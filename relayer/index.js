@@ -10,7 +10,6 @@ import {
   GetObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
-  PutBucketCorsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -261,26 +260,6 @@ app.post('/files/presign', async (req, res) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 async function start() {
-  // Configure CORS on Storj bucket so browsers can PUT directly
-  if (STORJ_ACCESS) {
-    try {
-      await s3.send(new PutBucketCorsCommand({
-        Bucket: BUCKET_FILES,
-        CORSConfiguration: {
-          CORSRules: [{
-            AllowedHeaders: ['*'],
-            AllowedMethods: ['PUT', 'GET', 'HEAD'],
-            AllowedOrigins: [...ALLOWED_ORIGINS, 'http://localhost:3000', 'http://localhost:3001'],
-            MaxAgeSeconds: 3600,
-          }],
-        },
-      }));
-      console.log(`[s3] CORS configured on bucket "${BUCKET_FILES}"`);
-    } catch (e) {
-      console.warn('[s3] CORS setup skipped:', e.message);
-    }
-  }
-
   app.listen(PORT, () => {
     console.log(`Relayer running on :${PORT}`);
     console.log(`Relayer wallet:  ${relayer.address}`);
