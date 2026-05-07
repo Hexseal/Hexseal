@@ -2,8 +2,47 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
+import multer from 'multer';
+import cron from 'node-cron';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 
 dotenv.config();
+
+// ─── File storage config ──────────────────────────────────────────────────────
+
+const __dirname  = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
+const FILE_TTL_MS = 18 * 24 * 60 * 60 * 1000; // 18 days
+const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE_MB || '50') * 1024 * 1024;
+
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+// Filename encodes upload timestamp: {timestamp}-{uuid}{ext}
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename:    (_req, file,  cb) => {
+    const ext = path.extname(file.originalname).slice(0, 10);
+    cb(null, `${Date.now()}-${randomUUID()}${ext}`);
+  },
+});
+const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } });
+
+// Cleanup: delete files older than FILE_TTL_MS — runs daily at 03:00
+cron.schedule('0 3 * * *', () => {
+  const cutoff = Date.now() - FILE_TTL_MS;
+  let removed = 0;
+  for (const f of fs.readdirSync(UPLOADS_DIR)) {
+    const ts = parseInt(f.split('-')[0], 10);
+    if (!isNaN(ts) && ts < cutoff) {
+      fs.unlinkSync(path.join(UPLOADS_DIR, f));
+      removed++;
+    }
+  }
+  if (removed) console.log(`[files] cleanup: removed ${removed} expired file(s)`);
+});
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -174,6 +213,35 @@ app.post('/relay', async (req, res) => {
     console.error('[relay] error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── File endpoints ───────────────────────────────────────────────────────────
+
+app.post('/files/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
+  const expiresAt = parseInt(req.file.filename.split('-')[0], 10) + FILE_TTL_MS;
+  res.json({
+    id:        req.file.filename,
+    expiresAt,
+    expiresIn: '18 days',
+  });
+});
+
+app.get('/files/:id', (req, res) => {
+  const id = path.basename(req.params.id); // prevent path traversal
+  const filePath = path.join(UPLOADS_DIR, id);
+
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found or expired' });
+
+  const ts = parseInt(id.split('-')[0], 10);
+  if (!isNaN(ts) && Date.now() - ts > FILE_TTL_MS) {
+    fs.unlinkSync(filePath);
+    return res.status(410).json({ error: 'File expired' });
+  }
+
+  res.setHeader('Content-Disposition', `attachment; filename="${id}"`);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  fs.createReadStream(filePath).pipe(res);
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────

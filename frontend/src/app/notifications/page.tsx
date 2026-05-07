@@ -35,7 +35,7 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
           )}>
             {notif.title}
           </p>
-          <span className="text-[11px] text-white/25 flex-shrink-0 mt-0.5">{timeAgo(notif.timestamp)}</span>
+          <span className="text-xs text-white/25 flex-shrink-0 mt-0.5">{timeAgo(notif.timestamp)}</span>
         </div>
         <p className="text-sm text-white/45 leading-relaxed">{notif.body}</p>
         {notif.txHash && (
@@ -44,7 +44,7 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 mt-2 text-[11px] font-mono text-white/25 hover:text-white/50 transition-colors"
+            className="inline-flex items-center gap-1 mt-2 text-xs font-mono text-white/25 hover:text-white/50 transition-colors"
           >
             <ExternalLink className="w-2.5 h-2.5" />
             {notif.txHash.slice(0, 12)}…

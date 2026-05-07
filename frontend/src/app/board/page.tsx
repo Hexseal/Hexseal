@@ -155,7 +155,7 @@ function JobCard({
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
           {!isClient && address && (
             <Link href={`/chat/${job.client}`}>
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/30 hover:text-primary">
+              <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary">
                 <MessageCircle className="w-3.5 h-3.5" />
               </Button>
             </Link>
@@ -164,7 +164,7 @@ function JobCard({
             hasApplied ? (
               <span className="text-[11px] text-white/30 font-mono px-1">applied</span>
             ) : (
-              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-7 px-3 text-xs gap-1">
+              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
                 {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                 Apply
               </Button>
@@ -212,9 +212,9 @@ function JobCard({
                     <span className="text-xs font-mono text-white/50 truncate min-w-0">{addr}</span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <Link href={`/chat/${addr}`}>
-                        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/35 hover:text-primary">Chat</Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary">Chat</Button>
                       </Link>
-                      <Button size="sm" onClick={() => handleAccept(addr)} disabled={!!isAccepting} className="h-6 px-2 text-xs gap-1">
+                      <Button size="sm" onClick={() => handleAccept(addr)} disabled={!!isAccepting} className="h-8 px-2.5 text-xs gap-1">
                         {isAccepting === addr ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
                         Accept
                       </Button>
@@ -231,7 +231,7 @@ function JobCard({
 
           <div className="pt-2 border-t border-white/6">
             <Link href={`/job/${jobId.toString()}`} onClick={e => e.stopPropagation()}>
-              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-7 px-2 gap-1.5">
+              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5">
                 <ExternalLink className="w-3 h-3" /> Full page
               </Button>
             </Link>

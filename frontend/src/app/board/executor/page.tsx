@@ -227,20 +227,20 @@ function ServiceCard({
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
           {isConnected && !isMyService && (
             <Link href={`/chat/${service.executor}`}>
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/30 hover:text-primary">
+              <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary">
                 <MessageCircle className="w-3.5 h-3.5" />
               </Button>
             </Link>
           )}
           {isConnected && !isMyService && myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
             <Link href={`/deal/${myAccepted.agreement}`}>
-              <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
+              <Button size="sm" variant="outline" className="h-9 px-3 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
                 Deal <ExternalLink className="w-3 h-3" />
               </Button>
             </Link>
           )}
           {isConnected && !isMyService && !myActive && (
-            <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-7 px-3 text-xs gap-1">
+            <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-9 px-3 text-xs gap-1">
               {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               Request
             </Button>

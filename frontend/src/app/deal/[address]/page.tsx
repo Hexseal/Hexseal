@@ -462,6 +462,22 @@ export default function DealDetailPage() {
           </div>
         )}
 
+        {/* ── Deal Chat button ────────────────────────────────────────────────── */}
+        {isConnected && (isParty || isArbiter) && (
+          <Link href={`/deal/${dealAddress}/chat`} className="block">
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4 flex items-center gap-3 hover:bg-white/[0.06] hover:border-white/15 transition-colors group cursor-pointer">
+              <div className="w-9 h-9 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+                <MessageCircle className="w-4 h-4 text-violet-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-white/80 group-hover:text-white transition-colors">Deal Chat</p>
+                <p className="text-xs text-white/35">Encrypted group chat between client, executor{parsed?.arbiter !== ZERO_ADDR ? ' & arbiter' : ''}</p>
+              </div>
+              <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors flex-shrink-0" />
+            </div>
+          </Link>
+        )}
+
         {/* ── Dispute banner ──────────────────────────────────────────────────── */}
         {parsed.status === 4 && isParty && (
           <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-5 py-4">

@@ -5,59 +5,109 @@ import Link from 'next/link';
 import { useAccount, useReadContract } from 'wagmi';
 import type { Abi } from 'viem';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
-import { Button } from '@/components/ui/button';
 import {
-  Loader2, Activity, RefreshCw, ChevronDown, Briefcase, User, Plus,
+  Loader2, Activity, Briefcase, Zap, CheckCircle,
+  DollarSign, Plus, ArrowRight, Star,
 } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import { DealSearch } from '@/components/DealSearch';
 import { DealCard, type AgreementRecord } from './components/DealCard';
 import { MyJobs, MyServices, MyClientRequests, MyJobReceipts } from './components/MyListings';
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 function calcXP(deals: AgreementRecord[]): number {
   const completed = deals.filter(d => d.status === 1 || d.status === 4).length;
   const refunded  = deals.filter(d => d.status === 2).length;
   const volume    = deals.reduce((s, d) => s + Number(d.amount), 0);
   return Math.max(0, completed * 100 + Math.floor(volume / 10_000_000) - refunded * 25);
 }
-function xpLevel(xp: number): { label: string; badge: string } {
-  if (xp >= 1000) return { label: 'Master',   badge: 'bg-yellow-400/10 border-yellow-400/20 text-yellow-400' };
-  if (xp >= 500)  return { label: 'Expert',   badge: 'bg-violet-400/10 border-violet-400/20 text-violet-400' };
-  if (xp >= 200)  return { label: 'Trusted',  badge: 'bg-blue-400/10 border-blue-400/20 text-blue-400'       };
-  if (xp >= 50)   return { label: 'Rising',   badge: 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400' };
-  return               { label: 'Newcomer', badge: 'bg-white/5 border-white/10 text-white/40'               };
+function xpLevel(xp: number) {
+  if (xp >= 1000) return { label: 'Master',   color: 'text-yellow-400',  bar: 'bg-yellow-400',  pct: 100 };
+  if (xp >= 500)  return { label: 'Expert',   color: 'text-violet-400',  bar: 'bg-violet-400',  pct: Math.round((xp - 500) / 5) };
+  if (xp >= 200)  return { label: 'Trusted',  color: 'text-blue-400',    bar: 'bg-blue-400',    pct: Math.round((xp - 200) / 3) };
+  if (xp >= 50)   return { label: 'Rising',   color: 'text-emerald-400', bar: 'bg-emerald-400', pct: Math.round((xp - 50) / 1.5) };
+  return               { label: 'Newcomer', color: 'text-white/40',    bar: 'bg-white/20',    pct: Math.round(xp / 0.5) };
 }
 
-function DashSection({ dot, label, count, children }: {
-  dot: string; label: string; count?: number; children: ReactNode;
+// ─── Stat card ────────────────────────────────────────────────────────────────
+
+function StatCard({ icon, label, value, sub }: {
+  icon: ReactNode; label: string; value: string | number; sub?: string;
 }) {
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
-        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
-        <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">
-          {label}{count !== undefined ? ` · ${count}` : ''}
-        </span>
+    <div className="rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3 flex items-center gap-3">
+      <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0">
+        {icon}
       </div>
-      {children}
+      <div className="min-w-0">
+        <p className="text-xs text-white/35 leading-none mb-1">{label}</p>
+        <p className="text-lg font-bold text-white leading-none">{value}</p>
+        {sub && <p className="text-[11px] text-white/30 mt-0.5">{sub}</p>}
+      </div>
     </div>
   );
 }
 
+// ─── Tab button ───────────────────────────────────────────────────────────────
+
+function Tab({ active, onClick, children, count }: {
+  active: boolean; onClick: () => void; children: ReactNode; count?: number;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0 ${
+        active
+          ? 'bg-white/10 text-white'
+          : 'text-white/40 hover:text-white/70 hover:bg-white/5'
+      }`}
+    >
+      {children}
+      {count !== undefined && count > 0 && (
+        <span className={`text-[11px] px-1.5 py-0.5 rounded-md font-mono ${
+          active ? 'bg-white/15 text-white/80' : 'bg-white/8 text-white/35'
+        }`}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ─── Quick action button ───────────────────────────────────────────────────────
+
+function QuickAction({ href, icon, label, sub, accent }: {
+  href: string; icon: ReactNode; label: string; sub: string; accent?: boolean;
+}) {
+  return (
+    <Link href={href} className="block">
+      <div className={`rounded-xl border px-4 py-3.5 flex items-center gap-3 transition-colors group cursor-pointer ${
+        accent
+          ? 'border-violet-500/30 bg-violet-500/8 hover:bg-violet-500/15 hover:border-violet-500/50'
+          : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.07] hover:border-white/15'
+      }`}>
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+          accent ? 'bg-violet-500/20' : 'bg-white/5'
+        }`}>
+          {icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-semibold leading-none mb-0.5 ${accent ? 'text-violet-300' : 'text-white/80'} group-hover:text-white transition-colors`}>{label}</p>
+          <p className="text-xs text-white/30">{sub}</p>
+        </div>
+        <ArrowRight className={`w-4 h-4 flex-shrink-0 transition-colors ${accent ? 'text-violet-500/50 group-hover:text-violet-400' : 'text-white/15 group-hover:text-white/40'}`} />
+      </div>
+    </Link>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+type TabKey = 'active' | 'jobs' | 'services' | 'history';
+
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
   const [refreshKey, setRefreshKey] = useState(0);
-  const [showHistory, setShowHistory] = useState(false);
+  const [tab, setTab] = useState<TabKey>('active');
 
   const { data: clientAgreements,   isLoading: isLoadingClient,   refetch: refetchClient   } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI as Abi,
@@ -87,7 +137,6 @@ export default function DashboardPage() {
     setRefreshKey(k => k + 1);
   };
 
-  // Registry enum: 0=ACTIVE 1=COMPLETED 2=REFUNDED 3=DISPUTED 4=RESOLVED
   const activeDeals  = allAgreements.filter(d => d.status === 0 || d.status === 3);
   const historyDeals = allAgreements.filter(d => d.status !== 0 && d.status !== 3);
   const completed    = allAgreements.filter(d => d.status === 1 || d.status === 4).length;
@@ -97,14 +146,14 @@ export default function DashboardPage() {
 
   if (!isConnected) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center max-w-sm px-4">
+      <div className="flex items-center justify-center min-h-screen px-4">
+        <div className="text-center max-w-sm">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Activity className="w-7 h-7 text-primary" />
           </div>
           <h1 className="text-2xl font-bold font-syne mb-2">Dashboard</h1>
           <p className="text-muted-foreground text-sm mb-6">Connect your wallet to view your deals</p>
-          <Link href="/"><Button variant="outline">Go Home</Button></Link>
+          <Link href="/"><button className="border border-white/15 rounded-lg px-4 py-2 text-sm text-white/60 hover:text-white hover:border-white/30 transition-colors">Go Home</button></Link>
         </div>
       </div>
     );
@@ -112,144 +161,180 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      <div className="mx-auto px-4 py-5 max-w-4xl space-y-4">
 
-      {/* ── Profile bar ── */}
-      <div className="border-b border-white/8 bg-white/[0.02]">
-        <div className="container mx-auto px-4 py-4 max-w-4xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center flex-shrink-0">
-              <User className="w-5 h-5 text-white/25" />
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-bold font-mono text-white">{shortAddr(address!)}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${level.badge}`}>
-                  {level.label}
-                </span>
-                <span className="text-xs text-white/30 font-mono">{xp} XP</span>
-              </div>
-              {!isLoading && allAgreements.length > 0 && (
-                <div className="flex items-center gap-3 mt-1 text-xs text-white/35">
-                  <span><span className="text-white/60 font-mono">{activeDeals.length}</span> active</span>
-                  <span><span className="text-white/60 font-mono">{completed}</span> completed</span>
-                  <span><span className="text-white/60 font-mono">${(totalVolume / 1e6).toFixed(0)}</span> USDC</span>
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <Button
-                variant="ghost" size="sm" onClick={refetch} disabled={isLoading}
-                className="text-white/40 hover:text-white/70 h-8 w-8 p-0"
-              >
-                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" className="gap-1.5">
-                    <Plus className="w-3.5 h-3.5" />Post
-                    <ChevronDown className="w-3 h-3 opacity-70" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[180px]">
-                  <DropdownMenuItem asChild>
-                    <Link href="/board/client/post" className="flex items-center gap-2">
-                      <Briefcase className="w-3.5 h-3.5" />Post a Job
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild>
-                    <Link href="/board/executor/post" className="flex items-center gap-2">
-                      <User className="w-3.5 h-3.5" />Offer a Service
-                    </Link>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Content ── */}
-      <div className="container mx-auto px-4 py-5 max-w-4xl space-y-6">
-
+        {/* ── XMTP setup banner (only shows when needed) ── */}
         <MessagingSetup />
 
+        {/* ── Stats row ── */}
+        {!isLoading && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <StatCard
+              icon={<Zap className="w-4 h-4 text-violet-400" />}
+              label="Level"
+              value={level.label}
+              sub={`${xp} XP`}
+            />
+            <StatCard
+              icon={<Activity className="w-4 h-4 text-sky-400" />}
+              label="Active"
+              value={activeDeals.length}
+              sub={activeDeals.length === 1 ? 'deal' : 'deals'}
+            />
+            <StatCard
+              icon={<CheckCircle className="w-4 h-4 text-emerald-400" />}
+              label="Completed"
+              value={completed}
+              sub={completed === 1 ? 'deal' : 'deals'}
+            />
+            <StatCard
+              icon={<DollarSign className="w-4 h-4 text-amber-400" />}
+              label="Volume"
+              value={`$${(totalVolume / 1e6).toFixed(0)}`}
+              sub="USDC total"
+            />
+          </div>
+        )}
+
+        {/* XP progress bar */}
+        {!isLoading && (
+          <div className="rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Star className="w-3.5 h-3.5 text-white/30" />
+                <span className={`text-xs font-semibold ${level.color}`}>{level.label}</span>
+              </div>
+              <span className="text-xs font-mono text-white/30">{xp} XP</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ${level.bar}`}
+                style={{ width: `${Math.min(100, level.pct)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── Quick actions ── */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <QuickAction
+            href="/board/client/post"
+            icon={<Briefcase className="w-4 h-4 text-white/50" />}
+            label="Post a Job"
+            sub="Hire an executor"
+            accent={false}
+          />
+          <QuickAction
+            href="/board/executor"
+            icon={<Zap className="w-4 h-4 text-violet-400" />}
+            label="Find Work"
+            sub="Browse service listings"
+            accent={true}
+          />
+          <QuickAction
+            href="/board/executor/post"
+            icon={<Plus className="w-4 h-4 text-white/50" />}
+            label="Offer a Service"
+            sub="List your skills"
+            accent={false}
+          />
+        </div>
+
+        {/* ── Deal search ── */}
         <DealSearch />
 
-        {isLoading ? (
-          <div className="flex items-center justify-center py-16 gap-2 text-white/30">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm">Loading…</span>
+        {/* ── Tabs ── */}
+        <div className="rounded-xl border border-white/8 bg-white/[0.02] overflow-hidden">
+          {/* Tab bar */}
+          <div className="flex gap-1 p-2 border-b border-white/8 overflow-x-auto scrollbar-none">
+            <Tab active={tab === 'active'}   onClick={() => setTab('active')}   count={activeDeals.length}>
+              Active
+            </Tab>
+            <Tab active={tab === 'jobs'}     onClick={() => setTab('jobs')}>
+              Jobs
+            </Tab>
+            <Tab active={tab === 'services'} onClick={() => setTab('services')}>
+              Services
+            </Tab>
+            <Tab active={tab === 'history'}  onClick={() => setTab('history')}  count={historyDeals.length}>
+              History
+            </Tab>
           </div>
-        ) : (
-          <>
-            {/* Active & Disputed Deals */}
-            {activeDeals.length > 0 && (
-              <DashSection dot="bg-violet-400" label="Active Deals" count={activeDeals.length}>
-                <div className="space-y-2">
-                  {activeDeals.map(a => (
-                    <DealCard
-                      key={`${a.agreement}-${refreshKey}`}
-                      agreement={a}
-                      address={address!}
-                      refetch={refetch}
-                    />
-                  ))}
-                </div>
-              </DashSection>
-            )}
 
-            {/* Job Postings (as client) */}
-            <DashSection dot="bg-sky-400" label="Job Postings">
-              <MyJobs address={address!} onDealCreated={refetch} />
-            </DashSection>
+          {/* Tab content */}
+          <div className="p-3 sm:p-4">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12 gap-2 text-white/30">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Loading…</span>
+              </div>
+            ) : (
+              <>
+                {tab === 'active' && (
+                  activeDeals.length === 0 ? (
+                    <div className="text-center py-10">
+                      <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
+                      <p className="text-sm text-white/30">No active deals</p>
+                      <p className="text-xs text-white/20 mt-1">Post a job or find work to get started</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {activeDeals.map(a => (
+                        <DealCard
+                          key={`${a.agreement}-${refreshKey}`}
+                          agreement={a}
+                          address={address!}
+                          refetch={refetch}
+                        />
+                      ))}
+                    </div>
+                  )
+                )}
 
-            {/* Job Receipt NFTs (soulbound proof of posted jobs) */}
-            <DashSection dot="bg-sky-400/40" label="Job Receipts">
-              <MyJobReceipts address={address!} />
-            </DashSection>
-
-            {/* Outgoing service requests (as client) */}
-            <DashSection dot="bg-indigo-400" label="Service Requests">
-              <MyClientRequests address={address!} />
-            </DashSection>
-
-            {/* My service listings (as executor) */}
-            <DashSection dot="bg-emerald-400" label="My Services">
-              <MyServices address={address!} onDealCreated={refetch} />
-            </DashSection>
-
-            {/* History */}
-            {historyDeals.length > 0 && (
-              <div>
-                <button
-                  onClick={() => setShowHistory(v => !v)}
-                  className="flex items-center gap-2 group w-full text-left py-1"
-                >
-                  <div className="w-1.5 h-1.5 rounded-full bg-white/20 flex-shrink-0" />
-                  <span className="text-xs font-semibold text-white/35 uppercase tracking-wider group-hover:text-white/55 transition-colors">
-                    History · {historyDeals.length}
-                  </span>
-                  <ChevronDown className={`w-3 h-3 text-white/25 ml-0.5 transition-transform group-hover:text-white/50 ${showHistory ? 'rotate-180' : ''}`} />
-                </button>
-                {showHistory && (
-                  <div className="space-y-2 mt-3 opacity-70">
-                    {historyDeals.map(a => (
-                      <DealCard
-                        key={`${a.agreement}-hist-${refreshKey}`}
-                        agreement={a}
-                        address={address!}
-                        refetch={refetch}
-                      />
-                    ))}
+                {tab === 'jobs' && (
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">My Job Postings</p>
+                      <MyJobs address={address!} onDealCreated={refetch} />
+                    </div>
+                    <div>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">Job Receipts</p>
+                      <MyJobReceipts address={address!} />
+                    </div>
+                    <div>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">Service Requests</p>
+                      <MyClientRequests address={address!} />
+                    </div>
                   </div>
                 )}
-              </div>
+
+                {tab === 'services' && (
+                  <MyServices address={address!} onDealCreated={refetch} />
+                )}
+
+                {tab === 'history' && (
+                  historyDeals.length === 0 ? (
+                    <div className="text-center py-10">
+                      <CheckCircle className="w-8 h-8 text-white/10 mx-auto mb-3" />
+                      <p className="text-sm text-white/30">No history yet</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 opacity-80">
+                      {historyDeals.map(a => (
+                        <DealCard
+                          key={`${a.agreement}-hist-${refreshKey}`}
+                          agreement={a}
+                          address={address!}
+                          refetch={refetch}
+                        />
+                      ))}
+                    </div>
+                  )
+                )}
+              </>
             )}
-          </>
-        )}
+          </div>
+        </div>
       </div>
     </div>
   );

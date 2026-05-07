@@ -81,8 +81,7 @@ export const BackgroundFX: React.FC = () => {
     const onRM = () => { reduced = mql.matches; };
     mql.addEventListener?.("change", onRM);
 
-    // Respect app theme from next-themes instead of system preference
-    const dark = resolvedTheme === 'dark';
+    const dark = resolvedTheme !== 'light'; // default to dark until theme resolves
 
     const onMouseMove = (e: MouseEvent) => {
       if (!canvas) return;

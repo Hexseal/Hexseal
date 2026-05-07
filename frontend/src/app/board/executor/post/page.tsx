@@ -226,7 +226,7 @@ export default function PostServicePage() {
                 <p className="text-xs text-white/25 text-right">{description.length}/500</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="price" className="text-sm text-white/70">Price (USDC)</Label>
                   <Input id="price" type="number" step="1" min="1" placeholder="100" value={price}

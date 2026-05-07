@@ -165,6 +165,7 @@ type DealChatProps = {
   executor: string;
   arbiter?: string;
   currentUser: string;
+  fullHeight?: boolean;
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -175,6 +176,7 @@ export function DealChat({
   executor,
   arbiter,
   currentUser,
+  fullHeight = false,
 }: DealChatProps) {
   const {
     messages,
@@ -246,8 +248,9 @@ export function DealChat({
   };
 
   return (
-    <div className="flex flex-col rounded-xl border border-white/10 bg-[#0d0d0d] overflow-hidden">
-      {/* Header */}
+    <div className={`flex flex-col bg-[#0d0d0d] overflow-hidden ${fullHeight ? 'h-full' : 'rounded-xl border border-white/10'}`}>
+      {/* Header — hidden in fullHeight mode (page already has header) */}
+      {!fullHeight && (
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/5">
         <span className="text-sm font-semibold text-white/80">Deal Chat</span>
         <div className="flex items-center gap-2">
@@ -255,6 +258,7 @@ export function DealChat({
           <span className="text-xs text-green-400">E2E encrypted</span>
         </div>
       </div>
+      )}
 
       {isClosed && (
         <div className="px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/20 text-yellow-400 text-xs text-center">
@@ -263,7 +267,7 @@ export function DealChat({
       )}
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto min-h-[260px] max-h-[400px] p-4 space-y-2">
+      <div className={`flex-1 overflow-y-auto p-4 space-y-2 ${fullHeight ? '' : 'min-h-[260px] max-h-[400px]'}`}>
         {isLoading && (
           <div className="flex items-center justify-center h-full gap-2 text-white/40 text-sm">
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -333,8 +337,12 @@ export function DealChat({
           <button
             type="button"
             disabled={!isInitialized || uploading || isClosed}
-            onClick={() => fileRef.current?.click()}
-            title="Attach file (encrypted)"
+            onClick={() => {
+              if (!isInitialized || uploading || isClosed) return;
+              if (!window.confirm('Files are stored for 18 days, then permanently deleted. Encrypted end-to-end. Max 50 MB. Continue?')) return;
+              fileRef.current?.click();
+            }}
+            title="Attach file — available 18 days"
             className="p-2 rounded-lg text-white/40 hover:text-white/70 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex-shrink-0"
           >
             {uploading
@@ -349,7 +357,7 @@ export function DealChat({
             onKeyDown={handleKeyDown}
             disabled={!isInitialized || sending || isClosed}
             placeholder={isClosed ? 'Deal closed' : isInitialized ? 'Type a message…' : 'Initializing…'}
-            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/25 focus:outline-none focus:ring-1 focus:ring-violet-500/60 disabled:opacity-40"
+            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-base text-white placeholder:text-white/25 focus:outline-none focus:ring-1 focus:ring-violet-500/60 disabled:opacity-40"
           />
           <button
             type="button"

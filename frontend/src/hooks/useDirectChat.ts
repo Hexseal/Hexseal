@@ -14,8 +14,9 @@ import {
 } from '@/lib/xmtp';
 import { encryptFile } from '@/lib/fileCrypto';
 
-// XHR-based upload so we get real progress events
-function uploadToIPFS(
+const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL || 'http://localhost:3001';
+
+function uploadToRelayer(
   file: File,
   onProgress?: (pct: number) => void,
 ): Promise<{ url: string }> {
@@ -31,14 +32,15 @@ function uploadToIPFS(
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(JSON.parse(xhr.responseText) as { url: string });
+        const { id } = JSON.parse(xhr.responseText) as { id: string };
+        resolve({ url: `${RELAYER_URL}/files/${id}` });
       } else {
         const body = JSON.parse(xhr.responseText || '{}') as { error?: string };
         reject(new Error(body.error ?? 'Upload failed'));
       }
     };
     xhr.onerror = () => reject(new Error('Upload failed'));
-    xhr.open('POST', '/api/ipfs/upload');
+    xhr.open('POST', `${RELAYER_URL}/files/upload`);
     xhr.send(form);
   });
 }
@@ -164,7 +166,7 @@ export function useDirectChat(recipientAddress: string) {
     setUploadProgress(0);
     let url: string;
     try {
-      ({ url } = await uploadToIPFS(encryptedFile, setUploadProgress));
+      ({ url } = await uploadToRelayer(encryptedFile, setUploadProgress));
     } finally {
       setUploadProgress(null);
     }

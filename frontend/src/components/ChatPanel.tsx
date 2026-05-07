@@ -63,14 +63,14 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
   const rounded = isMe ? 'rounded-t-2xl rounded-bl-2xl rounded-br-sm' : 'rounded-t-2xl rounded-br-2xl rounded-bl-sm';
 
   if (decrypting) return (
-    <div className={`w-[220px] h-[140px] ${rounded} border border-white/10 bg-white/5 flex items-center justify-center gap-2`}>
+    <div className={`w-full max-w-[220px] h-[140px] ${rounded} border border-white/10 bg-white/5 flex items-center justify-center gap-2`}>
       <Loader2 className="w-4 h-4 animate-spin text-white/30" />
       <span className="text-xs text-white/30">Decrypting…</span>
     </div>
   );
 
   if (decryptErr || !src) return (
-    <div className={`w-[220px] h-[80px] ${rounded} border border-red-500/20 bg-red-500/5 flex items-center justify-center`}>
+    <div className={`w-full max-w-[220px] h-[80px] ${rounded} border border-red-500/20 bg-red-500/5 flex items-center justify-center`}>
       <span className="text-xs text-red-400/60">Failed to decrypt image</span>
     </div>
   );
@@ -78,7 +78,7 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
   return (
     <>
       <button onClick={() => setLightbox(true)}
-        className={`block max-w-[280px] ${rounded} overflow-hidden border border-white/10 hover:border-white/20 transition-colors cursor-zoom-in`}>
+        className={`block w-full max-w-[min(280px,80vw)] ${rounded} overflow-hidden border border-white/10 hover:border-white/20 transition-colors cursor-zoom-in`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={src} alt={a.name} className="w-full h-auto object-cover max-h-72" />
       </button>
@@ -107,7 +107,7 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
 
   return (
     <button onClick={handleDownload} disabled={saving}
-      className={`flex items-center gap-2.5 px-3 py-2.5 rounded-2xl border transition-colors group max-w-[260px] text-left ${
+      className={`flex items-center gap-2.5 px-3 py-2.5 rounded-2xl border transition-colors group w-full max-w-[min(260px,80vw)] text-left ${
         isMe ? 'border-primary/30 bg-primary/20 hover:bg-primary/30 rounded-br-sm'
              : 'border-white/10 bg-white/8 hover:bg-white/12 rounded-bl-sm'
       } disabled:opacity-60`}>
@@ -735,9 +735,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         <div className="flex items-end gap-2">
           <input ref={fileRef} type="file" className="hidden" onChange={handleFileChange} />
           <button
-            onClick={() => fileRef.current?.click()}
+            onClick={() => {
+              if (!isInitialized || uploading) return;
+              if (!window.confirm('Files are stored for 18 days, then permanently deleted. Encrypted end-to-end. Max 50 MB. Continue?')) return;
+              fileRef.current?.click();
+            }}
             disabled={!isInitialized || uploading}
-            title="Attach file (encrypted)"
+            title="Attach file — available 18 days"
             className="w-9 h-9 rounded-xl flex items-center justify-center text-white/35 hover:text-white/65 hover:bg-white/5 disabled:opacity-25 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
           </button>
@@ -753,7 +757,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               error         ? 'Chat unavailable' :
               isInitialized ? 'Message…'         : 'Initializing…'
             }
-            className="flex-1 bg-white/[0.06] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-primary/35 focus:bg-white/8 disabled:opacity-40 transition-all resize-none overflow-hidden leading-[1.4]"
+            className="flex-1 bg-white/[0.06] border border-white/10 rounded-xl px-4 py-2.5 text-base text-white placeholder:text-white/20 focus:outline-none focus:border-primary/35 focus:bg-white/8 disabled:opacity-40 transition-all resize-none overflow-hidden leading-[1.4]"
             style={{ minHeight: '40px', maxHeight: '120px' }}
           />
           <button

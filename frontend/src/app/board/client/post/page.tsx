@@ -238,7 +238,7 @@ export default function PostJobPage() {
                   className="bg-white/[0.03] border-white/10 placeholder:text-white/20 resize-none rounded-xl" required />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="amount" className="text-sm text-white/70">Budget (USDC)</Label>
                   <Input id="amount" type="number" step="0.01" min="0" placeholder="100" value={amount}
