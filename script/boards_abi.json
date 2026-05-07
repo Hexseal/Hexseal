@@ -1,0 +1,243 @@
+{
+  "JobBoardFacet": [
+    {
+      "name": "mintJob",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "title", "type": "string" },
+        { "name": "description", "type": "string" },
+        { "name": "amount", "type": "uint256" },
+        { "name": "deadlineDays", "type": "uint256" },
+        { "name": "termsHash", "type": "bytes32" },
+        { "name": "region", "type": "uint8" }
+      ],
+      "outputs": [{ "name": "jobId", "type": "uint256" }]
+    },
+    {
+      "name": "applyForJob",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "jobId", "type": "uint256" }],
+      "outputs": []
+    },
+    {
+      "name": "acceptApplicant",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "jobId", "type": "uint256" },
+        { "name": "executor", "type": "address" }
+      ],
+      "outputs": [{ "name": "agreement", "type": "address" }]
+    },
+    {
+      "name": "cancelJob",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "jobId", "type": "uint256" }],
+      "outputs": []
+    },
+    {
+      "name": "getJob",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "jobId", "type": "uint256" }],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            { "name": "client", "type": "address" },
+            { "name": "title", "type": "string" },
+            { "name": "description", "type": "string" },
+            { "name": "amount", "type": "uint256" },
+            { "name": "deadlineDays", "type": "uint256" },
+            { "name": "termsHash", "type": "bytes32" },
+            { "name": "region", "type": "uint8" },
+            { "name": "status", "type": "uint8" },
+            { "name": "createdAt", "type": "uint256" },
+            { "name": "chosenExecutor", "type": "address" },
+            { "name": "agreement", "type": "address" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "getClientJobs",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "client", "type": "address" }],
+      "outputs": [{ "name": "", "type": "uint256[]" }]
+    },
+    {
+      "name": "getApplicants",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "jobId", "type": "uint256" }],
+      "outputs": [{ "name": "", "type": "address[]" }]
+    },
+    {
+      "name": "JobPosted",
+      "type": "event",
+      "inputs": [
+        { "name": "jobId", "type": "uint256", "indexed": true },
+        { "name": "client", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint256", "indexed": false },
+        { "name": "region", "type": "uint8", "indexed": false }
+      ]
+    },
+    {
+      "name": "JobApplied",
+      "type": "event",
+      "inputs": [
+        { "name": "jobId", "type": "uint256", "indexed": true },
+        { "name": "executor", "type": "address", "indexed": true }
+      ]
+    },
+    {
+      "name": "JobAccepted",
+      "type": "event",
+      "inputs": [
+        { "name": "jobId", "type": "uint256", "indexed": true },
+        { "name": "client", "type": "address", "indexed": true },
+        { "name": "executor", "type": "address", "indexed": true },
+        { "name": "agreement", "type": "address", "indexed": false }
+      ]
+    },
+    {
+      "name": "JobCancelled",
+      "type": "event",
+      "inputs": [
+        { "name": "jobId", "type": "uint256", "indexed": true },
+        { "name": "client", "type": "address", "indexed": true },
+        { "name": "refundAmount", "type": "uint256", "indexed": false }
+      ]
+    }
+  ],
+  "ServiceBoardFacet": [
+    {
+      "name": "mintService",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "title", "type": "string" },
+        { "name": "description", "type": "string" },
+        { "name": "price", "type": "uint256" },
+        { "name": "deadlineDays", "type": "uint256" },
+        { "name": "region", "type": "uint8" }
+      ],
+      "outputs": [{ "name": "serviceId", "type": "uint256" }]
+    },
+    {
+      "name": "hireService",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "serviceId", "type": "uint256" },
+        { "name": "amount", "type": "uint256" },
+        { "name": "deadlineDays", "type": "uint256" },
+        { "name": "termsHash", "type": "bytes32" },
+        { "name": "region", "type": "uint8" }
+      ],
+      "outputs": [{ "name": "agreement", "type": "address" }]
+    },
+    {
+      "name": "removeService",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "serviceId", "type": "uint256" }],
+      "outputs": []
+    },
+    {
+      "name": "pauseService",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "serviceId", "type": "uint256" }],
+      "outputs": []
+    },
+    {
+      "name": "unpauseService",
+      "type": "function",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "serviceId", "type": "uint256" }],
+      "outputs": []
+    },
+    {
+      "name": "getService",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "serviceId", "type": "uint256" }],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            { "name": "executor", "type": "address" },
+            { "name": "title", "type": "string" },
+            { "name": "description", "type": "string" },
+            { "name": "price", "type": "uint256" },
+            { "name": "deadlineDays", "type": "uint256" },
+            { "name": "region", "type": "uint8" },
+            { "name": "status", "type": "uint8" },
+            { "name": "createdAt", "type": "uint256" },
+            { "name": "hiresCount", "type": "uint256" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "getExecutorServices",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "executor", "type": "address" }],
+      "outputs": [{ "name": "", "type": "uint256[]" }]
+    },
+    {
+      "name": "getServiceClients",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [{ "name": "serviceId", "type": "uint256" }],
+      "outputs": [{ "name": "", "type": "address[]" }]
+    },
+    {
+      "name": "ServicePosted",
+      "type": "event",
+      "inputs": [
+        { "name": "serviceId", "type": "uint256", "indexed": true },
+        { "name": "executor", "type": "address", "indexed": true },
+        { "name": "price", "type": "uint256", "indexed": false },
+        { "name": "region", "type": "uint8", "indexed": false }
+      ]
+    },
+    {
+      "name": "ServiceHired",
+      "type": "event",
+      "inputs": [
+        { "name": "serviceId", "type": "uint256", "indexed": true },
+        { "name": "client", "type": "address", "indexed": true },
+        { "name": "executor", "type": "address", "indexed": true },
+        { "name": "agreement", "type": "address", "indexed": false },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "name": "ServiceRemoved",
+      "type": "event",
+      "inputs": [
+        { "name": "serviceId", "type": "uint256", "indexed": true },
+        { "name": "executor", "type": "address", "indexed": true }
+      ]
+    },
+    {
+      "name": "ServicePaused",
+      "type": "event",
+      "inputs": [{ "name": "serviceId", "type": "uint256", "indexed": true }]
+    },
+    {
+      "name": "ServiceUnpaused",
+      "type": "event",
+      "inputs": [{ "name": "serviceId", "type": "uint256", "indexed": true }]
+    }
+  ]
+}

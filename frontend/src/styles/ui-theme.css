@@ -1,0 +1,57 @@
+:root {
+  /* Dark theme — Signature404 */
+  --background: 0 0% 0%;          /* #000000 pure black */
+  --foreground: 0 0% 98%;         /* near white */
+
+  --muted: 0 0% 7%;               /* very dark, not grey */
+  --muted-foreground: 0 0% 60%;   /* mid gray text */
+
+  --popover: 0 0% 4%;
+  --popover-foreground: 0 0% 98%;
+
+  --card: 0 0% 4%;                /* barely off-black */
+  --card-foreground: 0 0% 98%;
+
+  --border: 0 0% 12%;
+  --input: 0 0% 12%;
+
+  /* Electric Blue accent */
+  --primary: 217 91% 60%;         /* #2563EB */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 7%;
+  --secondary-foreground: 0 0% 98%;
+
+  --accent: 217 91% 60%;          /* #2563EB */
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 98%;
+
+  --ring: 217 91% 60%;            /* #2563EB */
+
+  --radius: 0.75rem;
+}
+
+/* Override shadcn .dark values — must match :root above */
+.dark {
+  --background: 0 0% 0%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 4%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 4%;
+  --popover-foreground: 0 0% 98%;
+  --muted: 0 0% 7%;
+  --muted-foreground: 0 0% 60%;
+  --secondary: 0 0% 7%;
+  --secondary-foreground: 0 0% 98%;
+  --border: 0 0% 12%;
+  --input: 0 0% 12%;
+}
+
+html, body {
+  background: #000000;
+  color: #fafafa;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}

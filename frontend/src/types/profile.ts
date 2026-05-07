@@ -1,0 +1,38 @@
+/**
+ * User Profile types for Signature404
+ */
+
+export interface UserProfile {
+  address: string;
+  displayName: string;
+  bio: string;
+  role?: 'client' | 'executor' | 'both';
+  specializations: string[];
+  links: {
+    telegram?: string;
+    github?: string;
+    twitter?: string;
+    discord?: string;
+    website?: string;
+  };
+  avatarCid?: string;
+  createdAt: number;
+  updatedAt: number;
+  signature: string;
+  cid: string;
+}
+
+export interface ProfilesIndex {
+  profiles: Record<string, string>; // address -> CID
+  updatedAt: number;
+}
+
+export interface OnChainStats {
+  completedDeals: number;
+  refundedDeals: number;
+  disputedDeals: number;
+  totalVolume: bigint;
+  avgCompletionTime: number; // in days
+  activeNow: number;
+  memberSince: number; // unix timestamp
+}

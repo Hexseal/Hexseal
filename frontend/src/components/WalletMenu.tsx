@@ -1,0 +1,251 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import Link from "next/link";
+import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract } from "wagmi";
+import { appChainId } from "@/config/chain";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { CONTRACTS, ARBITER_REGISTRY_ABI, DIAMOND_ABI } from "@/config/contracts";
+import type { Abi } from "viem";
+import { fetchProfile } from "@/lib/profiles-ipfs";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, Shield, ShieldCheck, HelpCircle } from "lucide-react";
+import { toast } from "react-hot-toast";
+
+function shortAddr(addr: string) {
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+interface Props {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+export default function WalletMenu({ open, onOpenChange }: Props) {
+  const { address, isConnected } = useAccount();
+  const { disconnect } = useDisconnect();
+  const { openConnectModal } = useConnectModal();
+  const [mounted, setMounted] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => { setMounted(true); }, []);
+
+  // ENS name (only on mainnet, but we try anyway)
+  const { data: ensName } = useEnsName({
+    address: address as `0x${string}`,
+    chainId: appChainId,
+    query: { enabled: !!address },
+  });
+
+  // Arbiter check
+  const { data: isArbiter } = useReadContract({
+    address: CONTRACTS.diamond,
+    abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "isRegisteredArbiter",
+    args: [address ?? "0x0000000000000000000000000000000000000000"],
+    query: { enabled: !!address },
+  }) as { data: boolean | undefined };
+
+  // Owner check
+  const { data: diamondOwner } = useReadContract({
+    address: CONTRACTS.diamond,
+    abi: DIAMOND_ABI as Abi,
+    functionName: "owner",
+    query: { enabled: !!address },
+  }) as { data: string | undefined };
+  const isOwner = !!address && !!diamondOwner &&
+    address.toLowerCase() === diamondOwner.toLowerCase();
+
+  // USDC balance
+  const { data: usdcBalanceData } = useBalance({
+    address: address,
+    token: CONTRACTS.usdc as `0x${string}`,
+    query: { enabled: !!address },
+  });
+  const usdcBalance = usdcBalanceData?.value ?? BigInt(0);
+
+  // Fetch profile from IPFS (name + avatar)
+  useEffect(() => {
+    if (!address) return;
+    let alive = true;
+    const loadProfile = async () => {
+      try {
+        const profile = await fetchProfile(address);
+        if (!alive) return;
+        if (profile?.displayName) setDisplayName(profile.displayName);
+        if (profile?.avatarCid) {
+          const gw = process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://dweb.link";
+          setProfileAvatarUrl(`${gw}/ipfs/${profile.avatarCid}`);
+        }
+      } catch {}
+    };
+    loadProfile();
+    return () => { alive = false; };
+  }, [address]);
+
+  // Display name priority: ENS > profile name > truncated address
+  const displayText = ensName || displayName || (address ? shortAddr(address) : "");
+  // Avatar priority: IPFS profile > effigy identicon
+  const avatarUrl = profileAvatarUrl || (address ? `https://effigy.im/a/${address}.svg` : "");
+
+  const handleCopy = async () => {
+    if (!address) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      toast.success("Address copied!");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Failed to copy");
+    }
+  };
+
+  const handleDisconnect = () => {
+    disconnect();
+    window.location.href = "/";
+  };
+
+  if (!mounted || !isConnected || !address) {
+    return (
+      <button
+        onClick={openConnectModal}
+        disabled={!mounted}
+        className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 disabled:opacity-0"
+      >
+        Connect Wallet
+      </button>
+    );
+  }
+
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-white/[0.10] bg-[#1a1a1a] hover:bg-[#222] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20">
+          <img
+            src={avatarUrl}
+            alt="avatar"
+            className="w-5 h-5 rounded-full ring-1 ring-white/[0.08]"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+          <span className="hidden sm:inline font-mono text-sm">{displayText}</span>
+          <ChevronDown className="w-3 h-3 text-white/35" />
+        </button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent align="end" className="w-64 bg-[#0e0e0e] border-white/[0.08] shadow-2xl shadow-black/80 p-0 overflow-hidden">
+
+        {/* ── Profile header ── */}
+        <div className="px-4 py-3.5 border-b border-white/[0.06]">
+          <div className="flex items-center gap-3">
+            <img
+              src={avatarUrl}
+              alt="avatar"
+              className="w-10 h-10 rounded-full ring-1 ring-white/[0.08] flex-shrink-0"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm text-white/90 truncate">{displayText}</p>
+              <div className="flex items-center gap-1 mt-0.5">
+                <p className="text-xs text-white/35 font-mono">{shortAddr(address)}</p>
+                <button
+                  onClick={handleCopy}
+                  className="text-white/25 hover:text-white/60 transition-colors"
+                  aria-label="Copy address"
+                >
+                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                </button>
+              </div>
+              <p className="text-xs font-mono text-white/45 mt-1.5">
+                {(Number(usdcBalance) / 1e6).toFixed(2)} USDC
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Navigation ── */}
+        <div className="p-1">
+          <DropdownMenuItem asChild>
+            <Link href={`/profile/${address}`} className="flex items-center gap-2.5 cursor-pointer">
+              <User className="w-3.5 h-3.5 text-white/40" />
+              My Profile
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/dashboard" className="flex items-center gap-2.5 cursor-pointer">
+              <LayoutDashboard className="w-3.5 h-3.5 text-white/40" />
+              Dashboard
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/chat" className="flex items-center gap-2.5 cursor-pointer">
+              <MessageCircle className="w-3.5 h-3.5 text-white/40" />
+              Messages
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/profile/edit" className="flex items-center gap-2.5 cursor-pointer">
+              <Settings className="w-3.5 h-3.5 text-white/40" />
+              Settings
+            </Link>
+          </DropdownMenuItem>
+        </div>
+
+        {/* ── Role-specific ── */}
+        {(isArbiter || isOwner) && (
+          <>
+            <div className="h-px bg-white/[0.06]" />
+            <div className="p-1">
+              {isArbiter && (
+                <DropdownMenuItem asChild>
+                  <Link href="/arbiter" className="flex items-center gap-2.5 cursor-pointer text-blue-400 focus:text-blue-400">
+                    <Shield className="w-3.5 h-3.5" />
+                    Arbiter Panel
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {isOwner && (
+                <DropdownMenuItem asChild>
+                  <Link href="/admin" className="flex items-center gap-2.5 cursor-pointer text-amber-400 focus:text-amber-400">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    Admin Panel
+                  </Link>
+                </DropdownMenuItem>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── Help ── */}
+        <div className="h-px bg-white/[0.06]" />
+        <div className="p-1">
+          <DropdownMenuItem
+            onClick={() => window.dispatchEvent(new Event('sig404:open-onboarding'))}
+            className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            How it works
+          </DropdownMenuItem>
+        </div>
+
+        {/* ── Disconnect ── */}
+        <div className="h-px bg-white/[0.06]" />
+        <div className="p-1">
+          <DropdownMenuItem onClick={handleDisconnect} className="flex items-center gap-2.5 cursor-pointer text-destructive focus:text-destructive">
+            <LogOut className="w-3.5 h-3.5" />
+            Disconnect
+          </DropdownMenuItem>
+        </div>
+
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
