@@ -15,37 +15,7 @@ import {
   type XmtpGroup,
 } from '@/lib/xmtp';
 import { encryptFile } from '@/lib/fileCrypto';
-
-const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL || 'http://localhost:3001';
-
-function uploadToRelayer(
-  file: File,
-  onProgress?: (pct: number) => void,
-): Promise<{ url: string }> {
-  return new Promise((resolve, reject) => {
-    const form = new FormData();
-    form.append('file', file);
-
-    const xhr = new XMLHttpRequest();
-    if (onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-      };
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const { id } = JSON.parse(xhr.responseText) as { id: string };
-        resolve({ url: `${RELAYER_URL}/files/${id}` });
-      } else {
-        const body = JSON.parse(xhr.responseText || '{}') as { error?: string };
-        reject(new Error(body.error ?? 'Upload failed'));
-      }
-    };
-    xhr.onerror = () => reject(new Error('Upload failed'));
-    xhr.open('POST', `${RELAYER_URL}/files/upload`);
-    xhr.send(form);
-  });
-}
+import { uploadEncryptedFile } from '@/lib/fileStorage';
 
 // ─── Agreement ABI ────────────────────────────────────────────────────────────
 
@@ -227,13 +197,12 @@ export function useDealChat(agreementAddress: string) {
 
     // 1. Encrypt in browser
     const { encryptedBlob, keyHex, ivHex } = await encryptFile(file);
-    const encryptedFile = new File([encryptedBlob], file.name + '.enc', { type: 'application/octet-stream' });
 
-    // 2. Upload encrypted blob with progress
+    // 2. Upload encrypted blob directly to Storj (browser → Storj, no relay bandwidth)
     setUploadProgress(0);
     let url: string;
     try {
-      ({ url } = await uploadToRelayer(encryptedFile, setUploadProgress));
+      ({ url } = await uploadEncryptedFile(encryptedBlob, file.name, setUploadProgress));
     } finally {
       setUploadProgress(null);
     }

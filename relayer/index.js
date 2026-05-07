@@ -2,46 +2,61 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
-import multer from 'multer';
 import cron from 'node-cron';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
+  PutBucketCorsCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 dotenv.config();
 
-// ─── File storage config ──────────────────────────────────────────────────────
+// ─── Storj S3 config ──────────────────────────────────────────────────────────
 
-const __dirname  = path.dirname(fileURLToPath(import.meta.url));
-const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
-const FILE_TTL_MS = 18 * 24 * 60 * 60 * 1000; // 18 days
-const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE_MB || '50') * 1024 * 1024;
+const STORJ_ENDPOINT  = process.env.STORJ_ENDPOINT  || 'https://gateway.storjshare.io';
+const STORJ_ACCESS    = process.env.STORJ_ACCESS_KEY;
+const STORJ_SECRET    = process.env.STORJ_SECRET_KEY;
+const BUCKET_FILES    = process.env.STORJ_BUCKET_FILES || 's404-files';
+const FILE_TTL_S      = 18 * 24 * 60 * 60; // 18 days in seconds
+const FILE_TTL_MS     = FILE_TTL_S * 1000;
 
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!STORJ_ACCESS || !STORJ_SECRET) {
+  console.warn('[s3] STORJ_ACCESS_KEY / STORJ_SECRET_KEY not set — file endpoints disabled');
+}
 
-// Filename encodes upload timestamp: {timestamp}-{uuid}{ext}
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-  filename:    (_req, file,  cb) => {
-    const ext = path.extname(file.originalname).slice(0, 10);
-    cb(null, `${Date.now()}-${randomUUID()}${ext}`);
-  },
+const s3 = new S3Client({
+  region: 'us-east-1',
+  endpoint: STORJ_ENDPOINT,
+  credentials: { accessKeyId: STORJ_ACCESS || '', secretAccessKey: STORJ_SECRET || '' },
+  forcePathStyle: true,
 });
-const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } });
 
-// Cleanup: delete files older than FILE_TTL_MS — runs daily at 03:00
-cron.schedule('0 3 * * *', () => {
-  const cutoff = Date.now() - FILE_TTL_MS;
-  let removed = 0;
-  for (const f of fs.readdirSync(UPLOADS_DIR)) {
-    const ts = parseInt(f.split('-')[0], 10);
-    if (!isNaN(ts) && ts < cutoff) {
-      fs.unlinkSync(path.join(UPLOADS_DIR, f));
-      removed++;
+// Cleanup: delete Storj objects older than 18 days — runs daily at 03:00
+cron.schedule('0 3 * * *', async () => {
+  if (!STORJ_ACCESS) return;
+  const cutoff = new Date(Date.now() - FILE_TTL_MS);
+  try {
+    const toDelete = [];
+    let token;
+    do {
+      const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET_FILES, ContinuationToken: token }));
+      for (const obj of list.Contents || []) {
+        if (obj.LastModified < cutoff) toDelete.push({ Key: obj.Key });
+      }
+      token = list.IsTruncated ? list.NextContinuationToken : undefined;
+    } while (token);
+    if (toDelete.length) {
+      await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET_FILES, Delete: { Objects: toDelete } }));
+      console.log(`[files] cleanup: removed ${toDelete.length} expired object(s) from Storj`);
     }
+  } catch (e) {
+    console.error('[files] cleanup error:', e.message);
   }
-  if (removed) console.log(`[files] cleanup: removed ${removed} expired file(s)`);
 });
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -215,41 +230,65 @@ app.post('/relay', async (req, res) => {
   }
 });
 
-// ─── File endpoints ───────────────────────────────────────────────────────────
+// ─── File endpoints (Storj presigned) ────────────────────────────────────────
 
-app.post('/files/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file provided' });
-  const expiresAt = parseInt(req.file.filename.split('-')[0], 10) + FILE_TTL_MS;
-  res.json({
-    id:        req.file.filename,
-    expiresAt,
-    expiresIn: '18 days',
-  });
-});
+app.post('/files/presign', async (req, res) => {
+  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+  try {
+    const { ext = '' } = req.body || {};
+    const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
+    const key = `${Date.now()}-${randomUUID()}${safeExt}`;
 
-app.get('/files/:id', (req, res) => {
-  const id = path.basename(req.params.id); // prevent path traversal
-  const filePath = path.join(UPLOADS_DIR, id);
+    const [uploadUrl, downloadUrl] = await Promise.all([
+      getSignedUrl(s3, new PutObjectCommand({
+        Bucket: BUCKET_FILES,
+        Key: key,
+        ContentType: 'application/octet-stream',
+      }), { expiresIn: 3600 }),
+      getSignedUrl(s3, new GetObjectCommand({
+        Bucket: BUCKET_FILES,
+        Key: key,
+      }), { expiresIn: FILE_TTL_S }),
+    ]);
 
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found or expired' });
-
-  const ts = parseInt(id.split('-')[0], 10);
-  if (!isNaN(ts) && Date.now() - ts > FILE_TTL_MS) {
-    fs.unlinkSync(filePath);
-    return res.status(410).json({ error: 'File expired' });
+    res.json({ uploadUrl, downloadUrl, key, expiresIn: '18 days' });
+  } catch (err) {
+    console.error('[files/presign]', err.message);
+    res.status(500).json({ error: err.message });
   }
-
-  res.setHeader('Content-Disposition', `attachment; filename="${id}"`);
-  res.setHeader('Cache-Control', 'private, max-age=86400');
-  fs.createReadStream(filePath).pipe(res);
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`Relayer running on :${PORT}`);
-  console.log(`Relayer wallet:  ${relayer.address}`);
-  console.log(`Forwarder:       ${FORWARDER_ADDR}`);
-  console.log(`Diamond:         ${DIAMOND_ADDR}`);
-  console.log(`Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
-});
+async function start() {
+  // Configure CORS on Storj bucket so browsers can PUT directly
+  if (STORJ_ACCESS) {
+    try {
+      await s3.send(new PutBucketCorsCommand({
+        Bucket: BUCKET_FILES,
+        CORSConfiguration: {
+          CORSRules: [{
+            AllowedHeaders: ['*'],
+            AllowedMethods: ['PUT', 'GET', 'HEAD'],
+            AllowedOrigins: [...ALLOWED_ORIGINS, 'http://localhost:3000', 'http://localhost:3001'],
+            MaxAgeSeconds: 3600,
+          }],
+        },
+      }));
+      console.log(`[s3] CORS configured on bucket "${BUCKET_FILES}"`);
+    } catch (e) {
+      console.warn('[s3] CORS setup skipped:', e.message);
+    }
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Relayer running on :${PORT}`);
+    console.log(`Relayer wallet:  ${relayer.address}`);
+    console.log(`Forwarder:       ${FORWARDER_ADDR}`);
+    console.log(`Diamond:         ${DIAMOND_ADDR}`);
+    console.log(`Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+    console.log(`Storage bucket:  ${STORJ_ACCESS ? BUCKET_FILES + ' (Storj)' : 'disabled'}`);
+  });
+}
+
+start();
