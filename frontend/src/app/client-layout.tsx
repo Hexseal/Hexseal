@@ -59,7 +59,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <Header />
       <main className="flex-1" style={{ paddingTop: 'calc(4rem + env(safe-area-inset-top))' }}>
         {children}
-        <div className="md:hidden" style={{ height: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }} />
+        <div className="md:hidden" style={{ height: 'calc(6.5rem + env(safe-area-inset-bottom, 0px))' }} />
       </main>
       <MobileBottomNav />
       {modal}

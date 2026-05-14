@@ -4,9 +4,87 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount } from "wagmi";
-import { LayoutDashboard, MessageCircle, LayoutList, Bell, Settings, Briefcase, User, ChevronUp } from "lucide-react";
+import {
+  LayoutDashboard,
+  MessageCircle,
+  LayoutList,
+  Bell,
+  Settings,
+  Briefcase,
+  User,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNotifications } from "@/hooks/useNotifications";
+
+// ─── Single pill button ───────────────────────────────────────────────────────
+
+function PillBtn({
+  active,
+  label,
+  badge,
+  onClick,
+  href,
+  children,
+}: {
+  active: boolean;
+  label: string;
+  badge?: number;
+  onClick?: () => void;
+  href?: string;
+  children: React.ReactNode;
+}) {
+  const inner = (
+    <span className="flex flex-col items-center gap-[5px] select-none">
+      <span className="relative flex items-center justify-center">
+        {/* icon circle */}
+        <span
+          className={cn(
+            "w-[46px] h-[46px] rounded-full flex items-center justify-center transition-all duration-200",
+            active
+              ? "bg-primary/15"
+              : "bg-transparent"
+          )}
+        >
+          <span className={cn("transition-colors duration-200", active ? "text-primary" : "text-white/40")}>
+            {children}
+          </span>
+        </span>
+        {/* badge */}
+        {badge != null && badge > 0 && (
+          <span className="absolute top-0.5 right-0.5 min-w-[16px] h-[16px] px-[3px] rounded-full bg-primary text-[9px] font-bold text-white flex items-center justify-center leading-none z-10">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        )}
+      </span>
+      <span
+        className={cn(
+          "text-[10px] font-medium tracking-wide leading-none transition-colors duration-200",
+          active ? "text-primary" : "text-white/35"
+        )}
+      >
+        {label}
+      </span>
+    </span>
+  );
+
+  const cls = "flex-1 flex items-center justify-center py-2 min-w-0";
+
+  if (href) {
+    return (
+      <Link href={href} className={cls}>
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <button type="button" onClick={onClick} className={cls}>
+      {inner}
+    </button>
+  );
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function MobileBottomNav() {
   const { isConnected } = useAccount();
@@ -23,6 +101,7 @@ export default function MobileBottomNav() {
 
   return (
     <>
+      {/* backdrop to close board popup */}
       {boardOpen && (
         <div
           className="fixed inset-0 z-40"
@@ -30,84 +109,97 @@ export default function MobileBottomNav() {
         />
       )}
 
-      <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-white/[0.07] bg-black/90 backdrop-blur-2xl"
-        style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 16px)" }}
-      >
-        {boardOpen && (
-          <div className="absolute bottom-full left-1/2 -translate-x-1/2 flex flex-col items-center">
-            <div className="bg-[#0e0e0e] border border-white/[0.10] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 min-w-[172px]">
-              <Link
-                href="/board"
+      {/* Board popup — above the pill */}
+      {boardOpen && (
+        <div
+          className="fixed z-50 bottom-[calc(env(safe-area-inset-bottom,0px)+108px)] left-1/2 -translate-x-1/2"
+          style={{ minWidth: 200 }}
+        >
+          <div className="bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-2xl overflow-hidden shadow-2xl shadow-black/70">
+            <div className="flex items-center justify-between px-4 pt-3 pb-2">
+              <span className="text-[11px] text-white/30 font-medium tracking-widest uppercase">Board</span>
+              <button
                 onClick={() => setBoardOpen(false)}
-                className="flex items-center gap-3 px-5 py-4 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+                className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center"
               >
-                <Briefcase className="w-4 h-4 flex-shrink-0" />
-                Jobs
-              </Link>
-              <div className="h-px bg-white/[0.07] mx-3" />
-              <Link
-                href="/board/executor"
-                onClick={() => setBoardOpen(false)}
-                className="flex items-center gap-3 px-5 py-4 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
-              >
-                <User className="w-4 h-4 flex-shrink-0" />
-                Services
-              </Link>
+                <X className="w-3 h-3 text-white/50" />
+              </button>
             </div>
-            {/* connecting arrow */}
+            <div className="h-px bg-white/[0.06] mx-3" />
+            <Link
+              href="/board"
+              onClick={() => setBoardOpen(false)}
+              className="flex items-center gap-3 px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              <span className="w-8 h-8 rounded-xl bg-white/[0.07] flex items-center justify-center flex-shrink-0">
+                <Briefcase className="w-4 h-4" />
+              </span>
+              <div>
+                <p className="font-medium text-white/85">Jobs</p>
+                <p className="text-[11px] text-white/35 mt-0.5">Browse client postings</p>
+              </div>
+            </Link>
+            <div className="h-px bg-white/[0.06] mx-3" />
+            <Link
+              href="/board/executor"
+              onClick={() => setBoardOpen(false)}
+              className="flex items-center gap-3 px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              <span className="w-8 h-8 rounded-xl bg-white/[0.07] flex items-center justify-center flex-shrink-0">
+                <User className="w-4 h-4" />
+              </span>
+              <div>
+                <p className="font-medium text-white/85">Services</p>
+                <p className="text-[11px] text-white/35 mt-0.5">Browse executor offers</p>
+              </div>
+            </Link>
+          </div>
+          {/* caret */}
+          <div className="flex justify-center mt-[-1px]">
             <div
               className="w-0 h-0"
               style={{
-                borderLeft: "8px solid transparent",
-                borderRight: "8px solid transparent",
-                borderTop: "8px solid #0e0e0e",
-                marginTop: "-1px",
+                borderLeft: "9px solid transparent",
+                borderRight: "9px solid transparent",
+                borderTop: "9px solid rgba(17,17,19,0.95)",
               }}
             />
           </div>
-        )}
+        </div>
+      )}
 
-        <div className="flex items-center h-[74px] px-1">
+      {/* ── Floating pill ─────────────────────────────────────────────────── */}
+      <nav
+        className="md:hidden fixed left-4 right-4 z-50"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
+      >
+        <div
+          className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] px-1.5 py-1.5"
+          style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.65), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+        >
+          <PillBtn href="/dashboard" active={isActive("/dashboard")} label="Dashboard">
+            <LayoutDashboard className="w-[22px] h-[22px]" />
+          </PillBtn>
 
-          <Link href="/dashboard" className="flex-1 flex flex-col items-center justify-center gap-2 py-3">
-            <LayoutDashboard className={cn("w-[24px] h-[24px] transition-colors", isActive("/dashboard") ? "text-primary" : "text-white/30")} />
-            <span className={cn("text-[11px] font-medium tracking-wide", isActive("/dashboard") ? "text-primary" : "text-white/30")}>Dashboard</span>
-          </Link>
+          <PillBtn href="/chat" active={isActive("/chat")} label="Messages">
+            <MessageCircle className="w-[22px] h-[22px]" />
+          </PillBtn>
 
-          <Link href="/chat" className="flex-1 flex flex-col items-center justify-center gap-2 py-3">
-            <MessageCircle className={cn("w-[24px] h-[24px] transition-colors", isActive("/chat") ? "text-primary" : "text-white/30")} />
-            <span className={cn("text-[11px] font-medium tracking-wide", isActive("/chat") ? "text-primary" : "text-white/30")}>Messages</span>
-          </Link>
-
-          <button
+          <PillBtn
+            active={boardActive || boardOpen}
+            label="Board"
             onClick={() => setBoardOpen(v => !v)}
-            className="flex-1 flex flex-col items-center justify-center gap-2 py-3"
           >
-            <LayoutList className={cn("w-[24px] h-[24px] transition-colors", boardActive || boardOpen ? "text-primary" : "text-white/30")} />
-            <span className={cn("text-[11px] font-medium tracking-wide flex items-center gap-0.5", boardActive || boardOpen ? "text-primary" : "text-white/30")}>
-              Board
-              <ChevronUp className={cn("w-2.5 h-2.5 transition-transform duration-200", boardOpen ? "rotate-0" : "rotate-180")} />
-            </span>
-          </button>
+            <LayoutList className="w-[22px] h-[22px]" />
+          </PillBtn>
 
-          <Link href="/notifications" className="flex-1 flex flex-col items-center justify-center gap-2 py-3">
-            <div className="relative">
-              <Bell className={cn("w-[24px] h-[24px] transition-colors", isActive("/notifications") ? "text-primary" : "text-white/30")} />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-primary text-[8px] font-bold text-white flex items-center justify-center leading-none">
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </span>
-              )}
-            </div>
-            <span className={cn("text-[11px] font-medium tracking-wide", isActive("/notifications") ? "text-primary" : "text-white/30")}>Alerts</span>
-          </Link>
+          <PillBtn href="/notifications" active={isActive("/notifications")} label="Alerts" badge={unreadCount}>
+            <Bell className="w-[22px] h-[22px]" />
+          </PillBtn>
 
-          <Link href="/profile/edit" className="flex-1 flex flex-col items-center justify-center gap-2 py-3">
-            <Settings className={cn("w-[24px] h-[24px] transition-colors", isActive("/profile/edit") ? "text-primary" : "text-white/30")} />
-            <span className={cn("text-[11px] font-medium tracking-wide", isActive("/profile/edit") ? "text-primary" : "text-white/30")}>Settings</span>
-          </Link>
-
+          <PillBtn href="/profile/edit" active={isActive("/profile/edit")} label="Settings">
+            <Settings className="w-[22px] h-[22px]" />
+          </PillBtn>
         </div>
       </nav>
     </>
