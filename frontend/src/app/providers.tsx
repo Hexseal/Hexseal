@@ -58,6 +58,7 @@ const config = projectId
       transports,
       storage: safeStorage,
       ssr: true,
+      pollingInterval: 15_000,
       wallets: [
         {
           groupName: "Popular",
@@ -87,6 +88,7 @@ const config = projectId
       connectors: [injected({ shimDisconnect: true })],
       storage: safeStorage,
       ssr: true,
+      pollingInterval: 15_000,
     });
 
 function XmtpNotificationsMount() {
