@@ -277,28 +277,114 @@ contract OfferNFTFacet {
 
     // ─── Business: Hire ───────────────────────────────────────────────────────
 
+    // ── Old signature removed ── previously took (tokenId, address client, termsHash, region)
+    // with no authorization, no fee, no funding — anyone could create a fee-free unfunded deal.
+    // New: CLIENT is the caller (msg.sender / ERC-2771), fee + amount collected atomically.
+
+    /// @notice Client hires an executor via their Offer NFT.
+    /// Requires prior approve(diamond, fee + offer.price) on USDC.
+    /// For gasless use hireAndCreateDealWithPermit.
     function hireAndCreateDeal(
         uint256 tokenId,
-        address client,
         bytes32 termsHash,
-        uint8 region
+        uint8   region
     ) external nonReentrant returns (address agreement) {
-        require(client != address(0), "Invalid client");
+        address client = _msgSender();
 
         OfferNFTStorage.Layout storage s = OfferNFTStorage.layout();
         OfferNFTStorage.Offer storage offer = s.offers[tokenId];
 
         require(offer.executor != address(0), "Offer does not exist");
-        require(offer.active, "Offer not active");
+        require(offer.active,                 "Offer not active");
+        require(client != offer.executor,     "Cannot hire yourself");
+        require(region <= 3,                  "Invalid region");
 
+        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        require(!fs.paused, "Factory paused");
+        uint256 fee        = fs.regionFee[region];
+        require(fee > 0,  "Zero fee");
+        uint256 dealAmount = offer.price;
+
+        // Effects
         s.offerHires[tokenId].push(client);
         offer.hiresCount++;
 
         emit OfferHired(tokenId, offer.executor, client);
 
-        agreement = _deployAgreement(client, offer.executor, offer.price, offer.deadlineDays, termsHash, region);
+        // Fee: client → feeRecipient (non-refundable anti-spam)
+        _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
+
+        // Deploy Agreement via FactoryFacet (checks hasActivePair, registers pair)
+        agreement = _deployAgreement(client, offer.executor, dealAmount, offer.deadlineDays, termsHash, region);
+
+        // Fund Agreement atomically: client → agreement → fundFromFactory()
+        _safeTransferFrom(fs.usdc, client, agreement, dealAmount);
+        (bool funded, ) = agreement.call(abi.encodeWithSignature("fundFromFactory()"));
+        require(funded, "OfferNFT: fund failed");
 
         emit DealCreated(tokenId, client, offer.executor, agreement);
+    }
+
+    /// @notice Gasless variant — permit replaces pre-approval.
+    /// @param permitAmount Must equal fee + offer.price for the given region.
+    function hireAndCreateDealWithPermit(
+        uint256 tokenId,
+        bytes32 termsHash,
+        uint8   region,
+        uint256 permitAmount,
+        uint256 permitDeadline,
+        uint8   v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant returns (address agreement) {
+        address client = _msgSender();
+
+        OfferNFTStorage.Layout storage os = OfferNFTStorage.layout();
+        OfferNFTStorage.Offer storage offer = os.offers[tokenId];
+
+        require(offer.executor != address(0), "Offer does not exist");
+        require(offer.active,                 "Offer not active");
+        require(client != offer.executor,     "Cannot hire yourself");
+        require(region <= 3,                  "Invalid region");
+
+        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        require(!fs.paused, "Factory paused");
+        uint256 fee        = fs.regionFee[region];
+        require(fee > 0,  "Zero fee");
+        uint256 dealAmount = offer.price;
+        require(permitAmount == fee + dealAmount, "Permit amount mismatch");
+
+        // Permit: one signature covers fee + amount
+        (bool pOk, ) = fs.usdc.call(abi.encodeWithSignature(
+            "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+            client, address(this), permitAmount, permitDeadline, v, r, s
+        ));
+        require(pOk, "OfferNFT: permit failed");
+
+        // Effects
+        os.offerHires[tokenId].push(client);
+        offer.hiresCount++;
+
+        emit OfferHired(tokenId, offer.executor, client);
+
+        _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
+
+        agreement = _deployAgreement(client, offer.executor, dealAmount, offer.deadlineDays, termsHash, region);
+
+        _safeTransferFrom(fs.usdc, client, agreement, dealAmount);
+        (bool funded, ) = agreement.call(abi.encodeWithSignature("fundFromFactory()"));
+        require(funded, "OfferNFT: fund failed");
+
+        emit DealCreated(tokenId, client, offer.executor, agreement);
+    }
+
+    // ─── Internal Helpers ─────────────────────────────────────────────────────
+
+    function _safeTransferFrom(address token, address from, address to, uint256 amount) internal {
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSelector(0x23b872dd, from, to, amount)
+        );
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "OfferNFT: transferFrom failed");
     }
 
     // ─── Business: Deactivate ─────────────────────────────────────────────────
