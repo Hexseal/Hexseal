@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
-import { useTheme } from "next-themes";
 
 interface Particle {
   a: number;
@@ -62,7 +61,6 @@ export const BackgroundFX: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const parentRef = useRef<HTMLDivElement | null>(null);
   const [isMounted, setIsMounted] = useState(false);
-  const { resolvedTheme } = useTheme();
 
 
   useEffect(() => {
@@ -81,7 +79,7 @@ export const BackgroundFX: React.FC = () => {
     const onRM = () => { reduced = mql.matches; };
     mql.addEventListener?.("change", onRM);
 
-    const dark = resolvedTheme !== 'light'; // default to dark until theme resolves
+    const dark = true; // hero is always dark — site has no light mode
 
     const onMouseMove = (e: MouseEvent) => {
       if (!canvas) return;
@@ -268,7 +266,7 @@ export const BackgroundFX: React.FC = () => {
       mql.removeEventListener?.("change", onRM);
       window.removeEventListener("mousemove", onMouseMove);
     };
-  }, [isMounted, resolvedTheme]);
+  }, [isMounted]);
 
   // Set mounted after initial render
   useEffect(() => {

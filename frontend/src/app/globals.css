@@ -221,6 +221,8 @@ a {
     rgba(0,0,0,0.52) 52%,
     rgba(0,0,0,0.82) 100%
   );
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
 }
 
 /* Headline — hidden initially, revealed by JS adding .revealed */
