@@ -1,10 +1,14 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, Lock, Paperclip, FileText, Download } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, Loader2, Lock, Paperclip, FileText, Download, Scale } from 'lucide-react';
 import { useDealChat } from '@/hooks/useDealChat';
 import type { ChatMessage } from '@/lib/xmtp';
 import { decryptToObjectUrl, decryptAndSave } from '@/lib/fileCrypto';
+import { fetchProfile } from '@/lib/profiles-ipfs';
+import type { UserProfile } from '@/types/profile';
+
+const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://ipfs.io';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +28,52 @@ function formatTime(ts: number): string {
 
 function isImageMime(mime?: string) {
   return mime?.startsWith('image/') ?? false;
+}
+
+// ─── Sender identity header ───────────────────────────────────────────────────
+
+type SenderRole = 'client' | 'executor' | 'arbiter' | 'unknown';
+
+interface SenderInfo {
+  role: SenderRole;
+  profile: UserProfile | null;
+}
+
+function SenderHeader({ addr, info, isMe }: { addr: string; info: SenderInfo; isMe: boolean }) {
+  if (isMe) return null;
+
+  if (info.role === 'arbiter') {
+    return (
+      <div className="flex items-center gap-1.5 mb-1">
+        <div className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+          <Scale className="w-2.5 h-2.5 text-amber-400" />
+        </div>
+        <span className="text-[11px] font-semibold text-amber-400/80">
+          Arbiter#{addr.slice(-4)}
+        </span>
+      </div>
+    );
+  }
+
+  const profile = info.profile;
+  const name = profile?.displayName || shortAddr(addr);
+  const avatarSrc = profile?.avatarCid ? `${IPFS_GATEWAY}/ipfs/${profile.avatarCid}` : null;
+  const initials = name.slice(0, 2).toUpperCase();
+  const roleColor = info.role === 'client' ? 'text-sky-400/70' : 'text-violet-400/70';
+  const roleLabel = info.role === 'client' ? 'Client' : info.role === 'executor' ? 'Executor' : '';
+
+  return (
+    <div className="flex items-center gap-1.5 mb-1">
+      <div className="w-5 h-5 rounded-full bg-white/10 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
+        {avatarSrc
+          ? <img src={avatarSrc} alt={name} className="w-full h-full object-cover" />
+          : <span className="text-[8px] font-bold text-white/50">{initials}</span>
+        }
+      </div>
+      <span className="text-[11px] font-medium text-white/60">{name}</span>
+      {roleLabel && <span className={`text-[10px] ${roleColor}`}>· {roleLabel}</span>}
+    </div>
+  );
 }
 
 // ─── Attachment: encrypted image ─────────────────────────────────────────────
@@ -206,16 +256,37 @@ export function DealChat({
     .map((a) => (a as string).toLowerCase());
   const isParticipant = participants.includes(currentUser.toLowerCase());
 
-  const roleMap: Record<string, string> = {};
-  if (client)   roleMap[client.toLowerCase()]   = 'Client';
-  if (executor) roleMap[executor.toLowerCase()] = 'Executor';
-  if (arbiter)  roleMap[arbiter.toLowerCase()]  = 'Arbiter';
+  const [senderMap, setSenderMap] = useState<Record<string, SenderInfo>>({});
 
-  function senderLabel(addr: string): string {
-    const key = addr.toLowerCase();
-    const role = roleMap[key];
-    const tail = addr.slice(-4);
-    return role ? `${role}#${tail}` : shortAddr(addr);
+  const getRole = useCallback((addr: string): SenderRole => {
+    const a = addr.toLowerCase();
+    if (arbiter  && a === arbiter.toLowerCase())  return 'arbiter';
+    if (client   && a === client.toLowerCase())   return 'client';
+    if (executor && a === executor.toLowerCase()) return 'executor';
+    return 'unknown';
+  }, [client, executor, arbiter]);
+
+  useEffect(() => {
+    const addrs = [client, executor].filter(Boolean) as string[];
+    addrs.forEach(async (addr) => {
+      const key = addr.toLowerCase();
+      if (senderMap[key]) return;
+      const profile = await fetchProfile(addr).catch(() => null);
+      setSenderMap(prev => ({
+        ...prev,
+        [key]: { role: getRole(addr), profile },
+      }));
+    });
+    if (arbiter) {
+      const key = arbiter.toLowerCase();
+      if (!senderMap[key]) {
+        setSenderMap(prev => ({ ...prev, [key]: { role: 'arbiter', profile: null } }));
+      }
+    }
+  }, [client, executor, arbiter, getRole]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function getSenderInfo(addr: string): SenderInfo {
+    return senderMap[addr.toLowerCase()] ?? { role: getRole(addr), profile: null };
   }
 
   if (!isParticipant) {
@@ -306,30 +377,32 @@ export function DealChat({
           const isFirst = !prev || prev.from !== msg.from;
           const isLast  = !next || next.from !== msg.from;
 
+          const info = getSenderInfo(msg.from);
+          const isArbiter = info.role === 'arbiter';
+          const bubbleBase = isMe
+            ? `bg-violet-600 text-white ${isFirst ? 'rounded-t-lg' : 'rounded-tl-lg rounded-tr-sm'} ${isLast ? 'rounded-bl-lg rounded-br-sm' : 'rounded-l-lg rounded-r-sm'}`
+            : isArbiter
+              ? `bg-amber-500/10 border border-amber-500/20 text-white/90 ${isFirst ? 'rounded-t-lg' : 'rounded-tr-lg rounded-tl-sm'} ${isLast ? 'rounded-br-lg rounded-bl-sm' : 'rounded-r-lg rounded-l-sm'}`
+              : `bg-white/10 text-white/90 ${isFirst ? 'rounded-t-lg' : 'rounded-tr-lg rounded-tl-sm'} ${isLast ? 'rounded-br-lg rounded-bl-sm' : 'rounded-r-lg rounded-l-sm'}`;
+
           return (
             <div
               key={msg.id}
               className={`flex flex-col gap-0.5 ${isMe ? 'items-end' : 'items-start'} ${isFirst && i > 0 ? 'mt-3' : ''}`}
             >
+              {isFirst && <SenderHeader addr={msg.from} info={info} isMe={isMe} />}
               {msg.attachment
                 ? isImageMime(msg.attachment.mime)
                   ? <ImageBubble a={msg.attachment} isMe={isMe} />
                   : <FileCard a={msg.attachment} isMe={isMe} />
                 : (
-                  <div
-                    className={`max-w-[75%] px-3 py-2 text-sm break-words leading-relaxed ${
-                      isMe
-                        ? `bg-violet-600 text-white ${isFirst ? 'rounded-t-lg' : 'rounded-tl-lg rounded-tr-sm'} ${isLast ? 'rounded-bl-lg rounded-br-sm' : 'rounded-l-lg rounded-r-sm'}`
-                        : `bg-white/10 text-white/90 ${isFirst ? 'rounded-t-lg' : 'rounded-tr-lg rounded-tl-sm'} ${isLast ? 'rounded-br-lg rounded-bl-sm' : 'rounded-r-lg rounded-l-sm'}`
-                    }`}
-                  >
+                  <div className={`max-w-[75%] px-3 py-2 text-sm break-words leading-relaxed ${bubbleBase}`}>
                     {msg.text}
                   </div>
                 )
               }
               {isLast && (
                 <div className="flex items-center gap-2 px-0.5">
-                  <span className="text-[10px] font-mono text-white/30">{senderLabel(msg.from)}</span>
                   <span className="text-[10px] text-white/20">{formatTime(msg.timestamp)}</span>
                 </div>
               )}
