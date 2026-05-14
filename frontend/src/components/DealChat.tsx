@@ -206,6 +206,18 @@ export function DealChat({
     .map((a) => (a as string).toLowerCase());
   const isParticipant = participants.includes(currentUser.toLowerCase());
 
+  const roleMap: Record<string, string> = {};
+  if (client)   roleMap[client.toLowerCase()]   = 'Client';
+  if (executor) roleMap[executor.toLowerCase()] = 'Executor';
+  if (arbiter)  roleMap[arbiter.toLowerCase()]  = 'Arbiter';
+
+  function senderLabel(addr: string): string {
+    const key = addr.toLowerCase();
+    const role = roleMap[key];
+    const tail = addr.slice(-4);
+    return role ? `${role}#${tail}` : shortAddr(addr);
+  }
+
   if (!isParticipant) {
     return (
       <div className="rounded-xl border border-white/10 bg-white/5 p-6 text-center text-sm text-red-400">
@@ -317,7 +329,7 @@ export function DealChat({
               }
               {isLast && (
                 <div className="flex items-center gap-2 px-0.5">
-                  <span className="text-[10px] font-mono text-white/25">{shortAddr(msg.from)}</span>
+                  <span className="text-[10px] font-mono text-white/30">{senderLabel(msg.from)}</span>
                   <span className="text-[10px] text-white/20">{formatTime(msg.timestamp)}</span>
                 </div>
               )}
