@@ -40,7 +40,7 @@ function PillBtn({
         {/* icon circle */}
         <span
           className={cn(
-            "w-[46px] h-[46px] rounded-full flex items-center justify-center transition-all duration-200",
+            "w-[40px] h-[40px] rounded-full flex items-center justify-center transition-all duration-200",
             active
               ? "bg-primary/15"
               : "bg-transparent"

@@ -46,7 +46,8 @@ function NavLink({
 
 export default function Header() {
   const { isConnected, address } = useAccount();
-  const [openPanel, setOpenPanel] = useState<"notifications" | "wallet" | null>(null);
+  const [openPanelMobile, setOpenPanelMobile] = useState<"notifications" | "wallet" | null>(null);
+  const [openPanelDesktop, setOpenPanelDesktop] = useState<"notifications" | "wallet" | null>(null);
   const pathname = usePathname();
   const router = useRouter();
   const showBack = pathname !== "/";
@@ -103,13 +104,13 @@ export default function Header() {
           <div className="flex items-center gap-1">
             {isConnected && (
               <NotificationCenter
-                open={openPanel === "notifications"}
-                onOpenChange={(o) => setOpenPanel(o ? "notifications" : null)}
+                open={openPanelMobile === "notifications"}
+                onOpenChange={(o) => setOpenPanelMobile(o ? "notifications" : null)}
               />
             )}
             <WalletMenu
-              open={openPanel === "wallet"}
-              onOpenChange={(o) => setOpenPanel(o ? "wallet" : null)}
+              open={openPanelMobile === "wallet"}
+              onOpenChange={(o) => setOpenPanelMobile(o ? "wallet" : null)}
               hideNavItems
             />
           </div>
@@ -174,13 +175,13 @@ export default function Header() {
           <div className="flex items-center gap-2 justify-end">
             {isConnected && (
               <NotificationCenter
-                open={openPanel === "notifications"}
-                onOpenChange={(o) => setOpenPanel(o ? "notifications" : null)}
+                open={openPanelDesktop === "notifications"}
+                onOpenChange={(o) => setOpenPanelDesktop(o ? "notifications" : null)}
               />
             )}
             <WalletMenu
-              open={openPanel === "wallet"}
-              onOpenChange={(o) => setOpenPanel(o ? "wallet" : null)}
+              open={openPanelDesktop === "wallet"}
+              onOpenChange={(o) => setOpenPanelDesktop(o ? "wallet" : null)}
             />
           </div>
         </div>
