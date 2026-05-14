@@ -21,6 +21,11 @@ import {
   okxWallet,
   phantomWallet,
   injectedWallet,
+  rabbyWallet,
+  safepalWallet,
+  zerionWallet,
+  bitgetWallet,
+  oneKeyWallet,
 } from "@rainbow-me/rainbowkit/wallets";
 import { createConfig } from "wagmi";
 import { injected } from "wagmi/connectors";
@@ -64,18 +69,23 @@ const config = projectId
           groupName: "Popular",
           wallets: [
             metaMaskWallet,
+            rabbyWallet,
             coinbaseWallet,
-            walletConnectWallet,
             rainbowWallet,
             trustWallet,
-            braveWallet,
+            okxWallet,
           ],
         },
         {
           groupName: "More",
           wallets: [
-            okxWallet,
+            walletConnectWallet,
             phantomWallet,
+            braveWallet,
+            zerionWallet,
+            bitgetWallet,
+            safepalWallet,
+            oneKeyWallet,
             ledgerWallet,
             injectedWallet,
           ],
