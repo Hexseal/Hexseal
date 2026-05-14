@@ -71,7 +71,7 @@ export default function Header() {
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div
-          className="flex items-center justify-between px-3 py-2 bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[22px]"
+          className="flex items-center justify-between px-3 py-2 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
           style={glassStyle}
         >
           {/* Left: back + logo */}
@@ -94,7 +94,7 @@ export default function Header() {
                 className="opacity-75 group-hover:opacity-100 transition-opacity"
               />
               <span className="font-syne font-bold text-sm tracking-tight">
-                Sig<span className="text-primary">404</span>
+                Signature<span className="text-primary">404</span>
               </span>
             </Link>
           </div>
@@ -110,6 +110,7 @@ export default function Header() {
             <WalletMenu
               open={openPanel === "wallet"}
               onOpenChange={(o) => setOpenPanel(o ? "wallet" : null)}
+              hideNavItems
             />
           </div>
         </div>

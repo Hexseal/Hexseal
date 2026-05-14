@@ -26,9 +26,11 @@ function shortAddr(addr: string) {
 interface Props {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** On mobile: hide Dashboard/Messages/Settings (already in bottom nav) */
+  hideNavItems?: boolean;
 }
 
-export default function WalletMenu({ open, onOpenChange }: Props) {
+export default function WalletMenu({ open, onOpenChange, hideNavItems = false }: Props) {
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
@@ -127,9 +129,10 @@ export default function WalletMenu({ open, onOpenChange }: Props) {
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <button className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-white/[0.10] bg-[#1a1a1a] hover:bg-[#222] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={avatarUrl}
             alt="avatar"
@@ -141,11 +144,12 @@ export default function WalletMenu({ open, onOpenChange }: Props) {
         </button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-64 bg-[#0e0e0e] border-white/[0.08] shadow-2xl shadow-black/80 p-0 overflow-hidden">
+      <DropdownMenuContent align="end" className="w-64 bg-[#0e0e0e] border-white/[0.08] shadow-2xl shadow-black/80 p-0 overflow-hidden z-[200]">
 
         {/* ── Profile header ── */}
         <div className="px-4 py-3.5 border-b border-white/[0.06]">
           <div className="flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={avatarUrl}
               alt="avatar"
@@ -171,33 +175,47 @@ export default function WalletMenu({ open, onOpenChange }: Props) {
           </div>
         </div>
 
-        {/* ── Navigation ── */}
-        <div className="p-1">
-          <DropdownMenuItem asChild>
-            <Link href={`/profile/${address}`} className="flex items-center gap-2.5 cursor-pointer">
-              <User className="w-3.5 h-3.5 text-white/40" />
-              My Profile
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link href="/dashboard" className="flex items-center gap-2.5 cursor-pointer">
-              <LayoutDashboard className="w-3.5 h-3.5 text-white/40" />
-              Dashboard
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link href="/chat" className="flex items-center gap-2.5 cursor-pointer">
-              <MessageCircle className="w-3.5 h-3.5 text-white/40" />
-              Messages
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link href="/profile/edit" className="flex items-center gap-2.5 cursor-pointer">
-              <Settings className="w-3.5 h-3.5 text-white/40" />
-              Settings
-            </Link>
-          </DropdownMenuItem>
-        </div>
+        {/* ── Navigation (hidden on mobile — bottom nav handles these) ── */}
+        {!hideNavItems && (
+          <div className="p-1">
+            <DropdownMenuItem asChild>
+              <Link href={`/profile/${address}`} className="flex items-center gap-2.5 cursor-pointer">
+                <User className="w-3.5 h-3.5 text-white/40" />
+                My Profile
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/dashboard" className="flex items-center gap-2.5 cursor-pointer">
+                <LayoutDashboard className="w-3.5 h-3.5 text-white/40" />
+                Dashboard
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/chat" className="flex items-center gap-2.5 cursor-pointer">
+                <MessageCircle className="w-3.5 h-3.5 text-white/40" />
+                Messages
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/profile/edit" className="flex items-center gap-2.5 cursor-pointer">
+                <Settings className="w-3.5 h-3.5 text-white/40" />
+                Settings
+              </Link>
+            </DropdownMenuItem>
+          </div>
+        )}
+
+        {/* ── Mobile-only nav shortcut (profile) ── */}
+        {hideNavItems && (
+          <div className="p-1">
+            <DropdownMenuItem asChild>
+              <Link href={`/profile/${address}`} className="flex items-center gap-2.5 cursor-pointer">
+                <User className="w-3.5 h-3.5 text-white/40" />
+                My Profile
+              </Link>
+            </DropdownMenuItem>
+          </div>
+        )}
 
         {/* ── Role-specific ── */}
         {(isArbiter || isOwner) && (

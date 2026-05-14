@@ -68,7 +68,7 @@ function PillBtn({
     </span>
   );
 
-  const cls = "flex-1 flex items-center justify-center py-2 min-w-0";
+  const cls = "flex-1 flex items-center justify-center h-full min-w-0";
 
   if (href) {
     return (
@@ -174,7 +174,7 @@ export default function MobileBottomNav() {
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
       >
         <div
-          className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] px-1.5 py-1.5"
+          className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] px-1.5 h-[70px]"
           style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.65), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)" }}
         >
           <PillBtn href="/dashboard" active={isActive("/dashboard")} label="Dashboard">
