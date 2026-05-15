@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTranslations } from 'next-intl';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,7 @@ function ConvoItem({
 }) {
   const ds = dealCtx ? DEAL_STATUS_LABEL[dealCtx.status] : null;
   const { displayName, avatarUrl } = useProfile(peerAddress);
+  const t = useTranslations();
 
   return (
     <button
@@ -140,7 +142,7 @@ function ConvoItem({
                 : <User      className="w-2.5 h-2.5 text-emerald-400/60 flex-shrink-0" />
               }
               <span className={`text-[11px] font-medium ${dealCtx.role === 'client' ? 'text-sky-400/70' : 'text-emerald-400/70'}`}>
-                {dealCtx.role === 'client' ? 'Client' : 'Executor'}
+                {dealCtx.role === 'client' ? t("common.role_client") : t("common.role_executor")}
               </span>
               <span className="text-white/20 text-[11px]">·</span>
               <span className="text-[11px] font-mono text-white/30">
@@ -167,15 +169,16 @@ function ConvoItem({
 // ─── Empty chat state ─────────────────────────────────────────────────────────
 
 function EmptyState() {
+  const t = useTranslations();
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center px-8 gap-4">
       <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center">
         <MessageCircle className="w-7 h-7 text-white/25" />
       </div>
       <div>
-        <p className="text-white/50 text-sm font-medium">Select a conversation</p>
+        <p className="text-white/50 text-sm font-medium">{t("chat.select_conversation")}</p>
         <p className="text-white/20 text-xs mt-1 max-w-xs leading-relaxed">
-          Choose from the list or start a new chat with the + button
+          {t("chat.empty_state_hint")}
         </p>
       </div>
     </div>
@@ -298,6 +301,8 @@ function ChatHubPageInner() {
     setNewChatAddr('');
   };
 
+  const t = useTranslations();
+
   if (!isConnected) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -305,9 +310,9 @@ function ChatHubPageInner() {
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <MessageCircle className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold font-syne mb-2">Messages</h1>
-          <p className="text-muted-foreground text-sm mb-6">Connect your wallet to view your conversations</p>
-          <Link href="/"><Button variant="outline">Go Home</Button></Link>
+          <h1 className="text-2xl font-bold font-syne mb-2">{t("chat.title")}</h1>
+          <p className="text-muted-foreground text-sm mb-6">{t("chat.wallet_required")}</p>
+          <Link href="/"><Button variant="outline">{t("common.go_home")}</Button></Link>
         </div>
       </div>
     );
@@ -317,7 +322,7 @@ function ChatHubPageInner() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-md">
-          <h1 className="text-xl font-bold font-syne mb-4">Messages</h1>
+          <h1 className="text-xl font-bold font-syne mb-4">{t("chat.title")}</h1>
           <MessagingSetup />
         </div>
       </div>
@@ -360,20 +365,20 @@ function ChatHubPageInner() {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">
           <div>
-            <h2 className="text-sm font-semibold">Messages</h2>
+            <h2 className="text-sm font-semibold">{t("chat.title")}</h2>
             <div className="flex items-center gap-1 mt-0.5">
               <Lock className="w-2.5 h-2.5 text-white/25" />
-              <span className="text-[11px] text-white/25">End-to-end encrypted</span>
+              <span className="text-[11px] text-white/25">{t("chat.encrypted")}</span>
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={reload} disabled={isLoading} title="Refresh"
+            <button onClick={reload} disabled={isLoading} title={t("common.refresh")}
               className="p-1.5 rounded-lg text-white/35 hover:text-white/65 hover:bg-white/5 transition-colors disabled:opacity-30">
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); }}
-              title="New conversation"
+              title={t("chat.new_conversation")}
               className={cn(
                 'p-1.5 rounded-lg transition-colors',
                 showNewChat ? 'bg-white/10 text-white/70' : 'text-white/35 hover:text-white/65 hover:bg-white/5',
@@ -386,7 +391,7 @@ function ChatHubPageInner() {
         {/* New chat search */}
         {showNewChat && (
           <div className="px-3 py-2.5 border-b border-white/8 bg-white/[0.02]">
-            <p className="text-[11px] text-white/35 mb-1.5">Paste a wallet address to start chatting</p>
+            <p className="text-[11px] text-white/35 mb-1.5">{t("chat.paste_address_hint")}</p>
             <div className="flex gap-2">
               <input
                 autoFocus
@@ -413,7 +418,7 @@ function ChatHubPageInner() {
           {isLoading && (
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-white/30">
               <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-xs">Loading conversations…</span>
+              <span className="text-xs">{t("chat.loading_conversations")}</span>
             </div>
           )}
 
@@ -427,11 +432,11 @@ function ChatHubPageInner() {
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors"
                 >
-                  Open xmtp.chat <ArrowRight className="w-3 h-3" />
+                  {t("chat.open_xmtp")} <ArrowRight className="w-3 h-3" />
                 </a>
               )}
               <div>
-                <Button size="sm" variant="outline" onClick={reload} className="border-white/15 text-white/50 text-xs">Retry</Button>
+                <Button size="sm" variant="outline" onClick={reload} className="border-white/15 text-white/50 text-xs">{t("chat.retry")}</Button>
               </div>
             </div>
           )}
@@ -439,9 +444,9 @@ function ChatHubPageInner() {
           {!isLoading && !error && conversations.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center px-4">
               <MessageCircle className="w-8 h-8 text-white/15 mb-3" />
-              <p className="text-sm text-white/35 mb-1">No conversations yet</p>
+              <p className="text-sm text-white/35 mb-1">{t("chat.no_conversations")}</p>
               <p className="text-xs text-white/20 leading-relaxed">
-                Start a chat from a deal or use the + button above
+                {t("chat.start_hint")}
               </p>
             </div>
           )}

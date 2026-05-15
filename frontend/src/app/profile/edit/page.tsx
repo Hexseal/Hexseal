@@ -14,6 +14,7 @@ import { uploadToIPFS } from "@/lib/ipfs";
 import { Loader2, CheckCircle, AlertCircle, X, Upload, UserCircle } from "lucide-react";
 import Link from "next/link";
 import { toast } from "react-hot-toast";
+import { useTranslations } from "next-intl";
 
 const SPECIALIZATIONS = [
   "Smart Contracts", "Frontend Dev", "Backend Dev", "Full-Stack",
@@ -30,17 +31,14 @@ const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://cloudflare
 
 type Role = 'client' | 'executor' | 'both' | '';
 
-const ROLES: { val: 'client' | 'executor' | 'both'; label: string; hint: string }[] = [
-  { val: 'client', label: 'Client', hint: 'I post jobs and hire' },
-  { val: 'executor', label: 'Executor', hint: 'I offer services' },
-  { val: 'both', label: 'Both', hint: 'I do both' },
-];
+const ROLE_VALS: ('client' | 'executor' | 'both')[] = ['client', 'executor', 'both'];
 
 export default function EditProfilePage() {
   const router = useRouter();
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const t = useTranslations();
 
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
@@ -92,7 +90,7 @@ export default function EditProfilePage() {
     if (!file) return;
 
     if (file.size > MAX_AVATAR_SIZE) {
-      setError("Image must be under 5MB");
+      setError(t("profile.image_size_error"));
       return;
     }
 
@@ -104,9 +102,9 @@ export default function EditProfilePage() {
       const ext = file.name.split('.').pop() || 'jpg';
       const result = await uploadToIPFS(file, `avatar-${address}-${Date.now()}.${ext}`);
       setAvatarCid(result.cid);
-      toast.success("Photo uploaded!");
+      toast.success(t("profile.photo_uploaded"));
     } catch {
-      setError("Failed to upload photo. Please try again.");
+      setError(t("profile.upload_failed"));
       setAvatarPreview(null);
     } finally {
       setAvatarUploading(false);
@@ -118,27 +116,27 @@ export default function EditProfilePage() {
     setError(null);
 
     if (!isConnected || !address) {
-      setError("Please connect your wallet first");
+      setError(t("common.wallet_not_connected"));
       return;
     }
     if (avatarUploading) {
-      setError("Wait for photo upload to finish");
+      setError(t("profile.wait_for_upload"));
       return;
     }
 
     const trimmedName = displayName.trim();
     if (!trimmedName) {
-      setError("Display name is required");
+      setError(t("profile.display_name_required"));
       return;
     }
     if (trimmedName.length > MAX_NAME_LENGTH) {
-      setError(`Display name must be ${MAX_NAME_LENGTH} characters or less`);
+      setError(t("profile.display_name_max"));
       return;
     }
 
     const trimmedBio = bio.trim();
     if (trimmedBio.length > MAX_BIO_LENGTH) {
-      setError(`Bio must be ${MAX_BIO_LENGTH} characters or less`);
+      setError(t("profile.bio_max"));
       return;
     }
 
@@ -179,7 +177,7 @@ export default function EditProfilePage() {
       await publishProfile({ ...profileData, signature });
 
       setSuccess(true);
-      toast.success("Profile saved!");
+      toast.success(t("profile.save_success"));
       setTimeout(() => router.push(`/profile/${address}`), 1500);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to save profile");
@@ -192,9 +190,9 @@ export default function EditProfilePage() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Card className="w-full max-w-md text-center">
-          <CardHeader><CardTitle className="font-mono">Connect Wallet</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="font-mono">{t("profile.connect_wallet")}</CardTitle></CardHeader>
           <CardContent>
-            <p className="text-muted-foreground mb-4">Please connect your wallet to edit your profile</p>
+            <p className="text-muted-foreground mb-4">{t("profile.connect_required")}</p>
           </CardContent>
         </Card>
       </div>
@@ -207,8 +205,8 @@ export default function EditProfilePage() {
         <Card className="w-full max-w-md text-center">
           <CardContent className="pt-8 pb-8">
             <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-500" />
-            <h2 className="text-2xl font-bold font-mono mb-2">Profile Saved!</h2>
-            <p className="text-muted-foreground mb-4">Redirecting to your profile…</p>
+            <h2 className="text-2xl font-bold font-mono mb-2">{t("profile.saved_title")}</h2>
+            <p className="text-muted-foreground mb-4">{t("profile.redirecting")}</p>
           </CardContent>
         </Card>
       </div>
@@ -221,21 +219,21 @@ export default function EditProfilePage() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold font-mono mb-2">Edit Profile</h1>
-          <p className="text-muted-foreground">Stored on IPFS — no gas required</p>
+          <h1 className="text-3xl font-bold font-mono mb-2">{t("profile.edit_title")}</h1>
+          <p className="text-muted-foreground">{t("profile.ipfs_info")}</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>Profile Details</CardTitle>
-            <CardDescription>All fields optional except display name.</CardDescription>
+            <CardTitle>{t("profile.details_section")}</CardTitle>
+            <CardDescription>{t("profile.fields_info")}</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
 
               {/* Avatar */}
               <div className="space-y-3">
-                <Label>Profile Photo</Label>
+                <Label>{t("profile.photo_label")}</Label>
                 <div className="flex items-center gap-4">
                   <div className="w-20 h-20 rounded-2xl overflow-hidden flex-shrink-0 bg-muted border border-border flex items-center justify-center">
                     {avatarSrc ? (
@@ -254,9 +252,9 @@ export default function EditProfilePage() {
                       onClick={() => fileInputRef.current?.click()}
                     >
                       {avatarUploading ? (
-                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Uploading…</>
+                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />{t("common.uploading")}</>
                       ) : (
-                        <><Upload className="w-3.5 h-3.5 mr-1.5" />Upload Photo</>
+                        <><Upload className="w-3.5 h-3.5 mr-1.5" />{t("profile.upload_photo_btn")}</>
                       )}
                     </Button>
                     <input
@@ -266,13 +264,13 @@ export default function EditProfilePage() {
                       className="sr-only"
                       onChange={handleAvatarChange}
                     />
-                    <p className="text-xs text-muted-foreground mt-1.5">JPG, PNG or GIF · Max 5MB · Stored on IPFS</p>
+                    <p className="text-xs text-muted-foreground mt-1.5">{t("profile.photo_info")}</p>
                   </div>
                   {avatarSrc && (
                     <button
                       type="button"
                       onClick={() => { setAvatarPreview(null); setAvatarCid(null); }}
-                      title="Remove photo"
+                      title={t("profile.remove_photo")}
                       className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
                     >
                       <X className="w-4 h-4" />
@@ -284,11 +282,11 @@ export default function EditProfilePage() {
               {/* Display Name */}
               <div className="space-y-2">
                 <Label htmlFor="displayName">
-                  Display Name <span className="text-destructive">*</span>
+                  {t("profile.display_name_label")} <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="displayName"
-                  placeholder="Your name or pseudonym"
+                  placeholder={t("profile.display_name_placeholder")}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   maxLength={MAX_NAME_LENGTH}
@@ -298,10 +296,10 @@ export default function EditProfilePage() {
 
               {/* Bio */}
               <div className="space-y-2">
-                <Label htmlFor="bio">Bio</Label>
+                <Label htmlFor="bio">{t("profile.bio_label")}</Label>
                 <Textarea
                   id="bio"
-                  placeholder="Tell others about yourself…"
+                  placeholder={t("profile.bio_placeholder")}
                   value={bio}
                   onChange={(e) => setBio(e.target.value)}
                   maxLength={MAX_BIO_LENGTH}
@@ -312,9 +310,9 @@ export default function EditProfilePage() {
 
               {/* Role */}
               <div className="space-y-2">
-                <Label>I primarily act as</Label>
+                <Label>{t("profile.role_label")}</Label>
                 <div className="grid grid-cols-3 gap-2">
-                  {ROLES.map(({ val, label, hint }) => (
+                  {ROLE_VALS.map((val) => (
                     <button
                       key={val}
                       type="button"
@@ -325,8 +323,8 @@ export default function EditProfilePage() {
                           : "bg-background text-muted-foreground border-border hover:bg-muted"
                       }`}
                     >
-                      <div className="font-medium">{label}</div>
-                      <div className={`text-[11px] mt-0.5 ${role === val ? 'text-primary-foreground/70' : 'text-muted-foreground/60'}`}>{hint}</div>
+                      <div className="font-medium">{t(`profile.role_${val}`)}</div>
+                      <div className={`text-[11px] mt-0.5 ${role === val ? 'text-primary-foreground/70' : 'text-muted-foreground/60'}`}>{t(`profile.role_${val}_hint`)}</div>
                     </button>
                   ))}
                 </div>
@@ -334,7 +332,7 @@ export default function EditProfilePage() {
 
               {/* Specializations */}
               <div className="space-y-2">
-                <Label>Skills & Interests</Label>
+                <Label>{t("profile.specializations_label")}</Label>
                 <div className="flex flex-wrap gap-2">
                   {SPECIALIZATIONS.map((spec) => (
                     <button
@@ -359,36 +357,36 @@ export default function EditProfilePage() {
               {/* Links */}
               <div className="space-y-4">
                 <Label>
-                  Links <span className="text-muted-foreground font-normal text-xs">(optional)</span>
+                  {t("profile.links_label")} <span className="text-muted-foreground font-normal text-xs">{t("common.optional")}</span>
                 </Label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <Label htmlFor="telegram" className="text-xs text-muted-foreground">Telegram</Label>
+                    <Label htmlFor="telegram" className="text-xs text-muted-foreground">{t("profile.link_telegram")}</Label>
                     <div className="flex">
                       <span className="inline-flex items-center px-3 text-sm border border-r-0 border-border rounded-l-md bg-muted text-muted-foreground select-none">@</span>
                       <Input id="telegram" placeholder="username" value={telegram} onChange={(e) => setTelegram(e.target.value)} className="rounded-l-none" />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="github" className="text-xs text-muted-foreground">GitHub</Label>
+                    <Label htmlFor="github" className="text-xs text-muted-foreground">{t("profile.link_github")}</Label>
                     <div className="flex">
                       <span className="inline-flex items-center px-3 text-sm border border-r-0 border-border rounded-l-md bg-muted text-muted-foreground select-none whitespace-nowrap">github/</span>
                       <Input id="github" placeholder="username" value={github} onChange={(e) => setGithub(e.target.value)} className="rounded-l-none" />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="twitter" className="text-xs text-muted-foreground">Twitter / X</Label>
+                    <Label htmlFor="twitter" className="text-xs text-muted-foreground">{t("profile.link_twitter")}</Label>
                     <div className="flex">
                       <span className="inline-flex items-center px-3 text-sm border border-r-0 border-border rounded-l-md bg-muted text-muted-foreground select-none">@</span>
                       <Input id="twitter" placeholder="username" value={twitter} onChange={(e) => setTwitter(e.target.value)} className="rounded-l-none" />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="discord" className="text-xs text-muted-foreground">Discord</Label>
+                    <Label htmlFor="discord" className="text-xs text-muted-foreground">{t("profile.link_discord")}</Label>
                     <Input id="discord" placeholder="username" value={discord} onChange={(e) => setDiscord(e.target.value)} />
                   </div>
                   <div className="space-y-1 sm:col-span-2">
-                    <Label htmlFor="website" className="text-xs text-muted-foreground">Website</Label>
+                    <Label htmlFor="website" className="text-xs text-muted-foreground">{t("profile.link_website")}</Label>
                     <Input id="website" placeholder="https://…" value={website} onChange={(e) => setWebsite(e.target.value)} />
                   </div>
                 </div>
@@ -403,17 +401,17 @@ export default function EditProfilePage() {
 
               <div className="flex gap-4">
                 <Link href={`/profile/${address}`} className="flex-1">
-                  <Button type="button" variant="outline" className="w-full">Cancel</Button>
+                  <Button type="button" variant="outline" className="w-full">{t("common.cancel")}</Button>
                 </Link>
                 <Button type="submit" className="flex-1" disabled={submitting || avatarUploading}>
                   {submitting ? (
-                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</>
-                  ) : "Save Profile"}
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t("common.saving")}</>
+                  ) : t("profile.save_btn")}
                 </Button>
               </div>
 
               <p className="text-xs text-muted-foreground text-center">
-                Your profile is stored on IPFS and signed by your wallet.
+                {t("profile.ipfs_signed_info")}
               </p>
             </form>
           </CardContent>

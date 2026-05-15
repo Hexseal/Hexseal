@@ -16,6 +16,7 @@ import {
   ChevronRight, AlertCircle, FileText,
 } from "lucide-react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 interface JobRecord {
   client: string;
   title: string;
@@ -60,6 +61,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   const router = useRouter();
   const { address } = useAccount();
   const jobId = BigInt(id);
+  const t = useTranslations();
 
   const { data: job, isLoading: jobLoading, refetch } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -138,7 +140,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         [jobId, executor as `0x${string}`],
         DIAMOND_ABI as Abi,
       );
-      toast.success("Executor accepted! Agreement deployed & funded.");
+      toast.success(t("job.accept_success"));
       // Relay returns agreementAddr from AgreementDeployed event
       if (result.agreementAddr && result.agreementAddr !== "0x0000000000000000000000000000000000000000") {
         router.push(`/deal/${result.agreementAddr}`);
@@ -172,7 +174,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         [jobId],
         DIAMOND_ABI as Abi,
       );
-      toast.success("Job cancelled. Budget refunded.");
+      toast.success(t("job.cancel_success"));
       refetch();
       setTimeout(() => router.push("/board"), 1500);
     } catch (err: any) {
@@ -253,13 +255,13 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             <div>
               <p className="text-sm font-medium text-white/80">
                 {(applicants?.length ?? 0) > 0
-                  ? `${applicants!.length} executor${applicants!.length !== 1 ? 's' : ''} applied — review and hire one`
-                  : 'Waiting for executors to apply'}
+                  ? t("job.applicants_applied", {count: applicants!.length})
+                  : t("job.waiting_applicants")}
               </p>
               <p className="text-xs text-white/35 mt-0.5">
                 {(applicants?.length ?? 0) > 0
-                  ? 'Click Hire next to an executor below. This will create an escrow agreement.'
-                  : 'Share the job link or wait for executors to find it on the board.'}
+                  ? t("job.hire_hint")
+                  : t("job.waiting_hint")}
               </p>
             </div>
           </div>
@@ -269,10 +271,8 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <div className="rounded-xl border border-sky-400/25 bg-sky-400/5 px-4 py-3 flex items-start gap-3">
             <CheckCircle className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-medium text-sky-300/80">Application sent · Waiting for client</p>
-              <p className="text-xs text-white/35 mt-0.5">
-                The client will review applicants and either hire you or someone else. You'll see the result here.
-              </p>
+              <p className="text-sm font-medium text-sky-300/80">{t("job.application_sent")}</p>
+              <p className="text-xs text-white/35 mt-0.5">{t("job.application_pending_hint")}</p>
             </div>
           </div>
         )}
@@ -281,10 +281,8 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex items-start gap-3">
             <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-medium text-white/60">Apply to take this job</p>
-              <p className="text-xs text-white/30 mt-0.5">
-                Send an application. The client will see your address in the applicant list and can hire you.
-              </p>
+              <p className="text-sm font-medium text-white/60">{t("job.apply_title")}</p>
+              <p className="text-xs text-white/30 mt-0.5">{t("job.apply_hint")}</p>
             </div>
           </div>
         )}
@@ -294,13 +292,13 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             <div className="flex items-start gap-3">
               <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-medium text-emerald-300/90">You were hired · Agreement created</p>
-                <p className="text-xs text-white/35 mt-0.5">The escrow is live. Go to the deal page to activate and start work.</p>
+                <p className="text-sm font-medium text-emerald-300/90">{t("job.hired_title")}</p>
+                <p className="text-xs text-white/35 mt-0.5">{t("job.hired_hint")}</p>
               </div>
             </div>
             <Link href={`/deal/${job.agreement}`}>
               <Button size="sm" className="flex-shrink-0 gap-1">
-                Go to Deal<ChevronRight className="w-3.5 h-3.5" />
+                {t("job.go_to_deal")}<ChevronRight className="w-3.5 h-3.5" />
               </Button>
             </Link>
           </div>
@@ -310,8 +308,8 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex items-start gap-3">
             <AlertCircle className="w-4 h-4 text-white/25 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-medium text-white/45">Position filled · You were not selected</p>
-              <p className="text-xs text-white/25 mt-0.5">The client hired another executor. Check the board for other jobs.</p>
+              <p className="text-sm font-medium text-white/45">{t("job.not_selected")}</p>
+              <p className="text-xs text-white/25 mt-0.5">{t("job.not_selected_hint")}</p>
             </div>
           </div>
         )}
@@ -320,7 +318,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-5">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
             <div>
-              <p className="text-xs text-white/30 mb-1">Budget</p>
+              <p className="text-xs text-white/30 mb-1">{t("job.budget_label")}</p>
               <div className="flex items-center gap-1">
                 <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="font-mono font-semibold text-white">
@@ -329,21 +327,21 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               </div>
             </div>
             <div>
-              <p className="text-xs text-white/30 mb-1">Deadline</p>
+              <p className="text-xs text-white/30 mb-1">{t("job.deadline_label")}</p>
               <div className="flex items-center gap-1">
                 <Calendar className="w-3.5 h-3.5 text-white/40" />
                 <span className="text-white/80">{job.deadlineDays.toString()} days</span>
               </div>
             </div>
             <div>
-              <p className="text-xs text-white/30 mb-1">Posted</p>
+              <p className="text-xs text-white/30 mb-1">{t("job.posted_label")}</p>
               <div className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-white/40" />
                 <span className="text-white/80">{timeAgo(job.createdAt)}</span>
               </div>
             </div>
             <div>
-              <p className="text-xs text-white/30 mb-1">Region</p>
+              <p className="text-xs text-white/30 mb-1">{t("job.region_label")}</p>
               <div className="flex items-center gap-1">
                 <Globe className="w-3.5 h-3.5 text-white/40" />
                 <span className="text-white/80">{REGION_LABELS[job.region] ?? "—"}</span>
@@ -352,7 +350,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           </div>
 
           <div className="mb-3">
-            <p className="text-xs text-white/30 mb-1">Client</p>
+            <p className="text-xs text-white/30 mb-1">{t("common.role_client")}</p>
             <a
               href={explorerUrl('address', job.client)}
               target="_blank"
@@ -366,7 +364,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
           {job.description && (
             <div className="mb-3">
-              <p className="text-xs text-white/30 mb-1.5">Description</p>
+              <p className="text-xs text-white/30 mb-1.5">{t("job.description_label")}</p>
               <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">
                 {job.description}
               </p>
@@ -377,21 +375,21 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             <div className="mt-3 pt-3 border-t border-white/8">
               <div className="flex items-center gap-2 mb-2">
                 <FileText className="w-3.5 h-3.5 text-white/30 flex-shrink-0" />
-                <p className="text-xs text-white/30 uppercase tracking-widest">Terms & Conditions</p>
+                <p className="text-xs text-white/30 uppercase tracking-widest">{t("job.terms_label")}</p>
               </div>
               {termsFetching ? (
                 <p className="text-sm text-white/30">Loading…</p>
               ) : termsText ? (
                 <p className="text-sm text-white/60 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">{termsText}</p>
               ) : (
-                <p className="text-sm text-white/30">Terms attached on-chain · Hash: {job.termsHash.slice(0, 14)}…</p>
+                <p className="text-sm text-white/30">{t("job.terms_on_chain")} · Hash: {job.termsHash.slice(0, 14)}…</p>
               )}
             </div>
           )}
 
           {job.status === 1 && job.agreement && job.agreement !== "0x0000000000000000000000000000000000000000" && (
             <div className="mt-4 pt-4 border-t border-white/8">
-              <p className="text-xs text-white/30 mb-1">Agreement</p>
+              <p className="text-xs text-white/30 mb-1">{t("job.agreement_label")}</p>
               <Link
                 href={`/deal/${job.agreement}`}
                 className="inline-flex items-center gap-1 text-sm font-mono text-primary hover:underline max-w-full"
@@ -408,7 +406,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <div className="flex items-center gap-2 mb-4">
             <Users className="w-4 h-4 text-white/40" />
             <h2 className="text-sm font-semibold text-white/80">
-              Applicants
+              {t("job.applicants_title")}
               {!applicantsLoading && applicants && (
                 <span className="ml-2 text-white/30 font-normal">{applicants.length}</span>
               )}
@@ -422,9 +420,9 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             </div>
           ) : !applicants || applicants.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-sm text-white/30">No applicants yet</p>
+              <p className="text-sm text-white/30">{t("job.no_applicants")}</p>
               {!isClient && address && job.status === 0 && (
-                <p className="text-xs text-white/20 mt-1">Be the first to apply from the board</p>
+                <p className="text-xs text-white/20 mt-1">{t("job.be_first_applicant")}</p>
               )}
             </div>
           ) : (
@@ -452,7 +450,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                       >
                         {executor}
                       </a>
-                      {isMe && <span className="text-xs text-white/30 flex-shrink-0">(you)</span>}
+                      {isMe && <span className="text-xs text-white/30 flex-shrink-0">({t("common.you")})</span>}
                       {isChosen && (
                         <Badge className="text-xs border bg-violet-400/10 text-violet-400 border-violet-400/20 flex-shrink-0">
                           Accepted
@@ -484,7 +482,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                           ) : (
                             <CheckCircle className="w-3.5 h-3.5" />
                           )}
-                          Hire
+                          {t("job.hire_btn")}
                         </Button>
                       )}
                     </div>
@@ -511,35 +509,33 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 <AlertCircle className="w-5 h-5 text-amber-400" />
               </div>
               <div>
-                <h2 className="text-base font-bold font-syne text-white mb-1">Confirm Hire</h2>
-                <p className="text-sm text-white/50 leading-relaxed">
-                  You're about to lock funds into an on-chain escrow. Once confirmed, deal terms are final and cannot be changed.
-                </p>
+                <h2 className="text-base font-bold font-syne text-white mb-1">{t("job.confirm_hire_title")}</h2>
+                <p className="text-sm text-white/50 leading-relaxed">{t("job.confirm_hire_desc")}</p>
               </div>
             </div>
 
             <div className="rounded-xl border border-white/8 bg-white/[0.03] divide-y divide-white/6 mb-4">
               <div className="flex justify-between items-center px-4 py-2.5 text-sm">
-                <span className="text-white/40">Executor</span>
+                <span className="text-white/40">{t("job.executor_label")}</span>
                 <span className="font-mono text-white/60 text-xs">{shortAddr(confirmExecutor)}</span>
               </div>
               <div className="flex justify-between items-center px-4 py-2.5 text-sm">
-                <span className="text-white/40">Budget locked in escrow</span>
+                <span className="text-white/40">{t("job.budget_locked")}</span>
                 <span className="font-mono font-semibold text-white">{(Number(job!.amount) / 1e6).toFixed(2)} USDC</span>
               </div>
               <div className="flex justify-between items-center px-4 py-2.5 text-sm">
-                <span className="text-white/40">Deadline</span>
-                <span className="text-white/70">{job!.deadlineDays.toString()} days</span>
+                <span className="text-white/40">{t("job.deadline_label")}</span>
+                <span className="text-white/70">{t("job.deadline_days", { days: job!.deadlineDays.toString() })}</span>
               </div>
               <div className="flex justify-between items-center px-4 py-2.5 text-sm">
-                <span className="text-white/40">Region / Fee</span>
+                <span className="text-white/40">{t("job.region_fee_label")}</span>
                 <span className="text-white/60">{REGION_LABELS[job!.region] ?? '—'}</span>
               </div>
             </div>
 
             <div className="rounded-xl border border-amber-400/15 bg-amber-400/5 px-4 py-3 mb-5">
               <p className="text-xs text-amber-400/80 leading-relaxed">
-                Budget will stay locked until you approve the work, a dispute is resolved, or an auto-release timeout expires. You cannot change the executor or amount after this point.
+                {t("job.escrow_warning")}
               </p>
             </div>
 
@@ -550,7 +546,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 onClick={() => setConfirmExecutor(null)}
                 disabled={isBusy}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 className="flex-1 gap-1.5"
@@ -562,7 +558,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 disabled={isBusy}
               >
                 <CheckCircle className="w-3.5 h-3.5" />
-                Confirm Hire
+                {t("job.confirm_hire_title")}
               </Button>
             </div>
           </div>

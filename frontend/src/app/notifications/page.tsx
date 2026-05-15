@@ -6,6 +6,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useAccount } from "wagmi";
 import { cn } from "@/lib/utils";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
+import { useTranslations } from "next-intl";
 
 function timeAgo(ts: number): string {
   const diff = (Date.now() - ts) / 1000;
@@ -74,11 +75,12 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
 export default function NotificationsPage() {
   const { isConnected } = useAccount();
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotifications();
+  const t = useTranslations();
 
   if (!isConnected) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-white/35 text-sm">Connect wallet to view notifications</p>
+        <p className="text-white/35 text-sm">{t("notifications.wallet_required")}</p>
       </div>
     );
   }
@@ -92,7 +94,7 @@ export default function NotificationsPage() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Bell className="w-4 h-4 text-white/40" />
-              <h1 className="text-sm font-semibold">Notifications</h1>
+              <h1 className="text-sm font-semibold">{t("notifications.title")}</h1>
               {unreadCount > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-primary/20 text-primary text-[10px] font-bold">
                   {unreadCount}
@@ -105,7 +107,7 @@ export default function NotificationsPage() {
             {unreadCount > 0 && (
               <button
                 onClick={markAll}
-                title="Mark all read"
+                title={t("notifications.mark_all_read")}
                 className="p-2 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-colors"
               >
                 <CheckCheck className="w-4 h-4" />
@@ -114,7 +116,7 @@ export default function NotificationsPage() {
             {notifications.length > 0 && (
               <button
                 onClick={clearAll}
-                title="Clear all"
+                title={t("notifications.clear_all")}
                 className="p-2 rounded-lg text-white/30 hover:text-red-400 hover:bg-white/5 transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -130,9 +132,9 @@ export default function NotificationsPage() {
               <Bell className="w-6 h-6 text-white/15" />
             </div>
             <div>
-              <p className="text-white/50 text-sm font-medium mb-1">All caught up</p>
+              <p className="text-white/50 text-sm font-medium mb-1">{t("notifications.all_caught_up")}</p>
               <p className="text-white/25 text-xs leading-relaxed max-w-xs">
-                Notifications about your deals, jobs, and services will appear here
+                {t("notifications.empty_hint")}
               </p>
             </div>
           </div>

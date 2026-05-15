@@ -25,6 +25,7 @@ import {
 import Link from "next/link";
 import { toast } from "react-hot-toast";
 import { isAddress } from "viem";
+import { useTranslations } from "next-intl";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,14 +72,14 @@ function calcCompletionRate(deals: AgreementRecord[]): number {
   return closed > 0 ? Math.round((completed / closed) * 100) : 100;
 }
 
-type Level = { label: string; color: string; glow: string; next: number | null };
+type Level = { labelKey: string; color: string; glow: string; next: number | null };
 
 function xpLevel(xp: number): Level {
-  if (xp >= 1000) return { label: "Master",   color: "text-yellow-400", glow: "shadow-yellow-400/20",  next: null };
-  if (xp >= 500)  return { label: "Expert",   color: "text-violet-400", glow: "shadow-violet-400/20",  next: 1000 };
-  if (xp >= 200)  return { label: "Trusted",  color: "text-blue-400",   glow: "shadow-blue-400/20",    next: 500  };
-  if (xp >= 50)   return { label: "Rising",   color: "text-emerald-400",glow: "shadow-emerald-400/20", next: 200  };
-  return               { label: "Newcomer", color: "text-white/40",   glow: "",                      next: 50   };
+  if (xp >= 1000) return { labelKey: "xp_level.master",   color: "text-yellow-400", glow: "shadow-yellow-400/20",  next: null };
+  if (xp >= 500)  return { labelKey: "xp_level.expert",   color: "text-violet-400", glow: "shadow-violet-400/20",  next: 1000 };
+  if (xp >= 200)  return { labelKey: "xp_level.trusted",  color: "text-blue-400",   glow: "shadow-blue-400/20",    next: 500  };
+  if (xp >= 50)   return { labelKey: "xp_level.rising",   color: "text-emerald-400",glow: "shadow-emerald-400/20", next: 200  };
+  return               { labelKey: "xp_level.newcomer", color: "text-white/40",   glow: "",                      next: 50   };
 }
 
 // ─── Address Avatar ───────────────────────────────────────────────────────────
@@ -110,17 +111,18 @@ function AddressAvatar({ address, size = 64 }: { address: string; size?: number 
 // ─── Status config ────────────────────────────────────────────────────────────
 
 // Registry enum: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
-const STATUS_CFG: Record<number, { label: string; dot: string; badge: string }> = {
-  0: { label: "Active",    dot: "bg-violet-400",  badge: "bg-violet-400/10 text-violet-400 border-violet-400/20"    },
-  1: { label: "Completed", dot: "bg-green-400",   badge: "bg-green-400/10 text-green-400 border-green-400/20"       },
-  2: { label: "Refunded",  dot: "bg-gray-400",    badge: "bg-gray-400/10 text-gray-400 border-gray-400/20"          },
-  3: { label: "Disputed",  dot: "bg-red-400",     badge: "bg-red-400/10 text-red-400 border-red-400/20"             },
-  4: { label: "Resolved",  dot: "bg-purple-400",  badge: "bg-purple-400/10 text-purple-400 border-purple-400/20"    },
+const STATUS_CFG: Record<number, { labelKey: string; dot: string; badge: string }> = {
+  0: { labelKey: "deal_status.active",    dot: "bg-violet-400",  badge: "bg-violet-400/10 text-violet-400 border-violet-400/20"    },
+  1: { labelKey: "deal_status.completed", dot: "bg-green-400",   badge: "bg-green-400/10 text-green-400 border-green-400/20"       },
+  2: { labelKey: "deal_status.refunded",  dot: "bg-gray-400",    badge: "bg-gray-400/10 text-gray-400 border-gray-400/20"          },
+  3: { labelKey: "deal_status.disputed",  dot: "bg-red-400",     badge: "bg-red-400/10 text-red-400 border-red-400/20"             },
+  4: { labelKey: "deal_status.resolved",  dot: "bg-purple-400",  badge: "bg-purple-400/10 text-purple-400 border-purple-400/20"    },
 };
 
 // ─── Deal History Row ─────────────────────────────────────────────────────────
 
 function DealRow({ deal, profileAddress }: { deal: AgreementRecord; profileAddress: string }) {
+  const t = useTranslations();
   const cfg = STATUS_CFG[deal.status] ?? STATUS_CFG[0];
   const isClient = deal.client.toLowerCase() === profileAddress.toLowerCase();
 
@@ -131,11 +133,11 @@ function DealRow({ deal, profileAddress }: { deal: AgreementRecord; profileAddre
         <div className="min-w-0">
           <p className="font-mono text-xs text-white/70 truncate">#{deal.agreement.slice(2, 10).toUpperCase()}</p>
           <p className="text-[11px] text-white/30 mt-0.5">
-            {isClient ? "Client" : "Executor"} · {formatDate(deal.createdAt)}
+            {isClient ? t("profile.client_role_badge") : t("profile.executor_role_badge")} · {formatDate(deal.createdAt)}
           </p>
         </div>
         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border flex-shrink-0 ${cfg.badge}`}>
-          {cfg.label}
+          {t(cfg.labelKey)}
         </span>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -153,6 +155,7 @@ function DealRow({ deal, profileAddress }: { deal: AgreementRecord; profileAddre
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProfilePage() {
+  const t = useTranslations();
   const params = useParams();
   const profileAddress = ((params.address as string) || '').toLowerCase();
   const { address: viewerAddress } = useAccount();
@@ -217,7 +220,7 @@ export default function ProfilePage() {
   if (!validAddress) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-white/40 text-sm">Invalid address</p>
+        <p className="text-white/40 text-sm">{t("profile.invalid_address")}</p>
       </div>
     );
   }
@@ -243,21 +246,21 @@ export default function ProfilePage() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <h1 className="text-xl font-bold text-white">
-                  {profile?.displayName || (isOwner ? "Your Profile" : shortAddr(profileAddress))}
+                  {profile?.displayName || (isOwner ? t("profile.your_profile") : shortAddr(profileAddress))}
                 </h1>
                 <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs border border-white/10 font-semibold ${level.color}`}>
-                  <Zap className="w-3 h-3" />{level.label}
+                  <Zap className="w-3 h-3" />{t(level.labelKey)}
                 </span>
                 {profile?.role && (
                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs border border-white/10 text-white/40 bg-white/[0.03]">
-                    {profile.role === 'client' ? 'Client' : profile.role === 'executor' ? 'Executor' : 'Client & Executor'}
+                    {profile.role === 'client' ? t("profile.client_role_badge") : profile.role === 'executor' ? t("profile.executor_role_badge") : t("profile.role_client_executor")}
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-2 text-xs text-white/30 font-mono">
                 <span>{shortAddr(profileAddress)}</span>
                 <button
-                  onClick={() => { navigator.clipboard.writeText(profileAddress); toast.success("Copied"); }}
+                  onClick={() => { navigator.clipboard.writeText(profileAddress); toast.success(t("common.copied")); }}
                   className="hover:text-white/60 transition-colors"
                 >
                   <Copy className="w-3 h-3" />
@@ -266,7 +269,7 @@ export default function ProfilePage() {
               {profile?.bio ? (
                 <p className="text-xs text-white/50 mt-2 leading-relaxed">{profile.bio}</p>
               ) : (
-                <p className="text-xs text-white/25 mt-1.5">On-chain reputation · Base Sepolia</p>
+                <p className="text-xs text-white/25 mt-1.5">{t("profile.on_chain_info")}</p>
               )}
               {profile?.specializations && profile.specializations.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
@@ -314,7 +317,7 @@ export default function ProfilePage() {
             {isOwner && (
               <Link href="/profile/edit">
                 <Button variant="outline" size="sm" className="flex-shrink-0">
-                  <Edit className="w-3.5 h-3.5 mr-1" />Edit
+                  <Edit className="w-3.5 h-3.5 mr-1" />{t("common.edit")}
                 </Button>
               </Link>
             )}
@@ -325,7 +328,7 @@ export default function ProfilePage() {
         {isLoading ? (
           <div className="flex items-center justify-center py-10 gap-2 text-white/30">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">Loading on-chain data…</span>
+            <span className="text-sm">{t("profile.loading_data")}</span>
           </div>
         ) : (
           <>
@@ -334,11 +337,11 @@ export default function ProfilePage() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Zap className="w-4 h-4 text-yellow-400" />
-                  <span className="font-semibold text-sm text-white">Experience Points</span>
+                  <span className="font-semibold text-sm text-white">{t("profile.xp_title")}</span>
                 </div>
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-2xl font-bold font-mono text-white">{xp}</span>
-                  <span className={`text-sm font-semibold ${level.color}`}>{level.label}</span>
+                  <span className={`text-sm font-semibold ${level.color}`}>{t(level.labelKey)}</span>
                 </div>
               </div>
               {level.next !== null && (
@@ -349,11 +352,11 @@ export default function ProfilePage() {
                       style={{ width: `${Math.min(100, (xp / level.next) * 100)}%` }}
                     />
                   </div>
-                  <p className="text-[11px] text-white/30 mt-1.5">{xp} / {level.next} XP to next level</p>
+                  <p className="text-[11px] text-white/30 mt-1.5">{t("profile.xp_to_next", { xp, next: level.next })}</p>
                 </>
               )}
               {level.next === null && (
-                <p className="text-[11px] text-yellow-400/60">Max level reached</p>
+                <p className="text-[11px] text-yellow-400/60">{t("profile.max_level")}</p>
               )}
             </div>
 
@@ -362,28 +365,28 @@ export default function ProfilePage() {
               <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <Activity className="w-3 h-3 text-violet-400" />
-                  <span className="text-[11px] text-white/40">Active</span>
+                  <span className="text-[11px] text-white/40">{t("profile.stats_active")}</span>
                 </div>
                 <span className="text-2xl font-bold font-mono text-white">{activeDeals}</span>
               </div>
               <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <CheckCircle className="w-3 h-3 text-green-400" />
-                  <span className="text-[11px] text-white/40">Completed</span>
+                  <span className="text-[11px] text-white/40">{t("profile.stats_completed")}</span>
                 </div>
                 <span className="text-2xl font-bold font-mono text-white">{completedDeals}</span>
               </div>
               <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <Wallet className="w-3 h-3 text-emerald-400" />
-                  <span className="text-[11px] text-white/40">Volume</span>
+                  <span className="text-[11px] text-white/40">{t("profile.stats_volume")}</span>
                 </div>
                 <span className="text-2xl font-bold font-mono text-white">${(totalVolume / 1e6).toFixed(0)}</span>
               </div>
               <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <TrendingUp className="w-3 h-3 text-blue-400" />
-                  <span className="text-[11px] text-white/40">Success</span>
+                  <span className="text-[11px] text-white/40">{t("profile.stats_success")}</span>
                 </div>
                 <span className="text-2xl font-bold font-mono text-white">
                   {closedCount > 0 ? `${completionRate}%` : "—"}
@@ -394,26 +397,26 @@ export default function ProfilePage() {
             {/* Coefficient + dispute rate row */}
             {allDeals.length > 0 && (
               <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4">
-                <h3 className="text-sm font-semibold text-white/60 mb-3">Reputation Breakdown</h3>
+                <h3 className="text-sm font-semibold text-white/60 mb-3">{t("profile.reputation_breakdown")}</h3>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <p className="text-[11px] text-white/35 mb-1">Completion rate</p>
+                    <p className="text-[11px] text-white/35 mb-1">{t("profile.completion_rate")}</p>
                     <p className="text-lg font-bold font-mono text-white">
                       {closedCount > 0 ? `${completionRate}%` : "N/A"}
                     </p>
-                    <p className="text-[10px] text-white/25">{completedDeals} / {closedCount} closed</p>
+                    <p className="text-[10px] text-white/25">{t("profile.closed_count", { completed: completedDeals, closed: closedCount })}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] text-white/35 mb-1">Dispute rate</p>
+                    <p className="text-[11px] text-white/35 mb-1">{t("profile.dispute_rate")}</p>
                     <p className={`text-lg font-bold font-mono ${disputedDeals > 0 ? 'text-orange-400' : 'text-white'}`}>
                       {allDeals.length > 0 ? `${Math.round((disputedDeals / allDeals.length) * 100)}%` : "0%"}
                     </p>
-                    <p className="text-[10px] text-white/25">{disputedDeals} disputed</p>
+                    <p className="text-[10px] text-white/25">{t("profile.disputed_count", { count: disputedDeals })}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] text-white/35 mb-1">Total deals</p>
+                    <p className="text-[11px] text-white/35 mb-1">{t("profile.total_deals")}</p>
                     <p className="text-lg font-bold font-mono text-white">{allDeals.length}</p>
-                    <p className="text-[10px] text-white/25">{activeDeals} active</p>
+                    <p className="text-[10px] text-white/25">{t("profile.active_count", { count: activeDeals })}</p>
                   </div>
                 </div>
               </div>
@@ -424,7 +427,7 @@ export default function ProfilePage() {
               <div>
                 <div className="flex items-center gap-2 mb-3">
                   <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                  <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">Active · {activeList.length}</span>
+                  <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">{t("profile.active_section", { count: activeList.length })}</span>
                 </div>
                 <div className="space-y-2">
                   {activeList.map(d => (
@@ -443,7 +446,7 @@ export default function ProfilePage() {
                 >
                   <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
                   <span className="text-xs font-semibold text-white/35 uppercase tracking-wider group-hover:text-white/55 transition-colors">
-                    History · {historyDeals.length}
+                    {t("profile.history_section", { count: historyDeals.length })}
                   </span>
                   <ChevronDown className={`w-3 h-3 text-white/25 transition-transform group-hover:text-white/50 ${showAllHistory ? 'rotate-180' : ''}`} />
                 </button>
@@ -460,11 +463,11 @@ export default function ProfilePage() {
             {allDeals.length === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-center rounded-2xl border border-white/6 bg-white/[0.02]">
                 <Star className="w-8 h-8 text-white/15 mb-3" />
-                <p className="text-white/35 text-sm">No on-chain deals found</p>
+                <p className="text-white/35 text-sm">{t("profile.no_deals")}</p>
                 {isOwner && (
                   <Link href="/deal">
                     <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/50">
-                      Create First Deal
+                      {t("profile.create_first_deal")}
                     </Button>
                   </Link>
                 )}

@@ -6,6 +6,7 @@ import { Bell, Check, CheckCheck, Trash2, X, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNotifications } from "@/hooks/useNotifications";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
+import { useTranslations } from "next-intl";
 
 function timeAgo(ts: number): string {
   const diff = (Date.now() - ts) / 1000;
@@ -64,6 +65,7 @@ interface Props {
 export default function NotificationCenter({ open, onOpenChange }: Props) {
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotifications();
   const ref = useRef<HTMLDivElement>(null);
+  const t = useTranslations();
 
   useEffect(() => {
     if (!open) return;
@@ -114,7 +116,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <Bell className="w-3.5 h-3.5 text-white/50" />
-                <span className="text-sm font-semibold">Notifications</span>
+                <span className="text-sm font-semibold">{t("notifications.title")}</span>
                 {unreadCount > 0 && (
                   <span className="px-1.5 py-0.5 rounded-full bg-primary/20 text-primary text-[10px] font-bold">
                     {unreadCount}
@@ -125,7 +127,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
                 {unreadCount > 0 && (
                   <button
                     onClick={markAll}
-                    title="Mark all read"
+                    title={t("notifications.mark_all_read")}
                     className="p-1.5 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-colors"
                   >
                     <CheckCheck className="w-3.5 h-3.5" />
@@ -134,7 +136,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
                 {notifications.length > 0 && (
                   <button
                     onClick={clearAll}
-                    title="Clear all"
+                    title={t("notifications.clear_all")}
                     className="p-1.5 rounded-lg text-white/30 hover:text-red-400 hover:bg-white/5 transition-colors"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -154,7 +156,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
               {notifications.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3 text-white/30">
                   <Bell className="w-8 h-8 opacity-30" />
-                  <p className="text-sm">No notifications yet</p>
+                  <p className="text-sm">{t("notifications.empty")}</p>
                 </div>
               ) : (
                 notifications.map((n) => (
@@ -175,7 +177,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
                 onClick={() => onOpenChange(false)}
                 className="flex items-center justify-center gap-1.5 py-2.5 text-xs text-white/35 hover:text-white/60 hover:bg-white/5 transition-colors w-full"
               >
-                See all notifications
+                {t("notifications.title")}
                 <ExternalLink className="w-3 h-3" />
               </Link>
             </div>

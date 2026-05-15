@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless, sendAgreementGasless } from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex } from "viem";
@@ -28,9 +29,10 @@ import type { Abi, Address, Hex } from "viem";
 const AGREEMENT_STATUS_DISPUTED = 4;
 const TERMINAL = new Set([3, 5, 6]);
 
-const STATUS_LABELS: Record<number, string> = {
-  0: "Created", 1: "Funded", 2: "Active", 3: "Completed",
-  4: "Disputed", 5: "Resolved", 6: "Refunded",
+const STATUS_KEYS: Record<number, string> = {
+  0: "arbiter.status_created", 1: "arbiter.status_funded", 2: "arbiter.status_active",
+  3: "arbiter.status_completed", 4: "arbiter.status_disputed", 5: "arbiter.status_resolved",
+  6: "arbiter.status_refunded",
 };
 
 const HIST_DETAIL_ABI = parseAbi([
@@ -66,6 +68,7 @@ function fmtTimeLeft(seconds: bigint | number | undefined): string {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ArbiterPage() {
+  const t = useTranslations();
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
@@ -133,7 +136,7 @@ export default function ArbiterPage() {
   const disputedList = disputed ?? [];
 
   const handleClaim = async (agreement: string) => {
-    if (!walletClient || !publicClient || !address) { toast.error("Wallet not connected"); return; }
+    if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
     setBusy(agreement);
     try {
       // Step 1/2 — генерируем случайный salt, коммитим хеш (защита от фронтраннинга)
@@ -144,41 +147,39 @@ export default function ArbiterPage() {
         [agreement as Address, address as Address, salt],
       ));
 
-      const commitToast = toast.loading("Step 1/2: Committing claim…");
+      const commitToast = toast.loading(t("arbiter.claim_step1"));
       const { txHash: commitTx } = await commitDisputeClaimGasless(walletClient, publicClient, commitment);
 
-      // Ждём майнинга коммита — reveal возможен только со следующего блока
-      toast.loading("Confirming commitment…", { id: commitToast });
+      toast.loading(t("arbiter.claim_confirming"), { id: commitToast });
       await publicClient.waitForTransactionReceipt({ hash: commitTx as `0x${string}` });
 
-      // Step 2/2 — раскрываем salt и берём дело
-      toast.loading("Step 2/2: Claiming dispute…", { id: commitToast });
+      toast.loading(t("arbiter.claim_step2"), { id: commitToast });
       await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
-      toast.success("Dispute claimed. You are now the arbiter.", { id: commitToast });
+      toast.success(t("arbiter.claim_success"), { id: commitToast });
       bump();
     } catch (err: any) {
-      toast.error(err?.message || "Claim failed");
+      toast.error(err?.message || t("common.error"));
     } finally { setBusy(null); }
   };
 
   const handleRelease = async (agreement: string) => {
-    if (!walletClient || !publicClient) { toast.error("Wallet not connected"); return; }
+    if (!walletClient || !publicClient) { toast.error(t("common.error")); return; }
     setBusy(agreement);
     try {
-      toast("Releasing claim…");
+      toast(t("arbiter.releasing"));
       await releaseDisputeGasless(walletClient, publicClient, agreement as Address);
-      toast.success("Claim released. Deal is open for other arbiters.");
+      toast.success(t("arbiter.release_success"));
       bump();
     } catch (err: any) {
-      toast.error(err?.message || "Release failed");
+      toast.error(err?.message || t("common.error"));
     } finally { setBusy(null); }
   };
 
   const handleResolve = async (agreement: string, clientWins: boolean) => {
-    if (!walletClient || !publicClient) { toast.error("Wallet not connected"); return; }
+    if (!walletClient || !publicClient) { toast.error(t("common.error")); return; }
     setBusy(agreement);
     try {
-      toast(`Resolving — ${clientWins ? "refunding client" : "paying executor"}…`);
+      toast(clientWins ? t("arbiter.resolving_refund") : t("arbiter.resolving_pay"));
       await sendAgreementGasless(
         walletClient, publicClient,
         agreement as Address,
@@ -186,10 +187,10 @@ export default function ArbiterPage() {
         AGREEMENT_ABI as Abi,
         [clientWins],
       );
-      toast.success(clientWins ? "Refunded to client." : "Paid to executor.");
+      toast.success(clientWins ? t("arbiter.refund_success") : t("arbiter.pay_success"));
       bump();
     } catch (err: any) {
-      toast.error(err?.shortMessage || err?.message || "Resolve failed");
+      toast.error(err?.shortMessage || err?.message || t("arbiter.resolve_failed"));
     } finally { setBusy(null); }
   };
 
@@ -198,10 +199,10 @@ export default function ArbiterPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold font-mono mb-2 flex items-center gap-2">
           <ShieldCheck className="w-8 h-8" />
-          Arbiter Hub
+          {t("arbiter.title")}
         </h1>
         <p className="text-muted-foreground">
-          Review disputed deals, claim cases, and resolve them.
+          {t("arbiter.subtitle")}
         </p>
       </div>
 
@@ -209,7 +210,7 @@ export default function ArbiterPage() {
         <TabsList className="mb-6">
           <TabsTrigger value="disputes" className="flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4" />
-            Open Disputes
+            {t("arbiter.tab_disputes")}
             {disputedList.length > 0 && (
               <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0">
                 {disputedList.length}
@@ -218,16 +219,16 @@ export default function ArbiterPage() {
           </TabsTrigger>
           <TabsTrigger value="mine" className="flex items-center gap-1.5">
             <Scale className="w-4 h-4" />
-            My Cases
+            {t("arbiter.tab_my_cases")}
           </TabsTrigger>
           <TabsTrigger value="history" className="flex items-center gap-1.5">
             <History className="w-4 h-4" />
-            History
+            {t("arbiter.tab_history")}
           </TabsTrigger>
           {isChiefArbiter && (
             <TabsTrigger value="manage" className="flex items-center gap-1.5 text-amber-400 data-[state=active]:text-amber-400">
               <Crown className="w-4 h-4" />
-              Manage
+              {t("arbiter.tab_manage")}
             </TabsTrigger>
           )}
         </TabsList>
@@ -236,9 +237,9 @@ export default function ArbiterPage() {
         <TabsContent value="disputes">
           <Card>
             <CardHeader>
-              <CardTitle className="font-mono text-base">Open Disputes</CardTitle>
+              <CardTitle className="font-mono text-base">{t("arbiter.tab_disputes")}</CardTitle>
               <CardDescription>
-                All active disputes — claim a case to become its arbiter, then chat with both parties and resolve.
+                {t("arbiter.disputes_desc")}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -249,7 +250,7 @@ export default function ArbiterPage() {
               ) : disputedList.length === 0 ? (
                 <div className="py-10 text-center text-muted-foreground">
                   <CheckCircle className="w-10 h-10 mx-auto mb-3 text-green-500 opacity-40" />
-                  No open disputes right now
+                  {t("arbiter.no_disputes")}
                 </div>
               ) : (
                 disputedList.map(rec => (
@@ -271,9 +272,9 @@ export default function ArbiterPage() {
         <TabsContent value="mine">
           <Card>
             <CardHeader>
-              <CardTitle className="font-mono text-base">My Active Cases</CardTitle>
+              <CardTitle className="font-mono text-base">{t("arbiter.my_cases_title")}</CardTitle>
               <CardDescription>
-                Disputes you have claimed. Resolve them before the 7-day window expires.
+                {t("arbiter.my_cases_desc")}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -283,7 +284,7 @@ export default function ArbiterPage() {
                 </div>
               ) : !myHistory || myHistory.length === 0 ? (
                 <p className="py-8 text-center text-muted-foreground">
-                  You haven't claimed any disputes yet
+                  {t("arbiter.no_cases")}
                 </p>
               ) : (
                 myHistory.map(addr => (
@@ -305,9 +306,9 @@ export default function ArbiterPage() {
         <TabsContent value="history">
           <Card>
             <CardHeader>
-              <CardTitle className="font-mono text-base">My Resolved Cases</CardTitle>
+              <CardTitle className="font-mono text-base">{t("arbiter.history_title")}</CardTitle>
               <CardDescription>
-                All disputes you arbitrated — resolved, refunded, or completed.
+                {t("arbiter.history_desc")}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -316,19 +317,19 @@ export default function ArbiterPage() {
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                 </div>
               ) : !myHistory || myHistory.length === 0 ? (
-                <p className="py-8 text-center text-muted-foreground">No history yet</p>
+                <p className="py-8 text-center text-muted-foreground">{t("arbiter.no_history")}</p>
               ) : (
                 <>
                   <div className="relative mb-4">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none" />
                     <Input
-                      placeholder="Search by deal, client or executor address…"
+                      placeholder={t("arbiter.search_placeholder")}
                       value={historyQ}
                       onChange={e => setHistoryQ(e.target.value)}
                       className="pl-9 bg-white/[0.03] border-white/10 placeholder:text-white/25 rounded-xl text-sm"
                     />
                   </div>
-                  <p className="text-xs text-white/30 font-mono mb-3">{myHistory.length} total cases</p>
+                  <p className="text-xs text-white/30 font-mono mb-3">{t("arbiter.total_cases", { count: myHistory.length })}</p>
                   {myHistory
                     .filter(addr => {
                       if (!historyQ) return true;
@@ -362,6 +363,7 @@ export default function ArbiterPage() {
 // ─── ChiefManagePanel — add/remove arbiters (chief arbiter role) ──────────────
 
 function ChiefManagePanel() {
+  const t = useTranslations();
   const { data: arbiters, refetch } = useReadContract({
     address: CONTRACTS.diamond as Address,
     abi: ARBITER_REGISTRY_ABI as Abi,
@@ -373,7 +375,7 @@ function ChiefManagePanel() {
   const [removingAddr, setRemovingAddr] = useState<string | null>(null);
 
   const handleAdd = async () => {
-    if (!isAddress(newArbiter)) { toast.error('Invalid address'); return; }
+    if (!isAddress(newArbiter)) { toast.error(t("profile.invalid_address")); return; }
     try {
       await writeContract({
         address: CONTRACTS.diamond as Address,
@@ -382,10 +384,10 @@ function ChiefManagePanel() {
         args: [newArbiter as Address],
         gas: BigInt(120_000),
       });
-      toast.success('Arbiter added');
+      toast.success(t("arbiter.added_success"));
       setNewArbiter('');
       refetch();
-    } catch (err: any) { toast.error(err?.shortMessage || err?.message || 'Failed'); }
+    } catch (err: any) { toast.error(err?.shortMessage || err?.message || t("common.error")); }
   };
 
   const handleRemove = async (addr: string) => {
@@ -398,9 +400,9 @@ function ChiefManagePanel() {
         args: [addr as Address],
         gas: BigInt(120_000),
       });
-      toast.success('Arbiter removed');
+      toast.success(t("arbiter.removed_success"));
       refetch();
-    } catch (err: any) { toast.error(err?.shortMessage || err?.message || 'Failed'); }
+    } catch (err: any) { toast.error(err?.shortMessage || err?.message || t("common.error")); }
     finally { setRemovingAddr(null); }
   };
 
@@ -409,15 +411,15 @@ function ChiefManagePanel() {
       <CardHeader>
         <CardTitle className="font-mono flex items-center gap-2 text-base">
           <Crown className="w-4 h-4 text-amber-400" />
-          Arbiter Management
+          {t("arbiter.manage_title")}
         </CardTitle>
         <CardDescription>
-          You are the chief arbiter — you can add and remove arbiters.
+          {t("arbiter.chief_desc")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {!arbiters || arbiters.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No arbiters registered yet.</p>
+          <p className="text-sm text-muted-foreground">{t("arbiter.no_arbiters")}</p>
         ) : (
           <div className="space-y-2">
             {arbiters.map(addr => (
@@ -432,7 +434,7 @@ function ChiefManagePanel() {
                   {removingAddr === addr
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     : <UserMinus className="w-3.5 h-3.5" />}
-                  Remove
+                  {t("arbiter.remove_btn")}
                 </Button>
               </div>
             ))}
@@ -440,7 +442,7 @@ function ChiefManagePanel() {
         )}
         <Separator />
         <div className="space-y-2">
-          <Label>Add Arbiter</Label>
+          <Label>{t("arbiter.add_arbiter")}</Label>
           <div className="flex gap-2">
             <Input
               placeholder="0x..."
@@ -450,7 +452,7 @@ function ChiefManagePanel() {
             />
             <Button onClick={handleAdd} disabled={isPending || !newArbiter} className="gap-1">
               {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-              Add
+              {t("arbiter.add_btn")}
             </Button>
           </div>
         </div>
@@ -470,6 +472,7 @@ function DisputeRow({
   onClaim: (a: string) => void;
   onRelease: (a: string) => void;
 }) {
+  const t = useTranslations();
   const { data: claimer } = useReadContract({
     address: CONTRACTS.diamond,
     abi: ARBITER_REGISTRY_ABI as Abi,
@@ -507,10 +510,10 @@ function DisputeRow({
             </Link>
             {isClaimed ? (
               <Badge variant="secondary" className="text-xs">
-                Claimed by {isMineClaim ? "you" : shortAddr(claimer!)}
+                {isMineClaim ? t("arbiter.claimed_by_you") : t("arbiter.claimed_by", { address: shortAddr(claimer!) })}
               </Badge>
             ) : (
-              <Badge variant="destructive" className="text-xs">Unclaimed</Badge>
+              <Badge variant="destructive" className="text-xs">{t("arbiter.unclaimed")}</Badge>
             )}
             {timeLeft !== undefined && timeLeft > 0n && (
               <span className={`text-xs font-mono ${Number(timeLeft) < 86400 ? "text-red-400" : "text-orange-400"}`}>
@@ -519,20 +522,20 @@ function DisputeRow({
             )}
           </div>
           <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3">
-            <span>Client: <span className="font-mono">{shortAddr(rec.client)}</span></span>
-            <span>Executor: <span className="font-mono">{shortAddr(rec.executor)}</span></span>
+            <span>{t("arbiter.client_label")}: <span className="font-mono">{shortAddr(rec.client)}</span></span>
+            <span>{t("arbiter.executor_label")}: <span className="font-mono">{shortAddr(rec.executor)}</span></span>
             <span className="text-white/60">${fmtUSDC(rec.amount)} USDC</span>
           </div>
         </div>
         <div className="flex flex-col gap-2 shrink-0 items-end">
           {!isClaimed && (
             <Button size="sm" onClick={() => onClaim(rec.agreement)} disabled={!!busy}>
-              {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Claim Case"}
+              {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : t("arbiter.claim_btn")}
             </Button>
           )}
           {isMineClaim && (
             <Button size="sm" variant="outline" onClick={() => onRelease(rec.agreement)} disabled={!!busy}>
-              {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Release"}
+              {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : t("arbiter.release_btn")}
             </Button>
           )}
         </div>
@@ -541,17 +544,17 @@ function DisputeRow({
       {/* Dispute reason */}
       {disputeReason ? (
         <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/[0.04] px-3 py-2.5">
-          <p className="text-[11px] text-red-400/70 font-semibold uppercase tracking-wide mb-1">Dispute reason</p>
+          <p className="text-[11px] text-red-400/70 font-semibold uppercase tracking-wide mb-1">{t("arbiter.dispute_reason_title")}</p>
           <p className="text-xs text-white/70 leading-relaxed">{disputeReason}</p>
         </div>
       ) : (
-        <p className="text-xs text-white/25 mt-2 italic">No dispute reason provided.</p>
+        <p className="text-xs text-white/25 mt-2 italic">{t("arbiter.no_reason")}</p>
       )}
 
       {/* Claim hint */}
       {!isClaimed && (
         <p className="text-[11px] text-white/30 mt-2">
-          Claim this case to join the deal chat and contact both parties.
+          {t("arbiter.claim_hint")}
         </p>
       )}
     </div>
@@ -569,6 +572,7 @@ function MyCaseRow({
   onRelease: (a: string) => void;
   onResolve: (a: string, clientWins: boolean) => void;
 }) {
+  const t = useTranslations();
   const MINI_ABI = [
     { inputs: [], name: "status",         outputs: [{ internalType: "uint8",    name: "", type: "uint8" }],    stateMutability: "view", type: "function" },
     { inputs: [], name: "amount",         outputs: [{ internalType: "uint256",  name: "", type: "uint256" }],  stateMutability: "view", type: "function" },
@@ -603,7 +607,7 @@ function MyCaseRow({
   if (!isMineClaim && !isDisputed) return null;
   if (isTerminal) return null; // resolved — show in history tab only
 
-  const statusLabel = statusVal !== undefined ? (STATUS_LABELS[statusVal] ?? "Unknown") : "…";
+  const statusLabel = statusVal !== undefined ? t(STATUS_KEYS[statusVal] ?? "arbiter.status_unknown") : "…";
 
   return (
     <div className="py-4 border-b border-border last:border-0">
@@ -622,44 +626,44 @@ function MyCaseRow({
               </span>
             )}
             {expired && (
-              <span className="text-xs text-red-400 font-semibold">Window expired — parties can trigger refund</span>
+              <span className="text-xs text-red-400 font-semibold">{t("arbiter.window_expired")}</span>
             )}
           </div>
           <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3">
-            <span>Client: <span className="font-mono">{client ? shortAddr(client) : "…"}</span></span>
-            <span>Executor: <span className="font-mono">{executor ? shortAddr(executor) : "…"}</span></span>
+            <span>{t("arbiter.client_label")}: <span className="font-mono">{client ? shortAddr(client) : "…"}</span></span>
+            <span>{t("arbiter.executor_label")}: <span className="font-mono">{executor ? shortAddr(executor) : "…"}</span></span>
             <span className="text-white/60">${amount ? fmtUSDC(amount) : "…"} USDC</span>
           </div>
           {disputedAt && disputedAt > 0n && (
             <div className="text-xs text-muted-foreground mt-0.5">
-              Disputed: {new Date(Number(disputedAt) * 1000).toLocaleString()}
+              {t("arbiter.disputed_label")}: {new Date(Number(disputedAt) * 1000).toLocaleString()}
             </div>
           )}
           <div className="flex flex-wrap gap-2 mt-2">
             <Link href={`/deal/${agreement}/chat`}>
               <Button size="sm" variant="outline" className="text-xs h-7 gap-1.5 border-green-500/30 text-green-400 hover:bg-green-500/10">
                 <MessageSquare className="w-3 h-3" />
-                Deal Chat
+                {t("arbiter.deal_chat_btn")}
               </Button>
             </Link>
             {client && (
               <Link href={`/chat?peer=${client.toLowerCase()}`}>
                 <Button size="sm" variant="outline" className="text-xs h-7 gap-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10">
-                  Chat Client
+                  {t("arbiter.chat_client_btn")}
                 </Button>
               </Link>
             )}
             {executor && (
               <Link href={`/chat?peer=${executor.toLowerCase()}`}>
                 <Button size="sm" variant="outline" className="text-xs h-7 gap-1 border-violet-500/30 text-violet-400 hover:bg-violet-500/10">
-                  Chat Executor
+                  {t("arbiter.chat_executor_btn")}
                 </Button>
               </Link>
             )}
           </div>
         </div>
         <Link href={`/deal/${agreement}`}>
-          <Button size="sm" variant="ghost">Details</Button>
+          <Button size="sm" variant="ghost">{t("common.details")}</Button>
         </Link>
       </div>
 
@@ -667,12 +671,12 @@ function MyCaseRow({
       {isDisputed && isMineClaim && !expired && (
         <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3 space-y-2">
           <p className="text-xs text-muted-foreground">
-            Chat with both parties above to understand the situation, then make your ruling.
-            <span className="text-red-400/80"> This action is irreversible.</span>
+            {t("arbiter.resolve_hint")}
+            <span className="text-red-400/80"> {t("arbiter.resolve_irreversible")}</span>
           </p>
           <p className="text-xs text-muted-foreground/70">
-            <strong className="text-blue-400">Refund Client</strong> — client gets their USDC back (executor did not deliver).
-            &nbsp;<strong className="text-violet-400">Pay Executor</strong> — executor gets paid (work was done).
+            <strong className="text-blue-400">{t("arbiter.refund_client_btn")}</strong> — {t("arbiter.resolve_client_desc")}
+            &nbsp;<strong className="text-violet-400">{t("arbiter.pay_executor_btn")}</strong> — {t("arbiter.resolve_executor_desc")}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -683,7 +687,7 @@ function MyCaseRow({
               onClick={() => onResolve(agreement, true)}
             >
               {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
-              Refund Client
+              {t("arbiter.refund_client_btn")}
             </Button>
             <Button
               size="sm"
@@ -693,7 +697,7 @@ function MyCaseRow({
               onClick={() => onResolve(agreement, false)}
             >
               {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserX className="w-4 h-4" />}
-              Pay Executor
+              {t("arbiter.pay_executor_btn")}
             </Button>
             <Button
               size="sm"
@@ -702,7 +706,7 @@ function MyCaseRow({
               disabled={!!busy}
               onClick={() => onRelease(agreement)}
             >
-              Release Claim
+              {t("arbiter.release_claim_btn")}
             </Button>
           </div>
         </div>
@@ -714,6 +718,7 @@ function MyCaseRow({
 // ─── HistoryRow — terminal status ─────────────────────────────────────────────
 
 function HistoryRow({ agreement, prefetched }: { agreement: string; prefetched?: HistDetail }) {
+  const t = useTranslations();
   const skip = prefetched !== undefined;
   const MINI_ABI = [
     { inputs: [], name: "status",     outputs: [{ internalType: "uint8",   name: "", type: "uint8" }],   stateMutability: "view", type: "function" },
@@ -741,11 +746,16 @@ function HistoryRow({ agreement, prefetched }: { agreement: string; prefetched?:
   const isResolved = statusVal === 5; // executor paid
   const isRefunded = statusVal === 6; // client refunded
 
-  const verdict = isResolved
-    ? { label: "Executor paid", cls: "border-violet-500/30 text-violet-400" }
+  const verdictLabel = isResolved
+    ? t("arbiter.verdict_executor_paid")
     : isRefunded
-    ? { label: "Client refunded", cls: "border-blue-500/30 text-blue-400" }
-    : { label: STATUS_LABELS[statusVal!] ?? "—", cls: "border-white/15 text-white/40" };
+    ? t("arbiter.verdict_client_refunded")
+    : (statusVal !== undefined ? t(STATUS_KEYS[statusVal] ?? "arbiter.status_unknown") : "—");
+  const verdictCls = isResolved
+    ? "border-violet-500/30 text-violet-400"
+    : isRefunded
+    ? "border-blue-500/30 text-blue-400"
+    : "border-white/15 text-white/40";
 
   return (
     <div className="py-3 border-b border-border last:border-0">
@@ -755,13 +765,13 @@ function HistoryRow({ agreement, prefetched }: { agreement: string; prefetched?:
             <Link href={`/deal/${agreement}`} className="font-mono text-sm text-primary hover:underline">
               {shortAddr(agreement)}
             </Link>
-            <Badge variant="outline" className={`text-xs ${verdict.cls}`}>
-              {verdict.label}
+            <Badge variant="outline" className={`text-xs ${verdictCls}`}>
+              {verdictLabel}
             </Badge>
           </div>
           <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3">
-            <span>Client: <span className="font-mono">{client ? shortAddr(client) : "…"}</span></span>
-            <span>Executor: <span className="font-mono">{executor ? shortAddr(executor) : "…"}</span></span>
+            <span>{t("arbiter.client_label")}: <span className="font-mono">{client ? shortAddr(client) : "…"}</span></span>
+            <span>{t("arbiter.executor_label")}: <span className="font-mono">{executor ? shortAddr(executor) : "…"}</span></span>
             <span className="text-white/60">${amount ? fmtUSDC(amount) : "…"} USDC</span>
             {resolvedAt && resolvedAt > 0n && (
               <span className="text-white/30">{new Date(Number(resolvedAt) * 1000).toLocaleDateString()}</span>
@@ -769,7 +779,7 @@ function HistoryRow({ agreement, prefetched }: { agreement: string; prefetched?:
           </div>
         </div>
         <Link href={`/deal/${agreement}`}>
-          <Button size="sm" variant="ghost" className="text-xs">Open</Button>
+          <Button size="sm" variant="ghost" className="text-xs">{t("common.open")}</Button>
         </Link>
       </div>
     </div>

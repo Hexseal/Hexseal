@@ -3,26 +3,29 @@
 import React from "react";
 import Link from "next/link";
 import { appChain, appChainId } from "@/config/chain";
+import { useTranslations } from "next-intl";
 
 export default function Footer() {
+  const t = useTranslations();
+
   return (
     <footer className="site-footer" role="contentinfo">
       <div className="footer-inner">
         <div className="footer-col">
           <h4>Signature404</h4>
-          <p>Decentralized freelance protocol on Base. No admins. Code is law.</p>
+          <p>{t("footer.tagline")}</p>
         </div>
         <div className="footer-col">
-          <h4>Resources</h4>
+          <h4>{t("footer.resources_title")}</h4>
           <ul>
-            <li><Link href="/docs/faq">FAQ</Link></li>
+            <li><Link href="/docs/faq">{t("footer.faq")}</Link></li>
             <li>
               <a
                 href="https://sepolia.basescan.org/address/0xF00CC71878c226E0b64253Fb71dD802aF12165D0"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Contract
+                {t("footer.contract")}
               </a>
             </li>
             <li>
@@ -31,13 +34,13 @@ export default function Footer() {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Source Code
+                {t("footer.source_code")}
               </a>
             </li>
           </ul>
         </div>
         <div className="footer-col">
-          <h4>Connect</h4>
+          <h4>{t("footer.connect_title")}</h4>
           <ul>
             <li>
               <a
@@ -45,7 +48,7 @@ export default function Footer() {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                GitHub
+                {t("footer.github")}
               </a>
             </li>
             <li>
@@ -54,7 +57,7 @@ export default function Footer() {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Report Issue
+                {t("footer.report_issue")}
               </a>
             </li>
           </ul>

@@ -25,6 +25,7 @@ import { useProfile } from "@/hooks/useProfile";
 import { ARBITER_REGISTRY_ABI } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
 import { initXmtpClient, notifyArbiters } from "@/lib/xmtp";
+import { useTranslations } from "next-intl";
 
 // Agreement status enum matches Solidity:
 // 0=CREATED, 1=FUNDED, 2=ACTIVE, 3=COMPLETED, 4=DISPUTED, 5=RESOLVED, 6=REFUNDED
@@ -50,6 +51,7 @@ function PartyRow({
   role: string; addr: string; isMe: boolean; showChat: boolean; fixedLabel?: string;
 }) {
   const { displayName, avatarUrl } = useProfile(addr);
+  const t = useTranslations();
   const primaryName = fixedLabel ?? displayName ?? shortAddr(addr);
   const showAddrBelow = !!(fixedLabel || displayName);
 
@@ -82,7 +84,7 @@ function PartyRow({
       </Link>
       {isMe && (
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400 font-medium">
-          you
+          {t("common.you")}
         </span>
       )}
       {!isMe && showChat && (
@@ -119,6 +121,7 @@ export default function DealDetailPage() {
   const [isFunding, setIsFunding] = useState(false);
   const [disputeModal, setDisputeModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
+  const t = useTranslations();
 
   // Read Diamond owner as the platform admin / arbiter address
   const { data: adminAddress } = useReadContract({
@@ -212,7 +215,7 @@ export default function DealDetailPage() {
     if (!isValidDeal || !walletClient || !publicClient) return;
     setIsFunding(true);
     try {
-      toast('Confirm in wallet…');
+      toast(t("common.confirm_in_wallet"));
       await sendAgreementGasless(walletClient, publicClient, dealAddress as `0x${string}`, fn, AGREEMENT_ABI as Abi, args);
       toast.success(successMsg);
 
@@ -235,7 +238,7 @@ export default function DealDetailPage() {
 
       setTimeout(() => refetchDetails(), 2000);
     } catch (err: any) {
-      toast.error(err?.shortMessage || err?.message || 'Transaction failed');
+      toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
     } finally {
       setIsFunding(false);
     }
@@ -246,15 +249,15 @@ export default function DealDetailPage() {
     setIsFunding(true);
     try {
       const dealAddr = dealAddress as `0x${string}`;
-      toast('Sign 1/2: USDC permit in wallet…');
+      toast(t("deal.fund_sign_permit"));
       const { txHash } = await fundAgreementGasless(walletClient, publicClient, dealAddr, parsed.amount);
-      toast.success(`Deal funded! Tx: ${txHash.slice(0, 10)}…`);
+      toast.success(`${t("deal.fund_success")} Tx: ${txHash.slice(0, 10)}…`);
       setTimeout(() => refetchDetails(), 4000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       const msg = e?.shortMessage || e?.message || "Fund failed";
       if (msg.includes('AlreadyFunded')) {
-        toast.error('Deal is already funded — refreshing…');
+        toast.error(t("deal.already_funded"));
         setTimeout(() => refetchDetails(), 1000);
       } else {
         toast.error(msg);
@@ -289,7 +292,7 @@ export default function DealDetailPage() {
   if (!isValidDeal) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <p className="text-white/50 text-sm">Invalid deal address</p>
+        <p className="text-white/50 text-sm">{t("deal.invalid_address")}</p>
         <Link href="/dashboard"><Button variant="outline" size="sm">← Dashboard</Button></Link>
       </div>
     );
@@ -348,7 +351,7 @@ export default function DealDetailPage() {
           <div className="flex items-start justify-between gap-4 flex-wrap">
             {/* Amount */}
             <div>
-              <p className="text-xs text-white/35 mb-0.5">Deal amount</p>
+              <p className="text-xs text-white/35 mb-0.5">{t("deal.amount_label")}</p>
               <p className="text-3xl font-bold font-mono text-white">
                 {amountFormatted}
                 <span className="text-base font-normal text-white/40 ml-1.5">USDC</span>
@@ -367,11 +370,11 @@ export default function DealDetailPage() {
 
             {/* Parties */}
             <div className="flex flex-col gap-2 text-right">
-              <PartyRow role="Client"   addr={parsed.client}   isMe={isClient}            showChat={!!address} />
-              <PartyRow role="Executor" addr={parsed.executor} isMe={isExecutor}           showChat={!!address} />
+              <PartyRow role={t("common.role_client")}   addr={parsed.client}   isMe={isClient}            showChat={!!address} />
+              <PartyRow role={t("common.role_executor")} addr={parsed.executor} isMe={isExecutor}           showChat={!!address} />
               {parsed.arbiter !== ZERO_ADDR && (
                 <PartyRow
-                  role="Arbiter"
+                  role={t("common.role_arbiter")}
                   addr={parsed.arbiter}
                   isMe={isArbiter as boolean}
                   showChat={!!address}
@@ -385,77 +388,77 @@ export default function DealDetailPage() {
         {/* ── Primary actions ─────────────────────────────────────────────────── */}
         {isConnected && (isParty || isArbiter) && (
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4">
-            <p className="text-xs text-white/35 mb-3">Actions</p>
+            <p className="text-xs text-white/35 mb-3">{t("deal.actions_title")}</p>
             <div className="flex flex-wrap gap-2">
               {parsed.status === 0 && isClient && (
                 <Button size="sm" onClick={handleFund} disabled={busy}>
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
-                  Fund Deal
+                  {t("deal.fund_btn")}
                 </Button>
               )}
               {parsed.status === 1 && isExecutor && (
-                <Button size="sm" onClick={() => handleAction('activate', 'Deal activated! Work has started.')} disabled={busy}>
+                <Button size="sm" onClick={() => handleAction('activate', t("deal.activate_success"))} disabled={busy}>
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Shield className="w-3.5 h-3.5 mr-1.5" />}
-                  Activate
+                  {t("deal.activate_btn")}
                 </Button>
               )}
               {parsed.status === 2 && isExecutor && parsed.markedDoneAt === BigInt(0) && (
-                <Button size="sm" onClick={() => handleAction('markDone', 'Work submitted! Awaiting client review.')} disabled={busy}>
+                <Button size="sm" onClick={() => handleAction('markDone', t("deal.mark_done_success"))} disabled={busy}>
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
-                  Mark Done
+                  {t("deal.mark_done_btn")}
                 </Button>
               )}
               {parsed.status === 2 && isClient && parsed.markedDoneAt > BigInt(0) && !autoApproveWindowPassed && (
-                <Button size="sm" onClick={() => handleAction('release', 'Payment released to executor!')} disabled={busy}>
+                <Button size="sm" onClick={() => handleAction('release', t("deal.release_success"))} disabled={busy}>
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
-                  Release Funds
+                  {t("deal.release_funds_btn")}
                 </Button>
               )}
               {parsed.status === 2 && (isClient || isExecutor) && (
                 <Button size="sm" variant="destructive" onClick={() => setDisputeModal(true)} disabled={busy}>
                   <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />
-                  Raise Dispute
+                  {t("deal.dispute_btn")}
                 </Button>
               )}
               {parsed.status === 4 && isArbiter && (
                 <>
                   <Button size="sm" variant="destructive" disabled={busy}
-                    onClick={() => handleAction('resolveDispute', 'Dispute resolved · Budget refunded to client.', [true])}>
-                    Refund Client
+                    onClick={() => handleAction('resolveDispute', t("deal.refund_success"), [true])}>
+                    {t("deal.refund_client_btn")}
                   </Button>
                   <Button size="sm" disabled={busy}
-                    onClick={() => handleAction('resolveDispute', 'Dispute resolved · Funds paid to executor.', [false])}>
-                    Pay Executor
+                    onClick={() => handleAction('resolveDispute', t("deal.pay_executor_success"), [false])}>
+                    {t("deal.pay_executor_btn")}
                   </Button>
                 </>
               )}
               {/* Timeout actions — only shown when window has actually expired */}
               {parsed.status === 1 && isParty && activationWindowPassed && (
                 <Button size="sm" variant="ghost" className="text-orange-400/60 hover:text-orange-400"
-                  onClick={() => handleAction('triggerActivationTimeout', 'Executor timed out · Budget refunded to you.')}
+                  onClick={() => handleAction('triggerActivationTimeout', t("deal.timeout_activation_success"))}
                   disabled={busy}>
-                  Executor didn't activate → Refund
+                  {t("deal.timeout_activation")}
                 </Button>
               )}
               {parsed.status === 2 && isParty && parsed.markedDoneAt === BigInt(0) && timeLeft === BigInt(0) && (
                 <Button size="sm" variant="ghost" className="text-orange-400/60 hover:text-orange-400"
-                  onClick={() => handleAction('triggerDeadlineTimeout', 'Deadline passed · Budget refunded to you.')}
+                  onClick={() => handleAction('triggerDeadlineTimeout', t("deal.timeout_deadline_success"))}
                   disabled={busy}>
-                  Deadline passed → Refund
+                  {t("deal.timeout_deadline")}
                 </Button>
               )}
               {parsed.status === 4 && isParty && arbiterTimeLeft === BigInt(0) && (
                 <Button size="sm" variant="ghost" className="text-orange-400/60 hover:text-orange-400"
-                  onClick={() => handleAction('triggerArbiterTimeout', 'Arbiter timed out · Budget refunded to client.')}
+                  onClick={() => handleAction('triggerArbiterTimeout', t("deal.timeout_arbiter_success"))}
                   disabled={busy}>
-                  Arbiter idle → Refund
+                  {t("deal.timeout_arbiter")}
                 </Button>
               )}
               {parsed.status === 2 && isParty && autoApproveWindowPassed && (
                 <Button size="sm" variant="ghost" className="text-white/40"
-                  onClick={() => handleAction('triggerAutoApprove', 'Auto-approved · Funds released to executor.')}
+                  onClick={() => handleAction('triggerAutoApprove', t("deal.timeout_auto_approve_success"))}
                   disabled={busy}>
-                  Client silent → Release to executor
+                  {t("deal.timeout_auto_approve")}
                 </Button>
               )}
             </div>
@@ -470,8 +473,8 @@ export default function DealDetailPage() {
                 <MessageCircle className="w-4 h-4 text-violet-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white/80 group-hover:text-white transition-colors">Deal Chat</p>
-                <p className="text-xs text-white/35">Encrypted group chat between client, executor{parsed?.arbiter !== ZERO_ADDR ? ' & arbiter' : ''}</p>
+                <p className="text-sm font-medium text-white/80 group-hover:text-white transition-colors">{t("deal.chat_title")}</p>
+                <p className="text-xs text-white/35">{t("deal.chat_desc")}</p>
               </div>
               <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors flex-shrink-0" />
             </div>
@@ -483,24 +486,24 @@ export default function DealDetailPage() {
           <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-5 py-4">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="w-4 h-4 text-red-400" />
-              <span className="text-sm font-semibold text-red-400">Dispute Active</span>
+              <span className="text-sm font-semibold text-red-400">{t("deal.dispute_active")}</span>
               {arbiterTimeLeft && (
                 <span className="ml-auto text-xs text-red-400/70">{formatTimeLeft(arbiterTimeLeft)} left</span>
               )}
             </div>
-            <p className="text-xs text-white/40 mb-3">Arbitrator has been notified. Chat with them to resolve.</p>
+            <p className="text-xs text-white/40 mb-3">{t("deal.dispute_active_hint")}</p>
             <div className="flex gap-2">
               {parsed.arbiter !== ZERO_ADDR && (
                 <Link href={`/chat/${parsed.arbiter}`}>
                   <Button size="sm" variant="outline" className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs">
-                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> Chat with Arbitrator
+                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("arbiter.chat_client_btn")}
                   </Button>
                 </Link>
               )}
               {adminAddress && adminAddress !== ZERO_ADDR && (
                 <Link href={`/chat/${adminAddress.toLowerCase()}`}>
                   <Button size="sm" variant="ghost" className="text-white/40 text-xs">
-                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> Chat with Admin
+                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("arbiter.deal_chat_btn")}
                   </Button>
                 </Link>
               )}
@@ -513,7 +516,7 @@ export default function DealDetailPage() {
           <div className="rounded-xl border border-green-500/20 bg-green-500/5 px-5 py-3 flex items-center gap-3">
             <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-green-400">Work delivered</p>
+              <p className="text-sm font-medium text-green-400">{t("deal.work_delivered")}</p>
               <p className="text-xs text-white/35">Delivered {formatTimestamp(parsed.markedDoneAt)}</p>
             </div>
           </div>
@@ -521,7 +524,7 @@ export default function DealDetailPage() {
 
         {/* ── Timeline ────────────────────────────────────────────────────────── */}
         <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4">
-          <p className="text-xs text-white/35 mb-3">Timeline</p>
+          <p className="text-xs text-white/35 mb-3">{t("deal.timeline_title")}</p>
           <div className="relative pl-4">
             {[
               { label: 'Created',    ts: null,                  done: true },
@@ -560,16 +563,14 @@ export default function DealDetailPage() {
           <div className="bg-zinc-900 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className="w-4 h-4 text-red-400" />
-              <h2 className="text-sm font-semibold text-white">Raise Dispute</h2>
+              <h2 className="text-sm font-semibold text-white">{t("deal.dispute_btn")}</h2>
             </div>
-            <p className="text-xs text-white/40 mb-4">
-              Describe the issue clearly — the arbiter will read this before making a decision.
-            </p>
+            <p className="text-xs text-white/40 mb-4">{t("deal.dispute_reason_hint")}</p>
             <textarea
               autoFocus
               value={disputeReason}
               onChange={e => setDisputeReason(e.target.value)}
-              placeholder="e.g. Executor stopped responding after receiving the brief. Deadline passed with no deliverable submitted."
+              placeholder={t("deal.dispute_reason_placeholder")}
               rows={4}
               maxLength={2000}
               className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-red-500/40 resize-none"
@@ -579,11 +580,11 @@ export default function DealDetailPage() {
             </div>
             <div className="flex gap-3 justify-end">
               <Button size="sm" variant="ghost" onClick={() => { setDisputeModal(false); setDisputeReason(''); }}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button size="sm" variant="destructive" onClick={handleRaiseDispute} disabled={busy || !disputeReason.trim()}>
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
-                Confirm Dispute
+                {t("deal.confirm_dispute_btn")}
               </Button>
             </div>
           </div>
