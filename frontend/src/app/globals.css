@@ -9,13 +9,26 @@
 
 /* ── Russian locale ─────────────────────────────────────────────────────────── */
 :lang(ru) body {
-  font-family: var(--font-unbounded), var(--font-manrope), system-ui, sans-serif;
+  /* Manrope for body — readable Cyrillic at small sizes */
+  font-family: var(--font-manrope), system-ui, sans-serif;
+}
+/* Unbounded for headings & brand elements — overrides font-syne Tailwind class */
+:lang(ru) .font-syne,
+:lang(ru) [class*="font-syne"],
+:lang(ru) h1,
+:lang(ru) h2,
+:lang(ru) h3 {
+  font-family: var(--font-unbounded), system-ui, sans-serif;
 }
 :lang(ru) .font-mono,
 :lang(ru) code,
 :lang(ru) [class*="font-mono"],
 :lang(ru) [class*="space-mono"] {
   font-family: var(--font-jetbrains), monospace;
+}
+/* Hero headline in Russian — Unbounded is wider than Syne, scale down slightly */
+:lang(ru) {
+  --hero-fs: clamp(2rem, 8vw, 6.5rem);
 }
 
 /* ── Thai locale ─────────────────────────────────────────────────────────────── */

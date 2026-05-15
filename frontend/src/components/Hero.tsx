@@ -80,7 +80,7 @@ export default function Hero() {
         {/* Headline */}
         <h1
           className="font-syne font-black leading-[0.88] tracking-tight"
-          style={{ fontSize: "clamp(2.4rem, 9vw, 6.5rem)" }}
+          style={{ fontSize: "var(--hero-fs, clamp(2.4rem, 9vw, 6.5rem))" }}
           ref={headlineRef}
         >
           <span className="block">{t("hero.wordmark1")}</span>
