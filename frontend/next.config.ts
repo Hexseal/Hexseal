@@ -3,6 +3,14 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
 
+  // pino (WalletConnect dep) dynamically requires pino-pretty — don't bundle it
+  serverExternalPackages: ['pino', 'pino-pretty'],
+
+  // @typescript-eslint version mismatch on Vercel's env — don't block prod builds
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+
   images: {
     domains: ['ipfs.io', 'gateway.pinata.cloud'],
     formats: ['image/avif', 'image/webp'],
