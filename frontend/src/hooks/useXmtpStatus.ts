@@ -10,7 +10,7 @@
  * Registration is persisted in localStorage so the sign request only appears once.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWalletClient } from 'wagmi';
 import { initXmtpClient } from '@/lib/xmtp';
 
@@ -22,6 +22,7 @@ export function useXmtpStatus() {
   const [isEnabled,  setIsEnabled]  = useState(false);
   const [isEnabling, setIsEnabling] = useState(false);
   const [error,      setError]      = useState<string | null>(null);
+  const lockRef = useRef(false); // prevents re-entry across React re-renders
 
   // On wallet connect, check if already registered
   useEffect(() => {
@@ -36,6 +37,8 @@ export function useXmtpStatus() {
       setError('Connect your wallet first');
       return;
     }
+    if (lockRef.current) return;
+    lockRef.current = true;
     setIsEnabling(true);
     setError(null);
     try {
@@ -44,11 +47,16 @@ export function useXmtpStatus() {
       setIsEnabled(true);
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : 'Failed to enable messaging';
-      const isLimit = raw.includes('10/10') || raw.includes('registered 10');
-      setError(isLimit
-        ? 'Too many active XMTP sessions (10/10). Visit xmtp.chat with this wallet → Settings → Revoke installations, then retry.'
-        : raw);
+      const isLimit    = raw.includes('10/10') || raw.includes('registered 10');
+      const isPending  = raw.toLowerCase().includes('already pending') ||
+                         raw.toLowerCase().includes('pending for origin');
+      setError(
+        isPending ? 'Your wallet has a pending signature request. Open your wallet app, approve or reject it, then tap Enable again.' :
+        isLimit   ? 'Too many active XMTP sessions (10/10). Visit xmtp.chat → Settings → Revoke installations, then retry.' :
+        raw,
+      );
     } finally {
+      lockRef.current = false;
       setIsEnabling(false);
     }
   }, [walletClient]);

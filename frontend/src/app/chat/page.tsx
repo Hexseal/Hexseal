@@ -315,8 +315,8 @@ function ChatHubPageInner() {
 
   if (!xmtpEnabled) {
     return (
-      <div className="min-h-screen bg-background pt-20">
-        <div className="container mx-auto px-4 max-w-lg">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
+        <div className="w-full max-w-md">
           <h1 className="text-xl font-bold font-syne mb-4">Messages</h1>
           <MessagingSetup />
         </div>
