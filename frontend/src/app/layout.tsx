@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Space_Mono, Syne, Noto_Sans_Thai } from "next/font/google";
+import { Space_Grotesk, Space_Mono, Syne, Noto_Sans_Thai, Manrope } from "next/font/google";
 import "./globals.css";
 import "@/styles/shadcn.css";
 import "@/styles/ui-theme.css";
@@ -9,8 +9,15 @@ import ClientLayout from "./client-layout";
 
 const inter = Space_Grotesk({
   variable: "--font-inter",
-  subsets: ["latin", "latin-ext", "cyrillic"],
+  subsets: ["latin", "latin-ext"],
   weight: ["300", "400", "500", "600", "700"],
+  display: "swap",
+});
+
+const manrope = Manrope({
+  variable: "--font-manrope",
+  subsets: ["cyrillic", "latin"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -63,7 +70,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Sig404" />
       </head>
-      <body className={`${inter.variable} ${spaceMono.variable} ${syne.variable} ${notoSansThai.variable} min-h-screen flex flex-col`}>
+      <body className={`${inter.variable} ${manrope.variable} ${spaceMono.variable} ${syne.variable} ${notoSansThai.variable} min-h-screen flex flex-col`}>
         <Providers>
           <ClientLayout>{children}</ClientLayout>
         </Providers>

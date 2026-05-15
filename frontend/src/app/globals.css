@@ -23,7 +23,7 @@ body {
   overflow-x: hidden;
   background: #000000;
   color: #fafafa;
-  font-family: var(--font-inter), system-ui, sans-serif;
+  font-family: var(--font-inter), var(--font-manrope), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
