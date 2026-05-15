@@ -1,0 +1,199 @@
+{
+  "hero": {
+    "tagline": "ฟรีแลนซ์แบบกระจายศูนย์ · เครือข่าย Base",
+    "heading1": "ไม่มีคนกลาง",
+    "heading2": "ไม่ต้องไว้วางใจใคร",
+    "subheading1": "เซ็นครั้งเดียว โค้ดดำเนินการ",
+    "subheading2": "เอสโครว์โดยไม่มีเอสโครว์",
+    "cta": "เริ่มต้น",
+    "connect_wallet": "เชื่อมต่อกระเป๋า",
+    "wordmark1": "ดีล",
+    "wordmark2": "คือ",
+    "wordmark3": "สัญญา"
+  },
+  "nav": {
+    "jobs": "งาน",
+    "services": "บริการ",
+    "arbiter": "อนุญาโตตุลาการ",
+    "board": "กระดาน",
+    "alerts": "แจ้งเตือน",
+    "dashboard": "แดชบอร์ด",
+    "messages": "ข้อความ",
+    "settings": "การตั้งค่า"
+  },
+  "board": {
+    "mobile_popup": {
+      "title": "กระดาน",
+      "jobs_label": "งาน",
+      "jobs_desc": "ดูประกาศจากลูกค้า",
+      "services_label": "บริการ",
+      "services_desc": "ดูข้อเสนอจากผู้รับงาน"
+    },
+    "jobs": {
+      "title": "กระดานงาน",
+      "connect_prompt": "เชื่อมต่อกระเป๋าเพื่อดูและสมัครงาน",
+      "post_btn": "ประกาศงาน",
+      "search_placeholder": "ค้นหาตามชื่อหรือที่อยู่…",
+      "loading_short": "กำลังโหลด…",
+      "loading_long": "กำลังโหลดงาน…",
+      "empty": "ยังไม่มีงาน",
+      "no_results": "ไม่พบงานที่ตรงกัน",
+      "post_first": "ประกาศงานแรก",
+      "yours": "(ของคุณ)",
+      "applied_tag": "สมัครแล้ว",
+      "apply_btn": "สมัคร",
+      "terms": "ข้อกำหนดและเงื่อนไข",
+      "full_page": "หน้าเต็ม",
+      "applicants_tab": "ผู้สมัคร",
+      "chat_tab": "แชท",
+      "accept_btn": "ยอมรับ",
+      "no_applicants": "ยังไม่มีผู้สมัคร",
+      "applied_waiting": "สมัครแล้ว! รอการยืนยันจากลูกค้า",
+      "accepted_deal": "ผู้รับงานได้รับการยอมรับ! สร้างดีลแล้ว",
+      "accepting": "กำลังยอมรับผู้สมัคร…"
+    },
+    "services": {
+      "title": "บริการ",
+      "request_btn": "ขอรับบริการ",
+      "search_placeholder": "ค้นหาตามชื่อหรือที่อยู่…",
+      "loading": "กำลังโหลดบริการ…",
+      "empty": "ยังไม่มีบริการ",
+      "no_results": "ไม่พบบริการที่ตรงกัน",
+      "connect_prompt": "เชื่อมต่อกระเป๋าเพื่อดูบริการ",
+      "amount_label": "จำนวน (USDC)",
+      "request_confirm": "ยืนยันการขอรับบริการ",
+      "requesting": "กำลังส่งคำขอ…"
+    },
+    "post_service": {
+      "title": "ประกาศบริการ",
+      "section_details": "รายละเอียดบริการ",
+      "field_title": "ชื่อ",
+      "field_description": "คำอธิบาย",
+      "field_price": "ราคา (USDC)",
+      "field_delivery": "ระยะเวลา (วัน)",
+      "field_category": "หมวดหมู่",
+      "fee_label": "ค่าธรรมเนียม PPP (ไม่คืนเงิน)",
+      "sign_label": "คุณเซ็นสำหรับ",
+      "submit_btn": "ประกาศบริการ",
+      "success": "เผยแพร่บริการแล้ว!",
+      "categories": {
+        "design": "การออกแบบ",
+        "development": "การพัฒนา",
+        "marketing": "การตลาด",
+        "content": "เนื้อหา",
+        "other": "อื่นๆ"
+      }
+    },
+    "post_job": {
+      "title": "ประกาศงาน",
+      "field_title": "ชื่อ",
+      "field_description": "คำอธิบาย",
+      "field_budget": "งบประมาณ (USDC)",
+      "field_deadline": "กำหนดส่ง (วัน)",
+      "field_region": "ภูมิภาค",
+      "fee_label": "ค่าธรรมเนียมการประกาศ (ไม่คืนเงิน)",
+      "submit_btn": "ประกาศงาน",
+      "success": "ประกาศงานแล้ว!"
+    }
+  },
+  "wallet": {
+    "connect": "เชื่อมต่อกระเป๋า",
+    "my_profile": "โปรไฟล์ของฉัน",
+    "dashboard": "แดชบอร์ด",
+    "messages": "ข้อความ",
+    "settings": "การตั้งค่า",
+    "arbiter_panel": "แผงอนุญาโตตุลาการ",
+    "admin_panel": "แผงผู้ดูแล",
+    "how_it_works": "วิธีใช้งาน",
+    "disconnect": "ยกเลิกการเชื่อมต่อ",
+    "copied": "คัดลอกที่อยู่แล้ว!",
+    "copy_failed": "คัดลอกล้มเหลว"
+  },
+  "dashboard": {
+    "title": "แดชบอร์ด",
+    "connect_prompt": "เชื่อมต่อกระเป๋าเพื่อดูแดชบอร์ด",
+    "tabs": {
+      "active": "กำลังดำเนินการ",
+      "completed": "เสร็จสิ้น",
+      "disputed": "มีข้อพิพาท"
+    },
+    "deal_card": {
+      "as_client": "ในฐานะลูกค้า",
+      "as_executor": "ในฐานะผู้รับงาน",
+      "view_deal": "ดูดีล",
+      "status_active": "กำลังดำเนินการ",
+      "status_completed": "เสร็จสิ้น",
+      "status_disputed": "มีข้อพิพาท"
+    },
+    "empty": "ยังไม่มีดีล",
+    "loading": "กำลังโหลดดีล…"
+  },
+  "profile": {
+    "edit_title": "แก้ไขโปรไฟล์",
+    "field_username": "ชื่อผู้ใช้",
+    "field_bio": "แนะนำตัว",
+    "field_avatar": "รูปโปรไฟล์",
+    "save_btn": "บันทึก",
+    "saving": "กำลังบันทึก…",
+    "saved": "บันทึกโปรไฟล์แล้ว!"
+  },
+  "deal": {
+    "fund": "โอนเงิน",
+    "activate": "เปิดใช้งาน",
+    "mark_done": "ทำเครื่องหมายว่าเสร็จ",
+    "release": "ปล่อยเงิน",
+    "raise_dispute": "ยื่นข้อพิพาท",
+    "resolve_dispute": "แก้ไข",
+    "loading": "กำลังโหลดดีล…",
+    "status": {
+      "created": "สร้างแล้ว",
+      "funded": "โอนเงินแล้ว",
+      "active": "กำลังดำเนินการ",
+      "done": "เสร็จแล้ว",
+      "completed": "เสร็จสิ้น",
+      "disputed": "มีข้อพิพาท",
+      "cancelled": "ยกเลิก"
+    }
+  },
+  "common": {
+    "loading": "กำลังโหลด…",
+    "error": "เกิดข้อผิดพลาด",
+    "retry": "ลองอีกครั้ง",
+    "cancel": "ยกเลิก",
+    "confirm": "ยืนยัน",
+    "close": "ปิด",
+    "back": "กลับ",
+    "save": "บันทึก",
+    "copy": "คัดลอก",
+    "share": "แชร์",
+    "view": "ดู",
+    "edit": "แก้ไข",
+    "delete": "ลบ",
+    "search": "ค้นหา",
+    "filter": "กรอง",
+    "all": "ทั้งหมด",
+    "none": "ไม่มี",
+    "yes": "ใช่",
+    "no": "ไม่",
+    "connect_wallet": "เชื่อมต่อกระเป๋าของคุณ"
+  },
+  "notifications": {
+    "title": "การแจ้งเตือน",
+    "empty": "ยังไม่มีการแจ้งเตือน",
+    "mark_all_read": "ทำเครื่องหมายว่าอ่านทั้งหมด"
+  },
+  "chat": {
+    "placeholder": "พิมพ์ข้อความ…",
+    "send": "ส่ง",
+    "loading": "กำลังโหลดข้อความ…",
+    "empty": "ยังไม่มีข้อความ ทักทายกันเลย!"
+  },
+  "arbiter": {
+    "title": "แผงอนุญาโตตุลาการ",
+    "register": "ลงทะเบียนเป็นอนุญาโตตุลาการ",
+    "active_disputes": "ข้อพิพาทที่ดำเนินอยู่",
+    "no_disputes": "ไม่มีข้อพิพาทที่ต้องแก้ไข",
+    "resolve_btn": "แก้ไขข้อพิพาท",
+    "loading": "กำลังโหลดข้อพิพาท…"
+  }
+}

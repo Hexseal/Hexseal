@@ -1,0 +1,199 @@
+{
+  "hero": {
+    "tagline": "Freelance Descentralizado · Red Base",
+    "heading1": "Sin intermediarios.",
+    "heading2": "Sin confianza requerida.",
+    "subheading1": "Firma una vez. El código ejecuta.",
+    "subheading2": "Depósito sin depósito.",
+    "cta": "Comenzar",
+    "connect_wallet": "Conectar Billetera",
+    "wordmark1": "EL TRATO",
+    "wordmark2": "ES EL",
+    "wordmark3": "CONTRATO"
+  },
+  "nav": {
+    "jobs": "Trabajos",
+    "services": "Servicios",
+    "arbiter": "Árbitro",
+    "board": "Panel",
+    "alerts": "Alertas",
+    "dashboard": "Panel",
+    "messages": "Mensajes",
+    "settings": "Ajustes"
+  },
+  "board": {
+    "mobile_popup": {
+      "title": "Panel",
+      "jobs_label": "Trabajos",
+      "jobs_desc": "Ver publicaciones de clientes",
+      "services_label": "Servicios",
+      "services_desc": "Ver ofertas de ejecutores"
+    },
+    "jobs": {
+      "title": "Panel de Trabajos",
+      "connect_prompt": "Conecta tu billetera para explorar y postularte a trabajos",
+      "post_btn": "Publicar Trabajo",
+      "search_placeholder": "Buscar por título o dirección…",
+      "loading_short": "Cargando…",
+      "loading_long": "Cargando trabajos…",
+      "empty": "No hay trabajos aún",
+      "no_results": "No se encontraron trabajos",
+      "post_first": "Publicar Primer Trabajo",
+      "yours": "(tuyo)",
+      "applied_tag": "postulado",
+      "apply_btn": "Postularse",
+      "terms": "Términos y Condiciones",
+      "full_page": "Página completa",
+      "applicants_tab": "Postulantes",
+      "chat_tab": "Chat",
+      "accept_btn": "Aceptar",
+      "no_applicants": "Sin postulantes aún.",
+      "applied_waiting": "¡Postulado! Esperando que el cliente acepte.",
+      "accepted_deal": "¡Ejecutor aceptado! Trato creado.",
+      "accepting": "Aceptando postulante…"
+    },
+    "services": {
+      "title": "Servicios",
+      "request_btn": "Solicitar Servicio",
+      "search_placeholder": "Buscar por título o dirección…",
+      "loading": "Cargando servicios…",
+      "empty": "No hay servicios aún",
+      "no_results": "No se encontraron servicios",
+      "connect_prompt": "Conecta tu billetera para explorar servicios",
+      "amount_label": "Monto (USDC)",
+      "request_confirm": "Confirmar Solicitud",
+      "requesting": "Enviando solicitud…"
+    },
+    "post_service": {
+      "title": "Publicar un Servicio",
+      "section_details": "Detalles del Servicio",
+      "field_title": "Título",
+      "field_description": "Descripción",
+      "field_price": "Precio (USDC)",
+      "field_delivery": "Entrega (días)",
+      "field_category": "Categoría",
+      "fee_label": "Tarifa PPP (no reembolsable)",
+      "sign_label": "Firmas por",
+      "submit_btn": "Publicar Servicio",
+      "success": "¡Servicio Publicado!",
+      "categories": {
+        "design": "Diseño",
+        "development": "Desarrollo",
+        "marketing": "Marketing",
+        "content": "Contenido",
+        "other": "Otro"
+      }
+    },
+    "post_job": {
+      "title": "Publicar un Trabajo",
+      "field_title": "Título",
+      "field_description": "Descripción",
+      "field_budget": "Presupuesto (USDC)",
+      "field_deadline": "Plazo (días)",
+      "field_region": "Región",
+      "fee_label": "Tarifa de publicación (no reembolsable)",
+      "submit_btn": "Publicar Trabajo",
+      "success": "¡Trabajo Publicado!"
+    }
+  },
+  "wallet": {
+    "connect": "Conectar Billetera",
+    "my_profile": "Mi Perfil",
+    "dashboard": "Panel",
+    "messages": "Mensajes",
+    "settings": "Ajustes",
+    "arbiter_panel": "Panel de Árbitro",
+    "admin_panel": "Panel de Admin",
+    "how_it_works": "Cómo funciona",
+    "disconnect": "Desconectar",
+    "copied": "¡Dirección copiada!",
+    "copy_failed": "Error al copiar"
+  },
+  "dashboard": {
+    "title": "Panel",
+    "connect_prompt": "Conecta tu billetera para ver tu panel",
+    "tabs": {
+      "active": "Activos",
+      "completed": "Completados",
+      "disputed": "Disputados"
+    },
+    "deal_card": {
+      "as_client": "como cliente",
+      "as_executor": "como ejecutor",
+      "view_deal": "Ver Trato",
+      "status_active": "Activo",
+      "status_completed": "Completado",
+      "status_disputed": "Disputado"
+    },
+    "empty": "No hay tratos aún.",
+    "loading": "Cargando tratos…"
+  },
+  "profile": {
+    "edit_title": "Editar Perfil",
+    "field_username": "Nombre de usuario",
+    "field_bio": "Biografía",
+    "field_avatar": "Avatar",
+    "save_btn": "Guardar",
+    "saving": "Guardando…",
+    "saved": "¡Perfil guardado!"
+  },
+  "deal": {
+    "fund": "Fondear",
+    "activate": "Activar",
+    "mark_done": "Marcar como Hecho",
+    "release": "Liberar",
+    "raise_dispute": "Iniciar Disputa",
+    "resolve_dispute": "Resolver",
+    "loading": "Cargando trato…",
+    "status": {
+      "created": "Creado",
+      "funded": "Fondeado",
+      "active": "Activo",
+      "done": "Hecho",
+      "completed": "Completado",
+      "disputed": "Disputado",
+      "cancelled": "Cancelado"
+    }
+  },
+  "common": {
+    "loading": "Cargando…",
+    "error": "Algo salió mal",
+    "retry": "Reintentar",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "close": "Cerrar",
+    "back": "Volver",
+    "save": "Guardar",
+    "copy": "Copiar",
+    "share": "Compartir",
+    "view": "Ver",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "search": "Buscar",
+    "filter": "Filtrar",
+    "all": "Todos",
+    "none": "Ninguno",
+    "yes": "Sí",
+    "no": "No",
+    "connect_wallet": "Conecta tu billetera"
+  },
+  "notifications": {
+    "title": "Notificaciones",
+    "empty": "Sin notificaciones aún",
+    "mark_all_read": "Marcar todo como leído"
+  },
+  "chat": {
+    "placeholder": "Escribe un mensaje…",
+    "send": "Enviar",
+    "loading": "Cargando mensajes…",
+    "empty": "Sin mensajes aún. ¡Saluda!"
+  },
+  "arbiter": {
+    "title": "Panel de Árbitro",
+    "register": "Registrarse como Árbitro",
+    "active_disputes": "Disputas Activas",
+    "no_disputes": "Sin disputas para resolver",
+    "resolve_btn": "Resolver Disputa",
+    "loading": "Cargando disputas…"
+  }
+}

@@ -1,0 +1,199 @@
+{
+  "hero": {
+    "tagline": "Dezentrales Freelancing · Base Netzwerk",
+    "heading1": "Keine Mittelsmänner.",
+    "heading2": "Kein Vertrauen nötig.",
+    "subheading1": "Einmal signieren. Code setzt durch.",
+    "subheading2": "Treuhand ohne Treuhand.",
+    "cta": "Loslegen",
+    "connect_wallet": "Wallet verbinden",
+    "wordmark1": "DER DEAL",
+    "wordmark2": "IST DER",
+    "wordmark3": "VERTRAG"
+  },
+  "nav": {
+    "jobs": "Jobs",
+    "services": "Leistungen",
+    "arbiter": "Schlichter",
+    "board": "Board",
+    "alerts": "Benachrichtigungen",
+    "dashboard": "Dashboard",
+    "messages": "Nachrichten",
+    "settings": "Einstellungen"
+  },
+  "board": {
+    "mobile_popup": {
+      "title": "Board",
+      "jobs_label": "Jobs",
+      "jobs_desc": "Kundenausschreibungen ansehen",
+      "services_label": "Leistungen",
+      "services_desc": "Angebote von Ausführenden ansehen"
+    },
+    "jobs": {
+      "title": "Job Board",
+      "connect_prompt": "Verbinde deine Wallet, um Jobs zu durchsuchen und dich zu bewerben",
+      "post_btn": "Job veröffentlichen",
+      "search_placeholder": "Nach Titel oder Adresse suchen…",
+      "loading_short": "Laden…",
+      "loading_long": "Jobs werden geladen…",
+      "empty": "Noch keine Jobs vorhanden",
+      "no_results": "Keine Jobs gefunden",
+      "post_first": "Ersten Job veröffentlichen",
+      "yours": "(deiner)",
+      "applied_tag": "beworben",
+      "apply_btn": "Bewerben",
+      "terms": "Nutzungsbedingungen",
+      "full_page": "Vollansicht",
+      "applicants_tab": "Bewerber",
+      "chat_tab": "Chat",
+      "accept_btn": "Annehmen",
+      "no_applicants": "Noch keine Bewerber.",
+      "applied_waiting": "Beworben! Warte auf Bestätigung des Kunden.",
+      "accepted_deal": "Ausführender angenommen! Deal erstellt.",
+      "accepting": "Bewerber wird angenommen…"
+    },
+    "services": {
+      "title": "Leistungen",
+      "request_btn": "Leistung anfragen",
+      "search_placeholder": "Nach Titel oder Adresse suchen…",
+      "loading": "Leistungen werden geladen…",
+      "empty": "Noch keine Leistungen vorhanden",
+      "no_results": "Keine Leistungen gefunden",
+      "connect_prompt": "Verbinde deine Wallet, um Leistungen zu durchsuchen",
+      "amount_label": "Betrag (USDC)",
+      "request_confirm": "Anfrage bestätigen",
+      "requesting": "Anfrage wird gesendet…"
+    },
+    "post_service": {
+      "title": "Leistung veröffentlichen",
+      "section_details": "Leistungsdetails",
+      "field_title": "Titel",
+      "field_description": "Beschreibung",
+      "field_price": "Preis (USDC)",
+      "field_delivery": "Lieferzeit (Tage)",
+      "field_category": "Kategorie",
+      "fee_label": "PPP-Gebühr (nicht erstattungsfähig)",
+      "sign_label": "Du signierst für",
+      "submit_btn": "Leistung veröffentlichen",
+      "success": "Leistung veröffentlicht!",
+      "categories": {
+        "design": "Design",
+        "development": "Entwicklung",
+        "marketing": "Marketing",
+        "content": "Inhalte",
+        "other": "Sonstiges"
+      }
+    },
+    "post_job": {
+      "title": "Job veröffentlichen",
+      "field_title": "Titel",
+      "field_description": "Beschreibung",
+      "field_budget": "Budget (USDC)",
+      "field_deadline": "Frist (Tage)",
+      "field_region": "Region",
+      "fee_label": "Veröffentlichungsgebühr (nicht erstattungsfähig)",
+      "submit_btn": "Job veröffentlichen",
+      "success": "Job veröffentlicht!"
+    }
+  },
+  "wallet": {
+    "connect": "Wallet verbinden",
+    "my_profile": "Mein Profil",
+    "dashboard": "Dashboard",
+    "messages": "Nachrichten",
+    "settings": "Einstellungen",
+    "arbiter_panel": "Schlichter-Panel",
+    "admin_panel": "Admin-Panel",
+    "how_it_works": "So funktioniert es",
+    "disconnect": "Trennen",
+    "copied": "Adresse kopiert!",
+    "copy_failed": "Kopieren fehlgeschlagen"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "connect_prompt": "Verbinde deine Wallet, um dein Dashboard zu sehen",
+    "tabs": {
+      "active": "Aktiv",
+      "completed": "Abgeschlossen",
+      "disputed": "Strittig"
+    },
+    "deal_card": {
+      "as_client": "als Kunde",
+      "as_executor": "als Ausführender",
+      "view_deal": "Deal ansehen",
+      "status_active": "Aktiv",
+      "status_completed": "Abgeschlossen",
+      "status_disputed": "Strittig"
+    },
+    "empty": "Noch keine Deals vorhanden.",
+    "loading": "Deals werden geladen…"
+  },
+  "profile": {
+    "edit_title": "Profil bearbeiten",
+    "field_username": "Benutzername",
+    "field_bio": "Über mich",
+    "field_avatar": "Avatar",
+    "save_btn": "Speichern",
+    "saving": "Speichern…",
+    "saved": "Profil gespeichert!"
+  },
+  "deal": {
+    "fund": "Einzahlen",
+    "activate": "Aktivieren",
+    "mark_done": "Als erledigt markieren",
+    "release": "Freigeben",
+    "raise_dispute": "Streit einleiten",
+    "resolve_dispute": "Lösen",
+    "loading": "Deal wird geladen…",
+    "status": {
+      "created": "Erstellt",
+      "funded": "Finanziert",
+      "active": "Aktiv",
+      "done": "Erledigt",
+      "completed": "Abgeschlossen",
+      "disputed": "Strittig",
+      "cancelled": "Abgebrochen"
+    }
+  },
+  "common": {
+    "loading": "Laden…",
+    "error": "Etwas ist schiefgelaufen",
+    "retry": "Erneut versuchen",
+    "cancel": "Abbrechen",
+    "confirm": "Bestätigen",
+    "close": "Schließen",
+    "back": "Zurück",
+    "save": "Speichern",
+    "copy": "Kopieren",
+    "share": "Teilen",
+    "view": "Ansehen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "search": "Suchen",
+    "filter": "Filtern",
+    "all": "Alle",
+    "none": "Keine",
+    "yes": "Ja",
+    "no": "Nein",
+    "connect_wallet": "Verbinde deine Wallet"
+  },
+  "notifications": {
+    "title": "Benachrichtigungen",
+    "empty": "Noch keine Benachrichtigungen",
+    "mark_all_read": "Alle als gelesen markieren"
+  },
+  "chat": {
+    "placeholder": "Nachricht eingeben…",
+    "send": "Senden",
+    "loading": "Nachrichten werden geladen…",
+    "empty": "Noch keine Nachrichten. Sag Hallo!"
+  },
+  "arbiter": {
+    "title": "Schlichter-Panel",
+    "register": "Als Schlichter registrieren",
+    "active_disputes": "Aktive Streitfälle",
+    "no_disputes": "Keine Streitfälle zu lösen",
+    "resolve_btn": "Streitfall lösen",
+    "loading": "Streitfälle werden geladen…"
+  }
+}

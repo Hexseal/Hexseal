@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useTranslations } from "next-intl";
 
 // ─── Single pill button ───────────────────────────────────────────────────────
 
@@ -91,6 +92,7 @@ export default function MobileBottomNav() {
   const pathname = usePathname();
   const { unreadCount } = useNotifications();
   const [boardOpen, setBoardOpen] = useState(false);
+  const t = useTranslations();
 
   if (!isConnected) return null;
 
@@ -117,7 +119,7 @@ export default function MobileBottomNav() {
         >
           <div className="bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-2xl overflow-hidden shadow-2xl shadow-black/70">
             <div className="flex items-center justify-between px-4 pt-3 pb-2">
-              <span className="text-[11px] text-white/30 font-medium tracking-widest uppercase">Board</span>
+              <span className="text-[11px] text-white/30 font-medium tracking-widest uppercase">{t("board.mobile_popup.title")}</span>
               <button
                 onClick={() => setBoardOpen(false)}
                 className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center"
@@ -135,8 +137,8 @@ export default function MobileBottomNav() {
                 <Briefcase className="w-4 h-4" />
               </span>
               <div>
-                <p className="font-medium text-white/85">Jobs</p>
-                <p className="text-[11px] text-white/35 mt-0.5">Browse client postings</p>
+                <p className="font-medium text-white/85">{t("board.mobile_popup.jobs_label")}</p>
+                <p className="text-[11px] text-white/35 mt-0.5">{t("board.mobile_popup.jobs_desc")}</p>
               </div>
             </Link>
             <div className="h-px bg-white/[0.06] mx-3" />
@@ -149,8 +151,8 @@ export default function MobileBottomNav() {
                 <User className="w-4 h-4" />
               </span>
               <div>
-                <p className="font-medium text-white/85">Services</p>
-                <p className="text-[11px] text-white/35 mt-0.5">Browse executor offers</p>
+                <p className="font-medium text-white/85">{t("board.mobile_popup.services_label")}</p>
+                <p className="text-[11px] text-white/35 mt-0.5">{t("board.mobile_popup.services_desc")}</p>
               </div>
             </Link>
           </div>
@@ -177,27 +179,27 @@ export default function MobileBottomNav() {
           className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] px-1.5 h-[70px]"
           style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.65), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)" }}
         >
-          <PillBtn href="/dashboard" active={isActive("/dashboard")} label="Dashboard">
+          <PillBtn href="/dashboard" active={isActive("/dashboard")} label={t("nav.dashboard")}>
             <LayoutDashboard className="w-[22px] h-[22px]" />
           </PillBtn>
 
-          <PillBtn href="/chat" active={isActive("/chat")} label="Messages">
+          <PillBtn href="/chat" active={isActive("/chat")} label={t("nav.messages")}>
             <MessageCircle className="w-[22px] h-[22px]" />
           </PillBtn>
 
           <PillBtn
             active={boardActive || boardOpen}
-            label="Board"
+            label={t("nav.board")}
             onClick={() => setBoardOpen(v => !v)}
           >
             <LayoutList className="w-[22px] h-[22px]" />
           </PillBtn>
 
-          <PillBtn href="/notifications" active={isActive("/notifications")} label="Alerts" badge={unreadCount}>
+          <PillBtn href="/notifications" active={isActive("/notifications")} label={t("nav.alerts")} badge={unreadCount}>
             <Bell className="w-[22px] h-[22px]" />
           </PillBtn>
 
-          <PillBtn href="/profile/edit" active={isActive("/profile/edit")} label="Settings">
+          <PillBtn href="/profile/edit" active={isActive("/profile/edit")} label={t("nav.settings")}>
             <Settings className="w-[22px] h-[22px]" />
           </PillBtn>
         </div>

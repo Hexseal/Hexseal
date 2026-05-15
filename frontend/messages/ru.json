@@ -1,0 +1,199 @@
+{
+  "hero": {
+    "tagline": "Децентрализованный фриланс · Сеть Base",
+    "heading1": "Без посредников.",
+    "heading2": "Без доверия.",
+    "subheading1": "Подписал однажды. Код исполняет.",
+    "subheading2": "Эскроу без эскроу.",
+    "cta": "Начать",
+    "connect_wallet": "Подключить кошелёк",
+    "wordmark1": "СДЕЛКА",
+    "wordmark2": "ЭТО И ЕСТЬ",
+    "wordmark3": "КОНТРАКТ"
+  },
+  "nav": {
+    "jobs": "Работы",
+    "services": "Услуги",
+    "arbiter": "Арбитр",
+    "board": "Биржа",
+    "alerts": "Уведомления",
+    "dashboard": "Кабинет",
+    "messages": "Сообщения",
+    "settings": "Настройки"
+  },
+  "board": {
+    "mobile_popup": {
+      "title": "Биржа",
+      "jobs_label": "Работы",
+      "jobs_desc": "Смотреть заказы клиентов",
+      "services_label": "Услуги",
+      "services_desc": "Смотреть офферы исполнителей"
+    },
+    "jobs": {
+      "title": "Доска заказов",
+      "connect_prompt": "Подключите кошелёк, чтобы просматривать и откликаться на заказы",
+      "post_btn": "Разместить заказ",
+      "search_placeholder": "Поиск по названию или адресу…",
+      "loading_short": "Загрузка…",
+      "loading_long": "Загрузка заказов…",
+      "empty": "Заказов пока нет",
+      "no_results": "Ничего не найдено",
+      "post_first": "Разместить первый заказ",
+      "yours": "(ваш)",
+      "applied_tag": "откликнулся",
+      "apply_btn": "Откликнуться",
+      "terms": "Условия использования",
+      "full_page": "Открыть",
+      "applicants_tab": "Отклики",
+      "chat_tab": "Чат",
+      "accept_btn": "Принять",
+      "no_applicants": "Откликов пока нет.",
+      "applied_waiting": "Отклик отправлен! Ожидайте подтверждения клиента.",
+      "accepted_deal": "Исполнитель принят! Сделка создана.",
+      "accepting": "Принятие отклика…"
+    },
+    "services": {
+      "title": "Услуги",
+      "request_btn": "Заказать услугу",
+      "search_placeholder": "Поиск по названию или адресу…",
+      "loading": "Загрузка услуг…",
+      "empty": "Услуг пока нет",
+      "no_results": "Ничего не найдено",
+      "connect_prompt": "Подключите кошелёк, чтобы просматривать услуги",
+      "amount_label": "Сумма (USDC)",
+      "request_confirm": "Подтвердить заказ",
+      "requesting": "Отправка заказа…"
+    },
+    "post_service": {
+      "title": "Разместить услугу",
+      "section_details": "Детали услуги",
+      "field_title": "Название",
+      "field_description": "Описание",
+      "field_price": "Цена (USDC)",
+      "field_delivery": "Срок (дней)",
+      "field_category": "Категория",
+      "fee_label": "Комиссия PPP (невозвратная)",
+      "sign_label": "Вы подписываете",
+      "submit_btn": "Разместить услугу",
+      "success": "Услуга опубликована!",
+      "categories": {
+        "design": "Дизайн",
+        "development": "Разработка",
+        "marketing": "Маркетинг",
+        "content": "Контент",
+        "other": "Другое"
+      }
+    },
+    "post_job": {
+      "title": "Разместить заказ",
+      "field_title": "Название",
+      "field_description": "Описание",
+      "field_budget": "Бюджет (USDC)",
+      "field_deadline": "Срок (дней)",
+      "field_region": "Регион",
+      "fee_label": "Комиссия за размещение (невозвратная)",
+      "submit_btn": "Разместить заказ",
+      "success": "Заказ размещён!"
+    }
+  },
+  "wallet": {
+    "connect": "Подключить кошелёк",
+    "my_profile": "Мой профиль",
+    "dashboard": "Кабинет",
+    "messages": "Сообщения",
+    "settings": "Настройки",
+    "arbiter_panel": "Панель арбитра",
+    "admin_panel": "Панель администратора",
+    "how_it_works": "Как это работает",
+    "disconnect": "Отключиться",
+    "copied": "Адрес скопирован!",
+    "copy_failed": "Не удалось скопировать"
+  },
+  "dashboard": {
+    "title": "Личный кабинет",
+    "connect_prompt": "Подключите кошелёк, чтобы открыть кабинет",
+    "tabs": {
+      "active": "Активные",
+      "completed": "Завершённые",
+      "disputed": "Спорные"
+    },
+    "deal_card": {
+      "as_client": "как клиент",
+      "as_executor": "как исполнитель",
+      "view_deal": "Открыть сделку",
+      "status_active": "Активна",
+      "status_completed": "Завершена",
+      "status_disputed": "Спор"
+    },
+    "empty": "Сделок пока нет.",
+    "loading": "Загрузка сделок…"
+  },
+  "profile": {
+    "edit_title": "Редактировать профиль",
+    "field_username": "Имя пользователя",
+    "field_bio": "О себе",
+    "field_avatar": "Аватар",
+    "save_btn": "Сохранить",
+    "saving": "Сохранение…",
+    "saved": "Профиль сохранён!"
+  },
+  "deal": {
+    "fund": "Пополнить",
+    "activate": "Активировать",
+    "mark_done": "Отметить выполненной",
+    "release": "Выплатить",
+    "raise_dispute": "Открыть спор",
+    "resolve_dispute": "Разрешить",
+    "loading": "Загрузка сделки…",
+    "status": {
+      "created": "Создана",
+      "funded": "Пополнена",
+      "active": "Активна",
+      "done": "Выполнена",
+      "completed": "Завершена",
+      "disputed": "Спор",
+      "cancelled": "Отменена"
+    }
+  },
+  "common": {
+    "loading": "Загрузка…",
+    "error": "Что-то пошло не так",
+    "retry": "Повторить",
+    "cancel": "Отмена",
+    "confirm": "Подтвердить",
+    "close": "Закрыть",
+    "back": "Назад",
+    "save": "Сохранить",
+    "copy": "Копировать",
+    "share": "Поделиться",
+    "view": "Смотреть",
+    "edit": "Изменить",
+    "delete": "Удалить",
+    "search": "Поиск",
+    "filter": "Фильтр",
+    "all": "Все",
+    "none": "Нет",
+    "yes": "Да",
+    "no": "Нет",
+    "connect_wallet": "Подключите кошелёк"
+  },
+  "notifications": {
+    "title": "Уведомления",
+    "empty": "Уведомлений пока нет",
+    "mark_all_read": "Отметить всё прочитанным"
+  },
+  "chat": {
+    "placeholder": "Введите сообщение…",
+    "send": "Отправить",
+    "loading": "Загрузка сообщений…",
+    "empty": "Сообщений пока нет. Поздоровайтесь!"
+  },
+  "arbiter": {
+    "title": "Панель арбитра",
+    "register": "Зарегистрироваться как арбитр",
+    "active_disputes": "Активные споры",
+    "no_disputes": "Споров нет",
+    "resolve_btn": "Разрешить спор",
+    "loading": "Загрузка споров…"
+  }
+}

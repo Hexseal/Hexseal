@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, Shield, ShieldCheck, HelpCircle } from "lucide-react";
 import { toast } from "react-hot-toast";
+import { useTranslations } from "next-intl";
 
 function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -31,6 +32,7 @@ interface Props {
 }
 
 export default function WalletMenu({ open, onOpenChange, hideNavItems = false }: Props) {
+  const t = useTranslations();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
@@ -104,10 +106,10 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
     try {
       await navigator.clipboard.writeText(address);
       setCopied(true);
-      toast.success("Address copied!");
+      toast.success(t("wallet.copied"));
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Failed to copy");
+      toast.error(t("wallet.copy_failed"));
     }
   };
 
@@ -123,7 +125,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
         disabled={!mounted}
         className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 disabled:opacity-0"
       >
-        Connect Wallet
+        {t("wallet.connect")}
       </button>
     );
   }
@@ -181,25 +183,25 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
             <DropdownMenuItem asChild>
               <Link href={`/profile/${address}`} className="flex items-center gap-2.5 cursor-pointer">
                 <User className="w-3.5 h-3.5 text-white/40" />
-                My Profile
+                {t("wallet.my_profile")}
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href="/dashboard" className="flex items-center gap-2.5 cursor-pointer">
                 <LayoutDashboard className="w-3.5 h-3.5 text-white/40" />
-                Dashboard
+                {t("wallet.dashboard")}
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href="/chat" className="flex items-center gap-2.5 cursor-pointer">
                 <MessageCircle className="w-3.5 h-3.5 text-white/40" />
-                Messages
+                {t("wallet.messages")}
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href="/profile/edit" className="flex items-center gap-2.5 cursor-pointer">
                 <Settings className="w-3.5 h-3.5 text-white/40" />
-                Settings
+                {t("wallet.settings")}
               </Link>
             </DropdownMenuItem>
           </div>
@@ -211,7 +213,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
             <DropdownMenuItem asChild>
               <Link href={`/profile/${address}`} className="flex items-center gap-2.5 cursor-pointer">
                 <User className="w-3.5 h-3.5 text-white/40" />
-                My Profile
+                {t("wallet.my_profile")}
               </Link>
             </DropdownMenuItem>
           </div>
@@ -226,7 +228,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
                 <DropdownMenuItem asChild>
                   <Link href="/arbiter" className="flex items-center gap-2.5 cursor-pointer text-blue-400 focus:text-blue-400">
                     <Shield className="w-3.5 h-3.5" />
-                    Arbiter Panel
+                    {t("wallet.arbiter_panel")}
                   </Link>
                 </DropdownMenuItem>
               )}
@@ -234,7 +236,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
                 <DropdownMenuItem asChild>
                   <Link href="/admin" className="flex items-center gap-2.5 cursor-pointer text-amber-400 focus:text-amber-400">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    Admin Panel
+                    {t("wallet.admin_panel")}
                   </Link>
                 </DropdownMenuItem>
               )}
@@ -250,7 +252,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
             className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
           >
             <HelpCircle className="w-3.5 h-3.5" />
-            How it works
+            {t("wallet.how_it_works")}
           </DropdownMenuItem>
         </div>
 
@@ -259,7 +261,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
         <div className="p-1">
           <DropdownMenuItem onClick={handleDisconnect} className="flex items-center gap-2.5 cursor-pointer text-destructive focus:text-destructive">
             <LogOut className="w-3.5 h-3.5" />
-            Disconnect
+            {t("wallet.disconnect")}
           </DropdownMenuItem>
         </div>
 

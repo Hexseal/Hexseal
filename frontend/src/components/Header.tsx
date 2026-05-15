@@ -12,6 +12,8 @@ import { useReadContract } from "wagmi";
 import { ARBITER_REGISTRY_ABI, CONTRACTS } from "@/config/contracts";
 import type { Abi } from "viem";
 import { cn } from "@/lib/utils";
+import { LocaleSwitcher } from "@/components/LocaleSwitcher";
+import { useTranslations } from "next-intl";
 
 function NavLink({
   href,
@@ -51,6 +53,7 @@ export default function Header() {
   const pathname = usePathname();
   const router = useRouter();
   const showBack = pathname !== "/";
+  const t = useTranslations();
 
   const { data: isArbiter } = useReadContract({
     address: CONTRACTS.diamond,
@@ -100,8 +103,9 @@ export default function Header() {
             </Link>
           </div>
 
-          {/* Right: notifications + wallet */}
+          {/* Right: locale + notifications + wallet */}
           <div className="flex items-center gap-1">
+            <LocaleSwitcher />
             {isConnected && (
               <NotificationCenter
                 open={openPanelMobile === "notifications"}
@@ -155,16 +159,16 @@ export default function Header() {
               <>
                 <NavLink href="/board" activePrefix="/board/client">
                   <Briefcase className="w-3.5 h-3.5" />
-                  Jobs
+                  {t("nav.jobs")}
                 </NavLink>
                 <NavLink href="/board/executor">
                   <User className="w-3.5 h-3.5" />
-                  Services
+                  {t("nav.services")}
                 </NavLink>
                 {isArbiter && (
                   <NavLink href="/arbiter">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    Arbiter
+                    {t("nav.arbiter")}
                   </NavLink>
                 )}
               </>
@@ -173,6 +177,7 @@ export default function Header() {
 
           {/* Right */}
           <div className="flex items-center gap-2 justify-end">
+            <LocaleSwitcher />
             {isConnected && (
               <NotificationCenter
                 open={openPanelDesktop === "notifications"}

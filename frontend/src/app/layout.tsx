@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Space_Mono, Syne } from "next/font/google";
+import { Space_Grotesk, Space_Mono, Syne, Noto_Sans_Thai } from "next/font/google";
 import "./globals.css";
 import "@/styles/shadcn.css";
 import "@/styles/ui-theme.css";
@@ -25,6 +25,13 @@ const syne = Syne({
   variable: "--font-syne",
   subsets: ["latin"],
   weight: ["400", "600", "700", "800"],
+  display: "swap",
+});
+
+const notoSansThai = Noto_Sans_Thai({
+  variable: "--font-noto-thai",
+  subsets: ["thai"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -56,7 +63,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Sig404" />
       </head>
-      <body className={`${inter.variable} ${spaceMono.variable} ${syne.variable} min-h-screen flex flex-col`}>
+      <body className={`${inter.variable} ${spaceMono.variable} ${syne.variable} ${notoSansThai.variable} min-h-screen flex flex-col`}>
         <Providers>
           <ClientLayout>{children}</ClientLayout>
         </Providers>

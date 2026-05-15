@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { pushNotif } from "@/lib/notifications";
+import { useTranslations } from "next-intl";
 
 interface RegionData { region: number; fee: bigint; label: string; }
 
@@ -70,6 +71,7 @@ type Step = "form" | "uploading" | "pending" | "success" | "error";
 
 export default function PostServicePage() {
   const { address, isConnected, chainId } = useAccount();
+  const t = useTranslations();
   const { switchChain } = useSwitchChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
@@ -178,8 +180,8 @@ export default function PostServicePage() {
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <User className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold font-syne mb-2">Post a Service</h1>
-          <p className="text-muted-foreground text-sm mb-6">Connect your wallet to publish your service</p>
+          <h1 className="text-2xl font-bold font-syne mb-2">{t("board.post_service.title")}</h1>
+          <p className="text-muted-foreground text-sm mb-6">{t("common.connect_wallet")}</p>
           <Link href="/"><Button variant="outline">Go Home</Button></Link>
         </div>
       </div>
@@ -191,7 +193,7 @@ export default function PostServicePage() {
       {/* Header */}
       <div className="border-b border-white/8 bg-white/[0.02]">
         <div className="container mx-auto px-4 py-5 max-w-2xl">
-<h1 className="text-xl font-bold font-syne">Post a Service</h1>
+<h1 className="text-xl font-bold font-syne">{t("board.post_service.title")}</h1>
           <p className="text-sm text-white/40 mt-0.5">Clients request you — you accept or decline.</p>
         </div>
       </div>
@@ -208,10 +210,10 @@ export default function PostServicePage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Service details */}
             <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4 space-y-4">
-              <h2 className="text-sm font-semibold text-white/60">Service Details</h2>
+              <h2 className="text-sm font-semibold text-white/60">{t("board.post_service.section_details")}</h2>
 
               <div className="space-y-1.5">
-                <Label htmlFor="title" className="text-sm text-white/70">Title</Label>
+                <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_service.field_title")}</Label>
                 <Input id="title" placeholder="e.g. Smart Contract Audit for DeFi Protocol" value={title}
                   onChange={e => setTitle(e.target.value)} maxLength={100}
                   className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
@@ -219,7 +221,7 @@ export default function PostServicePage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="description" className="text-sm text-white/70">Description</Label>
+                <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_service.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe your service, deliverables, tech stack, requirements…" value={description}
                   onChange={e => setDescription(e.target.value)} rows={4} maxLength={500}
                   className="bg-white/[0.03] border-white/10 placeholder:text-white/20 resize-none rounded-xl" required />
@@ -228,13 +230,13 @@ export default function PostServicePage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="price" className="text-sm text-white/70">Price (USDC)</Label>
+                  <Label htmlFor="price" className="text-sm text-white/70">{t("board.post_service.field_price")}</Label>
                   <Input id="price" type="number" step="1" min="1" placeholder="100" value={price}
                     onChange={e => setPrice(e.target.value)}
                     className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="deadline" className="text-sm text-white/70">Delivery (days)</Label>
+                  <Label htmlFor="deadline" className="text-sm text-white/70">{t("board.post_service.field_delivery")}</Label>
                   <Input id="deadline" type="number" min="1" max={MAX_DEADLINE} value={deadline}
                     onChange={e => setDeadline(e.target.value)}
                     className="bg-white/[0.03] border-white/10 rounded-xl" required />
@@ -242,7 +244,7 @@ export default function PostServicePage() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-sm text-white/70">Category</Label>
+                <Label className="text-sm text-white/70">{t("board.post_service.field_category")}</Label>
                 <div className="flex flex-wrap gap-2">
                   {CATEGORIES.map(cat => (
                     <button key={cat} type="button" onClick={() => setCategory(cat)}
@@ -251,7 +253,7 @@ export default function PostServicePage() {
                           ? (CATEGORY_BADGE[cat] ?? CATEGORY_BADGE.Other)
                           : "border-white/8 text-white/40 hover:text-white/60 hover:border-white/15"
                       }`}
-                    >{cat}</button>
+                    >{t(`board.post_service.categories.${cat.toLowerCase()}`)}</button>
                   ))}
                 </div>
               </div>
@@ -276,10 +278,10 @@ export default function PostServicePage() {
                   <span>Your price (shown to clients)</span><span className="font-mono">{price || "0"} USDC</span>
                 </div>
                 <div className="flex justify-between text-white/50">
-                  <span>PPP Fee (non-refundable)</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
+                  <span>{t("board.post_service.fee_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
                 </div>
                 <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
-                  <span>You sign for</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
+                  <span>{t("board.post_service.sign_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
                 </div>
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>
                   Balance: {usdcBalance.toFixed(2)} USDC
@@ -288,7 +290,7 @@ export default function PostServicePage() {
             </div>
 
             <Button type="submit" className="w-full" size="lg" disabled={!hasBalance || isWrongChain}>
-              <User className="w-4 h-4 mr-2" />Post Service
+              <User className="w-4 h-4 mr-2" />{t("board.post_service.submit_btn")}
             </Button>
           </form>
         )}
@@ -307,7 +309,7 @@ export default function PostServicePage() {
               <div className="w-14 h-14 rounded-2xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center mx-auto mb-5">
                 <CheckCircle className="w-7 h-7 text-emerald-400" />
               </div>
-              <h2 className="text-xl font-bold font-syne mb-1">Service Published!</h2>
+              <h2 className="text-xl font-bold font-syne mb-1">{t("board.post_service.success")}</h2>
               <p className="text-sm text-white/50 mb-2">Your service is live. Clients can now request you.</p>
               {serviceId && (
                 <p className="text-xs font-mono text-white/30 mb-4">Service #{serviceId}</p>

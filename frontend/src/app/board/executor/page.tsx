@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { UserName } from "@/components/UserName";
+import { useTranslations } from "next-intl";
+import { BoardRegionFilter, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +72,7 @@ function RequestModal({
   const [amount, setAmount] = useState(fmtUSDC(service.price));
   const [days, setDays]     = useState(String(Number(service.deadlineDays)));
   const [region, setRegion] = useState(service.region);
+  const t = useTranslations();
 
   const parsedAmount = parseFloat(amount || "0");
   const requiredRaw  = parsedAmount > 0 ? BigInt(Math.round(parsedAmount * 1e6)) : 0n;
@@ -79,7 +82,7 @@ function RequestModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
       <div className="w-full max-w-sm rounded-2xl border border-white/12 bg-[#111] p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="font-syne font-bold text-lg">Request Service</h2>
+          <h2 className="font-syne font-bold text-lg">{t("board.services.request_btn")}</h2>
           <button onClick={onClose} className="text-white/30 hover:text-white/60">
             <X className="w-5 h-5" />
           </button>
@@ -93,7 +96,7 @@ function RequestModal({
 
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-white/40 block mb-1.5">Amount (USDC)</label>
+            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.amount_label")}</label>
             <Input
               type="number"
               step="0.01"
@@ -140,7 +143,7 @@ function RequestModal({
 
         <div className="mt-6 flex gap-2">
           <Button variant="ghost" className="flex-1 border border-white/10 text-white/50" onClick={onClose} disabled={loading}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             className="flex-1 gap-1.5"
@@ -148,7 +151,7 @@ function RequestModal({
             onClick={() => onSubmit(amount, days, region)}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
-            Send Request
+            {t("board.services.request_confirm")}
           </Button>
         </div>
 
@@ -186,6 +189,7 @@ function ServiceCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const isMyService = address?.toLowerCase() === service.executor.toLowerCase();
+  const t = useTranslations();
 
   const myPending   = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 0);
   const myAccepted  = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 1);
@@ -205,7 +209,7 @@ function ServiceCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 mb-0.5">
             <span className="font-semibold text-white/90 text-sm truncate">{service.title}</span>
-            {isMyService && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">(yours)</span>}
+            {isMyService && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
           </div>
           <div className="flex items-center gap-2.5 text-xs flex-wrap">
             <span className="font-bold text-white/75 font-mono">{fmtUSDC(service.price)} USDC</span>
@@ -242,7 +246,7 @@ function ServiceCard({
           {isConnected && !isMyService && !myActive && (
             <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-9 px-3 text-xs gap-1">
               {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              Request
+              {t("board.services.request_btn")}
             </Button>
           )}
         </div>
@@ -289,8 +293,11 @@ export default function ExecutorBoardPage() {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
+  const t = useTranslations();
 
   const [mounted, setMounted]         = useState(false);
+  const [regionFilter, setRegionFilter] = useState<number | null>(null);
+  const [userRegion, setUserRegion]     = useState<number | null>(null);
   const [services, setServices]       = useState<Service[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -386,19 +393,45 @@ export default function ExecutorBoardPage() {
 
   useEffect(() => {
     setMounted(true);
+    const stored = getStoredBoardRegion();
+    fetch("/api/region")
+      .then(r => r.json())
+      .then(data => {
+        const detected = data.region as number;
+        setUserRegion(detected);
+        if (stored !== null || localStorage.getItem("sig404_board_region") !== null) {
+          setRegionFilter(stored);
+        } else {
+          setRegionFilter(detected);
+          storeBoardRegion(detected);
+        }
+      })
+      .catch(() => {
+        if (stored !== null) setRegionFilter(stored);
+      });
   }, []);
+
+  const handleRegionChange = (v: number | null) => {
+    setRegionFilter(v);
+    storeBoardRegion(v);
+  };
 
   useEffect(() => {
     if (mounted && publicClient) loadServices();
   }, [mounted, publicClient, loadServices]);
 
+
   const filtered = useMemo(() => {
-    if (!searchQuery) return services;
+    let list = services;
+    if (regionFilter !== null) {
+      list = list.filter(s => s.region === regionFilter);
+    }
+    if (!searchQuery) return list;
     const q = searchQuery.toLowerCase();
-    return services.filter(s =>
+    return list.filter(s =>
       s.title.toLowerCase().includes(q) || s.executor.toLowerCase().includes(q)
     );
-  }, [services, searchQuery]);
+  }, [services, searchQuery, regionFilter]);
 
   const handleRequest = async (amountStr: string, daysStr: string, region: number) => {
     if (!requestModal || !walletClient || !publicClient || !address) return;
@@ -434,8 +467,8 @@ export default function ExecutorBoardPage() {
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Briefcase className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold font-syne mb-2">Executor Board</h1>
-          <p className="text-muted-foreground mb-6 text-sm">Connect your wallet to browse and request executors</p>
+          <h1 className="text-2xl font-bold font-syne mb-2">{t("board.services.title")}</h1>
+          <p className="text-muted-foreground mb-6 text-sm">{t("board.services.connect_prompt")}</p>
           <Link href="/"><Button>Go Home</Button></Link>
         </div>
       </div>
@@ -470,7 +503,7 @@ export default function ExecutorBoardPage() {
                 <RefreshCw className={`w-4 h-4 ${loadingList ? "animate-spin" : ""}`} />
               </Button>
               <Link href="/board/executor/post">
-                <Button size="sm"><Plus className="w-4 h-4 mr-1" />Post Service</Button>
+                <Button size="sm"><Plus className="w-4 h-4 mr-1" />{t("board.post_service.submit_btn")}</Button>
               </Link>
             </div>
           </div>
@@ -478,6 +511,15 @@ export default function ExecutorBoardPage() {
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
+        {/* Region filter */}
+        <div className="mb-4">
+          <BoardRegionFilter
+            value={regionFilter}
+            onChange={handleRegionChange}
+            userRegion={userRegion}
+          />
+        </div>
+
         {/* Flow hint */}
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex items-start gap-3 mb-5">
           <UserCheck className="w-4 h-4 text-white/25 flex-shrink-0 mt-0.5" />
@@ -495,7 +537,7 @@ export default function ExecutorBoardPage() {
         <div className="relative mb-5">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none" />
           <Input
-            placeholder="Search by title or address…"
+            placeholder={t("board.services.search_placeholder")}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="pl-9 bg-white/[0.03] border-white/10 placeholder:text-white/25 rounded-xl"
@@ -504,7 +546,7 @@ export default function ExecutorBoardPage() {
 
         <div className="flex items-center gap-2 mb-4">
           <span className="text-xs text-white/30 font-mono">
-            {loadingList ? "loading…" : `${filtered.length} active service${filtered.length !== 1 ? "s" : ""}`}
+            {loadingList ? t("board.jobs.loading_short") : `${filtered.length} active service${filtered.length !== 1 ? "s" : ""}`}
           </span>
           {totalServicesData !== undefined && (
             <span className="text-xs text-white/15 font-mono">/ {totalServicesData.toString()} total</span>
@@ -517,7 +559,7 @@ export default function ExecutorBoardPage() {
         {loadingList ? (
           <div className="flex items-center justify-center py-24 gap-2 text-white/30">
             <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm">Loading services…</span>
+            <span className="text-sm">{t("board.services.loading")}</span>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -525,11 +567,11 @@ export default function ExecutorBoardPage() {
               <Briefcase className="w-6 h-6 text-white/25" />
             </div>
             <p className="text-white/40 text-sm mb-1">
-              {searchQuery ? "No services match your search" : "No services posted yet"}
+              {searchQuery ? t("board.services.no_results") : t("board.services.empty")}
             </p>
             <Link href="/board/executor/post">
               <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60">
-                <Plus className="w-3.5 h-3.5 mr-1" />Post First Service
+                <Plus className="w-3.5 h-3.5 mr-1" />{t("board.post_service.submit_btn")}
               </Button>
             </Link>
           </div>

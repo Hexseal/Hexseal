@@ -6,12 +6,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import BackgroundFX from "@/components/BackgroundFX";
 import Link from "next/link";
 import { appChainId } from "@/config/chain";
-
-const SUBHEADING_LINES = [
-  "No middlemen. No trust required.",
-  "Sign once. Code enforces.",
-  "Escrow without the escrow.",
-];
+import { useTranslations } from "next-intl";
 
 const TECH_TAGS = ["Base Network", "EIP-2535", "Gasless", "Escrow"];
 
@@ -20,11 +15,18 @@ export default function Hero() {
   const { openConnectModal } = useConnectModal();
   const chainId = useChainId();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
+  const t = useTranslations();
 
-  const consoleRef = useRef<HTMLDivElement | null>(null);
-  const badgeRef = useRef<HTMLDivElement | null>(null);
-  const headlineRef = useRef<HTMLHeadingElement | null>(null);
+  const consoleRef   = useRef<HTMLDivElement | null>(null);
+  const badgeRef     = useRef<HTMLDivElement | null>(null);
+  const headlineRef  = useRef<HTMLHeadingElement | null>(null);
   const subheadingRef = useRef<HTMLDivElement | null>(null);
+
+  const subheadingLines = [
+    t("hero.heading1") + " " + t("hero.heading2"),
+    t("hero.subheading1"),
+    t("hero.subheading2"),
+  ];
 
   useEffect(() => {
     const b = badgeRef.current;
@@ -72,7 +74,7 @@ export default function Hero() {
         {/* Protocol badge */}
         <div className="hero-badge" ref={badgeRef}>
           <span className="hero-dot" />
-          Decentralized Freelance &nbsp;·&nbsp; Base Network
+          {t("hero.tagline")}
         </div>
 
         {/* Headline */}
@@ -81,14 +83,14 @@ export default function Hero() {
           style={{ fontSize: "clamp(2.4rem, 9vw, 6.5rem)" }}
           ref={headlineRef}
         >
-          <span className="block">THE DEAL</span>
-          <span className="block">IS THE</span>
-          <span className="block hero-accent">CONTRACT</span>
+          <span className="block">{t("hero.wordmark1")}</span>
+          <span className="block">{t("hero.wordmark2")}</span>
+          <span className="block hero-accent">{t("hero.wordmark3")}</span>
         </h1>
 
         {/* Subheading */}
         <div className="subheading mt-7" ref={subheadingRef}>
-          {SUBHEADING_LINES.map((line) => (
+          {subheadingLines.map((line) => (
             <div key={line} className="flex items-center gap-3 mb-2.5">
               <span className="hero-dot" />
               <p className="font-sans text-white/85 text-sm sm:text-base tracking-wide" style={{ textShadow: '0 1px 8px rgba(0,0,0,0.9)' }}>
@@ -104,7 +106,7 @@ export default function Hero() {
             <>
               <span className="cta-prompt">{">"}</span>
               <span className="cta-command" onClick={onConnectClick}>
-                connect.wallet
+                {t("hero.connect_wallet")}
               </span>
               <span className="cta-cursor"></span>
               <div className="console-message" ref={consoleRef}>
@@ -113,7 +115,7 @@ export default function Hero() {
             </>
           ) : (
             <Link href="/board">
-              <button className="primary-btn">Get Started →</button>
+              <button className="primary-btn">{t("hero.cta")} →</button>
             </Link>
           )}
         </div>

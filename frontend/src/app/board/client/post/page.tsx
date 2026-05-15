@@ -22,6 +22,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { pushNotif } from "@/lib/notifications";
+import { useTranslations } from "next-intl";
 
 interface RegionData { region: number; fee: bigint; label: string; }
 
@@ -63,6 +64,7 @@ type Step = "form" | "uploading" | "pending" | "success" | "error";
 export default function PostJobPage() {
   const router = useRouter();
   const { address, isConnected, chainId } = useAccount();
+  const t = useTranslations();
   const { switchChain } = useSwitchChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
@@ -191,8 +193,8 @@ export default function PostJobPage() {
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Briefcase className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold font-syne mb-2">Post Job</h1>
-          <p className="text-muted-foreground text-sm mb-6">Connect your wallet to post a job</p>
+          <h1 className="text-2xl font-bold font-syne mb-2">{t("board.post_job.title")}</h1>
+          <p className="text-muted-foreground text-sm mb-6">{t("common.connect_wallet")}</p>
           <Link href="/"><Button variant="outline">Go Home</Button></Link>
         </div>
       </div>
@@ -204,7 +206,7 @@ export default function PostJobPage() {
       {/* Header */}
       <div className="border-b border-white/8 bg-white/[0.02]">
         <div className="container mx-auto px-4 py-5 max-w-2xl">
-<h1 className="text-xl font-bold font-syne">Post a Job</h1>
+<h1 className="text-xl font-bold font-syne">{t("board.post_job.title")}</h1>
           <p className="text-sm text-white/40 mt-0.5">Executors apply — you pick who to hire.</p>
         </div>
       </div>
@@ -221,10 +223,10 @@ export default function PostJobPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Job info */}
             <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4 space-y-4">
-              <h2 className="text-sm font-semibold text-white/60">Job Details</h2>
+              <h2 className="text-sm font-semibold text-white/60">{t("board.post_job.field_title")} Details</h2>
 
               <div className="space-y-1.5">
-                <Label htmlFor="title" className="text-sm text-white/70">Title</Label>
+                <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_job.field_title")}</Label>
                 <Input id="title" placeholder="e.g. Build a React Web Application" value={title}
                   onChange={e => setTitle(e.target.value)} maxLength={100}
                   className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
@@ -232,7 +234,7 @@ export default function PostJobPage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="description" className="text-sm text-white/70">Description</Label>
+                <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_job.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe requirements, deliverables…" value={description}
                   onChange={e => setDescription(e.target.value)} rows={4}
                   className="bg-white/[0.03] border-white/10 placeholder:text-white/20 resize-none rounded-xl" required />
@@ -240,13 +242,13 @@ export default function PostJobPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="amount" className="text-sm text-white/70">Budget (USDC)</Label>
+                  <Label htmlFor="amount" className="text-sm text-white/70">{t("board.post_job.field_budget")}</Label>
                   <Input id="amount" type="number" step="0.01" min="0" placeholder="100" value={amount}
                     onChange={e => setAmount(e.target.value)}
                     className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="deadline" className="text-sm text-white/70">Deadline (days)</Label>
+                  <Label htmlFor="deadline" className="text-sm text-white/70">{t("board.post_job.field_deadline")}</Label>
                   <Input id="deadline" type="number" min="1" max={MAX_DEADLINE} value={deadline}
                     onChange={e => setDeadline(e.target.value)}
                     className="bg-white/[0.03] border-white/10 rounded-xl" required />
@@ -285,10 +287,10 @@ export default function PostJobPage() {
                   <span>Budget</span><span className="font-mono">{amount || "0"} USDC</span>
                 </div>
                 <div className="flex justify-between text-white/50">
-                  <span>PPP Fee (non-refundable)</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
+                  <span>{t("board.post_job.fee_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
                 </div>
                 <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
-                  <span>You sign for</span><span className="font-mono">{totalNeeded.toFixed(2)} USDC</span>
+                  <span>{t("board.post_job.submit_btn")}</span><span className="font-mono">{totalNeeded.toFixed(2)} USDC</span>
                 </div>
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>
                   Balance: {usdcBalance.toFixed(2)} USDC
@@ -297,7 +299,7 @@ export default function PostJobPage() {
             </div>
 
             <Button type="submit" className="w-full" size="lg" disabled={!hasBalance || isWrongChain}>
-              <Briefcase className="w-4 h-4 mr-2" />Post Job
+              <Briefcase className="w-4 h-4 mr-2" />{t("board.post_job.submit_btn")}
             </Button>
           </form>
         )}
@@ -321,7 +323,7 @@ export default function PostJobPage() {
               <div className="w-14 h-14 rounded-2xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center mx-auto mb-5">
                 <CheckCircle className="w-7 h-7 text-emerald-400" />
               </div>
-              <h2 className="text-xl font-bold font-syne mb-1">Job Posted!</h2>
+              <h2 className="text-xl font-bold font-syne mb-1">{t("board.post_job.success")}</h2>
               <p className="text-sm text-white/50 mb-2">Your job is live. Executors can now apply.</p>
               {jobId && (
                 <p className="text-xs font-mono text-white/30 mb-4">Job #{jobId}</p>

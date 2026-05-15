@@ -1,0 +1,199 @@
+{
+  "hero": {
+    "tagline": "Decentralized Freelance · Base Network",
+    "heading1": "No middlemen.",
+    "heading2": "No trust required.",
+    "subheading1": "Sign once. Code enforces.",
+    "subheading2": "Escrow without the escrow.",
+    "cta": "Get Started",
+    "connect_wallet": "Connect Wallet",
+    "wordmark1": "THE DEAL",
+    "wordmark2": "IS THE",
+    "wordmark3": "CONTRACT"
+  },
+  "nav": {
+    "jobs": "Jobs",
+    "services": "Services",
+    "arbiter": "Arbiter",
+    "board": "Board",
+    "alerts": "Alerts",
+    "dashboard": "Dashboard",
+    "messages": "Messages",
+    "settings": "Settings"
+  },
+  "board": {
+    "mobile_popup": {
+      "title": "Board",
+      "jobs_label": "Jobs",
+      "jobs_desc": "Browse client postings",
+      "services_label": "Services",
+      "services_desc": "Browse executor offers"
+    },
+    "jobs": {
+      "title": "Job Board",
+      "connect_prompt": "Connect your wallet to browse and apply for jobs",
+      "post_btn": "Post Job",
+      "search_placeholder": "Search by title or address…",
+      "loading_short": "Loading…",
+      "loading_long": "Loading jobs…",
+      "empty": "No open jobs yet",
+      "no_results": "No jobs match your search",
+      "post_first": "Post First Job",
+      "yours": "(yours)",
+      "applied_tag": "applied",
+      "apply_btn": "Apply",
+      "terms": "Terms & Conditions",
+      "full_page": "Full page",
+      "applicants_tab": "Applicants",
+      "chat_tab": "Chat",
+      "accept_btn": "Accept",
+      "no_applicants": "No applicants yet.",
+      "applied_waiting": "Applied! Waiting for client to accept.",
+      "accepted_deal": "Executor accepted! Deal created.",
+      "accepting": "Accepting applicant…"
+    },
+    "services": {
+      "title": "Services",
+      "request_btn": "Request Service",
+      "search_placeholder": "Search by title or address…",
+      "loading": "Loading services…",
+      "empty": "No services yet",
+      "no_results": "No services match your search",
+      "connect_prompt": "Connect your wallet to browse services",
+      "amount_label": "Amount (USDC)",
+      "request_confirm": "Confirm Request",
+      "requesting": "Requesting…"
+    },
+    "post_service": {
+      "title": "Post a Service",
+      "section_details": "Service Details",
+      "field_title": "Title",
+      "field_description": "Description",
+      "field_price": "Price (USDC)",
+      "field_delivery": "Delivery (days)",
+      "field_category": "Category",
+      "fee_label": "PPP Fee (non-refundable)",
+      "sign_label": "You sign for",
+      "submit_btn": "Post Service",
+      "success": "Service Published!",
+      "categories": {
+        "design": "Design",
+        "development": "Development",
+        "marketing": "Marketing",
+        "content": "Content",
+        "other": "Other"
+      }
+    },
+    "post_job": {
+      "title": "Post a Job",
+      "field_title": "Title",
+      "field_description": "Description",
+      "field_budget": "Budget (USDC)",
+      "field_deadline": "Deadline (days)",
+      "field_region": "Region",
+      "fee_label": "Listing Fee (non-refundable)",
+      "submit_btn": "Post Job",
+      "success": "Job Posted!"
+    }
+  },
+  "wallet": {
+    "connect": "Connect Wallet",
+    "my_profile": "My Profile",
+    "dashboard": "Dashboard",
+    "messages": "Messages",
+    "settings": "Settings",
+    "arbiter_panel": "Arbiter Panel",
+    "admin_panel": "Admin Panel",
+    "how_it_works": "How it works",
+    "disconnect": "Disconnect",
+    "copied": "Address copied!",
+    "copy_failed": "Failed to copy"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "connect_prompt": "Connect your wallet to view your dashboard",
+    "tabs": {
+      "active": "Active",
+      "completed": "Completed",
+      "disputed": "Disputed"
+    },
+    "deal_card": {
+      "as_client": "as client",
+      "as_executor": "as executor",
+      "view_deal": "View Deal",
+      "status_active": "Active",
+      "status_completed": "Completed",
+      "status_disputed": "Disputed"
+    },
+    "empty": "No deals here yet.",
+    "loading": "Loading deals…"
+  },
+  "profile": {
+    "edit_title": "Edit Profile",
+    "field_username": "Username",
+    "field_bio": "Bio",
+    "field_avatar": "Avatar",
+    "save_btn": "Save",
+    "saving": "Saving…",
+    "saved": "Profile saved!"
+  },
+  "deal": {
+    "fund": "Fund",
+    "activate": "Activate",
+    "mark_done": "Mark Done",
+    "release": "Release",
+    "raise_dispute": "Raise Dispute",
+    "resolve_dispute": "Resolve",
+    "loading": "Loading deal…",
+    "status": {
+      "created": "Created",
+      "funded": "Funded",
+      "active": "Active",
+      "done": "Done",
+      "completed": "Completed",
+      "disputed": "Disputed",
+      "cancelled": "Cancelled"
+    }
+  },
+  "common": {
+    "loading": "Loading…",
+    "error": "Something went wrong",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "back": "Back",
+    "save": "Save",
+    "copy": "Copy",
+    "share": "Share",
+    "view": "View",
+    "edit": "Edit",
+    "delete": "Delete",
+    "search": "Search",
+    "filter": "Filter",
+    "all": "All",
+    "none": "None",
+    "yes": "Yes",
+    "no": "No",
+    "connect_wallet": "Connect your wallet"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "empty": "No notifications yet",
+    "mark_all_read": "Mark all read"
+  },
+  "chat": {
+    "placeholder": "Type a message…",
+    "send": "Send",
+    "loading": "Loading messages…",
+    "empty": "No messages yet. Say hi!"
+  },
+  "arbiter": {
+    "title": "Arbiter Panel",
+    "register": "Register as Arbiter",
+    "active_disputes": "Active Disputes",
+    "no_disputes": "No disputes to resolve",
+    "resolve_btn": "Resolve Dispute",
+    "loading": "Loading disputes…"
+  }
+}

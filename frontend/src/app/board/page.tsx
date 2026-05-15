@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { UserName } from "@/components/UserName";
+import { useTranslations } from "next-intl";
+import { BoardRegionFilter, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 
 interface JobRecord {
   client: string;
@@ -76,6 +78,7 @@ function JobCard({
   const [termsFetching, setTermsFetching] = useState(false);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
+  const t = useTranslations();
 
   const ZERO_HASH = "0x" + "0".repeat(64);
   const hasTerms = job.termsHash && job.termsHash !== ZERO_HASH;
@@ -96,7 +99,7 @@ function JobCard({
     setIsApplying(true);
     try {
       await sendGasless(walletClient, publicClient, "applyForJob", [jobId], DIAMOND_ABI as Abi);
-      toast.success("Applied! Waiting for client to accept.");
+      toast.success(t("board.jobs.applied_waiting"));
       onApplied?.();
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Apply failed");
@@ -109,9 +112,9 @@ function JobCard({
     if (!walletClient || !publicClient) return;
     setIsAccepting(executorAddr);
     try {
-      toast("Accepting applicant…");
+      toast(t("board.jobs.accepting"));
       await sendGasless(walletClient, publicClient, "acceptApplicant", [jobId, executorAddr], DIAMOND_ABI as Abi);
-      toast.success("Executor accepted! Deal created.");
+      toast.success(t("board.jobs.accepted_deal"));
       setTimeout(() => onApplied?.(), 2500);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Accept failed");
@@ -136,7 +139,7 @@ function JobCard({
             <span className="font-semibold text-white/90 text-sm truncate leading-snug">
               {job.title || `Job #${jobId.toString()}`}
             </span>
-            {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">(yours)</span>}
+            {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
           </div>
           <div className="flex items-center gap-2.5 text-xs flex-wrap">
             <span className="font-bold text-white/75 font-mono">{formatBudget(job.amount)} USDC</span>
@@ -162,11 +165,11 @@ function JobCard({
           )}
           {!isClient && address && (
             hasApplied ? (
-              <span className="text-[11px] text-white/30 font-mono px-1">applied</span>
+              <span className="text-[11px] text-white/30 font-mono px-1">{t("board.jobs.applied_tag")}</span>
             ) : (
               <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
                 {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                Apply
+                {t("board.jobs.apply_btn")}
               </Button>
             )
           )}
@@ -189,10 +192,10 @@ function JobCard({
           {hasTerms && (
             <div className="mb-3 rounded-lg bg-white/[0.03] border border-white/[0.05] px-3 py-2.5">
               <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                <FileText className="w-3 h-3" /> Terms & Conditions
+                <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
               </p>
               {termsFetching ? (
-                <p className="text-xs text-white/25">Loading…</p>
+                <p className="text-xs text-white/25">{t("common.loading")}</p>
               ) : termsText ? (
                 <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
               ) : (
@@ -204,7 +207,7 @@ function JobCard({
           {isClient && applicantCount > 0 && (
             <div className="mb-3">
               <p className="text-[10px] text-white/25 uppercase tracking-widest mb-2">
-                Applicants · {applicantCount}
+                {t("board.jobs.applicants_tab")} · {applicantCount}
               </p>
               <div className="space-y-1.5">
                 {applicants!.map(addr => (
@@ -212,11 +215,11 @@ function JobCard({
                     <span className="text-xs font-mono text-white/50 truncate min-w-0">{addr}</span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <Link href={`/chat/${addr}`}>
-                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary">Chat</Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary">{t("board.jobs.chat_tab")}</Button>
                       </Link>
                       <Button size="sm" onClick={() => handleAccept(addr)} disabled={!!isAccepting} className="h-8 px-2.5 text-xs gap-1">
                         {isAccepting === addr ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
-                        Accept
+                        {t("board.jobs.accept_btn")}
                       </Button>
                     </div>
                   </div>
@@ -226,13 +229,13 @@ function JobCard({
           )}
 
           {isClient && applicantCount === 0 && (
-            <p className="text-xs text-white/20 mb-3">No applicants yet.</p>
+            <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
           )}
 
           <div className="pt-2 border-t border-white/6">
             <Link href={`/job/${jobId.toString()}`} onClick={e => e.stopPropagation()}>
               <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5">
-                <ExternalLink className="w-3 h-3" /> Full page
+                <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
               </Button>
             </Link>
           </div>
@@ -245,6 +248,36 @@ function JobCard({
 export default function BoardPage() {
   const { address, isConnected } = useAccount();
   const [searchQuery, setSearchQuery] = useState("");
+  const t = useTranslations();
+
+  // Region filter — persisted in localStorage, auto-detected from IP on first visit
+  const [regionFilter, setRegionFilter] = useState<number | null>(null);
+  const [userRegion, setUserRegion] = useState<number | null>(null);
+
+  useEffect(() => {
+    const stored = getStoredBoardRegion();
+    fetch("/api/region")
+      .then(r => r.json())
+      .then(data => {
+        const detected = data.region as number;
+        setUserRegion(detected);
+        // Use stored preference if exists, otherwise default to detected region
+        if (stored !== null || localStorage.getItem("sig404_board_region") !== null) {
+          setRegionFilter(stored);
+        } else {
+          setRegionFilter(detected);
+          storeBoardRegion(detected);
+        }
+      })
+      .catch(() => {
+        if (stored !== null) setRegionFilter(stored);
+      });
+  }, []);
+
+  const handleRegionChange = (v: number | null) => {
+    setRegionFilter(v);
+    storeBoardRegion(v);
+  };
 
   const { data: openJobsData, isLoading, refetch } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -269,6 +302,7 @@ export default function BoardPage() {
     return ids
       .map((id, i) => ({ id, job: records[i] }))
       .filter(({ job }) => job.status === 0)
+      .filter(({ job }) => regionFilter === null || job.region === regionFilter)
       .filter(({ id, job }) => {
         if (!q) return true;
         return (
@@ -277,7 +311,7 @@ export default function BoardPage() {
           id.toString().includes(q)
         );
       });
-  }, [openJobsData, searchQuery]);
+  }, [openJobsData, searchQuery, regionFilter]);
 
   // Batch load applicants for all visible jobs
   const applicantContracts = useMemo(() =>
@@ -318,9 +352,9 @@ export default function BoardPage() {
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Briefcase className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold font-syne mb-2">Job Board</h1>
+          <h1 className="text-2xl font-bold font-syne mb-2">{t("board.jobs.title")}</h1>
           <p className="text-muted-foreground mb-6 text-sm">
-            Connect your wallet to browse and apply for jobs
+            {t("board.jobs.connect_prompt")}
           </p>
           <Link href="/">
             <Button>Go Home</Button>
@@ -337,7 +371,7 @@ export default function BoardPage() {
         <div className="container mx-auto px-4 py-6 max-w-4xl">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold font-syne mb-0.5">Job Board</h1>
+              <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.jobs.title")}</h1>
               <p className="text-sm text-muted-foreground">
                 Open jobs posted by clients. Apply or{" "}
                 <Link href="/board/client/post" className="text-primary hover:underline">
@@ -359,7 +393,7 @@ export default function BoardPage() {
               <Link href="/board/client/post">
                 <Button size="sm">
                   <Plus className="w-4 h-4 mr-1" />
-                  Post Job
+                  {t("board.jobs.post_btn")}
                 </Button>
               </Link>
             </div>
@@ -368,11 +402,20 @@ export default function BoardPage() {
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
+        {/* Region filter */}
+        <div className="mb-4">
+          <BoardRegionFilter
+            value={regionFilter}
+            onChange={handleRegionChange}
+            userRegion={userRegion}
+          />
+        </div>
+
         {/* Search */}
         <div className="relative mb-5">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none" />
           <Input
-            placeholder="Search by title or address…"
+            placeholder={t("board.jobs.search_placeholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9 bg-white/[0.03] border-white/10 placeholder:text-white/25 focus:border-primary/40 rounded-xl"
@@ -382,7 +425,7 @@ export default function BoardPage() {
         {/* Count */}
         <div className="flex items-center gap-2 mb-4">
           <span className="text-xs text-white/30 font-mono">
-            {isLoading ? "loading…" : `${jobs.length} open job${jobs.length !== 1 ? "s" : ""}`}
+            {isLoading ? t("board.jobs.loading_short") : `${jobs.length} open job${jobs.length !== 1 ? "s" : ""}`}
           </span>
           {totalJobsData !== undefined && (
             <span className="text-xs text-white/15 font-mono">/ {totalJobsData.toString()} total</span>
@@ -392,7 +435,7 @@ export default function BoardPage() {
         {isLoading ? (
           <div className="flex items-center justify-center py-24 gap-2 text-white/30">
             <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm">Loading jobs…</span>
+            <span className="text-sm">{t("board.jobs.loading_long")}</span>
           </div>
         ) : jobs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -400,13 +443,13 @@ export default function BoardPage() {
               <Briefcase className="w-6 h-6 text-white/25" />
             </div>
             <p className="text-white/40 text-sm mb-1">
-              {searchQuery ? "No jobs match your search" : "No open jobs yet"}
+              {searchQuery ? t("board.jobs.no_results") : t("board.jobs.empty")}
             </p>
             {!searchQuery && (
               <Link href="/board/client/post">
                 <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60">
                   <Plus className="w-3.5 h-3.5 mr-1" />
-                  Post First Job
+                  {t("board.jobs.post_first")}
                 </Button>
               </Link>
             )}

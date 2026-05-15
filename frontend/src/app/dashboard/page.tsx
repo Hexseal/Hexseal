@@ -13,6 +13,7 @@ import { MessagingSetup } from '@/components/MessagingSetup';
 import { DealSearch } from '@/components/DealSearch';
 import { DealCard, type AgreementRecord } from './components/DealCard';
 import { MyJobs, MyServices, MyClientRequests, MyJobReceipts } from './components/MyListings';
+import { useTranslations } from 'next-intl';
 
 function calcXP(deals: AgreementRecord[]): number {
   const completed = deals.filter(d => d.status === 1 || d.status === 4).length;
@@ -108,6 +109,7 @@ export default function DashboardPage() {
   const { address, isConnected } = useAccount();
   const [refreshKey, setRefreshKey] = useState(0);
   const [tab, setTab] = useState<TabKey>('active');
+  const t = useTranslations();
 
   const { data: clientAgreements,   isLoading: isLoadingClient,   refetch: refetchClient   } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI as Abi,
@@ -151,8 +153,8 @@ export default function DashboardPage() {
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Activity className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold font-syne mb-2">Dashboard</h1>
-          <p className="text-muted-foreground text-sm mb-6">Connect your wallet to view your deals</p>
+          <h1 className="text-2xl font-bold font-syne mb-2">{t("dashboard.title")}</h1>
+          <p className="text-muted-foreground text-sm mb-6">{t("dashboard.connect_prompt")}</p>
           <Link href="/"><button className="border border-white/15 rounded-lg px-4 py-2 text-sm text-white/60 hover:text-white hover:border-white/30 transition-colors">Go Home</button></Link>
         </div>
       </div>
@@ -248,13 +250,13 @@ export default function DashboardPage() {
           {/* Tab bar */}
           <div className="flex gap-1 p-2 border-b border-white/8 overflow-x-auto scrollbar-none">
             <Tab active={tab === 'active'}   onClick={() => setTab('active')}   count={activeDeals.length}>
-              Active
+              {t("dashboard.tabs.active")}
             </Tab>
             <Tab active={tab === 'jobs'}     onClick={() => setTab('jobs')}>
-              Jobs
+              {t("nav.jobs")}
             </Tab>
             <Tab active={tab === 'services'} onClick={() => setTab('services')}>
-              Services
+              {t("nav.services")}
             </Tab>
             <Tab active={tab === 'history'}  onClick={() => setTab('history')}  count={historyDeals.length}>
               History
@@ -266,7 +268,7 @@ export default function DashboardPage() {
             {isLoading ? (
               <div className="flex items-center justify-center py-12 gap-2 text-white/30">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">Loading…</span>
+                <span className="text-sm">{t("dashboard.loading")}</span>
               </div>
             ) : (
               <>

@@ -33,6 +33,7 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
 import { appChain, appChainId, appRpcUrl, isMainnet } from "@/config/chain";
 import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
+import { LocaleProvider } from "@/components/LocaleProvider";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -146,7 +147,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <NextThemesProvider attribute="class" forcedTheme="dark">
-          <RainbowKitProviders>{children}</RainbowKitProviders>
+          <LocaleProvider>
+            <RainbowKitProviders>{children}</RainbowKitProviders>
+          </LocaleProvider>
         </NextThemesProvider>
       </QueryClientProvider>
     </WagmiProvider>
