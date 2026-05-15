@@ -9,7 +9,7 @@ import ClientLayout from "./client-layout";
 
 const inter = Space_Grotesk({
   variable: "--font-inter",
-  subsets: ["latin"],
+  subsets: ["latin", "latin-ext", "cyrillic"],
   weight: ["300", "400", "500", "600", "700"],
   display: "swap",
 });

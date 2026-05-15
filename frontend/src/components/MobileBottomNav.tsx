@@ -36,7 +36,7 @@ function PillBtn({
   children: React.ReactNode;
 }) {
   const inner = (
-    <span className="flex flex-col items-center gap-[5px] select-none">
+    <span className="flex flex-col items-center gap-[6px] select-none">
       <span className="relative flex items-center justify-center">
         <span
           className={cn(
@@ -60,18 +60,18 @@ function PillBtn({
       >
         {label}
       </span>
-      {/* active dot */}
+      {/* active bar */}
       <span
         className={cn(
-          "w-[18px] h-[2px] rounded-full transition-all duration-300",
-          active ? "bg-primary opacity-100 scale-x-100" : "opacity-0 scale-x-0"
+          "h-[2px] rounded-full transition-all duration-300",
+          active ? "w-[20px] bg-primary opacity-100" : "w-0 opacity-0"
         )}
       />
     </span>
   );
 
   const cls =
-    "flex-1 flex items-center justify-center h-full min-w-0 py-2";
+    "flex-1 flex items-center justify-center h-full min-w-0";
 
   if (href) {
     return (
@@ -188,7 +188,7 @@ export default function MobileBottomNav() {
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
       >
         <div
-          className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] px-3 h-[72px]"
+          className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[32px] px-4 h-[78px]"
           style={{
             boxShadow:
               "0 8px 40px rgba(0,0,0,0.65), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)",
@@ -199,7 +199,7 @@ export default function MobileBottomNav() {
             active={isActive("/dashboard")}
             label={t("nav.dashboard")}
           >
-            <LayoutDashboard className="w-[22px] h-[22px]" />
+            <LayoutDashboard className="w-[24px] h-[24px]" />
           </PillBtn>
 
           <PillBtn
@@ -207,7 +207,7 @@ export default function MobileBottomNav() {
             active={isActive("/chat")}
             label={t("nav.messages")}
           >
-            <MessageCircle className="w-[22px] h-[22px]" />
+            <MessageCircle className="w-[24px] h-[24px]" />
           </PillBtn>
 
           <PillBtn
@@ -215,7 +215,7 @@ export default function MobileBottomNav() {
             label={t("nav.board")}
             onClick={() => setBoardOpen((v) => !v)}
           >
-            <LayoutList className="w-[22px] h-[22px]" />
+            <LayoutList className="w-[24px] h-[24px]" />
           </PillBtn>
 
           <PillBtn
@@ -224,7 +224,7 @@ export default function MobileBottomNav() {
             label={t("nav.alerts")}
             badge={unreadCount}
           >
-            <Bell className="w-[22px] h-[22px]" />
+            <Bell className="w-[24px] h-[24px]" />
           </PillBtn>
 
           <PillBtn
@@ -232,7 +232,7 @@ export default function MobileBottomNav() {
             active={isActive("/profile/edit")}
             label={t("nav.settings")}
           >
-            <Settings className="w-[22px] h-[22px]" />
+            <Settings className="w-[24px] h-[24px]" />
           </PillBtn>
         </div>
       </nav>
