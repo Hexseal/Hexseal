@@ -7,10 +7,26 @@
   --color-accent-glow: rgba(37, 99, 235, 0.3);
 }
 
-/* Thai locale: apply Noto Sans Thai as fallback so Thai characters render correctly */
-:lang(th) body,
-html[lang="th"] body {
-  font-family: var(--font-noto-thai), var(--font-inter), system-ui, sans-serif;
+/* ── Russian locale ─────────────────────────────────────────────────────────── */
+:lang(ru) body {
+  font-family: var(--font-unbounded), var(--font-manrope), system-ui, sans-serif;
+}
+:lang(ru) .font-mono,
+:lang(ru) code,
+:lang(ru) [class*="font-mono"],
+:lang(ru) [class*="space-mono"] {
+  font-family: var(--font-jetbrains), monospace;
+}
+
+/* ── Thai locale ─────────────────────────────────────────────────────────────── */
+:lang(th) body {
+  font-family: var(--font-kanit), var(--font-noto-thai), system-ui, sans-serif;
+}
+:lang(th) .font-syne,
+:lang(th) [class*="font-syne"],
+:lang(th) h1,
+:lang(th) h2 {
+  font-family: var(--font-chonburi), var(--font-kanit), serif;
 }
 
 /* base body */

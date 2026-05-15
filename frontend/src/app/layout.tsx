@@ -1,5 +1,15 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Space_Mono, Syne, Noto_Sans_Thai, Manrope } from "next/font/google";
+import {
+  Space_Grotesk,
+  Space_Mono,
+  Syne,
+  Noto_Sans_Thai,
+  Manrope,
+  Chonburi,
+  Kanit,
+  Unbounded,
+  JetBrains_Mono,
+} from "next/font/google";
 import "./globals.css";
 import "@/styles/shadcn.css";
 import "@/styles/ui-theme.css";
@@ -42,6 +52,36 @@ const notoSansThai = Noto_Sans_Thai({
   display: "swap",
 });
 
+// Thai — display + body
+const chonburi = Chonburi({
+  variable: "--font-chonburi",
+  subsets: ["thai", "latin"],
+  weight: ["400"],
+  display: "swap",
+});
+
+const kanit = Kanit({
+  variable: "--font-kanit",
+  subsets: ["thai", "latin"],
+  weight: ["300", "400", "500", "600", "700"],
+  display: "swap",
+});
+
+// Russian — display + mono
+const unbounded = Unbounded({
+  variable: "--font-unbounded",
+  subsets: ["cyrillic", "latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains",
+  subsets: ["cyrillic", "latin"],
+  weight: ["400", "500", "700"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Signature 404",
   description: "Reshape Digital Reality",
@@ -70,7 +110,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Sig404" />
       </head>
-      <body className={`${inter.variable} ${manrope.variable} ${spaceMono.variable} ${syne.variable} ${notoSansThai.variable} min-h-screen flex flex-col`}>
+      <body className={`${inter.variable} ${manrope.variable} ${spaceMono.variable} ${syne.variable} ${notoSansThai.variable} ${chonburi.variable} ${kanit.variable} ${unbounded.variable} ${jetbrainsMono.variable} min-h-screen flex flex-col`}>
         <Providers>
           <ClientLayout>{children}</ClientLayout>
         </Providers>

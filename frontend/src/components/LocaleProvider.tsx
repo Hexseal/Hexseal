@@ -33,6 +33,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const detected = detectLocale();
+    document.documentElement.lang = detected;
     if (detected !== defaultLocale) {
       setLocale(detected);
       loadMessages(detected).then(setMessages);
@@ -42,6 +43,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
       if (e.key === STORAGE_KEY && e.newValue) {
         const next = e.newValue as Locale;
         if ((locales as readonly string[]).includes(next)) {
+          document.documentElement.lang = next;
           setLocale(next);
           loadMessages(next).then(setMessages);
         }
@@ -50,6 +52,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
 
     function onLocaleChange(e: Event) {
       const next = (e as CustomEvent<Locale>).detail;
+      document.documentElement.lang = next;
       setLocale(next);
       loadMessages(next).then(setMessages);
     }
