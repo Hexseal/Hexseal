@@ -25,10 +25,33 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     />
   );
 
+  // Gradient scrims that hide content scrolling behind pill UI elements on mobile
+  const topScrim = (
+    <div
+      aria-hidden
+      className="md:hidden fixed top-0 left-0 right-0 pointer-events-none z-40"
+      style={{
+        height: 'calc(env(safe-area-inset-top, 0px) + 80px)',
+        background: 'linear-gradient(to bottom, #000 0%, #000 40%, transparent 100%)',
+      }}
+    />
+  );
+  const bottomScrim = (
+    <div
+      aria-hidden
+      className="md:hidden fixed bottom-0 left-0 right-0 pointer-events-none z-40"
+      style={{
+        height: 'calc(env(safe-area-inset-bottom, 0px) + 130px)',
+        background: 'linear-gradient(to top, #000 0%, #000 30%, transparent 100%)',
+      }}
+    />
+  );
+
   const isChatPage = pathname?.startsWith('/chat');
   if (isChatPage) {
     return (
       <>
+        {topScrim}
         <Header />
         <main className="h-dvh flex flex-col overflow-hidden" style={{ paddingTop: 'calc(4rem + env(safe-area-inset-top))' }}>
           {children}
@@ -43,6 +66,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   if (isHome) {
     return (
       <>
+        {topScrim}
         <Header />
         <main className="flex-1">
           {children}
@@ -56,6 +80,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
   return (
     <>
+      {topScrim}
+      {bottomScrim}
       <Header />
       <main className="flex-1" style={{ paddingTop: 'calc(4.5rem + env(safe-area-inset-top))' }}>
         {children}
