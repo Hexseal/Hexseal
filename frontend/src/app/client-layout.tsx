@@ -41,8 +41,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       aria-hidden
       className="md:hidden fixed bottom-0 left-0 right-0 pointer-events-none z-40"
       style={{
-        height: 'calc(env(safe-area-inset-bottom, 0px) + 130px)',
-        background: 'linear-gradient(to top, #000 0%, #000 30%, transparent 100%)',
+        height: 'calc(env(safe-area-inset-bottom, 0px) + 140px)',
+        background: 'linear-gradient(to top, #000 0%, #000 68%, transparent 100%)',
       }}
     />
   );
@@ -85,7 +85,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <Header />
       <main className="flex-1" style={{ paddingTop: 'calc(4.5rem + env(safe-area-inset-top))' }}>
         {children}
-        <div className="md:hidden" style={{ height: 'calc(6.5rem + env(safe-area-inset-bottom, 0px))' }} />
+        <div className="md:hidden" style={{ height: 'calc(7rem + env(safe-area-inset-bottom, 0px))' }} />
       </main>
       <MobileBottomNav />
       {modal}
