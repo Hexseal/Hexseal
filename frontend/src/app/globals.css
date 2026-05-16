@@ -44,6 +44,10 @@
   font-size: 0.6rem;
   letter-spacing: 0.06em;
 }
+/* Unbounded is display-width — subheading reads small at 14px on mobile */
+:lang(ru) .hero .subheading p {
+  font-size: 0.9375rem; /* 15px on mobile instead of 14px */
+}
 
 /* ── Thai locale ─────────────────────────────────────────────────────────────── */
 :lang(th) body {
@@ -64,12 +68,30 @@
   line-height: 1.35;
   letter-spacing: 0.02em;
 }
+/* Thai glyphs are intricate — 14px is too small for a hero slogan on mobile */
+:lang(th) .hero .subheading p {
+  font-size: 1rem;       /* 16px on mobile */
+}
+@media (min-width: 640px) {
+  :lang(th) .hero .subheading p {
+    font-size: 1.125rem; /* 18px on sm+ */
+  }
+}
 
 /* ── Chinese locale ─────────────────────────────────────────────────────────── */
 /* CJK glyphs fill the full em-square; leading-[0.88] clips top and bottom. */
 :lang(zh) .hero h1 {
   line-height: 1.1;
   letter-spacing: 0.02em;
+}
+/* CJK characters at 14px are too small for a hero slogan on mobile */
+:lang(zh) .hero .subheading p {
+  font-size: 1rem;       /* 16px on mobile */
+}
+@media (min-width: 640px) {
+  :lang(zh) .hero .subheading p {
+    font-size: 1.125rem; /* 18px on sm+ */
+  }
 }
 
 /* base body */
