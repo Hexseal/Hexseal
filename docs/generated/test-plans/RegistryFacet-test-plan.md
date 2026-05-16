@@ -63,6 +63,23 @@ RegistryFacet хранит список всех Agreement-контрактов 
 
 ---
 
+## Сценарий 5: Access control — чужой не может писать в реестр
+
+> Эти функции не видны в UI — проверяем через `cast send` / Foundry.
+
+**Цель:** убедиться что `register` и `updateStatus` защищены — нельзя вызвать с произвольного кошелька.
+
+- [ ] `cast send $DIAMOND "register(address,address,address)" $FAKE $FAKE $FAKE --private-key $ANY_WALLET --rpc-url ...` → revert `OnlyAuthorizedFactory`
+  > `register()` может вызывать **только** FactoryFacet при создании сделки
+- [ ] `cast send $AGREEMENT_ADDR "updateStatus(uint8)" 3 --private-key $ANY_WALLET --rpc-url ...` → revert `OnlyAgreementItself`
+  > `updateStatus()` может вызывать **только** сам Agreement-контракт по своему адресу
+- [ ] `cast send $DIAMOND "setAuthorizedFactory(address)" $FAKE --private-key $NOT_OWNER --rpc-url ...` → revert (не owner Diamond)
+  > `setAuthorizedFactory()` — только owner Diamond
+
+**Ожидаемый результат:** все три вызова ревертятся. Если хоть один прошёл — это баг в access control.
+
+---
+
 ## Граничные случаи
 
 - [ ] **Несуществующий адрес в реестре** — `getByClient(0x000...)` возвращает пустой массив, не revert
@@ -79,4 +96,5 @@ RegistryFacet хранит список всех Agreement-контрактов 
 | 2. Дашборд мои сделки | ⬜ | — | — | — |
 | 3. Список споров для арбитра | ⬜ | — | — | — |
 | 4. syncRegistry | ⬜ | — | — | — |
+| 5. Access control — чужой не пишет в реестр | ⬜ | — | — | — |
 | Граничные случаи | ⬜ | — | — | — |
