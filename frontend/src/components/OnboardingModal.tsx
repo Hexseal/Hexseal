@@ -9,36 +9,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Briefcase, FileSignature, Lock, CheckCircle, Zap } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 const STORAGE_KEY = "sig404_onboarding_done";
 
-const STEPS = [
-  {
-    icon: Briefcase,
-    title: "Post or Find Work",
-    desc: "Clients post jobs on the Job Board. Executors list services. Browse and respond to offers.",
-  },
-  {
-    icon: FileSignature,
-    title: "Create a Deal",
-    desc: "Both parties agree to terms. A smart contract is deployed — this is your binding agreement.",
-  },
-  {
-    icon: Lock,
-    title: "Fund Escrow",
-    desc: "Client deposits USDC into the contract. Funds are locked on-chain — no one can touch them until conditions are met.",
-  },
-  {
-    icon: CheckCircle,
-    title: "Complete & Release",
-    desc: "Executor marks done. Client releases payment. No release after timeout? Funds auto-approve. Dispute? Arbiter resolves.",
-  },
-  {
-    icon: Zap,
-    title: "Gasless by Default",
-    desc: "You sign transactions, the platform pays gas. No ETH needed — just USDC for deal funding.",
-  },
-];
+const STEP_ICONS = [Briefcase, FileSignature, Lock, CheckCircle, Zap];
 
 interface Props {
   /** Controlled open state — lets parent (e.g. WalletMenu) force-open */
@@ -49,6 +24,13 @@ interface Props {
 export default function OnboardingModal({ forceOpen, onClose }: Props) {
   const { isConnected, address } = useAccount();
   const [open, setOpen] = useState(false);
+  const t = useTranslations();
+
+  const steps = [1, 2, 3, 4, 5].map((n) => ({
+    icon: STEP_ICONS[n - 1],
+    title: t(`onboarding.step${n}_title`),
+    desc: t(`onboarding.step${n}_desc`),
+  }));
 
   // Auto-show once per wallet on first connect
   useEffect(() => {
@@ -76,12 +58,12 @@ export default function OnboardingModal({ forceOpen, onClose }: Props) {
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-lg bg-card border-border p-0 overflow-hidden">
         <DialogHeader className="px-6 pt-6 pb-4 border-b border-border">
-          <DialogTitle className="font-syne text-lg font-bold">How Signature404 works</DialogTitle>
-          <p className="text-sm text-muted-foreground mt-1">Decentralized freelance on Base — no middlemen, code enforces.</p>
+          <DialogTitle className="font-syne text-lg font-bold">{t("onboarding.title")}</DialogTitle>
+          <p className="text-sm text-muted-foreground mt-1">{t("onboarding.subtitle")}</p>
         </DialogHeader>
 
         <div className="px-6 py-5 space-y-4">
-          {STEPS.map((step, i) => {
+          {steps.map((step, i) => {
             const Icon = step.icon;
             return (
               <div key={i} className="flex gap-4 items-start">
@@ -102,7 +84,7 @@ export default function OnboardingModal({ forceOpen, onClose }: Props) {
             onClick={() => handleClose(false)}
             className="w-full py-2.5 rounded-xl bg-primary text-white font-semibold text-sm hover:bg-primary/90 transition-colors"
           >
-            Got it, let&apos;s go →
+            {t("onboarding.cta")}
           </button>
         </div>
       </DialogContent>

@@ -29,15 +29,6 @@ import { useTranslations } from "next-intl";
 
 // Agreement status enum matches Solidity:
 // 0=CREATED, 1=FUNDED, 2=ACTIVE, 3=COMPLETED, 4=DISPUTED, 5=RESOLVED, 6=REFUNDED
-const AGREEMENT_STATUS: Record<number, { label: string; color: string; dot: string; icon: React.ReactNode }> = {
-  0: { label: "Created",   dot: "bg-sky-400",    color: "bg-sky-400/10 text-sky-400 border border-sky-400/20",           icon: <Clock className="w-3.5 h-3.5" /> },
-  1: { label: "Funded",    dot: "bg-emerald-400", color: "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20", icon: <DollarSign className="w-3.5 h-3.5" /> },
-  2: { label: "Active",    dot: "bg-violet-400",  color: "bg-violet-400/10 text-violet-400 border border-violet-400/20",   icon: <Timer className="w-3.5 h-3.5" /> },
-  3: { label: "Completed", dot: "bg-green-400",   color: "bg-green-400/10 text-green-400 border border-green-400/20",     icon: <CheckCircle className="w-3.5 h-3.5" /> },
-  4: { label: "Disputed",  dot: "bg-red-400",     color: "bg-red-400/10 text-red-400 border border-red-400/20",           icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-  5: { label: "Resolved",  dot: "bg-purple-400",  color: "bg-purple-400/10 text-purple-400 border border-purple-400/20",  icon: <Shield className="w-3.5 h-3.5" /> },
-  6: { label: "Refunded",  dot: "bg-gray-400",    color: "bg-gray-400/10 text-gray-400 border border-gray-400/20",        icon: <ArrowRight className="w-3.5 h-3.5" /> },
-};
 
 function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -103,8 +94,8 @@ function formatTimestamp(ts: bigint | number | undefined): string {
   return new Date(Number(BigInt(ts)) * 1000).toLocaleString();
 }
 
-function formatTimeLeft(seconds: bigint | number | undefined): string {
-  if (!seconds || BigInt(seconds) === BigInt(0)) return "Expired";
+function formatTimeLeft(seconds: bigint | number | undefined, expiredLabel = "Expired"): string {
+  if (!seconds || BigInt(seconds) === BigInt(0)) return expiredLabel;
   const s = Number(BigInt(seconds));
   const days = Math.floor(s / 86400);
   const hours = Math.floor((s % 86400) / 3600);
@@ -122,6 +113,16 @@ export default function DealDetailPage() {
   const [disputeModal, setDisputeModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
   const t = useTranslations();
+
+  const AGREEMENT_STATUS: Record<number, { label: string; color: string; dot: string; icon: React.ReactNode }> = {
+    0: { label: t("deal_status.created"),   dot: "bg-sky-400",     color: "bg-sky-400/10 text-sky-400 border border-sky-400/20",             icon: <Clock className="w-3.5 h-3.5" /> },
+    1: { label: t("deal_status.funded"),    dot: "bg-emerald-400", color: "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20", icon: <DollarSign className="w-3.5 h-3.5" /> },
+    2: { label: t("deal_status.active"),    dot: "bg-violet-400",  color: "bg-violet-400/10 text-violet-400 border border-violet-400/20",   icon: <Timer className="w-3.5 h-3.5" /> },
+    3: { label: t("deal_status.completed"), dot: "bg-green-400",   color: "bg-green-400/10 text-green-400 border border-green-400/20",      icon: <CheckCircle className="w-3.5 h-3.5" /> },
+    4: { label: t("deal_status.disputed"),  dot: "bg-red-400",     color: "bg-red-400/10 text-red-400 border border-red-400/20",            icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+    5: { label: t("deal_status.resolved"),  dot: "bg-purple-400",  color: "bg-purple-400/10 text-purple-400 border border-purple-400/20",   icon: <Shield className="w-3.5 h-3.5" /> },
+    6: { label: t("deal_status.refunded"),  dot: "bg-gray-400",    color: "bg-gray-400/10 text-gray-400 border border-gray-400/20",         icon: <ArrowRight className="w-3.5 h-3.5" /> },
+  };
 
   // Read Diamond owner as the platform admin / arbiter address
   const { data: adminAddress } = useReadContract({
@@ -362,7 +363,7 @@ export default function DealDetailPage() {
                 {timeLeft && parsed.status < 3 && (
                   <>
                     <span className="opacity-30">·</span>
-                    <span>{formatTimeLeft(timeLeft)} left</span>
+                    <span>{formatTimeLeft(timeLeft, t("deal_status.expired"))} left</span>
                   </>
                 )}
               </div>
@@ -488,7 +489,7 @@ export default function DealDetailPage() {
               <AlertTriangle className="w-4 h-4 text-red-400" />
               <span className="text-sm font-semibold text-red-400">{t("deal.dispute_active")}</span>
               {arbiterTimeLeft && (
-                <span className="ml-auto text-xs text-red-400/70">{formatTimeLeft(arbiterTimeLeft)} left</span>
+                <span className="ml-auto text-xs text-red-400/70">{formatTimeLeft(arbiterTimeLeft, t("deal_status.expired"))} left</span>
               )}
             </div>
             <p className="text-xs text-white/40 mb-3">{t("deal.dispute_active_hint")}</p>

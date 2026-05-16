@@ -67,15 +67,6 @@ function formatTime(ts: number) {
   return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-// Registry AgreementStatus enum: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
-const DEAL_STATUS_LABEL: Record<number, { label: string; cls: string }> = {
-  0: { label: 'Active',    cls: 'text-violet-400/60' },
-  1: { label: 'Completed', cls: 'text-green-400/60' },
-  2: { label: 'Refunded',  cls: 'text-white/25' },
-  3: { label: 'Disputed',  cls: 'text-red-400/60' },
-  4: { label: 'Resolved',  cls: 'text-purple-400/60' },
-};
-
 // ─── Conversation item ─────────────────────────────────────────────────────────
 
 function ConvoItem({
@@ -88,9 +79,18 @@ function ConvoItem({
   onClick: () => void;
   dealCtx?: DealContext;
 }) {
-  const ds = dealCtx ? DEAL_STATUS_LABEL[dealCtx.status] : null;
   const { displayName, avatarUrl } = useProfile(peerAddress);
   const t = useTranslations();
+
+  // Registry AgreementStatus enum: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
+  const DEAL_STATUS_LABEL: Record<number, { label: string; cls: string }> = {
+    0: { label: t("deal_status.active"),    cls: 'text-violet-400/60' },
+    1: { label: t("deal_status.completed"), cls: 'text-green-400/60' },
+    2: { label: t("deal_status.refunded"),  cls: 'text-white/25' },
+    3: { label: t("deal_status.disputed"),  cls: 'text-red-400/60' },
+    4: { label: t("deal_status.resolved"),  cls: 'text-purple-400/60' },
+  };
+  const ds = dealCtx ? DEAL_STATUS_LABEL[dealCtx.status] : null;
 
   return (
     <button

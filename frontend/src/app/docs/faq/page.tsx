@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ArrowLeft, ExternalLink } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 interface FAQItem {
   q: string;
@@ -231,6 +232,18 @@ function FAQAccordion({ item }: { item: FAQItem }) {
 }
 
 export default function FAQPage() {
+  const t = useTranslations();
+
+  const sectionKeys: Array<[string, FAQSection]> = [
+    [t("faq.s_general"),   FAQ_SECTIONS[0]],
+    [t("faq.s_deals"),     FAQ_SECTIONS[1]],
+    [t("faq.s_gasless"),   FAQ_SECTIONS[2]],
+    [t("faq.s_disputes"),  FAQ_SECTIONS[3]],
+    [t("faq.s_jobs"),      FAQ_SECTIONS[4]],
+    [t("faq.s_privacy"),   FAQ_SECTIONS[5]],
+    [t("faq.s_tech"),      FAQ_SECTIONS[6]],
+  ];
+
   return (
     <main className="min-h-screen bg-[#0a0a0a] text-white">
       <div className="max-w-2xl mx-auto px-4 py-10">
@@ -240,24 +253,24 @@ export default function FAQPage() {
           className="inline-flex items-center gap-1.5 text-xs text-white/30 hover:text-white/60 transition-colors mb-8"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          Back to home
+          {t("faq.back")}
         </Link>
 
         {/* Header */}
         <div className="mb-10">
-          <p className="text-xs text-primary/70 font-semibold uppercase tracking-widest mb-2">Docs</p>
-          <h1 className="text-3xl font-black font-syne mb-3">FAQ</h1>
+          <p className="text-xs text-primary/70 font-semibold uppercase tracking-widest mb-2">{t("faq.docs_label")}</p>
+          <h1 className="text-3xl font-black font-syne mb-3">{t("faq.title")}</h1>
           <p className="text-white/40 text-sm leading-relaxed">
-            Frequently asked questions about Signature404 — the decentralized freelance protocol on Base.
+            {t("faq.subtitle")}
           </p>
         </div>
 
         {/* Sections */}
         <div className="space-y-10">
-          {FAQ_SECTIONS.map((section) => (
-            <div key={section.title}>
+          {sectionKeys.map(([title, section]) => (
+            <div key={title}>
               <h2 className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
-                {section.title}
+                {title}
               </h2>
               <div className="space-y-2">
                 {section.items.map((item) => (
@@ -271,14 +284,14 @@ export default function FAQPage() {
         {/* Footer note */}
         <div className="mt-12 pt-6 border-t border-white/8 text-center">
           <p className="text-xs text-white/25">
-            Still have questions?{" "}
+            {t("faq.still_questions")}{" "}
             <a
               href="https://github.com/Signature404/Signature404/issues"
               target="_blank"
               rel="noopener noreferrer"
               className="text-white/45 hover:text-white/70 transition-colors"
             >
-              Open an issue on GitHub
+              {t("faq.open_issue")}
             </a>
           </p>
         </div>

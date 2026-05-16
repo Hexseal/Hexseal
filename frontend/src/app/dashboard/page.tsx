@@ -155,7 +155,7 @@ export default function DashboardPage() {
           </div>
           <h1 className="text-2xl font-bold font-syne mb-2">{t("dashboard.title")}</h1>
           <p className="text-muted-foreground text-sm mb-6">{t("dashboard.connect_prompt")}</p>
-          <Link href="/"><button className="border border-white/15 rounded-lg px-4 py-2 text-sm text-white/60 hover:text-white hover:border-white/30 transition-colors">Go Home</button></Link>
+          <Link href="/"><button className="border border-white/15 rounded-lg px-4 py-2 text-sm text-white/60 hover:text-white hover:border-white/30 transition-colors">{t("dashboard.go_home")}</button></Link>
         </div>
       </div>
     );
@@ -173,27 +173,27 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <StatCard
               icon={<Zap className="w-4 h-4 text-violet-400" />}
-              label="Level"
+              label={t("dashboard.stat_level")}
               value={level.label}
               sub={`${xp} XP`}
             />
             <StatCard
               icon={<Activity className="w-4 h-4 text-sky-400" />}
-              label="Active"
+              label={t("dashboard.stat_active")}
               value={activeDeals.length}
-              sub={activeDeals.length === 1 ? 'deal' : 'deals'}
+              sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")}
             />
             <StatCard
               icon={<CheckCircle className="w-4 h-4 text-emerald-400" />}
-              label="Completed"
+              label={t("dashboard.stat_completed")}
               value={completed}
-              sub={completed === 1 ? 'deal' : 'deals'}
+              sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")}
             />
             <StatCard
               icon={<DollarSign className="w-4 h-4 text-amber-400" />}
-              label="Volume"
+              label={t("dashboard.stat_volume")}
               value={`$${(totalVolume / 1e6).toFixed(0)}`}
-              sub="USDC total"
+              sub={t("dashboard.stat_usdc_total")}
             />
           </div>
         )}
@@ -222,22 +222,22 @@ export default function DashboardPage() {
           <QuickAction
             href="/board/client/post"
             icon={<Briefcase className="w-4 h-4 text-white/50" />}
-            label="Post a Job"
-            sub="Hire an executor"
+            label={t("dashboard.action_post_job")}
+            sub={t("dashboard.action_post_job_sub")}
             accent={false}
           />
           <QuickAction
             href="/board/executor"
             icon={<Zap className="w-4 h-4 text-violet-400" />}
-            label="Find Work"
-            sub="Browse service listings"
+            label={t("dashboard.action_find_work")}
+            sub={t("dashboard.action_find_work_sub")}
             accent={true}
           />
           <QuickAction
             href="/board/executor/post"
             icon={<Plus className="w-4 h-4 text-white/50" />}
-            label="Offer a Service"
-            sub="List your skills"
+            label={t("dashboard.action_offer_service")}
+            sub={t("dashboard.action_offer_service_sub")}
             accent={false}
           />
         </div>
@@ -259,7 +259,7 @@ export default function DashboardPage() {
               {t("nav.services")}
             </Tab>
             <Tab active={tab === 'history'}  onClick={() => setTab('history')}  count={historyDeals.length}>
-              History
+              {t("dashboard.tabs.history")}
             </Tab>
           </div>
 
@@ -276,8 +276,8 @@ export default function DashboardPage() {
                   activeDeals.length === 0 ? (
                     <div className="text-center py-10">
                       <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
-                      <p className="text-sm text-white/30">No active deals</p>
-                      <p className="text-xs text-white/20 mt-1">Post a job or find work to get started</p>
+                      <p className="text-sm text-white/30">{t("dashboard.empty_active")}</p>
+                      <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -296,15 +296,15 @@ export default function DashboardPage() {
                 {tab === 'jobs' && (
                   <div className="space-y-4">
                     <div>
-                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">My Job Postings</p>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">{t("dashboard.section_job_postings")}</p>
                       <MyJobs address={address!} onDealCreated={refetch} />
                     </div>
                     <div>
-                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">Job Receipts</p>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">{t("dashboard.section_job_receipts")}</p>
                       <MyJobReceipts address={address!} />
                     </div>
                     <div>
-                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">Service Requests</p>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">{t("dashboard.section_service_requests")}</p>
                       <MyClientRequests address={address!} />
                     </div>
                   </div>
@@ -318,7 +318,7 @@ export default function DashboardPage() {
                   historyDeals.length === 0 ? (
                     <div className="text-center py-10">
                       <CheckCircle className="w-8 h-8 text-white/10 mx-auto mb-3" />
-                      <p className="text-sm text-white/30">No history yet</p>
+                      <p className="text-sm text-white/30">{t("dashboard.empty_history")}</p>
                     </div>
                   ) : (
                     <div className="space-y-2 opacity-80">
