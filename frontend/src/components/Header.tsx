@@ -12,7 +12,6 @@ import { useReadContract } from "wagmi";
 import { ARBITER_REGISTRY_ABI, CONTRACTS } from "@/config/contracts";
 import type { Abi } from "viem";
 import { cn } from "@/lib/utils";
-import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import { useTranslations } from "next-intl";
 
 function NavLink({
@@ -97,15 +96,14 @@ export default function Header() {
                 height={22}
                 className="opacity-75 group-hover:opacity-100 transition-opacity"
               />
-              <span className="font-syne font-bold text-sm tracking-tight">
+              <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
                 Signature<span className="text-primary">404</span>
               </span>
             </Link>
           </div>
 
-          {/* Right: locale + notifications + wallet */}
+          {/* Right: notifications + wallet */}
           <div className="flex items-center gap-1">
-            <LocaleSwitcher />
             {isConnected && (
               <NotificationCenter
                 open={openPanelMobile === "notifications"}
@@ -147,7 +145,7 @@ export default function Header() {
                 height={26}
                 className="opacity-80 group-hover:opacity-100 transition-opacity"
               />
-              <span className="font-syne font-bold text-base tracking-tight">
+              <span className="font-syne font-bold text-base tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
                 Signature<span className="text-primary">404</span>
               </span>
             </Link>
@@ -177,7 +175,6 @@ export default function Header() {
 
           {/* Right */}
           <div className="flex items-center gap-2 justify-end">
-            <LocaleSwitcher />
             {isConnected && (
               <NotificationCenter
                 open={openPanelDesktop === "notifications"}

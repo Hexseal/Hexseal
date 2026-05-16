@@ -16,9 +16,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, Shield, ShieldCheck, HelpCircle } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, Shield, ShieldCheck, HelpCircle, Globe } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
+import { useLocale } from "@/hooks/useLocale";
+import { locales, localeNames, type Locale } from "@/i18n/config";
+import { cn } from "@/lib/utils";
 
 function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -33,6 +36,7 @@ interface Props {
 
 export default function WalletMenu({ open, onOpenChange, hideNavItems = false }: Props) {
   const t = useTranslations();
+  const { locale, setLocale } = useLocale();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
@@ -120,13 +124,16 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
 
   if (!mounted || !isConnected || !address) {
     return (
-      <button
-        onClick={openConnectModal}
-        disabled={!mounted}
-        className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 disabled:opacity-0"
-      >
-        {t("wallet.connect")}
-      </button>
+      <div className="flex items-center gap-1">
+        <LocaleToggle locale={locale} setLocale={setLocale} />
+        <button
+          onClick={openConnectModal}
+          disabled={!mounted}
+          className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 disabled:opacity-0"
+        >
+          {t("wallet.connect")}
+        </button>
+      </div>
     );
   }
 
@@ -256,6 +263,33 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
           </DropdownMenuItem>
         </div>
 
+        {/* ── Language ── */}
+        <div className="h-px bg-white/[0.06]" />
+        <div className="px-3 py-2.5">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Globe className="w-3 h-3 text-white/30" />
+            <span className="text-[11px] text-white/30 font-medium uppercase tracking-wide">Language</span>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {locales.map((l) => (
+              <button
+                key={l}
+                type="button"
+                onClick={() => setLocale(l as Locale)}
+                title={localeNames[l as Locale]}
+                className={cn(
+                  "text-xs px-2 py-0.5 rounded-md font-mono font-medium transition-colors",
+                  l === locale
+                    ? "bg-primary/20 text-primary"
+                    : "text-white/35 hover:text-white/70 hover:bg-white/5"
+                )}
+              >
+                {l.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* ── Disconnect ── */}
         <div className="h-px bg-white/[0.06]" />
         <div className="p-1">
@@ -267,5 +301,50 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
 
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function LocaleToggle({ locale, setLocale }: { locale: Locale; setLocale: (l: Locale) => void }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    function onOut(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener("mousedown", onOut);
+    return () => document.removeEventListener("mousedown", onOut);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1 h-9 px-2.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-xs text-white/50 hover:text-white/80 font-mono"
+        aria-label="Switch language"
+      >
+        <Globe className="w-3.5 h-3.5" />
+        {locale.toUpperCase()}
+      </button>
+      {open && (
+        <div className="absolute top-full mt-2 right-0 w-44 bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-xl overflow-hidden shadow-2xl shadow-black/70 z-[200]">
+          {locales.map((l) => (
+            <button
+              key={l}
+              type="button"
+              onClick={() => { setLocale(l as Locale); setOpen(false); }}
+              className={cn(
+                "w-full flex items-center gap-3 px-3.5 py-2.5 text-sm transition-colors",
+                l === locale ? "text-primary bg-primary/10" : "text-white/70 hover:text-white hover:bg-white/5"
+              )}
+            >
+              <span className="font-mono text-xs opacity-50 w-6">{l.toUpperCase()}</span>
+              <span>{localeNames[l as Locale]}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
