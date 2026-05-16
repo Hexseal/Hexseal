@@ -12,7 +12,6 @@ import {
   Settings,
   Briefcase,
   User,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -118,71 +117,56 @@ export default function MobileBottomNav() {
         />
       )}
 
-      {/* Board popup — above the pill */}
+      {/* Board popup — sits directly above the nav pill, same visual language */}
       {boardOpen && (
         <div
-          className="fixed z-50 bottom-[calc(env(safe-area-inset-bottom,0px)+108px)] left-1/2 -translate-x-1/2"
-          style={{ minWidth: 200 }}
+          className="fixed z-50 left-4 right-4 animate-in slide-in-from-bottom-3 fade-in duration-200"
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 102px)" }}
         >
-          <div className="animate-in slide-in-from-bottom-2 fade-in duration-150 bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-2xl overflow-hidden shadow-2xl shadow-black/70">
-            <div className="flex items-center justify-between px-4 pt-3 pb-2">
-              <span className="text-[11px] text-white/30 font-medium tracking-widest uppercase">
-                {t("board.mobile_popup.title")}
-              </span>
-              <button
-                onClick={() => setBoardOpen(false)}
-                className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center"
-              >
-                <X className="w-3 h-3 text-white/50" />
-              </button>
-            </div>
-            <div className="h-px bg-white/[0.06] mx-3" />
+          <div
+            className="flex bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] overflow-hidden"
+            style={{
+              boxShadow:
+                "0 8px 40px rgba(0,0,0,0.65), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)",
+            }}
+          >
             <Link
               href="/board"
               onClick={() => setBoardOpen(false)}
-              className="flex items-center gap-3 px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+              className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
-              <span className="w-8 h-8 rounded-xl bg-white/[0.07] flex items-center justify-center flex-shrink-0">
-                <Briefcase className="w-4 h-4" />
+              <span className="w-9 h-9 rounded-2xl bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
+                <Briefcase className="w-[18px] h-[18px] text-white/55" />
               </span>
               <div>
-                <p className="font-medium text-white/85">
+                <p className="text-sm font-medium text-white/85">
                   {t("board.mobile_popup.jobs_label")}
                 </p>
-                <p className="text-[11px] text-white/35 mt-0.5">
+                <p className="text-[11px] text-white/30 mt-0.5">
                   {t("board.mobile_popup.jobs_desc")}
                 </p>
               </div>
             </Link>
-            <div className="h-px bg-white/[0.06] mx-3" />
+
+            <div className="w-px bg-white/[0.06] my-3" />
+
             <Link
               href="/board/executor"
               onClick={() => setBoardOpen(false)}
-              className="flex items-center gap-3 px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+              className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
-              <span className="w-8 h-8 rounded-xl bg-white/[0.07] flex items-center justify-center flex-shrink-0">
-                <User className="w-4 h-4" />
+              <span className="w-9 h-9 rounded-2xl bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
+                <User className="w-[18px] h-[18px] text-white/55" />
               </span>
               <div>
-                <p className="font-medium text-white/85">
+                <p className="text-sm font-medium text-white/85">
                   {t("board.mobile_popup.services_label")}
                 </p>
-                <p className="text-[11px] text-white/35 mt-0.5">
+                <p className="text-[11px] text-white/30 mt-0.5">
                   {t("board.mobile_popup.services_desc")}
                 </p>
               </div>
             </Link>
-          </div>
-          {/* caret */}
-          <div className="flex justify-center mt-[-1px]">
-            <div
-              className="w-0 h-0"
-              style={{
-                borderLeft: "9px solid transparent",
-                borderRight: "9px solid transparent",
-                borderTop: "9px solid rgba(17,17,19,0.95)",
-              }}
-            />
           </div>
         </div>
       )}
