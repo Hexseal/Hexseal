@@ -1,1025 +1,150 @@
-# Test Plan: Agreement
-> Источник: `src/Agreement.sol`
-> Сгенерировано: 2026-05-07
+# Тест-план: Agreement — Жизненный цикл сделки
 
-Эскроу-контракт между клиентом и исполнителем. ERC-2771 gasless, USDC permit, reentrancy guard, автоапрув по таймауту.
+> Сеть: Base Sepolia · Diamond: `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` · USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+> Тестер: — · Дата: —
 
-## Окружение
-| Параметр | Значение |
-|----------|----------|
-| Сеть | Base Sepolia (chainId 84532) |
-| Diamond | `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` |
-| Тестовый USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Кошелёк тестера | — |
-| Дата теста | — |
-
-## ✏️ Write Functions
-
-### approve
-
-**Happy path:**
-- [ ] Вызвать `approve()` с валидными параметрами — транзакция принята
-- [ ] Event `Approval` эмитирован с правильными аргументами
-- [ ] Event `ApprovalForAll` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+Тестируем всё через UI на странице `/deal/[address]`. Каждый сценарий — **отдельная сделка** (создаётся через Job Board). Нужны минимум два кошелька с тестовым USDC.
 
 ---
 
-### setApprovalForAll
+## Сценарий 1: Happy path — Fund → Activate → Mark Done → Release
 
-**Happy path:**
-- [ ] Вызвать `setApprovalForAll()` с валидными параметрами — транзакция принята
-- [ ] Event `Approval` эмитирован с правильными аргументами
-- [ ] Event `ApprovalForAll` эмитирован с правильными аргументами
+**Роли:** Клиент (К) и Исполнитель (И)
+**Страница:** `/deal/[address]`
+**Предусловие:** сделка создана через Job Board (клиент нанял исполнителя), статус `CREATED`
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Подключить кошелёк **Клиента**, открыть страницу сделки
+- [ ] Нажать кнопку **«Fund Deal»** → MetaMask просит подписать permit (подпись 1/2), потом транзакцию
+- [ ] Подписать → тост «Deal funded!», статус меняется на `FUNDED`, кнопка «Fund Deal» исчезает
+- [ ] Переключиться на кошелёк **Исполнителя**, обновить страницу
+- [ ] Нажать кнопку **«Activate»** → подтвердить транзакцию → статус `ACTIVE`, появляется таймер дедлайна
+- [ ] Нажать кнопку **«Mark Done»** → подтвердить → появляется плашка «Work delivered»
+- [ ] Переключиться обратно на **Клиента**, обновить страницу
+- [ ] Нажать кнопку **«Release Funds»** → подтвердить → статус `COMPLETED`, USDC ушёл на кошелёк И
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+**Проверить после:**
+- [ ] Баланс Исполнителя вырос на сумму сделки (можно сверить на basescan)
+- [ ] Страница `/profile/[адрес исполнителя]` — сделка появилась в истории со статусом «Completed»
+- [ ] Счётчик XP и completion rate обновился
 
 ---
 
-### transferFrom
+## Сценарий 2: Автоапрув — клиент не реагирует, исполнитель забирает деньги сам
 
-**Happy path:**
-- [ ] Вызвать `transferFrom()` с валидными параметрами — транзакция принята
+**Роли:** Клиент (К) и Исполнитель (И)
+**Страница:** `/deal/[address]`
+**Предусловие:** сделка в статусе `ACTIVE`, исполнитель нажал «Mark Done», клиент молчит
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+> Таймаут автоапрува = 3 дня (72 часа). Для теста нужно либо ждать, либо использовать тестовый деплой с коротким таймером.
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
+- [ ] Исполнитель нажал **«Mark Done»**, клиент не реагирует
+- [ ] Дождаться истечения AUTO_APPROVE_WINDOW (или использовать тестовый контракт с коротким таймером)
+- [ ] Любой пользователь (И или К) нажимает кнопку **«Trigger Auto-Approve»** (появляется после таймаута)
+- [ ] Подтвердить транзакцию → USDC уходит Исполнителю, статус `COMPLETED`
 
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+**Проверить:**
+- [ ] Кнопка «Trigger Auto-Approve» **не появляется** до истечения таймаута
+- [ ] После триггера клиент не может нажать «Release Funds» (функция уже выполнена)
 
 ---
 
-### safeTransferFrom
+## Сценарий 3: Спор → арбитр на стороне клиента (рефанд)
 
-**Happy path:**
-- [ ] Вызвать `safeTransferFrom()` с валидными параметрами — транзакция принята
+**Роли:** Клиент (К), Исполнитель (И), Арбитр (А)
+**Страница:** `/deal/[address]` для К/И, `/arbiter` для А
+**Предусловие:** сделка `ACTIVE`
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] **Клиент** (или исполнитель) нажимает **«Raise Dispute»**
+- [ ] Появляется модальное окно — вписать причину спора в поле, нажать **«Confirm Dispute»**
+- [ ] Подтвердить транзакцию → статус `DISPUTED`, появляется баннер «Dispute Active»
+- [ ] Перейти на `/arbiter` → вкладка **«Open Disputes»** — сделка появилась
+- [ ] **Арбитр** нажимает **«Claim Case»** (двухшаговый процесс: commit → reveal)
+- [ ] После клейма: идёт в чат сделки кнопкой **«Deal Chat»**, общается с обеими сторонами
+- [ ] Арбитр нажимает **«Refund Client»** → подтвердить → USDC возвращается Клиенту, статус `RESOLVED`
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+**Проверить:**
+- [ ] Баланс Клиента вырос на сумму сделки
+- [ ] Баланс Арбитра вырос на комиссию арбитра
+- [ ] Сделка ушла из «Open Disputes» в «History» у арбитра
 
 ---
 
-### safeTransferFrom
+## Сценарий 4: Спор → арбитр на стороне исполнителя (выплата)
 
-**Happy path:**
-- [ ] Вызвать `safeTransferFrom()` с валидными параметрами — транзакция принята
+**Предусловие:** аналогично сценарию 3, спор поднят
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Арбитр клеймит дело, изучает материалы, нажимает **«Pay Executor»** → подтвердить
+- [ ] USDC уходит Исполнителю, статус `RESOLVED`
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+**Проверить:**
+- [ ] Баланс Исполнителя вырос на сумму сделки
+- [ ] Кнопка «Refund Client» больше не доступна
 
 ---
 
-### updateStatus
+## Сценарий 5: Таймаут активации — исполнитель не начал работу
 
-**Happy path:**
-- [ ] Вызвать `updateStatus()` с валидными параметрами — транзакция принята
+**Страница:** `/deal/[address]`
+**Предусловие:** сделка `FUNDED`, исполнитель так и не нажал «Activate»
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+> Таймаут активации — фиксированный период (например, 7 дней).
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
+- [ ] Дождаться истечения окна активации
+- [ ] Любой пользователь нажимает **«Trigger Activation Timeout»** (кнопка появляется после дедлайна)
+- [ ] Подтвердить → USDC возвращается Клиенту, статус `REFUNDED`
 
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+**Проверить:**
+- [ ] Кнопка **не появляется** до истечения таймаута
+- [ ] Исполнитель не может нажать «Activate» после того как кнопка таймаута сработала
 
 ---
 
-### clearDisputeClaim
+## Сценарий 6: Таймаут дедлайна — исполнитель не сдал работу вовремя
 
-**Happy path:**
-- [ ] Вызвать `clearDisputeClaim()` с валидными параметрами — транзакция принята
+**Предусловие:** сделка `ACTIVE`, дедлайн истёк, исполнитель не нажал «Mark Done»
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] После истечения дедлайна нажать **«Trigger Deadline Timeout»**
+- [ ] Подтвердить → USDC возвращается Клиенту
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+**Проверить:**
+- [ ] Если исполнитель нажал «Mark Done» до истечения дедлайна — таймаут недоступен
+- [ ] Таймаут доступен даже если исполнитель нажал «Mark Done» **после** дедлайна
 
 ---
 
-### setArbiter
-> Только Diamond может вызвать — проверяем msg.sender напрямую (не ERC-2771).
+## Сценарий 7: Таймаут арбитра — арбитр не решил спор вовремя
 
-**Happy path:**
-- [ ] Вызвать `setArbiter()` с валидными параметрами — транзакция принята
+**Предусловие:** сделка `DISPUTED`, арбитр заклеймил дело, но ничего не сделал 7 дней
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Дождаться истечения окна арбитра
+- [ ] Любой пользователь нажимает **«Trigger Arbiter Timeout»**
+- [ ] USDC возвращается Клиенту автоматически
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+**Проверить:**
+- [ ] Кнопка не появляется пока арбитр не заклеймил дело
+- [ ] После триггера арбитр не может больше нажать «Refund Client» или «Pay Executor»
 
 ---
 
-### fund
-> Клиент должен сделать approve(agreement, amount) на USDC перед вызовом
+## Граничные случаи
 
-**Happy path:**
-- [ ] Вызвать `fund()` с валидными параметрами — транзакция принята
-- [ ] Event `Funded` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
+- [ ] **Двойное финансирование:** попробовать нажать «Fund Deal» повторно → должен быть revert (AlreadyFunded)
+- [ ] **Не клиент финансирует:** подключить чужой кошелёк и попробовать нажать «Fund Deal» → revert
+- [ ] **Исполнитель пытается релизнуть деньги:** переключиться на И и нажать «Release Funds» → revert (NotClient)
+- [ ] **Спор после релиза:** сделка `COMPLETED` — кнопки «Raise Dispute» быть не должно
+- [ ] **Mark Done дважды:** нажать «Mark Done» повторно → revert (AlreadyMarkedDone)
 
 ---
 
-### fundFromFactory
-> Only factory can call this — used by deployAndFund()
-
-**Happy path:**
-- [ ] Вызвать `fundFromFactory()` с валидными параметрами — транзакция принята
-- [ ] Event `Funded` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### activate
-> После этого клиент не может забрать деньги
-
-**Happy path:**
-- [ ] Вызвать `activate()` с валидными параметрами — транзакция принята
-- [ ] Event `Activated` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### markDone
-> @notice Исполнитель сигнализирует о завершении работы
-
-**Happy path:**
-- [ ] Вызвать `markDone()` с валидными параметрами — транзакция принята
-- [ ] Event `MarkedDone` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### release
-> @notice Клиент подтверждает выполнение → USDC уходит исполнителю
-
-**Happy path:**
-- [ ] Вызвать `release()` с валидными параметрами — транзакция принята
-- [ ] Event `Released` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### triggerAutoApprove
-> Клиент не ответил → исполнитель получает деньги автоматически
-
-**Happy path:**
-- [ ] Вызвать `triggerAutoApprove()` с валидными параметрами — транзакция принята
-- [ ] Event `AutoApproved` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### raiseDispute
-> Можно поднять спор даже после markDone, если AUTO_APPROVE_WINDOW ещё не прошёл
-
-**Happy path:**
-- [ ] Вызвать `raiseDispute()` с валидными параметрами — транзакция принята
-- [ ] Event `DisputeRaised` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### resolveDispute
-> clientWins = false → оплата исполнителю
-
-**Happy path:**
-- [ ] Вызвать `resolveDispute()` с валидными параметрами — транзакция принята
-- [ ] Event `DisputeResolved` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### triggerActivationTimeout
-> Рефанд клиенту
-
-**Happy path:**
-- [ ] Вызвать `triggerActivationTimeout()` с валидными параметрами — транзакция принята
-- [ ] Event `TimedOut` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### triggerDeadlineTimeout
-> Рефанд клиенту
-
-**Happy path:**
-- [ ] Вызвать `triggerDeadlineTimeout()` с валидными параметрами — транзакция принята
-- [ ] Event `TimedOut` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### triggerArbiterTimeout
-> Авторефанд клиенту — защита от неактивного/злонамеренного арбитра
-
-**Happy path:**
-- [ ] Вызвать `triggerArbiterTimeout()` с валидными параметрами — транзакция принята
-- [ ] Event `ArbiterTimedOut` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-### syncRegistry
-> Может вызвать любой.
-
-**Happy path:**
-- [ ] Вызвать `syncRegistry()` с валидными параметрами — транзакция принята
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `ERC721NonexistentToken`
-- [ ] Спровоцировать условие → revert `ERC721TransferToZeroAddress`
-- [ ] Спровоцировать условие → revert `ERC721AlreadyMinted`
-- [ ] Спровоцировать условие → revert `TokenSoulbound`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `NotParty`
-- [ ] Спровоцировать условие → revert `AlreadyFunded`
-- [ ] Спровоцировать условие → revert `NotFunded`
-- [ ] Спровоцировать условие → revert `NotActive`
-- [ ] Спровоцировать условие → revert `AlreadyActive`
-- [ ] Спровоцировать условие → revert `AlreadyMarkedDone`
-- [ ] Спровоцировать условие → revert `NotMarkedDone`
-- [ ] Спровоцировать условие → revert `AlreadyDisputed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `AlreadyResolved`
-- [ ] Спровоцировать условие → revert `AlreadyFinalized`
-- [ ] Спровоцировать условие → revert `WindowNotPassed`
-- [ ] Спровоцировать условие → revert `WindowAlreadyPassed`
-- [ ] Спровоцировать условие → revert `DeadlinePassed`
-- [ ] Спровоцировать условие → revert `DeadlineNotPassed`
-- [ ] Спровоцировать условие → revert `ActivationWindowPassed`
-- [ ] Спровоцировать условие → revert `NoArbiterSet`
-
----
-
-## 👁️ View Functions
-
-### name
-
-- [ ] Вызвать `name()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### symbol
-
-- [ ] Вызвать `symbol()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### ownerOf
-
-- [ ] Вызвать `ownerOf()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### balanceOf
-
-- [ ] Вызвать `balanceOf()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getApproved
-
-- [ ] Вызвать `getApproved()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### isApprovedForAll
-
-- [ ] Вызвать `isApprovedForAll()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### supportsInterface
-
-- [ ] Вызвать `supportsInterface()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### isTrustedForwarder
-
-- [ ] Вызвать `isTrustedForwarder()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### trustedForwarder
-
-- [ ] Вызвать `trustedForwarder()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### balanceOf
-
-- [ ] Вызвать `balanceOf()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### status
-
-- [ ] Вызвать `status()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getDetails
-
-- [ ] Вызвать `getDetails()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### timeLeft
-> @notice Сколько времени осталось до дедлайна (0 если прошёл)
-
-- [ ] Вызвать `timeLeft()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### arbiterTimeLeft
-> @notice Сколько времени осталось арбитру (0 если не в споре или прошёл)
-
-- [ ] Вызвать `arbiterTimeLeft()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### tokenURI
-
-- [ ] Вызвать `tokenURI()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-## 📡 Events
-
-### Transfer
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed from, address indexed to, uint256 indexed tokenId) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### Approval
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed owner, address indexed approved, uint256 indexed tokenId) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ApprovalForAll
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed owner, address indexed operator, bool approved) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### Funded
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed client, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### Activated
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed executor) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### MarkedDone
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed executor) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### Released
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed client, address indexed executor, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### AutoApproved
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed executor, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### DisputeRaised
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed by) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### DisputeResolved
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed arbiter, bool clientWins, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### TimedOut
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed client, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ArbiterTimedOut
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed client, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### RegistrySyncFailed
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed agreement, uint8 targetStatus) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-## ✅ Результат
-| Функция | Статус | Тестер | Дата | Комментарий |
-|---------|--------|--------|------|-------------|
-| `name` | ⬜ | — | — | — |
-| `symbol` | ⬜ | — | — | — |
-| `ownerOf` | ⬜ | — | — | — |
-| `balanceOf` | ⬜ | — | — | — |
-| `getApproved` | ⬜ | — | — | — |
-| `isApprovedForAll` | ⬜ | — | — | — |
-| `approve` | ⬜ | — | — | — |
-| `setApprovalForAll` | ⬜ | — | — | — |
-| `transferFrom` | ⬜ | — | — | — |
-| `safeTransferFrom` | ⬜ | — | — | — |
-| `safeTransferFrom` | ⬜ | — | — | — |
-| `supportsInterface` | ⬜ | — | — | — |
-| `isTrustedForwarder` | ⬜ | — | — | — |
-| `trustedForwarder` | ⬜ | — | — | — |
-| `balanceOf` | ⬜ | — | — | — |
-| `updateStatus` | ⬜ | — | — | — |
-| `clearDisputeClaim` | ⬜ | — | — | — |
-| `setArbiter` | ⬜ | — | — | — |
-| `status` | ⬜ | — | — | — |
-| `fund` | ⬜ | — | — | — |
-| `fundFromFactory` | ⬜ | — | — | — |
-| `activate` | ⬜ | — | — | — |
-| `markDone` | ⬜ | — | — | — |
-| `release` | ⬜ | — | — | — |
-| `triggerAutoApprove` | ⬜ | — | — | — |
-| `raiseDispute` | ⬜ | — | — | — |
-| `resolveDispute` | ⬜ | — | — | — |
-| `triggerActivationTimeout` | ⬜ | — | — | — |
-| `triggerDeadlineTimeout` | ⬜ | — | — | — |
-| `triggerArbiterTimeout` | ⬜ | — | — | — |
-| `getDetails` | ⬜ | — | — | — |
-| `timeLeft` | ⬜ | — | — | — |
-| `arbiterTimeLeft` | ⬜ | — | — | — |
-| `tokenURI` | ⬜ | — | — | — |
-| `syncRegistry` | ⬜ | — | — | — |
+## ✅ Итог по сценариям
+
+| Сценарий | Статус | Тестер | Дата | Комментарий |
+|----------|--------|--------|------|-------------|
+| 1. Happy path — Release | ⬜ | — | — | — |
+| 2. Автоапрув | ⬜ | — | — | — |
+| 3. Спор → рефанд клиенту | ⬜ | — | — | — |
+| 4. Спор → выплата исполнителю | ⬜ | — | — | — |
+| 5. Таймаут активации | ⬜ | — | — | — |
+| 6. Таймаут дедлайна | ⬜ | — | — | — |
+| 7. Таймаут арбитра | ⬜ | — | — | — |
+| Граничные случаи | ⬜ | — | — | — |

@@ -1,373 +1,144 @@
-# Test Plan: ArbiterRegistryFacet
-> Источник: `src/facets/ArbiterRegistryFacet.sol`
-> Сгенерировано: 2026-05-07
+# Тест-план: ArbiterRegistryFacet — Хаб арбитров
 
-Реестр арбитров. Commit-reveal клейм споров, история решений, управление chief arbiter.
+> Сеть: Base Sepolia · Diamond: `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` · USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+> Тестер: — · Дата: —
 
-## Окружение
-| Параметр | Значение |
-|----------|----------|
-| Сеть | Base Sepolia (chainId 84532) |
-| Diamond | `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` |
-| Тестовый USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Кошелёк тестера | — |
-| Дата теста | — |
-
-## ✏️ Write Functions
-
-### setArbiter
-
-**Happy path:**
-- [ ] Вызвать `setArbiter()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `address`
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+Тестируем `/arbiter` — всё что видит и делает арбитр. Нужны: кошелёк Арбитра (зарегистрированный), кошельки Клиента и Исполнителя для создания споров, кошелёк Chief Arbiter для управления.
 
 ---
 
-### setChiefArbiter
-> @notice Назначить главного арбитра. Только owner.
+## Сценарий 1: Арбитр видит открытые споры
 
-**Happy path:**
-- [ ] Вызвать `setChiefArbiter()` с валидными параметрами — транзакция принята
-- [ ] Event `ArbiterAdded` эмитирован с правильными аргументами
-- [ ] Event `ChiefArbiterSet` эмитирован с правильными аргументами
+**Роль:** Арбитр
+**Страница:** `/arbiter` → вкладка **«Open Disputes»**
+**Предусловие:** существует хотя бы один спор (создан через сделку с «Raise Dispute»)
 
-**Access control:**
-- [ ] Вызов от чужого адреса → revert `NotOwner` / `OwnableUnauthorizedAccount`
-- [ ] Вызов от owner → успех
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+- [ ] Подключить кошелёк Арбитра, открыть `/arbiter`
+- [ ] Убедиться, что вкладка «Open Disputes» активна по умолчанию
+- [ ] Видна карточка спора с: адресом сделки (ссылка), адресами Клиента и Исполнителя, суммой USDC
+- [ ] Если клиент указал причину спора — она видна под карточкой
+- [ ] Если спор ещё не заклеймен — виден бейдж «Unclaimed» и кнопка «Claim Case»
+- [ ] Если кто-то уже заклеймил — бейдж «Claimed by [адрес]» и кнопки «Claim Case» нет
 
 ---
 
-### addArbiter
-> @notice Добавить арбитра в реестр. Owner или chief arbiter.
+## Сценарий 2: Арбитр клеймит спор (двухшаговый commit-reveal)
 
-**Happy path:**
-- [ ] Вызвать `addArbiter()` с валидными параметрами — транзакция принята
-- [ ] Event `ArbiterAdded` эмитирован с правильными аргументами
-- [ ] Event `ArbiterRemoved` эмитирован с правильными аргументами
+**Роль:** Арбитр
+**Страница:** `/arbiter` → вкладка «Open Disputes»
+**Предусловие:** спор «Unclaimed»
 
-**Access control:**
-- [ ] Вызов от чужого адреса → revert `NotOwner` / `OwnableUnauthorizedAccount`
-- [ ] Вызов от owner → успех
+- [ ] Нажать **«Claim Case»** на нужном споре
+- [ ] Первый шаг (commit) — MetaMask запрашивает gasless-подпись → тост «Step 1/2: Committing claim…»
+- [ ] Дождаться майнинга commit-транзакции → тост «Step 2/2: Claiming dispute…»
+- [ ] Второй шаг (reveal) — автоматически → тост «Dispute claimed. You are now the arbiter.»
+- [ ] Бейдж спора сменился на «Claimed by you»
+- [ ] Спор появился во вкладке **«My Cases»**
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+**Проверить:**
+- [ ] Другой арбитр больше не может заклеймить этот же спор
+- [ ] Отображается таймер (сколько времени осталось на решение — 7 дней)
 
 ---
 
-### removeArbiter
-> @notice Убрать арбитра из реестра. Owner или chief arbiter.
+## Сценарий 3: Арбитр изучает дело и общается со сторонами
 
-**Happy path:**
-- [ ] Вызвать `removeArbiter()` с валидными параметрами — транзакция принята
-- [ ] Event `ArbiterRemoved` эмитирован с правильными аргументами
+**Роль:** Арбитр
+**Страница:** `/arbiter` → вкладка **«My Cases»**
 
-**Access control:**
-- [ ] Вызов от чужого адреса → revert `NotOwner` / `OwnableUnauthorizedAccount`
-- [ ] Вызов от owner → успех
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+- [ ] Найти заклеймленное дело в «My Cases»
+- [ ] Нажать **«Deal Chat»** → открывается групповой чат сделки `/deal/[address]/chat`
+- [ ] Арбитр может написать сообщение обеим сторонам
+- [ ] Нажать **«Chat Client»** → открывается личный чат с Клиентом `/chat?peer=[client]`
+- [ ] Нажать **«Chat Executor»** → открывается личный чат с Исполнителем
+- [ ] Нажать **«Details»** → переход на `/deal/[address]` для просмотра деталей сделки
 
 ---
 
-### commitDisputeClaim
-> Раскрывать можно не раньше следующего блока — защита от фронтраннинга.
+## Сценарий 4: Арбитр выносит решение — рефанд Клиенту
 
-**Happy path:**
-- [ ] Вызвать `commitDisputeClaim()` с валидными параметрами — транзакция принята
-- [ ] Event `DisputeClaimCommitted` эмитирован с правильными аргументами
+**Роль:** Арбитр
+**Страница:** `/arbiter` → вкладка «My Cases»
+**Предусловие:** дело заклеймено, таймаут не истёк
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Найти дело в «My Cases»
+- [ ] Прокрутить до блока с кнопками разрешения
+- [ ] Нажать **«Refund Client»** → подтвердить gasless-транзакцию
+- [ ] Тост «Refunded to client.» → дело исчезает из «My Cases»
+- [ ] Переходит в вкладку **«History»** с вердиктом «Client refunded»
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+**Проверить:**
+- [ ] USDC вернулся Клиенту
+- [ ] Статус сделки на `/deal/[address]` = `RESOLVED`
 
 ---
 
-### claimDispute
-> Вызывает Agreement.setArbiter(caller) через Diamond delegatecall.
+## Сценарий 5: Арбитр выносит решение — выплата Исполнителю
 
-**Happy path:**
-- [ ] Вызвать `claimDispute()` с валидными параметрами — транзакция принята
+- [ ] Нажать **«Pay Executor»** → подтвердить
+- [ ] Тост «Paid to executor.» → вкладка «History» с вердиктом «Executor paid»
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+**Проверить:**
+- [ ] USDC ушёл Исполнителю
 
 ---
 
-### releaseDisputeClaim
-> @notice Снять клейм (арбитр или owner). Освобождает сделку для другого арбитра.
+## Сценарий 6: Арбитр отказывается от дела (Release Claim)
 
-**Happy path:**
-- [ ] Вызвать `releaseDisputeClaim()` с валидными параметрами — транзакция принята
-- [ ] Event `DisputeReleased` эмитирован с правильными аргументами
+**Роль:** Арбитр
+**Предусловие:** дело заклеймено, но арбитр передумал (например, конфликт интересов)
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+- [ ] В «My Cases» нажать **«Release Claim»**
+- [ ] Подтвердить → тост «Claim released. Deal is open for other arbiters.»
+- [ ] Дело снова появляется в «Open Disputes» как «Unclaimed»
 
 ---
 
-### clearDisputeClaim
-> Только Agreement сам может очистить свой клейм — msg.sender == agreement.
+## Сценарий 7: Chief Arbiter добавляет нового арбитра
 
-**Happy path:**
-- [ ] Вызвать `clearDisputeClaim()` с валидными параметрами — транзакция принята
+**Роль:** Chief Arbiter
+**Страница:** `/arbiter` → вкладка **«Manage»** (видна только chief arbiter)
+**Предусловие:** подключён кошелёк chief arbiter
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Открыть `/arbiter` — видна вкладка «Manage» с иконкой короны
+- [ ] В поле «Add Arbiter» вставить адрес нового арбитра
+- [ ] Нажать **«Add»** → MetaMask запрашивает транзакцию (не gasless, платит сам chief)
+- [ ] Подтвердить → адрес появляется в списке арбитров
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `NotOwner`
-- [ ] Спровоцировать условие → revert `NotOwnerOrChief`
-- [ ] Спровоцировать условие → revert `NotArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyArbiter`
-- [ ] Спровоцировать условие → revert `NotAnArbiter`
-- [ ] Спровоцировать условие → revert `AlreadyClaimed`
-- [ ] Спровоцировать условие → revert `NotClaimed`
-- [ ] Спровоцировать условие → revert `NotDisputed`
-- [ ] Спровоцировать условие → revert `NotAuthorized`
-- [ ] Спровоцировать условие → revert `CommitmentNotFound`
-- [ ] Спровоцировать условие → revert `CommitmentTooEarly`
-- [ ] Спровоцировать условие → revert `CommitmentExpired`
+**Проверить:**
+- [ ] Новый арбитр теперь видит вкладку «Open Disputes» на `/arbiter`
+- [ ] Попробовать добавить невалидный адрес → кнопка «Add» заблокирована
 
 ---
 
-## 👁️ View Functions
+## Сценарий 8: Chief Arbiter удаляет арбитра
 
-### status
+- [ ] В списке арбитров на вкладке «Manage» нажать **«Remove»** рядом с нужным адресом
+- [ ] Подтвердить транзакцию → арбитр исчезает из списка
+- [ ] Бывший арбитр больше не видит вкладку «Open Disputes»
 
-- [ ] Вызвать `status()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+---
 
-### client
+## Граничные случаи
 
-- [ ] Вызвать `client()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+- [ ] **Не-арбитр пытается зайти на `/arbiter`** — страница загружается, но список споров пустой или доступны только публичные данные
+- [ ] **Клейм чужого уже-заклеймленного спора** → транзакция reverts
+- [ ] **Решение после таймаута арбитра** → кнопки «Refund Client» / «Pay Executor» недоступны, вместо них уведомление «Window expired»
+- [ ] **Добавить уже существующего арбитра** → транзакция reverts или silent ignore
+- [ ] **История в «History» корректно фильтруется** → ввести адрес стороны в поиск, нужные дела остаются
 
-### executor
+---
 
-- [ ] Вызвать `executor()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+## ✅ Итог по сценариям
 
-### amount
-
-- [ ] Вызвать `amount()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### disputedAt
-
-- [ ] Вызвать `disputedAt()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getChiefArbiter
-
-- [ ] Вызвать `getChiefArbiter()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### isRegisteredArbiter
-
-- [ ] Вызвать `isRegisteredArbiter()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getArbiters
-
-- [ ] Вызвать `getArbiters()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### getDisputeClaimer
-
-- [ ] Вызвать `getDisputeClaimer()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getArbiterDeals
-> @notice История сделок арбитра (все когда-либо взятые им)
-
-- [ ] Вызвать `getArbiterDeals()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### getClaimCommitment
-> @notice Блок в котором был сохранён коммит (0 если не существует или удалён)
-
-- [ ] Вызвать `getClaimCommitment()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-## 📡 Events
-
-### ArbiterAdded
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed arbiter) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ArbiterRemoved
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed arbiter) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ChiefArbiterSet
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed prev, address indexed next) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### DisputeClaimCommitted
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed arbiter, bytes32 indexed commitment) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### DisputeClaimed
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed agreement, address indexed arbiter) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### DisputeReleased
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed agreement, address indexed prevArbiter) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-## ✅ Результат
-| Функция | Статус | Тестер | Дата | Комментарий |
-|---------|--------|--------|------|-------------|
-| `status` | ⬜ | — | — | — |
-| `setArbiter` | ⬜ | — | — | — |
-| `client` | ⬜ | — | — | — |
-| `executor` | ⬜ | — | — | — |
-| `amount` | ⬜ | — | — | — |
-| `disputedAt` | ⬜ | — | — | — |
-| `setChiefArbiter` | ⬜ | — | — | — |
-| `addArbiter` | ⬜ | — | — | — |
-| `removeArbiter` | ⬜ | — | — | — |
-| `commitDisputeClaim` | ⬜ | — | — | — |
-| `claimDispute` | ⬜ | — | — | — |
-| `releaseDisputeClaim` | ⬜ | — | — | — |
-| `clearDisputeClaim` | ⬜ | — | — | — |
-| `getChiefArbiter` | ⬜ | — | — | — |
-| `isRegisteredArbiter` | ⬜ | — | — | — |
-| `getArbiters` | ⬜ | — | — | — |
-| `getDisputeClaimer` | ⬜ | — | — | — |
-| `getArbiterDeals` | ⬜ | — | — | — |
-| `getClaimCommitment` | ⬜ | — | — | — |
+| Сценарий | Статус | Тестер | Дата | Комментарий |
+|----------|--------|--------|------|-------------|
+| 1. Просмотр открытых споров | ⬜ | — | — | — |
+| 2. Commit-reveal клейм | ⬜ | — | — | — |
+| 3. Общение со сторонами | ⬜ | — | — | — |
+| 4. Решение — рефанд клиенту | ⬜ | — | — | — |
+| 5. Решение — выплата исполнителю | ⬜ | — | — | — |
+| 6. Release Claim | ⬜ | — | — | — |
+| 7. Chief — добавить арбитра | ⬜ | — | — | — |
+| 8. Chief — удалить арбитра | ⬜ | — | — | — |
+| Граничные случаи | ⬜ | — | — | — |

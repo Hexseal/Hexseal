@@ -1,501 +1,112 @@
-# Test Plan: ServiceBoardFacet
-> Источник: `src/facets/ServiceBoardFacet.sol`
-> Сгенерировано: 2026-05-07
+# Тест-план: ServiceBoardFacet — Доска услуг
 
-Доска услуг: исполнитель постит услугу, клиенты запрашивают её выполнение.
+> Сеть: Base Sepolia · Diamond: `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` · USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+> Тестер: — · Дата: —
 
-## Окружение
-| Параметр | Значение |
-|----------|----------|
-| Сеть | Base Sepolia (chainId 84532) |
-| Diamond | `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` |
-| Тестовый USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Кошелёк тестера | — |
-| Дата теста | — |
-
-## ✏️ Write Functions
-
-### permit
-
-**Happy path:**
-- [ ] Вызвать `permit()` с валидными параметрами — транзакция принята
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
+Тестируем публикацию услуг и запросы на них. Направление обратное Job Board: **Исполнитель** публикует что умеет, **Клиент** запрашивает выполнение. Нужны два кошелька.
 
 ---
 
-### mintService
-> @notice Исполнитель публикует услугу. Требует approve(diamond, fee) до вызова.
+## Сценарий 1: Исполнитель публикует услугу
 
-**Happy path:**
-- [ ] Вызвать `mintService()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `uint256 serviceId`
+**Роль:** Исполнитель
+**Страница:** `/board/executor` → кнопка «Post Service» (или `/board/executor/post`)
+**Предусловие:** кошелёк Исполнителя подключён
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Открыть страницу создания услуги
+- [ ] Заполнить **Title** (например: «Solidity smart contract review»)
+- [ ] Заполнить **Description** (что именно делаю, сроки, условия)
+- [ ] Указать **Price** (цена в USDC)
+- [ ] Указать **Delivery** (срок в днях)
+- [ ] Выбрать **Region**
+- [ ] Нажать **«Post Service»** → подтвердить транзакцию
+- [ ] Тост «Service posted!», редирект на страницу услуги
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
+**Проверить после:**
+- [ ] Услуга появилась на `/board/executor` в общем списке
+- [ ] Все данные отображаются корректно (название, цена, срок, регион)
+- [ ] Статус услуги «Open»
 
 ---
 
-### mintServiceWithPermit
-> @dev executor передаётся явно — msg.sender здесь форвардер (ERC-2771).
+## Сценарий 2: Клиент запрашивает услугу
 
-**Happy path:**
-- [ ] Вызвать `mintServiceWithPermit()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `uint256 serviceId`
+**Роль:** Клиент
+**Страница:** `/board/executor` → открыть карточку услуги
+**Предусловие:** услуга в статусе «Open», у Клиента есть USDC
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Найти интересную услугу на доске, открыть её страницу
+- [ ] Нажать кнопку **«Request Service»** (или «Order»)
+- [ ] MetaMask: подписать permit на USDC + подтвердить транзакцию
+- [ ] Тост «Request sent!», статус сменился
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
+**Проверить:**
+- [ ] USDC заблокирован на контракте (Клиент не может вывести пока не отменит)
+- [ ] Исполнитель видит запрос в своём списке
+- [ ] Услуга помечена как «Requested» или ждёт принятия
 
 ---
 
-### removeService
+## Сценарий 3: Исполнитель принимает запрос → создаётся сделка
 
-**Happy path:**
-- [ ] Вызвать `removeService()` с валидными параметрами — транзакция принята
-- [ ] Event `ServiceRemoved` эмитирован с правильными аргументами
-- [ ] Event `ServicePaused` эмитирован с правильными аргументами
+**Роль:** Исполнитель
+**Страница:** Страница своей услуги или dashboard
+**Предусловие:** Клиент сделал запрос
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Переключиться на кошелёк Исполнителя
+- [ ] Найти входящий запрос (уведомление или в профиле/дашборде)
+- [ ] Нажать **«Accept Request»** → подтвердить gasless-транзакцию
+- [ ] Автоматически создаётся Agreement-контракт → редирект на `/deal/[address]`
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
+**Проверить после:**
+- [ ] Сделка создана, статус `CREATED` (ждёт фондирования)
+- [ ] Клиент видит сделку у себя в дашборде
+- [ ] Дальнейший флоу — как в тест-плане Agreement (Fund → Activate → ...)
 
 ---
 
-### pauseService
+## Сценарий 4: Клиент отменяет запрос до принятия
 
-**Happy path:**
-- [ ] Вызвать `pauseService()` с валидными параметрами — транзакция принята
-- [ ] Event `ServicePaused` эмитирован с правильными аргументами
-- [ ] Event `ServiceUnpaused` эмитирован с правильными аргументами
+**Роль:** Клиент
+**Предусловие:** запрос отправлен, Исполнитель ещё не принял
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
+- [ ] Клиент нажимает **«Cancel Request»**
+- [ ] Подтвердить транзакцию → USDC возвращается Клиенту
+- [ ] Услуга снова доступна для заказа
 
 ---
 
-### unpauseService
+## Сценарий 5: Исполнитель снимает свою услугу
 
-**Happy path:**
-- [ ] Вызвать `unpauseService()` с валидными параметрами — транзакция принята
-- [ ] Event `ServiceUnpaused` эмитирован с правильными аргументами
+**Роль:** Исполнитель
+**Предусловие:** услуга в статусе «Open», нет активных запросов
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Открыть свою услугу
+- [ ] Нажать **«Cancel Service»** / **«Remove»**
+- [ ] Подтвердить → услуга исчезает из публичного списка
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
+**Проверить:**
+- [ ] Услуга не отображается на доске
+- [ ] Если был активный запрос — отмена недоступна или требует сначала отклонить запрос
 
 ---
 
-### requestService
-> @param amount     Сумма сделки (может отличаться от price — договорились off-chain)
+## Граничные случаи
 
-**Happy path:**
-- [ ] Вызвать `requestService()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `uint256 requestId`
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
+- [ ] **Нулевая цена:** попробовать создать услугу с price = 0 → ошибка валидации
+- [ ] **Исполнитель заказывает сам у себя:** попробовать нажать «Request Service» своей услуги → revert (SelfRequest)
+- [ ] **Двойной запрос:** отправить два запроса на одну услугу → revert (AlreadyRequested)
+- [ ] **Чужой принимает запрос:** другой кошелёк пытается принять чужой запрос → revert (NotExecutor)
 
 ---
 
-### requestServiceWithPermit
-> @dev client передаётся явно — msg.sender здесь форвардер (ERC-2771).
+## ✅ Итог по сценариям
 
-**Happy path:**
-- [ ] Вызвать `requestServiceWithPermit()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `uint256 requestId`
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
-
----
-
-### acceptRequest
-> @notice Исполнитель принимает запрос → деплоит Agreement, переводит amount из Diamond.
-
-**Happy path:**
-- [ ] Вызвать `acceptRequest()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `address agreementAddr`
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
-
----
-
-### rejectRequest
-> @notice Исполнитель отклоняет запрос → amount рефандится клиенту.
-
-**Happy path:**
-- [ ] Вызвать `rejectRequest()` с валидными параметрами — транзакция принята
-- [ ] Event `RequestRejected` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
-
----
-
-### cancelRequest
-> @notice Клиент отменяет запрос пока он PENDING → amount рефандится.
-
-**Happy path:**
-- [ ] Вызвать `cancelRequest()` с валидными параметрами — транзакция принята
-- [ ] Event `RequestCancelled` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `TitleInvalid`
-- [ ] Спровоцировать условие → revert `DescriptionTooLong`
-- [ ] Спровоцировать условие → revert `ZeroAmount`
-- [ ] Спровоцировать условие → revert `DeadlineInvalid`
-- [ ] Спровоцировать условие → revert `InvalidRegion`
-- [ ] Спровоцировать условие → revert `ZeroFee`
-- [ ] Спровоцировать условие → revert `NotExecutor`
-- [ ] Спровоцировать условие → revert `NotClient`
-- [ ] Спровоцировать условие → revert `ServiceNotActive`
-- [ ] Спровоцировать условие → revert `RequestNotPending`
-- [ ] Спровоцировать условие → revert `Reentrant`
-- [ ] Спровоцировать условие → revert `FactoryPaused`
-- [ ] Спровоцировать условие → revert `SelfRequest`
-
----
-
-## 👁️ View Functions
-
-### getService
-
-- [ ] Вызвать `getService()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getExecutorServices
-
-- [ ] Вызвать `getExecutorServices()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### getServiceClients
-
-- [ ] Вызвать `getServiceClients()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### totalServices
-
-- [ ] Вызвать `totalServices()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getRequest
-
-- [ ] Вызвать `getRequest()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getServiceRequests
-
-- [ ] Вызвать `getServiceRequests()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### getClientRequests
-
-- [ ] Вызвать `getClientRequests()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### totalRequests
-
-- [ ] Вызвать `totalRequests()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getRequestFunds
-
-- [ ] Вызвать `getRequestFunds()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getActiveServices
-> @notice Все активные услуги с их ID
-
-- [ ] Вызвать `getActiveServices()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### getPendingRequests
-> @notice Ожидающие (PENDING) запросы на услугу
-
-- [ ] Вызвать `getPendingRequests()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-## 📡 Events
-
-### ServicePosted
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed serviceId, address indexed executor, uint256 price, uint8 region) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ServiceRemoved
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed serviceId, address indexed executor) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ServicePaused
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed serviceId) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ServiceUnpaused
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed serviceId) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### ServiceRequested
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed requestId, uint256 indexed serviceId, address indexed client, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### RequestAccepted
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed requestId, address indexed executor, address indexed client, address agreement) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### RequestRejected
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed requestId, address indexed executor, address indexed client) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### RequestCancelled
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed requestId, address indexed client) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-## ✅ Результат
-| Функция | Статус | Тестер | Дата | Комментарий |
-|---------|--------|--------|------|-------------|
-| `permit` | ⬜ | — | — | — |
-| `mintService` | ⬜ | — | — | — |
-| `mintServiceWithPermit` | ⬜ | — | — | — |
-| `removeService` | ⬜ | — | — | — |
-| `pauseService` | ⬜ | — | — | — |
-| `unpauseService` | ⬜ | — | — | — |
-| `requestService` | ⬜ | — | — | — |
-| `requestServiceWithPermit` | ⬜ | — | — | — |
-| `acceptRequest` | ⬜ | — | — | — |
-| `rejectRequest` | ⬜ | — | — | — |
-| `cancelRequest` | ⬜ | — | — | — |
-| `getService` | ⬜ | — | — | — |
-| `getExecutorServices` | ⬜ | — | — | — |
-| `getServiceClients` | ⬜ | — | — | — |
-| `totalServices` | ⬜ | — | — | — |
-| `getRequest` | ⬜ | — | — | — |
-| `getServiceRequests` | ⬜ | — | — | — |
-| `getClientRequests` | ⬜ | — | — | — |
-| `totalRequests` | ⬜ | — | — | — |
-| `getRequestFunds` | ⬜ | — | — | — |
-| `getActiveServices` | ⬜ | — | — | — |
-| `getPendingRequests` | ⬜ | — | — | — |
+| Сценарий | Статус | Тестер | Дата | Комментарий |
+|----------|--------|--------|------|-------------|
+| 1. Исполнитель публикует услугу | ⬜ | — | — | — |
+| 2. Клиент запрашивает услугу | ⬜ | — | — | — |
+| 3. Исполнитель принимает → сделка | ⬜ | — | — | — |
+| 4. Клиент отменяет запрос | ⬜ | — | — | — |
+| 5. Исполнитель снимает услугу | ⬜ | — | — | — |
+| Граничные случаи | ⬜ | — | — | — |

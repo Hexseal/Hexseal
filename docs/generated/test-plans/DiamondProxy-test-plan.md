@@ -1,156 +1,80 @@
-# Test Plan: DiamondProxy
-> Источник: `src/DiamondProxy.sol`
-> Сгенерировано: 2026-05-07
+# Тест-план: DiamondProxy — Прокси и управление контрактом
 
-Главный прокси-контракт. Содержит DiamondCut, DiamondLoupe и OwnershipFacet. Все вызовы проксируются через fallback к соответствующим фасетам.
+> Сеть: Base Sepolia · Diamond: `0xF00CC71878c226E0b64253Fb71dD802aF12165D0`
+> Тестер: — · Дата: —
 
-## Окружение
-| Параметр | Значение |
-|----------|----------|
-| Сеть | Base Sepolia (chainId 84532) |
-| Diamond | `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` |
-| Тестовый USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Кошелёк тестера | — |
-| Дата теста | — |
-
-## ✏️ Write Functions
-
-### diamondCut
-
-**Happy path:**
-- [ ] Вызвать `diamondCut()` с валидными параметрами — транзакция принята
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
+DiamondProxy — главный контракт системы. Пользователи никогда не взаимодействуют с ним напрямую — всё проксируется к фасетам. Тесты здесь в основном административные и проверяются через `/admin` или скрипты Foundry.
 
 ---
 
-### diamondCut
+## Сценарий 1: Проверить владельца Diamond
 
-**Happy path:**
-- [ ] Вызвать `diamondCut()` с валидными параметрами — транзакция принята
+**Страница:** `/admin` или через explorer
+**Предусловие:** кошелёк владельца известен
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
+- [ ] Открыть `/admin` под кошельком, который **не** является owner → страница либо пустая, либо показывает «Not authorized»
+- [ ] Переключиться на owner-кошелёк → административные опции доступны
+- [ ] Проверить через basescan: `owner()` возвращает ожидаемый адрес
 
 ---
 
-### transferOwnership
+## Сценарий 2: DiamondCut — замена фасета (только скрипт)
 
-**Happy path:**
-- [ ] Вызвать `transferOwnership()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `address owner_`
+**Роль:** Владелец Diamond
+**Инструмент:** Foundry (`forge script`)
+**Предусловие:** написан upgrade-скрипт, например `UpgradeJobBoardFacet.s.sol`
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+> DiamondCut нельзя сделать через UI — это операция через `cast send` или Foundry скрипт.
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
+- [ ] Задеплоить новую версию фасета: `forge script script/UpgradeJobBoardFacet.s.sol --broadcast`
+- [ ] Проверить что транзакция прошла: hash виден в выводе
+- [ ] На basescan: найти Diamond-адрес → вкладка «Internal Txns» → новый фасет добавлен
+- [ ] Функционал нового фасета работает через UI (например, новая кнопка или поведение)
+
+**Проверить access control:**
+- [ ] Попытка DiamondCut от не-owner кошелька → revert (NotOwner / OwnableUnauthorizedAccount)
 
 ---
 
-## 👁️ View Functions
+## Сценарий 3: DiamondLoupe — проверить список фасетов
 
-### facets
+**Инструмент:** cast call или basescan
+**Цель:** убедиться, что все нужные фасеты зарегистрированы
 
-- [ ] Вызвать `facets()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
+- [ ] Выполнить: `cast call $DIAMOND "facets()" --rpc-url $BASE_SEPOLIA_RPC_URL`
+- [ ] Убедиться что в списке есть: FactoryFacet, JobBoardFacet, ServiceBoardFacet, ArbiterRegistryFacet, RegistryFacet, JobReceiptFacet, OfferNFTFacet
+- [ ] Для каждого фасета: список функций корректный (facetFunctionSelectors)
+- [ ] Нет дублирующихся селекторов
 
-### facetFunctionSelectors
+---
 
-- [ ] Вызвать `facetFunctionSelectors()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
+## Сценарий 4: Передача владения Diamond
 
-### facetAddresses
+**Роль:** Текущий владелец
+**Инструмент:** cast send или `/admin`
 
-- [ ] Вызвать `facetAddresses()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
+> Используй с осторожностью — после передачи старый owner теряет доступ к adminPanel.
 
-### facetAddress
+- [ ] Выполнить: `cast send $DIAMOND "transferOwnership(address)" $NEW_OWNER --private-key $PRIVATE_KEY --rpc-url ...`
+- [ ] Проверить: `cast call $DIAMOND "owner()"` → новый адрес
+- [ ] Старый owner пробует выполнить admin-операцию → revert
 
-- [ ] Вызвать `facetAddress()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+---
 
-### facets
+## Граничные случаи
 
-- [ ] Вызвать `facets()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
+- [ ] **Вызов несуществующего селектора** → Diamond возвращает revert с пустыми данными или ошибкой «FunctionNotFound»
+- [ ] **Прямой ETH transfer на Diamond без данных** → revert или fallback без паники
+- [ ] **DiamondCut с пустым массивом фасетов** → no-op без ошибки (или revert — проверить поведение)
 
-### facetFunctionSelectors
+---
 
-- [ ] Вызвать `facetFunctionSelectors()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
+## ✅ Итог по сценариям
 
-### facetAddresses
-
-- [ ] Вызвать `facetAddresses()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### facetAddress
-
-- [ ] Вызвать `facetAddress()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### supportsInterface
-
-- [ ] Вызвать `supportsInterface()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### owner
-
-- [ ] Вызвать `owner()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-## 📡 Events
-
-### DiamondCut
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (FacetCut[] _diamondCut, address _init, bytes _calldata) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### OwnershipTransferred
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed previousOwner, address indexed newOwner) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### DiamondCut
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (IDiamondCut.FacetCut[] _diamondCut, address _init, bytes _calldata) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### OwnershipTransferred
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed previousOwner, address indexed newOwner) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-## ✅ Результат
-| Функция | Статус | Тестер | Дата | Комментарий |
-|---------|--------|--------|------|-------------|
-| `diamondCut` | ⬜ | — | — | — |
-| `facets` | ⬜ | — | — | — |
-| `facetFunctionSelectors` | ⬜ | — | — | — |
-| `facetAddresses` | ⬜ | — | — | — |
-| `facetAddress` | ⬜ | — | — | — |
-| `diamondCut` | ⬜ | — | — | — |
-| `facets` | ⬜ | — | — | — |
-| `facetFunctionSelectors` | ⬜ | — | — | — |
-| `facetAddresses` | ⬜ | — | — | — |
-| `facetAddress` | ⬜ | — | — | — |
-| `supportsInterface` | ⬜ | — | — | — |
-| `transferOwnership` | ⬜ | — | — | — |
-| `owner` | ⬜ | — | — | — |
+| Сценарий | Статус | Тестер | Дата | Комментарий |
+|----------|--------|--------|------|-------------|
+| 1. Проверить owner | ⬜ | — | — | — |
+| 2. DiamondCut — замена фасета | ⬜ | — | — | — |
+| 3. DiamondLoupe — список фасетов | ⬜ | — | — | — |
+| 4. Передача владения | ⬜ | — | — | — |
+| Граничные случаи | ⬜ | — | — | — |

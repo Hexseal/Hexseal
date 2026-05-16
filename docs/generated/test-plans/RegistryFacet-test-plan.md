@@ -1,210 +1,82 @@
-# Test Plan: RegistryFacet
-> Источник: `src/RegistryFacet.sol`
-> Сгенерировано: 2026-05-07
+# Тест-план: RegistryFacet — Реестр сделок
 
-Реестр всех Agreement-контрактов. Индексирует сделки по участникам, хранит их текущий статус.
+> Сеть: Base Sepolia · Diamond: `0xF00CC71878c226E0b64253Fb71dD802aF12165D0`
+> Тестер: — · Дата: —
 
-## Окружение
-| Параметр | Значение |
-|----------|----------|
-| Сеть | Base Sepolia (chainId 84532) |
-| Diamond | `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` |
-| Тестовый USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Кошелёк тестера | — |
-| Дата теста | — |
-
-## ✏️ Write Functions
-
-### initRegistry
-
-**Happy path:**
-- [ ] Вызвать `initRegistry()` с валидными параметрами — транзакция принята
-- [ ] Event `AuthorizedFactorySet` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `OnlyAuthorizedFactory`
-- [ ] Спровоцировать условие → revert `OnlyAgreementItself`
-- [ ] Спровоцировать условие → revert `AgreementNotRegistered`
-- [ ] Спровоцировать условие → revert `ActiveDealAlreadyExists`
-- [ ] Спровоцировать условие → revert `ZeroAddress`
-- [ ] Спровоцировать условие → revert `AlreadyInitialized`
-- [ ] Спровоцировать условие → revert `NotOwner`
+RegistryFacet хранит список всех Agreement-контрактов и их текущие статусы. Пользователи видят эти данные в профиле, на дашборде и в хабе арбитра. Тут нет кнопок — только проверяем, что данные отображаются корректно после действий.
 
 ---
 
-### register
-> @notice Регистрация новой сделки. Вызывает только FactoryFacet после деплоя Agreement.
+## Сценарий 1: Профиль корректно отображает историю сделок
 
-**Happy path:**
-- [ ] Вызвать `register()` с валидными параметрами — транзакция принята
+**Страница:** `/profile/[address]`
+**Предусловие:** у адреса есть хотя бы одна завершённая сделка
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Открыть `/profile/[адрес_клиента_или_исполнителя]`
+- [ ] Видна секция «History» или «Active» с карточками сделок
+- [ ] Каждая карточка: адрес сделки (ссылка), роль (Client / Executor), сумма, дата, статус с цветовой меткой
+- [ ] Нажать на адрес сделки → редирект на `/deal/[address]`
+- [ ] Статус в карточке совпадает со статусом на странице самой сделки
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `OnlyAuthorizedFactory`
-- [ ] Спровоцировать условие → revert `OnlyAgreementItself`
-- [ ] Спровоцировать условие → revert `AgreementNotRegistered`
-- [ ] Спровоцировать условие → revert `ActiveDealAlreadyExists`
-- [ ] Спровоцировать условие → revert `ZeroAddress`
-- [ ] Спровоцировать условие → revert `AlreadyInitialized`
-- [ ] Спровоцировать условие → revert `NotOwner`
+**Проверить:**
+- [ ] Активные сделки (ACTIVE, DISPUTED) — в секции «Active · N»
+- [ ] Завершённые (COMPLETED, REFUNDED, RESOLVED) — в секции «History · N» (свёрнута по умолчанию)
+- [ ] Если у адреса нет сделок — пустой стейт «No on-chain deals found»
+- [ ] XP и completion rate рассчитаны корректно (формула: +100 за COMPLETED/RESOLVED, -25 за REFUNDED)
 
 ---
 
-### updateStatus
-> @notice Обновление статуса. Вызывает только сам Agreement контракт.
+## Сценарий 2: Дашборд показывает мои активные сделки
 
-**Happy path:**
-- [ ] Вызвать `updateStatus()` с валидными параметрами — транзакция принята
-- [ ] Event `AgreementStatusUpdated` эмитирован с правильными аргументами
+**Страница:** `/dashboard`
+**Предусловие:** подключённый кошелёк участвует в сделках
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `OnlyAuthorizedFactory`
-- [ ] Спровоцировать условие → revert `OnlyAgreementItself`
-- [ ] Спровоцировать условие → revert `AgreementNotRegistered`
-- [ ] Спровоцировать условие → revert `ActiveDealAlreadyExists`
-- [ ] Спровоцировать условие → revert `ZeroAddress`
-- [ ] Спровоцировать условие → revert `AlreadyInitialized`
-- [ ] Спровоцировать условие → revert `NotOwner`
+- [ ] Открыть `/dashboard`
+- [ ] Видны все сделки где я Клиент или Исполнитель
+- [ ] Статусы корректны (FUNDED, ACTIVE, DISPUTED, COMPLETED и т.д.)
+- [ ] Кнопки действий доступны (Fund, Activate, etc.) — соответствуют текущему статусу
 
 ---
 
-### setAuthorizedFactory
-> Нужно если деплоишь новую версию FactoryFacet
+## Сценарий 3: Арбитр-хаб получает все споры
 
-**Happy path:**
-- [ ] Вызвать `setAuthorizedFactory()` с валидными параметрами — транзакция принята
-- [ ] Event `AuthorizedFactorySet` эмитирован с правильными аргументами
+**Страница:** `/arbiter` → вкладка «Open Disputes»
+**Предусловие:** существует хотя бы один DISPUTED договор в реестре
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-
-**Revert cases:**
-- [ ] Спровоцировать условие → revert `OnlyAuthorizedFactory`
-- [ ] Спровоцировать условие → revert `OnlyAgreementItself`
-- [ ] Спровоцировать условие → revert `AgreementNotRegistered`
-- [ ] Спровоцировать условие → revert `ActiveDealAlreadyExists`
-- [ ] Спровоцировать условие → revert `ZeroAddress`
-- [ ] Спровоцировать условие → revert `AlreadyInitialized`
-- [ ] Спровоцировать условие → revert `NotOwner`
+- [ ] Открыть `/arbiter`
+- [ ] Список споров содержит только сделки со статусом DISPUTED (не ACTIVE, не COMPLETED)
+- [ ] После того как арбитр разрешил спор — сделка исчезает из «Open Disputes»
+- [ ] Разрешённая сделка появляется в «History» у арбитра
 
 ---
 
-## 👁️ View Functions
+## Сценарий 4: syncRegistry — ручная синхронизация статуса
 
-### hasActivePair
-> @notice Есть ли активная сделка между этой парой
+> syncRegistry нужна если статус Agreement.sol и RegistryFacet разошлись. Вызывается редко.
 
-- [ ] Вызвать `hasActivePair()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+**Инструмент:** cast send или через релеер
+**Предусловие:** обнаружено расхождение (статус на странице сделки отличается от профиля)
 
-### getActivePair
-> @notice Адрес активной сделки между парой (address(0) если нет)
+- [ ] `cast send $AGREEMENT "syncRegistry()" --private-key $ANY_WALLET --rpc-url ...`
+- [ ] Перезагрузить страницу профиля → статус обновился
+- [ ] Если статусы были в норме — syncRegistry выполняется без ошибок (no-op)
 
-- [ ] Вызвать `getActivePair()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+---
 
-### getRecord
-> @notice Полная запись по адресу Agreement
+## Граничные случаи
 
-- [ ] Вызвать `getRecord()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+- [ ] **Несуществующий адрес в реестре** — `getByClient(0x000...)` возвращает пустой массив, не revert
+- [ ] **Два одинаковых адреса в реестре** — дедупликация на фронте работает (UUID по адресу сделки)
+- [ ] **Очень много сделок (N > 100)** — профиль загружается без таймаута, пагинация или lazy-load работает
 
-### getByClient
-> @notice Все сделки клиента
+---
 
-- [ ] Вызвать `getByClient()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
+## ✅ Итог по сценариям
 
-### getByExecutor
-> @notice Все сделки исполнителя
-
-- [ ] Вызвать `getByExecutor()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### getActive
-> @notice Все активные сделки (для борды)
-
-- [ ] Вызвать `getActive()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### getDisputed
-> @notice Все спорные сделки (для борды арбитров)
-
-- [ ] Вызвать `getDisputed()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-- [ ] Проверить поведение с пустым массивом (до первой записи)
-
-### totalAgreements
-> @notice Общее количество сделок
-
-- [ ] Вызвать `totalAgreements()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### authorizedFactory
-> @notice Адрес авторизованного Factory
-
-- [ ] Вызвать `authorizedFactory()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-## 📡 Events
-
-### AgreementRegistered
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed agreement, address indexed client, address indexed executor, uint256 amount) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### AgreementStatusUpdated
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed agreement, RegistryStorage.AgreementStatus newStatus) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### AuthorizedFactorySet
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed factory) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-## ✅ Результат
-| Функция | Статус | Тестер | Дата | Комментарий |
-|---------|--------|--------|------|-------------|
-| `initRegistry` | ⬜ | — | — | — |
-| `register` | ⬜ | — | — | — |
-| `updateStatus` | ⬜ | — | — | — |
-| `setAuthorizedFactory` | ⬜ | — | — | — |
-| `hasActivePair` | ⬜ | — | — | — |
-| `getActivePair` | ⬜ | — | — | — |
-| `getRecord` | ⬜ | — | — | — |
-| `getByClient` | ⬜ | — | — | — |
-| `getByExecutor` | ⬜ | — | — | — |
-| `getActive` | ⬜ | — | — | — |
-| `getDisputed` | ⬜ | — | — | — |
-| `totalAgreements` | ⬜ | — | — | — |
-| `authorizedFactory` | ⬜ | — | — | — |
+| Сценарий | Статус | Тестер | Дата | Комментарий |
+|----------|--------|--------|------|-------------|
+| 1. История в профиле | ⬜ | — | — | — |
+| 2. Дашборд мои сделки | ⬜ | — | — | — |
+| 3. Список споров для арбитра | ⬜ | — | — | — |
+| 4. syncRegistry | ⬜ | — | — | — |
+| Граничные случаи | ⬜ | — | — | — |

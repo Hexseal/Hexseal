@@ -1,179 +1,79 @@
-# Test Plan: JobReceiptFacet
-> Источник: `src/JobReceiptFacet.sol`
-> Сгенерировано: 2026-05-07
+# Тест-план: JobReceiptFacet — Soulbound NFT-квитанции
 
-Soulbound NFT-квитанции за выполненные работы. Минтятся автоматически при закрытии сделки.
+> Сеть: Base Sepolia · Diamond: `0xF00CC71878c226E0b64253Fb71dD802aF12165D0`
+> Тестер: — · Дата: —
 
-## Окружение
-| Параметр | Значение |
-|----------|----------|
-| Сеть | Base Sepolia (chainId 84532) |
-| Diamond | `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` |
-| Тестовый USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Кошелёк тестера | — |
-| Дата теста | — |
-
-## ✏️ Write Functions
-
-### setSvgRenderer
-
-**Happy path:**
-- [ ] Вызвать `setSvgRenderer()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `address`
-- [ ] Event `SvgRendererUpdated` эмитирован с правильными аргументами
-
-**Access control:**
-- [ ] Вызов от чужого адреса → revert `NotOwner` / `OwnableUnauthorizedAccount`
-- [ ] Вызов от owner → успех
-
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
+JobReceipt — soulbound NFT, который автоматически минтится исполнителю при успешном закрытии сделки. Пользователь ничего специально не нажимает — NFT приходит сам. Тестируем что он появляется когда надо и что нельзя его передать.
 
 ---
 
-### mintJobReceipt
+## Сценарий 1: NFT минтится при Release (клиент одобрил работу)
 
-**Happy path:**
-- [ ] Вызвать `mintJobReceipt()` с валидными параметрами — транзакция принята
-- [ ] Вернулся ожидаемый результат: `uint256 tokenId`
-- [ ] Event `Transfer` эмитирован с правильными аргументами
-- [ ] Event `JobReceiptMinted` эмитирован с правильными аргументами
+**Роль:** наблюдаем за кошельком Исполнителя
+**Предусловие:** сделка завершилась через «Release Funds» (см. Agreement тест-план, сценарий 1)
 
-**Access control:**
-- [ ] Функция публичная — проверить что работает с любого адреса
+- [ ] Дождаться статуса `COMPLETED` на странице сделки
+- [ ] Открыть basescan → адрес кошелька Исполнителя → вкладка «ERC-721 Token Txns»
+- [ ] Виден минт NFT от Diamond-адреса на адрес Исполнителя
+- [ ] tokenId корректный, смотреть tokenURI — содержит данные сделки (адрес, сумма и т.д.)
 
-**Edge cases:**
-- [ ] Повторный вызов (идемпотентность / защита от дублей)
-- [ ] Передать нулевой адрес (0x000…) → ожидаемый revert или silent ignore
-- [ ] Передать 0 → ожидаемый revert или корректная обработка
-- [ ] Передать type(uint256).max → проверить на overflow
+**Проверить в UI:**
+- [ ] В профиле исполнителя `/profile/[executor]` — если NFT отображается — карточка сделки отмечена как «Completed»
 
 ---
 
-## 👁️ View Functions
+## Сценарий 2: NFT минтится при AutoApprove
 
-### name
+**Предусловие:** сделка завершилась через «Trigger Auto-Approve» (таймаут клиента)
 
-- [ ] Вызвать `name()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+- [ ] Аналогично сценарию 1 — проверить mint на basescan
+- [ ] tokenURI содержит корректные данные
 
-### symbol
+---
 
-- [ ] Вызвать `symbol()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+## Сценарий 3: NFT минтится при разрешении спора в пользу исполнителя
 
-### supportsInterface
+**Предусловие:** арбитр нажал «Pay Executor» (спор решён в пользу И)
 
-- [ ] Вызвать `supportsInterface()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+- [ ] Проверить mint на basescan у адреса Исполнителя
+- [ ] При разрешении **в пользу клиента** (Refund Client) — NFT **не** минтится Исполнителю
 
-### balanceOf
+---
 
-- [ ] Вызвать `balanceOf()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+## Сценарий 4: NFT нельзя передать (soulbound)
 
-### ownerOf
+**Роль:** Исполнитель
+**Инструмент:** cast send или MetaMask (любой кошелёк)
 
-- [ ] Вызвать `ownerOf()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+- [ ] Попытаться вызвать `transferFrom(executor, other, tokenId)` → revert `TokenSoulbound`
+- [ ] Попытаться вызвать `safeTransferFrom(executor, other, tokenId)` → revert `TokenSoulbound`
+- [ ] В UI нет кнопки «Transfer» — это ожидаемо
 
-### tokenURI
+---
 
-- [ ] Вызвать `tokenURI()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+## Сценарий 5: tokenURI содержит корректные данные
 
-### transferFrom
+- [ ] Через basescan или cast call: `tokenURI(tokenId)` возвращает данные (Base64 JSON или IPFS ссылка)
+- [ ] Данные содержат: адрес сделки, сумму, клиента/исполнителя, дату
+- [ ] Изображение рендерится (SVG on-chain)
 
-- [ ] Вызвать `transferFrom()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+---
 
-### safeTransferFrom
+## Граничные случаи
 
-- [ ] Вызвать `safeTransferFrom()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+- [ ] **Неудавшаяся сделка (REFUNDED)** → NFT не должен минтиться
+- [ ] **Двойной минт** → если вызвать syncRegistry дважды — NFT не дублируется (tokenId уникален)
+- [ ] **Смена SVG-рендерера (setSvgRenderer)** — только owner. Попытка от чужого → revert
 
-### safeTransferFrom
+---
 
-- [ ] Вызвать `safeTransferFrom()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
+## ✅ Итог по сценариям
 
-### approve
-
-- [ ] Вызвать `approve()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### setApprovalForAll
-
-- [ ] Вызвать `setApprovalForAll()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getApproved
-
-- [ ] Вызвать `getApproved()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### isApprovedForAll
-
-- [ ] Вызвать `isApprovedForAll()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getSvgRenderer
-
-- [ ] Вызвать `getSvgRenderer()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getJobReceiptData
-
-- [ ] Вызвать `getJobReceiptData()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### isJobReceiptToken
-
-- [ ] Вызвать `isJobReceiptToken()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-### getReceiptTotalSupply
-
-- [ ] Вызвать `getReceiptTotalSupply()` — возвращает данные без revert
-- [ ] Результат соответствует on-chain состоянию (проверить через explorer или cast call)
-
-## 📡 Events
-
-### Transfer
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed from, address indexed to, uint256 indexed tokenId) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### JobReceiptMinted
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (uint256 indexed tokenId, uint256 indexed jobId, address indexed client) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-### SvgRendererUpdated
-- [ ] Эмитируется при правильном условии
-- [ ] Все параметры (address indexed renderer) заполнены верно
-- [ ] Indexed-параметры фильтруются корректно
-
-## ✅ Результат
-| Функция | Статус | Тестер | Дата | Комментарий |
-|---------|--------|--------|------|-------------|
-| `name` | ⬜ | — | — | — |
-| `symbol` | ⬜ | — | — | — |
-| `supportsInterface` | ⬜ | — | — | — |
-| `balanceOf` | ⬜ | — | — | — |
-| `ownerOf` | ⬜ | — | — | — |
-| `tokenURI` | ⬜ | — | — | — |
-| `transferFrom` | ⬜ | — | — | — |
-| `safeTransferFrom` | ⬜ | — | — | — |
-| `safeTransferFrom` | ⬜ | — | — | — |
-| `approve` | ⬜ | — | — | — |
-| `setApprovalForAll` | ⬜ | — | — | — |
-| `getApproved` | ⬜ | — | — | — |
-| `isApprovedForAll` | ⬜ | — | — | — |
-| `setSvgRenderer` | ⬜ | — | — | — |
-| `getSvgRenderer` | ⬜ | — | — | — |
-| `mintJobReceipt` | ⬜ | — | — | — |
-| `getJobReceiptData` | ⬜ | — | — | — |
-| `isJobReceiptToken` | ⬜ | — | — | — |
-| `getReceiptTotalSupply` | ⬜ | — | — | — |
+| Сценарий | Статус | Тестер | Дата | Комментарий |
+|----------|--------|--------|------|-------------|
+| 1. Минт при Release | ⬜ | — | — | — |
+| 2. Минт при AutoApprove | ⬜ | — | — | — |
+| 3. Минт при победе исполнителя в споре | ⬜ | — | — | — |
+| 4. Soulbound — нельзя передать | ⬜ | — | — | — |
+| 5. tokenURI корректный | ⬜ | — | — | — |
+| Граничные случаи | ⬜ | — | — | — |
