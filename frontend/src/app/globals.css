@@ -55,6 +55,22 @@
 :lang(th) h2 {
   font-family: var(--font-chonburi), var(--font-kanit), serif;
 }
+/* Chonburi has very tall ascenders and below-baseline diacritics.
+   leading-[0.88] clips them; also shrink font so marks fit on screen. */
+:lang(th) {
+  --hero-fs: clamp(1.9rem, 8vw, 6rem);
+}
+:lang(th) .hero h1 {
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+}
+
+/* ── Chinese locale ─────────────────────────────────────────────────────────── */
+/* CJK glyphs fill the full em-square; leading-[0.88] clips top and bottom. */
+:lang(zh) .hero h1 {
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+}
 
 /* base body */
 html {
