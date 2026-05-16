@@ -9,7 +9,7 @@ import { usePreDealBar } from '@/hooks/usePreDealBar';
 import { toast } from 'react-hot-toast';
 
 import { useDirectChat } from '@/hooks/useDirectChat';
-import { useXmtpStatus } from '@/hooks/useXmtpStatus';
+import { MessagingSetup } from '@/components/MessagingSetup';
 import {
   ArrowLeft, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, Paperclip, FileText, ExternalLink, Lock,
@@ -171,9 +171,8 @@ const AGR_STATUS: Record<number, { label: string; cls: string }> = {
 
 export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelProps) {
   const { address } = useAccount();
-  const { messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress } =
+  const { messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress, needsSetup } =
     useDirectChat(recipientAddress);
-  const { isEnabled: xmtpEnabled } = useXmtpStatus();
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
@@ -626,15 +625,18 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         <div className="flex-1" />
         <div className="px-4 py-5 space-y-1">
 
+          {!isLoading && needsSetup && (
+            <div className="flex flex-col items-center justify-center py-16 gap-4 px-4">
+              <div className="w-full max-w-sm">
+                <MessagingSetup />
+              </div>
+            </div>
+          )}
+
           {isLoading && (
             <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
               <Loader2 className="w-5 h-5 animate-spin text-white/25" />
-              <div>
-                <p className="text-white/40 text-sm">
-                  {!xmtpEnabled ? 'Setting up encrypted messaging…' : 'Loading messages…'}
-                </p>
-                {!xmtpEnabled && <p className="text-white/25 text-xs mt-1">Check your wallet for a signature request</p>}
-              </div>
+              <p className="text-white/40 text-sm">Loading messages…</p>
             </div>
           )}
 

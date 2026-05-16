@@ -226,6 +226,13 @@
     "client_role_badge": "Клиент",
     "executor_role_badge": "Исполнитель"
   },
+  "xp_level": {
+    "master": "Мастер",
+    "expert": "Эксперт",
+    "trusted": "Надёжный",
+    "rising": "Растущий",
+    "newcomer": "Новичок"
+  },
   "deal": {
     "fund": "Пополнить",
     "activate": "Активировать",

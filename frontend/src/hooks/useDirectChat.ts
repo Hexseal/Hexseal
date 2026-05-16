@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWalletClient } from 'wagmi';
+import { useXmtpStatus } from './useXmtpStatus';
 import {
   initXmtpClient,
   toIdentifier,
@@ -21,6 +22,7 @@ export type { ChatMessage as DirectMessage };
 
 export function useDirectChat(recipientAddress: string) {
   const { data: walletClient } = useWalletClient();
+  const { isEnabled }          = useXmtpStatus();
 
   const [messages,        setMessages]        = useState<ChatMessage[]>([]);
   const [isLoading,       setIsLoading]       = useState(true);
@@ -34,6 +36,7 @@ export function useDirectChat(recipientAddress: string) {
 
   useEffect(() => {
     if (!walletClient || !recipientAddress) return;
+    if (!isEnabled) { setIsLoading(false); return; }
 
     let cancelled = false;
 
@@ -107,7 +110,7 @@ export function useDirectChat(recipientAddress: string) {
       streamRef.current?.return();
       streamRef.current = null;
     };
-  }, [walletClient, recipientAddress]);
+  }, [walletClient, recipientAddress, isEnabled]);
 
   // ── Send message ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (text: string) => {
@@ -155,5 +158,5 @@ export function useDirectChat(recipientAddress: string) {
     await dm.sendText(encoded);
   }, []);
 
-  return { messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress };
+  return { messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress, needsSetup: !isEnabled };
 }

@@ -16,6 +16,10 @@ import { initXmtpClient } from '@/lib/xmtp';
 
 const flagKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
+// Module-level pub-sub: when any hook instance calls enable(), all others update too.
+const _enabledListeners: Set<() => void> = new Set();
+function _notifyEnabled() { _enabledListeners.forEach(fn => fn()); }
+
 export function useXmtpStatus() {
   const { data: walletClient } = useWalletClient();
 
@@ -28,8 +32,12 @@ export function useXmtpStatus() {
   useEffect(() => {
     const addr = walletClient?.account?.address;
     if (!addr) { setIsEnabled(false); return; }
-    const registered = localStorage.getItem(flagKey(addr)) === '1';
-    setIsEnabled(registered);
+    setIsEnabled(localStorage.getItem(flagKey(addr)) === '1');
+
+    // Refresh when another hook instance calls enable() in the same tab
+    const refresh = () => setIsEnabled(localStorage.getItem(flagKey(addr)) === '1');
+    _enabledListeners.add(refresh);
+    return () => { _enabledListeners.delete(refresh); };
   }, [walletClient]);
 
   const enable = useCallback(async () => {
@@ -44,6 +52,7 @@ export function useXmtpStatus() {
     try {
       await initXmtpClient(walletClient);
       localStorage.setItem(flagKey(walletClient.account.address), '1');
+      _notifyEnabled(); // update all other hook instances in this tab
       setIsEnabled(true);
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : 'Failed to enable messaging';

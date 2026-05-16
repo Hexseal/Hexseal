@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWalletClient, usePublicClient } from 'wagmi';
+import { useXmtpStatus } from './useXmtpStatus';
 import {
   initXmtpClient,
   findOrCreateDealGroup,
@@ -53,6 +54,7 @@ const ZERO_ADDR        = '0x0000000000000000000000000000000000000000';
 export function useDealChat(agreementAddress: string) {
   const { data: walletClient } = useWalletClient();
   const publicClient           = usePublicClient();
+  const { isEnabled }          = useXmtpStatus();
 
   const [messages,       setMessages]       = useState<ChatMessage[]>([]);
   const [isLoading,      setIsLoading]      = useState(true);
@@ -67,6 +69,7 @@ export function useDealChat(agreementAddress: string) {
 
   useEffect(() => {
     if (!walletClient || !publicClient || !agreementAddress) return;
+    if (!isEnabled) { setIsLoading(false); return; }
 
     let cancelled = false;
 
@@ -174,7 +177,7 @@ export function useDealChat(agreementAddress: string) {
       streamRef.current?.return();
       streamRef.current = null;
     };
-  }, [walletClient, publicClient, agreementAddress]);
+  }, [walletClient, publicClient, agreementAddress, isEnabled]);
 
   // ── Send message ─────────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (text: string) => {
@@ -231,5 +234,6 @@ export function useDealChat(agreementAddress: string) {
     isClosed,
     error,
     uploadProgress,
+    needsSetup: !isEnabled,
   };
 }

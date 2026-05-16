@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Loader2, Lock, Paperclip, FileText, Download, Scale } from 'lucide-react';
 import { useDealChat } from '@/hooks/useDealChat';
+import { MessagingSetup } from '@/components/MessagingSetup';
 import type { ChatMessage } from '@/lib/xmtp';
 import { decryptToObjectUrl, decryptAndSave } from '@/lib/fileCrypto';
 import { fetchProfile } from '@/lib/profiles-ipfs';
@@ -237,6 +238,7 @@ export function DealChat({
     isClosed,
     error,
     uploadProgress,
+    needsSetup,
   } = useDealChat(agreementAddress);
 
   const [text,       setText]       = useState('');
@@ -351,6 +353,14 @@ export function DealChat({
 
       {/* Messages area */}
       <div className={`flex-1 overflow-y-auto p-4 space-y-2 ${fullHeight ? '' : 'min-h-[260px] max-h-[400px]'}`}>
+        {!isLoading && needsSetup && (
+          <div className="flex items-center justify-center h-full p-4">
+            <div className="w-full max-w-sm">
+              <MessagingSetup />
+            </div>
+          </div>
+        )}
+
         {isLoading && (
           <div className="flex items-center justify-center h-full gap-2 text-white/40 text-sm">
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -358,19 +368,19 @@ export function DealChat({
           </div>
         )}
 
-        {!isLoading && error && (
+        {!isLoading && !needsSetup && error && (
           <div className="flex items-center justify-center h-full text-red-400 text-sm text-center px-4">
             {error}
           </div>
         )}
 
-        {!isLoading && !error && messages.length === 0 && (
+        {!isLoading && !needsSetup && !error && messages.length === 0 && (
           <div className="flex items-center justify-center h-full text-white/30 text-sm">
             No messages yet. Start the conversation.
           </div>
         )}
 
-        {!isLoading && !error && messages.map((msg, i) => {
+        {!isLoading && !needsSetup && !error && messages.map((msg, i) => {
           const isMe = msg.from.toLowerCase() === currentUser.toLowerCase();
           const prev = messages[i - 1];
           const next = messages[i + 1];
@@ -413,8 +423,8 @@ export function DealChat({
         <div ref={bottomRef} />
       </div>
 
-      {/* Input area */}
-      <div className="border-t border-white/10 p-3 space-y-1.5">
+      {/* Input area — hidden when messaging not yet enabled */}
+      {needsSetup ? null : <div className="border-t border-white/10 p-3 space-y-1.5">
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
         {uploadErr && <p className="text-xs text-red-400 px-1">{uploadErr}</p>}
         <div className="flex items-center gap-2">
@@ -456,7 +466,7 @@ export function DealChat({
             }
           </button>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
