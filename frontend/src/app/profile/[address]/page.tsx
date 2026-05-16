@@ -54,23 +54,7 @@ function formatDate(ts: number | bigint): string {
   return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
 
-// Registry AgreementStatus enum (different from Agreement.sol internal enum!):
-// 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
-
-// ─── XP system ───────────────────────────────────────────────────────────────
-
-function calcXP(deals: AgreementRecord[]): number {
-  const completed = deals.filter(d => d.status === 1 || d.status === 4).length; // COMPLETED or RESOLVED
-  const refunded  = deals.filter(d => d.status === 2).length;                   // REFUNDED
-  const volume    = deals.reduce((s, d) => s + Number(d.amount), 0);
-  return Math.max(0, completed * 100 + Math.floor(volume / 10_000_000) - refunded * 25);
-}
-
-function calcCompletionRate(deals: AgreementRecord[]): number {
-  const closed    = deals.filter(d => [1, 2, 4].includes(d.status)).length;     // COMPLETED, REFUNDED, RESOLVED
-  const completed = deals.filter(d => d.status === 1 || d.status === 4).length; // COMPLETED or RESOLVED
-  return closed > 0 ? Math.round((completed / closed) * 100) : 100;
-}
+import { calcXP, calcCompletionRate } from '@/lib/xp';
 
 type Level = { labelKey: string; color: string; glow: string; next: number | null };
 

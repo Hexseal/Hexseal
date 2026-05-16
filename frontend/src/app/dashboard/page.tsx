@@ -14,13 +14,8 @@ import { DealSearch } from '@/components/DealSearch';
 import { DealCard, type AgreementRecord } from './components/DealCard';
 import { MyJobs, MyServices, MyClientRequests, MyJobReceipts } from './components/MyListings';
 import { useTranslations } from 'next-intl';
+import { calcXP } from '@/lib/xp';
 
-function calcXP(deals: AgreementRecord[]): number {
-  const completed = deals.filter(d => d.status === 1 || d.status === 4).length;
-  const refunded  = deals.filter(d => d.status === 2).length;
-  const volume    = deals.reduce((s, d) => s + Number(d.amount), 0);
-  return Math.max(0, completed * 100 + Math.floor(volume / 10_000_000) - refunded * 25);
-}
 function xpLevel(xp: number) {
   if (xp >= 1000) return { label: 'Master',   color: 'text-yellow-400',  bar: 'bg-yellow-400',  pct: 100 };
   if (xp >= 500)  return { label: 'Expert',   color: 'text-violet-400',  bar: 'bg-violet-400',  pct: Math.round((xp - 500) / 5) };

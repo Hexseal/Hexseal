@@ -142,6 +142,7 @@ export function useNotifications() {
       ),
     ];
 
+    // Registry AgreementStatus: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
     let hasNew = false;
     for (const deal of allDeals) {
       const st = Number(deal.status);
@@ -149,7 +150,8 @@ export function useNotifications() {
 
       let notif: Omit<AppNotification, "id" | "timestamp" | "read"> | null = null;
 
-      if (st === 4 && !alreadyHas(lnk, "deal_disputed")) {
+      if (st === 3 && !alreadyHas(lnk, "deal_disputed")) {
+        // DISPUTED
         notif = {
           type: "deal_disputed",
           title: "Dispute Raised ⚠️",
@@ -158,25 +160,38 @@ export function useNotifications() {
             : "Client raised a dispute — arbiter will review.",
           link: lnk,
         };
-      } else if (st === 2 && deal.myRole === "client" && !alreadyHas(lnk, "deal_done")) {
+      } else if (st === 4 && !alreadyHas(lnk, "deal_resolved")) {
+        // RESOLVED
         notif = {
-          type: "deal_done",
-          title: "Work Submitted",
-          body: "Executor submitted work — review and release payment.",
+          type: "deal_resolved",
+          title: "Dispute Resolved ⚖️",
+          body: "The arbiter has resolved the dispute.",
           link: lnk,
         };
-      } else if (st === 1 && deal.myRole === "executor" && !alreadyHas(lnk, "deal_active")) {
+      } else if (st === 2 && !alreadyHas(lnk, "deal_refunded")) {
+        // REFUNDED
+        notif = {
+          type: "deal_refunded",
+          title: "Deal Refunded",
+          body: deal.myRole === "client" ? "Funds returned to your wallet." : "The deal was refunded to the client.",
+          link: lnk,
+        };
+      } else if (st === 1 && !alreadyHas(lnk, "deal_completed")) {
+        // COMPLETED
+        notif = {
+          type: "deal_completed",
+          title: "Deal Complete ✓",
+          body: deal.myRole === "client"
+            ? "Payment successfully released to executor."
+            : "Payment has been released to your wallet!",
+          link: lnk,
+        };
+      } else if (st === 0 && deal.myRole === "executor" && !alreadyHas(lnk, "deal_active")) {
+        // ACTIVE — напоминаем только исполнителю (клиент и так знает)
         notif = {
           type: "deal_active",
-          title: "Deal Active",
+          title: "Deal In Progress",
           body: "You have an active deal — time to deliver.",
-          link: lnk,
-        };
-      } else if (st === 0 && deal.myRole === "executor" && !alreadyHas(lnk, "deal_new")) {
-        notif = {
-          type: "deal_new",
-          title: "You've Been Hired!",
-          body: "A client created a deal with you. Activate to start working.",
           link: lnk,
         };
       }
