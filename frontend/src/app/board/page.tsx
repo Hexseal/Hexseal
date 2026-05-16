@@ -369,18 +369,17 @@ export default function BoardPage() {
       {/* Page header */}
       <div className="border-b border-white/8 bg-white/[0.02]">
         <div className="container mx-auto px-4 py-6 max-w-4xl">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="min-w-0">
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.jobs.title")}</h1>
               <p className="text-sm text-muted-foreground">
-                Open jobs posted by clients. Apply or{" "}
+                {t("board.jobs.subtitle")}{" "}
                 <Link href="/board/client/post" className="text-primary hover:underline">
-                  post your own
+                  {t("board.jobs.post_own_link")}
                 </Link>
-                .
               </p>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-shrink-0 self-start">
               <Button
                 variant="ghost"
                 size="sm"

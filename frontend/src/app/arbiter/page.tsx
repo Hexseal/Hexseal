@@ -207,7 +207,8 @@ export default function ArbiterPage() {
       </div>
 
       <Tabs defaultValue="disputes">
-        <TabsList className="mb-6">
+        <div className="overflow-x-auto scrollbar-none mb-6 -mx-4 px-4">
+          <TabsList className="min-w-max">
           <TabsTrigger value="disputes" className="flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4" />
             {t("arbiter.tab_disputes")}
@@ -232,6 +233,7 @@ export default function ArbiterPage() {
             </TabsTrigger>
           )}
         </TabsList>
+        </div>
 
         {/* ── Open Disputes ──────────────────────────────────────────────── */}
         <TabsContent value="disputes">

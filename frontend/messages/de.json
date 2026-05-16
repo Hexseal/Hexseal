@@ -31,6 +31,8 @@
     },
     "jobs": {
       "title": "Job Board",
+      "subtitle": "Offene Jobs von Kunden. Bewirb dich oder",
+      "post_own_link": "erstelle deinen eigenen.",
       "connect_prompt": "Verbinde deine Wallet, um Jobs zu durchsuchen und dich zu bewerben",
       "post_btn": "Job veröffentlichen",
       "search_placeholder": "Nach Titel oder Adresse suchen…",
@@ -53,7 +55,10 @@
       "accepting": "Bewerber wird angenommen…"
     },
     "services": {
-      "title": "Leistungen",
+      "title": "Leistungsbörse",
+      "subtitle": "Leistungen durchsuchen, Anfrage senden — der Ausführende entscheidet.",
+      "post_own_link": "Eigene einstellen.",
+      "flow_hint": "Du sendest eine Anfrage mit Betrag und Frist. Der Ausführende prüft und Akzeptiert oder Lehnt ab. Dein USDC ist gesperrt bis zur Antwort.",
       "request_btn": "Leistung anfragen",
       "search_placeholder": "Nach Titel oder Adresse suchen…",
       "loading": "Leistungen werden geladen…",
@@ -266,6 +271,7 @@
     "dispute_active": "Streit aktiv",
     "dispute_active_hint": "Schlichter wurde benachrichtigt. Chatte mit ihm zur Lösung.",
     "work_delivered": "Arbeit geliefert",
+    "delivered_label": "Geliefert",
     "timeline_title": "Zeitlinie",
     "dispute_reason_hint": "Beschreibe das Problem klar — der Schlichter liest dies, bevor er entscheidet.",
     "dispute_reason_placeholder": "z. B. Ausführender reagierte nicht mehr nach Erhalt des Briefings. Frist verstrichen ohne Lieferung.",

@@ -31,6 +31,8 @@
     },
     "jobs": {
       "title": "Job Board",
+      "subtitle": "Open jobs posted by clients. Apply or",
+      "post_own_link": "post your own.",
       "connect_prompt": "Connect your wallet to browse and apply for jobs",
       "post_btn": "Post Job",
       "search_placeholder": "Search by title or address…",
@@ -53,7 +55,10 @@
       "accepting": "Accepting applicant…"
     },
     "services": {
-      "title": "Services",
+      "title": "Service Board",
+      "subtitle": "Browse services, send a request — executor chooses to accept.",
+      "post_own_link": "Post yours.",
+      "flow_hint": "You send a Request with your amount and deadline. The executor reviews and Accepts or Rejects. Your USDC is locked until they respond.",
       "request_btn": "Request Service",
       "search_placeholder": "Search by title or address…",
       "loading": "Loading services…",
@@ -266,6 +271,7 @@
     "dispute_active": "Dispute Active",
     "dispute_active_hint": "Arbitrator has been notified. Chat with them to resolve.",
     "work_delivered": "Work delivered",
+    "delivered_label": "Delivered",
     "timeline_title": "Timeline",
     "dispute_reason_hint": "Describe the issue clearly — the arbiter will read this before making a decision.",
     "dispute_reason_placeholder": "e.g. Executor stopped responding after receiving the brief. Deadline passed with no deliverable submitted.",

@@ -398,7 +398,7 @@ export default function ProfilePage() {
             {allDeals.length > 0 && (
               <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4">
                 <h3 className="text-sm font-semibold text-white/60 mb-3">{t("profile.reputation_breakdown")}</h3>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <div>
                     <p className="text-[11px] text-white/35 mb-1">{t("profile.completion_rate")}</p>
                     <p className="text-lg font-bold font-mono text-white">
@@ -413,7 +413,7 @@ export default function ProfilePage() {
                     </p>
                     <p className="text-[10px] text-white/25">{t("profile.disputed_count", { count: disputedDeals })}</p>
                   </div>
-                  <div>
+                  <div className="col-span-2 sm:col-span-1">
                     <p className="text-[11px] text-white/35 mb-1">{t("profile.total_deals")}</p>
                     <p className="text-lg font-bold font-mono text-white">{allDeals.length}</p>
                     <p className="text-[10px] text-white/25">{t("profile.active_count", { count: activeDeals })}</p>

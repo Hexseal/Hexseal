@@ -31,6 +31,8 @@
     },
     "jobs": {
       "title": "Panel de Trabajos",
+      "subtitle": "Trabajos abiertos publicados por clientes. Postúlate o",
+      "post_own_link": "publica el tuyo.",
       "connect_prompt": "Conecta tu billetera para explorar y postularte a trabajos",
       "post_btn": "Publicar Trabajo",
       "search_placeholder": "Buscar por título o dirección…",
@@ -53,7 +55,10 @@
       "accepting": "Aceptando postulante…"
     },
     "services": {
-      "title": "Servicios",
+      "title": "Panel de Servicios",
+      "subtitle": "Explora servicios, envía una solicitud — el ejecutor decide aceptar.",
+      "post_own_link": "Publica el tuyo.",
+      "flow_hint": "Envías una solicitud con tu monto y plazo. El ejecutor revisa y Acepta o Rechaza. Tu USDC queda bloqueado hasta su respuesta.",
       "request_btn": "Solicitar Servicio",
       "search_placeholder": "Buscar por título o dirección…",
       "loading": "Cargando servicios…",
@@ -266,6 +271,7 @@
     "dispute_active": "Disputa Activa",
     "dispute_active_hint": "El árbitro ha sido notificado. Chatea con él para resolver.",
     "work_delivered": "Trabajo entregado",
+    "delivered_label": "Entregado",
     "timeline_title": "Línea de tiempo",
     "dispute_reason_hint": "Describe el problema claramente — el árbitro lo leerá antes de tomar una decisión.",
     "dispute_reason_placeholder": "ej. El ejecutor dejó de responder después de recibir el brief. El plazo venció sin entregable enviado.",

@@ -518,7 +518,7 @@ export default function DealDetailPage() {
             <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-green-400">{t("deal.work_delivered")}</p>
-              <p className="text-xs text-white/35">Delivered {formatTimestamp(parsed.markedDoneAt)}</p>
+              <p className="text-xs text-white/35">{t("deal.delivered_label")} {formatTimestamp(parsed.markedDoneAt)}</p>
             </div>
           </div>
         )}
@@ -528,12 +528,12 @@ export default function DealDetailPage() {
           <p className="text-xs text-white/35 mb-3">{t("deal.timeline_title")}</p>
           <div className="relative pl-4">
             {[
-              { label: 'Created',    ts: null,                  done: true },
-              { label: 'Funded',     ts: parsed.fundedAt,       done: parsed.fundedAt > 0n },
-              { label: 'Active',     ts: parsed.activatedAt,    done: parsed.activatedAt > 0n },
-              { label: 'Delivered',  ts: parsed.markedDoneAt,   done: parsed.markedDoneAt > 0n },
-              { label: 'Disputed',   ts: parsed.disputedAt,     done: parsed.disputedAt > 0n },
-              { label: 'Resolved',   ts: parsed.resolvedAt,     done: parsed.resolvedAt > 0n },
+              { label: t("deal_status.created"),   ts: null,                  done: true },
+              { label: t("deal_status.funded"),    ts: parsed.fundedAt,       done: parsed.fundedAt > 0n },
+              { label: t("deal_status.active"),    ts: parsed.activatedAt,    done: parsed.activatedAt > 0n },
+              { label: t("deal.delivered_label"),  ts: parsed.markedDoneAt,   done: parsed.markedDoneAt > 0n },
+              { label: t("deal_status.disputed"),  ts: parsed.disputedAt,     done: parsed.disputedAt > 0n },
+              { label: t("deal_status.resolved"),  ts: parsed.resolvedAt,     done: parsed.resolvedAt > 0n },
             ].map((step, i, arr) => (
               <div key={step.label} className="relative flex items-start gap-3 pb-3 last:pb-0">
                 {/* Connector line */}

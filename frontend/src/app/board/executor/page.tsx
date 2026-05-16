@@ -490,15 +490,15 @@ export default function ExecutorBoardPage() {
       {/* Header */}
       <div className="border-b border-white/8 bg-white/[0.02]">
         <div className="container mx-auto px-4 py-6 max-w-4xl">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold font-syne mb-0.5">Executor Board</h1>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.services.title")}</h1>
               <p className="text-sm text-muted-foreground">
-                Browse services, send a request — executor chooses to accept.{" "}
-                <Link href="/board/executor/post" className="text-primary hover:underline">Post yours.</Link>
+                {t("board.services.subtitle")}{" "}
+                <Link href="/board/executor/post" className="text-primary hover:underline">{t("board.services.post_own_link")}</Link>
               </p>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-shrink-0 self-start">
               <Button variant="ghost" size="sm" onClick={loadServices} disabled={loadingList} className="text-white/40 hover:text-white/70">
                 <RefreshCw className={`w-4 h-4 ${loadingList ? "animate-spin" : ""}`} />
               </Button>
@@ -523,14 +523,7 @@ export default function ExecutorBoardPage() {
         {/* Flow hint */}
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex items-start gap-3 mb-5">
           <UserCheck className="w-4 h-4 text-white/25 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-white/55">Symmetric flow</p>
-            <p className="text-xs text-white/30 mt-0.5">
-              You send a <strong className="text-white/50">Request</strong> with your amount and deadline.
-              The executor reviews and <strong className="text-white/50">Accepts</strong> or Rejects.
-              Your USDC is locked until they respond.
-            </p>
-          </div>
+          <p className="text-xs text-white/40 leading-relaxed">{t("board.services.flow_hint")}</p>
         </div>
 
         {/* Search */}
