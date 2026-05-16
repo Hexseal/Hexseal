@@ -16,7 +16,8 @@ import {
   ChevronDown, Download, Search, X,
 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/xmtp';
-import { decryptToObjectUrl, decryptAndSave } from '@/lib/fileCrypto';
+import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
+import { MAX_FILE_SIZE } from '@/lib/fileStorage';
 import { useProfile } from '@/hooks/useProfile';
 
 const ZERO_HASH = ('0x' + '00'.repeat(32)) as `0x${string}`;
@@ -93,16 +94,23 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
 }
 
 function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean }) {
-  const [saving, setSaving] = useState(false);
-  const [err, setErr]       = useState(false);
+  const [saving,     setSaving]     = useState(false);
+  const [err,        setErr]        = useState(false);
+  const [dlProgress, setDlProgress] = useState<number | null>(null);
 
   const handleDownload = async () => {
     if (saving) return;
     if (!a.key || !a.iv) { window.open(a.url, '_blank'); return; }
-    setSaving(true); setErr(false);
-    try { await decryptAndSave(a.url, a.key, a.iv, a.name, a.mime); }
+    setSaving(true); setErr(false); setDlProgress(0);
+    try {
+      if (a.chunked && a.chunkCount && a.size) {
+        await decryptAndSaveChunked(a.url, a.key, a.iv, a.name, a.mime, a.chunkCount, a.chunkSize ?? CHUNK_SIZE, a.size, setDlProgress);
+      } else {
+        await decryptAndSave(a.url, a.key, a.iv, a.name, a.mime);
+      }
+    }
     catch { setErr(true); }
-    finally { setSaving(false); }
+    finally { setSaving(false); setDlProgress(null); }
   };
 
   return (
@@ -118,6 +126,7 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
         <p className="text-xs font-medium text-white/85 truncate leading-tight">{a.name}</p>
         <p className="text-[11px] text-white/35 mt-0.5">
           {err ? <span className="text-red-400/70">Decryption failed</span>
+               : dlProgress !== null ? <span className="text-primary/70">Decrypting… {dlProgress}%</span>
                : a.size != null ? formatBytes(a.size)
                : a.key ? 'Encrypted · click to save' : 'Click to open'}
         </p>
@@ -278,7 +287,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
-    setUploadErr(null); setUploading(true);
+    setUploadErr(null);
+    if (file.size > MAX_FILE_SIZE) { setUploadErr('File too large. Maximum is 5 GB.'); return; }
+    setUploading(true);
     try { await sendFile(file); setAtBottom(true); }
     catch (err: unknown) { setUploadErr(err instanceof Error ? err.message : 'Upload failed'); }
     finally { setUploading(false); }
@@ -693,7 +704,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                 className={`flex ${isMe ? 'justify-end' : 'justify-start'} ${isFirst && i > 0 ? 'mt-3' : ''}`}>
                 <div className={`group max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                   {msg.attachment
-                    ? isImageMime(msg.attachment.mime)
+                    ? !msg.attachment.chunked && isImageMime(msg.attachment.mime)
                       ? <ImageBubble a={msg.attachment} isMe={isMe} />
                       : <FileCard a={msg.attachment} isMe={isMe} />
                     : (
@@ -739,7 +750,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           <button
             onClick={() => {
               if (!isInitialized || uploading) return;
-              if (!window.confirm('Files are stored for 18 days, then permanently deleted. Encrypted end-to-end. Max 50 MB. Continue?')) return;
+              if (!window.confirm('Files are stored for 18 days, then permanently deleted. Encrypted end-to-end. Max 5 GB. Continue?')) return;
               fileRef.current?.click();
             }}
             disabled={!isInitialized || uploading}

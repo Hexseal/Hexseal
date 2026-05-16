@@ -29,11 +29,15 @@ export type ChatMessage = {
   isFromMe: boolean;
   attachment?: {          // present for file messages
     name: string;
-    url: string;          // URL to (encrypted) blob on IPFS
-    size?: number;        // original file size in bytes
+    url: string;          // URL to (encrypted) blob on Storj
+    size?: number;        // original plaintext file size in bytes
     mime?: string;
-    key?: string;         // AES-256-GCM key, hex  (encrypted files only)
-    iv?:  string;         // AES-256-GCM IV,  hex  (encrypted files only)
+    key?: string;         // AES-256-GCM key, hex
+    iv?:  string;         // AES-256-GCM base IV, hex
+    // Large-file chunked fields (present when chunked === true)
+    chunked?: boolean;
+    chunkCount?: number;
+    chunkSize?: number;   // plaintext bytes per chunk (always CHUNK_SIZE = 8 MB)
   };
 };
 
@@ -49,8 +53,9 @@ export function encodeFileMessage(
   mime?: string,
   key?: string,
   iv?:  string,
+  chunkedOpts?: { chunked: true; chunkCount: number; chunkSize: number },
 ): string {
-  return JSON.stringify({ _type: 'enc_file', name, url, size, mime, key, iv });
+  return JSON.stringify({ _type: 'enc_file', name, url, size, mime, key, iv, ...chunkedOpts });
 }
 
 export type XmtpClient = Client;
@@ -244,12 +249,15 @@ function parseContent(msg: DecodedMessage): ParsedContent | null {
         return {
           text: p.name,
           attachment: {
-            name: p.name,
-            url:  p.url,
-            size: typeof p.size === 'number' ? p.size : undefined,
-            mime: typeof p.mime === 'string'  ? p.mime : undefined,
-            key:  typeof p.key  === 'string'  ? p.key  : undefined,
-            iv:   typeof p.iv   === 'string'  ? p.iv   : undefined,
+            name:       p.name,
+            url:        p.url,
+            size:       typeof p.size       === 'number'  ? p.size       : undefined,
+            mime:       typeof p.mime       === 'string'  ? p.mime       : undefined,
+            key:        typeof p.key        === 'string'  ? p.key        : undefined,
+            iv:         typeof p.iv         === 'string'  ? p.iv         : undefined,
+            chunked:    p.chunked === true                ? true         : undefined,
+            chunkCount: typeof p.chunkCount === 'number'  ? p.chunkCount : undefined,
+            chunkSize:  typeof p.chunkSize  === 'number'  ? p.chunkSize  : undefined,
           },
         };
       }

@@ -1,49 +1,49 @@
 'use client';
 
-/**
- * fileCrypto.ts — Client-side AES-256-GCM encryption/decryption
- *
- * Files are encrypted in the browser before upload to IPFS.
- * The key + IV travel exclusively through XMTP (E2E encrypted).
- * The blob on IPFS is useless without the key — opaque bytes.
- */
-
 // ─── Hex helpers ─────────────────────────────────────────────────────────────
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
-  }
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(hex.length / 2) as Uint8Array<ArrayBuffer>;
+  for (let i = 0; i < hex.length; i += 2) out[i / 2] = parseInt(hex.slice(i, i + 2), 16);
   return out;
 }
 
-// ─── Encrypt ─────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Plaintext bytes per chunk for large-file encryption. */
+export const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB
+
+// ─── Per-chunk IV derivation ─────────────────────────────────────────────────
+
+function chunkIv(baseIv: Uint8Array, index: number): Uint8Array<ArrayBuffer> {
+  const iv = baseIv.slice() as Uint8Array<ArrayBuffer>;
+  // XOR first 4 bytes with little-endian chunk index so each chunk has a unique IV
+  iv[0] ^= (index >>> 0)  & 0xff;
+  iv[1] ^= (index >>> 8)  & 0xff;
+  iv[2] ^= (index >>> 16) & 0xff;
+  iv[3] ^= (index >>> 24) & 0xff;
+  return iv;
+}
+
+// ─── Small-file encryption (≤ 20 MB) ─────────────────────────────────────────
 
 export type EncryptedFile = {
-  encryptedBlob: Blob;   // AES-GCM ciphertext (upload this to IPFS)
-  keyHex: string;        // 256-bit key, hex-encoded (send via XMTP)
-  ivHex:  string;        // 96-bit IV,  hex-encoded (send via XMTP)
+  encryptedBlob: Blob;
+  keyHex: string;
+  ivHex:  string;
 };
 
+/** Encrypts a small file entirely in memory. Do NOT use for files > 20 MB. */
 export async function encryptFile(file: File): Promise<EncryptedFile> {
   const buffer = await file.arrayBuffer();
-
-  const key = await crypto.subtle.generateKey(
-    { name: 'AES-GCM', length: 256 },
-    true,
-    ['encrypt', 'decrypt'],
-  );
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buffer);
-
   const rawKey = await crypto.subtle.exportKey('raw', key);
-
   return {
     encryptedBlob: new Blob([ciphertext], { type: 'application/octet-stream' }),
     keyHex: bytesToHex(new Uint8Array(rawKey)),
@@ -51,11 +51,39 @@ export async function encryptFile(file: File): Promise<EncryptedFile> {
   };
 }
 
-// ─── Decrypt ─────────────────────────────────────────────────────────────────
+// ─── Large-file chunked encryption ───────────────────────────────────────────
 
-// Simple in-memory cache: encrypted URL → decrypted object URL
-// Avoids re-fetching + re-decrypting the same file on re-renders.
-// Object URLs live for the session; browser cleans up on unload.
+/**
+ * Encrypts `file` in 8 MB chunks, calling `onChunk` for each encrypted piece.
+ * Only 8 MB is held in RAM at a time — safe for multi-GB files.
+ *
+ * Returns key + base IV after all chunks have been processed (chunks are
+ * concatenated encrypted blobs; the receiver reconstructs per-chunk IVs from
+ * the base IV + chunk index).
+ */
+export async function encryptFileChunked(
+  file: File,
+  onChunk: (data: Uint8Array<ArrayBuffer>, index: number, total: number) => Promise<void>,
+): Promise<{ keyHex: string; ivHex: string; chunkCount: number }> {
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  const baseIv     = crypto.getRandomValues(new Uint8Array(12));
+  const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
+
+  for (let i = 0; i < chunkCount; i++) {
+    const start  = i * CHUNK_SIZE;
+    const slice  = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
+    const buffer = await slice.arrayBuffer() as ArrayBuffer; // only 8 MB in RAM
+    const iv     = chunkIv(baseIv, i);
+    const enc    = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buffer);
+    await onChunk(new Uint8Array(enc), i, chunkCount);
+  }
+
+  const rawKey = await crypto.subtle.exportKey('raw', key);
+  return { keyHex: bytesToHex(new Uint8Array(rawKey)), ivHex: bytesToHex(baseIv), chunkCount };
+}
+
+// ─── Small-file decryption (existing path, for images + small files) ──────────
+
 const _cache = new Map<string, string>();
 
 export async function decryptToObjectUrl(
@@ -78,14 +106,11 @@ export async function decryptToObjectUrl(
   const key = await crypto.subtle.importKey(
     'raw',
     keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength) as ArrayBuffer,
-    'AES-GCM',
-    false,
-    ['decrypt'],
+    'AES-GCM', false, ['decrypt'],
   );
   const plaintext = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: ivBytes.buffer.slice(ivBytes.byteOffset, ivBytes.byteOffset + ivBytes.byteLength) as ArrayBuffer },
-    key,
-    ciphertext,
+    key, ciphertext,
   );
 
   const blob = new Blob([plaintext], { type: mime || 'application/octet-stream' });
@@ -108,5 +133,108 @@ export async function decryptAndSave(
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // Don't revoke — it may be cached for subsequent uses
+}
+
+// ─── Streaming byte reader ────────────────────────────────────────────────────
+
+class ByteReader {
+  private buf: Uint8Array<ArrayBuffer> = new Uint8Array(0);
+  constructor(private reader: ReadableStreamDefaultReader<Uint8Array>) {}
+
+  async read(n: number): Promise<Uint8Array<ArrayBuffer>> {
+    while (this.buf.length < n) {
+      const { done, value } = await this.reader.read();
+      if (done) throw new Error('Unexpected end of encrypted stream');
+      const merged = new Uint8Array(this.buf.length + value.length) as Uint8Array<ArrayBuffer>;
+      merged.set(this.buf);
+      merged.set(value, this.buf.length);
+      this.buf = merged;
+    }
+    const result = this.buf.slice(0, n) as Uint8Array<ArrayBuffer>;
+    this.buf = this.buf.slice(n) as Uint8Array<ArrayBuffer>;
+    return result;
+  }
+}
+
+// ─── Large-file chunked decryption ───────────────────────────────────────────
+
+/**
+ * Downloads and decrypts a chunked file.
+ *
+ * On Chrome/Edge uses showSaveFilePicker to stream directly to disk — no RAM limit.
+ * On other browsers collects decrypted chunks as Blobs (browser may page to OS disk)
+ * then triggers the download link. Works up to ~2 GB on Firefox/Safari.
+ */
+export async function decryptAndSaveChunked(
+  encryptedUrl: string,
+  keyHex: string,
+  ivHex: string,
+  filename: string,
+  mime: string | undefined,
+  chunkCount: number,
+  chunkSize: number,   // plaintext bytes per chunk (CHUNK_SIZE)
+  originalSize: number, // total plaintext file size
+  onProgress?: (pct: number) => void,
+): Promise<void> {
+  const keyBytes = hexToBytes(keyHex);
+  const baseIv   = hexToBytes(ivHex);
+
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
+
+  const response = await fetch(encryptedUrl);
+  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+
+  // ── Try streaming save to disk (Chrome / Edge) ────────────────────────────
+  if ('showSaveFilePicker' in window) {
+    try {
+      type SavePicker = (opts?: object) => Promise<FileSystemFileHandle>;
+      const handle = await (window as unknown as { showSaveFilePicker: SavePicker }).showSaveFilePicker({
+        suggestedName: filename,
+      });
+      const writable = await handle.createWritable();
+      const br = new ByteReader(response.body!.getReader());
+
+      for (let i = 0; i < chunkCount; i++) {
+        const isLast   = i === chunkCount - 1;
+        const plain    = isLast ? originalSize - i * chunkSize : chunkSize;
+        const encSize  = plain + 16; // AES-GCM auth tag
+        const encChunk = await br.read(encSize);
+        const iv       = chunkIv(baseIv, i);
+        const dec      = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, encChunk);
+        await writable.write(new Uint8Array(dec));
+        onProgress?.(Math.round(((i + 1) / chunkCount) * 100));
+      }
+
+      await writable.close();
+      return;
+    } catch (e: unknown) {
+      if ((e as DOMException).name === 'AbortError') return; // user cancelled picker
+      // showSaveFilePicker failed — fall through to in-memory approach
+    }
+  }
+
+  // ── Fallback: collect decrypted chunks, trigger <a> download ─────────────
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  const br = new ByteReader(response.body!.getReader());
+
+  for (let i = 0; i < chunkCount; i++) {
+    const isLast   = i === chunkCount - 1;
+    const plain    = isLast ? originalSize - i * chunkSize : chunkSize;
+    const encSize  = plain + 16;
+    const encChunk = await br.read(encSize);
+    const iv       = chunkIv(baseIv, i);
+    const dec      = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, encChunk);
+    chunks.push(new Uint8Array(dec));
+    onProgress?.(Math.round(((i + 1) / chunkCount) * 100));
+  }
+
+  const blob = new Blob(chunks, { type: mime || 'application/octet-stream' });
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }

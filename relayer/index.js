@@ -10,6 +10,11 @@ import {
   GetObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  ListPartsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -253,6 +258,104 @@ app.post('/files/presign', async (req, res) => {
     res.json({ uploadUrl, downloadUrl, key, expiresIn: '18 days' });
   } catch (err) {
     console.error('[files/presign]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Multipart upload endpoints (large files > 20 MB) ────────────────────────
+
+app.post('/files/multipart/create', async (req, res) => {
+  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+  try {
+    const { ext = '', chunkCount } = req.body || {};
+    if (!chunkCount || chunkCount < 1 || chunkCount > 10000) {
+      return res.status(400).json({ error: 'chunkCount must be between 1 and 10000' });
+    }
+    const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
+    const key = `${Date.now()}-${randomUUID()}${safeExt}`;
+
+    const create = await s3.send(new CreateMultipartUploadCommand({
+      Bucket: BUCKET_FILES,
+      Key: key,
+      ContentType: 'application/octet-stream',
+    }));
+    const uploadId = create.UploadId;
+
+    // Presign all part URLs at once (parts are 1-indexed)
+    const partUrls = await Promise.all(
+      Array.from({ length: chunkCount }, (_, i) =>
+        getSignedUrl(s3, new UploadPartCommand({
+          Bucket: BUCKET_FILES,
+          Key: key,
+          UploadId: uploadId,
+          PartNumber: i + 1,
+        }), { expiresIn: 7200 }) // 2 hours for large uploads
+      )
+    );
+
+    res.json({ uploadId, key, partUrls });
+  } catch (err) {
+    console.error('[files/multipart/create]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/files/multipart/complete', async (req, res) => {
+  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+  try {
+    const { uploadId, key } = req.body || {};
+    if (!uploadId || !key) return res.status(400).json({ error: 'uploadId and key required' });
+
+    // Read ETags server-side via ListParts to avoid CORS ETag exposure issues
+    const parts = [];
+    let partNumberMarker;
+    do {
+      const listed = await s3.send(new ListPartsCommand({
+        Bucket: BUCKET_FILES,
+        Key: key,
+        UploadId: uploadId,
+        PartNumberMarker: partNumberMarker,
+      }));
+      for (const p of listed.Parts || []) {
+        parts.push({ PartNumber: p.PartNumber, ETag: p.ETag });
+      }
+      partNumberMarker = listed.IsTruncated ? listed.NextPartNumberMarker : undefined;
+    } while (partNumberMarker);
+
+    if (!parts.length) return res.status(400).json({ error: 'No parts found for this upload' });
+
+    await s3.send(new CompleteMultipartUploadCommand({
+      Bucket: BUCKET_FILES,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: { Parts: parts },
+    }));
+
+    const downloadUrl = await getSignedUrl(s3, new GetObjectCommand({
+      Bucket: BUCKET_FILES,
+      Key: key,
+    }), { expiresIn: FILE_TTL_S });
+
+    res.json({ downloadUrl });
+  } catch (err) {
+    console.error('[files/multipart/complete]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/files/multipart/abort', async (req, res) => {
+  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+  try {
+    const { uploadId, key } = req.body || {};
+    if (!uploadId || !key) return res.status(400).json({ error: 'uploadId and key required' });
+    await s3.send(new AbortMultipartUploadCommand({
+      Bucket: BUCKET_FILES,
+      Key: key,
+      UploadId: uploadId,
+    }));
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[files/multipart/abort]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

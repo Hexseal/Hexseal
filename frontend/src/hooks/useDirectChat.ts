@@ -13,8 +13,7 @@ import {
   type XmtpClient,
   type XmtpDm,
 } from '@/lib/xmtp';
-import { encryptFile } from '@/lib/fileCrypto';
-import { uploadEncryptedFile } from '@/lib/fileStorage';
+import { uploadFileWithEncryption } from '@/lib/fileStorage';
 
 export type { ChatMessage as DirectMessage };
 
@@ -131,30 +130,29 @@ export function useDirectChat(recipientAddress: string) {
 
     const myAddress = xmtp.accountIdentifier?.identifier?.toLowerCase() ?? '';
 
-    // 1. Encrypt in browser
-    const { encryptedBlob, keyHex, ivHex } = await encryptFile(file);
-
-    // 2. Upload encrypted blob directly to Storj
     setUploadProgress(0);
-    let url: string;
+    let result: Awaited<ReturnType<typeof uploadFileWithEncryption>>;
     try {
-      ({ url } = await uploadEncryptedFile(encryptedBlob, file.name, setUploadProgress));
+      result = await uploadFileWithEncryption(file, file.name, setUploadProgress);
     } finally {
       setUploadProgress(null);
     }
 
-    // 3. Optimistic UI
-    const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex);
+    const { url, keyHex, ivHex, chunked, chunkCount, chunkSize } = result;
+    const chunkedOpts = chunked && chunkCount && chunkSize
+      ? { chunked: true as const, chunkCount, chunkSize }
+      : undefined;
+
+    const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex, chunkedOpts);
     setMessages((prev) => [...prev, {
       id: `opt-${Date.now()}`,
       from: myAddress,
       text: file.name,
-      attachment: { name: file.name, url, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex },
+      attachment: { name: file.name, url, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex, ...chunkedOpts },
       timestamp: Date.now(),
       isFromMe: true,
     }]);
 
-    // 4. Send via XMTP (key + IV travel E2E encrypted)
     await dm.sendText(encoded);
   }, []);
 

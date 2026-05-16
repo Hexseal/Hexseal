@@ -5,7 +5,8 @@ import { Send, Loader2, Lock, Paperclip, FileText, Download, Scale } from 'lucid
 import { useDealChat } from '@/hooks/useDealChat';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import type { ChatMessage } from '@/lib/xmtp';
-import { decryptToObjectUrl, decryptAndSave } from '@/lib/fileCrypto';
+import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
+import { MAX_FILE_SIZE } from '@/lib/fileStorage';
 import { fetchProfile } from '@/lib/profiles-ipfs';
 import type { UserProfile } from '@/types/profile';
 
@@ -140,20 +141,31 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
 // ─── Attachment: encrypted file ───────────────────────────────────────────────
 
 function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean }) {
-  const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState(false);
+  const [saving,    setSaving]    = useState(false);
+  const [err,       setErr]       = useState(false);
+  const [dlProgress, setDlProgress] = useState<number | null>(null);
 
   const handleDownload = async () => {
     if (saving) return;
     if (!a.key || !a.iv) { window.open(a.url, '_blank'); return; }
     setSaving(true);
     setErr(false);
+    setDlProgress(0);
     try {
-      await decryptAndSave(a.url, a.key, a.iv, a.name, a.mime);
+      if (a.chunked && a.chunkCount && a.size) {
+        await decryptAndSaveChunked(
+          a.url, a.key, a.iv, a.name, a.mime,
+          a.chunkCount, a.chunkSize ?? CHUNK_SIZE, a.size,
+          setDlProgress,
+        );
+      } else {
+        await decryptAndSave(a.url, a.key, a.iv, a.name, a.mime);
+      }
     } catch {
       setErr(true);
     } finally {
       setSaving(false);
+      setDlProgress(null);
     }
   };
 
@@ -178,9 +190,11 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
         <p className="text-[11px] text-white/35 mt-0.5">
           {err
             ? <span className="text-red-400/70">Decryption failed</span>
-            : a.size != null
-              ? formatBytes(a.size)
-              : a.key ? 'Encrypted · click to save' : 'Click to open'
+            : dlProgress !== null
+              ? <span className="text-violet-400/70">Decrypting… {dlProgress}%</span>
+              : a.size != null
+                ? formatBytes(a.size)
+                : a.key ? 'Encrypted · click to save' : 'Click to open'
           }
         </p>
       </div>
@@ -322,6 +336,10 @@ export function DealChat({
     if (!file || isClosed) return;
     e.target.value = '';
     setUploadErr(null);
+    if (file.size > MAX_FILE_SIZE) {
+      setUploadErr('File too large. Maximum is 5 GB.');
+      return;
+    }
     setUploading(true);
     try {
       await sendFile(file);
@@ -402,7 +420,7 @@ export function DealChat({
             >
               {isFirst && <SenderHeader addr={msg.from} info={info} isMe={isMe} />}
               {msg.attachment
-                ? isImageMime(msg.attachment.mime)
+                ? !msg.attachment.chunked && isImageMime(msg.attachment.mime)
                   ? <ImageBubble a={msg.attachment} isMe={isMe} />
                   : <FileCard a={msg.attachment} isMe={isMe} />
                 : (
@@ -434,7 +452,7 @@ export function DealChat({
             disabled={!isInitialized || uploading || isClosed}
             onClick={() => {
               if (!isInitialized || uploading || isClosed) return;
-              if (!window.confirm('Files are stored for 18 days, then permanently deleted. Encrypted end-to-end. Max 50 MB. Continue?')) return;
+              if (!window.confirm('Files are stored for 18 days, then permanently deleted. Encrypted end-to-end. Max 5 GB. Continue?')) return;
               fileRef.current?.click();
             }}
             title="Attach file — available 18 days"
