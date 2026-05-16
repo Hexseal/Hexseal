@@ -47,13 +47,18 @@ export function useXmtpStatus() {
       setIsEnabled(true);
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : 'Failed to enable messaging';
+      // Trim the verbose XMTP API stats dump that appears after the first sentence.
+      const trimmed = raw.split('=====')[0].split('\n')[0].trim();
+
       const isLimit    = raw.includes('10/10') || raw.includes('registered 10');
       const isPending  = raw.toLowerCase().includes('already pending') ||
                          raw.toLowerCase().includes('pending for origin');
+      const isChainId  = raw.toLowerCase().includes('wrong chain id');
       setError(
-        isPending ? 'Your wallet has a pending signature request. Open your wallet app, approve or reject it, then tap Enable again.' :
-        isLimit   ? 'Too many active XMTP sessions (10/10). Visit xmtp.chat → Settings → Revoke installations, then retry.' :
-        raw,
+        isPending  ? 'Your wallet has a pending signature request. Open your wallet app, approve or reject it, then tap Enable again.' :
+        isLimit    ? 'Too many active XMTP sessions (10/10). Visit xmtp.chat → Settings → Revoke installations, then retry.' :
+        isChainId  ? 'XMTP session mismatch — please clear your browser/app storage and try again.' :
+        trimmed,
       );
     } finally {
       lockRef.current = false;

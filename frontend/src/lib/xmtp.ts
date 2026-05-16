@@ -85,10 +85,12 @@ export function createXmtpSigner(walletClient: WalletClient): Signer {
   return {
     type: 'EOA' as const,
     getIdentifier: () => toIdentifier(walletClient.account!.address),
-    // XMTP production env anchors identities to Base mainnet (8453).
-    // Without this, the SDK sends chainId=0 and PublishIdentityUpdate fails
-    // with "Wrong chain id. Initially added with 8453 but now signing from 0".
-    getChainId: () => BigInt(8453),
+    // The TypeScript type omits getChainId for EOA, but the XMTP WASM runtime
+    // calls it via duck typing when publishing identity updates. Without it the
+    // runtime falls back to chainId=0, causing "Wrong chain id. Initially added
+    // with 8453 but now signing from 0". Production env anchors to Base mainnet.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    getChainId: () => BigInt(8453) as any,
     signMessage: async (message: string): Promise<Uint8Array> => {
       const sig = await walletClient.signMessage({
         account: walletClient.account!,
@@ -96,7 +98,7 @@ export function createXmtpSigner(walletClient: WalletClient): Signer {
       });
       return toBytes(sig);
     },
-  };
+  } as unknown as Signer;
 }
 
 // ─── Client init ──────────────────────────────────────────────────────────────

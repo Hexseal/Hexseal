@@ -140,12 +140,41 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Forces all queries to refetch when user returns to the tab/PWA.
+// React Query's built-in refetchOnWindowFocus is unreliable in iOS standalone mode.
+function VisibilityRefresher({ queryClient }: { queryClient: QueryClient }) {
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        queryClient.invalidateQueries();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [queryClient]);
+  return null;
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            // Poll every 15 s so on-chain changes appear without manual refresh.
+            refetchInterval: 15_000,
+            // Treat data as fresh for 10 s to avoid redundant back-to-back fetches.
+            staleTime: 10_000,
+            refetchOnWindowFocus: true,
+          },
+        },
+      }),
+  );
 
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
+        <VisibilityRefresher queryClient={queryClient} />
         <NextThemesProvider attribute="class" forcedTheme="dark">
           <LocaleProvider>
             <RainbowKitProviders>{children}</RainbowKitProviders>
