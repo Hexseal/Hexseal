@@ -30,6 +30,20 @@
 :lang(ru) {
   --hero-fs: clamp(2rem, 8vw, 6.5rem);
 }
+/* Unbounded has taller caps than Syne — leading-[0.88] causes lines to overlap.
+   Also undo tracking-tight: Unbounded at display size reads better at 0. */
+:lang(ru) .hero h1 {
+  line-height: 1.05;
+  letter-spacing: 0em;
+}
+/* Badge tagline in Russian is much longer than English.
+   Switch to JetBrains Mono (narrower than Space Mono) and tighten spacing
+   so "Децентрализованный фриланс · Сеть Base" fits on one line on mobile. */
+:lang(ru) .hero-badge {
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+}
 
 /* ── Thai locale ─────────────────────────────────────────────────────────────── */
 :lang(th) body {
