@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount } from "wagmi";
@@ -96,6 +96,11 @@ export default function MobileBottomNav() {
   const [boardOpen, setBoardOpen] = useState(false);
   const t = useTranslations();
 
+  // Close the board popup whenever the user navigates to a new page.
+  useEffect(() => {
+    setBoardOpen(false);
+  }, [pathname]);
+
   if (!isConnected) return null;
 
   const isActive = (path: string) =>
@@ -119,7 +124,7 @@ export default function MobileBottomNav() {
           className="fixed z-50 bottom-[calc(env(safe-area-inset-bottom,0px)+108px)] left-1/2 -translate-x-1/2"
           style={{ minWidth: 200 }}
         >
-          <div className="bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-2xl overflow-hidden shadow-2xl shadow-black/70">
+          <div className="animate-in slide-in-from-bottom-2 fade-in duration-150 bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-2xl overflow-hidden shadow-2xl shadow-black/70">
             <div className="flex items-center justify-between px-4 pt-3 pb-2">
               <span className="text-[11px] text-white/30 font-medium tracking-widest uppercase">
                 {t("board.mobile_popup.title")}

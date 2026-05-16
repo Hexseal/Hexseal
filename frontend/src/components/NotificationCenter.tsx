@@ -111,7 +111,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
         </button>
 
         {open && (
-          <div className="absolute right-0 top-full mt-2 w-80 max-h-[480px] flex flex-col rounded-xl border border-white/10 bg-black shadow-2xl shadow-black/50 overflow-hidden z-50">
+          <div className="animate-in slide-in-from-top-2 fade-in duration-150 absolute right-0 top-full mt-2 w-80 max-h-[480px] flex flex-col rounded-xl border border-white/10 bg-black shadow-2xl shadow-black/50 overflow-hidden z-50">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
               <div className="flex items-center gap-2">

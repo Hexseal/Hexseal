@@ -8,6 +8,15 @@ import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
 
+// Re-mounts on each navigation via key={pathname}, triggering the fade-in.
+function PageFade({ children, pathname }: { children: React.ReactNode; pathname: string }) {
+  return (
+    <div key={pathname} className="animate-in fade-in duration-200 min-h-0 flex flex-col flex-1">
+      {children}
+    </div>
+  );
+}
+
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [onboardingForced, setOnboardingForced] = useState(false);
@@ -54,7 +63,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         {topScrim}
         <Header />
         <main className="h-dvh flex flex-col overflow-hidden" style={{ paddingTop: 'calc(4rem + env(safe-area-inset-top))' }}>
-          {children}
+          <PageFade pathname={pathname}>{children}</PageFade>
         </main>
         {modal}
         <Toaster />
@@ -69,7 +78,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         {topScrim}
         <Header />
         <main className="flex-1">
-          {children}
+          <PageFade pathname={pathname}>{children}</PageFade>
         </main>
         <Footer />
         {modal}
@@ -84,8 +93,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       {bottomScrim}
       <Header />
       <main className="flex-1" style={{ paddingTop: 'calc(4.5rem + env(safe-area-inset-top))' }}>
-        {children}
-        <div className="md:hidden" style={{ height: 'calc(7.5rem + env(safe-area-inset-bottom, 0px))' }} />
+        <PageFade pathname={pathname}>
+          {children}
+          <div className="md:hidden" style={{ height: 'calc(7.5rem + env(safe-area-inset-bottom, 0px))' }} />
+        </PageFade>
       </main>
       <MobileBottomNav />
       {modal}

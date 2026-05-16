@@ -328,7 +328,7 @@ function LocaleToggle({ locale, setLocale }: { locale: Locale; setLocale: (l: Lo
         {locale.toUpperCase()}
       </button>
       {open && (
-        <div className="absolute top-full mt-2 right-0 w-44 bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-xl overflow-hidden shadow-2xl shadow-black/70 z-[200]">
+        <div className="animate-in slide-in-from-top-2 fade-in duration-150 absolute top-full mt-2 right-0 w-44 bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-xl overflow-hidden shadow-2xl shadow-black/70 z-[200]">
           {locales.map((l) => (
             <button
               key={l}
