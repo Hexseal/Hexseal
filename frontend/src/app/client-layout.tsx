@@ -28,7 +28,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   }, []);
 
   // Track the true visible-viewport height (shrinks when keyboard opens on iOS).
-  // Sets --vvh on <html> so the chat container can use it instead of dvh/vh.
+  // Also listen to 'scroll' so we catch the visual-viewport offset iOS applies
+  // when focusing an input (prevents the "flies up" effect).
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -36,9 +37,38 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
     };
     vv.addEventListener('resize', update);
-    update(); // set immediately
-    return () => vv.removeEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
   }, []);
+
+  // For chat pages: lock body scroll so iOS Safari can't scroll the page
+  // when the keyboard opens. Without this the whole page "flies up".
+  const isChatPageRef = React.useRef(false);
+  const currentIsChatPage = pathname?.startsWith('/chat') ?? false;
+  useEffect(() => {
+    isChatPageRef.current = currentIsChatPage;
+    const body = document.body;
+    if (currentIsChatPage) {
+      body.style.position = 'fixed';
+      body.style.width = '100%';
+      body.style.overflow = 'hidden';
+    } else {
+      body.style.position = '';
+      body.style.width = '';
+      body.style.overflow = '';
+    }
+    return () => {
+      if (isChatPageRef.current) {
+        body.style.position = '';
+        body.style.width = '';
+        body.style.overflow = '';
+      }
+    };
+  }, [currentIsChatPage]);
 
   const modal = (
     <OnboardingModal
@@ -81,8 +111,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         <main
           className="flex flex-col overflow-hidden"
           style={{
+            position: 'fixed',
+            top: 'calc(4rem + env(safe-area-inset-top, 0px))',
+            left: 0,
+            right: 0,
             height: 'calc(var(--vvh, 100dvh) - 4rem - env(safe-area-inset-top, 0px))',
-            marginTop: 'calc(4rem + env(safe-area-inset-top, 0px))',
           }}
         >
           <PageFade pathname={pathname}>{children}</PageFade>
