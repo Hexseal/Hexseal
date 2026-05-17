@@ -3,6 +3,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWalletClient, usePublicClient } from 'wagmi';
 import { useXmtpStatus } from './useXmtpStatus';
+
+const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
+
+function pushChatNotif(recipients: string[], body: string, url: string) {
+  for (const to of recipients) {
+    fetch(`${RELAYER_URL}/push/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, title: 'New Message 💬', body, url }),
+    }).catch(() => {});
+  }
+}
 import {
   initXmtpClient,
   findOrCreateDealGroup,
@@ -62,9 +74,12 @@ export function useDealChat(agreementAddress: string) {
   const [error,          setError]          = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
-  const clientRef  = useRef<XmtpClient | null>(null);
-  const groupRef   = useRef<XmtpGroup | null>(null);
-  const streamRef  = useRef<{ return: () => void } | null>(null);
+  const clientRef         = useRef<XmtpClient | null>(null);
+  const groupRef          = useRef<XmtpGroup | null>(null);
+  const streamRef         = useRef<{ return: () => void } | null>(null);
+  const counterpartiesRef = useRef<string[]>([]);
+  const agreementRef      = useRef(agreementAddress);
+  useEffect(() => { agreementRef.current = agreementAddress; }, [agreementAddress]);
 
   useEffect(() => {
     if (!walletClient || !publicClient || !agreementAddress) return;
@@ -95,6 +110,11 @@ export function useDealChat(agreementAddress: string) {
         if (!participants.includes(myAddress)) {
           throw new Error('Access denied: you are not a participant of this deal');
         }
+
+        // Store counterparties (everyone except me and zero address) for push notifications
+        counterpartiesRef.current = participants.filter(
+          (a) => a !== myAddress && a !== ZERO_ADDR
+        );
 
         if (cancelled) return;
         setIsClosed(CLOSED_STATUSES.has(Number(status_)));
@@ -187,6 +207,7 @@ export function useDealChat(agreementAddress: string) {
     const myAddress = xmtp.accountIdentifier?.identifier?.toLowerCase() ?? '';
     setMessages((prev) => [...prev, { id: `opt-${Date.now()}`, from: myAddress, text, timestamp: Date.now(), isFromMe: true }]);
     await group.sendText(text);
+    pushChatNotif(counterpartiesRef.current, text.length > 80 ? text.slice(0, 80) + '…' : text, `/deal/${agreementRef.current}`);
   }, []);
 
   // ── Send file (encrypt → upload → XMTP) ──────────────────────────────────
@@ -221,6 +242,7 @@ export function useDealChat(agreementAddress: string) {
     }]);
 
     await group.sendText(encoded);
+    pushChatNotif(counterpartiesRef.current, `📎 ${file.name}`, `/deal/${agreementRef.current}`);
   }, []);
 
   return {

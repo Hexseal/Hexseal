@@ -3,6 +3,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWalletClient } from 'wagmi';
 import { useXmtpStatus } from './useXmtpStatus';
+
+const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
+
+function pushChatNotif(to: string, body: string, url: string) {
+  fetch(`${RELAYER_URL}/push/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, title: 'New Message 💬', body, url }),
+  }).catch(() => {});
+}
 import {
   initXmtpClient,
   toIdentifier,
@@ -29,9 +39,11 @@ export function useDirectChat(recipientAddress: string) {
   const [error,           setError]           = useState<string | null>(null);
   const [uploadProgress,  setUploadProgress]  = useState<number | null>(null);
 
-  const clientRef = useRef<XmtpClient | null>(null);
-  const dmRef     = useRef<XmtpDm | null>(null);
-  const streamRef = useRef<{ return: () => void } | null>(null);
+  const clientRef       = useRef<XmtpClient | null>(null);
+  const dmRef           = useRef<XmtpDm | null>(null);
+  const streamRef       = useRef<{ return: () => void } | null>(null);
+  const recipientRef    = useRef(recipientAddress);
+  useEffect(() => { recipientRef.current = recipientAddress; }, [recipientAddress]);
 
   useEffect(() => {
     if (!walletClient || !recipientAddress) return;
@@ -120,6 +132,7 @@ export function useDirectChat(recipientAddress: string) {
     const myAddress = xmtp.accountIdentifier?.identifier?.toLowerCase() ?? '';
     setMessages((prev) => [...prev, { id: `opt-${Date.now()}`, from: myAddress, text, timestamp: Date.now(), isFromMe: true }]);
     await dm.sendText(text);
+    pushChatNotif(recipientRef.current, text.length > 80 ? text.slice(0, 80) + '…' : text, '/chat');
   }, []);
 
   // ── Send file (encrypt → upload → XMTP) ──────────────────────────────────
@@ -154,6 +167,7 @@ export function useDirectChat(recipientAddress: string) {
     }]);
 
     await dm.sendText(encoded);
+    pushChatNotif(recipientRef.current, `📎 ${file.name}`, '/chat');
   }, []);
 
   return { messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress, needsSetup: !isEnabled };

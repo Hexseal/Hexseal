@@ -105,18 +105,36 @@ export function useXmtpNotifications() {
           });
 
           if (saved) {
-            toast(`💬  New Message\n${body}`, {
-              duration: 5000,
-              style: {
-                background: '#050505',
-                color: '#f0f0f0',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '12px',
-                fontSize: '13px',
-                maxWidth: '320px',
-                whiteSpace: 'pre-line',
-              },
-            });
+            // Native OS notification when tab is in background
+            if (
+              document.visibilityState !== 'visible' &&
+              Notification.permission === 'granted' &&
+              'serviceWorker' in navigator
+            ) {
+              navigator.serviceWorker.ready.then((reg) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                reg.showNotification('New Message 💬', {
+                  body,
+                  icon: '/icon-192.png',
+                  badge: '/icon-192.png',
+                  tag: link,
+                  data: { url: link },
+                } as any);
+              }).catch(() => {});
+            } else {
+              toast(`💬  New Message\n${body}`, {
+                duration: 5000,
+                style: {
+                  background: '#050505',
+                  color: '#f0f0f0',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '12px',
+                  fontSize: '13px',
+                  maxWidth: '320px',
+                  whiteSpace: 'pre-line',
+                },
+              });
+            }
           }
         }
       } catch {

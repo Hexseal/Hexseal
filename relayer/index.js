@@ -498,6 +498,28 @@ app.post('/push/unsubscribe', async (req, res) => {
   }
 });
 
+// Send push notification to a specific wallet address (used by frontend after chat messages).
+// Best-effort: rate-limited, fire-and-forget on the client side.
+app.post('/push/send', async (req, res) => {
+  try {
+    const ip = clientIp(req);
+    if (!checkRateLimit(ip)) {
+      return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
+    }
+    const { to, title, body, url } = req.body || {};
+    if (!to || !title || !body) {
+      return res.status(400).json({ error: 'to, title, body required' });
+    }
+    if (!ethers.isAddress(to)) {
+      return res.status(400).json({ error: 'Invalid address' });
+    }
+    await sendPush(to.toLowerCase(), { title, body: String(body).slice(0, 200), url: url || '/chat' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 async function start() {
