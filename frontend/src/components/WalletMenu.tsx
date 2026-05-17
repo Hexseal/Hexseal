@@ -145,7 +145,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
       modal={false}
     >
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-white/[0.10] bg-[#1a1a1a] hover:bg-[#222] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20">
+        <button className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-white/[0.10] bg-white/[0.06] hover:bg-white/[0.10] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={avatarUrl}

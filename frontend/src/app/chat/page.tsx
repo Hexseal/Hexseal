@@ -11,9 +11,10 @@ import { useXmtpStatus } from '@/hooks/useXmtpStatus';
 import { useProfile } from '@/hooks/useProfile';
 import { ChatPanel } from '@/components/ChatPanel';
 import { MessagingSetup } from '@/components/MessagingSetup';
+import MobileBottomNav from '@/components/MobileBottomNav';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
-import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight, ArrowLeft } from 'lucide-react';
+import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
@@ -208,8 +209,8 @@ function ChatHubPageInner() {
   const { isEnabled: xmtpEnabled }   = useXmtpStatus();
   const { conversations, isLoading, error, reload } = useConversations();
 
-  const [selected, setSelected]       = useState<string | null>(initialPeer);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
+  const selected = searchParams.get('peer')?.toLowerCase() ?? null;
   const [showNewChat, setShowNewChat] = useState(false);
   const [newChatAddr, setNewChatAddr] = useState('');
   const [seenConvos, setSeenConvos]   = useState<Set<string>>(() =>
@@ -313,9 +314,11 @@ function ChatHubPageInner() {
   const handleOpenNewChat = () => {
     const addr = newChatAddr.trim().toLowerCase();
     if (!isAddress(addr)) return;
-    setSelected(addr);
     setShowNewChat(false);
     setNewChatAddr('');
+    setSeenConvos(prev => new Set([...prev, addr]));
+    localStorage.setItem(`sig404_chat_seen_${addr}`, String(Date.now()));
+    router.push(`/chat?peer=${addr}`);
   };
 
   const t = useTranslations();
@@ -348,10 +351,9 @@ function ChatHubPageInner() {
 
   const handleConvoClick = (addr: string) => {
     const lc = addr.toLowerCase();
-    setSelected(lc);
-    setSidebarOpen(false);
     setSeenConvos(prev => new Set([...prev, lc]));
     localStorage.setItem(`sig404_chat_seen_${lc}`, String(Date.now()));
+    router.push(`/chat?peer=${lc}`);
   };
 
   const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
@@ -359,44 +361,21 @@ function ChatHubPageInner() {
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden bg-background">
 
-      {/* Mobile backdrop when drawer is open over a chat */}
-      {sidebarOpen && !!selected && (
-        <div
-          className="sm:hidden fixed inset-0 z-20 bg-black/60 backdrop-blur-[2px]"
-          style={{ top: 'var(--chat-top-offset)' }}
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
       {/* ── Sidebar ── */}
       <aside
         className={cn(
           'flex-shrink-0 border-r border-white/[0.05] flex flex-col overflow-hidden bg-black',
           // Desktop: always static in layout
-          'sm:relative sm:flex sm:w-80 sm:translate-x-0 sm:z-auto',
-          // Mobile, no chat selected: full-width (sidebar IS the page)
-          !selected && 'flex w-full',
-          // Mobile, chat selected: slide-over drawer from left
-          !!selected && cn(
-            'fixed bottom-0 left-0 w-[88vw] max-w-[340px] z-30',
-            'transition-transform duration-300 ease-out',
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full',
-          ),
+          'sm:relative sm:flex sm:w-80',
+          // Mobile: full-width when no chat selected, hidden when chat is open
+          !selected ? 'flex w-full' : 'hidden sm:flex',
         )}
-        style={!!selected ? { top: 'var(--chat-top-offset)' } : undefined}
       >
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3.5 flex-shrink-0"
           style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => router.back()}
-              className="sm:hidden -ml-1 w-8 h-8 flex items-center justify-center text-white/35 hover:text-white/70 hover:bg-white/[0.06] rounded-[12px] transition-colors flex-shrink-0"
-              aria-label="Go back"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
             <div>
               <h2 className="text-sm font-semibold text-white/85">{t("chat.title")}</h2>
               <div className="flex items-center gap-1 mt-0.5">
@@ -513,6 +492,9 @@ function ChatHubPageInner() {
             />
           ))}
 
+          {/* Spacer so last items aren't hidden under the bottom nav pill on mobile */}
+          <div className="sm:hidden flex-shrink-0" style={{ height: 'calc(92px + env(safe-area-inset-bottom, 0px))' }} />
+
         </div>
       </aside>
 
@@ -525,11 +507,13 @@ function ChatHubPageInner() {
           ? <ChatPanel
               recipientAddress={selected}
               dealContext={selectedDealCtx}
-              onBack={() => setSidebarOpen(true)}
             />
           : <EmptyState />
         }
       </main>
+
+      {/* Bottom nav only on chat list (no conversation selected) */}
+      {!selected && <MobileBottomNav />}
 
     </div>
   );

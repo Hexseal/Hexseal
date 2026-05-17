@@ -138,12 +138,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             top: 'calc(var(--chat-top-offset) + var(--vv-offset-top, 0px))',
             left: 0,
             right: 0,
-            height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset) - var(--chat-bottom-offset, 0px))',
+            height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset))',
           }}
         >
           <PageFade pathname={pathname}>{children}</PageFade>
         </main>
-        <MobileBottomNav />
         {modal}
         <Toaster />
       </>
@@ -171,7 +170,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       {topScrim}
       {bottomScrim}
       <Header />
-      <main className="flex-1" style={{ paddingTop: 'calc(4.5rem + env(safe-area-inset-top))' }}>
+      <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
         <PageFade pathname={pathname}>
           {children}
           <div className="md:hidden" style={{ height: 'calc(6.5rem + env(safe-area-inset-bottom, 0px))' }} />

@@ -69,13 +69,12 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
   return (
     <>
       {/* ── Mobile floating pill header ────────────────────────────────── */}
-      {/* Hidden on chat pages — ChatPanel provides its own header with navigation */}
       <header
         className={chatMode ? "hidden" : "md:hidden fixed left-2 right-2 z-50"}
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div
-          className="flex items-center justify-between px-3 py-2 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
+          className="flex items-center justify-between px-3 py-3 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
           style={glassStyle}
         >
           {/* Left: back + logo */}
@@ -120,72 +119,77 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
         </div>
       </header>
 
-      {/* ── Desktop full-width header ──────────────────────────────────── */}
+      {/* ── Desktop floating pill header ───────────────────────────────── */}
       <header
-        className="hidden md:block fixed top-0 left-0 right-0 z-50 border-b border-white/[0.08] bg-[#111113]/90 backdrop-blur-3xl"
-        style={{ paddingTop: "env(safe-area-inset-top)", boxShadow: "0 4px 32px rgba(0,0,0,0.4)" }}
+        className="hidden md:block fixed left-5 right-5 z-50"
+        style={{ top: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
       >
-        <div className="grid grid-cols-[auto_1fr_auto] items-center pl-5 pr-3 h-16 max-w-screen-xl mx-auto gap-4">
+        <div
+          className="max-w-screen-xl mx-auto bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[26px] h-14 flex items-center px-4"
+          style={glassStyle}
+        >
+          <div className="grid grid-cols-[auto_1fr_auto] items-center w-full gap-4">
 
-          {/* Left: back + brand */}
-          <div className="flex items-center gap-1">
-            {showBack && (
-              <button
-                onClick={() => router.back()}
-                className="flex items-center justify-center w-8 h-8 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-colors"
-                aria-label="Go back"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-            )}
-            <Link href="/" className="flex items-center gap-2.5 group">
-              <Image
-                src="/s404logo.png"
-                alt="S404"
-                width={26}
-                height={26}
-                className="opacity-80 group-hover:opacity-100 transition-opacity"
-              />
-              <span className="font-syne font-bold text-base tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
-                Signature<span className="text-primary">404</span>
-              </span>
-            </Link>
-          </div>
+            {/* Left: back + brand */}
+            <div className="flex items-center gap-1">
+              {showBack && (
+                <button
+                  onClick={() => router.back()}
+                  className="flex items-center justify-center w-8 h-8 rounded-[12px] text-white/40 hover:text-white hover:bg-white/[0.06] transition-colors"
+                  aria-label="Go back"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              )}
+              <Link href="/" className="flex items-center gap-2.5 group">
+                <Image
+                  src="/s404logo.png"
+                  alt="S404"
+                  width={24}
+                  height={24}
+                  className="opacity-80 group-hover:opacity-100 transition-opacity"
+                />
+                <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
+                  Signature<span className="text-primary">404</span>
+                </span>
+              </Link>
+            </div>
 
-          {/* Center nav */}
-          <nav className="flex items-center justify-center gap-1">
-            {isConnected && (
-              <>
-                <NavLink href="/board" activePrefix="/board/client">
-                  <Briefcase className="w-3.5 h-3.5" />
-                  {t("nav.jobs")}
-                </NavLink>
-                <NavLink href="/board/executor">
-                  <User className="w-3.5 h-3.5" />
-                  {t("nav.services")}
-                </NavLink>
-                {isArbiter && (
-                  <NavLink href="/arbiter">
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    {t("nav.arbiter")}
+            {/* Center nav */}
+            <nav className="flex items-center justify-center gap-0.5">
+              {isConnected && (
+                <>
+                  <NavLink href="/board" activePrefix="/board/client">
+                    <Briefcase className="w-3.5 h-3.5" />
+                    {t("nav.jobs")}
                   </NavLink>
-                )}
-              </>
-            )}
-          </nav>
+                  <NavLink href="/board/executor">
+                    <User className="w-3.5 h-3.5" />
+                    {t("nav.services")}
+                  </NavLink>
+                  {isArbiter && (
+                    <NavLink href="/arbiter">
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      {t("nav.arbiter")}
+                    </NavLink>
+                  )}
+                </>
+              )}
+            </nav>
 
-          {/* Right */}
-          <div className="flex items-center gap-2 justify-end">
-            {isConnected && (
-              <NotificationCenter
-                open={openPanelDesktop === "notifications"}
-                onOpenChange={(o) => setOpenPanelDesktop(o ? "notifications" : null)}
+            {/* Right */}
+            <div className="flex items-center gap-1.5 justify-end">
+              {isConnected && (
+                <NotificationCenter
+                  open={openPanelDesktop === "notifications"}
+                  onOpenChange={(o) => setOpenPanelDesktop(o ? "notifications" : null)}
+                />
+              )}
+              <WalletMenu
+                open={openPanelDesktop === "wallet"}
+                onOpenChange={(o) => setOpenPanelDesktop(o ? "wallet" : null)}
               />
-            )}
-            <WalletMenu
-              open={openPanelDesktop === "wallet"}
-              onOpenChange={(o) => setOpenPanelDesktop(o ? "wallet" : null)}
-            />
+            </div>
           </div>
         </div>
       </header>
