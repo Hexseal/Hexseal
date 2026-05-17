@@ -125,14 +125,21 @@ function JobCard({
 
   return (
     <div
-      className={`rounded-2xl border cursor-pointer transition-all duration-150 ${
-        expanded ? "border-white/15 bg-white/[0.05]" : "border-white/8 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/12"
+      className={`rounded-[22px] border cursor-pointer transition-all duration-200 ${
+        expanded
+          ? "border-white/[0.12] bg-[#111113]"
+          : "border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] hover:border-white/[0.13]"
       }`}
+      style={{
+        boxShadow: expanded
+          ? "0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)"
+          : "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)",
+      }}
       onClick={() => setExpanded(v => !v)}
     >
       {/* ── Collapsed row ── */}
-      <div className="flex items-center gap-3 px-4 py-3.5">
-        <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400 mt-0.5" />
+      <div className="flex items-center gap-3 px-4 py-4">
+        <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400/80 mt-0.5" />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 mb-0.5">
@@ -189,17 +196,15 @@ function JobCard({
             <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{job.description}</p>
           )}
 
-          {hasTerms && (
-            <div className="mb-3 rounded-lg bg-white/[0.03] border border-white/[0.05] px-3 py-2.5">
+          {hasTerms && (termsFetching || termsText) && (
+            <div className="mb-3">
               <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
               </p>
               {termsFetching ? (
                 <p className="text-xs text-white/25">{t("common.loading")}</p>
-              ) : termsText ? (
-                <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
               ) : (
-                <p className="text-xs text-white/20 font-mono">Hash: {job.termsHash.slice(0, 18)}…</p>
+                <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
               )}
             </div>
           )}
@@ -211,7 +216,7 @@ function JobCard({
               </p>
               <div className="space-y-1.5">
                 {applicants!.map(addr => (
-                  <div key={addr} className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.03] border border-white/[0.05] px-3 py-2">
+                  <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5">
                     <span className="text-xs font-mono text-white/50 truncate min-w-0">{addr}</span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <Link href={`/chat/${addr}`}>
@@ -417,7 +422,7 @@ export default function BoardPage() {
             placeholder={t("board.jobs.search_placeholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 bg-white/[0.03] border-white/10 placeholder:text-white/25 focus:border-primary/40 rounded-xl"
+            className="pl-9 bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 focus:border-primary/40 rounded-[14px]"
           />
         </div>
 
@@ -454,7 +459,7 @@ export default function BoardPage() {
             )}
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {jobs.map(({ id, job }) => (
               <JobCard
                 key={id.toString()}

@@ -382,7 +382,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               ) : termsText ? (
                 <p className="text-sm text-white/60 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">{termsText}</p>
               ) : (
-                <p className="text-sm text-white/30">{t("job.terms_on_chain")} · Hash: {job.termsHash.slice(0, 14)}…</p>
+                <p className="text-sm text-white/30">{t("job.terms_on_chain")}</p>
               )}
             </div>
           )}
