@@ -154,7 +154,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="border-b border-white/8 bg-white/[0.02]">
+      <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-3xl">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -273,7 +273,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         )}
 
         {req.status === 3 && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[16px] border border-white/[0.07] bg-[#0d0d0f] px-4 py-3 flex items-start gap-3">
             <XCircle className="w-4 h-4 text-white/25 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-white/45">Request cancelled</p>
@@ -346,7 +346,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
         {/* ── Service info ── */}
         {service && (
-          <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-5">
+          <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] p-5" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             <div className="flex items-center gap-2 mb-3">
               <Briefcase className="w-4 h-4 text-white/40" />
               <h2 className="text-sm font-semibold text-white/80">Service</h2>
@@ -393,7 +393,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
         {/* ── Bottom action panel (mobile-friendly alternative to header buttons) ── */}
         {req.status === 0 && (isClient || isExecutor) && (
-          <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+          <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] p-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             {isClient && (
               <Button
                 variant="ghost"

@@ -28,7 +28,7 @@ export function MessagingSetup() {
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+    <div className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] p-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
       <div className="flex items-start gap-3">
         <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
           <MessageCircle className="w-4.5 h-4.5 text-primary" />

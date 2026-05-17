@@ -111,7 +111,7 @@ function DealRow({ deal, profileAddress }: { deal: AgreementRecord; profileAddre
   const isClient = deal.client.toLowerCase() === profileAddress.toLowerCase();
 
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3 rounded-xl border border-white/6 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+    <div className="flex items-center justify-between gap-4 px-4 py-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] hover:bg-white/[0.04] transition-colors">
       <div className="flex items-center gap-3 min-w-0">
         <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
         <div className="min-w-0">
@@ -214,7 +214,7 @@ export default function ProfilePage() {
       <div className="container mx-auto px-4 py-8 max-w-3xl space-y-5">
 
         {/* ── Profile header ─────────────────────────────────────────────── */}
-        <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-6 py-5">
+        <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-5" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
           <div className="flex items-start gap-4">
             {/* Avatar: real image if uploaded, else gradient fallback */}
             {profile?.avatarCid ? (
@@ -317,7 +317,7 @@ export default function ProfilePage() {
         ) : (
           <>
             {/* XP bar */}
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4">
+            <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Zap className="w-4 h-4 text-yellow-400" />
@@ -346,28 +346,28 @@ export default function ProfilePage() {
 
             {/* Stats grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <Activity className="w-3 h-3 text-violet-400" />
                   <span className="text-[11px] text-white/40">{t("profile.stats_active")}</span>
                 </div>
                 <span className="text-2xl font-bold font-mono text-white">{activeDeals}</span>
               </div>
-              <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <CheckCircle className="w-3 h-3 text-green-400" />
                   <span className="text-[11px] text-white/40">{t("profile.stats_completed")}</span>
                 </div>
                 <span className="text-2xl font-bold font-mono text-white">{completedDeals}</span>
               </div>
-              <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <Wallet className="w-3 h-3 text-emerald-400" />
                   <span className="text-[11px] text-white/40">{t("profile.stats_volume")}</span>
                 </div>
                 <span className="text-2xl font-bold font-mono text-white">${(totalVolume / 1e6).toFixed(0)}</span>
               </div>
-              <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <TrendingUp className="w-3 h-3 text-blue-400" />
                   <span className="text-[11px] text-white/40">{t("profile.stats_success")}</span>
@@ -380,7 +380,7 @@ export default function ProfilePage() {
 
             {/* Coefficient + dispute rate row */}
             {allDeals.length > 0 && (
-              <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4">
+              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
                 <h3 className="text-sm font-semibold text-white/60 mb-3">{t("profile.reputation_breakdown")}</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <div>
@@ -413,7 +413,7 @@ export default function ProfilePage() {
                   <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
                   <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">{t("profile.active_section", { count: activeList.length })}</span>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {activeList.map(d => (
                     <DealRow key={d.agreement} deal={d} profileAddress={profileAddress} />
                   ))}
@@ -435,7 +435,7 @@ export default function ProfilePage() {
                   <ChevronDown className={`w-3 h-3 text-white/25 transition-transform group-hover:text-white/50 ${showAllHistory ? 'rotate-180' : ''}`} />
                 </button>
                 {showAllHistory && (
-                  <div className="space-y-2 opacity-75">
+                  <div className="space-y-3 opacity-75">
                     {historyDeals.map(d => (
                       <DealRow key={d.agreement} deal={d} profileAddress={profileAddress} />
                     ))}

@@ -3,17 +3,17 @@
   --background: 0 0% 0%;          /* #000000 pure black */
   --foreground: 0 0% 98%;         /* near white */
 
-  --muted: 0 0% 7%;               /* very dark, not grey */
-  --muted-foreground: 0 0% 60%;   /* mid gray text */
+  --muted: 0 0% 6%;               /* very dark */
+  --muted-foreground: 220 6% 55%; /* cool-dimmed white, not dead neutral gray */
 
-  --popover: 0 0% 4%;
+  --popover: 0 0% 3%;
   --popover-foreground: 0 0% 98%;
 
-  --card: 0 0% 4%;                /* barely off-black */
+  --card: 0 0% 3%;                /* near-black */
   --card-foreground: 0 0% 98%;
 
-  --border: 0 0% 12%;
-  --input: 0 0% 12%;
+  --border: 0 0% 9%;
+  --input: 0 0% 9%;
 
   /* Electric Blue accent */
   --primary: 217 91% 60%;         /* #2563EB */
@@ -41,12 +41,12 @@
   --card-foreground: 0 0% 98%;
   --popover: 0 0% 4%;
   --popover-foreground: 0 0% 98%;
-  --muted: 0 0% 7%;
-  --muted-foreground: 0 0% 60%;
-  --secondary: 0 0% 7%;
+  --muted: 0 0% 6%;
+  --muted-foreground: 220 6% 55%;
+  --secondary: 0 0% 6%;
   --secondary-foreground: 0 0% 98%;
-  --border: 0 0% 12%;
-  --input: 0 0% 12%;
+  --border: 0 0% 9%;
+  --input: 0 0% 9%;
 }
 
 html, body {

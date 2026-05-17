@@ -209,7 +209,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="border-b border-white/8 bg-white/[0.02]">
+      <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-3xl">
 <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -315,7 +315,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         )}
 
         {/* Details */}
-        <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-5">
+        <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] p-5" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
             <div>
               <p className="text-xs text-white/30 mb-1">{t("job.budget_label")}</p>
@@ -402,7 +402,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         </div>
 
         {/* Applicants */}
-        <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-5">
+        <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] p-5" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
           <div className="flex items-center gap-2 mb-4">
             <Users className="w-4 h-4 text-white/40" />
             <h2 className="text-sm font-semibold text-white/80">
@@ -426,17 +426,17 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               )}
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {applicants.map((executor) => {
                 const isMe = address?.toLowerCase() === executor.toLowerCase();
                 const isChosen = job.chosenExecutor?.toLowerCase() === executor.toLowerCase();
                 return (
                   <div
                     key={executor}
-                    className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${
+                    className={`flex items-center justify-between gap-3 rounded-[14px] border p-3 ${
                       isChosen
                         ? "border-violet-400/30 bg-violet-400/5"
-                        : "border-white/8 bg-white/[0.02]"
+                        : "border-white/[0.07] bg-[#0d0d0f]"
                     }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
@@ -514,7 +514,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/8 bg-white/[0.03] divide-y divide-white/6 mb-4">
+            <div className="rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] divide-y divide-white/6 mb-4">
               <div className="flex justify-between items-center px-4 py-2.5 text-sm">
                 <span className="text-white/40">{t("job.executor_label")}</span>
                 <span className="font-mono text-white/60 text-xs">{shortAddr(confirmExecutor)}</span>

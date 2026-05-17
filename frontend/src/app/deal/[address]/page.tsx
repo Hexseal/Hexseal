@@ -315,7 +315,7 @@ export default function DealDetailPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
-      <div className="border-b border-white/8 bg-white/[0.02]">
+      <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-4 max-w-3xl flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`w-2 h-2 rounded-full flex-shrink-0 ${statusInfo.dot}`} />
@@ -348,7 +348,10 @@ export default function DealDetailPage() {
       <div className="container mx-auto px-4 py-5 max-w-3xl space-y-4">
 
         {/* ── Hero: amount + parties ──────────────────────────────────────────── */}
-        <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4">
+        <div
+          className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4"
+          style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)" }}
+        >
           <div className="flex items-start justify-between gap-4 flex-wrap">
             {/* Amount */}
             <div>
@@ -388,7 +391,10 @@ export default function DealDetailPage() {
 
         {/* ── Primary actions ─────────────────────────────────────────────────── */}
         {isConnected && (isParty || isArbiter) && (
-          <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4">
+          <div
+            className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+          >
             <p className="text-xs text-white/35 mb-3">{t("deal.actions_title")}</p>
             <div className="flex flex-wrap gap-2">
               {parsed.status === 0 && isClient && (
@@ -469,7 +475,10 @@ export default function DealDetailPage() {
         {/* ── Deal Chat button ────────────────────────────────────────────────── */}
         {isConnected && (isParty || isArbiter) && (
           <Link href={`/deal/${dealAddress}/chat`} className="block">
-            <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4 flex items-center gap-3 hover:bg-white/[0.06] hover:border-white/15 transition-colors group cursor-pointer">
+            <div
+              className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 flex items-center gap-3 hover:bg-[#111113] hover:border-white/[0.13] transition-colors group cursor-pointer"
+              style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+            >
               <div className="w-9 h-9 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0">
                 <MessageCircle className="w-4 h-4 text-violet-400" />
               </div>
@@ -524,7 +533,10 @@ export default function DealDetailPage() {
         )}
 
         {/* ── Timeline ────────────────────────────────────────────────────────── */}
-        <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4">
+        <div
+          className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4"
+          style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+        >
           <p className="text-xs text-white/35 mb-3">{t("deal.timeline_title")}</p>
           <div className="relative pl-4">
             {[

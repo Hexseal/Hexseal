@@ -146,9 +146,13 @@ function ServiceCard({
 
   return (
     <div
-      className={`rounded-xl border transition-all duration-150 cursor-pointer ${
-        expanded ? 'border-white/15 bg-white/[0.05]' : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.05]'
+      className={`rounded-[22px] border transition-all duration-150 cursor-pointer ${
+        expanded ? 'border-white/[0.12] bg-[#111113]' : 'border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113]'
       }`}
+      style={expanded
+        ? { boxShadow: "0 4px 20px rgba(0,0,0,0.5), 0 1px 4px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)" }
+        : { boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }
+      }
       onClick={() => setExpanded(v => !v)}
     >
       <div className="px-4 py-3 flex items-center gap-3">
@@ -216,7 +220,7 @@ function ServiceCard({
                   if (!req) return null;
                   const rId = rid.toString();
                   return (
-                    <div key={rId} className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.04] px-3 py-2">
+                    <div key={rId} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2">
                       <div className="min-w-0">
                         <span className="text-xs font-mono text-white/60">{shortAddr(req.client)}</span>
                         <span className="ml-3 text-xs font-mono font-semibold text-white/80">{fmt(req.amount)} USDC</span>
@@ -261,7 +265,7 @@ function ServiceCard({
               </p>
               <div className="space-y-1.5">
                 {historyReqs.map(({ id, req }) => (
-                  <div key={id.toString()} className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.03] px-3 py-2 opacity-80">
+                  <div key={id.toString()} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2 opacity-80">
                     <div className="min-w-0">
                       <span className="text-xs font-mono text-white/45">{shortAddr(req.client)}</span>
                       <span className="ml-3 text-xs font-mono text-white/60">{fmt(req.amount)} USDC</span>
@@ -448,7 +452,7 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
   return (
     <div className="space-y-3">
       {active.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {active.map(({ id, svc }) => {
             const pending = pendingMap.get(id.toString()) ?? { ids: [], reqs: [] };
             return (
@@ -481,7 +485,7 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
             <ChevronDown className={`w-3 h-3 text-white/25 ml-0.5 transition-transform group-hover:text-white/50 ${showRemoved ? 'rotate-180' : ''}`} />
           </button>
           {showRemoved && (
-            <div className="space-y-2 opacity-70">
+            <div className="space-y-3 opacity-70">
               {removed.map(({ id, svc }) => (
                 <ServiceCard
                   key={id.toString()}
@@ -524,7 +528,7 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/8 bg-white/[0.03] divide-y divide-white/6 mb-5">
+            <div className="rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] divide-y divide-white/6 mb-5">
               <div className="flex justify-between items-center px-4 py-2.5 text-sm">
                 <span className="text-white/40">Client</span>
                 <span className="font-mono text-white/60 text-xs">{shortAddr(confirmReq.client)}</span>
@@ -586,9 +590,13 @@ function JobCard({
 
   return (
     <div
-      className={`rounded-xl border transition-all duration-150 cursor-pointer ${
-        expanded ? 'border-white/15 bg-white/[0.05]' : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.05]'
+      className={`rounded-[22px] border transition-all duration-150 cursor-pointer ${
+        expanded ? 'border-white/[0.12] bg-[#111113]' : 'border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113]'
       }`}
+      style={expanded
+        ? { boxShadow: "0 4px 20px rgba(0,0,0,0.5), 0 1px 4px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)" }
+        : { boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }
+      }
       onClick={() => setExpanded(v => !v)}
     >
       <div className="px-4 py-3 flex items-center gap-3">
@@ -647,7 +655,7 @@ function JobCard({
               </p>
               <div className="space-y-1.5">
                 {applicants!.map(addr => (
-                  <div key={addr} className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.04] px-3 py-2">
+                  <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2">
                     <span className="text-xs font-mono text-white/60">{addr}</span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <Link href={`/chat/${addr}`}>
@@ -799,7 +807,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
   return (
     <div className="space-y-3">
       {active.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {active.map(({ id, job }) => (
             <JobCard
               key={id.toString()}
@@ -825,7 +833,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
             <ChevronDown className={`w-3 h-3 text-white/25 ml-0.5 transition-transform group-hover:text-white/50 ${showArchive ? 'rotate-180' : ''}`} />
           </button>
           {showArchive && (
-            <div className="space-y-2 opacity-70">
+            <div className="space-y-3 opacity-70">
               {archive.map(({ id, job }) => (
                 <JobCard
                   key={id.toString()}
@@ -864,7 +872,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/8 bg-white/[0.03] divide-y divide-white/6 mb-4">
+            <div className="rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] divide-y divide-white/6 mb-4">
               <div className="flex justify-between items-center px-4 py-2.5 text-sm">
                 <span className="text-white/40">Executor</span>
                 <span className="font-mono text-white/60 text-xs">{shortAddr(confirmHire.executor)}</span>
@@ -974,9 +982,9 @@ export function MyClientRequests({ address }: { address: string }) {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {pending.map(({ id, req }) => (
-        <div key={id.toString()} className="rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3 flex items-center justify-between gap-3">
+        <div key={id.toString()} className="rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] px-4 py-3 flex items-center justify-between gap-3">
           <Link href={`/request/${id.toString()}`} className="min-w-0 flex-1 group">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium ${REQUEST_STATUS[0].cls}`}>
@@ -1007,9 +1015,9 @@ export function MyClientRequests({ address }: { address: string }) {
             <ChevronDown className={`w-3 h-3 text-white/25 ml-0.5 transition-transform group-hover:text-white/50 ${showHistory ? 'rotate-180' : ''}`} />
           </button>
           {showHistory && (
-            <div className="space-y-2 opacity-70">
+            <div className="space-y-3 opacity-70">
               {history.map(({ id, req }) => (
-                <Link key={id.toString()} href={`/request/${id.toString()}`} className="block rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3 hover:border-white/15 transition-colors">
+                <Link key={id.toString()} href={`/request/${id.toString()}`} className="block rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] px-4 py-3 hover:border-white/[0.12] transition-colors">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium ${REQUEST_STATUS[req.status]?.cls ?? ''}`}>
                       {REQUEST_STATUS[req.status]?.label}
@@ -1120,9 +1128,9 @@ export function MyJobReceipts({ address }: { address: string }) {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {receipts.map((r) => (
-        <div key={r.tokenId.toString()} className="rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3">
+        <div key={r.tokenId.toString()} className="rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-white/85 truncate">{r.title}</p>

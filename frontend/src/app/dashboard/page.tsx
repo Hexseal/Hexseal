@@ -30,8 +30,11 @@ function StatCard({ icon, label, value, sub }: {
   icon: ReactNode; label: string; value: string | number; sub?: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3 flex items-center gap-3">
-      <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0">
+    <div
+      className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3"
+      style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+    >
+      <div className="w-9 h-9 rounded-[12px] bg-white/[0.06] flex items-center justify-center flex-shrink-0">
         {icon}
       </div>
       <div className="min-w-0">
@@ -76,11 +79,14 @@ function QuickAction({ href, icon, label, sub, accent }: {
 }) {
   return (
     <Link href={href} className="block">
-      <div className={`rounded-xl border px-4 py-3.5 flex items-center gap-3 transition-colors group cursor-pointer ${
-        accent
-          ? 'border-violet-500/30 bg-violet-500/8 hover:bg-violet-500/15 hover:border-violet-500/50'
-          : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.07] hover:border-white/15'
-      }`}>
+      <div
+        className={`rounded-[20px] border px-4 py-3.5 flex items-center gap-3 transition-colors group cursor-pointer ${
+          accent
+            ? 'border-violet-500/30 bg-violet-500/[0.08] hover:bg-violet-500/[0.15] hover:border-violet-500/50'
+            : 'border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] hover:border-white/[0.13]'
+        }`}
+        style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+      >
         <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
           accent ? 'bg-violet-500/20' : 'bg-white/5'
         }`}>
@@ -195,7 +201,10 @@ export default function DashboardPage() {
 
         {/* XP progress bar */}
         {!isLoading && (
-          <div className="rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3">
+          <div
+            className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+          >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <Star className="w-3.5 h-3.5 text-white/30" />
@@ -241,9 +250,12 @@ export default function DashboardPage() {
         <DealSearch />
 
         {/* ── Tabs ── */}
-        <div className="rounded-xl border border-white/8 bg-white/[0.02] overflow-hidden">
+        <div
+          className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] overflow-hidden"
+          style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+        >
           {/* Tab bar */}
-          <div className="flex gap-1 p-2 border-b border-white/8 overflow-x-auto scrollbar-none">
+          <div className="flex gap-1 p-2 border-b border-white/[0.06] overflow-x-auto scrollbar-none">
             <Tab active={tab === 'active'}   onClick={() => setTab('active')}   count={activeDeals.length}>
               {t("dashboard.tabs.active")}
             </Tab>
@@ -275,7 +287,7 @@ export default function DashboardPage() {
                       <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {activeDeals.map(a => (
                         <DealCard
                           key={`${a.agreement}-${refreshKey}`}

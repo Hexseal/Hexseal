@@ -328,7 +328,7 @@ export default function ArbiterPage() {
                       placeholder={t("arbiter.search_placeholder")}
                       value={historyQ}
                       onChange={e => setHistoryQ(e.target.value)}
-                      className="pl-9 bg-white/[0.03] border-white/10 placeholder:text-white/25 rounded-xl text-sm"
+                      className="pl-9 bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-[14px] text-sm"
                     />
                   </div>
                   <p className="text-xs text-white/30 font-mono mb-3">{t("arbiter.total_cases", { count: myHistory.length })}</p>
@@ -425,7 +425,7 @@ function ChiefManagePanel() {
         ) : (
           <div className="space-y-2">
             {arbiters.map(addr => (
-              <div key={addr} className="flex items-center justify-between gap-3 rounded-md border border-white/10 px-3 py-2">
+              <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] px-3 py-2">
                 <span className="font-mono text-xs text-white/70 truncate">{addr}</span>
                 <Button
                   size="sm" variant="ghost"
@@ -671,7 +671,7 @@ function MyCaseRow({
 
       {/* Resolve actions */}
       {isDisputed && isMineClaim && !expired && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3 space-y-2">
+        <div className="rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] p-3 space-y-2">
           <p className="text-xs text-muted-foreground">
             {t("arbiter.resolve_hint")}
             <span className="text-red-400/80"> {t("arbiter.resolve_irreversible")}</span>

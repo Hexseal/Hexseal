@@ -372,7 +372,7 @@ export default function BoardPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Page header */}
-      <div className="border-b border-white/8 bg-white/[0.02]">
+      <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-6 max-w-4xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">

@@ -204,7 +204,7 @@ export default function PostJobPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="border-b border-white/8 bg-white/[0.02]">
+      <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-2xl">
 <h1 className="text-xl font-bold font-syne">{t("board.post_job.title")}</h1>
           <p className="text-sm text-white/40 mt-0.5">Executors apply — you pick who to hire.</p>
@@ -222,14 +222,14 @@ export default function PostJobPage() {
         {step === "form" && (
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Job info */}
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4 space-y-4">
+            <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 space-y-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
               <h2 className="text-sm font-semibold text-white/60">{t("board.post_job.field_title")} Details</h2>
 
               <div className="space-y-1.5">
                 <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_job.field_title")}</Label>
                 <Input id="title" placeholder="e.g. Build a React Web Application" value={title}
                   onChange={e => setTitle(e.target.value)} maxLength={100}
-                  className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
                 <p className="text-xs text-white/25 text-right">{title.length}/100</p>
               </div>
 
@@ -237,7 +237,7 @@ export default function PostJobPage() {
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_job.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe requirements, deliverables…" value={description}
                   onChange={e => setDescription(e.target.value)} rows={4}
-                  className="bg-white/[0.03] border-white/10 placeholder:text-white/20 resize-none rounded-xl" required />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-xl" required />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -245,13 +245,13 @@ export default function PostJobPage() {
                   <Label htmlFor="amount" className="text-sm text-white/70">{t("board.post_job.field_budget")}</Label>
                   <Input id="amount" type="number" step="0.01" min="0" placeholder="100" value={amount}
                     onChange={e => setAmount(e.target.value)}
-                    className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
+                    className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="deadline" className="text-sm text-white/70">{t("board.post_job.field_deadline")}</Label>
                   <Input id="deadline" type="number" min="1" max={MAX_DEADLINE} value={deadline}
                     onChange={e => setDeadline(e.target.value)}
-                    className="bg-white/[0.03] border-white/10 rounded-xl" required />
+                    className="bg-[#0d0d0f] border-white/[0.08] rounded-xl" required />
                 </div>
               </div>
 
@@ -259,13 +259,13 @@ export default function PostJobPage() {
                 <Label htmlFor="terms" className="text-sm text-white/70">Terms <span className="text-white/25">(optional)</span></Label>
                 <Textarea id="terms" placeholder="Additional conditions, requirements…" value={jobTerms}
                   onChange={e => setJobTerms(e.target.value)} rows={3}
-                  className="bg-white/[0.03] border-white/10 placeholder:text-white/20 resize-none rounded-xl" />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-xl" />
                 <p className="text-xs text-white/25">Uploaded to IPFS</p>
               </div>
             </div>
 
             {/* Summary */}
-            <div className="rounded-2xl border border-white/8 bg-white/[0.02] px-5 py-4 space-y-2.5 text-sm">
+            <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 space-y-2.5 text-sm" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
               <div className="flex items-center gap-2 text-white/40">
                 <Globe className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Region: {regionData?.label ?? "Detecting…"}</span>
@@ -305,7 +305,7 @@ export default function PostJobPage() {
         )}
 
         {(step === "uploading" || step === "pending") && (
-          <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-6 py-16 text-center">
+          <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-16 text-center" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             <Loader2 className="w-10 h-10 animate-spin mx-auto mb-5 text-primary" />
             <h2 className="text-lg font-semibold mb-2">
               {step === "uploading" ? "Uploading to IPFS…" : "Sending gasless transaction…"}
@@ -342,7 +342,7 @@ export default function PostJobPage() {
 
             {/* Receipt NFT */}
             {jobId && (
-              <div className="rounded-2xl border border-white/8 bg-white/[0.02] px-5 py-4">
+              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
                 {/* Receipt card preview */}
                 <div className="rounded-xl bg-[#0d0d1f] border border-white/5 p-5 mb-4 font-mono text-xs">
                   {/* Green top bar */}

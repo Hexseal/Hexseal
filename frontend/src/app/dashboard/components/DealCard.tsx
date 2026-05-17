@@ -205,7 +205,10 @@ export function DealCard({ agreement, address, refetch }: {
   );
 
   return (
-    <div className="rounded-2xl border border-white/8 bg-white/[0.03] hover:bg-white/[0.05] transition-colors">
+    <div
+      className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors"
+      style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+    >
       <div className="px-4 py-4 sm:px-5">
         {/* Status row */}
         <div className="flex items-center gap-2 mb-2 flex-wrap">

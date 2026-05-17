@@ -55,7 +55,7 @@ export function DealSearch() {
   }
 
   return (
-    <div className="rounded-xl border border-white/8 bg-white/[0.02] px-4 py-3">
+    <div className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
       <form onSubmit={handleSearch} className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/25 pointer-events-none" />
@@ -63,7 +63,7 @@ export function DealSearch() {
             value={input}
             onChange={e => { setInput(e.target.value); setError(''); }}
             placeholder="Find deal by address…"
-            className="pl-9 h-9 bg-white/[0.03] border-white/10 text-sm placeholder:text-white/25 focus:border-white/25"
+            className="pl-9 h-9 bg-[#0d0d0f] border-white/[0.08] text-sm placeholder:text-white/20 focus:border-white/25"
           />
         </div>
         <Button type="submit" size="sm" variant="outline" className="h-9 px-3 border-white/15 text-white/60 hover:text-white">
@@ -87,7 +87,7 @@ export function DealSearch() {
       )}
 
       {!isLoading && record && record.agreement !== zeroAddress && (
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-white/[0.03] border border-white/8 px-3 py-2">
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-[14px] bg-[#0d0d0f] border border-white/[0.07] px-3 py-2">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[record.status] ?? 'bg-white/20'}`} />

@@ -191,7 +191,7 @@ export default function PostServicePage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="border-b border-white/8 bg-white/[0.02]">
+      <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-2xl">
 <h1 className="text-xl font-bold font-syne">{t("board.post_service.title")}</h1>
           <p className="text-sm text-white/40 mt-0.5">Clients request you — you accept or decline.</p>
@@ -209,14 +209,14 @@ export default function PostServicePage() {
         {step === "form" && (
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Service details */}
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-4 space-y-4">
+            <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 space-y-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
               <h2 className="text-sm font-semibold text-white/60">{t("board.post_service.section_details")}</h2>
 
               <div className="space-y-1.5">
                 <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_service.field_title")}</Label>
                 <Input id="title" placeholder="e.g. Smart Contract Audit for DeFi Protocol" value={title}
                   onChange={e => setTitle(e.target.value)} maxLength={100}
-                  className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
                 <p className="text-xs text-white/25 text-right">{title.length}/100</p>
               </div>
 
@@ -224,7 +224,7 @@ export default function PostServicePage() {
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_service.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe your service, deliverables, tech stack, requirements…" value={description}
                   onChange={e => setDescription(e.target.value)} rows={4} maxLength={500}
-                  className="bg-white/[0.03] border-white/10 placeholder:text-white/20 resize-none rounded-xl" required />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-xl" required />
                 <p className="text-xs text-white/25 text-right">{description.length}/500</p>
               </div>
 
@@ -233,13 +233,13 @@ export default function PostServicePage() {
                   <Label htmlFor="price" className="text-sm text-white/70">{t("board.post_service.field_price")}</Label>
                   <Input id="price" type="number" step="1" min="1" placeholder="100" value={price}
                     onChange={e => setPrice(e.target.value)}
-                    className="bg-white/[0.03] border-white/10 placeholder:text-white/20 rounded-xl" required />
+                    className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="deadline" className="text-sm text-white/70">{t("board.post_service.field_delivery")}</Label>
                   <Input id="deadline" type="number" min="1" max={MAX_DEADLINE} value={deadline}
                     onChange={e => setDeadline(e.target.value)}
-                    className="bg-white/[0.03] border-white/10 rounded-xl" required />
+                    className="bg-[#0d0d0f] border-white/[0.08] rounded-xl" required />
                 </div>
               </div>
 
@@ -260,7 +260,7 @@ export default function PostServicePage() {
             </div>
 
             {/* Summary */}
-            <div className="rounded-2xl border border-white/8 bg-white/[0.02] px-5 py-4 space-y-2.5 text-sm">
+            <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 space-y-2.5 text-sm" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
               <div className="flex items-center gap-2 text-white/40">
                 <Globe className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Region: {regionData?.label ?? "Detecting…"}</span>
@@ -296,7 +296,7 @@ export default function PostServicePage() {
         )}
 
         {step === "pending" && (
-          <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-6 py-16 text-center">
+          <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-16 text-center" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             <Loader2 className="w-10 h-10 animate-spin mx-auto mb-5 text-primary" />
             <h2 className="text-lg font-semibold mb-2">Sending gasless transaction…</h2>
             <p className="text-sm text-white/40">Sign the USDC permit in your wallet — no ETH needed</p>
