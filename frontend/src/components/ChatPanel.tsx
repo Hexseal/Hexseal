@@ -773,7 +773,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
         {uploadErr && <p className="text-xs text-red-400/60 px-1">{uploadErr}</p>}
         <div className="flex items-end gap-2">
-          <input ref={fileRef} type="file" className="hidden" onChange={handleFileChange} />
+          <input ref={fileRef} type="file" className="hidden" tabIndex={-1} onChange={handleFileChange} />
           <button
             onClick={() => {
               if (!isInitialized || uploading) return;

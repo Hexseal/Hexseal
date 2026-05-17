@@ -27,14 +27,18 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => window.removeEventListener('sig404:open-onboarding', handler);
   }, []);
 
-  // Track the true visible-viewport height (shrinks when keyboard opens on iOS).
-  // Also listen to 'scroll' so we catch the visual-viewport offset iOS applies
-  // when focusing an input (prevents the "flies up" effect).
+  // Track visual viewport dimensions.
+  // iOS PWA bug: when an input is focused, iOS scrolls the visual viewport DOWN
+  // (offsetTop > 0) to "show" the input. Since our chat <main> is position:fixed
+  // in LAYOUT viewport coords, it appears to fly UP by offsetTop pixels.
+  // Fix: expose --vv-offset-top and add it to the chat main's top offset so the
+  // element tracks the visual viewport instead of the layout viewport.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const update = () => {
       document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
+      document.documentElement.style.setProperty('--vv-offset-top', `${vv.offsetTop}px`);
     };
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
@@ -42,6 +46,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => {
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
+      document.documentElement.style.removeProperty('--vv-offset-top');
     };
   }, []);
 
@@ -128,7 +133,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           className="flex flex-col overflow-hidden"
           style={{
             position: 'fixed',
-            top: 'var(--chat-top-offset)',
+            // --vv-offset-top counteracts iOS PWA visual-viewport scroll-to-focus:
+            // iOS shifts the visual viewport DOWN by offsetTop when focusing an input,
+            // making fixed elements appear to fly UP. Adding offsetTop to 'top' keeps
+            // the element anchored to the visual viewport instead.
+            top: 'calc(var(--chat-top-offset) + var(--vv-offset-top, 0px))',
             left: 0,
             right: 0,
             height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset))',
