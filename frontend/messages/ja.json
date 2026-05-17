@@ -52,7 +52,9 @@
       "no_applicants": "まだ応募者がいません。",
       "applied_waiting": "応募完了！クライアントの承認を待っています。",
       "accepted_deal": "受注者が承認されました！契約が作成されました。",
-      "accepting": "応募者を承認中…"
+      "accepting": "応募者を承認中…",
+      "open_count": "{count} 件",
+      "applicants_count": "{count}人応募"
     },
     "services": {
       "title": "サービスボード",
@@ -67,7 +69,22 @@
       "connect_prompt": "ウォレットを接続してサービスを閲覧する",
       "amount_label": "金額 (USDC)",
       "request_confirm": "リクエストを確認",
-      "requesting": "リクエスト中…"
+      "requesting": "リクエスト中…",
+      "count": "{count} 件",
+      "requests_total": "· {count} リクエスト",
+      "status_pending": "応答待ち",
+      "status_accepted": "承認済み",
+      "hired": "{count}件成約",
+      "deal_btn": "取引",
+      "open_deal": "取引を開く",
+      "your_request": "リクエスト #{id}",
+      "amount_suggested": "推奨: {amount} USDC",
+      "deadline_label": "期限（日）",
+      "region_label": "地域（手数料）",
+      "insufficient_usdc": "USDC不足 — 残高{have}、必要{need}",
+      "fee_notice": "送信時に手数料が発生。執行者が回答するまで金額ロック。",
+      "sign_permit": "署名: ウォレットのUSDC許可…",
+      "request_sent": "リクエスト送信！執行者の応答待ち。"
     },
     "post_service": {
       "title": "サービスを掲載",
@@ -586,6 +603,12 @@
     "role_client": "クライアント",
     "role_executor": "受注者",
     "role_arbiter": "仲裁人",
-    "you": "あなた"
+    "you": "あなた",
+    "by": "投稿:",
+    "just_now": "たった今",
+    "minutes_ago": "{count}分前",
+    "hours_ago": "{count}時間前",
+    "days_ago": "{count}日前",
+    "total_suffix": "/ 計{count}件"
   }
 }

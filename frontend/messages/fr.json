@@ -52,7 +52,9 @@
       "no_applicants": "Aucun candidat pour l'instant.",
       "applied_waiting": "Postulé ! En attente de l'acceptation du client.",
       "accepted_deal": "Exécutant accepté ! Accord créé.",
-      "accepting": "Acceptation du candidat…"
+      "accepting": "Acceptation du candidat…",
+      "open_count": "{count} ouvertes",
+      "applicants_count": "{count} candidats"
     },
     "services": {
       "title": "Tableau des Services",
@@ -67,7 +69,22 @@
       "connect_prompt": "Connectez votre portefeuille pour parcourir les services",
       "amount_label": "Montant (USDC)",
       "request_confirm": "Confirmer la Demande",
-      "requesting": "Demande en cours…"
+      "requesting": "Demande en cours…",
+      "count": "{count} actives",
+      "requests_total": "· {count} demandes",
+      "status_pending": "en attente",
+      "status_accepted": "accepté",
+      "hired": "{count} embauchés",
+      "deal_btn": "Accord",
+      "open_deal": "Ouvrir l'accord",
+      "your_request": "Votre demande #{id}",
+      "amount_suggested": "Suggéré : {amount} USDC",
+      "deadline_label": "Délai (jours)",
+      "region_label": "Votre région (frais)",
+      "insufficient_usdc": "USDC insuffisant — {have} disponible, {need} requis",
+      "fee_notice": "Frais prélevés à l'envoi. Montant bloqué jusqu'à la réponse.",
+      "sign_permit": "Signer : autorisation USDC dans le portefeuille…",
+      "request_sent": "Demande envoyée ! En attente de l'exécutant."
     },
     "post_service": {
       "title": "Publier un Service",
@@ -586,6 +603,12 @@
     "role_client": "Client",
     "role_executor": "Exécutant",
     "role_arbiter": "Arbitre",
-    "you": "vous"
+    "you": "vous",
+    "by": "par",
+    "just_now": "à l'instant",
+    "minutes_ago": "il y a {count}m",
+    "hours_ago": "il y a {count}h",
+    "days_ago": "il y a {count}j",
+    "total_suffix": "/ {count} au total"
   }
 }

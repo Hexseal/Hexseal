@@ -39,12 +39,15 @@ function formatBudget(budget: bigint): string {
   return (Number(budget) / 1e6).toFixed(2);
 }
 
-function timeAgo(ts: bigint): string {
-  const diff = Math.floor(Date.now() / 1000) - Number(ts);
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+function useTimeAgo() {
+  const t = useTranslations();
+  return (ts: bigint): string => {
+    const diff = Math.floor(Date.now() / 1000) - Number(ts);
+    if (diff < 60) return t("common.just_now");
+    if (diff < 3600) return t("common.minutes_ago", { count: Math.floor(diff / 60) });
+    if (diff < 86400) return t("common.hours_ago", { count: Math.floor(diff / 3600) });
+    return t("common.days_ago", { count: Math.floor(diff / 86400) });
+  };
 }
 
 function JobCard({
@@ -75,6 +78,7 @@ function JobCard({
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const t = useTranslations();
+  const timeAgo = useTimeAgo();
 
   const ZERO_HASH = "0x" + "0".repeat(64);
   const hasTerms = job.termsHash && job.termsHash !== ZERO_HASH;
@@ -153,7 +157,7 @@ function JobCard({
             <span className="text-white/25">·</span>
             <span className="text-white/25">{timeAgo(job.createdAt)}</span>
             {isClient && applicantCount > 0 && (
-              <span className="text-violet-400/80 font-mono text-[11px]">{applicantCount} applied</span>
+              <span className="text-violet-400/80 font-mono text-[11px]">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
             )}
           </div>
         </div>
@@ -184,7 +188,7 @@ function JobCard({
       {expanded && (
         <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
           <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
-            <span>by</span>
+            <span>{t("common.by")}</span>
             <UserName address={job.client} link className="font-mono hover:text-white/60 transition-colors" />
           </div>
 
@@ -359,7 +363,7 @@ export default function BoardPage() {
             {t("board.jobs.connect_prompt")}
           </p>
           <Link href="/">
-            <Button>Go Home</Button>
+            <Button>{t("common.go_home")}</Button>
           </Link>
         </div>
       </div>
@@ -426,10 +430,10 @@ export default function BoardPage() {
         {/* Count */}
         <div className="flex items-center gap-2 mb-4">
           <span className="text-xs text-white/30 font-mono">
-            {isLoading ? t("board.jobs.loading_short") : `${jobs.length} open job${jobs.length !== 1 ? "s" : ""}`}
+            {isLoading ? t("board.jobs.loading_short") : t("board.jobs.open_count", { count: jobs.length })}
           </span>
           {totalJobsData !== undefined && (
-            <span className="text-xs text-white/15 font-mono">/ {totalJobsData.toString()} total</span>
+            <span className="text-xs text-white/15 font-mono">{t("common.total_suffix", { count: totalJobsData.toString() })}</span>
           )}
         </div>
 

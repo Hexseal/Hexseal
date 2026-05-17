@@ -52,7 +52,9 @@
       "no_applicants": "Nessun candidato ancora.",
       "applied_waiting": "Candidato! In attesa dell'accettazione del cliente.",
       "accepted_deal": "Esecutore accettato! Accordo creato.",
-      "accepting": "Accettazione candidato…"
+      "accepting": "Accettazione candidato…",
+      "open_count": "{count} aperti",
+      "applicants_count": "{count} candidati"
     },
     "services": {
       "title": "Bacheca Servizi",
@@ -67,7 +69,22 @@
       "connect_prompt": "Collega il portafoglio per sfogliare i servizi",
       "amount_label": "Importo (USDC)",
       "request_confirm": "Conferma Richiesta",
-      "requesting": "Richiesta in corso…"
+      "requesting": "Richiesta in corso…",
+      "count": "{count} attivi",
+      "requests_total": "· {count} richieste",
+      "status_pending": "in attesa",
+      "status_accepted": "accettato",
+      "hired": "{count} assunti",
+      "deal_btn": "Accordo",
+      "open_deal": "Apri accordo",
+      "your_request": "La tua richiesta #{id}",
+      "amount_suggested": "Suggerito: {amount} USDC",
+      "deadline_label": "Scadenza (giorni)",
+      "region_label": "La tua regione (commissione)",
+      "insufficient_usdc": "USDC insufficiente — hai {have}, servono {need}",
+      "fee_notice": "Commissione all'invio. Importo bloccato fino alla risposta.",
+      "sign_permit": "Firma: permesso USDC nel wallet…",
+      "request_sent": "Richiesta inviata! In attesa dell'esecutore."
     },
     "post_service": {
       "title": "Pubblica un Servizio",
@@ -586,6 +603,12 @@
     "role_client": "Cliente",
     "role_executor": "Esecutore",
     "role_arbiter": "Arbitro",
-    "you": "tu"
+    "you": "tu",
+    "by": "da",
+    "just_now": "adesso",
+    "minutes_ago": "{count}m fa",
+    "hours_ago": "{count}h fa",
+    "days_ago": "{count}g fa",
+    "total_suffix": "/ {count} totali"
   }
 }

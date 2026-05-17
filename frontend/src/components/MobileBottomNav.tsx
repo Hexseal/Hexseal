@@ -120,8 +120,8 @@ export default function MobileBottomNav() {
       {/* Board popup — sits directly above the nav pill, same visual language */}
       {boardOpen && (
         <div
-          className="fixed z-50 left-4 right-4 animate-in slide-in-from-bottom-3 fade-in duration-200"
-          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 102px)" }}
+          className="fixed z-50 left-3 right-3 animate-in slide-in-from-bottom-3 fade-in duration-200"
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 96px)" }}
         >
           <div
             className="flex bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] overflow-hidden"
@@ -173,8 +173,8 @@ export default function MobileBottomNav() {
 
       {/* ── Floating pill ─────────────────────────────────────────────────── */}
       <nav
-        className="md:hidden fixed left-4 right-4 z-50"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
+        className="md:hidden fixed left-3 right-3 z-50"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 10px)" }}
       >
         <div
           className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[32px] px-4 h-[78px]"

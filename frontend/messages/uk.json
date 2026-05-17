@@ -52,7 +52,9 @@
       "no_applicants": "Поки немає претендентів.",
       "applied_waiting": "Заявку подано! Очікування прийняття клієнта.",
       "accepted_deal": "Виконавця прийнято! Угоду створено.",
-      "accepting": "Прийняття претендента…"
+      "accepting": "Прийняття претендента…",
+      "open_count": "{count} відкритих",
+      "applicants_count": "{count} відгуків"
     },
     "services": {
       "title": "Дошка Послуг",
@@ -67,7 +69,22 @@
       "connect_prompt": "Підключіть гаманець для перегляду послуг",
       "amount_label": "Сума (USDC)",
       "request_confirm": "Підтвердити Запит",
-      "requesting": "Запит…"
+      "requesting": "Запит…",
+      "count": "{count} активних",
+      "requests_total": "· {count} запитів",
+      "status_pending": "очікує відповіді",
+      "status_accepted": "прийнято",
+      "hired": "{count} найнято",
+      "deal_btn": "Угода",
+      "open_deal": "Відкрити угоду",
+      "your_request": "Ваш запит #{id}",
+      "amount_suggested": "Рекомендована: {amount} USDC",
+      "deadline_label": "Дедлайн (дні)",
+      "region_label": "Ваш регіон (комісія)",
+      "insufficient_usdc": "Недостатньо USDC — є {have}, потрібно {need}",
+      "fee_notice": "Комісія при відправці. Сума заблокована до відповіді виконавця.",
+      "sign_permit": "Підпишіть: дозвіл USDC у гаманці…",
+      "request_sent": "Запит надіслано! Очікуємо відповіді виконавця."
     },
     "post_service": {
       "title": "Опублікувати Послугу",
@@ -586,6 +603,12 @@
     "role_client": "Клієнт",
     "role_executor": "Виконавець",
     "role_arbiter": "Арбітр",
-    "you": "ви"
+    "you": "ви",
+    "by": "від",
+    "just_now": "щойно",
+    "minutes_ago": "{count}хв тому",
+    "hours_ago": "{count}год тому",
+    "days_ago": "{count}д тому",
+    "total_suffix": "/ {count} всього"
   }
 }

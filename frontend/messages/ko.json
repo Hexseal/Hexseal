@@ -52,7 +52,9 @@
       "no_applicants": "아직 지원자가 없습니다.",
       "applied_waiting": "지원 완료! 클라이언트 수락을 기다리는 중입니다.",
       "accepted_deal": "실행자가 수락되었습니다! 계약이 생성되었습니다.",
-      "accepting": "지원자 수락 중…"
+      "accepting": "지원자 수락 중…",
+      "open_count": "{count} 개",
+      "applicants_count": "{count}명 지원"
     },
     "services": {
       "title": "서비스 게시판",
@@ -67,7 +69,22 @@
       "connect_prompt": "서비스를 보려면 지갑을 연결하세요",
       "amount_label": "금액 (USDC)",
       "request_confirm": "요청 확인",
-      "requesting": "요청 중…"
+      "requesting": "요청 중…",
+      "count": "{count} 개",
+      "requests_total": "· {count} 요청",
+      "status_pending": "응답 대기",
+      "status_accepted": "수락됨",
+      "hired": "{count}명 고용",
+      "deal_btn": "거래",
+      "open_deal": "거래 열기",
+      "your_request": "내 요청 #{id}",
+      "amount_suggested": "제안: {amount} USDC",
+      "deadline_label": "마감 (일)",
+      "region_label": "지역 (수수료)",
+      "insufficient_usdc": "USDC 부족 — 보유 {have}, 필요 {need}",
+      "fee_notice": "제출 시 수수료 부과. 집행자 응답까지 금액 잠금.",
+      "sign_permit": "서명: 지갑의 USDC 허가…",
+      "request_sent": "요청 전송됨! 집행자를 기다리는 중."
     },
     "post_service": {
       "title": "서비스 게시",
@@ -586,6 +603,12 @@
     "role_client": "클라이언트",
     "role_executor": "실행자",
     "role_arbiter": "중재자",
-    "you": "당신"
+    "you": "당신",
+    "by": "작성:",
+    "just_now": "방금",
+    "minutes_ago": "{count}분 전",
+    "hours_ago": "{count}시간 전",
+    "days_ago": "{count}일 전",
+    "total_suffix": "/ {count} 합계"
   }
 }

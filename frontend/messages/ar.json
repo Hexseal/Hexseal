@@ -52,7 +52,9 @@
       "no_applicants": "لا يوجد متقدمون بعد.",
       "applied_waiting": "تم التقدم! في انتظار قبول العميل.",
       "accepted_deal": "تم قبول المنفّذ! تم إنشاء الاتفاق.",
-      "accepting": "جارٍ قبول المتقدم…"
+      "accepting": "جارٍ قبول المتقدم…",
+      "open_count": "{count} مفتوح",
+      "applicants_count": "{count} تقدموا"
     },
     "services": {
       "title": "لوحة الخدمات",
@@ -67,7 +69,22 @@
       "connect_prompt": "ربط محفظتك لاستعراض الخدمات",
       "amount_label": "المبلغ (USDC)",
       "request_confirm": "تأكيد الطلب",
-      "requesting": "جارٍ الطلب…"
+      "requesting": "جارٍ الطلب…",
+      "count": "{count} نشط",
+      "requests_total": "· {count} طلبات",
+      "status_pending": "بانتظار الرد",
+      "status_accepted": "مقبول",
+      "hired": "{count} موظفين",
+      "deal_btn": "صفقة",
+      "open_deal": "فتح الصفقة",
+      "your_request": "طلبك #{id}",
+      "amount_suggested": "مقترح: {amount} USDC",
+      "deadline_label": "الموعد النهائي (أيام)",
+      "region_label": "منطقتك (رسوم المنصة)",
+      "insufficient_usdc": "USDC غير كافٍ — لديك {have}، تحتاج {need}",
+      "fee_notice": "رسوم المنصة عند الإرسال. المبلغ مجمد حتى استجابة المنفذ.",
+      "sign_permit": "التوقيع: إذن USDC في المحفظة…",
+      "request_sent": "تم إرسال الطلب! في انتظار المنفذ."
     },
     "post_service": {
       "title": "نشر خدمة",
@@ -586,6 +603,12 @@
     "role_client": "عميل",
     "role_executor": "منفّذ",
     "role_arbiter": "محكّم",
-    "you": "أنت"
+    "you": "أنت",
+    "by": "بواسطة",
+    "just_now": "الآن",
+    "minutes_ago": "منذ {count}د",
+    "hours_ago": "منذ {count}س",
+    "days_ago": "منذ {count}ي",
+    "total_suffix": "/ {count} الإجمالي"
   }
 }

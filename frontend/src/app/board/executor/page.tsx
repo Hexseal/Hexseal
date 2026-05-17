@@ -105,11 +105,11 @@ function RequestModal({
               className="bg-white/[0.04] border-white/10 text-white"
               placeholder="10.00"
             />
-            <p className="text-xs text-white/25 mt-1">Suggested: {fmtUSDC(service.price)} USDC</p>
+            <p className="text-xs text-white/25 mt-1">{t("board.services.amount_suggested", { amount: fmtUSDC(service.price) })}</p>
           </div>
 
           <div>
-            <label className="text-xs text-white/40 block mb-1.5">Deadline (days)</label>
+            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.deadline_label")}</label>
             <Input
               type="number"
               min="1"
@@ -121,7 +121,7 @@ function RequestModal({
           </div>
 
           <div>
-            <label className="text-xs text-white/40 block mb-1.5">Your Region (sets platform fee)</label>
+            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.region_label")}</label>
             <div className="grid grid-cols-2 gap-2">
               {Object.entries(REGION_LABELS).map(([k, v]) => (
                 <button
@@ -156,12 +156,12 @@ function RequestModal({
 
         {!hasEnough && userUsdcBalance !== undefined && (
           <p className="text-xs text-red-400 text-center mt-2">
-            Insufficient USDC — have {fmtUSDC(userUsdcBalance)}, need {parsedAmount.toFixed(2)}
+            {t("board.services.insufficient_usdc", { have: fmtUSDC(userUsdcBalance), need: parsedAmount.toFixed(2) })}
           </p>
         )}
         {hasEnough && (
           <p className="text-xs text-white/25 text-center mt-3">
-            Platform fee will be charged on submit. Amount is locked until executor responds.
+            {t("board.services.fee_notice")}
           </p>
         )}
       </div>
@@ -229,11 +229,11 @@ function ServiceCard({
             {Number(service.hiresCount) > 0 && (
               <>
                 <span className="text-white/25">·</span>
-                <span className="text-white/25">{Number(service.hiresCount)} hired</span>
+                <span className="text-white/25">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
               </>
             )}
-            {myPending && <span className="text-yellow-400/70 font-mono text-[11px]">awaiting response</span>}
-            {myAccepted && <span className="text-emerald-400/70 font-mono text-[11px]">accepted</span>}
+            {myPending && <span className="text-yellow-400/70 font-mono text-[11px]">{t("board.services.status_pending")}</span>}
+            {myAccepted && <span className="text-emerald-400/70 font-mono text-[11px]">{t("board.services.status_accepted")}</span>}
           </div>
         </div>
 
@@ -248,7 +248,7 @@ function ServiceCard({
           {isConnected && !isMyService && myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
             <Link href={`/deal/${myAccepted.agreement}`}>
               <Button size="sm" variant="outline" className="h-9 px-3 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
-                Deal <ExternalLink className="w-3 h-3" />
+                {t("board.services.deal_btn")} <ExternalLink className="w-3 h-3" />
               </Button>
             </Link>
           )}
@@ -266,7 +266,7 @@ function ServiceCard({
       {expanded && (
         <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
           <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
-            <span>by</span>
+            <span>{t("common.by")}</span>
             <UserName address={service.executor} link className="font-mono hover:text-white/60 transition-colors" />
             <span className="text-white/20">· #{service.serviceId}</span>
           </div>
@@ -277,14 +277,14 @@ function ServiceCard({
 
           {myActive && (
             <div className="mb-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5">
-              <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5">Your Request #{myActive.requestId}</p>
+              <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5">{t("board.services.your_request", { id: myActive.requestId })}</p>
               <p className="text-xs text-white/50 font-mono">
                 {fmtUSDC(myActive.amount)} USDC · {REQUEST_STATUS[myActive.status]}
               </p>
               {myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
                 <Link href={`/deal/${myAccepted.agreement}`}>
                   <Button size="sm" variant="outline" className="mt-2 h-7 px-2.5 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
-                    Open Deal <ExternalLink className="w-3.5 h-3.5" />
+                    {t("board.services.open_deal")} <ExternalLink className="w-3.5 h-3.5" />
                   </Button>
                 </Link>
               )}
@@ -451,7 +451,7 @@ export default function ExecutorBoardPage() {
       const days      = BigInt(daysStr);
       const termsHash = ("0x" + "0".repeat(64)) as `0x${string}`;
 
-      toast("Sign: USDC permit in wallet…");
+      toast(t("board.services.sign_permit"));
       await requestServiceGasless(walletClient, publicClient, {
         serviceId:    BigInt(requestModal.serviceId),
         amount,
@@ -460,7 +460,7 @@ export default function ExecutorBoardPage() {
         region,
       });
 
-      toast.success("Request sent! Waiting for executor to accept.");
+      toast.success(t("board.services.request_sent"));
       setRequestModal(null);
       setTimeout(() => { refetchMyRequests(); loadServices(); }, 2000);
     } catch (err: any) {
@@ -479,7 +479,7 @@ export default function ExecutorBoardPage() {
           </div>
           <h1 className="text-2xl font-bold font-syne mb-2">{t("board.services.title")}</h1>
           <p className="text-muted-foreground mb-6 text-sm">{t("board.services.connect_prompt")}</p>
-          <Link href="/"><Button>Go Home</Button></Link>
+          <Link href="/"><Button>{t("common.go_home")}</Button></Link>
         </div>
       </div>
     );
@@ -549,13 +549,13 @@ export default function ExecutorBoardPage() {
 
         <div className="flex items-center gap-2 mb-4">
           <span className="text-xs text-white/30 font-mono">
-            {loadingList ? t("board.jobs.loading_short") : `${filtered.length} active service${filtered.length !== 1 ? "s" : ""}`}
+            {loadingList ? t("board.jobs.loading_short") : t("board.services.count", { count: filtered.length })}
           </span>
           {totalServicesData !== undefined && (
-            <span className="text-xs text-white/15 font-mono">/ {totalServicesData.toString()} total</span>
+            <span className="text-xs text-white/15 font-mono">{t("common.total_suffix", { count: totalServicesData.toString() })}</span>
           )}
           {totalRequestsData !== undefined && (
-            <span className="text-xs text-white/15 font-mono">· {totalRequestsData.toString()} requests</span>
+            <span className="text-xs text-white/15 font-mono">{t("board.services.requests_total", { count: totalRequestsData.toString() })}</span>
           )}
         </div>
 

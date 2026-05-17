@@ -52,7 +52,9 @@
       "no_applicants": "Nenhum candidato ainda.",
       "applied_waiting": "Candidatado! Aguardando aceitação do cliente.",
       "accepted_deal": "Executor aceito! Acordo criado.",
-      "accepting": "Aceitando candidato…"
+      "accepting": "Aceitando candidato…",
+      "open_count": "{count} abertos",
+      "applicants_count": "{count} aplicaram"
     },
     "services": {
       "title": "Quadro de Serviços",
@@ -67,7 +69,22 @@
       "connect_prompt": "Conecte a carteira para ver serviços",
       "amount_label": "Valor (USDC)",
       "request_confirm": "Confirmar Solicitação",
-      "requesting": "Solicitando…"
+      "requesting": "Solicitando…",
+      "count": "{count} ativos",
+      "requests_total": "· {count} pedidos",
+      "status_pending": "aguardando",
+      "status_accepted": "aceito",
+      "hired": "{count} contratados",
+      "deal_btn": "Negócio",
+      "open_deal": "Abrir negócio",
+      "your_request": "Seu pedido #{id}",
+      "amount_suggested": "Sugerido: {amount} USDC",
+      "deadline_label": "Prazo (dias)",
+      "region_label": "Sua região (taxa)",
+      "insufficient_usdc": "USDC insuficiente — tem {have}, precisa de {need}",
+      "fee_notice": "Taxa cobrada ao enviar. Valor bloqueado até a resposta.",
+      "sign_permit": "Assinar: permissão USDC na carteira…",
+      "request_sent": "Pedido enviado! Aguardando o executor."
     },
     "post_service": {
       "title": "Publicar Serviço",
@@ -586,6 +603,12 @@
     "role_client": "Cliente",
     "role_executor": "Executor",
     "role_arbiter": "Árbitro",
-    "you": "você"
+    "you": "você",
+    "by": "por",
+    "just_now": "agora",
+    "minutes_ago": "há {count}m",
+    "hours_ago": "há {count}h",
+    "days_ago": "há {count}d",
+    "total_suffix": "/ {count} total"
   }
 }

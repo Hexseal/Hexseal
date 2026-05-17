@@ -52,7 +52,9 @@
       "no_applicants": "Откликов пока нет.",
       "applied_waiting": "Отклик отправлен! Ожидаем решения клиента.",
       "accepted_deal": "Исполнитель принят! Сделка создана.",
-      "accepting": "Принимаем кандидата…"
+      "accepting": "Принимаем кандидата…",
+      "open_count": "{count} открытых",
+      "applicants_count": "{count} откликов"
     },
     "services": {
       "title": "Биржа услуг",
@@ -67,7 +69,22 @@
       "connect_prompt": "Подключите кошелёк чтобы смотреть услуги",
       "amount_label": "Сумма (USDC)",
       "request_confirm": "Подтвердить запрос",
-      "requesting": "Отправляем…"
+      "requesting": "Отправляем…",
+      "count": "{count} активных",
+      "requests_total": "· {count} запросов",
+      "status_pending": "ждём ответа",
+      "status_accepted": "принято",
+      "hired": "{count} нанято",
+      "deal_btn": "Сделка",
+      "open_deal": "Открыть сделку",
+      "your_request": "Ваш запрос #{id}",
+      "amount_suggested": "Рекомендуемая: {amount} USDC",
+      "deadline_label": "Дедлайн (дни)",
+      "region_label": "Ваш регион (комиссия)",
+      "insufficient_usdc": "Недостаточно USDC — есть {have}, нужно {need}",
+      "fee_notice": "Комиссия списывается при отправке. Сумма заблокирована до ответа исполнителя.",
+      "sign_permit": "Подпишите: разрешение USDC в кошельке…",
+      "request_sent": "Запрос отправлен! Ждём ответа исполнителя."
     },
     "post_service": {
       "title": "Разместить услугу",
@@ -388,7 +405,7 @@
     "history_desc": "Все дела которые вы рассматривали.",
     "no_history": "Истории пока нет",
     "search_placeholder": "Поиск по сделке, клиенту или адресу исполнителя…",
-    "total_cases": "всего дел",
+    "total_cases": "{count} дел всего",
     "manage_title": "Управление арбитрами",
     "chief_desc": "Вы главный арбитр — вы можете добавлять и удалять арбитров.",
     "no_arbiters": "Арбитров пока нет.",
@@ -426,7 +443,6 @@
     "active_disputes": "Активные споры",
     "resolve_btn": "Разрешить спор",
     "loading": "Загружаем споры…",
-    "total_cases": "{count} дел всего",
     "status_created": "Создана",
     "status_funded": "Пополнена",
     "status_active": "Активна",
@@ -587,6 +603,12 @@
     "role_client": "Клиент",
     "role_executor": "Исполнитель",
     "role_arbiter": "Арбитр",
-    "you": "вы"
+    "you": "вы",
+    "by": "от",
+    "just_now": "только что",
+    "minutes_ago": "{count}м назад",
+    "hours_ago": "{count}ч назад",
+    "days_ago": "{count}д назад",
+    "total_suffix": "/ {count} всего"
   }
 }

@@ -71,7 +71,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
       {/* ── Mobile floating pill header ────────────────────────────────── */}
       {/* Hidden on chat pages — ChatPanel provides its own header with navigation */}
       <header
-        className={chatMode ? "hidden" : "md:hidden fixed left-3 right-3 z-50"}
+        className={chatMode ? "hidden" : "md:hidden fixed left-2 right-2 z-50"}
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div

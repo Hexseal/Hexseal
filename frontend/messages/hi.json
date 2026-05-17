@@ -52,7 +52,9 @@
       "no_applicants": "अभी कोई आवेदक नहीं।",
       "applied_waiting": "आवेदन किया! क्लाइंट के स्वीकार करने की प्रतीक्षा है।",
       "accepted_deal": "एक्जीक्यूटर स्वीकृत! डील बनाई गई।",
-      "accepting": "आवेदक स्वीकार हो रहा है…"
+      "accepting": "आवेदक स्वीकार हो रहा है…",
+      "open_count": "{count} खुले",
+      "applicants_count": "{count} आवेदन"
     },
     "services": {
       "title": "सेवा बोर्ड",
@@ -67,7 +69,22 @@
       "connect_prompt": "सेवाएं ब्राउज़ करने के लिए अपना वॉलेट कनेक्ट करें",
       "amount_label": "राशि (USDC)",
       "request_confirm": "अनुरोध की पुष्टि करें",
-      "requesting": "अनुरोध हो रहा है…"
+      "requesting": "अनुरोध हो रहा है…",
+      "count": "{count} सक्रिय",
+      "requests_total": "· {count} अनुरोध",
+      "status_pending": "जवाब का इंतजार",
+      "status_accepted": "स्वीकृत",
+      "hired": "{count} भर्ती",
+      "deal_btn": "डील",
+      "open_deal": "डील खोलें",
+      "your_request": "आपका अनुरोध #{id}",
+      "amount_suggested": "सुझाव: {amount} USDC",
+      "deadline_label": "समयसीमा (दिन)",
+      "region_label": "आपका क्षेत्र (शुल्क)",
+      "insufficient_usdc": "USDC अपर्याप्त — है {have}, चाहिए {need}",
+      "fee_notice": "सबमिट पर शुल्क। जवाब तक राशि लॉक रहेगी।",
+      "sign_permit": "साइन करें: वॉलेट में USDC अनुमति…",
+      "request_sent": "अनुरोध भेजा गया! निष्पादक की प्रतीक्षा में।"
     },
     "post_service": {
       "title": "सेवा पोस्ट करें",
@@ -586,6 +603,12 @@
     "role_client": "क्लाइंट",
     "role_executor": "एक्जीक्यूटर",
     "role_arbiter": "मध्यस्थ",
-    "you": "आप"
+    "you": "आप",
+    "by": "द्वारा",
+    "just_now": "अभी",
+    "minutes_ago": "{count}मि पहले",
+    "hours_ago": "{count}घं पहले",
+    "days_ago": "{count}दि पहले",
+    "total_suffix": "/ {count} कुल"
   }
 }

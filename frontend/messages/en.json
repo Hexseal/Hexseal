@@ -52,7 +52,9 @@
       "no_applicants": "No applicants yet.",
       "applied_waiting": "Applied! Waiting for client to accept.",
       "accepted_deal": "Executor accepted! Deal created.",
-      "accepting": "Accepting applicant…"
+      "accepting": "Accepting applicant…",
+      "open_count": "{count} open",
+      "applicants_count": "{count} applied"
     },
     "services": {
       "title": "Service Board",
@@ -67,7 +69,22 @@
       "connect_prompt": "Connect your wallet to browse services",
       "amount_label": "Amount (USDC)",
       "request_confirm": "Confirm Request",
-      "requesting": "Requesting…"
+      "requesting": "Requesting…",
+      "count": "{count} active",
+      "requests_total": "· {count} requests",
+      "status_pending": "awaiting response",
+      "status_accepted": "accepted",
+      "hired": "{count} hired",
+      "deal_btn": "Deal",
+      "open_deal": "Open Deal",
+      "your_request": "Your Request #{id}",
+      "amount_suggested": "Suggested: {amount} USDC",
+      "deadline_label": "Deadline (days)",
+      "region_label": "Your Region (platform fee)",
+      "insufficient_usdc": "Not enough USDC — have {have}, need {need}",
+      "fee_notice": "Platform fee charged on submit. Amount locked until executor responds.",
+      "sign_permit": "Sign: USDC permit in wallet…",
+      "request_sent": "Request sent! Waiting for executor."
     },
     "post_service": {
       "title": "Post a Service",
@@ -586,6 +603,12 @@
     "role_client": "Client",
     "role_executor": "Executor",
     "role_arbiter": "Arbiter",
-    "you": "you"
+    "you": "you",
+    "by": "by",
+    "just_now": "just now",
+    "minutes_ago": "{count}m ago",
+    "hours_ago": "{count}h ago",
+    "days_ago": "{count}d ago",
+    "total_suffix": "/ {count} total"
   }
 }

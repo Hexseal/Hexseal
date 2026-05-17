@@ -52,7 +52,9 @@
       "no_applicants": "ยังไม่มีผู้สมัคร",
       "applied_waiting": "สมัครแล้ว! รอการยืนยันจากลูกค้า",
       "accepted_deal": "ผู้รับงานได้รับการยอมรับ! สร้างดีลแล้ว",
-      "accepting": "กำลังยอมรับผู้สมัคร…"
+      "accepting": "กำลังยอมรับผู้สมัคร…",
+      "open_count": "{count} รายการ",
+      "applicants_count": "{count} สมัคร"
     },
     "services": {
       "title": "กระดานบริการ",
@@ -67,7 +69,22 @@
       "connect_prompt": "เชื่อมต่อกระเป๋าเพื่อดูบริการ",
       "amount_label": "จำนวน (USDC)",
       "request_confirm": "ยืนยันการขอรับบริการ",
-      "requesting": "กำลังส่งคำขอ…"
+      "requesting": "กำลังส่งคำขอ…",
+      "count": "{count} รายการ",
+      "requests_total": "· {count} คำขอ",
+      "status_pending": "รอการตอบกลับ",
+      "status_accepted": "ยอมรับแล้ว",
+      "hired": "{count} จ้างงาน",
+      "deal_btn": "ดีล",
+      "open_deal": "เปิดดีล",
+      "your_request": "คำขอของคุณ #{id}",
+      "amount_suggested": "แนะนำ: {amount} USDC",
+      "deadline_label": "กำหนดส่ง (วัน)",
+      "region_label": "ภูมิภาค (ค่าธรรมเนียม)",
+      "insufficient_usdc": "USDC ไม่พอ — มี {have} ต้องการ {need}",
+      "fee_notice": "ค่าธรรมเนียมจะถูกเรียกเก็บเมื่อส่ง จำนวนเงินถูกล็อกจนกว่าผู้ดำเนินการจะตอบกลับ",
+      "sign_permit": "เซ็น: USDC permit ในวอลเล็ต…",
+      "request_sent": "ส่งคำขอแล้ว! รอผู้ดำเนินการ"
     },
     "post_service": {
       "title": "ประกาศบริการ",
@@ -586,6 +603,12 @@
     "role_client": "ลูกค้า",
     "role_executor": "ผู้รับงาน",
     "role_arbiter": "อนุญาโตตุลาการ",
-    "you": "คุณ"
+    "you": "คุณ",
+    "by": "โดย",
+    "just_now": "เมื่อกี้",
+    "minutes_ago": "{count}น. ที่แล้ว",
+    "hours_ago": "{count}ชม. ที่แล้ว",
+    "days_ago": "{count}ว. ที่แล้ว",
+    "total_suffix": "/ {count} ทั้งหมด"
   }
 }

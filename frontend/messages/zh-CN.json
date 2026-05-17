@@ -52,7 +52,9 @@
       "no_applicants": "暂无申请人。",
       "applied_waiting": "已申请！等待客户接受。",
       "accepted_deal": "执行者已接受！交易已创建。",
-      "accepting": "正在接受申请人…"
+      "accepting": "正在接受申请人…",
+      "open_count": "{count} 个",
+      "applicants_count": "{count} 人申请"
     },
     "services": {
       "title": "服务广场",
@@ -67,7 +69,22 @@
       "connect_prompt": "连接钱包以浏览服务",
       "amount_label": "金额（USDC）",
       "request_confirm": "确认请求",
-      "requesting": "正在请求…"
+      "requesting": "正在请求…",
+      "count": "{count} 个",
+      "requests_total": "· {count} 请求",
+      "status_pending": "等待回复",
+      "status_accepted": "已接受",
+      "hired": "{count} 次成交",
+      "deal_btn": "交易",
+      "open_deal": "查看交易",
+      "your_request": "您的请求 #{id}",
+      "amount_suggested": "建议: {amount} USDC",
+      "deadline_label": "截止（天）",
+      "region_label": "您的地区（平台费）",
+      "insufficient_usdc": "USDC 不足 — 有 {have}，需要 {need}",
+      "fee_notice": "提交时收取平台费。金额锁定直至执行者回应。",
+      "sign_permit": "签署：钱包中的 USDC 许可…",
+      "request_sent": "请求已发送！等待执行者回应。"
     },
     "post_service": {
       "title": "发布服务",
@@ -586,6 +603,12 @@
     "role_client": "客户",
     "role_executor": "执行者",
     "role_arbiter": "仲裁者",
-    "you": "您"
+    "you": "您",
+    "by": "作者",
+    "just_now": "刚刚",
+    "minutes_ago": "{count}分钟前",
+    "hours_ago": "{count}小时前",
+    "days_ago": "{count}天前",
+    "total_suffix": "/ {count} 总计"
   }
 }

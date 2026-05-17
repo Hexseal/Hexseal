@@ -52,7 +52,9 @@
       "no_applicants": "Noch keine Bewerber.",
       "applied_waiting": "Beworben! Warte auf Bestätigung des Kunden.",
       "accepted_deal": "Ausführender angenommen! Deal erstellt.",
-      "accepting": "Bewerber wird angenommen…"
+      "accepting": "Bewerber wird angenommen…",
+      "open_count": "{count} offen",
+      "applicants_count": "{count} beworben"
     },
     "services": {
       "title": "Leistungsbörse",
@@ -67,7 +69,22 @@
       "connect_prompt": "Verbinde deine Wallet, um Leistungen zu durchsuchen",
       "amount_label": "Betrag (USDC)",
       "request_confirm": "Anfrage bestätigen",
-      "requesting": "Anfrage wird gesendet…"
+      "requesting": "Anfrage wird gesendet…",
+      "count": "{count} aktiv",
+      "requests_total": "· {count} Anfragen",
+      "status_pending": "wartet auf Antwort",
+      "status_accepted": "angenommen",
+      "hired": "{count} eingestellt",
+      "deal_btn": "Deal",
+      "open_deal": "Deal öffnen",
+      "your_request": "Ihre Anfrage #{id}",
+      "amount_suggested": "Vorschlag: {amount} USDC",
+      "deadline_label": "Frist (Tage)",
+      "region_label": "Region (Gebühr)",
+      "insufficient_usdc": "Zu wenig USDC — {have} vorhanden, {need} benötigt",
+      "fee_notice": "Plattformgebühr beim Absenden. Betrag gesperrt bis zur Antwort.",
+      "sign_permit": "Signieren: USDC-Genehmigung im Wallet…",
+      "request_sent": "Anfrage gesendet! Warten auf Auftragnehmer."
     },
     "post_service": {
       "title": "Leistung veröffentlichen",
@@ -586,6 +603,12 @@
     "role_client": "Kunde",
     "role_executor": "Ausführender",
     "role_arbiter": "Schlichter",
-    "you": "du"
+    "you": "du",
+    "by": "von",
+    "just_now": "gerade eben",
+    "minutes_ago": "vor {count}m",
+    "hours_ago": "vor {count}h",
+    "days_ago": "vor {count}d",
+    "total_suffix": "/ {count} gesamt"
   }
 }
