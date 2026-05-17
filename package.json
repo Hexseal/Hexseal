@@ -17,6 +17,7 @@
     "@openzeppelin/contracts": "^4.9.3",
     "chai": "^4.3.7",
     "ethers": "^5.7.2",
-    "hardhat": "^2.19.5"
+    "hardhat": "^2.19.5",
+    "web-push": "^3.6.7"
   }
 }

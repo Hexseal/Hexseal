@@ -5,6 +5,7 @@
 .envrc
 !.env.example
 !**/.env.example
+.env.relayer
 
 # ── OS / IDE ──────────────────────────────────────────────────────────────────
 .DS_Store
