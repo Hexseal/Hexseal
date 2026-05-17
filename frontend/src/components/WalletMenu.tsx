@@ -16,7 +16,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, Shield, ShieldCheck, HelpCircle, Globe } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, Shield, ShieldCheck, HelpCircle, Globe, ChevronRight } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -37,6 +37,7 @@ interface Props {
 export default function WalletMenu({ open, onOpenChange, hideNavItems = false }: Props) {
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
+  const [langOpen, setLangOpen] = useState(false);
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
@@ -138,7 +139,11 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
+    <DropdownMenu
+      open={open}
+      onOpenChange={(o) => { if (!o) setLangOpen(false); onOpenChange?.(o); }}
+      modal={false}
+    >
       <DropdownMenuTrigger asChild>
         <button className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-white/[0.10] bg-[#1a1a1a] hover:bg-[#222] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -265,29 +270,36 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
 
         {/* ── Language ── */}
         <div className="h-px bg-white/[0.06]" />
-        <div className="px-3 py-2.5">
-          <div className="flex items-center gap-1.5 mb-2">
-            <Globe className="w-3 h-3 text-white/30" />
-            <span className="text-[11px] text-white/30 font-medium uppercase tracking-wide">Language</span>
-          </div>
-          <div className="flex gap-1 flex-wrap">
-            {locales.map((l) => (
-              <button
-                key={l}
-                type="button"
-                onClick={() => setLocale(l as Locale)}
-                title={localeNames[l as Locale]}
-                className={cn(
-                  "text-xs px-2 py-0.5 rounded-md font-mono font-medium transition-colors",
-                  l === locale
-                    ? "bg-primary/20 text-primary"
-                    : "text-white/35 hover:text-white/70 hover:bg-white/5"
-                )}
-              >
-                {l.toUpperCase()}
-              </button>
-            ))}
-          </div>
+        <div className="p-1">
+          <button
+            type="button"
+            onClick={() => setLangOpen(v => !v)}
+            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm text-white/50 hover:text-white/80 hover:bg-white/5 transition-colors"
+          >
+            <Globe className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="flex-1 text-left">{localeNames[locale as Locale]}</span>
+            <ChevronRight className={cn("w-3.5 h-3.5 transition-transform duration-150", langOpen && "rotate-90")} />
+          </button>
+          {langOpen && (
+            <div className="mt-0.5 overflow-y-auto max-h-52 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent]">
+              {locales.map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => { setLocale(l as Locale); setLangOpen(false); }}
+                  className={cn(
+                    "w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm transition-colors",
+                    l === locale
+                      ? "text-primary bg-primary/10"
+                      : "text-white/50 hover:text-white/80 hover:bg-white/5"
+                  )}
+                >
+                  <span className="font-mono text-[10px] opacity-40 w-7 flex-shrink-0">{l.toUpperCase()}</span>
+                  <span>{localeNames[l as Locale]}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Disconnect ── */}

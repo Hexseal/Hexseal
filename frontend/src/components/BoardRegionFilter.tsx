@@ -46,7 +46,25 @@ export function BoardRegionFilter({
   userRegion: number | null;
 }) {
   return (
-    <div className="flex items-center gap-1.5 flex-wrap">
+    <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Global */}
+      <button
+        type="button"
+        onClick={() => onChange(null)}
+        className={cn(
+          "flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+          value === null
+            ? "border-primary bg-primary/10 text-primary"
+            : "border-white/10 text-white/40 hover:border-white/20 hover:text-white/60"
+        )}
+      >
+        <Globe className="w-3 h-3" />
+        Global
+      </button>
+
+      {/* Separator */}
+      <span className="flex-shrink-0 w-px h-4 bg-white/10" />
+
       {Object.entries(REGION_LABELS).map(([k, label]) => {
         const region = Number(k);
         const isActive = value === region;
@@ -56,38 +74,19 @@ export function BoardRegionFilter({
             key={k}
             type="button"
             onClick={() => onChange(region)}
+            title={REGION_HINTS[region]}
             className={cn(
-              "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors flex flex-col items-center leading-tight",
+              "flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
               isActive
                 ? "border-primary bg-primary/10 text-primary"
                 : "border-white/10 text-white/40 hover:border-white/20 hover:text-white/60"
             )}
           >
-            <span className="flex items-center gap-0.5">
-              {label}
-              {isDetected && (
-                <span className="text-[8px] opacity-50">●</span>
-              )}
-            </span>
-            <span className="text-[9px] opacity-40 font-normal tracking-wide">
-              {REGION_HINTS[region]}
-            </span>
+            {label}
+            {isDetected && <span className="w-1 h-1 rounded-full bg-current opacity-50" />}
           </button>
         );
       })}
-      <button
-        type="button"
-        onClick={() => onChange(null)}
-        className={cn(
-          "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors flex items-center gap-1",
-          value === null
-            ? "border-primary bg-primary/10 text-primary"
-            : "border-white/10 text-white/40 hover:border-white/20 hover:text-white/60"
-        )}
-      >
-        <Globe className="w-3 h-3" />
-        Global
-      </button>
     </div>
   );
 }
