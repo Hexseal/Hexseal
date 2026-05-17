@@ -10,10 +10,13 @@
      Mobile: pill header (10px margin + ~48px height + ~12px gap = 70px) + safe-area.
      Desktop: full fixed header height (4rem) + safe-area. */
   --chat-top-offset: calc(env(safe-area-inset-top, 0px) + 70px);
+  /* Mobile: pill nav (78px) + 10px margin + safe-area */
+  --chat-bottom-offset: calc(88px + env(safe-area-inset-bottom, 0px));
 }
 @media (min-width: 768px) {
   :root {
     --chat-top-offset: calc(4rem + env(safe-area-inset-top, 0px));
+    --chat-bottom-offset: 0px;
   }
 }
 

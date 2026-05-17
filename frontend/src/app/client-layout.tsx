@@ -138,11 +138,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             top: 'calc(var(--chat-top-offset) + var(--vv-offset-top, 0px))',
             left: 0,
             right: 0,
-            height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset))',
+            height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset) - var(--chat-bottom-offset, 0px))',
           }}
         >
           <PageFade pathname={pathname}>{children}</PageFade>
         </main>
+        <MobileBottomNav />
         {modal}
         <Toaster />
       </>

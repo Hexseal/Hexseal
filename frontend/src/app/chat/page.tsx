@@ -371,7 +371,7 @@ function ChatHubPageInner() {
       {/* ── Sidebar ── */}
       <aside
         className={cn(
-          'flex-shrink-0 border-r border-white/[0.05] flex flex-col overflow-hidden bg-[#0a0a0a]',
+          'flex-shrink-0 border-r border-white/[0.05] flex flex-col overflow-hidden bg-black',
           // Desktop: always static in layout
           'sm:relative sm:flex sm:w-80 sm:translate-x-0 sm:z-auto',
           // Mobile, no chat selected: full-width (sidebar IS the page)
