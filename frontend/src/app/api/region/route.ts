@@ -3,13 +3,13 @@ import { Redis } from '@upstash/redis';
 
 const REGION_MAP: Record<string, number> = {
   // CIS = 0
-  RU: 0, UA: 0, BY: 0, KZ: 0, UZ: 0, AZ: 0, AM: 0, GE: 0, MD: 0, TJ: 0, TM: 0, KG: 0,
+  RU: 0, BY: 0, KZ: 0, UZ: 0, AZ: 0, AM: 0, GE: 0, MD: 0, TJ: 0, TM: 0, KG: 0,
   // Asia/LATAM = 1
   TH: 1, VN: 1, ID: 1, PH: 1, MY: 1, SG: 1, MM: 1, KH: 1, LA: 1,
   BR: 1, MX: 1, AR: 1, CO: 1, CL: 1, PE: 1, VE: 1, EC: 1,
   // Europe = 2
   DE: 2, FR: 2, IT: 2, ES: 2, PL: 2, NL: 2, SE: 2, NO: 2, DK: 2,
-  FI: 2, PT: 2, BE: 2, AT: 2, CH: 2, CZ: 2, RO: 2, HU: 2, GR: 2,
+  FI: 2, PT: 2, BE: 2, AT: 2, CH: 2, CZ: 2, RO: 2, HU: 2, GR: 2, UA: 2,
   // US/Canada/AU/UK = 3
   US: 3, CA: 3, AU: 3, NZ: 3, GB: 3, JP: 3, KR: 3,
 };

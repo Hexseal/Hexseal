@@ -8,10 +8,13 @@ const STORAGE_KEY = "sig404_locale";
 
 function detectBrowserLocale(): Locale {
   if (typeof navigator === "undefined") return defaultLocale;
-  const lang = navigator.language.split("-")[0].toLowerCase();
-  return (locales as readonly string[]).includes(lang)
-    ? (lang as Locale)
-    : defaultLocale;
+  for (const lang of navigator.languages ?? [navigator.language]) {
+    const lower = lang.toLowerCase();
+    if (lower.startsWith("zh")) return "zh-CN";
+    const base = lower.split("-")[0];
+    if ((locales as readonly string[]).includes(base)) return base as Locale;
+  }
+  return defaultLocale;
 }
 
 export function useLocale() {

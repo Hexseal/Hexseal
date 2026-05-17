@@ -5,9 +5,16 @@ import { cn } from "@/lib/utils";
 
 export const REGION_LABELS: Record<number, string> = {
   0: "CIS",
-  1: "Asia/LATAM",
+  1: "Asia / LATAM",
   2: "Europe",
-  3: "US/CA",
+  3: "US / CA",
+};
+
+const REGION_HINTS: Record<number, string> = {
+  0: "RU · BY · KZ",
+  1: "TH · BR · MX",
+  2: "DE · FR · PL",
+  3: "US · CA · AU",
 };
 
 const LS_KEY = "sig404_board_region";
@@ -46,16 +53,21 @@ export function BoardRegionFilter({
             type="button"
             onClick={() => onChange(region)}
             className={cn(
-              "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+              "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors flex flex-col items-center leading-tight",
               isActive
                 ? "border-primary bg-primary/10 text-primary"
                 : "border-white/10 text-white/40 hover:border-white/20 hover:text-white/60"
             )}
           >
-            {label}
-            {isDetected && (
-              <span className="ml-1 text-[8px] opacity-50">●</span>
-            )}
+            <span className="flex items-center gap-0.5">
+              {label}
+              {isDetected && (
+                <span className="text-[8px] opacity-50">●</span>
+              )}
+            </span>
+            <span className="text-[9px] opacity-40 font-normal tracking-wide">
+              {REGION_HINTS[region]}
+            </span>
           </button>
         );
       })}
