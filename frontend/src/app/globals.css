@@ -5,6 +5,16 @@
   --color-accent: #2563EB;
   --color-accent-hover: #1D4ED8;
   --color-accent-glow: rgba(37, 99, 235, 0.3);
+
+  /* Chat layout: how far from the top the chat main starts.
+     Mobile: pill header is hidden in chat mode, so only safe-area.
+     Desktop: full fixed header height + safe-area. */
+  --chat-top-offset: env(safe-area-inset-top, 0px);
+}
+@media (min-width: 768px) {
+  :root {
+    --chat-top-offset: calc(4rem + env(safe-area-inset-top, 0px));
+  }
 }
 
 /* ── Russian locale ─────────────────────────────────────────────────────────── */

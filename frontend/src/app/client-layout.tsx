@@ -45,26 +45,26 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     };
   }, []);
 
-  // For chat pages: lock body scroll so iOS Safari can't scroll the page
-  // when the keyboard opens. Without this the whole page "flies up".
+  // For chat pages: prevent iOS Safari from scrolling the document when
+  // the keyboard opens. overflow:hidden on both html+body is enough;
+  // position:fixed is intentionally avoided — it causes a scroll-position
+  // jump (the whole page "raises") and fights the interactiveWidget viewport setting.
   const isChatPageRef = React.useRef(false);
   const currentIsChatPage = pathname?.startsWith('/chat') ?? false;
   useEffect(() => {
     isChatPageRef.current = currentIsChatPage;
     const body = document.body;
+    const html = document.documentElement;
     if (currentIsChatPage) {
-      body.style.position = 'fixed';
-      body.style.width = '100%';
+      html.style.overflow = 'hidden';
       body.style.overflow = 'hidden';
     } else {
-      body.style.position = '';
-      body.style.width = '';
+      html.style.overflow = '';
       body.style.overflow = '';
     }
     return () => {
       if (isChatPageRef.current) {
-        body.style.position = '';
-        body.style.width = '';
+        html.style.overflow = '';
         body.style.overflow = '';
       }
     };
@@ -103,19 +103,21 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   if (isChatPage) {
     return (
       <>
-        {topScrim}
-        <Header />
-        {/* height = visual viewport height (--vvh) minus the header clearance.
-            --vvh is set by the VisualViewport listener above and shrinks when
-            the keyboard opens, so the flex layout stays correct on iOS. */}
+        {/* topScrim is skipped for chat — the ChatPanel has its own fixed header
+            and the flex layout prevents messages from scrolling behind it. */}
+        <Header chatMode />
+        {/* --chat-top-offset is a CSS variable: env(safe-area-inset-top) on mobile
+            (pill header is hidden in chatMode) and 4rem + safe-area on desktop.
+            --vvh is set by the VisualViewport listener and shrinks when the
+            keyboard opens, keeping the input above the keyboard on iOS. */}
         <main
           className="flex flex-col overflow-hidden"
           style={{
             position: 'fixed',
-            top: 'calc(4rem + env(safe-area-inset-top, 0px))',
+            top: 'var(--chat-top-offset)',
             left: 0,
             right: 0,
-            height: 'calc(var(--vvh, 100dvh) - 4rem - env(safe-area-inset-top, 0px))',
+            height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset))',
           }}
         >
           <PageFade pathname={pathname}>{children}</PageFade>

@@ -13,7 +13,8 @@ import { ChatPanel } from '@/components/ChatPanel';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
-import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
+import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight, ArrowLeft } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 
@@ -214,6 +215,7 @@ function ChatHubPageInner() {
   const [seenConvos, setSeenConvos]   = useState<Set<string>>(() =>
     initialPeer ? new Set([initialPeer.toLowerCase()]) : new Set()
   );
+  const router = useRouter();
 
   // Load agreements to build peer→deal context map
   const { data: clientDeals } = useReadContract({
@@ -386,11 +388,23 @@ function ChatHubPageInner() {
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">
-          <div>
-            <h2 className="text-sm font-semibold">{t("chat.title")}</h2>
-            <div className="flex items-center gap-1 mt-0.5">
-              <Lock className="w-2.5 h-2.5 text-white/25" />
-              <span className="text-[11px] text-white/25">{t("chat.encrypted")}</span>
+          <div className="flex items-center gap-2">
+            {/* Back button — visible on mobile only when pill header is hidden */}
+            {!selected && (
+              <button
+                onClick={() => router.back()}
+                className="sm:hidden -ml-1 w-8 h-8 flex items-center justify-center text-white/40 hover:text-white/75 hover:bg-white/8 rounded-xl transition-colors flex-shrink-0"
+                aria-label="Go back"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+            )}
+            <div>
+              <h2 className="text-sm font-semibold">{t("chat.title")}</h2>
+              <div className="flex items-center gap-1 mt-0.5">
+                <Lock className="w-2.5 h-2.5 text-white/25" />
+                <span className="text-[11px] text-white/25">{t("chat.encrypted")}</span>
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-1">
