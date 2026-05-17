@@ -394,10 +394,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-[#0a0a0a]">
 
       {/* Header */}
-      <div className="border-b border-white/[0.06] bg-[#0d0d0f]/95 backdrop-blur-xl flex-shrink-0">
+      <div className="flex-shrink-0 bg-[#0a0a0a]"
+        style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.05)' }}>
         <div className="flex items-center gap-3 px-4 py-3">
           {onBack && (
             <button onClick={onBack}
@@ -493,7 +494,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search messages…"
-                className="w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] pl-9 pr-4 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-primary/40 focus:bg-[#111113] transition-all"
+                className="w-full bg-white/[0.05] border border-white/[0.07] rounded-[14px] pl-9 pr-4 py-2 text-sm text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.14] focus:bg-white/[0.07] transition-all"
               />
             </div>
             {searchQuery && (
@@ -511,7 +512,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
       {/* Pre-deal bar (before Agreement is deployed) */}
       {!dealContext && preDealCtx && (
-        <div className="border-b border-white/[0.06] bg-[#0a0a0b] flex-shrink-0 px-4 py-2 flex items-center gap-2">
+        <div className="flex-shrink-0 px-3 py-2 mx-3 mb-1 mt-1 rounded-[14px] bg-white/[0.03] flex items-center gap-2">
           <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap text-xs">
             {preDealCtx.title && (
               <>
@@ -570,7 +571,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
       {/* Deal bar */}
       {dealContext && (
-        <div className="border-b border-white/[0.06] bg-[#0a0a0b] flex-shrink-0 px-4 py-2 flex items-center gap-2">
+        <div className="flex-shrink-0 px-3 py-2 mx-3 mb-1 mt-1 rounded-[14px] bg-white/[0.03] flex items-center gap-2">
           <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap text-xs">
             {dealContext.jobTitle && (
               <>
@@ -733,10 +734,20 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                       ? <ImageBubble a={msg.attachment} isMe={isMe} />
                       : <FileCard a={msg.attachment} isMe={isMe} />
                     : (
-                      <div className={`px-3.5 py-2 text-sm break-words leading-relaxed ${
+                      <div className={`px-4 py-2.5 text-sm break-words leading-relaxed ${
                         isMe
-                          ? `bg-primary text-white ${isFirst ? 'rounded-t-2xl' : 'rounded-tl-2xl rounded-tr-sm'} ${isLast ? 'rounded-bl-2xl rounded-br-sm' : 'rounded-l-2xl rounded-r-sm'}`
-                          : `bg-white/[0.08] text-white/90 ${isFirst ? 'rounded-t-2xl' : 'rounded-tr-2xl rounded-tl-sm'} ${isLast ? 'rounded-br-2xl rounded-bl-sm' : 'rounded-r-2xl rounded-l-sm'}`
+                          ? `bg-primary text-white ${
+                              isFirst && isLast ? 'rounded-[22px]' :
+                              isFirst ? 'rounded-t-[22px] rounded-bl-[22px] rounded-br-[6px]' :
+                              isLast  ? 'rounded-tl-[22px] rounded-tr-[6px] rounded-b-[22px]' :
+                                        'rounded-l-[22px] rounded-r-[6px]'
+                            }`
+                          : `bg-white/[0.09] text-white/90 ${
+                              isFirst && isLast ? 'rounded-[22px]' :
+                              isFirst ? 'rounded-t-[22px] rounded-br-[22px] rounded-bl-[6px]' :
+                              isLast  ? 'rounded-tr-[22px] rounded-tl-[6px] rounded-b-[22px]' :
+                                        'rounded-r-[22px] rounded-l-[6px]'
+                            }`
                       }`}>
                         {msg.text}
                       </div>
@@ -758,7 +769,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         {!atBottom && (
           <div className="sticky bottom-4 flex justify-center">
             <button onClick={scrollToBottom}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#0d0d0f]/95 backdrop-blur-xl border border-white/[0.10] text-xs text-white/50 hover:bg-[#111113]/95 hover:text-white/70 transition-colors shadow-lg">
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[20px] bg-[#111113]/95 backdrop-blur-xl border border-white/[0.10] text-xs text-white/50 hover:bg-[#161618]/95 hover:text-white/70 transition-colors"
+              style={{ boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }}>
               <ChevronDown className="w-3 h-3" />scroll down
             </button>
           </div>
@@ -767,8 +779,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
       {/* Input */}
       <div
-        className="flex-shrink-0 px-3 pt-2.5 flex flex-col gap-1.5 bg-[#0d0d0f]/95 backdrop-blur-xl border-t border-white/[0.06]"
-        style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom))' }}
+        className="flex-shrink-0 px-3 pt-3 flex flex-col gap-2 bg-[#0a0a0a]"
+        style={{
+          paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
+        }}
       >
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
         {uploadErr && <p className="text-xs text-red-400/60 px-1">{uploadErr}</p>}
@@ -782,7 +797,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             }}
             disabled={!isInitialized || uploading}
             title="Attach file — available 18 days"
-            className="w-9 h-9 rounded-[12px] flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-white/[0.06] disabled:opacity-20 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
+            className="w-9 h-9 rounded-[14px] flex items-center justify-center text-white/28 hover:text-white/60 hover:bg-white/[0.06] disabled:opacity-20 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
           </button>
           <textarea
@@ -799,13 +814,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               error         ? 'Chat unavailable' :
               isInitialized ? 'Message…'         : 'Initializing…'
             }
-            className="flex-1 bg-[#0d0d0f] border border-white/[0.08] rounded-[16px] px-4 py-2.5 text-base text-white placeholder:text-white/25 focus:outline-none focus:border-primary/40 focus:bg-[#111113] disabled:opacity-40 transition-all resize-none overflow-hidden leading-[1.4]"
-            style={{ minHeight: '40px', maxHeight: '120px' }}
+            className="flex-1 bg-white/[0.05] border border-white/[0.07] rounded-[22px] px-4 py-2.5 text-[15px] text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.14] focus:bg-white/[0.07] disabled:opacity-40 transition-all resize-none overflow-hidden leading-[1.45]"
+            style={{ minHeight: '42px', maxHeight: '120px' }}
           />
           <button
             onClick={handleSend}
             disabled={!isInitialized || !text.trim() || sending}
-            className="w-9 h-9 rounded-[14px] bg-primary flex items-center justify-center text-white hover:bg-primary/80 active:scale-95 disabled:opacity-25 disabled:cursor-not-allowed transition-all flex-shrink-0 mb-0.5">
+            className="w-9 h-9 rounded-[16px] bg-primary flex items-center justify-center text-white hover:bg-primary/85 active:scale-95 disabled:opacity-25 disabled:cursor-not-allowed transition-all flex-shrink-0 mb-0.5">
             {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
         </div>

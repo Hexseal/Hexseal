@@ -104,8 +104,8 @@ function ConvoItem({
     <button
       onClick={onClick}
       className={cn(
-        'w-full flex items-start gap-3 px-4 py-3 text-left transition-colors border-l-2',
-        isSelected ? 'bg-[#111113] border-primary' : 'border-transparent hover:bg-white/[0.03]',
+        'w-full flex items-start gap-3 px-3 py-2.5 text-left transition-all rounded-[16px]',
+        isSelected ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]',
       )}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -363,7 +363,7 @@ function ChatHubPageInner() {
       {sidebarOpen && !!selected && (
         <div
           className="sm:hidden fixed inset-0 z-20 bg-black/60 backdrop-blur-[2px]"
-          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 68px)' }}
+          style={{ top: 'var(--chat-top-offset)' }}
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -371,7 +371,7 @@ function ChatHubPageInner() {
       {/* ── Sidebar ── */}
       <aside
         className={cn(
-          'flex-shrink-0 border-r border-white/[0.06] flex flex-col overflow-hidden bg-[#090909]',
+          'flex-shrink-0 border-r border-white/[0.05] flex flex-col overflow-hidden bg-[#0a0a0a]',
           // Desktop: always static in layout
           'sm:relative sm:flex sm:w-80 sm:translate-x-0 sm:z-auto',
           // Mobile, no chat selected: full-width (sidebar IS the page)
@@ -383,39 +383,39 @@ function ChatHubPageInner() {
             sidebarOpen ? 'translate-x-0' : '-translate-x-full',
           ),
         )}
-        style={!!selected ? { top: 'calc(env(safe-area-inset-top, 0px) + 68px)' } : undefined}
+        style={!!selected ? { top: 'var(--chat-top-offset)' } : undefined}
       >
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-3.5 flex-shrink-0"
+          style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
           <div className="flex items-center gap-2">
-            {/* Back button — always visible on mobile (pill header is hidden in chatMode) */}
             <button
               onClick={() => router.back()}
-              className="sm:hidden -ml-1 w-8 h-8 flex items-center justify-center text-white/35 hover:text-white/70 hover:bg-white/[0.06] rounded-[10px] transition-colors flex-shrink-0"
+              className="sm:hidden -ml-1 w-8 h-8 flex items-center justify-center text-white/35 hover:text-white/70 hover:bg-white/[0.06] rounded-[12px] transition-colors flex-shrink-0"
               aria-label="Go back"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
             <div>
-              <h2 className="text-sm font-semibold text-white/90">{t("chat.title")}</h2>
+              <h2 className="text-sm font-semibold text-white/85">{t("chat.title")}</h2>
               <div className="flex items-center gap-1 mt-0.5">
-                <Lock className="w-2.5 h-2.5 text-white/20" />
-                <span className="text-[11px] text-white/20">{t("chat.encrypted")}</span>
+                <Lock className="w-2.5 h-2.5 text-white/18" />
+                <span className="text-[10px] text-white/18">{t("chat.encrypted")}</span>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-1">
             <button onClick={reload} disabled={isLoading} title={t("common.refresh")}
-              className="p-1.5 rounded-[10px] text-white/30 hover:text-white/60 hover:bg-white/[0.06] transition-colors disabled:opacity-30">
+              className="p-2 rounded-[12px] text-white/25 hover:text-white/55 hover:bg-white/[0.06] transition-colors disabled:opacity-30">
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); }}
               title={t("chat.new_conversation")}
               className={cn(
-                'p-1.5 rounded-[10px] transition-colors',
-                showNewChat ? 'bg-white/[0.08] text-white/70' : 'text-white/30 hover:text-white/60 hover:bg-white/[0.06]',
+                'p-2 rounded-[12px] transition-colors',
+                showNewChat ? 'bg-white/[0.08] text-white/70' : 'text-white/25 hover:text-white/55 hover:bg-white/[0.06]',
               )}>
               {showNewChat ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
             </button>
@@ -424,7 +424,7 @@ function ChatHubPageInner() {
 
         {/* New chat search */}
         {showNewChat && (
-          <div className="px-3 py-2.5 border-b border-white/[0.06]">
+          <div className="px-3 py-2.5 mx-2 mb-2 rounded-[16px] bg-white/[0.03]">
             <p className="text-[11px] text-white/30 mb-1.5">{t("chat.paste_address_hint")}</p>
             <div className="flex gap-2">
               <input
@@ -447,7 +447,7 @@ function ChatHubPageInner() {
         )}
 
         {/* Conversation list */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
 
           {isLoading && (
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-white/30">

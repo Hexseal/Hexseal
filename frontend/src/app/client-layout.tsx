@@ -122,9 +122,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   if (isChatPage) {
     return (
       <>
-        {/* topScrim is skipped for chat — the ChatPanel has its own fixed header
-            and the flex layout prevents messages from scrolling behind it. */}
-        <Header chatMode />
+        <Header />
         {/* --chat-top-offset is a CSS variable: env(safe-area-inset-top) on mobile
             (pill header is hidden in chatMode) and 4rem + safe-area on desktop.
             --vvh is set by the VisualViewport listener and shrinks when the
