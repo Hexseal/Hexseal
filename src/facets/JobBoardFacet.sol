@@ -167,7 +167,7 @@ contract JobBoardFacet {
         if (bytes(description).length > 500) revert DescriptionTooLong();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         uint256 fee = fs.regionFee[region];
@@ -223,7 +223,7 @@ contract JobBoardFacet {
         if (bytes(description).length > 500) revert DescriptionTooLong();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         uint256 fee = fs.regionFee[region];

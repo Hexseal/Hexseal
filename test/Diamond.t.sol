@@ -342,7 +342,7 @@ contract DiamondTest is Test {
         FactoryFacet(address(diamond)).setTrustedForwarder(address(0x6));
         assertEq(FactoryFacet(address(diamond)).getTrustedForwarder(), address(0x6));
         
-        (uint256 cis, uint256 asia, uint256 eu, uint256 us) = FactoryFacet(address(diamond)).getAllFees();
+        (uint256 cis, uint256 asia, uint256 eu, uint256 us, uint256 latam, uint256 ca) = FactoryFacet(address(diamond)).getAllFees();
         assertGt(cis, 0);
     }
     

@@ -144,7 +144,7 @@ contract ServiceBoardFacet {
         if (titleLen == 0 || titleLen > 100) revert TitleInvalid();
         if (bytes(description).length > 500) revert DescriptionTooLong();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         uint256 fee = fs.regionFee[region];
@@ -190,7 +190,7 @@ contract ServiceBoardFacet {
         if (titleLen == 0 || titleLen > 100) revert TitleInvalid();
         if (bytes(description).length > 500) revert DescriptionTooLong();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         uint256 fee = fs.regionFee[region];
@@ -267,7 +267,7 @@ contract ServiceBoardFacet {
     ) external nonReentrant whenNotPaused returns (uint256 requestId) {
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
 
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
@@ -315,7 +315,7 @@ contract ServiceBoardFacet {
     ) external nonReentrant whenNotPaused returns (uint256 requestId) {
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
 
         ServiceBoardStorage.Layout storage st = ServiceBoardStorage.layout();
         ServiceBoardStorage.Service storage svc = st.services[serviceId];

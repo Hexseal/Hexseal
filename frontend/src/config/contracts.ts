@@ -188,6 +188,8 @@ export const DIAMOND_ABI = [
       { internalType: 'uint256', name: 'asia', type: 'uint256' },
       { internalType: 'uint256', name: 'eu', type: 'uint256' },
       { internalType: 'uint256', name: 'us', type: 'uint256' },
+      { internalType: 'uint256', name: 'latam', type: 'uint256' },
+      { internalType: 'uint256', name: 'ca', type: 'uint256' },
     ],
     stateMutability: 'view',
     type: 'function',

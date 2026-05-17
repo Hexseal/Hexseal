@@ -4,23 +4,29 @@ import { Redis } from '@upstash/redis';
 const REGION_MAP: Record<string, number> = {
   // CIS = 0
   RU: 0, BY: 0, KZ: 0, UZ: 0, AZ: 0, AM: 0, GE: 0, MD: 0, TJ: 0, TM: 0, KG: 0,
-  // Asia/LATAM = 1
-  TH: 1, VN: 1, ID: 1, PH: 1, MY: 1, SG: 1, MM: 1, KH: 1, LA: 1,
-  BR: 1, MX: 1, AR: 1, CO: 1, CL: 1, PE: 1, VE: 1, EC: 1,
+  // Asia = 1
+  CN: 1, JP: 1, KR: 1, TH: 1, VN: 1, ID: 1, PH: 1, MY: 1, SG: 1, MM: 1, KH: 1, LA: 1, IN: 1,
   // Europe = 2
   DE: 2, FR: 2, IT: 2, ES: 2, PL: 2, NL: 2, SE: 2, NO: 2, DK: 2,
   FI: 2, PT: 2, BE: 2, AT: 2, CH: 2, CZ: 2, RO: 2, HU: 2, GR: 2, UA: 2,
-  // US/Canada/AU/UK = 3
-  US: 3, CA: 3, AU: 3, NZ: 3, GB: 3, JP: 3, KR: 3,
+  // US = 3
+  US: 3,
+  // LATAM = 4
+  BR: 4, MX: 4, AR: 4, CO: 4, CL: 4, PE: 4, VE: 4, EC: 4, BO: 4, PY: 4, UY: 4,
+  GT: 4, HN: 4, SV: 4, NI: 4, CR: 4, PA: 4, DO: 4, CU: 4,
+  // CA (+ AU, GB, NZ) = 5
+  CA: 5, AU: 5, NZ: 5, GB: 5,
 };
 
 // Internal cache code 10 = VPN/proxy (contractRegion=3, same $10 price)
 const FEE_MAP: Record<number, { usdc: number; label: string; contractRegion: number }> = {
-  0:  { usdc: 2_000_000,  label: 'CIS · $2',       contractRegion: 0 },
-  1:  { usdc: 4_000_000,  label: 'Asia/LATAM · $4', contractRegion: 1 },
-  2:  { usdc: 7_000_000,  label: 'Europe · $7',     contractRegion: 2 },
-  3:  { usdc: 10_000_000, label: 'US/CA/AU · $10',  contractRegion: 3 },
-  10: { usdc: 10_000_000, label: 'VPN · $10',       contractRegion: 3 },
+  0:  { usdc: 2_000_000,  label: 'CIS · $2',    contractRegion: 0 },
+  1:  { usdc: 4_000_000,  label: 'Asia · $4',   contractRegion: 1 },
+  2:  { usdc: 7_000_000,  label: 'Europe · $7', contractRegion: 2 },
+  3:  { usdc: 10_000_000, label: 'US · $10',    contractRegion: 3 },
+  4:  { usdc: 4_000_000,  label: 'LATAM · $4',  contractRegion: 4 },
+  5:  { usdc: 10_000_000, label: 'CA · $10',    contractRegion: 5 },
+  10: { usdc: 10_000_000, label: 'VPN · $10',   contractRegion: 3 },
 };
 
 const CACHE_TTL_SECONDS = 3600;

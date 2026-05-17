@@ -5,16 +5,20 @@ import { cn } from "@/lib/utils";
 
 export const REGION_LABELS: Record<number, string> = {
   0: "CIS",
-  1: "Asia / LATAM",
+  1: "Asia",
   2: "Europe",
-  3: "US / CA",
+  3: "US",
+  4: "LATAM",
+  5: "CA / AU",
 };
 
 const REGION_HINTS: Record<number, string> = {
   0: "RU · BY · KZ",
-  1: "TH · BR · MX",
+  1: "CN · JP · TH",
   2: "DE · FR · PL",
-  3: "US · CA · AU",
+  3: "US",
+  4: "BR · MX · AR",
+  5: "CA · AU · GB",
 };
 
 const LS_KEY = "sig404_board_region";

@@ -45,6 +45,8 @@ library FactoryStorage {
     uint8 constant REGION_ASIA  = 1;
     uint8 constant REGION_EU    = 2;
     uint8 constant REGION_US    = 3;
+    uint8 constant REGION_LATAM = 4;
+    uint8 constant REGION_CA    = 5;
 
     struct Layout {
         address usdc;
@@ -169,7 +171,7 @@ contract FactoryFacet {
         if (client == executor) revert ClientEqualsExecutor();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0) revert ZeroDeadline();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
         if (msg.sender != client && msg.sender != address(this)) revert NotClient();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
@@ -212,7 +214,7 @@ contract FactoryFacet {
         if (client == executor) revert ClientEqualsExecutor();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0) revert ZeroDeadline();
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         if (fs.agreementDeployer == address(0)) revert DeployerNotSet();
@@ -255,7 +257,7 @@ contract FactoryFacet {
     // -------- ADMIN --------
 
     function setRegionFee(uint8 region, uint256 newFee) external onlyOwner {
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
         FactoryStorage.layout().regionFee[region] = newFee;
         emit RegionFeeUpdated(region, newFee);
     }
@@ -295,16 +297,20 @@ contract FactoryFacet {
     // -------- READ --------
 
     function getRegionFee(uint8 region) external view returns (uint256) {
-        if (region > 3) revert InvalidRegion();
+        if (region > 5) revert InvalidRegion();
         return FactoryStorage.layout().regionFee[region];
     }
 
-    function getAllFees() external view returns (uint256 cis, uint256 asia, uint256 eu, uint256 us) {
+    function getAllFees() external view returns (
+        uint256 cis, uint256 asia, uint256 eu, uint256 us, uint256 latam, uint256 ca
+    ) {
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
-        cis  = fs.regionFee[0];
-        asia = fs.regionFee[1];
-        eu   = fs.regionFee[2];
-        us   = fs.regionFee[3];
+        cis   = fs.regionFee[0];
+        asia  = fs.regionFee[1];
+        eu    = fs.regionFee[2];
+        us    = fs.regionFee[3];
+        latam = fs.regionFee[4];
+        ca    = fs.regionFee[5];
     }
 
     function getFeeRecipient() external view returns (address) {
