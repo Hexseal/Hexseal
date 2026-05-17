@@ -17,7 +17,7 @@ import {
 import Link from "next/link";
 import { UserName } from "@/components/UserName";
 import { useTranslations } from "next-intl";
-import { BoardRegionFilter, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
+import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +47,6 @@ interface HireRequest {
   agreement: string;
 }
 
-const REGION_LABELS: Record<number, string> = { 0: "CIS", 1: "Asia/LATAM", 2: "Europe", 3: "US/CA" };
 const REQUEST_STATUS: Record<number, string> = { 0: "Pending", 1: "Accepted", 2: "Rejected", 3: "Cancelled" };
 const DEAL_STATUS: Record<number, string> = { 0: "Created", 1: "Funded", 2: "Active", 3: "Done", 4: "Disputed", 5: "Resolved", 6: "Refunded" };
 
@@ -179,6 +178,8 @@ function ServiceCard({
   myRequests,
   onRequest,
   isRequesting,
+  expanded,
+  onToggle,
 }: {
   service: Service;
   address?: string;
@@ -186,8 +187,9 @@ function ServiceCard({
   myRequests: HireRequest[];
   onRequest: (service: Service) => void;
   isRequesting: boolean;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const isMyService = address?.toLowerCase() === service.executor.toLowerCase();
   const t = useTranslations();
 
@@ -207,7 +209,7 @@ function ServiceCard({
           ? "0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)"
           : "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)",
       }}
-      onClick={() => setExpanded(v => !v)}
+      onClick={onToggle}
     >
       {/* Row */}
       <div className="flex items-center gap-3 px-4 py-4">
@@ -308,6 +310,7 @@ export default function ExecutorBoardPage() {
   const [services, setServices]       = useState<Service[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
   const [requestModal, setRequestModal] = useState<Service | null>(null);
   const [isRequesting, setIsRequesting] = useState(false);
 
@@ -586,6 +589,8 @@ export default function ExecutorBoardPage() {
                 myRequests={myRequests.filter(r => String(r.serviceId) === svc.serviceId)}
                 onRequest={() => setRequestModal(svc)}
                 isRequesting={isRequesting}
+                expanded={expandedServiceId === svc.serviceId}
+                onToggle={() => setExpandedServiceId(prev => prev === svc.serviceId ? null : svc.serviceId)}
               />
             ))}
           </div>

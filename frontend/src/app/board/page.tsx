@@ -15,7 +15,7 @@ import {
 import Link from "next/link";
 import { UserName } from "@/components/UserName";
 import { useTranslations } from "next-intl";
-import { BoardRegionFilter, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
+import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 
 interface JobRecord {
   client: string;
@@ -30,13 +30,6 @@ interface JobRecord {
   chosenExecutor: string;
   agreement: string;
 }
-
-const REGION_LABELS: Record<number, string> = {
-  0: "CIS",
-  1: "Asia/LATAM",
-  2: "Europe",
-  3: "US/CA",
-};
 
 function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -62,6 +55,8 @@ function JobCard({
   hasApplied,
   applicants,
   onApplied,
+  expanded,
+  onToggle,
 }: {
   jobId: bigint;
   job: JobRecord;
@@ -70,8 +65,9 @@ function JobCard({
   hasApplied?: boolean;
   applicants?: string[];
   onApplied?: () => void;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [isAccepting, setIsAccepting] = useState<string | null>(null);
   const [termsText, setTermsText] = useState<string | null>(null);
@@ -135,7 +131,7 @@ function JobCard({
           ? "0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)"
           : "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)",
       }}
-      onClick={() => setExpanded(v => !v)}
+      onClick={onToggle}
     >
       {/* ── Collapsed row ── */}
       <div className="flex items-center gap-3 px-4 py-4">
@@ -253,6 +249,7 @@ function JobCard({
 export default function BoardPage() {
   const { address, isConnected } = useAccount();
   const [searchQuery, setSearchQuery] = useState("");
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const t = useTranslations();
 
   // Region filter — persisted in localStorage, auto-detected from IP on first visit
@@ -470,6 +467,8 @@ export default function BoardPage() {
                 hasApplied={appliedSet.has(id.toString())}
                 applicants={applicantsMap.get(id.toString())}
                 onApplied={refetch}
+                expanded={expandedJobId === id.toString()}
+                onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
               />
             ))}
           </div>
