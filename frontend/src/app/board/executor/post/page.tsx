@@ -52,9 +52,12 @@ function sanitizeHtml(text: string): string {
 
 const REGION_LABELS: Record<number, string> = {
   0: "CIS",
-  1: "ASIA/LATAM",
-  2: "EUROPE",
-  3: "US/CA",
+  1: "Asia",
+  2: "Europe",
+  3: "US",
+  4: "LATAM",
+  5: "CA",
+  6: "AU",
 };
 
 const CATEGORIES = ["Design", "Development", "Marketing", "Content", "Other"];

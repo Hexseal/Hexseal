@@ -32,13 +32,15 @@ interface Props {
   onOpenChange?: (open: boolean) => void;
   /** On mobile: hide Dashboard/Messages/Settings (already in bottom nav) */
   hideNavItems?: boolean;
+  /** Hide locale toggle (e.g. on home page) */
+  hideLocale?: boolean;
 }
 
-export default function WalletMenu({ open, onOpenChange, hideNavItems = false }: Props) {
+export default function WalletMenu({ open, onOpenChange, hideNavItems = false, hideLocale = false }: Props) {
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
   const [mounted, setMounted] = useState(false);
@@ -47,6 +49,15 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
   const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
 
   useEffect(() => { setMounted(true); }, []);
+
+  // Sync "has-wallet" cookie so middleware can redirect "/" → "/board" instantly.
+  useEffect(() => {
+    if (isConnected) {
+      document.cookie = 'has-wallet=1; path=/; max-age=31536000; SameSite=Lax';
+    } else if (status === 'disconnected') {
+      document.cookie = 'has-wallet=; path=/; max-age=0; SameSite=Lax';
+    }
+  }, [isConnected, status]);
 
   // ENS name (only on mainnet, but we try anyway)
   const { data: ensName } = useEnsName({
@@ -120,13 +131,22 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false }:
 
   const handleDisconnect = () => {
     disconnect();
+    // Clear cookie so middleware won't redirect back to /board
+    document.cookie = 'has-wallet=; path=/; max-age=0; SameSite=Lax';
+    // Clear wagmi + WalletConnect session storage to prevent auto-reconnect on mobile
+    try {
+      const keys = Object.keys(localStorage).filter(k =>
+        k.startsWith('wagmi') || k.startsWith('wc@') || k.startsWith('@walletconnect') || k === 'wallet-ever-connected'
+      );
+      keys.forEach(k => localStorage.removeItem(k));
+    } catch {}
     window.location.href = "/";
   };
 
   if (!mounted || !isConnected || !address) {
     return (
       <div className="flex items-center gap-1">
-        <LocaleToggle locale={locale} setLocale={setLocale} />
+        {!hideLocale && <LocaleToggle locale={locale} setLocale={setLocale} />}
         <button
           onClick={openConnectModal}
           disabled={!mounted}

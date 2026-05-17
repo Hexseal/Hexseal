@@ -11,7 +11,6 @@ import { useXmtpStatus } from '@/hooks/useXmtpStatus';
 import { useProfile } from '@/hooks/useProfile';
 import { ChatPanel } from '@/components/ChatPanel';
 import { MessagingSetup } from '@/components/MessagingSetup';
-import MobileBottomNav from '@/components/MobileBottomNav';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
@@ -105,8 +104,10 @@ function ConvoItem({
     <button
       onClick={onClick}
       className={cn(
-        'w-full flex items-start gap-3 px-3 py-2.5 text-left transition-all rounded-[16px]',
-        isSelected ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]',
+        'w-full flex items-start gap-3 px-3 py-2.5 text-left transition-all rounded-[16px] border',
+        isSelected
+          ? 'bg-white/[0.07] border-white/[0.08]'
+          : 'bg-white/[0.03] border-white/[0.04] hover:bg-white/[0.05] hover:border-white/[0.07]',
       )}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -364,7 +365,7 @@ function ChatHubPageInner() {
       {/* ── Sidebar ── */}
       <aside
         className={cn(
-          'flex-shrink-0 border-r border-white/[0.05] flex flex-col overflow-hidden bg-black',
+          'flex-shrink-0 border-r border-white/[0.05] flex flex-col overflow-hidden bg-[#080808]',
           // Desktop: always static in layout
           'sm:relative sm:flex sm:w-80',
           // Mobile: full-width when no chat selected, hidden when chat is open
@@ -493,7 +494,7 @@ function ChatHubPageInner() {
           ))}
 
           {/* Spacer so last items aren't hidden under the bottom nav pill on mobile */}
-          <div className="sm:hidden flex-shrink-0" style={{ height: 'calc(92px + env(safe-area-inset-bottom, 0px))' }} />
+          <div className="sm:hidden flex-shrink-0" style={{ height: 'calc(98px + env(safe-area-inset-bottom, 0px))' }} />
 
         </div>
       </aside>
@@ -511,9 +512,6 @@ function ChatHubPageInner() {
           : <EmptyState />
         }
       </main>
-
-      {/* Bottom nav only on chat list (no conversation selected) */}
-      {!selected && <MobileBottomNav />}
 
     </div>
   );

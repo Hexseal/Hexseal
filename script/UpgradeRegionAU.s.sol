@@ -2,22 +2,16 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// UpgradeRegions7.s.sol
+// UpgradeRegionAU.s.sol
 //
-// Расширяет PPP-регионы с 4 до 6 (on-chain 0-6):
-//   0: CIS   $2   — без изменений
-//   1: Asia  $4   — был Asia/LATAM, теперь только Asia
-//   2: EU    $7   — без изменений
-//   3: US    $10  — был US/CA, теперь только US
-//   4: LATAM $4   — новый
-//   5: CA    $10  — новый (CA + AU + GB + NZ)
-//   6: AU    $10  — без изменений (теперь только AU)
+// Добавляет регион 6 (AU) — расширяет с 0-5 до 0-6:
+//   5: CA  $10  — без изменений
+//   6: AU  $10  — новый (AU + NZ)
 //
-// Что меняется в контрактах:
-//   - region > 3  →  region > 5  (FactoryFacet, JobBoardFacet, ServiceBoardFacet)
-//   - getAllFees() возвращает 6 значений вместо 4
-//
-// Старые данные (объявления с region 0-3) не затрагиваются.
+// Что меняется:
+//   - region > 5 → region > 6  (FactoryFacet, JobBoardFacet, ServiceBoardFacet)
+//   - getAllFees() теперь возвращает 7 значений (добавлен au)
+//   - setRegionFee(6, 10_000_000) устанавливает fee для AU
 // ============================================================
 
 import "forge-std/Script.sol";
@@ -27,7 +21,7 @@ import "../src/FactoryFacet.sol";
 import "../src/facets/JobBoardFacet.sol";
 import "../src/facets/ServiceBoardFacet.sol";
 
-contract UpgradeRegions7 is Script {
+contract UpgradeRegionAU is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address diamond = vm.envOr("DIAMOND_ADDRESS", address(0xF00CC71878c226E0b64253Fb71dD802aF12165D0));
@@ -35,8 +29,8 @@ contract UpgradeRegions7 is Script {
         vm.startBroadcast(deployerKey);
 
         // ── 1. Deploy new facets ──────────────────────────────────────────────
-        FactoryFacet      newFactory    = new FactoryFacet();
-        JobBoardFacet     newJobBoard   = new JobBoardFacet();
+        FactoryFacet      newFactory     = new FactoryFacet();
+        JobBoardFacet     newJobBoard    = new JobBoardFacet();
         ServiceBoardFacet newServiceBoard = new ServiceBoardFacet();
 
         console.log("New FactoryFacet:      ", address(newFactory));
@@ -44,7 +38,6 @@ contract UpgradeRegions7 is Script {
         console.log("New ServiceBoardFacet: ", address(newServiceBoard));
 
         // ── 2. Build cuts ─────────────────────────────────────────────────────
-
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
 
         // ── FactoryFacet: REPLACE 19 existing selectors ──
@@ -128,10 +121,9 @@ contract UpgradeRegions7 is Script {
         console.log("Applying diamond cut (3 facets, all Replace)...");
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
-        // ── 4. Initialize new region fees (4=LATAM $4, 5=CA $10) ─────────────
-        console.log("Setting region fees for LATAM (4) and CA (5)...");
-        FactoryFacet(diamond).setRegionFee(4, 4_000_000);   // LATAM $4
-        FactoryFacet(diamond).setRegionFee(5, 10_000_000);  // CA    $10
+        // ── 4. Set AU fee ─────────────────────────────────────────────────────
+        console.log("Setting region fee for AU (6) = $7...");
+        FactoryFacet(diamond).setRegionFee(6, 7_000_000);
 
         // ── 5. Verify ─────────────────────────────────────────────────────────
         (
@@ -154,7 +146,7 @@ contract UpgradeRegions7 is Script {
         console.log("  5 CA:    ", ca);
         console.log("  6 AU:    ", au);
         console.log("");
-        console.log("UpgradeRegions7 complete!");
+        console.log("UpgradeRegionAU complete!");
 
         vm.stopBroadcast();
     }

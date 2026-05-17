@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount } from "wagmi";
@@ -92,13 +92,27 @@ export default function MobileBottomNav() {
   const { isConnected } = useAccount();
   const pathname = usePathname();
   const { unreadCount } = useNotifications();
-  const [boardOpen, setBoardOpen] = useState(false);
+  const [boardMounted, setBoardMounted] = useState(false);
+  const [boardVisible, setBoardVisible] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const t = useTranslations();
 
-  // Close the board popup whenever the user navigates to a new page.
-  useEffect(() => {
-    setBoardOpen(false);
-  }, [pathname]);
+  const openBoard = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    setBoardMounted(true);
+    // Two RAF frames so the browser paints the element before the transition fires.
+    requestAnimationFrame(() => requestAnimationFrame(() => setBoardVisible(true)));
+  };
+
+  const closeBoard = () => {
+    setBoardVisible(false);
+    closeTimer.current = setTimeout(() => setBoardMounted(false), 280);
+  };
+
+  const toggleBoard = () => (boardMounted && boardVisible ? closeBoard() : openBoard());
+
+  // Close on navigation.
+  useEffect(() => { closeBoard(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!isConnected) return null;
 
@@ -106,22 +120,36 @@ export default function MobileBottomNav() {
     pathname === path || pathname.startsWith(path + "/");
 
   const boardActive = isActive("/board");
+  const boardOpen = boardMounted && boardVisible;
+
+  const POPUP_TRANSITION = "transform 280ms cubic-bezier(0.34,1.56,0.64,1), opacity 220ms ease-out";
 
   return (
     <>
-      {/* backdrop to close board popup */}
-      {boardOpen && (
+      {/* backdrop */}
+      {boardMounted && (
         <div
           className="fixed inset-0 z-40"
-          onClick={() => setBoardOpen(false)}
+          style={{
+            opacity: boardVisible ? 1 : 0,
+            transition: "opacity 220ms ease-out",
+            pointerEvents: boardVisible ? "auto" : "none",
+          }}
+          onClick={closeBoard}
         />
       )}
 
-      {/* Board popup — sits directly above the nav pill, same visual language */}
-      {boardOpen && (
+      {/* Board popup */}
+      {boardMounted && (
         <div
-          className="fixed z-50 left-3 right-3 animate-in slide-in-from-bottom-3 fade-in duration-200"
-          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 100px)" }}
+          className="fixed z-50 left-3 right-3"
+          style={{
+            bottom: "calc(env(safe-area-inset-bottom, 0px) + 100px)",
+            transform: boardVisible ? "translateY(0) scale(1)" : "translateY(16px) scale(0.97)",
+            opacity: boardVisible ? 1 : 0,
+            transition: POPUP_TRANSITION,
+            willChange: "transform, opacity",
+          }}
         >
           <div
             className="flex bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[28px] overflow-hidden"
@@ -132,7 +160,7 @@ export default function MobileBottomNav() {
           >
             <Link
               href="/board"
-              onClick={() => setBoardOpen(false)}
+              onClick={closeBoard}
               className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
               <span className="w-9 h-9 rounded-2xl bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
@@ -152,7 +180,7 @@ export default function MobileBottomNav() {
 
             <Link
               href="/board/executor"
-              onClick={() => setBoardOpen(false)}
+              onClick={closeBoard}
               className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
               <span className="w-9 h-9 rounded-2xl bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
@@ -202,7 +230,7 @@ export default function MobileBottomNav() {
           <PillBtn
             active={boardActive || boardOpen}
             label={t("nav.board")}
-            onClick={() => setBoardOpen((v) => !v)}
+            onClick={toggleBoard}
           >
             <LayoutList className="w-[24px] h-[24px]" />
           </PillBtn>

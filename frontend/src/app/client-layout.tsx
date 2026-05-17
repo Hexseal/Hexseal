@@ -1,17 +1,27 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import React, { useEffect, useState, Suspense } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
 
+// Shows MobileBottomNav on the chat LIST page only (not when a conversation is open).
+// Must be outside the chat fixed <main> so position:fixed works correctly on iOS.
+function ChatMobileNavInner() {
+  const sp = useSearchParams();
+  return sp.get('peer') ? null : <MobileBottomNav />;
+}
+function ChatMobileNav() {
+  return <Suspense fallback={null}><ChatMobileNavInner /></Suspense>;
+}
+
 // Re-mounts on each navigation via key={pathname}, triggering the fade-in.
 function PageFade({ children, pathname }: { children: React.ReactNode; pathname: string }) {
   return (
-    <div key={pathname} className="animate-in fade-in duration-200 min-h-0 flex flex-col flex-1">
+    <div key={pathname} className="animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out min-h-0 flex flex-col flex-1">
       {children}
     </div>
   );
@@ -143,6 +153,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         >
           <PageFade pathname={pathname}>{children}</PageFade>
         </main>
+        <ChatMobileNav />
         {modal}
         <Toaster />
       </>

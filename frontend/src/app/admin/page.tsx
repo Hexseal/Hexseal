@@ -783,10 +783,13 @@ function SettingsTab() {
   const [selectedRegion, setSelectedRegion] = useState(0);
 
   const regions = [
-    { idx: 0, name: 'CIS (СНГ)',    fee: fees?.[0] },
-    { idx: 1, name: 'Asia/LatAm',  fee: fees?.[1] },
-    { idx: 2, name: 'Europe',      fee: fees?.[2] },
-    { idx: 3, name: 'US/Canada',   fee: fees?.[3] },
+    { idx: 0, name: 'CIS (СНГ)',  fee: fees?.[0] },
+    { idx: 1, name: 'Asia',       fee: fees?.[1] },
+    { idx: 2, name: 'Europe',     fee: fees?.[2] },
+    { idx: 3, name: 'US',         fee: fees?.[3] },
+    { idx: 4, name: 'LATAM',      fee: fees?.[4] },
+    { idx: 5, name: 'CA',         fee: fees?.[5] },
+    { idx: 6, name: 'AU',         fee: fees?.[6] },
   ];
 
   const handleSetFeeRecipient = async () => {

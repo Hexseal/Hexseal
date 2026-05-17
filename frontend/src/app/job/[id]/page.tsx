@@ -33,9 +33,12 @@ interface JobRecord {
 
 const REGION_LABELS: Record<number, string> = {
   0: "CIS · $2",
-  1: "Asia/LATAM · $4",
+  1: "Asia · $4",
   2: "Europe · $7",
-  3: "US/CA · $10",
+  3: "US · $10",
+  4: "LATAM · $4",
+  5: "CA · $10",
+  6: "AU · $7",
 };
 
 const JOB_STATUS: Record<number, { label: string; color: string }> = {

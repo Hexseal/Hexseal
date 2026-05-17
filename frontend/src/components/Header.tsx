@@ -52,6 +52,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const showBack = pathname !== "/";
+  const isHome = pathname === "/";
   const t = useTranslations();
 
   const { data: isArbiter } = useReadContract({
@@ -114,6 +115,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
               open={openPanelMobile === "wallet"}
               onOpenChange={(o) => setOpenPanelMobile(o ? "wallet" : null)}
               hideNavItems
+              hideLocale={isHome}
             />
           </div>
         </div>
@@ -188,6 +190,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
               <WalletMenu
                 open={openPanelDesktop === "wallet"}
                 onOpenChange={(o) => setOpenPanelDesktop(o ? "wallet" : null)}
+                hideLocale={isHome}
               />
             </div>
           </div>

@@ -9,7 +9,8 @@ export const REGION_LABELS: Record<number, string> = {
   2: "Europe",
   3: "US",
   4: "LATAM",
-  5: "CA / AU",
+  5: "CA",
+  6: "AU",
 };
 
 const REGION_HINTS: Record<number, string> = {
@@ -18,7 +19,8 @@ const REGION_HINTS: Record<number, string> = {
   2: "DE · FR · PL",
   3: "US",
   4: "BR · MX · AR",
-  5: "CA · AU · GB",
+  5: "CA · GB",
+  6: "AU · NZ",
 };
 
 const LS_KEY = "sig404_board_region";

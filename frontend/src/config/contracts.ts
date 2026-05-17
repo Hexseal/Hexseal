@@ -1173,6 +1173,9 @@ export const REGIONS = {
   ASIA: 1,
   EU: 2,
   US: 3,
+  LATAM: 4,
+  CA: 5,
+  AU: 6,
 } as const;
 
 // Статусы сделок

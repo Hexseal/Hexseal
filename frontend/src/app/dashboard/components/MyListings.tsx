@@ -1049,7 +1049,7 @@ export function MyClientRequests({ address }: { address: string }) {
 // ─── MyJobReceipts ────────────────────────────────────────────────────────────
 
 const RECEIPT_REGION: Record<number, string> = {
-  0: 'CIS', 1: 'Asia/LATAM', 2: 'Europe', 3: 'US/CA',
+  0: 'CIS', 1: 'Asia', 2: 'Europe', 3: 'US', 4: 'LATAM', 5: 'CA', 6: 'AU',
 };
 
 interface ReceiptItem {

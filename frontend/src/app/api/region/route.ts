@@ -14,8 +14,10 @@ const REGION_MAP: Record<string, number> = {
   // LATAM = 4
   BR: 4, MX: 4, AR: 4, CO: 4, CL: 4, PE: 4, VE: 4, EC: 4, BO: 4, PY: 4, UY: 4,
   GT: 4, HN: 4, SV: 4, NI: 4, CR: 4, PA: 4, DO: 4, CU: 4,
-  // CA (+ AU, GB, NZ) = 5
-  CA: 5, AU: 5, NZ: 5, GB: 5,
+  // CA = 5
+  CA: 5, GB: 5,
+  // AU = 6
+  AU: 6, NZ: 6,
 };
 
 // Internal cache code 10 = VPN/proxy (contractRegion=3, same $10 price)
@@ -26,6 +28,7 @@ const FEE_MAP: Record<number, { usdc: number; label: string; contractRegion: num
   3:  { usdc: 10_000_000, label: 'US · $10',    contractRegion: 3 },
   4:  { usdc: 4_000_000,  label: 'LATAM · $4',  contractRegion: 4 },
   5:  { usdc: 10_000_000, label: 'CA · $10',    contractRegion: 5 },
+  6:  { usdc: 7_000_000,  label: 'AU · $7',     contractRegion: 6 },
   10: { usdc: 10_000_000, label: 'VPN · $10',   contractRegion: 3 },
 };
 

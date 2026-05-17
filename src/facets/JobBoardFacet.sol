@@ -62,7 +62,7 @@ library JobBoardStorage {
         uint256 amount;         // сумма сделки USDC (6 decimals)
         uint256 deadlineDays;   // для Agreement
         bytes32 termsHash;      // IPFS CID условий
-        uint8 region;           // PPP регион (0=CIS,1=Asia,2=EU,3=US)
+        uint8 region;           // PPP регион (0=CIS,1=Asia,2=EU,3=US,4=LATAM,5=CA,6=AU)
         JobStatus status;
         uint256 createdAt;
         address chosenExecutor; // address(0) пока не принят
@@ -167,7 +167,7 @@ contract JobBoardFacet {
         if (bytes(description).length > 500) revert DescriptionTooLong();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 5) revert InvalidRegion();
+        if (region > 6) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         uint256 fee = fs.regionFee[region];
@@ -223,7 +223,7 @@ contract JobBoardFacet {
         if (bytes(description).length > 500) revert DescriptionTooLong();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
-        if (region > 5) revert InvalidRegion();
+        if (region > 6) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         uint256 fee = fs.regionFee[region];
