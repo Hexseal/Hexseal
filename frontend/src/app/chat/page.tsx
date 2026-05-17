@@ -389,16 +389,14 @@ function ChatHubPageInner() {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] flex-shrink-0">
           <div className="flex items-center gap-2">
-            {/* Back button — visible on mobile only when pill header is hidden */}
-            {!selected && (
-              <button
-                onClick={() => router.back()}
-                className="sm:hidden -ml-1 w-8 h-8 flex items-center justify-center text-white/35 hover:text-white/70 hover:bg-white/[0.06] rounded-[10px] transition-colors flex-shrink-0"
-                aria-label="Go back"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-            )}
+            {/* Back button — always visible on mobile (pill header is hidden in chatMode) */}
+            <button
+              onClick={() => router.back()}
+              className="sm:hidden -ml-1 w-8 h-8 flex items-center justify-center text-white/35 hover:text-white/70 hover:bg-white/[0.06] rounded-[10px] transition-colors flex-shrink-0"
+              aria-label="Go back"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
             <div>
               <h2 className="text-sm font-semibold text-white/90">{t("chat.title")}</h2>
               <div className="flex items-center gap-1 mt-0.5">

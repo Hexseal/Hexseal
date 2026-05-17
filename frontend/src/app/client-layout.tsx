@@ -45,27 +45,41 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     };
   }, []);
 
-  // For chat pages: prevent iOS Safari from scrolling the document when
-  // the keyboard opens. overflow:hidden on both html+body is enough;
-  // position:fixed is intentionally avoided — it causes a scroll-position
-  // jump (the whole page "raises") and fights the interactiveWidget viewport setting.
+  // For chat pages: prevent iOS Safari from scrolling the document when the
+  // keyboard opens (its "scroll-to-focused-input" fires immediately on tap,
+  // before the keyboard even appears, and "flies" the whole chat up).
+  // body.position=fixed is the only reliable stopper on iOS; we compensate the
+  // scroll-position snap by saving scrollY first so there's no visual jump.
   const isChatPageRef = React.useRef(false);
+  const bodyScrollY   = React.useRef(0);
   const currentIsChatPage = pathname?.startsWith('/chat') ?? false;
   useEffect(() => {
     isChatPageRef.current = currentIsChatPage;
     const body = document.body;
     const html = document.documentElement;
     if (currentIsChatPage) {
-      html.style.overflow = 'hidden';
+      bodyScrollY.current = window.scrollY;
+      body.style.position = 'fixed';
+      body.style.top      = `-${bodyScrollY.current}px`;
+      body.style.width    = '100%';
       body.style.overflow = 'hidden';
+      html.style.overflow = 'hidden';
     } else {
-      html.style.overflow = '';
+      body.style.position = '';
+      body.style.top      = '';
+      body.style.width    = '';
       body.style.overflow = '';
+      html.style.overflow = '';
+      window.scrollTo(0, bodyScrollY.current);
     }
     return () => {
       if (isChatPageRef.current) {
-        html.style.overflow = '';
+        body.style.position = '';
+        body.style.top      = '';
+        body.style.width    = '';
         body.style.overflow = '';
+        html.style.overflow = '';
+        window.scrollTo(0, bodyScrollY.current);
       }
     };
   }, [currentIsChatPage]);
