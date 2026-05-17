@@ -27,6 +27,19 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => window.removeEventListener('sig404:open-onboarding', handler);
   }, []);
 
+  // Track the true visible-viewport height (shrinks when keyboard opens on iOS).
+  // Sets --vvh on <html> so the chat container can use it instead of dvh/vh.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
+    };
+    vv.addEventListener('resize', update);
+    update(); // set immediately
+    return () => vv.removeEventListener('resize', update);
+  }, []);
+
   const modal = (
     <OnboardingModal
       forceOpen={onboardingForced}
@@ -62,7 +75,16 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <>
         {topScrim}
         <Header />
-        <main className="h-dvh flex flex-col overflow-hidden" style={{ paddingTop: 'calc(4rem + env(safe-area-inset-top))' }}>
+        {/* height = visual viewport height (--vvh) minus the header clearance.
+            --vvh is set by the VisualViewport listener above and shrinks when
+            the keyboard opens, so the flex layout stays correct on iOS. */}
+        <main
+          className="flex flex-col overflow-hidden"
+          style={{
+            height: 'calc(var(--vvh, 100dvh) - 4rem - env(safe-area-inset-top, 0px))',
+            marginTop: 'calc(4rem + env(safe-area-inset-top, 0px))',
+          }}
+        >
           <PageFade pathname={pathname}>{children}</PageFade>
         </main>
         {modal}

@@ -219,8 +219,6 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef   = useRef<HTMLDivElement>(null);
   const scrollRef   = useRef<HTMLDivElement>(null);
-  const inputBarRef = useRef<HTMLDivElement>(null);
-  const [inputH, setInputH] = useState(64);
 
   const chatUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/chat/${address?.toLowerCase()}`
@@ -233,15 +231,16 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Track input bar height so messages don't hide under it
+  // Scroll to bottom when keyboard opens/closes (visual viewport resize)
   useEffect(() => {
-    const el = inputBarRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => setInputH(entry.contentRect.height));
-    ro.observe(el);
-    setInputH(el.getBoundingClientRect().height);
-    return () => ro.disconnect();
-  }, []);
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      if (atBottom) bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    };
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, [atBottom]);
 
   // Mark conversation as seen whenever this chat is open
   useEffect(() => {
@@ -660,7 +659,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col">
         <div className="flex-1" />
-        <div className="px-4 pt-5 space-y-1" style={{ paddingBottom: `${inputH + 12}px` }}>
+        <div className="px-4 py-5 space-y-1">
 
           {!isLoading && needsSetup && (
             <div className="flex flex-col items-center justify-center py-16 gap-4 px-4">
@@ -766,10 +765,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         )}
       </div>
 
-      {/* Input — fixed above keyboard on mobile, aligned after sidebar on desktop */}
+      {/* Input — flex-shrink-0 stays at the bottom of the flex column.
+          The parent container height is driven by --vvh (visual viewport),
+          so this naturally sits just above the keyboard on iOS. */}
       <div
-        ref={inputBarRef}
-        className="fixed bottom-0 left-0 right-0 sm:left-80 z-10 px-3 pt-2 flex flex-col gap-1.5 bg-[#070707]/85 backdrop-blur-xl border-t border-white/[0.05]"
+        className="flex-shrink-0 px-3 pt-2 flex flex-col gap-1.5 bg-[#070707]/85 backdrop-blur-xl border-t border-white/[0.05]"
         style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom))' }}
       >
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
