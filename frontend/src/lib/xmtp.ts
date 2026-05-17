@@ -67,6 +67,7 @@ export type DmConversation = {
   peerAddress: string;
   lastText: string;
   lastAt: number;
+  lastFromMe: boolean;
 };
 
 // ─── Identifier helper ────────────────────────────────────────────────────────
@@ -351,9 +352,11 @@ export async function listDmConversations(client: XmtpClient): Promise<DmConvers
       let lastText = '';
       let lastAt = 0;
 
+      let lastFromMe = true;
       if (last) {
         lastAt = last.sentAtNs ? Number(last.sentAtNs) / 1_000_000 : 0;
         const isFromMe = last.senderInboxId === myInboxId;
+        lastFromMe = isFromMe;
         const content = typeof last.content === 'string' ? last.content : '';
         if (content.startsWith('{')) {
           try { const p = JSON.parse(content) as { name?: string }; lastText = p.name ? `📎 ${p.name}` : content; }
@@ -363,7 +366,7 @@ export async function listDmConversations(client: XmtpClient): Promise<DmConvers
         }
       }
 
-      result.push({ dm, peerAddress, lastText, lastAt });
+      result.push({ dm, peerAddress, lastText, lastAt, lastFromMe });
     } catch {
       // skip malformed conversations
     }

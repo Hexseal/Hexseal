@@ -215,10 +215,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   const preDealCtx = usePreDealBar(address, recipientAddress, !!dealContext);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const fileRef    = useRef<HTMLInputElement>(null);
+  const fileRef     = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const scrollRef  = useRef<HTMLDivElement>(null);
+  const bottomRef   = useRef<HTMLDivElement>(null);
+  const scrollRef   = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<HTMLDivElement>(null);
+  const [inputH, setInputH] = useState(64);
 
   const chatUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/chat/${address?.toLowerCase()}`
@@ -230,6 +232,26 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Track input bar height so messages don't hide under it
+  useEffect(() => {
+    const el = inputBarRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setInputH(entry.contentRect.height));
+    ro.observe(el);
+    setInputH(el.getBoundingClientRect().height);
+    return () => ro.disconnect();
+  }, []);
+
+  // Mark conversation as seen whenever this chat is open
+  useEffect(() => {
+    if (!recipientAddress) return;
+    const key = `sig404_chat_seen_${recipientAddress.toLowerCase()}`;
+    const mark = () => localStorage.setItem(key, String(Date.now()));
+    mark();
+    window.addEventListener('focus', mark);
+    return () => window.removeEventListener('focus', mark);
+  }, [recipientAddress]);
 
   useEffect(() => {
     if (atBottom) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -638,7 +660,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col">
         <div className="flex-1" />
-        <div className="px-4 py-5 space-y-1">
+        <div className="px-4 pt-5 space-y-1" style={{ paddingBottom: `${inputH + 12}px` }}>
 
           {!isLoading && needsSetup && (
             <div className="flex flex-col items-center justify-center py-16 gap-4 px-4">
@@ -744,9 +766,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         )}
       </div>
 
-      {/* Input */}
-      <div className="border-t border-white/[0.07] bg-[#0a0a0a] flex-shrink-0 px-3 pt-2.5 flex flex-col gap-1.5"
-        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+      {/* Input — fixed above keyboard on mobile, aligned after sidebar on desktop */}
+      <div
+        ref={inputBarRef}
+        className="fixed bottom-0 left-0 right-0 sm:left-80 z-10 px-3 pt-2 flex flex-col gap-1.5 bg-[#070707]/85 backdrop-blur-xl border-t border-white/[0.05]"
+        style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom))' }}
+      >
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
         {uploadErr && <p className="text-xs text-red-400/70 px-1">{uploadErr}</p>}
         <div className="flex items-end gap-2">
@@ -769,6 +794,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={!isInitialized}
+            enterKeyHint="send"
+            autoComplete="off"
             placeholder={
               isLoading     ? 'Connecting…'     :
               error         ? 'Chat unavailable' :

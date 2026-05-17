@@ -70,17 +70,24 @@ function formatTime(ts: number) {
 // ─── Conversation item ─────────────────────────────────────────────────────────
 
 function ConvoItem({
-  peerAddress, lastText, lastAt, isSelected, onClick, dealCtx,
+  peerAddress, lastText, lastAt, lastFromMe, isSelected, isSeen, onClick, dealCtx,
 }: {
   peerAddress: string;
   lastText: string;
   lastAt: number;
+  lastFromMe: boolean;
   isSelected: boolean;
+  isSeen: boolean;
   onClick: () => void;
   dealCtx?: DealContext;
 }) {
   const { displayName, avatarUrl } = useProfile(peerAddress);
   const t = useTranslations();
+
+  const seenAt = typeof window !== 'undefined'
+    ? Number(localStorage.getItem(`sig404_chat_seen_${peerAddress}`) ?? 0)
+    : 0;
+  const hasUnread = !lastFromMe && !isSeen && lastAt > seenAt && lastAt > 0;
 
   // Registry AgreementStatus enum: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
   const DEAL_STATUS_LABEL: Record<number, { label: string; cls: string }> = {
@@ -115,7 +122,7 @@ function ConvoItem({
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <span className="text-sm font-medium text-white/85 truncate block">
+            <span className={`text-sm truncate block ${hasUnread ? 'font-semibold text-white' : 'font-medium text-white/85'}`}>
               {displayName ?? shortAddr(peerAddress)}
             </span>
             {displayName && (
@@ -124,9 +131,14 @@ function ConvoItem({
               </span>
             )}
           </div>
-          {lastAt > 0 && (
-            <span className="text-[11px] text-white/25 flex-shrink-0">{formatTime(lastAt)}</span>
-          )}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {lastAt > 0 && (
+              <span className="text-[11px] text-white/25">{formatTime(lastAt)}</span>
+            )}
+            {hasUnread && (
+              <span className="w-2 h-2 rounded-full bg-primary flex-shrink-0" />
+            )}
+          </div>
         </div>
 
         {dealCtx && (
@@ -199,6 +211,9 @@ function ChatHubPageInner() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [newChatAddr, setNewChatAddr] = useState('');
+  const [seenConvos, setSeenConvos]   = useState<Set<string>>(() =>
+    initialPeer ? new Set([initialPeer.toLowerCase()]) : new Set()
+  );
 
   // Load agreements to build peer→deal context map
   const { data: clientDeals } = useReadContract({
@@ -330,8 +345,11 @@ function ChatHubPageInner() {
   }
 
   const handleConvoClick = (addr: string) => {
-    setSelected(addr);
+    const lc = addr.toLowerCase();
+    setSelected(lc);
     setSidebarOpen(false);
+    setSeenConvos(prev => new Set([...prev, lc]));
+    localStorage.setItem(`sig404_chat_seen_${lc}`, String(Date.now()));
   };
 
   const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
@@ -461,19 +479,23 @@ function ChatHubPageInner() {
               peerAddress={selected}
               lastText=""
               lastAt={0}
+              lastFromMe={true}
               isSelected
+              isSeen
               dealCtx={peerDealMap.get(selected)}
               onClick={() => {}}
             />
           )}
 
-          {!isLoading && !error && conversations.map(({ peerAddress, lastText, lastAt }) => (
+          {!isLoading && !error && conversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
             <ConvoItem
               key={peerAddress}
               peerAddress={peerAddress}
               lastText={lastText}
               lastAt={lastAt}
+              lastFromMe={lastFromMe}
               isSelected={selected === peerAddress}
+              isSeen={seenConvos.has(peerAddress)}
               dealCtx={peerDealMap.get(peerAddress)}
               onClick={() => handleConvoClick(peerAddress)}
             />
