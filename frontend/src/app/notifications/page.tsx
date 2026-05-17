@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, CheckCheck, Trash2, ExternalLink } from "lucide-react";
+import { Bell, CheckCheck, Trash2, ExternalLink, BellRing, BellOff, Loader2 } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useAccount } from "wagmi";
 import { cn } from "@/lib/utils";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
@@ -75,6 +76,7 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
 export default function NotificationsPage() {
   const { isConnected } = useAccount();
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotifications();
+  const { supported, subscribed, permission, loading: pushLoading, enable: enablePush, disable: disablePush } = usePushNotifications();
   const t = useTranslations();
 
   if (!isConnected) {
@@ -124,6 +126,49 @@ export default function NotificationsPage() {
             )}
           </div>
         </div>
+
+        {/* Push notification toggle */}
+        {supported && permission !== 'denied' && (
+          <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-white/8 bg-white/[0.02] mb-4">
+            <div className="flex items-center gap-3">
+              {subscribed
+                ? <BellRing className="w-4 h-4 text-primary/70" />
+                : <BellOff className="w-4 h-4 text-white/30" />
+              }
+              <div>
+                <p className="text-sm font-medium text-white/80">
+                  {subscribed ? 'Push notifications on' : 'Push notifications off'}
+                </p>
+                <p className="text-xs text-white/35">
+                  {subscribed ? 'You\'ll be notified about deal updates even when the app is closed.' : 'Enable to get deal alerts when you\'re away.'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={subscribed ? disablePush : enablePush}
+              disabled={pushLoading}
+              className={cn(
+                'flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40',
+                subscribed
+                  ? 'border border-white/15 text-white/50 hover:border-white/25 hover:text-white/70'
+                  : 'bg-primary text-white hover:bg-primary/80'
+              )}
+            >
+              {pushLoading
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : subscribed ? 'Turn off' : 'Enable'
+              }
+            </button>
+          </div>
+        )}
+
+        {supported && permission === 'denied' && (
+          <div className="px-4 py-3 rounded-xl border border-amber-500/20 bg-amber-500/5 mb-4">
+            <p className="text-xs text-amber-400/70">
+              Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.
+            </p>
+          </div>
+        )}
 
         {/* Empty state */}
         {notifications.length === 0 && (

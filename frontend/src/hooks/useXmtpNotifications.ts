@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
 import { usePathname } from 'next/navigation';
 import { toast } from 'react-hot-toast';
-import { initXmtpClient } from '@/lib/xmtp';
+import { initXmtpClient, dealGroupName } from '@/lib/xmtp';
 import { pushNotif } from '@/lib/notifications';
 
 const flagKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
@@ -56,6 +56,11 @@ export function useXmtpNotifications() {
         if (cancelledRef.current) { stream.return(); return; }
         streamRef.current = stream;
 
+        // Build a map: conversationId → group name (for deal groups)
+        const groups = await client.conversations.listGroups();
+        const groupNameById = new Map<string, string>();
+        for (const g of groups) groupNameById.set(g.id, g.name ?? '');
+
         for await (const msg of stream) {
           if (cancelledRef.current) break;
 
@@ -65,19 +70,38 @@ export function useXmtpNotifications() {
           // Skip when user is already viewing chat/deal pages
           if (isChatPage(pathnameRef.current)) continue;
 
-          // Only notify for plain text messages
           const content = typeof msg.content === 'string' ? msg.content : null;
-          if (!content && typeof msg.content !== 'string') continue;
+          if (!content) continue;
 
-          const body = content
-            ? content.slice(0, 80) + (content.length > 80 ? '…' : '')
-            : 'You have a new message';
+          // Parse file messages to show a friendly preview
+          let body: string;
+          if (content.startsWith('{')) {
+            try {
+              const p = JSON.parse(content) as { _type?: string; name?: string };
+              body = (p._type === 'enc_file' || p._type === 'file') && p.name
+                ? `📎 ${p.name}`
+                : content.slice(0, 80);
+            } catch {
+              body = content.slice(0, 80);
+            }
+          } else {
+            body = content.length > 80 ? content.slice(0, 80) + '…' : content;
+          }
+
+          // Determine link: deal group → /deal/{address}/chat, DM → /chat
+          const groupName = groupNameById.get(msg.conversationId ?? '');
+          let link = '/chat';
+          if (groupName?.startsWith('S404-')) {
+            // Group name format: S404-0x{agreementAddress}
+            const agreementAddr = groupName.slice(5); // strip "S404-"
+            link = `/deal/${agreementAddr}/chat`;
+          }
 
           const saved = pushNotif(address!, {
             type: 'message_new',
             title: 'New Message 💬',
             body,
-            link: '/chat',
+            link,
           });
 
           if (saved) {

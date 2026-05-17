@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import { randomUUID } from 'crypto';
+import webpush from 'web-push';
 import {
   S3Client,
   PutObjectCommand,
@@ -19,6 +20,99 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 dotenv.config();
+
+// ─── Web Push (VAPID) ─────────────────────────────────────────────────────────
+
+let VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY;
+let VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_EMAIL     = process.env.VAPID_EMAIL || 'mailto:admin@signature404.com';
+
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+  const keys = webpush.generateVAPIDKeys();
+  VAPID_PUBLIC_KEY  = keys.publicKey;
+  VAPID_PRIVATE_KEY = keys.privateKey;
+  console.warn('[push] VAPID keys not set — generated for this session only.');
+  console.warn('[push] Add to .env to persist subscriptions across restarts:');
+  console.warn(`VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}`);
+  console.warn(`VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}`);
+  console.warn(`NEXT_PUBLIC_VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}`);
+}
+
+webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+
+// address (lowercase) → PushSubscription[]
+const _pushSubs = new Map();
+
+async function sendPush(address, payload) {
+  const subs = _pushSubs.get(address?.toLowerCase()) ?? [];
+  const dead = [];
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(sub, JSON.stringify(payload));
+    } catch (e) {
+      if (e.statusCode === 404 || e.statusCode === 410) dead.push(sub.endpoint);
+    }
+  }
+  if (dead.length) {
+    _pushSubs.set(address.toLowerCase(), subs.filter(s => !dead.includes(s.endpoint)));
+  }
+}
+
+// ─── Agreement ABI (minimal — for reading deal participants after relay) ───────
+
+const AGREEMENT_MINI_ABI = [
+  'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, bytes32 termsHash_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
+];
+
+const AGR_STATUS_EVENT_ABI = [
+  'event AgreementStatusUpdated(address indexed agreement, uint8 newStatus)',
+];
+const agrEventInterface = new ethers.Interface(AGR_STATUS_EVENT_ABI);
+
+// Agreement.sol internal status enum
+const AGR_PUSH_MSG = {
+  2: { title: 'Deal Activated ⚡', body: 'The deal has been activated. Work has started.' },
+  3: { title: 'Deal Complete ✓',  body: 'Payment has been released. Deal is closed.' },
+  4: { title: 'Dispute Raised ⚠️', body: 'A dispute was opened on your deal. Arbiter will review.' },
+  5: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.' },
+  6: { title: 'Deal Refunded ↩️', body: 'The deal was refunded.' },
+};
+
+async function pushAfterRelay(receipt, agreementAddress) {
+  try {
+    // Parse AgreementStatusUpdated from logs
+    let newStatus = null;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = agrEventInterface.parseLog(log);
+        if (parsed?.name === 'AgreementStatusUpdated') {
+          newStatus = Number(parsed.args.newStatus);
+          break;
+        }
+      } catch {}
+    }
+    if (newStatus === null || !AGR_PUSH_MSG[newStatus]) return;
+
+    // Read agreement participants
+    const agr = new ethers.Contract(agreementAddress, AGREEMENT_MINI_ABI, provider);
+    const details = await agr.getDetails();
+    const client   = details.client_?.toLowerCase();
+    const executor = details.executor_?.toLowerCase();
+    const arbiter  = details.arbiter_?.toLowerCase();
+
+    const msg = AGR_PUSH_MSG[newStatus];
+    const url = `/deal/${agreementAddress}`;
+    const payload = { title: msg.title, body: msg.body, url };
+
+    await Promise.allSettled([
+      client   && sendPush(client,   payload),
+      executor && sendPush(executor, payload),
+      arbiter  && arbiter !== '0x0000000000000000000000000000000000000000' && newStatus === 4 && sendPush(arbiter, payload),
+    ]);
+  } catch {
+    // Non-critical — push is best-effort
+  }
+}
 
 // ─── Storj S3 config ──────────────────────────────────────────────────────────
 
@@ -228,6 +322,9 @@ app.post('/relay', async (req, res) => {
 
     res.json({ success: true, txHash: receipt.hash, blockNumber: receipt.blockNumber });
 
+    // Fire-and-forget push notification (best-effort, non-blocking)
+    pushAfterRelay(receipt, forwardReq.to);
+
   } catch (err) {
     console.error('[relay] error:', err.message);
     res.status(500).json({ error: err.message });
@@ -356,6 +453,47 @@ app.post('/files/multipart/abort', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[files/multipart/abort]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Push notification endpoints ─────────────────────────────────────────────
+
+app.get('/push/vapid-key', (_req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post('/push/subscribe', async (req, res) => {
+  try {
+    const { address, subscription } = req.body || {};
+    if (!address || !subscription?.endpoint) {
+      return res.status(400).json({ error: 'address and subscription required' });
+    }
+    const key = address.toLowerCase();
+    const existing = _pushSubs.get(key) ?? [];
+    // Avoid duplicate endpoints
+    if (!existing.some(s => s.endpoint === subscription.endpoint)) {
+      _pushSubs.set(key, [...existing, subscription]);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/push/unsubscribe', async (req, res) => {
+  try {
+    const { address, endpoint } = req.body || {};
+    if (!address) return res.status(400).json({ error: 'address required' });
+    const key = address.toLowerCase();
+    if (endpoint) {
+      const existing = _pushSubs.get(key) ?? [];
+      _pushSubs.set(key, existing.filter(s => s.endpoint !== endpoint));
+    } else {
+      _pushSubs.delete(key);
+    }
+    res.json({ ok: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
