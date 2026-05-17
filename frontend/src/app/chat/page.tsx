@@ -342,25 +342,29 @@ function ChatHubPageInner() {
       {/* Mobile backdrop when drawer is open over a chat */}
       {sidebarOpen && !!selected && (
         <div
-          className="sm:hidden fixed inset-0 top-16 z-20 bg-black/60 backdrop-blur-[2px]"
+          className="sm:hidden fixed inset-0 z-20 bg-black/60 backdrop-blur-[2px]"
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 68px)' }}
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
       {/* ── Sidebar ── */}
-      <aside className={cn(
-        'flex-shrink-0 border-r border-white/[0.07] flex flex-col overflow-hidden bg-[#070707]',
-        // Desktop: always static in layout
-        'sm:relative sm:flex sm:w-80 sm:translate-x-0 sm:z-auto',
-        // Mobile, no chat selected: full-width (sidebar IS the page)
-        !selected && 'flex w-full',
-        // Mobile, chat selected: slide-over drawer from left
-        !!selected && cn(
-          'fixed top-16 bottom-0 left-0 w-[88vw] max-w-[340px] z-30',
-          'transition-transform duration-300 ease-out',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full',
-        ),
-      )}>
+      <aside
+        className={cn(
+          'flex-shrink-0 border-r border-white/[0.07] flex flex-col overflow-hidden bg-[#070707]',
+          // Desktop: always static in layout
+          'sm:relative sm:flex sm:w-80 sm:translate-x-0 sm:z-auto',
+          // Mobile, no chat selected: full-width (sidebar IS the page)
+          !selected && 'flex w-full',
+          // Mobile, chat selected: slide-over drawer from left
+          !!selected && cn(
+            'fixed bottom-0 left-0 w-[88vw] max-w-[340px] z-30',
+            'transition-transform duration-300 ease-out',
+            sidebarOpen ? 'translate-x-0' : '-translate-x-full',
+          ),
+        )}
+        style={!!selected ? { top: 'calc(env(safe-area-inset-top, 0px) + 68px)' } : undefined}
+      >
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">

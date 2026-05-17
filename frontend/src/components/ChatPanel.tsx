@@ -11,7 +11,7 @@ import { toast } from 'react-hot-toast';
 import { useDirectChat } from '@/hooks/useDirectChat';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import {
-  ArrowLeft, Send, Loader2, MessageCircle, AlertCircle,
+  PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, Paperclip, FileText, ExternalLink, Lock,
   ChevronDown, Download, Search, X,
 } from 'lucide-react';
@@ -380,9 +380,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         <div className="flex items-center gap-3 px-4 py-3">
           {onBack && (
             <button onClick={onBack}
-              className="sm:hidden flex items-center gap-1 text-white/50 hover:text-white/80 transition-colors py-1 pl-0 pr-2 -ml-1 rounded-lg hover:bg-white/5 flex-shrink-0">
-              <ArrowLeft className="w-4 h-4" />
-              <span className="text-sm font-medium">Chats</span>
+              className="sm:hidden w-8 h-8 flex items-center justify-center text-white/40 hover:text-white/75 hover:bg-white/8 rounded-xl transition-colors flex-shrink-0"
+              title="Open conversations">
+              <PanelLeftOpen className="w-4.5 h-4.5" />
             </button>
           )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -439,11 +439,15 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-white/30" />}
             {!isLoading && isInitialized && (
-              <span className="flex items-center gap-1 text-[11px] text-emerald-400/70">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />live
+              <span className="flex items-center gap-1 text-[11px] text-emerald-400/60">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                </span>
+                live
               </span>
             )}
-            {!isLoading && error && <AlertCircle className="w-3.5 h-3.5 text-red-400/60" />}
+            {!isLoading && error && <AlertCircle className="w-3.5 h-3.5 text-red-400/60 animate-pulse" />}
             <span className="flex items-center gap-1 text-[11px] text-white/20">
               <Lock className="w-2.5 h-2.5" />E2E
             </span>
@@ -701,7 +705,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
             return (
               <div key={msg.id}
-                className={`flex ${isMe ? 'justify-end' : 'justify-start'} ${isFirst && i > 0 ? 'mt-3' : ''}`}>
+                className={`flex ${isMe ? 'justify-end' : 'justify-start'} ${isFirst && i > 0 ? 'mt-3' : ''} animate-in fade-in slide-in-from-bottom-1 duration-200`}>
                 <div className={`group max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                   {msg.attachment
                     ? !msg.attachment.chunked && isImageMime(msg.attachment.mime)
@@ -741,10 +745,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       </div>
 
       {/* Input */}
-      <div className="border-t border-white/8 bg-black/20 flex-shrink-0 px-4 pt-3 pb-3 space-y-1.5"
+      <div className="border-t border-white/[0.07] bg-[#0a0a0a] flex-shrink-0 px-3 pt-2.5 flex flex-col gap-1.5"
         style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
-        {uploadErr && <p className="text-xs text-red-400/80 px-1">{uploadErr}</p>}
+        {uploadErr && <p className="text-xs text-red-400/70 px-1">{uploadErr}</p>}
         <div className="flex items-end gap-2">
           <input ref={fileRef} type="file" className="hidden" onChange={handleFileChange} />
           <button
@@ -776,8 +780,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           <button
             onClick={handleSend}
             disabled={!isInitialized || !text.trim() || sending}
-            className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center text-white hover:bg-primary/80 disabled:opacity-25 disabled:cursor-not-allowed transition-all flex-shrink-0 mb-0.5">
-            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center text-white hover:bg-primary/80 active:scale-95 disabled:opacity-25 disabled:cursor-not-allowed transition-all flex-shrink-0 mb-0.5">
+            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />}
           </button>
         </div>
       </div>
