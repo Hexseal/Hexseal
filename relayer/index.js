@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import cron from 'node-cron';
 import { randomUUID } from 'crypto';
 import webpush from 'web-push';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import {
   S3Client,
   PutObjectCommand,
@@ -41,7 +42,24 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // address (lowercase) → PushSubscription[]
-const _pushSubs = new Map();
+// Persisted to disk so subscriptions survive process restarts.
+const PUSH_SUBS_FILE = './push_subscriptions.json';
+function loadPushSubs() {
+  try {
+    if (existsSync(PUSH_SUBS_FILE)) {
+      const raw = JSON.parse(readFileSync(PUSH_SUBS_FILE, 'utf8'));
+      return new Map(Object.entries(raw));
+    }
+  } catch {}
+  return new Map();
+}
+function savePushSubs() {
+  try {
+    const obj = Object.fromEntries(_pushSubs);
+    writeFileSync(PUSH_SUBS_FILE, JSON.stringify(obj), 'utf8');
+  } catch {}
+}
+const _pushSubs = loadPushSubs();
 
 async function sendPush(address, payload) {
   const subs = _pushSubs.get(address?.toLowerCase()) ?? [];
@@ -55,6 +73,7 @@ async function sendPush(address, payload) {
   }
   if (dead.length) {
     _pushSubs.set(address.toLowerCase(), subs.filter(s => !dead.includes(s.endpoint)));
+    savePushSubs();
   }
 }
 
@@ -474,6 +493,7 @@ app.post('/push/subscribe', async (req, res) => {
     // Avoid duplicate endpoints
     if (!existing.some(s => s.endpoint === subscription.endpoint)) {
       _pushSubs.set(key, [...existing, subscription]);
+      savePushSubs();
     }
     res.json({ ok: true });
   } catch (err) {
@@ -492,6 +512,7 @@ app.post('/push/unsubscribe', async (req, res) => {
     } else {
       _pushSubs.delete(key);
     }
+    savePushSubs();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

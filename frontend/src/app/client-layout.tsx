@@ -149,6 +149,19 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => window.removeEventListener('sig404:open-onboarding', handler);
   }, []);
 
+  // Dynamically measure the real header height and write --chat-top-offset.
+  // Overrides the CSS static fallback so the chat main always starts exactly below the header.
+  useEffect(() => {
+    const header = document.querySelector('header');
+    const update = () => {
+      const h = header?.getBoundingClientRect().height ?? 56;
+      document.documentElement.style.setProperty('--chat-top-offset', `${h}px`);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
   // Track visual viewport dimensions for iOS keyboard handling.
   // --vvh shrinks when the keyboard opens, keeping the input above it.
   // --vv-offset-top counteracts iOS PWA visual-viewport scroll-to-focus.

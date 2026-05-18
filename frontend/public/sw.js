@@ -5,13 +5,18 @@ self.addEventListener('push', (event) => {
   try { data = { ...data, ...event.data?.json() }; } catch {}
 
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
-      tag: data.url,          // collapse same-URL notifications
-      renotify: true,
-      data: { url: data.url },
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      // Don't show notification if the app is already open and focused
+      const appFocused = list.some(c => c.focused);
+      if (appFocused) return;
+      return self.registration.showNotification(data.title, {
+        body: data.body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: data.url,
+        renotify: true,
+        data: { url: data.url },
+      });
     })
   );
 });

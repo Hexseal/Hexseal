@@ -19,6 +19,14 @@ export function usePushNotifications() {
     getPushSubscription().then(sub => setSubscribed(!!sub));
   }, []);
 
+  // Auto-resubscribe silently when wallet connects and permission was already granted.
+  // This re-registers the subscription with the relayer after restarts, without prompting.
+  useEffect(() => {
+    if (!address || !supported) return;
+    if (Notification.permission !== 'granted') return;
+    enablePush(address).catch(() => {});
+  }, [address, supported]);
+
   const enable = useCallback(async () => {
     if (!address || !supported) return;
     setLoading(true);

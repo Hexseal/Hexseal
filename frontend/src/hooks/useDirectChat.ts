@@ -27,6 +27,8 @@ import { uploadFileWithEncryption } from '@/lib/fileStorage';
 
 export type { ChatMessage as DirectMessage };
 
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useDirectChat(recipientAddress: string) {
@@ -71,11 +73,31 @@ export function useDirectChat(recipientAddress: string) {
         }
 
         // 3. Find or create DM conversation
-        await xmtp.conversations.sync(); // pull any existing convos from the network
+        let convSyncAttempt = 0;
+        while (convSyncAttempt < 3) {
+          try {
+            await xmtp.conversations.sync();
+            break;
+          } catch (syncErr) {
+            convSyncAttempt++;
+            if (convSyncAttempt >= 3) throw syncErr;
+            await sleep(1000 * convSyncAttempt);
+          }
+        }
         const dm = await xmtp.conversations.createDmWithIdentifier(recipientId);
         if (cancelled) return;
         dmRef.current = dm;
-        await dm.sync();
+        let syncAttempt = 0;
+        while (syncAttempt < 3) {
+          try {
+            await dm.sync();
+            break;
+          } catch (syncErr) {
+            syncAttempt++;
+            if (syncAttempt >= 3) throw syncErr;
+            await sleep(1000 * syncAttempt);
+          }
+        }
 
         // 4. Load message history
         const history = await loadDmMessages(dm, xmtp.inboxId ?? '', myAddress, recipientAddress);
@@ -87,21 +109,32 @@ export function useDirectChat(recipientAddress: string) {
         streamRef.current = stream;
 
         const loop = async () => {
-          for await (const msg of stream) {
-            if (cancelled) break;
-            const chat = normalizeDmMessage(msg, xmtp.inboxId ?? '', myAddress, recipientAddress);
-            if (!chat) continue;
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === chat.id)) return prev;
-              if (chat.isFromMe) {
-                let optIdx = -1;
-                for (let i = prev.length - 1; i >= 0; i--) {
-                  if (prev[i].id.startsWith('opt-') && prev[i].text === chat.text) { optIdx = i; break; }
-                }
-                if (optIdx >= 0) return prev.map((m, i) => i === optIdx ? chat : m);
+          let streamRetries = 0;
+          while (!cancelled && streamRetries < 5) {
+            try {
+              for await (const msg of stream) {
+                if (cancelled) return;
+                const chat = normalizeDmMessage(msg, xmtp.inboxId ?? '', myAddress, recipientAddress);
+                if (!chat) continue;
+                setMessages((prev) => {
+                  if (prev.some((m) => m.id === chat.id)) return prev;
+                  if (chat.isFromMe) {
+                    let optIdx = -1;
+                    for (let i = prev.length - 1; i >= 0; i--) {
+                      if (prev[i].id.startsWith('opt-') && prev[i].text === chat.text) { optIdx = i; break; }
+                    }
+                    if (optIdx >= 0) return prev.map((m, i) => i === optIdx ? chat : m);
+                  }
+                  return [...prev, chat];
+                });
               }
-              return [...prev, chat];
-            });
+              break;
+            } catch (streamErr) {
+              streamRetries++;
+              if (cancelled) return;
+              console.warn('[useDirectChat] stream error, retry', streamRetries, streamErr);
+              await sleep(2000 * streamRetries);
+            }
           }
         };
         loop();
