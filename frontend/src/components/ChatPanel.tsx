@@ -867,7 +867,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       <div
         className="flex-shrink-0 px-3 pt-1 flex flex-col gap-1 bg-black"
         style={{
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          paddingBottom: '4px',
           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
           position: 'relative',
           zIndex: 10,
