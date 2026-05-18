@@ -775,7 +775,7 @@ function SettingsTab() {
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI,
     functionName: 'getAllFees',
-  }) as { data: [bigint, bigint, bigint, bigint] | undefined; refetch: () => void };
+  }) as { data: [bigint, bigint, bigint, bigint, bigint, bigint, bigint] | undefined; refetch: () => void };
 
   const [feeRecipient, setFeeRecipient] = useState('');
   const [forwarder,    setForwarder]    = useState('');
