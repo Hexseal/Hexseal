@@ -676,7 +676,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black" style={{ overscrollBehavior: 'none' }}>
         <div className="flex-1" />
         <div className="px-3 py-4">
 
