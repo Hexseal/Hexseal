@@ -12,17 +12,21 @@ const Toaster = dynamic(
 
 export default function ToasterClient() {
   return (
-    <Toaster 
-      position="top-center" 
+    <Toaster
+      position="top-center"
       toastOptions={{
         style: {
-          background: '#1a1a1a',
-          color: '#fff',
-          border: '1px solid #333',
-          borderRadius: '0.25rem',
-          padding: '1rem',
+          background: '#1a1a1d',
+          color: 'rgba(255,255,255,0.85)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: '14px',
+          fontSize: '13px',
+          padding: '10px 14px',
+          zIndex: 9999,
         },
-      }} 
+        success: { iconTheme: { primary: '#4ade80', secondary: '#0d0d0f' } },
+        error:   { iconTheme: { primary: '#f87171', secondary: '#0d0d0f' } },
+      }}
     />
   );
 }

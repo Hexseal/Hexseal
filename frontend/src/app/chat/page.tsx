@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, Suspense } from 'react';
+import { useState, useMemo, Suspense, useRef, useEffect } from 'react';
 import { useAccount, useReadContract, useReadContracts } from 'wagmi';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -214,6 +214,10 @@ function ChatHubPageInner() {
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
   const [showNewChat, setShowNewChat] = useState(false);
   const [newChatAddr, setNewChatAddr] = useState('');
+  const newChatInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (showNewChat) newChatInputRef.current?.focus();
+  }, [showNewChat]);
   const [seenConvos, setSeenConvos]   = useState<Set<string>>(() =>
     initialPeer ? new Set([initialPeer.toLowerCase()]) : new Set()
   );
@@ -416,12 +420,11 @@ function ChatHubPageInner() {
         </div>
 
         {/* New chat search */}
-        {showNewChat && (
-          <div className="px-3 py-2.5 mx-2 mb-2 rounded-[16px] bg-white/[0.03]">
+        <div className={showNewChat ? "px-3 py-2.5 mx-2 mb-2 rounded-[16px] bg-white/[0.03]" : "hidden"}>
             <p className="text-[11px] text-white/30 mb-1.5">{t("chat.paste_address_hint")}</p>
             <div className="flex gap-2">
               <input
-                autoFocus
+                ref={newChatInputRef}
                 type="text"
                 value={newChatAddr}
                 onChange={e => setNewChatAddr(e.target.value)}
@@ -438,7 +441,6 @@ function ChatHubPageInner() {
               </button>
             </div>
           </div>
-        )}
 
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">

@@ -326,6 +326,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     const trimmed = text.trim();
     if (!trimmed || sending || !isInitialized) return;
     setText('');
+    setTimeout(() => textareaRef.current?.focus(), 0);
     setSending(true);
     try { await sendMessage(trimmed); setAtBottom(true); }
     catch (err) {
@@ -572,30 +573,30 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               {preDealCtx.type === 'job_as_client' && (
                 <>
                   <button onClick={() => setPreDealConfirm('reject_app')}
-                    className="px-3 py-1.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
+                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
                     Reject
                   </button>
                   <button onClick={() => setPreDealConfirm('accept_deploy')}
-                    className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
                     Accept
                   </button>
                 </>
               )}
               {preDealCtx.type === 'job_as_executor' && preDealCtx.hasApplied && (
                 <button onClick={() => setPreDealConfirm('withdraw')}
-                  className="px-3 py-1.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
+                  className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
                   Withdraw
                 </button>
               )}
               {preDealCtx.type === 'job_as_executor' && !preDealCtx.hasApplied && (
                 <button onClick={() => setPreDealConfirm('apply')}
-                  className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
                   Apply
                 </button>
               )}
               {preDealCtx.type === 'service_as_client' && (
                 <button onClick={() => setPreDealConfirm('request_service')}
-                  className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
                   Request
                 </button>
               )}
@@ -633,18 +634,18 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               {dealMeta?.agreementStatus === 1 && dealContext.role === 'executor' && (
                 <>
                   <button onClick={() => setConfirmAction('reject')}
-                    className="px-3 py-1.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
+                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
                     Reject
                   </button>
                   <button onClick={() => setConfirmAction('accept')}
-                    className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
                     Accept
                   </button>
                 </>
               )}
               {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt === 0n && (
                 <button onClick={() => setConfirmAction('markDone')}
-                  className="px-3 py-1.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
                   Mark Done
                 </button>
               )}
@@ -654,12 +655,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               {dealMeta?.agreementStatus === 2 && dealContext.role === 'client' && (
                 <>
                   <button onClick={() => setConfirmAction('dispute')}
-                    className="px-3 py-1.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
+                    className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
                     Dispute
                   </button>
                   {dealMeta.markedDoneAt > 0n && (
                     <button onClick={() => setConfirmAction('release')}
-                      className="px-3 py-1.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
+                      className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
                       Release
                     </button>
                   )}
@@ -834,6 +835,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         style={{
           paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
+          position: 'relative',
+          zIndex: 10,
         }}
       >
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
