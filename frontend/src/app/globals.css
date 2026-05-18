@@ -112,7 +112,7 @@
 
 /* base body */
 html {
-  overflow-y: scroll; /* always reserve scrollbar slot so page width never shifts */
+  overflow-y: auto;
   scrollbar-width: none; /* Firefox — 0-width scrollbar = nothing to lose when modal locks */
   background: #000000; /* covers iOS rubber-band overscroll area so bounce zone matches app bg */
 }

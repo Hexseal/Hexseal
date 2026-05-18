@@ -12,7 +12,7 @@ import OnboardingModal from "@/components/OnboardingModal";
 function PageFade({ children, pathname }: { children: React.ReactNode; pathname: string }) {
   const isChat = pathname?.startsWith('/chat');
   return (
-    <div key={pathname} className={`animate-in fade-in duration-200 ease-out min-h-0 flex flex-col flex-1 ${isChat ? '' : 'slide-in-from-bottom-2 duration-300'}`}>
+    <div key={pathname} className={`animate-in fade-in duration-200 ease-out min-h-0 flex flex-col flex-1 ${isChat ? 'overflow-hidden' : 'slide-in-from-bottom-2 duration-300'}`}>
       {children}
     </div>
   );
@@ -148,6 +148,30 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     window.addEventListener('sig404:open-onboarding', handler);
     return () => window.removeEventListener('sig404:open-onboarding', handler);
   }, []);
+
+  // Early body lock: fires before the Suspense/ChatLayoutInner effect has a chance to run.
+  // Reads window.location.search directly to avoid needing useSearchParams here.
+  useEffect(() => {
+    if (!pathname?.startsWith('/chat')) return;
+    const hasPeer = new URLSearchParams(window.location.search).has('peer');
+    if (!hasPeer) return;
+    const body = document.body;
+    const html = document.documentElement;
+    const scrollY = window.scrollY;
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+    html.style.overflow = 'hidden';
+    return () => {
+      body.style.position = '';
+      body.style.top = '';
+      body.style.width = '';
+      body.style.overflow = '';
+      html.style.overflow = '';
+      window.scrollTo(0, scrollY);
+    };
+  }, [pathname]);
 
   // Dynamically measure the real header height and write --chat-top-offset.
   // Overrides the CSS static fallback so the chat main always starts exactly below the header.
