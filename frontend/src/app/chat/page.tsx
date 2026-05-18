@@ -360,7 +360,7 @@ function ChatHubPageInner() {
   const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
 
   return (
-    <div className="flex-1 min-h-0 flex overflow-hidden bg-background">
+    <div className="flex-1 min-h-0 flex overflow-hidden bg-black">
 
       {/* ── Sidebar ── */}
       <aside

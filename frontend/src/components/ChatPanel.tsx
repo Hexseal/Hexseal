@@ -150,6 +150,41 @@ function UploadProgress({ pct }: { pct: number }) {
   );
 }
 
+function DateDivider({ ts }: { ts: number }) {
+  const d = new Date(ts);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  let label: string;
+  if (d.toDateString() === today.toDateString()) label = 'Today';
+  else if (d.toDateString() === yesterday.toDateString()) label = 'Yesterday';
+  else label = d.toLocaleDateString([], { month: 'long', day: 'numeric' });
+  return (
+    <div className="flex items-center gap-3 my-4">
+      <div className="flex-1 h-px bg-white/[0.06]" />
+      <span className="text-[10px] text-white/25 font-medium tracking-wide uppercase">{label}</span>
+      <div className="flex-1 h-px bg-white/[0.06]" />
+    </div>
+  );
+}
+
+function MessageSkeleton() {
+  return (
+    <div className="px-4 py-6 space-y-5">
+      {[
+        { me: false, w: 160 }, { me: false, w: 220 },
+        { me: true,  w: 140 }, { me: true,  w: 190 },
+        { me: false, w: 110 },
+      ].map((s, i) => (
+        <div key={i} className={`flex items-end gap-2 ${s.me ? 'justify-end' : 'justify-start'}`}>
+          {!s.me && <div className="w-7 h-7 rounded-full bg-white/[0.06] flex-shrink-0 animate-pulse" />}
+          <div className="h-9 rounded-[18px] bg-white/[0.06] animate-pulse" style={{ width: s.w }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── ChatPanel ────────────────────────────────────────────────────────────────
 
 interface DealContext {
@@ -510,157 +545,140 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         )}
       </div>
 
-      {/* Pre-deal bar (before Agreement is deployed) */}
+      {/* Pre-deal bar */}
       {!dealContext && preDealCtx && (
-        <div className="flex-shrink-0 px-3 py-2 mx-3 mb-1 mt-1 rounded-[14px] bg-white/[0.03] flex items-center gap-2">
-          <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap text-xs">
-            {preDealCtx.title && (
-              <>
-                <span className="text-white/70 font-medium truncate max-w-[130px]">{preDealCtx.title}</span>
-                <span className="text-white/20">·</span>
-              </>
-            )}
-            <span className="font-mono text-white/45">{formatUnits(preDealCtx.amount, 6)} USDC</span>
-            {preDealCtx.deadlineDays > 0n && (
-              <>
-                <span className="text-white/20">·</span>
-                <span className="text-white/35">{Number(preDealCtx.deadlineDays)}d</span>
-              </>
-            )}
-            <span className="text-white/20">·</span>
-            <span className="text-amber-400/60 text-[11px]">
-              {preDealCtx.type === 'job_as_client' ? 'Application received' :
-               preDealCtx.type === 'job_as_executor' ? (preDealCtx.hasApplied ? 'Applied' : 'Open job') :
-               'Active service'}
-            </span>
-          </div>
-          <div className="flex gap-1.5 flex-shrink-0">
-            {preDealCtx.type === 'job_as_client' && (
-              <>
-                <button onClick={() => setPreDealConfirm('reject_app')}
-                  className="px-2.5 py-1 rounded-[8px] text-xs border border-white/[0.12] text-white/45 hover:border-white/20 hover:text-white/65 transition-colors">
-                  Reject
+        <div className="flex-shrink-0 mx-3 mb-1 mt-1 rounded-[18px] overflow-hidden"
+          style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="px-3.5 py-2.5 flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              {preDealCtx.title && (
+                <p className="text-xs font-semibold text-white/80 truncate mb-0.5">{preDealCtx.title}</p>
+              )}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-mono text-[11px] text-white/50">{formatUnits(preDealCtx.amount, 6)} USDC</span>
+                {preDealCtx.deadlineDays > 0n && (
+                  <><span className="text-white/20 text-[11px]">·</span>
+                  <span className="text-[11px] text-white/35">{Number(preDealCtx.deadlineDays)}d</span></>
+                )}
+                <span className="text-white/20 text-[11px]">·</span>
+                <span className="text-[11px] text-amber-400/70 font-medium">
+                  {preDealCtx.type === 'job_as_client' ? 'Application received' :
+                   preDealCtx.type === 'job_as_executor' ? (preDealCtx.hasApplied ? 'Applied' : 'Open job') :
+                   'Active service'}
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-1.5 flex-shrink-0">
+              {preDealCtx.type === 'job_as_client' && (
+                <>
+                  <button onClick={() => setPreDealConfirm('reject_app')}
+                    className="px-3 py-1.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
+                    Reject
+                  </button>
+                  <button onClick={() => setPreDealConfirm('accept_deploy')}
+                    className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                    Accept
+                  </button>
+                </>
+              )}
+              {preDealCtx.type === 'job_as_executor' && preDealCtx.hasApplied && (
+                <button onClick={() => setPreDealConfirm('withdraw')}
+                  className="px-3 py-1.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
+                  Withdraw
                 </button>
-                <button onClick={() => setPreDealConfirm('accept_deploy')}
-                  className="px-2.5 py-1 rounded-[8px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-medium">
-                  Accept & Deploy
+              )}
+              {preDealCtx.type === 'job_as_executor' && !preDealCtx.hasApplied && (
+                <button onClick={() => setPreDealConfirm('apply')}
+                  className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                  Apply
                 </button>
-              </>
-            )}
-            {preDealCtx.type === 'job_as_executor' && preDealCtx.hasApplied && (
-              <button onClick={() => setPreDealConfirm('withdraw')}
-                className="px-2.5 py-1 rounded-[8px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
-                Withdraw
-              </button>
-            )}
-            {preDealCtx.type === 'job_as_executor' && !preDealCtx.hasApplied && (
-              <button onClick={() => setPreDealConfirm('apply')}
-                className="px-2.5 py-1 rounded-[8px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-medium">
-                Apply
-              </button>
-            )}
-            {preDealCtx.type === 'service_as_client' && (
-              <button onClick={() => setPreDealConfirm('request_service')}
-                className="px-2.5 py-1 rounded-[8px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-medium">
-                Request Service
-              </button>
-            )}
+              )}
+              {preDealCtx.type === 'service_as_client' && (
+                <button onClick={() => setPreDealConfirm('request_service')}
+                  className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                  Request
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* Deal bar */}
       {dealContext && (
-        <div className="flex-shrink-0 px-3 py-2 mx-3 mb-1 mt-1 rounded-[14px] bg-white/[0.03] flex items-center gap-2">
-          <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap text-xs">
-            {dealContext.jobTitle && (
-              <>
-                <span className="text-white/70 font-medium truncate max-w-[130px]">{dealContext.jobTitle}</span>
-                <span className="text-white/20">·</span>
-              </>
-            )}
-            <span className="font-mono text-white/45">{formatUnits(dealContext.amount, 6)} USDC</span>
-            {dealMeta?.deadlineDays && dealMeta.deadlineDays > 0n && (
-              <>
-                <span className="text-white/20">·</span>
-                <span className="text-white/35">{Number(dealMeta.deadlineDays)}d</span>
-              </>
-            )}
-            <span className="text-white/20">·</span>
-            {dealMeta?.agreementStatus === 2 && dealMeta.markedDoneAt > 0n
-              ? <span className="text-amber-400/70">Delivered</span>
-              : <span className={AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.cls ?? 'text-white/30'}>
-                  {AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.label ?? '…'}
+        <div className="flex-shrink-0 mx-3 mb-1 mt-1 rounded-[18px] overflow-hidden"
+          style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="px-3.5 py-2.5 flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              {dealContext.jobTitle && (
+                <p className="text-xs font-semibold text-white/80 truncate mb-0.5">{dealContext.jobTitle}</p>
+              )}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-mono text-[11px] text-white/50">{formatUnits(dealContext.amount, 6)} USDC</span>
+                {dealMeta?.deadlineDays && dealMeta.deadlineDays > 0n && (
+                  <><span className="text-white/20 text-[11px]">·</span>
+                  <span className="text-[11px] text-white/35">{Number(dealMeta.deadlineDays)}d</span></>
+                )}
+                <span className="text-white/20 text-[11px]">·</span>
+                {dealMeta?.agreementStatus === 2 && dealMeta.markedDoneAt > 0n
+                  ? <span className="text-[11px] text-amber-400/80 font-medium">Delivered</span>
+                  : <span className={`text-[11px] font-medium ${AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.cls ?? 'text-white/30'}`}>
+                      {AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.label ?? '…'}
+                    </span>
+                }
+              </div>
+            </div>
+
+            <div className="flex gap-1.5 flex-shrink-0">
+              {dealMeta?.agreementStatus === 1 && dealContext.role === 'executor' && (
+                <>
+                  <button onClick={() => setConfirmAction('reject')}
+                    className="px-3 py-1.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
+                    Reject
+                  </button>
+                  <button onClick={() => setConfirmAction('accept')}
+                    className="px-3 py-1.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
+                    Accept
+                  </button>
+                </>
+              )}
+              {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt === 0n && (
+                <button onClick={() => setConfirmAction('markDone')}
+                  className="px-3 py-1.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
+                  Mark Done
+                </button>
+              )}
+              {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt > 0n && (
+                <span className="text-[11px] text-amber-400/55 font-medium">Awaiting review</span>
+              )}
+              {dealMeta?.agreementStatus === 2 && dealContext.role === 'client' && (
+                <>
+                  <button onClick={() => setConfirmAction('dispute')}
+                    className="px-3 py-1.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
+                    Dispute
+                  </button>
+                  {dealMeta.markedDoneAt > 0n && (
+                    <button onClick={() => setConfirmAction('release')}
+                      className="px-3 py-1.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
+                      Release
+                    </button>
+                  )}
+                </>
+              )}
+              {dealMeta?.agreementStatus === 4 && (
+                <span className="text-[11px] px-2 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400/70 font-medium">
+                  In Arbitration
                 </span>
-            }
+              )}
+            </div>
           </div>
-
-          {/* Status 1 (Funded) — executor: Accept or Reject */}
-          {dealMeta?.agreementStatus === 1 && dealContext.role === 'executor' && (
-            <div className="flex gap-1.5 flex-shrink-0">
-              <button onClick={() => setConfirmAction('reject')}
-                className="px-2.5 py-1 rounded-[8px] text-xs border border-white/[0.12] text-white/45 hover:border-white/20 hover:text-white/65 transition-colors">
-                Reject
-              </button>
-              <button onClick={() => setConfirmAction('accept')}
-                className="px-2.5 py-1 rounded-[8px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-medium">
-                Accept
-              </button>
-            </div>
-          )}
-
-          {/* Status 2 (Active), work not done — executor: Mark Done */}
-          {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt === 0n && (
-            <div className="flex gap-1.5 flex-shrink-0">
-              <button onClick={() => setConfirmAction('markDone')}
-                className="px-2.5 py-1 rounded-[8px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-medium">
-                Mark Done
-              </button>
-            </div>
-          )}
-
-          {/* Status 2 (Active), work submitted — executor: waiting */}
-          {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt > 0n && (
-            <span className="text-[11px] text-amber-400/55 flex-shrink-0 font-medium">Awaiting review</span>
-          )}
-
-          {/* Status 2 (Active), work not done — client: Dispute only */}
-          {dealMeta?.agreementStatus === 2 && dealContext.role === 'client' && dealMeta.markedDoneAt === 0n && (
-            <div className="flex gap-1.5 flex-shrink-0">
-              <button onClick={() => setConfirmAction('dispute')}
-                className="px-2.5 py-1 rounded-[8px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
-                Dispute
-              </button>
-            </div>
-          )}
-
-          {/* Status 2 (Active), work submitted — client: Dispute + Release */}
-          {dealMeta?.agreementStatus === 2 && dealContext.role === 'client' && dealMeta.markedDoneAt > 0n && (
-            <div className="flex gap-1.5 flex-shrink-0">
-              <button onClick={() => setConfirmAction('dispute')}
-                className="px-2.5 py-1 rounded-[8px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
-                Dispute
-              </button>
-              <button onClick={() => setConfirmAction('release')}
-                className="px-2.5 py-1 rounded-[8px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-medium">
-                Release
-              </button>
-            </div>
-          )}
-
-          {/* Status 4 (Disputed) */}
-          {dealMeta?.agreementStatus === 4 && (
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400/70 font-medium flex-shrink-0">
-              In Arbitration
-            </span>
-          )}
         </div>
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-white/[0.015]">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black">
         <div className="flex-1" />
-        <div className="px-4 py-5 space-y-1">
+        <div className="px-3 py-4">
 
           {!isLoading && needsSetup && (
             <div className="flex flex-col items-center justify-center py-16 gap-4 px-4">
@@ -670,12 +688,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             </div>
           )}
 
-          {isLoading && (
-            <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
-              <Loader2 className="w-5 h-5 animate-spin text-white/25" />
-              <p className="text-white/40 text-sm">Loading messages…</p>
-            </div>
-          )}
+          {isLoading && <MessageSkeleton />}
 
           {!isLoading && error && (
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
@@ -705,8 +718,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
           {!isLoading && !error && messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
-              <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.08] flex items-center justify-center">
-                <MessageCircle className="w-5 h-5 text-white/[0.18]" />
+              <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+                <MessageCircle className="w-5 h-5 text-white/[0.15]" />
               </div>
               <p className="text-white/20 text-sm">No messages yet</p>
             </div>
@@ -718,50 +731,88 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             </div>
           )}
 
-          {!isLoading && !error && visibleMessages.map((msg, i) => {
-            const isMe  = msg.from === address?.toLowerCase();
-            const prev  = visibleMessages[i - 1];
-            const next  = visibleMessages[i + 1];
-            const isFirst = !prev || prev.from !== msg.from;
-            const isLast  = !next || next.from !== msg.from;
+          {!isLoading && !error && (() => {
+            const items: React.ReactNode[] = [];
+            let lastDay = '';
+            let lastGroupEnd = -1;
 
-            return (
-              <div key={msg.id}
-                className={`flex ${isMe ? 'justify-end' : 'justify-start'} ${isFirst && i > 0 ? 'mt-3' : ''} animate-in fade-in slide-in-from-bottom-1 duration-200`}>
-                <div className={`group max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                  {msg.attachment
-                    ? !msg.attachment.chunked && isImageMime(msg.attachment.mime)
-                      ? <ImageBubble a={msg.attachment} isMe={isMe} />
-                      : <FileCard a={msg.attachment} isMe={isMe} />
-                    : (
-                      <div className={`px-4 py-2.5 text-sm break-words leading-relaxed ${
-                        isMe
-                          ? `bg-primary text-white ${
-                              isFirst && isLast ? 'rounded-[22px]' :
-                              isFirst ? 'rounded-t-[22px] rounded-bl-[22px] rounded-br-[6px]' :
-                              isLast  ? 'rounded-tl-[22px] rounded-tr-[6px] rounded-b-[22px]' :
-                                        'rounded-l-[22px] rounded-r-[6px]'
-                            }`
-                          : `bg-white/[0.09] text-white/90 ${
-                              isFirst && isLast ? 'rounded-[22px]' :
-                              isFirst ? 'rounded-t-[22px] rounded-br-[22px] rounded-bl-[6px]' :
-                              isLast  ? 'rounded-tr-[22px] rounded-tl-[6px] rounded-b-[22px]' :
-                                        'rounded-r-[22px] rounded-l-[6px]'
-                            }`
-                      }`}>
-                        {msg.text}
-                      </div>
-                    )
-                  }
-                  {isLast && (
-                    <span className="text-[10px] text-white/20 mt-0.5 px-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {formatTime(msg.timestamp)}
-                    </span>
+            visibleMessages.forEach((msg, i) => {
+              const isMe    = msg.from === address?.toLowerCase();
+              const prev    = visibleMessages[i - 1];
+              const next    = visibleMessages[i + 1];
+              const isFirst = !prev || prev.from !== msg.from;
+              const isLast  = !next || next.from !== msg.from;
+
+              // Date divider
+              const day = new Date(msg.timestamp).toDateString();
+              if (day !== lastDay) {
+                lastDay = day;
+                items.push(<DateDivider key={`d-${msg.id}`} ts={msg.timestamp} />);
+              }
+
+              // Gap between different senders
+              if (isFirst && i > 0 && lastGroupEnd === i - 1) {
+                items.push(<div key={`gap-${msg.id}`} className="h-2" />);
+              }
+              if (isLast) lastGroupEnd = i;
+
+              items.push(
+                <div key={msg.id}
+                  className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'} animate-in fade-in duration-150`}>
+
+                  {/* Avatar placeholder (incoming only, last of group) */}
+                  {!isMe && (
+                    isLast
+                      ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={`https://effigy.im/a/${msg.from}.svg`}
+                          alt=""
+                          className="w-7 h-7 rounded-full flex-shrink-0 mb-0.5 bg-white/10 object-cover"
+                        />
+                      )
+                      : <div className="w-7 flex-shrink-0" />
                   )}
+
+                  <div className={`group max-w-[72%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                    {msg.attachment
+                      ? !msg.attachment.chunked && isImageMime(msg.attachment.mime)
+                        ? <ImageBubble a={msg.attachment} isMe={isMe} />
+                        : <FileCard a={msg.attachment} isMe={isMe} />
+                      : (
+                        <div className={`px-4 py-2.5 text-[15px] break-words leading-relaxed ${
+                          isMe
+                            ? `bg-primary text-white ${
+                                isFirst && isLast ? 'rounded-[22px]' :
+                                isFirst ? 'rounded-t-[22px] rounded-bl-[22px] rounded-br-[6px]' :
+                                isLast  ? 'rounded-tl-[22px] rounded-tr-[6px] rounded-b-[22px]' :
+                                          'rounded-l-[22px] rounded-r-[6px]'
+                              }`
+                            : `bg-[#1e1e21] text-white/90 ${
+                                isFirst && isLast ? 'rounded-[22px]' :
+                                isFirst ? 'rounded-t-[22px] rounded-br-[22px] rounded-bl-[6px]' :
+                                isLast  ? 'rounded-tr-[22px] rounded-tl-[6px] rounded-b-[22px]' :
+                                          'rounded-r-[22px] rounded-l-[6px]'
+                              }`
+                        }`}>
+                          {msg.text}
+                        </div>
+                      )
+                    }
+                    {isLast && (
+                      <span className="text-[10px] text-white/20 mt-1 px-1">
+                        {formatTime(msg.timestamp)}
+                        {msg.id.startsWith('opt-') && (
+                          <span className="ml-1 text-white/15">·</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            });
+            return items;
+          })()}
 
           <div ref={bottomRef} />
         </div>
@@ -779,7 +830,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
       {/* Input */}
       <div
-        className="flex-shrink-0 px-3 pt-3 flex flex-col gap-2 bg-black"
+        className="flex-shrink-0 px-3 pt-2.5 flex flex-col gap-1.5 bg-black"
         style={{
           paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
@@ -790,14 +841,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         <div className="flex items-end gap-2">
           <input ref={fileRef} type="file" className="hidden" tabIndex={-1} onChange={handleFileChange} />
           <button
-            onClick={() => {
-              if (!isInitialized || uploading) return;
-              if (!window.confirm('Files are stored for 18 days, then permanently deleted. Encrypted end-to-end. Max 5 GB. Continue?')) return;
-              fileRef.current?.click();
-            }}
+            onClick={() => { if (!isInitialized || uploading) return; fileRef.current?.click(); }}
             disabled={!isInitialized || uploading}
-            title="Attach file — available 18 days"
-            className="w-9 h-9 rounded-[14px] flex items-center justify-center text-white/28 hover:text-white/60 hover:bg-white/[0.06] disabled:opacity-20 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
+            title="Attach file (encrypted, 18 days, max 5 GB)"
+            className="w-9 h-9 rounded-full flex items-center justify-center text-white/30 hover:text-white/65 hover:bg-white/[0.07] disabled:opacity-20 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
           </button>
           <textarea
@@ -814,13 +861,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               error         ? 'Chat unavailable' :
               isInitialized ? 'Message…'         : 'Initializing…'
             }
-            className="flex-1 bg-white/[0.05] border border-white/[0.07] rounded-[22px] px-4 py-2.5 text-[15px] text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.14] focus:bg-white/[0.07] disabled:opacity-40 transition-all resize-none overflow-hidden leading-[1.45]"
-            style={{ minHeight: '42px', maxHeight: '120px' }}
+            className="flex-1 bg-[#111113] border border-white/[0.08] rounded-[22px] px-4 py-2.5 text-[15px] text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.15] focus:bg-[#141416] disabled:opacity-40 transition-all resize-none overflow-hidden leading-[1.45]"
+            style={{ minHeight: '44px', maxHeight: '120px' }}
           />
           <button
             onClick={handleSend}
             disabled={!isInitialized || !text.trim() || sending}
-            className="w-9 h-9 rounded-[16px] bg-primary flex items-center justify-center text-white hover:bg-primary/85 active:scale-95 disabled:opacity-25 disabled:cursor-not-allowed transition-all flex-shrink-0 mb-0.5">
+            className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white hover:bg-primary/85 active:scale-95 disabled:opacity-25 disabled:cursor-not-allowed transition-all flex-shrink-0 mb-0.5">
             {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
         </div>
