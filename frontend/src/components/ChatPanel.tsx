@@ -432,8 +432,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-black">
 
       {/* Header */}
-      <div className="flex-shrink-0 bg-black"
-        style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.05)' }}>
+      <div className="flex-shrink-0 bg-black">
         <div className="flex items-center gap-3 px-4 py-3">
           {onBack && (
             <button onClick={onBack}

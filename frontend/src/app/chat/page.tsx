@@ -365,25 +365,18 @@ function ChatHubPageInner() {
       {/* ── Sidebar ── */}
       <aside
         className={cn(
-          'flex-shrink-0 border-r border-white/[0.05] flex flex-col overflow-hidden bg-[#080808]',
-          // Desktop: always static in layout
-          'sm:relative sm:flex sm:w-80',
-          // Mobile: full-width when no chat selected, hidden when chat is open
+          'flex-shrink-0 flex flex-col overflow-hidden bg-black',
+          // Desktop: static column with subtle right border
+          'sm:relative sm:flex sm:w-80 sm:border-r sm:border-white/[0.04]',
+          // Mobile: full-width list OR hidden when in conversation
           !selected ? 'flex w-full' : 'hidden sm:flex',
         )}
       >
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3.5 flex-shrink-0"
-          style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.04)' }}>
-          <div className="flex items-center gap-2">
-            <div>
-              <h2 className="text-sm font-semibold text-white/85">{t("chat.title")}</h2>
-              <div className="flex items-center gap-1 mt-0.5">
-                <Lock className="w-2.5 h-2.5 text-white/18" />
-                <span className="text-[10px] text-white/18">{t("chat.encrypted")}</span>
-              </div>
-            </div>
+        {/* Header — only visible on desktop; on mobile the app header covers this */}
+        <div className="hidden sm:flex items-center justify-between px-4 py-3 flex-shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold text-white/70">{t("chat.title")}</h2>
           </div>
           <div className="flex items-center gap-1">
             <button onClick={reload} disabled={isLoading} title={t("common.refresh")}
@@ -397,6 +390,26 @@ function ChatHubPageInner() {
                 'p-2 rounded-[12px] transition-colors',
                 showNewChat ? 'bg-white/[0.08] text-white/70' : 'text-white/25 hover:text-white/55 hover:bg-white/[0.06]',
               )}>
+              {showNewChat ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile: minimal action bar */}
+        <div className="sm:hidden flex items-center justify-between px-3 pt-2 pb-1 flex-shrink-0">
+          <div className="flex items-center gap-1.5">
+            <Lock className="w-3 h-3 text-white/15" />
+            <span className="text-[11px] text-white/20">{t("chat.encrypted")}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button onClick={reload} disabled={isLoading}
+              className="p-2 rounded-[12px] text-white/20 hover:text-white/50 hover:bg-white/[0.06] transition-colors disabled:opacity-30">
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); }}
+              className={cn('p-2 rounded-[12px] transition-colors',
+                showNewChat ? 'bg-white/[0.08] text-white/60' : 'text-white/20 hover:text-white/50 hover:bg-white/[0.06]')}>
               {showNewChat ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
             </button>
           </div>

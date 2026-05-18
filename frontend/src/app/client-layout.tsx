@@ -20,8 +20,9 @@ function ChatMobileNav() {
 
 // Re-mounts on each navigation via key={pathname}, triggering the fade-in.
 function PageFade({ children, pathname }: { children: React.ReactNode; pathname: string }) {
+  const isChat = pathname?.startsWith('/chat');
   return (
-    <div key={pathname} className="animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out min-h-0 flex flex-col flex-1">
+    <div key={pathname} className={`animate-in fade-in duration-200 ease-out min-h-0 flex flex-col flex-1 ${isChat ? '' : 'slide-in-from-bottom-2 duration-300'}`}>
       {children}
     </div>
   );
