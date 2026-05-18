@@ -277,6 +277,40 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     return () => vv.removeEventListener('resize', onResize);
   }, [atBottom]);
 
+  // Prevent scroll chaining on iOS: when the messages list is at its top or bottom
+  // boundary, block the touch event from bubbling up to the page/body.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    let startY = 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      startY = e.touches[0].clientY;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      const el = scrollRef.current;
+      if (!el) return;
+
+      const deltaY = e.touches[0].clientY - startY;
+      const atTop = el.scrollTop === 0;
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+
+      if ((atTop && deltaY > 0) || (atBottom && deltaY < 0)) {
+        e.preventDefault();
+      }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+    };
+  }, []);
+
   // Mark conversation as seen whenever this chat is open
   useEffect(() => {
     if (!recipientAddress) return;
