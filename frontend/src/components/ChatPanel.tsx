@@ -322,7 +322,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   }, [recipientAddress]);
 
   useEffect(() => {
-    if (atBottom) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (atBottom) bottomRef.current?.scrollIntoView({ behavior: 'instant' });
   }, [messages, atBottom]);
 
   const handleScroll = () => {
@@ -867,7 +867,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       <div
         className="flex-shrink-0 px-3 pt-2.5 flex flex-col gap-1.5 bg-black"
         style={{
-          paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+          paddingBottom: 'max(0.25rem, env(safe-area-inset-bottom))',
           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
           position: 'relative',
           zIndex: 10,

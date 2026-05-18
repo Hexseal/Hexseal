@@ -28,6 +28,8 @@ import {
 } from '@/lib/xmtp';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
 
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
 // ─── Agreement ABI ────────────────────────────────────────────────────────────
 
 const AGREEMENT_ABI = [
@@ -124,45 +126,73 @@ export function useDealChat(agreementAddress: string) {
         clientRef.current = xmtp;
 
         // 4. Find or create deal group
-        const memberAddresses = [client_ as string, executor_ as string].filter(Boolean);
-        const group = await findOrCreateDealGroup(xmtp, agreementAddress, memberAddresses);
+        const memberAddresses = [client_ as string, executor_ as string, arbiter_ as string]
+          .filter((a): a is string => !!a && a.toLowerCase() !== ZERO_ADDR);
+        let group: XmtpGroup | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            group = await findOrCreateDealGroup(xmtp, agreementAddress, memberAddresses);
+            break;
+          } catch (err) {
+            if (attempt === 2) throw err;
+            await sleep(1500 * (attempt + 1));
+          }
+        }
+        if (!group) throw new Error('Failed to initialize group chat');
         if (cancelled) return;
         groupRef.current = group;
 
         const myInboxId = xmtp.inboxId ?? '';
 
-        // 6. Load message history
-        const history = await loadGroupMessages(group, myInboxId, myAddress);
+        // 5. Load message history
+        let history: ChatMessage[] = [];
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            await group.sync();
+            history = await loadGroupMessages(group, myInboxId, myAddress);
+            break;
+          } catch (err) {
+            if (attempt === 2) throw err;
+            await sleep(1500 * (attempt + 1));
+          }
+        }
         if (cancelled) return;
         setMessages(history);
 
-        // 7. Subscribe to new messages
-        const stream = await group.stream();
-        streamRef.current = stream;
-
-        const members = await group.members();
-        const inboxToAddr = buildInboxAddressMap(members);
-
+        // 6. Subscribe to new messages
         const loop = async () => {
-          for await (const msg of stream) {
-            if (cancelled) break;
-            const chat = normalizeGroupMessage(msg, myInboxId, myAddress, inboxToAddr);
-            if (!chat) continue;
-            setMessages((prev) => {
-              // Skip exact duplicate (e.g. two streams in StrictMode)
-              if (prev.some((m) => m.id === chat.id)) return prev;
-              // Replace matching optimistic message with the real one
-              if (chat.isFromMe) {
-                let optIdx = -1;
-                for (let i = prev.length - 1; i >= 0; i--) {
-                  if (prev[i].id.startsWith('opt-') && prev[i].text === chat.text) {
-                    optIdx = i; break;
+          let retries = 0;
+          while (!cancelled && retries < 5) {
+            try {
+              const stream = await group!.stream();
+              streamRef.current = stream;
+              const members = await group!.members();
+              const inboxToAddr = buildInboxAddressMap(members);
+              for await (const msg of stream) {
+                if (cancelled) return;
+                const chat = normalizeGroupMessage(msg, myInboxId, myAddress, inboxToAddr);
+                if (!chat) continue;
+                setMessages((prev) => {
+                  if (prev.some((m) => m.id === chat.id)) return prev;
+                  if (chat.isFromMe) {
+                    let optIdx = -1;
+                    for (let i = prev.length - 1; i >= 0; i--) {
+                      if (prev[i].id.startsWith('opt-') && prev[i].text === chat.text) {
+                        optIdx = i; break;
+                      }
+                    }
+                    if (optIdx >= 0) return prev.map((m, i) => i === optIdx ? chat : m);
                   }
-                }
-                if (optIdx >= 0) return prev.map((m, i) => i === optIdx ? chat : m);
+                  return [...prev, chat];
+                });
               }
-              return [...prev, chat];
-            });
+              break;
+            } catch (streamErr) {
+              retries++;
+              if (cancelled) return;
+              console.warn('[useDealChat] stream error, retry', retries, streamErr);
+              await sleep(2000 * retries);
+            }
           }
         };
         loop();

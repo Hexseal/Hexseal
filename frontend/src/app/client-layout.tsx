@@ -129,7 +129,7 @@ function ChatLayoutInner({
       <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
         <PageFade pathname={pathname ?? ''}>
           {children}
-          <div className="md:hidden" style={{ height: 'calc(6.5rem + env(safe-area-inset-bottom, 0px))' }} />
+          <div className="md:hidden" style={{ height: 'calc(5.75rem + env(safe-area-inset-bottom, 0px))' }} />
         </PageFade>
       </main>
       <MobileBottomNav />
@@ -255,7 +255,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
         <PageFade pathname={pathname ?? ''}>
           {children}
-          <div className="md:hidden" style={{ height: 'calc(6.5rem + env(safe-area-inset-bottom, 0px))' }} />
+          <div className="md:hidden" style={{ height: 'calc(5.75rem + env(safe-area-inset-bottom, 0px))' }} />
         </PageFade>
       </main>
       <MobileBottomNav />
