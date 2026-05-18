@@ -528,6 +528,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search messages…"
+                tabIndex={showSearch ? 0 : -1}
                 className="w-full bg-white/[0.05] border border-white/[0.07] rounded-[14px] pl-9 pr-4 py-2 text-sm text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.14] focus:bg-white/[0.07] transition-all"
               />
             </div>
@@ -852,7 +853,6 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={!isInitialized}
             enterKeyHint="send"
             autoComplete="off"
             placeholder={
@@ -860,7 +860,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               error         ? 'Chat unavailable' :
               isInitialized ? 'Message…'         : 'Initializing…'
             }
-            className="flex-1 bg-[#111113] border border-white/[0.08] rounded-[22px] px-4 py-2.5 text-[15px] text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.15] focus:bg-[#141416] disabled:opacity-40 transition-all resize-none overflow-hidden leading-[1.45]"
+            className="flex-1 bg-[#111113] border border-white/[0.08] rounded-[22px] px-4 py-2.5 text-[15px] text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.15] focus:bg-[#141416] transition-all resize-none overflow-hidden leading-[1.45]"
             style={{ minHeight: '44px', maxHeight: '120px' }}
           />
           <button

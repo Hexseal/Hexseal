@@ -360,7 +360,7 @@ function ChatHubPageInner() {
   const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
 
   return (
-    <div className="flex-1 min-h-0 flex overflow-hidden bg-black">
+    <div className="flex overflow-hidden bg-black" style={{ height: '100dvh', maxHeight: '-webkit-fill-available', position: 'fixed', inset: 0 }}>
 
       {/* ── Sidebar ── */}
       <aside
@@ -427,6 +427,7 @@ function ChatHubPageInner() {
                 onChange={e => setNewChatAddr(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleOpenNewChat(); }}
                 placeholder="0x…"
+                tabIndex={showNewChat ? 0 : -1}
                 className="flex-1 min-w-0 bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-primary/40 focus:bg-[#111113] transition-all font-mono"
               />
               <button

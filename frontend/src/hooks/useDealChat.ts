@@ -18,7 +18,6 @@ function pushChatNotif(recipients: string[], body: string, url: string) {
 import {
   initXmtpClient,
   findOrCreateDealGroup,
-  tryAddGroupMember,
   loadGroupMessages,
   normalizeGroupMessage,
   buildInboxAddressMap,
@@ -129,17 +128,6 @@ export function useDealChat(agreementAddress: string) {
         const group = await findOrCreateDealGroup(xmtp, agreementAddress, memberAddresses);
         if (cancelled) return;
         groupRef.current = group;
-
-        // 5. Auto-add arbiter if deal is DISPUTED (status 4)
-        if (
-          Number(status_) === 4 &&
-          arbiter_ &&
-          (arbiter_ as string).toLowerCase() !== ZERO_ADDR
-        ) {
-          try {
-            await tryAddGroupMember(group, arbiter_ as string, xmtp);
-          } catch { /* Non-critical */ }
-        }
 
         const myInboxId = xmtp.inboxId ?? '';
 
