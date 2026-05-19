@@ -83,7 +83,7 @@ async function resolveRegion(ip: string): Promise<{ cacheCode: number; contractR
     const data = await res.json();
 
     if (data.status === 'success') {
-      const isVpn = !!(data.proxy || data.hosting);
+      const isVpn = !!data.proxy;
       if (isVpn) return { cacheCode: 10, contractRegion: 3 };
       const region = REGION_MAP[data.countryCode as string] ?? 1;
       return { cacheCode: region, contractRegion: region };

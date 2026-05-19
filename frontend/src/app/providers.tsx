@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { WagmiProvider, createStorage } from "wagmi";
+import { WagmiProvider, createStorage, useAccount, useChainId, useSwitchChain } from "wagmi";
 import { http, fallback } from "viem";
 import {
   RainbowKitProvider,
@@ -40,8 +40,13 @@ const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const chains = [appChain] as any;
 const publicRpc = isMainnet ? "https://mainnet.base.org" : "https://sepolia.base.org";
+// /api/rpc routes all RPC calls through the Next.js server so geo-blocked users
+// (CIS, VPN exit nodes) don't lose access to the blockchain.
+// On the server (SSR), relative URLs don't work — fall back to direct RPC there.
+const clientRpc = typeof window !== "undefined" ? "/api/rpc" : appRpcUrl;
 const transports = {
   [appChainId]: fallback([
+    http(clientRpc, { timeout: 20_000 }),
     http(appRpcUrl, { timeout: 20_000 }),
     http(publicRpc, { timeout: 20_000 }),
   ]),
@@ -107,6 +112,20 @@ function XmtpNotificationsMount() {
   return null;
 }
 
+function ChainEnforcer() {
+  const { isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChainAsync, isPending } = useSwitchChain();
+
+  useEffect(() => {
+    if (isConnected && chainId !== appChainId && !isPending) {
+      switchChainAsync({ chainId: appChainId }).catch(() => {});
+    }
+  }, [isConnected, chainId, isPending, switchChainAsync]);
+
+  return null;
+}
+
 function RainbowKitProviders({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const { resolvedTheme } = useTheme();
@@ -134,6 +153,7 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <RainbowKitProvider theme={rkTheme}>
+      <ChainEnforcer />
       <XmtpNotificationsMount />
       {children}
     </RainbowKitProvider>

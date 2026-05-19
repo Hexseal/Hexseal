@@ -1,11 +1,10 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import { useAccount, useChainId, useSwitchChain } from "wagmi";
+import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import BackgroundFX from "@/components/BackgroundFX";
 import Link from "next/link";
-import { appChainId } from "@/config/chain";
 import { useTranslations } from "next-intl";
 
 const TECH_TAGS = ["Base Network", "EIP-2535", "Gasless", "Escrow"];
@@ -13,8 +12,6 @@ const TECH_TAGS = ["Base Network", "EIP-2535", "Gasless", "Escrow"];
 export default function Hero() {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
-  const chainId = useChainId();
-  const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
   const t = useTranslations();
 
   const consoleRef   = useRef<HTMLDivElement | null>(null);
@@ -43,17 +40,6 @@ export default function Hero() {
     }, 180);
     return () => clearTimeout(t0);
   }, []);
-
-  useEffect(() => {
-    const ensureBaseSepolia = async () => {
-      try {
-        if (isConnected && chainId !== appChainId && !isSwitching) {
-          await switchChainAsync({ chainId: appChainId });
-        }
-      } catch (_) {}
-    };
-    ensureBaseSepolia();
-  }, [isConnected, chainId, isSwitching, switchChainAsync]);
 
   const onConnectClick = async () => {
     const c = consoleRef.current;
