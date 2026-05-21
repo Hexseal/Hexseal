@@ -914,7 +914,7 @@ export default function AdminPage() {
 
   if (!isMounted || isChecking) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-white/30" />
       </div>
     );
@@ -922,7 +922,7 @@ export default function AdminPage() {
 
   if (!isConnected || !isOwner) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="flex-1 flex items-center justify-center p-4">
         <div className="max-w-sm w-full text-center space-y-4">
           <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto">
             <Shield className="w-6 h-6 text-white/30" />
@@ -942,8 +942,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen">
-      <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto px-4 py-8">
 
         {/* Page header */}
         <div className="flex items-center justify-between mb-6">
@@ -981,6 +980,5 @@ export default function AdminPage() {
         {tab === 'activity'  && <ActivityTab  />}
         {tab === 'settings'  && <SettingsTab  />}
       </div>
-    </div>
   );
 }

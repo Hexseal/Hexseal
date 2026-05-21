@@ -193,7 +193,7 @@ export default function PostJobPage() {
 
   if (!isConnected) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+      <div className="flex-1 flex items-center justify-center px-4">
         <div className="text-center max-w-sm">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Briefcase className="w-7 h-7 text-primary" />
@@ -207,7 +207,7 @@ export default function PostJobPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
       {/* Header */}
       <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-2xl">
@@ -430,6 +430,6 @@ export default function PostJobPage() {
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }

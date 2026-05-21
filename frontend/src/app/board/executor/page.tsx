@@ -489,7 +489,7 @@ export default function ExecutorBoardPage() {
 
   if (!mounted || !isConnected) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Briefcase className="w-7 h-7 text-primary" />
@@ -503,7 +503,7 @@ export default function ExecutorBoardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
       {requestModal && (
         <RequestModal
           service={requestModal}
@@ -621,6 +621,6 @@ export default function ExecutorBoardPage() {
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }

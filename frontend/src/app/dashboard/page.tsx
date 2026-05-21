@@ -119,7 +119,7 @@ export default function DashboardPage() {
 
   if (!isConnected) {
     return (
-      <div className="flex items-center justify-center min-h-screen px-4">
+      <div className="flex-1 flex items-center justify-center px-4">
         <div className="text-center max-w-sm">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Activity className="w-7 h-7 text-primary" />
@@ -133,8 +133,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto px-4 py-5 max-w-4xl space-y-4">
+    <div className="mx-auto px-4 py-5 max-w-4xl space-y-4">
 
         {/* ── XMTP setup banner (only shows when needed) ── */}
         <MessagingSetup />
@@ -290,6 +289,5 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-    </div>
   );
 }

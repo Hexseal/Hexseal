@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
 interface JobRecord {
   client: string;
   title: string;
@@ -194,7 +195,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   if (jobLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-white/30" />
       </div>
     );
@@ -202,16 +203,18 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   if (!job) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <p className="text-white/40 text-sm">Job not found</p>
       </div>
     );
   }
 
   const statusInfo = JOB_STATUS[job.status] ?? JOB_STATUS[0];
+  const catKey = extractCategory(job.description);
+  const displayDesc = stripCategory(job.description);
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
       {/* Header */}
       <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-3xl">
@@ -222,6 +225,11 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 <Badge className={`text-xs border font-medium ${statusInfo.color}`}>
                   {statusInfo.label}
                 </Badge>
+                {catKey && (
+                  <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                    {t(`categories.${catKey}`)}
+                  </span>
+                )}
               </div>
               <h1 className="text-xl font-bold font-syne leading-tight">
                 {job.title || `Job #${id}`}
@@ -366,11 +374,11 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             </a>
           </div>
 
-          {job.description && (
+          {displayDesc && (
             <div className="mb-3">
               <p className="text-xs text-white/30 mb-1.5">{t("job.description_label")}</p>
               <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">
-                {job.description}
+                {displayDesc}
               </p>
             </div>
           )}
@@ -569,6 +577,6 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         </div>
       )}
 
-    </div>
+    </>
   );
 }

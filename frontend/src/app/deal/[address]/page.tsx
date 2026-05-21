@@ -401,7 +401,7 @@ export default function DealDetailPage() {
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-4 max-w-3xl flex items-center justify-between gap-4">
@@ -858,6 +858,6 @@ export default function DealDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

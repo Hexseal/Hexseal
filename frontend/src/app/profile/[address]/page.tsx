@@ -203,15 +203,14 @@ export default function ProfilePage() {
 
   if (!validAddress) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <p className="text-white/40 text-sm">{t("profile.invalid_address")}</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-3xl space-y-5">
+    <div className="container mx-auto px-4 py-8 max-w-3xl space-y-5">
 
         {/* ── Profile header ─────────────────────────────────────────────── */}
         <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-5" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
@@ -460,6 +459,5 @@ export default function ProfilePage() {
           </>
         )}
       </div>
-    </div>
   );
 }

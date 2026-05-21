@@ -17,6 +17,8 @@ import {
   Briefcase, User, ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
 
 interface HireRequestRecord {
   client: string;
@@ -159,7 +161,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-white/30" />
       </div>
     );
@@ -167,16 +169,19 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
   if (!req) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <p className="text-white/40 text-sm">Request not found</p>
       </div>
     );
   }
 
   const statusInfo = REQUEST_STATUS[req.status] ?? REQUEST_STATUS[0];
+  const t = useTranslations();
+  const catKey = service ? extractCategory(service.description) : null;
+  const displayDesc = service ? stripCategory(service.description) : null;
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
       {/* Header */}
       <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-3xl">
@@ -190,6 +195,11 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
                 <Badge className={`text-xs border font-medium ${statusInfo.color}`}>
                   {statusInfo.label}
                 </Badge>
+                {catKey && (
+                  <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                    {t(`categories.${catKey}`)}
+                  </span>
+                )}
               </div>
               <h1 className="text-xl font-bold font-syne leading-tight">
                 {service?.title ?? `Service #${req.serviceId.toString()}`}
@@ -380,9 +390,9 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
             <p className="text-base font-semibold text-white/90 mb-1">{service.title}</p>
 
-            {service.description && (
+            {displayDesc && (
               <p className="text-sm text-white/55 leading-relaxed whitespace-pre-wrap mb-4">
-                {service.description}
+                {displayDesc}
               </p>
             )}
 
@@ -455,6 +465,6 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         )}
 
       </div>
-    </div>
+    </>
   );
 }
