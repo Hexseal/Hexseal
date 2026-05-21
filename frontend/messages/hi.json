@@ -272,7 +272,7 @@
     "amount_label": "डील राशि",
     "actions_title": "कार्रवाइयां",
     "fund_btn": "डील फंड करें",
-    "activate_btn": "सक्रिय करें",
+    "activate_btn": "काम शुरू करें",
     "activate_success": "डील सक्रिय! काम शुरू हो गया।",
     "mark_done_btn": "पूर्ण चिह्नित करें",
     "mark_done_success": "काम जमा! क्लाइंट की समीक्षा की प्रतीक्षा है।",
@@ -314,7 +314,15 @@
       "completed": "सम्पन्न",
       "disputed": "विवादित",
       "cancelled": "रद्द"
-    }
+    },
+    "funded_executor_title": "Action required — start work",
+    "funded_executor_hint": "Deal is funded and waiting for you. Click Start Work — the deadline timer begins then. If you don't start within 3 days, the client can request a refund.",
+    "funded_client_title": "Waiting for executor to start",
+    "funded_client_hint": "The executor needs to confirm they are starting. If they don't start within 3 days, you can trigger a refund.",
+    "active_executor_title": "Work in progress",
+    "active_executor_hint": "Complete the work and click Mark Done when ready. The client will review and release payment.",
+    "active_client_title": "Work in progress",
+    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed."
   },
   "job": {
     "status_open": "खुला",

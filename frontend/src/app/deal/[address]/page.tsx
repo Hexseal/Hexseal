@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
-import { AGREEMENT_ABI, CONTRACTS, STATUS_LABELS, DIAMOND_ABI } from "@/config/contracts";
+import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI } from "@/config/contracts";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
 import { formatUnits, isAddress, type Abi } from "viem";
@@ -206,6 +206,17 @@ export default function DealDetailPage() {
 
   const isParty = isClient || isExecutor;
 
+  // Terminal states — deal is fully closed, no further actions possible
+  const isTerminal = parsed ? [3, 5, 6].includes(parsed.status) : false;
+
+  // The person this user should chat with
+  const chatPeer = useMemo(() => {
+    if (!parsed || !address) return null;
+    if (isClient)   return parsed.executor;
+    if (isExecutor) return parsed.client;
+    return null;
+  }, [parsed, address, isClient, isExecutor]);
+
   const now = Date.now() / 1000;
   const activationWindowPassed = !!parsed && parsed.fundedAt > 0n
     && now > Number(parsed.fundedAt) + 3 * 24 * 3600;
@@ -389,8 +400,88 @@ export default function DealDetailPage() {
           </div>
         </div>
 
+        {/* ── FUNDED state guidance banners ──────────────────────────────────── */}
+        {parsed.status === 1 && isExecutor && (
+          <div className="rounded-[22px] border border-amber-400/30 bg-amber-400/5 px-5 py-4"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)" }}>
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-400/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Shield className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-amber-300/90 mb-0.5">{t("deal.funded_executor_title")}</p>
+                <p className="text-xs text-white/40 leading-relaxed mb-3">{t("deal.funded_executor_hint")}</p>
+                <Button size="sm" onClick={() => handleAction('activate', t("deal.activate_success"))} disabled={busy}
+                  className="gap-1.5">
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
+                  {t("deal.activate_btn")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {parsed.status === 1 && isClient && (
+          <div className="rounded-[22px] border border-sky-400/20 bg-sky-400/5 px-5 py-4"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)" }}>
+            <div className="flex items-start gap-3">
+              <Clock className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-sky-300/80 mb-0.5">{t("deal.funded_client_title")}</p>
+                <p className="text-xs text-white/35 leading-relaxed">{t("deal.funded_client_hint")}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── ACTIVE guidance for executor: mark done ─────────────────────────── */}
+        {parsed.status === 2 && isExecutor && parsed.markedDoneAt === BigInt(0) && (
+          <div className="rounded-[22px] border border-violet-400/20 bg-violet-400/5 px-5 py-3 flex items-start gap-3"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)" }}>
+            <Timer className="w-4 h-4 text-violet-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-violet-300/80 mb-0.5">{t("deal.active_executor_title")}</p>
+              <p className="text-xs text-white/35">{t("deal.active_executor_hint")}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── ACTIVE guidance for client: waiting for delivery ────────────────── */}
+        {parsed.status === 2 && isClient && parsed.markedDoneAt === BigInt(0) && (
+          <div className="rounded-[22px] border border-white/[0.07] bg-white/[0.02] px-5 py-3 flex items-start gap-3"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)" }}>
+            <Clock className="w-4 h-4 text-white/30 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-white/55 mb-0.5">{t("deal.active_client_title")}</p>
+              <p className="text-xs text-white/25">{t("deal.active_client_hint")}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Terminal state banner ───────────────────────────────────────────── */}
+        {isTerminal && (
+          <div className={`rounded-[22px] border px-5 py-4 flex items-center gap-3 ${
+            parsed!.status === 3 ? 'border-green-500/20 bg-green-500/5' :
+            parsed!.status === 5 ? 'border-purple-500/20 bg-purple-500/5' :
+                                   'border-white/[0.07] bg-white/[0.02]'
+          }`}>
+            <CheckCircle className={`w-4 h-4 flex-shrink-0 ${
+              parsed!.status === 3 ? 'text-green-400' :
+              parsed!.status === 5 ? 'text-purple-400' : 'text-white/30'
+            }`} />
+            <div>
+              <p className="text-sm font-medium text-white/70">
+                {parsed!.status === 3 ? t("deal_status.completed") :
+                 parsed!.status === 5 ? t("deal_status.resolved") :
+                                        t("deal_status.refunded")}
+              </p>
+              <p className="text-xs text-white/30">{t("deal.closed_hint")}</p>
+            </div>
+          </div>
+        )}
+
         {/* ── Primary actions ─────────────────────────────────────────────────── */}
-        {isConnected && (isParty || isArbiter) && (
+        {!isTerminal && isConnected && (isParty || isArbiter) && (
           <div
             className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4"
             style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
@@ -472,9 +563,9 @@ export default function DealDetailPage() {
           </div>
         )}
 
-        {/* ── Deal Chat button ────────────────────────────────────────────────── */}
-        {isConnected && (isParty || isArbiter) && (
-          <Link href={`/deal/${dealAddress}/chat`} className="block">
+        {/* ── Chat with counterparty ──────────────────────────────────────────── */}
+        {isConnected && isParty && chatPeer && (
+          <Link href={`/chat?peer=${chatPeer.toLowerCase()}`} className="block">
             <div
               className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 flex items-center gap-3 hover:bg-[#111113] hover:border-white/[0.13] transition-colors group cursor-pointer"
               style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
@@ -484,7 +575,10 @@ export default function DealDetailPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white/80 group-hover:text-white transition-colors">{t("deal.chat_title")}</p>
-                <p className="text-xs text-white/35">{t("deal.chat_desc")}</p>
+                <p className="text-xs text-white/35">
+                  {isClient ? t("common.role_executor") : t("common.role_client")}
+                  {" · "}{chatPeer.slice(0, 6)}…{chatPeer.slice(-4)}
+                </p>
               </div>
               <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors flex-shrink-0" />
             </div>

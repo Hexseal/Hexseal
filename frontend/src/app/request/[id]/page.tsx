@@ -5,7 +5,8 @@ import { useAccount, useReadContract, usePublicClient, useWalletClient } from "w
 import { useRouter } from "next/navigation";
 import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
-import { sendGasless } from "@/lib/relay";
+import { sendGasless, sendAgreementGasless } from "@/lib/relay";
+import { AGREEMENT_ABI } from "@/config/contracts";
 import type { Abi } from "viem";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -109,6 +110,10 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
   const handleAction = async (action: "accept" | "reject" | "cancel") => {
     if (!walletClient || !publicClient) { toast.error("Wallet not connected"); return; }
+    if (action === "accept" && service?.status !== 0) {
+      toast.error("This service is no longer active.");
+      return;
+    }
     setIsBusy(action);
     const labels = { accept: "Accepting…", reject: "Rejecting…", cancel: "Cancelling…" };
     const ok     = { accept: "Request accepted — deal created!", reject: "Request rejected.", cancel: "Request cancelled." };
@@ -116,16 +121,32 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
     try {
       const fnName = action === "accept" ? "acceptRequest" : action === "reject" ? "rejectRequest" : "cancelRequest";
       const result = await sendGasless(walletClient, publicClient, fnName, [requestId], DIAMOND_ABI as Abi);
-      toast.success(ok[action]);
+
       if (action === "accept") {
         await refetch();
         const agreementAddr = result?.agreementAddr;
         if (agreementAddr && agreementAddr !== ZERO_ADDR) {
+          // Auto-activate: executor already confirmed by accepting — no second step needed
+          try {
+            toast("Starting work…");
+            await sendAgreementGasless(
+              walletClient,
+              publicClient,
+              agreementAddr as `0x${string}`,
+              "activate",
+              AGREEMENT_ABI as Abi,
+            );
+            toast.success("Request accepted — work started!");
+          } catch {
+            toast.success("Request accepted — deal created. Open the deal to start work.");
+          }
           router.push(`/deal/${agreementAddr}`);
         } else {
+          toast.success(ok[action]);
           setTimeout(() => refetch(), 2000);
         }
       } else {
+        toast.success(ok[action]);
         setTimeout(() => refetch(), 2000);
       }
     } catch (err: unknown) {
@@ -204,7 +225,8 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
                     <Button
                       size="sm"
                       onClick={() => handleAction("accept")}
-                      disabled={!!isBusy}
+                      disabled={!!isBusy || service?.status !== 0}
+                      title={service?.status !== 0 ? "Service is no longer active" : undefined}
                       className="gap-1"
                     >
                       {isBusy === "accept" ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}

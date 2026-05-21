@@ -6,8 +6,8 @@ import { useAccount, useReadContract } from 'wagmi';
 import type { Abi } from 'viem';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import {
-  Loader2, Activity, Briefcase, Zap, CheckCircle,
-  DollarSign, Plus, ArrowRight, Star,
+  Loader2, Activity, CheckCircle,
+  DollarSign, Star, Zap,
 } from 'lucide-react';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import { DealSearch } from '@/components/DealSearch';
@@ -69,36 +69,6 @@ function Tab({ active, onClick, children, count }: {
         </span>
       )}
     </button>
-  );
-}
-
-// ─── Quick action button ───────────────────────────────────────────────────────
-
-function QuickAction({ href, icon, label, sub, accent }: {
-  href: string; icon: ReactNode; label: string; sub: string; accent?: boolean;
-}) {
-  return (
-    <Link href={href} className="block">
-      <div
-        className={`rounded-[20px] border px-4 py-3.5 flex items-center gap-3 transition-colors group cursor-pointer ${
-          accent
-            ? 'border-violet-500/30 bg-violet-500/[0.08] hover:bg-violet-500/[0.15] hover:border-violet-500/50'
-            : 'border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] hover:border-white/[0.13]'
-        }`}
-        style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
-      >
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-          accent ? 'bg-violet-500/20' : 'bg-white/5'
-        }`}>
-          {icon}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm font-semibold leading-none mb-0.5 ${accent ? 'text-violet-300' : 'text-white/80'} group-hover:text-white transition-colors`}>{label}</p>
-          <p className="text-xs text-white/30">{sub}</p>
-        </div>
-        <ArrowRight className={`w-4 h-4 flex-shrink-0 transition-colors ${accent ? 'text-violet-500/50 group-hover:text-violet-400' : 'text-white/15 group-hover:text-white/40'}`} />
-      </div>
-    </Link>
   );
 }
 
@@ -220,31 +190,6 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
-
-        {/* ── Quick actions ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <QuickAction
-            href="/board/client/post"
-            icon={<Briefcase className="w-4 h-4 text-white/50" />}
-            label={t("dashboard.action_post_job")}
-            sub={t("dashboard.action_post_job_sub")}
-            accent={false}
-          />
-          <QuickAction
-            href="/board/executor"
-            icon={<Zap className="w-4 h-4 text-violet-400" />}
-            label={t("dashboard.action_find_work")}
-            sub={t("dashboard.action_find_work_sub")}
-            accent={true}
-          />
-          <QuickAction
-            href="/board/executor/post"
-            icon={<Plus className="w-4 h-4 text-white/50" />}
-            label={t("dashboard.action_offer_service")}
-            sub={t("dashboard.action_offer_service_sub")}
-            accent={false}
-          />
-        </div>
 
         {/* ── Deal search ── */}
         <DealSearch />

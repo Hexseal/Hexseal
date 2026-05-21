@@ -69,7 +69,7 @@ const config = projectId
       transports,
       storage: safeStorage,
       ssr: true,
-      pollingInterval: 15_000,
+      pollingInterval: 6_000,
       wallets: [
         {
           groupName: "Popular",
@@ -104,7 +104,7 @@ const config = projectId
       connectors: [injected({ shimDisconnect: true })],
       storage: safeStorage,
       ssr: true,
-      pollingInterval: 15_000,
+      pollingInterval: 6_000,
     });
 
 function XmtpNotificationsMount() {
@@ -181,10 +181,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // Poll every 15 s so on-chain changes appear without manual refresh.
-            refetchInterval: 15_000,
-            // Treat data as fresh for 10 s to avoid redundant back-to-back fetches.
-            staleTime: 10_000,
+            // Poll every 6 s so on-chain changes appear quickly.
+            refetchInterval: 6_000,
+            // Treat data as fresh for 4 s to avoid redundant back-to-back fetches.
+            staleTime: 4_000,
             refetchOnWindowFocus: true,
           },
         },

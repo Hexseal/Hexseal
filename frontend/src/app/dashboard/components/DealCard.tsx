@@ -162,9 +162,12 @@ export function DealCard({ agreement, address, refetch }: {
     </div>
   );
   if (liveStatus === 1 && isExecutor) primaryActions.push(
-    <Button key="activate" size="sm" disabled={busy} onClick={() => run('activate')}>
-      {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}Activate
-    </Button>
+    <div key="activate-group" className="flex flex-col gap-1.5 w-full">
+      <p className="text-xs text-amber-400/70">Deal is funded — start work to begin the countdown</p>
+      <Button size="sm" disabled={busy} onClick={() => run('activate')} className="self-start gap-1">
+        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}Start Work
+      </Button>
+    </div>
   );
   if (liveStatus === 2 && isExecutor && markedDoneAt === BigInt(0)) primaryActions.push(
     <Button key="markDone" size="sm" disabled={busy} onClick={() => run('markDone')}>

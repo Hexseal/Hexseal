@@ -173,13 +173,14 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     };
   }, [pathname]);
 
-  // Dynamically measure the real header height and write --chat-top-offset.
-  // Overrides the CSS static fallback so the chat main always starts exactly below the header.
+  // Dynamically measure the real header bottom edge and write --chat-top-offset.
+  // Must use .bottom (not .height) because the floating pill header has a top offset.
+  // Must scan all <header> elements: on desktop the first one is md:hidden (height=0).
   useEffect(() => {
-    const header = document.querySelector('header');
     const update = () => {
-      const h = header?.getBoundingClientRect().height ?? 56;
-      document.documentElement.style.setProperty('--chat-top-offset', `${h}px`);
+      const headers = Array.from(document.querySelectorAll('header'));
+      const bottom = headers.reduce((max, h) => Math.max(max, h.getBoundingClientRect().bottom), 0);
+      document.documentElement.style.setProperty('--chat-top-offset', `${bottom || 76}px`);
     };
     update();
     window.addEventListener('resize', update);

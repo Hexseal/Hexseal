@@ -103,6 +103,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   const handleAccept = async (executor: string) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
+    if (job?.status !== 0) { toast.error('This job is no longer open.'); return; }
     setAcceptingExecutor(executor);
     setIsBusy(true);
 

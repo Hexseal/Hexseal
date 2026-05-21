@@ -272,7 +272,7 @@
     "amount_label": "계약 금액",
     "actions_title": "작업",
     "fund_btn": "계약 자금 제공",
-    "activate_btn": "활성화",
+    "activate_btn": "작업 시작",
     "activate_success": "계약이 활성화되었습니다! 작업이 시작되었습니다.",
     "mark_done_btn": "완료 표시",
     "mark_done_success": "작업이 제출되었습니다! 클라이언트 검토를 기다리는 중입니다.",
@@ -314,7 +314,15 @@
       "completed": "완료됨",
       "disputed": "분쟁 중",
       "cancelled": "취소됨"
-    }
+    },
+    "funded_executor_title": "Action required — start work",
+    "funded_executor_hint": "Deal is funded and waiting for you. Click Start Work — the deadline timer begins then. If you don't start within 3 days, the client can request a refund.",
+    "funded_client_title": "Waiting for executor to start",
+    "funded_client_hint": "The executor needs to confirm they are starting. If they don't start within 3 days, you can trigger a refund.",
+    "active_executor_title": "Work in progress",
+    "active_executor_hint": "Complete the work and click Mark Done when ready. The client will review and release payment.",
+    "active_client_title": "Work in progress",
+    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed."
   },
   "job": {
     "status_open": "공개",

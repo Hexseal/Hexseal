@@ -96,6 +96,7 @@ function JobCard({
 
   const handleApply = async () => {
     if (!walletClient || !publicClient || isApplying) return;
+    if (job.status !== 0) { toast.error('This job is no longer open.'); return; }
     setIsApplying(true);
     try {
       await sendGasless(walletClient, publicClient, "applyForJob", [jobId], DIAMOND_ABI as Abi);
@@ -110,6 +111,7 @@ function JobCard({
 
   const handleAccept = async (executorAddr: string) => {
     if (!walletClient || !publicClient) return;
+    if (job.status !== 0) { toast.error('This job is no longer open.'); return; }
     setIsAccepting(executorAddr);
     try {
       toast(t("board.jobs.accepting"));
@@ -427,15 +429,6 @@ export default function BoardPage() {
           />
         </div>
 
-        {/* Count */}
-        <div className="flex items-center gap-2 mb-4">
-          <span className="text-xs text-white/30 font-mono">
-            {isLoading ? t("board.jobs.loading_short") : t("board.jobs.open_count", { count: jobs.length })}
-          </span>
-          {totalJobsData !== undefined && (
-            <span className="text-xs text-white/15 font-mono">{t("common.total_suffix", { count: totalJobsData.toString() })}</span>
-          )}
-        </div>
 
         {isLoading ? (
           <div className="flex items-center justify-center py-24 gap-2 text-white/30">

@@ -252,7 +252,7 @@ function ServiceCard({
               </Button>
             </Link>
           )}
-          {isConnected && !isMyService && !myActive && (
+          {isConnected && !isMyService && !myActive && service.status === 0 && (
             <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-9 px-3 text-xs gap-1">
               {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               {t("board.services.request_btn")}
@@ -432,7 +432,7 @@ export default function ExecutorBoardPage() {
 
 
   const filtered = useMemo(() => {
-    let list = services;
+    let list = services.filter(s => s.status === 0);
     if (regionFilter !== null) {
       list = list.filter(s => s.region === regionFilter);
     }
@@ -445,6 +445,11 @@ export default function ExecutorBoardPage() {
 
   const handleRequest = async (amountStr: string, daysStr: string, region: number) => {
     if (!requestModal || !walletClient || !publicClient || !address) return;
+    if (requestModal.status !== 0) {
+      toast.error("This service is no longer active.");
+      setRequestModal(null);
+      return;
+    }
     setIsRequesting(true);
     try {
       const amount    = parseUnits(amountStr, 6);
@@ -530,12 +535,6 @@ export default function ExecutorBoardPage() {
           />
         </div>
 
-        {/* Flow hint */}
-        <div className="rounded-[14px] border border-white/[0.07] px-4 py-3 flex items-start gap-3 mb-5">
-          <UserCheck className="w-4 h-4 text-white/25 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-white/40 leading-relaxed">{t("board.services.flow_hint")}</p>
-        </div>
-
         {/* Search */}
         <div className="relative mb-5">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none" />
@@ -547,17 +546,6 @@ export default function ExecutorBoardPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2 mb-4">
-          <span className="text-xs text-white/30 font-mono">
-            {loadingList ? t("board.jobs.loading_short") : t("board.services.count", { count: filtered.length })}
-          </span>
-          {totalServicesData !== undefined && (
-            <span className="text-xs text-white/15 font-mono">{t("common.total_suffix", { count: totalServicesData.toString() })}</span>
-          )}
-          {totalRequestsData !== undefined && (
-            <span className="text-xs text-white/15 font-mono">{t("board.services.requests_total", { count: totalRequestsData.toString() })}</span>
-          )}
-        </div>
 
         {loadingList ? (
           <div className="flex items-center justify-center py-24 gap-2 text-white/30">

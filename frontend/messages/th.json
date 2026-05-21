@@ -272,7 +272,7 @@
     "amount_label": "จำนวนเงินดีล",
     "actions_title": "การดำเนินการ",
     "fund_btn": "โอนเงินเข้าดีล",
-    "activate_btn": "เปิดใช้งาน",
+    "activate_btn": "เริ่มงาน",
     "activate_success": "เปิดใช้งานดีลแล้ว! งานเริ่มต้นแล้ว",
     "mark_done_btn": "ทำเครื่องหมายว่าเสร็จ",
     "mark_done_success": "ส่งงานแล้ว! รอลูกค้าตรวจสอบ",
@@ -314,7 +314,15 @@
       "completed": "เสร็จสิ้น",
       "disputed": "มีข้อพิพาท",
       "cancelled": "ยกเลิก"
-    }
+    },
+    "funded_executor_title": "Action required — start work",
+    "funded_executor_hint": "Deal is funded and waiting for you. Click Start Work — the deadline timer begins then. If you don't start within 3 days, the client can request a refund.",
+    "funded_client_title": "Waiting for executor to start",
+    "funded_client_hint": "The executor needs to confirm they are starting. If they don't start within 3 days, you can trigger a refund.",
+    "active_executor_title": "Work in progress",
+    "active_executor_hint": "Complete the work and click Mark Done when ready. The client will review and release payment.",
+    "active_client_title": "Work in progress",
+    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed."
   },
   "job": {
     "status_open": "เปิดรับ",

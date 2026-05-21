@@ -272,7 +272,7 @@
     "amount_label": "交易金额",
     "actions_title": "操作",
     "fund_btn": "注资",
-    "activate_btn": "激活",
+    "activate_btn": "開始工作",
     "activate_success": "交易已激活！工作已开始。",
     "mark_done_btn": "标记完成",
     "mark_done_success": "工作已提交！等待客户审核。",
@@ -314,7 +314,15 @@
       "completed": "已结束",
       "disputed": "争议中",
       "cancelled": "已取消"
-    }
+    },
+    "funded_executor_title": "Action required — start work",
+    "funded_executor_hint": "Deal is funded and waiting for you. Click Start Work — the deadline timer begins then. If you don't start within 3 days, the client can request a refund.",
+    "funded_client_title": "Waiting for executor to start",
+    "funded_client_hint": "The executor needs to confirm they are starting. If they don't start within 3 days, you can trigger a refund.",
+    "active_executor_title": "Work in progress",
+    "active_executor_hint": "Complete the work and click Mark Done when ready. The client will review and release payment.",
+    "active_client_title": "Work in progress",
+    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed."
   },
   "job": {
     "status_open": "开放",

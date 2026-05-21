@@ -250,10 +250,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   const preDealCtx = usePreDealBar(address, recipientAddress, !!dealContext);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const fileRef     = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const scrollRef   = useRef<HTMLDivElement>(null);
+  const fileRef       = useRef<HTMLInputElement>(null);
+  const textareaRef   = useRef<HTMLTextAreaElement>(null);
+  const bottomRef     = useRef<HTMLDivElement>(null);
+  const scrollRef     = useRef<HTMLDivElement>(null);
+  const prevMsgCount  = useRef(0);
 
   const chatUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/chat/${address?.toLowerCase()}`
@@ -322,7 +323,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   }, [recipientAddress]);
 
   useEffect(() => {
-    if (atBottom) bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    const newCount = messages.length;
+    const grew = newCount > prevMsgCount.current;
+    prevMsgCount.current = newCount;
+    if (grew && atBottom) bottomRef.current?.scrollIntoView({ behavior: 'instant' });
   }, [messages, atBottom]);
 
   const handleScroll = () => {
@@ -787,13 +791,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
               // Gap between different senders
               if (isFirst && i > 0 && lastGroupEnd === i - 1) {
-                items.push(<div key={`gap-${msg.id}`} className="h-2" />);
+                items.push(<div key={`gap-${msg.id}`} className="h-3" />);
               }
               if (isLast) lastGroupEnd = i;
 
               items.push(
                 <div key={msg.id}
-                  className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'} animate-in fade-in duration-150`}>
+                  className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'} ${!isLast ? 'mb-0.5' : ''}`}>
 
                   {/* Avatar placeholder (incoming only, last of group) */}
                   {!isMe && (
@@ -878,10 +882,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         <div className="flex items-end gap-2">
           <input ref={fileRef} type="file" className="hidden" tabIndex={-1} onChange={handleFileChange} />
           <button
-            onClick={() => { if (!isInitialized || uploading) return; fileRef.current?.click(); }}
-            disabled={!isInitialized || uploading}
-            title="Attach file (encrypted, 18 days, max 5 GB)"
-            className="w-9 h-9 rounded-full flex items-center justify-center text-white/30 hover:text-white/65 hover:bg-white/[0.07] disabled:opacity-20 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
+            onClick={() => { if (!isInitialized || uploading || !dealContext) return; fileRef.current?.click(); }}
+            disabled={!isInitialized || uploading || !dealContext}
+            title={dealContext ? "Attach file (encrypted, 18 days, max 5 GB)" : "Files available only in active deals"}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-white/30 hover:text-white/65 hover:bg-white/[0.07] disabled:opacity-10 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
           </button>
           <textarea
