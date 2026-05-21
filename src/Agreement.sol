@@ -264,6 +264,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     // Флаг финализации — предотвращает двойное завершение при гонке resolveDispute / triggerArbiterTimeout
     bool private _finalized;
 
+    // Extras: доп оплата за переделки/доп работу (клиент предлагает → исполнитель принимает)
+    mapping(uint256 => Extra) public extras;
+    uint256 public nextExtraId;
+    uint256 public extrasTotal;         // сумма принятых extras → исполнителю при release
+    uint256 public pendingExtrasTotal;  // сумма ожидающих extras → рефанд клиенту при закрытии
+
     // -------- STATUS ENUM --------
 
     enum Status {
@@ -274,6 +280,16 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         DISPUTED,  // спор поднят
         RESOLVED,  // арбитр вынес решение
         REFUNDED   // рефанд клиенту, NFT сожжён
+    }
+
+    // -------- EXTRAS --------
+
+    enum ExtraStatus { PENDING, ACCEPTED, REJECTED }
+
+    struct Extra {
+        uint256 amount;
+        bytes32 termsHash;
+        ExtraStatus status;
     }
 
     // -------- EVENTS --------
@@ -287,6 +303,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     event DisputeResolved(address indexed arbiter, bool clientWins, uint256 amount);
     event TimedOut(address indexed client, uint256 amount);
     event ArbiterTimedOut(address indexed client, uint256 amount);
+    event ExtraProposed(uint256 indexed extraId, address indexed client, uint256 amount, bytes32 termsHash);
+    event ExtraAccepted(uint256 indexed extraId, uint256 newTotal);
+    event ExtraRejected(uint256 indexed extraId);
     // Срабатывает если Registry.updateStatus() упал — сделка завершена, статус в Registry рассинхронизирован.
     // Любой может вызвать syncRegistry() чтобы исправить.
     event RegistrySyncFailed(address indexed agreement, uint8 targetStatus);
@@ -315,6 +334,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     error ArbiterWindowNotPassed();
     error NoArbiterSet();
     error WrongAmount();
+    error ExtraNotPending();
+    error ZeroAmount();
 
     // -------- CONSTRUCTOR --------
 
@@ -495,7 +516,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // AUTO_APPROVE_WINDOW ещё не прошёл (иначе triggerAutoApprove)
         if (block.timestamp >= markedDoneAt + AUTO_APPROVE_WINDOW) revert WindowAlreadyPassed();
 
-        uint256 payout = amount;
+        _settlePending();
+        uint256 payout = amount + extrasTotal;
 
         _complete(Status.COMPLETED);
         usdc.safeTransfer(executor, payout);
@@ -510,7 +532,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (disputedAt != 0) revert AlreadyDisputed();
         if (block.timestamp < markedDoneAt + AUTO_APPROVE_WINDOW) revert WindowNotPassed();
 
-        uint256 payout = amount;
+        _settlePending();
+        uint256 payout = amount + extrasTotal;
 
         _complete(Status.COMPLETED);
         usdc.safeTransfer(executor, payout);
@@ -560,7 +583,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
         resolvedAt = block.timestamp;
 
-        uint256 payout = amount;
+        _settlePending();
+        uint256 payout = amount + extrasTotal;
 
         if (clientWins) {
             _complete(Status.RESOLVED);
@@ -601,7 +625,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (markedDoneAt != 0) revert AlreadyMarkedDone();
         if (block.timestamp <= activatedAt + (deadlineDays * 1 days)) revert DeadlineNotPassed();
 
-        uint256 payout = amount;
+        _settlePending();
+        uint256 payout = amount + extrasTotal;
 
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, payout);
@@ -618,13 +643,78 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (resolvedAt != 0) revert AlreadyResolved();
         if (block.timestamp <= disputedAt + DISPUTE_WINDOW) revert WindowNotPassed();
 
-        uint256 payout = amount;
+        _settlePending();
+        uint256 payout = amount + extrasTotal;
 
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, payout);
 
         _clearDisputeClaim();
         emit ArbiterTimedOut(client, payout);
+    }
+
+    // -------- EXTRAS --------
+
+    /// @notice Клиент предлагает доп оплату за переделку / новую задачу.
+    /// USDC лочится в Agreement. Исполнитель принимает (acceptExtra) или отклоняет (rejectExtra).
+    /// Все принятые extras прибавляются к основному amount при release.
+    function proposeExtra(uint256 extraAmount, bytes32 extraTermsHash) external nonReentrant {
+        address sender = _msgSender();
+        if (sender != client) revert NotClient();
+        if (extraAmount == 0) revert ZeroAmount();
+        if (activatedAt == 0) revert NotActive();
+        if (markedDoneAt != 0) revert AlreadyMarkedDone();
+        if (disputedAt != 0) revert AlreadyDisputed();
+        if (_finalized) revert AlreadyFinalized();
+        if (block.timestamp > activatedAt + (deadlineDays * 1 days)) revert DeadlinePassed();
+
+        uint256 extraId = nextExtraId++;
+        extras[extraId] = Extra({ amount: extraAmount, termsHash: extraTermsHash, status: ExtraStatus.PENDING });
+        pendingExtrasTotal += extraAmount;
+
+        usdc.safeTransferFrom(sender, address(this), extraAmount);
+
+        emit ExtraProposed(extraId, sender, extraAmount, extraTermsHash);
+    }
+
+    /// @notice Исполнитель принимает extra → добавляется к итоговому payout.
+    function acceptExtra(uint256 extraId) external {
+        address sender = _msgSender();
+        if (sender != executor) revert NotExecutor();
+        if (_finalized) revert AlreadyFinalized();
+        Extra storage e = extras[extraId];
+        if (e.status != ExtraStatus.PENDING) revert ExtraNotPending();
+
+        e.status = ExtraStatus.ACCEPTED;
+        pendingExtrasTotal -= e.amount;
+        extrasTotal += e.amount;
+
+        emit ExtraAccepted(extraId, extrasTotal);
+    }
+
+    /// @notice Исполнитель отклоняет extra → USDC возвращается клиенту.
+    function rejectExtra(uint256 extraId) external nonReentrant {
+        address sender = _msgSender();
+        if (sender != executor) revert NotExecutor();
+        if (_finalized) revert AlreadyFinalized();
+        Extra storage e = extras[extraId];
+        if (e.status != ExtraStatus.PENDING) revert ExtraNotPending();
+
+        uint256 refund = e.amount;
+        e.status = ExtraStatus.REJECTED;
+        pendingExtrasTotal -= refund;
+
+        usdc.safeTransfer(client, refund);
+
+        emit ExtraRejected(extraId);
+    }
+
+    function getExtra(uint256 extraId) external view returns (Extra memory) {
+        return extras[extraId];
+    }
+
+    function totalPayout() external view returns (uint256) {
+        return amount + extrasTotal;
     }
 
     // -------- VIEW --------
@@ -823,6 +913,15 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     }
 
     // -------- INTERNAL --------
+
+    /// @notice Рефанд всех ожидающих extras клиенту. Вызывается до финализации сделки.
+    function _settlePending() private {
+        uint256 pending = pendingExtrasTotal;
+        if (pending > 0) {
+            pendingExtrasTotal = 0;
+            usdc.safeTransfer(client, pending);
+        }
+    }
 
     function _complete(Status newStatus) private {
         if (_finalized) revert AlreadyFinalized();

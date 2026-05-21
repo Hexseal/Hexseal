@@ -102,9 +102,11 @@
         "design": "设计",
         "development": "开发",
         "marketing": "营销",
-        "content": "内容",
+        "writing": "写作与内容",
         "other": "其他"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "发布工作",
@@ -115,7 +117,10 @@
       "field_region": "地区",
       "fee_label": "发布费用（不可退款）",
       "submit_btn": "发布工作",
-      "success": "工作已发布！"
+      "success": "工作已发布！",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "{count}小时前",
     "days_ago": "{count}天前",
     "total_suffix": "/ {count} 总计"
+  },
+  "categories": {
+    "design": "设计",
+    "development": "开发",
+    "marketing": "营销",
+    "writing": "写作与内容",
+    "video": "视频与摄影",
+    "translation": "翻译",
+    "business": "商业",
+    "audio": "音乐与音频",
+    "data": "数据与研究",
+    "legal": "法律",
+    "education": "教育",
+    "other": "其他"
   }
 }

@@ -102,9 +102,11 @@
         "design": "Дизайн",
         "development": "Розробка",
         "marketing": "Маркетинг",
-        "content": "Контент",
+        "writing": "Тексти та контент",
         "other": "Інше"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "Опублікувати Роботу",
@@ -115,7 +117,10 @@
       "field_region": "Регіон",
       "fee_label": "Комісія за публікацію (неповернена)",
       "submit_btn": "Опублікувати Роботу",
-      "success": "Роботу Опубліковано!"
+      "success": "Роботу Опубліковано!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "{count}год тому",
     "days_ago": "{count}д тому",
     "total_suffix": "/ {count} всього"
+  },
+  "categories": {
+    "design": "Дизайн",
+    "development": "Розробка",
+    "marketing": "Маркетинг",
+    "writing": "Тексти та контент",
+    "video": "Відео та фото",
+    "translation": "Переклади",
+    "business": "Бізнес",
+    "audio": "Музика та аудіо",
+    "data": "Дані та дослідження",
+    "legal": "Юридичні послуги",
+    "education": "Освіта",
+    "other": "Інше"
   }
 }

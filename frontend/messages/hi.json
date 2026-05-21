@@ -102,9 +102,11 @@
         "design": "डिज़ाइन",
         "development": "डेवलपमेंट",
         "marketing": "मार्केटिंग",
-        "content": "कंटेंट",
+        "writing": "लेखन और सामग्री",
         "other": "अन्य"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "काम पोस्ट करें",
@@ -115,7 +117,10 @@
       "field_region": "क्षेत्र",
       "fee_label": "लिस्टिंग शुल्क (अप्रतिदेय)",
       "submit_btn": "काम पोस्ट करें",
-      "success": "काम पोस्ट हुआ!"
+      "success": "काम पोस्ट हुआ!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "{count}घं पहले",
     "days_ago": "{count}दि पहले",
     "total_suffix": "/ {count} कुल"
+  },
+  "categories": {
+    "design": "डिज़ाइन",
+    "development": "डेवलपमेंट",
+    "marketing": "मार्केटिंग",
+    "writing": "लेखन और सामग्री",
+    "video": "वीडियो और फ़ोटो",
+    "translation": "अनुवाद",
+    "business": "बिज़नेस",
+    "audio": "संगीत और ऑडियो",
+    "data": "डेटा और शोध",
+    "legal": "कानूनी",
+    "education": "शिक्षा",
+    "other": "अन्य"
   }
 }

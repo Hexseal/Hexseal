@@ -102,9 +102,11 @@
         "design": "Design",
         "development": "Development",
         "marketing": "Marketing",
-        "content": "Content",
+        "writing": "Writing & Content",
         "other": "Other"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "Post a Job",
@@ -115,7 +117,10 @@
       "field_region": "Region",
       "fee_label": "Listing Fee (non-refundable)",
       "submit_btn": "Post Job",
-      "success": "Job Posted!"
+      "success": "Job Posted!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -619,5 +624,19 @@
     "hours_ago": "{count}h ago",
     "days_ago": "{count}d ago",
     "total_suffix": "/ {count} total"
+  },
+  "categories": {
+    "design": "Design",
+    "development": "Development",
+    "marketing": "Marketing",
+    "writing": "Writing & Content",
+    "video": "Video & Photo",
+    "translation": "Translation",
+    "business": "Business",
+    "audio": "Music & Audio",
+    "data": "Data & Research",
+    "legal": "Legal",
+    "education": "Education",
+    "other": "Other"
   }
 }

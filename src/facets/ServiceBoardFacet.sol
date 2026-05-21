@@ -130,6 +130,21 @@ contract ServiceBoardFacet {
         _;
     }
 
+    // -------- ERC-2771 msgSender --------
+
+    function _msgSender() internal view returns (address sender) {
+        if (
+            msg.sender == FactoryStorage.layout().trustedForwarder &&
+            msg.data.length >= 20
+        ) {
+            assembly {
+                sender := shr(96, calldataload(sub(calldatasize(), 20)))
+            }
+        } else {
+            sender = msg.sender;
+        }
+    }
+
     // -------- EXECUTOR: POST SERVICE --------
 
     /// @notice Исполнитель публикует услугу. Требует approve(diamond, fee) до вызова.
@@ -220,21 +235,23 @@ contract ServiceBoardFacet {
     }
 
     function removeService(uint256 serviceId) external {
+        address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
-        if (msg.sender != svc.executor) revert NotExecutor();
+        if (sender != svc.executor) revert NotExecutor();
         if (svc.status == ServiceBoardStorage.ServiceStatus.REMOVED) revert ServiceNotActive();
 
         svc.status = ServiceBoardStorage.ServiceStatus.REMOVED;
-        emit ServiceRemoved(serviceId, msg.sender);
+        emit ServiceRemoved(serviceId, sender);
     }
 
     function pauseService(uint256 serviceId) external {
+        address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
-        if (msg.sender != svc.executor) revert NotExecutor();
+        if (sender != svc.executor) revert NotExecutor();
         if (svc.status != ServiceBoardStorage.ServiceStatus.ACTIVE) revert ServiceNotActive();
 
         svc.status = ServiceBoardStorage.ServiceStatus.PAUSED;
@@ -242,10 +259,11 @@ contract ServiceBoardFacet {
     }
 
     function unpauseService(uint256 serviceId) external {
+        address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
-        if (msg.sender != svc.executor) revert NotExecutor();
+        if (sender != svc.executor) revert NotExecutor();
         if (svc.status != ServiceBoardStorage.ServiceStatus.PAUSED) revert ServiceNotActive();
 
         svc.status = ServiceBoardStorage.ServiceStatus.ACTIVE;
@@ -355,11 +373,12 @@ contract ServiceBoardFacet {
     function acceptRequest(uint256 requestId)
         external nonReentrant whenNotPaused returns (address agreementAddr)
     {
+        address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
         ServiceBoardStorage.HireRequest storage req = s.requests[requestId];
         ServiceBoardStorage.Service storage svc = s.services[req.serviceId];
 
-        if (msg.sender != svc.executor) revert NotExecutor();
+        if (sender != svc.executor) revert NotExecutor();
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         // Effects first
@@ -380,7 +399,7 @@ contract ServiceBoardFacet {
             abi.encodeWithSelector(
                 IFactory.deployAgreement.selector,
                 client,
-                msg.sender,
+                sender,
                 address(0),
                 amount,
                 deadline,
@@ -401,16 +420,17 @@ contract ServiceBoardFacet {
         (bool funded, ) = agreementAddr.call(abi.encodeWithSignature("fundFromFactory()"));
         require(funded, "ServiceBoard: fund failed");
 
-        emit RequestAccepted(requestId, msg.sender, client, agreementAddr);
+        emit RequestAccepted(requestId, sender, client, agreementAddr);
     }
 
     /// @notice Исполнитель отклоняет запрос → amount рефандится клиенту.
     function rejectRequest(uint256 requestId) external nonReentrant {
+        address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
         ServiceBoardStorage.HireRequest storage req = s.requests[requestId];
         ServiceBoardStorage.Service storage svc = s.services[req.serviceId];
 
-        if (msg.sender != svc.executor) revert NotExecutor();
+        if (sender != svc.executor) revert NotExecutor();
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.REJECTED;
@@ -420,17 +440,18 @@ contract ServiceBoardFacet {
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         _safeTransfer(fs.usdc, req.client, refund);
 
-        emit RequestRejected(requestId, msg.sender, req.client);
+        emit RequestRejected(requestId, sender, req.client);
     }
 
     // -------- CLIENT: CANCEL --------
 
     /// @notice Клиент отменяет запрос пока он PENDING → amount рефандится.
     function cancelRequest(uint256 requestId) external nonReentrant {
+        address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
         ServiceBoardStorage.HireRequest storage req = s.requests[requestId];
 
-        if (msg.sender != req.client) revert NotClient();
+        if (sender != req.client) revert NotClient();
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.CANCELLED;
@@ -438,9 +459,9 @@ contract ServiceBoardFacet {
         s.requestFunds[requestId] = 0;
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
-        _safeTransfer(fs.usdc, msg.sender, refund);
+        _safeTransfer(fs.usdc, sender, refund);
 
-        emit RequestCancelled(requestId, msg.sender);
+        emit RequestCancelled(requestId, sender);
     }
 
     // -------- VIEW --------

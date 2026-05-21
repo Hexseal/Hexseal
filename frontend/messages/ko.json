@@ -102,9 +102,11 @@
         "design": "디자인",
         "development": "개발",
         "marketing": "마케팅",
-        "content": "콘텐츠",
+        "writing": "글쓰기 & 콘텐츠",
         "other": "기타"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "일자리 게시",
@@ -115,7 +117,10 @@
       "field_region": "지역",
       "fee_label": "게시 수수료 (환불 불가)",
       "submit_btn": "일자리 게시",
-      "success": "일자리가 게시되었습니다!"
+      "success": "일자리가 게시되었습니다!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "{count}시간 전",
     "days_ago": "{count}일 전",
     "total_suffix": "/ {count} 합계"
+  },
+  "categories": {
+    "design": "디자인",
+    "development": "개발",
+    "marketing": "마케팅",
+    "writing": "글쓰기 & 콘텐츠",
+    "video": "영상 & 사진",
+    "translation": "번역",
+    "business": "비즈니스",
+    "audio": "음악 & 오디오",
+    "data": "데이터 & 리서치",
+    "legal": "법률",
+    "education": "교육",
+    "other": "기타"
   }
 }

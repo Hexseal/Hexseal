@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
 import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI } from "@/config/contracts";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
-import { formatUnits, isAddress, type Abi } from "viem";
+import { formatUnits, parseUnits, keccak256, toBytes, isAddress, type Abi } from "viem";
 import {
   Loader2,
   CheckCircle,
@@ -17,10 +17,12 @@ import {
   Timer,
   Shield,
   MessageCircle,
+  Plus,
+  ChevronDown,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { fundAgreementGasless, sendAgreementGasless } from "@/lib/relay";
+import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from "@/lib/relay";
 import { useProfile } from "@/hooks/useProfile";
 import { ARBITER_REGISTRY_ABI } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
@@ -112,6 +114,11 @@ export default function DealDetailPage() {
   const [isFunding, setIsFunding] = useState(false);
   const [disputeModal, setDisputeModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
+  const [proposeModal, setProposeModal] = useState(false);
+  const [proposeAmount, setProposeAmount] = useState('');
+  const [proposeDesc, setProposeDesc] = useState('');
+  const [extrasList, setExtrasList] = useState<Array<{ id: number; amount: bigint; termsHash: string; status: number }>>([]);
+  const [extrasLoading, setExtrasLoading] = useState(false);
   const t = useTranslations();
 
   const AGREEMENT_STATUS: Record<number, { label: string; color: string; dot: string; icon: React.ReactNode }> = {
@@ -164,6 +171,40 @@ export default function DealDetailPage() {
     functionName: "arbiterTimeLeft",
     query: { enabled: !!isValidDeal },
   }) as { data: bigint | undefined };
+
+  // Read extras count
+  const { data: nextExtraId, refetch: refetchNextExtraId } = useReadContract({
+    address: dealAddress as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: "nextExtraId",
+    query: { enabled: !!isValidDeal },
+  }) as { data: bigint | undefined; refetch: () => void };
+
+  // Fetch all extras when count changes
+  useEffect(() => {
+    if (!publicClient || !isValidDeal || !nextExtraId || nextExtraId === 0n) {
+      setExtrasList([]);
+      return;
+    }
+    const count = Number(nextExtraId);
+    setExtrasLoading(true);
+    Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        publicClient.readContract({
+          address: dealAddress as `0x${string}`,
+          abi: AGREEMENT_ABI,
+          functionName: 'getExtra',
+          args: [BigInt(i)],
+        }).then(e => {
+          const ex = e as { amount: bigint; termsHash: string; status: number };
+          return { id: i, amount: ex.amount, termsHash: ex.termsHash, status: Number(ex.status) };
+        }).catch(() => null)
+      )
+    ).then(results => {
+      setExtrasList(results.filter(Boolean) as typeof extrasList);
+    }).finally(() => setExtrasLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextExtraId, publicClient, dealAddress, isValidDeal]);
 
   // Parse details
   // viem v2 returns named-output results as an object { field_: value }
@@ -298,6 +339,42 @@ export default function DealDetailPage() {
       await handleAction('raiseDispute', 'Dispute raised!');
     } finally {
       setDisputeReason('');
+    }
+  };
+
+  const handleProposeExtra = async () => {
+    if (!isValidDeal || !walletClient || !publicClient || !proposeAmount) return;
+    const amountParsed = parseUnits(proposeAmount, 6);
+    if (amountParsed === 0n) { toast.error('Amount must be > 0'); return; }
+    const termsHash = keccak256(toBytes(proposeDesc || proposeAmount + ' USDC extra'));
+    setProposeModal(false);
+    setIsFunding(true);
+    try {
+      toast(t("common.confirm_in_wallet"));
+      await proposeExtraGasless(walletClient, publicClient, dealAddress as `0x${string}`, amountParsed, termsHash);
+      toast.success('Extra proposed');
+      setProposeAmount('');
+      setProposeDesc('');
+      setTimeout(() => { refetchNextExtraId(); }, 3000);
+    } catch (err: any) {
+      toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
+    } finally {
+      setIsFunding(false);
+    }
+  };
+
+  const handleExtraAction = async (fn: 'acceptExtra' | 'rejectExtra', extraId: number) => {
+    if (!isValidDeal || !walletClient || !publicClient) return;
+    setIsFunding(true);
+    try {
+      toast(t("common.confirm_in_wallet"));
+      await sendAgreementGasless(walletClient, publicClient, dealAddress as `0x${string}`, fn, AGREEMENT_ABI as Abi, [BigInt(extraId)]);
+      toast.success(fn === 'acceptExtra' ? 'Extra accepted' : 'Extra rejected');
+      setTimeout(() => { refetchNextExtraId(); }, 3000);
+    } catch (err: any) {
+      toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
+    } finally {
+      setIsFunding(false);
     }
   };
 
@@ -560,6 +637,90 @@ export default function DealDetailPage() {
                 </Button>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ── Extras (revisions / add-ons) ────────────────────────────────────── */}
+        {isConnected && isParty && (extrasList.length > 0 || (isClient && parsed.status === 2 && parsed.markedDoneAt === 0n)) && (
+          <div
+            className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs text-white/35">Extras</p>
+              {isClient && parsed.status === 2 && parsed.markedDoneAt === 0n && (
+                <Button size="sm" variant="ghost" className="text-xs text-white/40 hover:text-white/70 h-6 px-2"
+                  onClick={() => setProposeModal(true)} disabled={busy}>
+                  <Plus className="w-3 h-3 mr-1" /> Propose
+                </Button>
+              )}
+            </div>
+
+            {/* Propose modal (inline) */}
+            {proposeModal && (
+              <div className="mb-3 rounded-xl border border-white/[0.1] bg-white/[0.03] p-3 space-y-2">
+                <p className="text-xs text-white/50">New extra payment</p>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Amount (USDC)"
+                  value={proposeAmount}
+                  onChange={e => setProposeAmount(e.target.value)}
+                  className="w-full bg-transparent border border-white/[0.12] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 focus:outline-none focus:border-white/30"
+                />
+                <input
+                  type="text"
+                  placeholder="Description (e.g. Fix button styles, add dark mode)"
+                  value={proposeDesc}
+                  onChange={e => setProposeDesc(e.target.value)}
+                  className="w-full bg-transparent border border-white/[0.12] rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 focus:outline-none focus:border-white/30"
+                />
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleProposeExtra} disabled={!proposeAmount || busy}>
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                    Confirm & Lock USDC
+                  </Button>
+                  <Button size="sm" variant="ghost" className="text-white/40" onClick={() => { setProposeModal(false); setProposeAmount(''); setProposeDesc(''); }}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {extrasLoading && <p className="text-xs text-white/25 text-center py-2">Loading…</p>}
+
+            {!extrasLoading && extrasList.length === 0 && (
+              <p className="text-xs text-white/20 text-center py-1">No extras yet</p>
+            )}
+
+            {!extrasLoading && extrasList.length > 0 && (
+              <div className="space-y-2">
+                {extrasList.map(ex => {
+                  const statusLabel = ex.status === 0 ? 'Pending' : ex.status === 1 ? 'Accepted' : 'Rejected';
+                  const statusColor = ex.status === 0 ? 'text-amber-400' : ex.status === 1 ? 'text-green-400' : 'text-white/30';
+                  return (
+                    <div key={ex.id} className="flex items-center gap-3 rounded-lg bg-white/[0.03] border border-white/[0.06] px-3 py-2.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-mono text-white/80">{formatUnits(ex.amount, 6)} USDC</p>
+                        <p className="text-[11px] text-white/25 truncate font-mono">#{ex.termsHash.slice(2, 14)}…</p>
+                      </div>
+                      <span className={`text-xs font-medium ${statusColor} flex-shrink-0`}>{statusLabel}</span>
+                      {ex.status === 0 && isExecutor && (
+                        <div className="flex gap-1.5 flex-shrink-0">
+                          <Button size="sm" className="h-6 px-2 text-xs" onClick={() => handleExtraAction('acceptExtra', ex.id)} disabled={busy}>
+                            Accept
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40" onClick={() => handleExtraAction('rejectExtra', ex.id)} disabled={busy}>
+                            Reject
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 

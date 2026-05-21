@@ -1115,6 +1115,70 @@ export const AGREEMENT_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  // ── Extras ──
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'extraAmount', type: 'uint256' },
+      { internalType: 'bytes32', name: 'extraTermsHash', type: 'bytes32' },
+    ],
+    name: 'proposeExtra',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'extraId', type: 'uint256' }],
+    name: 'acceptExtra',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'extraId', type: 'uint256' }],
+    name: 'rejectExtra',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'extraId', type: 'uint256' }],
+    name: 'getExtra',
+    outputs: [
+      {
+        components: [
+          { internalType: 'uint256', name: 'amount', type: 'uint256' },
+          { internalType: 'bytes32', name: 'termsHash', type: 'bytes32' },
+          { internalType: 'uint8',   name: 'status',    type: 'uint8' },
+        ],
+        internalType: 'struct Agreement.Extra',
+        name: '',
+        type: 'tuple',
+      },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'totalPayout',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'nextExtraId',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'extrasTotal',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
 ];
 
 // Адреса контрактов

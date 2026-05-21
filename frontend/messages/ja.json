@@ -102,9 +102,11 @@
         "design": "デザイン",
         "development": "開発",
         "marketing": "マーケティング",
-        "content": "コンテンツ",
+        "writing": "ライティング",
         "other": "その他"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "仕事を掲載",
@@ -115,7 +117,10 @@
       "field_region": "地域",
       "fee_label": "掲載手数料（返金不可）",
       "submit_btn": "仕事を掲載",
-      "success": "仕事が掲載されました！"
+      "success": "仕事が掲載されました！",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "{count}時間前",
     "days_ago": "{count}日前",
     "total_suffix": "/ 計{count}件"
+  },
+  "categories": {
+    "design": "デザイン",
+    "development": "開発",
+    "marketing": "マーケティング",
+    "writing": "ライティング",
+    "video": "動画・写真",
+    "translation": "翻訳",
+    "business": "ビジネス",
+    "audio": "音楽・オーディオ",
+    "data": "データ・リサーチ",
+    "legal": "法律",
+    "education": "教育",
+    "other": "その他"
   }
 }

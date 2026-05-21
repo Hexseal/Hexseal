@@ -102,9 +102,11 @@
         "design": "Design",
         "development": "Développement",
         "marketing": "Marketing",
-        "content": "Contenu",
+        "writing": "Écriture & Contenu",
         "other": "Autre"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "Publier un Emploi",
@@ -115,7 +117,10 @@
       "field_region": "Région",
       "fee_label": "Frais de publication (non remboursables)",
       "submit_btn": "Publier l'Emploi",
-      "success": "Emploi Publié !"
+      "success": "Emploi Publié !",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "il y a {count}h",
     "days_ago": "il y a {count}j",
     "total_suffix": "/ {count} au total"
+  },
+  "categories": {
+    "design": "Design",
+    "development": "Développement",
+    "marketing": "Marketing",
+    "writing": "Écriture & Contenu",
+    "video": "Vidéo & Photo",
+    "translation": "Traduction",
+    "business": "Business",
+    "audio": "Musique & Audio",
+    "data": "Données & Recherche",
+    "legal": "Juridique",
+    "education": "Éducation",
+    "other": "Autre"
   }
 }

@@ -102,9 +102,11 @@
         "design": "تصميم",
         "development": "تطوير",
         "marketing": "تسويق",
-        "content": "محتوى",
+        "writing": "كتابة ومحتوى",
         "other": "أخرى"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "نشر وظيفة",
@@ -115,7 +117,10 @@
       "field_region": "المنطقة",
       "fee_label": "رسوم النشر (غير قابلة للاسترداد)",
       "submit_btn": "نشر الوظيفة",
-      "success": "تم نشر الوظيفة!"
+      "success": "تم نشر الوظيفة!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "منذ {count}س",
     "days_ago": "منذ {count}ي",
     "total_suffix": "/ {count} الإجمالي"
+  },
+  "categories": {
+    "design": "تصميم",
+    "development": "تطوير",
+    "marketing": "تسويق",
+    "writing": "كتابة ومحتوى",
+    "video": "فيديو وصور",
+    "translation": "ترجمة",
+    "business": "أعمال",
+    "audio": "موسيقى وصوت",
+    "data": "بيانات وبحث",
+    "legal": "قانوني",
+    "education": "تعليم",
+    "other": "أخرى"
   }
 }

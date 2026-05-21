@@ -102,9 +102,11 @@
         "design": "Design",
         "development": "Entwicklung",
         "marketing": "Marketing",
-        "content": "Inhalte",
+        "writing": "Texte & Inhalte",
         "other": "Sonstiges"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "Job veröffentlichen",
@@ -115,7 +117,10 @@
       "field_region": "Region",
       "fee_label": "Veröffentlichungsgebühr (nicht erstattungsfähig)",
       "submit_btn": "Job veröffentlichen",
-      "success": "Job veröffentlicht!"
+      "success": "Job veröffentlicht!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "vor {count}h",
     "days_ago": "vor {count}d",
     "total_suffix": "/ {count} gesamt"
+  },
+  "categories": {
+    "design": "Design",
+    "development": "Entwicklung",
+    "marketing": "Marketing",
+    "writing": "Texte & Inhalte",
+    "video": "Video & Foto",
+    "translation": "Übersetzung",
+    "business": "Business",
+    "audio": "Musik & Audio",
+    "data": "Daten & Forschung",
+    "legal": "Recht",
+    "education": "Bildung",
+    "other": "Sonstiges"
   }
 }

@@ -725,6 +725,145 @@ export async function sendGasless(
   }
 }
 
+// ─── proposeExtraGasless ──────────────────────────────────────────────────────
+
+/**
+ * Gasless proposeExtra() для Agreement.
+ * Пользователь подписывает:
+ *   1. USDC permit (EIP-2612) — agreement как spender, сумма = extraAmount
+ *   2. ForwardRequest (EIP-712) — proposeExtra() calldata → Agreement
+ */
+const PROPOSE_EXTRA_ABI = parseAbi([
+  'function proposeExtra(uint256 extraAmount, bytes32 extraTermsHash)',
+]);
+
+export async function proposeExtraGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  agreementAddress: Address,
+  extraAmount: bigint,
+  extraTermsHash: `0x${string}`,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+
+  let agreementForwarder: Address = FORWARDER;
+  try {
+    agreementForwarder = await publicClient.readContract({
+      address: agreementAddress,
+      abi: TRUSTED_FORWARDER_ABI,
+      functionName: 'trustedForwarder',
+    }) as Address;
+  } catch { /* fallback */ }
+  const forwarderOverride =
+    agreementForwarder.toLowerCase() !== FORWARDER.toLowerCase()
+      ? agreementForwarder
+      : undefined;
+  const effectiveForwarder = forwarderOverride ?? FORWARDER;
+  const forwarderDomain =
+    forwarderOverride
+      ? { ...FORWARDER_DOMAIN, verifyingContract: effectiveForwarder } as const
+      : FORWARDER_DOMAIN;
+
+  const [usdcNonce, usdcDomain] = await Promise.all([
+    publicClient.readContract({ address: USDC, abi: USDC_READ_ABI, functionName: 'nonces', args: [userAddress] }),
+    getUsdcDomain(publicClient),
+  ]);
+
+  const permitDeadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+  const permitSig = await walletClient.signTypedData({
+    account: walletClient.account!,
+    domain: usdcDomain as Parameters<typeof walletClient.signTypedData>[0]['domain'],
+    types: PERMIT_TYPES,
+    primaryType: 'Permit',
+    message: { owner: userAddress, spender: agreementAddress, value: extraAmount, nonce: usdcNonce, deadline: permitDeadline },
+  });
+  const { r: permitR, s: permitS, v: permitVRaw } = parseSignature(permitSig);
+  const permitV = Number(permitVRaw) < 27 ? Number(permitVRaw) + 27 : Number(permitVRaw);
+
+  const nonce = await publicClient.readContract({
+    address: effectiveForwarder,
+    abi: FORWARDER_READ_ABI,
+    functionName: 'getNonce',
+    args: [userAddress],
+  });
+
+  const calldata = encodeFunctionData({
+    abi: PROPOSE_EXTRA_ABI,
+    functionName: 'proposeExtra',
+    args: [extraAmount, extraTermsHash],
+  });
+
+  let gasLimit: bigint;
+  try {
+    const estimated = await publicClient.estimateGas({ account: userAddress, to: agreementAddress, data: calldata as Hex });
+    gasLimit = (estimated * 130n) / 100n;
+  } catch {
+    gasLimit = 150_000n;
+  }
+
+  const message = { from: userAddress, to: agreementAddress, value: 0n, gas: gasLimit, nonce, data: calldata as Hex };
+
+  const signature = await walletClient.signTypedData({
+    account: walletClient.account!,
+    domain: forwarderDomain,
+    types: FORWARD_TYPES,
+    primaryType: 'ForwardRequest',
+    message,
+  });
+
+  try {
+    const res = await fetch('/api/relay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from:          message.from,
+        to:            message.to,
+        value:         '0',
+        gas:           message.gas.toString(),
+        nonce:         message.nonce.toString(),
+        data:          message.data,
+        signature,
+        ...(forwarderOverride ? { forwarderOverride: effectiveForwarder } : {}),
+        permitOwner:   userAddress,
+        permitSpender: agreementAddress,
+        permitValue:   extraAmount.toString(),
+        permitDeadline: permitDeadline.toString(),
+        permitV,
+        permitR,
+        permitS,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `Relay error ${res.status}`);
+    return { txHash: json.txHash as string };
+  } catch (err) {
+    if (!isRelayDown(err)) throw err;
+    console.warn('[relay] down → direct permit+proposeExtra for', agreementAddress);
+    const account = walletClient.account;
+    if (!account) throw new Error('Wallet not connected');
+    const permitTx = await walletClient.writeContract({
+      address: USDC,
+      abi: WRITE_USDC_ABI,
+      functionName: 'permit',
+      args: [userAddress, agreementAddress, extraAmount, permitDeadline, permitV, permitR, permitS],
+      account,
+      chain: walletClient.chain,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: permitTx });
+    const txHash = await walletClient.writeContract({
+      address: agreementAddress,
+      abi: PROPOSE_EXTRA_ABI,
+      functionName: 'proposeExtra',
+      args: [extraAmount, extraTermsHash],
+      account,
+      chain: walletClient.chain,
+    });
+    return { txHash, fallbackUsed: true };
+  }
+}
+
 // ─── sendAgreementGasless ─────────────────────────────────────────────────────
 
 /**

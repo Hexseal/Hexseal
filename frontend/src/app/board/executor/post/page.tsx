@@ -22,6 +22,7 @@ import {
 import Link from "next/link";
 import { pushNotif } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
+import { CATEGORIES, DEFAULT_CATEGORY, type CategoryKey, withCategory } from "@/config/categories";
 
 interface RegionData { region: number; fee: bigint; label: string; }
 
@@ -58,16 +59,6 @@ const REGION_LABELS: Record<number, string> = {
   4: "LATAM",
   5: "CA",
   6: "AU",
-};
-
-const CATEGORIES = ["Design", "Development", "Marketing", "Content", "Other"];
-
-const CATEGORY_BADGE: Record<string, string> = {
-  Design:      "bg-purple-400/10 text-purple-400 border-purple-400/20",
-  Development: "bg-blue-400/10 text-blue-400 border-blue-400/20",
-  Marketing:   "bg-green-400/10 text-green-400 border-green-400/20",
-  Content:     "bg-orange-400/10 text-orange-400 border-orange-400/20",
-  Other:       "bg-gray-400/10 text-gray-400 border-gray-400/20",
 };
 
 type Step = "form" | "uploading" | "pending" | "success" | "error";
@@ -109,7 +100,7 @@ export default function PostServicePage() {
   const [description, setDescription] = useState("");
   const [price,       setPrice]       = useState("");
   const [deadline,    setDeadline]    = useState("7");
-  const [category,    setCategory]    = useState("Development");
+  const [category,    setCategory]    = useState<CategoryKey>(DEFAULT_CATEGORY);
   const [step,        setStep]        = useState<Step>("form");
   const [errorMsg,    setErrorMsg]    = useState("");
   const [txHash,      setTxHash]      = useState("");
@@ -141,7 +132,7 @@ export default function PostServicePage() {
       toast("Sign: USDC permit in wallet…");
       const { txHash: hash } = await mintServiceGasless(walletClient, publicClient, {
         title:        sanitizeHtml(trimmedTitle),
-        description:  sanitizeHtml(description.trim()),
+        description:  withCategory(category, sanitizeHtml(description.trim())),
         price:        parseUnits(price, 6),
         deadlineDays: BigInt(parsedDeadline),
         region:       regionData?.region ?? 1,
@@ -249,14 +240,12 @@ export default function PostServicePage() {
               <div className="space-y-2">
                 <Label className="text-sm text-white/70">{t("board.post_service.field_category")}</Label>
                 <div className="flex flex-wrap gap-2">
-                  {CATEGORIES.map(cat => (
-                    <button key={cat} type="button" onClick={() => setCategory(cat)}
+                  {CATEGORIES.map(({ key, badge }) => (
+                    <button key={key} type="button" onClick={() => setCategory(key)}
                       className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                        category === cat
-                          ? (CATEGORY_BADGE[cat] ?? CATEGORY_BADGE.Other)
-                          : "border-white/8 text-white/40 hover:text-white/60 hover:border-white/15"
+                        category === key ? badge : "border-white/8 text-white/40 hover:text-white/60 hover:border-white/15"
                       }`}
-                    >{t(`board.post_service.categories.${cat.toLowerCase()}`)}</button>
+                    >{t(`categories.${key}`)}</button>
                   ))}
                 </div>
               </div>

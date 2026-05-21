@@ -18,6 +18,7 @@ import Link from "next/link";
 import { UserName } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
+import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -192,6 +193,8 @@ function ServiceCard({
 }) {
   const isMyService = address?.toLowerCase() === service.executor.toLowerCase();
   const t = useTranslations();
+  const catKey = extractCategory(service.description);
+  const displayDesc = stripCategory(service.description);
 
   const myPending   = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 0);
   const myAccepted  = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 1);
@@ -221,6 +224,11 @@ function ServiceCard({
             {isMyService && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
           </div>
           <div className="flex items-center gap-2.5 text-xs flex-wrap">
+            {catKey && (
+              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                {t(`categories.${catKey}`)}
+              </span>
+            )}
             <span className="font-bold text-white/75 font-mono">{fmtUSDC(service.price)} USDC</span>
             <span className="text-white/25">·</span>
             <span className="text-white/35">{Number(service.deadlineDays)}d</span>
@@ -271,8 +279,8 @@ function ServiceCard({
             <span className="text-white/20">· #{service.serviceId}</span>
           </div>
 
-          {service.description && (
-            <p className="text-sm text-white/60 leading-relaxed mb-3">{service.description}</p>
+          {displayDesc && (
+            <p className="text-sm text-white/60 leading-relaxed mb-3">{displayDesc}</p>
           )}
 
           {myActive && (
@@ -306,6 +314,7 @@ export default function ExecutorBoardPage() {
 
   const [mounted, setMounted]         = useState(false);
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
   const [userRegion, setUserRegion]     = useState<number | null>(null);
   const [services, setServices]       = useState<Service[]>([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -436,12 +445,15 @@ export default function ExecutorBoardPage() {
     if (regionFilter !== null) {
       list = list.filter(s => s.region === regionFilter);
     }
+    if (categoryFilter !== null) {
+      list = list.filter(s => extractCategory(s.description) === categoryFilter);
+    }
     if (!searchQuery) return list;
     const q = searchQuery.toLowerCase();
     return list.filter(s =>
       s.title.toLowerCase().includes(q) || s.executor.toLowerCase().includes(q)
     );
-  }, [services, searchQuery, regionFilter]);
+  }, [services, searchQuery, regionFilter, categoryFilter]);
 
   const handleRequest = async (amountStr: string, daysStr: string, region: number) => {
     if (!requestModal || !walletClient || !publicClient || !address) return;
@@ -527,12 +539,37 @@ export default function ExecutorBoardPage() {
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
         {/* Region filter */}
-        <div className="mb-4">
+        <div className="mb-3">
           <BoardRegionFilter
             value={regionFilter}
             onChange={handleRegionChange}
             userRegion={userRegion}
           />
+        </div>
+
+        {/* Category filter */}
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          <button
+            onClick={() => setCategoryFilter(null)}
+            className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+              categoryFilter === null
+                ? "bg-white/10 border-white/20 text-white/80"
+                : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+            }`}
+          >
+            {t("common.all")}
+          </button>
+          {CATEGORIES.map(({ key, badge }) => (
+            <button
+              key={key}
+              onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
+              className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+              }`}
+            >
+              {t(`categories.${key}`)}
+            </button>
+          ))}
         </div>
 
         {/* Search */}

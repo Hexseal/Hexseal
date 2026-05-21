@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { pushNotif } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
+import { CATEGORIES, DEFAULT_CATEGORY, type CategoryKey, withCategory } from "@/config/categories";
 
 interface RegionData { region: number; fee: bigint; label: string; }
 
@@ -103,6 +104,7 @@ export default function PostJobPage() {
   const [amount,     setAmount]     = useState("");
   const [deadline,   setDeadline]   = useState("7");
   const [jobTerms,   setJobTerms]   = useState("");
+  const [category,   setCategory]   = useState<CategoryKey>(DEFAULT_CATEGORY);
   const [step,       setStep]       = useState<Step>("form");
   const [errorMsg,   setErrorMsg]   = useState("");
   const [txHash,     setTxHash]     = useState("");
@@ -151,7 +153,7 @@ export default function PostJobPage() {
       toast("Sign: USDC permit in wallet…");
       const { txHash: hash } = await mintJobGasless(walletClient, publicClient, {
         title:        sanitizeHtml(trimmedTitle),
-        description:  description.trim(),
+        description:  withCategory(category, description.trim()),
         amount:       parseUnits(amount, 6),
         deadlineDays: BigInt(parsedDeadline),
         termsHash,
@@ -258,12 +260,27 @@ export default function PostJobPage() {
                 </div>
               </div>
 
+              <div className="space-y-2">
+                <Label className="text-sm text-white/70">{t("board.post_job.field_category")}</Label>
+                <div className="flex flex-wrap gap-2">
+                  {CATEGORIES.map(({ key, badge }) => (
+                    <button key={key} type="button" onClick={() => setCategory(key)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                        category === key ? badge : "border-white/8 text-white/40 hover:text-white/60 hover:border-white/15"
+                      }`}
+                    >{t(`categories.${key}`)}</button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-1.5">
-                <Label htmlFor="terms" className="text-sm text-white/70">Terms <span className="text-white/25">(optional)</span></Label>
-                <Textarea id="terms" placeholder="Additional conditions, requirements…" value={jobTerms}
+                <Label htmlFor="terms" className="text-sm text-white/70">
+                  {t("board.post_job.field_brief")} <span className="text-white/25">(optional)</span>
+                </Label>
+                <Textarea id="terms" placeholder={t("board.post_job.field_brief_hint")} value={jobTerms}
                   onChange={e => setJobTerms(e.target.value)} rows={3}
                   className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-xl" />
-                <p className="text-xs text-white/25">Uploaded to IPFS</p>
+                <p className="text-xs text-white/25">Uploaded to IPFS — visible only after match</p>
               </div>
             </div>
 

@@ -99,12 +99,14 @@
       "submit_btn": "ประกาศบริการ",
       "success": "เผยแพร่บริการแล้ว!",
       "categories": {
-        "design": "การออกแบบ",
-        "development": "การพัฒนา",
+        "design": "ออกแบบ",
+        "development": "พัฒนา",
         "marketing": "การตลาด",
-        "content": "เนื้อหา",
+        "writing": "เขียนและเนื้อหา",
         "other": "อื่นๆ"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "ประกาศงาน",
@@ -115,7 +117,10 @@
       "field_region": "ภูมิภาค",
       "fee_label": "ค่าธรรมเนียมการประกาศ (ไม่คืนเงิน)",
       "submit_btn": "ประกาศงาน",
-      "success": "ประกาศงานแล้ว!"
+      "success": "ประกาศงานแล้ว!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "{count}ชม. ที่แล้ว",
     "days_ago": "{count}ว. ที่แล้ว",
     "total_suffix": "/ {count} ทั้งหมด"
+  },
+  "categories": {
+    "design": "ออกแบบ",
+    "development": "พัฒนา",
+    "marketing": "การตลาด",
+    "writing": "เขียนและเนื้อหา",
+    "video": "วิดีโอและภาพถ่าย",
+    "translation": "แปลภาษา",
+    "business": "ธุรกิจ",
+    "audio": "ดนตรีและเสียง",
+    "data": "ข้อมูลและวิจัย",
+    "legal": "กฎหมาย",
+    "education": "การศึกษา",
+    "other": "อื่นๆ"
   }
 }

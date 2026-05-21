@@ -313,6 +313,9 @@ export async function POST(req: NextRequest) {
           '0x49986e73': 'WrongAmount',
           '0x607311ec': 'WindowAlreadyPassed',
           '0x4dc5a7d2': 'WindowNotPassed',
+          '0x1f2a2005': 'ZeroAmount',
+          '0x2e020977': 'ExtraNotPending',
+          '0x475a2535': 'AlreadyFinalized',
         };
 
         let reason = 'Inner call reverted';

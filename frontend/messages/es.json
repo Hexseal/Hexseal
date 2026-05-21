@@ -102,9 +102,11 @@
         "design": "Diseño",
         "development": "Desarrollo",
         "marketing": "Marketing",
-        "content": "Contenido",
+        "writing": "Escritura & Contenido",
         "other": "Otro"
-      }
+      },
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     },
     "post_job": {
       "title": "Publicar un Trabajo",
@@ -115,7 +117,10 @@
       "field_region": "Región",
       "fee_label": "Tarifa de publicación (no reembolsable)",
       "submit_btn": "Publicar Trabajo",
-      "success": "¡Trabajo Publicado!"
+      "success": "¡Trabajo Publicado!",
+      "field_category": "Category",
+      "field_brief": "Full Brief",
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
     }
   },
   "wallet": {
@@ -618,5 +623,19 @@
     "hours_ago": "hace {count}h",
     "days_ago": "hace {count}d",
     "total_suffix": "/ {count} total"
+  },
+  "categories": {
+    "design": "Diseño",
+    "development": "Desarrollo",
+    "marketing": "Marketing",
+    "writing": "Escritura & Contenido",
+    "video": "Vídeo & Foto",
+    "translation": "Traducción",
+    "business": "Negocios",
+    "audio": "Música & Audio",
+    "data": "Datos & Investigación",
+    "legal": "Legal",
+    "education": "Educación",
+    "other": "Otro"
   }
 }

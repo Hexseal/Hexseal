@@ -16,6 +16,7 @@ import Link from "next/link";
 import { UserName } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
+import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
 
 interface JobRecord {
   client: string;
@@ -83,6 +84,8 @@ function JobCard({
   const ZERO_HASH = "0x" + "0".repeat(64);
   const hasTerms = job.termsHash && job.termsHash !== ZERO_HASH;
   const applicantCount = applicants?.length ?? 0;
+  const catKey = extractCategory(job.description);
+  const displayDesc = stripCategory(job.description);
 
   useEffect(() => {
     if (!hasTerms || !expanded || termsFetching || termsText !== null) return;
@@ -151,6 +154,11 @@ function JobCard({
             {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
           </div>
           <div className="flex items-center gap-2.5 text-xs flex-wrap">
+            {catKey && (
+              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                {t(`categories.${catKey}`)}
+              </span>
+            )}
             <span className="font-bold text-white/75 font-mono">{formatBudget(job.amount)} USDC</span>
             <span className="text-white/25">·</span>
             <span className="text-white/35">{job.deadlineDays.toString()}d</span>
@@ -194,8 +202,8 @@ function JobCard({
             <UserName address={job.client} link className="font-mono hover:text-white/60 transition-colors" />
           </div>
 
-          {job.description && (
-            <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{job.description}</p>
+          {displayDesc && (
+            <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{displayDesc}</p>
           )}
 
           {hasTerms && (termsFetching || termsText) && (
@@ -261,6 +269,7 @@ export default function BoardPage() {
   // Region filter — persisted in localStorage, auto-detected from IP on first visit
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [userRegion, setUserRegion] = useState<number | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
 
   useEffect(() => {
     const stored = getStoredBoardRegion();
@@ -311,6 +320,7 @@ export default function BoardPage() {
       .map((id, i) => ({ id, job: records[i] }))
       .filter(({ job }) => job.status === 0)
       .filter(({ job }) => regionFilter === null || job.region === regionFilter)
+      .filter(({ job }) => categoryFilter === null || extractCategory(job.description) === categoryFilter)
       .filter(({ id, job }) => {
         if (!q) return true;
         return (
@@ -319,7 +329,7 @@ export default function BoardPage() {
           id.toString().includes(q)
         );
       });
-  }, [openJobsData, searchQuery, regionFilter]);
+  }, [openJobsData, searchQuery, regionFilter, categoryFilter]);
 
   // Batch load applicants for all visible jobs
   const applicantContracts = useMemo(() =>
@@ -410,12 +420,37 @@ export default function BoardPage() {
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
         {/* Region filter */}
-        <div className="mb-4">
+        <div className="mb-3">
           <BoardRegionFilter
             value={regionFilter}
             onChange={handleRegionChange}
             userRegion={userRegion}
           />
+        </div>
+
+        {/* Category filter */}
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          <button
+            onClick={() => setCategoryFilter(null)}
+            className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+              categoryFilter === null
+                ? "bg-white/10 border-white/20 text-white/80"
+                : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+            }`}
+          >
+            {t("common.all")}
+          </button>
+          {CATEGORIES.map(({ key, badge }) => (
+            <button
+              key={key}
+              onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
+              className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+              }`}
+            >
+              {t(`categories.${key}`)}
+            </button>
+          ))}
         </div>
 
         {/* Search */}
