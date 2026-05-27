@@ -428,11 +428,11 @@ export default function BoardPage() {
           />
         </div>
 
-        {/* Category filter */}
-        <div className="flex flex-wrap gap-1.5 mb-4">
+        {/* Category filter — horizontal scroll strip */}
+        <div className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <button
             onClick={() => setCategoryFilter(null)}
-            className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+            className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
               categoryFilter === null
                 ? "bg-white/10 border-white/20 text-white/80"
                 : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
@@ -444,7 +444,7 @@ export default function BoardPage() {
             <button
               key={key}
               onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
-              className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
                 categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
               }`}
             >
