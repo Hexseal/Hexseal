@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
   },
 
   images: {
-    domains: ['ipfs.io', 'gateway.pinata.cloud'],
+    domains: ['ipfs.io', 'w3s.link', 'cloudflare-ipfs.com'],
     formats: ['image/avif', 'image/webp'],
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],

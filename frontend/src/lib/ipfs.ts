@@ -1,13 +1,12 @@
 /**
- * IPFS helpers — upload via Filebase (primary) + Pinata mirror (optional),
+ * IPFS helpers — upload via Lighthouse.storage (lighthouse.storage),
  * fetch with automatic public-gateway fallback so NFTs are always visible.
  *
- * Server-side env vars (in .env.local):
- *   FILEBASE_BUCKET / FILEBASE_KEY / FILEBASE_SECRET  — required
- *   PINATA_JWT                                        — optional mirror
+ * Server-side env vars:
+ *   LIGHTHOUSE_API_KEY  — API key from lighthouse.storage dashboard
  *
  * Client-side env vars (prefix NEXT_PUBLIC_):
- *   NEXT_PUBLIC_IPFS_GATEWAY  — your Filebase dedicated gateway URL
+ *   NEXT_PUBLIC_IPFS_GATEWAY  — override default gateway (optional)
  */
 
 export interface IPFSUploadResult {
@@ -16,16 +15,13 @@ export interface IPFSUploadResult {
 }
 
 /**
- * Upload content to IPFS via Filebase
- * @param content - The content to upload (string or Blob)
- * @param filename - Optional filename for the upload
- * @returns IPFS CID and gateway URL
+ * Upload content to IPFS via Storacha.
+ * Always routes through the API — never exposes keys to the browser.
  */
 export async function uploadToIPFS(
   content: string | Blob,
-  filename: string = 'content.json'
+  filename: string = 'content.json',
 ): Promise<IPFSUploadResult> {
-  // Always use the API route — never expose secrets to the browser
   const formData = new FormData();
   const blob = content instanceof Blob ? content : new Blob([content], { type: 'application/json' });
   formData.append('file', blob, filename);
@@ -43,34 +39,29 @@ export async function uploadToIPFS(
   const result = await response.json();
   return {
     cid: result.cid,
-    url: result.url || `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://dweb.link'}/ipfs/${result.cid}`,
+    url: result.url || `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${result.cid}`,
   };
 }
 
-// Public gateways tried in order on fetch. Filebase dedicate gateway is first
-// (fastest for our pins), then Cloudflare (most reliable public CDN), then
-// Pinata public gateway, then Protocol Labs ipfs.io as last resort.
+// Public gateways tried in order on fetch.
+// Lighthouse CDN first (our upload target) → cloudflare → w3s.link → ipfs.io.
 const IPFS_GATEWAYS = [
-  typeof window !== 'undefined'
-    ? (process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://corporate-orange-boa.myfilebase.com')
-    : 'https://corporate-orange-boa.myfilebase.com',
-  'https://coffee-deep-turtle-81.mypinata.cloud',
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage',
+  'https://gateway.lighthouse.storage',
   'https://cloudflare-ipfs.com',
+  'https://w3s.link',
   'https://ipfs.io',
 ];
 
 /**
- * Returns a public URL for a CID that should work for anyone (NFT metadata,
- * images, etc.). Uses Cloudflare as the default public gateway since it has
- * the best global CDN coverage.
+ * Returns a stable public URL for a CID (NFT metadata, images, etc.).
  */
 export function publicGatewayUrl(cid: string): string {
-  return `https://cloudflare-ipfs.com/ipfs/${cid}`;
+  return `https://gateway.lighthouse.storage/ipfs/${cid}`;
 }
 
 /**
  * Fetch content from IPFS with automatic gateway fallback.
- * Tries dedicated Filebase gateway first, then public CDN gateways.
  */
 export async function fetchFromIPFS(cid: string): Promise<Response> {
   let lastError: unknown;
@@ -91,6 +82,7 @@ export async function fetchFromIPFS(cid: string): Promise<Response> {
  * Convert IPFS CID to bytes32 for contract storage using keccak256 hash
  */
 export function cidToBytes32(cid: string): `0x${string}` {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { keccak256 } = require('viem');
   return keccak256(new TextEncoder().encode(cid)) as `0x${string}`;
 }
