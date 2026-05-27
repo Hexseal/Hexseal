@@ -189,7 +189,7 @@
     "fields_info": "ทุกช่องเป็นตัวเลือก ยกเว้นชื่อที่แสดง",
     "photo_label": "รูปโปรไฟล์",
     "upload_photo_btn": "อัปโหลดรูป",
-    "photo_info": "JPG, PNG หรือ GIF · สูงสุด 5MB · เก็บบน IPFS",
+    "photo_info": "JPG, PNG หรือ GIF · สูงสุด 20 MB",
     "remove_photo": "ลบรูปภาพ",
     "display_name_label": "ชื่อที่แสดง",
     "display_name_placeholder": "ชื่อหรือนามแฝงของคุณ",
@@ -246,7 +246,8 @@
     "active_count": "{count} ที่ใช้งานอยู่",
     "role_client_executor": "ลูกค้าและผู้รับงาน",
     "client_role_badge": "ลูกค้า",
-    "executor_role_badge": "ผู้รับงาน"
+    "executor_role_badge": "ผู้รับงาน",
+    "photo_ready": "รูปพร้อมแล้ว"
   },
   "deal_status": {
     "created": "สร้างแล้ว",

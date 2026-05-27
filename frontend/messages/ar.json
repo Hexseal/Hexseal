@@ -189,7 +189,7 @@
     "fields_info": "جميع الحقول اختيارية ما عدا اسم العرض.",
     "photo_label": "صورة الملف الشخصي",
     "upload_photo_btn": "رفع صورة",
-    "photo_info": "JPG أو PNG أو GIF · الحد الأقصى 5 ميغابايت · مخزّن على IPFS",
+    "photo_info": "JPG أو PNG أو GIF · الحد الأقصى 20 ميجابايت",
     "remove_photo": "إزالة الصورة",
     "display_name_label": "اسم العرض",
     "display_name_placeholder": "اسمك أو اسم المستعار",
@@ -246,7 +246,8 @@
     "active_count": "{count} نشط",
     "role_client_executor": "عميل ومنفّذ",
     "client_role_badge": "عميل",
-    "executor_role_badge": "منفّذ"
+    "executor_role_badge": "منفّذ",
+    "photo_ready": "الصورة جاهزة"
   },
   "deal_status": {
     "created": "تم الإنشاء",

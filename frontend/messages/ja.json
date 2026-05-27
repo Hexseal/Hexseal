@@ -189,7 +189,7 @@
     "fields_info": "表示名以外のすべてのフィールドは任意です。",
     "photo_label": "プロフィール写真",
     "upload_photo_btn": "写真をアップロード",
-    "photo_info": "JPG、PNG、GIF · 最大5MB · IPFSに保存",
+    "photo_info": "JPG・PNG・GIF · 最大20MB",
     "remove_photo": "写真を削除",
     "display_name_label": "表示名",
     "display_name_placeholder": "あなたの名前またはニックネーム",
@@ -246,7 +246,8 @@
     "active_count": "{count} アクティブ",
     "role_client_executor": "クライアント＆受注者",
     "client_role_badge": "クライアント",
-    "executor_role_badge": "受注者"
+    "executor_role_badge": "受注者",
+    "photo_ready": "写真選択済み"
   },
   "deal_status": {
     "created": "作成済",

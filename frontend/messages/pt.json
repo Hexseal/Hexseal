@@ -189,7 +189,7 @@
     "fields_info": "Todos os campos são opcionais exceto o nome de exibição.",
     "photo_label": "Foto de Perfil",
     "upload_photo_btn": "Enviar Foto",
-    "photo_info": "JPG, PNG ou GIF · Máx 5MB · Armazenado no IPFS",
+    "photo_info": "JPG, PNG ou GIF · Máx 20 MB",
     "remove_photo": "Remover foto",
     "display_name_label": "Nome de Exibição",
     "display_name_placeholder": "Seu nome ou pseudônimo",
@@ -246,7 +246,8 @@
     "active_count": "{count} ativos",
     "role_client_executor": "Cliente e Executor",
     "client_role_badge": "Cliente",
-    "executor_role_badge": "Executor"
+    "executor_role_badge": "Executor",
+    "photo_ready": "Foto pronta"
   },
   "deal_status": {
     "created": "Criado",

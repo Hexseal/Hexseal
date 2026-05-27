@@ -189,7 +189,7 @@
     "fields_info": "표시 이름을 제외한 모든 필드는 선택사항입니다.",
     "photo_label": "프로필 사진",
     "upload_photo_btn": "사진 업로드",
-    "photo_info": "JPG, PNG 또는 GIF · 최대 5MB · IPFS에 저장",
+    "photo_info": "JPG, PNG 또는 GIF · 최대 20MB",
     "remove_photo": "사진 제거",
     "display_name_label": "표시 이름",
     "display_name_placeholder": "이름 또는 닉네임",
@@ -246,7 +246,8 @@
     "active_count": "{count} 활성",
     "role_client_executor": "클라이언트 & 실행자",
     "client_role_badge": "클라이언트",
-    "executor_role_badge": "실행자"
+    "executor_role_badge": "실행자",
+    "photo_ready": "사진 준비됨"
   },
   "deal_status": {
     "created": "생성됨",

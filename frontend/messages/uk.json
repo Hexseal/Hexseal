@@ -189,7 +189,7 @@
     "fields_info": "Всі поля необов'язкові, крім відображуваного імені.",
     "photo_label": "Фото Профілю",
     "upload_photo_btn": "Завантажити Фото",
-    "photo_info": "JPG, PNG або GIF · Макс 5 МБ · Зберігається на IPFS",
+    "photo_info": "JPG, PNG або GIF · Макс 20 МБ",
     "remove_photo": "Видалити фото",
     "display_name_label": "Відображуване Ім'я",
     "display_name_placeholder": "Ваше ім'я або псевдонім",
@@ -246,7 +246,8 @@
     "active_count": "{count} активних",
     "role_client_executor": "Клієнт і Виконавець",
     "client_role_badge": "Клієнт",
-    "executor_role_badge": "Виконавець"
+    "executor_role_badge": "Виконавець",
+    "photo_ready": "Фото обрано"
   },
   "deal_status": {
     "created": "Створена",

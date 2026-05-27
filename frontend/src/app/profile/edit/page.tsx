@@ -87,7 +87,7 @@ export default function EditProfilePage() {
   const [avatarCid, setAvatarCid] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);    // Storj direct URL
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
-  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null); // file selected but not yet uploaded
   const [originalCreatedAt, setOriginalCreatedAt] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,7 +122,10 @@ export default function EditProfilePage() {
     );
   };
 
-  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Just store the file + show local preview — no upload yet.
+  // Upload happens atomically during handleSubmit to avoid mobile issues
+  // (network errors on immediate upload, HEIC conversion timing, etc.).
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -132,22 +135,11 @@ export default function EditProfilePage() {
     }
 
     setError(null);
+    setPendingAvatarFile(file);
     setAvatarPreview(URL.createObjectURL(file));
-    setAvatarUploading(true);
-
-    try {
-      // Compress before upload: 800×800 max, JPEG 0.82 — turns 5-8 MB into ~200 KB
-      const compressed = await compressAvatar(file);
-      const result = await uploadToIPFS(compressed, `avatar-${address}-${Date.now()}.jpg`);
-      setAvatarCid(result.cid || null);
-      setAvatarUrl(result.storjUrl || null);
-      toast.success(t("profile.photo_uploaded"));
-    } catch {
-      setError(t("profile.upload_failed"));
-      setAvatarPreview(null);
-    } finally {
-      setAvatarUploading(false);
-    }
+    // Clear previously uploaded values — new file will be uploaded on save
+    setAvatarCid(null);
+    setAvatarUrl(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -156,10 +148,6 @@ export default function EditProfilePage() {
 
     if (!isConnected || !address) {
       setError(t("common.wallet_not_connected"));
-      return;
-    }
-    if (avatarUploading) {
-      setError(t("profile.wait_for_upload"));
       return;
     }
 
@@ -181,6 +169,28 @@ export default function EditProfilePage() {
 
     setSubmitting(true);
     try {
+      // ── Upload avatar if a new file was selected ─────────────────────────────
+      // Deferred from file-select to save-time so mobile browsers don't drop the
+      // request between tap and form submission (avoids HEIC timing / network race).
+      let finalAvatarCid  = avatarCid;
+      let finalAvatarUrl  = avatarUrl;
+
+      if (pendingAvatarFile) {
+        try {
+          const compressed = await compressAvatar(pendingAvatarFile);
+          const result = await uploadToIPFS(compressed, `avatar-${address}-${Date.now()}.jpg`);
+          finalAvatarCid = result.cid || null;
+          finalAvatarUrl = result.storjUrl || null;
+          setAvatarCid(finalAvatarCid);
+          setAvatarUrl(finalAvatarUrl);
+          setPendingAvatarFile(null);
+        } catch {
+          setError(t("profile.upload_failed"));
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const now = Math.floor(Date.now() / 1000);
       const profileData = {
         address: address.toLowerCase(),
@@ -195,8 +205,8 @@ export default function EditProfilePage() {
           discord: discord.trim() || undefined,
           website: website.trim() || undefined,
         },
-        avatarCid: avatarCid || undefined,
-        avatarUrl: avatarUrl || undefined,
+        avatarCid: finalAvatarCid || undefined,
+        avatarUrl: finalAvatarUrl || undefined,
         createdAt: originalCreatedAt ?? now,
         updatedAt: now,
       };
@@ -261,7 +271,7 @@ export default function EditProfilePage() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold font-mono mb-2">{t("profile.edit_title")}</h1>
+          <h1 className="text-3xl font-bold mb-2">{t("profile.edit_title")}</h1>
           <p className="text-muted-foreground">{t("profile.ipfs_info")}</p>
         </div>
 
@@ -290,14 +300,11 @@ export default function EditProfilePage() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={avatarUploading}
+                      disabled={submitting}
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      {avatarUploading ? (
-                        <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />{t("common.uploading")}</>
-                      ) : (
-                        <><Upload className="w-3.5 h-3.5 mr-1.5" />{t("profile.upload_photo_btn")}</>
-                      )}
+                      <Upload className="w-3.5 h-3.5 mr-1.5" />
+                      {pendingAvatarFile ? t("profile.photo_ready") : t("profile.upload_photo_btn")}
                     </Button>
                     <input
                       ref={fileInputRef}
@@ -445,9 +452,9 @@ export default function EditProfilePage() {
                 <Link href={`/profile/${address}`} className="flex-1">
                   <Button type="button" variant="outline" className="w-full">{t("common.cancel")}</Button>
                 </Link>
-                <Button type="submit" className="flex-1" disabled={submitting || avatarUploading}>
+                <Button type="submit" className="flex-1" disabled={submitting}>
                   {submitting ? (
-                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t("common.saving")}</>
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{pendingAvatarFile ? t("common.uploading") : t("common.saving")}</>
                   ) : t("profile.save_btn")}
                 </Button>
               </div>

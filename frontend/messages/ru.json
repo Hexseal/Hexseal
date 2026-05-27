@@ -189,7 +189,7 @@
     "fields_info": "Все поля необязательные, кроме имени.",
     "photo_label": "Фото профиля",
     "upload_photo_btn": "Загрузить фото",
-    "photo_info": "JPG, PNG или GIF · Макс 5МБ · Хранится в IPFS",
+    "photo_info": "JPG, PNG или GIF · Макс 20 МБ",
     "remove_photo": "Удалить фото",
     "display_name_label": "Имя",
     "display_name_placeholder": "Ваше имя или псевдоним",
@@ -246,7 +246,8 @@
     "active_count": "{count} активных",
     "role_client_executor": "Клиент и исполнитель",
     "client_role_badge": "Клиент",
-    "executor_role_badge": "Исполнитель"
+    "executor_role_badge": "Исполнитель",
+    "photo_ready": "Фото выбрано"
   },
   "xp_level": {
     "master": "Мастер",

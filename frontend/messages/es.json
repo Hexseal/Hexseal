@@ -189,7 +189,7 @@
     "fields_info": "Todos los campos son opcionales excepto el nombre visible.",
     "photo_label": "Foto de Perfil",
     "upload_photo_btn": "Subir Foto",
-    "photo_info": "JPG, PNG o GIF · Máx 5MB · Almacenado en IPFS",
+    "photo_info": "JPG, PNG o GIF · Máx 20 MB",
     "remove_photo": "Eliminar foto",
     "display_name_label": "Nombre Visible",
     "display_name_placeholder": "Tu nombre o seudónimo",
@@ -246,7 +246,8 @@
     "active_count": "{count} activos",
     "role_client_executor": "Cliente y Ejecutor",
     "client_role_badge": "Cliente",
-    "executor_role_badge": "Ejecutor"
+    "executor_role_badge": "Ejecutor",
+    "photo_ready": "Foto lista"
   },
   "deal_status": {
     "created": "Creado",

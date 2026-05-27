@@ -189,7 +189,7 @@
     "fields_info": "डिस्प्ले नाम को छोड़कर सभी फ़ील्ड वैकल्पिक हैं।",
     "photo_label": "प्रोफ़ाइल फोटो",
     "upload_photo_btn": "फोटो अपलोड करें",
-    "photo_info": "JPG, PNG या GIF · अधिकतम 5MB · IPFS पर संग्रहीत",
+    "photo_info": "JPG, PNG या GIF · अधिकतम 20 MB",
     "remove_photo": "फोटो हटाएं",
     "display_name_label": "डिस्प्ले नाम",
     "display_name_placeholder": "आपका नाम या उपनाम",
@@ -246,7 +246,8 @@
     "active_count": "{count} सक्रिय",
     "role_client_executor": "क्लाइंट और एक्जीक्यूटर",
     "client_role_badge": "क्लाइंट",
-    "executor_role_badge": "एक्जीक्यूटर"
+    "executor_role_badge": "एक्जीक्यूटर",
+    "photo_ready": "फ़ोटो तैयार"
   },
   "deal_status": {
     "created": "बनाई गई",

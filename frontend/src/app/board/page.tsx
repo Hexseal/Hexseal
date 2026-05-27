@@ -89,12 +89,15 @@ function JobCard({
 
   useEffect(() => {
     if (!hasTerms || !expanded || termsFetching || termsText !== null) return;
+    // Start fetching immediately — `termsFetching || !termsText` in the render
+    // shows "loading" right away so there's no blank-then-appear flicker.
     setTermsFetching(true);
     fetch(`/api/job-terms?hash=${job.termsHash}`)
       .then(r => r.json())
       .then(data => setTermsText(data.text ?? ''))
       .catch(() => setTermsText(''))
       .finally(() => setTermsFetching(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, hasTerms, job.termsHash]);
 
   const handleApply = async () => {
@@ -206,13 +209,13 @@ function JobCard({
             <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{displayDesc}</p>
           )}
 
-          {hasTerms && (termsFetching || termsText) && (
+          {expanded && hasTerms && (
             <div className="mb-3">
               <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
               </p>
-              {termsFetching ? (
-                <p className="text-xs text-white/25">{t("common.loading")}</p>
+              {termsFetching || !termsText ? (
+                <p className="text-xs text-white/25">{t("common.loading_short")}</p>
               ) : (
                 <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
               )}

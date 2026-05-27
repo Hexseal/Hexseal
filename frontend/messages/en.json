@@ -189,7 +189,7 @@
     "fields_info": "All fields optional except display name.",
     "photo_label": "Profile Photo",
     "upload_photo_btn": "Upload Photo",
-    "photo_info": "JPG, PNG or GIF · Max 5MB · Stored on IPFS",
+    "photo_info": "JPG, PNG or GIF · Max 20 MB",
     "remove_photo": "Remove photo",
     "display_name_label": "Display Name",
     "display_name_placeholder": "Your name or pseudonym",
@@ -246,7 +246,8 @@
     "active_count": "{count} active",
     "role_client_executor": "Client & Executor",
     "client_role_badge": "Client",
-    "executor_role_badge": "Executor"
+    "executor_role_badge": "Executor",
+    "photo_ready": "Photo ready"
   },
   "deal_status": {
     "created": "Created",
