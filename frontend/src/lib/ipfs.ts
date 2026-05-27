@@ -1,12 +1,12 @@
 /**
- * IPFS helpers — upload via Lighthouse.storage (lighthouse.storage),
- * fetch with automatic public-gateway fallback so NFTs are always visible.
+ * File upload helpers — upload via Storj (through relayer presign).
+ * fetchFromIPFS kept for reading legacy IPFS CIDs (avatarCid on old profiles).
  *
  * Server-side env vars:
- *   LIGHTHOUSE_API_KEY  — API key from lighthouse.storage dashboard
+ *   NEXT_PUBLIC_RELAYER_URL — relayer base URL (required)
  *
  * Client-side env vars (prefix NEXT_PUBLIC_):
- *   NEXT_PUBLIC_IPFS_GATEWAY  — override default gateway (optional)
+ *   NEXT_PUBLIC_IPFS_GATEWAY  — override default IPFS read gateway (optional)
  */
 
 export interface IPFSUploadResult {
@@ -39,30 +39,29 @@ export async function uploadToIPFS(
   }
 
   const result = await response.json();
-  const gateway = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage';
   return {
     cid:      result.cid      ?? '',
-    url:      result.url      || (result.cid ? `${gateway}/ipfs/${result.cid}` : ''),
+    url:      result.url      ?? '',
     storjUrl: result.storjUrl ?? null,
-    ipfsUrl:  result.ipfsUrl  ?? (result.cid ? `${gateway}/ipfs/${result.cid}` : null),
+    ipfsUrl:  result.ipfsUrl  ?? null,
   };
 }
 
-// Public gateways tried in order on fetch.
-// Lighthouse CDN first (our upload target) → cloudflare → w3s.link → ipfs.io.
+// Public gateways for reading legacy IPFS CIDs (old avatarCid records).
+// New uploads go to Storj — these are only needed for backward compat.
 const IPFS_GATEWAYS = [
-  process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage',
-  'https://gateway.lighthouse.storage',
-  'https://cloudflare-ipfs.com',
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://w3s.link',
   'https://w3s.link',
+  'https://cloudflare-ipfs.com',
   'https://ipfs.io',
 ];
 
 /**
- * Returns a stable public URL for a CID (NFT metadata, images, etc.).
+ * Returns a stable public URL for a legacy IPFS CID.
  */
 export function publicGatewayUrl(cid: string): string {
-  return `https://gateway.lighthouse.storage/ipfs/${cid}`;
+  const gw = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://w3s.link';
+  return `${gw}/ipfs/${cid}`;
 }
 
 /**
