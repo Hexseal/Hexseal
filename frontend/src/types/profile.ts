@@ -15,7 +15,8 @@ export interface UserProfile {
     discord?: string;
     website?: string;
   };
-  avatarCid?: string;
+  avatarCid?: string;  // IPFS CID (Lighthouse — secondary/decentralised)
+  avatarUrl?: string;  // Direct URL (Storj permanent public bucket — primary)
   createdAt: number;
   updatedAt: number;
   signature: string;

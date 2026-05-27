@@ -50,6 +50,7 @@ export default function EditProfilePage() {
   const [discord, setDiscord] = useState("");
   const [website, setWebsite] = useState("");
   const [avatarCid, setAvatarCid] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);    // Storj direct URL
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [originalCreatedAt, setOriginalCreatedAt] = useState<number | null>(null);
@@ -73,6 +74,7 @@ export default function EditProfilePage() {
       setDiscord(data.links?.discord || "");
       setWebsite(data.links?.website || "");
       setAvatarCid(data.avatarCid || null);
+      setAvatarUrl(data.avatarUrl || null);
       setOriginalCreatedAt(data.createdAt || null);
     } catch {
       // ignore parse errors
@@ -101,7 +103,8 @@ export default function EditProfilePage() {
     try {
       const ext = file.name.split('.').pop() || 'jpg';
       const result = await uploadToIPFS(file, `avatar-${address}-${Date.now()}.${ext}`);
-      setAvatarCid(result.cid);
+      setAvatarCid(result.cid || null);
+      setAvatarUrl(result.storjUrl || null); // Storj permanent URL (primary storage)
       toast.success(t("profile.photo_uploaded"));
     } catch {
       setError(t("profile.upload_failed"));
@@ -157,6 +160,7 @@ export default function EditProfilePage() {
           website: website.trim() || undefined,
         },
         avatarCid: avatarCid || undefined,
+        avatarUrl: avatarUrl || undefined,
         createdAt: originalCreatedAt ?? now,
         updatedAt: now,
       };
@@ -169,6 +173,7 @@ export default function EditProfilePage() {
         specializations: profileData.specializations,
         links: profileData.links,
         avatarCid: profileData.avatarCid,
+        avatarUrl: profileData.avatarUrl,
         createdAt: profileData.createdAt,
         updatedAt: profileData.updatedAt,
       })}\n${profileData.updatedAt}`;
@@ -213,7 +218,8 @@ export default function EditProfilePage() {
     );
   }
 
-  const avatarSrc = avatarPreview || (avatarCid ? `${IPFS_GATEWAY}/ipfs/${avatarCid}` : null);
+  // Prefer: local preview > Storj direct URL > IPFS gateway
+  const avatarSrc = avatarPreview || avatarUrl || (avatarCid ? `${IPFS_GATEWAY}/ipfs/${avatarCid}` : null);
 
   return (
     <div className="min-h-screen bg-background">
@@ -269,7 +275,7 @@ export default function EditProfilePage() {
                   {avatarSrc && (
                     <button
                       type="button"
-                      onClick={() => { setAvatarPreview(null); setAvatarCid(null); }}
+                      onClick={() => { setAvatarPreview(null); setAvatarCid(null); setAvatarUrl(null); }}
                       title={t("profile.remove_photo")}
                       className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
                     >

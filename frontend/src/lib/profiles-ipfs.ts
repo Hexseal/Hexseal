@@ -77,6 +77,7 @@ export async function verifyProfileSignature(profile: UserProfile): Promise<bool
       specializations: profile.specializations,
       links: profile.links,
       avatarCid: profile.avatarCid,
+      avatarUrl: profile.avatarUrl,    // undefined on old profiles → omitted in JSON → backward compat
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
     })}\n${profile.updatedAt}`;

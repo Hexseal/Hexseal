@@ -216,10 +216,14 @@ export default function ProfilePage() {
         <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-5" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
           <div className="flex items-start gap-4">
             {/* Avatar: real image if uploaded, else gradient fallback */}
-            {profile?.avatarCid ? (
+            {/* Prefer Storj direct URL (fast, permanent); fall back to IPFS gateway */}
+            {(profile?.avatarUrl || profile?.avatarCid) ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://ipfs.io'}/ipfs/${profile.avatarCid}`}
+                src={
+                  profile.avatarUrl ||
+                  `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${profile.avatarCid}`
+                }
                 alt={profile.displayName || 'Avatar'}
                 className="w-[72px] h-[72px] rounded-2xl object-cover flex-shrink-0"
               />

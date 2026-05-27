@@ -10,8 +10,10 @@
  */
 
 export interface IPFSUploadResult {
-  cid: string;
-  url: string;
+  cid:      string;       // IPFS CID (from Lighthouse; '' if Lighthouse unavailable)
+  url:      string;       // primary URL: Storj direct URL when available, else Lighthouse gateway
+  storjUrl: string | null; // permanent Storj URL (null if Storj unavailable)
+  ipfsUrl:  string | null; // Lighthouse IPFS gateway URL (null if Lighthouse unavailable)
 }
 
 /**
@@ -37,9 +39,12 @@ export async function uploadToIPFS(
   }
 
   const result = await response.json();
+  const gateway = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage';
   return {
-    cid: result.cid,
-    url: result.url || `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${result.cid}`,
+    cid:      result.cid      ?? '',
+    url:      result.url      || (result.cid ? `${gateway}/ipfs/${result.cid}` : ''),
+    storjUrl: result.storjUrl ?? null,
+    ipfsUrl:  result.ipfsUrl  ?? (result.cid ? `${gateway}/ipfs/${result.cid}` : null),
   };
 }
 

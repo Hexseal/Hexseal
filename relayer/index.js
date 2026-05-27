@@ -138,7 +138,8 @@ async function pushAfterRelay(receipt, agreementAddress) {
 const STORJ_ENDPOINT  = process.env.STORJ_ENDPOINT  || 'https://gateway.storjshare.io';
 const STORJ_ACCESS    = process.env.STORJ_ACCESS_KEY;
 const STORJ_SECRET    = process.env.STORJ_SECRET_KEY;
-const BUCKET_FILES    = process.env.STORJ_BUCKET_FILES || 's404-files';
+const BUCKET_FILES    = process.env.STORJ_BUCKET_FILES  || 's404-files';   // encrypted chat files (18-day TTL)
+const BUCKET_PUBLIC   = process.env.STORJ_BUCKET_PUBLIC || 's404-public';  // permanent public files (profiles, avatars)
 const FILE_TTL_S      = 18 * 24 * 60 * 60; // 18 days in seconds
 const FILE_TTL_MS     = FILE_TTL_S * 1000;
 
@@ -378,6 +379,34 @@ app.post('/files/presign', async (req, res) => {
   }
 });
 
+// ─── Public permanent presign (profile photos, avatars — no TTL) ─────────────
+// The BUCKET_PUBLIC bucket must be set to public-read in Storj dashboard.
+// Returned publicUrl is a direct, permanent, unauthenticated link to the file.
+
+app.post('/files/public/presign', async (req, res) => {
+  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+  try {
+    const { ext = '', contentType = 'application/octet-stream' } = req.body || {};
+    const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
+    const key = `${Date.now()}-${randomUUID()}${safeExt}`;
+
+    // Presigned PUT — lets the caller upload directly to Storj without server round-trip
+    const uploadUrl = await getSignedUrl(s3, new PutObjectCommand({
+      Bucket: BUCKET_PUBLIC,
+      Key: key,
+      ContentType: contentType,
+    }), { expiresIn: 3600 });
+
+    // Public URL — no signing needed because BUCKET_PUBLIC is set to public in Storj
+    const publicUrl = `${STORJ_ENDPOINT}/${BUCKET_PUBLIC}/${key}`;
+
+    res.json({ uploadUrl, publicUrl, key });
+  } catch (err) {
+    console.error('[files/public/presign]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Multipart upload endpoints (large files > 20 MB) ────────────────────────
 
 app.post('/files/multipart/create', async (req, res) => {
@@ -550,7 +579,8 @@ async function start() {
     console.log(`Forwarder:       ${FORWARDER_ADDR}`);
     console.log(`Diamond:         ${DIAMOND_ADDR}`);
     console.log(`Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
-    console.log(`Storage bucket:  ${STORJ_ACCESS ? BUCKET_FILES + ' (Storj)' : 'disabled'}`);
+    console.log(`Storage (files): ${STORJ_ACCESS ? BUCKET_FILES + ' (Storj, encrypted, 18d TTL)' : 'disabled'}`);
+    console.log(`Storage (public):${STORJ_ACCESS ? ' ' + BUCKET_PUBLIC + ' (Storj, permanent public)' : ' disabled'}`);
   });
 }
 
