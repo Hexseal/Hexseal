@@ -31,7 +31,7 @@ import { createConfig } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
-import { appChain, appChainId, appRpcUrl, isMainnet } from "@/config/chain";
+import { appChain, appChainId, isMainnet } from "@/config/chain";
 import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
 
@@ -39,16 +39,15 @@ const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const chains = [appChain] as any;
+// Official Base public RPC — always works, no auth required.
 const publicRpc = isMainnet ? "https://mainnet.base.org" : "https://sepolia.base.org";
-// /api/rpc routes all RPC calls through the Next.js server so geo-blocked users
-// (CIS, VPN exit nodes) don't lose access to the blockchain.
-// On the server (SSR), relative URLs don't work — fall back to direct RPC there.
-const clientRpc = typeof window !== "undefined" ? "/api/rpc" : appRpcUrl;
+// /api/rpc proxies through Next.js (uses server-side RPC_URL with API key).
+// On the server (SSR) relative URLs don't work — fall back to publicRpc directly.
+const clientRpc = typeof window !== "undefined" ? "/api/rpc" : publicRpc;
 const transports = {
   [appChainId]: fallback([
-    http(clientRpc, { timeout: 20_000 }),
-    http(appRpcUrl, { timeout: 20_000 }),
-    http(publicRpc, { timeout: 20_000 }),
+    http(clientRpc,  { timeout: 20_000 }), // /api/rpc → private RPC with key
+    http(publicRpc,  { timeout: 20_000 }), // sepolia.base.org — official fallback
   ]),
 };
 
@@ -181,11 +180,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // Poll every 6 s so on-chain changes appear quickly.
-            refetchInterval: 6_000,
-            // Treat data as fresh for 4 s to avoid redundant back-to-back fetches.
-            staleTime: 4_000,
-            refetchOnWindowFocus: true,
+            // wagmi already polls for new blocks via pollingInterval and
+            // invalidates its own queries — don't add a second independent timer.
+            refetchInterval: false,
+            // Treat data as fresh for 8 s to avoid back-to-back fetches.
+            staleTime: 8_000,
+            // Handled by VisibilityRefresher below — don't double-trigger.
+            refetchOnWindowFocus: false,
           },
         },
       }),
