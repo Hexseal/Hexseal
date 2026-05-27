@@ -330,7 +330,7 @@ function ChatHubPageInner() {
 
   if (!isConnected) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm px-4">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <MessageCircle className="w-7 h-7 text-primary" />
@@ -538,7 +538,7 @@ function ChatHubPageInner() {
 export default function ChatHubPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-white/30" />
       </div>
     }>

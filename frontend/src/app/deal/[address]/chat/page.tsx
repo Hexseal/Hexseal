@@ -43,7 +43,7 @@ export default function DealChatRedirect() {
   }, [details, address, dealAddress, router]);
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
+    <div className="flex-1 flex items-center justify-center">
       <Loader2 className="w-6 h-6 animate-spin text-white/30" />
     </div>
   );

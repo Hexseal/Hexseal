@@ -168,19 +168,22 @@ function DateDivider({ ts }: { ts: number }) {
   );
 }
 
-function MessageSkeleton() {
+function XmtpConnecting() {
   return (
-    <div className="px-4 py-6 space-y-5">
-      {[
-        { me: false, w: 160 }, { me: false, w: 220 },
-        { me: true,  w: 140 }, { me: true,  w: 190 },
-        { me: false, w: 110 },
-      ].map((s, i) => (
-        <div key={i} className={`flex items-end gap-2 ${s.me ? 'justify-end' : 'justify-start'}`}>
-          {!s.me && <div className="w-7 h-7 rounded-full bg-white/[0.06] flex-shrink-0 animate-pulse" />}
-          <div className="h-9 rounded-[18px] bg-white/[0.06] animate-pulse" style={{ width: s.w }} />
+    <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
+      <div className="relative w-12 h-12">
+        <div className="absolute inset-0 rounded-full border-2 border-white/[0.06]" />
+        <div className="absolute inset-0 rounded-full border-2 border-t-primary/60 animate-spin" />
+        <div className="absolute inset-2 flex items-center justify-center">
+          <Lock className="w-4 h-4 text-white/25" />
         </div>
-      ))}
+      </div>
+      <div>
+        <p className="text-white/60 text-sm font-medium mb-1">Connecting…</p>
+        <p className="text-white/25 text-xs max-w-[200px] leading-relaxed">
+          Setting up end-to-end encrypted messaging
+        </p>
+      </div>
     </div>
   );
 }
@@ -586,9 +589,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
       {/* Pre-deal bar */}
       {!dealContext && preDealCtx && (
-        <div className="flex-shrink-0 mx-3 mb-1 mt-1 rounded-[18px] overflow-hidden"
-          style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="px-3.5 py-2.5 flex items-center gap-3">
+        <div className="flex-shrink-0 bg-white/[0.03] border-b border-white/[0.05]">
+          <div className="px-4 py-2.5 flex items-center gap-3">
             <div className="flex-1 min-w-0">
               {preDealCtx.title && (
                 <p className="text-xs font-semibold text-white/80 truncate mb-0.5">{preDealCtx.title}</p>
@@ -645,9 +647,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
       {/* Deal bar */}
       {dealContext && (
-        <div className="flex-shrink-0 mx-3 mb-1 mt-1 rounded-[18px] overflow-hidden"
-          style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="px-3.5 py-2.5 flex items-center gap-3">
+        <div className="flex-shrink-0 bg-white/[0.03] border-b border-white/[0.05]">
+          <div className="px-4 py-2.5 flex items-center gap-3">
             <div className="flex-1 min-w-0">
               {dealContext.jobTitle && (
                 <p className="text-xs font-semibold text-white/80 truncate mb-0.5">{dealContext.jobTitle}</p>
@@ -727,7 +728,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             </div>
           )}
 
-          {isLoading && <MessageSkeleton />}
+          {isLoading && <XmtpConnecting />}
 
           {!isLoading && error && (
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
