@@ -13,7 +13,7 @@ import { MessagingSetup } from '@/components/MessagingSetup';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, Paperclip, FileText, ExternalLink, Lock,
-  ChevronDown, Download, Search, X,
+  ChevronDown, Download, Search, X, Clock,
 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/xmtp';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
@@ -37,6 +37,9 @@ function shortAddr(addr: string) {
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+
+// Same-sender bubble group breaks after this gap (like iMessage / Telegram)
+const TIME_BREAK = 10 * 60 * 1000;
 
 function isImageMime(mime?: string) {
   return mime?.startsWith('image/') ?? false;
@@ -150,6 +153,37 @@ function UploadProgress({ pct }: { pct: number }) {
   );
 }
 
+// ─── Clickable URL renderer ───────────────────────────────────────────────────
+
+// Split pattern (with capture group so URLs land at odd indices)
+const URL_SPLIT = /(https?:\/\/[^\s<>"']+)/g;
+// Non-global for safe .test() calls
+const URL_TEST  = /^https?:\/\/[^\s<>"']+$/;
+
+function MessageText({ text }: { text: string }) {
+  const parts = text.split(URL_SPLIT);
+  return (
+    <>
+      {parts.map((part, i) =>
+        URL_TEST.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 opacity-80 hover:opacity-100 break-all"
+            onClick={e => e.stopPropagation()}
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
 function DateDivider({ ts }: { ts: number }) {
   const d = new Date(ts);
   const today = new Date();
@@ -218,7 +252,7 @@ const AGR_STATUS: Record<number, { label: string; cls: string }> = {
 
 export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelProps) {
   const { address } = useAccount();
-  const { messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress, needsSetup } =
+  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, needsSetup } =
     useDirectChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   const publicClient = usePublicClient();
@@ -575,8 +609,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               />
             </div>
             {searchQuery && (
-              <span className="text-[11px] text-white/35 flex-shrink-0">
-                {visibleMessages.length} / {messages.length}
+              <span
+                className="text-[11px] text-white/35 flex-shrink-0"
+                title={hasMore ? 'Searching loaded messages only — load more to search history' : undefined}
+              >
+                {visibleMessages.length} / {messages.length}{hasMore ? '…' : ''}
               </span>
             )}
             <button onClick={() => { setSearchQuery(''); setShowSearch(false); }}
@@ -766,8 +803,30 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           )}
 
           {!isLoading && !error && searchQuery && visibleMessages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="flex flex-col items-center justify-center py-16 text-center gap-1.5">
               <p className="text-white/30 text-sm">No messages match &ldquo;{searchQuery}&rdquo;</p>
+              {hasMore && (
+                <p className="text-white/20 text-xs max-w-[220px] leading-relaxed">
+                  Searching loaded messages only —{' '}
+                  <button onClick={loadMore} className="underline underline-offset-2 hover:text-white/40 transition-colors">
+                    load more
+                  </button>{' '}
+                  to search history
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Load older messages */}
+          {!isLoading && !error && hasMore && messages.length > 0 && (
+            <div className="flex justify-center py-3">
+              <button
+                onClick={loadMore}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-[20px] bg-white/[0.05] border border-white/[0.08] text-xs text-white/40 hover:bg-white/[0.09] hover:text-white/65 transition-colors"
+              >
+                <ChevronDown className="w-3 h-3 rotate-180" />
+                Load older messages
+              </button>
             </div>
           )}
 
@@ -780,8 +839,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               const isMe    = msg.from === address?.toLowerCase();
               const prev    = visibleMessages[i - 1];
               const next    = visibleMessages[i + 1];
-              const isFirst = !prev || prev.from !== msg.from;
-              const isLast  = !next || next.from !== msg.from;
+              // Break the bubble group if sender changes OR the gap exceeds TIME_BREAK
+              const isFirst = !prev || prev.from !== msg.from || (msg.timestamp  - prev.timestamp) > TIME_BREAK;
+              const isLast  = !next || next.from !== msg.from || (next.timestamp - msg.timestamp)  > TIME_BREAK;
 
               // Date divider
               const day = new Date(msg.timestamp).toDateString();
@@ -835,15 +895,15 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                                           'rounded-r-[22px] rounded-l-[6px]'
                               }`
                         }`}>
-                          {msg.text}
+                          <MessageText text={msg.text} />
                         </div>
                       )
                     }
                     {isLast && (
-                      <span className="text-[10px] text-white/20 mt-1 px-1">
+                      <span className="text-[10px] text-white/20 mt-1 px-1 flex items-center gap-1">
                         {formatTime(msg.timestamp)}
                         {msg.id.startsWith('opt-') && (
-                          <span className="ml-1 text-white/15">·</span>
+                          <Clock className="w-2.5 h-2.5 opacity-60" />
                         )}
                       </span>
                     )}

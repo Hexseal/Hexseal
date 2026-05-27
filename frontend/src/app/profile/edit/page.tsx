@@ -323,7 +323,7 @@ export default function EditProfilePage() {
                       key={val}
                       type="button"
                       onClick={() => setRole(role === val ? '' : val)}
-                      className={`py-2.5 px-3 rounded-lg text-sm border transition-colors text-center ${
+                      className={`py-2.5 px-3 rounded-[10px] text-sm border transition-colors text-center ${
                         role === val
                           ? "bg-primary text-primary-foreground border-primary"
                           : "bg-background text-muted-foreground border-border hover:bg-muted"

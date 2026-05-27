@@ -163,7 +163,7 @@ export default function NotificationsPage() {
         )}
 
         {supported && permission === 'denied' && (
-          <div className="px-4 py-3 rounded-xl border border-amber-500/20 bg-amber-500/5 mb-4">
+          <div className="px-4 py-3 rounded-[14px] border border-amber-500/20 bg-amber-500/5 mb-4">
             <p className="text-xs text-amber-400/70">
               Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.
             </p>
@@ -173,7 +173,7 @@ export default function NotificationsPage() {
         {/* Empty state */}
         {notifications.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/8 flex items-center justify-center">
+            <div className="w-16 h-16 rounded-[18px] bg-white/[0.03] border border-white/[0.08] flex items-center justify-center">
               <Bell className="w-6 h-6 text-white/15" />
             </div>
             <div>
@@ -187,7 +187,7 @@ export default function NotificationsPage() {
 
         {/* Notification list */}
         {notifications.length > 0 && (
-          <div className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] overflow-hidden divide-y divide-white/[0.05]" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
+          <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] overflow-hidden divide-y divide-white/[0.05]" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             {notifications.map((n) => (
               <NotifEntry key={n.id} notif={n} onRead={markRead} />
             ))}

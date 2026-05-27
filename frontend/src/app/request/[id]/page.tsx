@@ -255,7 +255,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         {/* ── Status banners ── */}
 
         {req.status === 0 && isClient && (
-          <div className="rounded-xl border border-sky-400/25 bg-sky-400/5 px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[22px] border border-sky-400/25 bg-sky-400/5 px-4 py-3 flex items-start gap-3">
             <Clock className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-sky-300/90">Waiting for executor to respond</p>
@@ -267,7 +267,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         )}
 
         {req.status === 0 && isExecutor && (
-          <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[22px] border border-amber-400/25 bg-amber-400/5 px-4 py-3 flex items-start gap-3">
             <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-amber-300/90">New hire request — action required</p>
@@ -279,7 +279,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         )}
 
         {req.status === 1 && hasDeal && (
-          <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/5 px-4 py-3 flex items-center justify-between gap-3">
+          <div className="rounded-[22px] border border-emerald-400/30 bg-emerald-400/5 px-4 py-3 flex items-center justify-between gap-3">
             <div className="flex items-start gap-3">
               <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
               <div>
@@ -296,7 +296,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         )}
 
         {req.status === 2 && (
-          <div className="rounded-xl border border-red-400/20 bg-red-400/5 px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[22px] border border-red-400/20 bg-red-400/5 px-4 py-3 flex items-start gap-3">
             <XCircle className="w-4 h-4 text-red-400/70 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-red-300/70">Request rejected</p>
@@ -308,7 +308,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         )}
 
         {req.status === 3 && (
-          <div className="rounded-[16px] border border-white/[0.07] bg-[#0d0d0f] px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[22px] border border-white/[0.07] bg-[#0d0d0f] px-4 py-3 flex items-start gap-3">
             <XCircle className="w-4 h-4 text-white/25 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-white/45">Request cancelled</p>
@@ -318,7 +318,9 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         )}
 
         {/* ── Request details ── */}
-        <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-5">
+        <div className="rounded-[22px] border border-white/[0.08] bg-white/[0.03] p-5"
+          style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+        >
           <h2 className="text-xs font-semibold text-white/30 uppercase tracking-widest mb-4">Request Details</h2>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">

@@ -524,6 +524,7 @@ function ChatHubPageInner() {
           ? <ChatPanel
               recipientAddress={selected}
               dealContext={selectedDealCtx}
+              onBack={() => router.push('/chat')}
             />
           : <EmptyState />
         }

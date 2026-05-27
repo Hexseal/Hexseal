@@ -80,7 +80,8 @@ function RequestModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-white/12 bg-[#111] p-6 shadow-2xl">
+      <div className="w-full max-w-sm rounded-[22px] border border-white/[0.08] bg-[#111113] p-5"
+        style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-syne font-bold text-lg">{t("board.services.request_btn")}</h2>
           <button onClick={onClose} className="text-white/30 hover:text-white/60">
@@ -128,7 +129,7 @@ function RequestModal({
                 <button
                   key={k}
                   onClick={() => setRegion(Number(k))}
-                  className={`rounded-lg border py-2 text-xs transition-colors ${
+                  className={`rounded-[10px] border py-2 text-xs transition-colors ${
                     region === Number(k)
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-white/10 text-white/40 hover:border-white/20"
@@ -591,8 +592,8 @@ export default function ExecutorBoardPage() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4">
-              <Briefcase className="w-6 h-6 text-white/25" />
+            <div className="w-14 h-14 rounded-[18px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-4">
+              <Briefcase className="w-6 h-6 text-white/20" />
             </div>
             <p className="text-white/40 text-sm mb-1">
               {searchQuery ? t("board.services.no_results") : t("board.services.empty")}

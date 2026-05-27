@@ -211,14 +211,14 @@ export default function PostJobPage() {
       {/* Header */}
       <div className="border-b border-white/[0.06]">
         <div className="container mx-auto px-4 py-5 max-w-2xl">
-<h1 className="text-xl font-bold font-syne">{t("board.post_job.title")}</h1>
+<h1 className="text-2xl font-bold font-syne">{t("board.post_job.title")}</h1>
           <p className="text-sm text-white/40 mt-0.5">Executors apply — you pick who to hire.</p>
         </div>
       </div>
 
       <div className="container mx-auto px-4 py-8 max-w-2xl space-y-4">
         {isWrongChain && (
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-300">
+          <div className="flex items-center justify-between p-3 rounded-[22px] bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-300">
             Wrong network — switch to Base Sepolia
             <button className="underline text-xs" onClick={() => switchChain?.({ chainId: EXPECTED_CHAIN_ID })}>Switch</button>
           </div>
@@ -234,7 +234,7 @@ export default function PostJobPage() {
                 <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_job.field_title")}</Label>
                 <Input id="title" placeholder="e.g. Build a React Web Application" value={title}
                   onChange={e => setTitle(e.target.value)} maxLength={100}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-[14px]" required />
                 <p className="text-xs text-white/25 text-right">{title.length}/100</p>
               </div>
 
@@ -242,7 +242,7 @@ export default function PostJobPage() {
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_job.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe requirements, deliverables…" value={description}
                   onChange={e => setDescription(e.target.value)} rows={4}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-xl" required />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-[14px]" required />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -250,13 +250,13 @@ export default function PostJobPage() {
                   <Label htmlFor="amount" className="text-sm text-white/70">{t("board.post_job.field_budget")}</Label>
                   <Input id="amount" type="number" step="0.01" min="0" placeholder="100" value={amount}
                     onChange={e => setAmount(e.target.value)}
-                    className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
+                    className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-[14px]" required />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="deadline" className="text-sm text-white/70">{t("board.post_job.field_deadline")}</Label>
                   <Input id="deadline" type="number" min="1" max={MAX_DEADLINE} value={deadline}
                     onChange={e => setDeadline(e.target.value)}
-                    className="bg-[#0d0d0f] border-white/[0.08] rounded-xl" required />
+                    className="bg-[#0d0d0f] border-white/[0.08] rounded-[14px]" required />
                 </div>
               </div>
 
@@ -279,7 +279,7 @@ export default function PostJobPage() {
                 </Label>
                 <Textarea id="terms" placeholder={t("board.post_job.field_brief_hint")} value={jobTerms}
                   onChange={e => setJobTerms(e.target.value)} rows={3}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-xl" />
+                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-[14px]" />
                 <p className="text-xs text-white/25">Uploaded to IPFS — visible only after match</p>
               </div>
             </div>
@@ -339,8 +339,8 @@ export default function PostJobPage() {
         {step === "success" && (
           <div className="space-y-4">
             {/* Success header */}
-            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 px-6 py-8 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center mx-auto mb-5">
+            <div className="rounded-[22px] border border-emerald-400/20 bg-emerald-400/5 px-6 py-8 text-center">
+              <div className="w-14 h-14 rounded-[18px] bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center mx-auto mb-5">
                 <CheckCircle className="w-7 h-7 text-emerald-400" />
               </div>
               <h2 className="text-xl font-bold font-syne mb-1">{t("board.post_job.success")}</h2>
@@ -364,7 +364,7 @@ export default function PostJobPage() {
             {jobId && (
               <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
                 {/* Receipt card preview */}
-                <div className="rounded-xl bg-[#0d0d1f] border border-white/5 p-5 mb-4 font-mono text-xs">
+                <div className="rounded-[14px] bg-[#0d0d1f] border border-white/5 p-5 mb-4 font-mono text-xs">
                   {/* Green top bar */}
                   <div className="h-0.5 bg-emerald-500 rounded-full mb-4" />
                   <p className="text-emerald-400 font-bold text-sm tracking-widest text-center mb-0.5">SIGNATURE404</p>
@@ -420,8 +420,8 @@ export default function PostJobPage() {
         )}
 
         {step === "error" && (
-          <div className="rounded-2xl border border-red-400/20 bg-red-400/5 px-6 py-12 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-red-400/10 border border-red-400/20 flex items-center justify-center mx-auto mb-5">
+          <div className="rounded-[22px] border border-red-400/20 bg-red-400/5 px-6 py-12 text-center">
+            <div className="w-14 h-14 rounded-[18px] bg-red-400/10 border border-red-400/20 flex items-center justify-center mx-auto mb-5">
               <AlertCircle className="w-7 h-7 text-red-400" />
             </div>
             <h2 className="text-xl font-bold font-syne mb-2">Transaction Failed</h2>

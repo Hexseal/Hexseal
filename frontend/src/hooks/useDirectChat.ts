@@ -45,6 +45,8 @@ export function useDirectChat(recipientAddress: string) {
   const dmRef           = useRef<XmtpDm | null>(null);
   const streamRef       = useRef<{ return: () => void } | null>(null);
   const recipientRef    = useRef(recipientAddress);
+  const oldestNsRef     = useRef<bigint | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   useEffect(() => { recipientRef.current = recipientAddress; }, [recipientAddress]);
 
   useEffect(() => {
@@ -99,9 +101,12 @@ export function useDirectChat(recipientAddress: string) {
           }
         }
 
-        // 4. Load message history
-        const history = await loadDmMessages(dm, xmtp.inboxId ?? '', myAddress, recipientAddress);
+        // 4. Load message history (newest 50)
+        const { messages: history, hasMore: more, oldestNs } =
+          await loadDmMessages(dm, xmtp.inboxId ?? '', myAddress, recipientAddress);
         if (cancelled) return;
+        oldestNsRef.current = oldestNs;
+        setHasMore(more);
         setMessages(history);
 
         // 5. Subscribe to new messages
@@ -156,6 +161,51 @@ export function useDirectChat(recipientAddress: string) {
     };
   }, [walletClient, recipientAddress, isEnabled]);
 
+  // ── Re-sync on window focus (stream may have gone stale in background) ───
+  useEffect(() => {
+    const onFocus = async () => {
+      const xmtp = clientRef.current;
+      const dm   = dmRef.current;
+      if (!xmtp || !dm || !isInitialized) return;
+      try {
+        await dm.sync();
+        const myAddress = xmtp.accountIdentifier?.identifier?.toLowerCase() ?? '';
+        const { messages: fresh } = await loadDmMessages(
+          dm, xmtp.inboxId ?? '', myAddress, recipientRef.current,
+        );
+        setMessages(prev => {
+          const knownIds = new Set(prev.filter(m => !m.id.startsWith('opt-')).map(m => m.id));
+          const incoming = fresh.filter(m => !knownIds.has(m.id));
+          if (incoming.length === 0) return prev;
+          // Rebuild: confirmed fresh base + any still-pending optimistic at the end
+          const optimistic = prev.filter(m => m.id.startsWith('opt-'));
+          return [...fresh, ...optimistic];
+        });
+      } catch { /* silent — stream will self-recover or user will see error on next action */ }
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [isInitialized]);
+
+  // ── Load older messages ───────────────────────────────────────────────────
+  const loadMore = useCallback(async () => {
+    const xmtp = clientRef.current;
+    const dm   = dmRef.current;
+    if (!xmtp || !dm || !oldestNsRef.current) return;
+    const myAddress = xmtp.accountIdentifier?.identifier?.toLowerCase() ?? '';
+    try {
+      const { messages: older, hasMore: more, oldestNs } =
+        await loadDmMessages(dm, xmtp.inboxId ?? '', myAddress, recipientRef.current, oldestNsRef.current);
+      if (older.length > 0) {
+        oldestNsRef.current = oldestNs;
+        setMessages(prev => [...older, ...prev]);
+      }
+      setHasMore(more && older.length > 0);
+    } catch (err) {
+      console.warn('[useDirectChat] loadMore failed:', err);
+    }
+  }, []);
+
   // ── Send message ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (text: string) => {
     const xmtp = clientRef.current;
@@ -203,5 +253,5 @@ export function useDirectChat(recipientAddress: string) {
     pushChatNotif(recipientRef.current, `📎 ${file.name}`, '/chat');
   }, []);
 
-  return { messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress, needsSetup: !isEnabled };
+  return { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, needsSetup: !isEnabled };
 }

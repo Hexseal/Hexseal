@@ -304,17 +304,35 @@ export function normalizeDmMessage(
 // ─── History loading ──────────────────────────────────────────────────────────
 
 
+const MSG_PAGE_SIZE = 50n;
+
+export interface LoadedMessages {
+  messages:  ChatMessage[];
+  hasMore:   boolean;       // true if there may be older messages to load
+  oldestNs:  bigint | null; // sentAtNs of the oldest message — cursor for next page
+}
+
 export async function loadGroupMessages(
   group: XmtpGroup,
   myInboxId: string,
   myAddress: string,
-): Promise<ChatMessage[]> {
-  const members = await group.members();
+  beforeNs?: bigint,
+): Promise<LoadedMessages> {
+  const members     = await group.members();
   const inboxToAddr = buildInboxAddressMap(members);
-  const raw = await group.messages({ direction: SortDirection.Ascending, limit: BigInt(50) });
-  return raw
-    .map((m) => normalizeGroupMessage(m, myInboxId, myAddress, inboxToAddr))
+  const raw         = await group.messages({
+    direction: SortDirection.Descending, // newest first
+    limit:     MSG_PAGE_SIZE,
+    ...(beforeNs ? { beforeNs } : {}),
+  });
+
+  const oldestNs = raw.length > 0 ? (raw[raw.length - 1].sentAtNs ?? null) : null;
+  const messages = [...raw]
+    .reverse()
+    .map((m)  => normalizeGroupMessage(m, myInboxId, myAddress, inboxToAddr))
     .filter((m): m is ChatMessage => m !== null);
+
+  return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs };
 }
 
 export async function loadDmMessages(
@@ -322,11 +340,21 @@ export async function loadDmMessages(
   myInboxId: string,
   myAddress: string,
   peerAddress: string,
-): Promise<ChatMessage[]> {
-  const raw = await dm.messages({ direction: SortDirection.Ascending, limit: BigInt(50) });
-  return raw
-    .map((m) => normalizeDmMessage(m, myInboxId, myAddress, peerAddress))
+  beforeNs?: bigint,
+): Promise<LoadedMessages> {
+  const raw = await dm.messages({
+    direction: SortDirection.Descending, // newest first
+    limit:     MSG_PAGE_SIZE,
+    ...(beforeNs ? { beforeNs } : {}),
+  });
+
+  const oldestNs = raw.length > 0 ? (raw[raw.length - 1].sentAtNs ?? null) : null;
+  const messages = [...raw]
+    .reverse()
+    .map((m)  => normalizeDmMessage(m, myInboxId, myAddress, peerAddress))
     .filter((m): m is ChatMessage => m !== null);
+
+  return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs };
 }
 
 // ─── Conversation list ────────────────────────────────────────────────────────

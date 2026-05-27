@@ -54,7 +54,7 @@ function Tab({ active, onClick, children, count }: {
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0 ${
+      className={`px-4 py-2 text-sm font-medium rounded-[10px] transition-colors flex items-center gap-1.5 flex-shrink-0 ${
         active
           ? 'bg-white/10 text-white'
           : 'text-white/40 hover:text-white/70 hover:bg-white/5'
@@ -140,7 +140,7 @@ export default function DashboardPage() {
 
         {/* ── Stats row ── */}
         {!isLoading && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard
               icon={<Zap className="w-4 h-4 text-violet-400" />}
               label={t("dashboard.stat_level")}

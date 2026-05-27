@@ -152,7 +152,7 @@ export default function MobileBottomNav() {
           }}
         >
           <div
-            className="flex backdrop-blur-3xl border border-white/[0.08] rounded-[28px] overflow-hidden"
+            className="flex backdrop-blur-3xl border border-white/[0.08] rounded-[22px] overflow-hidden"
             style={{
               background: 'rgba(0,0,0,0.96)',
               boxShadow:
@@ -164,7 +164,7 @@ export default function MobileBottomNav() {
               onClick={closeBoard}
               className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
-              <span className="w-9 h-9 rounded-2xl bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
+              <span className="w-9 h-9 rounded-[12px] bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
                 <Briefcase className="w-[18px] h-[18px] text-white/55" />
               </span>
               <div>
@@ -184,7 +184,7 @@ export default function MobileBottomNav() {
               onClick={closeBoard}
               className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
-              <span className="w-9 h-9 rounded-2xl bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
+              <span className="w-9 h-9 rounded-[12px] bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
                 <User className="w-[18px] h-[18px] text-white/55" />
               </span>
               <div>

@@ -827,8 +827,9 @@ export default function DealDetailPage() {
 
       {/* ── Raise Dispute Modal ─────────────────────────────────────────────── */}
       {disputeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-          <div className="bg-zinc-900 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="bg-[#111113] border border-white/[0.08] rounded-[22px] p-5 w-full max-w-md"
+            style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className="w-4 h-4 text-red-400" />
               <h2 className="text-sm font-semibold text-white">{t("deal.dispute_btn")}</h2>
@@ -841,7 +842,7 @@ export default function DealDetailPage() {
               placeholder={t("deal.dispute_reason_placeholder")}
               rows={4}
               maxLength={2000}
-              className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-red-500/40 resize-none"
+              className="w-full bg-white/[0.05] border border-white/[0.08] rounded-[14px] px-3 py-2.5 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-red-500/40 resize-none"
             />
             <div className="flex justify-between items-center mt-1 mb-4">
               <span className="text-[11px] text-white/25">{disputeReason.length}/2000</span>

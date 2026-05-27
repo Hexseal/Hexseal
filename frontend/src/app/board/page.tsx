@@ -472,8 +472,8 @@ export default function BoardPage() {
           </div>
         ) : jobs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4">
-              <Briefcase className="w-6 h-6 text-white/25" />
+            <div className="w-14 h-14 rounded-[18px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-4">
+              <Briefcase className="w-6 h-6 text-white/20" />
             </div>
             <p className="text-white/40 text-sm mb-1">
               {searchQuery ? t("board.jobs.no_results") : t("board.jobs.empty")}

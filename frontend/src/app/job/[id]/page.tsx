@@ -231,7 +231,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                   </span>
                 )}
               </div>
-              <h1 className="text-xl font-bold font-syne leading-tight">
+              <h1 className="text-2xl font-bold font-syne leading-tight">
                 {job.title || `Job #${id}`}
               </h1>
             </div>
@@ -255,7 +255,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
         {/* ── Status guidance banner ── */}
         {job.status === 0 && isClient && (
-          <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${
+          <div className={`rounded-[22px] border px-4 py-3 flex items-start gap-3 ${
             (applicants?.length ?? 0) > 0
               ? 'border-violet-400/30 bg-violet-400/5'
               : 'border-white/10 bg-white/[0.03]'
@@ -280,7 +280,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         )}
 
         {job.status === 0 && !isClient && address && hasApplied && (
-          <div className="rounded-xl border border-sky-400/25 bg-sky-400/5 px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[22px] border border-sky-400/25 bg-sky-400/5 px-4 py-3 flex items-start gap-3">
             <CheckCircle className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-sky-300/80">{t("job.application_sent")}</p>
@@ -290,7 +290,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         )}
 
         {job.status === 0 && !isClient && address && !hasApplied && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[22px] border border-white/[0.08] bg-white/[0.03] px-4 py-3 flex items-start gap-3">
             <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-white/60">{t("job.apply_title")}</p>
@@ -300,7 +300,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         )}
 
         {job.status === 1 && wasChosen && job.agreement && job.agreement !== '0x0000000000000000000000000000000000000000' && (
-          <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/5 px-4 py-3 flex items-center justify-between gap-3">
+          <div className="rounded-[22px] border border-emerald-400/30 bg-emerald-400/5 px-4 py-3 flex items-center justify-between gap-3">
             <div className="flex items-start gap-3">
               <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
               <div>
@@ -317,7 +317,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         )}
 
         {job.status === 1 && !isClient && !wasChosen && hasApplied && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex items-start gap-3">
+          <div className="rounded-[22px] border border-white/[0.08] bg-white/[0.03] px-4 py-3 flex items-start gap-3">
             <AlertCircle className="w-4 h-4 text-white/25 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-white/45">{t("job.not_selected")}</p>
@@ -509,15 +509,16 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       {/* Hire Confirmation Modal */}
       {confirmExecutor && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70 backdrop-blur-sm"
           onClick={() => !isBusy && setConfirmExecutor(null)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-white/12 bg-[#111118] p-6 shadow-2xl"
+            className="w-full max-w-md rounded-[22px] border border-white/[0.08] bg-[#111113] p-5"
+            style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-5">
-              <div className="w-9 h-9 rounded-full bg-amber-400/10 flex items-center justify-center flex-shrink-0">
+              <div className="w-9 h-9 rounded-[12px] bg-amber-400/10 flex items-center justify-center flex-shrink-0">
                 <AlertCircle className="w-5 h-5 text-amber-400" />
               </div>
               <div>
@@ -545,7 +546,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               </div>
             </div>
 
-            <div className="rounded-xl border border-amber-400/15 bg-amber-400/5 px-4 py-3 mb-5">
+            <div className="rounded-[14px] border border-amber-400/15 bg-amber-400/5 px-4 py-3 mb-5">
               <p className="text-xs text-amber-400/80 leading-relaxed">
                 {t("job.escrow_warning")}
               </p>

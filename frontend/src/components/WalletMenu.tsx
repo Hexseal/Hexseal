@@ -178,7 +178,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         </button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-64 bg-[#0e0e0e] border-white/[0.08] shadow-2xl shadow-black/80 p-0 overflow-hidden z-[200]">
+      <DropdownMenuContent align="end" className="w-64 bg-[#111113] border-white/[0.08] shadow-2xl shadow-black/80 p-0 overflow-hidden z-[200]">
 
         {/* ── Profile header ── */}
         <div className="px-4 py-3.5 border-b border-white/[0.06]">

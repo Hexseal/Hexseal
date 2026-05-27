@@ -21,9 +21,9 @@ export function useProfile(address: string | undefined) {
     return () => { cancelled = true; };
   }, [address]);
 
-  const avatarUrl = profile?.avatarCid
-    ? `${gateway}/ipfs/${profile.avatarCid}`
-    : null;
+  // Prefer direct Storj URL (fast), fall back to IPFS gateway
+  const avatarUrl = profile?.avatarUrl
+    ?? (profile?.avatarCid ? `${gateway}/ipfs/${profile.avatarCid}` : null);
 
   return {
     profile,
