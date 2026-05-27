@@ -25,7 +25,42 @@ const SPECIALIZATIONS = [
 
 const MAX_NAME_LENGTH = 50;
 const MAX_BIO_LENGTH = 500;
-const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
+const MAX_AVATAR_SIZE = 20 * 1024 * 1024; // 20 MB raw — compressed down before upload
+
+// ─── Client-side image compression ───────────────────────────────────────────
+// Resizes to max 800×800 and re-encodes as JPEG 0.82 quality.
+// Turns a 5-8 MB iPhone photo into ~150-350 KB — much faster to upload.
+async function compressAvatar(file: File): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const MAX = 800;
+      let { width, height } = img;
+      if (width > MAX || height > MAX) {
+        const ratio = Math.min(MAX / width, MAX / height);
+        width  = Math.round(width  * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width  = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(file); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        blob => blob
+          ? resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }))
+          : reject(new Error('Canvas compression failed')),
+        'image/jpeg',
+        0.82,
+      );
+    };
+    img.onerror = reject;
+    img.src = objectUrl;
+  });
+}
 
 const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://cloudflare-ipfs.com';
 
@@ -101,10 +136,11 @@ export default function EditProfilePage() {
     setAvatarUploading(true);
 
     try {
-      const ext = file.name.split('.').pop() || 'jpg';
-      const result = await uploadToIPFS(file, `avatar-${address}-${Date.now()}.${ext}`);
+      // Compress before upload: 800×800 max, JPEG 0.82 — turns 5-8 MB into ~200 KB
+      const compressed = await compressAvatar(file);
+      const result = await uploadToIPFS(compressed, `avatar-${address}-${Date.now()}.jpg`);
       setAvatarCid(result.cid || null);
-      setAvatarUrl(result.storjUrl || null); // Storj permanent URL (primary storage)
+      setAvatarUrl(result.storjUrl || null);
       toast.success(t("profile.photo_uploaded"));
     } catch {
       setError(t("profile.upload_failed"));
