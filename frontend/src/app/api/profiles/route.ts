@@ -7,13 +7,33 @@ const redis = Redis.fromEnv();
 const PREFIX = 'sig404:profile:';
 
 const IPFS_GATEWAYS = [
-  process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://w3s.link',
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage',
+  'https://gateway.lighthouse.storage',
   'https://w3s.link',
   'https://ipfs.io',
-  'https://dweb.link',
 ];
 
-async function fetchByCid(cid: string): Promise<unknown | null> {
+/**
+ * Fetch profile data from either a direct URL (Storj) or an IPFS CID.
+ * Redis now stores either:
+ *   - a Storj URL (starts with "https://") — fetched directly
+ *   - an IPFS CID (legacy / Lighthouse backup) — tried via gateways
+ */
+async function fetchProfileData(ref: string): Promise<unknown | null> {
+  // Direct URL (Storj or any https)
+  if (ref.startsWith('https://') || ref.startsWith('http://')) {
+    try {
+      const res = await fetch(ref, { signal: AbortSignal.timeout(10_000) });
+      if (res.ok) return res.json();
+    } catch {
+      // fall through to IPFS gateways as last resort
+    }
+  }
+
+  // IPFS CID fallback (legacy records or when Storj URL fetch fails)
+  const cid = ref.startsWith('http') ? null : ref;
+  if (!cid) return null;
+
   for (const gw of IPFS_GATEWAYS) {
     try {
       const res = await fetch(`${gw}/ipfs/${cid}`, {
@@ -32,16 +52,17 @@ export async function GET(request: NextRequest) {
   const address = request.nextUrl.searchParams.get('address')?.toLowerCase();
   if (!address) return NextResponse.json({ error: 'address required' }, { status: 400 });
 
-  const cid = await redis.get<string>(`${PREFIX}${address}`);
-  if (!cid) return NextResponse.json(null);
+  const ref = await redis.get<string>(`${PREFIX}${address}`);
+  if (!ref) return NextResponse.json(null);
 
-  const profile = await fetchByCid(cid);
+  const profile = await fetchProfileData(ref);
   if (!profile) return NextResponse.json(null);
 
-  return NextResponse.json({ ...(profile as object), cid });
+  // Always include the stored ref so client knows where the profile lives
+  return NextResponse.json({ ...(profile as object), cid: ref });
 }
 
-// POST /api/profiles — update index with new profile CID
+// POST /api/profiles — update index with new profile ref (Storj URL or IPFS CID)
 // Body: { address: string, profileCid: string }
 export async function POST(request: NextRequest) {
   try {

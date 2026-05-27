@@ -36,31 +36,45 @@ export async function fetchProfile(address: string): Promise<UserProfile | null>
 
 /**
  * Publish a profile and update the index.
- * Profile JSON is uploaded to IPFS; the index is updated server-side via
- * /api/profiles (reads/writes S3 directly — no broken gateway key-lookups).
+ *
+ * Storage strategy:
+ *   PRIMARY   — Storj via relayer presign  → permanent URL stored in Redis
+ *   SECONDARY — Lighthouse IPFS pin        → optional, for decentralised redundancy
+ *
+ * Redis stores the best available ref:
+ *   1. Storj URL  (preferred — fast, permanent, no IPFS dependency)
+ *   2. IPFS CID   (fallback when Storj is unavailable)
+ *
+ * LIGHTHOUSE_API_KEY is NOT required — if absent, profiles work via Storj only.
  */
 export async function publishProfile(profileData: Omit<UserProfile, 'cid'>): Promise<string> {
-  // 1. Upload profile JSON to IPFS
+  // 1. Upload profile JSON (Storj primary, Lighthouse secondary)
   const profileJson = JSON.stringify(profileData);
   const profileBlob = new Blob([profileJson], { type: 'application/json' });
   const profileResult = await uploadToIPFS(profileBlob, `profile-${profileData.address}-${Date.now()}.json`);
-  const profileCid = profileResult.cid;
 
-  // 2. Update index via server-side API (reads + writes Filebase S3 atomically)
+  // Use Storj URL if available (permanent, no IPFS gateway required).
+  // Fall back to IPFS CID if only Lighthouse succeeded.
+  const profileRef = profileResult.storjUrl || profileResult.cid;
+  if (!profileRef) {
+    throw new Error('Profile upload failed: no storage backend returned a valid reference');
+  }
+
+  // 2. Update index via server-side API
   const res = await fetch('/api/profiles', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: profileData.address.toLowerCase(), profileCid }),
+    body: JSON.stringify({ address: profileData.address.toLowerCase(), profileCid: profileRef }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'index update failed' })) as { error?: string };
     throw new Error(err.error || 'Failed to update profile index');
   }
 
-  // 3. Cache locally
-  cacheProfile(profileData.address.toLowerCase(), { ...profileData, cid: profileCid });
+  // 3. Cache locally (use the ref as cid field — works for both URLs and CIDs)
+  cacheProfile(profileData.address.toLowerCase(), { ...profileData, cid: profileRef });
 
-  return profileCid;
+  return profileRef;
 }
 
 /**

@@ -7,6 +7,7 @@ import { AGREEMENT_ABI, DIAMOND_ABI } from '@/config/contracts';
 import { sendAgreementGasless, sendGasless, requestServiceGasless } from '@/lib/relay';
 import { usePreDealBar } from '@/hooks/usePreDealBar';
 import { toast } from 'react-hot-toast';
+import { useTranslations } from 'next-intl';
 
 import { useDirectChat } from '@/hooks/useDirectChat';
 import { MessagingSetup } from '@/components/MessagingSetup';
@@ -52,6 +53,7 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
   const [decrypting, setDecrypting] = useState(false);
   const [decryptErr, setDecryptErr] = useState(false);
   const [lightbox, setLightbox]     = useState(false);
+  const t = useTranslations();
 
   useEffect(() => {
     if (!a.key || !a.iv) { setSrc(a.url); return; }
@@ -69,13 +71,13 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
   if (decrypting) return (
     <div className={`w-full max-w-[220px] h-[140px] ${rounded} border border-white/[0.08] bg-white/[0.03] flex items-center justify-center gap-2`}>
       <Loader2 className="w-4 h-4 animate-spin text-white/25" />
-      <span className="text-xs text-white/25">Decrypting…</span>
+      <span className="text-xs text-white/25">{t("chat.decrypting")}</span>
     </div>
   );
 
   if (decryptErr || !src) return (
     <div className={`w-full max-w-[220px] h-[80px] ${rounded} border border-red-500/20 bg-red-500/5 flex items-center justify-center`}>
-      <span className="text-xs text-red-400/50">Failed to decrypt image</span>
+      <span className="text-xs text-red-400/50">{t("chat.decrypt_failed_image")}</span>
     </div>
   );
 
@@ -100,6 +102,7 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
   const [saving,     setSaving]     = useState(false);
   const [err,        setErr]        = useState(false);
   const [dlProgress, setDlProgress] = useState<number | null>(null);
+  const t = useTranslations();
 
   const handleDownload = async () => {
     if (saving) return;
@@ -128,10 +131,10 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-white/85 truncate leading-tight">{a.name}</p>
         <p className="text-[11px] text-white/35 mt-0.5">
-          {err ? <span className="text-red-400/70">Decryption failed</span>
-               : dlProgress !== null ? <span className="text-primary/70">Decrypting… {dlProgress}%</span>
+          {err ? <span className="text-red-400/70">{t("chat.decrypt_failed")}</span>
+               : dlProgress !== null ? <span className="text-primary/70">{t("chat.decrypting")} {dlProgress}%</span>
                : a.size != null ? formatBytes(a.size)
-               : a.key ? 'Encrypted · click to save' : 'Click to open'}
+               : a.key ? t("chat.click_to_save") : t("chat.click_to_open")}
         </p>
       </div>
       {a.key
@@ -203,6 +206,7 @@ function DateDivider({ ts }: { ts: number }) {
 }
 
 function XmtpConnecting() {
+  const t = useTranslations();
   return (
     <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
       <div className="relative w-12 h-12">
@@ -213,9 +217,9 @@ function XmtpConnecting() {
         </div>
       </div>
       <div>
-        <p className="text-white/60 text-sm font-medium mb-1">Connecting…</p>
+        <p className="text-white/60 text-sm font-medium mb-1">{t("chat.connecting")}</p>
         <p className="text-white/25 text-xs max-w-[200px] leading-relaxed">
-          Setting up end-to-end encrypted messaging
+          {t("chat.connecting_desc")}
         </p>
       </div>
     </div>
@@ -240,18 +244,29 @@ interface ChatPanelProps {
 }
 
 // Agreement.Status enum (7 states) — from getDetails().status_ (uint8 0-6)
-const AGR_STATUS: Record<number, { label: string; cls: string }> = {
-  0: { label: 'Created',   cls: 'text-sky-400/70' },
-  1: { label: 'Funded',    cls: 'text-emerald-400/70' },
-  2: { label: 'Active',    cls: 'text-violet-400/70' },
-  3: { label: 'Completed', cls: 'text-green-400/70' },
-  4: { label: 'Disputed',  cls: 'text-red-400/70' },
-  5: { label: 'Resolved',  cls: 'text-purple-400/70' },
-  6: { label: 'Refunded',  cls: 'text-white/30' },
+// Labels are resolved via i18n keys at render time
+const AGR_STATUS_CLS: Record<number, string> = {
+  0: 'text-sky-400/70',
+  1: 'text-emerald-400/70',
+  2: 'text-violet-400/70',
+  3: 'text-green-400/70',
+  4: 'text-red-400/70',
+  5: 'text-purple-400/70',
+  6: 'text-white/30',
+};
+const AGR_STATUS_KEY: Record<number, string> = {
+  0: 'deal_status.created',
+  1: 'deal_status.funded',
+  2: 'deal_status.active',
+  3: 'deal_status.completed',
+  4: 'deal_status.disputed',
+  5: 'deal_status.resolved',
+  6: 'deal_status.refunded',
 };
 
 export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelProps) {
   const { address } = useAccount();
+  const t = useTranslations();
   const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, needsSetup } =
     useDirectChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
@@ -513,7 +528,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           {onBack && (
             <button onClick={onBack}
               className="sm:hidden w-8 h-8 flex items-center justify-center text-white/40 hover:text-white/75 hover:bg-white/8 rounded-xl transition-colors flex-shrink-0"
-              title="Open conversations">
+              title={t("chat.open_conversations")}>
               <PanelLeftOpen className="w-4.5 h-4.5" />
             </button>
           )}
@@ -545,11 +560,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                     {dealContext.jobTitle}
                   </p>
                 )}
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-[11px] font-medium ${
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className={`text-[11px] font-medium whitespace-nowrap ${
                     dealContext.role === 'client' ? 'text-sky-400/70' : 'text-emerald-400/70'
                   }`}>
-                    {dealContext.role === 'client' ? 'Client' : 'Executor'}
+                    {dealContext.role === 'client' ? t("common.role_client") : t("common.role_executor")}
                   </span>
                   <span className="text-white/20 text-[11px]">·</span>
                   <a href={`/deal/${dealContext.agreementAddr}`}
@@ -557,8 +572,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                     #{dealContext.agreementAddr.slice(2, 10).toUpperCase()}
                   </a>
                   <span className="text-white/20 text-[11px]">·</span>
-                  <span className={`text-[11px] ${AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.cls ?? 'text-white/30'}`}>
-                    {AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.label ?? '…'}
+                  <span className={`text-[11px] whitespace-nowrap ${AGR_STATUS_CLS[dealMeta?.agreementStatus ?? -1] ?? 'text-white/30'}`}>
+                    {dealMeta?.agreementStatus !== undefined && AGR_STATUS_KEY[dealMeta.agreementStatus]
+                      ? t(AGR_STATUS_KEY[dealMeta.agreementStatus] as Parameters<typeof t>[0])
+                      : '…'}
                   </span>
                 </div>
               </div>
@@ -587,7 +604,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               className={`p-1.5 rounded-[10px] transition-colors ${
                 showSearch ? 'bg-white/[0.08] text-white/70' : 'text-white/30 hover:text-white/60 hover:bg-white/[0.06]'
               }`}
-              title="Search messages">
+              title={t("chat.search_messages")}>
               <Search className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -603,7 +620,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search messages…"
+                placeholder={t("chat.search_placeholder")}
                 tabIndex={showSearch ? 0 : -1}
                 className="w-full bg-white/[0.05] border border-white/[0.07] rounded-[14px] pl-9 pr-4 py-2 text-sm text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.14] focus:bg-white/[0.07] transition-all"
               />
@@ -611,7 +628,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             {searchQuery && (
               <span
                 className="text-[11px] text-white/35 flex-shrink-0"
-                title={hasMore ? 'Searching loaded messages only — load more to search history' : undefined}
+                title={hasMore ? t("chat.search_history_hint") : undefined}
               >
                 {visibleMessages.length} / {messages.length}{hasMore ? '…' : ''}
               </span>
@@ -627,7 +644,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       {/* Pre-deal bar */}
       {!dealContext && preDealCtx && (
         <div className="flex-shrink-0 bg-white/[0.03] border-b border-white/[0.05]">
-          <div className="px-4 py-2.5 flex items-center gap-3">
+          <div className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
             <div className="flex-1 min-w-0">
               {preDealCtx.title && (
                 <p className="text-xs font-semibold text-white/80 truncate mb-0.5">{preDealCtx.title}</p>
@@ -640,9 +657,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                 )}
                 <span className="text-white/20 text-[11px]">·</span>
                 <span className="text-[11px] text-amber-400/70 font-medium">
-                  {preDealCtx.type === 'job_as_client' ? 'Application received' :
-                   preDealCtx.type === 'job_as_executor' ? (preDealCtx.hasApplied ? 'Applied' : 'Open job') :
-                   'Active service'}
+                  {preDealCtx.type === 'job_as_client' ? t("deal_bar.application_received") :
+                   preDealCtx.type === 'job_as_executor' ? (preDealCtx.hasApplied ? t("deal_bar.applied") : t("deal_bar.open_job")) :
+                   t("deal_bar.active_service")}
                 </span>
               </div>
             </div>
@@ -650,31 +667,31 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               {preDealCtx.type === 'job_as_client' && (
                 <>
                   <button onClick={() => setPreDealConfirm('reject_app')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
-                    Reject
+                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors whitespace-nowrap">
+                    {t("deal_bar.reject_btn")}
                   </button>
                   <button onClick={() => setPreDealConfirm('accept_deploy')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
-                    Accept
+                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
+                    {t("deal_bar.accept_btn")}
                   </button>
                 </>
               )}
               {preDealCtx.type === 'job_as_executor' && preDealCtx.hasApplied && (
                 <button onClick={() => setPreDealConfirm('withdraw')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
-                  Withdraw
+                  className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors whitespace-nowrap">
+                  {t("deal_bar.withdraw_btn")}
                 </button>
               )}
               {preDealCtx.type === 'job_as_executor' && !preDealCtx.hasApplied && (
                 <button onClick={() => setPreDealConfirm('apply')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
-                  Apply
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
+                  {t("deal_bar.apply_btn")}
                 </button>
               )}
               {preDealCtx.type === 'service_as_client' && (
                 <button onClick={() => setPreDealConfirm('request_service')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
-                  Request
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
+                  {t("deal_bar.request_btn")}
                 </button>
               )}
             </div>
@@ -685,7 +702,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       {/* Deal bar */}
       {dealContext && (
         <div className="flex-shrink-0 bg-white/[0.03] border-b border-white/[0.05]">
-          <div className="px-4 py-2.5 flex items-center gap-3">
+          <div className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
             <div className="flex-1 min-w-0">
               {dealContext.jobTitle && (
                 <p className="text-xs font-semibold text-white/80 truncate mb-0.5">{dealContext.jobTitle}</p>
@@ -698,9 +715,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                 )}
                 <span className="text-white/20 text-[11px]">·</span>
                 {dealMeta?.agreementStatus === 2 && dealMeta.markedDoneAt > 0n
-                  ? <span className="text-[11px] text-amber-400/80 font-medium">Delivered</span>
-                  : <span className={`text-[11px] font-medium ${AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.cls ?? 'text-white/30'}`}>
-                      {AGR_STATUS[dealMeta?.agreementStatus ?? -1]?.label ?? '…'}
+                  ? <span className="text-[11px] text-amber-400/80 font-medium whitespace-nowrap">{t("deal_bar.delivered")}</span>
+                  : <span className={`text-[11px] font-medium whitespace-nowrap ${AGR_STATUS_CLS[dealMeta?.agreementStatus ?? -1] ?? 'text-white/30'}`}>
+                      {dealMeta?.agreementStatus !== undefined && AGR_STATUS_KEY[dealMeta.agreementStatus]
+                        ? t(AGR_STATUS_KEY[dealMeta.agreementStatus] as Parameters<typeof t>[0])
+                        : '…'}
                     </span>
                 }
               </div>
@@ -710,41 +729,41 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               {dealMeta?.agreementStatus === 1 && dealContext.role === 'executor' && (
                 <>
                   <button onClick={() => setConfirmAction('reject')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors">
-                    Reject
+                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors whitespace-nowrap">
+                    {t("deal_bar.reject_btn")}
                   </button>
                   <button onClick={() => setConfirmAction('accept')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold">
-                    Accept
+                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
+                    {t("deal_bar.accept_btn")}
                   </button>
                 </>
               )}
               {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt === 0n && (
                 <button onClick={() => setConfirmAction('markDone')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
-                  Mark Done
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold whitespace-nowrap">
+                  {t("deal_bar.mark_done_btn")}
                 </button>
               )}
               {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt > 0n && (
-                <span className="text-[11px] text-amber-400/55 font-medium">Awaiting review</span>
+                <span className="text-[11px] text-amber-400/55 font-medium whitespace-nowrap">{t("deal_bar.awaiting_review")}</span>
               )}
               {dealMeta?.agreementStatus === 2 && dealContext.role === 'client' && (
                 <>
                   <button onClick={() => setConfirmAction('dispute')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors">
-                    Dispute
+                    className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors whitespace-nowrap">
+                    {t("deal_bar.dispute_btn")}
                   </button>
                   {dealMeta.markedDoneAt > 0n && (
                     <button onClick={() => setConfirmAction('release')}
-                      className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold">
-                      Release
+                      className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold whitespace-nowrap">
+                      {t("deal_bar.release_btn")}
                     </button>
                   )}
                 </>
               )}
               {dealMeta?.agreementStatus === 4 && (
-                <span className="text-[11px] px-2 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400/70 font-medium">
-                  In Arbitration
+                <span className="text-[11px] px-2 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400/70 font-medium whitespace-nowrap">
+                  {t("deal_bar.in_arbitration")}
                 </span>
               )}
             </div>
@@ -775,19 +794,19 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               <div>
                 <p className="text-white/70 text-sm font-semibold mb-1">
                   {error.includes('not set up') || error.includes('not registered')
-                    ? "Recipient hasn't enabled messaging"
-                    : 'Could not connect'}
+                    ? t("chat.recipient_no_messaging")
+                    : t("chat.could_not_connect")}
                 </p>
                 <p className="text-white/35 text-xs max-w-xs leading-relaxed">
                   {error.includes('not set up') || error.includes('not registered')
-                    ? 'Share your chat link — when they open it and connect, messaging activates.'
+                    ? t("chat.share_invite_hint")
                     : error}
                 </p>
               </div>
               {(error.includes('not set up') || error.includes('not registered')) && chatUrl && (
                 <button onClick={copyInvite}
                   className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                  {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" />Copied!</> : <><Copy className="w-3.5 h-3.5" />Copy invite link</>}
+                  {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" />{t("chat.copied")}</> : <><Copy className="w-3.5 h-3.5" />{t("chat.copy_invite")}</>}
                 </button>
               )}
             </div>
@@ -798,20 +817,16 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-white/[0.15]" />
               </div>
-              <p className="text-white/20 text-sm">No messages yet</p>
+              <p className="text-white/20 text-sm">{t("chat.no_messages_yet")}</p>
             </div>
           )}
 
           {!isLoading && !error && searchQuery && visibleMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center gap-1.5">
-              <p className="text-white/30 text-sm">No messages match &ldquo;{searchQuery}&rdquo;</p>
+              <p className="text-white/30 text-sm">{t("chat.no_match")} &ldquo;{searchQuery}&rdquo;</p>
               {hasMore && (
                 <p className="text-white/20 text-xs max-w-[220px] leading-relaxed">
-                  Searching loaded messages only —{' '}
-                  <button onClick={loadMore} className="underline underline-offset-2 hover:text-white/40 transition-colors">
-                    load more
-                  </button>{' '}
-                  to search history
+                  {t("chat.search_history_hint")}
                 </p>
               )}
             </div>
@@ -822,10 +837,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             <div className="flex justify-center py-3">
               <button
                 onClick={loadMore}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-[20px] bg-white/[0.05] border border-white/[0.08] text-xs text-white/40 hover:bg-white/[0.09] hover:text-white/65 transition-colors"
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-[20px] bg-white/[0.05] border border-white/[0.08] text-xs text-white/40 hover:bg-white/[0.09] hover:text-white/65 transition-colors whitespace-nowrap"
               >
                 <ChevronDown className="w-3 h-3 rotate-180" />
-                Load older messages
+                {t("chat.load_older")}
               </button>
             </div>
           )}
@@ -920,9 +935,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         {!atBottom && (
           <div className="sticky bottom-4 flex justify-center">
             <button onClick={scrollToBottom}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[20px] bg-[#111113]/95 backdrop-blur-xl border border-white/[0.10] text-xs text-white/50 hover:bg-[#161618]/95 hover:text-white/70 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[20px] bg-[#111113]/95 backdrop-blur-xl border border-white/[0.10] text-xs text-white/50 hover:bg-[#161618]/95 hover:text-white/70 transition-colors whitespace-nowrap"
               style={{ boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }}>
-              <ChevronDown className="w-3 h-3" />scroll down
+              <ChevronDown className="w-3 h-3" />{t("chat.scroll_down")}
             </button>
           </div>
         )}
@@ -945,7 +960,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           <button
             onClick={() => { if (!isInitialized || uploading || !dealContext) return; fileRef.current?.click(); }}
             disabled={!isInitialized || uploading || !dealContext}
-            title={dealContext ? "Attach file (encrypted, 18 days, max 5 GB)" : "Files available only in active deals"}
+            title={dealContext ? t("chat.attach_file_title") : t("chat.files_deal_only")}
             className="w-9 h-9 rounded-full flex items-center justify-center text-white/30 hover:text-white/65 hover:bg-white/[0.07] disabled:opacity-10 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
           </button>
@@ -958,9 +973,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             enterKeyHint="send"
             autoComplete="off"
             placeholder={
-              isLoading     ? ''                 :
-              error         ? 'Chat unavailable' :
-              isInitialized ? 'Message…'         : 'Initializing…'
+              isLoading     ? ''                          :
+              error         ? t("chat.chat_unavailable") :
+              isInitialized ? t("chat.message_placeholder") : t("chat.initializing")
             }
             className="flex-1 bg-[#111113] border border-white/[0.08] rounded-[22px] px-4 py-2.5 text-[15px] text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.15] focus:bg-[#141416] transition-all resize-none overflow-hidden leading-[1.45]"
             style={{ minHeight: '44px', maxHeight: '120px' }}
@@ -980,27 +995,27 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           <div className="border border-white/[0.08] rounded-[22px] p-5 w-full max-w-sm"
             style={{ background: '#0d0d0f', boxShadow: '0 8px 40px rgba(0,0,0,0.7), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
             <h3 className="text-sm font-semibold text-white mb-2">
-              {preDealConfirm === 'apply'           ? 'Apply for Job' :
-               preDealConfirm === 'accept_deploy'   ? 'Accept & Deploy Agreement' :
-               preDealConfirm === 'request_service' ? 'Request Service' :
-               preDealConfirm === 'withdraw'        ? 'Withdraw Application' :
-                                                      'Reject Application'}
+              {preDealConfirm === 'apply'           ? t("chat_modal.apply_title") :
+               preDealConfirm === 'accept_deploy'   ? t("chat_modal.accept_deploy_title") :
+               preDealConfirm === 'request_service' ? t("chat_modal.request_service_title") :
+               preDealConfirm === 'withdraw'        ? t("chat_modal.withdraw_title") :
+                                                      t("chat_modal.reject_app_title")}
             </h3>
             <p className="text-xs text-white/45 mb-5 leading-relaxed">
               {preDealConfirm === 'apply'
-                ? 'Your application will be submitted to the client.'
+                ? t("chat_modal.apply_desc")
                 : preDealConfirm === 'accept_deploy'
-                ? 'This will accept the applicant and deploy an escrow Agreement contract. Gas is covered.'
+                ? t("chat_modal.accept_deploy_desc")
                 : preDealConfirm === 'request_service'
                 ? `A service request for ${formatUnits(preDealCtx.amount, 6)} USDC will be sent. The executor must accept to start.`
                 : preDealConfirm === 'withdraw'
-                ? 'Your application will be withdrawn. A message will be sent to the client.'
-                : 'The application will be rejected. A message will be sent to the applicant.'}
+                ? t("chat_modal.withdraw_desc")
+                : t("chat_modal.reject_app_desc")}
             </p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setPreDealConfirm(null)} disabled={preDealBusy}
                 className="px-3.5 py-1.5 rounded-[10px] text-xs text-white/45 hover:text-white/70 border border-white/[0.08] hover:bg-white/[0.05] transition-colors disabled:opacity-40">
-                Cancel
+                {t("chat_modal.cancel_btn")}
               </button>
               <button onClick={() => handlePreDealAction(preDealConfirm)} disabled={preDealBusy}
                 className={`px-3.5 py-1.5 rounded-[10px] text-xs font-medium text-white transition-colors disabled:opacity-40 flex items-center gap-1.5 ${
@@ -1008,7 +1023,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                     ? 'bg-red-600 hover:bg-red-500'
                     : 'bg-primary hover:bg-primary/80'
                 }`}>
-                {preDealBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm'}
+                {preDealBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : t("chat_modal.confirm_btn")}
               </button>
             </div>
           </div>
@@ -1021,23 +1036,23 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           <div className="border border-white/[0.08] rounded-[22px] p-5 w-full max-w-sm"
             style={{ background: '#0d0d0f', boxShadow: '0 8px 40px rgba(0,0,0,0.7), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
             <h3 className="text-sm font-semibold text-white mb-2">
-              {confirmAction === 'accept'   ? 'Accept Deal' :
-               confirmAction === 'reject'   ? 'Decline Job' :
-               confirmAction === 'release'  ? 'Release Payment' :
-               confirmAction === 'markDone' ? 'Submit Work' :
-                                             'Raise Dispute'}
+              {confirmAction === 'accept'   ? t("chat_modal.accept_deal_title") :
+               confirmAction === 'reject'   ? t("chat_modal.decline_job_title") :
+               confirmAction === 'release'  ? t("chat_modal.release_payment_title") :
+               confirmAction === 'markDone' ? t("chat_modal.submit_work_title") :
+                                             t("chat_modal.raise_dispute_title")}
             </h3>
             <p className="text-xs text-white/45 mb-5 leading-relaxed">
-              {confirmAction === 'accept'   ? 'This will activate the agreement. Funds are locked until you mark it done.' :
-               confirmAction === 'reject'   ? 'You will decline this job request. A message will be sent to the client in chat.' :
+              {confirmAction === 'accept'   ? t("chat_modal.accept_deal_desc") :
+               confirmAction === 'reject'   ? t("chat_modal.decline_job_desc") :
                confirmAction === 'release'  ? `This will release ${formatUnits(dealContext.amount, 6)} USDC to the executor. This action is irreversible — verify the work before confirming.` :
-               confirmAction === 'markDone' ? 'This marks the work as complete. The client will review and release payment.' :
-                                             'This will freeze the deal and call an arbiter to review.'}
+               confirmAction === 'markDone' ? t("chat_modal.mark_done_desc") :
+                                             t("chat_modal.raise_dispute_desc")}
             </p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setConfirmAction(null)} disabled={actionBusy}
                 className="px-3.5 py-1.5 rounded-[10px] text-xs text-white/45 hover:text-white/70 border border-white/[0.08] hover:bg-white/[0.05] transition-colors disabled:opacity-40">
-                Cancel
+                {t("chat_modal.cancel_btn")}
               </button>
               <button onClick={() => handleDealAction(confirmAction!)} disabled={actionBusy}
                 className={`px-3.5 py-1.5 rounded-[10px] text-xs font-medium text-white transition-colors disabled:opacity-40 flex items-center gap-1.5 ${
@@ -1047,7 +1062,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                     ? 'bg-emerald-600 hover:bg-emerald-500'
                     : 'bg-primary hover:bg-primary/80'
                 }`}>
-                {actionBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm'}
+                {actionBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : t("chat_modal.confirm_btn")}
               </button>
             </div>
           </div>

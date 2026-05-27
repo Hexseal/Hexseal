@@ -102,8 +102,11 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         const profile = await fetchProfile(address);
         if (!alive) return;
         if (profile?.displayName) setDisplayName(profile.displayName);
-        if (profile?.avatarCid) {
-          const gw = process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://dweb.link";
+        // Prefer Storj direct URL; fall back to Lighthouse IPFS CID
+        if (profile?.avatarUrl) {
+          setProfileAvatarUrl(profile.avatarUrl);
+        } else if (profile?.avatarCid) {
+          const gw = process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://gateway.lighthouse.storage";
           setProfileAvatarUrl(`${gw}/ipfs/${profile.avatarCid}`);
         }
       } catch {}
