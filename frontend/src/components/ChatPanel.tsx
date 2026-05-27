@@ -376,9 +376,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
   useEffect(() => {
     const newCount = messages.length;
-    const grew = newCount > prevMsgCount.current;
-    prevMsgCount.current = newCount;
-    if (grew && atBottom) bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    // Only act when the list actually grew (new message arrived or loaded).
+    // Skips firing when `messages` reference changed but count is the same
+    // (e.g., optimistic → confirmed replacement) — avoids spurious scroll jumps.
+    if (newCount > prevMsgCount.current) {
+      prevMsgCount.current = newCount;
+      if (atBottom) bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    }
   }, [messages, atBottom]);
 
   const handleScroll = () => {
@@ -772,7 +776,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black" style={{ overscrollBehavior: 'none' }}>
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black" style={{ overscrollBehavior: 'none', overflowAnchor: 'none' }}>
         {!isLoading && !needsSetup && !error && messages.length > 0 && <div className="flex-1" />}
         <div className="py-4">
 
@@ -929,7 +933,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             return items;
           })()}
 
-          <div ref={bottomRef} />
+          <div ref={bottomRef} style={{ overflowAnchor: 'auto' }} />
         </div>
 
         {!atBottom && (

@@ -174,14 +174,17 @@ export function useDirectChat(recipientAddress: string) {
           dm, xmtp.inboxId ?? '', myAddress, recipientRef.current,
         );
         setMessages(prev => {
-          const knownIds = new Set(prev.filter(m => !m.id.startsWith('opt-')).map(m => m.id));
-          const incoming = fresh.filter(m => !knownIds.has(m.id));
-          if (incoming.length === 0) return prev;
-          // Rebuild: confirmed fresh base + any still-pending optimistic at the end
+          // Only append genuinely new messages — never rebuild from scratch.
+          // Returning the same `prev` reference tells React nothing changed → no re-render,
+          // no DOM thrash, no scroll-position jump.
+          const knownIds = new Set(prev.map(m => m.id));
+          const newMsgs = fresh.filter(m => !knownIds.has(m.id));
+          if (newMsgs.length === 0) return prev; // ← same ref, React bails out entirely
+          const confirmed = prev.filter(m => !m.id.startsWith('opt-'));
           const optimistic = prev.filter(m => m.id.startsWith('opt-'));
-          return [...fresh, ...optimistic];
+          return [...confirmed, ...newMsgs, ...optimistic];
         });
-      } catch { /* silent — stream will self-recover or user will see error on next action */ }
+      } catch { /* silent — stream will self-recover */ }
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
