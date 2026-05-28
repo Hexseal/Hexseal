@@ -17,6 +17,7 @@ import { UserName } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface JobRecord {
   client: string;
@@ -51,6 +52,29 @@ function useTimeAgo() {
   };
 }
 
+function JobCardSkeleton() {
+  return (
+    <motion.div
+      className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[80px]"
+      animate={{ opacity: [0.4, 0.8, 0.4] }}
+      transition={{ repeat: Infinity, duration: 1.5 }}
+    >
+      <div className="flex items-center gap-3 px-4 py-4">
+        <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-white/[0.06] mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-2">
+          <div className="h-3.5 w-48 rounded-md bg-white/[0.06]" />
+          <div className="flex gap-2">
+            <div className="h-2.5 w-16 rounded-md bg-white/[0.06]" />
+            <div className="h-2.5 w-20 rounded-md bg-white/[0.06]" />
+            <div className="h-2.5 w-12 rounded-md bg-white/[0.06]" />
+          </div>
+        </div>
+        <div className="h-8 w-16 rounded-[10px] bg-white/[0.06] flex-shrink-0" />
+      </div>
+    </motion.div>
+  );
+}
+
 function JobCard({
   jobId,
   job,
@@ -61,6 +85,7 @@ function JobCard({
   onApplied,
   expanded,
   onToggle,
+  index,
 }: {
   jobId: bigint;
   job: JobRecord;
@@ -71,6 +96,7 @@ function JobCard({
   onApplied?: () => void;
   expanded: boolean;
   onToggle: () => void;
+  index: number;
 }) {
   const [isApplying, setIsApplying] = useState(false);
   const [isAccepting, setIsAccepting] = useState<string | null>(null);
@@ -89,8 +115,6 @@ function JobCard({
 
   useEffect(() => {
     if (!hasTerms || !expanded || termsFetching || termsText !== null) return;
-    // Start fetching immediately — `termsFetching || !termsText` in the render
-    // shows "loading" right away so there's no blank-then-appear flicker.
     setTermsFetching(true);
     fetch(`/api/job-terms?hash=${job.termsHash}`)
       .then(r => r.json())
@@ -131,135 +155,146 @@ function JobCard({
     }
   };
 
+  const cappedDelay = Math.min(index, 8) * 0.04;
+
   return (
-    <div
-      className={`rounded-[22px] border cursor-pointer transition-all duration-200 ${
-        expanded
-          ? "border-white/[0.12] bg-[#111113]"
-          : "border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] hover:border-white/[0.13]"
-      }`}
-      style={{
-        boxShadow: expanded
-          ? "0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)"
-          : "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)",
-      }}
-      onClick={onToggle}
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay: cappedDelay }}
+      whileHover={{ scale: 1.01 }}
+      whileTap={{ scale: 0.98 }}
+      style={{ transformOrigin: "center" }}
     >
-      {/* ── Collapsed row ── */}
-      <div className="flex items-center gap-3 px-4 py-4">
-        <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400/80 mt-0.5" />
+      <div
+        className={`rounded-[22px] border cursor-pointer transition-all duration-200 ${
+          expanded
+            ? "border-white/[0.12] bg-[#111113]"
+            : "border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] hover:border-white/[0.13]"
+        }`}
+        style={{
+          boxShadow: expanded
+            ? "0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)"
+            : "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)",
+        }}
+        onClick={onToggle}
+      >
+        {/* ── Collapsed row ── */}
+        <div className="flex items-center gap-3 px-4 py-4">
+          <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400/80 mt-0.5" />
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 mb-0.5">
-            <span className="font-semibold text-white/90 text-sm truncate leading-snug">
-              {job.title || `Job #${jobId.toString()}`}
-            </span>
-            {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
-          </div>
-          <div className="flex items-center gap-2.5 text-xs flex-wrap">
-            {catKey && (
-              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
-                {t(`categories.${catKey}`)}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2 mb-0.5">
+              <span className="font-semibold text-white/90 text-sm truncate leading-snug">
+                {job.title || `Job #${jobId.toString()}`}
               </span>
-            )}
-            <span className="font-bold text-white/75 font-mono">{formatBudget(job.amount)} USDC</span>
-            <span className="text-white/25">·</span>
-            <span className="text-white/35">{job.deadlineDays.toString()}d</span>
-            <span className="text-white/25">·</span>
-            <span className="text-white/25">{REGION_LABELS[job.region] ?? "—"}</span>
-            <span className="text-white/25">·</span>
-            <span className="text-white/25">{timeAgo(job.createdAt)}</span>
-            {isClient && applicantCount > 0 && (
-              <span className="text-violet-400/80 font-mono text-[11px]">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
-          {!isClient && address && (
-            <Link href={`/chat/${job.client}`}>
-              <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary">
-                <MessageCircle className="w-3.5 h-3.5" />
-              </Button>
-            </Link>
-          )}
-          {!isClient && address && (
-            hasApplied ? (
-              <span className="text-[11px] text-white/30 font-mono px-1">{t("board.jobs.applied_tag")}</span>
-            ) : (
-              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
-                {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                {t("board.jobs.apply_btn")}
-              </Button>
-            )
-          )}
-        </div>
-        <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform flex-shrink-0 ${expanded ? "rotate-180" : ""}`} />
-      </div>
-
-      {/* ── Expanded ── */}
-      {expanded && (
-        <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
-            <span>{t("common.by")}</span>
-            <UserName address={job.client} link className="font-mono hover:text-white/60 transition-colors" />
-          </div>
-
-          {displayDesc && (
-            <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{displayDesc}</p>
-          )}
-
-          {expanded && hasTerms && (
-            <div className="mb-3">
-              <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
-              </p>
-              {termsFetching || !termsText ? (
-                <p className="text-xs text-white/25">{t("common.loading_short")}</p>
-              ) : (
-                <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
+              {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
+            </div>
+            <div className="flex items-center gap-2.5 text-xs flex-wrap">
+              {catKey && (
+                <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                  {t(`categories.${catKey}`)}
+                </span>
+              )}
+              <span className="font-bold text-white/75 font-mono">{formatBudget(job.amount)} USDC</span>
+              <span className="text-white/25">·</span>
+              <span className="text-white/35">{job.deadlineDays.toString()}d</span>
+              <span className="text-white/25">·</span>
+              <span className="text-white/25">{REGION_LABELS[job.region] ?? "—"}</span>
+              <span className="text-white/25">·</span>
+              <span className="text-white/25">{timeAgo(job.createdAt)}</span>
+              {isClient && applicantCount > 0 && (
+                <span className="text-violet-400/80 font-mono text-[11px]">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
               )}
             </div>
-          )}
-
-          {isClient && applicantCount > 0 && (
-            <div className="mb-3">
-              <p className="text-[10px] text-white/25 uppercase tracking-widest mb-2">
-                {t("board.jobs.applicants_tab")} · {applicantCount}
-              </p>
-              <div className="space-y-1.5">
-                {applicants!.map(addr => (
-                  <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5">
-                    <span className="text-xs font-mono text-white/50 truncate min-w-0">{addr}</span>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <Link href={`/chat/${addr}`}>
-                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary">{t("board.jobs.chat_tab")}</Button>
-                      </Link>
-                      <Button size="sm" onClick={() => handleAccept(addr)} disabled={!!isAccepting} className="h-8 px-2.5 text-xs gap-1">
-                        {isAccepting === addr ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
-                        {t("board.jobs.accept_btn")}
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {isClient && applicantCount === 0 && (
-            <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
-          )}
-
-          <div className="pt-2 border-t border-white/6">
-            <Link href={`/job/${jobId.toString()}`} onClick={e => e.stopPropagation()}>
-              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5">
-                <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
-              </Button>
-            </Link>
           </div>
+
+          <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            {!isClient && address && (
+              <Link href={`/chat/${job.client}`}>
+                <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary">
+                  <MessageCircle className="w-3.5 h-3.5" />
+                </Button>
+              </Link>
+            )}
+            {!isClient && address && (
+              hasApplied ? (
+                <span className="text-[11px] text-white/30 font-mono px-1">{t("board.jobs.applied_tag")}</span>
+              ) : (
+                <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
+                  {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  {t("board.jobs.apply_btn")}
+                </Button>
+              )
+            )}
+          </div>
+          <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform flex-shrink-0 ${expanded ? "rotate-180" : ""}`} />
         </div>
-      )}
-    </div>
+
+        {/* ── Expanded ── */}
+        {expanded && (
+          <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
+              <span>{t("common.by")}</span>
+              <UserName address={job.client} link className="font-mono hover:text-white/60 transition-colors" />
+            </div>
+
+            {displayDesc && (
+              <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{displayDesc}</p>
+            )}
+
+            {expanded && hasTerms && (
+              <div className="mb-3">
+                <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                  <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
+                </p>
+                {termsFetching || !termsText ? (
+                  <p className="text-xs text-white/25">{t("common.loading_short")}</p>
+                ) : (
+                  <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
+                )}
+              </div>
+            )}
+
+            {isClient && applicantCount > 0 && (
+              <div className="mb-3">
+                <p className="text-[10px] text-white/25 uppercase tracking-widest mb-2">
+                  {t("board.jobs.applicants_tab")} · {applicantCount}
+                </p>
+                <div className="space-y-1.5">
+                  {applicants!.map(addr => (
+                    <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5">
+                      <span className="text-xs font-mono text-white/50 truncate min-w-0">{addr}</span>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <Link href={`/chat/${addr}`}>
+                          <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary">{t("board.jobs.chat_tab")}</Button>
+                        </Link>
+                        <Button size="sm" onClick={() => handleAccept(addr)} disabled={!!isAccepting} className="h-8 px-2.5 text-xs gap-1">
+                          {isAccepting === addr ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
+                          {t("board.jobs.accept_btn")}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {isClient && applicantCount === 0 && (
+              <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
+            )}
+
+            <div className="pt-2 border-t border-white/6">
+              <Link href={`/job/${jobId.toString()}`} onClick={e => e.stopPropagation()}>
+                <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5">
+                  <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
+                </Button>
+              </Link>
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
   );
 }
 
@@ -387,8 +422,8 @@ export default function BoardPage() {
 
   return (
     <>
-      {/* Page header */}
-      <div className="border-b border-white/[0.06]">
+      {/* Page header — no bottom border */}
+      <div>
         <div className="container mx-auto px-4 py-6 max-w-4xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
@@ -400,6 +435,7 @@ export default function BoardPage() {
                 </Link>
               </p>
             </div>
+            {/* Mobile: Refresh + Post Job always side by side on the right */}
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
               <Button
                 variant="ghost"
@@ -433,7 +469,8 @@ export default function BoardPage() {
 
         {/* Category filter — horizontal scroll strip */}
         <div className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <button
+          <motion.button
+            whileTap={{ scale: 0.94 }}
             onClick={() => setCategoryFilter(null)}
             className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
               categoryFilter === null
@@ -442,17 +479,18 @@ export default function BoardPage() {
             }`}
           >
             {t("common.all")}
-          </button>
+          </motion.button>
           {CATEGORIES.map(({ key, badge }) => (
-            <button
+            <motion.button
               key={key}
+              whileTap={{ scale: 0.94 }}
               onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
               className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
                 categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
               }`}
             >
               {t(`categories.${key}`)}
-            </button>
+            </motion.button>
           ))}
         </div>
 
@@ -469,9 +507,10 @@ export default function BoardPage() {
 
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-24 gap-2 text-white/30">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm">{t("board.jobs.loading_long")}</span>
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <JobCardSkeleton key={i} />
+            ))}
           </div>
         ) : jobs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -491,22 +530,25 @@ export default function BoardPage() {
             )}
           </div>
         ) : (
-          <div className="space-y-3">
-            {jobs.map(({ id, job }) => (
-              <JobCard
-                key={id.toString()}
-                jobId={id}
-                job={job}
-                isClient={address?.toLowerCase() === job.client?.toLowerCase()}
-                address={address}
-                hasApplied={appliedSet.has(id.toString())}
-                applicants={applicantsMap.get(id.toString())}
-                onApplied={refetch}
-                expanded={expandedJobId === id.toString()}
-                onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
-              />
-            ))}
-          </div>
+          <AnimatePresence>
+            <div className="space-y-3">
+              {jobs.map(({ id, job }, index) => (
+                <JobCard
+                  key={id.toString()}
+                  jobId={id}
+                  job={job}
+                  isClient={address?.toLowerCase() === job.client?.toLowerCase()}
+                  address={address}
+                  hasApplied={appliedSet.has(id.toString())}
+                  applicants={applicantsMap.get(id.toString())}
+                  onApplied={refetch}
+                  expanded={expandedJobId === id.toString()}
+                  onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
+                  index={index}
+                />
+              ))}
+            </div>
+          </AnimatePresence>
         )}
       </div>
     </>
