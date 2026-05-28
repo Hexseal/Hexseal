@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
 import { Bell, CheckCheck, Trash2, ExternalLink, BellRing, BellOff, Loader2 } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
@@ -188,9 +189,19 @@ export default function NotificationsPage() {
         {/* Notification list */}
         {notifications.length > 0 && (
           <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] overflow-hidden divide-y divide-white/[0.05]" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
-            {notifications.map((n) => (
-              <NotifEntry key={n.id} notif={n} onRead={markRead} />
-            ))}
+            <AnimatePresence mode="popLayout">
+              {notifications.map((n, index) => (
+                <motion.div
+                  key={n.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                  transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
+                >
+                  <NotifEntry notif={n} onRead={markRead} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
           </div>
         )}
 

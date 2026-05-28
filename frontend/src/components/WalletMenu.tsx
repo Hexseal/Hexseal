@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract } from "wagmi";
 import { appChainId } from "@/config/chain";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -303,26 +304,39 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             <span className="flex-1 text-left">{localeNames[locale as Locale]}</span>
             <ChevronRight className={cn("w-3.5 h-3.5 transition-transform duration-150", langOpen && "rotate-90")} />
           </button>
-          {langOpen && (
-            <div className="mt-0.5 overflow-y-auto max-h-52 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent]">
-              {locales.map((l) => (
-                <button
-                  key={l}
-                  type="button"
-                  onClick={() => { setLocale(l as Locale); setLangOpen(false); }}
-                  className={cn(
-                    "w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm transition-colors",
-                    l === locale
-                      ? "text-primary bg-primary/10"
-                      : "text-white/50 hover:text-white/80 hover:bg-white/5"
-                  )}
-                >
-                  <span className="font-mono text-[10px] opacity-40 w-7 flex-shrink-0">{l.toUpperCase()}</span>
-                  <span>{localeNames[l as Locale]}</span>
-                </button>
-              ))}
-            </div>
-          )}
+          <AnimatePresence>
+            {langOpen && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                className="overflow-hidden"
+              >
+                <div className="mt-0.5 overflow-y-auto max-h-52 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent]">
+                  {locales.map((l, i) => (
+                    <motion.button
+                      key={l}
+                      initial={{ opacity: 0, x: -4 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.03, duration: 0.15 }}
+                      type="button"
+                      onClick={() => { setLocale(l as Locale); setLangOpen(false); }}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm transition-colors",
+                        l === locale
+                          ? "text-primary bg-primary/10"
+                          : "text-white/50 hover:text-white/80 hover:bg-white/5"
+                      )}
+                    >
+                      <span className="font-mono text-[10px] opacity-40 w-7 flex-shrink-0">{l.toUpperCase()}</span>
+                      <span>{localeNames[l as Locale]}</span>
+                    </motion.button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* ── Disconnect ── */}
@@ -362,24 +376,35 @@ function LocaleToggle({ locale, setLocale }: { locale: Locale; setLocale: (l: Lo
         <Globe className="w-3.5 h-3.5" />
         {locale.toUpperCase()}
       </button>
-      {open && (
-        <div className="animate-in slide-in-from-top-2 fade-in duration-150 absolute top-full mt-2 right-0 w-44 bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-xl overflow-hidden shadow-2xl shadow-black/70 z-[200]">
-          {locales.map((l) => (
-            <button
-              key={l}
-              type="button"
-              onClick={() => { setLocale(l as Locale); setOpen(false); }}
-              className={cn(
-                "w-full flex items-center gap-3 px-3.5 py-2.5 text-sm transition-colors",
-                l === locale ? "text-primary bg-primary/10" : "text-white/70 hover:text-white hover:bg-white/5"
-              )}
-            >
-              <span className="font-mono text-xs opacity-50 w-6">{l.toUpperCase()}</span>
-              <span>{localeNames[l as Locale]}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: -8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -8 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className="absolute top-full mt-2 right-0 w-44 bg-[#111113]/95 backdrop-blur-2xl border border-white/[0.09] rounded-xl overflow-hidden shadow-2xl shadow-black/70 z-[200]"
+          >
+            {locales.map((l, i) => (
+              <motion.button
+                key={l}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: i * 0.03, duration: 0.15 }}
+                type="button"
+                onClick={() => { setLocale(l as Locale); setOpen(false); }}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3.5 py-2.5 text-sm transition-colors",
+                  l === locale ? "text-primary bg-primary/10" : "text-white/70 hover:text-white hover:bg-white/5"
+                )}
+              >
+                <span className="font-mono text-xs opacity-50 w-6">{l.toUpperCase()}</span>
+                <span>{localeNames[l as Locale]}</span>
+              </motion.button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

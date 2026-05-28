@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract } from "wagmi";
 import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
 import { fetchProfile } from "@/lib/profiles-ipfs";
@@ -334,9 +335,11 @@ export default function ProfilePage() {
               {level.next !== null && (
                 <>
                   <div className="h-1.5 w-full bg-white/8 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-500 transition-all"
-                      style={{ width: `${Math.min(100, (xp / level.next) * 100)}%` }}
+                    <motion.div
+                      className="h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-500"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min(100, (xp / level.next) * 100)}%` }}
+                      transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
                     />
                   </div>
                   <p className="text-[11px] text-white/30 mt-1.5">{t("profile.xp_to_next", { xp, next: level.next })}</p>
@@ -349,36 +352,27 @@ export default function ProfilePage() {
 
             {/* Stats grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <Activity className="w-3 h-3 text-violet-400" />
-                  <span className="text-[11px] text-white/40">{t("profile.stats_active")}</span>
-                </div>
-                <span className="text-2xl font-bold font-mono text-white">{activeDeals}</span>
-              </div>
-              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <CheckCircle className="w-3 h-3 text-green-400" />
-                  <span className="text-[11px] text-white/40">{t("profile.stats_completed")}</span>
-                </div>
-                <span className="text-2xl font-bold font-mono text-white">{completedDeals}</span>
-              </div>
-              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <Wallet className="w-3 h-3 text-emerald-400" />
-                  <span className="text-[11px] text-white/40">{t("profile.stats_volume")}</span>
-                </div>
-                <span className="text-2xl font-bold font-mono text-white">${(totalVolume / 1e6).toFixed(0)}</span>
-              </div>
-              <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <TrendingUp className="w-3 h-3 text-blue-400" />
-                  <span className="text-[11px] text-white/40">{t("profile.stats_success")}</span>
-                </div>
-                <span className="text-2xl font-bold font-mono text-white">
-                  {closedCount > 0 ? `${completionRate}%` : "—"}
-                </span>
-              </div>
+              {[
+                { icon: <Activity className="w-3 h-3 text-violet-400" />, label: t("profile.stats_active"),    value: activeDeals },
+                { icon: <CheckCircle className="w-3 h-3 text-green-400" />, label: t("profile.stats_completed"), value: completedDeals },
+                { icon: <Wallet className="w-3 h-3 text-emerald-400" />, label: t("profile.stats_volume"),    value: `$${(totalVolume / 1e6).toFixed(0)}` },
+                { icon: <TrendingUp className="w-3 h-3 text-blue-400" />, label: t("profile.stats_success"),  value: closedCount > 0 ? `${completionRate}%` : "—" },
+              ].map(({ icon, label, value }, i) => (
+                <motion.div
+                  key={label}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.06, duration: 0.2 }}
+                  className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
+                  style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+                >
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    {icon}
+                    <span className="text-[11px] text-white/40">{label}</span>
+                  </div>
+                  <span className="text-2xl font-bold font-mono text-white">{value}</span>
+                </motion.div>
+              ))}
             </div>
 
             {/* Coefficient + dispute rate row */}
@@ -417,9 +411,19 @@ export default function ProfilePage() {
                   <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">{t("profile.active_section", { count: activeList.length })}</span>
                 </div>
                 <div className="space-y-3">
-                  {activeList.map(d => (
-                    <DealRow key={d.agreement} deal={d} profileAddress={profileAddress} />
-                  ))}
+                  <AnimatePresence>
+                    {activeList.map((d, index) => (
+                      <motion.div
+                        key={d.agreement}
+                        initial={{ opacity: 0, y: 14 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.97 }}
+                        transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
+                      >
+                        <DealRow deal={d} profileAddress={profileAddress} />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
                 </div>
               </div>
             )}
@@ -437,13 +441,28 @@ export default function ProfilePage() {
                   </span>
                   <ChevronDown className={`w-3 h-3 text-white/25 transition-transform group-hover:text-white/50 ${showAllHistory ? 'rotate-180' : ''}`} />
                 </button>
-                {showAllHistory && (
-                  <div className="space-y-3 opacity-75">
-                    {historyDeals.map(d => (
-                      <DealRow key={d.agreement} deal={d} profileAddress={profileAddress} />
-                    ))}
-                  </div>
-                )}
+                <AnimatePresence>
+                  {showAllHistory && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="space-y-3 opacity-75"
+                    >
+                      {historyDeals.map((d, index) => (
+                        <motion.div
+                          key={d.agreement}
+                          initial={{ opacity: 0, y: 14 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
+                        >
+                          <DealRow deal={d} profileAddress={profileAddress} />
+                        </motion.div>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )}
 

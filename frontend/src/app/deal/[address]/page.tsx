@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
 import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI } from "@/config/contracts";
 import { Button } from "@/components/ui/button";
@@ -826,39 +827,53 @@ export default function DealDetailPage() {
       </div>
 
       {/* ── Raise Dispute Modal ─────────────────────────────────────────────── */}
-      {disputeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-          <div className="bg-[#111113] border border-white/[0.08] rounded-[22px] p-5 w-full max-w-md"
-            style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className="w-4 h-4 text-red-400" />
-              <h2 className="text-sm font-semibold text-white">{t("deal.dispute_btn")}</h2>
-            </div>
-            <p className="text-xs text-white/40 mb-4">{t("deal.dispute_reason_hint")}</p>
-            <textarea
-              autoFocus
-              value={disputeReason}
-              onChange={e => setDisputeReason(e.target.value)}
-              placeholder={t("deal.dispute_reason_placeholder")}
-              rows={4}
-              maxLength={2000}
-              className="w-full bg-white/[0.05] border border-white/[0.08] rounded-[14px] px-3 py-2.5 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-red-500/40 resize-none"
-            />
-            <div className="flex justify-between items-center mt-1 mb-4">
-              <span className="text-[11px] text-white/25">{disputeReason.length}/2000</span>
-            </div>
-            <div className="flex gap-3 justify-end">
-              <Button size="sm" variant="ghost" onClick={() => { setDisputeModal(false); setDisputeReason(''); }}>
-                {t("common.cancel")}
-              </Button>
-              <Button size="sm" variant="destructive" onClick={handleRaiseDispute} disabled={busy || !disputeReason.trim()}>
-                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
-                {t("deal.confirm_dispute_btn")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {disputeModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="bg-[#111113] border border-white/[0.08] rounded-[22px] p-5 w-full max-w-md"
+              style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <h2 className="text-sm font-semibold text-white">{t("deal.dispute_btn")}</h2>
+              </div>
+              <p className="text-xs text-white/40 mb-4">{t("deal.dispute_reason_hint")}</p>
+              <textarea
+                autoFocus
+                value={disputeReason}
+                onChange={e => setDisputeReason(e.target.value)}
+                placeholder={t("deal.dispute_reason_placeholder")}
+                rows={4}
+                maxLength={2000}
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-[14px] px-3 py-2.5 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-red-500/40 resize-none"
+              />
+              <div className="flex justify-between items-center mt-1 mb-4">
+                <span className="text-[11px] text-white/25">{disputeReason.length}/2000</span>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <Button size="sm" variant="ghost" onClick={() => { setDisputeModal(false); setDisputeReason(''); }}>
+                  {t("common.cancel")}
+                </Button>
+                <Button size="sm" variant="destructive" onClick={handleRaiseDispute} disabled={busy || !disputeReason.trim()}>
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
+                  {t("deal.confirm_dispute_btn")}
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

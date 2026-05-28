@@ -15,6 +15,7 @@ import { DealCard, type AgreementRecord } from './components/DealCard';
 import { MyJobs, MyServices, MyClientRequests, MyJobReceipts } from './components/MyListings';
 import { useTranslations } from 'next-intl';
 import { calcXP } from '@/lib/xp';
+import { motion, AnimatePresence } from 'framer-motion';
 
 function xpLevel(xp: number) {
   if (xp >= 1000) return { label: 'Master',   color: 'text-yellow-400',  bar: 'bg-yellow-400',  pct: 100 };
@@ -26,11 +27,14 @@ function xpLevel(xp: number) {
 
 // ─── Stat card ────────────────────────────────────────────────────────────────
 
-function StatCard({ icon, label, value, sub }: {
-  icon: ReactNode; label: string; value: string | number; sub?: string;
+function StatCard({ icon, label, value, sub, index = 0 }: {
+  icon: ReactNode; label: string; value: string | number; sub?: string; index?: number;
 }) {
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.06, duration: 0.2 }}
       className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3"
       style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
     >
@@ -42,7 +46,7 @@ function StatCard({ icon, label, value, sub }: {
         <p className="text-lg font-bold text-white leading-none">{value}</p>
         {sub && <p className="text-[11px] text-white/30 mt-0.5">{sub}</p>}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -142,24 +146,28 @@ export default function DashboardPage() {
         {!isLoading && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard
+              index={0}
               icon={<Zap className="w-4 h-4 text-violet-400" />}
               label={t("dashboard.stat_level")}
               value={level.label}
               sub={`${xp} XP`}
             />
             <StatCard
+              index={1}
               icon={<Activity className="w-4 h-4 text-sky-400" />}
               label={t("dashboard.stat_active")}
               value={activeDeals.length}
               sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")}
             />
             <StatCard
+              index={2}
               icon={<CheckCircle className="w-4 h-4 text-emerald-400" />}
               label={t("dashboard.stat_completed")}
               value={completed}
               sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")}
             />
             <StatCard
+              index={3}
               icon={<DollarSign className="w-4 h-4 text-amber-400" />}
               label={t("dashboard.stat_volume")}
               value={`$${(totalVolume / 1e6).toFixed(0)}`}
@@ -232,14 +240,25 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {activeDeals.map(a => (
-                        <DealCard
-                          key={`${a.agreement}-${refreshKey}`}
-                          agreement={a}
-                          address={address!}
-                          refetch={refetch}
-                        />
-                      ))}
+                      <AnimatePresence>
+                        {activeDeals.map((a, index) => (
+                          <motion.div
+                            key={`${a.agreement}-${refreshKey}`}
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.97 }}
+                            transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
+                            whileHover={{ scale: 1.005 }}
+                            whileTap={{ scale: 0.99 }}
+                          >
+                            <DealCard
+                              agreement={a}
+                              address={address!}
+                              refetch={refetch}
+                            />
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
                     </div>
                   )
                 )}
@@ -273,14 +292,25 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <div className="space-y-2 opacity-80">
-                      {historyDeals.map(a => (
-                        <DealCard
-                          key={`${a.agreement}-hist-${refreshKey}`}
-                          agreement={a}
-                          address={address!}
-                          refetch={refetch}
-                        />
-                      ))}
+                      <AnimatePresence>
+                        {historyDeals.map((a, index) => (
+                          <motion.div
+                            key={`${a.agreement}-hist-${refreshKey}`}
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.97 }}
+                            transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
+                            whileHover={{ scale: 1.005 }}
+                            whileTap={{ scale: 0.99 }}
+                          >
+                            <DealCard
+                              agreement={a}
+                              address={address!}
+                              refetch={refetch}
+                            />
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
                     </div>
                   )
                 )}
