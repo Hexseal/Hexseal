@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, type ReactNode } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract, useWalletClient, usePublicClient, useWriteContract } from "wagmi";
 import { isAddress } from "viem";
 import { DIAMOND_ABI, ARBITER_REGISTRY_ABI, AGREEMENT_ABI, CONTRACTS } from "@/config/contracts";
@@ -240,6 +241,14 @@ export default function ArbiterPage() {
 
         {/* ── Tab content ── */}
         <div className="p-3 sm:p-4">
+          <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18 }}
+          >
 
           {/* ── Open Disputes ── */}
           {tab === "disputes" && (
@@ -342,6 +351,8 @@ export default function ArbiterPage() {
           {/* ── Chief Manage ── */}
           {tab === "manage" && isChiefArbiter && <ChiefManagePanel />}
 
+          </motion.div>
+          </AnimatePresence>
         </div>
       </div>
     </div>

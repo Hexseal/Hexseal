@@ -529,8 +529,8 @@ export default function ExecutorBoardPage() {
       )}
 
       {/* Header */}
-      <div className="border-b border-white/[0.06]">
-        <div className="container mx-auto px-4 py-6 max-w-4xl">
+      <div>
+        <div className="container mx-auto px-4 pt-4 pb-3 max-w-4xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.services.title")}</h1>
@@ -551,7 +551,7 @@ export default function ExecutorBoardPage() {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-6 max-w-4xl">
+      <div className="container mx-auto px-4 pt-0 pb-6 max-w-4xl">
         {/* Region filter */}
         <div className="mb-3">
           <BoardRegionFilter
@@ -627,8 +627,8 @@ export default function ExecutorBoardPage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.97 }}
                   transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.98 }}
+                  whileHover={{ scale: 1.004 }}
+                  whileTap={{ scale: 0.993 }}
                 >
                   <ServiceCard
                     service={svc}

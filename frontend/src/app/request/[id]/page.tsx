@@ -1,6 +1,7 @@
 "use client";
 
 import React, { use, useState } from "react";
+import { motion } from "framer-motion";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
 import { useRouter } from "next/navigation";
 import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
@@ -183,8 +184,8 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
   return (
     <>
       {/* Header */}
-      <div className="border-b border-white/[0.06]">
-        <div className="container mx-auto px-4 py-5 max-w-3xl">
+      <div>
+        <div className="container mx-auto px-4 pt-4 pb-3 max-w-3xl">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -250,7 +251,12 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-6 max-w-3xl space-y-5">
+      <motion.div
+        className="container mx-auto px-4 pt-0 pb-6 max-w-3xl space-y-5"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22 }}
+      >
 
         {/* ── Status banners ── */}
 
@@ -466,7 +472,7 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
 
-      </div>
+      </motion.div>
     </>
   );
 }

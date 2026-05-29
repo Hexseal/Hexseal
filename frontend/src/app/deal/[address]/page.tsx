@@ -404,7 +404,7 @@ export default function DealDetailPage() {
   return (
     <>
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
-      <div className="border-b border-white/[0.06]">
+      <div>
         <div className="container mx-auto px-4 py-4 max-w-3xl flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`w-2 h-2 rounded-full flex-shrink-0 ${statusInfo.dot}`} />
@@ -434,7 +434,12 @@ export default function DealDetailPage() {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-5 max-w-3xl space-y-4">
+      <motion.div
+        className="container mx-auto px-4 py-5 max-w-3xl space-y-4"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22 }}
+      >
 
         {/* ── Hero: amount + parties ──────────────────────────────────────────── */}
         <div
@@ -824,7 +829,7 @@ export default function DealDetailPage() {
           </div>
         </div>
 
-      </div>
+      </motion.div>
 
       {/* ── Raise Dispute Modal ─────────────────────────────────────────────── */}
       <AnimatePresence>

@@ -262,7 +262,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             <div className="p-1">
               {isArbiter && (
                 <DropdownMenuItem asChild>
-                  <Link href="/arbiter" className="flex items-center gap-2.5 cursor-pointer text-blue-400 focus:text-blue-400">
+                  <Link href="/arbiter" className="flex items-center gap-2.5 cursor-pointer text-blue-400 hover:text-white focus:text-white">
                     <Shield className="w-3.5 h-3.5" />
                     {t("wallet.arbiter_panel")}
                   </Link>

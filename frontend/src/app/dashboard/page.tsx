@@ -255,8 +255,8 @@ export default function DashboardPage() {
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, scale: 0.97 }}
                               transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05 }}
-                              whileHover={{ scale: 1.005 }}
-                              whileTap={{ scale: 0.99 }}
+                              whileHover={{ scale: 1.004 }}
+                              whileTap={{ scale: 0.993 }}
                             >
                               <DealCard
                                 agreement={a}
@@ -307,8 +307,8 @@ export default function DashboardPage() {
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, scale: 0.97 }}
                               transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05 }}
-                              whileHover={{ scale: 1.005 }}
-                              whileTap={{ scale: 0.99 }}
+                              whileHover={{ scale: 1.004 }}
+                              whileTap={{ scale: 0.993 }}
                             >
                               <DealCard
                                 agreement={a}

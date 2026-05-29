@@ -162,8 +162,8 @@ function JobCard({
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, delay: cappedDelay }}
-      whileHover={{ scale: 1.01 }}
-      whileTap={{ scale: 0.98 }}
+      whileHover={{ scale: 1.004 }}
+      whileTap={{ scale: 0.993 }}
       style={{ transformOrigin: "center" }}
     >
       <div
@@ -422,9 +422,9 @@ export default function BoardPage() {
 
   return (
     <>
-      {/* Page header — no bottom border */}
+      {/* Page header */}
       <div>
-        <div className="container mx-auto px-4 py-6 max-w-4xl">
+        <div className="container mx-auto px-4 pt-4 pb-3 max-w-4xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.jobs.title")}</h1>
@@ -457,7 +457,7 @@ export default function BoardPage() {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-6 max-w-4xl">
+      <div className="container mx-auto px-4 pt-0 pb-6 max-w-4xl">
         {/* Region filter */}
         <div className="mb-3">
           <BoardRegionFilter
@@ -470,7 +470,7 @@ export default function BoardPage() {
         {/* Category filter — horizontal scroll strip */}
         <div className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <motion.button
-            whileTap={{ scale: 0.94 }}
+            whileTap={{ scale: 0.975 }}
             onClick={() => setCategoryFilter(null)}
             className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
               categoryFilter === null
@@ -483,7 +483,7 @@ export default function BoardPage() {
           {CATEGORIES.map(({ key, badge }) => (
             <motion.button
               key={key}
-              whileTap={{ scale: 0.94 }}
+              whileTap={{ scale: 0.975 }}
               onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
               className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
                 categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 import {
   useAccount, useReadContract, useWalletClient, usePublicClient,
   useBalance, useSwitchChain,
@@ -185,14 +186,19 @@ export default function PostServicePage() {
   return (
     <>
       {/* Header */}
-      <div className="border-b border-white/[0.06]">
-        <div className="container mx-auto px-4 py-5 max-w-2xl">
+      <div>
+        <div className="container mx-auto px-4 pt-4 pb-3 max-w-2xl">
 <h1 className="text-xl font-bold font-syne">{t("board.post_service.title")}</h1>
           <p className="text-sm text-white/40 mt-0.5">Clients request you — you accept or decline.</p>
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-8 max-w-2xl space-y-4">
+      <motion.div
+        className="container mx-auto px-4 py-8 max-w-2xl space-y-4"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22 }}
+      >
         {isWrongChain && (
           <div className="flex items-center justify-between p-3 rounded-2xl bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-300">
             Wrong network — switch to Base Sepolia
@@ -331,7 +337,7 @@ export default function PostServicePage() {
             <Button onClick={() => { setStep("form"); setErrorMsg(""); }}>Try Again</Button>
           </div>
         )}
-      </div>
+      </motion.div>
     </>
   );
 }
