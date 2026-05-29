@@ -6,7 +6,7 @@
 import type { UserProfile } from '@/types/profile';
 import { uploadToIPFS } from '@/lib/ipfs';
 
-const CACHE_PREFIX = 'sig404_profile_';
+const CACHE_PREFIX = 'hexseal-public_';
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 /**
