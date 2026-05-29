@@ -1,5 +1,5 @@
 /**
- * User Profile types for Signature404
+ * User Profile types for Hexseal
  */
 
 export interface UserProfile {

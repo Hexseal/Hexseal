@@ -1,5 +1,5 @@
 /**
- * Client Task types for Signature404 marketplace
+ * Client Task types for Hexseal marketplace
  */
 
 export type TaskCategory = 'Design' | 'Development' | 'Marketing' | 'Content' | 'Other';

@@ -2,13 +2,13 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — JobReceiptFacet.sol
+// HEXSEAL — JobReceiptFacet.sol
 //
 // Soulbound NFT-квитанция клиента при размещении заказа.
 // Минтится автоматически из JobBoardFacet через internal Diamond call.
 //
 // Использует тот же namespaced storage slot что и OfferNFTFacet
-// (keccak256("signature404.offernft.storage")) — данные сохраняются.
+// (keccak256("hexseal.offernft.storage")) — данные сохраняются.
 //
 // OfferNFTFacet выпилен из Diamond — этот фасет его заменяет.
 // ============================================================
@@ -19,7 +19,7 @@ import "./SVGRenderer.sol";
 // ─── Storage (same slot as OfferNFTFacet — data preserved) ───────────────────
 
 library ReceiptStorage {
-    bytes32 constant POSITION = keccak256("signature404.offernft.storage");
+    bytes32 constant POSITION = keccak256("hexseal.offernft.storage");
 
     struct JobReceiptData {
         address client;
@@ -66,8 +66,8 @@ contract JobReceiptFacet {
 
     // ─── ERC-721 Metadata ─────────────────────────────────────────────────────
 
-    function name()   external pure returns (string memory) { return "Signature404 Receipt"; }
-    function symbol() external pure returns (string memory) { return "S404R"; }
+    function name()   external pure returns (string memory) { return "Hexseal Receipt"; }
+    function symbol() external pure returns (string memory) { return "HSEALR"; }
 
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return interfaceId == 0x80ac58cd

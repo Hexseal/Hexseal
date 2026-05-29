@@ -1,4 +1,4 @@
-# Signature404 — Generated Documentation
+# Hexseal — Generated Documentation
 
 > Автогенерация: `node scripts/generate-docs.js` · Дата: 2026-05-07
 

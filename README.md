@@ -1,4 +1,4 @@
-# Signature404
+# Hexseal
 
 > **Decentralized freelance protocol on Base.** No middlemen, no trust required — the deal is the contract.
 
@@ -6,9 +6,9 @@
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.20-363636?logo=solidity)](https://soliditylang.org)
 [![EIP-2535](https://img.shields.io/badge/EIP--2535-Diamond-blueviolet)](https://eips.ethereum.org/EIPS/eip-2535)
 
-## What is Signature404?
+## What is Hexseal?
 
-Signature404 is a trustless freelance marketplace built on Base. Clients post jobs, executors submit work, funds are held in escrow — and everything is enforced by smart contracts, not platform rules.
+Hexseal is a trustless freelance marketplace built on Base. Clients post jobs, executors submit work, funds are held in escrow — and everything is enforced by smart contracts, not platform rules.
 
 - **No admins** making decisions over your money
 - **Gasless** — users sign messages, a relayer pays the gas
@@ -88,8 +88,8 @@ CREATED → FUNDED → ACTIVE → [COMPLETED | DISPUTED]
 ### Clone & install
 
 ```bash
-git clone https://github.com/Signature404/Signature404.git
-cd Signature404
+git clone https://github.com/Hexseal/Hexseal.git
+cd Hexseal
 
 # Smart contracts
 forge install
@@ -154,7 +154,7 @@ npm run docs
 ## Documentation
 
 - [Contract & Frontend Docs](docs/generated/README.md)
-- [FAQ](https://signature404.vercel.app/docs/faq)
+- [FAQ](https://hexseal.com/docs/faq)
 
 ---
 

@@ -12,7 +12,7 @@ export default function Footer() {
     <footer className="site-footer" role="contentinfo">
       <div className="footer-inner">
         <div className="footer-col">
-          <h4>Signature404</h4>
+          <h4>Hexseal</h4>
           <p>{t("footer.tagline")}</p>
         </div>
         <div className="footer-col">
@@ -30,7 +30,7 @@ export default function Footer() {
             </li>
             <li>
               <a
-                href="https://github.com/Signature404/Signature404"
+                href="https://github.com/Hexseal/Hexseal"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -44,7 +44,7 @@ export default function Footer() {
           <ul>
             <li>
               <a
-                href="https://github.com/Signature404/Signature404"
+                href="https://github.com/Hexseal/Hexseal"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -53,7 +53,7 @@ export default function Footer() {
             </li>
             <li>
               <a
-                href="https://github.com/Signature404/Signature404/issues"
+                href="https://github.com/Hexseal/Hexseal/issues"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -64,7 +64,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="footer-bottom">
-        <span>© {new Date().getFullYear()} Signature404</span>
+        <span>© {new Date().getFullYear()} Hexseal</span>
         <span>{appChain.name} · ChainId {appChainId}</span>
       </div>
     </footer>

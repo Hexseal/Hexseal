@@ -91,9 +91,9 @@ export function useXmtpNotifications() {
           // Determine link: deal group → /deal/{address}/chat, DM → /chat
           const groupName = groupNameById.get(msg.conversationId ?? '');
           let link = '/chat';
-          if (groupName?.startsWith('S404-')) {
-            // Group name format: S404-0x{agreementAddress}
-            const agreementAddr = groupName.slice(5); // strip "S404-"
+          if (groupName?.startsWith('HSEAL-')) {
+            // Group name format: HSEAL-0x{agreementAddress}
+            const agreementAddr = groupName.slice(5); // strip "HSEAL-"
             link = `/deal/${agreementAddr}/chat`;
           }
 

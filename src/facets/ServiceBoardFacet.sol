@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — ServiceBoardFacet.sol
+// HEXSEAL — ServiceBoardFacet.sol
 // Маркетплейс услуг: исполнитель публикует → клиент запрашивает →
 //                   исполнитель принимает/отклоняет → Agreement
 //
@@ -22,7 +22,7 @@ import "./IFactory.sol";
 // ---------- STORAGE ----------
 
 library ServiceBoardStorage {
-    bytes32 constant POSITION = keccak256("signature404.serviceboard.storage");
+    bytes32 constant POSITION = keccak256("hexseal.serviceboard.storage");
 
     enum ServiceStatus { ACTIVE, PAUSED, REMOVED }
     enum RequestStatus { PENDING, ACCEPTED, REJECTED, CANCELLED }

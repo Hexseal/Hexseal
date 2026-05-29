@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — AgreementDeployer.sol
+// HEXSEAL — AgreementDeployer.sol
 // Отдельный контракт (не фасет Diamond) который держит
 // bytecode Agreement и деплоит новые инстансы через CREATE.
 //

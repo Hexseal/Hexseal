@@ -59,9 +59,9 @@ const safeStorage = createStorage({
 // Falls back to injected-only to avoid WC API errors when projectId is missing.
 const config = projectId
   ? getDefaultConfig({
-      appName: "Signature404",
+      appName: "Hexseal",
       appDescription: "Decentralized freelance protocol on Base",
-      appUrl: typeof window !== "undefined" ? window.location.origin : "https://signature404.vercel.app",
+      appUrl: typeof window !== "undefined" ? window.location.origin : "https://hexseal.com",
       appIcon: "/icon.png",
       projectId,
       chains,

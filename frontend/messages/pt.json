@@ -502,7 +502,7 @@
     "remove_btn": "Remover"
   },
   "onboarding": {
-    "title": "Como funciona o Signature404",
+    "title": "Como funciona o Hexseal",
     "subtitle": "Freelance descentralizado na Base — sem intermediários, o código executa.",
     "cta": "Entendido, vamos lá →",
     "step1_title": "Publique ou Encontre Trabalho",
@@ -520,7 +520,7 @@
     "back": "Voltar ao início",
     "docs_label": "Docs",
     "title": "FAQ",
-    "subtitle": "Perguntas frequentes sobre o Signature404 — o protocolo freelance descentralizado na Base.",
+    "subtitle": "Perguntas frequentes sobre o Hexseal — o protocolo freelance descentralizado na Base.",
     "still_questions": "Ainda tem dúvidas?",
     "open_issue": "Abrir uma issue no GitHub",
     "s_general": "Geral",
@@ -530,8 +530,8 @@
     "s_jobs": "Trabalhos e Serviços",
     "s_privacy": "Privacidade e Segurança",
     "s_tech": "Técnico",
-    "q_what_is": "O que é o Signature404?",
-    "a_what_is": "Signature404 é um marketplace freelance descentralizado na Base. Clientes publicam trabalhos, executores enviam trabalho, e os fundos ficam bloqueados em um contrato escrow on-chain.",
+    "q_what_is": "O que é o Hexseal?",
+    "a_what_is": "Hexseal é um marketplace freelance descentralizado na Base. Clientes publicam trabalhos, executores enviam trabalho, e os fundos ficam bloqueados em um contrato escrow on-chain.",
     "q_who_controls": "Quem controla os fundos?",
     "a_who_controls": "Ninguém. Os fundos são mantidos por um contrato inteligente autônomo. A plataforma não pode congelar, redirecionar ou tocar seu USDC.",
     "q_is_free": "É gratuito?",

@@ -4,7 +4,7 @@
  * xmtp.ts — XMTP v3 (browser-sdk) helpers
  *
  * Uses MLS group messaging (no dependency on crypto.subtle — MetaMask compatible).
- * Deal chats use groups named "S404-{agreementAddress}".
+ * Deal chats use groups named "HSEAL-{agreementAddress}".
  * Direct chats (DMs) use XMTP 1:1 conversations.
  */
 
@@ -170,7 +170,7 @@ export async function initXmtpClient(walletClient: WalletClient): Promise<Client
 // ─── Deal group ───────────────────────────────────────────────────────────────
 
 export function dealGroupName(agreementAddress: string): string {
-  return `S404-${agreementAddress.toLowerCase()}`;
+  return `HSEAL-${agreementAddress.toLowerCase()}`;
 }
 
 /**
@@ -201,7 +201,7 @@ export async function findOrCreateDealGroup(
 
   return client.conversations.createGroupWithIdentifiers(reachable, {
     groupName: name,
-    groupDescription: `Signature404 deal: ${agreementAddress}`,
+    groupDescription: `Hexseal deal: ${agreementAddress}`,
   });
 }
 
@@ -410,7 +410,7 @@ export async function notifyArbiters(
   agreementAddress: string,
   arbiters: string[],
 ): Promise<void> {
-  const msg = `[Signature404] New dispute on deal ${agreementAddress}. Check your Arbiter Hub.`;
+  const msg = `[Hexseal] New dispute on deal ${agreementAddress}. Check your Arbiter Hub.`;
   for (const arbiter of arbiters) {
     try {
       const id = toIdentifier(arbiter);

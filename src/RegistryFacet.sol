@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — RegistryFacet.sol
+// HEXSEAL — RegistryFacet.sol
 // Хранит все сделки, статусы, пары клиент+исполнитель
 // Живёт внутри Diamond — один адрес навсегда
 // ============================================================
@@ -12,7 +12,7 @@ import "./DiamondProxy.sol";
 // ---------- STORAGE ----------
 
 library RegistryStorage {
-    bytes32 constant REGISTRY_STORAGE_POSITION = keccak256("signature404.registry.storage");
+    bytes32 constant REGISTRY_STORAGE_POSITION = keccak256("hexseal.registry.storage");
 
     enum AgreementStatus {
         ACTIVE,

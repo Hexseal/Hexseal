@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — Agreement.sol
+// HEXSEAL — Agreement.sol
 //
 // Один контракт = одна сделка = один NFT
 // Иммутабелен после деплоя — как юридический договор
@@ -351,7 +351,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         address trustedForwarder_,
         address factory_
     )
-        MinimalERC721("Signature404 Deal", "S404")
+        MinimalERC721("Hexseal Deal", "HSEAL")
         ERC2771Context(trustedForwarder_)
     {
         require(client_ != address(0), "Agreement: zero client");
@@ -776,7 +776,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
             _base64Encode(bytes(_buildSVG(s)))
         ));
         return string(abi.encodePacked(
-            'data:application/json;utf8,{"name":"S404 Deal ',
+            'data:application/json;utf8,{"name":"HSEAL Deal ',
             _shortAddr(address(this)),
             '","description":"Escrow: ',
             _shortAddr(client), ' -> ', _shortAddr(executor),
@@ -805,7 +805,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
             '<rect width="400" height="520" fill="#0d0d0d"/>',
             '<rect x="0" y="0" width="400" height="3" fill="', col, '"/>',
             '<text x="32" y="44" font-family="monospace" font-size="11" fill="#555" letter-spacing="2">DEAL AGREEMENT</text>',
-            '<text x="368" y="44" font-family="monospace" font-size="11" fill="#333" text-anchor="end">S404</text>',
+            '<text x="368" y="44" font-family="monospace" font-size="11" fill="#333" text-anchor="end">HSEAL</text>',
             '<text x="32" y="66" font-family="monospace" font-size="11" fill="#444">', _shortAddr(address(this)), '</text>',
             _buildSVGStatus(col, st),
             _buildSVGData(),
@@ -844,7 +844,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         return string(abi.encodePacked(
             '<line x1="32" y1="396" x2="368" y2="396" stroke="#1a1a1a" stroke-width="1"/>',
             '<text x="200" y="428" font-family="monospace" font-size="9" fill="#333" text-anchor="middle">SOULBOUND  *  Burns on completion</text>',
-            '<text x="200" y="448" font-family="monospace" font-size="9" fill="#333" text-anchor="middle">signature404.xyz</text>',
+            '<text x="200" y="448" font-family="monospace" font-size="9" fill="#333" text-anchor="middle">hexseal.com</text>',
             '</svg>'
         ));
     }

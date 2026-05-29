@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — SVGRenderer.sol
+// HEXSEAL — SVGRenderer.sol
 // Внешний контракт (не фасет Diamond) для on-chain SVG/JSON рендеринга.
 // OfferNFTFacet вызывает его через staticcall, чтобы не раздувать
 // собственный bytecode SVG-строками и хелперами.
@@ -57,7 +57,7 @@ contract SVGRenderer is ISVGRenderer {
         string memory imgB64 = Base64.encode(bytes(svg));
         string memory json   = string(abi.encodePacked(
             '{"name":"Job Receipt #', p.tokenId.toString(),
-            unicode'","description":"Signature404 — job posting receipt. Posted by ',
+            unicode'","description":"Hexseal — job posting receipt. Posted by ',
             _shortAddr(p.client),
             '.","image":"data:image/svg+xml;base64,', imgB64,
             '","attributes":['
@@ -79,7 +79,7 @@ contract SVGRenderer is ISVGRenderer {
     ) internal pure returns (string memory) {
         return string(abi.encodePacked(
             unicode'{"name":"Offer #', p.tokenId.toString(), unicode' — ', p.title,
-            unicode'","description":"Signature404 Executor Offer — soulbound NFT.",',
+            unicode'","description":"Hexseal Executor Offer — soulbound NFT.",',
             '"attributes":[',
                 '{"trait_type":"Type","value":"OFFER"},',
                 '{"trait_type":"Category","value":"', p.category, '"},',
@@ -189,7 +189,7 @@ contract SVGRenderer is ISVGRenderer {
             '<circle cx="0"   cy="440" r="10" fill="#0d0d1f"/>',
             '<circle cx="380" cy="440" r="10" fill="#0d0d1f"/>',
             '<text x="190" y="462" text-anchor="middle" ',
-              'font-family="monospace,Courier New" font-size="9" fill="#1e293b" letter-spacing="2">signature404.xyz</text>',
+              'font-family="monospace,Courier New" font-size="9" fill="#1e293b" letter-spacing="2">hexseal.com</text>',
             '<rect y="495" width="380" height="5" fill="#6366f1" rx="2"/>'
         ));
     }
@@ -266,7 +266,7 @@ contract SVGRenderer is ISVGRenderer {
             '<line x1="0" y1="454" x2="380" y2="454" stroke="#222222" stroke-width="1" stroke-dasharray="2,6"/>',
             '<circle cx="0"   cy="454" r="10" fill="#0a0a0a"/>',
             '<circle cx="380" cy="454" r="10" fill="#0a0a0a"/>',
-            '<text x="190" y="476" text-anchor="middle" font-family="monospace,Courier New" font-size="9" fill="#333333" letter-spacing="2">signature404.xyz</text>'
+            '<text x="190" y="476" text-anchor="middle" font-family="monospace,Courier New" font-size="9" fill="#333333" letter-spacing="2">hexseal.com</text>'
         ));
     }
 

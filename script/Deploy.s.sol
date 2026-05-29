@@ -9,7 +9,7 @@ import "../src/RegistryFacet.sol";
 import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
 
-contract DeploySignature404 is Script {
+contract DeployHexseal is Script {
 
     // ----------------------------------------------------------------
     // Адреса из .env

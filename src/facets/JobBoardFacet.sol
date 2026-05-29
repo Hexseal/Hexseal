@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — JobBoardFacet.sol
+// HEXSEAL — JobBoardFacet.sol
 // Маркетплейс заказов: клиент создаёт заказ, исполнитель откликается
 // ============================================================
 //
@@ -51,7 +51,7 @@ interface IJobBoardUSDC {
 // ---------- STORAGE ----------
 
 library JobBoardStorage {
-    bytes32 constant POSITION = keccak256("signature404.jobboard.storage");
+    bytes32 constant POSITION = keccak256("hexseal.jobboard.storage");
 
     enum JobStatus { OPEN, ACCEPTED, CANCELLED }
 

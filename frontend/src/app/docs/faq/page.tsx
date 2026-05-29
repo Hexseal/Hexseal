@@ -20,8 +20,8 @@ const FAQ_SECTIONS: FAQSection[] = [
     title: "General",
     items: [
       {
-        q: "What is Signature404?",
-        a: "Signature404 is a decentralized freelance marketplace on Base. Clients post jobs, executors submit work, and funds are locked in an on-chain escrow contract — enforced by code, not by a platform admin.",
+        q: "What is Hexseal?",
+        a: "Hexseal is a decentralized freelance marketplace on Base. Clients post jobs, executors submit work, and funds are locked in an on-chain escrow contract — enforced by code, not by a platform admin.",
       },
       {
         q: "Who controls the funds?",
@@ -179,12 +179,12 @@ const FAQ_SECTIONS: FAQSection[] = [
         q: "Where is the source code?",
         a: (
           <a
-            href="https://github.com/Signature404/Signature404"
+            href="https://github.com/Hexseal/Hexseal"
             target="_blank"
             rel="noopener noreferrer"
             className="text-primary hover:underline inline-flex items-center gap-1"
           >
-            github.com/Signature404/Signature404 <ExternalLink className="w-3 h-3" />
+            github.com/Hexseal/Hexseal <ExternalLink className="w-3 h-3" />
           </a>
         ),
       },
@@ -286,7 +286,7 @@ export default function FAQPage() {
           <p className="text-xs text-white/25">
             {t("faq.still_questions")}{" "}
             <a
-              href="https://github.com/Signature404/Signature404/issues"
+              href="https://github.com/Hexseal/Hexseal/issues"
               target="_blank"
               rel="noopener noreferrer"
               className="text-white/45 hover:text-white/70 transition-colors"

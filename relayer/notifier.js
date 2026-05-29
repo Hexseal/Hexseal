@@ -112,49 +112,49 @@ async function watchAgreement(agreementAddr) {
     return; // not a valid agreement
   }
 
-  const dealLink = `https://signature404.com/deal/${agreementAddr}`;
+  const dealLink = `https://hexseal.com/deal/${agreementAddr}`;
   const short = shortAddr(agreementAddr);
 
   contract.on('Funded', async () => {
-    await notify(executor, `[S404] Deal ${short} funded — you can now activate it.\n${dealLink}`);
+    await notify(executor, `[HSEAL] Deal ${short} funded — you can now activate it.\n${dealLink}`);
   });
 
   contract.on('Activated', async () => {
-    await notify(client, `[S404] Deal ${short} activated by executor. Work has started.\n${dealLink}`);
+    await notify(client, `[HSEAL] Deal ${short} activated by executor. Work has started.\n${dealLink}`);
   });
 
   contract.on('MarkedDone', async () => {
-    await notify(client, `[S404] Deal ${short}: executor marked work done. Please review and release funds or raise a dispute.\n${dealLink}`);
+    await notify(client, `[HSEAL] Deal ${short}: executor marked work done. Please review and release funds or raise a dispute.\n${dealLink}`);
   });
 
   contract.on('Released', async (_, __, amount) => {
     const usdcAmt = (Number(amount) / 1e6).toFixed(2);
-    await notify(executor, `[S404] Deal ${short}: $${usdcAmt} USDC released to you.\n${dealLink}`);
+    await notify(executor, `[HSEAL] Deal ${short}: $${usdcAmt} USDC released to you.\n${dealLink}`);
   });
 
   contract.on('DisputeRaised', async () => {
-    await notify(client,   `[S404] Deal ${short}: dispute raised. An arbiter will review the case.\n${dealLink}`);
-    await notify(executor, `[S404] Deal ${short}: dispute raised. An arbiter will review the case.\n${dealLink}`);
+    await notify(client,   `[HSEAL] Deal ${short}: dispute raised. An arbiter will review the case.\n${dealLink}`);
+    await notify(executor, `[HSEAL] Deal ${short}: dispute raised. An arbiter will review the case.\n${dealLink}`);
   });
 
   contract.on('DisputeResolved', async (arbiterAddr, clientWins, amount) => {
     const usdcAmt = (Number(amount) / 1e6).toFixed(2);
     const outcome = clientWins ? `client refunded $${usdcAmt} USDC` : `executor paid $${usdcAmt} USDC`;
-    await notify(client,     `[S404] Deal ${short} resolved: ${outcome}.\n${dealLink}`);
-    await notify(executor,   `[S404] Deal ${short} resolved: ${outcome}.\n${dealLink}`);
-    await notify(arbiterAddr,`[S404] Deal ${short} resolved by you: ${outcome}.\n${dealLink}`);
+    await notify(client,     `[HSEAL] Deal ${short} resolved: ${outcome}.\n${dealLink}`);
+    await notify(executor,   `[HSEAL] Deal ${short} resolved: ${outcome}.\n${dealLink}`);
+    await notify(arbiterAddr,`[HSEAL] Deal ${short} resolved by you: ${outcome}.\n${dealLink}`);
   });
 
   contract.on('TimedOut', async (clientAddr, amount) => {
     const usdcAmt = (Number(amount) / 1e6).toFixed(2);
-    await notify(clientAddr, `[S404] Deal ${short} timed out — $${usdcAmt} USDC refunded.\n${dealLink}`);
-    await notify(executor,   `[S404] Deal ${short} timed out — funds returned to client.\n${dealLink}`);
+    await notify(clientAddr, `[HSEAL] Deal ${short} timed out — $${usdcAmt} USDC refunded.\n${dealLink}`);
+    await notify(executor,   `[HSEAL] Deal ${short} timed out — funds returned to client.\n${dealLink}`);
   });
 
   contract.on('ArbiterTimedOut', async (clientAddr, amount) => {
     const usdcAmt = (Number(amount) / 1e6).toFixed(2);
-    await notify(clientAddr, `[S404] Deal ${short}: arbiter missed 7-day window — $${usdcAmt} USDC refunded to you.\n${dealLink}`);
-    await notify(executor,   `[S404] Deal ${short}: arbiter timeout — funds returned to client.\n${dealLink}`);
+    await notify(clientAddr, `[HSEAL] Deal ${short}: arbiter missed 7-day window — $${usdcAmt} USDC refunded to you.\n${dealLink}`);
+    await notify(executor,   `[HSEAL] Deal ${short}: arbiter timeout — funds returned to client.\n${dealLink}`);
   });
 
   console.log('[notifier] watching', agreementAddr.slice(0, 10), `(client=${shortAddr(client)} executor=${shortAddr(executor)})`);

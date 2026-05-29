@@ -367,7 +367,7 @@ export default function PostJobPage() {
                 <div className="rounded-[14px] bg-[#0d0d1f] border border-white/5 p-5 mb-4 font-mono text-xs">
                   {/* Green top bar */}
                   <div className="h-0.5 bg-emerald-500 rounded-full mb-4" />
-                  <p className="text-emerald-400 font-bold text-sm tracking-widest text-center mb-0.5">SIGNATURE404</p>
+                  <p className="text-emerald-400 font-bold text-sm tracking-widest text-center mb-0.5">HEXSEAL</p>
                   <p className="text-white/20 text-[9px] tracking-widest text-center mb-3">JOB POSTING RECEIPT</p>
                   <div className="border-t border-dashed border-white/10 pt-2.5 mb-2.5 space-y-1.5">
                     <div className="flex justify-between text-white/40">

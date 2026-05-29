@@ -1,5 +1,5 @@
 /**
- * Executor Offer types for Signature404 marketplace
+ * Executor Offer types for Hexseal marketplace
  */
 
 export type OfferCategory = 'Design' | 'Development' | 'Marketing' | 'Content' | 'Other';

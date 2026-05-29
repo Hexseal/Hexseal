@@ -1,7 +1,7 @@
-// Signature404 Service Worker — handles background push notifications
+// Hexseal Service Worker — handles background push notifications
 
 self.addEventListener('push', (event) => {
-  let data = { title: 'Signature404', body: 'New update', url: '/' };
+  let data = { title: 'Hexseal', body: 'New update', url: '/' };
   try { data = { ...data, ...event.data?.json() }; } catch {}
 
   event.waitUntil(

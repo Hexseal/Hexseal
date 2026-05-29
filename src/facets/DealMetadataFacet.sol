@@ -31,7 +31,7 @@ contract DealMetadataFacet {
             Base64.encode(bytes(_buildSVG(deal, statusCode, client_, executor_, amount_, deadlineDays_)))
         ));
         return string(abi.encodePacked(
-            'data:application/json;utf8,{"name":"S404 Deal ',
+            'data:application/json;utf8,{"name":"HSEAL Deal ',
             _shortAddr(deal),
             '","description":"Escrow: ',
             _shortAddr(client_), ' -> ', _shortAddr(executor_),
@@ -121,7 +121,7 @@ contract DealMetadataFacet {
             '<line x1="0" y1="460" x2="400" y2="460" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="2,6"/>',
             '<circle cx="0"   cy="460" r="10" fill="#0a0a0a"/>',
             '<circle cx="400" cy="460" r="10" fill="#0a0a0a"/>',
-            '<text x="200" y="486" font-family="monospace" font-size="9" fill="#2a2a2a" text-anchor="middle" letter-spacing="2">signature404.xyz</text>',
+            '<text x="200" y="486" font-family="monospace" font-size="9" fill="#2a2a2a" text-anchor="middle" letter-spacing="2">hexseal.com</text>',
             '</svg>'
         ));
     }

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — OfferNFTFacet.sol
+// HEXSEAL — OfferNFTFacet.sol
 // Soulbound NFT facet. Issues job receipt NFTs to clients
 // when a deal is accepted (called internally by JobBoardFacet).
 //
@@ -16,7 +16,7 @@ import "./SVGRenderer.sol";
 // ─── Namespaced Storage ───────────────────────────────────────────────────────
 
 library OfferNFTStorage {
-    bytes32 constant POSITION = keccak256("signature404.offernft.storage");
+    bytes32 constant POSITION = keccak256("hexseal.offernft.storage");
 
     // Slot layout must not change — fields below are reserved for storage continuity.
     // The Offer-related fields (slots 2-4) are deprecated but cannot be removed
@@ -80,8 +80,8 @@ contract OfferNFTFacet {
 
     // ─── ERC-721 Metadata ─────────────────────────────────────────────────────
 
-    function name() external pure returns (string memory) { return "Signature404 NFT"; }
-    function symbol() external pure returns (string memory) { return "S404"; }
+    function name() external pure returns (string memory) { return "Hexseal NFT"; }
+    function symbol() external pure returns (string memory) { return "HSEAL"; }
 
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return interfaceId == 0x80ac58cd

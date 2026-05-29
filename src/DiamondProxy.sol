@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — DiamondProxy.sol
+// HEXSEAL — DiamondProxy.sol
 // EIP-2535 Diamond Standard
 // OZ v5 · Base mainnet · Foundry
 // ============================================================
@@ -44,7 +44,7 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 // ---------- STORAGE ----------
 
 library DiamondStorage {
-    bytes32 constant DIAMOND_STORAGE_POSITION = keccak256("signature404.diamond.storage");
+    bytes32 constant DIAMOND_STORAGE_POSITION = keccak256("hexseal.diamond.storage");
 
     struct FacetAddressAndPosition {
         address facetAddress;
@@ -82,7 +82,7 @@ library DiamondStorage {
 // Каждый фасет использует DiamondGuard вместо своего per-facet guard.
 
 library DiamondGuard {
-    bytes32 constant GUARD_POSITION = keccak256("signature404.diamond.reentrancy");
+    bytes32 constant GUARD_POSITION = keccak256("hexseal.diamond.reentrancy");
     uint256 constant NOT_ENTERED = 1;
     uint256 constant ENTERED = 2;
 

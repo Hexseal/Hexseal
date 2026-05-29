@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "/Users/tvoybatya/Documents/signature404/node_modules/@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "/Users/tvoybatya/Documents/signature404/node_modules/@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "/Users/tvoybatya/Documents/signature404/node_modules/@openzeppelin/contracts/access/Ownable.sol";
-import "/Users/tvoybatya/Documents/signature404/node_modules/@openzeppelin/contracts/utils/Strings.sol";
-import "/Users/tvoybatya/Documents/signature404/node_modules/@openzeppelin/contracts/security/Pausable.sol";
-import "/Users/tvoybatya/Documents/signature404/node_modules/@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "/Users/tvoybatya/Documents/hexseal/node_modules/@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "/Users/tvoybatya/Documents/hexseal/node_modules/@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "/Users/tvoybatya/Documents/hexseal/node_modules/@openzeppelin/contracts/access/Ownable.sol";
+import "/Users/tvoybatya/Documents/hexseal/node_modules/@openzeppelin/contracts/utils/Strings.sol";
+import "/Users/tvoybatya/Documents/hexseal/node_modules/@openzeppelin/contracts/security/Pausable.sol";
+import "/Users/tvoybatya/Documents/hexseal/node_modules/@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-contract Signature404 is ERC721, Ownable, Pausable, ReentrancyGuard {
+contract Hexseal is ERC721, Ownable, Pausable, ReentrancyGuard {
     using Strings for uint256;
     using EnumerableSet for EnumerableSet.UintSet;
 

@@ -502,7 +502,7 @@
     "remove_btn": "Entfernen"
   },
   "onboarding": {
-    "title": "So funktioniert Signature404",
+    "title": "So funktioniert Hexseal",
     "subtitle": "Dezentrales Freelancing auf Base — keine Mittelsmänner, Code setzt durch.",
     "cta": "Verstanden, los geht's →",
     "step1_title": "Arbeit veröffentlichen oder finden",
@@ -520,7 +520,7 @@
     "back": "Zurück zur Startseite",
     "docs_label": "Docs",
     "title": "FAQ",
-    "subtitle": "Häufig gestellte Fragen zu Signature404 — dem dezentralen Freelance-Protokoll auf Base.",
+    "subtitle": "Häufig gestellte Fragen zu Hexseal — dem dezentralen Freelance-Protokoll auf Base.",
     "still_questions": "Noch Fragen?",
     "open_issue": "Issue auf GitHub öffnen",
     "s_general": "Allgemein",
@@ -530,8 +530,8 @@
     "s_jobs": "Jobs & Leistungen",
     "s_privacy": "Datenschutz & Sicherheit",
     "s_tech": "Technisch",
-    "q_what_is": "Was ist Signature404?",
-    "a_what_is": "Signature404 ist ein dezentraler Freelance-Marktplatz auf Base. Kunden veröffentlichen Jobs, Ausführende reichen Arbeit ein, und Gelder werden in einem On-Chain-Treuhandvertrag gesperrt — durchgesetzt durch Code, nicht durch einen Plattformadministrator.",
+    "q_what_is": "Was ist Hexseal?",
+    "a_what_is": "Hexseal ist ein dezentraler Freelance-Marktplatz auf Base. Kunden veröffentlichen Jobs, Ausführende reichen Arbeit ein, und Gelder werden in einem On-Chain-Treuhandvertrag gesperrt — durchgesetzt durch Code, nicht durch einen Plattformadministrator.",
     "q_who_controls": "Wer kontrolliert die Gelder?",
     "a_who_controls": "Niemand. Gelder werden von einem autonomen Smart Contract gehalten. Die Plattform kann dein USDC nicht einfrieren, umleiten oder anfassen. Nur der Kunde, Ausführende oder Schlichter können unter den im Vertrag definierten Bedingungen Zustandsübergänge auslösen.",
     "q_is_free": "Ist es kostenlos zu nutzen?",

@@ -502,7 +502,7 @@
     "remove_btn": "제거"
   },
   "onboarding": {
-    "title": "Signature404 사용 방법",
+    "title": "Hexseal 사용 방법",
     "subtitle": "Base의 분산형 프리랜서 — 중개자 없이, 코드가 실행합니다.",
     "cta": "알겠습니다, 시작해요 →",
     "step1_title": "일을 게시하거나 찾기",
@@ -520,7 +520,7 @@
     "back": "홈으로 돌아가기",
     "docs_label": "문서",
     "title": "자주 묻는 질문",
-    "subtitle": "Signature404 — Base의 분산형 프리랜서 프로토콜에 대한 자주 묻는 질문.",
+    "subtitle": "Hexseal — Base의 분산형 프리랜서 프로토콜에 대한 자주 묻는 질문.",
     "still_questions": "아직 궁금한 점이 있으신가요?",
     "open_issue": "GitHub에서 issue 열기",
     "s_general": "일반",
@@ -530,8 +530,8 @@
     "s_jobs": "일자리 및 서비스",
     "s_privacy": "개인정보 및 보안",
     "s_tech": "기술",
-    "q_what_is": "Signature404란 무엇인가요?",
-    "a_what_is": "Signature404는 Base의 분산형 프리랜서 마켓플레이스입니다. 클라이언트가 일자리를 게시하고, 실행자가 작업을 제출하며, 자금은 온체인 에스크로 컨트랙트에 잠깁니다.",
+    "q_what_is": "Hexseal란 무엇인가요?",
+    "a_what_is": "Hexseal는 Base의 분산형 프리랜서 마켓플레이스입니다. 클라이언트가 일자리를 게시하고, 실행자가 작업을 제출하며, 자금은 온체인 에스크로 컨트랙트에 잠깁니다.",
     "q_who_controls": "누가 자금을 통제하나요?",
     "a_who_controls": "아무도 없습니다. 자금은 자율적인 스마트 컨트랙트가 보관합니다. 플랫폼은 USDC를 동결, 전송, 또는 건드릴 수 없습니다.",
     "q_is_free": "무료인가요?",

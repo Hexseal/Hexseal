@@ -26,7 +26,7 @@ dotenv.config();
 
 let VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY;
 let VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-const VAPID_EMAIL     = process.env.VAPID_EMAIL || 'mailto:admin@signature404.com';
+const VAPID_EMAIL     = process.env.VAPID_EMAIL || 'mailto:admin@hexseal.com';
 
 if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
   const keys = webpush.generateVAPIDKeys();
@@ -138,8 +138,8 @@ async function pushAfterRelay(receipt, agreementAddress) {
 const STORJ_ENDPOINT  = process.env.STORJ_ENDPOINT  || 'https://gateway.storjshare.io';
 const STORJ_ACCESS    = process.env.STORJ_ACCESS_KEY;
 const STORJ_SECRET    = process.env.STORJ_SECRET_KEY;
-const BUCKET_FILES    = process.env.STORJ_BUCKET_FILES  || 's404-files';   // encrypted chat files (18-day TTL)
-const BUCKET_PUBLIC   = process.env.STORJ_BUCKET_PUBLIC || 's404-public';  // permanent public files (profiles, avatars)
+const BUCKET_FILES    = process.env.STORJ_BUCKET_FILES  || 'hexseal-files';   // encrypted chat files (18-day TTL)
+const BUCKET_PUBLIC   = process.env.STORJ_BUCKET_PUBLIC || 'hexseal-public';  // permanent public files (profiles, avatars)
 const FILE_TTL_S      = 18 * 24 * 60 * 60; // 18 days in seconds
 const FILE_TTL_MS     = FILE_TTL_S * 1000;
 
@@ -187,7 +187,7 @@ const FORWARDER_ADDR   = process.env.TRUSTED_FORWARDER;
 const DIAMOND_ADDR     = process.env.DIAMOND_ADDRESS;
 const PORT             = process.env.PORT || 3001;
 
-// Comma-separated list of allowed origins, e.g. "http://localhost:3000,https://signature404.com"
+// Comma-separated list of allowed origins, e.g. "http://localhost:3000,https://hexseal.com"
 const ALLOWED_ORIGINS  = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
                           .split(',').map(o => o.trim()).filter(Boolean);
 

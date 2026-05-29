@@ -750,7 +750,7 @@ function generateFrontendDoc(mod) {
 
 function generateReadme() {
   const lines = [];
-  lines.push('# Signature404 — Generated Documentation');
+  lines.push('# Hexseal — Generated Documentation');
   lines.push('');
   lines.push(`> Автогенерация: \`node scripts/generate-docs.js\` · Дата: ${new Date().toISOString().slice(0, 10)}`);
   lines.push('');

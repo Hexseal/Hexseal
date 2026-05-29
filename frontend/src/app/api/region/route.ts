@@ -98,7 +98,7 @@ async function resolveRegion(ip: string): Promise<{ cacheCode: number; contractR
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3000);
     const res = await fetch(`https://ipapi.co/${ip}/json/`, {
-      headers: { 'User-Agent': 'Signature404/1.0' },
+      headers: { 'User-Agent': 'Hexseal/1.0' },
       signal: ctrl.signal,
     });
     clearTimeout(timer);

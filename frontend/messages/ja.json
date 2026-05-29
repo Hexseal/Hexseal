@@ -502,7 +502,7 @@
     "remove_btn": "削除"
   },
   "onboarding": {
-    "title": "Signature404の使い方",
+    "title": "Hexsealの使い方",
     "subtitle": "Baseの分散型フリーランス — 仲介者なし、コードが執行。",
     "cta": "わかりました、始めましょう →",
     "step1_title": "仕事を掲載または探す",
@@ -520,7 +520,7 @@
     "back": "ホームに戻る",
     "docs_label": "ドキュメント",
     "title": "よくある質問",
-    "subtitle": "Signature404 — Baseの分散型フリーランスプロトコルについてのよくある質問。",
+    "subtitle": "Hexseal — Baseの分散型フリーランスプロトコルについてのよくある質問。",
     "still_questions": "まだ質問がありますか？",
     "open_issue": "GitHubでissueを開く",
     "s_general": "一般",
@@ -530,8 +530,8 @@
     "s_jobs": "仕事とサービス",
     "s_privacy": "プライバシーとセキュリティ",
     "s_tech": "技術",
-    "q_what_is": "Signature404とは？",
-    "a_what_is": "Signature404はBase上の分散型フリーランスマーケットプレイスです。クライアントが仕事を掲載し、受注者が作業を提出し、資金はオンチェーンのエスクロー契約にロックされます。",
+    "q_what_is": "Hexsealとは？",
+    "a_what_is": "HexsealはBase上の分散型フリーランスマーケットプレイスです。クライアントが仕事を掲載し、受注者が作業を提出し、資金はオンチェーンのエスクロー契約にロックされます。",
     "q_who_controls": "誰が資金をコントロールしますか？",
     "a_who_controls": "誰もコントロールしません。資金は自律型スマートコントラクトによって保管されます。プラットフォームはあなたのUSDCを凍結、転送、または触れることができません。",
     "q_is_free": "無料で使えますか？",

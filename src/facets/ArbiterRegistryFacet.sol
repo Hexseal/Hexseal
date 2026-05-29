@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — ArbiterRegistryFacet.sol
+// HEXSEAL — ArbiterRegistryFacet.sol
 //
 // Реестр арбитров: мультиарбитражный хаб
 // - Овнер добавляет/убирает арбитров
@@ -28,7 +28,7 @@ interface IAgreementStatus {
 // ---------- STORAGE ----------
 
 library ArbiterRegistryStorage {
-    bytes32 constant POSITION = keccak256("signature404.arbiterregistry.storage");
+    bytes32 constant POSITION = keccak256("hexseal.arbiterregistry.storage");
 
     struct Data {
         mapping(address => bool) isArbiter;

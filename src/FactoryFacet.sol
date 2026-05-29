@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // ============================================================
-// SIGNATURE404 — FactoryFacet.sol
+// HEXSEAL — FactoryFacet.sol
 // Деплоит Agreement контракты через внешний AgreementDeployer.
 // Берёт PPP fee в USDC, регистрирует в RegistryFacet.
 // ============================================================
@@ -39,7 +39,7 @@ interface IUSDC {
 // ---------- STORAGE ----------
 
 library FactoryStorage {
-    bytes32 constant FACTORY_STORAGE_POSITION = keccak256("signature404.factory.storage");
+    bytes32 constant FACTORY_STORAGE_POSITION = keccak256("hexseal.factory.storage");
 
     uint8 constant REGION_CIS   = 0;
     uint8 constant REGION_ASIA  = 1;

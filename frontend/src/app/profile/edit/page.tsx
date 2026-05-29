@@ -211,7 +211,7 @@ export default function EditProfilePage() {
         updatedAt: now,
       };
 
-      const message = `Signature404 Profile\n${JSON.stringify({
+      const message = `Hexseal Profile\n${JSON.stringify({
         address: profileData.address,
         displayName: profileData.displayName,
         bio: profileData.bio,

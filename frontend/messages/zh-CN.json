@@ -502,7 +502,7 @@
     "remove_btn": "移除"
   },
   "onboarding": {
-    "title": "Signature404 的工作原理",
+    "title": "Hexseal 的工作原理",
     "subtitle": "Base 上的去中心化自由职业 — 无中间商，代码强制执行。",
     "cta": "明白了，出发 →",
     "step1_title": "发布或寻找工作",
@@ -520,7 +520,7 @@
     "back": "返回首页",
     "docs_label": "文档",
     "title": "常见问题",
-    "subtitle": "关于 Signature404 的常见问题 — Base 上的去中心化自由职业协议。",
+    "subtitle": "关于 Hexseal 的常见问题 — Base 上的去中心化自由职业协议。",
     "still_questions": "还有问题？",
     "open_issue": "在 GitHub 上提交 issue",
     "s_general": "一般",
@@ -530,8 +530,8 @@
     "s_jobs": "工作与服务",
     "s_privacy": "隐私与安全",
     "s_tech": "技术",
-    "q_what_is": "Signature404 是什么？",
-    "a_what_is": "Signature404 是 Base 上的去中心化自由职业市场。客户发布工作，执行者提交工作，资金锁定在链上托管合同中——由代码强制执行，而非平台管理员。",
+    "q_what_is": "Hexseal 是什么？",
+    "a_what_is": "Hexseal 是 Base 上的去中心化自由职业市场。客户发布工作，执行者提交工作，资金锁定在链上托管合同中——由代码强制执行，而非平台管理员。",
     "q_who_controls": "谁控制资金？",
     "a_who_controls": "没有人。资金由自主智能合约持有。平台无法冻结、重定向或触碰您的 USDC。只有客户、执行者或仲裁者才能在合同规定的条件下触发状态转换。",
     "q_is_free": "使用是否免费？",

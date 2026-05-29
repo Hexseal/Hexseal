@@ -83,7 +83,7 @@ export async function publishProfile(profileData: Omit<UserProfile, 'cid'>): Pro
 export async function verifyProfileSignature(profile: UserProfile): Promise<boolean> {
   try {
     const { ethers } = await import('ethers');
-    const message = `Signature404 Profile\n${JSON.stringify({
+    const message = `Hexseal Profile\n${JSON.stringify({
       address: profile.address,
       displayName: profile.displayName,
       bio: profile.bio,

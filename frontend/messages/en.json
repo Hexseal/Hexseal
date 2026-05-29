@@ -542,7 +542,7 @@
     "remove_btn": "Remove"
   },
   "onboarding": {
-    "title": "How Signature404 works",
+    "title": "How Hexseal works",
     "subtitle": "Decentralized freelance on Base — no middlemen, code enforces.",
     "cta": "Got it, let's go →",
     "step1_title": "Post or Find Work",
@@ -560,7 +560,7 @@
     "back": "Back to home",
     "docs_label": "Docs",
     "title": "FAQ",
-    "subtitle": "Frequently asked questions about Signature404 — the decentralized freelance protocol on Base.",
+    "subtitle": "Frequently asked questions about Hexseal — the decentralized freelance protocol on Base.",
     "still_questions": "Still have questions?",
     "open_issue": "Open an issue on GitHub",
     "s_general": "General",
@@ -570,8 +570,8 @@
     "s_jobs": "Jobs & Services",
     "s_privacy": "Privacy & Security",
     "s_tech": "Technical",
-    "q_what_is": "What is Signature404?",
-    "a_what_is": "Signature404 is a decentralized freelance marketplace on Base. Clients post jobs, executors submit work, and funds are locked in an on-chain escrow contract — enforced by code, not by a platform admin.",
+    "q_what_is": "What is Hexseal?",
+    "a_what_is": "Hexseal is a decentralized freelance marketplace on Base. Clients post jobs, executors submit work, and funds are locked in an on-chain escrow contract — enforced by code, not by a platform admin.",
     "q_who_controls": "Who controls the funds?",
     "a_who_controls": "No one. Funds are held by an autonomous smart contract. The platform cannot freeze, redirect, or touch your USDC. Only the client, executor, or arbiter can trigger state transitions — under conditions defined in the contract.",
     "q_is_free": "Is it free to use?",

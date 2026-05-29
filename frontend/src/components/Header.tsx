@@ -91,8 +91,8 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
             )}
             <Link href="/" className="flex items-center gap-2 group">
               <Image
-                src="/s404logo.png"
-                alt="S404"
+                src="/hexseallogo.png"
+                alt="Hexseal"
                 width={22}
                 height={22}
                 className="opacity-75 group-hover:opacity-100 transition-opacity"
@@ -145,8 +145,8 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
               )}
               <Link href="/" className="flex items-center gap-2.5 group">
                 <Image
-                  src="/s404logo.png"
-                  alt="S404"
+                  src="/hexseallogo.png"
+                  alt="Hexseal"
                   width={24}
                   height={24}
                   className="opacity-80 group-hover:opacity-100 transition-opacity"
