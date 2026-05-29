@@ -97,6 +97,7 @@ contract JobBoardFacet {
     event JobApplied(uint256 indexed jobId, address indexed executor);
     event JobAccepted(uint256 indexed jobId, address indexed client, address indexed executor, address agreement);
     event JobCancelled(uint256 indexed jobId, address indexed client, uint256 refundAmount);
+    event JobEdited(uint256 indexed jobId, address indexed client);
 
     // -------- ERRORS --------
 
@@ -113,6 +114,7 @@ contract JobBoardFacet {
     error Reentrant();
     error FactoryPaused();
     error SelfApply();
+    error JobHasApplicants();
 
     // -------- REENTRANCY --------
 
@@ -346,6 +348,44 @@ contract JobBoardFacet {
         _safeTransfer(fs.usdc, job.client, refund);
 
         emit JobCancelled(jobId, job.client, refund);
+    }
+
+    /// @notice Клиент редактирует заказ, пока он OPEN и НЕТ откликов (gasless-совместим).
+    /// @dev amount неизменяем — деньги уже заблокированы в Diamond по старой сумме.
+    ///      Хочешь другую сумму — отмени заказ и создай новый.
+    ///      Редактирование запрещено после первого отклика — нечестно менять
+    ///      условия под уже откликнувшихся исполнителей.
+    function editJob(
+        uint256 jobId,
+        string memory title,
+        string memory description,
+        uint256 deadlineDays,
+        bytes32 termsHash,
+        uint8 region
+    ) external whenNotPaused {
+        address sender = _msgSender();
+        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Job storage job = s.jobs[jobId];
+
+        if (sender != job.client) revert NotClient();
+        if (job.status != JobBoardStorage.JobStatus.OPEN) revert JobNotOpen();
+        if (s.applicants[jobId].length > 0) revert JobHasApplicants();
+
+        // --- Валидация (та же что при минте) ---
+        uint256 titleLen = bytes(title).length;
+        if (titleLen == 0 || titleLen > 100) revert TitleInvalid();
+        if (bytes(description).length > 500) revert DescriptionTooLong();
+        if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
+        if (region > 6) revert InvalidRegion();
+
+        // --- Effects ---
+        job.title        = title;
+        job.description  = description;
+        job.deadlineDays = deadlineDays;
+        job.termsHash    = termsHash;
+        job.region       = region;
+
+        emit JobEdited(jobId, sender);
     }
 
     // -------- VIEW --------

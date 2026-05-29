@@ -567,6 +567,34 @@ export const DIAMOND_ABI = [
     type: 'function',
   },
   {
+    inputs: [
+      { internalType: 'uint256', name: 'jobId', type: 'uint256' },
+      { internalType: 'string', name: 'title', type: 'string' },
+      { internalType: 'string', name: 'description', type: 'string' },
+      { internalType: 'uint256', name: 'deadlineDays', type: 'uint256' },
+      { internalType: 'bytes32', name: 'termsHash', type: 'bytes32' },
+      { internalType: 'uint8', name: 'region', type: 'uint8' },
+    ],
+    name: 'editJob',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'serviceId', type: 'uint256' },
+      { internalType: 'string', name: 'title', type: 'string' },
+      { internalType: 'string', name: 'description', type: 'string' },
+      { internalType: 'uint256', name: 'price', type: 'uint256' },
+      { internalType: 'uint256', name: 'deadlineDays', type: 'uint256' },
+      { internalType: 'uint8', name: 'region', type: 'uint8' },
+    ],
+    name: 'editService',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
     inputs: [{ internalType: 'uint256', name: 'jobId', type: 'uint256' }],
     name: 'getJob',
     outputs: [

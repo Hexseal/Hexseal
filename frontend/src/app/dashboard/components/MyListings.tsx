@@ -12,8 +12,12 @@ import { toast } from 'react-hot-toast';
 import {
   Briefcase, ChevronDown, ExternalLink, Clock,
   CheckCircle, XCircle, Users, Zap, Loader2, UserCheck, Trash2,
-  Pause, Play, Inbox, AlertCircle,
+  Pause, Play, Inbox, AlertCircle, Pencil,
 } from 'lucide-react';
+
+const REGION_LABELS: Record<number, string> = {
+  0: 'CIS', 1: 'Asia', 2: 'Europe', 3: 'US', 4: 'LATAM', 5: 'CA', 6: 'AU',
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -83,11 +87,137 @@ const JOB_STATUS: Record<number, { label: string; icon: React.ReactNode; cls: st
   2: { label: 'Cancelled', icon: <XCircle className="w-3 h-3" />,     cls: 'bg-white/5 text-white/40 border-white/10' },
 };
 
+// ── Edit Listing Modal ──────────────────────────────────────────────────────
+// Shared by jobs and services. `kind` switches the amount field:
+//   service → price is editable
+//   job     → amount is locked (funds already escrowed); shown disabled
+
+export interface EditTarget {
+  kind: 'job' | 'service';
+  id: bigint;
+  title: string;
+  description: string;
+  amount: bigint;        // job budget OR service price
+  deadlineDays: bigint;
+  region: number;
+  termsHash?: string;    // job only — passed through unchanged
+}
+
+function EditListingModal({
+  target, busy, onClose, onSave,
+}: {
+  target: EditTarget;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (fields: { title: string; description: string; price: bigint; deadlineDays: bigint; region: number }) => void;
+}) {
+  const [title, setTitle]             = useState(target.title);
+  const [description, setDescription] = useState(target.description);
+  const [priceStr, setPriceStr]       = useState((Number(target.amount) / 1e6).toString());
+  const [deadlineStr, setDeadlineStr] = useState(target.deadlineDays.toString());
+  const [region, setRegion]           = useState(target.region);
+  const [err, setErr]                 = useState<string | null>(null);
+
+  const isService = target.kind === 'service';
+
+  const submit = () => {
+    const t = title.trim();
+    if (!t || t.length > 100) { setErr('Заголовок обязателен (макс 100 символов)'); return; }
+    if (description.length > 500) { setErr('Описание слишком длинное (макс 500)'); return; }
+    const days = parseInt(deadlineStr, 10);
+    if (isNaN(days) || days < 1 || days > 365) { setErr('Срок: от 1 до 365 дней'); return; }
+    // For services the price can change; for jobs we keep the original amount.
+    let price = target.amount;
+    if (isService) {
+      const p = parseFloat(priceStr);
+      if (isNaN(p) || p < 1) { setErr('Цена: минимум 1 USDC'); return; }
+      price = BigInt(Math.round(p * 1e6));
+    }
+    setErr(null);
+    onSave({ title: t, description: description.trim(), price, deadlineDays: BigInt(days), region });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={() => !busy && onClose()}>
+      <div className="w-full max-w-md rounded-2xl border border-white/12 bg-[#111118] p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-2.5 mb-5">
+          <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <Pencil className="w-4 h-4 text-primary" />
+          </div>
+          <h2 className="text-base font-bold font-syne text-white">
+            {isService ? 'Редактировать услугу' : 'Редактировать заказ'} #{target.id.toString()}
+          </h2>
+        </div>
+
+        <div className="space-y-3.5">
+          <div className="space-y-1.5">
+            <label className="text-xs text-white/50">Заголовок</label>
+            <input value={title} onChange={e => setTitle(e.target.value)} maxLength={100}
+              className="w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/[0.18]" />
+            <p className="text-[11px] text-white/25 text-right">{title.length}/100</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-white/50">Описание</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4} maxLength={500}
+              className="w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm text-white placeholder:text-white/20 resize-none focus:outline-none focus:border-white/[0.18]" />
+            <p className="text-[11px] text-white/25 text-right">{description.length}/500</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs text-white/50">{isService ? 'Цена (USDC)' : 'Бюджет (USDC)'}</label>
+              <input value={priceStr} onChange={e => setPriceStr(e.target.value)} type="number" min={isService ? '1' : '0'}
+                disabled={!isService}
+                className={`w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm rounded-[12px] focus:outline-none focus:border-white/[0.18] ${isService ? 'text-white' : 'text-white/35 cursor-not-allowed'}`} />
+              {!isService && <p className="text-[11px] text-white/25">Бюджет нельзя менять — отмени и создай новый</p>}
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-white/50">Срок (дней)</label>
+              <input value={deadlineStr} onChange={e => setDeadlineStr(e.target.value)} type="number" min="1" max="365"
+                className="w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm text-white focus:outline-none focus:border-white/[0.18]" />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-white/50">Регион</label>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(REGION_LABELS).map(([val, label]) => (
+                <button key={val} onClick={() => setRegion(Number(val))}
+                  className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                    region === Number(val) ? 'bg-white/10 border-white/20 text-white/80' : 'border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {err && <p className="text-xs text-red-400/80">{err}</p>}
+        </div>
+
+        <div className="flex gap-2.5 mt-5">
+          <Button variant="ghost" className="flex-1 border border-white/10 text-white/50 hover:text-white/80 hover:bg-white/5"
+            onClick={onClose} disabled={busy}>
+            Отмена
+          </Button>
+          <Button className="flex-1 gap-1.5" onClick={submit} disabled={busy}>
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+            Сохранить
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Service Card ──────────────────────────────────────────────────────────────
 
 function ServiceCard({
   serviceId, service, pendingIds, pendingReqs, busyId,
-  onPause, onUnpause, onRemove, onAccept, onReject,
+  onPause, onUnpause, onRemove, onAccept, onReject, onEdit,
 }: {
   serviceId: bigint;
   service: ServiceRecord;
@@ -99,6 +229,7 @@ function ServiceCard({
   onRemove: () => void;
   onAccept: (requestId: bigint, req: HireRequestRecord) => void;
   onReject: (requestId: bigint) => void;
+  onEdit: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [histLoaded, setHistLoaded] = useState(false);
@@ -175,6 +306,12 @@ function ServiceCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+          {service.status !== 2 && (
+            <Button size="sm" variant="ghost" onClick={onEdit} disabled={!!busyId}
+              className="h-7 w-7 p-0 text-white/25 hover:text-primary" title="Edit service">
+              <Pencil className="w-3.5 h-3.5" />
+            </Button>
+          )}
           {service.status === 0 && (
             <Button size="sm" variant="ghost" onClick={onPause} disabled={!!busyId}
               className="h-7 w-7 p-0 text-white/25 hover:text-amber-400/80" title="Pause service">
@@ -320,6 +457,8 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
   const [showRemoved, setShowRemoved] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmReq, setConfirmReq] = useState<{ requestId: bigint; client: string; amount: bigint; deadlineDays: bigint } | null>(null);
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -434,6 +573,27 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
     }
   };
 
+  const handleEditSave = async (
+    fields: { title: string; description: string; price: bigint; deadlineDays: bigint; region: number },
+  ) => {
+    if (!walletClient || !publicClient || !editTarget) { toast.error('Wallet not connected'); return; }
+    setEditBusy(true);
+    try {
+      await sendGasless(
+        walletClient, publicClient, 'editService',
+        [editTarget.id, fields.title, fields.description, fields.price, fields.deadlineDays, fields.region],
+        DIAMOND_ABI as Abi,
+      );
+      toast.success('Услуга обновлена');
+      setEditTarget(null);
+      setTimeout(refetch, 2000);
+    } catch (err: any) {
+      toast.error(err?.message?.slice(0, 80) || 'Edit failed');
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   if (isLoading) {
     return <div className="py-8 text-center text-sm text-white/30"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>;
   }
@@ -468,6 +628,7 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
                 onRemove={() => handleServiceAction(id, 'removeService')}
                 onAccept={(rid, req) => setConfirmReq({ requestId: rid, client: req.client, amount: req.amount, deadlineDays: req.deadlineDays })}
                 onReject={handleReject}
+                onEdit={() => setEditTarget({ kind: 'service', id, title: svc.title, description: svc.description, amount: svc.price, deadlineDays: svc.deadlineDays, region: svc.region })}
               />
             );
           })}
@@ -499,11 +660,22 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
                   onRemove={() => {}}
                   onAccept={() => {}}
                   onReject={() => {}}
+                  onEdit={() => {}}
                 />
               ))}
             </div>
           )}
         </div>
+      )}
+
+      {/* Edit Service Modal */}
+      {editTarget && editTarget.kind === 'service' && (
+        <EditListingModal
+          target={editTarget}
+          busy={editBusy}
+          onClose={() => !editBusy && setEditTarget(null)}
+          onSave={handleEditSave}
+        />
       )}
 
       {/* Accept Request Confirmation Modal */}
@@ -575,18 +747,21 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
 // ── Job Card ──────────────────────────────────────────────────────────────────
 
 function JobCard({
-  jobId, job, applicants, onCancel, onAccept, busy,
+  jobId, job, applicants, onCancel, onAccept, onEdit, busy,
 }: {
   jobId: bigint;
   job: JobRecord;
   applicants?: string[];
   onCancel: () => void;
   onAccept: (executor: string) => void;
+  onEdit: () => void;
   busy: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const s = JOB_STATUS[job.status] ?? JOB_STATUS[0];
   const count = applicants?.length ?? 0;
+  // Editable only while OPEN and nobody has applied yet
+  const canEdit = job.status === 0 && count === 0;
 
   return (
     <div
@@ -624,6 +799,12 @@ function JobCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+          {canEdit && (
+            <Button size="sm" variant="ghost" onClick={onEdit} disabled={busy}
+              className="h-7 w-7 p-0 text-white/25 hover:text-primary" title="Edit job">
+              <Pencil className="w-3.5 h-3.5" />
+            </Button>
+          )}
           {job.status === 0 && (
             <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}
               className="h-7 w-7 p-0 text-white/25 hover:text-red-400/80" title="Cancel job">
@@ -702,6 +883,8 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
   const [showArchive, setShowArchive] = useState(false);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -790,6 +973,28 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
     }
   };
 
+  const handleEditSave = async (
+    fields: { title: string; description: string; price: bigint; deadlineDays: bigint; region: number },
+  ) => {
+    if (!walletClient || !publicClient || !editTarget) { toast.error('Wallet not connected'); return; }
+    setEditBusy(true);
+    try {
+      // editJob(jobId, title, description, deadlineDays, termsHash, region) — amount is immutable
+      await sendGasless(
+        walletClient, publicClient, 'editJob',
+        [editTarget.id, fields.title, fields.description, fields.deadlineDays, editTarget.termsHash ?? `0x${'0'.repeat(64)}`, fields.region],
+        DIAMOND_ABI as Abi,
+      );
+      toast.success('Заказ обновлён');
+      setEditTarget(null);
+      setTimeout(refetch, 2000);
+    } catch (err: any) {
+      toast.error(err?.message?.slice(0, 80) || 'Edit failed');
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   if (isLoading) return <div className="py-8 text-center text-sm text-white/30"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>;
 
   if (jobs.length === 0) {
@@ -816,6 +1021,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
               applicants={applicantsMap.get(id.toString())}
               onCancel={() => handleCancel(id)}
               onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
+              onEdit={() => setEditTarget({ kind: 'job', id, title: job.title, description: job.description, amount: job.amount, deadlineDays: job.deadlineDays, region: job.region, termsHash: job.termsHash })}
               busy={busyJobId === id.toString()}
             />
           ))}
@@ -842,12 +1048,23 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
                   applicants={applicantsMap.get(id.toString())}
                   onCancel={() => handleCancel(id)}
                   onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
+                  onEdit={() => {}}
                   busy={busyJobId === id.toString()}
                 />
               ))}
             </div>
           )}
         </div>
+      )}
+
+      {/* Edit Job Modal */}
+      {editTarget && editTarget.kind === 'job' && (
+        <EditListingModal
+          target={editTarget}
+          busy={editBusy}
+          onClose={() => !editBusy && setEditTarget(null)}
+          onSave={handleEditSave}
+        />
       )}
 
       {/* Hire Confirmation Modal */}

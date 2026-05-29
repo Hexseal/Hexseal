@@ -95,6 +95,7 @@ contract ServiceBoardFacet {
     event ServiceRemoved(uint256 indexed serviceId, address indexed executor);
     event ServicePaused(uint256 indexed serviceId);
     event ServiceUnpaused(uint256 indexed serviceId);
+    event ServiceEdited(uint256 indexed serviceId, address indexed executor);
     event ServiceRequested(uint256 indexed requestId, uint256 indexed serviceId, address indexed client, uint256 amount);
     event RequestAccepted(uint256 indexed requestId, address indexed executor, address indexed client, address agreement);
     event RequestRejected(uint256 indexed requestId, address indexed executor, address indexed client);
@@ -268,6 +269,42 @@ contract ServiceBoardFacet {
 
         svc.status = ServiceBoardStorage.ServiceStatus.ACTIVE;
         emit ServiceUnpaused(serviceId);
+    }
+
+    /// @notice Исполнитель редактирует услугу (gasless-совместим).
+    /// @dev Разрешено для ACTIVE и PAUSED услуг (не для REMOVED).
+    ///      Безопасно даже при наличии PENDING-запросов: каждый запрос фиксирует
+    ///      свои условия (amount/deadline) независимо от полей услуги.
+    function editService(
+        uint256 serviceId,
+        string memory title,
+        string memory description,
+        uint256 price,
+        uint256 deadlineDays,
+        uint8 region
+    ) external whenNotPaused {
+        address sender = _msgSender();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Service storage svc = s.services[serviceId];
+
+        if (sender != svc.executor) revert NotExecutor();
+        if (svc.status == ServiceBoardStorage.ServiceStatus.REMOVED) revert ServiceNotActive();
+
+        // --- Валидация (та же что при минте) ---
+        uint256 titleLen = bytes(title).length;
+        if (titleLen == 0 || titleLen > 100) revert TitleInvalid();
+        if (bytes(description).length > 500) revert DescriptionTooLong();
+        if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
+        if (region > 6) revert InvalidRegion();
+
+        // --- Effects ---
+        svc.title        = title;
+        svc.description  = description;
+        svc.price        = price;
+        svc.deadlineDays = deadlineDays;
+        svc.region       = region;
+
+        emit ServiceEdited(serviceId, sender);
     }
 
     // -------- CLIENT: REQUEST SERVICE --------

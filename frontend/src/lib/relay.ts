@@ -96,6 +96,8 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   deployAgreement:    1_500_000n,
   mintJob:            1_500_000n, // mintJobWithPermit deploys Agreement → heavy
   mintJobWithPermit:  1_500_000n,
+  editJob:              150_000n,
+  editService:          150_000n,
   acceptApplicant:    1_800_000n, // deploys Agreement via FactoryFacet
   cancelJob:            150_000n,
   applyForJob:          150_000n,
