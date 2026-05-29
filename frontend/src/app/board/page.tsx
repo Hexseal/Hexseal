@@ -13,7 +13,8 @@ import {
   ChevronDown, UserCheck, ExternalLink, FileText,
 } from "lucide-react";
 import Link from "next/link";
-import { UserName } from "@/components/UserName";
+import { useRouter } from "next/navigation";
+import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
@@ -106,6 +107,7 @@ function JobCard({
   const { data: walletClient } = useWalletClient();
   const t = useTranslations();
   const timeAgo = useTimeAgo();
+  const router = useRouter();
 
   const ZERO_HASH = "0x" + "0".repeat(64);
   const hasTerms = job.termsHash && job.termsHash !== ZERO_HASH;
@@ -147,7 +149,8 @@ function JobCard({
       toast(t("board.jobs.accepting"));
       await sendGasless(walletClient, publicClient, "acceptApplicant", [jobId, executorAddr], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.accepted_deal"));
-      setTimeout(() => onApplied?.(), 2500);
+      // Navigate to the job page where the freshly created deal is shown
+      setTimeout(() => { onApplied?.(); router.push(`/job/${jobId.toString()}`); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Accept failed");
     } finally {
@@ -180,8 +183,8 @@ function JobCard({
         onClick={onToggle}
       >
         {/* ── Collapsed row ── */}
-        <div className="flex items-center gap-3 px-4 py-4">
-          <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400/80 mt-0.5" />
+        <div className="flex items-center gap-3 px-4 py-3.5">
+          <UserAvatar address={job.client} size={28} link />
 
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline gap-2 mb-0.5">
@@ -190,21 +193,27 @@ function JobCard({
               </span>
               {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
             </div>
-            <div className="flex items-center gap-2.5 text-xs flex-wrap">
+            <div className="flex items-center gap-2 text-xs flex-wrap">
               {catKey && (
                 <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
                   {t(`categories.${catKey}`)}
                 </span>
               )}
               <span className="font-bold text-white/75 font-mono">{formatBudget(job.amount)} USDC</span>
-              <span className="text-white/25">·</span>
+              <span className="text-white/20">·</span>
               <span className="text-white/35">{job.deadlineDays.toString()}d</span>
-              <span className="text-white/25">·</span>
+              <span className="text-white/20">·</span>
               <span className="text-white/25">{REGION_LABELS[job.region] ?? "—"}</span>
-              <span className="text-white/25">·</span>
-              <span className="text-white/25">{timeAgo(job.createdAt)}</span>
+              <span className="text-white/20">·</span>
+              <span className="text-white/20">{timeAgo(job.createdAt)}</span>
               {isClient && applicantCount > 0 && (
                 <span className="text-violet-400/80 font-mono text-[11px]">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
+              )}
+              {!isClient && hasApplied && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400/80 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/70 flex-shrink-0" />
+                  {t("board.jobs.applied_tag")}
+                </span>
               )}
             </div>
           </div>
@@ -217,15 +226,11 @@ function JobCard({
                 </Button>
               </Link>
             )}
-            {!isClient && address && (
-              hasApplied ? (
-                <span className="text-[11px] text-white/30 font-mono px-1">{t("board.jobs.applied_tag")}</span>
-              ) : (
-                <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
-                  {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                  {t("board.jobs.apply_btn")}
-                </Button>
-              )
+            {!isClient && address && !hasApplied && (
+              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
+                {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                {t("board.jobs.apply_btn")}
+              </Button>
             )}
           </div>
           <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform flex-shrink-0 ${expanded ? "rotate-180" : ""}`} />
@@ -304,6 +309,11 @@ export default function BoardPage() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const t = useTranslations();
 
+  const PAGE_SIZE = 20;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  type SortKey = 'newest' | 'oldest' | 'highest' | 'lowest';
+  const [sortBy, setSortBy] = useState<SortKey>('newest');
+
   // Region filter — persisted in localStorage, auto-detected from IP on first visit
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [userRegion, setUserRegion] = useState<number | null>(null);
@@ -330,6 +340,7 @@ export default function BoardPage() {
   }, []);
 
   const handleRegionChange = (v: number | null) => {
+    setVisibleCount(PAGE_SIZE);
     setRegionFilter(v);
     storeBoardRegion(v);
   };
@@ -354,7 +365,7 @@ export default function BoardPage() {
     if (!openJobsData) return [];
     const [ids, records] = openJobsData;
     const q = searchQuery.toLowerCase();
-    return ids
+    const filtered = ids
       .map((id, i) => ({ id, job: records[i] }))
       .filter(({ job }) => job.status === 0)
       .filter(({ job }) => regionFilter === null || job.region === regionFilter)
@@ -363,11 +374,18 @@ export default function BoardPage() {
         if (!q) return true;
         return (
           job.title?.toLowerCase().includes(q) ||
+          job.description?.toLowerCase().includes(q) ||
           job.client?.toLowerCase().includes(q) ||
           id.toString().includes(q)
         );
       });
-  }, [openJobsData, searchQuery, regionFilter, categoryFilter]);
+    switch (sortBy) {
+      case 'oldest':  return [...filtered].sort((a, b) => Number(a.job.createdAt) - Number(b.job.createdAt));
+      case 'highest': return [...filtered].sort((a, b) => Number(b.job.amount) - Number(a.job.amount));
+      case 'lowest':  return [...filtered].sort((a, b) => Number(a.job.amount) - Number(b.job.amount));
+      default:        return [...filtered].sort((a, b) => Number(b.job.createdAt) - Number(a.job.createdAt));
+    }
+  }, [openJobsData, searchQuery, regionFilter, categoryFilter, sortBy]);
 
   // Batch load applicants for all visible jobs
   const applicantContracts = useMemo(() =>
@@ -515,6 +533,22 @@ export default function BoardPage() {
         </div>
 
 
+        {/* Sort controls */}
+        {!isLoading && jobs.length > 0 && (
+          <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+            <span className="text-xs text-white/25 mr-1">{t("common.sort")}:</span>
+            {(['newest','oldest','highest','lowest'] as const).map(key => (
+              <button key={key} onClick={() => { setSortBy(key); setVisibleCount(PAGE_SIZE); }}
+                className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                  sortBy === key ? 'bg-white/10 border-white/20 text-white/80' : 'border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50'
+                }`}>
+                {key === 'newest' ? t("board.sort.newest") : key === 'oldest' ? t("board.sort.oldest") : key === 'highest' ? t("board.sort.highest") : t("board.sort.lowest")}
+              </button>
+            ))}
+            <span className="ml-auto text-xs text-white/20">{Math.min(visibleCount, jobs.length)} / {jobs.length}</span>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -539,25 +573,35 @@ export default function BoardPage() {
             )}
           </div>
         ) : (
-          <AnimatePresence>
-            <div className="space-y-3">
-              {jobs.map(({ id, job }, index) => (
-                <JobCard
-                  key={id.toString()}
-                  jobId={id}
-                  job={job}
-                  isClient={address?.toLowerCase() === job.client?.toLowerCase()}
-                  address={address}
-                  hasApplied={appliedSet.has(id.toString())}
-                  applicants={applicantsMap.get(id.toString())}
-                  onApplied={refetch}
-                  expanded={expandedJobId === id.toString()}
-                  onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
-                  index={index}
-                />
-              ))}
-            </div>
-          </AnimatePresence>
+          <>
+            <AnimatePresence>
+              <div className="space-y-3">
+                {jobs.slice(0, visibleCount).map(({ id, job }, index) => (
+                  <JobCard
+                    key={id.toString()}
+                    jobId={id}
+                    job={job}
+                    isClient={address?.toLowerCase() === job.client?.toLowerCase()}
+                    address={address}
+                    hasApplied={appliedSet.has(id.toString())}
+                    applicants={applicantsMap.get(id.toString())}
+                    onApplied={refetch}
+                    expanded={expandedJobId === id.toString()}
+                    onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
+                    index={index}
+                  />
+                ))}
+              </div>
+            </AnimatePresence>
+            {visibleCount < jobs.length && (
+              <button
+                onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
+                className="w-full mt-4 py-2.5 rounded-[14px] border border-white/[0.08] text-sm text-white/40 hover:text-white/70 hover:border-white/15 hover:bg-white/[0.03] transition-colors"
+              >
+                {t("common.load_more")} ({jobs.length - visibleCount})
+              </button>
+            )}
+          </>
         )}
       </div>
     </>

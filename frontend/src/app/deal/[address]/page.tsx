@@ -20,6 +20,7 @@ import {
   MessageCircle,
   Plus,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -149,13 +150,17 @@ export default function DealDetailPage() {
     query: { enabled: !!isValidDeal },
   }) as { data: [string, string, string, bigint, string, bigint, bigint, bigint, bigint, bigint, bigint, number] | undefined; isLoading: boolean; refetch: () => void };
 
-  // Read status separately for reactivity
-  const { data: statusNum } = useReadContract({
+  // Read status separately — poll every 10s for active deals, stop when terminal
+  const isTerminalStatus = statusNum !== undefined && [3, 5, 6].includes(statusNum as number);
+  const { data: statusNum, refetch: refetchStatus } = useReadContract({
     address: dealAddress as `0x${string}`,
     abi: AGREEMENT_ABI,
     functionName: "status",
-    query: { enabled: !!isValidDeal },
-  }) as { data: number | undefined };
+    query: {
+      enabled: !!isValidDeal,
+      refetchInterval: isTerminalStatus ? false : 10_000,
+    },
+  }) as { data: number | undefined; refetch: () => void };
 
   // Read timeLeft
   const { data: timeLeft } = useReadContract({
@@ -426,11 +431,20 @@ export default function DealDetailPage() {
               </div>
             </div>
           </div>
-          <Link href="/dashboard">
-            <Button variant="ghost" size="sm" className="text-white/40 hover:text-white/70 flex-shrink-0 text-xs">
-              ← Dashboard
-            </Button>
-          </Link>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              onClick={() => { refetchDetails(); refetchStatus(); }}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+              title="Обновить статус"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+            <Link href="/dashboard">
+              <Button variant="ghost" size="sm" className="text-white/40 hover:text-white/70 text-xs">
+                ← Dashboard
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
 

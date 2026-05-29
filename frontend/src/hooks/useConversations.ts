@@ -41,11 +41,18 @@ export function useConversations() {
     if (address) load();
   }, [address, load]);
 
-  // Auto-poll every 30 s to pick up new messages in the sidebar
+  // Auto-poll every 30s as fallback
   useEffect(() => {
     if (!address) return;
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
+  }, [address, load]);
+
+  // Instant update when useDirectChat notifies of a new incoming message
+  useEffect(() => {
+    if (!address) return;
+    window.addEventListener('hexseal-conv-update', load);
+    return () => window.removeEventListener('hexseal-conv-update', load);
   }, [address, load]);
 
   // Re-sync immediately when the tab regains focus (stream may have gone stale)

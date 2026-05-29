@@ -228,6 +228,21 @@ export default function EditProfilePage() {
       const signature = await signMessageAsync({ message });
       await publishProfile({ ...profileData, signature });
 
+      // Clear stale caches so profile views immediately show new data
+      try {
+        const addr = address.toLowerCase();
+        // Old Signature404 cache key (pre-fill source for this form)
+        localStorage.removeItem(`sig404_profile_${addr}`);
+        // hexseal-public display cache — publishProfile updates it, but force
+        // other tabs/devices to re-fetch by bumping timestamp to 0
+        const displayKey = `hexseal-public_${addr}`;
+        const raw = localStorage.getItem(displayKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          localStorage.setItem(displayKey, JSON.stringify({ ...parsed, timestamp: 0 }));
+        }
+      } catch { /* ignore cache errors */ }
+
       setSuccess(true);
       toast.success(t("profile.save_success"));
       setTimeout(() => router.push(`/profile/${address}`), 1500);

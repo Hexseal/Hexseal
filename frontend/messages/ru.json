@@ -22,6 +22,12 @@
     "settings": "Настройки"
   },
   "board": {
+    "sort": {
+      "newest": "Новые",
+      "oldest": "Старые",
+      "highest": "Дороже",
+      "lowest": "Дешевле"
+    },
     "mobile_popup": {
       "title": "Доска",
       "jobs_label": "Работа",
@@ -649,7 +655,9 @@
     "minutes_ago": "{count}м назад",
     "hours_ago": "{count}ч назад",
     "days_ago": "{count}д назад",
-    "total_suffix": "/ {count} всего"
+    "total_suffix": "/ {count} всего",
+    "sort": "Сортировка",
+    "load_more": "Загрузить ещё"
   },
   "categories": {
     "design": "Дизайн",

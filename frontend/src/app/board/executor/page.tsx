@@ -16,7 +16,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import Link from "next/link";
-import { UserName } from "@/components/UserName";
+import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
@@ -229,29 +229,29 @@ function ServiceCard({
       onClick={onToggle}
     >
       {/* Row */}
-      <div className="flex items-center gap-3 px-4 py-4">
-        <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400/80 mt-0.5" />
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <UserAvatar address={service.executor} size={28} link />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 mb-0.5">
             <span className="font-semibold text-white/90 text-sm truncate">{service.title}</span>
             {isMyService && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
           </div>
-          <div className="flex items-center gap-2.5 text-xs flex-wrap">
+          <div className="flex items-center gap-2 text-xs flex-wrap">
             {catKey && (
               <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
                 {t(`categories.${catKey}`)}
               </span>
             )}
             <span className="font-bold text-white/75 font-mono">{fmtUSDC(service.price)} USDC</span>
-            <span className="text-white/25">·</span>
+            <span className="text-white/20">·</span>
             <span className="text-white/35">{Number(service.deadlineDays)}d</span>
-            <span className="text-white/25">·</span>
+            <span className="text-white/20">·</span>
             <span className="text-white/25">{REGION_LABELS[service.region]}</span>
             {Number(service.hiresCount) > 0 && (
               <>
-                <span className="text-white/25">·</span>
-                <span className="text-white/25">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
+                <span className="text-white/20">·</span>
+                <span className="text-emerald-400/50 font-mono text-[11px]">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
               </>
             )}
             {myPending && <span className="text-yellow-400/70 font-mono text-[11px]">{t("board.services.status_pending")}</span>}
@@ -331,6 +331,11 @@ export default function ExecutorBoardPage() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
   const [userRegion, setUserRegion]     = useState<number | null>(null);
   const [services, setServices]       = useState<Service[]>([]);
+
+  const PAGE_SIZE = 20;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  type SortKey = 'newest' | 'oldest' | 'highest' | 'lowest';
+  const [sortBy, setSortBy] = useState<SortKey>('newest');
   const [loadingList, setLoadingList] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
@@ -445,6 +450,7 @@ export default function ExecutorBoardPage() {
   }, []);
 
   const handleRegionChange = (v: number | null) => {
+    setVisibleCount(PAGE_SIZE);
     setRegionFilter(v);
     storeBoardRegion(v);
   };
@@ -462,12 +468,21 @@ export default function ExecutorBoardPage() {
     if (categoryFilter !== null) {
       list = list.filter(s => extractCategory(s.description) === categoryFilter);
     }
-    if (!searchQuery) return list;
-    const q = searchQuery.toLowerCase();
-    return list.filter(s =>
-      s.title.toLowerCase().includes(q) || s.executor.toLowerCase().includes(q)
-    );
-  }, [services, searchQuery, regionFilter, categoryFilter]);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(s =>
+        s.title.toLowerCase().includes(q) ||
+        s.description?.toLowerCase().includes(q) ||
+        s.executor.toLowerCase().includes(q)
+      );
+    }
+    switch (sortBy) {
+      case 'oldest':  return [...list].sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+      case 'highest': return [...list].sort((a, b) => Number(b.price) - Number(a.price));
+      case 'lowest':  return [...list].sort((a, b) => Number(a.price) - Number(b.price));
+      default:        return [...list].sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
+    }
+  }, [services, searchQuery, regionFilter, categoryFilter, sortBy]);
 
   const handleRequest = async (amountStr: string, daysStr: string, region: number) => {
     if (!requestModal || !walletClient || !publicClient || !address) return;
@@ -626,6 +641,22 @@ export default function ExecutorBoardPage() {
         </div>
 
 
+        {/* Sort controls */}
+        {!loadingList && filtered.length > 0 && (
+          <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+            <span className="text-xs text-white/25 mr-1">{t("common.sort")}:</span>
+            {(['newest','oldest','highest','lowest'] as const).map(key => (
+              <button key={key} onClick={() => { setSortBy(key); setVisibleCount(PAGE_SIZE); }}
+                className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                  sortBy === key ? 'bg-white/10 border-white/20 text-white/80' : 'border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50'
+                }`}>
+                {key === 'newest' ? t("board.sort.newest") : key === 'oldest' ? t("board.sort.oldest") : key === 'highest' ? t("board.sort.highest") : t("board.sort.lowest")}
+              </button>
+            ))}
+            <span className="ml-auto text-xs text-white/20">{Math.min(visibleCount, filtered.length)} / {filtered.length}</span>
+          </div>
+        )}
+
         {loadingList ? (
           <div className="flex items-center justify-center py-24 gap-2 text-white/30">
             <Loader2 className="w-5 h-5 animate-spin" />
@@ -646,32 +677,42 @@ export default function ExecutorBoardPage() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-3">
-            <AnimatePresence>
-              {filtered.map((svc, index) => (
-                <motion.div
-                  key={svc.serviceId}
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.97 }}
-                  transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
-                  whileHover={{ scale: 1.004 }}
-                  whileTap={{ scale: 0.993 }}
-                >
-                  <ServiceCard
-                    service={svc}
-                    address={address}
-                    isConnected={isConnected}
-                    myRequests={myRequests.filter(r => String(r.serviceId) === svc.serviceId)}
-                    onRequest={() => setRequestModal(svc)}
-                    isRequesting={isRequesting}
-                    expanded={expandedServiceId === svc.serviceId}
-                    onToggle={() => setExpandedServiceId(prev => prev === svc.serviceId ? null : svc.serviceId)}
-                  />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
+          <>
+            <div className="space-y-3">
+              <AnimatePresence>
+                {filtered.slice(0, visibleCount).map((svc, index) => (
+                  <motion.div
+                    key={svc.serviceId}
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.97 }}
+                    transition={{ duration: 0.22, delay: Math.min(index, 6) * 0.04 }}
+                    whileHover={{ scale: 1.004 }}
+                    whileTap={{ scale: 0.993 }}
+                  >
+                    <ServiceCard
+                      service={svc}
+                      address={address}
+                      isConnected={isConnected}
+                      myRequests={myRequests.filter(r => String(r.serviceId) === svc.serviceId)}
+                      onRequest={() => setRequestModal(svc)}
+                      isRequesting={isRequesting}
+                      expanded={expandedServiceId === svc.serviceId}
+                      onToggle={() => setExpandedServiceId(prev => prev === svc.serviceId ? null : svc.serviceId)}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+            {visibleCount < filtered.length && (
+              <button
+                onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
+                className="w-full mt-4 py-2.5 rounded-[14px] border border-white/[0.08] text-sm text-white/40 hover:text-white/70 hover:border-white/15 hover:bg-white/[0.03] transition-colors"
+              >
+                {t("common.load_more")} ({filtered.length - visibleCount})
+              </button>
+            )}
+          </>
         )}
       </div>
     </>

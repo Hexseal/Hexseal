@@ -12,13 +12,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "react-hot-toast";
 import {
-  DollarSign, Calendar, User, Clock,
+  DollarSign, Calendar, Clock,
   CheckCircle, XCircle, Loader2, ExternalLink, Users, Globe, MessageCircle,
   ChevronRight, AlertCircle, FileText,
 } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
+import { UserName, UserAvatar } from "@/components/UserName";
 interface JobRecord {
   client: string;
   title: string;
@@ -457,23 +458,28 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                         : "border-white/[0.07] bg-[#0d0d0f]"
                     }`}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <User className="w-3.5 h-3.5 text-white/30 flex-shrink-0" />
-                      <a
-                        href={explorerUrl('address', executor)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="font-mono text-sm text-white/60 hover:text-white/90 transition-colors truncate min-w-0"
-                      >
-                        {executor}
-                      </a>
-                      {isMe && <span className="text-xs text-white/30 flex-shrink-0">({t("common.you")})</span>}
-                      {isChosen && (
-                        <Badge className="text-xs border bg-violet-400/10 text-violet-400 border-violet-400/20 flex-shrink-0">
-                          Accepted
-                        </Badge>
-                      )}
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <UserAvatar address={executor} size={32} link />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <UserName address={executor} link className="text-sm font-medium text-white/80 hover:text-white truncate" />
+                          {isMe && <span className="text-xs text-white/30 flex-shrink-0">({t("common.you")})</span>}
+                          {isChosen && (
+                            <Badge className="text-xs border bg-violet-400/10 text-violet-400 border-violet-400/20 flex-shrink-0">
+                              Accepted
+                            </Badge>
+                          )}
+                        </div>
+                        <a
+                          href={explorerUrl('address', executor)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-mono text-[11px] text-white/30 hover:text-white/50 transition-colors truncate block"
+                        >
+                          {executor.slice(0, 10)}…{executor.slice(-8)}
+                        </a>
+                      </div>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {/* Chat button — client or any logged-in party */}

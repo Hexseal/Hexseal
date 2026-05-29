@@ -293,7 +293,7 @@ const AGR_STATUS_KEY: Record<number, string> = {
 export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelProps) {
   const { address } = useAccount();
   const t = useTranslations();
-  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, needsSetup } =
+  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup } =
     useDirectChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   const publicClient = usePublicClient();
@@ -1080,6 +1080,18 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                 )}
               </div>
             </div>
+          </div>
+        )}
+        {/* Stream dead banner */}
+        {streamDead && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 mx-1 mb-1 rounded-[12px] bg-yellow-500/10 border border-yellow-500/20">
+            <p className="text-xs text-yellow-400/80">Соединение прервано — новые сообщения не приходят</p>
+            <button
+              onClick={reconnect}
+              className="flex-shrink-0 text-xs font-medium text-yellow-400 hover:text-yellow-300 transition-colors"
+            >
+              Переподключиться
+            </button>
           </div>
         )}
         {uploadErr && <p className="text-xs text-red-400/60 px-1">{uploadErr}</p>}

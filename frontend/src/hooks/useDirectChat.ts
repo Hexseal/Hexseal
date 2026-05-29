@@ -40,6 +40,8 @@ export function useDirectChat(recipientAddress: string) {
   const [isInitialized,   setIsInitialized]   = useState(false);
   const [error,           setError]           = useState<string | null>(null);
   const [uploadProgress,  setUploadProgress]  = useState<number | null>(null);
+  const [streamDead,      setStreamDead]      = useState(false);
+  const [retryKey,        setRetryKey]        = useState(0);
 
   const clientRef       = useRef<XmtpClient | null>(null);
   const dmRef           = useRef<XmtpDm | null>(null);
@@ -53,6 +55,7 @@ export function useDirectChat(recipientAddress: string) {
     if (!walletClient || !recipientAddress) return;
     if (!isEnabled) { setIsLoading(false); return; }
 
+    setStreamDead(false);
     let cancelled = false;
 
     async function init() {
@@ -130,6 +133,8 @@ export function useDirectChat(recipientAddress: string) {
                     }
                     if (optIdx >= 0) return prev.map((m, i) => i === optIdx ? chat : m);
                   }
+                  // Notify conversation list to update immediately (only for incoming)
+                  if (!chat.isFromMe) window.dispatchEvent(new Event('hexseal-conv-update'));
                   return [...prev, chat];
                 });
               }
@@ -141,6 +146,8 @@ export function useDirectChat(recipientAddress: string) {
               await sleep(2000 * streamRetries);
             }
           }
+          // All retries exhausted — notify UI so user can manually reconnect
+          if (!cancelled) setStreamDead(true);
         };
         loop();
 
@@ -159,7 +166,7 @@ export function useDirectChat(recipientAddress: string) {
       streamRef.current?.return();
       streamRef.current = null;
     };
-  }, [walletClient, recipientAddress, isEnabled]);
+  }, [walletClient, recipientAddress, isEnabled, retryKey]);
 
   // ── Re-sync on window focus (stream may have gone stale in background) ───
   useEffect(() => {
@@ -258,5 +265,14 @@ export function useDirectChat(recipientAddress: string) {
     pushChatNotif(recipientRef.current, `📎 ${file.name}`, '/chat');
   }, []);
 
-  return { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, needsSetup: !isEnabled };
+  const reconnect = useCallback(() => {
+    setIsLoading(true);
+    setIsInitialized(false);
+    setMessages([]);
+    clientRef.current = null;
+    dmRef.current = null;
+    setRetryKey(k => k + 1);
+  }, []);
+
+  return { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup: !isEnabled };
 }
