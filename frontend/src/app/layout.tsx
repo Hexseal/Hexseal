@@ -83,7 +83,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Signature 404",
+  title: "Hexseal",
   description: "Reshape Digital Reality",
 };
 
@@ -108,7 +108,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Sig404" />
+        <meta name="apple-mobile-web-app-title" content="Hexseal" />
       </head>
       <body className={`${inter.variable} ${manrope.variable} ${spaceMono.variable} ${syne.variable} ${notoSansThai.variable} ${chonburi.variable} ${kanit.variable} ${unbounded.variable} ${jetbrainsMono.variable} min-h-screen flex flex-col`}>
         <Providers>

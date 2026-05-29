@@ -98,7 +98,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
                 className="opacity-75 group-hover:opacity-100 transition-opacity"
               />
               <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
-                Signature<span className="text-primary">404</span>
+                HEXSEAL<span className="text-primary"></span>
               </span>
             </Link>
           </div>
@@ -152,7 +152,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
                   className="opacity-80 group-hover:opacity-100 transition-opacity"
                 />
                 <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
-                  Signature<span className="text-primary">404</span>
+                  HEXSEAL<span className="text-primary">404</span>
                 </span>
               </Link>
             </div>
