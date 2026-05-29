@@ -75,10 +75,12 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
 }
 
 export default function NotificationsPage() {
-  const { isConnected } = useAccount();
+  const { isConnected, status } = useAccount();
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotifications();
   const { supported, subscribed, permission, loading: pushLoading, enable: enablePush, disable: disablePush } = usePushNotifications();
   const t = useTranslations();
+
+  if (status === 'reconnecting' || status === 'connecting') return null;
 
   if (!isConnected) {
     return (

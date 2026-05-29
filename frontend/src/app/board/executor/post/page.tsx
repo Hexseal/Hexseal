@@ -106,6 +106,7 @@ export default function PostServicePage() {
   const [errorMsg,    setErrorMsg]    = useState("");
   const [txHash,      setTxHash]      = useState("");
   const [serviceId,   setServiceId]   = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const parsedPrice = parseFloat(price || "0");
   const hasBalance  = usdcBalance >= feeAmount;
@@ -117,15 +118,17 @@ export default function PostServicePage() {
     if (!isConnected || !walletClient || !publicClient) { toast.error("Connect your wallet"); return; }
 
     const trimmedTitle = title.trim();
-    if (!trimmedTitle || trimmedTitle.length > 100) { toast.error("Title required (max 100 chars)"); return; }
-    if (!description.trim()) { toast.error("Description required"); return; }
-    if (!price || isNaN(parsedPrice) || parsedPrice < 1 || parsedPrice > MAX_PRICE) {
-      toast.error("Invalid price"); return;
-    }
     const parsedDeadline = parseInt(deadline, 10);
-    if (isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) {
-      toast.error("Deadline must be 1–365 days"); return;
-    }
+    const errs: Record<string, string> = {};
+    if (!trimmedTitle) errs.title = "Обязательное поле";
+    else if (trimmedTitle.length > 100) errs.title = "Максимум 100 символов";
+    if (!description.trim()) errs.description = "Обязательное поле";
+    if (!price || isNaN(parsedPrice) || parsedPrice < 1) errs.price = "Укажите цену от 1 USDC";
+    else if (parsedPrice > MAX_PRICE) errs.price = `Максимум ${MAX_PRICE} USDC`;
+    if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = "От 1 до 365 дней";
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
+    setFieldErrors({});
+
     if (!hasBalance) { toast.error(`Need ${feeAmount.toFixed(2)} USDC for PPP fee, have ${usdcBalance.toFixed(2)}`); return; }
 
     setStep("pending");
@@ -215,31 +218,39 @@ export default function PostServicePage() {
               <div className="space-y-1.5">
                 <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_service.field_title")}</Label>
                 <Input id="title" placeholder="e.g. Smart Contract Audit for DeFi Protocol" value={title}
-                  onChange={e => setTitle(e.target.value)} maxLength={100}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
-                <p className="text-xs text-white/25 text-right">{title.length}/100</p>
+                  onChange={e => { setTitle(e.target.value); if (fieldErrors.title) setFieldErrors(p => ({ ...p, title: "" })); }} maxLength={100}
+                  className={`bg-[#0d0d0f] placeholder:text-white/20 rounded-xl ${fieldErrors.title ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                <div className="flex justify-between">
+                  {fieldErrors.title ? <p className="text-xs text-red-400">{fieldErrors.title}</p> : <span />}
+                  <p className="text-xs text-white/25">{title.length}/100</p>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_service.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe your service, deliverables, tech stack, requirements…" value={description}
-                  onChange={e => setDescription(e.target.value)} rows={4} maxLength={500}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-xl" required />
-                <p className="text-xs text-white/25 text-right">{description.length}/500</p>
+                  onChange={e => { setDescription(e.target.value); if (fieldErrors.description) setFieldErrors(p => ({ ...p, description: "" })); }} rows={4} maxLength={500}
+                  className={`bg-[#0d0d0f] placeholder:text-white/20 resize-none rounded-xl ${fieldErrors.description ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                <div className="flex justify-between">
+                  {fieldErrors.description ? <p className="text-xs text-red-400">{fieldErrors.description}</p> : <span />}
+                  <p className="text-xs text-white/25">{description.length}/500</p>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="price" className="text-sm text-white/70">{t("board.post_service.field_price")}</Label>
                   <Input id="price" type="number" step="1" min="1" placeholder="100" value={price}
-                    onChange={e => setPrice(e.target.value)}
-                    className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-xl" required />
+                    onChange={e => { setPrice(e.target.value); if (fieldErrors.price) setFieldErrors(p => ({ ...p, price: "" })); }}
+                    className={`bg-[#0d0d0f] placeholder:text-white/20 rounded-xl ${fieldErrors.price ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                  {fieldErrors.price && <p className="text-xs text-red-400">{fieldErrors.price}</p>}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="deadline" className="text-sm text-white/70">{t("board.post_service.field_delivery")}</Label>
                   <Input id="deadline" type="number" min="1" max={MAX_DEADLINE} value={deadline}
-                    onChange={e => setDeadline(e.target.value)}
-                    className="bg-[#0d0d0f] border-white/[0.08] rounded-xl" required />
+                    onChange={e => { setDeadline(e.target.value); if (fieldErrors.deadline) setFieldErrors(p => ({ ...p, deadline: "" })); }}
+                    className={`bg-[#0d0d0f] rounded-xl ${fieldErrors.deadline ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                  {fieldErrors.deadline && <p className="text-xs text-red-400">{fieldErrors.deadline}</p>}
                 </div>
               </div>
 

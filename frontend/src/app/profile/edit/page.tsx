@@ -71,7 +71,7 @@ const ROLE_VALS: ('client' | 'executor' | 'both')[] = ['client', 'executor', 'bo
 
 export default function EditProfilePage() {
   const router = useRouter();
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const t = useTranslations();
@@ -237,6 +237,8 @@ export default function EditProfilePage() {
       setSubmitting(false);
     }
   };
+
+  if (status === 'reconnecting' || status === 'connecting') return null;
 
   if (!isConnected) {
     return (

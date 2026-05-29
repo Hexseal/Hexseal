@@ -321,7 +321,7 @@ function ServiceCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ExecutorBoardPage() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const t = useTranslations();
@@ -501,7 +501,35 @@ export default function ExecutorBoardPage() {
     }
   };
 
-  if (!mounted || !isConnected) {
+  // Wallet reconnecting on page reload — show skeleton to avoid flash of "connect" screen
+  if (!mounted || status === 'reconnecting' || status === 'connecting') {
+    return (
+      <div className="container mx-auto px-4 pt-4 pb-6 max-w-4xl space-y-3">
+        {[...Array(5)].map((_, i) => (
+          <motion.div
+            key={i}
+            className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[72px]"
+            animate={{ opacity: [0.4, 0.8, 0.4] }}
+            transition={{ repeat: Infinity, duration: 1.5, delay: i * 0.1 }}
+          >
+            <div className="flex items-center gap-3 px-4 py-4">
+              <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-white/[0.06]" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3.5 w-40 rounded-md bg-white/[0.06]" />
+                <div className="flex gap-2">
+                  <div className="h-2.5 w-16 rounded-md bg-white/[0.06]" />
+                  <div className="h-2.5 w-12 rounded-md bg-white/[0.06]" />
+                </div>
+              </div>
+              <div className="h-8 w-24 rounded-[10px] bg-white/[0.06] flex-shrink-0" />
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    );
+  }
+
+  if (!isConnected) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm">

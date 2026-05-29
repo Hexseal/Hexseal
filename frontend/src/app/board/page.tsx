@@ -299,7 +299,7 @@ function JobCard({
 }
 
 export default function BoardPage() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const t = useTranslations();
@@ -400,6 +400,15 @@ export default function BoardPage() {
     });
     return { appliedSet, applicantsMap };
   }, [applicantsResults, jobs, address]);
+
+  // Wallet reconnecting on page reload — show skeleton to avoid flash of "connect" screen
+  if (status === 'reconnecting' || status === 'connecting') {
+    return (
+      <div className="container mx-auto px-4 pt-4 pb-6 max-w-4xl space-y-3">
+        {[...Array(5)].map((_, i) => <JobCardSkeleton key={i} />)}
+      </div>
+    );
+  }
 
   if (!isConnected) {
     return (

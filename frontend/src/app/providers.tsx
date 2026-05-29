@@ -34,6 +34,7 @@ import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
 import { appChain, appChainId, isMainnet } from "@/config/chain";
 import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
+import { isPushSupported, enablePush } from "@/lib/webpush";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -111,6 +112,18 @@ function XmtpNotificationsMount() {
   return null;
 }
 
+// Silently re-registers push subscription on every page load if permission already granted.
+// Keeps the relayer's subscription list fresh after restarts or expiry.
+function PushAutoMount() {
+  const { address } = useAccount();
+  useEffect(() => {
+    if (!address || !isPushSupported()) return;
+    if (Notification.permission !== 'granted') return;
+    enablePush(address).catch(() => {});
+  }, [address]);
+  return null;
+}
+
 function ChainEnforcer() {
   const { isConnected } = useAccount();
   const chainId = useChainId();
@@ -154,6 +167,7 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
     <RainbowKitProvider theme={rkTheme}>
       <ChainEnforcer />
       <XmtpNotificationsMount />
+      <PushAutoMount />
       {children}
     </RainbowKitProvider>
   );

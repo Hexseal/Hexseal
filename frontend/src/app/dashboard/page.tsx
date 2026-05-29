@@ -81,7 +81,7 @@ function Tab({ active, onClick, children, count }: {
 type TabKey = 'active' | 'jobs' | 'services' | 'history';
 
 export default function DashboardPage() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
   const [refreshKey, setRefreshKey] = useState(0);
   const [tab, setTab] = useState<TabKey>('active');
   const t = useTranslations();
@@ -120,6 +120,8 @@ export default function DashboardPage() {
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
   const xp           = calcXP(allAgreements);
   const level        = xpLevel(xp);
+
+  if (status === 'reconnecting' || status === 'connecting') return null;
 
   if (!isConnected) {
     return (

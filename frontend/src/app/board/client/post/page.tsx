@@ -68,7 +68,7 @@ type Step = "form" | "uploading" | "pending" | "success" | "error";
 
 export default function PostJobPage() {
   const router = useRouter();
-  const { address, isConnected, chainId } = useAccount();
+  const { address, isConnected, chainId, status } = useAccount();
   const t = useTranslations();
   const { switchChain } = useSwitchChain();
   const { data: walletClient } = useWalletClient();
@@ -110,6 +110,7 @@ export default function PostJobPage() {
   const [errorMsg,   setErrorMsg]   = useState("");
   const [txHash,     setTxHash]     = useState("");
   const [jobId,      setJobId]      = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const parsedAmount = parseFloat(amount || "0");
   const totalNeeded  = parsedAmount + feeAmount;
@@ -122,15 +123,17 @@ export default function PostJobPage() {
     if (!isConnected || !walletClient || !publicClient) { toast.error("Connect your wallet"); return; }
 
     const trimmedTitle = title.trim();
-    if (!trimmedTitle || trimmedTitle.length > 100) { toast.error("Title required (max 100 chars)"); return; }
-    if (!description.trim()) { toast.error("Description required"); return; }
-    if (!amount || isNaN(parsedAmount) || parsedAmount <= 0 || parsedAmount > MAX_AMOUNT) {
-      toast.error("Invalid budget"); return;
-    }
     const parsedDeadline = parseInt(deadline, 10);
-    if (isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) {
-      toast.error("Deadline must be 1–365 days"); return;
-    }
+    const errs: Record<string, string> = {};
+    if (!trimmedTitle) errs.title = "Обязательное поле";
+    else if (trimmedTitle.length > 100) errs.title = "Максимум 100 символов";
+    if (!description.trim()) errs.description = "Обязательное поле";
+    if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) errs.amount = "Укажите сумму больше 0";
+    else if (parsedAmount > MAX_AMOUNT) errs.amount = `Максимум ${MAX_AMOUNT} USDC`;
+    if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = "От 1 до 365 дней";
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
+    setFieldErrors({});
+
     if (!hasBalance) { toast.error(`Need ${totalNeeded.toFixed(2)} USDC, have ${usdcBalance.toFixed(2)}`); return; }
 
     let termsHash: Hex = `0x${"0".repeat(64)}` as Hex;
@@ -192,6 +195,8 @@ export default function PostJobPage() {
     }
   };
 
+  if (status === 'reconnecting' || status === 'connecting') return null;
+
   if (!isConnected) {
     return (
       <div className="flex-1 flex items-center justify-center px-4">
@@ -239,30 +244,36 @@ export default function PostJobPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_job.field_title")}</Label>
                 <Input id="title" placeholder="e.g. Build a React Web Application" value={title}
-                  onChange={e => setTitle(e.target.value)} maxLength={100}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-[14px]" required />
-                <p className="text-xs text-white/25 text-right">{title.length}/100</p>
+                  onChange={e => { setTitle(e.target.value); if (fieldErrors.title) setFieldErrors(p => ({ ...p, title: "" })); }} maxLength={100}
+                  className={`bg-[#0d0d0f] placeholder:text-white/20 rounded-[14px] ${fieldErrors.title ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                <div className="flex justify-between">
+                  {fieldErrors.title ? <p className="text-xs text-red-400">{fieldErrors.title}</p> : <span />}
+                  <p className="text-xs text-white/25">{title.length}/100</p>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_job.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe requirements, deliverables…" value={description}
-                  onChange={e => setDescription(e.target.value)} rows={4}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-[14px]" required />
+                  onChange={e => { setDescription(e.target.value); if (fieldErrors.description) setFieldErrors(p => ({ ...p, description: "" })); }} rows={4}
+                  className={`bg-[#0d0d0f] placeholder:text-white/20 resize-none rounded-[14px] ${fieldErrors.description ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                {fieldErrors.description && <p className="text-xs text-red-400">{fieldErrors.description}</p>}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="amount" className="text-sm text-white/70">{t("board.post_job.field_budget")}</Label>
                   <Input id="amount" type="number" step="0.01" min="0" placeholder="100" value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-[14px]" required />
+                    onChange={e => { setAmount(e.target.value); if (fieldErrors.amount) setFieldErrors(p => ({ ...p, amount: "" })); }}
+                    className={`bg-[#0d0d0f] placeholder:text-white/20 rounded-[14px] ${fieldErrors.amount ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                  {fieldErrors.amount && <p className="text-xs text-red-400">{fieldErrors.amount}</p>}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="deadline" className="text-sm text-white/70">{t("board.post_job.field_deadline")}</Label>
                   <Input id="deadline" type="number" min="1" max={MAX_DEADLINE} value={deadline}
-                    onChange={e => setDeadline(e.target.value)}
-                    className="bg-[#0d0d0f] border-white/[0.08] rounded-[14px]" required />
+                    onChange={e => { setDeadline(e.target.value); if (fieldErrors.deadline) setFieldErrors(p => ({ ...p, deadline: "" })); }}
+                    className={`bg-[#0d0d0f] rounded-[14px] ${fieldErrors.deadline ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                  {fieldErrors.deadline && <p className="text-xs text-red-400">{fieldErrors.deadline}</p>}
                 </div>
               </div>
 

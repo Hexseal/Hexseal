@@ -89,7 +89,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
               </button>
             )}
             <Link href="/" className="flex items-center group">
-              <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
+              <span className="font-syne font-bold text-base tracking-wide" style={{ fontFamily: "var(--font-syne)" }}>
                 HEXSEAL
               </span>
             </Link>

@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract } from "wagmi";
 import { appChainId } from "@/config/chain";
@@ -44,7 +45,9 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   const { address, isConnected, status } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
@@ -133,19 +136,21 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
     }
   };
 
-  const handleDisconnect = () => {
-    disconnect();
-    // Clear cookie so middleware won't redirect back to /board
-    document.cookie = 'has-wallet=; path=/; max-age=0; SameSite=Lax';
-    // Clear wagmi + WalletConnect session storage to prevent auto-reconnect on mobile
-    try {
-      const keys = Object.keys(localStorage).filter(k =>
-        k.startsWith('wagmi') || k.startsWith('wc@') || k.startsWith('@walletconnect') || k === 'wallet-ever-connected'
-      );
-      keys.forEach(k => localStorage.removeItem(k));
-    } catch {}
-    window.location.href = "/";
-  };
+  const handleDisconnect = useCallback(() => {
+    setDisconnecting(true);
+    // Brief fade-out, then soft-navigate (no hard reload = no squeezing)
+    setTimeout(() => {
+      disconnect();
+      document.cookie = 'has-wallet=; path=/; max-age=0; SameSite=Lax';
+      try {
+        const keys = Object.keys(localStorage).filter(k =>
+          k.startsWith('wagmi') || k.startsWith('wc@') || k.startsWith('@walletconnect') || k === 'wallet-ever-connected'
+        );
+        keys.forEach(k => localStorage.removeItem(k));
+      } catch {}
+      router.push('/');
+    }, 280);
+  }, [disconnect, router]);
 
   if (!mounted || !isConnected || !address) {
     return (
@@ -163,6 +168,19 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   }
 
   return (
+    <>
+      {/* Full-screen fade-out overlay on disconnect */}
+      <AnimatePresence>
+        {disconnecting && (
+          <motion.div
+            className="fixed inset-0 bg-black z-[9999] pointer-events-none"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.25 }}
+          />
+        )}
+      </AnimatePresence>
+
     <DropdownMenu
       open={open}
       onOpenChange={(o) => { if (!o) setLangOpen(false); onOpenChange?.(o); }}
@@ -350,6 +368,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
 
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }
 

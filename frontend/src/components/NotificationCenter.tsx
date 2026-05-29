@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import Link from "next/link";
-import { Bell, Check, CheckCheck, Trash2, X, ExternalLink } from "lucide-react";
+import { Bell, CheckCheck, Trash2, X, ExternalLink, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useAccount } from "wagmi";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
 
@@ -64,8 +65,15 @@ interface Props {
 
 export default function NotificationCenter({ open, onOpenChange }: Props) {
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotifications();
+  const { address } = useAccount();
   const ref = useRef<HTMLDivElement>(null);
   const t = useTranslations();
+
+  const [xmtpEnabled, setXmtpEnabled] = useState(true);
+  useEffect(() => {
+    if (!address) return;
+    setXmtpEnabled(localStorage.getItem(`xmtp-registered-${address.toLowerCase()}`) === '1');
+  }, [address, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -169,6 +177,18 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
                 ))
               )}
             </div>
+
+            {/* Hint: enable XMTP for message notifications */}
+            {address && !xmtpEnabled && (
+              <Link
+                href="/chat"
+                onClick={() => onOpenChange(false)}
+                className="flex items-center gap-2 px-4 py-2.5 border-t border-white/[0.06] text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+              >
+                <MessageCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                Включи мессенджер чтобы получать уведомления о сообщениях
+              </Link>
+            )}
 
             {/* Footer */}
             <div className="border-t border-white/10 flex-shrink-0">
