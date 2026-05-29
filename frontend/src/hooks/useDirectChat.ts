@@ -237,17 +237,17 @@ export function useDirectChat(recipientAddress: string) {
       setUploadProgress(null);
     }
 
-    const { url, keyHex, ivHex, chunked, chunkCount, chunkSize } = result;
+    const { url, storjKey, keyHex, ivHex, chunked, chunkCount, chunkSize } = result;
     const chunkedOpts = chunked && chunkCount && chunkSize
       ? { chunked: true as const, chunkCount, chunkSize }
       : undefined;
 
-    const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex, chunkedOpts);
+    const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex, chunkedOpts, storjKey);
     setMessages((prev) => [...prev, {
       id: `opt-${Date.now()}`,
       from: myAddress,
       text: file.name,
-      attachment: { name: file.name, url, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex, ...chunkedOpts },
+      attachment: { name: file.name, url, storjKey, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex, ...chunkedOpts },
       timestamp: Date.now(),
       isFromMe: true,
     }]);

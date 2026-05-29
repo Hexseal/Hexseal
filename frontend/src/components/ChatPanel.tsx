@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/xmtp';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
-import { MAX_FILE_SIZE } from '@/lib/fileStorage';
+import { MAX_FILE_SIZE, refreshDownloadUrl } from '@/lib/fileStorage';
 import { useProfile } from '@/hooks/useProfile';
 
 const ZERO_HASH = ('0x' + '00'.repeat(32)) as `0x${string}`;
@@ -59,12 +59,23 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
     if (!a.key || !a.iv) { setSrc(a.url); return; }
     let active = true;
     setDecrypting(true);
-    decryptToObjectUrl(a.url, a.key, a.iv, a.mime)
+    const tryDecrypt = (url: string) => decryptToObjectUrl(url, a.key!, a.iv!, a.mime);
+    tryDecrypt(a.url)
       .then((url) => { if (active) setSrc(url); })
-      .catch(() => { if (active) setDecryptErr(true); })
+      .catch(async () => {
+        if (a.storjKey) {
+          try {
+            const fresh = await refreshDownloadUrl(a.storjKey);
+            const url = await tryDecrypt(fresh);
+            if (active) setSrc(url);
+            return;
+          } catch {}
+        }
+        if (active) setDecryptErr(true);
+      })
       .finally(() => { if (active) setDecrypting(false); });
     return () => { active = false; };
-  }, [a.url, a.key, a.iv, a.mime]);
+  }, [a.url, a.key, a.iv, a.mime, a.storjKey]);
 
   const rounded = isMe ? 'rounded-t-2xl rounded-bl-2xl rounded-br-sm' : 'rounded-t-2xl rounded-br-2xl rounded-bl-sm';
 
@@ -108,15 +119,30 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
     if (saving) return;
     if (!a.key || !a.iv) { window.open(a.url, '_blank'); return; }
     setSaving(true); setErr(false); setDlProgress(0);
-    try {
+
+    const doDownload = async (url: string) => {
       if (a.chunked && a.chunkCount && a.size) {
-        await decryptAndSaveChunked(a.url, a.key, a.iv, a.name, a.mime, a.chunkCount, a.chunkSize ?? CHUNK_SIZE, a.size, setDlProgress);
+        await decryptAndSaveChunked(url, a.key!, a.iv!, a.name, a.mime, a.chunkCount, a.chunkSize ?? CHUNK_SIZE, a.size, setDlProgress);
       } else {
-        await decryptAndSave(a.url, a.key, a.iv, a.name, a.mime);
+        await decryptAndSave(url, a.key!, a.iv!, a.name, a.mime);
       }
+    };
+
+    try {
+      await doDownload(a.url);
+    } catch {
+      // URL might be expired — try refreshing once if we have the Storj key
+      if (a.storjKey) {
+        try {
+          const fresh = await refreshDownloadUrl(a.storjKey);
+          await doDownload(fresh);
+        } catch { setErr(true); }
+      } else {
+        setErr(true);
+      }
+    } finally {
+      setSaving(false); setDlProgress(null);
     }
-    catch { setErr(true); }
-    finally { setSaving(false); setDlProgress(null); }
   };
 
   return (
@@ -290,6 +316,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   const [sending, setSending]       = useState(false);
   const [uploading, setUploading]   = useState(false);
   const [uploadErr, setUploadErr]   = useState<string | null>(null);
+  const [pendingFile, setPendingFile]         = useState<File | null>(null);
+  const [pendingPreview, setPendingPreview]   = useState<string | null>(null);
   const [copied, setCopied]         = useState(false);
   const [atBottom, setAtBottom]     = useState(true);
   const [showSearch, setShowSearch] = useState(false);
@@ -434,16 +462,42 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
     setUploadErr(null);
     if (file.size > MAX_FILE_SIZE) { setUploadErr('File too large. Maximum is 5 GB.'); return; }
+    // Show preview — don't upload yet
+    if (file.type.startsWith('image/')) {
+      setPendingPreview(URL.createObjectURL(file));
+    } else {
+      setPendingPreview(null);
+    }
+    setPendingFile(file);
+  };
+
+  const handleFileSend = async () => {
+    if (!pendingFile) return;
     setUploading(true);
-    try { await sendFile(file); setAtBottom(true); }
-    catch (err: unknown) { setUploadErr(err instanceof Error ? err.message : 'Upload failed'); }
-    finally { setUploading(false); }
+    setUploadErr(null);
+    try {
+      await sendFile(pendingFile);
+      setAtBottom(true);
+      setPendingFile(null);
+      setPendingPreview(null);
+    } catch (err: unknown) {
+      setUploadErr(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFileCancel = () => {
+    if (pendingPreview) URL.revokeObjectURL(pendingPreview);
+    setPendingFile(null);
+    setPendingPreview(null);
+    setUploadErr(null);
   };
 
   const handleDealAction = async (action: 'accept' | 'reject' | 'release' | 'dispute' | 'markDone') => {
@@ -957,6 +1011,53 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           zIndex: 10,
         }}
       >
+        {/* Pending file preview + disclaimer */}
+        {pendingFile && !uploading && (
+          <div className="mx-1 mb-1 rounded-[16px] border border-white/[0.10] bg-[#111113] overflow-hidden">
+            {pendingPreview && (
+              <div className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={pendingPreview} alt={pendingFile.name} className="w-full max-h-48 object-cover" />
+              </div>
+            )}
+            <div className="px-3 py-2.5 flex items-start gap-2.5">
+              {!pendingPreview && (
+                <div className="w-9 h-9 rounded-xl bg-white/8 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <FileText className="w-4 h-4 text-white/40" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white/80 font-medium truncate">{pendingFile.name}</p>
+                <p className="text-xs text-white/35 mt-0.5">
+                  {pendingFile.size < 1024 * 1024
+                    ? `${(pendingFile.size / 1024).toFixed(1)} KB`
+                    : `${(pendingFile.size / (1024 * 1024)).toFixed(1)} MB`}
+                </p>
+                <div className="flex items-center gap-1 mt-1.5">
+                  <Lock className="w-2.5 h-2.5 text-white/25 flex-shrink-0" />
+                  <p className="text-[11px] text-white/25 leading-tight">
+                    Файл будет зашифрован E2E и удалён через 7 дней
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0 ml-1">
+                <button
+                  onClick={handleFileCancel}
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-white/8 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={handleFileSend}
+                  className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-primary text-white text-xs font-medium hover:bg-primary/85 active:scale-95 transition-all"
+                >
+                  <Send className="w-3 h-3" />
+                  {t("chat.send")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
         {uploadErr && <p className="text-xs text-red-400/60 px-1">{uploadErr}</p>}
         <div className="flex items-end gap-2">

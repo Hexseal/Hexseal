@@ -140,8 +140,9 @@ const STORJ_ACCESS    = process.env.STORJ_ACCESS_KEY;
 const STORJ_SECRET    = process.env.STORJ_SECRET_KEY;
 const BUCKET_FILES    = process.env.STORJ_BUCKET_FILES  || 'hexseal-files';   // encrypted chat files (18-day TTL)
 const BUCKET_PUBLIC   = process.env.STORJ_BUCKET_PUBLIC || 'hexseal-public';  // permanent public files (profiles, avatars)
-const FILE_TTL_S      = 18 * 24 * 60 * 60; // 18 days in seconds
+const FILE_TTL_S      = 7 * 24 * 60 * 60; // 7 days — aligns with S3 presigned URL max
 const FILE_TTL_MS     = FILE_TTL_S * 1000;
+const URL_TTL_S       = FILE_TTL_S;        // URL and physical TTL are the same
 
 if (!STORJ_ACCESS || !STORJ_SECRET) {
   console.warn('[s3] STORJ_ACCESS_KEY / STORJ_SECRET_KEY not set — file endpoints disabled');
@@ -369,12 +370,33 @@ app.post('/files/presign', async (req, res) => {
       getSignedUrl(s3, new GetObjectCommand({
         Bucket: BUCKET_FILES,
         Key: key,
-      }), { expiresIn: FILE_TTL_S }),
+      }), { expiresIn: URL_TTL_S }),
     ]);
 
-    res.json({ uploadUrl, downloadUrl, key, expiresIn: '18 days' });
+    res.json({ uploadUrl, downloadUrl, key, expiresIn: '7 days' });
   } catch (err) {
     console.error('[files/presign]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Refresh download URL for an existing chat file ──────────────────────────
+// Called when a stored presigned URL has expired (after 6 days) but the file
+// still exists on Storj (within the 18-day physical TTL).
+app.post('/files/refresh-url', async (req, res) => {
+  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+  try {
+    const { key } = req.body || {};
+    if (!key || typeof key !== 'string' || key.includes('/') || key.includes('..')) {
+      return res.status(400).json({ error: 'Invalid key' });
+    }
+    const downloadUrl = await getSignedUrl(s3, new GetObjectCommand({
+      Bucket: BUCKET_FILES,
+      Key: key,
+    }), { expiresIn: URL_TTL_S });
+    res.json({ downloadUrl });
+  } catch (err) {
+    console.error('[files/refresh-url]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -479,7 +501,7 @@ app.post('/files/multipart/complete', async (req, res) => {
     const downloadUrl = await getSignedUrl(s3, new GetObjectCommand({
       Bucket: BUCKET_FILES,
       Key: key,
-    }), { expiresIn: FILE_TTL_S });
+    }), { expiresIn: URL_TTL_S });
 
     res.json({ downloadUrl });
   } catch (err) {

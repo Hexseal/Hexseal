@@ -24,7 +24,7 @@ export async function uploadEncryptedFile(
   encryptedBlob: File | Blob,
   originalName: string,
   onProgress?: (pct: number) => void,
-): Promise<{ url: string }> {
+): Promise<{ url: string; storjKey: string }> {
   const ext = originalName.includes('.') ? `.${originalName.split('.').pop()!.slice(0, 10)}` : '';
 
   const presignRes = await fetch(`${RELAYER_URL}/files/presign`, {
@@ -36,7 +36,9 @@ export async function uploadEncryptedFile(
     const err = await presignRes.json().catch(() => ({})) as { error?: string };
     throw new Error(err.error ?? 'Failed to get upload URL');
   }
-  const { uploadUrl, downloadUrl } = await presignRes.json() as { uploadUrl: string; downloadUrl: string };
+  const { uploadUrl, downloadUrl, key: storjKey } = await presignRes.json() as {
+    uploadUrl: string; downloadUrl: string; key: string;
+  };
 
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -50,7 +52,19 @@ export async function uploadEncryptedFile(
     xhr.send(encryptedBlob);
   });
 
-  return { url: downloadUrl };
+  return { url: downloadUrl, storjKey };
+}
+
+/** Refresh an expired presigned download URL using the Storj object key. */
+export async function refreshDownloadUrl(storjKey: string): Promise<string> {
+  const res = await fetch(`${RELAYER_URL}/files/refresh-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: storjKey }),
+  });
+  if (!res.ok) throw new Error('Failed to refresh download URL');
+  const { downloadUrl } = await res.json() as { downloadUrl: string };
+  return downloadUrl;
 }
 
 // ─── Multipart upload (large files) ──────────────────────────────────────────
@@ -59,7 +73,7 @@ async function uploadEncryptedFileMultipart(
   file: File,
   originalName: string,
   onProgress?: (pct: number) => void,
-): Promise<{ url: string; keyHex: string; ivHex: string; chunkCount: number }> {
+): Promise<{ url: string; storjKey: string; keyHex: string; ivHex: string; chunkCount: number }> {
   const ext        = originalName.includes('.') ? `.${originalName.split('.').pop()!.slice(0, 10)}` : '';
   const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
 
@@ -104,7 +118,7 @@ async function uploadEncryptedFileMultipart(
     const { downloadUrl } = await completeRes.json() as { downloadUrl: string };
 
     onProgress?.(100);
-    return { url: downloadUrl, keyHex, ivHex, chunkCount };
+    return { url: downloadUrl, storjKey, keyHex, ivHex, chunkCount };
 
   } catch (err) {
     // Best-effort abort to free Storj storage
@@ -121,6 +135,7 @@ async function uploadEncryptedFileMultipart(
 
 export type UploadResult = {
   url: string;
+  storjKey: string;
   keyHex: string;
   ivHex: string;
   chunked: boolean;
@@ -147,11 +162,11 @@ export async function uploadFileWithEncryption(
     // In-memory path — single PUT
     const { encryptedBlob, keyHex, ivHex } = await encryptFile(file);
     onProgress?.(50);
-    const { url } = await uploadEncryptedFile(encryptedBlob, originalName, (p) => onProgress?.(50 + p / 2));
-    return { url, keyHex, ivHex, chunked: false };
+    const { url, storjKey } = await uploadEncryptedFile(encryptedBlob, originalName, (p) => onProgress?.(50 + p / 2));
+    return { url, storjKey, keyHex, ivHex, chunked: false };
   }
 
   // Chunked path — multipart upload
-  const { url, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress);
-  return { url, keyHex, ivHex, chunked: true, chunkCount, chunkSize: CHUNK_SIZE };
+  const { url, storjKey, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress);
+  return { url, storjKey, keyHex, ivHex, chunked: true, chunkCount, chunkSize: CHUNK_SIZE };
 }

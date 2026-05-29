@@ -29,7 +29,8 @@ export type ChatMessage = {
   isFromMe: boolean;
   attachment?: {          // present for file messages
     name: string;
-    url: string;          // URL to (encrypted) blob on Storj
+    url: string;          // presigned download URL (expires in 6 days)
+    storjKey?: string;    // Storj object key — used to refresh expired URL
     size?: number;        // original plaintext file size in bytes
     mime?: string;
     key?: string;         // AES-256-GCM key, hex
@@ -54,8 +55,9 @@ export function encodeFileMessage(
   key?: string,
   iv?:  string,
   chunkedOpts?: { chunked: true; chunkCount: number; chunkSize: number },
+  storjKey?: string,
 ): string {
-  return JSON.stringify({ _type: 'enc_file', name, url, size, mime, key, iv, ...chunkedOpts });
+  return JSON.stringify({ _type: 'enc_file', name, url, storjKey, size, mime, key, iv, ...chunkedOpts });
 }
 
 export type XmtpClient = Client;
@@ -258,6 +260,7 @@ function parseContent(msg: DecodedMessage): ParsedContent | null {
           attachment: {
             name:       p.name,
             url:        p.url,
+            storjKey:   typeof p.storjKey   === 'string'  ? p.storjKey   : undefined,
             size:       typeof p.size       === 'number'  ? p.size       : undefined,
             mime:       typeof p.mime       === 'string'  ? p.mime       : undefined,
             key:        typeof p.key        === 'string'  ? p.key        : undefined,
