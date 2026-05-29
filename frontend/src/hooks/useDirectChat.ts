@@ -222,7 +222,7 @@ export function useDirectChat(recipientAddress: string) {
   }, []);
 
   // ── Send file (encrypt → upload → XMTP) ──────────────────────────────────
-  const sendFile = useCallback(async (file: File) => {
+  const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
     const xmtp = clientRef.current;
     const dm   = dmRef.current;
     if (!xmtp || !dm) throw new Error('Chat not initialized');
@@ -232,10 +232,12 @@ export function useDirectChat(recipientAddress: string) {
     setUploadProgress(0);
     let result: Awaited<ReturnType<typeof uploadFileWithEncryption>>;
     try {
-      result = await uploadFileWithEncryption(file, file.name, setUploadProgress);
+      result = await uploadFileWithEncryption(file, file.name, setUploadProgress, signal);
     } finally {
       setUploadProgress(null);
     }
+
+    signal?.throwIfAborted();
 
     const { url, storjKey, keyHex, ivHex, chunked, chunkCount, chunkSize } = result;
     const chunkedOpts = chunked && chunkCount && chunkSize

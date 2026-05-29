@@ -74,11 +74,11 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div
-          className="flex items-center justify-between px-3 py-4 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
+          className="flex items-center justify-between px-4 py-4 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
           style={glassStyle}
         >
           {/* Left: back + logo */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2.5">
             {showBack && (
               <button
                 onClick={() => router.back()}
@@ -89,7 +89,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
               </button>
             )}
             <Link href="/" className="flex items-center group">
-              <span className="font-syne font-bold text-base tracking-wide" style={{ fontFamily: "var(--font-syne)" }}>
+              <span className="font-syne font-bold text-[17px] tracking-wide" style={{ fontFamily: "var(--font-syne)" }}>
                 HEXSEAL
               </span>
             </Link>
@@ -119,13 +119,13 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
       >
         <div
-          className="max-w-screen-xl mx-auto bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[26px] h-[64px] flex items-center px-4"
+          className="max-w-screen-xl mx-auto bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[26px] h-[64px] flex items-center px-5"
           style={glassStyle}
         >
           <div className="grid grid-cols-[auto_1fr_auto] items-center w-full gap-4">
 
             {/* Left: back + brand */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2.5">
               {showBack && (
                 <button
                   onClick={() => router.back()}
@@ -136,7 +136,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
                 </button>
               )}
               <Link href="/" className="flex items-center group">
-                <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
+                <span className="font-syne font-bold text-[17px] tracking-wide" style={{ fontFamily: "var(--font-syne)" }}>
                   HEXSEAL
                 </span>
               </Link>

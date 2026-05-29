@@ -318,6 +318,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   const [uploadErr, setUploadErr]   = useState<string | null>(null);
   const [pendingFile, setPendingFile]         = useState<File | null>(null);
   const [pendingPreview, setPendingPreview]   = useState<string | null>(null);
+  const uploadAbortRef                        = useRef<AbortController | null>(null);
   const [copied, setCopied]         = useState(false);
   const [atBottom, setAtBottom]     = useState(true);
   const [showSearch, setShowSearch] = useState(false);
@@ -479,21 +480,28 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
 
   const handleFileSend = async () => {
     if (!pendingFile) return;
+    const controller = new AbortController();
+    uploadAbortRef.current = controller;
     setUploading(true);
     setUploadErr(null);
     try {
-      await sendFile(pendingFile);
+      await sendFile(pendingFile, controller.signal);
       setAtBottom(true);
+      if (pendingPreview) URL.revokeObjectURL(pendingPreview);
       setPendingFile(null);
       setPendingPreview(null);
     } catch (err: unknown) {
-      setUploadErr(err instanceof Error ? err.message : 'Upload failed');
+      const isAbort = err instanceof DOMException && err.name === 'AbortError';
+      if (!isAbort) setUploadErr(err instanceof Error ? err.message : 'Upload failed');
     } finally {
+      uploadAbortRef.current = null;
       setUploading(false);
     }
   };
 
   const handleFileCancel = () => {
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = null;
     if (pendingPreview) URL.revokeObjectURL(pendingPreview);
     setPendingFile(null);
     setPendingPreview(null);
@@ -1011,14 +1019,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
           zIndex: 10,
         }}
       >
-        {/* Pending file preview + disclaimer */}
-        {pendingFile && !uploading && (
+        {/* Pending file preview + disclaimer (visible before AND during upload) */}
+        {pendingFile && (
           <div className="mx-1 mb-1 rounded-[16px] border border-white/[0.10] bg-[#111113] overflow-hidden">
             {pendingPreview && (
-              <div className="relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={pendingPreview} alt={pendingFile.name} className="w-full max-h-48 object-cover" />
-              </div>
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={pendingPreview} alt={pendingFile.name} className="w-full max-h-48 object-cover" />
             )}
             <div className="px-3 py-2.5 flex items-start gap-2.5">
               {!pendingPreview && (
@@ -1033,41 +1039,58 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                     ? `${(pendingFile.size / 1024).toFixed(1)} KB`
                     : `${(pendingFile.size / (1024 * 1024)).toFixed(1)} MB`}
                 </p>
-                <div className="flex items-center gap-1 mt-1.5">
-                  <Lock className="w-2.5 h-2.5 text-white/25 flex-shrink-0" />
-                  <p className="text-[11px] text-white/25 leading-tight">
-                    Файл будет зашифрован E2E и удалён через 7 дней
-                  </p>
-                </div>
+                {uploading ? (
+                  /* Progress bar replaces disclaimer during upload */
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full transition-all duration-200"
+                        style={{ width: `${uploadProgress ?? 0}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-white/35 tabular-nums w-7 text-right flex-shrink-0">
+                      {uploadProgress ?? 0}%
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 mt-1.5">
+                    <Lock className="w-2.5 h-2.5 text-white/25 flex-shrink-0" />
+                    <p className="text-[11px] text-white/25 leading-tight">
+                      Зашифрован E2E · удалится через 7 дней
+                    </p>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0 ml-1">
+              <div className="flex items-center gap-1.5 flex-shrink-0 ml-1 mt-0.5">
                 <button
                   onClick={handleFileCancel}
+                  title={uploading ? 'Отменить загрузку' : 'Убрать файл'}
                   className="w-7 h-7 rounded-full flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-white/8 transition-colors"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
-                <button
-                  onClick={handleFileSend}
-                  className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-primary text-white text-xs font-medium hover:bg-primary/85 active:scale-95 transition-all"
-                >
-                  <Send className="w-3 h-3" />
-                  {t("chat.send")}
-                </button>
+                {!uploading && (
+                  <button
+                    onClick={handleFileSend}
+                    className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-primary text-white text-xs font-medium hover:bg-primary/85 active:scale-95 transition-all"
+                  >
+                    <Send className="w-3 h-3" />
+                    {t("chat.send")}
+                  </button>
+                )}
               </div>
             </div>
           </div>
         )}
-        {uploadProgress !== null && <UploadProgress pct={uploadProgress} />}
         {uploadErr && <p className="text-xs text-red-400/60 px-1">{uploadErr}</p>}
         <div className="flex items-end gap-2">
           <input ref={fileRef} type="file" className="hidden" tabIndex={-1} onChange={handleFileChange} />
           <button
-            onClick={() => { if (!isInitialized || uploading || !dealContext) return; fileRef.current?.click(); }}
-            disabled={!isInitialized || uploading || !dealContext}
+            onClick={() => { if (!isInitialized || uploading || pendingFile || !dealContext) return; fileRef.current?.click(); }}
+            disabled={!isInitialized || uploading || !!pendingFile || !dealContext}
             title={dealContext ? t("chat.attach_file_title") : t("chat.files_deal_only")}
             className="w-9 h-9 rounded-full flex items-center justify-center text-white/30 hover:text-white/65 hover:bg-white/[0.07] disabled:opacity-10 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
-            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+            <Paperclip className="w-4 h-4" />
           </button>
           <textarea
             ref={textareaRef}

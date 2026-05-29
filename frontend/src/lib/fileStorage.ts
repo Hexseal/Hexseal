@@ -24,6 +24,7 @@ export async function uploadEncryptedFile(
   encryptedBlob: File | Blob,
   originalName: string,
   onProgress?: (pct: number) => void,
+  signal?: AbortSignal,
 ): Promise<{ url: string; storjKey: string }> {
   const ext = originalName.includes('.') ? `.${originalName.split('.').pop()!.slice(0, 10)}` : '';
 
@@ -31,6 +32,7 @@ export async function uploadEncryptedFile(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ext }),
+    signal,
   });
   if (!presignRes.ok) {
     const err = await presignRes.json().catch(() => ({})) as { error?: string };
@@ -47,6 +49,8 @@ export async function uploadEncryptedFile(
     };
     xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error(`Storage error ${xhr.status}`));
     xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
     xhr.open('PUT', uploadUrl);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.send(encryptedBlob);
@@ -73,6 +77,7 @@ async function uploadEncryptedFileMultipart(
   file: File,
   originalName: string,
   onProgress?: (pct: number) => void,
+  signal?: AbortSignal,
 ): Promise<{ url: string; storjKey: string; keyHex: string; ivHex: string; chunkCount: number }> {
   const ext        = originalName.includes('.') ? `.${originalName.split('.').pop()!.slice(0, 10)}` : '';
   const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
@@ -82,6 +87,7 @@ async function uploadEncryptedFileMultipart(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ext, chunkCount }),
+    signal,
   });
   if (!createRes.ok) {
     const err = await createRes.json().catch(() => ({})) as { error?: string };
@@ -96,10 +102,12 @@ async function uploadEncryptedFileMultipart(
   try {
     // 2. Encrypt in 8 MB chunks; upload each chunk as a multipart part
     const { keyHex, ivHex } = await encryptFileChunked(file, async (chunk, index, total) => {
+      signal?.throwIfAborted();
       const res = await fetch(partUrls[index], {
         method: 'PUT',
         body: chunk,
         headers: { 'Content-Type': 'application/octet-stream' },
+        signal,
       });
       if (!res.ok) throw new Error(`Part ${index + 1} upload failed (${res.status})`);
       onProgress?.(Math.round(((index + 1) / total) * 95)); // 0 → 95%
@@ -110,6 +118,7 @@ async function uploadEncryptedFileMultipart(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uploadId, key: storjKey }),
+      signal,
     });
     if (!completeRes.ok) {
       const err = await completeRes.json().catch(() => ({})) as { error?: string };
@@ -152,6 +161,7 @@ export async function uploadFileWithEncryption(
   file: File,
   originalName: string,
   onProgress?: (pct: number) => void,
+  signal?: AbortSignal,
 ): Promise<UploadResult> {
   if (file.size > MAX_FILE_SIZE) {
     const mb = MAX_FILE_SIZE / (1024 * 1024 * 1024);
@@ -159,14 +169,13 @@ export async function uploadFileWithEncryption(
   }
 
   if (file.size <= MULTIPART_THRESHOLD) {
-    // In-memory path — single PUT
     const { encryptedBlob, keyHex, ivHex } = await encryptFile(file);
+    signal?.throwIfAborted();
     onProgress?.(50);
-    const { url, storjKey } = await uploadEncryptedFile(encryptedBlob, originalName, (p) => onProgress?.(50 + p / 2));
+    const { url, storjKey } = await uploadEncryptedFile(encryptedBlob, originalName, (p) => onProgress?.(50 + p / 2), signal);
     return { url, storjKey, keyHex, ivHex, chunked: false };
   }
 
-  // Chunked path — multipart upload
-  const { url, storjKey, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress);
+  const { url, storjKey, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress, signal);
   return { url, storjKey, keyHex, ivHex, chunked: true, chunkCount, chunkSize: CHUNK_SIZE };
 }
