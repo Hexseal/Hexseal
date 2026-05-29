@@ -87,7 +87,11 @@ const installIdKey = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
 
 // ─── Signer ───────────────────────────────────────────────────────────────────
 
-export function createXmtpSigner(walletClient: WalletClient): Signer {
+export function createXmtpSigner(
+  walletClient: WalletClient,
+  onSignStep?: (step: number) => void,
+): Signer {
+  let signCount = 0;
   return {
     type: 'EOA' as const,
     getIdentifier: () => toIdentifier(walletClient.account!.address),
@@ -98,6 +102,8 @@ export function createXmtpSigner(walletClient: WalletClient): Signer {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     getChainId: () => BigInt(8453) as any,
     signMessage: async (message: string): Promise<Uint8Array> => {
+      signCount++;
+      onSignStep?.(signCount);
       const sig = await walletClient.signMessage({
         account: walletClient.account!,
         message,
@@ -114,7 +120,7 @@ export function createXmtpSigner(walletClient: WalletClient): Signer {
 const _clientCache:  Map<string, Client>          = new Map();
 const _initPromises: Map<string, Promise<Client>> = new Map();
 
-export async function initXmtpClient(walletClient: WalletClient): Promise<Client> {
+export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (step: number) => void): Promise<Client> {
   // XMTP WASM requires OPFS (Origin Private File System) which is only available
   // on secure contexts (localhost or https). Check BEFORE spawning the worker so
   // the error surfaces on the main thread as a friendly message rather than
@@ -139,7 +145,7 @@ export async function initXmtpClient(walletClient: WalletClient): Promise<Client
 
   const promise = (async () => {
     try {
-      const signer = createXmtpSigner(walletClient);
+      const signer = createXmtpSigner(walletClient, onSignStep);
       // Note: dbEncryptionKey is silently ignored by the XMTP WASM runtime.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const client = await Client.create(signer, { env: 'production' } as any);

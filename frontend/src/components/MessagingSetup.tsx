@@ -7,7 +7,7 @@ import { useXmtpStatus } from '@/hooks/useXmtpStatus';
 import { useTranslations } from 'next-intl';
 
 export function MessagingSetup() {
-  const { isEnabled, isEnabling, error, enable } = useXmtpStatus();
+  const { isEnabled, isEnabling, signStep, error, enable } = useXmtpStatus();
   const t = useTranslations();
 
   if (isEnabled) {
@@ -48,7 +48,9 @@ export function MessagingSetup() {
             {isEnabling ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                {t("messaging.signing")}
+                {signStep > 0
+                  ? `${t("messaging.signing")} ${signStep}/2`
+                  : t("messaging.signing")}
               </>
             ) : (
               <>

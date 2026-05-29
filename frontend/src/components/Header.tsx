@@ -2,7 +2,6 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useAccount } from "wagmi";
 import { usePathname, useRouter } from "next/navigation";
 import WalletMenu from "@/components/WalletMenu";
@@ -89,16 +88,9 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
                 <ArrowLeft className="w-4 h-4" />
               </button>
             )}
-            <Link href="/" className="flex items-center gap-2 group">
-              <Image
-                src="/hexseallogo.png"
-                alt="Hexseal"
-                width={22}
-                height={22}
-                className="opacity-75 group-hover:opacity-100 transition-opacity"
-              />
+            <Link href="/" className="flex items-center group">
               <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
-                HEXSEAL<span className="text-primary"></span>
+                HEXSEAL
               </span>
             </Link>
           </div>
@@ -143,16 +135,9 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
                   <ArrowLeft className="w-4 h-4" />
                 </button>
               )}
-              <Link href="/" className="flex items-center gap-2.5 group">
-                <Image
-                  src="/hexseallogo.png"
-                  alt="Hexseal"
-                  width={24}
-                  height={24}
-                  className="opacity-80 group-hover:opacity-100 transition-opacity"
-                />
+              <Link href="/" className="flex items-center group">
                 <span className="font-syne font-bold text-sm tracking-tight" style={{ fontFamily: "var(--font-syne)" }}>
-                  HEXSEAL<span className="text-primary">404</span>
+                  HEXSEAL
                 </span>
               </Link>
             </div>

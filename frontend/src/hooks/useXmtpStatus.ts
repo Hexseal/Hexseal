@@ -25,6 +25,7 @@ export function useXmtpStatus() {
 
   const [isEnabled,  setIsEnabled]  = useState(false);
   const [isEnabling, setIsEnabling] = useState(false);
+  const [signStep,   setSignStep]   = useState(0);
   const [error,      setError]      = useState<string | null>(null);
   const lockRef = useRef(false); // prevents re-entry across React re-renders
 
@@ -48,9 +49,10 @@ export function useXmtpStatus() {
     if (lockRef.current) return;
     lockRef.current = true;
     setIsEnabling(true);
+    setSignStep(0);
     setError(null);
     try {
-      await initXmtpClient(walletClient);
+      await initXmtpClient(walletClient, setSignStep);
       localStorage.setItem(flagKey(walletClient.account.address), '1');
       _notifyEnabled(); // update all other hook instances in this tab
       setIsEnabled(true);
@@ -75,5 +77,5 @@ export function useXmtpStatus() {
     }
   }, [walletClient]);
 
-  return { isEnabled, isEnabling, error, enable };
+  return { isEnabled, isEnabling, signStep, error, enable };
 }
