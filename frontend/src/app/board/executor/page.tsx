@@ -202,18 +202,16 @@ function RequestModal({
 
 function IncomingRequestsPanel({
   address,
-  walletClient,
-  publicClient,
   services,
   onRefresh,
 }: {
   address: string;
-  walletClient: ReturnType<typeof useWalletClient>["data"];
-  publicClient: ReturnType<typeof usePublicClient>;
   services: Service[];
   onRefresh: () => void;
 }) {
   const t = useTranslations();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
   const [acting, setActing] = useState<string | null>(null);
 
   const { data: myServiceIds } = useReadContract({
@@ -779,8 +777,6 @@ export default function ExecutorBoardPage() {
         {isConnected && address && (
           <IncomingRequestsPanel
             address={address}
-            walletClient={walletClient}
-            publicClient={publicClient}
             services={services}
             onRefresh={loadServices}
           />

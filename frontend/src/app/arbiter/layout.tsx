@@ -18,13 +18,22 @@ export default function ArbiterLayout({ children }: { children: React.ReactNode 
     functionName: "owner",
   }) as { data: string | undefined };
 
-  const { data: isArbiter, isLoading } = useReadContract({
+  const { data: isArbiter, isLoading: loadingArbiter } = useReadContract({
     address: CONTRACTS.diamond,
     abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "isRegisteredArbiter",
     args: [address ?? "0x0000000000000000000000000000000000000000"],
     query: { enabled: !!address },
   }) as { data: boolean | undefined; isLoading: boolean };
+
+  const { data: chiefArbiterAddr, isLoading: loadingChief } = useReadContract({
+    address: CONTRACTS.diamond,
+    abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getChiefArbiter",
+    query: { enabled: !!address },
+  }) as { data: string | undefined; isLoading: boolean };
+
+  const isLoading = loadingArbiter || loadingChief;
 
   useEffect(() => {
     if (!isConnected) {
@@ -33,15 +42,19 @@ export default function ArbiterLayout({ children }: { children: React.ReactNode 
     }
     if (isLoading || ownerAddr === undefined) return;
 
+    const ZERO = "0x0000000000000000000000000000000000000000";
     const isOwner = !!address && !!ownerAddr &&
       address.toLowerCase() === ownerAddr.toLowerCase();
+    const isChief = !!address && !!chiefArbiterAddr &&
+      chiefArbiterAddr !== ZERO &&
+      chiefArbiterAddr.toLowerCase() === address.toLowerCase();
 
-    if (!isArbiter && !isOwner) {
+    if (!isArbiter && !isOwner && !isChief) {
       router.replace("/");
       return;
     }
     setChecked(true);
-  }, [isConnected, isArbiter, isLoading, address, ownerAddr, router]);
+  }, [isConnected, isArbiter, isLoading, address, ownerAddr, chiefArbiterAddr, router]);
 
   if (!checked || isLoading) {
     return (

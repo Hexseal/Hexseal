@@ -491,6 +491,14 @@ function MyCaseCard({
     functionName: "getDisputeClaimer", args: [agreement as Address],
   }) as { data: string | undefined };
 
+  const [disputeReason, setDisputeReason] = useState<string | null>(null);
+  useEffect(() => {
+    fetch(`/api/dispute-reason?agreement=${agreement.toLowerCase()}`)
+      .then(r => r.json())
+      .then((d: { reason?: string | null }) => { if (d.reason) setDisputeReason(d.reason); })
+      .catch(() => {});
+  }, [agreement]);
+
   const ZERO         = "0x0000000000000000000000000000000000000000";
   const isDisputed   = statusVal === AGREEMENT_STATUS_DISPUTED;
   const isTerminal   = statusVal !== undefined && TERMINAL.has(statusVal);
@@ -547,6 +555,18 @@ function MyCaseCard({
           )}
         </div>
       </div>
+
+      {/* ── Dispute reason ── */}
+      {disputeReason ? (
+        <div className="mx-3 mb-3 rounded-[12px] border border-red-500/20 bg-red-500/[0.04] px-3 py-2.5">
+          <p className="text-[10px] text-red-400/60 font-semibold uppercase tracking-wider mb-1">
+            {t("arbiter.dispute_reason_title")}
+          </p>
+          <p className="text-xs text-white/65 leading-relaxed">{disputeReason}</p>
+        </div>
+      ) : (
+        <p className="text-xs text-white/20 px-4 pb-3 italic">{t("arbiter.no_reason")}</p>
+      )}
 
       {/* ── Communication row ── */}
       {(client || executor) && (

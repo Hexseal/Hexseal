@@ -1513,6 +1513,20 @@ export const ARBITER_REGISTRY_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  {
+    inputs: [{ internalType: 'bytes32', name: 'commitment', type: 'bytes32' }],
+    name: 'commitDisputeClaim',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'bytes32', name: 'commitment', type: 'bytes32' }],
+    name: 'getClaimCommitment',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
   // Events
   {
     anonymous: false,
