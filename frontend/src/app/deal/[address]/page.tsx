@@ -150,15 +150,20 @@ export default function DealDetailPage() {
     query: { enabled: !!isValidDeal },
   }) as { data: [string, string, string, bigint, string, bigint, bigint, bigint, bigint, bigint, bigint, number] | undefined; isLoading: boolean; refetch: () => void };
 
-  // Read status separately — poll every 10s for active deals, stop when terminal
-  const isTerminalStatus = statusNum !== undefined && [3, 5, 6].includes(statusNum as number);
+  // Read status separately — poll every 10s for active deals, stop when terminal.
+  // refetchInterval uses the callback form so it can read the latest value
+  // without a forward reference to statusNum.
   const { data: statusNum, refetch: refetchStatus } = useReadContract({
     address: dealAddress as `0x${string}`,
     abi: AGREEMENT_ABI,
     functionName: "status",
     query: {
       enabled: !!isValidDeal,
-      refetchInterval: isTerminalStatus ? false : 10_000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      refetchInterval: (query: any) => {
+        const s = query.state.data as number | undefined;
+        return s !== undefined && [3, 5, 6].includes(s) ? false : 10_000;
+      },
     },
   }) as { data: number | undefined; refetch: () => void };
 
