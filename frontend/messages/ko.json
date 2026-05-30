@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC 부족 — 보유 {have}, 필요 {need}",
       "fee_notice": "제출 시 수수료 부과. 집행자 응답까지 금액 잠금.",
       "sign_permit": "서명: 지갑의 USDC 허가…",
-      "request_sent": "요청 전송됨! 집행자를 기다리는 중."
+      "request_sent": "요청 전송됨! 집행자를 기다리는 중.",
+      "terms_label": "브리프 / 조건 (선택사항)",
+      "terms_placeholder": "필요한 사항, 수락 기준을 설명하세요…",
+      "terms_hint": "IPFS에 저장 — 당신과 실행자에게 표시됨",
+      "incoming_title": "받은 요청",
+      "incoming_empty": "대기 중인 요청 없음",
+      "reject_btn": "거절",
+      "accepted_msg": "수락됨! 거래가 생성되었습니다.",
+      "rejected_msg": "요청이 거절되었습니다."
     },
     "post_service": {
       "title": "서비스 게시",
@@ -106,7 +114,8 @@
         "other": "기타"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "클라이언트가 요청합니다 — 수락 또는 거절하세요."
     },
     "post_job": {
       "title": "일자리 게시",
@@ -120,7 +129,8 @@
       "success": "일자리가 게시되었습니다!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "실행자가 지원합니다 — 채용할 사람을 선택하세요."
     }
   },
   "wallet": {

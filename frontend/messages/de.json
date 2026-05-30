@@ -84,7 +84,15 @@
       "insufficient_usdc": "Zu wenig USDC — {have} vorhanden, {need} benötigt",
       "fee_notice": "Plattformgebühr beim Absenden. Betrag gesperrt bis zur Antwort.",
       "sign_permit": "Signieren: USDC-Genehmigung im Wallet…",
-      "request_sent": "Anfrage gesendet! Warten auf Auftragnehmer."
+      "request_sent": "Anfrage gesendet! Warten auf Auftragnehmer.",
+      "terms_label": "Briefing / Bedingungen (optional)",
+      "terms_placeholder": "Was Sie brauchen, Abnahmekriterien…",
+      "terms_hint": "In IPFS gespeichert — für Sie und den Ausführenden sichtbar",
+      "incoming_title": "Eingehende Anfragen",
+      "incoming_empty": "Keine offenen Anfragen",
+      "reject_btn": "Ablehnen",
+      "accepted_msg": "Angenommen! Deal erstellt.",
+      "rejected_msg": "Anfrage abgelehnt."
     },
     "post_service": {
       "title": "Leistung veröffentlichen",
@@ -106,7 +114,8 @@
         "other": "Sonstiges"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Kunden fordern Sie an — Sie nehmen an oder lehnen ab."
     },
     "post_job": {
       "title": "Job veröffentlichen",
@@ -120,7 +129,8 @@
       "success": "Job veröffentlicht!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Ausführende bewerben sich — Sie wählen, wen Sie einstellen."
     }
   },
   "wallet": {

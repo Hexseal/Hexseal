@@ -84,7 +84,15 @@
       "insufficient_usdc": "Недостатньо USDC — є {have}, потрібно {need}",
       "fee_notice": "Комісія при відправці. Сума заблокована до відповіді виконавця.",
       "sign_permit": "Підпишіть: дозвіл USDC у гаманці…",
-      "request_sent": "Запит надіслано! Очікуємо відповіді виконавця."
+      "request_sent": "Запит надіслано! Очікуємо відповіді виконавця.",
+      "terms_label": "Завдання / Умови (необов'язково)",
+      "terms_placeholder": "Опишіть вимоги, критерії прийняття…",
+      "terms_hint": "Зберігається в IPFS — видно вам і виконавцю",
+      "incoming_title": "Вхідні запити",
+      "incoming_empty": "Немає очікуючих запитів",
+      "reject_btn": "Відхилити",
+      "accepted_msg": "Прийнято! Угоду створено.",
+      "rejected_msg": "Запит відхилено."
     },
     "post_service": {
       "title": "Опублікувати Послугу",
@@ -106,7 +114,8 @@
         "other": "Інше"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Клієнти надсилають запити — ви приймаєте або відхиляєте."
     },
     "post_job": {
       "title": "Опублікувати Роботу",
@@ -120,7 +129,8 @@
       "success": "Роботу Опубліковано!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Виконавці подають заявки — ви обираєте кого найняти."
     }
   },
   "wallet": {

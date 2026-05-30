@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC ไม่พอ — มี {have} ต้องการ {need}",
       "fee_notice": "ค่าธรรมเนียมจะถูกเรียกเก็บเมื่อส่ง จำนวนเงินถูกล็อกจนกว่าผู้ดำเนินการจะตอบกลับ",
       "sign_permit": "เซ็น: USDC permit ในวอลเล็ต…",
-      "request_sent": "ส่งคำขอแล้ว! รอผู้ดำเนินการ"
+      "request_sent": "ส่งคำขอแล้ว! รอผู้ดำเนินการ",
+      "terms_label": "รายละเอียด / เงื่อนไข (ไม่บังคับ)",
+      "terms_placeholder": "อธิบายสิ่งที่คุณต้องการ เกณฑ์การยอมรับ…",
+      "terms_hint": "บันทึกใน IPFS — มองเห็นได้โดยคุณและผู้ดำเนินการ",
+      "incoming_title": "คำขอที่ได้รับ",
+      "incoming_empty": "ไม่มีคำขอที่รอดำเนินการ",
+      "reject_btn": "ปฏิเสธ",
+      "accepted_msg": "ยอมรับแล้ว! สร้างข้อตกลงแล้ว",
+      "rejected_msg": "คำขอถูกปฏิเสธ"
     },
     "post_service": {
       "title": "ประกาศบริการ",
@@ -106,7 +114,8 @@
         "other": "อื่นๆ"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "ลูกค้าส่งคำขอ — คุณรับหรือปฏิเสธ"
     },
     "post_job": {
       "title": "ประกาศงาน",
@@ -120,7 +129,8 @@
       "success": "ประกาศงานแล้ว!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "ผู้ดำเนินการสมัคร — คุณเลือกว่าจะจ้างใคร"
     }
   },
   "wallet": {

@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC insuficiente — tienes {have}, necesitas {need}",
       "fee_notice": "Tarifa al enviar. Monto bloqueado hasta la respuesta.",
       "sign_permit": "Firma: permiso USDC en billetera…",
-      "request_sent": "¡Solicitud enviada! Esperando al ejecutor."
+      "request_sent": "¡Solicitud enviada! Esperando al ejecutor.",
+      "terms_label": "Brief / Condiciones (opcional)",
+      "terms_placeholder": "Describe lo que necesitas, criterios de aceptación…",
+      "terms_hint": "Almacenado en IPFS — visible para ti y el ejecutor",
+      "incoming_title": "Solicitudes Entrantes",
+      "incoming_empty": "Sin solicitudes pendientes",
+      "reject_btn": "Rechazar",
+      "accepted_msg": "¡Aceptado! Trato creado.",
+      "rejected_msg": "Solicitud rechazada."
     },
     "post_service": {
       "title": "Publicar un Servicio",
@@ -106,7 +114,8 @@
         "other": "Otro"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Los clientes te solicitan — tú aceptas o rechazas."
     },
     "post_job": {
       "title": "Publicar un Trabajo",
@@ -120,7 +129,8 @@
       "success": "¡Trabajo Publicado!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Los ejecutores se postulan — tú eliges a quién contratar."
     }
   },
   "wallet": {

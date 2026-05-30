@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC 不足 — 有 {have}，需要 {need}",
       "fee_notice": "提交时收取平台费。金额锁定直至执行者回应。",
       "sign_permit": "签署：钱包中的 USDC 许可…",
-      "request_sent": "请求已发送！等待执行者回应。"
+      "request_sent": "请求已发送！等待执行者回应。",
+      "terms_label": "简介 / 条款 (可选)",
+      "terms_placeholder": "描述您的需求、验收标准…",
+      "terms_hint": "存储在IPFS上 — 对您和执行者可见",
+      "incoming_title": "收到的请求",
+      "incoming_empty": "没有待处理的请求",
+      "reject_btn": "拒绝",
+      "accepted_msg": "已接受！交易已创建。",
+      "rejected_msg": "请求已拒绝。"
     },
     "post_service": {
       "title": "发布服务",
@@ -106,7 +114,8 @@
         "other": "其他"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "客户向您发起请求 — 您接受或拒绝。"
     },
     "post_job": {
       "title": "发布工作",
@@ -120,7 +129,8 @@
       "success": "工作已发布！",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "执行者申请 — 您选择雇用谁。"
     }
   },
   "wallet": {

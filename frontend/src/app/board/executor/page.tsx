@@ -2,14 +2,15 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useAccount, useWalletClient, usePublicClient, useReadContract } from "wagmi";
+import { useAccount, useWalletClient, usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
 import type { Abi } from "viem";
-import { parseUnits } from "viem";
-import { requestServiceGasless } from "@/lib/relay";
+import { parseUnits, keccak256 } from "viem";
+import { requestServiceGasless, sendGasless } from "@/lib/relay";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Search, Loader2, Briefcase, Plus, ArrowRight,
   MessageCircle, RefreshCw, ChevronDown, X, ExternalLink,
@@ -66,13 +67,14 @@ function RequestModal({
 }: {
   service: Service;
   onClose: () => void;
-  onSubmit: (amount: string, days: string, region: number) => void;
+  onSubmit: (amount: string, days: string, region: number, terms: string) => void;
   loading: boolean;
   userUsdcBalance?: bigint;
 }) {
   const [amount, setAmount] = useState(fmtUSDC(service.price));
   const [days, setDays]     = useState(String(Number(service.deadlineDays)));
   const [region, setRegion] = useState(service.region);
+  const [terms, setTerms]   = useState("");
   const t = useTranslations();
 
   const parsedAmount = parseFloat(amount || "0");
@@ -153,6 +155,18 @@ function RequestModal({
               ))}
             </div>
           </div>
+
+          <div>
+            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.terms_label")}</label>
+            <Textarea
+              placeholder={t("board.services.terms_placeholder")}
+              value={terms}
+              onChange={e => setTerms(e.target.value)}
+              rows={3}
+              className="bg-white/[0.04] border-white/10 text-white resize-none text-sm placeholder:text-white/20 rounded-[10px]"
+            />
+            <p className="text-xs text-white/20 mt-1">{t("board.services.terms_hint")}</p>
+          </div>
         </div>
 
         <div className="mt-6 flex gap-2">
@@ -162,7 +176,7 @@ function RequestModal({
           <Button
             className="flex-1 gap-1.5"
             disabled={loading || !amount || !days || !hasEnough}
-            onClick={() => onSubmit(amount, days, region)}
+            onClick={() => onSubmit(amount, days, region, terms)}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
             {t("board.services.request_confirm")}
@@ -181,6 +195,158 @@ function RequestModal({
         )}
       </motion.div>
     </motion.div>
+  );
+}
+
+// ─── Incoming Requests Panel ──────────────────────────────────────────────────
+
+function IncomingRequestsPanel({
+  address,
+  walletClient,
+  publicClient,
+  services,
+  onRefresh,
+}: {
+  address: string;
+  walletClient: ReturnType<typeof useWalletClient>["data"];
+  publicClient: ReturnType<typeof usePublicClient>;
+  services: Service[];
+  onRefresh: () => void;
+}) {
+  const t = useTranslations();
+  const [acting, setActing] = useState<string | null>(null);
+
+  const { data: myServiceIds } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: DIAMOND_ABI as Abi,
+    functionName: "getExecutorServices",
+    args: [address as `0x${string}`],
+    query: { enabled: !!address },
+  }) as { data: bigint[] | undefined };
+
+  const pendingContracts = useMemo(() =>
+    (myServiceIds ?? []).map(id => ({
+      address: CONTRACTS.diamond as `0x${string}`,
+      abi: DIAMOND_ABI as Abi,
+      functionName: "getPendingRequests" as const,
+      args: [id] as const,
+    })),
+    [myServiceIds]
+  );
+
+  const { data: pendingData, refetch } = useReadContracts({
+    contracts: pendingContracts,
+    query: { enabled: pendingContracts.length > 0 },
+  });
+
+  const pendingRequests = useMemo(() => {
+    if (!pendingData || !myServiceIds) return [];
+    const result: Array<{
+      requestId: bigint;
+      serviceId: bigint;
+      serviceTitle: string;
+      client: string;
+      amount: bigint;
+      deadlineDays: bigint;
+    }> = [];
+    pendingData.forEach((d, i) => {
+      if (d.status === "success") {
+        const [reqIds, reqs] = d.result as [bigint[], any[]];
+        reqIds.forEach((reqId, j) => {
+          const svcId = myServiceIds[i];
+          const svc = services.find(s => s.serviceId === String(svcId));
+          result.push({
+            requestId: reqId,
+            serviceId: svcId,
+            serviceTitle: svc?.title ?? `#${String(svcId)}`,
+            client: reqs[j].client,
+            amount: reqs[j].amount,
+            deadlineDays: reqs[j].deadlineDays,
+          });
+        });
+      }
+    });
+    return result;
+  }, [pendingData, myServiceIds, services]);
+
+  const handleAccept = async (requestId: bigint) => {
+    if (!walletClient || !publicClient) return;
+    const key = `accept-${requestId}`;
+    setActing(key);
+    try {
+      await sendGasless(walletClient, publicClient, "acceptRequest", [requestId], DIAMOND_ABI as Abi);
+      toast.success(t("board.services.accepted_msg"));
+      setTimeout(() => { refetch(); onRefresh(); }, 2000);
+    } catch (err: any) {
+      toast.error(err?.message?.slice(0, 80) || "Failed");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const handleReject = async (requestId: bigint) => {
+    if (!walletClient || !publicClient) return;
+    const key = `reject-${requestId}`;
+    setActing(key);
+    try {
+      await sendGasless(walletClient, publicClient, "rejectRequest", [requestId], DIAMOND_ABI as Abi);
+      toast.success(t("board.services.rejected_msg"));
+      setTimeout(() => { refetch(); }, 1500);
+    } catch (err: any) {
+      toast.error(err?.message?.slice(0, 80) || "Failed");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  if (!pendingRequests.length) return null;
+
+  return (
+    <div className="mb-5 rounded-[22px] border border-violet-400/20 bg-violet-400/[0.03] px-4 py-4"
+      style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(139,92,246,0.06)" }}>
+      <p className="text-[10px] text-violet-400/50 uppercase tracking-widest mb-3 font-medium">
+        {t("board.services.incoming_title")} · {pendingRequests.length}
+      </p>
+      <div className="space-y-2">
+        {pendingRequests.map(req => (
+          <div
+            key={req.requestId.toString()}
+            className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-xs text-white/60 font-medium truncate">{req.serviceTitle}</p>
+              <div className="flex items-center gap-2 text-[11px] text-white/30 mt-0.5">
+                <span className="font-mono">{req.client.slice(0, 6)}…{req.client.slice(-4)}</span>
+                <span className="text-white/15">·</span>
+                <span className="font-mono text-white/50">{fmtUSDC(req.amount)} USDC</span>
+                <span className="text-white/15">·</span>
+                <span>{Number(req.deadlineDays)}d</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => handleReject(req.requestId)}
+                disabled={!!acting}
+                className="h-8 px-2.5 text-xs text-red-400/50 hover:text-red-400 hover:bg-red-400/10"
+              >
+                {acting === `reject-${req.requestId}` ? <Loader2 className="w-3 h-3 animate-spin" /> : t("board.services.reject_btn")}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => handleAccept(req.requestId)}
+                disabled={!!acting}
+                className="h-8 px-2.5 text-xs gap-1"
+              >
+                {acting === `accept-${req.requestId}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
+                {t("board.jobs.accept_btn")}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -484,7 +650,7 @@ export default function ExecutorBoardPage() {
     }
   }, [services, searchQuery, regionFilter, categoryFilter, sortBy]);
 
-  const handleRequest = async (amountStr: string, daysStr: string, region: number) => {
+  const handleRequest = async (amountStr: string, daysStr: string, region: number, termsText: string) => {
     if (!requestModal || !walletClient || !publicClient || !address) return;
     if (requestModal.status !== 0) {
       toast.error("This service is no longer active.");
@@ -493,9 +659,23 @@ export default function ExecutorBoardPage() {
     }
     setIsRequesting(true);
     try {
-      const amount    = parseUnits(amountStr, 6);
-      const days      = BigInt(daysStr);
-      const termsHash = ("0x" + "0".repeat(64)) as `0x${string}`;
+      const amount = parseUnits(amountStr, 6);
+      const days   = BigInt(daysStr);
+
+      let termsHash = ("0x" + "0".repeat(64)) as `0x${string}`;
+      if (termsText.trim()) {
+        const encoded = new TextEncoder().encode(termsText.trim());
+        termsHash = keccak256(encoded) as `0x${string}`;
+        try {
+          await fetch('/api/job-terms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: termsHash, text: termsText.trim() }),
+          });
+        } catch {
+          toast("Terms save failed — continuing", { icon: "⚠️" });
+        }
+      }
 
       toast(t("board.services.sign_permit"));
       await requestServiceGasless(walletClient, publicClient, {
@@ -595,6 +775,17 @@ export default function ExecutorBoardPage() {
       </div>
 
       <div className="container mx-auto px-4 pt-0 pb-6 max-w-4xl">
+        {/* Incoming requests for executor */}
+        {isConnected && address && (
+          <IncomingRequestsPanel
+            address={address}
+            walletClient={walletClient}
+            publicClient={publicClient}
+            services={services}
+            onRefresh={loadServices}
+          />
+        )}
+
         {/* Region filter */}
         <div className="mb-3">
           <BoardRegionFilter

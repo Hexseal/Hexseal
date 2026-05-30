@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC不足 — 残高{have}、必要{need}",
       "fee_notice": "送信時に手数料が発生。執行者が回答するまで金額ロック。",
       "sign_permit": "署名: ウォレットのUSDC許可…",
-      "request_sent": "リクエスト送信！執行者の応答待ち。"
+      "request_sent": "リクエスト送信！執行者の応答待ち。",
+      "terms_label": "ブリーフ / 条件 (任意)",
+      "terms_placeholder": "必要なもの、受入基準を説明してください…",
+      "terms_hint": "IPFSに保存 — あなたと受注者が閲覧可能",
+      "incoming_title": "受信リクエスト",
+      "incoming_empty": "保留中のリクエストなし",
+      "reject_btn": "拒否",
+      "accepted_msg": "承認しました！取引が作成されました。",
+      "rejected_msg": "リクエストを拒否しました。"
     },
     "post_service": {
       "title": "サービスを掲載",
@@ -106,7 +114,8 @@
         "other": "その他"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "クライアントがリクエスト — 承認または拒否します。"
     },
     "post_job": {
       "title": "仕事を掲載",
@@ -120,7 +129,8 @@
       "success": "仕事が掲載されました！",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "受注者が応募 — 採用する人を選んでください。"
     }
   },
   "wallet": {

@@ -90,7 +90,15 @@
       "insufficient_usdc": "Not enough USDC — have {have}, need {need}",
       "fee_notice": "Platform fee charged on submit. Amount locked until executor responds.",
       "sign_permit": "Sign: USDC permit in wallet…",
-      "request_sent": "Request sent! Waiting for executor."
+      "request_sent": "Request sent! Waiting for executor.",
+      "terms_label": "Brief / Terms (optional)",
+      "terms_placeholder": "Describe what you need, acceptance criteria…",
+      "terms_hint": "Stored on IPFS — visible to you and the executor",
+      "incoming_title": "Incoming Requests",
+      "incoming_empty": "No pending requests",
+      "reject_btn": "Reject",
+      "accepted_msg": "Accepted! Deal created.",
+      "rejected_msg": "Request rejected."
     },
     "post_service": {
       "title": "Post a Service",
@@ -112,7 +120,8 @@
         "other": "Other"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Clients request you — you accept or decline."
     },
     "post_job": {
       "title": "Post a Job",
@@ -126,7 +135,8 @@
       "success": "Job Posted!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Executors apply — you pick who to hire."
     }
   },
   "wallet": {

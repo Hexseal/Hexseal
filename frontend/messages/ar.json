@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC غير كافٍ — لديك {have}، تحتاج {need}",
       "fee_notice": "رسوم المنصة عند الإرسال. المبلغ مجمد حتى استجابة المنفذ.",
       "sign_permit": "التوقيع: إذن USDC في المحفظة…",
-      "request_sent": "تم إرسال الطلب! في انتظار المنفذ."
+      "request_sent": "تم إرسال الطلب! في انتظار المنفذ.",
+      "terms_label": "الموجز / الشروط (اختياري)",
+      "terms_placeholder": "صف ما تحتاجه، معايير القبول…",
+      "terms_hint": "مخزن على IPFS — مرئي لك وللمنفذ",
+      "incoming_title": "الطلبات الواردة",
+      "incoming_empty": "لا توجد طلبات معلقة",
+      "reject_btn": "رفض",
+      "accepted_msg": "تم القبول! تم إنشاء الصفقة.",
+      "rejected_msg": "تم رفض الطلب."
     },
     "post_service": {
       "title": "نشر خدمة",
@@ -106,7 +114,8 @@
         "other": "أخرى"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "يطلب العملاء خدمتك — أنت تقبل أو ترفض."
     },
     "post_job": {
       "title": "نشر وظيفة",
@@ -120,7 +129,8 @@
       "success": "تم نشر الوظيفة!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "يتقدم المنفذون — اختر من تريد توظيفه."
     }
   },
   "wallet": {

@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC insuffisant — {have} disponible, {need} requis",
       "fee_notice": "Frais prélevés à l'envoi. Montant bloqué jusqu'à la réponse.",
       "sign_permit": "Signer : autorisation USDC dans le portefeuille…",
-      "request_sent": "Demande envoyée ! En attente de l'exécutant."
+      "request_sent": "Demande envoyée ! En attente de l'exécutant.",
+      "terms_label": "Brief / Conditions (optionnel)",
+      "terms_placeholder": "Décrivez vos besoins, critères d'acceptation…",
+      "terms_hint": "Stocké sur IPFS — visible pour vous et le prestataire",
+      "incoming_title": "Demandes Reçues",
+      "incoming_empty": "Aucune demande en attente",
+      "reject_btn": "Refuser",
+      "accepted_msg": "Accepté ! Deal créé.",
+      "rejected_msg": "Demande refusée."
     },
     "post_service": {
       "title": "Publier un Service",
@@ -106,7 +114,8 @@
         "other": "Autre"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Les clients vous sollicitent — vous acceptez ou refusez."
     },
     "post_job": {
       "title": "Publier un Emploi",
@@ -120,7 +129,8 @@
       "success": "Emploi Publié !",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "Les prestataires postulent — vous choisissez qui embaucher."
     }
   },
   "wallet": {

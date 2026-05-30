@@ -84,7 +84,15 @@
       "insufficient_usdc": "USDC अपर्याप्त — है {have}, चाहिए {need}",
       "fee_notice": "सबमिट पर शुल्क। जवाब तक राशि लॉक रहेगी।",
       "sign_permit": "साइन करें: वॉलेट में USDC अनुमति…",
-      "request_sent": "अनुरोध भेजा गया! निष्पादक की प्रतीक्षा में।"
+      "request_sent": "अनुरोध भेजा गया! निष्पादक की प्रतीक्षा में।",
+      "terms_label": "ब्रीफ / शर्तें (वैकल्पिक)",
+      "terms_placeholder": "बताएं क्या चाहिए, स्वीकृति मापदंड…",
+      "terms_hint": "IPFS में संग्रहीत — आपको और निष्पादक को दिखाई देगा",
+      "incoming_title": "आने वाले अनुरोध",
+      "incoming_empty": "कोई लंबित अनुरोध नहीं",
+      "reject_btn": "अस्वीकार",
+      "accepted_msg": "स्वीकृत! डील बनाई गई।",
+      "rejected_msg": "अनुरोध अस्वीकृत।"
     },
     "post_service": {
       "title": "सेवा पोस्ट करें",
@@ -106,7 +114,8 @@
         "other": "अन्य"
       },
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "ग्राहक आपसे अनुरोध करते हैं — आप स्वीकार या अस्वीकार करते हैं।"
     },
     "post_job": {
       "title": "काम पोस्ट करें",
@@ -120,7 +129,8 @@
       "success": "काम पोस्ट हुआ!",
       "field_category": "Category",
       "field_brief": "Full Brief",
-      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables"
+      "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
+      "subtitle": "निष्पादक आवेदन करते हैं — आप तय करते हैं किसे नियुक्त करें।"
     }
   },
   "wallet": {
