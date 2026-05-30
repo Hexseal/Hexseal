@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "执行者申请 — 您选择雇用谁。"
+    },
+    "service_page": {
+      "not_found": "找不到服务",
+      "paused_notice": "此服务已被暂停",
+      "removed_notice": "此服务已被删除",
+      "hires_label": "总雇用次数",
+      "full_page": "完整页面"
     }
   },
   "wallet": {

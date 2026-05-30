@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "Les prestataires postulent — vous choisissez qui embaucher."
+    },
+    "service_page": {
+      "not_found": "Service introuvable",
+      "paused_notice": "Ce service est temporairement suspendu",
+      "removed_notice": "Ce service a été supprimé",
+      "hires_label": "Total embauches",
+      "full_page": "Page complète"
     }
   },
   "wallet": {

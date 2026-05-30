@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "실행자가 지원합니다 — 채용할 사람을 선택하세요."
+    },
+    "service_page": {
+      "not_found": "서비스를 찾을 수 없습니다",
+      "paused_notice": "이 서비스는 일시 중지되었습니다",
+      "removed_notice": "이 서비스는 삭제되었습니다",
+      "hires_label": "총 채용",
+      "full_page": "전체 페이지"
     }
   },
   "wallet": {

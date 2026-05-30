@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "Ausführende bewerben sich — Sie wählen, wen Sie einstellen."
+    },
+    "service_page": {
+      "not_found": "Leistung nicht gefunden",
+      "paused_notice": "Diese Leistung wurde vorübergehend pausiert",
+      "removed_notice": "Diese Leistung wurde entfernt",
+      "hires_label": "Gesamt Aufträge",
+      "full_page": "Vollseite"
     }
   },
   "wallet": {

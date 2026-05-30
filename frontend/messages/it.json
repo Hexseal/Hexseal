@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "I prestatori si candidano — tu scegli chi assumere."
+    },
+    "service_page": {
+      "not_found": "Servizio non trovato",
+      "paused_notice": "Questo servizio è temporaneamente in pausa",
+      "removed_notice": "Questo servizio è stato rimosso",
+      "hires_label": "Assunzioni totali",
+      "full_page": "Pagina completa"
     }
   },
   "wallet": {

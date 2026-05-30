@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "Виконавці подають заявки — ви обираєте кого найняти."
+    },
+    "service_page": {
+      "not_found": "Послугу не знайдено",
+      "paused_notice": "Послугу тимчасово призупинено виконавцем",
+      "removed_notice": "Цю послугу видалено",
+      "hires_label": "Всього найнято",
+      "full_page": "Сторінка"
     }
   },
   "wallet": {

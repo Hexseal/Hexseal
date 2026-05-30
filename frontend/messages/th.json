@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "ผู้ดำเนินการสมัคร — คุณเลือกว่าจะจ้างใคร"
+    },
+    "service_page": {
+      "not_found": "ไม่พบบริการ",
+      "paused_notice": "บริการนี้หยุดชั่วคราวโดยผู้ดำเนินการ",
+      "removed_notice": "บริการนี้ถูกลบแล้ว",
+      "hires_label": "จำนวนการจ้างทั้งหมด",
+      "full_page": "หน้าเต็ม"
     }
   },
   "wallet": {

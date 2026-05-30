@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "執行者申請 — 您選擇僱用誰。"
+    },
+    "service_page": {
+      "not_found": "找不到服務",
+      "paused_notice": "此服務已被暫停",
+      "removed_notice": "此服務已被刪除",
+      "hires_label": "總僱用次數",
+      "full_page": "完整頁面"
     }
   },
   "wallet": {

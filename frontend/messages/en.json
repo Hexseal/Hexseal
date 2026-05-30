@@ -137,6 +137,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "Executors apply — you pick who to hire."
+    },
+    "service_page": {
+      "not_found": "Service not found",
+      "paused_notice": "This service is temporarily paused by the executor",
+      "removed_notice": "This service has been removed",
+      "hires_label": "Total hires",
+      "full_page": "Full page"
     }
   },
   "wallet": {

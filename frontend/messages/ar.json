@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "يتقدم المنفذون — اختر من تريد توظيفه."
+    },
+    "service_page": {
+      "not_found": "الخدمة غير موجودة",
+      "paused_notice": "هذه الخدمة متوقفة مؤقتاً",
+      "removed_notice": "تمت إزالة هذه الخدمة",
+      "hires_label": "إجمالي التوظيف",
+      "full_page": "الصفحة الكاملة"
     }
   },
   "wallet": {

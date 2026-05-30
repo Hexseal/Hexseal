@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "Los ejecutores se postulan — tú eliges a quién contratar."
+    },
+    "service_page": {
+      "not_found": "Servicio no encontrado",
+      "paused_notice": "Este servicio está pausado temporalmente",
+      "removed_notice": "Este servicio ha sido eliminado",
+      "hires_label": "Total contratado",
+      "full_page": "Página completa"
     }
   },
   "wallet": {

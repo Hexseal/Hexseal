@@ -476,6 +476,14 @@ function ServiceCard({
               )}
             </div>
           )}
+
+          <div className="pt-2 border-t border-white/6">
+            <Link href={`/service/${service.serviceId}`} onClick={e => e.stopPropagation()}>
+              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5">
+                <ExternalLink className="w-3 h-3" /> {t("board.service_page.full_page")}
+              </Button>
+            </Link>
+          </div>
         </div>
       )}
     </div>

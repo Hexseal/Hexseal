@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "निष्पादक आवेदन करते हैं — आप तय करते हैं किसे नियुक्त करें।"
+    },
+    "service_page": {
+      "not_found": "सेवा नहीं मिली",
+      "paused_notice": "यह सेवा अस्थायी रूप से रोकी गई है",
+      "removed_notice": "यह सेवा हटा दी गई है",
+      "hires_label": "कुल नियुक्तियाँ",
+      "full_page": "पूरा पृष्ठ"
     }
   },
   "wallet": {

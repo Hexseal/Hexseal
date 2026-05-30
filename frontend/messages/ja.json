@@ -131,6 +131,13 @@
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
       "subtitle": "受注者が応募 — 採用する人を選んでください。"
+    },
+    "service_page": {
+      "not_found": "サービスが見つかりません",
+      "paused_notice": "このサービスは一時停止中です",
+      "removed_notice": "このサービスは削除されました",
+      "hires_label": "採用合計",
+      "full_page": "全ページ"
     }
   },
   "wallet": {
