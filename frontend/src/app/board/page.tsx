@@ -100,6 +100,7 @@ function JobCard({
   index: number;
 }) {
   const [isApplying, setIsApplying] = useState(false);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [isAccepting, setIsAccepting] = useState<string | null>(null);
   const [termsText, setTermsText] = useState<string | null>(null);
   const [termsFetching, setTermsFetching] = useState(false);
@@ -138,6 +139,21 @@ function JobCard({
       toast.error(err?.message?.slice(0, 80) || "Apply failed");
     } finally {
       setIsApplying(false);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    if (!walletClient || !publicClient || isWithdrawing) return;
+    if (job.status !== 0) { toast.error('This job is no longer open.'); return; }
+    setIsWithdrawing(true);
+    try {
+      await sendGasless(walletClient, publicClient, "withdrawApplication", [jobId], DIAMOND_ABI as Abi);
+      toast.success(t("board.jobs.withdrawn"));
+      onApplied?.();
+    } catch (err: any) {
+      toast.error(err?.message?.slice(0, 80) || "Withdraw failed");
+    } finally {
+      setIsWithdrawing(false);
     }
   };
 
@@ -230,6 +246,18 @@ function JobCard({
               <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
                 {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                 {t("board.jobs.apply_btn")}
+              </Button>
+            )}
+            {!isClient && address && hasApplied && job.status === 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleWithdraw}
+                disabled={isWithdrawing}
+                className="h-9 px-3 text-xs text-white/30 hover:text-red-400 hover:bg-red-400/10 gap-1"
+              >
+                {isWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                {t("board.jobs.withdraw_btn")}
               </Button>
             )}
           </div>

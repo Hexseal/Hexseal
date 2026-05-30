@@ -54,7 +54,9 @@
       "accepted_deal": "Esecutore accettato! Accordo creato.",
       "accepting": "Accettazione candidato…",
       "open_count": "{count} aperti",
-      "applicants_count": "{count} candidati"
+      "applicants_count": "{count} candidati",
+      "withdraw_btn": "Ritira",
+      "withdrawn": "Candidatura ritirata."
     },
     "services": {
       "title": "Bacheca Servizi",

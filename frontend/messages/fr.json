@@ -54,7 +54,9 @@
       "accepted_deal": "Exécutant accepté ! Accord créé.",
       "accepting": "Acceptation du candidat…",
       "open_count": "{count} ouvertes",
-      "applicants_count": "{count} candidats"
+      "applicants_count": "{count} candidats",
+      "withdraw_btn": "Retirer",
+      "withdrawn": "Candidature retirée."
     },
     "services": {
       "title": "Tableau des Services",

@@ -54,7 +54,9 @@
       "accepted_deal": "¡Ejecutor aceptado! Trato creado.",
       "accepting": "Aceptando postulante…",
       "open_count": "{count} abiertos",
-      "applicants_count": "{count} postulados"
+      "applicants_count": "{count} postulados",
+      "withdraw_btn": "Retirar",
+      "withdrawn": "Solicitud retirada."
     },
     "services": {
       "title": "Panel de Servicios",

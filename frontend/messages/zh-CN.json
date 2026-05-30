@@ -54,7 +54,9 @@
       "accepted_deal": "执行者已接受！交易已创建。",
       "accepting": "正在接受申请人…",
       "open_count": "{count} 个",
-      "applicants_count": "{count} 人申请"
+      "applicants_count": "{count} 人申请",
+      "withdraw_btn": "撤回",
+      "withdrawn": "申请已撤回。"
     },
     "services": {
       "title": "服务广场",

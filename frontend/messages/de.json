@@ -54,7 +54,9 @@
       "accepted_deal": "Ausführender angenommen! Deal erstellt.",
       "accepting": "Bewerber wird angenommen…",
       "open_count": "{count} offen",
-      "applicants_count": "{count} beworben"
+      "applicants_count": "{count} beworben",
+      "withdraw_btn": "Zurückziehen",
+      "withdrawn": "Bewerbung zurückgezogen."
     },
     "services": {
       "title": "Leistungsbörse",

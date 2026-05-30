@@ -207,11 +207,28 @@ export function DealCard({ agreement, address, refetch }: {
     </Button>
   );
 
+  const needsAction = primaryActions.length > 0;
+
+  // Stripe color matches the deal status badge when action is required
+  const stripeColor =
+    liveStatus === 0 ? 'bg-sky-400/70' :      // CREATED — client needs to fund
+    liveStatus === 1 ? 'bg-amber-400/70' :    // FUNDED — executor needs to activate
+    liveStatus === 2 ? 'bg-violet-400/50' :   // ACTIVE — mark done / release
+    liveStatus === 4 ? 'bg-red-400/70' :      // DISPUTED
+    'bg-white/20';
+
   return (
     <div
-      className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors"
+      className={`rounded-[22px] border transition-colors relative overflow-hidden ${
+        needsAction
+          ? 'border-white/[0.13] bg-[#0d0d0f] hover:bg-[#111113]'
+          : 'border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113]'
+      }`}
       style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
     >
+      {needsAction && (
+        <div className={`absolute top-0 left-0 right-0 h-0.5 rounded-t-[22px] ${stripeColor}`} />
+      )}
       <div className="px-4 py-4 sm:px-5">
         {/* Status row */}
         <div className="flex items-center gap-2 mb-2 flex-wrap">

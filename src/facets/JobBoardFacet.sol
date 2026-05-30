@@ -95,6 +95,7 @@ contract JobBoardFacet {
 
     event JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region);
     event JobApplied(uint256 indexed jobId, address indexed executor);
+    event JobWithdrawn(uint256 indexed jobId, address indexed executor);
     event JobAccepted(uint256 indexed jobId, address indexed client, address indexed executor, address agreement);
     event JobCancelled(uint256 indexed jobId, address indexed client, uint256 refundAmount);
     event JobEdited(uint256 indexed jobId, address indexed client);
@@ -261,6 +262,31 @@ contract JobBoardFacet {
         try IJobReceiptMint(address(this)).mintJobReceipt(msg.sender, jobId, amount, deadlineDays, region, title) {} catch {}
 
         emit JobPosted(jobId, msg.sender, amount, region);
+    }
+
+    /// @notice Исполнитель отзывает отклик (пока заказ OPEN, gasless-совместим)
+    function withdrawApplication(uint256 jobId) external {
+        address sender = _msgSender();
+        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Job storage job = s.jobs[jobId];
+
+        if (job.status != JobBoardStorage.JobStatus.OPEN) revert JobNotOpen();
+        if (!s.hasApplied[jobId][sender]) revert NotApplicant();
+
+        s.hasApplied[jobId][sender] = false;
+
+        // Swap-and-pop чтобы не ломать порядок без сдвига массива
+        address[] storage appl = s.applicants[jobId];
+        uint256 len = appl.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (appl[i] == sender) {
+                appl[i] = appl[len - 1];
+                appl.pop();
+                break;
+            }
+        }
+
+        emit JobWithdrawn(jobId, sender);
     }
 
     /// @notice Исполнитель откликается на заказ (gasless-совместим через ERC-2771)

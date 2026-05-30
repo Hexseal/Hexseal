@@ -54,7 +54,9 @@
       "accepted_deal": "ผู้รับงานได้รับการยอมรับ! สร้างดีลแล้ว",
       "accepting": "กำลังยอมรับผู้สมัคร…",
       "open_count": "{count} รายการ",
-      "applicants_count": "{count} สมัคร"
+      "applicants_count": "{count} สมัคร",
+      "withdraw_btn": "ถอนคำขอ",
+      "withdrawn": "ถอนคำขอแล้ว"
     },
     "services": {
       "title": "กระดานบริการ",

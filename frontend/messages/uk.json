@@ -54,7 +54,9 @@
       "accepted_deal": "Виконавця прийнято! Угоду створено.",
       "accepting": "Прийняття претендента…",
       "open_count": "{count} відкритих",
-      "applicants_count": "{count} відгуків"
+      "applicants_count": "{count} відгуків",
+      "withdraw_btn": "Відкликати",
+      "withdrawn": "Заявку відкликано."
     },
     "services": {
       "title": "Дошка Послуг",

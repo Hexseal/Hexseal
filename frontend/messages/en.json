@@ -60,7 +60,9 @@
       "accepted_deal": "Executor accepted! Deal created.",
       "accepting": "Accepting applicant…",
       "open_count": "{count} open",
-      "applicants_count": "{count} applied"
+      "applicants_count": "{count} applied",
+      "withdraw_btn": "Withdraw",
+      "withdrawn": "Application withdrawn."
     },
     "services": {
       "title": "Service Board",

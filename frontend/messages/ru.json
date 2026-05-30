@@ -60,7 +60,9 @@
       "accepted_deal": "Исполнитель принят! Сделка создана.",
       "accepting": "Принимаем кандидата…",
       "open_count": "{count} открытых",
-      "applicants_count": "{count} откликов"
+      "applicants_count": "{count} откликов",
+      "withdraw_btn": "Отозвать",
+      "withdrawn": "Отклик отозван."
     },
     "services": {
       "title": "Биржа услуг",

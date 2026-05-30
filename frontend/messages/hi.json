@@ -54,7 +54,9 @@
       "accepted_deal": "एक्जीक्यूटर स्वीकृत! डील बनाई गई।",
       "accepting": "आवेदक स्वीकार हो रहा है…",
       "open_count": "{count} खुले",
-      "applicants_count": "{count} आवेदन"
+      "applicants_count": "{count} आवेदन",
+      "withdraw_btn": "वापस लें",
+      "withdrawn": "आवेदन वापस लिया गया।"
     },
     "services": {
       "title": "सेवा बोर्ड",

@@ -101,6 +101,7 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   acceptApplicant:    1_800_000n, // deploys Agreement via FactoryFacet
   cancelJob:            150_000n,
   applyForJob:          150_000n,
+  withdrawApplication:  150_000n,
   mintService:          300_000n,
   requestService:       300_000n,
   acceptRequest:      1_800_000n,

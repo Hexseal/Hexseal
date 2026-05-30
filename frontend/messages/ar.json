@@ -54,7 +54,9 @@
       "accepted_deal": "تم قبول المنفّذ! تم إنشاء الاتفاق.",
       "accepting": "جارٍ قبول المتقدم…",
       "open_count": "{count} مفتوح",
-      "applicants_count": "{count} تقدموا"
+      "applicants_count": "{count} تقدموا",
+      "withdraw_btn": "سحب",
+      "withdrawn": "تم سحب الطلب."
     },
     "services": {
       "title": "لوحة الخدمات",

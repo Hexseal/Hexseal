@@ -54,7 +54,9 @@
       "accepted_deal": "受注者が承認されました！契約が作成されました。",
       "accepting": "応募者を承認中…",
       "open_count": "{count} 件",
-      "applicants_count": "{count}人応募"
+      "applicants_count": "{count}人応募",
+      "withdraw_btn": "取り消し",
+      "withdrawn": "応募を取り消しました。"
     },
     "services": {
       "title": "サービスボード",

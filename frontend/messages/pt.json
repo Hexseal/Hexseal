@@ -54,7 +54,9 @@
       "accepted_deal": "Executor aceito! Acordo criado.",
       "accepting": "Aceitando candidato…",
       "open_count": "{count} abertos",
-      "applicants_count": "{count} aplicaram"
+      "applicants_count": "{count} aplicaram",
+      "withdraw_btn": "Retirar",
+      "withdrawn": "Candidatura retirada."
     },
     "services": {
       "title": "Quadro de Serviços",

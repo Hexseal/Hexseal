@@ -54,7 +54,9 @@
       "accepted_deal": "실행자가 수락되었습니다! 계약이 생성되었습니다.",
       "accepting": "지원자 수락 중…",
       "open_count": "{count} 개",
-      "applicants_count": "{count}명 지원"
+      "applicants_count": "{count}명 지원",
+      "withdraw_btn": "철회",
+      "withdrawn": "지원이 철회되었습니다."
     },
     "services": {
       "title": "서비스 게시판",
