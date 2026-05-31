@@ -42,9 +42,9 @@ const RPC_URL    = process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org
 const CLIENT_KEY   = process.env.TEST_CLIENT_KEY;
 const EXECUTOR_KEY = process.env.TEST_EXECUTOR_KEY;
 
-// Тестовые параметры — минимальные суммы чтобы не тратить много USDC
-const TEST_AMOUNT   = 1_000_000n;  // 1 USDC (budget / deal amount)
-const TEST_DEADLINE = 7n;          // 7 дней
+// Тестовые параметры — минимум чтобы не тратить лишний USDC
+const TEST_AMOUNT   = 100_000n;   // 0.1 USDC budget (fee всегда 4 USDC, не зависит от этого)
+const TEST_DEADLINE = 7n;         // 7 дней
 
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ const PERMIT_TYPES = {
 
 const GAS = {
   mintJobWithPermit:     1_500_000n,
-  mintServiceWithPermit:   300_000n,
+  mintServiceWithPermit:   800_000n, // permit + struct storage (7 fields) + array push + transferFrom
   applyForJob:             150_000n,
   acceptApplicant:       1_800_000n,
   fund:                    150_000n,
@@ -160,15 +160,32 @@ async function signPermit(wallet, provider, spender, value) {
   return { v, r, s, deadline };
 }
 
+// Локальные нонсы форвардера — читаем один раз в начале, потом сами инкрементируем.
+// Это избегает RPC-lag после подтверждения транзакции (TOCTOU race condition).
+const _fwNonces = new Map();
+
+async function getFwNonce(wallet, provider) {
+  const addr = wallet.address.toLowerCase();
+  if (!_fwNonces.has(addr)) {
+    const fwd = new ethers.Contract(FORWARDER, FORWARDER_ABI, provider);
+    _fwNonces.set(addr, await fwd.getNonce(wallet.address));
+  }
+  return _fwNonces.get(addr);
+}
+
+function bumpFwNonce(wallet) {
+  const addr = wallet.address.toLowerCase();
+  _fwNonces.set(addr, (_fwNonces.get(addr) ?? 0n) + 1n);
+}
+
 /**
  * Строит и подписывает ForwardRequest, отправляет на relay.
  * to = целевой контракт (Diamond или Agreement)
  * extraBody = доп. поля для permit (fund flow)
  */
 async function sendForward(wallet, provider, to, calldata, fnName, extraBody = {}) {
-  const forwarder = new ethers.Contract(FORWARDER, FORWARDER_ABI, provider);
-  const nonce     = await forwarder.getNonce(wallet.address);
-  const gas       = GAS[fnName] ?? 500_000n;
+  const nonce = await getFwNonce(wallet, provider);
+  const gas   = GAS[fnName] ?? 500_000n;
 
   const message = {
     from:  wallet.address,
@@ -200,6 +217,7 @@ async function sendForward(wallet, provider, to, calldata, fnName, extraBody = {
 
   const json = await res.json();
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+  bumpFwNonce(wallet); // локально инкрементируем — не ждём RPC
   return json; // { txHash, agreementAddr?, jobId? }
 }
 

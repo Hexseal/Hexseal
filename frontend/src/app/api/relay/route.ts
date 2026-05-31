@@ -219,13 +219,23 @@ export async function POST(req: NextRequest) {
       transport,
     });
 
-    // ── Build tuple ─────────────────────────────────────────────────────────
+    // ── Build tuple — всегда используем нонс с чейна ────────────────────────
+    // Читаем on-chain нонс напрямую — не доверяем client-supplied nonce.
+    // Это устраняет TOCTOU: verify() и execute() видят одно и то же значение.
+    // Если клиент подписал с неправильным нонсом, verify() вернёт false.
+    const onChainNonce = await publicClient.readContract({
+      address: effectiveForwarder,
+      abi: FORWARDER_ABI,
+      functionName: 'getNonce',
+      args: [from as Address],
+    });
+
     const forwardReq = {
       from:  from  as Address,
       to:    to    as Address,
       value: BigInt(value),
       gas:   BigInt(gas),
-      nonce: BigInt(nonce),
+      nonce: onChainNonce as bigint,
       data:  data  as Hex,
     } as const;
 
