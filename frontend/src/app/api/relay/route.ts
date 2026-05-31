@@ -194,9 +194,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Hot wallet ──────────────────────────────────────────────────────────
-    const relayerKey = process.env.RELAY_PRIVATE_KEY;
+    const relayerKey = process.env.RELAYER_PRIVATE_KEY ?? process.env.RELAY_PRIVATE_KEY;
     if (!relayerKey) {
-      console.error('[relay] RELAY_PRIVATE_KEY is not set');
+      console.error('[relay] RELAYER_PRIVATE_KEY is not set');
       return NextResponse.json(
         { error: 'Gasless relay unavailable', gasless: false },
         { status: 503 }

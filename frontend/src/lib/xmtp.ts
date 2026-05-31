@@ -122,6 +122,12 @@ export function createXmtpSigner(
 const _clientCache:  Map<string, Client>          = new Map();
 const _initPromises: Map<string, Promise<Client>> = new Map();
 
+// Returns the cached client for this address if it was already initialized in this
+// browser session — without triggering any wallet signatures. Returns null otherwise.
+export function getXmtpClientIfCached(address: string): Client | null {
+  return _clientCache.get(address.toLowerCase()) ?? null;
+}
+
 export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (step: number) => void): Promise<Client> {
   // XMTP WASM requires OPFS (Origin Private File System) which is only available
   // on secure contexts (localhost or https). Check BEFORE spawning the worker so

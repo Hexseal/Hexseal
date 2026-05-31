@@ -2,7 +2,8 @@
 
 import React from "react";
 import Link from "next/link";
-import { appChain, appChainId } from "@/config/chain";
+import { appChain, appChainId, explorerUrl } from "@/config/chain";
+import { CONTRACTS } from "@/config/contracts";
 import { useTranslations } from "next-intl";
 
 export default function Footer() {
@@ -21,7 +22,7 @@ export default function Footer() {
             <li><Link href="/docs/faq">{t("footer.faq")}</Link></li>
             <li>
               <a
-                href="https://sepolia.basescan.org/address/0xF00CC71878c226E0b64253Fb71dD802aF12165D0"
+                href={explorerUrl('address', CONTRACTS.diamond)}
                 target="_blank"
                 rel="noopener noreferrer"
               >

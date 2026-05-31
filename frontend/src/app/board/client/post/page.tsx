@@ -70,7 +70,7 @@ export default function PostJobPage() {
   const router = useRouter();
   const { address, isConnected, chainId, status } = useAccount();
   const t = useTranslations();
-  const { switchChain } = useSwitchChain();
+  const { switchChainAsync } = useSwitchChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -119,8 +119,11 @@ export default function PostJobPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isWrongChain) { switchChain?.({ chainId: EXPECTED_CHAIN_ID }); return; }
     if (!isConnected || !walletClient || !publicClient) { toast.error("Connect your wallet"); return; }
+    if (isWrongChain) {
+      try { await switchChainAsync({ chainId: EXPECTED_CHAIN_ID }); }
+      catch { toast.error("Switch to Base Sepolia to continue"); return; }
+    }
 
     const trimmedTitle = title.trim();
     const parsedDeadline = parseInt(deadline, 10);
@@ -228,13 +231,6 @@ export default function PostJobPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22 }}
       >
-        {isWrongChain && (
-          <div className="flex items-center justify-between p-3 rounded-[22px] bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-300">
-            Wrong network — switch to Base Sepolia
-            <button className="underline text-xs" onClick={() => switchChain?.({ chainId: EXPECTED_CHAIN_ID })}>Switch</button>
-          </div>
-        )}
-
         {step === "form" && (
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Job info */}
@@ -335,7 +331,7 @@ export default function PostJobPage() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full" size="lg" disabled={!hasBalance || isWrongChain}>
+            <Button type="submit" className="w-full" size="lg" disabled={!hasBalance}>
               <Briefcase className="w-4 h-4 mr-2" />{t("board.post_job.submit_btn")}
             </Button>
           </form>

@@ -4,6 +4,8 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ArrowLeft, ExternalLink } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { CONTRACTS } from "@/config/contracts";
+import { explorerUrl } from "@/config/chain";
 
 interface FAQItem {
   q: string;
@@ -194,14 +196,14 @@ const FAQ_SECTIONS: FAQSection[] = [
           <>
             You can inspect all contracts on{" "}
             <a
-              href="https://sepolia.basescan.org/address/0xF00CC71878c226E0b64253Fb71dD802aF12165D0"
+              href={explorerUrl('address', CONTRACTS.diamond)}
               target="_blank"
               rel="noopener noreferrer"
               className="text-primary hover:underline"
             >
               BaseScan
             </a>
-            . Diamond address: <code className="text-xs bg-white/8 px-1.5 py-0.5 rounded font-mono">0xF00CC71878c226E0b64253Fb71dD802aF12165D0</code>
+            . Diamond address: <code className="text-xs bg-white/8 px-1.5 py-0.5 rounded font-mono">{CONTRACTS.diamond}</code>
           </>
         ),
       },

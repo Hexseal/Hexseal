@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { WagmiProvider, createStorage, useAccount, useChainId, useSwitchChain } from "wagmi";
+import { WagmiProvider, createStorage, useAccount } from "wagmi";
 import { http, fallback } from "viem";
 import {
   RainbowKitProvider,
@@ -124,19 +124,6 @@ function PushAutoMount() {
   return null;
 }
 
-function ChainEnforcer() {
-  const { isConnected } = useAccount();
-  const chainId = useChainId();
-  const { switchChainAsync, isPending } = useSwitchChain();
-
-  useEffect(() => {
-    if (isConnected && chainId !== appChainId && !isPending) {
-      switchChainAsync({ chainId: appChainId }).catch(() => {});
-    }
-  }, [isConnected, chainId, isPending, switchChainAsync]);
-
-  return null;
-}
 
 function RainbowKitProviders({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -165,7 +152,6 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <RainbowKitProvider theme={rkTheme}>
-      <ChainEnforcer />
       <XmtpNotificationsMount />
       <PushAutoMount />
       {children}
