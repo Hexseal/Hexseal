@@ -42,9 +42,8 @@ const FORWARDER_ABI = parseAbi([
   'function execute((address from, address to, uint256 value, uint256 gas, uint256 nonce, bytes data) req, bytes signature) payable returns (bool success, bytes retdata)',
 ]);
 
-// AgreementDeployed(address,address,address,uint256,uint8,uint256)
-const AGREEMENT_DEPLOYED_TOPIC =
-  '0xdc0b79f3c97af7e31fcad61bebb8ddebc56ce50fd7d0d4c7ac1ce64bd3a7af15' as Hex;
+// AgreementDeployed(address indexed agreement, address indexed client, address indexed executor, uint256 amount, uint8 region, uint256 fee)
+const AGREEMENT_DEPLOYED_TOPIC = keccak256(toBytes('AgreementDeployed(address,address,address,uint256,uint8,uint256)'));
 
 // JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region)
 const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,uint8)'));
@@ -219,23 +218,13 @@ export async function POST(req: NextRequest) {
       transport,
     });
 
-    // ── Build tuple — всегда используем нонс с чейна ────────────────────────
-    // Читаем on-chain нонс напрямую — не доверяем client-supplied nonce.
-    // Это устраняет TOCTOU: verify() и execute() видят одно и то же значение.
-    // Если клиент подписал с неправильным нонсом, verify() вернёт false.
-    const onChainNonce = await publicClient.readContract({
-      address: effectiveForwarder,
-      abi: FORWARDER_ABI,
-      functionName: 'getNonce',
-      args: [from as Address],
-    });
-
+    // ── Build tuple ─────────────────────────────────────────────────────────
     const forwardReq = {
       from:  from  as Address,
       to:    to    as Address,
       value: BigInt(value),
       gas:   BigInt(gas),
-      nonce: onChainNonce as bigint,
+      nonce: BigInt(nonce),
       data:  data  as Hex,
     } as const;
 

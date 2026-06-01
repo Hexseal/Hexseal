@@ -92,19 +92,19 @@ const PERMIT_TYPES = {
 // ─── Gas defaults ─────────────────────────────────────────────────────────────
 
 const GAS_DEFAULTS: Record<string, bigint> = {
-  deployAndFund:      1_800_000n,
-  deployAgreement:    1_500_000n,
-  mintJob:            1_500_000n, // mintJobWithPermit deploys Agreement → heavy
+  deployAndFund:      5_500_000n, // deployAgreement alone ~4.6M
+  deployAgreement:    5_500_000n,
+  mintJob:            1_500_000n,
   mintJobWithPermit:  1_500_000n,
   editJob:              150_000n,
   editService:          150_000n,
-  acceptApplicant:    1_800_000n, // deploys Agreement via FactoryFacet
+  acceptApplicant:    5_500_000n, // deploys Agreement via FactoryFacet (~4.6M) + overhead
   cancelJob:            150_000n,
   applyForJob:          150_000n,
   withdrawApplication:  150_000n,
   mintService:          800_000n,
   requestService:       800_000n,
-  acceptRequest:      1_800_000n,
+  acceptRequest:      5_500_000n, // also deploys Agreement
   rejectRequest:        120_000n,
   cancelRequest:        120_000n,
   pauseService:          80_000n,
@@ -116,9 +116,9 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   resolveDispute:       200_000n,
   // Agreement lifecycle
   fund:               150_000n,
-  activate:           100_000n,
-  markDone:            80_000n,
-  release:            120_000n,
+  activate:           200_000n,
+  markDone:           200_000n,
+  release:            500_000n, // _complete: NFT burn + Diamond registry call + USDC transfer
   raiseDispute:       100_000n,
   triggerAutoApprove: 120_000n,
   triggerActivationTimeout: 100_000n,
