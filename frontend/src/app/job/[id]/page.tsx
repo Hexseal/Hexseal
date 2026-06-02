@@ -14,7 +14,7 @@ import { toast } from "react-hot-toast";
 import {
   DollarSign, Calendar, Clock,
   CheckCircle, XCircle, Loader2, ExternalLink, Users, Globe, MessageCircle,
-  ChevronRight, AlertCircle, FileText,
+  ChevronRight, AlertCircle, FileText, Receipt,
 } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -237,18 +237,32 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 {job.title || `Job #${id}`}
               </h1>
             </div>
-            {isClient && job.status === 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancel}
-                disabled={isBusy}
-                className="text-red-400/60 hover:text-red-400 hover:bg-red-400/10 flex-shrink-0"
-              >
-                <XCircle className="w-4 h-4 mr-1" />
-                Cancel
-              </Button>
-            )}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {isClient && (
+                <Link href={`/job/${id}/receipt`}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-white/30 hover:text-white/70 hover:bg-white/5 gap-1"
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    Receipt
+                  </Button>
+                </Link>
+              )}
+              {isClient && job.status === 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancel}
+                  disabled={isBusy}
+                  className="text-red-400/60 hover:text-red-400 hover:bg-red-400/10"
+                >
+                  <XCircle className="w-4 h-4 mr-1" />
+                  Cancel
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
