@@ -602,8 +602,8 @@ export default function BoardPage() {
           </div>
         ) : (
           <>
-            <AnimatePresence>
-              <div className="space-y-3">
+            <div className="space-y-3">
+              <AnimatePresence>
                 {jobs.slice(0, visibleCount).map(({ id, job }, index) => (
                   <JobCard
                     key={id.toString()}
@@ -619,8 +619,8 @@ export default function BoardPage() {
                     index={index}
                   />
                 ))}
-              </div>
-            </AnimatePresence>
+              </AnimatePresence>
+            </div>
             {visibleCount < jobs.length && (
               <button
                 onClick={() => setVisibleCount(c => c + PAGE_SIZE)}

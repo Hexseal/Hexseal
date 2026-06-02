@@ -874,7 +874,7 @@ export default function ExecutorBoardPage() {
         ) : (
           <>
             <div className="space-y-3">
-              <AnimatePresence>
+              <AnimatePresence mode="popLayout">
                 {filtered.slice(0, visibleCount).map((svc, index) => (
                   <motion.div
                     key={svc.serviceId}

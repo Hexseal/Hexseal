@@ -2,19 +2,28 @@
 
 import React, { useEffect, useState, Suspense } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
+import { motion } from 'framer-motion';
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
 
-// Re-mounts on each navigation via key={pathname}, triggering the fade-in.
+// Framer-motion page transition — reliable on mobile unlike tailwindcss-animate.
+// key={pathname} forces React to unmount/remount on navigation, triggering
+// initial → animate on every route change including MobileBottomNav taps.
 function PageFade({ children, pathname }: { children: React.ReactNode; pathname: string }) {
   const isChat = pathname?.startsWith('/chat');
   return (
-    <div key={pathname} className={`animate-in fade-in duration-200 ease-out min-h-0 flex flex-col flex-1 ${isChat ? 'overflow-hidden' : 'slide-in-from-bottom-2 duration-300'}`}>
+    <motion.div
+      key={pathname}
+      initial={{ opacity: 0, y: 7 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
+      className={`min-h-0 flex flex-col flex-1 ${isChat ? 'overflow-hidden' : ''}`}
+    >
       {children}
-    </div>
+    </motion.div>
   );
 }
 
