@@ -6,6 +6,7 @@ import "../src/DiamondProxy.sol";
 import "../src/RegistryFacet.sol";
 import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
+import "../src/facets/ArbiterRegistryFacet.sol";
 
 contract MockUSDC {
     mapping(address => uint256) public balanceOf;
@@ -50,6 +51,7 @@ contract DiamondTest is Test {
     uint256 constant AMOUNT = 100 * 10**6;
     uint256 constant DEADLINE = 7;
     bytes32 constant TERMS_HASH = keccak256("test");
+    bytes32 constant DISPUTE_SALT = bytes32("hexseal-test-salt");
     
     function setUp() public {
         owner = address(this);
@@ -67,6 +69,7 @@ contract DiamondTest is Test {
         DiamondCutFacet diamondCutFacet = new DiamondCutFacet();
         DiamondLoupeFacet diamondLoupeFacet = new DiamondLoupeFacet();
         OwnershipFacet ownershipFacet = new OwnershipFacet();
+        ArbiterRegistryFacet arbiterRegistryFacet = new ArbiterRegistryFacet();
         
         // RegistryFacet selectors
         bytes4[] memory registrySelectors = new bytes4[](12);
@@ -114,22 +117,51 @@ contract DiamondTest is Test {
         bytes4[] memory ownerSelectors = new bytes4[](2);
         ownerSelectors[0] = OwnershipFacet.transferOwnership.selector;
         ownerSelectors[1] = OwnershipFacet.owner.selector;
-        
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](5);
+
+        // ArbiterRegistryFacet selectors
+        bytes4[] memory arbiterSelectors = new bytes4[](13);
+        arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
+        arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
+        arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
+        arbiterSelectors[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        arbiterSelectors[4]  = ArbiterRegistryFacet.claimDispute.selector;
+        arbiterSelectors[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        arbiterSelectors[6]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
+        arbiterSelectors[7]  = ArbiterRegistryFacet.getChiefArbiter.selector;
+        arbiterSelectors[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        arbiterSelectors[9]  = ArbiterRegistryFacet.getArbiters.selector;
+        arbiterSelectors[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
+        arbiterSelectors[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        arbiterSelectors[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
+
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](6);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet), IDiamondCut.FacetCutAction.Add, registrySelectors);
         cut[1] = IDiamondCut.FacetCut(address(factoryFacet), IDiamondCut.FacetCutAction.Add, factorySelectors);
         cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet), IDiamondCut.FacetCutAction.Add, cutSelectors);
         cut[3] = IDiamondCut.FacetCut(address(diamondLoupeFacet), IDiamondCut.FacetCutAction.Add, loupeSelectors);
         cut[4] = IDiamondCut.FacetCut(address(ownershipFacet), IDiamondCut.FacetCutAction.Add, ownerSelectors);
-        
+        cut[5] = IDiamondCut.FacetCut(address(arbiterRegistryFacet), IDiamondCut.FacetCutAction.Add, arbiterSelectors);
+
         diamond = new DiamondProxy(owner, cut, address(0), "");
         AgreementDeployer agDeployer = new AgreementDeployer();
 
         RegistryFacet(address(diamond)).initRegistry(address(diamond));
         FactoryFacet(address(diamond)).initFactory(address(usdc), feeRecipient, address(0), address(diamond), address(agDeployer));
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
     }
     
     
+    // ============ HELPERS ============
+
+    function _claimDispute(address agreementAddr) internal {
+        bytes32 commitment = keccak256(abi.encodePacked(agreementAddr, arbiter, DISPUTE_SALT));
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+        vm.roll(block.number + 1);
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+    }
+
     // ============ DIAMOND PROXY TESTS ============
     
     function testDiamondOwner() public {
@@ -311,7 +343,7 @@ contract DiamondTest is Test {
         vm.prank(client);
         vm.expectRevert(FactoryFacet.InvalidRegion.selector);
         FactoryFacet(address(diamond)).deployAgreement(
-            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 5
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 7
         );
     }
     
@@ -583,24 +615,26 @@ contract DiamondTest is Test {
         address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
         );
-        
+
         vm.prank(client);
         usdc.approve(agreementAddr, AMOUNT);
         vm.prank(client);
         Agreement(agreementAddr).fund();
-        
+
         vm.prank(executor);
         Agreement(agreementAddr).activate();
-        
+
         vm.prank(client);
         Agreement(agreementAddr).raiseDispute();
-        
+
         assertEq(uint256(Agreement(agreementAddr).status()), uint256(Agreement.Status.DISPUTED));
-        
+
+        _claimDispute(agreementAddr);
+
         uint256 clientBalanceBefore = usdc.balanceOf(client);
         vm.prank(arbiter);
         Agreement(agreementAddr).resolveDispute(true);
-        
+
         assertEq(uint256(Agreement(agreementAddr).status()), uint256(Agreement.Status.RESOLVED));
         assertEq(usdc.balanceOf(client), clientBalanceBefore + AMOUNT);
     }
@@ -612,22 +646,24 @@ contract DiamondTest is Test {
         address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
         );
-        
+
         vm.prank(client);
         usdc.approve(agreementAddr, AMOUNT);
         vm.prank(client);
         Agreement(agreementAddr).fund();
-        
+
         vm.prank(executor);
         Agreement(agreementAddr).activate();
-        
+
         vm.prank(executor);
         Agreement(agreementAddr).raiseDispute();
-        
+
+        _claimDispute(agreementAddr);
+
         uint256 executorBalanceBefore = usdc.balanceOf(executor);
         vm.prank(arbiter);
         Agreement(agreementAddr).resolveDispute(false);
-        
+
         assertEq(usdc.balanceOf(executor), executorBalanceBefore + AMOUNT);
     }
     
@@ -638,18 +674,20 @@ contract DiamondTest is Test {
         address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
         );
-        
+
         vm.prank(client);
         usdc.approve(agreementAddr, AMOUNT);
         vm.prank(client);
         Agreement(agreementAddr).fund();
-        
+
         vm.prank(executor);
         Agreement(agreementAddr).activate();
-        
+
         vm.prank(client);
         Agreement(agreementAddr).raiseDispute();
-        
+
+        _claimDispute(agreementAddr);
+
         vm.prank(client);
         vm.expectRevert(Agreement.NotArbiter.selector);
         Agreement(agreementAddr).resolveDispute(true);
@@ -821,5 +859,493 @@ contract DiamondTest is Test {
         
         uint256 s = uint256(Agreement(agreementAddr).status());
         assertLe(s, 6);
+    }
+
+    // ============ ARBITER REGISTRY TESTS ============
+
+    function testArbiterRegistryAddArbiter() public {
+        address newArbiter = address(0x10);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(newArbiter);
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(newArbiter));
+        address[] memory list = ArbiterRegistryFacet(address(diamond)).getArbiters();
+        assertEq(list.length, 2); // arbiter from setUp + new
+    }
+
+    function testArbiterRegistryAddRevertIfAlreadyArbiter() public {
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyArbiter.selector);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+    }
+
+    function testArbiterRegistryAddRevertIfNotOwner() public {
+        vm.prank(client);
+        vm.expectRevert(ArbiterRegistryFacet.NotOwnerOrChief.selector);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(address(0x10));
+    }
+
+    function testArbiterRegistryRemoveArbiter() public {
+        ArbiterRegistryFacet(address(diamond)).removeArbiter(arbiter);
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiters().length, 0);
+    }
+
+    function testArbiterRegistryRemoveRevertIfNotArbiter() public {
+        vm.expectRevert(ArbiterRegistryFacet.NotAnArbiter.selector);
+        ArbiterRegistryFacet(address(diamond)).removeArbiter(address(0x99));
+    }
+
+    function testArbiterRegistryChiefCanAdd() public {
+        address chief = address(0x20);
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getChiefArbiter(), chief);
+
+        vm.prank(chief);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(address(0x21));
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(address(0x21)));
+    }
+
+    function testArbiterCommitRevertIfNotRegistered() public {
+        bytes32 commitment = keccak256(abi.encodePacked(address(0x100), client, DISPUTE_SALT));
+        vm.prank(client); // not a registered arbiter
+        vm.expectRevert(ArbiterRegistryFacet.NotArbiter.selector);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+    }
+
+    function testArbiterClaimRevertIfCommitTooEarly() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        bytes32 commitment = keccak256(abi.encodePacked(agreementAddr, arbiter, DISPUTE_SALT));
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+
+        // Reveal in the same block — should fail
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterRegistryFacet.CommitmentTooEarly.selector);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+    }
+
+    function testArbiterClaimRevertIfCommitmentExpired() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        bytes32 commitment = keccak256(abi.encodePacked(agreementAddr, arbiter, DISPUTE_SALT));
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+
+        vm.roll(block.number + 51); // past COMMIT_MAX_BLOCKS (50)
+
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterRegistryFacet.CommitmentExpired.selector);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+    }
+
+    function testArbiterClaimRevertIfNotDisputed() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        // No raiseDispute — agreement is ACTIVE, not DISPUTED
+
+        bytes32 commitment = keccak256(abi.encodePacked(agreementAddr, arbiter, DISPUTE_SALT));
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+        vm.roll(block.number + 1);
+
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterRegistryFacet.NotDisputed.selector);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+    }
+
+    function testArbiterClaimRevertIfAlreadyClaimed() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+
+        // Second arbiter tries to claim the same dispute
+        address arbiter2 = address(0x30);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter2);
+        bytes32 commitment2 = keccak256(abi.encodePacked(agreementAddr, arbiter2, DISPUTE_SALT));
+        vm.prank(arbiter2);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment2);
+        vm.roll(block.number + 1);
+
+        vm.prank(arbiter2);
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyClaimed.selector);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+    }
+
+    function testArbiterReleaseDisputeClaim() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeClaimer(agreementAddr), arbiter);
+        assertEq(Agreement(agreementAddr).arbiter(), arbiter);
+
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).releaseDisputeClaim(agreementAddr);
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeClaimer(agreementAddr), address(0));
+        assertEq(Agreement(agreementAddr).arbiter(), address(0));
+    }
+
+    function testArbiterOwnerCanReleaseClaim() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+
+        // Owner (address(this)) releases — not the arbiter
+        ArbiterRegistryFacet(address(diamond)).releaseDisputeClaim(agreementAddr);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeClaimer(agreementAddr), address(0));
+    }
+
+    function testArbiterDealsHistoryTracked() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+
+        address[] memory deals = ArbiterRegistryFacet(address(diamond)).getArbiterDeals(arbiter);
+        assertEq(deals.length, 1);
+        assertEq(deals[0], agreementAddr);
+    }
+
+    // ============ AGREEMENT EDGE CASES ============
+
+    function testAgreementRaiseDisputeByExecutor() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+
+        // Исполнитель тоже может поднять спор
+        vm.prank(executor);
+        Agreement(agreementAddr).raiseDispute();
+
+        assertEq(uint256(Agreement(agreementAddr).status()), uint256(Agreement.Status.DISPUTED));
+    }
+
+    function testAgreementRevertIfAlreadyDisputed() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        vm.prank(executor);
+        vm.expectRevert(Agreement.AlreadyDisputed.selector);
+        Agreement(agreementAddr).raiseDispute();
+    }
+
+    function testAgreementRaiseDisputeAfterMarkDone() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(executor); Agreement(agreementAddr).markDone();
+
+        // Клиент может поднять спор после markDone, если AUTO_APPROVE_WINDOW не прошёл
+        vm.prank(client);
+        Agreement(agreementAddr).raiseDispute();
+
+        assertEq(uint256(Agreement(agreementAddr).status()), uint256(Agreement.Status.DISPUTED));
+    }
+
+    function testAgreementRaiseDisputeRevertAfterDeadline() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, 1, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+
+        vm.warp(block.timestamp + 2 days); // дедлайн = 1 день, прошёл
+
+        vm.prank(client);
+        vm.expectRevert(Agreement.DeadlinePassed.selector);
+        Agreement(agreementAddr).raiseDispute();
+    }
+
+    function testAgreementReleaseRevertIfWindowPassed() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(executor); Agreement(agreementAddr).markDone();
+
+        vm.warp(block.timestamp + 6 days); // AUTO_APPROVE_WINDOW = 5 days
+
+        vm.prank(client);
+        vm.expectRevert(Agreement.WindowAlreadyPassed.selector);
+        Agreement(agreementAddr).release();
+    }
+
+    function testAgreementAutoApproveRevertIfWindowNotPassed() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(executor); Agreement(agreementAddr).markDone();
+
+        // Слишком рано — окно ещё не прошло
+        vm.prank(address(0x99));
+        vm.expectRevert(Agreement.WindowNotPassed.selector);
+        Agreement(agreementAddr).triggerAutoApprove();
+    }
+
+    function testAgreementAutoApproveByAnyone() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(executor); Agreement(agreementAddr).markDone();
+
+        vm.warp(block.timestamp + 6 days);
+
+        uint256 executorBefore = usdc.balanceOf(executor);
+        address stranger = address(0xBEEF);
+        vm.prank(stranger); // не client и не executor
+        Agreement(agreementAddr).triggerAutoApprove();
+
+        assertEq(usdc.balanceOf(executor), executorBefore + AMOUNT);
+    }
+
+    function testAgreementActivationTimeoutTooEarly() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+
+        // ACTIVATION_WINDOW = 3 days, 2 дня прошло — рано
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(client);
+        vm.expectRevert(Agreement.WindowNotPassed.selector);
+        Agreement(agreementAddr).triggerActivationTimeout();
+    }
+
+    function testAgreementDeadlineTimeoutTooEarly() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, 7, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+
+        // Дедлайн = 7 дней, 5 дней прошло — рано
+        vm.warp(block.timestamp + 5 days);
+
+        vm.prank(client);
+        vm.expectRevert(Agreement.DeadlineNotPassed.selector);
+        Agreement(agreementAddr).triggerDeadlineTimeout();
+    }
+
+    function testAgreementArbiterTimeoutTooEarly() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        // DISPUTE_WINDOW = 7 days, 5 дней прошло — рано
+        vm.warp(block.timestamp + 5 days);
+
+        vm.prank(client);
+        vm.expectRevert(Agreement.WindowNotPassed.selector);
+        Agreement(agreementAddr).triggerArbiterTimeout();
+    }
+
+    function testAgreementResolveDisputeRevertIfWindowPassed() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+
+        vm.warp(block.timestamp + 8 days); // DISPUTE_WINDOW = 7 days
+
+        vm.prank(arbiter);
+        vm.expectRevert(Agreement.WindowAlreadyPassed.selector);
+        Agreement(agreementAddr).resolveDispute(true);
+    }
+
+    function testAgreementMarkDoneRevertAfterDeadline() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, 1, TERMS_HASH, 0 // deadline = 1 day
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+
+        vm.warp(block.timestamp + 2 days); // дедлайн прошёл
+
+        vm.prank(executor);
+        vm.expectRevert(Agreement.DeadlinePassed.selector);
+        Agreement(agreementAddr).markDone();
+    }
+
+    function testAgreementRevertIfAlreadyResolved() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+        _claimDispute(agreementAddr);
+        vm.prank(arbiter); Agreement(agreementAddr).resolveDispute(true);
+
+        // Повторный вызов должен ревертить
+        vm.prank(arbiter);
+        vm.expectRevert(Agreement.AlreadyResolved.selector);
+        Agreement(agreementAddr).resolveDispute(false);
+    }
+
+    function testRegistrySetAuthorizedFactory() public {
+        address newFactory = address(0x50);
+        // owner = address(this) в тестах
+        RegistryFacet(address(diamond)).setAuthorizedFactory(newFactory);
+        assertEq(RegistryFacet(address(diamond)).authorizedFactory(), newFactory);
+    }
+
+    function testRegistrySetAuthorizedFactoryRevertIfNotOwner() public {
+        vm.prank(client);
+        vm.expectRevert(RegistryFacet.NotOwner.selector);
+        RegistryFacet(address(diamond)).setAuthorizedFactory(address(0x50));
+    }
+
+    function testArbiterClaimClearedAfterResolve() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client); Agreement(agreementAddr).fund();
+        vm.prank(executor); Agreement(agreementAddr).activate();
+        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+
+        vm.prank(arbiter);
+        Agreement(agreementAddr).resolveDispute(true);
+
+        // After resolution, the claim should be cleared by Agreement's callback
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeClaimer(agreementAddr), address(0));
     }
 }

@@ -8,6 +8,7 @@ import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
 import "../src/facets/JobBoardFacet.sol";
 import "../src/facets/ServiceBoardFacet.sol";
+import "../src/JobReceiptFacet.sol";
 
 // ---------- MOCK USDC ----------
 
@@ -76,6 +77,7 @@ contract BoardsTest is Test {
         OwnershipFacet ownershipFacet = new OwnershipFacet();
         JobBoardFacet jobBoardFacet = new JobBoardFacet();
         ServiceBoardFacet serviceBoardFacet = new ServiceBoardFacet();
+        JobReceiptFacet jobReceiptFacet = new JobReceiptFacet();
 
         // --- Registry selectors ---
         bytes4[] memory regSels = new bytes4[](12);
@@ -109,17 +111,21 @@ contract BoardsTest is Test {
         facSels[12] = FactoryFacet.setProtocolArbiter.selector;
 
         // --- JobBoardFacet selectors ---
-        bytes4[] memory jobSels = new bytes4[](7);
-        jobSels[0] = JobBoardFacet.mintJob.selector;
-        jobSels[1] = JobBoardFacet.applyForJob.selector;
-        jobSels[2] = JobBoardFacet.acceptApplicant.selector;
-        jobSels[3] = JobBoardFacet.cancelJob.selector;
-        jobSels[4] = JobBoardFacet.getJob.selector;
-        jobSels[5] = JobBoardFacet.getClientJobs.selector;
-        jobSels[6] = JobBoardFacet.getApplicants.selector;
+        bytes4[] memory jobSels = new bytes4[](11);
+        jobSels[0]  = JobBoardFacet.mintJob.selector;
+        jobSels[1]  = JobBoardFacet.applyForJob.selector;
+        jobSels[2]  = JobBoardFacet.acceptApplicant.selector;
+        jobSels[3]  = JobBoardFacet.cancelJob.selector;
+        jobSels[4]  = JobBoardFacet.getJob.selector;
+        jobSels[5]  = JobBoardFacet.getClientJobs.selector;
+        jobSels[6]  = JobBoardFacet.getApplicants.selector;
+        jobSels[7]  = JobBoardFacet.withdrawApplication.selector;
+        jobSels[8]  = JobBoardFacet.editJob.selector;
+        jobSels[9]  = JobBoardFacet.totalJobs.selector;
+        jobSels[10] = JobBoardFacet.getOpenJobs.selector;
 
         // --- ServiceBoardFacet selectors ---
-        bytes4[] memory svcSels = new bytes4[](15);
+        bytes4[] memory svcSels = new bytes4[](20);
         svcSels[0]  = ServiceBoardFacet.mintService.selector;
         svcSels[1]  = ServiceBoardFacet.requestService.selector;
         svcSels[2]  = ServiceBoardFacet.acceptRequest.selector;
@@ -135,6 +141,11 @@ contract BoardsTest is Test {
         svcSels[12] = ServiceBoardFacet.getServiceRequests.selector;
         svcSels[13] = ServiceBoardFacet.getClientRequests.selector;
         svcSels[14] = ServiceBoardFacet.totalServices.selector;
+        svcSels[15] = ServiceBoardFacet.editService.selector;
+        svcSels[16] = ServiceBoardFacet.totalRequests.selector;
+        svcSels[17] = ServiceBoardFacet.getRequestFunds.selector;
+        svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
+        svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
 
         // --- Infrastructure selectors ---
         bytes4[] memory cutSels = new bytes4[](1);
@@ -151,14 +162,36 @@ contract BoardsTest is Test {
         ownSels[0] = OwnershipFacet.transferOwnership.selector;
         ownSels[1] = OwnershipFacet.owner.selector;
 
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](7);
-        cut[0] = IDiamondCut.FacetCut(address(registryFacet),   IDiamondCut.FacetCutAction.Add, regSels);
-        cut[1] = IDiamondCut.FacetCut(address(factoryFacet),    IDiamondCut.FacetCutAction.Add, facSels);
-        cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet), IDiamondCut.FacetCutAction.Add, cutSels);
+        // --- JobReceiptFacet selectors (supportsInterface excluded — already in DiamondLoupe) ---
+        bytes4[] memory receiptSels = new bytes4[](18);
+        receiptSels[0]  = JobReceiptFacet.name.selector;
+        receiptSels[1]  = JobReceiptFacet.symbol.selector;
+        receiptSels[2]  = JobReceiptFacet.balanceOf.selector;
+        receiptSels[3]  = JobReceiptFacet.ownerOf.selector;
+        receiptSels[4]  = JobReceiptFacet.tokenURI.selector;
+        receiptSels[5]  = bytes4(keccak256("transferFrom(address,address,uint256)"));
+        receiptSels[6]  = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
+        receiptSels[7]  = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
+        receiptSels[8]  = bytes4(keccak256("approve(address,uint256)"));
+        receiptSels[9]  = bytes4(keccak256("setApprovalForAll(address,bool)"));
+        receiptSels[10] = JobReceiptFacet.getApproved.selector;
+        receiptSels[11] = JobReceiptFacet.isApprovedForAll.selector;
+        receiptSels[12] = JobReceiptFacet.setSvgRenderer.selector;
+        receiptSels[13] = JobReceiptFacet.getSvgRenderer.selector;
+        receiptSels[14] = JobReceiptFacet.mintJobReceipt.selector;
+        receiptSels[15] = JobReceiptFacet.getJobReceiptData.selector;
+        receiptSels[16] = JobReceiptFacet.isJobReceiptToken.selector;
+        receiptSels[17] = JobReceiptFacet.getReceiptTotalSupply.selector;
+
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](8);
+        cut[0] = IDiamondCut.FacetCut(address(registryFacet),    IDiamondCut.FacetCutAction.Add, regSels);
+        cut[1] = IDiamondCut.FacetCut(address(factoryFacet),     IDiamondCut.FacetCutAction.Add, facSels);
+        cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet),  IDiamondCut.FacetCutAction.Add, cutSels);
         cut[3] = IDiamondCut.FacetCut(address(diamondLoupeFacet),IDiamondCut.FacetCutAction.Add, loupeSels);
-        cut[4] = IDiamondCut.FacetCut(address(ownershipFacet),  IDiamondCut.FacetCutAction.Add, ownSels);
-        cut[5] = IDiamondCut.FacetCut(address(jobBoardFacet),   IDiamondCut.FacetCutAction.Add, jobSels);
+        cut[4] = IDiamondCut.FacetCut(address(ownershipFacet),   IDiamondCut.FacetCutAction.Add, ownSels);
+        cut[5] = IDiamondCut.FacetCut(address(jobBoardFacet),    IDiamondCut.FacetCutAction.Add, jobSels);
         cut[6] = IDiamondCut.FacetCut(address(serviceBoardFacet),IDiamondCut.FacetCutAction.Add, svcSels);
+        cut[7] = IDiamondCut.FacetCut(address(jobReceiptFacet),  IDiamondCut.FacetCutAction.Add, receiptSels);
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
 
@@ -400,7 +433,7 @@ contract BoardsTest is Test {
 
     function _requestService(uint256 serviceId) internal returns (uint256 requestId) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), FEE + AMOUNT);
+        usdc.approve(address(diamond), AMOUNT);
         requestId = ServiceBoardFacet(address(diamond)).requestService(
             serviceId, AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -416,11 +449,10 @@ contract BoardsTest is Test {
         uint256 requestId = _requestService(serviceId);
         assertEq(requestId, 0);
 
-        // Fee сгорела
-        assertEq(usdc.balanceOf(feeRecipient), feeBefore + FEE);
-        // Amount заблокирован в Diamond
+        // requestService не берёт fee — только amount блокируется в Diamond
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore);
         assertEq(usdc.balanceOf(address(diamond)), AMOUNT);
-        assertEq(usdc.balanceOf(client), clientBefore - FEE - AMOUNT);
+        assertEq(usdc.balanceOf(client), clientBefore - AMOUNT);
 
         ServiceBoardStorage.HireRequest memory req = ServiceBoardFacet(address(diamond)).getRequest(requestId);
         assertEq(req.client, client);
@@ -583,5 +615,276 @@ contract BoardsTest is Test {
 
         ServiceBoardStorage.Service memory svc = ServiceBoardFacet(address(diamond)).getService(serviceId);
         assertEq(svc.hiresCount, 1);
+    }
+
+    // ============================================================
+    //  JOB RECEIPT NFT TESTS
+    // ============================================================
+
+    function testJobReceiptMintedOnJobPost() public {
+        assertEq(JobReceiptFacet(address(diamond)).getReceiptTotalSupply(), 0);
+
+        _approveAndMintJob();
+
+        assertEq(JobReceiptFacet(address(diamond)).getReceiptTotalSupply(), 1);
+        assertEq(JobReceiptFacet(address(diamond)).balanceOf(client), 1);
+        assertEq(JobReceiptFacet(address(diamond)).ownerOf(0), client);
+        assertTrue(JobReceiptFacet(address(diamond)).isJobReceiptToken(0));
+    }
+
+    function testJobReceiptData() public {
+        _approveAndMintJob();
+
+        ReceiptStorage.JobReceiptData memory data = JobReceiptFacet(address(diamond)).getJobReceiptData(0);
+        assertEq(data.client, client);
+        assertEq(data.amount, AMOUNT);
+        assertEq(data.deadlineDays, DEADLINE);
+        assertEq(data.region, REGION);
+        assertEq(data.title, "Build a dApp");
+    }
+
+    function testJobReceiptSoulbound() public {
+        _approveAndMintJob();
+
+        vm.prank(client);
+        vm.expectRevert();
+        JobReceiptFacet(address(diamond)).transferFrom(client, address(0x5), 0);
+    }
+
+    function testJobReceiptDirectMintReverts() public {
+        vm.expectRevert("Only Diamond");
+        JobReceiptFacet(address(diamond)).mintJobReceipt(client, 0, AMOUNT, DEADLINE, REGION, "title");
+    }
+
+    function testJobReceiptIdempotent() public {
+        // Two jobs — each gets its own receipt
+        _approveAndMintJob();
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), FEE + AMOUNT);
+        JobBoardFacet(address(diamond)).mintJob(
+            "Second Job",
+            "Another task",
+            AMOUNT,
+            DEADLINE,
+            TERMS,
+            REGION
+        );
+        vm.stopPrank();
+
+        assertEq(JobReceiptFacet(address(diamond)).getReceiptTotalSupply(), 2);
+        assertEq(JobReceiptFacet(address(diamond)).balanceOf(client), 2);
+    }
+
+    function testJobReceiptNotReceiptToken() public {
+        assertFalse(JobReceiptFacet(address(diamond)).isJobReceiptToken(99));
+    }
+
+    function testJobReceiptSetSvgRenderer() public {
+        address renderer = address(0xABC);
+        JobReceiptFacet(address(diamond)).setSvgRenderer(renderer);
+        assertEq(JobReceiptFacet(address(diamond)).getSvgRenderer(), renderer);
+    }
+
+    function testJobReceiptTokenURIRevertsWithoutRenderer() public {
+        _approveAndMintJob();
+        // Без SVGRenderer tokenURI ревертит
+        vm.expectRevert("SVGRenderer not set");
+        JobReceiptFacet(address(diamond)).tokenURI(0);
+    }
+
+    // ============================================================
+    //  JOB BOARD EDIT + WITHDRAW TESTS
+    // ============================================================
+
+    function testWithdrawApplication() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+
+        assertEq(JobBoardFacet(address(diamond)).getApplicants(jobId).length, 1);
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).withdrawApplication(jobId);
+
+        assertEq(JobBoardFacet(address(diamond)).getApplicants(jobId).length, 0);
+    }
+
+    function testWithdrawApplicationRevertIfNotApplied() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(executor);
+        vm.expectRevert(JobBoardFacet.NotApplicant.selector);
+        JobBoardFacet(address(diamond)).withdrawApplication(jobId);
+    }
+
+    function testWithdrawApplicationRevertIfJobClosed() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+
+        vm.prank(executor);
+        vm.expectRevert(JobBoardFacet.JobNotOpen.selector);
+        JobBoardFacet(address(diamond)).withdrawApplication(jobId);
+    }
+
+    function testEditJob() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).editJob(
+            jobId,
+            "Updated Title",
+            "Updated description",
+            14,
+            TERMS,
+            REGION
+        );
+
+        JobBoardStorage.Job memory job = JobBoardFacet(address(diamond)).getJob(jobId);
+        assertEq(job.title, "Updated Title");
+        assertEq(job.deadlineDays, 14);
+    }
+
+    function testEditJobRevertIfNotClient() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(executor);
+        vm.expectRevert(JobBoardFacet.NotClient.selector);
+        JobBoardFacet(address(diamond)).editJob(jobId, "X", "X", 14, TERMS, REGION);
+    }
+
+    function testEditJobRevertIfHasApplicants() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+
+        vm.prank(client);
+        vm.expectRevert(JobBoardFacet.JobHasApplicants.selector);
+        JobBoardFacet(address(diamond)).editJob(jobId, "X", "X", 14, TERMS, REGION);
+    }
+
+    function testTotalJobsAndGetOpenJobs() public {
+        assertEq(JobBoardFacet(address(diamond)).totalJobs(), 0);
+
+        _approveAndMintJob();
+        assertEq(JobBoardFacet(address(diamond)).totalJobs(), 1);
+
+        (uint256[] memory ids, JobBoardStorage.Job[] memory jobs) =
+            JobBoardFacet(address(diamond)).getOpenJobs();
+        assertEq(ids.length, 1);
+        assertEq(jobs[0].client, client);
+    }
+
+    function testGetClientJobs() public {
+        _approveAndMintJob();
+
+        uint256[] memory clientJobs = JobBoardFacet(address(diamond)).getClientJobs(client);
+        assertEq(clientJobs.length, 1);
+        assertEq(clientJobs[0], 0);
+    }
+
+    // ============================================================
+    //  SERVICE BOARD EDIT + VIEW TESTS
+    // ============================================================
+
+    function testEditService() public {
+        uint256 serviceId = _mintService();
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).editService(
+            serviceId,
+            "Updated Service",
+            "New description",
+            50_000_000, // new price
+            14,         // new deadline
+            REGION
+        );
+
+        ServiceBoardStorage.Service memory svc = ServiceBoardFacet(address(diamond)).getService(serviceId);
+        assertEq(svc.title, "Updated Service");
+        assertEq(svc.price, 50_000_000);
+        assertEq(svc.deadlineDays, 14);
+    }
+
+    function testEditServiceRevertIfNotExecutor() public {
+        uint256 serviceId = _mintService();
+
+        vm.prank(client);
+        vm.expectRevert(ServiceBoardFacet.NotExecutor.selector);
+        ServiceBoardFacet(address(diamond)).editService(
+            serviceId, "X", "X", 50_000_000, 14, REGION
+        );
+    }
+
+    function testTotalRequests() public {
+        uint256 serviceId = _mintService();
+        assertEq(ServiceBoardFacet(address(diamond)).totalRequests(), 0);
+
+        _requestService(serviceId);
+        assertEq(ServiceBoardFacet(address(diamond)).totalRequests(), 1);
+    }
+
+    function testGetRequestFunds() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        assertEq(ServiceBoardFacet(address(diamond)).getRequestFunds(requestId), AMOUNT);
+    }
+
+    function testGetRequestFundsClearedOnAccept() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+
+        // После accept средства ушли из Diamond в Agreement
+        assertEq(ServiceBoardFacet(address(diamond)).getRequestFunds(requestId), 0);
+    }
+
+    function testGetActiveServices() public {
+        _mintService();
+
+        (uint256[] memory ids, ServiceBoardStorage.Service[] memory svcs) =
+            ServiceBoardFacet(address(diamond)).getActiveServices();
+        assertEq(ids.length, 1);
+        assertEq(svcs[0].executor, executor);
+    }
+
+    function testGetExecutorServices() public {
+        _mintService();
+
+        uint256[] memory ids = ServiceBoardFacet(address(diamond)).getExecutorServices(executor);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], 0);
+    }
+
+    function testAcceptRequestRevertIfNotPending() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+
+        // Повторный accept того же requestId
+        vm.prank(executor);
+        vm.expectRevert(ServiceBoardFacet.RequestNotPending.selector);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+    }
+
+    function testGetClientRequests() public {
+        uint256 serviceId = _mintService();
+        _requestService(serviceId);
+
+        uint256[] memory reqs = ServiceBoardFacet(address(diamond)).getClientRequests(client);
+        assertEq(reqs.length, 1);
+        assertEq(reqs[0], 0);
     }
 }
