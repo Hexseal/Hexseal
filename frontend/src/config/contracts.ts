@@ -1443,6 +1443,40 @@ export const JOB_RECEIPT_FACET_ABI = [
     name: 'Transfer',
     type: 'event',
   },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'uint256', name: 'tokenId', type: 'uint256' },
+      { indexed: true, internalType: 'uint256', name: 'jobId', type: 'uint256' },
+      { indexed: true, internalType: 'address', name: 'client', type: 'address' },
+    ],
+    name: 'JobReceiptBurned',
+    type: 'event',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'jobId', type: 'uint256' }],
+    name: 'burnJobReceipt',
+    outputs: [{ internalType: 'bool', name: 'burned', type: 'bool' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'tokenId', type: 'uint256' }],
+    name: 'isJobReceiptBurned',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'jobId', type: 'uint256' }],
+    name: 'getTokenIdByJobId',
+    outputs: [
+      { internalType: 'uint256', name: 'tokenId', type: 'uint256' },
+      { internalType: 'bool', name: 'exists', type: 'bool' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
 ];
 
 // ArbiterRegistryFacet ABI (part of Diamond)

@@ -43,6 +43,8 @@ library ReceiptStorage {
         mapping(uint256 => JobReceiptData) jobReceiptData;
         mapping(uint256 => bool)           jobReceiptMinted;
         address svgRenderer;
+        mapping(uint256 => uint256) jobIdToTokenId;    // jobId → tokenId (set on mint)
+        mapping(uint256 => bool)    jobIdToTokenIdSet; // sentinel to distinguish tokenId=0 from "not set"
     }
 
     function layout() internal pure returns (Layout storage l) {
@@ -57,6 +59,7 @@ contract JobReceiptFacet {
 
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     event JobReceiptMinted(uint256 indexed tokenId, uint256 indexed jobId, address indexed client);
+    event JobReceiptBurned(uint256 indexed tokenId, uint256 indexed jobId, address indexed client);
     event SvgRendererUpdated(address indexed renderer);
 
     modifier onlyOwner() {
@@ -176,9 +179,27 @@ contract JobReceiptFacet {
 
         s.owners[tokenId] = to;
         s.balances[to]++;
+        s.jobIdToTokenId[jobId]    = tokenId;
+        s.jobIdToTokenIdSet[jobId] = true;
 
         emit Transfer(address(0), to, tokenId);
         emit JobReceiptMinted(tokenId, jobId, to);
+    }
+
+    function burnJobReceipt(uint256 jobId) external returns (bool burned) {
+        require(msg.sender == address(this), "Only Diamond");
+        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        if (!s.jobIdToTokenIdSet[jobId]) return false;
+        uint256 tokenId = s.jobIdToTokenId[jobId];
+        address owner = s.owners[tokenId];
+        if (owner == address(0)) return false; // already burned
+
+        s.owners[tokenId] = address(0);
+        s.balances[owner]--;
+
+        emit Transfer(owner, address(0), tokenId);
+        emit JobReceiptBurned(tokenId, jobId, owner);
+        return true;
     }
 
     // ─── Views ────────────────────────────────────────────────────────────────
@@ -191,6 +212,16 @@ contract JobReceiptFacet {
 
     function isJobReceiptToken(uint256 tokenId) external view returns (bool) {
         return ReceiptStorage.layout().isJobReceipt[tokenId];
+    }
+
+    function isJobReceiptBurned(uint256 tokenId) external view returns (bool) {
+        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        return s.isJobReceipt[tokenId] && s.owners[tokenId] == address(0);
+    }
+
+    function getTokenIdByJobId(uint256 jobId) external view returns (uint256 tokenId, bool exists) {
+        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        return (s.jobIdToTokenId[jobId], s.jobIdToTokenIdSet[jobId]);
     }
 
     function getReceiptTotalSupply() external view returns (uint256) {

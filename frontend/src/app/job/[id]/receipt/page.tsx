@@ -90,15 +90,27 @@ function Dashes() {
 }
 
 function Receipt({ data }: { data: ReceiptData }) {
-  const fee   = REGION_FEE[data.region] ?? 2_000_000;
-  const total = Number(data.amount) + fee;
-  const st    = STATUS_MAP[data.jobStatus] ?? STATUS_MAP[0];
+  const fee      = REGION_FEE[data.region] ?? 2_000_000;
+  const total    = Number(data.amount) + fee;
+  const st       = STATUS_MAP[data.jobStatus] ?? STATUS_MAP[0];
+  const isCancelled = data.jobStatus === 2;
 
   return (
     <div
-      className="relative mx-auto font-mono"
+      className={`relative mx-auto font-mono transition-opacity ${isCancelled ? "opacity-60" : ""}`}
       style={{ width: 360, background: "#080808" }}
     >
+      {/* Void stamp — shown only when CANCELLED */}
+      {isCancelled && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 10 }}>
+          <div
+            className="font-mono font-bold tracking-[6px] text-red-400/25 border-[3px] border-red-400/20 rounded px-5 py-2"
+            style={{ fontSize: 34, transform: "rotate(-22deg)" }}
+          >
+            VOIDED
+          </div>
+        </div>
+      )}
       {/* Top bar */}
       <div style={{ height: 4, background: "#ffffff", borderRadius: "2px 2px 0 0" }} />
 

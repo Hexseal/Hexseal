@@ -19,7 +19,11 @@ import "../DiamondProxy.sol"; // для OwnershipLib
 
 import "./IFactory.sol";
 
-// ---------- RECEIPT NFT INTERFACE ----------
+// ---------- RECEIPT NFT INTERFACES ----------
+
+interface IJobReceiptBurn {
+    function burnJobReceipt(uint256 jobId) external returns (bool);
+}
 
 interface IJobReceiptMint {
     function mintJobReceipt(
@@ -372,6 +376,9 @@ contract JobBoardFacet {
         // --- Interaction ---
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         _safeTransfer(fs.usdc, job.client, refund);
+
+        // Burn receipt NFT — non-blocking so a failure doesn't block the refund
+        try IJobReceiptBurn(address(this)).burnJobReceipt(jobId) {} catch {}
 
         emit JobCancelled(jobId, job.client, refund);
     }

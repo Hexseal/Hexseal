@@ -163,7 +163,7 @@ contract BoardsTest is Test {
         ownSels[1] = OwnershipFacet.owner.selector;
 
         // --- JobReceiptFacet selectors (supportsInterface excluded — already in DiamondLoupe) ---
-        bytes4[] memory receiptSels = new bytes4[](18);
+        bytes4[] memory receiptSels = new bytes4[](21);
         receiptSels[0]  = JobReceiptFacet.name.selector;
         receiptSels[1]  = JobReceiptFacet.symbol.selector;
         receiptSels[2]  = JobReceiptFacet.balanceOf.selector;
@@ -182,6 +182,9 @@ contract BoardsTest is Test {
         receiptSels[15] = JobReceiptFacet.getJobReceiptData.selector;
         receiptSels[16] = JobReceiptFacet.isJobReceiptToken.selector;
         receiptSels[17] = JobReceiptFacet.getReceiptTotalSupply.selector;
+        receiptSels[18] = JobReceiptFacet.burnJobReceipt.selector;
+        receiptSels[19] = JobReceiptFacet.isJobReceiptBurned.selector;
+        receiptSels[20] = JobReceiptFacet.getTokenIdByJobId.selector;
 
         IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](8);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet),    IDiamondCut.FacetCutAction.Add, regSels);
@@ -691,6 +694,48 @@ contract BoardsTest is Test {
         // Без SVGRenderer tokenURI ревертит
         vm.expectRevert("SVGRenderer not set");
         JobReceiptFacet(address(diamond)).tokenURI(0);
+    }
+
+    function testCancelJobBurnsReceipt() public {
+        uint256 jobId = _approveAndMintJob();
+
+        // Receipt смминтилась при создании заказа
+        assertEq(JobReceiptFacet(address(diamond)).ownerOf(0), client);
+        assertFalse(JobReceiptFacet(address(diamond)).isJobReceiptBurned(0));
+
+        (uint256 tokenId, bool exists) = JobReceiptFacet(address(diamond)).getTokenIdByJobId(jobId);
+        assertEq(tokenId, 0);
+        assertTrue(exists);
+
+        // Отменяем заказ
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+
+        // Receipt должна быть сожжена
+        assertTrue(JobReceiptFacet(address(diamond)).isJobReceiptBurned(0));
+        assertEq(JobReceiptFacet(address(diamond)).balanceOf(client), 0);
+
+        // ownerOf ревертит для сожжённого токена
+        vm.expectRevert("ERC721: nonexistent token");
+        JobReceiptFacet(address(diamond)).ownerOf(0);
+
+        // getJobReceiptData всё ещё работает — данные сохранены для истории
+        ReceiptStorage.JobReceiptData memory data = JobReceiptFacet(address(diamond)).getJobReceiptData(0);
+        assertEq(data.client, client);
+        assertEq(data.amount, AMOUNT);
+    }
+
+    function testBurnJobReceiptDirectReverts() public {
+        _approveAndMintJob();
+
+        vm.prank(address(0x99));
+        vm.expectRevert("Only Diamond");
+        JobReceiptFacet(address(diamond)).burnJobReceipt(0);
+    }
+
+    function testGetTokenIdByJobIdBeforeMint() public {
+        (, bool exists) = JobReceiptFacet(address(diamond)).getTokenIdByJobId(99);
+        assertFalse(exists);
     }
 
     // ============================================================
