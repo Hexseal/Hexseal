@@ -12,12 +12,18 @@ import OnboardingModal from "@/components/OnboardingModal";
 // Framer-motion page transition — reliable on mobile unlike tailwindcss-animate.
 // key={pathname} forces React to unmount/remount on navigation, triggering
 // initial → animate on every route change including MobileBottomNav taps.
+//
+// _pageHasLoaded: module-level flag that stays true after the first render
+// completes. Skips the initial animation on hard refresh (prevents CLS from
+// the SSR→client hydration mismatch) while keeping transitions on navigation.
+let _pageHasLoaded = false;
 function PageFade({ children, pathname }: { children: React.ReactNode; pathname: string }) {
   const isChat = pathname?.startsWith('/chat');
+  useEffect(() => { _pageHasLoaded = true; }, []);
   return (
     <motion.div
       key={pathname}
-      initial={{ opacity: 0, y: 7 }}
+      initial={_pageHasLoaded ? { opacity: 0, y: 7 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
       className={`min-h-0 flex flex-col flex-1 ${isChat ? 'overflow-hidden' : ''}`}

@@ -97,12 +97,12 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
 
           {/* Right: notifications + wallet */}
           <div className="flex items-center gap-1">
-            {isConnected && (
+            <div className={isConnected ? undefined : 'invisible pointer-events-none'}>
               <NotificationCenter
                 open={openPanelMobile === "notifications"}
                 onOpenChange={(o) => setOpenPanelMobile(o ? "notifications" : null)}
               />
-            )}
+            </div>
             <WalletMenu
               open={openPanelMobile === "wallet"}
               onOpenChange={(o) => setOpenPanelMobile(o ? "wallet" : null)}
@@ -166,12 +166,12 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
 
             {/* Right */}
             <div className="flex items-center gap-1.5 justify-end">
-              {isConnected && (
+              <div className={isConnected ? undefined : 'invisible pointer-events-none'}>
                 <NotificationCenter
                   open={openPanelDesktop === "notifications"}
                   onOpenChange={(o) => setOpenPanelDesktop(o ? "notifications" : null)}
                 />
-              )}
+              </div>
               <WalletMenu
                 open={openPanelDesktop === "wallet"}
                 onOpenChange={(o) => setOpenPanelDesktop(o ? "wallet" : null)}

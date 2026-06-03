@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
 import { initXmtpClient, listDmConversations, type DmConversation } from '@/lib/xmtp';
 
-export function useConversations() {
+export function useConversations(isEnabled = false) {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
   const [conversations, setConversations] = useState<DmConversation[]>([]);
@@ -36,31 +36,32 @@ export function useConversations() {
     }
   }, []); // stable — reads walletClient via ref
 
-  // Reload when wallet address changes (connect / switch wallet)
+  // Reload when wallet address changes (connect / switch wallet).
+  // Only runs after user has enabled messaging — prevents auto-signing on page load.
   useEffect(() => {
-    if (address) load();
-  }, [address, load]);
+    if (address && isEnabled) load();
+  }, [address, isEnabled, load]);
 
   // Auto-poll every 30s as fallback
   useEffect(() => {
-    if (!address) return;
+    if (!address || !isEnabled) return;
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
-  }, [address, load]);
+  }, [address, isEnabled, load]);
 
   // Instant update when useDirectChat notifies of a new incoming message
   useEffect(() => {
-    if (!address) return;
+    if (!address || !isEnabled) return;
     window.addEventListener('hexseal-conv-update', load);
     return () => window.removeEventListener('hexseal-conv-update', load);
-  }, [address, load]);
+  }, [address, isEnabled, load]);
 
   // Re-sync immediately when the tab regains focus (stream may have gone stale)
   useEffect(() => {
-    if (!address) return;
+    if (!address || !isEnabled) return;
     window.addEventListener('focus', load);
     return () => window.removeEventListener('focus', load);
-  }, [address, load]);
+  }, [address, isEnabled, load]);
 
   return { conversations, isLoading, error, reload: load };
 }

@@ -152,14 +152,19 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
     }, 280);
   }, [disconnect, router]);
 
-  if (!mounted || !isConnected || !address) {
+  // While mounting or wagmi is reconnecting a saved session: show a fixed-size
+  // skeleton so the header right column doesn't shift when the wallet button appears.
+  if (!mounted || status === 'reconnecting') {
+    return <div className="h-9 w-[130px] rounded-lg bg-white/[0.06]" />;
+  }
+
+  if (!isConnected || !address) {
     return (
       <div className="flex items-center gap-1">
         {!hideLocale && <LocaleToggle locale={locale} setLocale={setLocale} />}
         <button
           onClick={openConnectModal}
-          disabled={!mounted}
-          className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 disabled:opacity-0"
+          className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90"
         >
           {t("wallet.connect")}
         </button>

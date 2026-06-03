@@ -208,7 +208,7 @@ function ChatHubPageInner() {
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
   const { isEnabled: xmtpEnabled }   = useXmtpStatus();
-  const { conversations, isLoading, error, reload } = useConversations();
+  const { conversations, isLoading, error, reload } = useConversations(xmtpEnabled);
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
