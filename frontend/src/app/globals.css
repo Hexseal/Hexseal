@@ -7,11 +7,10 @@
   --color-accent-glow: rgba(37, 99, 235, 0.3);
 
   /* Chat layout: how far from the top the chat main starts.
-     Mobile: pill header (10px margin + ~48px height + ~12px gap = 70px) + safe-area.
+     Mobile: pill 10px margin + 52px height (py-2 + h-9) + 6px gap = 68px + safe-area.
      Desktop: full fixed header height (4rem) + safe-area. */
-  /* Mobile: pill header 10px margin + ~54px height + gap = 74px */
-  --chat-top-offset: calc(env(safe-area-inset-top, 0px) + 74px);
-  --content-top-offset: calc(env(safe-area-inset-top, 0px) + 74px);
+  --chat-top-offset: calc(env(safe-area-inset-top, 0px) + 68px);
+  --content-top-offset: calc(env(safe-area-inset-top, 0px) + 68px);
   --vvh: 100dvh;
   --vv-offset-top: 0px;
 }

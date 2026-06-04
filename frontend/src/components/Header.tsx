@@ -74,7 +74,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div
-          className="flex items-center justify-between px-4 py-3 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
+          className="flex items-center justify-between px-4 py-2 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
           style={glassStyle}
         >
           {/* Left: back + logo */}

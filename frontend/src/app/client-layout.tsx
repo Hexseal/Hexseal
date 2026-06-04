@@ -43,8 +43,8 @@ const topScrim = (
     aria-hidden
     className="md:hidden fixed top-0 left-0 right-0 pointer-events-none z-40"
     style={{
-      height: 'calc(env(safe-area-inset-top, 0px) + 80px)',
-      background: 'linear-gradient(to bottom, #000 calc(env(safe-area-inset-top, 0px) + 10px), transparent calc(env(safe-area-inset-top, 0px) + 80px))',
+      height: 'calc(env(safe-area-inset-top, 0px) + 70px)',
+      background: 'linear-gradient(to bottom, #000 calc(env(safe-area-inset-top, 0px) + 10px), transparent calc(env(safe-area-inset-top, 0px) + 70px))',
     }}
   />
 );
