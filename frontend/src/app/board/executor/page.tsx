@@ -732,7 +732,10 @@ export default function ExecutorBoardPage() {
 
   if (!isConnected) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div
+        className="flex items-center justify-center"
+        style={{ minHeight: 'calc(100dvh - var(--content-top-offset))' }}
+      >
         <div className="text-center max-w-sm px-6">
           <h1 className="text-2xl font-bold font-syne mb-2">{t("board.services.title")}</h1>
           <p className="text-muted-foreground mb-6 text-sm">{t("board.services.connect_prompt")}</p>
