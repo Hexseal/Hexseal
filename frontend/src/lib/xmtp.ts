@@ -81,11 +81,40 @@ export function toIdentifier(address: string): Identifier {
   };
 }
 
-// ─── Installation ID tracking ─────────────────────────────────────────────────
-// Used to detect when OPFS was cleared and a fresh installation was registered,
-// so we can revoke the now-orphaned old installations automatically.
+// ─── Session helpers ──────────────────────────────────────────────────────────
 
-const installIdKey = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
+export const SESSION_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
+const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
+const expiryKey     = (addr: string) => `xmtp-expiry-${addr.toLowerCase()}`;
+const installIdKey  = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
+
+/** Check whether the XMTP OPFS database file exists for this address.
+ *  If it exists, Client.create() will NOT require a wallet signature.
+ *  If it's gone (browser cleared storage), signing would be needed — we
+ *  avoid that by clearing the session instead.
+ */
+export async function checkXmtpDbExists(address: string): Promise<boolean> {
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.getFileHandle(`xmtp-${address.toLowerCase()}`, { create: false });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Clear XMTP session state for this address (localStorage + in-memory cache).
+ *  Dispatches a DOM event so any mounted useXmtpStatus instances update immediately.
+ */
+export function clearXmtpSession(address: string): void {
+  const addr = address.toLowerCase();
+  localStorage.removeItem(registeredKey(addr));
+  localStorage.removeItem(expiryKey(addr));
+  localStorage.removeItem(installIdKey(addr));
+  _clientCache.delete(addr);
+  window.dispatchEvent(new CustomEvent('hexseal:xmtp-session-cleared', { detail: addr }));
+}
 
 // ─── Signer ───────────────────────────────────────────────────────────────────
 

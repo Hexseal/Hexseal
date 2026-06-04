@@ -8,6 +8,7 @@ import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
+import { useXmtpSession } from "@/hooks/useXmtpSession";
 
 // Framer-motion page transition — reliable on mobile unlike tailwindcss-animate.
 // key={pathname} forces React to unmount/remount on navigation, triggering
@@ -161,6 +162,7 @@ function ChatLayoutInner({
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [onboardingForced, setOnboardingForced] = useState(false);
+  useXmtpSession(); // background session restore + cleanup
 
   useEffect(() => {
     const handler = () => setOnboardingForced(true);
