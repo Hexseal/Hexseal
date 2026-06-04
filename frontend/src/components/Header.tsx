@@ -88,7 +88,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
                 <ArrowLeft className="w-4 h-4" />
               </button>
             )}
-            <Link href="/" className="flex items-center group">
+            <Link href="/" className={cn("flex items-center group", !showBack && "ml-1.5")}>
               <span className="font-syne font-bold text-[17px] tracking-wide" style={{ fontFamily: "var(--font-syne)" }}>
                 HEXSEAL
               </span>
