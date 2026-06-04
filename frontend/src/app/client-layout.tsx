@@ -34,13 +34,17 @@ function PageFade({ children, pathname }: { children: React.ReactNode; pathname:
 }
 
 // Gradient scrims that hide content scrolling behind pill UI elements on mobile
+// Covers the status-bar gap above the floating pill header, then fades through
+// the pill's own backdrop-blur zone. Solid only up to pill top (safe-area + 10px);
+// the 70px fade after that is hidden behind the pill (z-50 > z-40) and produces
+// only a subtle ~10px shadow below it.
 const topScrim = (
   <div
     aria-hidden
     className="md:hidden fixed top-0 left-0 right-0 pointer-events-none z-40"
     style={{
-      height: 'calc(env(safe-area-inset-top, 0px) + 110px)',
-      background: 'linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%)',
+      height: 'calc(env(safe-area-inset-top, 0px) + 80px)',
+      background: 'linear-gradient(to bottom, #000 calc(env(safe-area-inset-top, 0px) + 10px), transparent calc(env(safe-area-inset-top, 0px) + 80px))',
     }}
   />
 );
@@ -251,7 +255,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   if (isHome) {
     return (
       <>
-        {topScrim}
         <Header />
         <main className="flex-1">
           <PageFade pathname={pathname ?? ''}>{children}</PageFade>
