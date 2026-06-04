@@ -196,12 +196,12 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
       <DropdownMenuTrigger asChild>
         {hideNavItems ? (
           // Mobile pill: icon-style, matches the Bell button (transparent p-2, no border)
-          <button className="relative flex items-center gap-1 p-2 rounded-lg hover:bg-white/5 transition-colors outline-none">
+          <button className="relative flex items-center gap-0.5 p-2 rounded-lg hover:bg-white/5 transition-colors outline-none">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={avatarUrl}
               alt="avatar"
-              className="w-5 h-5 rounded-full ring-1 ring-white/[0.08]"
+              className="w-4 h-4 rounded-full ring-1 ring-white/[0.08]"
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
             <ChevronDown className="w-3 h-3 text-white/35" />
