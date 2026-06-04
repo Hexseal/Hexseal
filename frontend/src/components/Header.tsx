@@ -74,15 +74,15 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div
-          className="flex items-center justify-between px-4 py-2 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
+          className="flex items-center justify-between px-3 py-2 bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[22px]"
           style={glassStyle}
         >
           {/* Left: back + logo */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {showBack && (
               <button
                 onClick={() => router.back()}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors"
+                className="p-2 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors"
                 aria-label="Go back"
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -96,7 +96,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
           </div>
 
           {/* Right: notifications + wallet */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             <div className={isConnected ? undefined : 'invisible pointer-events-none'}>
               <NotificationCenter
                 open={openPanelMobile === "notifications"}

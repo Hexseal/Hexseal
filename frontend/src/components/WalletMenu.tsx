@@ -194,17 +194,31 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
       modal={false}
     >
       <DropdownMenuTrigger asChild>
-        <button className={`flex items-center gap-2 ${btnH} px-2.5 rounded-lg border border-white/[0.10] bg-white/[0.06] hover:bg-white/[0.10] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20`}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={avatarUrl}
-            alt="avatar"
-            className="w-5 h-5 rounded-full ring-1 ring-white/[0.08]"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-          />
-          <span className="hidden sm:inline font-mono text-sm">{displayText}</span>
-          <ChevronDown className="w-3 h-3 text-white/35" />
-        </button>
+        {hideNavItems ? (
+          // Mobile pill: icon-style, matches the Bell button (transparent p-2, no border)
+          <button className="relative flex items-center gap-1 p-2 rounded-lg hover:bg-white/5 transition-colors outline-none">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={avatarUrl}
+              alt="avatar"
+              className="w-5 h-5 rounded-full ring-1 ring-white/[0.08]"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+            <ChevronDown className="w-3 h-3 text-white/35" />
+          </button>
+        ) : (
+          <button className={`flex items-center gap-2 ${btnH} px-2.5 rounded-lg border border-white/[0.10] bg-white/[0.06] hover:bg-white/[0.10] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={avatarUrl}
+              alt="avatar"
+              className="w-5 h-5 rounded-full ring-1 ring-white/[0.08]"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+            <span className="hidden sm:inline font-mono text-sm">{displayText}</span>
+            <ChevronDown className="w-3 h-3 text-white/35" />
+          </button>
+        )}
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="end" className="w-64 bg-[#111113] border-white/[0.08] shadow-2xl shadow-black/80 p-0 overflow-hidden z-[200]">
