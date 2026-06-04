@@ -70,7 +70,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
     <>
       {/* ── Mobile floating pill header ────────────────────────────────── */}
       <header
-        className={chatMode ? "hidden" : "md:hidden fixed left-2 right-2 z-50"}
+        className={chatMode ? "hidden" : "md:hidden fixed left-4 right-4 z-50"}
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div
