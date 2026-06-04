@@ -459,10 +459,7 @@ export default function BoardPage() {
   if (!isConnected) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="text-center max-w-sm">
-          <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
-            <Briefcase className="w-7 h-7 text-primary" />
-          </div>
+        <div className="text-center max-w-sm px-6">
           <h1 className="text-2xl font-bold font-syne mb-2">{t("board.jobs.title")}</h1>
           <p className="text-muted-foreground mb-6 text-sm">
             {t("board.jobs.connect_prompt")}
