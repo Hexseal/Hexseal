@@ -154,8 +154,10 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
 
   // While mounting or wagmi is reconnecting a saved session: show a fixed-size
   // skeleton so the header right column doesn't shift when the wallet button appears.
+  const btnH = hideNavItems ? 'h-8' : 'h-9';
+
   if (!mounted || status === 'reconnecting') {
-    return <div className="h-9 w-[130px] rounded-lg bg-white/[0.06]" />;
+    return <div className={`${btnH} ${hideNavItems ? 'w-[80px]' : 'w-[130px]'} rounded-lg bg-white/[0.06]`} />;
   }
 
   if (!isConnected || !address) {
@@ -164,7 +166,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         {!hideLocale && <LocaleToggle locale={locale} setLocale={setLocale} />}
         <button
           onClick={openConnectModal}
-          className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90"
+          className={`flex items-center gap-2 ${btnH} px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90`}
         >
           {t("wallet.connect")}
         </button>
@@ -192,7 +194,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
       modal={false}
     >
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-white/[0.10] bg-white/[0.06] hover:bg-white/[0.10] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20">
+        <button className={`flex items-center gap-2 ${btnH} px-2.5 rounded-lg border border-white/[0.10] bg-white/[0.06] hover:bg-white/[0.10] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20`}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={avatarUrl}

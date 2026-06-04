@@ -119,7 +119,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
       >
         <div
-          className="max-w-screen-xl mx-auto bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[26px] h-[64px] flex items-center px-5"
+          className="max-w-screen-xl mx-auto bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[22px] h-[52px] flex items-center px-5"
           style={glassStyle}
         >
           <div className="grid grid-cols-[auto_1fr_auto] items-center w-full gap-4">
