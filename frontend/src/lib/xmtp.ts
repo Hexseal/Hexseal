@@ -154,20 +154,20 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   const promise = (async () => {
     try {
       const signer = createXmtpSigner(walletClient, onSignStep);
-      // Note: dbEncryptionKey is silently ignored by the XMTP WASM runtime.
+      // dbPath: per-address OPFS path so different wallets on the same browser
+      // don't share (and clobber) each other's MLS database.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const client = await Client.create(signer, { env: 'production' } as any);
+      const client = await Client.create(signer, { env: 'production', dbPath: `xmtp-${address}` } as any);
 
-      // Detect fresh installation (OPFS lost/cleared → new installationId).
-      // Revoke the now-orphaned stale installations to prevent hitting the 10/10 limit.
-      // revokeAllOtherInstallations() is a no-op (no wallet prompt) when nothing to revoke.
+      // Track installationId to detect OPFS clears across sessions.
+      // We do NOT auto-revoke other installations here — revokeAllOtherInstallations()
+      // requires a wallet signature even when nothing to revoke, which was triggering
+      // an extra sign prompt on every fresh installation (first use AND OPFS clear).
+      // Users who hit the 10/10 limit see a clear error message and can clean up via
+      // xmtp.chat → Settings → Revoke installations.
       const currentId = client.installationId;
       if (currentId) {
-        const storedId = localStorage.getItem(installIdKey(address));
-        if (storedId !== currentId) {
-          try { await client.revokeAllOtherInstallations(); } catch { /* non-critical */ }
-          localStorage.setItem(installIdKey(address), currentId);
-        }
+        localStorage.setItem(installIdKey(address), currentId);
       }
 
       _clientCache.set(address, client);
