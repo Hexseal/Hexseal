@@ -163,7 +163,9 @@
       "active": "กำลังดำเนินการ",
       "completed": "เสร็จสิ้น",
       "disputed": "มีข้อพิพาท",
-      "history": "ประวัติ"
+      "history": "ประวัติ",
+      "listings": "ประกาศ",
+      "deals": "ดีล"
     },
     "deal_card": {
       "as_client": "ในฐานะลูกค้า",

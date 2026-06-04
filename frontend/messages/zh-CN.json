@@ -163,7 +163,9 @@
       "active": "进行中",
       "completed": "已完成",
       "disputed": "争议中",
-      "history": "历史"
+      "history": "历史",
+      "listings": "列表",
+      "deals": "交易"
     },
     "deal_card": {
       "as_client": "作为客户",

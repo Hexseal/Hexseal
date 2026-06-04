@@ -163,7 +163,9 @@
       "active": "نشط",
       "completed": "مكتمل",
       "disputed": "متنازع عليه",
-      "history": "السجل"
+      "history": "السجل",
+      "listings": "الإعلانات",
+      "deals": "الصفقات"
     },
     "deal_card": {
       "as_client": "كعميل",

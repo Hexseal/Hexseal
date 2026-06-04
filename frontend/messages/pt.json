@@ -163,7 +163,9 @@
       "active": "Ativos",
       "completed": "Concluídos",
       "disputed": "Em disputa",
-      "history": "Histórico"
+      "history": "Histórico",
+      "listings": "Anúncios",
+      "deals": "Negócios"
     },
     "deal_card": {
       "as_client": "como cliente",

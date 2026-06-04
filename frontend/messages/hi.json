@@ -163,7 +163,9 @@
       "active": "सक्रिय",
       "completed": "पूर्ण",
       "disputed": "विवादित",
-      "history": "इतिहास"
+      "history": "इतिहास",
+      "listings": "सूचियाँ",
+      "deals": "डील"
     },
     "deal_card": {
       "as_client": "क्लाइंट के रूप में",

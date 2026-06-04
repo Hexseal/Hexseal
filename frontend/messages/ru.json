@@ -169,7 +169,9 @@
       "active": "Активные",
       "completed": "Завершённые",
       "disputed": "Спорные",
-      "history": "История"
+      "history": "История",
+      "listings": "Объявления",
+      "deals": "Сделки"
     },
     "deal_card": {
       "as_client": "как клиент",

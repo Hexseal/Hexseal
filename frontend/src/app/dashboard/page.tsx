@@ -12,7 +12,7 @@ import {
 import { MessagingSetup } from '@/components/MessagingSetup';
 import { DealSearch } from '@/components/DealSearch';
 import { DealCard, type AgreementRecord } from './components/DealCard';
-import { MyJobs, MyServices, MyClientRequests, MyJobReceipts } from './components/MyListings';
+import { MyJobs, MyServices, MyClientRequests } from './components/MyListings';
 import { useTranslations } from 'next-intl';
 import { calcXP } from '@/lib/xp';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -78,12 +78,12 @@ function Tab({ active, onClick, children, count }: {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type TabKey = 'active' | 'jobs' | 'services' | 'history';
+type TabKey = 'listings' | 'deals' | 'history';
 
 export default function DashboardPage() {
   const { address, isConnected, status } = useAccount();
   const [refreshKey, setRefreshKey] = useState(0);
-  const [tab, setTab] = useState<TabKey>('active');
+  const [tab, setTab] = useState<TabKey>('listings');
   const t = useTranslations();
 
   const { data: clientAgreements,   isLoading: isLoadingClient,   refetch: refetchClient   } = useReadContract({
@@ -114,8 +114,9 @@ export default function DashboardPage() {
     setRefreshKey(k => k + 1);
   };
 
-  const activeDeals  = allAgreements.filter(d => d.status === 0 || d.status === 3);
-  const historyDeals = allAgreements.filter(d => d.status !== 0 && d.status !== 3);
+  // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
+  const activeDeals  = allAgreements.filter(d => [0, 1, 2, 4].includes(d.status));
+  const historyDeals = allAgreements.filter(d => [3, 5, 6].includes(d.status));
   const completed    = allAgreements.filter(d => d.status === 1 || d.status === 4).length;
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
   const xp           = calcXP(allAgreements);
@@ -204,129 +205,117 @@ export default function DashboardPage() {
         <DealSearch />
 
         {/* ── Tabs ── */}
-        <div
-          className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] overflow-hidden"
-          style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)" }}
-        >
-          {/* Tab bar */}
-          <div className="flex gap-1 p-2 border-b border-white/[0.06] overflow-x-auto scrollbar-none">
-            <Tab active={tab === 'active'}   onClick={() => setTab('active')}   count={activeDeals.length}>
-              {t("dashboard.tabs.active")}
+        <div>
+          {/* Tab bar — no outer box, standalone pills */}
+          <div className="flex gap-1 overflow-x-auto scrollbar-none mb-4">
+            <Tab active={tab === 'listings'} onClick={() => setTab('listings')}>
+              {t("dashboard.tabs.listings")}
             </Tab>
-            <Tab active={tab === 'jobs'}     onClick={() => setTab('jobs')}>
-              {t("nav.jobs")}
+            <Tab active={tab === 'deals'} onClick={() => setTab('deals')} count={activeDeals.length}>
+              {t("dashboard.tabs.deals")}
             </Tab>
-            <Tab active={tab === 'services'} onClick={() => setTab('services')}>
-              {t("nav.services")}
-            </Tab>
-            <Tab active={tab === 'history'}  onClick={() => setTab('history')}  count={historyDeals.length}>
+            <Tab active={tab === 'history'} onClick={() => setTab('history')} count={historyDeals.length}>
               {t("dashboard.tabs.history")}
             </Tab>
           </div>
 
           {/* Tab content */}
-          <div className="p-3 sm:p-4">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-12 gap-2 text-white/30">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">{t("dashboard.loading")}</span>
-              </div>
-            ) : (
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.div
-                  key={tab}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.18 }}
-                >
-                  {tab === 'active' && (
-                    activeDeals.length === 0 ? (
-                      <div className="text-center py-10">
-                        <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
-                        <p className="text-sm text-white/30">{t("dashboard.empty_active")}</p>
-                        <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <AnimatePresence>
-                          {activeDeals.map((a, index) => (
-                            <motion.div
-                              key={`${a.agreement}-${refreshKey}`}
-                              initial={{ opacity: 0, y: 20 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, scale: 0.97 }}
-                              transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05 }}
-                              whileHover={{ scale: 1.004 }}
-                              whileTap={{ scale: 0.993 }}
-                            >
-                              <DealCard
-                                agreement={a}
-                                address={address!}
-                                refetch={refetch}
-                              />
-                            </motion.div>
-                          ))}
-                        </AnimatePresence>
-                      </div>
-                    )
-                  )}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12 gap-2 text-white/30">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">{t("dashboard.loading")}</span>
+            </div>
+          ) : (
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={tab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.18 }}
+              >
+                {tab === 'listings' && (
+                  <div className="space-y-6">
+                    <section>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-3">{t("dashboard.section_job_postings")}</p>
+                      <MyJobs address={address!} onDealCreated={refetch} />
+                    </section>
+                    <section>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-3">{t("nav.services")}</p>
+                      <MyServices address={address!} onDealCreated={refetch} />
+                    </section>
+                    <section>
+                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-3">{t("dashboard.section_service_requests")}</p>
+                      <MyClientRequests address={address!} />
+                    </section>
+                  </div>
+                )}
 
-                  {tab === 'jobs' && (
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">{t("dashboard.section_job_postings")}</p>
-                        <MyJobs address={address!} onDealCreated={refetch} />
-                      </div>
-                      <div>
-                        <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">{t("dashboard.section_job_receipts")}</p>
-                        <MyJobReceipts address={address!} />
-                      </div>
-                      <div>
-                        <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-2">{t("dashboard.section_service_requests")}</p>
-                        <MyClientRequests address={address!} />
-                      </div>
+                {tab === 'deals' && (
+                  activeDeals.length === 0 ? (
+                    <div className="text-center py-10">
+                      <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
+                      <p className="text-sm text-white/30">{t("dashboard.empty_active")}</p>
+                      <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
                     </div>
-                  )}
+                  ) : (
+                    <div className="space-y-3">
+                      <AnimatePresence>
+                        {activeDeals.map((a, index) => (
+                          <motion.div
+                            key={`${a.agreement}-${refreshKey}`}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.97 }}
+                            transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05 }}
+                            whileHover={{ scale: 1.004 }}
+                            whileTap={{ scale: 0.993 }}
+                          >
+                            <DealCard
+                              agreement={a}
+                              address={address!}
+                              refetch={refetch}
+                            />
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  )
+                )}
 
-                  {tab === 'services' && (
-                    <MyServices address={address!} onDealCreated={refetch} />
-                  )}
-
-                  {tab === 'history' && (
-                    historyDeals.length === 0 ? (
-                      <div className="text-center py-10">
-                        <CheckCircle className="w-8 h-8 text-white/10 mx-auto mb-3" />
-                        <p className="text-sm text-white/30">{t("dashboard.empty_history")}</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2 opacity-80">
-                        <AnimatePresence>
-                          {historyDeals.map((a, index) => (
-                            <motion.div
-                              key={`${a.agreement}-hist-${refreshKey}`}
-                              initial={{ opacity: 0, y: 20 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, scale: 0.97 }}
-                              transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05 }}
-                              whileHover={{ scale: 1.004 }}
-                              whileTap={{ scale: 0.993 }}
-                            >
-                              <DealCard
-                                agreement={a}
-                                address={address!}
-                                refetch={refetch}
-                              />
-                            </motion.div>
-                          ))}
-                        </AnimatePresence>
-                      </div>
-                    )
-                  )}
-                </motion.div>
-              </AnimatePresence>
-            )}
-          </div>
+                {tab === 'history' && (
+                  historyDeals.length === 0 ? (
+                    <div className="text-center py-10">
+                      <CheckCircle className="w-8 h-8 text-white/10 mx-auto mb-3" />
+                      <p className="text-sm text-white/30">{t("dashboard.empty_history")}</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 opacity-80">
+                      <AnimatePresence>
+                        {historyDeals.map((a, index) => (
+                          <motion.div
+                            key={`${a.agreement}-hist-${refreshKey}`}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.97 }}
+                            transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05 }}
+                            whileHover={{ scale: 1.004 }}
+                            whileTap={{ scale: 0.993 }}
+                          >
+                            <DealCard
+                              agreement={a}
+                              address={address!}
+                              refetch={refetch}
+                            />
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  )
+                )}
+              </motion.div>
+            </AnimatePresence>
+          )}
         </div>
       </div>
   );

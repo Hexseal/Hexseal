@@ -163,7 +163,9 @@
       "active": "Actif",
       "completed": "Terminé",
       "disputed": "En litige",
-      "history": "Historique"
+      "history": "Historique",
+      "listings": "Annonces",
+      "deals": "Deals"
     },
     "deal_card": {
       "as_client": "en tant que client",

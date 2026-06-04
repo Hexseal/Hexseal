@@ -163,7 +163,9 @@
       "active": "アクティブ",
       "completed": "完了",
       "disputed": "紛争中",
-      "history": "履歴"
+      "history": "履歴",
+      "listings": "一覧",
+      "deals": "取引"
     },
     "deal_card": {
       "as_client": "クライアントとして",

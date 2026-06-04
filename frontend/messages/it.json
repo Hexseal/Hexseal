@@ -163,7 +163,9 @@
       "active": "Attivi",
       "completed": "Completati",
       "disputed": "Contestati",
-      "history": "Cronologia"
+      "history": "Cronologia",
+      "listings": "Annunci",
+      "deals": "Accordi"
     },
     "deal_card": {
       "as_client": "come cliente",

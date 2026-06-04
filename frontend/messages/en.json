@@ -169,7 +169,9 @@
       "active": "Active",
       "completed": "Completed",
       "disputed": "Disputed",
-      "history": "History"
+      "history": "History",
+      "listings": "Listings",
+      "deals": "Deals"
     },
     "deal_card": {
       "as_client": "as client",

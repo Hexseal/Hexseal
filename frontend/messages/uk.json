@@ -163,7 +163,9 @@
       "active": "Активні",
       "completed": "Завершені",
       "disputed": "Спірні",
-      "history": "Історія"
+      "history": "Історія",
+      "listings": "Оголошення",
+      "deals": "Угоди"
     },
     "deal_card": {
       "as_client": "як клієнт",

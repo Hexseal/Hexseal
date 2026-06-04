@@ -163,7 +163,9 @@
       "active": "활성",
       "completed": "완료",
       "disputed": "분쟁 중",
-      "history": "기록"
+      "history": "기록",
+      "listings": "목록",
+      "deals": "거래"
     },
     "deal_card": {
       "as_client": "클라이언트로",
