@@ -274,7 +274,8 @@
     "role_client_executor": "Клиент и исполнитель",
     "client_role_badge": "Клиент",
     "executor_role_badge": "Исполнитель",
-    "photo_ready": "Фото выбрано"
+    "photo_ready": "Фото выбрано",
+    "save_success_no_photo": "Профиль сохранён (фото не загрузилось)"
   },
   "xp_level": {
     "master": "Мастер",

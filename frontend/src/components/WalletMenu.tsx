@@ -166,7 +166,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         {!hideLocale && <LocaleToggle locale={locale} setLocale={setLocale} />}
         <button
           onClick={openConnectModal}
-          className={`flex items-center gap-2 ${btnH} px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90`}
+          className={`flex items-center gap-2 ${btnH} px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 whitespace-nowrap`}
         >
           {t("wallet.connect")}
         </button>

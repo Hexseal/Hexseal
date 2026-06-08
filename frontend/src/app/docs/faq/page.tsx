@@ -4,212 +4,11 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ArrowLeft, ExternalLink } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { CONTRACTS } from "@/config/contracts";
-import { explorerUrl } from "@/config/chain";
 
 interface FAQItem {
   q: string;
   a: React.ReactNode;
 }
-
-interface FAQSection {
-  title: string;
-  items: FAQItem[];
-}
-
-const FAQ_SECTIONS: FAQSection[] = [
-  {
-    title: "General",
-    items: [
-      {
-        q: "What is Hexseal?",
-        a: "Hexseal is a decentralized freelance marketplace on Base. Clients post jobs, executors submit work, and funds are locked in an on-chain escrow contract — enforced by code, not by a platform admin.",
-      },
-      {
-        q: "Who controls the funds?",
-        a: "No one. Funds are held by an autonomous smart contract (Agreement.sol). The platform cannot freeze, redirect, or touch your USDC. Only the client, executor, or arbiter can trigger state transitions — and only under conditions defined in the contract.",
-      },
-      {
-        q: "Is it free to use?",
-        a: "Transactions are gasless — the platform relayer pays ETH gas fees on your behalf. You only spend USDC for the deal amount itself. A small platform fee is deducted on successful deal completion.",
-      },
-      {
-        q: "Which wallets are supported?",
-        a: (
-          <>
-            MetaMask, Coinbase Wallet, Rainbow, Trust Wallet, Brave Wallet, OKX, Phantom, Ledger, and any injected wallet. WalletConnect QR code lets you connect any mobile wallet.
-          </>
-        ),
-      },
-      {
-        q: "Which network does this run on?",
-        a: (
-          <>
-            Currently deployed on <strong>Base Sepolia</strong> (testnet, chainId 84532). All USDC used is test USDC — no real money is at risk.
-          </>
-        ),
-      },
-    ],
-  },
-  {
-    title: "Deals & Escrow",
-    items: [
-      {
-        q: "How does a deal work?",
-        a: (
-          <ol className="list-decimal list-inside space-y-1 text-white/60">
-            <li>Client creates a deal and specifies the executor address, amount, and deadline.</li>
-            <li>Client funds the deal — USDC is locked in the contract.</li>
-            <li>Executor activates the deal (accepts the work).</li>
-            <li>Executor submits deliverable and marks the deal done.</li>
-            <li>Client reviews and releases payment — or raises a dispute.</li>
-            <li>If client is silent for 5 days after delivery, funds auto-release to executor.</li>
-          </ol>
-        ),
-      },
-      {
-        q: "What happens if the executor doesn't activate?",
-        a: "If the executor doesn't activate within 3 days after funding, the client can trigger a refund. Funds return to the client's wallet.",
-      },
-      {
-        q: "What happens if the deadline passes?",
-        a: "If the executor hasn't submitted work by the deadline, the client can trigger a timeout refund. Funds return to the client.",
-      },
-      {
-        q: "Can I cancel a deal?",
-        a: "The executor can decline a deal before activating — the client then receives a refund after the 3-day window. Once the deal is active there is no unilateral cancel; either party can raise a dispute instead.",
-      },
-      {
-        q: "What is auto-approve?",
-        a: "If the executor marks work as done and the client doesn't respond for 5 days, the funds automatically release to the executor. This prevents clients from holding payment hostage.",
-      },
-    ],
-  },
-  {
-    title: "Gasless Transactions",
-    items: [
-      {
-        q: "What does 'gasless' mean?",
-        a: "You sign a message with your wallet (no ETH needed). The platform relayer submits the transaction on-chain and pays the ETH gas fee. Your wallet only signs — it does not spend ETH.",
-      },
-      {
-        q: "Is it safe to sign gasless messages?",
-        a: "Yes. Each message is EIP-712 typed data bound to a specific contract, function, nonce, and deadline. The relayer cannot alter the call — it can only forward your signed intent.",
-      },
-      {
-        q: "Can the relayer be censored?",
-        a: "If the relayer is down, you can always call the contracts directly using any Ethereum wallet or tool like cast. Gasless is a convenience layer, not a requirement.",
-      },
-    ],
-  },
-  {
-    title: "Disputes & Arbitration",
-    items: [
-      {
-        q: "How do I raise a dispute?",
-        a: "On the deal page, click 'Raise Dispute' and describe the issue. USDC is frozen immediately. An arbiter from the registry will claim the case and review both sides.",
-      },
-      {
-        q: "Who are the arbiters?",
-        a: "Arbiters are addresses registered on-chain by the platform owner or chief arbiter. They are neutral third parties. You can view the full registry on the Arbiter page.",
-      },
-      {
-        q: "How does an arbiter claim a dispute?",
-        a: "Arbiters use a commit-reveal scheme: first commit a hash (to prevent front-running), then reveal in the next block to officially claim the deal. This ensures fair selection.",
-      },
-      {
-        q: "What are the possible dispute outcomes?",
-        a: (
-          <ul className="list-disc list-inside space-y-1 text-white/60">
-            <li><strong className="text-white/80">Client wins</strong> — full USDC refunded to client.</li>
-            <li><strong className="text-white/80">Executor wins</strong> — full USDC paid to executor.</li>
-          </ul>
-        ),
-      },
-      {
-        q: "What if the arbiter doesn't resolve in time?",
-        a: "If the arbiter doesn't resolve within the arbiter window, either party can trigger an arbiter timeout — funds return to the client.",
-      },
-    ],
-  },
-  {
-    title: "Jobs & Services",
-    items: [
-      {
-        q: "What is a Job Posting?",
-        a: "A client posts a job on the Job Board with a description, budget, and requirements. Executors browse and apply. The client selects an applicant and a deal is created.",
-      },
-      {
-        q: "What is a Service Listing?",
-        a: "An executor lists a service they offer on the Service Board with a fixed price. Clients browse and request the service directly, creating a deal.",
-      },
-      {
-        q: "What are Job Receipt NFTs?",
-        a: "When a deal is successfully completed, the executor receives a soulbound NFT (non-transferable) as verifiable proof of the completed work. These build an on-chain reputation over time.",
-      },
-    ],
-  },
-  {
-    title: "Privacy & Security",
-    items: [
-      {
-        q: "Is the chat private?",
-        a: "Yes. All chat messages are end-to-end encrypted via XMTP. Only the participants (client, executor, arbiter) can read the messages. The platform cannot read them.",
-      },
-      {
-        q: "Are files shared in chat private?",
-        a: "Files are AES-256-GCM encrypted in your browser before upload. The encryption key travels only through XMTP (E2E encrypted). Files are stored on the relayer server for 18 days, then permanently deleted.",
-      },
-      {
-        q: "Can the platform take my funds?",
-        a: "No. The smart contracts are immutable once deployed. The platform owner can upgrade facets on the Diamond, but cannot touch funds in individual Agreement contracts — those are standalone escrow contracts.",
-      },
-      {
-        q: "Are the contracts audited?",
-        a: "The protocol is currently on Base Sepolia testnet and has not been formally audited. Do not use with significant real funds until a mainnet audit is completed.",
-      },
-    ],
-  },
-  {
-    title: "Technical",
-    items: [
-      {
-        q: "What is EIP-2535 (Diamond)?",
-        a: "Diamond is an upgradeable proxy pattern where a single proxy contract delegates calls to multiple 'facet' contracts. This allows the protocol to be extended or fixed without redeploying everything.",
-      },
-      {
-        q: "Where is the source code?",
-        a: (
-          <a
-            href="https://github.com/Hexseal/Hexseal"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary hover:underline inline-flex items-center gap-1"
-          >
-            github.com/Hexseal/Hexseal <ExternalLink className="w-3 h-3" />
-          </a>
-        ),
-      },
-      {
-        q: "How do I verify the deployed contracts?",
-        a: (
-          <>
-            You can inspect all contracts on{" "}
-            <a
-              href={explorerUrl('address', CONTRACTS.diamond)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              BaseScan
-            </a>
-            . Diamond address: <code className="text-xs bg-white/8 px-1.5 py-0.5 rounded font-mono">{CONTRACTS.diamond}</code>
-          </>
-        ),
-      },
-    ],
-  },
-];
 
 function FAQAccordion({ item }: { item: FAQItem }) {
   const [open, setOpen] = useState(false);
@@ -236,14 +35,82 @@ function FAQAccordion({ item }: { item: FAQItem }) {
 export default function FAQPage() {
   const t = useTranslations();
 
-  const sectionKeys: Array<[string, FAQSection]> = [
-    [t("faq.s_general"),   FAQ_SECTIONS[0]],
-    [t("faq.s_deals"),     FAQ_SECTIONS[1]],
-    [t("faq.s_gasless"),   FAQ_SECTIONS[2]],
-    [t("faq.s_disputes"),  FAQ_SECTIONS[3]],
-    [t("faq.s_jobs"),      FAQ_SECTIONS[4]],
-    [t("faq.s_privacy"),   FAQ_SECTIONS[5]],
-    [t("faq.s_tech"),      FAQ_SECTIONS[6]],
+  const sections: Array<{ title: string; items: FAQItem[] }> = [
+    {
+      title: t("faq.s_general"),
+      items: [
+        { q: t("faq.q_what_is"), a: t("faq.a_what_is") },
+        { q: t("faq.q_who_controls"), a: t("faq.a_who_controls") },
+        { q: t("faq.q_is_free"), a: t("faq.a_is_free") },
+        { q: t("faq.q_wallets"), a: t("faq.a_wallets") },
+        { q: t("faq.q_network"), a: t("faq.a_network") },
+      ],
+    },
+    {
+      title: t("faq.s_deals"),
+      items: [
+        { q: t("faq.q_how_deal"), a: t("faq.a_how_deal") },
+        { q: t("faq.q_no_activate"), a: t("faq.a_no_activate") },
+        { q: t("faq.q_deadline"), a: t("faq.a_deadline") },
+        { q: t("faq.q_cancel"), a: t("faq.a_cancel") },
+        { q: t("faq.q_autoapprove"), a: t("faq.a_autoapprove") },
+      ],
+    },
+    {
+      title: t("faq.s_gasless"),
+      items: [
+        { q: t("faq.q_gasless"), a: t("faq.a_gasless") },
+        { q: t("faq.q_safe_sign"), a: t("faq.a_safe_sign") },
+        { q: t("faq.q_censored"), a: t("faq.a_censored") },
+      ],
+    },
+    {
+      title: t("faq.s_disputes"),
+      items: [
+        { q: t("faq.q_raise_dispute"), a: t("faq.a_raise_dispute") },
+        { q: t("faq.q_arbiters"), a: t("faq.a_arbiters") },
+        { q: t("faq.q_claim"), a: t("faq.a_claim") },
+        { q: t("faq.q_outcomes"), a: t("faq.a_outcomes") },
+        { q: t("faq.q_arbiter_timeout"), a: t("faq.a_arbiter_timeout") },
+      ],
+    },
+    {
+      title: t("faq.s_jobs"),
+      items: [
+        { q: t("faq.q_job_post"), a: t("faq.a_job_post") },
+        { q: t("faq.q_service"), a: t("faq.a_service") },
+        { q: t("faq.q_nft"), a: t("faq.a_nft") },
+      ],
+    },
+    {
+      title: t("faq.s_privacy"),
+      items: [
+        { q: t("faq.q_chat"), a: t("faq.a_chat") },
+        { q: t("faq.q_files"), a: t("faq.a_files") },
+        { q: t("faq.q_funds_safe"), a: t("faq.a_funds_safe") },
+        { q: t("faq.q_audited"), a: t("faq.a_audited") },
+      ],
+    },
+    {
+      title: t("faq.s_tech"),
+      items: [
+        { q: t("faq.q_diamond"), a: t("faq.a_diamond") },
+        {
+          q: t("faq.q_source"),
+          a: (
+            <a
+              href="https://github.com/Hexseal/Hexseal"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline inline-flex items-center gap-1"
+            >
+              github.com/Hexseal/Hexseal <ExternalLink className="w-3 h-3" />
+            </a>
+          ),
+        },
+        { q: t("faq.q_verify"), a: t("faq.a_verify") },
+      ],
+    },
   ];
 
   return (
@@ -269,10 +136,10 @@ export default function FAQPage() {
 
         {/* Sections */}
         <div className="space-y-10">
-          {sectionKeys.map(([title, section]) => (
-            <div key={title}>
+          {sections.map((section) => (
+            <div key={section.title}>
               <h2 className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
-                {title}
+                {section.title}
               </h2>
               <div className="space-y-2">
                 {section.items.map((item) => (

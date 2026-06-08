@@ -175,20 +175,25 @@ export default function EditProfilePage() {
       // request between tap and form submission (avoids HEIC timing / network race).
       let finalAvatarCid  = avatarCid;
       let finalAvatarUrl  = avatarUrl;
+      let avatarUploadFailed = false;
 
       if (pendingAvatarFile) {
         try {
-          const compressed = await compressAvatar(pendingAvatarFile);
-          const result = await uploadToIPFS(compressed, `avatar-${address}-${Date.now()}.jpg`);
+          // If compression fails (e.g. HEIC on non-Safari desktop), fall back to original
+          const fileToUpload = await compressAvatar(pendingAvatarFile).catch(() => pendingAvatarFile);
+          const result = await uploadToIPFS(fileToUpload, `avatar-${address}-${Date.now()}.jpg`);
           finalAvatarCid = result.cid || null;
           finalAvatarUrl = result.storjUrl || null;
           setAvatarCid(finalAvatarCid);
           setAvatarUrl(finalAvatarUrl);
           setPendingAvatarFile(null);
-        } catch {
-          setError(t("profile.upload_failed"));
-          setSubmitting(false);
-          return;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[profile/edit] avatar upload failed:', msg);
+          // Don't block the save — warn and continue with old avatar (or no avatar)
+          toast.error(`${t("profile.upload_failed")}: ${msg.slice(0, 80)}`);
+          avatarUploadFailed = true;
+          // Keep old cid/url values — don't update finalAvatar* vars
         }
       }
 
@@ -244,7 +249,7 @@ export default function EditProfilePage() {
       } catch { /* ignore cache errors */ }
 
       setSuccess(true);
-      toast.success(t("profile.save_success"));
+      toast.success(avatarUploadFailed ? t("profile.save_success_no_photo") : t("profile.save_success"));
       setTimeout(() => router.push(`/profile/${address}`), 1500);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to save profile");

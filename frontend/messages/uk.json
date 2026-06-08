@@ -268,7 +268,8 @@
     "role_client_executor": "Клієнт і Виконавець",
     "client_role_badge": "Клієнт",
     "executor_role_badge": "Виконавець",
-    "photo_ready": "Фото обрано"
+    "photo_ready": "Фото обрано",
+    "save_success_no_photo": "Профіль збережено (фото не завантажилось)"
   },
   "deal_status": {
     "created": "Створена",

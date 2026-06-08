@@ -274,7 +274,8 @@
     "role_client_executor": "Client & Executor",
     "client_role_badge": "Client",
     "executor_role_badge": "Executor",
-    "photo_ready": "Photo ready"
+    "photo_ready": "Photo ready",
+    "save_success_no_photo": "Profile saved (photo upload failed)"
   },
   "deal_status": {
     "created": "Created",

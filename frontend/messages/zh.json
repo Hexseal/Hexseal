@@ -267,7 +267,8 @@
     "active_count": "{count} 个进行中",
     "role_client_executor": "客户兼执行者",
     "client_role_badge": "客户",
-    "executor_role_badge": "执行者"
+    "executor_role_badge": "执行者",
+    "save_success_no_photo": "个人资料已保存（照片上传失败）"
   },
   "deal_status": {
     "created": "已创建",

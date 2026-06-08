@@ -268,7 +268,8 @@
     "role_client_executor": "클라이언트 & 실행자",
     "client_role_badge": "클라이언트",
     "executor_role_badge": "실행자",
-    "photo_ready": "사진 준비됨"
+    "photo_ready": "사진 준비됨",
+    "save_success_no_photo": "프로필 저장됨 (사진 업로드 실패)"
   },
   "deal_status": {
     "created": "생성됨",

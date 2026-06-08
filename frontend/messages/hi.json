@@ -268,7 +268,8 @@
     "role_client_executor": "क्लाइंट और एक्जीक्यूटर",
     "client_role_badge": "क्लाइंट",
     "executor_role_badge": "एक्जीक्यूटर",
-    "photo_ready": "फ़ोटो तैयार"
+    "photo_ready": "फ़ोटो तैयार",
+    "save_success_no_photo": "प्रोफाइल सेव हुई (फोटो अपलोड विफल)"
   },
   "deal_status": {
     "created": "बनाई गई",

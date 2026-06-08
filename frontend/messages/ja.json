@@ -268,7 +268,8 @@
     "role_client_executor": "クライアント＆受注者",
     "client_role_badge": "クライアント",
     "executor_role_badge": "受注者",
-    "photo_ready": "写真選択済み"
+    "photo_ready": "写真選択済み",
+    "save_success_no_photo": "プロフィール保存済み（写真アップロード失敗）"
   },
   "deal_status": {
     "created": "作成済",

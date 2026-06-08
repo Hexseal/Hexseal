@@ -268,7 +268,8 @@
     "role_client_executor": "ลูกค้าและผู้รับงาน",
     "client_role_badge": "ลูกค้า",
     "executor_role_badge": "ผู้รับงาน",
-    "photo_ready": "รูปพร้อมแล้ว"
+    "photo_ready": "รูปพร้อมแล้ว",
+    "save_success_no_photo": "บันทึกโปรไฟล์แล้ว (อัปโหลดรูปล้มเหลว)"
   },
   "deal_status": {
     "created": "สร้างแล้ว",

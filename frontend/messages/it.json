@@ -268,7 +268,8 @@
     "role_client_executor": "Cliente e Esecutore",
     "client_role_badge": "Cliente",
     "executor_role_badge": "Esecutore",
-    "photo_ready": "Foto pronta"
+    "photo_ready": "Foto pronta",
+    "save_success_no_photo": "Profilo salvato (caricamento foto fallito)"
   },
   "deal_status": {
     "created": "Creato",

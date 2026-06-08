@@ -5,22 +5,13 @@ import dotenv from 'dotenv';
 import cron from 'node-cron';
 import { randomUUID } from 'crypto';
 import webpush from 'web-push';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
-  DeleteObjectsCommand,
-  ListObjectsV2Command,
-  CreateMultipartUploadCommand,
-  UploadPartCommand,
-  CompleteMultipartUploadCommand,
-  AbortMultipartUploadCommand,
-  ListPartsCommand,
-} from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import fs, { readFileSync, writeFileSync, existsSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config({ path: '.env.relayer' });
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Web Push (VAPID) ─────────────────────────────────────────────────────────
 
@@ -41,8 +32,6 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 
 webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-// address (lowercase) → PushSubscription[]
-// Persisted to disk so subscriptions survive process restarts.
 const PUSH_SUBS_FILE = './push_subscriptions.json';
 function loadPushSubs() {
   try {
@@ -77,7 +66,7 @@ async function sendPush(address, payload) {
   }
 }
 
-// ─── Agreement ABI (minimal — for reading deal participants after relay) ───────
+// ─── Agreement ABI ────────────────────────────────────────────────────────────
 
 const AGREEMENT_MINI_ABI = [
   'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, bytes32 termsHash_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
@@ -88,18 +77,16 @@ const AGR_STATUS_EVENT_ABI = [
 ];
 const agrEventInterface = new ethers.Interface(AGR_STATUS_EVENT_ABI);
 
-// Agreement.sol internal status enum
 const AGR_PUSH_MSG = {
-  2: { title: 'Deal Activated ⚡', body: 'The deal has been activated. Work has started.' },
-  3: { title: 'Deal Complete ✓',  body: 'Payment has been released. Deal is closed.' },
-  4: { title: 'Dispute Raised ⚠️', body: 'A dispute was opened on your deal. Arbiter will review.' },
+  2: { title: 'Deal Activated ⚡',    body: 'The deal has been activated. Work has started.' },
+  3: { title: 'Deal Complete ✓',     body: 'Payment has been released. Deal is closed.' },
+  4: { title: 'Dispute Raised ⚠️',   body: 'A dispute was opened on your deal. Arbiter will review.' },
   5: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.' },
-  6: { title: 'Deal Refunded ↩️', body: 'The deal was refunded.' },
+  6: { title: 'Deal Refunded ↩️',    body: 'The deal was refunded.' },
 };
 
 async function pushAfterRelay(receipt, agreementAddress) {
   try {
-    // Parse AgreementStatusUpdated from logs
     let newStatus = null;
     for (const log of receipt.logs) {
       try {
@@ -112,7 +99,6 @@ async function pushAfterRelay(receipt, agreementAddress) {
     }
     if (newStatus === null || !AGR_PUSH_MSG[newStatus]) return;
 
-    // Read agreement participants
     const agr = new ethers.Contract(agreementAddress, AGREEMENT_MINI_ABI, provider);
     const details = await agr.getDetails();
     const client   = details.client_?.toLowerCase();
@@ -129,79 +115,77 @@ async function pushAfterRelay(receipt, agreementAddress) {
       arbiter  && arbiter !== '0x0000000000000000000000000000000000000000' && newStatus === 4 && sendPush(arbiter, payload),
     ]);
   } catch {
-    // Non-critical — push is best-effort
+    // push is best-effort
   }
 }
 
-// ─── Storj S3 config ──────────────────────────────────────────────────────────
+// ─── Local file storage ───────────────────────────────────────────────────────
 
-const STORJ_ENDPOINT  = process.env.STORJ_ENDPOINT  || 'https://gateway.storjshare.io';
-const STORJ_ACCESS    = process.env.STORJ_ACCESS_KEY;
-const STORJ_SECRET    = process.env.STORJ_SECRET_KEY;
-const BUCKET_FILES    = process.env.STORJ_BUCKET_FILES  || 'hexseal-files';   // encrypted chat files (18-day TTL)
-const BUCKET_PUBLIC   = process.env.STORJ_BUCKET_PUBLIC || 'hexseal-public';  // permanent public files (profiles, avatars)
-const FILE_TTL_S      = 7 * 24 * 60 * 60; // 7 days — aligns with S3 presigned URL max
-const FILE_TTL_MS     = FILE_TTL_S * 1000;
-const URL_TTL_S       = FILE_TTL_S;        // URL and physical TTL are the same
+const PORT         = process.env.PORT || 3001;
+const BASE_URL     = (process.env.RELAYER_PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const STORAGE_DIR  = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
+const DIR_FILES    = path.join(STORAGE_DIR, 'files');   // encrypted chat files — 7d TTL
+const DIR_PUBLIC   = path.join(STORAGE_DIR, 'public');  // permanent public files (profiles, avatars)
+const DIR_TEMP     = path.join(STORAGE_DIR, 'temp');    // in-progress multipart chunks
+const FILE_TTL_MS  = 7 * 24 * 60 * 60 * 1000;          // 7 days
 
-if (!STORJ_ACCESS || !STORJ_SECRET) {
-  console.warn('[s3] STORJ_ACCESS_KEY / STORJ_SECRET_KEY not set — file endpoints disabled');
+for (const dir of [DIR_FILES, DIR_PUBLIC, DIR_TEMP]) {
+  fs.mkdirSync(dir, { recursive: true });
 }
 
-const s3 = new S3Client({
-  region: 'us-east-1',
-  endpoint: STORJ_ENDPOINT,
-  credentials: { accessKeyId: STORJ_ACCESS || '', secretAccessKey: STORJ_SECRET || '' },
-  forcePathStyle: true,
-});
+// Strips path traversal and unsafe chars — returns just the basename
+function safeKey(key) {
+  return path.basename(String(key).replace(/[^a-zA-Z0-9.\-_]/g, '')).slice(0, 200);
+}
 
-// Cleanup: delete Storj objects older than 18 days — runs daily at 03:00
-cron.schedule('0 3 * * *', async () => {
-  if (!STORJ_ACCESS) return;
-  const cutoff = new Date(Date.now() - FILE_TTL_MS);
+// Cleanup: delete expired chat files and orphaned temp dirs — runs daily at 03:00
+cron.schedule('0 3 * * *', () => {
+  const cutoff   = Date.now() - FILE_TTL_MS;
+  const cutoff1d = Date.now() - 24 * 60 * 60 * 1000;
+
+  // Expired chat files
   try {
-    const toDelete = [];
-    let token;
-    do {
-      const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET_FILES, ContinuationToken: token }));
-      for (const obj of list.Contents || []) {
-        if (obj.LastModified < cutoff) toDelete.push({ Key: obj.Key });
-      }
-      token = list.IsTruncated ? list.NextContinuationToken : undefined;
-    } while (token);
-    if (toDelete.length) {
-      await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET_FILES, Delete: { Objects: toDelete } }));
-      console.log(`[files] cleanup: removed ${toDelete.length} expired object(s) from Storj`);
+    let removed = 0;
+    for (const f of fs.readdirSync(DIR_FILES)) {
+      const fp = path.join(DIR_FILES, f);
+      try {
+        if (fs.statSync(fp).mtimeMs < cutoff) { fs.unlinkSync(fp); removed++; }
+      } catch {}
     }
+    if (removed) console.log(`[files] cleanup: removed ${removed} expired file(s)`);
   } catch (e) {
     console.error('[files] cleanup error:', e.message);
   }
+
+  // Orphaned temp dirs (uploads that never completed)
+  try {
+    for (const d of fs.readdirSync(DIR_TEMP)) {
+      const dp = path.join(DIR_TEMP, d);
+      try {
+        if (fs.statSync(dp).mtimeMs < cutoff1d) fs.rmSync(dp, { recursive: true, force: true });
+      } catch {}
+    }
+  } catch {}
 });
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
 
-const RPC_URL          = process.env.RPC_URL
-                      || process.env.BASE_SEPOLIA_RPC_URL
-                      || 'https://sepolia.base.org';
-const RELAYER_KEY      = process.env.RELAYER_PRIVATE_KEY;
-const FORWARDER_ADDR   = process.env.TRUSTED_FORWARDER;
-const DIAMOND_ADDR     = process.env.DIAMOND_ADDRESS;
-const PORT             = process.env.PORT || 3001;
-
-// Comma-separated list of allowed origins, e.g. "http://localhost:3000,https://hexseal.com"
-const ALLOWED_ORIGINS  = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
-                          .split(',').map(o => o.trim()).filter(Boolean);
+const RPC_URL        = process.env.RPC_URL || process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
+const RELAYER_KEY    = process.env.RELAYER_PRIVATE_KEY;
+const FORWARDER_ADDR = process.env.TRUSTED_FORWARDER;
+const DIAMOND_ADDR   = process.env.DIAMOND_ADDRESS;
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+  .split(',').map(o => o.trim()).filter(Boolean);
 
 if (!RELAYER_KEY)    throw new Error('RELAYER_PRIVATE_KEY is not set');
 if (!FORWARDER_ADDR) throw new Error('TRUSTED_FORWARDER is not set');
 if (!DIAMOND_ADDR)   throw new Error('DIAMOND_ADDRESS is not set');
 
-// ─── Rate limiter (in-memory, per IP, sliding window) ────────────────────────
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
 
-const RATE_WINDOW_MS = 60_000; // 1 minute
-const RATE_MAX       = 10;     // max requests per window
-
-const _rateMap = new Map(); // ip → { count, resetAt }
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX       = 10;
+const _rateMap       = new Map();
 
 function checkRateLimit(ip) {
   const now = Date.now();
@@ -215,7 +199,6 @@ function checkRateLimit(ip) {
   return true;
 }
 
-// Cleanup stale entries every 5 minutes to avoid unbounded growth
 setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of _rateMap) {
@@ -223,7 +206,7 @@ setInterval(() => {
   }
 }, 5 * 60_000);
 
-// ─── Ethers setup ─────────────────────────────────────────────────────────────
+// ─── Ethers ───────────────────────────────────────────────────────────────────
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const relayer  = new ethers.Wallet(RELAYER_KEY, provider);
@@ -236,13 +219,12 @@ const FORWARDER_ABI = [
 
 const forwarder = new ethers.Contract(FORWARDER_ADDR, FORWARDER_ABI, provider);
 
-// ─── Express app ─────────────────────────────────────────────────────────────
+// ─── Express ──────────────────────────────────────────────────────────────────
 
 const app = express();
 
 app.use(cors({
   origin(origin, cb) {
-    // Allow server-to-server (no Origin header) and explicitly whitelisted origins
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     cb(new Error(`Origin not allowed: ${origin}`));
   },
@@ -251,16 +233,23 @@ app.use(cors({
 
 app.use(express.json({ limit: '64kb' }));
 
-// Resolve client IP (works behind common proxies)
+// Serve public files (profiles, avatars) — permanent, long-cached
+// nosniff + CSP prevent XSS even if someone smuggled an unexpected file type
+app.use('/public', (req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  next();
+}, express.static(DIR_PUBLIC, { maxAge: '365d', immutable: true }));
+// Serve encrypted chat files — already E2E encrypted, URL is a random UUID
+app.use('/files',  express.static(DIR_FILES,  { maxAge: '1h' }));
+
 function clientIp(req) {
-  return (
-    req.headers['x-forwarded-for']?.split(',')[0].trim() ||
-    req.socket.remoteAddress ||
-    'unknown'
-  );
+  return req.headers['x-forwarded-for']?.split(',')[0].trim()
+    || req.socket.remoteAddress
+    || 'unknown';
 }
 
-// ─── Routes ──────────────────────────────────────────────────────────────────
+// ─── Core routes ──────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', relayer: relayer.address, diamond: DIAMOND_ADDR });
@@ -287,247 +276,248 @@ app.get('/balance', async (_req, res) => {
 app.post('/relay', async (req, res) => {
   try {
     const ip = clientIp(req);
-
-    // ── Rate limit ────────────────────────────────────────────────────────────
     if (!checkRateLimit(ip)) {
-      return res.status(429)
-        .set('Retry-After', '60')
-        .json({ error: 'Rate limit exceeded. Max 10 requests per minute.' });
+      return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded. Max 10 requests per minute.' });
     }
 
     const { from, to, value = '0', gas, nonce, data, signature } = req.body;
-
-    // ── Field validation ──────────────────────────────────────────────────────
     if (!from || !to || !gas || !data || !signature) {
       return res.status(400).json({ error: 'Missing fields: from, to, gas, data, signature' });
     }
-
     if (!ethers.isAddress(from) || !ethers.isAddress(to)) {
       return res.status(400).json({ error: 'Invalid address in from/to' });
     }
 
-    // ── Gas cap — prevent ETH drain via oversized requests ───────────────────
     const MAX_GAS = 4_000_000n;
     if (BigInt(gas) > MAX_GAS) {
       return res.status(400).json({ error: `gas exceeds maximum (${MAX_GAS})` });
     }
 
-    // ── Fetch on-chain nonce (ignore client-supplied nonce to prevent replay) ─
     const onChainNonce = await forwarder.getNonce(from);
+    const forwardReq = { from, to, value: BigInt(value), gas: BigInt(gas), nonce: onChainNonce, data };
 
-    const forwardReq = {
-      from,
-      to,
-      value: BigInt(value),
-      gas:   BigInt(gas),
-      nonce: onChainNonce,
-      data,
-    };
-
-    // ── Verify signature on-chain ─────────────────────────────────────────────
     const valid = await forwarder.verify(forwardReq, signature);
-    if (!valid) {
-      return res.status(400).json({ error: 'Invalid signature' });
-    }
+    if (!valid) return res.status(400).json({ error: 'Invalid signature' });
 
-    // ── Execute ───────────────────────────────────────────────────────────────
-    const tx = await forwarder
-      .connect(relayer)
-      .execute(forwardReq, signature, { gasLimit: BigInt(gas) + 60_000n });
-
+    const tx = await forwarder.connect(relayer).execute(forwardReq, signature, { gasLimit: BigInt(gas) + 60_000n });
     const receipt = await tx.wait();
-
-    if (receipt.status === 0) {
-      return res.status(400).json({ error: 'Transaction reverted on-chain' });
-    }
+    if (receipt.status === 0) return res.status(400).json({ error: 'Transaction reverted on-chain' });
 
     res.json({ success: true, txHash: receipt.hash, blockNumber: receipt.blockNumber });
-
-    // Fire-and-forget push notification (best-effort, non-blocking)
     pushAfterRelay(receipt, forwardReq.to);
-
   } catch (err) {
     console.error('[relay] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── File endpoints (Storj presigned) ────────────────────────────────────────
+// ─── File endpoints — local disk ──────────────────────────────────────────────
+//
+// Small encrypted files (≤ 20 MB):
+//   POST /files/presign           → { uploadUrl, downloadUrl, key }
+//   PUT  /files/upload-put/:key   → streams body to DIR_FILES/<key>
+//
+// Large encrypted files (> 20 MB), chunk-by-chunk:
+//   POST /files/multipart/create  → { uploadId, key, partUrls[] }
+//   PUT  /files/part/:id/:num     → streams chunk to DIR_TEMP/<id>/<num>
+//   POST /files/multipart/complete→ concatenates chunks → { downloadUrl }
+//   POST /files/multipart/abort   → removes temp dir
+//
+// Public permanent files (profiles, avatars):
+//   POST /files/public/presign    → { uploadUrl, publicUrl, key }
+//   PUT  /files/public-put/:key   → streams body to DIR_PUBLIC/<key>
+//
+// URL refresh (local URLs never expire, just verify file still exists):
+//   POST /files/refresh-url       → { downloadUrl }
+//
+// Serving:
+//   GET  /files/:key              → express.static(DIR_FILES)
+//   GET  /public/:key             → express.static(DIR_PUBLIC)
 
-app.post('/files/presign', async (req, res) => {
-  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+// ── Small encrypted file presign ──────────────────────────────────────────────
+
+app.post('/files/presign', (req, res) => {
   try {
     const { ext = '' } = req.body || {};
     const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
     const key = `${Date.now()}-${randomUUID()}${safeExt}`;
-
-    const [uploadUrl, downloadUrl] = await Promise.all([
-      getSignedUrl(s3, new PutObjectCommand({
-        Bucket: BUCKET_FILES,
-        Key: key,
-        ContentType: 'application/octet-stream',
-      }), { expiresIn: 3600 }),
-      getSignedUrl(s3, new GetObjectCommand({
-        Bucket: BUCKET_FILES,
-        Key: key,
-      }), { expiresIn: URL_TTL_S }),
-    ]);
-
-    res.json({ uploadUrl, downloadUrl, key, expiresIn: '7 days' });
+    res.json({
+      uploadUrl:   `${BASE_URL}/files/upload-put/${key}`,
+      downloadUrl: `${BASE_URL}/files/${key}`,
+      key,
+      expiresIn: '7 days',
+    });
   } catch (err) {
-    console.error('[files/presign]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Refresh download URL for an existing chat file ──────────────────────────
-// Called when a stored presigned URL has expired (after 6 days) but the file
-// still exists on Storj (within the 18-day physical TTL).
-app.post('/files/refresh-url', async (req, res) => {
-  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+// ── Small encrypted file upload (streaming, up to 5 GB) ──────────────────────
+
+app.put('/files/upload-put/:key', (req, res) => {
+  const key = safeKey(req.params.key);
+  if (!key) return res.status(400).json({ error: 'Invalid key' });
+  const ws = fs.createWriteStream(path.join(DIR_FILES, key));
+  req.pipe(ws);
+  ws.on('finish', () => res.status(200).end());
+  ws.on('error', (err) => { console.error('[files/upload-put]', err.message); res.status(500).json({ error: 'Write error' }); });
+  req.on('error', () => ws.destroy());
+});
+
+// ── URL refresh (local files don't expire by URL, only by TTL cleanup) ────────
+
+app.post('/files/refresh-url', (req, res) => {
   try {
     const { key } = req.body || {};
-    if (!key || typeof key !== 'string' || key.includes('/') || key.includes('..')) {
-      return res.status(400).json({ error: 'Invalid key' });
+    if (!key || typeof key !== 'string') return res.status(400).json({ error: 'Invalid key' });
+    const safeK = safeKey(key);
+    if (!fs.existsSync(path.join(DIR_FILES, safeK))) {
+      return res.status(404).json({ error: 'File not found or expired' });
     }
-    const downloadUrl = await getSignedUrl(s3, new GetObjectCommand({
-      Bucket: BUCKET_FILES,
-      Key: key,
-    }), { expiresIn: URL_TTL_S });
-    res.json({ downloadUrl });
+    res.json({ downloadUrl: `${BASE_URL}/files/${safeK}` });
   } catch (err) {
-    console.error('[files/refresh-url]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Public permanent presign (profile photos, avatars — no TTL) ─────────────
-// The BUCKET_PUBLIC bucket must be set to public-read in Storj dashboard.
-// Returned publicUrl is a direct, permanent, unauthenticated link to the file.
+// ── Public file presign (profiles, avatars — permanent) ───────────────────────
+// Only whitelisted extensions allowed — prevents HTML/SVG XSS via static serve
 
-app.post('/files/public/presign', async (req, res) => {
-  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+const PUBLIC_ALLOWED_EXT = new Set(['.json', '.png', '.jpg', '.jpeg', '.webp', '.gif']);
+
+app.post('/files/public/presign', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(ip)) {
+    return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
+  }
   try {
-    const { ext = '', contentType = 'application/octet-stream' } = req.body || {};
-    const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
-    const key = `${Date.now()}-${randomUUID()}${safeExt}`;
-
-    // Presigned PUT — lets the caller upload directly to Storj without server round-trip
-    const uploadUrl = await getSignedUrl(s3, new PutObjectCommand({
-      Bucket: BUCKET_PUBLIC,
-      Key: key,
-      ContentType: contentType,
-    }), { expiresIn: 3600 });
-
-    // Public URL — no signing needed because BUCKET_PUBLIC is set to public in Storj
-    const publicUrl = `${STORJ_ENDPOINT}/${BUCKET_PUBLIC}/${key}`;
-
-    res.json({ uploadUrl, publicUrl, key });
+    const { ext = '' } = req.body || {};
+    const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').toLowerCase().slice(0, 10);
+    const dotExt  = safeExt.startsWith('.') ? safeExt : (safeExt ? `.${safeExt}` : '');
+    if (dotExt && !PUBLIC_ALLOWED_EXT.has(dotExt)) {
+      return res.status(400).json({ error: `File type not allowed. Allowed: ${[...PUBLIC_ALLOWED_EXT].join(', ')}` });
+    }
+    const key = `${Date.now()}-${randomUUID()}${dotExt}`;
+    res.json({
+      uploadUrl: `${BASE_URL}/files/public-put/${key}`,
+      publicUrl: `${BASE_URL}/public/${key}`,
+      key,
+    });
   } catch (err) {
-    console.error('[files/public/presign]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Multipart upload endpoints (large files > 20 MB) ────────────────────────
+// ── Public file upload (streaming) ────────────────────────────────────────────
 
-app.post('/files/multipart/create', async (req, res) => {
-  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+app.put('/files/public-put/:key', (req, res) => {
+  const key = safeKey(req.params.key);
+  if (!key) return res.status(400).json({ error: 'Invalid key' });
+  const ws = fs.createWriteStream(path.join(DIR_PUBLIC, key));
+  req.pipe(ws);
+  ws.on('finish', () => res.status(200).end());
+  ws.on('error', (err) => { console.error('[files/public-put]', err.message); res.status(500).json({ error: 'Write error' }); });
+  req.on('error', () => ws.destroy());
+});
+
+// ── Multipart create ──────────────────────────────────────────────────────────
+
+app.post('/files/multipart/create', (req, res) => {
   try {
     const { ext = '', chunkCount } = req.body || {};
     if (!chunkCount || chunkCount < 1 || chunkCount > 10000) {
-      return res.status(400).json({ error: 'chunkCount must be between 1 and 10000' });
+      return res.status(400).json({ error: 'chunkCount must be 1–10000' });
     }
-    const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
-    const key = `${Date.now()}-${randomUUID()}${safeExt}`;
+    const safeExt  = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
+    const uploadId = randomUUID();
+    const key      = `${Date.now()}-${randomUUID()}${safeExt}`;
 
-    const create = await s3.send(new CreateMultipartUploadCommand({
-      Bucket: BUCKET_FILES,
-      Key: key,
-      ContentType: 'application/octet-stream',
-    }));
-    const uploadId = create.UploadId;
+    fs.mkdirSync(path.join(DIR_TEMP, uploadId), { recursive: true });
 
-    // Presign all part URLs at once (parts are 1-indexed)
-    const partUrls = await Promise.all(
-      Array.from({ length: chunkCount }, (_, i) =>
-        getSignedUrl(s3, new UploadPartCommand({
-          Bucket: BUCKET_FILES,
-          Key: key,
-          UploadId: uploadId,
-          PartNumber: i + 1,
-        }), { expiresIn: 7200 }) // 2 hours for large uploads
-      )
+    const partUrls = Array.from({ length: chunkCount }, (_, i) =>
+      `${BASE_URL}/files/part/${uploadId}/${i + 1}`
     );
 
     res.json({ uploadId, key, partUrls });
   } catch (err) {
-    console.error('[files/multipart/create]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
+// ── Multipart part upload (streaming, one chunk per request) ──────────────────
+
+app.put('/files/part/:uploadId/:partNum', (req, res) => {
+  const uploadId = safeKey(req.params.uploadId);
+  const partNum  = parseInt(req.params.partNum, 10);
+  if (!uploadId || isNaN(partNum) || partNum < 1 || partNum > 10000) {
+    return res.status(400).json({ error: 'Invalid uploadId or partNum' });
+  }
+  const dir = path.join(DIR_TEMP, uploadId);
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Upload session not found' });
+
+  const filename = String(partNum).padStart(6, '0');
+  const ws = fs.createWriteStream(path.join(dir, filename));
+  req.pipe(ws);
+  ws.on('finish', () => res.status(200).end());
+  ws.on('error', (err) => { console.error('[files/part]', err.message); res.status(500).json({ error: err.message }); });
+  req.on('error', () => ws.destroy());
+});
+
+// ── Multipart complete — concatenate chunks ───────────────────────────────────
+
 app.post('/files/multipart/complete', async (req, res) => {
-  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
   try {
     const { uploadId, key } = req.body || {};
     if (!uploadId || !key) return res.status(400).json({ error: 'uploadId and key required' });
 
-    // Read ETags server-side via ListParts to avoid CORS ETag exposure issues
-    const parts = [];
-    let partNumberMarker;
-    do {
-      const listed = await s3.send(new ListPartsCommand({
-        Bucket: BUCKET_FILES,
-        Key: key,
-        UploadId: uploadId,
-        PartNumberMarker: partNumberMarker,
-      }));
-      for (const p of listed.Parts || []) {
-        parts.push({ PartNumber: p.PartNumber, ETag: p.ETag });
-      }
-      partNumberMarker = listed.IsTruncated ? listed.NextPartNumberMarker : undefined;
-    } while (partNumberMarker);
+    const safeUploadId = safeKey(uploadId);
+    const safeK        = safeKey(key);
+    const tempDir      = path.join(DIR_TEMP, safeUploadId);
+    const destPath     = path.join(DIR_FILES, safeK);
 
-    if (!parts.length) return res.status(400).json({ error: 'No parts found for this upload' });
+    if (!fs.existsSync(tempDir)) return res.status(404).json({ error: 'Upload session not found' });
 
-    await s3.send(new CompleteMultipartUploadCommand({
-      Bucket: BUCKET_FILES,
-      Key: key,
-      UploadId: uploadId,
-      MultipartUpload: { Parts: parts },
-    }));
+    const parts = fs.readdirSync(tempDir).sort();
+    if (!parts.length) return res.status(400).json({ error: 'No parts found' });
 
-    const downloadUrl = await getSignedUrl(s3, new GetObjectCommand({
-      Bucket: BUCKET_FILES,
-      Key: key,
-    }), { expiresIn: URL_TTL_S });
+    const ws = fs.createWriteStream(destPath);
+    for (const part of parts) {
+      await new Promise((resolve, reject) => {
+        const rs = fs.createReadStream(path.join(tempDir, part));
+        rs.pipe(ws, { end: false });
+        rs.on('end', resolve);
+        rs.on('error', reject);
+      });
+    }
+    await new Promise((resolve, reject) => {
+      ws.end();
+      ws.on('finish', resolve);
+      ws.on('error', reject);
+    });
 
-    res.json({ downloadUrl });
+    fs.rmSync(tempDir, { recursive: true, force: true });
+
+    res.json({ downloadUrl: `${BASE_URL}/files/${safeK}` });
   } catch (err) {
     console.error('[files/multipart/complete]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/files/multipart/abort', async (req, res) => {
-  if (!STORJ_ACCESS) return res.status(503).json({ error: 'File storage not configured' });
+// ── Multipart abort ───────────────────────────────────────────────────────────
+
+app.post('/files/multipart/abort', (req, res) => {
   try {
-    const { uploadId, key } = req.body || {};
-    if (!uploadId || !key) return res.status(400).json({ error: 'uploadId and key required' });
-    await s3.send(new AbortMultipartUploadCommand({
-      Bucket: BUCKET_FILES,
-      Key: key,
-      UploadId: uploadId,
-    }));
-    res.json({ success: true });
+    const { uploadId } = req.body || {};
+    if (!uploadId) return res.status(400).json({ error: 'uploadId required' });
+    fs.rmSync(path.join(DIR_TEMP, safeKey(uploadId)), { recursive: true, force: true });
+    res.json({ ok: true });
   } catch (err) {
-    console.error('[files/multipart/abort]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Push notification endpoints ─────────────────────────────────────────────
+// ─── Push notification endpoints ──────────────────────────────────────────────
 
 app.get('/push/vapid-key', (_req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
@@ -541,7 +531,6 @@ app.post('/push/subscribe', async (req, res) => {
     }
     const key = address.toLowerCase();
     const existing = _pushSubs.get(key) ?? [];
-    // Avoid duplicate endpoints
     if (!existing.some(s => s.endpoint === subscription.endpoint)) {
       _pushSubs.set(key, [...existing, subscription]);
       savePushSubs();
@@ -558,8 +547,7 @@ app.post('/push/unsubscribe', async (req, res) => {
     if (!address) return res.status(400).json({ error: 'address required' });
     const key = address.toLowerCase();
     if (endpoint) {
-      const existing = _pushSubs.get(key) ?? [];
-      _pushSubs.set(key, existing.filter(s => s.endpoint !== endpoint));
+      _pushSubs.set(key, (_pushSubs.get(key) ?? []).filter(s => s.endpoint !== endpoint));
     } else {
       _pushSubs.delete(key);
     }
@@ -570,8 +558,6 @@ app.post('/push/unsubscribe', async (req, res) => {
   }
 });
 
-// Send push notification to a specific wallet address (used by frontend after chat messages).
-// Best-effort: rate-limited, fire-and-forget on the client side.
 app.post('/push/send', async (req, res) => {
   try {
     const ip = clientIp(req);
@@ -579,12 +565,8 @@ app.post('/push/send', async (req, res) => {
       return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
     }
     const { to, title, body, url } = req.body || {};
-    if (!to || !title || !body) {
-      return res.status(400).json({ error: 'to, title, body required' });
-    }
-    if (!ethers.isAddress(to)) {
-      return res.status(400).json({ error: 'Invalid address' });
-    }
+    if (!to || !title || !body) return res.status(400).json({ error: 'to, title, body required' });
+    if (!ethers.isAddress(to)) return res.status(400).json({ error: 'Invalid address' });
     await sendPush(to.toLowerCase(), { title, body: String(body).slice(0, 200), url: url || '/chat' });
     res.json({ ok: true });
   } catch (err) {
@@ -601,8 +583,10 @@ async function start() {
     console.log(`Forwarder:       ${FORWARDER_ADDR}`);
     console.log(`Diamond:         ${DIAMOND_ADDR}`);
     console.log(`Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
-    console.log(`Storage (files): ${STORJ_ACCESS ? BUCKET_FILES + ' (Storj, encrypted, 18d TTL)' : 'disabled'}`);
-    console.log(`Storage (public):${STORJ_ACCESS ? ' ' + BUCKET_PUBLIC + ' (Storj, permanent public)' : ' disabled'}`);
+    console.log(`Public URL:      ${BASE_URL}`);
+    console.log(`Storage:         ${STORAGE_DIR}`);
+    console.log(`  files/  → ${DIR_FILES} (encrypted, 7d TTL)`);
+    console.log(`  public/ → ${DIR_PUBLIC} (permanent)`);
   });
 }
 
