@@ -174,13 +174,14 @@ function JobCard({
     }
   };
 
-  const cappedDelay = Math.min(index, 8) * 0.04;
+  const cappedDelay = Math.min(index, 6) * 0.05;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay: cappedDelay }}
+      initial={{ opacity: 0, y: 14 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-40px" }}
+      transition={{ duration: 0.28, delay: cappedDelay, ease: [0.25, 0.46, 0.45, 0.94] }}
       whileHover={{ scale: 1.004 }}
       whileTap={{ scale: 0.993 }}
       style={{ transformOrigin: "center" }}
@@ -478,7 +479,11 @@ export default function BoardPage() {
   return (
     <>
       {/* Page header */}
-      <div>
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
+      >
         <div className="container mx-auto px-4 pt-4 pb-3 max-w-4xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
@@ -510,7 +515,7 @@ export default function BoardPage() {
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
 
       <div className="container mx-auto px-4 pt-0 pb-6 max-w-4xl">
         {/* Region filter */}
