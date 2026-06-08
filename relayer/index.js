@@ -240,8 +240,15 @@ app.use('/public', (req, res, next) => {
   res.setHeader('Content-Security-Policy', "default-src 'none'");
   next();
 }, express.static(DIR_PUBLIC, { maxAge: '365d', immutable: true }));
-// Serve encrypted chat files — already E2E encrypted, URL is a random UUID
-app.use('/files',  express.static(DIR_FILES,  { maxAge: '1h' }));
+// Serve encrypted chat files — content is always AES-256-GCM ciphertext (never renderable),
+// but defensive headers prevent any accidental MIME-sniffing or rendering attempt
+app.use('/files', (req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  res.setHeader('Content-Disposition', 'attachment');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  next();
+}, express.static(DIR_FILES, { maxAge: '1h' }));
 
 function clientIp(req) {
   return req.headers['x-forwarded-for']?.split(',')[0].trim()
@@ -338,9 +345,10 @@ app.post('/relay', async (req, res) => {
 
 app.post('/files/presign', (req, res) => {
   try {
-    const { ext = '' } = req.body || {};
-    const safeExt = String(ext).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
-    const key = `${Date.now()}-${randomUUID()}${safeExt}`;
+    // Chat files are always encrypted binary blobs — extension is cosmetic only.
+    // We ignore whatever ext the client sends and always use .bin so that
+    // express.static never serves them with a text/html or image MIME type.
+    const key = `${Date.now()}-${randomUUID()}.bin`;
     res.json({
       uploadUrl:   `${BASE_URL}/files/upload-put/${key}`,
       downloadUrl: `${BASE_URL}/files/${key}`,
