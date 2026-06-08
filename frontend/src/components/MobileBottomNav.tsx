@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { motion } from "framer-motion";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount } from "wagmi";
@@ -59,13 +60,16 @@ function PillBtn({
       >
         {label}
       </span>
-      {/* active bar */}
-      <span
-        className={cn(
-          "h-[2px] rounded-full transition-all duration-300",
-          active ? "w-[20px] bg-primary opacity-100" : "w-0 opacity-0"
+      {/* active bar — fixed-height slot keeps layout stable; motion.div slides between tabs */}
+      <span className="h-[2px] flex items-center justify-center">
+        {active && (
+          <motion.div
+            layoutId="nav-indicator"
+            className="h-[2px] w-[20px] bg-primary rounded-full"
+            transition={{ type: "tween", ease: [0.4, 0, 0.2, 1], duration: 0.22 }}
+          />
         )}
-      />
+      </span>
     </span>
   );
 
@@ -201,7 +205,10 @@ export default function MobileBottomNav() {
       )}
 
       {/* ── Floating pill ─────────────────────────────────────────────────── */}
-      <nav
+      <motion.nav
+        initial={{ y: 20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
         className="md:hidden fixed left-3 right-3 z-50"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)" }}
       >
@@ -253,7 +260,7 @@ export default function MobileBottomNav() {
             <Settings className="w-[24px] h-[24px]" />
           </PillBtn>
         </div>
-      </nav>
+      </motion.nav>
     </>
   );
 }
