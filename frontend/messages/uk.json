@@ -497,6 +497,8 @@
     "deal_chat_btn": "Чат Угоди",
     "chat_client_btn": "Написати Клієнту",
     "chat_executor_btn": "Написати Виконавцю",
+    "view_history_btn": "Історія чату",
+    "no_history_log": "Повідомлень поки немає",
     "window_expired": "Вікно закінчилося — сторони можуть ініціювати повернення",
     "verdict_executor_paid": "Виконавцю сплачено",
     "verdict_client_refunded": "Клієнту повернуто",

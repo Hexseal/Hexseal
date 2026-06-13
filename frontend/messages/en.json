@@ -543,6 +543,8 @@
     "deal_chat_btn": "Deal Chat",
     "chat_client_btn": "Chat Client",
     "chat_executor_btn": "Chat Executor",
+    "view_history_btn": "Chat history",
+    "no_history_log": "No messages recorded yet",
     "window_expired": "Window expired — parties can trigger refund",
     "verdict_executor_paid": "Executor paid",
     "verdict_client_refunded": "Client refunded",

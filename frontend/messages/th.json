@@ -496,6 +496,8 @@
     "deal_chat_btn": "แชทดีล",
     "chat_client_btn": "แชทกับลูกค้า",
     "chat_executor_btn": "แชทกับผู้รับงาน",
+    "view_history_btn": "ประวัติแชท",
+    "no_history_log": "ยังไม่มีข้อความที่บันทึกไว้",
     "window_expired": "หมดกรอบเวลาแล้ว — ฝ่ายต่างๆ สามารถเรียกคืนเงินได้",
     "verdict_executor_paid": "จ่ายให้ผู้รับงานแล้ว",
     "verdict_client_refunded": "คืนเงินให้ลูกค้าแล้ว",

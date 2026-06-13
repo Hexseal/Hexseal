@@ -496,6 +496,8 @@
     "deal_chat_btn": "Deal-Chat",
     "chat_client_btn": "Mit Kunden chatten",
     "chat_executor_btn": "Mit Ausführendem chatten",
+    "view_history_btn": "Chatverlauf",
+    "no_history_log": "Noch keine Nachrichten aufgezeichnet",
     "window_expired": "Fenster abgelaufen — Parteien können Erstattung auslösen",
     "verdict_executor_paid": "Ausführender bezahlt",
     "verdict_client_refunded": "Kunde erstattet",

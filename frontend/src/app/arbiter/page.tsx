@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Loader2, AlertTriangle, CheckCircle, History, ShieldCheck, Scale,
-  UserCheck, UserX, Search, Crown, UserPlus, UserMinus,
+  UserCheck, UserX, Search, Crown, UserPlus, UserMinus, MessageCircle,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import Link from "next/link";
@@ -462,6 +462,80 @@ function DisputeCard({
   );
 }
 
+// ─── DisputeLog — inline chat history panel ──────────────────────────────────
+
+const RELAYER_URL_ARB = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
+
+type LogEntry = { ts: number; from: string; text: string };
+
+function DisputeLog({ dealId }: { dealId: string }) {
+  const { data: walletClient } = useWalletClient();
+  const { address } = useAccount();
+  const [entries, setEntries] = useState<LogEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr]         = useState<string | null>(null);
+  const t = useTranslations();
+
+  const fetchLog = async () => {
+    if (!walletClient || !address) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const ts = String(Math.floor(Date.now() / 1000));
+      const message = `hexseal:dispute-log:${dealId.toLowerCase()}:${ts}`;
+      const sig = await walletClient.signMessage({ account: address, message });
+      const res = await fetch(`${RELAYER_URL_ARB}/dispute-log/${dealId}`, {
+        headers: { 'x-ts': ts, 'x-sig': sig },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as { entries: LogEntry[] };
+      setEntries(data.entries ?? []);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (entries === null) {
+    return (
+      <button
+        onClick={fetchLog}
+        disabled={loading}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium border border-white/15 text-white/50 hover:bg-white/[0.06] transition-colors disabled:opacity-50"
+      >
+        {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageCircle className="w-3 h-3" />}
+        {t("arbiter.view_history_btn")}
+      </button>
+    );
+  }
+
+  if (err) {
+    return <p className="text-xs text-red-400/70 px-1">{err}</p>;
+  }
+
+  if (entries.length === 0) {
+    return <p className="text-xs text-white/30 px-1 italic">{t("arbiter.no_history_log")}</p>;
+  }
+
+  return (
+    <div className="mt-2 rounded-[12px] border border-white/[0.07] bg-[#0a0a0c] max-h-64 overflow-y-auto p-3 space-y-2">
+      {entries.map((e, i) => (
+        <div key={i} className="text-xs">
+          <span className="text-white/30 mr-2">
+            {new Date(e.ts).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
+          </span>
+          <span className="text-white/50 font-mono mr-2">{e.from.slice(0, 6)}…{e.from.slice(-4)}</span>
+          <span className="text-white/80">{e.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── MyCaseCard — claimed + active dispute, with verdict actions ──────────────
 
 function MyCaseCard({
@@ -570,21 +644,24 @@ function MyCaseCard({
 
       {/* ── Communication row ── */}
       {(client || executor) && (
-        <div className="px-3 pb-3 flex flex-wrap gap-2">
-          {client && (
-            <Link href={`/chat?peer=${client.toLowerCase()}`}>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium border border-sky-500/25 text-sky-400/80 hover:bg-sky-500/[0.12] transition-colors">
-                {t("arbiter.chat_client_btn")}
-              </button>
-            </Link>
-          )}
-          {executor && (
-            <Link href={`/chat?peer=${executor.toLowerCase()}`}>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium border border-violet-500/25 text-violet-400/80 hover:bg-violet-500/[0.12] transition-colors">
-                {t("arbiter.chat_executor_btn")}
-              </button>
-            </Link>
-          )}
+        <div className="px-3 pb-3 flex flex-col gap-2">
+          <div className="flex flex-wrap gap-2">
+            {client && (
+              <Link href={`/chat?peer=${client.toLowerCase()}`}>
+                <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium border border-sky-500/25 text-sky-400/80 hover:bg-sky-500/[0.12] transition-colors">
+                  {t("arbiter.chat_client_btn")}
+                </button>
+              </Link>
+            )}
+            {executor && (
+              <Link href={`/chat?peer=${executor.toLowerCase()}`}>
+                <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium border border-violet-500/25 text-violet-400/80 hover:bg-violet-500/[0.12] transition-colors">
+                  {t("arbiter.chat_executor_btn")}
+                </button>
+              </Link>
+            )}
+          </div>
+          <DisputeLog dealId={agreement} />
         </div>
       )}
 

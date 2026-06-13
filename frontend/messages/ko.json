@@ -497,6 +497,8 @@
     "deal_chat_btn": "계약 채팅",
     "chat_client_btn": "클라이언트 채팅",
     "chat_executor_btn": "실행자 채팅",
+    "view_history_btn": "채팅 기록",
+    "no_history_log": "아직 기록된 메시지가 없습니다",
     "window_expired": "기간 만료 — 당사자들이 환불을 트리거할 수 있습니다",
     "verdict_executor_paid": "실행자에게 지급됨",
     "verdict_client_refunded": "클라이언트에게 환불됨",

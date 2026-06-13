@@ -497,6 +497,8 @@
     "deal_chat_btn": "डील चैट",
     "chat_client_btn": "क्लाइंट से चैट",
     "chat_executor_btn": "एक्जीक्यूटर से चैट",
+    "view_history_btn": "चैट इतिहास",
+    "no_history_log": "अभी तक कोई संदेश दर्ज नहीं",
     "window_expired": "खिड़की समाप्त — पक्ष वापसी ट्रिगर कर सकते हैं",
     "verdict_executor_paid": "एक्जीक्यूटर को भुगतान",
     "verdict_client_refunded": "क्लाइंट को वापस",

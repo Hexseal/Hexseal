@@ -504,6 +504,8 @@
     "deal_chat_btn": "Чат сделки",
     "chat_client_btn": "Чат с клиентом",
     "chat_executor_btn": "Чат с исполнителем",
+    "view_history_btn": "История чата",
+    "no_history_log": "Сообщений пока нет",
     "window_expired": "Окно истекло — стороны могут запросить возврат",
     "verdict_executor_paid": "Исполнитель оплачен",
     "verdict_client_refunded": "Клиенту возвращено",

@@ -497,6 +497,8 @@
     "deal_chat_btn": "محادثة الاتفاق",
     "chat_client_btn": "محادثة العميل",
     "chat_executor_btn": "محادثة المنفّذ",
+    "view_history_btn": "سجل المحادثة",
+    "no_history_log": "لا توجد رسائل مسجلة بعد",
     "window_expired": "انتهت المهلة — يمكن للطرفين تفعيل الاسترداد",
     "verdict_executor_paid": "تم الدفع للمنفّذ",
     "verdict_client_refunded": "تم الاسترداد للعميل",

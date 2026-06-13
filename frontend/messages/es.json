@@ -496,6 +496,8 @@
     "deal_chat_btn": "Chat del Trato",
     "chat_client_btn": "Chatear con Cliente",
     "chat_executor_btn": "Chatear con Ejecutor",
+    "view_history_btn": "Historial de chat",
+    "no_history_log": "No hay mensajes registrados aún",
     "window_expired": "Ventana vencida — las partes pueden solicitar reembolso",
     "verdict_executor_paid": "Ejecutor pagado",
     "verdict_client_refunded": "Cliente reembolsado",

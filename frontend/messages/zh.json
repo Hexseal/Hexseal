@@ -470,6 +470,8 @@
     "deal_chat_btn": "交易聊天",
     "chat_client_btn": "联系客户",
     "chat_executor_btn": "联系执行者",
+    "view_history_btn": "聊天记录",
+    "no_history_log": "暂无消息记录",
     "window_expired": "窗口期已过 — 各方可触发退款",
     "verdict_executor_paid": "已支付执行者",
     "verdict_client_refunded": "已退款给客户",
