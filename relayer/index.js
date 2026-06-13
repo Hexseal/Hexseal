@@ -195,16 +195,25 @@ function decryptEntry(key, { iv, ct, authTag }) {
   return JSON.parse(plain.toString('utf8'));
 }
 
+const ETH_ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
+
+function safeLogPath(dealId) {
+  const id = dealId.toLowerCase();
+  if (!ETH_ADDR_RE.test(id)) throw new Error(`invalid dealId: ${id}`);
+  const logPath = path.join(DIR_LOGS, `${id}.ndjson`);
+  if (!path.resolve(logPath).startsWith(path.resolve(DIR_LOGS) + path.sep)) throw new Error('path escape');
+  return logPath;
+}
+
 function appendLogEntry(dealId, entry) {
   const key = deriveLogKey(dealId);
   const encrypted = encryptEntry(key, entry);
   const line = JSON.stringify(encrypted) + '\n';
-  const logPath = path.join(DIR_LOGS, `${dealId.toLowerCase()}.ndjson`);
-  fs.appendFileSync(logPath, line);
+  fs.appendFileSync(safeLogPath(dealId), line);
 }
 
 function readLog(dealId) {
-  const logPath = path.join(DIR_LOGS, `${dealId.toLowerCase()}.ndjson`);
+  const logPath = safeLogPath(dealId);
   if (!fs.existsSync(logPath)) return [];
   const key = deriveLogKey(dealId);
   return fs.readFileSync(logPath, 'utf8')
@@ -373,6 +382,8 @@ app.get('/bot-address', (_req, res) => {
 // Arbiter signs "hexseal:dispute-log:{dealId}:{unixSeconds}" with their wallet.
 app.get('/dispute-log/:dealId', async (req, res) => {
   const { dealId } = req.params;
+  if (!ETH_ADDR_RE.test(dealId.toLowerCase())) return res.status(400).json({ error: 'Invalid dealId' });
+
   const ts  = req.headers['x-ts'];
   const sig = req.headers['x-sig'];
 
@@ -743,7 +754,8 @@ start();
     async function streamGroupMessages(group) {
       const groupName = group.name ?? '';
       if (!groupName.startsWith('HSEAL-')) return;
-      const dealId = groupName.slice(6); // strip "HSEAL-"
+      const dealId = groupName.slice(6).toLowerCase();
+      if (!ETH_ADDR_RE.test(dealId)) return;
       try {
         const stream = await group.stream();
         for await (const msg of stream) {
