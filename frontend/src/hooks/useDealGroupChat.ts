@@ -137,14 +137,13 @@ export function useDealGroupChat(agreementAddr: string) {
 
   const sendFile = useCallback(async (
     file: File,
-    onProgress?: (pct: number) => void,
+    _signal?: AbortSignal,
   ) => {
     const group = groupRef.current;
     if (!group) return;
     setUploadProgress(0);
     const result = await uploadFileWithEncryption(file, file.name, (pct) => {
       setUploadProgress(pct);
-      onProgress?.(pct);
     });
     setUploadProgress(null);
     const msg = encodeFileMessage(

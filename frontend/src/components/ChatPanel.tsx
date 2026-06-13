@@ -10,6 +10,7 @@ import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
 
 import { useDirectChat } from '@/hooks/useDirectChat';
+import { useDealGroupChat } from '@/hooks/useDealGroupChat';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
@@ -293,8 +294,10 @@ const AGR_STATUS_KEY: Record<number, string> = {
 export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelProps) {
   const { address } = useAccount();
   const t = useTranslations();
+  const directChat = useDirectChat(recipientAddress);
+  const groupChat  = useDealGroupChat(dealContext?.agreementAddr ?? '');
   const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup } =
-    useDirectChat(recipientAddress);
+    dealContext ? groupChat : directChat;
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
