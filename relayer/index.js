@@ -369,6 +369,46 @@ app.get('/bot-address', (_req, res) => {
   res.json({ address: botWallet.address.toLowerCase() });
 });
 
+// Dispute log — only accessible to the deal's on-chain arbiter.
+// Arbiter signs "hexseal:dispute-log:{dealId}:{unixSeconds}" with their wallet.
+app.get('/dispute-log/:dealId', async (req, res) => {
+  const { dealId } = req.params;
+  const ts  = req.headers['x-ts'];
+  const sig = req.headers['x-sig'];
+
+  if (!ts || !sig) return res.status(401).json({ error: 'Missing x-ts or x-sig header' });
+
+  // Replay protection: timestamp must be within ±5 minutes
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSec - Number(ts)) > 300) {
+    return res.status(401).json({ error: 'Timestamp out of window' });
+  }
+
+  try {
+    // Recover signer address from signature
+    const message = `hexseal:dispute-log:${dealId.toLowerCase()}:${ts}`;
+    const signerAddr = ethers.verifyMessage(message, sig).toLowerCase();
+
+    // Check on-chain: is this address the arbiter of this deal?
+    const agr = new ethers.Contract(dealId, AGREEMENT_MINI_ABI, provider);
+    const details = await agr.getDetails();
+    const onChainArbiter = details.arbiter_?.toLowerCase();
+
+    if (!onChainArbiter || onChainArbiter === ethers.ZeroAddress.toLowerCase()) {
+      return res.status(403).json({ error: 'No arbiter assigned for this deal' });
+    }
+    if (onChainArbiter !== signerAddr) {
+      return res.status(403).json({ error: 'Not the arbiter of this deal' });
+    }
+
+    const entries = readLog(dealId);
+    res.json({ entries });
+  } catch (err) {
+    console.error('[dispute-log] error:', err.message);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
 app.post('/relay', async (req, res) => {
   try {
     const ip = clientIp(req);
