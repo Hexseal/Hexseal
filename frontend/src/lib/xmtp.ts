@@ -447,6 +447,23 @@ export async function listDmConversations(client: XmtpClient): Promise<DmConvers
   return result.sort((a, b) => b.lastAt - a.lastAt);
 }
 
+// ─── Relay bot address ────────────────────────────────────────────────────────
+
+const RELAYER_URL_XMTP = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
+let _botAddress: string | null = null;
+
+export async function getBotAddress(): Promise<string | null> {
+  if (_botAddress) return _botAddress;
+  try {
+    const res = await fetch(`${RELAYER_URL_XMTP}/bot-address`);
+    const { address } = await res.json() as { address: string };
+    _botAddress = address.toLowerCase();
+    return _botAddress;
+  } catch {
+    return null; // non-fatal — group works without bot, just no log
+  }
+}
+
 // ─── Arbiter notifications ────────────────────────────────────────────────────
 
 export async function notifyArbiters(
