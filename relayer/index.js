@@ -688,3 +688,61 @@ async function start() {
 }
 
 start();
+
+// ─── XMTP Bot startup ─────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const xmtpDbPath = path.join(STORAGE_DIR, 'xmtp-bot');
+    const botClient = await Client.create(botSigner, {
+      env: 'production',
+      dbPath: xmtpDbPath,
+    });
+    console.log(`[bot] XMTP ready: ${botClient.inboxId}`);
+
+    // Stream messages from one group (fire-and-forget)
+    async function streamGroupMessages(group) {
+      const groupName = group.name ?? '';
+      if (!groupName.startsWith('HSEAL-')) return;
+      const dealId = groupName.slice(6); // strip "HSEAL-"
+      try {
+        const stream = await group.stream();
+        for await (const msg of stream) {
+          if (typeof msg.content !== 'string' || !msg.content) continue;
+          const members = await group.members();
+          const sender = members.find(m => m.inboxId === msg.senderInboxId);
+          const from = sender?.accountIdentifiers?.[0]?.identifier?.toLowerCase() ?? msg.senderInboxId;
+          appendLogEntry(dealId, {
+            ts:   msg.sentAt ? msg.sentAt.getTime() : Date.now(),
+            from,
+            text: msg.content,
+          });
+        }
+      } catch (err) {
+        console.warn(`[bot] stream error for ${dealId}:`, err.message);
+      }
+    }
+
+    // Sync and start streaming all existing HSEAL-* groups
+    await botClient.conversations.sync();
+    const groups = await botClient.conversations.listGroups();
+    for (const g of groups) {
+      streamGroupMessages(g); // intentionally not awaited
+    }
+
+    // Stream new group invitations
+    (async () => {
+      try {
+        const stream = await botClient.conversations.stream();
+        for await (const conv of stream) {
+          streamGroupMessages(conv); // intentionally not awaited
+        }
+      } catch (err) {
+        console.warn('[bot] conversation stream error:', err.message);
+      }
+    })();
+
+  } catch (err) {
+    console.error('[bot] XMTP init failed:', err.message);
+    // Non-fatal — relay still works without the bot
+  }
+})();
