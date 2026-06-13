@@ -3,7 +3,8 @@ import cors from 'cors';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
-import { randomUUID } from 'crypto';
+import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { Client } from '@xmtp/node-sdk';
 import webpush from 'web-push';
 import fs, { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
@@ -131,6 +132,89 @@ const FILE_TTL_MS  = 7 * 24 * 60 * 60 * 1000;          // 7 days
 
 for (const dir of [DIR_FILES, DIR_PUBLIC, DIR_TEMP]) {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+// ─── Dispute Bot ──────────────────────────────────────────────────────────────
+
+const SERVER_SECRET = process.env.SERVER_SECRET;
+if (!SERVER_SECRET) throw new Error('SERVER_SECRET is not set');
+
+// Single deterministic bot wallet — keccak256(SERVER_SECRET) as private key
+const BOT_PRIVATE_KEY = ethers.keccak256(ethers.toUtf8Bytes(SERVER_SECRET));
+const botWallet = new ethers.Wallet(BOT_PRIVATE_KEY);
+
+// XMTP signer for node-sdk (same shape as browser-sdk signer)
+const botSigner = {
+  type: 'EOA',
+  getIdentifier: () => ({
+    identifier: botWallet.address.toLowerCase(),
+    identifierKind: 'Ethereum',
+  }),
+  signMessage: async (message) => {
+    const sig = await botWallet.signMessage(message);
+    return ethers.getBytes(sig);
+  },
+};
+
+// ─── Log encryption ───────────────────────────────────────────────────────────
+
+const DIR_LOGS = path.join(STORAGE_DIR, 'logs');
+fs.mkdirSync(DIR_LOGS, { recursive: true });
+
+/**
+ * AES-256-GCM key for a given deal.
+ * key = keccak256(dealId.toLowerCase() + SERVER_SECRET) → 32 bytes
+ */
+function deriveLogKey(dealId) {
+  return ethers.getBytes(
+    ethers.keccak256(ethers.toUtf8Bytes(dealId.toLowerCase() + SERVER_SECRET))
+  );
+}
+
+function encryptEntry(key, obj) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([
+    cipher.update(JSON.stringify(obj), 'utf8'),
+    cipher.final(),
+  ]);
+  return {
+    iv:      iv.toString('hex'),
+    ct:      ct.toString('hex'),
+    authTag: cipher.getAuthTag().toString('hex'),
+  };
+}
+
+function decryptEntry(key, { iv, ct, authTag }) {
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
+  decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+  const plain = Buffer.concat([
+    decipher.update(Buffer.from(ct, 'hex')),
+    decipher.final(),
+  ]);
+  return JSON.parse(plain.toString('utf8'));
+}
+
+function appendLogEntry(dealId, entry) {
+  const key = deriveLogKey(dealId);
+  const encrypted = encryptEntry(key, entry);
+  const line = JSON.stringify(encrypted) + '\n';
+  const logPath = path.join(DIR_LOGS, `${dealId.toLowerCase()}.ndjson`);
+  fs.appendFileSync(logPath, line);
+}
+
+function readLog(dealId) {
+  const logPath = path.join(DIR_LOGS, `${dealId.toLowerCase()}.ndjson`);
+  if (!fs.existsSync(logPath)) return [];
+  const key = deriveLogKey(dealId);
+  return fs.readFileSync(logPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      try { return decryptEntry(key, JSON.parse(line)); }
+      catch { return null; }
+    })
+    .filter(Boolean);
 }
 
 // Strips path traversal and unsafe chars — returns just the basename
@@ -278,6 +362,11 @@ app.get('/balance', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Returns the relay bot's XMTP address so the frontend knows who to invite.
+app.get('/bot-address', (_req, res) => {
+  res.json({ address: botWallet.address.toLowerCase() });
 });
 
 app.post('/relay', async (req, res) => {
