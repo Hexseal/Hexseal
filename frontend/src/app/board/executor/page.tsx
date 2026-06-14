@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useWalletClient, usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
@@ -501,6 +501,7 @@ export default function ExecutorBoardPage() {
   const [mounted, setMounted]         = useState(false);
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
+  const catScrollRef = useRef<HTMLDivElement>(null);
   const [userRegion, setUserRegion]     = useState<number | null>(null);
   const [services, setServices]       = useState<Service[]>([]);
 
@@ -705,7 +706,7 @@ export default function ExecutorBoardPage() {
   // Wallet reconnecting on page reload — show skeleton to avoid flash of "connect" screen
   if (!mounted || status === 'reconnecting' || status === 'connecting') {
     return (
-      <div className="container mx-auto px-4 pt-4 pb-6 max-w-4xl space-y-3">
+      <div className="container mx-auto px-4 pt-4 pb-6 max-w-6xl space-y-3">
         {[...Array(5)].map((_, i) => (
           <motion.div
             key={i}
@@ -763,7 +764,7 @@ export default function ExecutorBoardPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
       >
-        <div className="container mx-auto px-4 pt-4 pb-3 max-w-4xl">
+        <div className="container mx-auto px-4 pt-4 pb-3 max-w-6xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.services.title")}</h1>
@@ -784,7 +785,7 @@ export default function ExecutorBoardPage() {
         </div>
       </motion.div>
 
-      <div className="container mx-auto px-4 pt-0 pb-6 max-w-4xl">
+      <div className="container mx-auto px-4 pt-0 pb-6 max-w-6xl">
         {/* Incoming requests for executor */}
         {isConnected && address && (
           <IncomingRequestsPanel
@@ -804,7 +805,11 @@ export default function ExecutorBoardPage() {
         </div>
 
         {/* Category filter — horizontal scroll strip */}
-        <div className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={catScrollRef}
+          onWheel={e => { if (catScrollRef.current) { e.preventDefault(); catScrollRef.current.scrollLeft += e.deltaY; } }}
+          className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           <button
             onClick={() => setCategoryFilter(null)}
             className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${

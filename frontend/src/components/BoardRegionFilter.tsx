@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -47,8 +48,13 @@ export function BoardRegionFilter({
   onChange: (v: number | null) => void;
   userRegion: number | null;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   return (
-    <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div
+      ref={scrollRef}
+      onWheel={e => { if (scrollRef.current) { e.preventDefault(); scrollRef.current.scrollLeft += e.deltaY; } }}
+      className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
       {/* Global */}
       <button
         type="button"

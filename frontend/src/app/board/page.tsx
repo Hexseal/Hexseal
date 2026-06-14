@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useAccount, useReadContract, useReadContracts, usePublicClient, useWalletClient } from "wagmi";
 import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
 import { sendGasless } from "@/lib/relay";
@@ -347,6 +347,7 @@ export default function BoardPage() {
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [userRegion, setUserRegion] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
+  const catScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const stored = getStoredBoardRegion();
@@ -484,7 +485,7 @@ export default function BoardPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
       >
-        <div className="container mx-auto px-4 pt-4 pb-3 max-w-4xl">
+        <div className="container mx-auto px-4 pt-4 pb-3 max-w-6xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.jobs.title")}</h1>
@@ -517,7 +518,7 @@ export default function BoardPage() {
         </div>
       </motion.div>
 
-      <div className="container mx-auto px-4 pt-0 pb-6 max-w-4xl">
+      <div className="container mx-auto px-4 pt-0 pb-6 max-w-6xl">
         {/* Region filter */}
         <div className="mb-3">
           <BoardRegionFilter
@@ -528,7 +529,11 @@ export default function BoardPage() {
         </div>
 
         {/* Category filter — horizontal scroll strip */}
-        <div className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={catScrollRef}
+          onWheel={e => { if (catScrollRef.current) { e.preventDefault(); catScrollRef.current.scrollLeft += e.deltaY; } }}
+          className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           <motion.button
             whileTap={{ scale: 0.975 }}
             onClick={() => setCategoryFilter(null)}
