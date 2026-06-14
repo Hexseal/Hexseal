@@ -68,6 +68,12 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
 
   return (
     <>
+      {/* ── Top edge fade — masks content scrolling above the pill header ── */}
+      <div
+        className="fixed inset-x-0 top-0 z-40 pointer-events-none"
+        style={{ height: 80, background: "linear-gradient(to bottom, #0d0d0f 20%, transparent)" }}
+      />
+
       {/* ── Mobile floating pill header ────────────────────────────────── */}
       <header
         className={chatMode ? "hidden" : "md:hidden fixed left-4 right-4 z-50"}
