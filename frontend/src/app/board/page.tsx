@@ -492,7 +492,7 @@ export default function BoardPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
       >
-        <div className="container mx-auto px-4 pt-4 pb-3 max-w-6xl">
+        <div className="container mx-auto px-4 pt-4 pb-6 max-w-6xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.jobs.title")}</h1>
@@ -527,7 +527,7 @@ export default function BoardPage() {
 
       <div className="container mx-auto px-4 pt-0 pb-6 max-w-6xl">
         {/* Region filter */}
-        <div className="mb-3">
+        <div className="mb-4">
           <BoardRegionFilter
             value={regionFilter}
             onChange={handleRegionChange}
@@ -538,7 +538,7 @@ export default function BoardPage() {
         {/* Category filter — horizontal scroll strip */}
         <div
           ref={catScrollRef}
-          className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex overflow-x-auto gap-1.5 mb-5 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <motion.button
             whileTap={{ scale: 0.975 }}

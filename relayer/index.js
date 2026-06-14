@@ -148,7 +148,7 @@ const botSigner = {
   type: 'EOA',
   getIdentifier: () => ({
     identifier: botWallet.address.toLowerCase(),
-    identifierKind: 'Ethereum',
+    identifierKind: 0, // IdentifierKind.Ethereum
   }),
   signMessage: async (message) => {
     const sig = await botWallet.signMessage(message);

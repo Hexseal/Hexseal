@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+
+// Only animate the nav entrance once per page load — not on every route change
+let _navHasAppeared = false;
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -128,6 +131,9 @@ export default function MobileBottomNav() {
 
   const POPUP_TRANSITION = "transform 280ms cubic-bezier(0.34,1.56,0.64,1), opacity 220ms ease-out";
 
+  const isFirstAppear = !_navHasAppeared;
+  useEffect(() => { _navHasAppeared = true; }, []);
+
   return (
     <>
       {/* backdrop */}
@@ -206,7 +212,7 @@ export default function MobileBottomNav() {
 
       {/* ── Floating pill ─────────────────────────────────────────────────── */}
       <motion.nav
-        initial={{ y: 20, opacity: 0 }}
+        initial={isFirstAppear ? { y: 20, opacity: 0 } : false}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
         className="md:hidden fixed left-3 right-3 z-50"
