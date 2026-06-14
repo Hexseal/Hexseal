@@ -502,6 +502,13 @@ export default function ExecutorBoardPage() {
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
   const catScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = catScrollRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => { e.preventDefault(); el.scrollLeft += e.deltaY; };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
   const [userRegion, setUserRegion]     = useState<number | null>(null);
   const [services, setServices]       = useState<Service[]>([]);
 
@@ -807,7 +814,6 @@ export default function ExecutorBoardPage() {
         {/* Category filter — horizontal scroll strip */}
         <div
           ref={catScrollRef}
-          onWheel={e => { if (catScrollRef.current) { e.preventDefault(); catScrollRef.current.scrollLeft += e.deltaY; } }}
           className="flex overflow-x-auto gap-1.5 mb-4 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <button

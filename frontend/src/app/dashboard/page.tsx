@@ -170,7 +170,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="mx-auto px-4 py-5 max-w-4xl space-y-4">
+    <div className="mx-auto px-4 py-5 max-w-6xl space-y-4">
 
         {/* ── XMTP setup banner ── */}
         <MessagingSetup />

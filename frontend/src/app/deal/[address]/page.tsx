@@ -415,7 +415,7 @@ export default function DealDetailPage() {
     <>
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <div>
-        <div className="container mx-auto px-4 py-4 max-w-3xl flex items-center justify-between gap-4">
+        <div className="container mx-auto px-4 py-4 max-w-4xl flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`w-2 h-2 rounded-full flex-shrink-0 ${statusInfo.dot}`} />
             <div className="min-w-0">
@@ -454,7 +454,7 @@ export default function DealDetailPage() {
       </div>
 
       <motion.div
-        className="container mx-auto px-4 py-5 max-w-3xl space-y-4"
+        className="container mx-auto px-4 py-5 max-w-4xl space-y-4"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22 }}

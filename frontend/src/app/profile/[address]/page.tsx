@@ -211,7 +211,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-3xl space-y-5">
+    <div className="container mx-auto px-4 py-8 max-w-4xl space-y-5">
 
         {/* ── Profile header ─────────────────────────────────────────────── */}
         <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-5" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>

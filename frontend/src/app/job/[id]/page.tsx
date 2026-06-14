@@ -219,7 +219,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
     <>
       {/* Header */}
       <div>
-        <div className="container mx-auto px-4 pt-4 pb-3 max-w-3xl">
+        <div className="container mx-auto px-4 pt-4 pb-3 max-w-4xl">
 <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -268,7 +268,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       </div>
 
       <motion.div
-        className="container mx-auto px-4 pt-0 pb-6 max-w-3xl space-y-6"
+        className="container mx-auto px-4 pt-0 pb-6 max-w-4xl space-y-6"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22 }}
