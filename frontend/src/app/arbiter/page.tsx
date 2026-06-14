@@ -462,13 +462,13 @@ function DisputeCard({
   );
 }
 
-// ─── DisputeLog — inline chat history panel ──────────────────────────────────
+// ─── DisputeLog — chat-bubble history panel ───────────────────────────────────
 
 const RELAYER_URL_ARB = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 
 type LogEntry = { ts: number; from: string; text: string };
 
-function DisputeLog({ dealId }: { dealId: string }) {
+function DisputeLog({ dealId, client, executor }: { dealId: string; client?: string; executor?: string }) {
   const { data: walletClient } = useWalletClient();
   const { address } = useAccount();
   const [entries, setEntries] = useState<LogEntry[] | null>(null);
@@ -500,6 +500,14 @@ function DisputeLog({ dealId }: { dealId: string }) {
     }
   };
 
+  // Identify role by address
+  const roleOf = (from: string): 'client' | 'executor' | 'bot' => {
+    const f = from.toLowerCase();
+    if (client && f === client.toLowerCase()) return 'client';
+    if (executor && f === executor.toLowerCase()) return 'executor';
+    return 'bot';
+  };
+
   if (entries === null) {
     return (
       <button
@@ -517,21 +525,62 @@ function DisputeLog({ dealId }: { dealId: string }) {
     return <p className="text-xs text-red-400/70 px-1">{err}</p>;
   }
 
-  if (entries.length === 0) {
-    return <p className="text-xs text-white/30 px-1 italic">{t("arbiter.no_history_log")}</p>;
-  }
-
   return (
-    <div className="mt-2 rounded-[12px] border border-white/[0.07] bg-[#0a0a0c] max-h-64 overflow-y-auto p-3 space-y-2">
-      {entries.map((e, i) => (
-        <div key={i} className="text-xs">
-          <span className="text-white/30 mr-2">
-            {new Date(e.ts).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
-          </span>
-          <span className="text-white/50 font-mono mr-2">{e.from.slice(0, 6)}…{e.from.slice(-4)}</span>
-          <span className="text-white/80">{e.text}</span>
+    <div className="mt-1 rounded-[14px] border border-white/[0.07] bg-[#080809] overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.05]">
+        <div className="flex items-center gap-2">
+          <MessageCircle className="w-3.5 h-3.5 text-white/25" />
+          <span className="text-[11px] text-white/35 font-medium">{t("arbiter.view_history_btn")}</span>
+          {entries.length > 0 && (
+            <span className="text-[10px] text-white/20 font-mono">{entries.length}</span>
+          )}
         </div>
-      ))}
+        <div className="flex items-center gap-3 text-[10px] text-white/20">
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-sky-400/60 inline-block" />{t("arbiter.client_label")}</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-violet-400/60 inline-block" />{t("arbiter.executor_label")}</span>
+        </div>
+        <button onClick={() => setEntries(null)} className="text-white/20 hover:text-white/50 transition-colors text-[10px]">✕</button>
+      </div>
+
+      {/* Messages */}
+      {entries.length === 0 ? (
+        <p className="text-xs text-white/25 px-3 py-4 italic text-center">{t("arbiter.no_history_log")}</p>
+      ) : (
+        <div className="max-h-72 overflow-y-auto px-3 py-3 space-y-2 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.08)_transparent]">
+          {entries.map((e, i) => {
+            const role = roleOf(e.from);
+            const time = new Date(e.ts).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+
+            // Bot → centered system message
+            if (role === 'bot') {
+              return (
+                <div key={i} className="flex justify-center">
+                  <span className="text-[10px] text-white/20 italic px-2">{e.text} · {time}</span>
+                </div>
+              );
+            }
+
+            const isClient = role === 'client';
+            return (
+              <div key={i} className={`flex flex-col gap-0.5 ${isClient ? 'items-start' : 'items-end'}`}>
+                <span className={`text-[10px] font-medium px-0.5 ${isClient ? 'text-sky-400/50' : 'text-violet-400/50'}`}>
+                  {isClient ? t("arbiter.client_label") : t("arbiter.executor_label")}
+                  {' · '}<span className="font-mono font-normal">{e.from.slice(0, 6)}…{e.from.slice(-4)}</span>
+                </span>
+                <div className={`max-w-[85%] rounded-[10px] px-3 py-2 text-xs leading-relaxed ${
+                  isClient
+                    ? 'bg-sky-500/[0.08] border border-sky-500/15 text-white/80 rounded-tl-[3px]'
+                    : 'bg-violet-500/[0.08] border border-violet-500/15 text-white/80 rounded-tr-[3px]'
+                }`}>
+                  {e.text}
+                </div>
+                <span className="text-[10px] text-white/15 px-0.5">{time}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -661,7 +710,7 @@ function MyCaseCard({
               </Link>
             )}
           </div>
-          <DisputeLog dealId={agreement} />
+          <DisputeLog dealId={agreement} client={client ?? undefined} executor={executor ?? undefined} />
         </div>
       )}
 
