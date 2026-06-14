@@ -382,13 +382,15 @@ export default function BoardPage() {
     storeBoardRegion(v);
   };
 
-  const { data: openJobsData, isLoading, refetch } = useReadContract({
+  const { data: openJobsData, isLoading, isFetching, refetch } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI,
     functionName: "getOpenJobs",
+    query: { refetchInterval: 30_000 },
   }) as {
     data: [bigint[], JobRecord[]] | undefined;
     isLoading: boolean;
+    isFetching: boolean;
     refetch: () => void;
   };
 
@@ -509,10 +511,10 @@ export default function BoardPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() => refetch()}
-                disabled={isLoading}
+                disabled={isFetching}
                 className="text-white/40 hover:text-white/70"
               >
-                <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+                <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
               </Button>
               <Link href="/board/client/post">
                 <Button size="sm">

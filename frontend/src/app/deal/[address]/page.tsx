@@ -147,7 +147,15 @@ export default function DealDetailPage() {
     address: dealAddress as `0x${string}`,
     abi: AGREEMENT_ABI,
     functionName: "getDetails",
-    query: { enabled: !!isValidDeal },
+    query: {
+      enabled: !!isValidDeal,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      refetchInterval: (query: any) => {
+        const s = query.state.data as unknown[] | undefined;
+        const status = s ? (s[11] as number) : undefined;
+        return status !== undefined && [3, 5, 6].includes(status) ? false : 15_000;
+      },
+    },
   }) as { data: [string, string, string, bigint, string, bigint, bigint, bigint, bigint, bigint, bigint, number] | undefined; isLoading: boolean; refetch: () => void };
 
   // Read status separately — poll every 10s for active deals, stop when terminal.

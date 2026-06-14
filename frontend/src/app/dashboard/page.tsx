@@ -119,13 +119,13 @@ export default function DashboardPage() {
   const { data: clientAgreements,   isLoading: isLoadingClient,   refetch: refetchClient   } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI as Abi,
     functionName: 'getByClient', args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address, refetchInterval: 60_000 },
   }) as { data: AgreementRecord[] | undefined; isLoading: boolean; refetch: () => void };
 
   const { data: executorAgreements, isLoading: isLoadingExecutor, refetch: refetchExecutor } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI as Abi,
     functionName: 'getByExecutor', args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address, refetchInterval: 60_000 },
   }) as { data: AgreementRecord[] | undefined; isLoading: boolean; refetch: () => void };
 
   const allAgreements = (() => {

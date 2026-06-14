@@ -639,6 +639,13 @@ export default function ExecutorBoardPage() {
     if (mounted && publicClient) loadServices();
   }, [mounted, publicClient, loadServices]);
 
+  // Background silent refresh every 30s
+  useEffect(() => {
+    if (!mounted || !publicClient) return;
+    const id = setInterval(() => { if (!loadingList) loadServices(); }, 30_000);
+    return () => clearInterval(id);
+  }, [mounted, publicClient, loadingList, loadServices]);
+
 
   const filtered = useMemo(() => {
     let list = services.filter(s => s.status === 0);
