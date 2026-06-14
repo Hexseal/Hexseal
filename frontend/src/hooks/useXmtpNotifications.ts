@@ -86,7 +86,7 @@ export function useXmtpNotifications() {
           let link = '/chat';
           if (groupName?.startsWith('HSEAL-')) {
             // Group name format: HSEAL-0x{agreementAddress}
-            const agreementAddr = groupName.slice(5); // strip "HSEAL-"
+            const agreementAddr = groupName.slice(6); // strip "HSEAL-" (6 chars)
             link = `/deal/${agreementAddr}/chat`;
           }
 

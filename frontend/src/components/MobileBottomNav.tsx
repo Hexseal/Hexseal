@@ -95,7 +95,7 @@ function PillBtn({
 export default function MobileBottomNav() {
   const { isConnected } = useAccount();
   const pathname = usePathname();
-  const { unreadCount } = useNotifications();
+  const { unreadCount, unreadMessageCount } = useNotifications();
   const [boardMounted, setBoardMounted] = useState(false);
   const [boardVisible, setBoardVisible] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -231,6 +231,7 @@ export default function MobileBottomNav() {
             href="/chat"
             active={isActive("/chat")}
             label={t("nav.messages")}
+            badge={unreadMessageCount}
           >
             <MessageCircle className="w-[24px] h-[24px]" />
           </PillBtn>

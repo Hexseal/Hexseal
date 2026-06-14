@@ -573,6 +573,7 @@ export function useNotifications() {
 
   // ─── Public API ───────────────────────────────────────────────────────────
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const unreadMessageCount = notifications.filter((n) => !n.read && n.type === 'message_new').length;
 
   const markRead = useCallback(
     (id: string) => { if (address) setNotifications(markReadById(address, id)); },
@@ -587,5 +588,5 @@ export function useNotifications() {
     [address]
   );
 
-  return { notifications, unreadCount, markRead, markAll, clearAll };
+  return { notifications, unreadCount, unreadMessageCount, markRead, markAll, clearAll };
 }

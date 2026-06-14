@@ -91,7 +91,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
       {/* Mobile: link to full notifications page */}
       <Link
         href="/notifications"
-        className="md:hidden relative p-2 rounded-lg text-white/40 hover:text-white/70 hover:bg-white/5 transition-colors"
+        className="md:hidden inline-flex items-center justify-center relative p-2 rounded-lg text-white/40 hover:text-white/70 hover:bg-white/5 transition-colors"
         aria-label="Notifications"
       >
         <Bell className="w-4 h-4" />
