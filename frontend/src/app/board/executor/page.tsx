@@ -875,9 +875,15 @@ export default function ExecutorBoardPage() {
         )}
 
         {loadingList ? (
-          <div className="flex items-center justify-center py-24 gap-2 text-white/30">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm">{t("board.services.loading")}</span>
+          <div className="space-y-3">
+            {[0, 1, 2, 3, 4].map(i => (
+              <motion.div
+                key={i}
+                className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[80px]"
+                animate={{ opacity: [0.4, 0.8, 0.4] }}
+                transition={{ delay: i * 0.07, duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">

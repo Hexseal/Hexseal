@@ -25,6 +25,26 @@ function xpLevel(xp: number) {
   return               { label: 'Newcomer', color: 'text-white/40',    bar: 'bg-white/20',    pct: Math.round(xp / 0.5) };
 }
 
+// ─── Stat card skeleton ───────────────────────────────────────────────────────
+
+function StatCardSkeleton({ index = 0 }: { index?: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: [0.4, 0.7, 0.4] }}
+      transition={{ delay: index * 0.05, duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+      className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3"
+    >
+      <div className="w-9 h-9 rounded-[12px] bg-white/[0.06] flex-shrink-0" />
+      <div className="min-w-0 space-y-2">
+        <div className="h-2.5 w-16 rounded bg-white/[0.06]" />
+        <div className="h-5 w-10 rounded bg-white/[0.08]" />
+        <div className="h-2 w-12 rounded bg-white/[0.04]" />
+      </div>
+    </motion.div>
+  );
+}
+
 // ─── Stat card ────────────────────────────────────────────────────────────────
 
 function StatCard({ icon, label, value, sub, index = 0 }: {
@@ -176,41 +196,33 @@ export default function DashboardPage() {
         <MessagingSetup />
 
         {/* ── Stats row ── */}
-        {!isLoading && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <StatCard
-              index={0}
-              icon={<Zap className="w-4 h-4 text-violet-400" />}
-              label={t("dashboard.stat_level")}
-              value={level.label}
-              sub={`${xp} XP`}
-            />
-            <StatCard
-              index={1}
-              icon={<Activity className="w-4 h-4 text-sky-400" />}
-              label={t("dashboard.stat_active")}
-              value={activeDeals.length}
-              sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")}
-            />
-            <StatCard
-              index={2}
-              icon={<CheckCircle className="w-4 h-4 text-emerald-400" />}
-              label={t("dashboard.stat_completed")}
-              value={completed}
-              sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")}
-            />
-            <StatCard
-              index={3}
-              icon={<DollarSign className="w-4 h-4 text-amber-400" />}
-              label={t("dashboard.stat_volume")}
-              value={`$${(totalVolume / 1e6).toFixed(0)}`}
-              sub={t("dashboard.stat_usdc_total")}
-            />
-          </div>
-        )}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {isLoading ? (
+            [0, 1, 2, 3].map(i => <StatCardSkeleton key={i} index={i} />)
+          ) : (
+            <>
+              <StatCard index={0} icon={<Zap className="w-4 h-4 text-violet-400" />} label={t("dashboard.stat_level")} value={level.label} sub={`${xp} XP`} />
+              <StatCard index={1} icon={<Activity className="w-4 h-4 text-sky-400" />} label={t("dashboard.stat_active")} value={activeDeals.length} sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
+              <StatCard index={2} icon={<CheckCircle className="w-4 h-4 text-emerald-400" />} label={t("dashboard.stat_completed")} value={completed} sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
+              <StatCard index={3} icon={<DollarSign className="w-4 h-4 text-amber-400" />} label={t("dashboard.stat_volume")} value={`$${(totalVolume / 1e6).toFixed(0)}`} sub={t("dashboard.stat_usdc_total")} />
+            </>
+          )}
+        </div>
 
         {/* ── XP progress bar ── */}
-        {!isLoading && (
+        {isLoading ? (
+          <motion.div
+            animate={{ opacity: [0.4, 0.7, 0.4] }}
+            transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+            className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="h-3 w-16 rounded bg-white/[0.06]" />
+              <div className="h-3 w-10 rounded bg-white/[0.06]" />
+            </div>
+            <div className="h-1.5 rounded-full bg-white/[0.06]" />
+          </motion.div>
+        ) : (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -256,9 +268,15 @@ export default function DashboardPage() {
 
           {/* Tab content */}
           {isLoading ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-white/30">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-sm">{t("dashboard.loading")}</span>
+            <div className="space-y-3">
+              {[0, 1, 2].map(i => (
+                <motion.div
+                  key={i}
+                  animate={{ opacity: [0.4, 0.7, 0.4] }}
+                  transition={{ delay: i * 0.1, duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                  className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] h-[72px]"
+                />
+              ))}
             </div>
           ) : (
             <AnimatePresence mode="wait" initial={false}>
