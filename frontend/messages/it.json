@@ -153,7 +153,8 @@
     "how_it_works": "Come funziona",
     "disconnect": "Disconnetti",
     "copied": "Indirizzo copiato!",
-    "copy_failed": "Copia fallita"
+    "copy_failed": "Copia fallita",
+    "disable_messaging": "Disable Messaging"
   },
   "dashboard": {
     "title": "Dashboard",

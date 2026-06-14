@@ -153,7 +153,8 @@
     "how_it_works": "如何使用",
     "disconnect": "断开连接",
     "copied": "地址已复制！",
-    "copy_failed": "复制失败"
+    "copy_failed": "复制失败",
+    "disable_messaging": "Disable Messaging"
   },
   "dashboard": {
     "title": "控制台",

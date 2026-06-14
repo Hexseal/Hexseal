@@ -4,10 +4,11 @@
  * useXmtpSession — background XMTP session manager.
  *
  * Mounted once globally in client-layout. Handles:
- *  • Silent auto-restore: if OPFS DB exists + session not expired → init without signing
- *  • OPFS gone: clear session, user sees Enable prompt (no unexpected wallet popup)
- *  • TTL refresh: bumps expiry 3 days forward on every successful silent restore
+ *  • Silent auto-restore: if localStorage flag set + OPFS DB exists → init without signing
+ *  • OPFS gone (browser cleared storage): clear flag, user sees Enable prompt
  *  • Cleanup: clears session when wallet disconnects or address changes
+ *
+ * No TTL — session lives until user explicitly clicks "Disable Messaging".
  */
 
 import { useEffect, useRef } from 'react';
@@ -16,12 +17,10 @@ import {
   initXmtpClient,
   checkXmtpDbExists,
   clearXmtpSession,
-  SESSION_TTL_MS,
 } from '@/lib/xmtp';
 import { _notifyEnabled } from './useXmtpStatus';
 
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
-const expiryKey     = (addr: string) => `xmtp-expiry-${addr.toLowerCase()}`;
 
 export function useXmtpSession() {
   const { address, isConnected } = useAccount();
@@ -53,38 +52,27 @@ export function useXmtpSession() {
     const addr = address.toLowerCase();
     if (triedRef.current.has(addr)) return; // already attempted this session
 
-    const flag   = localStorage.getItem(registeredKey(addr));
-    const expiry = parseInt(localStorage.getItem(expiryKey(addr)) ?? '0', 10);
-
-    // No valid session registered
-    if (flag !== '1') return;
-
-    // TTL expired — clear and let user re-enable
-    if (Date.now() > expiry) {
-      clearXmtpSession(addr);
-      return;
-    }
+    // No valid session registered — user hasn't enabled messaging
+    if (localStorage.getItem(registeredKey(addr)) !== '1') return;
 
     triedRef.current.add(addr);
 
     (async () => {
       try {
-        // Only init silently if OPFS DB exists — if it's gone, Client.create()
-        // would need a wallet signature, which we must not trigger silently.
+        // Only init silently if OPFS DB exists — if it's gone (browser cleared storage),
+        // Client.create() would need a wallet signature, which we must not trigger silently.
         const dbExists = await checkXmtpDbExists(addr);
         if (!dbExists) {
+          // OPFS gone — clear flag so user sees Enable prompt instead of a phantom session
           clearXmtpSession(addr);
           return;
         }
 
-        // OPFS intact + session valid → restore without signing
+        // OPFS intact + flag set → restore client without any wallet signature
         await initXmtpClient(walletClient);
-
-        // Extend TTL on every successful silent restore
-        localStorage.setItem(expiryKey(addr), String(Date.now() + SESSION_TTL_MS));
         _notifyEnabled(); // update any mounted useXmtpStatus instances
       } catch {
-        // Unexpected error (shouldn't sign since OPFS existed, but handle gracefully)
+        // Unexpected error — clear session so user can re-enable cleanly
         clearXmtpSession(addr);
       }
     })();

@@ -153,7 +153,8 @@
     "how_it_works": "วิธีใช้งาน",
     "disconnect": "ยกเลิกการเชื่อมต่อ",
     "copied": "คัดลอกที่อยู่แล้ว!",
-    "copy_failed": "คัดลอกล้มเหลว"
+    "copy_failed": "คัดลอกล้มเหลว",
+    "disable_messaging": "Disable Messaging"
   },
   "dashboard": {
     "title": "แดชบอร์ด",

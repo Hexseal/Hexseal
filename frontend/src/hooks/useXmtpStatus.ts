@@ -3,34 +3,24 @@
 /**
  * useXmtpStatus — tracks XMTP registration for the current user.
  *
- * • isEnabled  — true once the user has signed their XMTP identity
+ * • isEnabled  — true when user has enabled messaging (persists until explicit disable)
  * • isEnabling — spinner flag while Client.create() is running
- * • enable()   — prompts wallet signature and registers on XMTP network
- *
- * Session TTL: 3 days from last activity. Refreshed on every silent restore
- * by useXmtpSession. Expired sessions clear automatically and show Enable again.
+ * • enable()   — prompts wallet signature on first use; silent restore if OPFS keys exist
+ * • disable()  — clears the flag (OPFS keys stay, so re-enable won't require re-signing)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWalletClient } from 'wagmi';
-import { initXmtpClient, SESSION_TTL_MS, clearXmtpSession } from '@/lib/xmtp';
+import { initXmtpClient, clearXmtpSession } from '@/lib/xmtp';
 
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
-const expiryKey     = (addr: string) => `xmtp-expiry-${addr.toLowerCase()}`;
 
 // Module-level pub-sub: when any hook instance calls enable(), all others update too.
 const _enabledListeners: Set<() => void> = new Set();
 export function _notifyEnabled() { _enabledListeners.forEach(fn => fn()); }
 
 function readIsEnabled(addr: string): boolean {
-  if (localStorage.getItem(registeredKey(addr)) !== '1') return false;
-  const expiry = parseInt(localStorage.getItem(expiryKey(addr)) ?? '0', 10);
-  if (Date.now() > expiry) {
-    // Session expired — clean up silently
-    clearXmtpSession(addr);
-    return false;
-  }
-  return true;
+  return localStorage.getItem(registeredKey(addr)) === '1';
 }
 
 export function useXmtpStatus() {
@@ -77,7 +67,6 @@ export function useXmtpStatus() {
       await initXmtpClient(walletClient, setSignStep);
       const addr = walletClient.account.address.toLowerCase();
       localStorage.setItem(registeredKey(addr), '1');
-      localStorage.setItem(expiryKey(addr), String(Date.now() + SESSION_TTL_MS));
       _notifyEnabled();
       setIsEnabled(true);
     } catch (err: unknown) {
@@ -100,5 +89,12 @@ export function useXmtpStatus() {
     }
   }, [walletClient]);
 
-  return { isEnabled, isEnabling, signStep, error, enable };
+  const disable = useCallback(() => {
+    const addr = walletClient?.account?.address;
+    if (!addr) return;
+    clearXmtpSession(addr);
+    // readIsEnabled will return false → setIsEnabled(false) via the 'hexseal:xmtp-session-cleared' event
+  }, [walletClient]);
+
+  return { isEnabled, isEnabling, signStep, error, enable, disable };
 }

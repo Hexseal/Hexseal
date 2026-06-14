@@ -153,7 +153,8 @@
     "how_it_works": "Cómo funciona",
     "disconnect": "Desconectar",
     "copied": "¡Dirección copiada!",
-    "copy_failed": "Error al copiar"
+    "copy_failed": "Error al copiar",
+    "disable_messaging": "Disable Messaging"
   },
   "dashboard": {
     "title": "Panel",

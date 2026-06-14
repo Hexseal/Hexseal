@@ -153,7 +153,8 @@
     "how_it_works": "使い方",
     "disconnect": "切断",
     "copied": "アドレスをコピーしました！",
-    "copy_failed": "コピーに失敗しました"
+    "copy_failed": "コピーに失敗しました",
+    "disable_messaging": "Disable Messaging"
   },
   "dashboard": {
     "title": "ダッシュボード",

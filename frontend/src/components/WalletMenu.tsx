@@ -18,12 +18,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, Shield, ShieldCheck, HelpCircle, Globe, ChevronRight } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, HelpCircle, Globe, ChevronRight } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn } from "@/lib/utils";
+import { useXmtpStatus } from "@/hooks/useXmtpStatus";
 
 function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -42,6 +43,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
+  const { isEnabled: xmtpEnabled, disable: disableXmtp } = useXmtpStatus();
   const { address, isConnected, status } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
@@ -319,7 +321,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
           </>
         )}
 
-        {/* ── Help ── */}
+        {/* ── Help + messaging toggle ── */}
         <div className="h-px bg-white/[0.06]" />
         <div className="p-1">
           <DropdownMenuItem
@@ -329,6 +331,15 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             <HelpCircle className="w-3.5 h-3.5" />
             {t("wallet.how_it_works")}
           </DropdownMenuItem>
+          {xmtpEnabled && (
+            <DropdownMenuItem
+              onClick={disableXmtp}
+              className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+            >
+              <MessageCircleOff className="w-3.5 h-3.5" />
+              {t("wallet.disable_messaging")}
+            </DropdownMenuItem>
+          )}
         </div>
 
         {/* ── Language ── */}

@@ -153,7 +153,8 @@
     "how_it_works": "Comment ça fonctionne",
     "disconnect": "Déconnecter",
     "copied": "Adresse copiée !",
-    "copy_failed": "Échec de la copie"
+    "copy_failed": "Échec de la copie",
+    "disable_messaging": "Disable Messaging"
   },
   "dashboard": {
     "title": "Tableau de bord",

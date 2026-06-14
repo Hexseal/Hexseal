@@ -153,7 +153,8 @@
     "how_it_works": "यह कैसे काम करता है",
     "disconnect": "डिसकनेक्ट",
     "copied": "पता कॉपी हुआ!",
-    "copy_failed": "कॉपी नहीं हो सका"
+    "copy_failed": "कॉपी नहीं हो सका",
+    "disable_messaging": "Disable Messaging"
   },
   "dashboard": {
     "title": "डैशबोर्ड",

@@ -83,10 +83,11 @@ export function toIdentifier(address: string): Identifier {
 
 // ─── Session helpers ──────────────────────────────────────────────────────────
 
-export const SESSION_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+// No TTL — session persists until user explicitly disconnects messaging.
+// OPFS stores the XMTP keys permanently; localStorage flag is just the enable/disable toggle.
 
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
-const expiryKey     = (addr: string) => `xmtp-expiry-${addr.toLowerCase()}`;
+const expiryKey     = (addr: string) => `xmtp-expiry-${addr.toLowerCase()}`; // kept for legacy cleanup only
 const installIdKey  = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
 
 /** Check whether the XMTP OPFS database file exists for this address.
@@ -104,7 +105,8 @@ export async function checkXmtpDbExists(address: string): Promise<boolean> {
   }
 }
 
-/** Clear XMTP session state for this address (localStorage + in-memory cache).
+/** Clear XMTP session state for this address (localStorage flag + in-memory cache).
+ *  OPFS keys file is intentionally kept — re-enabling won't require a wallet signature.
  *  Dispatches a DOM event so any mounted useXmtpStatus instances update immediately.
  */
 export function clearXmtpSession(address: string): void {
