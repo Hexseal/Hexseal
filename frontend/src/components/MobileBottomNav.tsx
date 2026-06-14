@@ -121,6 +121,10 @@ export default function MobileBottomNav() {
   // Close on navigation.
   useEffect(() => { closeBoard(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Must be before early return — hooks cannot be called conditionally.
+  const isFirstAppear = !_navHasAppeared;
+  useEffect(() => { _navHasAppeared = true; }, []);
+
   if (!isConnected) return null;
 
   const isActive = (path: string) =>
@@ -130,9 +134,6 @@ export default function MobileBottomNav() {
   const boardOpen = boardMounted && boardVisible;
 
   const POPUP_TRANSITION = "transform 280ms cubic-bezier(0.34,1.56,0.64,1), opacity 220ms ease-out";
-
-  const isFirstAppear = !_navHasAppeared;
-  useEffect(() => { _navHasAppeared = true; }, []);
 
   return (
     <>
