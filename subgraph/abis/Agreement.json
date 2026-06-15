@@ -1,0 +1,10 @@
+[
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"client","type":"address"},{"indexed":false,"name":"amount","type":"uint256"}],"name":"Funded","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"executor","type":"address"}],"name":"Activated","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"client","type":"address"},{"indexed":true,"name":"executor","type":"address"},{"indexed":false,"name":"amount","type":"uint256"}],"name":"Released","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"executor","type":"address"},{"indexed":false,"name":"amount","type":"uint256"}],"name":"AutoApproved","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"by","type":"address"}],"name":"DisputeRaised","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"arbiter","type":"address"},{"indexed":false,"name":"clientWins","type":"bool"},{"indexed":false,"name":"amount","type":"uint256"}],"name":"DisputeResolved","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"client","type":"address"},{"indexed":false,"name":"amount","type":"uint256"}],"name":"TimedOut","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"name":"client","type":"address"},{"indexed":false,"name":"amount","type":"uint256"}],"name":"ArbiterTimedOut","type":"event"}
+]

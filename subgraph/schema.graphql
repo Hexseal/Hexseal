@@ -1,0 +1,48 @@
+type Job @entity {
+  id: ID!
+  client: Bytes!
+  title: String!
+  description: String!
+  amount: BigInt!
+  deadlineDays: BigInt!
+  termsHash: Bytes!
+  region: Int!
+  status: String!
+  executor: Bytes
+  agreement: Bytes
+  applicants: [Bytes!]!
+  createdAt: BigInt!
+  updatedAt: BigInt!
+}
+
+type Service @entity {
+  id: ID!
+  executor: Bytes!
+  title: String!
+  description: String!
+  price: BigInt!
+  deadlineDays: BigInt!
+  region: Int!
+  status: String!
+  hiresCount: BigInt!
+  createdAt: BigInt!
+  updatedAt: BigInt!
+}
+
+type ServiceRequest @entity {
+  id: ID!
+  serviceId: String!
+}
+
+type Agreement @entity {
+  id: ID!
+  client: Bytes!
+  executor: Bytes!
+  amount: BigInt!
+  region: Int!
+  fee: BigInt!
+  status: Int!
+  createdAt: BigInt!
+  updatedAt: BigInt!
+  resolvedAt: BigInt
+}
