@@ -1,6 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Provider as UrqlProvider } from 'urql'
+import { createGraphClient } from '@/lib/graph'
+
+const graphClient = createGraphClient()
 import { WagmiProvider, createStorage, useAccount } from "wagmi";
 import { http, fallback } from "viem";
 import {
@@ -193,16 +197,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <VisibilityRefresher queryClient={queryClient} />
-        <NextThemesProvider attribute="class" forcedTheme="dark">
-          <LocaleProvider>
-            <RainbowKitProviders>{children}</RainbowKitProviders>
-          </LocaleProvider>
-        </NextThemesProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <UrqlProvider value={graphClient}>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={queryClient}>
+          <VisibilityRefresher queryClient={queryClient} />
+          <NextThemesProvider attribute="class" forcedTheme="dark">
+            <LocaleProvider>
+              <RainbowKitProviders>{children}</RainbowKitProviders>
+            </LocaleProvider>
+          </NextThemesProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </UrqlProvider>
   );
 }
 
