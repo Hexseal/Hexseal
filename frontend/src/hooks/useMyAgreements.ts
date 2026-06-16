@@ -1,5 +1,5 @@
 import { useQuery } from 'urql'
-import { MY_AGREEMENTS_QUERY } from '@/lib/graph'
+import { MY_AGREEMENTS_QUERY, SUBGRAPH_URL } from '@/lib/graph'
 
 export interface GraphAgreement {
   id: string
@@ -22,7 +22,7 @@ export function useMyAgreements(address: string | undefined) {
   const [{ data, fetching, error }] = useQuery<MyAgreementsData>({
     query: MY_AGREEMENTS_QUERY,
     variables: { client: addr, executor: addr },
-    pause: !addr,
+    pause: !addr || !SUBGRAPH_URL,
   })
 
   const allAgreements = (() => {

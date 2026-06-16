@@ -34,6 +34,13 @@ broadcast/
 # ── Docker / local services ───────────────────────────────────────────────────
 qdrant_storage/
 
+# ── Subgraph build artifacts ──────────────────────────────────────────────────
+subgraph/build/
+subgraph/generated/
+
+# ── Relayer runtime data ──────────────────────────────────────────────────────
+relayer/storage/
+
 # ── Personal notes / drafts (not documentation) ──────────────────────────────
 docs/ord.txt
 docs/nextplan.txt
