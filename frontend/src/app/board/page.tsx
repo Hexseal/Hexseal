@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { useAccount, useReadContract, useReadContracts, usePublicClient, useWalletClient } from "wagmi";
+import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { useJobs, type GraphJob } from "@/hooks/useJobs";
 import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
 import { sendGasless } from "@/lib/relay";
 import type { Abi } from "viem";
@@ -9,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "react-hot-toast";
 import {
-  Search, Loader2, Briefcase, Plus, RefreshCw, MessageCircle,
+  Search, Loader2, Briefcase, Plus, MessageCircle,
   ChevronDown, UserCheck, ExternalLink, FileText,
 } from "lucide-react";
 import Link from "next/link";
@@ -338,8 +339,8 @@ export default function BoardPage() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const t = useTranslations();
 
-  const PAGE_SIZE = 20;
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [page, setPage] = useState(0);
+  const [allJobs, setAllJobs] = useState<GraphJob[]>([]);
   type SortKey = 'newest' | 'oldest' | 'highest' | 'lowest';
   const [sortBy, setSortBy] = useState<SortKey>('newest');
 
@@ -377,86 +378,78 @@ export default function BoardPage() {
   }, []);
 
   const handleRegionChange = (v: number | null) => {
-    setVisibleCount(PAGE_SIZE);
     setRegionFilter(v);
     storeBoardRegion(v);
   };
 
-  const { data: openJobsData, isLoading, isFetching, refetch } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`,
-    abi: DIAMOND_ABI,
-    functionName: "getOpenJobs",
-    query: { refetchInterval: 30_000 },
-  }) as {
-    data: [bigint[], JobRecord[]] | undefined;
-    isLoading: boolean;
-    isFetching: boolean;
-    refetch: () => void;
-  };
+  const { jobs: pageJobs, isLoading, isFetching, hasMore } = useJobs({
+    region: regionFilter ?? undefined,
+    page,
+  });
 
-  const { data: totalJobsData } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`,
-    abi: DIAMOND_ABI,
-    functionName: "totalJobs",
-  }) as { data: bigint | undefined };
+  // Accumulate pages; reset when region changes
+  useEffect(() => {
+    if (page === 0) {
+      setAllJobs(pageJobs);
+    } else if (pageJobs.length > 0) {
+      setAllJobs(prev => [...prev, ...pageJobs]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageJobs]);
+
+  useEffect(() => {
+    setPage(0);
+    setAllJobs([]);
+  }, [regionFilter]);
 
   const jobs = useMemo(() => {
-    if (!openJobsData) return [];
-    const [ids, records] = openJobsData;
     const q = searchQuery.toLowerCase();
-    const filtered = ids
-      .map((id, i) => ({ id, job: records[i] }))
-      .filter(({ job }) => job.status === 0)
-      .filter(({ job }) => regionFilter === null || job.region === regionFilter)
-      .filter(({ job }) => categoryFilter === null || extractCategory(job.description) === categoryFilter)
-      .filter(({ id, job }) => {
+    const filtered = allJobs
+      .filter(gj => categoryFilter === null || extractCategory(gj.description) === categoryFilter)
+      .filter(gj => {
         if (!q) return true;
         return (
-          job.title?.toLowerCase().includes(q) ||
-          job.description?.toLowerCase().includes(q) ||
-          job.client?.toLowerCase().includes(q) ||
-          id.toString().includes(q)
+          gj.title.toLowerCase().includes(q) ||
+          gj.description.toLowerCase().includes(q) ||
+          gj.client.toLowerCase().includes(q) ||
+          gj.id.includes(q)
         );
-      });
+      })
+      .map(gj => ({
+        id: BigInt(gj.id),
+        job: {
+          client: gj.client,
+          title: gj.title,
+          description: gj.description,
+          amount: BigInt(gj.amount),
+          deadlineDays: BigInt(gj.deadlineDays),
+          termsHash: gj.termsHash,
+          region: gj.region,
+          status: 0,
+          createdAt: BigInt(gj.createdAt),
+          chosenExecutor: '0x0000000000000000000000000000000000000000',
+          agreement: '0x0000000000000000000000000000000000000000',
+        } as JobRecord,
+      }));
     switch (sortBy) {
       case 'oldest':  return [...filtered].sort((a, b) => Number(a.job.createdAt) - Number(b.job.createdAt));
       case 'highest': return [...filtered].sort((a, b) => Number(b.job.amount) - Number(a.job.amount));
       case 'lowest':  return [...filtered].sort((a, b) => Number(a.job.amount) - Number(b.job.amount));
       default:        return [...filtered].sort((a, b) => Number(b.job.createdAt) - Number(a.job.createdAt));
     }
-  }, [openJobsData, searchQuery, regionFilter, categoryFilter, sortBy]);
-
-  // Batch load applicants for all visible jobs
-  const applicantContracts = useMemo(() =>
-    jobs.map(({ id }) => ({
-      address: CONTRACTS.diamond as `0x${string}`,
-      abi: DIAMOND_ABI as Abi,
-      functionName: 'getApplicants' as const,
-      args: [id] as const,
-    })),
-    [jobs]
-  );
-
-  const { data: applicantsResults } = useReadContracts({
-    contracts: applicantContracts,
-    query: { enabled: jobs.length > 0 },
-  });
+  }, [allJobs, searchQuery, categoryFilter, sortBy]);
 
   const { appliedSet, applicantsMap } = useMemo(() => {
     const appliedSet = new Set<string>();
     const applicantsMap = new Map<string, string[]>();
-    jobs.forEach(({ id }, i) => {
-      const result = applicantsResults?.[i];
-      if (result?.status === 'success') {
-        const list = result.result as string[];
-        applicantsMap.set(id.toString(), list);
-        if (address && list.some(a => a.toLowerCase() === address.toLowerCase())) {
-          appliedSet.add(id.toString());
-        }
+    allJobs.forEach(gj => {
+      applicantsMap.set(gj.id, gj.applicants);
+      if (address && gj.applicants.some(a => a.toLowerCase() === address.toLowerCase())) {
+        appliedSet.add(gj.id);
       }
     });
     return { appliedSet, applicantsMap };
-  }, [applicantsResults, jobs, address]);
+  }, [allJobs, address]);
 
   // Wallet reconnecting on page reload — show skeleton to avoid flash of "connect" screen
   if (status === 'reconnecting' || status === 'connecting') {
@@ -505,17 +498,8 @@ export default function BoardPage() {
                 </Link>
               </p>
             </div>
-            {/* Mobile: Refresh + Post Job always side by side on the right */}
+            {/* Mobile: Post Job button */}
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => refetch()}
-                disabled={isFetching}
-                className="text-white/40 hover:text-white/70"
-              >
-                <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
-              </Button>
               <Link href="/board/client/post">
                 <Button size="sm">
                   <Plus className="w-4 h-4 mr-1" />
@@ -584,14 +568,14 @@ export default function BoardPage() {
           <div className="flex items-center gap-1.5 mb-3 flex-wrap">
             <span className="text-xs text-white/25 mr-1">{t("common.sort")}:</span>
             {(['newest','oldest','highest','lowest'] as const).map(key => (
-              <button key={key} onClick={() => { setSortBy(key); setVisibleCount(PAGE_SIZE); }}
+              <button key={key} onClick={() => setSortBy(key)}
                 className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
                   sortBy === key ? 'bg-white/10 border-white/20 text-white/80' : 'border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50'
                 }`}>
                 {key === 'newest' ? t("board.sort.newest") : key === 'oldest' ? t("board.sort.oldest") : key === 'highest' ? t("board.sort.highest") : t("board.sort.lowest")}
               </button>
             ))}
-            <span className="ml-auto text-xs text-white/20">{Math.min(visibleCount, jobs.length)} / {jobs.length}</span>
+            <span className="ml-auto text-xs text-white/20">{jobs.length}{hasMore ? '+' : ''}</span>
           </div>
         )}
 
@@ -622,7 +606,7 @@ export default function BoardPage() {
           <>
             <div className="space-y-3">
               <AnimatePresence>
-                {jobs.slice(0, visibleCount).map(({ id, job }, index) => (
+                {jobs.map(({ id, job }, index) => (
                   <JobCard
                     key={id.toString()}
                     jobId={id}
@@ -631,7 +615,7 @@ export default function BoardPage() {
                     address={address}
                     hasApplied={appliedSet.has(id.toString())}
                     applicants={applicantsMap.get(id.toString())}
-                    onApplied={refetch}
+                    onApplied={() => {}}
                     expanded={expandedJobId === id.toString()}
                     onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
                     index={index}
@@ -639,12 +623,13 @@ export default function BoardPage() {
                 ))}
               </AnimatePresence>
             </div>
-            {visibleCount < jobs.length && (
+            {hasMore && (
               <button
-                onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
-                className="w-full mt-4 py-2.5 rounded-[14px] border border-white/[0.08] text-sm text-white/40 hover:text-white/70 hover:border-white/15 hover:bg-white/[0.03] transition-colors"
+                onClick={() => setPage(p => p + 1)}
+                disabled={isFetching}
+                className="w-full mt-4 py-2.5 rounded-[14px] border border-white/[0.08] text-sm text-white/40 hover:text-white/70 hover:border-white/15 hover:bg-white/[0.03] transition-colors disabled:opacity-50"
               >
-                {t("common.load_more")} ({jobs.length - visibleCount})
+                {isFetching ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : t("common.load_more")}
               </button>
             )}
           </>

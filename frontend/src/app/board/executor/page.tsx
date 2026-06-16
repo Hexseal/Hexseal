@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useWalletClient, usePublicClient, useReadContract, useReadContracts } from "wagmi";
+import { useServices, type GraphService } from "@/hooks/useServices";
 import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
 import type { Abi } from "viem";
 import { parseUnits, keccak256 } from "viem";
@@ -510,13 +511,12 @@ export default function ExecutorBoardPage() {
     return () => el.removeEventListener('wheel', handler);
   }, []);
   const [userRegion, setUserRegion]     = useState<number | null>(null);
-  const [services, setServices]       = useState<Service[]>([]);
+  const [page, setPage] = useState(0);
+  const [allServices, setAllServices] = useState<GraphService[]>([]);
 
   const PAGE_SIZE = 20;
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   type SortKey = 'newest' | 'oldest' | 'highest' | 'lowest';
   const [sortBy, setSortBy] = useState<SortKey>('newest');
-  const [loadingList, setLoadingList] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
   const [requestModal, setRequestModal] = useState<Service | null>(null);
@@ -579,35 +579,18 @@ export default function ExecutorBoardPage() {
     ).then(results => setMyRequests(results.filter(Boolean) as HireRequest[]));
   }, [myRequestIds, publicClient]);
 
-  const loadServices = useCallback(async () => {
-    if (!publicClient) return;
-    setLoadingList(true);
-    try {
-      const result = await publicClient.readContract({
-        address: CONTRACTS.diamond as `0x${string}`,
-        abi: DIAMOND_ABI as Abi,
-        functionName: 'getActiveServices',
-      }) as [bigint[], any[]];
-
-      const [ids, svcs] = result;
-      setServices(ids.map((id, i) => ({
-        serviceId: String(id),
-        executor:     svcs[i].executor,
-        title:        svcs[i].title,
-        description:  svcs[i].description,
-        price:        svcs[i].price,
-        deadlineDays: svcs[i].deadlineDays,
-        region:       svcs[i].region,
-        status:       svcs[i].status,
-        createdAt:    svcs[i].createdAt,
-        hiresCount:   svcs[i].hiresCount,
-      })));
-    } catch (err) {
-      console.error("Failed to load services:", err);
-    } finally {
-      setLoadingList(false);
-    }
-  }, [publicClient]);
+  const services: Service[] = useMemo(() => allServices.map(gs => ({
+    serviceId: gs.id,
+    executor: gs.executor,
+    title: gs.title,
+    description: gs.description,
+    price: BigInt(gs.price),
+    deadlineDays: BigInt(gs.deadlineDays),
+    region: gs.region,
+    status: gs.status === 'active' ? 0 : gs.status === 'paused' ? 1 : 2,
+    createdAt: BigInt(gs.createdAt),
+    hiresCount: BigInt(gs.hiresCount),
+  })), [allServices]);
 
   useEffect(() => {
     setMounted(true);
@@ -630,21 +613,28 @@ export default function ExecutorBoardPage() {
   }, []);
 
   const handleRegionChange = (v: number | null) => {
-    setVisibleCount(PAGE_SIZE);
     setRegionFilter(v);
     storeBoardRegion(v);
   };
 
-  useEffect(() => {
-    if (mounted && publicClient) loadServices();
-  }, [mounted, publicClient, loadServices]);
+  const { services: pageServices, isLoading: loadingList, isFetching, hasMore } = useServices({
+    region: regionFilter ?? undefined,
+    page,
+  });
 
-  // Background silent refresh every 30s
   useEffect(() => {
-    if (!mounted || !publicClient) return;
-    const id = setInterval(() => { if (!loadingList) loadServices(); }, 30_000);
-    return () => clearInterval(id);
-  }, [mounted, publicClient, loadingList, loadServices]);
+    if (page === 0) {
+      setAllServices(pageServices);
+    } else if (pageServices.length > 0) {
+      setAllServices(prev => [...prev, ...pageServices]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageServices]);
+
+  useEffect(() => {
+    setPage(0);
+    setAllServices([]);
+  }, [regionFilter]);
 
 
   const filtered = useMemo(() => {
@@ -709,7 +699,7 @@ export default function ExecutorBoardPage() {
 
       toast.success(t("board.services.request_sent"));
       setRequestModal(null);
-      setTimeout(() => { refetchMyRequests(); loadServices(); }, 2000);
+      setTimeout(() => { refetchMyRequests(); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Transaction failed");
     } finally {
@@ -788,8 +778,8 @@ export default function ExecutorBoardPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
-              <Button variant="ghost" size="sm" onClick={loadServices} disabled={loadingList} className="text-white/40 hover:text-white/70">
-                <RefreshCw className={`w-4 h-4 ${loadingList ? "animate-spin" : ""}`} />
+              <Button variant="ghost" size="sm" onClick={() => { setPage(0); setAllServices([]); }} disabled={isFetching} className="text-white/40 hover:text-white/70">
+                <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
               </Button>
               <Link href="/board/executor/post">
                 <Button size="sm"><Plus className="w-4 h-4 mr-1" />{t("board.post_service.submit_btn")}</Button>
@@ -805,7 +795,7 @@ export default function ExecutorBoardPage() {
           <IncomingRequestsPanel
             address={address}
             services={services}
-            onRefresh={loadServices}
+            onRefresh={() => { setPage(0); setAllServices([]); }}
           />
         )}
 
@@ -863,14 +853,14 @@ export default function ExecutorBoardPage() {
           <div className="flex items-center gap-1.5 mb-3 flex-wrap">
             <span className="text-xs text-white/25 mr-1">{t("common.sort")}:</span>
             {(['newest','oldest','highest','lowest'] as const).map(key => (
-              <button key={key} onClick={() => { setSortBy(key); setVisibleCount(PAGE_SIZE); }}
+              <button key={key} onClick={() => setSortBy(key)}
                 className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
                   sortBy === key ? 'bg-white/10 border-white/20 text-white/80' : 'border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50'
                 }`}>
                 {key === 'newest' ? t("board.sort.newest") : key === 'oldest' ? t("board.sort.oldest") : key === 'highest' ? t("board.sort.highest") : t("board.sort.lowest")}
               </button>
             ))}
-            <span className="ml-auto text-xs text-white/20">{Math.min(visibleCount, filtered.length)} / {filtered.length}</span>
+            <span className="ml-auto text-xs text-white/20">{filtered.length}{hasMore ? '+' : ''}</span>
           </div>
         )}
 
@@ -903,7 +893,7 @@ export default function ExecutorBoardPage() {
           <>
             <div className="space-y-3">
               <AnimatePresence mode="popLayout">
-                {filtered.slice(0, visibleCount).map((svc, index) => (
+                {filtered.map((svc, index) => (
                   <motion.div
                     key={svc.serviceId}
                     initial={{ opacity: 0, y: 14 }}
@@ -928,12 +918,13 @@ export default function ExecutorBoardPage() {
                 ))}
               </AnimatePresence>
             </div>
-            {visibleCount < filtered.length && (
+            {hasMore && (
               <button
-                onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
-                className="w-full mt-4 py-2.5 rounded-[14px] border border-white/[0.08] text-sm text-white/40 hover:text-white/70 hover:border-white/15 hover:bg-white/[0.03] transition-colors"
+                onClick={() => setPage(p => p + 1)}
+                disabled={isFetching}
+                className="w-full mt-4 py-2.5 rounded-[14px] border border-white/[0.08] text-sm text-white/40 hover:text-white/70 hover:border-white/15 hover:bg-white/[0.03] transition-colors disabled:opacity-50"
               >
-                {t("common.load_more")} ({filtered.length - visibleCount})
+                {isFetching ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : t("common.load_more")}
               </button>
             )}
           </>

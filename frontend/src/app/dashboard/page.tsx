@@ -2,9 +2,8 @@
 
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useAccount, useReadContract } from 'wagmi';
-import type { Abi } from 'viem';
-import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
+import { useAccount } from 'wagmi';
+import { useMyAgreements, type GraphAgreement } from '@/hooks/useMyAgreements';
 import {
   Loader2, Activity, CheckCircle,
   DollarSign, Star, Zap,
@@ -130,39 +129,26 @@ const sectionItem = {
 
 type TabKey = 'listings' | 'deals' | 'history';
 
+function toAgreementRecord(a: GraphAgreement): AgreementRecord {
+  return {
+    agreement: a.id,
+    client: a.client,
+    executor: a.executor,
+    amount: BigInt(a.amount),
+    status: a.status,
+    createdAt: BigInt(a.createdAt),
+    resolvedAt: a.resolvedAt ? BigInt(a.resolvedAt) : BigInt(0),
+  };
+}
+
 export default function DashboardPage() {
   const { address, isConnected, status } = useAccount();
-  const [refreshKey, setRefreshKey] = useState(0);
   const [tab, setTab] = useState<TabKey>('listings');
   const t = useTranslations();
 
-  const { data: clientAgreements,   isLoading: isLoadingClient,   refetch: refetchClient   } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI as Abi,
-    functionName: 'getByClient', args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 60_000 },
-  }) as { data: AgreementRecord[] | undefined; isLoading: boolean; refetch: () => void };
-
-  const { data: executorAgreements, isLoading: isLoadingExecutor, refetch: refetchExecutor } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI as Abi,
-    functionName: 'getByExecutor', args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 60_000 },
-  }) as { data: AgreementRecord[] | undefined; isLoading: boolean; refetch: () => void };
-
-  const allAgreements = (() => {
-    const map = new Map<string, AgreementRecord>();
-    [...(clientAgreements || []), ...(executorAgreements || [])].forEach(a =>
-      map.set(a.agreement.toLowerCase(), a)
-    );
-    return Array.from(map.values());
-  })();
-
-  const isLoading = isLoadingClient || isLoadingExecutor;
-
-  const refetch = () => {
-    refetchClient();
-    refetchExecutor();
-    setRefreshKey(k => k + 1);
-  };
+  const { agreements: rawAgreements, isLoading } = useMyAgreements(address);
+  const allAgreements = rawAgreements.map(toAgreementRecord);
+  const refetch = () => {};
 
   // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
   const activeDeals  = allAgreements.filter(d => [0, 1, 2, 4].includes(d.status));
@@ -331,7 +317,7 @@ export default function DashboardPage() {
                       <AnimatePresence>
                         {activeDeals.map((a, index) => (
                           <motion.div
-                            key={`${a.agreement}-${refreshKey}`}
+                            key={a.agreement}
                             initial={{ opacity: 0, y: 18, scale: 0.97 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
@@ -372,7 +358,7 @@ export default function DashboardPage() {
                       <AnimatePresence>
                         {historyDeals.map((a, index) => (
                           <motion.div
-                            key={`${a.agreement}-hist-${refreshKey}`}
+                            key={`${a.agreement}-hist`}
                             initial={{ opacity: 0, y: 18, scale: 0.97 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
