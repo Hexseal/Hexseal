@@ -97,12 +97,12 @@ contract JobBoardFacet {
 
     // -------- EVENTS --------
 
-    event JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region);
+    event JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region, string title, string description, uint256 deadlineDays, bytes32 termsHash);
     event JobApplied(uint256 indexed jobId, address indexed executor);
     event JobWithdrawn(uint256 indexed jobId, address indexed executor);
     event JobAccepted(uint256 indexed jobId, address indexed client, address indexed executor, address agreement);
     event JobCancelled(uint256 indexed jobId, address indexed client, uint256 refundAmount);
-    event JobEdited(uint256 indexed jobId, address indexed client);
+    event JobEdited(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadlineDays, bytes32 termsHash, uint8 region);
 
     // -------- ERRORS --------
 
@@ -211,7 +211,7 @@ contract JobBoardFacet {
         // --- Auto-mint job receipt NFT (non-blocking) ---
         try IJobReceiptMint(address(this)).mintJobReceipt(client, jobId, amount, deadlineDays, region, title) {} catch {}
 
-        emit JobPosted(jobId, client, amount, region);
+        emit JobPosted(jobId, client, amount, region, title, description, deadlineDays, termsHash);
     }
 
     /// @notice Клиент создаёт заказ
@@ -265,7 +265,7 @@ contract JobBoardFacet {
         // --- Auto-mint job receipt NFT (non-blocking) ---
         try IJobReceiptMint(address(this)).mintJobReceipt(msg.sender, jobId, amount, deadlineDays, region, title) {} catch {}
 
-        emit JobPosted(jobId, msg.sender, amount, region);
+        emit JobPosted(jobId, msg.sender, amount, region, title, description, deadlineDays, termsHash);
     }
 
     /// @notice Исполнитель отзывает отклик (пока заказ OPEN, gasless-совместим)
@@ -418,7 +418,7 @@ contract JobBoardFacet {
         job.termsHash    = termsHash;
         job.region       = region;
 
-        emit JobEdited(jobId, sender);
+        emit JobEdited(jobId, sender, title, description, deadlineDays, termsHash, region);
     }
 
     // -------- VIEW --------

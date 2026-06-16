@@ -32,6 +32,9 @@ type Service @entity {
 type ServiceRequest @entity {
   id: ID!
   serviceId: String!
+  client: Bytes!
+  amount: BigInt!
+  createdAt: BigInt!
 }
 
 type Agreement @entity {
@@ -45,4 +48,7 @@ type Agreement @entity {
   createdAt: BigInt!
   updatedAt: BigInt!
   resolvedAt: BigInt
+  jobId: String
+  serviceId: String
+  requestId: String
 }

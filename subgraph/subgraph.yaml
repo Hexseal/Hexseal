@@ -16,14 +16,15 @@ dataSources:
       entities:
         - Job
         - Service
+        - ServiceRequest
         - Agreement
       abis:
         - name: Diamond
           file: ./abis/Diamond.json
       eventHandlers:
-        - event: JobPosted(indexed uint256,indexed address,uint256,uint8)
+        - event: JobPosted(indexed uint256,indexed address,uint256,uint8,string,string,uint256,bytes32)
           handler: handleJobPosted
-        - event: JobEdited(indexed uint256,indexed address)
+        - event: JobEdited(indexed uint256,indexed address,string,string,uint256,bytes32,uint8)
           handler: handleJobEdited
         - event: JobApplied(indexed uint256,indexed address)
           handler: handleJobApplied
@@ -33,9 +34,9 @@ dataSources:
           handler: handleJobAccepted
         - event: JobCancelled(indexed uint256,indexed address,uint256)
           handler: handleJobCancelled
-        - event: ServicePosted(indexed uint256,indexed address,uint256,uint8)
+        - event: ServicePosted(indexed uint256,indexed address,uint256,uint8,string,string,uint256)
           handler: handleServicePosted
-        - event: ServiceEdited(indexed uint256,indexed address)
+        - event: ServiceEdited(indexed uint256,indexed address,string,string,uint256,uint256,uint8)
           handler: handleServiceEdited
         - event: ServicePaused(indexed uint256)
           handler: handleServicePaused

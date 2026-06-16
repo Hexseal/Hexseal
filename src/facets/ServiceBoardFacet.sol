@@ -91,11 +91,11 @@ contract ServiceBoardFacet {
 
     // -------- EVENTS --------
 
-    event ServicePosted(uint256 indexed serviceId, address indexed executor, uint256 price, uint8 region);
+    event ServicePosted(uint256 indexed serviceId, address indexed executor, uint256 price, uint8 region, string title, string description, uint256 deadlineDays);
     event ServiceRemoved(uint256 indexed serviceId, address indexed executor);
     event ServicePaused(uint256 indexed serviceId);
     event ServiceUnpaused(uint256 indexed serviceId);
-    event ServiceEdited(uint256 indexed serviceId, address indexed executor);
+    event ServiceEdited(uint256 indexed serviceId, address indexed executor, string title, string description, uint256 price, uint256 deadlineDays, uint8 region);
     event ServiceRequested(uint256 indexed requestId, uint256 indexed serviceId, address indexed client, uint256 amount);
     event RequestAccepted(uint256 indexed requestId, address indexed executor, address indexed client, address agreement);
     event RequestRejected(uint256 indexed requestId, address indexed executor, address indexed client);
@@ -185,7 +185,7 @@ contract ServiceBoardFacet {
         // Антиспам fee → feeRecipient (не возвращается)
         _safeTransferFrom(fs.usdc, msg.sender, fs.feeRecipient, fee);
 
-        emit ServicePosted(serviceId, msg.sender, price, region);
+        emit ServicePosted(serviceId, msg.sender, price, region, title, description, deadlineDays);
     }
 
     /// @notice Gasless-вариант mintService с EIP-2612 permit (один вызов без предварительного approve).
@@ -232,7 +232,7 @@ contract ServiceBoardFacet {
 
         _safeTransferFrom(fs.usdc, executor, fs.feeRecipient, fee);
 
-        emit ServicePosted(serviceId, executor, price, region);
+        emit ServicePosted(serviceId, executor, price, region, title, description, deadlineDays);
     }
 
     function removeService(uint256 serviceId) external {
@@ -304,7 +304,7 @@ contract ServiceBoardFacet {
         svc.deadlineDays = deadlineDays;
         svc.region       = region;
 
-        emit ServiceEdited(serviceId, sender);
+        emit ServiceEdited(serviceId, sender, title, description, price, deadlineDays, region);
     }
 
     // -------- CLIENT: REQUEST SERVICE --------
