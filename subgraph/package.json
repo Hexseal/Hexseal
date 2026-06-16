@@ -2,9 +2,10 @@
   "name": "hexseal-subgraph",
   "version": "1.0.0",
   "scripts": {
-    "codegen": "graph codegen",
-    "build": "graph build",
-    "deploy:studio": "graph deploy --studio hexseal"
+    "graph": "node node_modules/@graphprotocol/graph-cli/bin/run",
+    "codegen": "node node_modules/@graphprotocol/graph-cli/bin/run codegen",
+    "build": "node node_modules/@graphprotocol/graph-cli/bin/run build",
+    "deploy:studio": "node node_modules/@graphprotocol/graph-cli/bin/run deploy hexseal --node https://api.studio.thegraph.com/deploy/ -l v0.0.2"
   },
   "dependencies": {
     "@graphprotocol/graph-cli": "^0.91.0",

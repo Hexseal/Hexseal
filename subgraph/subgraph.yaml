@@ -8,7 +8,7 @@ dataSources:
     source:
       address: "0x7A91d700CF2a201E99F0aD3C3b4f4D79CFE69557"
       abi: Diamond
-      startBlock: 0
+      startBlock: 42134705
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
