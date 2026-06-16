@@ -14,6 +14,10 @@ export const appRpcUrl: string =
   process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ??
   (isMainnet ? 'https://mainnet.base.org' : 'https://sepolia.base.org');
 
+export const appRpcFallback: string = isMainnet
+  ? 'https://mainnet.base.org'
+  : 'https://sepolia.base.org';
+
 export function explorerUrl(
   type: 'tx' | 'address' | 'token',
   value: string
