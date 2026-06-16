@@ -95,9 +95,8 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
               </button>
             )}
             <Link href="/" className={cn("flex items-center group", !showBack && "ml-1.5")}>
-              <span className="font-syne font-bold text-[17px] tracking-wide" style={{ fontFamily: "var(--font-syne)" }}>
-                HEXSEAL
-              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/hexseal-logo-white.svg" alt="Hexseal" className="h-5 w-auto" />
             </Link>
           </div>
 
@@ -142,9 +141,8 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
                 </button>
               )}
               <Link href="/" className="flex items-center group">
-                <span className="font-syne font-bold text-[17px] tracking-wide" style={{ fontFamily: "var(--font-syne)" }}>
-                  HEXSEAL
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/hexseal-logo-white.svg" alt="Hexseal" className="h-5 w-auto" />
               </Link>
             </div>
 

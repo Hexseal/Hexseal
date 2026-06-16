@@ -1,0 +1,30 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="glossGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="edgeGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.45"/>
+      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <style>
+    .bg { fill: #0A0A0F; }
+    .fg { fill: #FFFFFF; }
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #FFFFFF; }
+      .fg { fill: #0A0A0F; }
+    }
+  </style>
+
+  <rect width="200" height="200" rx="40" class="bg"/>
+  <rect width="200" height="200" rx="40" fill="url(#glossGrad)"/>
+  <rect x="2" y="2" width="196" height="196" rx="38" fill="none" stroke="url(#edgeGrad)" stroke-width="2"/>
+
+  <text x="100" y="110" text-anchor="middle"
+        font-family="'Geist', 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif"
+        font-weight="800" font-size="28" letter-spacing="4" class="fg">HEXSEAL</text>
+</svg>
