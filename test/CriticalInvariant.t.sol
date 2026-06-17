@@ -1,0 +1,569 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+// Money invariant test suite: at every point in every lifecycle,
+// sum(all_participant_balances) == INITIAL_TOTAL.
+// No funds should be created or destroyed; only moved.
+
+import "forge-std/Test.sol";
+import "../src/DiamondProxy.sol";
+import "../src/RegistryFacet.sol";
+import "../src/FactoryFacet.sol";
+import "../src/AgreementDeployer.sol";
+import "../src/Agreement.sol";
+import "../src/facets/ArbiterRegistryFacet.sol";
+import "../src/facets/JobBoardFacet.sol";
+import "../src/facets/ServiceBoardFacet.sol";
+
+// ---------- MOCK USDC ----------
+
+contract MockUSDCC {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "balance");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "allowance");
+        require(balanceOf[from] >= amount, "balance");
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+}
+
+// ---------- TEST ----------
+
+contract CriticalInvariantTest is Test {
+    DiamondProxy diamond;
+    MockUSDCC usdc;
+
+    address owner;
+    address client;
+    address client2;
+    address executor;
+    address arbiter;
+    address feeRecipient;
+
+    uint256 constant CLIENT_USDC   = 1_000_000_000;
+    uint256 constant EXECUTOR_USDC =   200_000_000;
+    uint256 constant CLIENT2_USDC  =   500_000_000;
+    uint256 constant INITIAL_TOTAL = CLIENT_USDC + EXECUTOR_USDC + CLIENT2_USDC;
+
+    uint8   constant REGION     = 0;
+    uint256 constant BOARD_FEE  = 2_000_000;
+    uint256 constant JOB_AMOUNT = 100_000_000;
+    uint256 constant SVC_AMOUNT =   80_000_000;
+    uint256 constant SVC2_AMOUNT =  50_000_000;
+    uint256 constant DEADLINE   = 7;
+    bytes32 constant TERMS      = keccak256("terms");
+    bytes32 constant SALT       = bytes32("hexseal-invariant-salt");
+
+    // ============================================================
+    //  SETUP
+    // ============================================================
+
+    function setUp() public {
+        owner       = address(this);
+        client      = address(0x1);
+        client2     = address(0x2);
+        executor    = address(0x3);
+        arbiter     = address(0x4);
+        feeRecipient = address(0x5);
+
+        usdc = new MockUSDCC();
+        usdc.mint(client,   CLIENT_USDC);
+        usdc.mint(client2,  CLIENT2_USDC);
+        usdc.mint(executor, EXECUTOR_USDC);
+
+        RegistryFacet        registryFacet        = new RegistryFacet();
+        FactoryFacet         factoryFacet         = new FactoryFacet();
+        DiamondCutFacet      diamondCutFacet      = new DiamondCutFacet();
+        DiamondLoupeFacet    diamondLoupeFacet    = new DiamondLoupeFacet();
+        OwnershipFacet       ownershipFacet       = new OwnershipFacet();
+        ArbiterRegistryFacet arbiterRegistryFacet = new ArbiterRegistryFacet();
+        JobBoardFacet        jobBoardFacet        = new JobBoardFacet();
+        ServiceBoardFacet    serviceBoardFacet    = new ServiceBoardFacet();
+
+        // ---- Registry selectors (12) ----
+        bytes4[] memory regSels = new bytes4[](12);
+        regSels[0]  = RegistryFacet.initRegistry.selector;
+        regSels[1]  = RegistryFacet.register.selector;
+        regSels[2]  = RegistryFacet.updateStatus.selector;
+        regSels[3]  = RegistryFacet.setAuthorizedFactory.selector;
+        regSels[4]  = RegistryFacet.hasActivePair.selector;
+        regSels[5]  = RegistryFacet.getActivePair.selector;
+        regSels[6]  = RegistryFacet.getRecord.selector;
+        regSels[7]  = RegistryFacet.getByClient.selector;
+        regSels[8]  = RegistryFacet.getByExecutor.selector;
+        regSels[9]  = RegistryFacet.getActive.selector;
+        regSels[10] = RegistryFacet.totalAgreements.selector;
+        regSels[11] = RegistryFacet.authorizedFactory.selector;
+
+        // ---- Factory selectors (13) ----
+        bytes4[] memory facSels = new bytes4[](13);
+        facSels[0]  = FactoryFacet.initFactory.selector;
+        facSels[1]  = FactoryFacet.deployAgreement.selector;
+        facSels[2]  = FactoryFacet.setRegionFee.selector;
+        facSels[3]  = FactoryFacet.setFeeRecipient.selector;
+        facSels[4]  = FactoryFacet.setTrustedForwarder.selector;
+        facSels[5]  = FactoryFacet.setPaused.selector;
+        facSels[6]  = FactoryFacet.getRegionFee.selector;
+        facSels[7]  = FactoryFacet.getAllFees.selector;
+        facSels[8]  = FactoryFacet.getFeeRecipient.selector;
+        facSels[9]  = FactoryFacet.getTrustedForwarder.selector;
+        facSels[10] = FactoryFacet.isPaused.selector;
+        facSels[11] = FactoryFacet.getUsdc.selector;
+        facSels[12] = FactoryFacet.setProtocolArbiter.selector;
+
+        // ---- JobBoardFacet selectors (11) ----
+        bytes4[] memory jobSels = new bytes4[](11);
+        jobSels[0]  = JobBoardFacet.mintJob.selector;
+        jobSels[1]  = JobBoardFacet.applyForJob.selector;
+        jobSels[2]  = JobBoardFacet.acceptApplicant.selector;
+        jobSels[3]  = JobBoardFacet.cancelJob.selector;
+        jobSels[4]  = JobBoardFacet.getJob.selector;
+        jobSels[5]  = JobBoardFacet.getClientJobs.selector;
+        jobSels[6]  = JobBoardFacet.getApplicants.selector;
+        jobSels[7]  = JobBoardFacet.withdrawApplication.selector;
+        jobSels[8]  = JobBoardFacet.editJob.selector;
+        jobSels[9]  = JobBoardFacet.totalJobs.selector;
+        jobSels[10] = JobBoardFacet.getOpenJobs.selector;
+
+        // ---- ServiceBoardFacet selectors (20) ----
+        bytes4[] memory svcSels = new bytes4[](20);
+        svcSels[0]  = ServiceBoardFacet.mintService.selector;
+        svcSels[1]  = ServiceBoardFacet.requestService.selector;
+        svcSels[2]  = ServiceBoardFacet.acceptRequest.selector;
+        svcSels[3]  = ServiceBoardFacet.rejectRequest.selector;
+        svcSels[4]  = ServiceBoardFacet.cancelRequest.selector;
+        svcSels[5]  = ServiceBoardFacet.removeService.selector;
+        svcSels[6]  = ServiceBoardFacet.pauseService.selector;
+        svcSels[7]  = ServiceBoardFacet.unpauseService.selector;
+        svcSels[8]  = ServiceBoardFacet.getService.selector;
+        svcSels[9]  = ServiceBoardFacet.getExecutorServices.selector;
+        svcSels[10] = ServiceBoardFacet.getServiceClients.selector;
+        svcSels[11] = ServiceBoardFacet.getRequest.selector;
+        svcSels[12] = ServiceBoardFacet.getServiceRequests.selector;
+        svcSels[13] = ServiceBoardFacet.getClientRequests.selector;
+        svcSels[14] = ServiceBoardFacet.totalServices.selector;
+        svcSels[15] = ServiceBoardFacet.editService.selector;
+        svcSels[16] = ServiceBoardFacet.totalRequests.selector;
+        svcSels[17] = ServiceBoardFacet.getRequestFunds.selector;
+        svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
+        svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
+
+        // ---- ArbiterRegistryFacet selectors (13) ----
+        bytes4[] memory arbSels = new bytes4[](13);
+        arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
+        arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
+        arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
+        arbSels[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        arbSels[4]  = ArbiterRegistryFacet.claimDispute.selector;
+        arbSels[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        arbSels[6]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
+        arbSels[7]  = ArbiterRegistryFacet.getChiefArbiter.selector;
+        arbSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        arbSels[9]  = ArbiterRegistryFacet.getArbiters.selector;
+        arbSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
+        arbSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        arbSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
+
+        // ---- Infrastructure selectors ----
+        bytes4[] memory cutSels = new bytes4[](1);
+        cutSels[0] = DiamondCutFacet.diamondCut.selector;
+
+        bytes4[] memory loupeSels = new bytes4[](5);
+        loupeSels[0] = DiamondLoupeFacet.facets.selector;
+        loupeSels[1] = DiamondLoupeFacet.facetFunctionSelectors.selector;
+        loupeSels[2] = DiamondLoupeFacet.facetAddresses.selector;
+        loupeSels[3] = DiamondLoupeFacet.facetAddress.selector;
+        loupeSels[4] = DiamondLoupeFacet.supportsInterface.selector;
+
+        bytes4[] memory ownSels = new bytes4[](2);
+        ownSels[0] = OwnershipFacet.transferOwnership.selector;
+        ownSels[1] = OwnershipFacet.owner.selector;
+
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](8);
+        cut[0] = IDiamondCut.FacetCut(address(registryFacet),        IDiamondCut.FacetCutAction.Add, regSels);
+        cut[1] = IDiamondCut.FacetCut(address(factoryFacet),         IDiamondCut.FacetCutAction.Add, facSels);
+        cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet),      IDiamondCut.FacetCutAction.Add, cutSels);
+        cut[3] = IDiamondCut.FacetCut(address(diamondLoupeFacet),    IDiamondCut.FacetCutAction.Add, loupeSels);
+        cut[4] = IDiamondCut.FacetCut(address(ownershipFacet),       IDiamondCut.FacetCutAction.Add, ownSels);
+        cut[5] = IDiamondCut.FacetCut(address(arbiterRegistryFacet), IDiamondCut.FacetCutAction.Add, arbSels);
+        cut[6] = IDiamondCut.FacetCut(address(jobBoardFacet),        IDiamondCut.FacetCutAction.Add, jobSels);
+        cut[7] = IDiamondCut.FacetCut(address(serviceBoardFacet),    IDiamondCut.FacetCutAction.Add, svcSels);
+
+        diamond = new DiamondProxy(owner, cut, address(0), "");
+
+        AgreementDeployer agDeployer = new AgreementDeployer();
+        RegistryFacet(address(diamond)).initRegistry(address(diamond));
+        FactoryFacet(address(diamond)).initFactory(
+            address(usdc),
+            feeRecipient,
+            address(0),
+            address(diamond),
+            address(agDeployer)
+        );
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+    }
+
+    // ============================================================
+    //  INVARIANT HELPER
+    // ============================================================
+
+    function _systemBalance(address agr) internal view returns (uint256) {
+        return usdc.balanceOf(client)
+             + usdc.balanceOf(client2)
+             + usdc.balanceOf(executor)
+             + usdc.balanceOf(feeRecipient)
+             + usdc.balanceOf(address(diamond))
+             + (agr != address(0) ? usdc.balanceOf(agr) : 0);
+    }
+
+    // ============================================================
+    //  ACTION HELPERS
+    // ============================================================
+
+    function _mintJob() internal returns (uint256 jobId) {
+        vm.startPrank(client);
+        usdc.approve(address(diamond), BOARD_FEE + JOB_AMOUNT);
+        jobId = JobBoardFacet(address(diamond)).mintJob(
+            "Build a dApp",
+            "Need a Solidity dev",
+            JOB_AMOUNT,
+            DEADLINE,
+            TERMS,
+            REGION
+        );
+        vm.stopPrank();
+    }
+
+    function _acceptJob(uint256 jobId) internal returns (address agr) {
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+        vm.prank(client);
+        agr = JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+    }
+
+    function _mintService() internal returns (uint256 serviceId) {
+        vm.startPrank(executor);
+        usdc.approve(address(diamond), BOARD_FEE);
+        serviceId = ServiceBoardFacet(address(diamond)).mintService(
+            "Solidity dev",
+            "Full-stack Web3",
+            SVC_AMOUNT,
+            DEADLINE,
+            REGION
+        );
+        vm.stopPrank();
+    }
+
+    function _requestService(address buyer, uint256 serviceId, uint256 amount)
+        internal returns (uint256 requestId)
+    {
+        vm.startPrank(buyer);
+        usdc.approve(address(diamond), amount);
+        requestId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId,
+            amount,
+            DEADLINE,
+            TERMS,
+            REGION
+        );
+        vm.stopPrank();
+    }
+
+    function _claimDispute(address agr) internal {
+        bytes32 commitment = keccak256(abi.encodePacked(agr, arbiter, SALT));
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+        vm.roll(block.number + 1);
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+    }
+
+    function _deployAndFundDirectly() internal returns (address agr) {
+        vm.startPrank(client);
+        usdc.approve(address(diamond), BOARD_FEE);
+        agr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, address(0), JOB_AMOUNT, DEADLINE, TERMS, REGION
+        );
+        usdc.approve(agr, JOB_AMOUNT);
+        Agreement(agr).fund();
+        vm.stopPrank();
+    }
+
+    // ============================================================
+    //  JOB BOARD INVARIANT TESTS
+    // ============================================================
+
+    function testJobCycle_Complete_Invariant() public {
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "initial");
+
+        uint256 jobId = _mintJob();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after mintJob");
+        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee to recipient");
+        assertEq(usdc.balanceOf(address(diamond)), JOB_AMOUNT, "amount locked in diamond");
+
+        address agr = _acceptJob(jobId);
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after accept");
+        assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty after accept");
+        assertEq(usdc.balanceOf(agr), JOB_AMOUNT, "amount in agreement");
+
+        vm.prank(executor);
+        Agreement(agr).activate();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after activate");
+
+        vm.prank(executor);
+        Agreement(agr).markDone();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after markDone");
+
+        vm.prank(client);
+        Agreement(agr).release();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after release");
+
+        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee final");
+        assertEq(usdc.balanceOf(executor), EXECUTOR_USDC + JOB_AMOUNT, "executor paid");
+        assertEq(usdc.balanceOf(client), CLIENT_USDC - BOARD_FEE - JOB_AMOUNT, "client paid for job + fee");
+        assertEq(usdc.balanceOf(agr), 0, "agreement empty");
+    }
+
+    function testJobCycle_Cancel_Invariant() public {
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        uint256 jobId = _mintJob();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after mint");
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after cancel");
+
+        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
+        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee recipient got fee");
+        assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty");
+    }
+
+    function testJobCycle_ActivationTimeout_Invariant() public {
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        uint256 jobId = _mintJob();
+        address agr = _acceptJob(jobId);
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after accept");
+
+        // Past ACTIVATION_WINDOW (3 days)
+        vm.warp(block.timestamp + 3 days + 1);
+
+        vm.prank(client);
+        Agreement(agr).triggerActivationTimeout();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after activation timeout");
+
+        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
+        assertEq(usdc.balanceOf(agr), 0, "agreement empty");
+    }
+
+    function testJobCycle_DeadlineTimeout_Invariant() public {
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        uint256 jobId = _mintJob();
+        address agr = _acceptJob(jobId);
+
+        vm.prank(executor);
+        Agreement(agr).activate();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after activate");
+
+        // Past deadline
+        vm.warp(block.timestamp + DEADLINE * 1 days + 1);
+
+        vm.prank(client);
+        Agreement(agr).triggerDeadlineTimeout();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after deadline timeout");
+
+        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
+        assertEq(usdc.balanceOf(agr), 0, "agreement empty");
+    }
+
+    function testJobCycle_AutoApprove_Invariant() public {
+        uint256 jobId = _mintJob();
+        address agr = _acceptJob(jobId);
+
+        vm.prank(executor);
+        Agreement(agr).activate();
+        vm.prank(executor);
+        Agreement(agr).markDone();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after markDone");
+
+        // Past AUTO_APPROVE_WINDOW (5 days)
+        vm.warp(block.timestamp + 5 days + 1);
+
+        Agreement(agr).triggerAutoApprove();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after autoApprove");
+
+        assertEq(usdc.balanceOf(executor), EXECUTOR_USDC + JOB_AMOUNT, "executor paid");
+        assertEq(usdc.balanceOf(agr), 0, "agreement empty");
+    }
+
+    // ============================================================
+    //  DISPUTE INVARIANT TESTS
+    // ============================================================
+
+    function testDispute_ClientWins_Invariant() public {
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        address agr = _deployAndFundDirectly();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after fund");
+        assertEq(usdc.balanceOf(agr), JOB_AMOUNT, "amount in agreement");
+
+        vm.prank(executor);
+        Agreement(agr).activate();
+
+        vm.prank(client);
+        Agreement(agr).raiseDispute();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after raiseDispute");
+
+        _claimDispute(agr);
+
+        vm.prank(arbiter);
+        Agreement(agr).resolveDispute(true);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after resolve client wins");
+
+        // Client only lost the board fee; amount returned
+        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
+        assertEq(usdc.balanceOf(agr), 0, "agreement empty");
+    }
+
+    function testDispute_ExecutorWins_Invariant() public {
+        uint256 executorBefore = usdc.balanceOf(executor);
+
+        address agr = _deployAndFundDirectly();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after fund");
+
+        vm.prank(executor);
+        Agreement(agr).activate();
+
+        vm.prank(executor);
+        Agreement(agr).raiseDispute();
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after raiseDispute");
+
+        _claimDispute(agr);
+
+        vm.prank(arbiter);
+        Agreement(agr).resolveDispute(false);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after resolve executor wins");
+
+        assertEq(usdc.balanceOf(executor), executorBefore + JOB_AMOUNT, "executor got full amount");
+        assertEq(usdc.balanceOf(agr), 0, "agreement empty");
+    }
+
+    // ============================================================
+    //  SERVICE BOARD INVARIANT TESTS
+    // ============================================================
+
+    function testServiceCycle_Complete_Invariant() public {
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "initial");
+
+        uint256 serviceId = _mintService();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after mintService");
+        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee to recipient");
+
+        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after request");
+        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT, "amount locked in diamond");
+
+        vm.prank(executor);
+        address agr = ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after accept");
+        assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty after accept");
+        assertEq(usdc.balanceOf(agr), SVC_AMOUNT, "amount in agreement");
+
+        vm.prank(executor);
+        Agreement(agr).activate();
+        vm.prank(executor);
+        Agreement(agr).markDone();
+        vm.prank(client);
+        Agreement(agr).release();
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after release");
+
+        assertEq(usdc.balanceOf(executor), EXECUTOR_USDC - BOARD_FEE + SVC_AMOUNT, "executor net");
+        assertEq(usdc.balanceOf(client), CLIENT_USDC - SVC_AMOUNT, "client paid for service");
+        assertEq(usdc.balanceOf(agr), 0, "agreement empty");
+    }
+
+    function testServiceCycle_RejectRequest_Invariant() public {
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after request");
+        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT, "amount locked");
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).rejectRequest(requestId);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after reject");
+
+        assertEq(usdc.balanceOf(client), clientBefore, "client fully refunded");
+        assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty");
+    }
+
+    function testServiceCycle_CancelRequest_Invariant() public {
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after request");
+
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after cancel");
+
+        assertEq(usdc.balanceOf(client), clientBefore, "client fully refunded");
+        assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty");
+    }
+
+    // Two concurrent requests on the same service; funds must not mix.
+    // client cancels its request; executor accepts client2's — verify isolation.
+    function testServiceCycle_MultiRequestFundIsolation() public {
+        uint256 serviceId = _mintService();
+
+        uint256 requestId1 = _requestService(client,  serviceId, SVC_AMOUNT);
+        uint256 requestId2 = _requestService(client2, serviceId, SVC2_AMOUNT);
+
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after both requests");
+        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT + SVC2_AMOUNT, "both amounts locked");
+
+        // Client cancels its own request
+        uint256 clientBalanceBeforeCancel = usdc.balanceOf(client);
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId1);
+
+        assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after client cancel");
+        assertEq(usdc.balanceOf(client), clientBalanceBeforeCancel + SVC_AMOUNT, "client got own funds back");
+        assertEq(usdc.balanceOf(address(diamond)), SVC2_AMOUNT, "only client2 funds remain");
+
+        // Executor accepts client2's request — must not touch client's returned funds
+        vm.prank(executor);
+        address agr = ServiceBoardFacet(address(diamond)).acceptRequest(requestId2);
+
+        assertEq(_systemBalance(agr), INITIAL_TOTAL, "after accept client2 request");
+        assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty");
+        assertEq(usdc.balanceOf(agr), SVC2_AMOUNT, "only client2 amount in agreement");
+
+        // Client's refund is untouched by executor accepting client2's request
+        assertEq(usdc.balanceOf(client), clientBalanceBeforeCancel + SVC_AMOUNT, "client balance unchanged");
+    }
+}
