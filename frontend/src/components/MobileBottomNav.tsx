@@ -91,6 +91,7 @@ function PillBtn({
 export default function MobileBottomNav() {
   const { isConnected } = useAccount();
   const pathname = usePathname();
+  const router = useRouter();
   const { unreadCount, unreadMessageCount } = useNotifications();
   const [boardMounted, setBoardMounted] = useState(false);
   const [boardVisible, setBoardVisible] = useState(false);
