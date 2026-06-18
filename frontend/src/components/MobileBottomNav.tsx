@@ -163,9 +163,9 @@ export default function MobileBottomNav() {
                 "0 8px 40px rgba(0,0,0,0.65), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)",
             }}
           >
-            <Link
-              href="/board"
-              onClick={closeBoard}
+            <button
+              type="button"
+              onClick={() => { closeBoard(); router.push("/board"); }}
               className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
               <span className="w-9 h-9 rounded-[12px] bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
@@ -179,13 +179,13 @@ export default function MobileBottomNav() {
                   {t("board.mobile_popup.jobs_desc")}
                 </p>
               </div>
-            </Link>
+            </button>
 
             <div className="w-px bg-white/[0.06] my-3" />
 
-            <Link
-              href="/board/executor"
-              onClick={closeBoard}
+            <button
+              type="button"
+              onClick={() => { closeBoard(); router.push("/board/executor"); }}
               className="flex-1 flex items-center gap-3 px-5 py-4 transition-colors active:bg-white/[0.06]"
             >
               <span className="w-9 h-9 rounded-[12px] bg-white/[0.06] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
@@ -199,7 +199,7 @@ export default function MobileBottomNav() {
                   {t("board.mobile_popup.services_desc")}
                 </p>
               </div>
-            </Link>
+            </button>
           </div>
         </div>
       )}
