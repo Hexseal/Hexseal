@@ -152,6 +152,7 @@ export default function MobileBottomNav() {
             bottom: "calc(env(safe-area-inset-bottom, 0px) + 94px)",
             transform: boardVisible ? "translateY(0) scale(1)" : "translateY(16px) scale(0.97)",
             opacity: boardVisible ? 1 : 0,
+            pointerEvents: boardVisible ? "auto" : "none",
             transition: POPUP_TRANSITION,
             willChange: "transform, opacity",
           }}

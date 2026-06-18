@@ -13,7 +13,6 @@ import {
   Search, Loader2, Briefcase, Plus, MessageCircle,
   ChevronDown, UserCheck, ExternalLink, FileText,
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
@@ -238,11 +237,9 @@ function JobCard({
 
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             {!isClient && address && (
-              <Link href={`/chat/${job.client}`}>
-                <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                </Button>
-              </Link>
+              <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary" onClick={() => router.push(`/chat/${job.client}`)}>
+                <MessageCircle className="w-3.5 h-3.5" />
+              </Button>
             )}
             {!isClient && address && !hasApplied && (
               <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
@@ -301,9 +298,7 @@ function JobCard({
                     <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5">
                       <span className="text-xs font-mono text-white/50 truncate min-w-0">{addr}</span>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <Link href={`/chat/${addr}`}>
-                          <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary">{t("board.jobs.chat_tab")}</Button>
-                        </Link>
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary" onClick={() => router.push(`/chat/${addr}`)}>{t("board.jobs.chat_tab")}</Button>
                         <Button size="sm" onClick={() => handleAccept(addr)} disabled={!!isAccepting} className="h-8 px-2.5 text-xs gap-1">
                           {isAccepting === addr ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
                           {t("board.jobs.accept_btn")}
@@ -320,11 +315,9 @@ function JobCard({
             )}
 
             <div className="pt-2 border-t border-white/6">
-              <Link href={`/job/${jobId.toString()}`} onClick={e => e.stopPropagation()}>
-                <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5">
-                  <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
-                </Button>
-              </Link>
+              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5" onClick={e => { e.stopPropagation(); router.push(`/job/${jobId.toString()}`); }}>
+                <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
+              </Button>
             </div>
           </div>
         )}
@@ -335,6 +328,7 @@ function JobCard({
 
 export default function BoardPage() {
   const { address, isConnected, status } = useAccount();
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const t = useTranslations();
@@ -471,9 +465,7 @@ export default function BoardPage() {
           <p className="text-muted-foreground mb-6 text-sm">
             {t("board.jobs.connect_prompt")}
           </p>
-          <Link href="/">
-            <Button>{t("common.go_home")}</Button>
-          </Link>
+          <Button onClick={() => router.push("/")}>{t("common.go_home")}</Button>
         </div>
       </div>
     );
@@ -493,19 +485,17 @@ export default function BoardPage() {
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.jobs.title")}</h1>
               <p className="text-sm text-muted-foreground">
                 {t("board.jobs.subtitle")}{" "}
-                <Link href="/board/client/post" className="text-primary hover:underline">
+                <button type="button" onClick={() => router.push("/board/client/post")} className="text-primary hover:underline">
                   {t("board.jobs.post_own_link")}
-                </Link>
+                </button>
               </p>
             </div>
             {/* Mobile: Post Job button */}
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
-              <Link href="/board/client/post">
-                <Button size="sm">
-                  <Plus className="w-4 h-4 mr-1" />
-                  {t("board.jobs.post_btn")}
-                </Button>
-              </Link>
+              <Button size="sm" onClick={() => router.push("/board/client/post")}>
+                <Plus className="w-4 h-4 mr-1" />
+                {t("board.jobs.post_btn")}
+              </Button>
             </div>
           </div>
         </div>
@@ -594,12 +584,10 @@ export default function BoardPage() {
               {searchQuery ? t("board.jobs.no_results") : t("board.jobs.empty")}
             </p>
             {!searchQuery && (
-              <Link href="/board/client/post">
-                <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60">
-                  <Plus className="w-3.5 h-3.5 mr-1" />
-                  {t("board.jobs.post_first")}
-                </Button>
-              </Link>
+              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => router.push("/board/client/post")}>
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                {t("board.jobs.post_first")}
+              </Button>
             )}
           </div>
         ) : (
