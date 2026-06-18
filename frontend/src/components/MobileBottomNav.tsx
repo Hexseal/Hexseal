@@ -5,8 +5,7 @@ import { useState, useEffect, useRef } from "react";
 // Only animate the nav entrance once per page load — not on every route change
 let _navHasAppeared = false;
 import { motion } from "framer-motion";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
 import {
   LayoutDashboard,
@@ -38,6 +37,8 @@ function PillBtn({
   href?: string;
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+
   const inner = (
     <span className="flex flex-col items-center gap-[6px] select-none">
       <span className="relative flex items-center justify-center">
@@ -76,18 +77,10 @@ function PillBtn({
     </span>
   );
 
-  const cls =
-    "flex-1 flex items-center justify-center h-full min-w-0";
+  const cls = "flex-1 flex items-center justify-center h-full min-w-0";
 
-  if (href) {
-    return (
-      <Link href={href} className={cls}>
-        {inner}
-      </Link>
-    );
-  }
   return (
-    <button type="button" onClick={onClick} className={cls}>
+    <button type="button" onClick={href ? () => router.push(href) : onClick} className={cls}>
       {inner}
     </button>
   );
