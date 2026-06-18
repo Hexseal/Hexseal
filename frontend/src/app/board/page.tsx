@@ -333,6 +333,16 @@ export default function BoardPage() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const t = useTranslations();
 
+  // DEBUG: trace click events and router.push calls
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const el = e.target as Element;
+      console.log('[hexdebug] click captured:', el.tagName, el.textContent?.trim().slice(0, 25));
+    };
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
+  }, []);
+
   const [page, setPage] = useState(0);
   const [allJobs, setAllJobs] = useState<GraphJob[]>([]);
   type SortKey = 'newest' | 'oldest' | 'highest' | 'lowest';
@@ -485,14 +495,14 @@ export default function BoardPage() {
               <h1 className="text-2xl font-bold font-syne mb-0.5">{t("board.jobs.title")}</h1>
               <p className="text-sm text-muted-foreground">
                 {t("board.jobs.subtitle")}{" "}
-                <button type="button" onClick={() => router.push("/board/client/post")} className="text-primary hover:underline">
+                <button type="button" onClick={() => { console.log('[hexdebug] router.push /board/client/post'); router.push("/board/client/post"); }} className="text-primary hover:underline">
                   {t("board.jobs.post_own_link")}
                 </button>
               </p>
             </div>
             {/* Mobile: Post Job button */}
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
-              <Button size="sm" onClick={() => router.push("/board/client/post")}>
+              <Button size="sm" onClick={() => { console.log('[hexdebug] router.push /board/client/post (header btn)'); router.push("/board/client/post"); }}>
                 <Plus className="w-4 h-4 mr-1" />
                 {t("board.jobs.post_btn")}
               </Button>
@@ -584,7 +594,7 @@ export default function BoardPage() {
               {searchQuery ? t("board.jobs.no_results") : t("board.jobs.empty")}
             </p>
             {!searchQuery && (
-              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => router.push("/board/client/post")}>
+              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => { console.log('[hexdebug] router.push /board/client/post (empty state btn)'); router.push("/board/client/post"); }}>
                 <Plus className="w-3.5 h-3.5 mr-1" />
                 {t("board.jobs.post_first")}
               </Button>
