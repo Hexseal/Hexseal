@@ -594,7 +594,14 @@ export default function BoardPage() {
               {searchQuery ? t("board.jobs.no_results") : t("board.jobs.empty")}
             </p>
             {!searchQuery && (
-              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => { console.log('[hexdebug] router.push /board/client/post (empty state btn)'); router.push("/board/client/post"); }}>
+              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => {
+                const before = window.location.pathname;
+                console.log('[hexdebug] BEFORE push:', before);
+                router.push("/board/client/post");
+                setTimeout(() => console.log('[hexdebug] 0ms after push:', window.location.pathname), 0);
+                setTimeout(() => console.log('[hexdebug] 200ms after push:', window.location.pathname), 200);
+                setTimeout(() => console.log('[hexdebug] 1s after push:', window.location.pathname), 1000);
+              }}>
                 <Plus className="w-3.5 h-3.5 mr-1" />
                 {t("board.jobs.post_first")}
               </Button>
