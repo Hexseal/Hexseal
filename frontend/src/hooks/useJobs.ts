@@ -16,6 +16,7 @@ export interface GraphJob {
 }
 
 const PAGE_SIZE = 20
+const EMPTY_JOBS: GraphJob[] = []
 
 export function useJobs({ region, page = 0 }: { region?: number; page?: number } = {}) {
   const where: Record<string, unknown> = { status: 'open' }
@@ -28,7 +29,7 @@ export function useJobs({ region, page = 0 }: { region?: number; page?: number }
   })
 
   return {
-    jobs: data?.jobs ?? [],
+    jobs: data?.jobs ?? EMPTY_JOBS,
     isLoading: fetching && !data,
     isFetching: fetching,
     hasMore: (data?.jobs.length ?? 0) === PAGE_SIZE,

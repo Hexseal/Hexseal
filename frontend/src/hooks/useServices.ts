@@ -15,6 +15,7 @@ export interface GraphService {
 }
 
 const PAGE_SIZE = 20
+const EMPTY_SERVICES: GraphService[] = []
 
 export function useServices({ region, page = 0 }: { region?: number; page?: number } = {}) {
   const where: Record<string, unknown> = { status: 'active' }
@@ -27,7 +28,7 @@ export function useServices({ region, page = 0 }: { region?: number; page?: numb
   })
 
   return {
-    services: data?.services ?? [],
+    services: data?.services ?? EMPTY_SERVICES,
     isLoading: fetching && !data,
     isFetching: fetching,
     hasMore: (data?.services.length ?? 0) === PAGE_SIZE,
