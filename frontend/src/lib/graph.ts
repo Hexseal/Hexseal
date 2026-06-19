@@ -7,6 +7,7 @@ export function createGraphClient() {
   return createClient({
     url: SUBGRAPH_URL,
     exchanges: [cacheExchange, fetchExchange],
+    requestPolicy: 'cache-and-network',
   })
 }
 

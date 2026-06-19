@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from 'urql'
-import { OPEN_SERVICES_QUERY, SUBGRAPH_URL } from '@/lib/graph'
+import { OPEN_SERVICES_QUERY } from '@/lib/graph'
 
 export interface GraphService {
   id: string
@@ -28,7 +28,6 @@ export function useServices({ region, page = 0 }: { region?: number; page?: numb
   const [{ data, fetching, error }] = useQuery<{ services: GraphService[] }>({
     query: OPEN_SERVICES_QUERY,
     variables,
-    pause: !SUBGRAPH_URL,
   })
 
   return {

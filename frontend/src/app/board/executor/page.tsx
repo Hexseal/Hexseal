@@ -711,11 +711,9 @@ export default function ExecutorBoardPage() {
     return (
       <div className="container mx-auto px-4 pt-4 pb-6 max-w-6xl space-y-3">
         {[...Array(5)].map((_, i) => (
-          <motion.div
+          <div
             key={i}
-            className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[72px]"
-            animate={{ opacity: [0.4, 0.8, 0.4] }}
-            transition={{ repeat: Infinity, duration: 1.5, delay: i * 0.1 }}
+            className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[72px]"
           >
             <div className="flex items-center gap-3 px-4 py-4">
               <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-white/[0.06]" />
@@ -728,7 +726,7 @@ export default function ExecutorBoardPage() {
               </div>
               <div className="h-8 w-24 rounded-[10px] bg-white/[0.06] flex-shrink-0" />
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
     );

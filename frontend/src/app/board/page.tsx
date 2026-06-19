@@ -55,11 +55,7 @@ function useTimeAgo() {
 
 function JobCardSkeleton() {
   return (
-    <motion.div
-      className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[80px]"
-      animate={{ opacity: [0.4, 0.8, 0.4] }}
-      transition={{ repeat: Infinity, duration: 1.5 }}
-    >
+    <div className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[80px]">
       <div className="flex items-center gap-3 px-4 py-4">
         <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-white/[0.06] mt-0.5" />
         <div className="flex-1 min-w-0 space-y-2">
@@ -72,7 +68,7 @@ function JobCardSkeleton() {
         </div>
         <div className="h-8 w-16 rounded-[10px] bg-white/[0.06] flex-shrink-0" />
       </div>
-    </motion.div>
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from 'urql'
-import { OPEN_JOBS_QUERY, SUBGRAPH_URL } from '@/lib/graph'
+import { OPEN_JOBS_QUERY } from '@/lib/graph'
 
 export interface GraphJob {
   id: string
@@ -29,7 +29,6 @@ export function useJobs({ region, page = 0 }: { region?: number; page?: number }
   const [{ data, fetching, error }] = useQuery<{ jobs: GraphJob[] }>({
     query: OPEN_JOBS_QUERY,
     variables,
-    pause: !SUBGRAPH_URL,
   })
 
   return {
