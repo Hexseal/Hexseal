@@ -600,12 +600,11 @@ export default function ExecutorBoardPage() {
       .then(data => {
         const detected = data.region as number;
         setUserRegion(detected);
-        if (stored !== null || localStorage.getItem("sig404_board_region") !== null) {
+        // Use stored preference if user explicitly set one; otherwise default to Global (null)
+        if (localStorage.getItem("sig404_board_region") !== null) {
           setRegionFilter(stored);
-        } else {
-          setRegionFilter(detected);
-          storeBoardRegion(detected);
         }
+        // If no stored preference: leave regionFilter as null (show all jobs)
       })
       .catch(() => {
         if (stored !== null) setRegionFilter(stored);
