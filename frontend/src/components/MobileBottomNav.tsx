@@ -158,7 +158,7 @@ export default function MobileBottomNav() {
           }}
         >
           <div
-            className="flex backdrop-blur-3xl border border-white/[0.08] rounded-[22px] overflow-hidden"
+            className="flex backdrop-blur-xl border border-white/[0.08] rounded-[22px] overflow-hidden"
             style={{
               background: 'rgba(0,0,0,0.96)',
               boxShadow:
@@ -215,7 +215,7 @@ export default function MobileBottomNav() {
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)" }}
       >
         <div
-          className="flex items-center bg-[#111113]/92 backdrop-blur-3xl border border-white/[0.08] rounded-[32px] px-4 h-[86px]"
+          className="flex items-center bg-[#111113]/95 backdrop-blur-xl border border-white/[0.08] rounded-[32px] px-4 h-[86px]"
           style={{
             boxShadow:
               "0 8px 40px rgba(0,0,0,0.65), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)",

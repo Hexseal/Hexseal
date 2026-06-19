@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from 'urql'
 import { MY_AGREEMENTS_QUERY, SUBGRAPH_URL } from '@/lib/graph'
 
@@ -18,20 +19,21 @@ interface MyAgreementsData {
 
 export function useMyAgreements(address: string | undefined) {
   const addr = address?.toLowerCase() ?? ''
+  const variables = useMemo(() => ({ client: addr, executor: addr }), [addr])
 
   const [{ data, fetching, error }] = useQuery<MyAgreementsData>({
     query: MY_AGREEMENTS_QUERY,
-    variables: { client: addr, executor: addr },
+    variables,
     pause: !addr || !SUBGRAPH_URL,
   })
 
-  const allAgreements = (() => {
+  const allAgreements = useMemo(() => {
     const map = new Map<string, GraphAgreement>()
     ;[...(data?.asClient ?? []), ...(data?.asExecutor ?? [])].forEach(a =>
       map.set(a.id.toLowerCase(), a)
     )
     return Array.from(map.values())
-  })()
+  }, [data])
 
   return {
     agreements: allAgreements,
