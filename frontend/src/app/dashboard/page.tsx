@@ -24,15 +24,13 @@ function xpLevel(xp: number) {
   return               { label: 'Newcomer', color: 'text-white/40',    bar: 'bg-white/20',    pct: Math.round(xp / 0.5) };
 }
 
-// ─── Stat card skeleton ───────────────────────────────────────────────────────
+// ─── Stat card skeleton — CSS animate-pulse, zero JS ─────────────────────────
 
 function StatCardSkeleton({ index = 0 }: { index?: number }) {
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: [0.4, 0.7, 0.4] }}
-      transition={{ delay: index * 0.05, duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-      className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3"
+    <div
+      className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3"
+      style={{ animationDelay: `${index * 0.05}s` }}
     >
       <div className="w-9 h-9 rounded-[12px] bg-white/[0.06] flex-shrink-0" />
       <div className="min-w-0 space-y-2">
@@ -40,11 +38,11 @@ function StatCardSkeleton({ index = 0 }: { index?: number }) {
         <div className="h-5 w-10 rounded bg-white/[0.08]" />
         <div className="h-2 w-12 rounded bg-white/[0.04]" />
       </div>
-    </motion.div>
+    </div>
   );
 }
 
-// ─── Stat card ────────────────────────────────────────────────────────────────
+// ─── Stat card — tween entrance, no hover/tap springs ────────────────────────
 
 function StatCard({ icon, label, value, sub, index = 0 }: {
   icon: ReactNode; label: string; value: string | number; sub?: string; index?: number;
@@ -53,8 +51,7 @@ function StatCard({ icon, label, value, sub, index = 0 }: {
     <motion.div
       initial={{ opacity: 0, y: 10, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ delay: index * 0.07, type: 'spring', stiffness: 280, damping: 22 }}
-      whileHover={{ y: -2, transition: { type: 'spring', stiffness: 400, damping: 20 } }}
+      transition={{ delay: index * 0.07, type: 'tween', duration: 0.25, ease: 'easeOut' }}
       className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3 cursor-default"
       style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
     >
@@ -62,7 +59,7 @@ function StatCard({ icon, label, value, sub, index = 0 }: {
         className="w-9 h-9 rounded-[12px] bg-white/[0.06] flex items-center justify-center flex-shrink-0"
         initial={{ rotate: -10, scale: 0.8 }}
         animate={{ rotate: 0, scale: 1 }}
-        transition={{ delay: index * 0.07 + 0.08, type: 'spring', stiffness: 300, damping: 18 }}
+        transition={{ delay: index * 0.07 + 0.08, type: 'tween', duration: 0.2, ease: 'easeOut' }}
       >
         {icon}
       </motion.div>
@@ -87,12 +84,11 @@ function Tab({ active, onClick, children, count }: {
         active ? 'text-white' : 'text-white/40 hover:text-white/60'
       }`}
     >
-      {/* Sliding pill indicator — animates between tabs via layoutId */}
       {active && (
         <motion.span
           layoutId="tab-pill"
           className="absolute inset-0 rounded-[10px] bg-white/10"
-          transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+          transition={{ type: 'tween', duration: 0.18, ease: 'easeOut' }}
         />
       )}
       <span className="relative z-10 flex items-center gap-1.5">
@@ -102,7 +98,7 @@ function Tab({ active, onClick, children, count }: {
             key={count}
             initial={{ scale: 0.7, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+            transition={{ type: 'tween', duration: 0.12, ease: 'easeOut' }}
             className={`text-[11px] px-1.5 py-0.5 rounded-md font-mono ${
               active ? 'bg-white/15 text-white/80' : 'bg-white/8 text-white/35'
             }`}
@@ -122,7 +118,7 @@ const sectionContainer = {
 };
 const sectionItem = {
   hidden: { opacity: 0, y: 14 },
-  show:   { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 280, damping: 24 } },
+  show:   { opacity: 1, y: 0, transition: { type: 'tween' as const, duration: 0.25, ease: 'easeOut' } },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -197,22 +193,18 @@ export default function DashboardPage() {
 
         {/* ── XP progress bar ── */}
         {isLoading ? (
-          <motion.div
-            animate={{ opacity: [0.4, 0.7, 0.4] }}
-            transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-            className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
-          >
+          <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
             <div className="flex items-center justify-between mb-2">
               <div className="h-3 w-16 rounded bg-white/[0.06]" />
               <div className="h-3 w-10 rounded bg-white/[0.06]" />
             </div>
             <div className="h-1.5 rounded-full bg-white/[0.06]" />
-          </motion.div>
+          </div>
         ) : (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.32, type: 'spring', stiffness: 260, damping: 22 }}
+            transition={{ delay: 0.3, type: 'tween', duration: 0.25, ease: 'easeOut' }}
             className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
             style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
           >
@@ -228,7 +220,7 @@ export default function DashboardPage() {
                 className={`h-full rounded-full ${level.bar}`}
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.min(100, level.pct)}%` }}
-                transition={{ delay: 0.45, type: 'spring', stiffness: 55, damping: 18 }}
+                transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
               />
             </div>
           </motion.div>
@@ -239,7 +231,6 @@ export default function DashboardPage() {
 
         {/* ── Tabs ── */}
         <div>
-          {/* Tab bar — standalone pills with sliding indicator */}
           <div className="flex gap-1 overflow-x-auto scrollbar-none mb-4">
             <Tab active={tab === 'listings'} onClick={() => setTab('listings')}>
               {t("dashboard.tabs.listings")}
@@ -252,15 +243,13 @@ export default function DashboardPage() {
             </Tab>
           </div>
 
-          {/* Tab content */}
           {isLoading ? (
             <div className="space-y-3">
               {[0, 1, 2].map(i => (
-                <motion.div
+                <div
                   key={i}
-                  animate={{ opacity: [0.4, 0.7, 0.4] }}
-                  transition={{ delay: i * 0.1, duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-                  className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] h-[72px]"
+                  className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] h-[72px]"
+                  style={{ animationDelay: `${i * 0.1}s` }}
                 />
               ))}
             </div>
@@ -268,10 +257,10 @@ export default function DashboardPage() {
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={tab}
-                initial={{ opacity: 0, y: 8 }}
+                initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                exit={{ opacity: 0, y: -3 }}
+                transition={{ type: 'tween', duration: 0.15, ease: 'easeOut' }}
               >
                 {tab === 'listings' && (
                   <motion.div
@@ -300,15 +289,12 @@ export default function DashboardPage() {
                     <motion.div
                       initial={{ opacity: 0, scale: 0.96 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      transition={{ type: 'spring', stiffness: 280, damping: 22 }}
+                      transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
                       className="text-center py-10"
                     >
-                      <motion.div
-                        animate={{ y: [0, -5, 0] }}
-                        transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
-                      >
+                      <div className="float-icon">
                         <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
-                      </motion.div>
+                      </div>
                       <p className="text-sm text-white/30">{t("dashboard.empty_active")}</p>
                       <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
                     </motion.div>
@@ -321,9 +307,8 @@ export default function DashboardPage() {
                             initial={{ opacity: 0, y: 18, scale: 0.97 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
-                            transition={{ type: 'spring', stiffness: 280, damping: 24, delay: Math.min(index, 5) * 0.06 }}
-                            whileHover={{ y: -3, transition: { type: 'spring', stiffness: 400, damping: 22 } }}
-                            whileTap={{ scale: 0.985, transition: { type: 'spring', stiffness: 400, damping: 20 } }}
+                            transition={{ type: 'tween', duration: 0.22, ease: 'easeOut', delay: Math.min(index, 5) * 0.06 }}
+                            className="active:scale-[0.985] transition-transform duration-100 cursor-pointer"
                           >
                             <DealCard
                               agreement={a}
@@ -342,15 +327,12 @@ export default function DashboardPage() {
                     <motion.div
                       initial={{ opacity: 0, scale: 0.96 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      transition={{ type: 'spring', stiffness: 280, damping: 22 }}
+                      transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
                       className="text-center py-10"
                     >
-                      <motion.div
-                        animate={{ y: [0, -5, 0] }}
-                        transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
-                      >
+                      <div className="float-icon">
                         <CheckCircle className="w-8 h-8 text-white/10 mx-auto mb-3" />
-                      </motion.div>
+                      </div>
                       <p className="text-sm text-white/30">{t("dashboard.empty_history")}</p>
                     </motion.div>
                   ) : (
@@ -362,9 +344,8 @@ export default function DashboardPage() {
                             initial={{ opacity: 0, y: 18, scale: 0.97 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
-                            transition={{ type: 'spring', stiffness: 280, damping: 24, delay: Math.min(index, 5) * 0.06 }}
-                            whileHover={{ y: -3, transition: { type: 'spring', stiffness: 400, damping: 22 } }}
-                            whileTap={{ scale: 0.985, transition: { type: 'spring', stiffness: 400, damping: 20 } }}
+                            transition={{ type: 'tween', duration: 0.22, ease: 'easeOut', delay: Math.min(index, 5) * 0.06 }}
+                            className="active:scale-[0.985] transition-transform duration-100 cursor-pointer"
                           >
                             <DealCard
                               agreement={a}

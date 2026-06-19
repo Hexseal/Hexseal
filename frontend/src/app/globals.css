@@ -471,3 +471,10 @@ a {
 .page-enter {
   animation: page-enter 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
 }
+
+/* Floating empty-state icons — replaces framer-motion repeat:Infinity y animation */
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-5px); }
+}
+.float-icon { animation: float-y 2.4s ease-in-out infinite; }
