@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { Locale } from "@/i18n/config";
 import { locales, defaultLocale } from "@/i18n/config";
 
-const STORAGE_KEY = "sig404_locale";
+const STORAGE_KEY = "hexseal_locale";
 
 function detectBrowserLocale(): Locale {
   if (typeof navigator === "undefined") return defaultLocale;
@@ -30,7 +30,7 @@ export function useLocale() {
   const setLocale = useCallback((next: Locale) => {
     localStorage.setItem(STORAGE_KEY, next);
     setLocaleState(next);
-    window.dispatchEvent(new CustomEvent("sig404:locale", { detail: next }));
+    window.dispatchEvent(new CustomEvent("hexseal:locale", { detail: next }));
   }, []);
 
   return { locale, setLocale };

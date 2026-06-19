@@ -359,7 +359,7 @@ export default function BoardPage() {
         const detected = data.region as number;
         setUserRegion(detected);
         // Use stored preference if user explicitly set one; otherwise default to Global (null)
-        if (localStorage.getItem("sig404_board_region_v2") !== null) {
+        if (localStorage.getItem("hexseal_board_region") !== null) {
           setRegionFilter(stored);
         }
         // If no stored preference: leave regionFilter as null (show all jobs)

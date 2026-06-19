@@ -19,7 +19,7 @@ export const runtime = 'nodejs';
  */
 
 const redis = Redis.fromEnv();
-const PREFIX = 'sig404:terms:';
+const PREFIX = 'hexseal:terms:';
 
 const LIGHTHOUSE_UPLOAD  = 'https://node.lighthouse.storage/api/v0/add';
 const LIGHTHOUSE_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage';

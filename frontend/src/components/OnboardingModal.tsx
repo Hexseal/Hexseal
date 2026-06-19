@@ -11,7 +11,7 @@ import {
 import { Briefcase, FileSignature, Lock, CheckCircle, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-const STORAGE_KEY = "sig404_onboarding_done";
+const STORAGE_KEY = "hexseal_onboarding_done";
 
 const STEP_ICONS = [Briefcase, FileSignature, Lock, CheckCircle, Zap];
 

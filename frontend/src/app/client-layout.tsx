@@ -159,8 +159,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     const handler = () => setOnboardingForced(true);
-    window.addEventListener('sig404:open-onboarding', handler);
-    return () => window.removeEventListener('sig404:open-onboarding', handler);
+    window.addEventListener('hexseal:open-onboarding', handler);
+    return () => window.removeEventListener('hexseal:open-onboarding', handler);
   }, []);
 
   // Early body lock: fires before the Suspense/ChatLayoutInner effect has a chance to run.

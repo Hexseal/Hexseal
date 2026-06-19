@@ -32,7 +32,7 @@ export interface AppNotification {
 }
 
 const MAX = 100;
-const key = (addr: string) => `sig404_notifs_${addr.toLowerCase()}`;
+const key = (addr: string) => `hexseal_notifs_${addr.toLowerCase()}`;
 
 export function loadNotifs(address: string): AppNotification[] {
   try {
@@ -65,7 +65,7 @@ export function pushNotif(
   const updated = [newNotif, ...notifs].slice(0, MAX);
   saveNotifs(address, updated);
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('sig404-notif-update'));
+    window.dispatchEvent(new Event('hexseal-notif-update'));
   }
   return newNotif;
 }

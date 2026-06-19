@@ -52,8 +52,8 @@ export function useNotifications() {
   useEffect(() => {
     if (!address) return;
     const handler = () => setNotifications(loadNotifs(address));
-    window.addEventListener('sig404-notif-update', handler);
-    return () => window.removeEventListener('sig404-notif-update', handler);
+    window.addEventListener('hexseal-notif-update', handler);
+    return () => window.removeEventListener('hexseal-notif-update', handler);
   }, [address]);
 
   // Check if current user is a registered arbiter

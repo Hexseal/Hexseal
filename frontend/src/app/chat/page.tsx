@@ -86,7 +86,7 @@ function ConvoItem({
   const t = useTranslations();
 
   const seenAt = typeof window !== 'undefined'
-    ? Number(localStorage.getItem(`sig404_chat_seen_${peerAddress}`) ?? 0)
+    ? Number(localStorage.getItem(`hexseal_chat_seen_${peerAddress}`) ?? 0)
     : 0;
   const hasUnread = !lastFromMe && !isSeen && lastAt > seenAt && lastAt > 0;
 
@@ -322,7 +322,7 @@ function ChatHubPageInner() {
     setShowNewChat(false);
     setNewChatAddr('');
     setSeenConvos(prev => new Set([...prev, addr]));
-    localStorage.setItem(`sig404_chat_seen_${addr}`, String(Date.now()));
+    localStorage.setItem(`hexseal_chat_seen_${addr}`, String(Date.now()));
     router.push(`/chat?peer=${addr}`);
   };
 
@@ -357,7 +357,7 @@ function ChatHubPageInner() {
   const handleConvoClick = (addr: string) => {
     const lc = addr.toLowerCase();
     setSeenConvos(prev => new Set([...prev, lc]));
-    localStorage.setItem(`sig404_chat_seen_${lc}`, String(Date.now()));
+    localStorage.setItem(`hexseal_chat_seen_${lc}`, String(Date.now()));
     router.push(`/chat?peer=${lc}`);
   };
 

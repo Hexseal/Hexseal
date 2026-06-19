@@ -5,7 +5,7 @@ import { isAddress } from 'viem';
 export const runtime = 'nodejs';
 
 const redis = Redis.fromEnv();
-const PREFIX = 'sig404:dispute:';
+const PREFIX = 'hexseal:dispute:';
 
 interface DisputeRecord {
   agreement: string;

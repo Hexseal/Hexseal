@@ -5,7 +5,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { defaultLocale, locales, type Locale } from "@/i18n/config";
 import enMessages from "../../messages/en.json";
 
-const STORAGE_KEY = "sig404_locale";
+const STORAGE_KEY = "hexseal_locale";
 const RTL_LOCALES = new Set<Locale>(["ar"]);
 
 // Maps browser language tags to our locale codes
@@ -74,10 +74,10 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     }
 
     window.addEventListener("storage", onStorage);
-    window.addEventListener("sig404:locale", onLocaleChange);
+    window.addEventListener("hexseal:locale", onLocaleChange);
     return () => {
       window.removeEventListener("storage", onStorage);
-      window.removeEventListener("sig404:locale", onLocaleChange);
+      window.removeEventListener("hexseal:locale", onLocaleChange);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

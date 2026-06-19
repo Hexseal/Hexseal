@@ -24,7 +24,7 @@ const REGION_HINTS: Record<number, string> = {
   6: "AU · NZ",
 };
 
-const LS_KEY = "sig404_board_region_v2";
+const LS_KEY = "hexseal_board_region";
 
 export function getStoredBoardRegion(): number | null {
   if (typeof window === "undefined") return null;

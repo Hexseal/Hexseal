@@ -96,7 +96,7 @@ export default function EditProfilePage() {
 
   useEffect(() => {
     if (!address) return;
-    const raw = localStorage.getItem(`sig404_profile_${address.toLowerCase()}`);
+    const raw = localStorage.getItem(`hexseal-public_${address.toLowerCase()}`);
     if (!raw) return;
     try {
       const { data } = JSON.parse(raw);

@@ -399,7 +399,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   // Mark conversation as seen whenever this chat is open
   useEffect(() => {
     if (!recipientAddress) return;
-    const key = `sig404_chat_seen_${recipientAddress.toLowerCase()}`;
+    const key = `hexseal_chat_seen_${recipientAddress.toLowerCase()}`;
     const mark = () => localStorage.setItem(key, String(Date.now()));
     mark();
     window.addEventListener('focus', mark);

@@ -325,7 +325,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         <div className="h-px bg-white/[0.06]" />
         <div className="p-1">
           <DropdownMenuItem
-            onClick={() => window.dispatchEvent(new Event('sig404:open-onboarding'))}
+            onClick={() => window.dispatchEvent(new Event('hexseal:open-onboarding'))}
             className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
           >
             <HelpCircle className="w-3.5 h-3.5" />

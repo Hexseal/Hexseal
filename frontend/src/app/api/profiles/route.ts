@@ -4,7 +4,7 @@ import { Redis } from '@upstash/redis';
 export const runtime = 'nodejs';
 
 const redis = Redis.fromEnv();
-const PREFIX = 'sig404:profile:';
+const PREFIX = 'hexseal:profile:';
 
 const IPFS_GATEWAYS = [
   process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage',
