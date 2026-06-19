@@ -462,3 +462,12 @@ a {
 .deal-card__amount { font-size:1.25rem; font-weight:700; font-family: var(--font-space-mono), monospace; }
 .deal-card__counterparty { font-size:.8rem; color:hsl(var(--muted-foreground)); font-family: var(--font-space-mono), monospace; }
 .deal-card__action { margin-left:auto; }
+
+/* Page transition — pure CSS so iOS compositor thread handles it independently of JS work */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-enter {
+  animation: page-enter 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}

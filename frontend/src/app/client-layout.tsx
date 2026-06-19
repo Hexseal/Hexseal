@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState, Suspense } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { motion } from 'framer-motion';
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
@@ -10,27 +9,21 @@ import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
 import { useXmtpSession } from "@/hooks/useXmtpSession";
 
-// Framer-motion page transition — reliable on mobile unlike tailwindcss-animate.
-// key={pathname} forces React to unmount/remount on navigation, triggering
-// initial → animate on every route change including MobileBottomNav taps.
-//
-// _pageHasLoaded: module-level flag that stays true after the first render
-// completes. Skips the initial animation on hard refresh (prevents CLS from
-// the SSR→client hydration mismatch) while keeping transitions on navigation.
+// Page transition via pure CSS animation (page-enter keyframe in globals.css).
+// CSS animations run on the compositor thread — independent of JS work — so
+// the fade stays smooth on iPhone even while React mounts the new page's hooks.
+// key={pathname} forces React to remount the div, restarting the animation.
 let _pageHasLoaded = false;
 function PageFade({ children, pathname }: { children: React.ReactNode; pathname: string }) {
   const isChat = pathname?.startsWith('/chat');
   useEffect(() => { _pageHasLoaded = true; }, []);
   return (
-    <motion.div
+    <div
       key={pathname}
-      initial={_pageHasLoaded ? { opacity: 0, y: 7 } : false}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className={`min-h-0 flex flex-col flex-1 ${isChat ? 'overflow-hidden' : ''}`}
+      className={`min-h-0 flex flex-col flex-1 ${_pageHasLoaded ? 'page-enter' : ''} ${isChat ? 'overflow-hidden' : ''}`}
     >
       {children}
-    </motion.div>
+    </div>
   );
 }
 
