@@ -83,18 +83,20 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
           className="flex items-center justify-between px-3 h-[52px] bg-[#111113]/80 backdrop-blur-md border border-white/[0.08] rounded-[18px]"
           style={glassStyle}
         >
-          {/* Left: back + logo */}
-          <div className="flex items-center gap-2">
-            {showBack && (
-              <button
-                onClick={() => router.back()}
-                className="p-2 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors"
-                aria-label="Go back"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-            )}
-            <Link href="/" className={cn("flex items-center group", !showBack && "ml-1.5")}>
+          {/* Left: back + logo — slot always reserves back-button width so HEXSEAL never shifts */}
+          <div className="flex items-center">
+            <div className="w-8 flex items-center justify-center">
+              {showBack && (
+                <button
+                  onClick={() => router.back()}
+                  className="p-2 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors"
+                  aria-label="Go back"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <Link href={isConnected ? "/board" : "/"} className="ml-1 flex items-center group">
               <span className="font-bold text-[17px] tracking-wide text-white" style={{ fontFamily: "var(--font-syne)" }}>
                 HEXSEAL
               </span>
@@ -130,18 +132,20 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
         >
           <div className="grid grid-cols-[auto_1fr_auto] items-center w-full gap-4">
 
-            {/* Left: back + brand */}
-            <div className="flex items-center gap-2.5">
-              {showBack && (
-                <button
-                  onClick={() => router.back()}
-                  className="flex items-center justify-center w-8 h-8 rounded-[12px] text-white/40 hover:text-white hover:bg-white/[0.06] transition-colors"
-                  aria-label="Go back"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-              )}
-              <Link href="/" className="flex items-center group">
+            {/* Left: back + brand — slot always reserves back-button width so HEXSEAL never shifts */}
+            <div className="flex items-center">
+              <div className="w-[38px] flex items-center">
+                {showBack && (
+                  <button
+                    onClick={() => router.back()}
+                    className="flex items-center justify-center w-8 h-8 rounded-[12px] text-white/40 hover:text-white hover:bg-white/[0.06] transition-colors"
+                    aria-label="Go back"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              <Link href={isConnected ? "/board" : "/"} className="flex items-center group">
                 <span className="font-bold text-[17px] tracking-wide text-white" style={{ fontFamily: "var(--font-syne)" }}>
                   HEXSEAL
                 </span>

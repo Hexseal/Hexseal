@@ -143,7 +143,7 @@
     }
   },
   "wallet": {
-    "connect": "Wallet verbinden",
+    "connect": "Verbinden",
     "my_profile": "Mein Profil",
     "dashboard": "Dashboard",
     "messages": "Nachrichten",

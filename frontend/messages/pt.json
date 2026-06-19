@@ -143,7 +143,7 @@
     }
   },
   "wallet": {
-    "connect": "Conectar Carteira",
+    "connect": "Conectar",
     "my_profile": "Meu Perfil",
     "dashboard": "Painel",
     "messages": "Mensagens",

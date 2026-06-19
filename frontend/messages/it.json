@@ -143,7 +143,7 @@
     }
   },
   "wallet": {
-    "connect": "Collega il Portafoglio",
+    "connect": "Collega",
     "my_profile": "Il Mio Profilo",
     "dashboard": "Dashboard",
     "messages": "Messaggi",
