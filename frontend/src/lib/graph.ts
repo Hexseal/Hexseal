@@ -1,10 +1,11 @@
 import { createClient, cacheExchange, fetchExchange } from '@urql/core'
 
-export const SUBGRAPH_URL = process.env.NEXT_PUBLIC_SUBGRAPH_URL ?? ''
+export const SUBGRAPH_URL = process.env.NEXT_PUBLIC_SUBGRAPH_URL
+  || 'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3'
 
 export function createGraphClient() {
   return createClient({
-    url: SUBGRAPH_URL || 'https://api.thegraph.com/subgraphs/name/placeholder',
+    url: SUBGRAPH_URL,
     exchanges: [cacheExchange, fetchExchange],
   })
 }
