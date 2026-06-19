@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from 'urql'
 import { OPEN_SERVICES_QUERY, SUBGRAPH_URL } from '@/lib/graph'
 
@@ -18,12 +19,15 @@ const PAGE_SIZE = 20
 const EMPTY_SERVICES: GraphService[] = []
 
 export function useServices({ region, page = 0 }: { region?: number; page?: number } = {}) {
-  const where: Record<string, unknown> = { status: 'active' }
-  if (region !== undefined && region >= 0) where.region = region
+  const variables = useMemo(() => {
+    const where: Record<string, unknown> = { status: 'active' }
+    if (region !== undefined && region >= 0) where.region = region
+    return { where, first: PAGE_SIZE, skip: page * PAGE_SIZE }
+  }, [region, page])
 
   const [{ data, fetching, error }] = useQuery<{ services: GraphService[] }>({
     query: OPEN_SERVICES_QUERY,
-    variables: { where, first: PAGE_SIZE, skip: page * PAGE_SIZE },
+    variables,
     pause: !SUBGRAPH_URL,
   })
 
