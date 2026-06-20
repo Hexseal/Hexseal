@@ -16,12 +16,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ errors: [{ message: 'Bad request body' }] }, { status: 400 });
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
   let res: Response;
   try {
     res = await fetch(SUBGRAPH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body,
+      signal: controller.signal,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -29,6 +33,8 @@ export async function POST(req: NextRequest) {
       { errors: [{ message: `Subgraph fetch error: ${msg}` }] },
       { status: 502 },
     );
+  } finally {
+    clearTimeout(timeout);
   }
 
   let text: string;
