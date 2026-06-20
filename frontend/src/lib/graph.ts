@@ -1,13 +1,9 @@
 import { createClient, cacheExchange, fetchExchange } from '@urql/core'
 
-// Browser: route through /api/subgraph (same-origin, bypasses ad blockers & CORS issues)
-// Server (SSR): use direct URL (relative URLs don't work server-side)
-const DIRECT_SUBGRAPH_URL =
+// The Graph Studio has Access-Control-Allow-Origin: * — direct browser requests work fine.
+export const SUBGRAPH_URL =
   process.env.NEXT_PUBLIC_SUBGRAPH_URL ||
   'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3'
-
-export const SUBGRAPH_URL =
-  typeof window !== 'undefined' ? '/api/subgraph' : DIRECT_SUBGRAPH_URL
 
 export function createGraphClient() {
   return createClient({
