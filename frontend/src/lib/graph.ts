@@ -1,13 +1,10 @@
 import { createClient, cacheExchange, fetchExchange } from '@urql/core'
 
-// Browser: /api/subgraph proxy (same-origin, URL never baked into client bundle).
-// SSR: direct URL (relative paths don't work server-side).
-// To change subgraph version set SUBGRAPH_URL (no NEXT_PUBLIC_ prefix) in Vercel —
-// it's read at runtime by the proxy, no redeploy needed.
+// Browser always uses the /api/subgraph proxy — URL never baked into the client bundle.
+// SSR uses SUBGRAPH_URL env var (server-only, no NEXT_PUBLIC_ prefix).
+// To change subgraph version: update SUBGRAPH_URL in Vercel env vars, no code change needed.
 export const SUBGRAPH_URL =
-  typeof window !== 'undefined'
-    ? '/api/subgraph'
-    : 'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3'
+  typeof window !== 'undefined' ? '/api/subgraph' : (process.env.SUBGRAPH_URL ?? '')
 
 export function createGraphClient() {
   return createClient({

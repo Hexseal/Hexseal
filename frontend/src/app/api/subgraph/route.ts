@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 // SUBGRAPH_URL (no NEXT_PUBLIC_ prefix) is read at runtime on the server.
-// Update it in Vercel env vars to switch subgraph versions without redeploying code.
-// Do NOT use NEXT_PUBLIC_SUBGRAPH_URL here — NEXT_PUBLIC_ vars are baked into the
-// client bundle at build time and can't be changed without a full redeploy.
-const SUBGRAPH_URL =
-  process.env.SUBGRAPH_URL ||
-  'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3';
+// Set it in Vercel env vars — update to switch subgraph versions without redeploying.
+const SUBGRAPH_URL = process.env.SUBGRAPH_URL;
 
 export async function POST(req: NextRequest) {
+  if (!SUBGRAPH_URL) {
+    return NextResponse.json(
+      { errors: [{ message: 'SUBGRAPH_URL env var is not configured' }] },
+      { status: 503 },
+    );
+  }
+
   let body: string;
   try {
     body = await req.text();
