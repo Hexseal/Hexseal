@@ -616,10 +616,14 @@ export default function ExecutorBoardPage() {
     storeBoardRegion(v);
   };
 
-  const { services: pageServices, isLoading: loadingList, isFetching, hasMore } = useServices({
+  const { services: pageServices, isLoading: loadingList, isFetching, hasMore, error: svcError } = useServices({
     region: regionFilter ?? undefined,
     page,
   });
+
+  useEffect(() => {
+    if (svcError) console.error('[Board/executor] subgraph error:', svcError);
+  }, [svcError]);
 
   useEffect(() => {
     if (page === 0) {
@@ -861,6 +865,12 @@ export default function ExecutorBoardPage() {
           </div>
         )}
 
+        {svcError && (
+          <div className="mb-4 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+            Subgraph error: {svcError}
+          </div>
+        )}
+
         {loadingList ? (
           <div className="space-y-3">
             {[0, 1, 2, 3, 4].map(i => (
@@ -878,13 +888,23 @@ export default function ExecutorBoardPage() {
               <Briefcase className="w-6 h-6 text-white/20" />
             </div>
             <p className="text-white/40 text-sm mb-1">
-              {searchQuery ? t("board.services.no_results") : t("board.services.empty")}
+              {searchQuery
+                ? t("board.services.no_results")
+                : regionFilter !== null
+                  ? `No services in ${REGION_LABELS[regionFilter] ?? 'this region'} — try Global`
+                  : t("board.services.empty")}
             </p>
-            <Link href="/board/executor/post">
-              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60">
-                <Plus className="w-3.5 h-3.5 mr-1" />{t("board.post_service.submit_btn")}
+            {!searchQuery && regionFilter !== null ? (
+              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => handleRegionChange(null)}>
+                Show Global
               </Button>
-            </Link>
+            ) : !searchQuery && (
+              <Link href="/board/executor/post">
+                <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60">
+                  <Plus className="w-3.5 h-3.5 mr-1" />{t("board.post_service.submit_btn")}
+                </Button>
+              </Link>
+            )}
           </div>
         ) : (
           <>

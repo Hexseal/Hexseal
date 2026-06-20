@@ -370,10 +370,14 @@ export default function BoardPage() {
     storeBoardRegion(v);
   };
 
-  const { jobs: pageJobs, isLoading, isFetching, hasMore } = useJobs({
+  const { jobs: pageJobs, isLoading, isFetching, hasMore, error: jobsError } = useJobs({
     region: regionFilter ?? undefined,
     page,
   });
+
+  useEffect(() => {
+    if (jobsError) console.error('[Board] subgraph error:', jobsError);
+  }, [jobsError]);
 
   // Accumulate pages; reset when region changes
   useEffect(() => {
@@ -563,6 +567,12 @@ export default function BoardPage() {
           </div>
         )}
 
+        {jobsError && (
+          <div className="mb-4 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+            Subgraph error: {jobsError}
+          </div>
+        )}
+
         {isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -575,9 +585,17 @@ export default function BoardPage() {
               <Briefcase className="w-6 h-6 text-white/20" />
             </div>
             <p className="text-white/40 text-sm mb-1">
-              {searchQuery ? t("board.jobs.no_results") : t("board.jobs.empty")}
+              {searchQuery
+                ? t("board.jobs.no_results")
+                : regionFilter !== null
+                  ? `No jobs in ${REGION_LABELS[regionFilter] ?? 'this region'} — try Global`
+                  : t("board.jobs.empty")}
             </p>
-            {!searchQuery && (
+            {!searchQuery && regionFilter !== null ? (
+              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => handleRegionChange(null)}>
+                Show Global
+              </Button>
+            ) : !searchQuery && (
               <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => router.push("/board/client/post")}>
                 <Plus className="w-3.5 h-3.5 mr-1" />
                 {t("board.jobs.post_first")}
