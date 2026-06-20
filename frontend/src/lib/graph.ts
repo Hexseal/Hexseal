@@ -1,9 +1,13 @@
 import { createClient, cacheExchange, fetchExchange } from '@urql/core'
 
-// The Graph Studio has Access-Control-Allow-Origin: * — direct browser requests work fine.
-// Hardcoded: NEXT_PUBLIC_ vars are baked into the bundle at build time and can override
-// the fallback with a stale/wrong value if set incorrectly in Vercel.
-export const SUBGRAPH_URL = 'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3'
+// Browser: /api/subgraph proxy (same-origin, URL never baked into client bundle).
+// SSR: direct URL (relative paths don't work server-side).
+// To change subgraph version set SUBGRAPH_URL (no NEXT_PUBLIC_ prefix) in Vercel —
+// it's read at runtime by the proxy, no redeploy needed.
+export const SUBGRAPH_URL =
+  typeof window !== 'undefined'
+    ? '/api/subgraph'
+    : 'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3'
 
 export function createGraphClient() {
   return createClient({
