@@ -1,9 +1,9 @@
 import { createClient, cacheExchange, fetchExchange } from '@urql/core'
 
 // The Graph Studio has Access-Control-Allow-Origin: * — direct browser requests work fine.
-export const SUBGRAPH_URL =
-  process.env.NEXT_PUBLIC_SUBGRAPH_URL ||
-  'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3'
+// Hardcoded: NEXT_PUBLIC_ vars are baked into the bundle at build time and can override
+// the fallback with a stale/wrong value if set incorrectly in Vercel.
+export const SUBGRAPH_URL = 'https://api.studio.thegraph.com/query/1755241/hexseal/v0.0.3'
 
 export function createGraphClient() {
   return createClient({
