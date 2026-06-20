@@ -14,6 +14,8 @@ export function createGraphClient() {
     url: SUBGRAPH_URL,
     exchanges: [cacheExchange, fetchExchange],
     requestPolicy: 'cache-and-network',
+    // urql v6 defaults to GET ('within-url-limit') — our proxy only handles POST
+    preferGetMethod: false,
   })
 }
 
