@@ -437,6 +437,18 @@ contract ArbiterRegistryFacet {
         }
     }
 
+    /// @notice Аварийная очистка застрявшего pending verdict.
+    /// Возникает когда triggerArbiterTimeout исполняет Agreement до finalizeVerdict —
+    /// Agreement уходит в REFUNDED, а pendingVerdicts остаётся висеть навечно.
+    function clearStuckVerdict(address agreement) external {
+        if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
+        // Убеждаемся что Agreement уже в терминальном состоянии (не DISPUTED = 4)
+        (bool ok, bytes memory st) = agreement.staticcall(abi.encodeWithSignature("status()"));
+        require(ok, "ArbiterRegistry: status read failed");
+        require(abi.decode(st, (uint8)) != 4, "ArbiterRegistry: agreement still disputed");
+        delete ArbiterRegistryStorage.data().pendingVerdicts[agreement];
+    }
+
     // -------- VIEWS --------
 
     function isDaoActive() public view returns (bool) {

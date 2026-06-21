@@ -119,7 +119,7 @@ contract DiamondTest is Test {
         ownerSelectors[1] = OwnershipFacet.owner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](32);
+        bytes4[] memory arbiterSelectors = new bytes4[](33);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -153,6 +153,7 @@ contract DiamondTest is Test {
         arbiterSelectors[29] = ArbiterRegistryFacet.getVaultBalance.selector;
         arbiterSelectors[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         arbiterSelectors[31] = ArbiterRegistryFacet.getDAOAddress.selector;
+        arbiterSelectors[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
 
         IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](6);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet), IDiamondCut.FacetCutAction.Add, registrySelectors);

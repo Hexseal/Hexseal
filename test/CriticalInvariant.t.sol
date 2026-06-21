@@ -169,7 +169,7 @@ contract CriticalInvariantTest is Test {
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
 
         // ---- ArbiterRegistryFacet selectors (13) ----
-        bytes4[] memory arbSels = new bytes4[](32);
+        bytes4[] memory arbSels = new bytes4[](33);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -202,6 +202,7 @@ contract CriticalInvariantTest is Test {
         arbSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
         arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
+        arbSels[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
 
         // ---- Infrastructure selectors ----
         bytes4[] memory cutSels = new bytes4[](1);

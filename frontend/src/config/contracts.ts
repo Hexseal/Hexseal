@@ -1748,6 +1748,13 @@ export const ARBITER_REGISTRY_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'clearStuckVerdict',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
   // V3 — events
   {
     anonymous: false,

@@ -125,7 +125,7 @@ contract ExtrasTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = FactoryFacet.setProtocolArbiter.selector;
 
-        bytes4[] memory arbSels = new bytes4[](32);
+        bytes4[] memory arbSels = new bytes4[](33);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -158,6 +158,7 @@ contract ExtrasTest is Test {
         arbSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
         arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
+        arbSels[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
 
         bytes4[] memory cutSels   = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
