@@ -63,6 +63,32 @@ export const OPEN_SERVICES_QUERY = `
   }
 `
 
+export const MY_JOBS_QUERY = `
+  query MyJobs($client: Bytes!) {
+    jobs(where: { client: $client }, first: 100, orderBy: createdAt, orderDirection: desc) {
+      id
+      title
+      amount
+      deadlineDays
+      status
+      createdAt
+    }
+  }
+`
+
+export const MY_SERVICES_QUERY = `
+  query MyServices($executor: Bytes!) {
+    services(where: { executor: $executor }, first: 100, orderBy: createdAt, orderDirection: desc) {
+      id
+      title
+      price
+      deadlineDays
+      status
+      createdAt
+    }
+  }
+`
+
 export const MY_AGREEMENTS_QUERY = `
   query MyAgreements($client: Bytes!, $executor: Bytes!) {
     asClient: agreements(where: { client: $client }) {

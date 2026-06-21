@@ -8,10 +8,12 @@ import {
   Loader2, Activity, CheckCircle,
   DollarSign, Star, Zap,
 } from 'lucide-react';
-import { DealSearch } from '@/components/DealSearch';
+import { DashboardSearch } from '@/components/DashboardSearch';
 import { DealCard, type AgreementRecord } from './components/DealCard';
 import { MyJobs, MyServices, MyClientRequests } from './components/MyListings';
 import { useTranslations } from 'next-intl';
+import { useMyJobs } from '@/hooks/useMyJobs';
+import { useMyServices } from '@/hooks/useMyServices';
 import { calcXP } from '@/lib/xp';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -120,6 +122,8 @@ export default function DashboardPage() {
   const t = useTranslations();
 
   const { agreements: rawAgreements, isLoading } = useMyAgreements(address);
+  const { jobs: mySearchJobs }     = useMyJobs(address);
+  const { services: mySearchSvcs } = useMyServices(address);
   const allAgreements = rawAgreements.map(toAgreementRecord);
   const refetch = () => {};
 
@@ -200,6 +204,13 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
+        {/* ── Unified search ── */}
+        <DashboardSearch
+          agreements={rawAgreements}
+          jobs={mySearchJobs}
+          services={mySearchSvcs}
+        />
+
         {/* ── Tabs ── */}
         <div>
           <div className="flex gap-1 overflow-x-auto scrollbar-none mb-4">
@@ -272,7 +283,6 @@ export default function DashboardPage() {
 
                 {tab === 'deals' && (
                   <>
-                    <DealSearch />
                     {activeDeals.length === 0 ? (
                       <div className="text-center py-10">
                         <div className="float-icon">
@@ -282,7 +292,7 @@ export default function DashboardPage() {
                         <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
                       </div>
                     ) : (
-                    <div className="space-y-3 mt-3">
+                    <div className="space-y-3">
                       {activeDeals.map((a, index) => (
                         <div
                           key={a.agreement}
