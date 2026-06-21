@@ -12,11 +12,28 @@ export const AGMT = {
   REFUNDED:  6, // TimedOut or ArbiterTimedOut
 } as const;
 
-type DealRecord = { amount: bigint; status: number };
+// Anti-gaming: win XP requires deal >= $10 USDC, capped at 3 wins per unique counterparty pair
+const MIN_WIN_AMOUNT    = 10_000_000n; // 10 USDC (6 decimals)
+const MAX_WINS_PER_PAIR = 3;
 
-// +100 per win (COMPLETED or RESOLVED), +1 per $10 USDC volume (capped 300), -30 per refund
+type DealRecord = { amount: bigint; status: number; pairKey?: string };
+
+// +100 per qualifying win, +1 per $10 USDC volume (capped 300), -30 per refund
 export function calcXP(deals: DealRecord[]): number {
-  const wins     = deals.filter(d => d.status === AGMT.COMPLETED || d.status === AGMT.RESOLVED).length;
+  const pairWins = new Map<string, number>();
+  let wins = 0;
+
+  for (const d of deals) {
+    if (d.status !== AGMT.COMPLETED && d.status !== AGMT.RESOLVED) continue;
+    if (BigInt(d.amount) < MIN_WIN_AMOUNT) continue;
+    if (d.pairKey !== undefined) {
+      const count = pairWins.get(d.pairKey) ?? 0;
+      if (count >= MAX_WINS_PER_PAIR) continue;
+      pairWins.set(d.pairKey, count + 1);
+    }
+    wins++;
+  }
+
   const refunded = deals.filter(d => d.status === AGMT.REFUNDED).length;
   const volume   = deals.reduce((s, d) => s + Number(d.amount), 0);
   const volumeXP = Math.min(Math.floor(volume / 10_000_000), 300);

@@ -184,7 +184,11 @@ export default function ProfilePage() {
   // Chain returns Registry 5-state enum: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
   // calcXP expects Agreement.sol 7-state enum — map before calling
   const REG_TO_AGMT = [2, 3, 6, 4, 5] as const; // index = reg status, value = agmt status
-  const dealsForXP  = allDeals.map(d => ({ ...d, status: REG_TO_AGMT[d.status] ?? 2 }));
+  const dealsForXP  = allDeals.map(d => ({
+    ...d,
+    status:  REG_TO_AGMT[d.status] ?? 2,
+    pairKey: [d.client, d.executor].map(s => s.toLowerCase()).sort().join(':'),
+  }));
 
   const completedDeals  = allDeals.filter(d => d.status === 1 || d.status === 4).length; // COMPLETED or RESOLVED
   const activeDeals     = allDeals.filter(d => d.status === 0 || d.status === 3).length; // ACTIVE or DISPUTED

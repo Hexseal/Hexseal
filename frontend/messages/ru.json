@@ -155,6 +155,8 @@
     "messages": "Сообщения",
     "settings": "Настройки",
     "arbiter_panel": "Панель арбитра",
+    "become_arbiter": "Стать арбитром",
+    "applying_arbiter": "Отправка...",
     "admin_panel": "Панель администратора",
     "how_it_works": "Как это работает",
     "disconnect": "Отключить",

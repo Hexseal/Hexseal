@@ -1599,4 +1599,91 @@ export const ARBITER_REGISTRY_ABI = [
     name: 'DisputeReleased',
     type: 'event',
   },
+  // DAO mode
+  {
+    inputs: [],
+    name: 'activateDAO',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'applyAsArbiter',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'isDaoActive',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getMinXPToRegister',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getDaoThreshold',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
+
+export const REPUTATION_ABI = [
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'claimXP',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'addr', type: 'address' }],
+    name: 'getXP',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getUniqueActiveUsers',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'address', name: 'agreement', type: 'address' },
+      { internalType: 'address', name: 'claimant', type: 'address' },
+    ],
+    name: 'hasClaimed',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'isDealWin',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'address', name: 'agreement', type: 'address' },
+      { indexed: true, internalType: 'address', name: 'claimant', type: 'address' },
+      { indexed: false, internalType: 'uint256', name: 'xpGained', type: 'uint256' },
+    ],
+    name: 'XPClaimed',
+    type: 'event',
+  },
 ] as const;

@@ -155,6 +155,8 @@
     "messages": "Messages",
     "settings": "Settings",
     "arbiter_panel": "Arbiter Panel",
+    "become_arbiter": "Become Arbiter",
+    "applying_arbiter": "Submitting...",
     "admin_panel": "Admin Panel",
     "how_it_works": "How it works",
     "disconnect": "Disconnect",

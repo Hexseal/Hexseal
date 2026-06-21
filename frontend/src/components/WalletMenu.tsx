@@ -4,10 +4,10 @@ import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract } from "wagmi";
+import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract, useWriteContract } from "wagmi";
 import { appChainId } from "@/config/chain";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { CONTRACTS, ARBITER_REGISTRY_ABI, DIAMOND_ABI } from "@/config/contracts";
+import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from "@/config/contracts";
 import type { Abi } from "viem";
 import { fetchProfile } from "@/lib/profiles-ipfs";
 import {
@@ -18,7 +18,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, HelpCircle, Globe, ChevronRight } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -80,6 +80,35 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
     args: [address ?? "0x0000000000000000000000000000000000000000"],
     query: { enabled: !!address },
   }) as { data: boolean | undefined };
+
+  // DAO active check
+  const { data: daoActive } = useReadContract({
+    address: CONTRACTS.diamond,
+    abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "isDaoActive",
+    query: { enabled: !!address },
+  }) as { data: boolean | undefined };
+
+  // On-chain XP
+  const { data: onchainXP } = useReadContract({
+    address: CONTRACTS.diamond,
+    abi: REPUTATION_ABI as Abi,
+    functionName: "getXP",
+    args: [address ?? "0x0000000000000000000000000000000000000000"],
+    query: { enabled: !!address },
+  }) as { data: bigint | undefined };
+
+  const { writeContract: applyAsArbiterWrite, isPending: applyPending } = useWriteContract();
+
+  const canApplyAsArbiter = daoActive && !isArbiter && !!onchainXP && onchainXP >= 3000n;
+
+  const handleApplyAsArbiter = () => {
+    applyAsArbiterWrite({
+      address: CONTRACTS.diamond,
+      abi: ARBITER_REGISTRY_ABI as Abi,
+      functionName: "applyAsArbiter",
+    });
+  };
 
   // Owner check
   const { data: diamondOwner } = useReadContract({
@@ -297,7 +326,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         )}
 
         {/* ── Role-specific ── */}
-        {(isArbiter || isOwner) && (
+        {(isArbiter || isOwner || canApplyAsArbiter) && (
           <>
             <div className="h-px bg-white/[0.06]" />
             <div className="p-1">
@@ -307,6 +336,16 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
                     <Shield className="w-3.5 h-3.5" />
                     {t("wallet.arbiter_panel")}
                   </Link>
+                </DropdownMenuItem>
+              )}
+              {canApplyAsArbiter && (
+                <DropdownMenuItem
+                  onClick={handleApplyAsArbiter}
+                  disabled={applyPending}
+                  className="flex items-center gap-2.5 cursor-pointer text-emerald-400 focus:text-emerald-400 disabled:opacity-50"
+                >
+                  <ShieldPlus className="w-3.5 h-3.5" />
+                  {applyPending ? t("wallet.applying_arbiter") : t("wallet.become_arbiter")}
                 </DropdownMenuItem>
               )}
               {isOwner && (

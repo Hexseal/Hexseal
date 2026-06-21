@@ -142,7 +142,10 @@ export default function DashboardPage() {
   const historyDeals = allAgreements.filter(d => [3, 5, 6].includes(d.status));
   const completed    = allAgreements.filter(d => d.status === 3 || d.status === 5).length;
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
-  const xp           = calcXP(allAgreements);
+  const xp           = calcXP(allAgreements.map(d => ({
+    ...d,
+    pairKey: [d.client, d.executor].map(s => s.toLowerCase()).sort().join(':'),
+  })));
   const level        = xpLevel(xp);
 
   if (status === 'reconnecting' || status === 'connecting') return null;

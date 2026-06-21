@@ -11,8 +11,9 @@ pragma solidity ^0.8.20;
 // - ERC-2771: арбитры могут клеймить без ETH (через relay)
 // ============================================================
 
-import "../../src/FactoryFacet.sol"; // для FactoryStorage (trustedForwarder) и OwnershipLib
-import "../../src/DiamondProxy.sol";  // для OwnershipLib
+import "../../src/FactoryFacet.sol";         // для FactoryStorage (trustedForwarder) и OwnershipLib
+import "../../src/DiamondProxy.sol";          // для OwnershipLib
+import "../../src/facets/ReputationFacet.sol"; // для ReputationStorage (XP + uniqueActiveUsers)
 
 // ---------- AGREEMENT INTERFACE ----------
 
@@ -41,6 +42,9 @@ library ArbiterRegistryStorage {
         mapping(bytes32 => uint256) claimCommitments;
         // chief arbiter — trusted role with same add/remove rights as owner
         address chiefArbiter;
+        // DAO mode: owner может включить вручную, либо включается автоматически
+        // когда uniqueActiveUsers >= DAO_THRESHOLD
+        bool daoActiveManual;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -55,7 +59,9 @@ contract ArbiterRegistryFacet {
 
     // -------- CONSTANTS --------
 
-    uint256 private constant COMMIT_MAX_BLOCKS = 50; // commitment expires after 50 blocks (~100s on Base)
+    uint256 private constant COMMIT_MAX_BLOCKS  = 50;      // commitment expires after 50 blocks (~100s on Base)
+    uint256 private constant DAO_THRESHOLD      = 100_000; // uniqueActiveUsers для авто-включения DAO
+    uint256 private constant MIN_XP_TO_REGISTER = 3_000;   // ~30 завершённых сделок с разными людьми
 
     // -------- EVENTS --------
 
@@ -65,6 +71,8 @@ contract ArbiterRegistryFacet {
     event DisputeClaimCommitted(address indexed arbiter, bytes32 indexed commitment);
     event DisputeClaimed(address indexed agreement, address indexed arbiter);
     event DisputeReleased(address indexed agreement, address indexed prevArbiter);
+    event DAOActivated(address indexed by);
+    event ArbiterApplied(address indexed arbiter);
 
     // -------- ERRORS --------
 
@@ -80,6 +88,8 @@ contract ArbiterRegistryFacet {
     error CommitmentNotFound();
     error CommitmentTooEarly();
     error CommitmentExpired();
+    error DAONotActive();
+    error InsufficientXP(uint256 have, uint256 need);
 
     // -------- MODIFIERS --------
 
@@ -107,6 +117,34 @@ contract ArbiterRegistryFacet {
         } else {
             sender = msg.sender;
         }
+    }
+
+    // -------- DAO MODE --------
+
+    /// @notice Owner вручную активирует DAO-режим. Нельзя отменить.
+    /// DAO также включается автоматически когда uniqueActiveUsers >= DAO_THRESHOLD.
+    function activateDAO() external onlyOwner {
+        ArbiterRegistryStorage.data().daoActiveManual = true;
+        emit DAOActivated(msg.sender);
+    }
+
+    /// @notice Самостоятельная регистрация арбитром через DAO.
+    /// Требует: daoActive == true, XP >= 1000, ещё не арбитр.
+    function applyAsArbiter() external {
+        if (!isDaoActive()) revert DAONotActive();
+
+        address caller = _msgSender();
+        uint256 xp = ReputationStorage.data().xp[caller];
+        if (xp < MIN_XP_TO_REGISTER) revert InsufficientXP(xp, MIN_XP_TO_REGISTER);
+
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (d.isArbiter[caller]) revert AlreadyArbiter();
+
+        d.isArbiter[caller] = true;
+        d.arbiterList.push(caller);
+
+        emit ArbiterAdded(caller);
+        emit ArbiterApplied(caller);
     }
 
     // -------- ADMIN: MANAGE ARBITERS --------
@@ -237,6 +275,20 @@ contract ArbiterRegistryFacet {
 
     function getChiefArbiter() external view returns (address) {
         return ArbiterRegistryStorage.data().chiefArbiter;
+    }
+
+    /// @notice DAO активен если: owner вручную включил ИЛИ uniqueActiveUsers >= 10,000
+    function isDaoActive() public view returns (bool) {
+        if (ArbiterRegistryStorage.data().daoActiveManual) return true;
+        return ReputationStorage.data().uniqueActiveUsers >= DAO_THRESHOLD;
+    }
+
+    function getMinXPToRegister() external pure returns (uint256) {
+        return MIN_XP_TO_REGISTER;
+    }
+
+    function getDaoThreshold() external pure returns (uint256) {
+        return DAO_THRESHOLD;
     }
 
     function isRegisteredArbiter(address addr) external view returns (bool) {
