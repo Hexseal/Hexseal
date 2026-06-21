@@ -68,10 +68,10 @@ function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-const SERVICE_STATUS: Record<number, { label: string; icon: React.ReactNode; cls: string }> = {
-  0: { label: 'Active',  icon: <Zap className="w-3 h-3" />,   cls: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20' },
-  1: { label: 'Paused',  icon: <Pause className="w-3 h-3" />, cls: 'bg-amber-400/10 text-amber-400 border-amber-400/20' },
-  2: { label: 'Removed', icon: <XCircle className="w-3 h-3" />, cls: 'bg-white/5 text-white/40 border-white/10' },
+const SERVICE_STATUS: Record<number, { label: string; icon: React.ReactNode; cls: string; dot: string; textCls: string }> = {
+  0: { label: 'Active',  icon: <Zap className="w-3 h-3" />,     cls: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20', dot: 'bg-emerald-400',   textCls: 'text-emerald-400/80' },
+  1: { label: 'Paused',  icon: <Pause className="w-3 h-3" />,   cls: 'bg-amber-400/10 text-amber-400 border-amber-400/20',      dot: 'bg-amber-400',     textCls: 'text-amber-400/80' },
+  2: { label: 'Removed', icon: <XCircle className="w-3 h-3" />, cls: 'bg-white/5 text-white/40 border-white/10',               dot: 'bg-white/[0.15]',  textCls: 'text-white/30' },
 };
 
 const REQUEST_STATUS: Record<number, { label: string; cls: string }> = {
@@ -81,10 +81,10 @@ const REQUEST_STATUS: Record<number, { label: string; cls: string }> = {
   3: { label: 'Cancelled', cls: 'bg-white/5 text-white/40 border-white/10' },
 };
 
-const JOB_STATUS: Record<number, { label: string; icon: React.ReactNode; cls: string }> = {
-  0: { label: 'Open',      icon: <Clock className="w-3 h-3" />,       cls: 'bg-sky-400/10 text-sky-400 border-sky-400/20' },
-  1: { label: 'Accepted',  icon: <CheckCircle className="w-3 h-3" />, cls: 'bg-green-400/10 text-green-400 border-green-400/20' },
-  2: { label: 'Cancelled', icon: <XCircle className="w-3 h-3" />,     cls: 'bg-white/5 text-white/40 border-white/10' },
+const JOB_STATUS: Record<number, { label: string; icon: React.ReactNode; cls: string; dot: string; textCls: string }> = {
+  0: { label: 'Open',      icon: <Clock className="w-3 h-3" />,       cls: 'bg-sky-400/10 text-sky-400 border-sky-400/20',       dot: 'bg-emerald-400',   textCls: 'text-emerald-400/80' },
+  1: { label: 'Accepted',  icon: <CheckCircle className="w-3 h-3" />, cls: 'bg-green-400/10 text-green-400 border-green-400/20', dot: 'bg-violet-400',    textCls: 'text-violet-400/80' },
+  2: { label: 'Cancelled', icon: <XCircle className="w-3 h-3" />,     cls: 'bg-white/5 text-white/40 border-white/10',          dot: 'bg-white/[0.15]',  textCls: 'text-white/30' },
 };
 
 // ── Edit Listing Modal ──────────────────────────────────────────────────────
@@ -288,21 +288,26 @@ function ServiceCard({
     >
       <div className="px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium ${s.cls}`}>
-              {s.icon}{s.label}
-            </span>
-            {pendingCount > 0 && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium bg-violet-400/10 text-violet-400 border-violet-400/20">
-                <Inbox className="w-3 h-3" />{pendingCount} request{pendingCount !== 1 ? 's' : ''}
-              </span>
+          <p className="text-[13px] font-semibold text-white/90 truncate leading-snug mb-1">{service.title}</p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
+            <span className={`text-[11px] font-medium ${s.textCls}`}>{s.label}</span>
+            <span className="text-[11px] text-white/15 select-none">·</span>
+            <span className="text-[11px] font-mono text-white/55">{fmt(service.price)} USDC</span>
+            <span className="text-[11px] text-white/15 select-none">·</span>
+            <span className="text-[11px] text-white/35">{Number(service.deadlineDays)}d</span>
+            {Number(service.hiresCount) > 0 && (
+              <>
+                <span className="text-[11px] text-white/15 select-none">·</span>
+                <span className="text-[11px] text-white/35">{Number(service.hiresCount)} hire{Number(service.hiresCount) !== 1 ? 's' : ''}</span>
+              </>
             )}
-            <span className="text-sm font-semibold text-white/90 truncate">{service.title}</span>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-white/35">
-            <span className="font-mono font-semibold text-white/60">{fmt(service.price)} USDC</span>
-            <span>{Number(service.deadlineDays)}d deadline</span>
-            <span className="flex items-center gap-1"><Users className="w-3 h-3" />{Number(service.hiresCount)} hires</span>
+            {pendingCount > 0 && (
+              <>
+                <span className="text-[11px] text-white/15 select-none">·</span>
+                <span className="text-[11px] font-medium text-violet-400/80">{pendingCount} request{pendingCount !== 1 ? 's' : ''}</span>
+              </>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
@@ -776,25 +781,28 @@ function JobCard({
     >
       <div className="px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium ${s.cls}`}>
-              {s.icon}{s.label}
-            </span>
+          <p className="text-[13px] font-semibold text-white/90 truncate leading-snug mb-1">{job.title}</p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
+            <span className={`text-[11px] font-medium ${s.textCls}`}>{s.label}</span>
+            <span className="text-[11px] text-white/15 select-none">·</span>
+            <span className="text-[11px] font-mono text-white/55">{fmt(job.amount)} USDC</span>
+            <span className="text-[11px] text-white/15 select-none">·</span>
+            <span className="text-[11px] text-white/35">{Number(job.deadlineDays)}d</span>
             {job.status === 0 && count > 0 && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium bg-violet-400/10 text-violet-400 border-violet-400/20">
-                <Users className="w-3 h-3" />{count} applicant{count !== 1 ? 's' : ''}
-              </span>
+              <>
+                <span className="text-[11px] text-white/15 select-none">·</span>
+                <span className="text-[11px] font-medium text-violet-400/80">{count} applicant{count !== 1 ? 's' : ''}</span>
+              </>
             )}
-            <span className="text-sm font-semibold text-white/90 truncate">{job.title}</span>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-white/35">
-            <span className="font-mono font-semibold text-white/60">{fmt(job.amount)} USDC</span>
-            <span>{Number(job.deadlineDays)}d deadline</span>
             {job.status === 1 && job.agreement !== '0x0000000000000000000000000000000000000000' && (
-              <Link href={`/deal/${job.agreement}`} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}
-                className="flex items-center gap-1 text-violet-400/70 hover:text-violet-400 transition-colors">
-                <ExternalLink className="w-3 h-3" />Deal
-              </Link>
+              <>
+                <span className="text-[11px] text-white/15 select-none">·</span>
+                <Link href={`/deal/${job.agreement}`} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}
+                  className="text-[11px] text-violet-400/70 hover:text-violet-400 flex items-center gap-0.5 transition-colors">
+                  <ExternalLink className="w-2.5 h-2.5" />Deal
+                </Link>
+              </>
             )}
           </div>
         </div>
@@ -837,7 +845,7 @@ function JobCard({
               <div className="space-y-1.5">
                 {applicants!.map(addr => (
                   <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2">
-                    <span className="text-xs font-mono text-white/60">{addr}</span>
+                    <span className="text-xs font-mono text-white/60 min-w-0 truncate">{shortAddr(addr)}</span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <Link href={`/chat/${addr}`}>
                         <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-primary">Chat</Button>

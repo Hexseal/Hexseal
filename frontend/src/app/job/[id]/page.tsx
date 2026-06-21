@@ -220,49 +220,21 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       {/* Header */}
       <div>
         <div className="container mx-auto px-4 pt-4 pb-3 max-w-4xl">
-<div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className="text-xs font-mono text-white/30">#{id}</span>
-                <Badge className={`text-xs border font-medium ${statusInfo.color}`}>
-                  {statusInfo.label}
-                </Badge>
-                {catKey && (
-                  <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
-                    {t(`categories.${catKey}`)}
-                  </span>
-                )}
-              </div>
-              <h1 className="text-2xl font-bold font-syne leading-tight">
-                {job.title || `Job #${id}`}
-              </h1>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {isClient && (
-                <Link href={`/job/${id}/receipt`}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-white/30 hover:text-white/70 hover:bg-white/5 gap-1"
-                  >
-                    <Receipt className="w-3.5 h-3.5" />
-                    Receipt
-                  </Button>
-                </Link>
-              )}
-              {isClient && job.status === 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleCancel}
-                  disabled={isBusy}
-                  className="text-red-400/60 hover:text-red-400 hover:bg-red-400/10"
-                >
-                  <XCircle className="w-4 h-4 mr-1" />
-                  Cancel
-                </Button>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="text-xs font-mono text-white/30">#{id}</span>
+              <Badge className={`text-xs border font-medium ${statusInfo.color}`}>
+                {statusInfo.label}
+              </Badge>
+              {catKey && (
+                <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                  {t(`categories.${catKey}`)}
+                </span>
               )}
             </div>
+            <h1 className="text-2xl font-bold font-syne leading-tight">
+              {job.title || `Job #${id}`}
+            </h1>
           </div>
         </div>
       </div>
@@ -430,6 +402,24 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 <span className="truncate">{job.agreement}</span>
                 <ExternalLink className="w-3 h-3 flex-shrink-0" />
               </Link>
+            </div>
+          )}
+
+          {isClient && (
+            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/8">
+              <Link href={`/job/${id}/receipt`}>
+                <Button variant="ghost" size="sm" className="gap-1.5 text-white/40 hover:text-white/70 hover:bg-white/5">
+                  <Receipt className="w-3.5 h-3.5" />
+                  Receipt
+                </Button>
+              </Link>
+              {job.status === 0 && (
+                <Button variant="ghost" size="sm" onClick={handleCancel} disabled={isBusy}
+                  className="gap-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-400/10">
+                  {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
+                  Cancel Job
+                </Button>
+              )}
             </div>
           )}
         </div>

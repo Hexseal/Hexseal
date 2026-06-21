@@ -124,6 +124,7 @@ const sectionItem = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 type TabKey = 'listings' | 'deals' | 'history';
+type ListingsSub = 'jobs' | 'services' | 'requests';
 
 function toAgreementRecord(a: GraphAgreement): AgreementRecord {
   return {
@@ -140,6 +141,7 @@ function toAgreementRecord(a: GraphAgreement): AgreementRecord {
 export default function DashboardPage() {
   const { address, isConnected, status } = useAccount();
   const [tab, setTab] = useState<TabKey>('listings');
+  const [listingsSub, setListingsSub] = useState<ListingsSub>('jobs');
   const t = useTranslations();
 
   const { agreements: rawAgreements, isLoading } = useMyAgreements(address);
@@ -172,7 +174,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="mx-auto px-4 py-5 max-w-6xl space-y-4">
+    <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
 
         {/* ── XMTP setup banner ── */}
         <MessagingSetup />
@@ -263,25 +265,40 @@ export default function DashboardPage() {
                 transition={{ type: 'tween', duration: 0.15, ease: 'easeOut' }}
               >
                 {tab === 'listings' && (
-                  <motion.div
-                    variants={sectionContainer}
-                    initial="hidden"
-                    animate="show"
-                    className="space-y-6"
-                  >
-                    <motion.section variants={sectionItem}>
-                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-3">{t("dashboard.section_job_postings")}</p>
-                      <MyJobs address={address!} onDealCreated={refetch} />
-                    </motion.section>
-                    <motion.section variants={sectionItem}>
-                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-3">{t("nav.services")}</p>
-                      <MyServices address={address!} onDealCreated={refetch} />
-                    </motion.section>
-                    <motion.section variants={sectionItem}>
-                      <p className="text-xs text-white/30 uppercase tracking-wider font-semibold mb-3">{t("dashboard.section_service_requests")}</p>
-                      <MyClientRequests address={address!} />
-                    </motion.section>
-                  </motion.div>
+                  <div>
+                    <div className="flex border-b border-white/[0.07] mb-5 -mx-0.5">
+                      {([
+                        ['jobs',     t('dashboard.section_job_postings')],
+                        ['services', t('nav.services')],
+                        ['requests', t('dashboard.section_service_requests')],
+                      ] as [ListingsSub, string][]).map(([key, label]) => (
+                        <button
+                          key={key}
+                          onClick={() => setListingsSub(key)}
+                          className={`px-3 pb-2.5 text-[11px] font-semibold tracking-widest uppercase border-b-2 -mb-px transition-colors ${
+                            listingsSub === key
+                              ? 'border-white/40 text-white/70'
+                              : 'border-transparent text-white/25 hover:text-white/45'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.div
+                        key={listingsSub}
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -3 }}
+                        transition={{ type: 'tween', duration: 0.13 }}
+                      >
+                        {listingsSub === 'jobs'     && <MyJobs address={address!} onDealCreated={refetch} />}
+                        {listingsSub === 'services' && <MyServices address={address!} onDealCreated={refetch} />}
+                        {listingsSub === 'requests' && <MyClientRequests address={address!} />}
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
                 )}
 
                 {tab === 'deals' && (
