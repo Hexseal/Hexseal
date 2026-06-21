@@ -478,3 +478,10 @@ a {
   50%       { transform: translateY(-5px); }
 }
 .float-icon { animation: float-y 2.4s ease-in-out infinite; }
+
+/* Card stagger entrance — CSS only, compositor thread */
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.card-enter { animation: card-enter 0.22s ease-out both; }

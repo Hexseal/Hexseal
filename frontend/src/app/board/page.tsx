@@ -178,8 +178,7 @@ function JobCard({
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-40px" }}
       transition={{ duration: 0.28, delay: cappedDelay, ease: [0.25, 0.46, 0.45, 0.94] }}
-      whileHover={{ scale: 1.004 }}
-      whileTap={{ scale: 0.993 }}
+      className="active:scale-[0.993] transition-transform duration-100"
       style={{ transformOrigin: "center" }}
     >
       <div
@@ -515,7 +514,7 @@ export default function BoardPage() {
           className="flex overflow-x-auto gap-1.5 mb-5 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <motion.button
-            whileTap={{ scale: 0.975 }}
+            className="active:scale-[0.975] transition-transform duration-75"
             onClick={() => setCategoryFilter(null)}
             className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
               categoryFilter === null
@@ -528,7 +527,7 @@ export default function BoardPage() {
           {CATEGORIES.map(({ key, badge }) => (
             <motion.button
               key={key}
-              whileTap={{ scale: 0.975 }}
+              className="active:scale-[0.975] transition-transform duration-75"
               onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
               className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
                 categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"

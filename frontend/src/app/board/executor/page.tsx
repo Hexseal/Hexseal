@@ -874,11 +874,10 @@ export default function ExecutorBoardPage() {
         {loadingList ? (
           <div className="space-y-3">
             {[0, 1, 2, 3, 4].map(i => (
-              <motion.div
+              <div
                 key={i}
-                className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[80px]"
-                animate={{ opacity: [0.4, 0.8, 0.4] }}
-                transition={{ delay: i * 0.07, duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] min-h-[80px]"
+                style={{ animationDelay: `${i * 0.07}s` }}
               />
             ))}
           </div>
@@ -918,8 +917,7 @@ export default function ExecutorBoardPage() {
                     exit={{ opacity: 0, scale: 0.97 }}
                     viewport={{ once: true, margin: "-40px" }}
                     transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    whileHover={{ scale: 1.004 }}
-                    whileTap={{ scale: 0.993 }}
+                    className="active:scale-[0.993] transition-transform duration-100"
                   >
                     <ServiceCard
                       service={svc}

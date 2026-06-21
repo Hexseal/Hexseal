@@ -618,23 +618,24 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
     <div className="space-y-3">
       {active.length > 0 && (
         <div className="space-y-3">
-          {active.map(({ id, svc }) => {
+          {active.map(({ id, svc }, index) => {
             const pending = pendingMap.get(id.toString()) ?? { ids: [], reqs: [] };
             return (
-              <ServiceCard
-                key={id.toString()}
-                serviceId={id}
-                service={svc}
-                pendingIds={pending.ids}
-                pendingReqs={pending.reqs}
-                busyId={busyId}
-                onPause={() => handleServiceAction(id, 'pauseService')}
-                onUnpause={() => handleServiceAction(id, 'unpauseService')}
-                onRemove={() => handleServiceAction(id, 'removeService')}
-                onAccept={(rid, req) => setConfirmReq({ requestId: rid, client: req.client, amount: req.amount, deadlineDays: req.deadlineDays })}
-                onReject={handleReject}
-                onEdit={() => setEditTarget({ kind: 'service', id, title: svc.title, description: svc.description, amount: svc.price, deadlineDays: svc.deadlineDays, region: svc.region })}
-              />
+              <div key={id.toString()} className="card-enter" style={{ animationDelay: `${index * 0.04}s` }}>
+                <ServiceCard
+                  serviceId={id}
+                  service={svc}
+                  pendingIds={pending.ids}
+                  pendingReqs={pending.reqs}
+                  busyId={busyId}
+                  onPause={() => handleServiceAction(id, 'pauseService')}
+                  onUnpause={() => handleServiceAction(id, 'unpauseService')}
+                  onRemove={() => handleServiceAction(id, 'removeService')}
+                  onAccept={(rid, req) => setConfirmReq({ requestId: rid, client: req.client, amount: req.amount, deadlineDays: req.deadlineDays })}
+                  onReject={handleReject}
+                  onEdit={() => setEditTarget({ kind: 'service', id, title: svc.title, description: svc.description, amount: svc.price, deadlineDays: svc.deadlineDays, region: svc.region })}
+                />
+              </div>
             );
           })}
         </div>
@@ -1021,17 +1022,18 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
     <div className="space-y-3">
       {active.length > 0 && (
         <div className="space-y-3">
-          {active.map(({ id, job }) => (
-            <JobCard
-              key={id.toString()}
-              jobId={id}
-              job={job}
-              applicants={applicantsMap.get(id.toString())}
-              onCancel={() => handleCancel(id)}
-              onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
-              onEdit={() => setEditTarget({ kind: 'job', id, title: job.title, description: job.description, amount: job.amount, deadlineDays: job.deadlineDays, region: job.region, termsHash: job.termsHash })}
-              busy={busyJobId === id.toString()}
-            />
+          {active.map(({ id, job }, index) => (
+            <div key={id.toString()} className="card-enter" style={{ animationDelay: `${index * 0.04}s` }}>
+              <JobCard
+                jobId={id}
+                job={job}
+                applicants={applicantsMap.get(id.toString())}
+                onCancel={() => handleCancel(id)}
+                onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
+                onEdit={() => setEditTarget({ kind: 'job', id, title: job.title, description: job.description, amount: job.amount, deadlineDays: job.deadlineDays, region: job.region, termsHash: job.termsHash })}
+                busy={busyJobId === id.toString()}
+              />
+            </div>
           ))}
         </div>
       )}
