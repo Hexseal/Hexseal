@@ -80,46 +80,22 @@ function Tab({ active, onClick, children, count }: {
   return (
     <button
       onClick={onClick}
-      className={`relative px-4 py-2 text-sm font-medium rounded-[10px] flex items-center gap-1.5 flex-shrink-0 transition-colors ${
-        active ? 'text-white' : 'text-white/40 hover:text-white/60'
+      className={`relative px-4 py-2 text-sm font-medium rounded-[10px] flex items-center gap-1.5 flex-shrink-0 transition-all duration-200 ${
+        active ? 'text-white bg-white/10' : 'text-white/40 hover:text-white/60 hover:bg-white/[0.05]'
       }`}
     >
-      {active && (
-        <motion.span
-          layoutId="tab-pill"
-          className="absolute inset-0 rounded-[10px] bg-white/10"
-          transition={{ type: 'tween', duration: 0.18, ease: 'easeOut' }}
-        />
+      {count !== undefined && count > 0 && (
+        <span className={`text-[11px] px-1.5 py-0.5 rounded-md font-mono transition-colors duration-200 ${
+          active ? 'bg-white/15 text-white/80' : 'bg-white/[0.06] text-white/35'
+        }`}>
+          {count}
+        </span>
       )}
-      <span className="relative z-10 flex items-center gap-1.5">
-        {children}
-        {count !== undefined && count > 0 && (
-          <motion.span
-            key={count}
-            initial={{ scale: 0.7, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ type: 'tween', duration: 0.12, ease: 'easeOut' }}
-            className={`text-[11px] px-1.5 py-0.5 rounded-md font-mono ${
-              active ? 'bg-white/15 text-white/80' : 'bg-white/8 text-white/35'
-            }`}
-          >
-            {count}
-          </motion.span>
-        )}
-      </span>
+      {children}
     </button>
   );
 }
 
-// ─── Stagger variants for listings sections ────────────────────────────────
-
-const sectionContainer = {
-  show: { transition: { staggerChildren: 0.09, delayChildren: 0.04 } },
-};
-const sectionItem = {
-  hidden: { opacity: 0, y: 14 },
-  show:   { opacity: 1, y: 0, transition: { type: 'tween' as const, duration: 0.25, ease: 'easeOut' } },
-};
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -219,9 +195,9 @@ export default function DashboardPage() {
             </div>
             <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
               <motion.div
-                className={`h-full rounded-full ${level.bar}`}
-                initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, level.pct)}%` }}
+                className={`h-full rounded-full origin-left ${level.bar}`}
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: Math.min(100, level.pct) / 100 }}
                 transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
               />
             </div>
@@ -317,61 +293,38 @@ export default function DashboardPage() {
                     </motion.div>
                   ) : (
                     <div className="space-y-3">
-                      <AnimatePresence>
-                        {activeDeals.map((a, index) => (
-                          <motion.div
-                            key={a.agreement}
-                            initial={{ opacity: 0, y: 18, scale: 0.97 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
-                            transition={{ type: 'tween', duration: 0.22, ease: 'easeOut', delay: Math.min(index, 5) * 0.06 }}
-                            className="active:scale-[0.985] transition-transform duration-100 cursor-pointer"
-                          >
-                            <DealCard
-                              agreement={a}
-                              address={address!}
-                              refetch={refetch}
-                            />
-                          </motion.div>
-                        ))}
-                      </AnimatePresence>
+                      {activeDeals.map((a, index) => (
+                        <div
+                          key={a.agreement}
+                          className="card-enter active:scale-[0.985] transition-transform duration-100 cursor-pointer"
+                          style={{ animationDelay: `${Math.min(index, 5) * 0.06}s` }}
+                        >
+                          <DealCard agreement={a} address={address!} refetch={refetch} />
+                        </div>
+                      ))}
                     </div>
                   )
                 )}
 
                 {tab === 'history' && (
                   historyDeals.length === 0 ? (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.96 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
-                      className="text-center py-10"
-                    >
+                    <div className="text-center py-10">
                       <div className="float-icon">
                         <CheckCircle className="w-8 h-8 text-white/10 mx-auto mb-3" />
                       </div>
                       <p className="text-sm text-white/30">{t("dashboard.empty_history")}</p>
-                    </motion.div>
+                    </div>
                   ) : (
                     <div className="space-y-2 opacity-80">
-                      <AnimatePresence>
-                        {historyDeals.map((a, index) => (
-                          <motion.div
-                            key={`${a.agreement}-hist`}
-                            initial={{ opacity: 0, y: 18, scale: 0.97 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
-                            transition={{ type: 'tween', duration: 0.22, ease: 'easeOut', delay: Math.min(index, 5) * 0.06 }}
-                            className="active:scale-[0.985] transition-transform duration-100 cursor-pointer"
-                          >
-                            <DealCard
-                              agreement={a}
-                              address={address!}
-                              refetch={refetch}
-                            />
-                          </motion.div>
-                        ))}
-                      </AnimatePresence>
+                      {historyDeals.map((a, index) => (
+                        <div
+                          key={`${a.agreement}-hist`}
+                          className="card-enter active:scale-[0.985] transition-transform duration-100 cursor-pointer"
+                          style={{ animationDelay: `${Math.min(index, 5) * 0.06}s` }}
+                        >
+                          <DealCard agreement={a} address={address!} refetch={refetch} />
+                        </div>
+                      ))}
                     </div>
                   )
                 )}
