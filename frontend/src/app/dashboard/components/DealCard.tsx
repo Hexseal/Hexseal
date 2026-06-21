@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { explorerUrl } from '@/config/chain';
 import { useReadContract, usePublicClient, useWalletClient } from 'wagmi';
 import { isAddress } from 'viem';
 import type { Abi } from 'viem';
@@ -12,9 +11,9 @@ import { fundAgreementGasless, sendAgreementGasless } from '@/lib/relay';
 import { Button } from '@/components/ui/button';
 import { toast } from 'react-hot-toast';
 import {
-  Loader2, Clock, CheckCircle, AlertTriangle, ArrowRight,
+  Loader2, CheckCircle,
   Copy, ExternalLink, Play, Flag, Shield, Timer,
-  ChevronDown, ImageIcon, MessageCircle,
+  ChevronDown, MessageCircle,
 } from 'lucide-react';
 
 export interface AgreementRecord {
@@ -47,14 +46,14 @@ export function isUrgent(seconds: bigint | undefined): boolean {
   return !!seconds && Number(seconds) < 86400;
 }
 
-export const DEAL_STATUS: Record<number, { label: string; dot: string; badge: string; icon: React.ReactNode }> = {
-  0: { label: 'Created',   dot: 'bg-sky-400',     badge: 'bg-sky-400/10 text-sky-400 border-sky-400/20',             icon: <Clock className="w-3 h-3" /> },
-  1: { label: 'Funded',    dot: 'bg-emerald-400',  badge: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20', icon: <Play className="w-3 h-3" /> },
-  2: { label: 'Active',    dot: 'bg-violet-400',   badge: 'bg-violet-400/10 text-violet-400 border-violet-400/20',    icon: <Clock className="w-3 h-3" /> },
-  3: { label: 'Completed', dot: 'bg-green-400',    badge: 'bg-green-400/10 text-green-400 border-green-400/20',       icon: <CheckCircle className="w-3 h-3" /> },
-  4: { label: 'Disputed',  dot: 'bg-red-400',      badge: 'bg-red-400/10 text-red-400 border-red-400/20',             icon: <AlertTriangle className="w-3 h-3" /> },
-  5: { label: 'Resolved',  dot: 'bg-purple-400',   badge: 'bg-purple-400/10 text-purple-400 border-purple-400/20',    icon: <CheckCircle className="w-3 h-3" /> },
-  6: { label: 'Refunded',  dot: 'bg-gray-400',     badge: 'bg-gray-400/10 text-gray-400 border-gray-400/20',          icon: <ArrowRight className="w-3 h-3" /> },
+export const DEAL_STATUS: Record<number, { label: string; dot: string; textCls: string }> = {
+  0: { label: 'Created',   dot: 'bg-sky-400',     textCls: 'text-sky-400' },
+  1: { label: 'Funded',    dot: 'bg-emerald-400', textCls: 'text-emerald-400' },
+  2: { label: 'Active',    dot: 'bg-violet-400',  textCls: 'text-violet-400' },
+  3: { label: 'Completed', dot: 'bg-green-400',   textCls: 'text-green-400' },
+  4: { label: 'Disputed',  dot: 'bg-red-400',     textCls: 'text-red-400' },
+  5: { label: 'Resolved',  dot: 'bg-purple-400',  textCls: 'text-purple-400' },
+  6: { label: 'Refunded',  dot: 'bg-gray-400',    textCls: 'text-white/35' },
 };
 
 export function DealCard({ agreement, address, refetch }: {
@@ -220,83 +219,78 @@ export function DealCard({ agreement, address, refetch }: {
   return (
     <div
       className={`rounded-[22px] border transition-colors relative overflow-hidden ${
-        needsAction
-          ? 'border-white/[0.13] bg-[#0d0d0f] hover:bg-[#111113]'
-          : 'border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113]'
+        needsAction ? 'border-white/[0.13] bg-[#0d0d0f]' : 'border-white/[0.08] bg-[#0d0d0f]'
       }`}
       style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
     >
       {needsAction && (
         <div className={`absolute top-0 left-0 right-0 h-0.5 rounded-t-[22px] ${stripeColor}`} />
       )}
-      <div className="px-4 py-4 sm:px-5">
-        {/* Status row */}
-        <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.dot}`} />
-          <span className="font-mono text-sm font-semibold text-white/90">
+      <div className="px-4 py-3.5 sm:px-5">
+
+        {/* Title row */}
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <p className="text-[13px] font-semibold text-white/90 font-mono truncate leading-snug">
             #{agreement.agreement.slice(2, 10).toUpperCase()}
-          </span>
-          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium ${s.badge}`}>
-            {s.icon}{s.label}
-          </span>
-          {liveStatus === 4 && arbiterTimeLeft && (
-            <span className={`text-xs px-2 py-0.5 rounded-full border bg-red-400/10 text-red-400 border-red-400/20 ${isUrgent(arbiterTimeLeft) ? 'animate-pulse' : ''}`}>
-              arbiter {formatTimeLeft(arbiterTimeLeft)}
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
-            <Link href={`/chat?peer=${counterparty.toLowerCase()}`} title="Open chat">
-              <Button size="sm" variant="ghost" className="text-white/30 hover:text-white/60 h-7 w-7 p-0">
+          </p>
+          <div className="flex items-center gap-0.5 flex-shrink-0 -mt-0.5">
+            <Link href={`/chat?peer=${counterparty.toLowerCase()}`}>
+              <Button size="sm" variant="ghost" className="text-white/25 hover:text-white/60 h-6 w-6 p-0">
                 <MessageCircle className="w-3.5 h-3.5" />
               </Button>
             </Link>
-            <Link href={`/deal/${agreement.agreement}`} title="View deal">
-              <Button size="sm" variant="ghost" className="text-white/30 hover:text-white/60 h-7 w-7 p-0">
+            <Link href={`/deal/${agreement.agreement}`}>
+              <Button size="sm" variant="ghost" className="text-white/25 hover:text-white/60 h-6 w-6 p-0">
                 <ExternalLink className="w-3.5 h-3.5" />
               </Button>
             </Link>
           </div>
         </div>
 
-        {/* Amount + counterparty row */}
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div>
-            <p className="text-2xl font-bold font-mono text-white leading-none">
-              {formatAmount(agreement.amount)}
-              <span className="text-sm font-normal text-white/40 ml-1.5">USDC</span>
-            </p>
-            <div className="flex items-center gap-1.5 mt-1 text-xs text-white/35">
-              <span className="font-mono">{shortAddr(counterparty)}</span>
-              <button onClick={() => { navigator.clipboard.writeText(counterparty); toast.success('Copied'); }} className="hover:text-white/60 transition-colors">
-                <Copy className="w-3 h-3" />
-              </button>
-              {timeLeft && liveStatus < 3 && (
-                <>
-                  <span className="opacity-30">·</span>
-                  <span className={isUrgent(timeLeft) ? 'text-orange-400' : ''}>{formatTimeLeft(timeLeft)} left</span>
-                </>
-              )}
-            </div>
-          </div>
-          {liveStatus >= 1 && liveStatus <= 2 && (
-            <a href={explorerUrl('token', agreement.agreement)} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1 text-xs text-violet-400/60 hover:text-violet-400 transition-colors flex-shrink-0">
-              <ImageIcon className="w-3 h-3" />
-              <span className="hidden sm:inline">NFT</span>
-            </a>
+        {/* Meta line */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
+          <span className={`text-[11px] font-medium ${s.textCls}`}>{s.label}</span>
+          <span className="text-[11px] text-white/15 select-none">·</span>
+          <span className="text-[11px] font-mono text-white/55">{formatAmount(agreement.amount)} USDC</span>
+          <span className="text-[11px] text-white/15 select-none">·</span>
+          <button
+            onClick={() => { navigator.clipboard.writeText(counterparty); toast.success('Copied'); }}
+            className="flex items-center gap-1 text-[11px] text-white/35 hover:text-white/55 transition-colors"
+          >
+            {shortAddr(counterparty)}
+            <Copy className="w-2.5 h-2.5 opacity-40" />
+          </button>
+          {timeLeft !== undefined && liveStatus < 3 && timeLeft > 0n && (
+            <>
+              <span className="text-[11px] text-white/15 select-none">·</span>
+              <span className={`text-[11px] ${isUrgent(timeLeft) ? 'text-orange-400' : 'text-white/35'}`}>
+                {formatTimeLeft(timeLeft)}
+              </span>
+            </>
+          )}
+          {liveStatus === 4 && arbiterTimeLeft && arbiterTimeLeft > 0n && (
+            <>
+              <span className="text-[11px] text-white/15 select-none">·</span>
+              <span className={`text-[11px] ${isUrgent(arbiterTimeLeft) ? 'text-orange-400' : 'text-white/35'}`}>
+                arbiter {formatTimeLeft(arbiterTimeLeft)}
+              </span>
+            </>
           )}
         </div>
 
+        {/* Primary actions */}
         {primaryActions.length > 0 && (
-          <div className="flex flex-wrap gap-2">{primaryActions}</div>
+          <div className="flex flex-wrap gap-2 mt-3">{primaryActions}</div>
         )}
 
+        {/* Timeout toggle */}
         {timeoutActions.length > 0 && (
-          <div className={primaryActions.length > 0 ? 'mt-2' : ''}>
+          <div className="mt-2">
             <button onClick={() => setShowTimeouts(v => !v)}
               className="flex items-center gap-1 text-xs text-white/25 hover:text-white/50 transition-colors">
               <ChevronDown className={`w-3 h-3 transition-transform ${showTimeouts ? 'rotate-180' : ''}`} />
-              {showTimeouts ? 'hide' : 'timeout actions'}
+              {showTimeouts ? 'скрыть' : 'таймаут-действия'}
             </button>
           </div>
         )}

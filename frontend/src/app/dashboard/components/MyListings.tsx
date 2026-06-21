@@ -889,7 +889,6 @@ function JobCard({
 // ── My Jobs (client postings) ─────────────────────────────────────────────────
 
 export function MyJobs({ address, onDealCreated }: { address: string; onDealCreated?: () => void }) {
-  const [showArchive, setShowArchive] = useState(false);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
@@ -947,8 +946,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
     .map((id, i) => ({ id, job: jobResults?.[i]?.result as JobRecord | undefined }))
     .filter((x): x is { id: bigint; job: JobRecord } => !!x.job);
 
-  const active  = jobs.filter(x => x.job.status === 0);
-  const archive = jobs.filter(x => x.job.status !== 0);
+  const active = jobs.filter(x => x.job.status === 0);
 
   const handleCancel = async (jobId: bigint) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
@@ -1038,34 +1036,6 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
         </div>
       )}
 
-      {archive.length > 0 && (
-        <div>
-          <button onClick={() => setShowArchive(v => !v)}
-            className="flex items-center gap-2 mb-2 group w-full text-left">
-            <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
-            <span className="text-xs font-semibold text-white/35 uppercase tracking-wider group-hover:text-white/55 transition-colors">
-              Archive · {archive.length}
-            </span>
-            <ChevronDown className={`w-3 h-3 text-white/25 ml-0.5 transition-transform group-hover:text-white/50 ${showArchive ? 'rotate-180' : ''}`} />
-          </button>
-          {showArchive && (
-            <div className="space-y-3 opacity-70">
-              {archive.map(({ id, job }) => (
-                <JobCard
-                  key={id.toString()}
-                  jobId={id}
-                  job={job}
-                  applicants={applicantsMap.get(id.toString())}
-                  onCancel={() => handleCancel(id)}
-                  onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
-                  onEdit={() => {}}
-                  busy={busyJobId === id.toString()}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Edit Job Modal */}
       {editTarget && editTarget.kind === 'job' && (
