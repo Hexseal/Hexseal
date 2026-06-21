@@ -18,11 +18,21 @@ import { calcXP } from '@/lib/xp';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function xpLevel(xp: number) {
+  // pct = progress within current tier (0–100). Minimum 3 so bar is always visible once unlocked.
+  const p = (v: number) => Math.max(3, Math.min(100, Math.round(v)));
   if (xp >= 1000) return { label: 'Master',   color: 'text-yellow-400',  bar: 'bg-yellow-400',  pct: 100 };
-  if (xp >= 500)  return { label: 'Expert',   color: 'text-violet-400',  bar: 'bg-violet-400',  pct: Math.round((xp - 500) / 5) };
-  if (xp >= 200)  return { label: 'Trusted',  color: 'text-blue-400',    bar: 'bg-blue-400',    pct: Math.round((xp - 200) / 3) };
-  if (xp >= 50)   return { label: 'Rising',   color: 'text-emerald-400', bar: 'bg-emerald-400', pct: Math.round((xp - 50) / 1.5) };
+  if (xp >= 500)  return { label: 'Expert',   color: 'text-violet-400',  bar: 'bg-violet-400',  pct: p((xp - 500) / 5) };
+  if (xp >= 200)  return { label: 'Trusted',  color: 'text-blue-400',    bar: 'bg-blue-400',    pct: p((xp - 200) / 3) };
+  if (xp >= 50)   return { label: 'Rising',   color: 'text-emerald-400', bar: 'bg-emerald-400', pct: p((xp - 50) / 1.5) };
   return               { label: 'Newcomer', color: 'text-white/40',    bar: 'bg-white/20',    pct: Math.round(xp / 0.5) };
+}
+
+function fmtVolume(microUsdc: number): string {
+  const v = microUsdc / 1e6;
+  if (v >= 1000) return `$${(v / 1000).toFixed(1)}K`;
+  if (v >= 1)    return `$${Math.round(v)}`;
+  if (v > 0)     return `$${v.toFixed(2)}`;
+  return '$0';
 }
 
 // ─── Stat card skeleton — CSS animate-pulse, zero JS ─────────────────────────
@@ -164,7 +174,7 @@ export default function DashboardPage() {
               <StatCard index={0} icon={<Zap className="w-4 h-4 text-violet-400" />} label={t("dashboard.stat_level")} value={level.label} sub={`${xp} XP`} />
               <StatCard index={1} icon={<Activity className="w-4 h-4 text-sky-400" />} label={t("dashboard.stat_active")} value={activeDeals.length} sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
               <StatCard index={2} icon={<CheckCircle className="w-4 h-4 text-emerald-400" />} label={t("dashboard.stat_completed")} value={completed} sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
-              <StatCard index={3} icon={<DollarSign className="w-4 h-4 text-amber-400" />} label={t("dashboard.stat_volume")} value={`$${(totalVolume / 1e6).toFixed(0)}`} sub={t("dashboard.stat_usdc_total")} />
+              <StatCard index={3} icon={<DollarSign className="w-4 h-4 text-amber-400" />} label={t("dashboard.stat_volume")} value={fmtVolume(totalVolume)} sub={t("dashboard.stat_usdc_total")} />
             </>
           )}
         </div>
