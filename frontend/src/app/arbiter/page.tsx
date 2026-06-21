@@ -12,11 +12,12 @@ import { Label } from "@/components/ui/label";
 import {
   Loader2, AlertTriangle, CheckCircle, History, ShieldCheck, Scale,
   UserCheck, UserX, Search, Crown, UserPlus, UserMinus, MessageCircle,
+  Coins, Lock,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless, sendAgreementGasless } from "@/lib/relay";
+import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless } from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex } from "viem";
 
@@ -38,6 +39,11 @@ interface HistDetail { client: string; executor: string; amount: bigint; resolve
 type AgreementRecord = {
   agreement: string; client: string; executor: string;
   amount: bigint; status: number; createdAt: bigint; resolvedAt: bigint;
+};
+
+type PendingVerdict = {
+  arbiter: string; clientWins: boolean; submittedAt: bigint;
+  frozen: boolean; finalized: boolean; overturned: boolean;
 };
 
 function shortAddr(a: string) { return a.slice(0, 6) + "…" + a.slice(-4); }
@@ -75,8 +81,6 @@ function Tab({ active, onClick, children, count }: {
   );
 }
 
-// ─── Section label ─────────────────────────────────────────────────────────────
-
 function SectionEmpty({ icon, text }: { icon: ReactNode; text: string }) {
   return (
     <div className="text-center py-10">
@@ -97,6 +101,7 @@ export default function ArbiterPage() {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
   const [busy, setBusy]           = useState<string | null>(null);
   const [refresh, setRefresh]     = useState(0);
   const [tab, setTab]             = useState<TabKey>("disputes");
@@ -104,15 +109,36 @@ export default function ArbiterPage() {
   const [histDetails, setHistDetails] = useState<Record<string, HistDetail>>({});
   const bump = useCallback(() => setRefresh(k => k + 1), []);
 
+  const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+
+  const { data: ownerAddr } = useReadContract({
+    address: CONTRACTS.diamond, abi: DIAMOND_ABI as Abi,
+    functionName: "owner", query: { enabled: !!address },
+  }) as { data: string | undefined };
+
   const { data: chiefArbiterAddr } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "getChiefArbiter", query: { enabled: !!address },
   }) as { data: string | undefined };
 
-  const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+  const { data: isArbiter } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "isRegisteredArbiter", args: [address ?? ZERO_ADDR as Address],
+    query: { enabled: !!address },
+  }) as { data: boolean | undefined };
+
+  const { data: myReward, refetch: refetchReward } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getArbiterReward", args: [address ?? ZERO_ADDR as Address],
+    scopeKey: `arbiter-${refresh}`,
+    query: { enabled: !!address && !!isArbiter },
+  }) as { data: bigint | undefined; refetch: () => void };
+
+  const isOwner       = !!address && !!ownerAddr && ownerAddr.toLowerCase() === address.toLowerCase();
   const isChiefArbiter = !!address && !!chiefArbiterAddr &&
     chiefArbiterAddr !== ZERO_ADDR &&
     chiefArbiterAddr.toLowerCase() === address.toLowerCase();
+  const showManage = isOwner || isChiefArbiter;
 
   const { data: disputed, isLoading: loadingDisputed } = useReadContract({
     address: CONTRACTS.diamond, abi: DIAMOND_ABI as Abi,
@@ -123,7 +149,7 @@ export default function ArbiterPage() {
   const { data: myHistory, isLoading: loadingMine } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "getArbiterDeals",
-    args: [address ?? ZERO_ADDR],
+    args: [address ?? ZERO_ADDR as Address],
     scopeKey: `arbiter-${refresh}`,
     query: { enabled: !!address, gcTime: 0, staleTime: 0 },
   }) as { data: string[] | undefined; isLoading: boolean };
@@ -182,19 +208,65 @@ export default function ArbiterPage() {
     } finally { setBusy(null); }
   };
 
-  const handleResolve = async (agreement: string, clientWins: boolean) => {
-    if (!walletClient || !publicClient) { toast.error(t("common.error")); return; }
+  // New verdict flow: submitVerdict → auto finalizeVerdict
+  const handleSubmitVerdict = async (agreement: string, clientWins: boolean) => {
+    if (!publicClient) { toast.error(t("common.error")); return; }
     setBusy(agreement);
+    const id = toast.loading(clientWins ? t("arbiter.submitting_refund") : t("arbiter.submitting_pay"));
     try {
-      toast(clientWins ? t("arbiter.resolving_refund") : t("arbiter.resolving_pay"));
-      await sendAgreementGasless(
-        walletClient, publicClient, agreement as Address,
-        "resolveDispute", AGREEMENT_ABI as Abi, [clientWins],
-      );
-      toast.success(clientWins ? t("arbiter.refund_success") : t("arbiter.pay_success"));
+      const hash1 = await writeContractAsync({
+        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
+        functionName: "submitVerdict", args: [agreement as Address, clientWins],
+      });
+      await publicClient.waitForTransactionReceipt({ hash: hash1 });
+
+      toast.loading(t("arbiter.finalizing"), { id });
+      const hash2 = await writeContractAsync({
+        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
+        functionName: "finalizeVerdict", args: [agreement as Address],
+      });
+      await publicClient.waitForTransactionReceipt({ hash: hash2 });
+
+      toast.success(clientWins ? t("arbiter.refund_success") : t("arbiter.pay_success"), { id });
       bump();
     } catch (err: any) {
-      toast.error(err?.shortMessage || err?.message || t("arbiter.resolve_failed"));
+      toast.error(err?.shortMessage || err?.message || t("arbiter.resolve_failed"), { id });
+    } finally { setBusy(null); }
+  };
+
+  // Finalize an already-submitted verdict (e.g. if first attempt failed)
+  const handleFinalizeVerdict = async (agreement: string) => {
+    if (!publicClient) { toast.error(t("common.error")); return; }
+    setBusy(agreement);
+    const id = toast.loading(t("arbiter.finalizing"));
+    try {
+      const hash = await writeContractAsync({
+        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
+        functionName: "finalizeVerdict", args: [agreement as Address],
+      });
+      await publicClient.waitForTransactionReceipt({ hash });
+      toast.success(t("arbiter.pay_success"), { id });
+      bump();
+    } catch (err: any) {
+      toast.error(err?.shortMessage || err?.message || t("arbiter.resolve_failed"), { id });
+    } finally { setBusy(null); }
+  };
+
+  const handleWithdraw = async () => {
+    if (!publicClient) return;
+    setBusy("reward");
+    const id = toast.loading(t("arbiter.withdrawing"));
+    try {
+      const hash = await writeContractAsync({
+        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
+        functionName: "withdrawArbiterReward",
+      });
+      await publicClient.waitForTransactionReceipt({ hash });
+      toast.success(t("arbiter.reward_withdrawn"), { id });
+      refetchReward();
+      bump();
+    } catch (err: any) {
+      toast.error(err?.shortMessage || err?.message || t("common.error"), { id });
     } finally { setBusy(null); }
   };
 
@@ -211,6 +283,31 @@ export default function ArbiterPage() {
           <p className="text-xs text-white/40 mt-0.5">{t("arbiter.subtitle")}</p>
         </div>
       </div>
+
+      {/* ── Reward strip ── */}
+      {isArbiter && myReward !== undefined && myReward > 0n && (
+        <div
+          className="rounded-[16px] border border-emerald-500/20 bg-emerald-500/[0.04] px-4 py-3 flex items-center justify-between gap-3"
+          style={{ boxShadow: "0 0 0 1px rgba(16,185,129,0.06) inset" }}
+        >
+          <div className="flex items-center gap-2.5">
+            <Coins className="w-4 h-4 text-emerald-400/70 shrink-0" />
+            <div>
+              <p className="text-[11px] text-emerald-400/60 uppercase tracking-wider font-semibold">{t("arbiter.reward_title")}</p>
+              <p className="text-lg font-bold font-mono text-emerald-300">${fmtUSDC(myReward)} USDC</p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleWithdraw}
+            disabled={busy === "reward"}
+            className="bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25 shrink-0"
+          >
+            {busy === "reward" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+            {t("arbiter.withdraw_btn")}
+          </Button>
+        </div>
+      )}
 
       {/* ── Main panel ── */}
       <div
@@ -231,7 +328,7 @@ export default function ArbiterPage() {
             <History className="w-3.5 h-3.5" />
             {t("arbiter.tab_history")}
           </Tab>
-          {isChiefArbiter && (
+          {showManage && (
             <Tab active={tab === "manage"} onClick={() => setTab("manage")}>
               <Crown className="w-3.5 h-3.5 text-amber-400" />
               {t("arbiter.tab_manage")}
@@ -297,7 +394,8 @@ export default function ArbiterPage() {
                     myAddress={address}
                     busy={busy}
                     onRelease={handleRelease}
-                    onResolve={handleResolve}
+                    onSubmitVerdict={handleSubmitVerdict}
+                    onFinalizeVerdict={handleFinalizeVerdict}
                   />
                 ))}
               </div>
@@ -317,7 +415,6 @@ export default function ArbiterPage() {
               />
             ) : (
               <>
-                {/* Search */}
                 <div className="relative mb-4">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none" />
                   <Input
@@ -328,7 +425,6 @@ export default function ArbiterPage() {
                   />
                 </div>
                 <p className="text-xs text-white/25 font-mono mb-3">{t("arbiter.total_cases", { count: myHistory.length })}</p>
-                {/* Compact list */}
                 <div>
                   {myHistory
                     .filter(addr => {
@@ -348,8 +444,8 @@ export default function ArbiterPage() {
             )
           )}
 
-          {/* ── Chief Manage ── */}
-          {tab === "manage" && isChiefArbiter && <ChiefManagePanel />}
+          {/* ── Manage ── */}
+          {tab === "manage" && showManage && <ManagePanel isOwner={isOwner} />}
 
           </motion.div>
           </AnimatePresence>
@@ -359,7 +455,7 @@ export default function ArbiterPage() {
   );
 }
 
-// ─── DisputeCard — unclaimed / claimed dispute ────────────────────────────────
+// ─── DisputeCard ─────────────────────────────────────────────────────────────
 
 function DisputeCard({
   rec, myAddress, busy, onClaim, onRelease,
@@ -397,9 +493,7 @@ function DisputeCard({
       className="rounded-[18px] border border-white/[0.07] bg-white/[0.02] overflow-hidden"
       style={{ boxShadow: "0 1px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.025)" }}
     >
-      {/* ── Case info ── */}
       <div className="px-4 pt-3.5 pb-3">
-        {/* Address + badges */}
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <Link href={`/deal/${rec.agreement}`} className="font-mono text-sm text-primary hover:underline">
             {shortAddr(rec.agreement)}
@@ -417,7 +511,6 @@ function DisputeCard({
             </span>
           )}
         </div>
-        {/* Parties */}
         <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-white/40">
           <span>{t("arbiter.client_label")} <span className="font-mono text-white/55">{shortAddr(rec.client)}</span></span>
           <span>{t("arbiter.executor_label")} <span className="font-mono text-white/55">{shortAddr(rec.executor)}</span></span>
@@ -425,7 +518,6 @@ function DisputeCard({
         </div>
       </div>
 
-      {/* ── Dispute reason ── */}
       {disputeReason ? (
         <div className="mx-3 mb-3 rounded-[12px] border border-red-500/20 bg-red-500/[0.04] px-3 py-2.5">
           <p className="text-[10px] text-red-400/60 font-semibold uppercase tracking-wider mb-1">
@@ -437,7 +529,6 @@ function DisputeCard({
         <p className="text-xs text-white/20 px-4 pb-3 italic">{t("arbiter.no_reason")}</p>
       )}
 
-      {/* ── Action footer ── */}
       <div className="px-3 pb-3 flex items-center gap-3">
         {!isClaimed && (
           <p className="text-[11px] text-white/25 leading-tight flex-1">{t("arbiter.claim_hint")}</p>
@@ -462,10 +553,9 @@ function DisputeCard({
   );
 }
 
-// ─── DisputeLog — chat-bubble history panel ───────────────────────────────────
+// ─── DisputeLog ───────────────────────────────────────────────────────────────
 
 const RELAYER_URL_ARB = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
-
 type LogEntry = { ts: number; from: string; text: string };
 
 function DisputeLog({ dealId, client, executor }: { dealId: string; client?: string; executor?: string }) {
@@ -478,8 +568,7 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
 
   const fetchLog = async () => {
     if (!walletClient || !address) return;
-    setLoading(true);
-    setErr(null);
+    setLoading(true); setErr(null);
     try {
       const ts = String(Math.floor(Date.now() / 1000));
       const message = `hexseal:dispute-log:${dealId.toLowerCase()}:${ts}`;
@@ -495,12 +584,9 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
       setEntries(data.entries ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to load');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  // Identify role by address
   const roleOf = (from: string): 'client' | 'executor' | 'bot' => {
     const f = from.toLowerCase();
     if (client && f === client.toLowerCase()) return 'client';
@@ -520,21 +606,15 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
       </button>
     );
   }
-
-  if (err) {
-    return <p className="text-xs text-red-400/70 px-1">{err}</p>;
-  }
+  if (err) return <p className="text-xs text-red-400/70 px-1">{err}</p>;
 
   return (
     <div className="mt-1 rounded-[14px] border border-white/[0.07] bg-[#080809] overflow-hidden">
-      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.05]">
         <div className="flex items-center gap-2">
           <MessageCircle className="w-3.5 h-3.5 text-white/25" />
           <span className="text-[11px] text-white/35 font-medium">{t("arbiter.view_history_btn")}</span>
-          {entries.length > 0 && (
-            <span className="text-[10px] text-white/20 font-mono">{entries.length}</span>
-          )}
+          {entries.length > 0 && <span className="text-[10px] text-white/20 font-mono">{entries.length}</span>}
         </div>
         <div className="flex items-center gap-3 text-[10px] text-white/20">
           <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-sky-400/60 inline-block" />{t("arbiter.client_label")}</span>
@@ -542,8 +622,6 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
         </div>
         <button onClick={() => setEntries(null)} className="text-white/20 hover:text-white/50 transition-colors text-[10px]">✕</button>
       </div>
-
-      {/* Messages */}
       {entries.length === 0 ? (
         <p className="text-xs text-white/25 px-3 py-4 italic text-center">{t("arbiter.no_history_log")}</p>
       ) : (
@@ -551,8 +629,6 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
           {entries.map((e, i) => {
             const role = roleOf(e.from);
             const time = new Date(e.ts).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
-
-            // Bot → centered system message
             if (role === 'bot') {
               return (
                 <div key={i} className="flex justify-center">
@@ -560,7 +636,6 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
                 </div>
               );
             }
-
             const isClient = role === 'client';
             return (
               <div key={i} className={`flex flex-col gap-0.5 ${isClient ? 'items-start' : 'items-end'}`}>
@@ -572,9 +647,7 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
                   isClient
                     ? 'bg-sky-500/[0.08] border border-sky-500/15 text-white/80 rounded-tl-[3px]'
                     : 'bg-violet-500/[0.08] border border-violet-500/15 text-white/80 rounded-tr-[3px]'
-                }`}>
-                  {e.text}
-                </div>
+                }`}>{e.text}</div>
                 <span className="text-[10px] text-white/15 px-0.5">{time}</span>
               </div>
             );
@@ -585,13 +658,15 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
   );
 }
 
-// ─── MyCaseCard — claimed + active dispute, with verdict actions ──────────────
+// ─── MyCaseCard ───────────────────────────────────────────────────────────────
 
 function MyCaseCard({
-  agreement, myAddress, busy, onRelease, onResolve,
+  agreement, myAddress, busy, onRelease, onSubmitVerdict, onFinalizeVerdict,
 }: {
-  agreement: string; myAddress?: string;
-  busy: string | null; onRelease: (a: string) => void; onResolve: (a: string, clientWins: boolean) => void;
+  agreement: string; myAddress?: string; busy: string | null;
+  onRelease: (a: string) => void;
+  onSubmitVerdict: (a: string, clientWins: boolean) => void;
+  onFinalizeVerdict: (a: string) => void;
 }) {
   const t = useTranslations();
   const MINI_ABI = [
@@ -609,10 +684,16 @@ function MyCaseCard({
   const { data: executor   } = useReadContract({ address: agreement as Address, abi: MINI_ABI, functionName: "executor" })        as { data: string  | undefined };
   const { data: timeLeft   } = useReadContract({ address: agreement as Address, abi: MINI_ABI, functionName: "arbiterTimeLeft" }) as { data: bigint  | undefined };
   const { data: disputedAt } = useReadContract({ address: agreement as Address, abi: MINI_ABI, functionName: "disputedAt" })      as { data: bigint  | undefined };
-  const { data: claimer    } = useReadContract({
+
+  const { data: claimer } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "getDisputeClaimer", args: [agreement as Address],
   }) as { data: string | undefined };
+
+  const { data: pendingVerdict } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getPendingVerdict", args: [agreement as Address],
+  }) as { data: PendingVerdict | undefined };
 
   const [disputeReason, setDisputeReason] = useState<string | null>(null);
   useEffect(() => {
@@ -622,13 +703,18 @@ function MyCaseCard({
       .catch(() => {});
   }, [agreement]);
 
-  const ZERO         = "0x0000000000000000000000000000000000000000";
-  const isDisputed   = statusVal === AGREEMENT_STATUS_DISPUTED;
-  const isTerminal   = statusVal !== undefined && TERMINAL.has(statusVal);
-  const isMineClaim  = claimer?.toLowerCase() === myAddress?.toLowerCase() && claimer !== ZERO;
-  const isBusy       = busy === agreement;
-  const expired      = timeLeft !== undefined && timeLeft === 0n && disputedAt && disputedAt > 0n;
-  const urgent       = timeLeft !== undefined && timeLeft > 0n && Number(timeLeft) < 86400;
+  const ZERO        = "0x0000000000000000000000000000000000000000";
+  const isDisputed  = statusVal === AGREEMENT_STATUS_DISPUTED;
+  const isTerminal  = statusVal !== undefined && TERMINAL.has(statusVal);
+  const isMineClaim = claimer?.toLowerCase() === myAddress?.toLowerCase() && claimer !== ZERO;
+  const isBusy      = busy === agreement;
+  const expired     = timeLeft !== undefined && timeLeft === 0n && disputedAt && disputedAt > 0n;
+  const urgent      = timeLeft !== undefined && timeLeft > 0n && Number(timeLeft) < 86400;
+
+  // Verdict state
+  const hasVerdict   = pendingVerdict && pendingVerdict.submittedAt > 0n;
+  const verdictReady = hasVerdict && !pendingVerdict!.finalized && !pendingVerdict!.frozen;
+  const verdictFrozen = hasVerdict && pendingVerdict!.frozen && !pendingVerdict!.finalized;
 
   if (!isMineClaim && !isDisputed) return null;
   if (isTerminal) return null;
@@ -640,10 +726,9 @@ function MyCaseCard({
       className="rounded-[18px] border border-white/[0.07] bg-white/[0.02] overflow-hidden"
       style={{ boxShadow: "0 1px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.025)" }}
     >
-      {/* ── Case info ── */}
+      {/* Case info */}
       <div className="px-4 pt-3.5 pb-3">
         <div className="flex items-start justify-between gap-3">
-          {/* Left: address + badges */}
           <div className="flex items-center gap-2 flex-wrap">
             <Link href={`/deal/${agreement}`} className="font-mono text-sm text-primary hover:underline">
               {shortAddr(agreement)}
@@ -660,7 +745,6 @@ function MyCaseCard({
               <span className="text-xs font-semibold text-red-400">{t("arbiter.window_expired")}</span>
             )}
           </div>
-          {/* Right: details link */}
           <Link href={`/deal/${agreement}`}>
             <Button size="sm" variant="ghost" className="h-7 text-xs text-white/40 hover:text-white shrink-0">
               {t("common.details")}
@@ -668,7 +752,6 @@ function MyCaseCard({
           </Link>
         </div>
 
-        {/* Parties + amount */}
         <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-white/40 mt-2">
           <span>{t("arbiter.client_label")} <span className="font-mono text-white/55">{client ? shortAddr(client) : "…"}</span></span>
           <span>{t("arbiter.executor_label")} <span className="font-mono text-white/55">{executor ? shortAddr(executor) : "…"}</span></span>
@@ -679,7 +762,7 @@ function MyCaseCard({
         </div>
       </div>
 
-      {/* ── Dispute reason ── */}
+      {/* Dispute reason */}
       {disputeReason ? (
         <div className="mx-3 mb-3 rounded-[12px] border border-red-500/20 bg-red-500/[0.04] px-3 py-2.5">
           <p className="text-[10px] text-red-400/60 font-semibold uppercase tracking-wider mb-1">
@@ -691,7 +774,7 @@ function MyCaseCard({
         <p className="text-xs text-white/20 px-4 pb-3 italic">{t("arbiter.no_reason")}</p>
       )}
 
-      {/* ── Communication row ── */}
+      {/* Communication */}
       {(client || executor) && (
         <div className="px-3 pb-3 flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">
@@ -714,63 +797,94 @@ function MyCaseCard({
         </div>
       )}
 
-      {/* ── Verdict panel (only when active + mine + not expired) ── */}
-      {isDisputed && isMineClaim && !expired && (
+      {/* Verdict panel */}
+      {isDisputed && isMineClaim && (
         <div className="mx-3 mb-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] p-3 space-y-3">
-          {/* Header */}
-          <div className="flex items-center gap-2">
-            <Scale className="w-3.5 h-3.5 text-white/30 shrink-0" />
-            <p className="text-xs font-semibold text-white/50">{t("arbiter.resolve_hint")}</p>
-            <span className="text-[10px] text-red-400/55 ml-auto">{t("arbiter.resolve_irreversible")}</span>
-          </div>
 
-          {/* Outcome descriptions */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-[10px] border border-sky-500/20 bg-sky-500/[0.05] px-3 py-2.5">
-              <p className="text-[11px] font-semibold text-sky-400/90 mb-1">{t("arbiter.refund_client_btn")}</p>
-              <p className="text-[10px] text-white/35 leading-relaxed">{t("arbiter.resolve_client_desc")}</p>
+          {/* FROZEN state */}
+          {verdictFrozen && (
+            <div className="flex items-center gap-2 py-2">
+              <Lock className="w-4 h-4 text-amber-400/70 shrink-0" />
+              <p className="text-xs text-amber-400/80">{t("arbiter.verdict_frozen")}</p>
             </div>
-            <div className="rounded-[10px] border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2.5">
-              <p className="text-[11px] font-semibold text-violet-400/90 mb-1">{t("arbiter.pay_executor_btn")}</p>
-              <p className="text-[10px] text-white/35 leading-relaxed">{t("arbiter.resolve_executor_desc")}</p>
+          )}
+
+          {/* PENDING finalization state */}
+          {verdictReady && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <p className="text-xs text-white/50">{t("arbiter.verdict_pending")}</p>
+                <span className="text-[10px] font-mono text-white/25 ml-auto">
+                  {pendingVerdict!.clientWins ? t("arbiter.refund_client_btn") : t("arbiter.pay_executor_btn")}
+                </span>
+              </div>
+              <button
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-[10px] text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
+                disabled={!!busy}
+                onClick={() => onFinalizeVerdict(agreement)}
+              >
+                {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                {t("arbiter.finalize_btn")}
+              </button>
             </div>
-          </div>
+          )}
 
-          {/* Action buttons */}
-          <div className="flex gap-2">
-            <button
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-[10px] text-xs font-semibold border border-sky-500/30 text-sky-400 hover:bg-sky-500/10 transition-colors disabled:opacity-40"
-              disabled={!!busy}
-              onClick={() => onResolve(agreement, true)}
-            >
-              {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserCheck className="w-3.5 h-3.5" />}
-              {t("arbiter.refund_client_btn")}
-            </button>
-            <button
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-[10px] text-xs font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-colors disabled:opacity-40"
-              disabled={!!busy}
-              onClick={() => onResolve(agreement, false)}
-            >
-              {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserX className="w-3.5 h-3.5" />}
-              {t("arbiter.pay_executor_btn")}
-            </button>
-          </div>
+          {/* VERDICT SUBMIT state (no verdict yet, not expired) */}
+          {!hasVerdict && !expired && (
+            <>
+              <div className="flex items-center gap-2">
+                <Scale className="w-3.5 h-3.5 text-white/30 shrink-0" />
+                <p className="text-xs font-semibold text-white/50">{t("arbiter.resolve_hint")}</p>
+                <span className="text-[10px] text-red-400/55 ml-auto">{t("arbiter.resolve_irreversible")}</span>
+              </div>
 
-          {/* Release (tertiary) */}
-          <button
-            className="w-full text-xs text-white/25 hover:text-white/50 transition-colors py-0.5"
-            disabled={!!busy}
-            onClick={() => onRelease(agreement)}
-          >
-            {t("arbiter.release_claim_btn")}
-          </button>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-[10px] border border-sky-500/20 bg-sky-500/[0.05] px-3 py-2.5">
+                  <p className="text-[11px] font-semibold text-sky-400/90 mb-1">{t("arbiter.refund_client_btn")}</p>
+                  <p className="text-[10px] text-white/35 leading-relaxed">{t("arbiter.resolve_client_desc")}</p>
+                </div>
+                <div className="rounded-[10px] border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2.5">
+                  <p className="text-[11px] font-semibold text-violet-400/90 mb-1">{t("arbiter.pay_executor_btn")}</p>
+                  <p className="text-[10px] text-white/35 leading-relaxed">{t("arbiter.resolve_executor_desc")}</p>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-[10px] text-xs font-semibold border border-sky-500/30 text-sky-400 hover:bg-sky-500/10 transition-colors disabled:opacity-40"
+                  disabled={!!busy}
+                  onClick={() => onSubmitVerdict(agreement, true)}
+                >
+                  {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserCheck className="w-3.5 h-3.5" />}
+                  {t("arbiter.refund_client_btn")}
+                </button>
+                <button
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-[10px] text-xs font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-colors disabled:opacity-40"
+                  disabled={!!busy}
+                  onClick={() => onSubmitVerdict(agreement, false)}
+                >
+                  {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserX className="w-3.5 h-3.5" />}
+                  {t("arbiter.pay_executor_btn")}
+                </button>
+              </div>
+
+              <button
+                className="w-full text-xs text-white/25 hover:text-white/50 transition-colors py-0.5"
+                disabled={!!busy}
+                onClick={() => onRelease(agreement)}
+              >
+                {t("arbiter.release_claim_btn")}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// ─── HistoryRow — compact terminal case ───────────────────────────────────────
+// ─── HistoryRow ───────────────────────────────────────────────────────────────
 
 function HistoryRow({ agreement, prefetched }: { agreement: string; prefetched?: HistDetail }) {
   const t = useTranslations();
@@ -778,8 +892,6 @@ function HistoryRow({ agreement, prefetched }: { agreement: string; prefetched?:
   const MINI_ABI = [
     { inputs: [], name: "status",     outputs: [{ internalType: "uint8",   name: "", type: "uint8" }],   stateMutability: "view", type: "function" },
     { inputs: [], name: "amount",     outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
-    { inputs: [], name: "client",     outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
-    { inputs: [], name: "executor",   outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
     { inputs: [], name: "resolvedAt", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
   ] as const;
 
@@ -829,9 +941,9 @@ function HistoryRow({ agreement, prefetched }: { agreement: string; prefetched?:
   );
 }
 
-// ─── ChiefManagePanel — add/remove arbiters ───────────────────────────────────
+// ─── ManagePanel ─────────────────────────────────────────────────────────────
 
-function ChiefManagePanel() {
+function ManagePanel({ isOwner }: { isOwner: boolean }) {
   const t = useTranslations();
   const { data: arbiters, refetch } = useReadContract({
     address: CONTRACTS.diamond as Address,
@@ -871,14 +983,12 @@ function ChiefManagePanel() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex items-center gap-2">
         <Crown className="w-4 h-4 text-amber-400 shrink-0" />
         <p className="text-sm font-semibold text-white/70">{t("arbiter.manage_title")}</p>
       </div>
       <p className="text-xs text-white/35 -mt-2">{t("arbiter.chief_desc")}</p>
 
-      {/* Arbiter list */}
       {!arbiters || arbiters.length === 0 ? (
         <p className="text-sm text-white/30 py-4 text-center">{t("arbiter.no_arbiters")}</p>
       ) : (
@@ -886,40 +996,43 @@ function ChiefManagePanel() {
           {arbiters.map(addr => (
             <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] px-3 py-2.5">
               <span className="font-mono text-xs text-white/60 truncate">{addr}</span>
-              <button
-                className="flex items-center gap-1 text-xs text-red-400/60 hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
-                disabled={removingAddr === addr || isPending}
-                onClick={() => handleRemove(addr)}
-              >
-                {removingAddr === addr
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <UserMinus className="w-3.5 h-3.5" />}
-                {t("arbiter.remove_btn")}
-              </button>
+              {isOwner && (
+                <button
+                  className="flex items-center gap-1 text-xs text-red-400/60 hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
+                  disabled={removingAddr === addr || isPending}
+                  onClick={() => handleRemove(addr)}
+                >
+                  {removingAddr === addr
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <UserMinus className="w-3.5 h-3.5" />}
+                  {t("arbiter.remove_btn")}
+                </button>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {/* Divider */}
-      <div className="h-px bg-white/[0.06]" />
-
-      {/* Add arbiter */}
-      <div className="space-y-2">
-        <Label className="text-xs text-white/40 uppercase tracking-wider">{t("arbiter.add_arbiter")}</Label>
-        <div className="flex gap-2">
-          <Input
-            placeholder="0x..."
-            value={newArbiter}
-            onChange={e => setNewArbiter(e.target.value)}
-            className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]"
-          />
-          <Button onClick={handleAdd} disabled={isPending || !newArbiter} className="gap-1 shrink-0">
-            {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-            {t("arbiter.add_btn")}
-          </Button>
-        </div>
-      </div>
+      {isOwner && (
+        <>
+          <div className="h-px bg-white/[0.06]" />
+          <div className="space-y-2">
+            <Label className="text-xs text-white/40 uppercase tracking-wider">{t("arbiter.add_arbiter")}</Label>
+            <div className="flex gap-2">
+              <Input
+                placeholder="0x..."
+                value={newArbiter}
+                onChange={e => setNewArbiter(e.target.value)}
+                className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]"
+              />
+              <Button onClick={handleAdd} disabled={isPending || !newArbiter} className="gap-1 shrink-0">
+                {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                {t("arbiter.add_btn")}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

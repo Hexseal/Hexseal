@@ -125,7 +125,7 @@ contract ExtrasTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = FactoryFacet.setProtocolArbiter.selector;
 
-        bytes4[] memory arbSels = new bytes4[](13);
+        bytes4[] memory arbSels = new bytes4[](32);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -139,6 +139,25 @@ contract ExtrasTest is Test {
         arbSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
         arbSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
         arbSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        arbSels[13] = ArbiterRegistryFacet.activateDAO.selector;
+        arbSels[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        arbSels[15] = ArbiterRegistryFacet.isDaoActive.selector;
+        arbSels[16] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        arbSels[17] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        arbSels[18] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbSels[19] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        arbSels[20] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbSels[21] = ArbiterRegistryFacet.freezeVerdict.selector;
+        arbSels[22] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        arbSels[23] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        arbSels[24] = ArbiterRegistryFacet.fundVault.selector;
+        arbSels[25] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        arbSels[26] = ArbiterRegistryFacet.setDAOAddress.selector;
+        arbSels[27] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        arbSels[28] = ArbiterRegistryFacet.getArbiterReward.selector;
+        arbSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
+        arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
 
         bytes4[] memory cutSels   = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -216,6 +235,12 @@ contract ExtrasTest is Test {
         vm.roll(block.number + 1);
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+    }
+
+    function _resolveDispute(address agr, bool clientWins) internal {
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agr, clientWins);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
     }
 
     // ============================================================
@@ -394,8 +419,7 @@ contract ExtrasTest is Test {
         _proposeExtra(agr, EXTRA_A); // pending
         _claimDispute(agr);
 
-        vm.prank(arbiter);
-        Agreement(agr).resolveDispute(true); // client wins
+        _resolveDispute(agr, true); // client wins
 
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "invariant final");
         // client gets JOB_AMOUNT + EXTRA_A (pending returned by _settlePending)

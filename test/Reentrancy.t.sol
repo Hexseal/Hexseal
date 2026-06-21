@@ -195,7 +195,7 @@ contract ReentrancyTest is Test {
         svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
 
-        bytes4[] memory arbSels = new bytes4[](13);
+        bytes4[] memory arbSels = new bytes4[](32);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -209,6 +209,25 @@ contract ReentrancyTest is Test {
         arbSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
         arbSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
         arbSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        arbSels[13] = ArbiterRegistryFacet.activateDAO.selector;
+        arbSels[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        arbSels[15] = ArbiterRegistryFacet.isDaoActive.selector;
+        arbSels[16] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        arbSels[17] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        arbSels[18] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbSels[19] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        arbSels[20] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbSels[21] = ArbiterRegistryFacet.freezeVerdict.selector;
+        arbSels[22] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        arbSels[23] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        arbSels[24] = ArbiterRegistryFacet.fundVault.selector;
+        arbSels[25] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        arbSels[26] = ArbiterRegistryFacet.setDAOAddress.selector;
+        arbSels[27] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        arbSels[28] = ArbiterRegistryFacet.getArbiterReward.selector;
+        arbSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
+        arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
 
         bytes4[] memory cutSels = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -269,6 +288,12 @@ contract ReentrancyTest is Test {
         agr = _deployActive();
         vm.prank(executor);
         Agreement(agr).markDone();
+    }
+
+    function _resolveDispute(address agr, bool clientWins) internal {
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agr, clientWins);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
     }
 
     function _deployDisputed() internal returns (address agr) {
@@ -416,9 +441,9 @@ contract ReentrancyTest is Test {
 
         uint256 clientBefore = malUSDC.balanceOf(client);
 
+        // Reentrancy tries to call Agreement.resolveDispute directly — blocked by NotArbiter (arbiter=Diamond)
         malUSDC.arm(agr, abi.encodeCall(Agreement.resolveDispute, (true)));
-        vm.prank(arbiter);
-        Agreement(agr).resolveDispute(true);
+        _resolveDispute(agr, true);
 
         assertTrue(malUSDC.reentrantReverted(),  "guard must block reentrant resolveDispute");
         assertFalse(malUSDC.reentrantSucceeded(), "double-refund must not happen");
@@ -432,9 +457,9 @@ contract ReentrancyTest is Test {
 
         uint256 executorBefore = malUSDC.balanceOf(executor);
 
+        // Reentrancy tries to call Agreement.resolveDispute directly — blocked by NotArbiter (arbiter=Diamond)
         malUSDC.arm(agr, abi.encodeCall(Agreement.resolveDispute, (false)));
-        vm.prank(arbiter);
-        Agreement(agr).resolveDispute(false);
+        _resolveDispute(agr, false);
 
         assertTrue(malUSDC.reentrantReverted(),  "guard must block reentrant resolveDispute");
         assertFalse(malUSDC.reentrantSucceeded(), "double-payout must not happen");

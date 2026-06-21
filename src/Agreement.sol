@@ -380,8 +380,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     /// Только Diamond может вызвать — проверяем msg.sender напрямую (не ERC-2771).
     function setArbiter(address newArbiter) external {
         require(msg.sender == diamond, "Agreement: only Diamond");
-        // Защита глубины: если не сброс (address(0)) — проверяем что арбитр в реестре
-        if (newArbiter != address(0)) {
+        // Diamond сам может быть арбитром (Diamond-as-arbiter паттерн) — пропускаем проверку реестра
+        if (newArbiter != address(0) && newArbiter != diamond) {
             (bool ok, bytes memory data) = diamond.staticcall(
                 abi.encodeWithSignature("isRegisteredArbiter(address)", newArbiter)
             );
@@ -574,7 +574,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     function resolveDispute(bool clientWins) external nonReentrant {
         address sender = _msgSender();
         if (arbiter == address(0)) revert NoArbiterSet();
-        if (sender != arbiter) revert NotArbiter();
+        // Diamond-as-arbiter: Diamond вызывает напрямую через finalizeVerdict
+        if (sender != arbiter && msg.sender != diamond) revert NotArbiter();
         if (disputedAt == 0) revert NotDisputed();
         if (resolvedAt != 0) revert AlreadyResolved();
 

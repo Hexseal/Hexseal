@@ -165,7 +165,7 @@ contract AdversarialAccessTest is Test {
         svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
 
-        bytes4[] memory arbSels = new bytes4[](13);
+        bytes4[] memory arbSels = new bytes4[](32);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -179,6 +179,25 @@ contract AdversarialAccessTest is Test {
         arbSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
         arbSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
         arbSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        arbSels[13] = ArbiterRegistryFacet.activateDAO.selector;
+        arbSels[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        arbSels[15] = ArbiterRegistryFacet.isDaoActive.selector;
+        arbSels[16] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        arbSels[17] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        arbSels[18] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbSels[19] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        arbSels[20] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbSels[21] = ArbiterRegistryFacet.freezeVerdict.selector;
+        arbSels[22] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        arbSels[23] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        arbSels[24] = ArbiterRegistryFacet.fundVault.selector;
+        arbSels[25] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        arbSels[26] = ArbiterRegistryFacet.setDAOAddress.selector;
+        arbSels[27] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        arbSels[28] = ArbiterRegistryFacet.getArbiterReward.selector;
+        arbSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
+        arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
 
         bytes4[] memory cutSels = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;

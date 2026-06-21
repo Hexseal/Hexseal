@@ -1635,6 +1635,147 @@ export const ARBITER_REGISTRY_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  // V3 — verdict flow
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }, { internalType: 'bool', name: 'clientWins', type: 'bool' }],
+    name: 'submitVerdict',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'finalizeVerdict',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }, { internalType: 'bool', name: 'newClientWins', type: 'bool' }],
+    name: 'overturnVerdict',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'freezeVerdict',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'unfreezeVerdict',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  // V3 — rewards
+  {
+    inputs: [],
+    name: 'withdrawArbiterReward',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'amount', type: 'uint256' }],
+    name: 'fundVault',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'amount', type: 'uint256' }],
+    name: 'setRewardPerDispute',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'dao', type: 'address' }],
+    name: 'setDAOAddress',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  // V3 — views
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getPendingVerdict',
+    outputs: [{
+      components: [
+        { internalType: 'address', name: 'arbiter',     type: 'address' },
+        { internalType: 'bool',    name: 'clientWins',  type: 'bool' },
+        { internalType: 'uint256', name: 'submittedAt', type: 'uint256' },
+        { internalType: 'bool',    name: 'frozen',      type: 'bool' },
+        { internalType: 'bool',    name: 'finalized',   type: 'bool' },
+        { internalType: 'bool',    name: 'overturned',  type: 'bool' },
+      ],
+      internalType: 'struct ArbiterRegistryStorage.PendingVerdict',
+      name: '',
+      type: 'tuple',
+    }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getArbiterReward',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getVaultBalance',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getRewardPerDispute',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getDAOAddress',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  // V3 — events
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'agreement',  type: 'address' },
+      { indexed: true,  internalType: 'address', name: 'arbiter',    type: 'address' },
+      { indexed: false, internalType: 'bool',    name: 'clientWins', type: 'bool' },
+    ],
+    name: 'VerdictSubmitted',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'address', name: 'agreement', type: 'address' },
+    ],
+    name: 'VerdictFinalized',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter', type: 'address' },
+      { indexed: false, internalType: 'uint256', name: 'amount',  type: 'uint256' },
+    ],
+    name: 'ArbiterRewarded',
+    type: 'event',
+  },
 ] as const;
 
 export const REPUTATION_ABI = [

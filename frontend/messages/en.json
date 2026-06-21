@@ -572,7 +572,17 @@
     "resolving_refund": "Resolving — refunding client…",
     "resolving_pay": "Resolving — paying executor…",
     "add_btn": "Add",
-    "remove_btn": "Remove"
+    "remove_btn": "Remove",
+    "submitting_refund": "Submitting verdict: refund to client…",
+    "submitting_pay": "Submitting verdict: pay to executor…",
+    "finalizing": "Finalizing verdict…",
+    "finalize_btn": "Finalize Verdict",
+    "verdict_pending": "Verdict submitted — awaiting finalization",
+    "verdict_frozen": "Verdict frozen by owner",
+    "reward_title": "Pending Reward",
+    "withdraw_btn": "Withdraw",
+    "withdrawing": "Withdrawing…",
+    "reward_withdrawn": "Reward withdrawn successfully"
   },
   "onboarding": {
     "title": "How Hexseal works",
