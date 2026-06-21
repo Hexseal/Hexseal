@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useAccount, useWalletClient, usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { useServices, type GraphService } from "@/hooks/useServices";
 import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
@@ -908,30 +908,20 @@ export default function ExecutorBoardPage() {
         ) : (
           <>
             <div className="space-y-3">
-              <AnimatePresence mode="popLayout">
-                {filtered.map((svc, index) => (
-                  <motion.div
-                    key={svc.serviceId}
-                    initial={{ opacity: 0, y: 14 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.97 }}
-                    viewport={{ once: true, margin: "-40px" }}
-                    transition={{ duration: 0.28, delay: Math.min(index, 6) * 0.05, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    className="active:scale-[0.993] transition-transform duration-100"
-                  >
-                    <ServiceCard
-                      service={svc}
-                      address={address}
-                      isConnected={isConnected}
-                      myRequests={myRequests.filter(r => String(r.serviceId) === svc.serviceId)}
-                      onRequest={() => setRequestModal(svc)}
-                      isRequesting={isRequesting}
-                      expanded={expandedServiceId === svc.serviceId}
-                      onToggle={() => setExpandedServiceId(prev => prev === svc.serviceId ? null : svc.serviceId)}
-                    />
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+              {filtered.map((svc, index) => (
+                <div key={svc.serviceId} className="card-enter active:scale-[0.993] transition-transform duration-100" style={{ animationDelay: `${Math.min(index, 8) * 0.04}s` }}>
+                  <ServiceCard
+                    service={svc}
+                    address={address}
+                    isConnected={isConnected}
+                    myRequests={myRequests.filter(r => String(r.serviceId) === svc.serviceId)}
+                    onRequest={() => setRequestModal(svc)}
+                    isRequesting={isRequesting}
+                    expanded={expandedServiceId === svc.serviceId}
+                    onToggle={() => setExpandedServiceId(prev => prev === svc.serviceId ? null : svc.serviceId)}
+                  />
+                </div>
+              ))}
             </div>
             {hasMore && (
               <button

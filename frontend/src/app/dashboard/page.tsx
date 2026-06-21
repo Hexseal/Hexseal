@@ -8,7 +8,6 @@ import {
   Loader2, Activity, CheckCircle,
   DollarSign, Star, Zap,
 } from 'lucide-react';
-import { MessagingSetup } from '@/components/MessagingSetup';
 import { DealSearch } from '@/components/DealSearch';
 import { DealCard, type AgreementRecord } from './components/DealCard';
 import { MyJobs, MyServices, MyClientRequests } from './components/MyListings';
@@ -152,9 +151,6 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
 
-        {/* ── XMTP setup banner ── */}
-        <MessagingSetup />
-
         {/* ── Stats row ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {isLoading ? (
@@ -203,9 +199,6 @@ export default function DashboardPage() {
             </div>
           </motion.div>
         )}
-
-        {/* ── Deal search ── */}
-        <DealSearch />
 
         {/* ── Tabs ── */}
         <div>
@@ -278,21 +271,18 @@ export default function DashboardPage() {
                 )}
 
                 {tab === 'deals' && (
-                  activeDeals.length === 0 ? (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.96 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
-                      className="text-center py-10"
-                    >
-                      <div className="float-icon">
-                        <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
+                  <>
+                    <DealSearch />
+                    {activeDeals.length === 0 ? (
+                      <div className="text-center py-10">
+                        <div className="float-icon">
+                          <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
+                        </div>
+                        <p className="text-sm text-white/30">{t("dashboard.empty_active")}</p>
+                        <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
                       </div>
-                      <p className="text-sm text-white/30">{t("dashboard.empty_active")}</p>
-                      <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>
-                    </motion.div>
-                  ) : (
-                    <div className="space-y-3">
+                    ) : (
+                    <div className="space-y-3 mt-3">
                       {activeDeals.map((a, index) => (
                         <div
                           key={a.agreement}
@@ -303,7 +293,8 @@ export default function DashboardPage() {
                         </div>
                       ))}
                     </div>
-                  )
+                    )}
+                  </>
                 )}
 
                 {tab === 'history' && (

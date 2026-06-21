@@ -18,7 +18,7 @@ import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 interface JobRecord {
   client: string;
@@ -173,14 +173,7 @@ function JobCard({
   const cappedDelay = Math.min(index, 6) * 0.05;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 14 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-40px" }}
-      transition={{ duration: 0.28, delay: cappedDelay, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="active:scale-[0.993] transition-transform duration-100"
-      style={{ transformOrigin: "center" }}
-    >
+    <div className="active:scale-[0.993] transition-transform duration-100">
       <div
         className={`rounded-[22px] border cursor-pointer transition-all duration-200 ${
           expanded
@@ -317,7 +310,7 @@ function JobCard({
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -602,10 +595,9 @@ export default function BoardPage() {
         ) : (
           <>
             <div className="space-y-3">
-              <AnimatePresence>
-                {jobs.map(({ id, job }, index) => (
+              {jobs.map(({ id, job }, index) => (
+                <div key={id.toString()} className="card-enter" style={{ animationDelay: `${Math.min(index, 8) * 0.04}s` }}>
                   <JobCard
-                    key={id.toString()}
                     jobId={id}
                     job={job}
                     isClient={address?.toLowerCase() === job.client?.toLowerCase()}
@@ -617,8 +609,8 @@ export default function BoardPage() {
                     onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
                     index={index}
                   />
-                ))}
-              </AnimatePresence>
+                </div>
+              ))}
             </div>
             {hasMore && (
               <button
