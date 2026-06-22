@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useReadContract, usePublicClient, useWalletClient } from 'wagmi';
 import { isAddress, keccak256, toBytes } from 'viem';
 import type { Abi } from 'viem';
@@ -68,6 +69,8 @@ export function DealCard({ agreement, address, refetch }: {
 }) {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
+  const t  = useTranslations();
+  const tc = useTranslations('dashboard.card');
   const [busy, setBusy] = useState(false);
   const [showTimeouts, setShowTimeouts] = useState(false);
   const [disputeOpen, setDisputeOpen]     = useState(false);
@@ -125,6 +128,16 @@ export function DealCard({ agreement, address, refetch }: {
   const { data: arbiterTimeLeft } = useReadContract({ address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI, functionName: 'arbiterTimeLeft', query: { enabled: isAddress(agreement.agreement) } }) as { data: bigint | undefined };
   const { data: details }         = useReadContract({ address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI, functionName: 'getDetails',      query: { enabled: isAddress(agreement.agreement) } });
 
+  const statusLabels: Record<number, string> = {
+    0: t('deal_status.created'),
+    1: t('deal_status.funded'),
+    2: t('deal_status.active'),
+    3: t('deal_status.completed'),
+    4: t('deal_status.disputed'),
+    5: t('deal_status.resolved'),
+    6: t('deal_status.refunded'),
+  };
+
   const isClient   = agreement.client.toLowerCase()   === address.toLowerCase();
   const { data: userUsdcBalance } = useReadContract({
     address: CONTRACTS.usdc as `0x${string}`,
@@ -138,6 +151,10 @@ export function DealCard({ agreement, address, refetch }: {
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const activationExpired  = fundedAt > 0n && nowSec > fundedAt + ACTIVATION_WINDOW;
   const autoApproveExpired = markedDoneAt > 0n && nowSec >= markedDoneAt + AUTO_APPROVE_WINDOW;
+  const autoApproveRemaining =
+    markedDoneAt > 0n && !autoApproveExpired
+      ? markedDoneAt + AUTO_APPROVE_WINDOW - nowSec
+      : 0n;
   const deadlineExpired    = timeLeft !== undefined && timeLeft === 0n;
   const arbiterExpired     = arbiterTimeLeft !== undefined && arbiterTimeLeft === 0n;
 
@@ -150,17 +167,17 @@ export function DealCard({ agreement, address, refetch }: {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
     setBusy(true);
     const successMsg: Record<string, string> = {
-      activate:    'Deal activated! Work has started.',
-      markDone:    'Work submitted! Awaiting client review.',
-      release:     'Payment released to executor!',
-      raiseDispute:'Dispute raised. Arbiter will be notified.',
-      triggerActivationTimeout: 'Executor timed out — deal refunded.',
-      triggerDeadlineTimeout:   'Deadline passed — deal refunded.',
-      triggerArbiterTimeout:    'Arbiter timed out — deal refunded.',
-      triggerAutoApprove:       'Auto-approved — funds released to executor.',
+      activate:    tc('activate_success'),
+      markDone:    t('deal.mark_done_success'),
+      release:     tc('release_success'),
+      raiseDispute: tc('dispute_success'),
+      triggerActivationTimeout: t('deal.timeout_activation_success'),
+      triggerDeadlineTimeout:   t('deal.timeout_deadline_success'),
+      triggerArbiterTimeout:    t('deal.timeout_arbiter_success'),
+      triggerAutoApprove:       t('deal.timeout_auto_approve_success'),
     };
     try {
-      toast('Confirm in wallet…');
+      toast(tc('sign_wallet'));
       await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, fn, AGREEMENT_ABI as Abi);
       toast.success(successMsg[fn] ?? 'Done!');
       setTimeout(refetch, 2000);
@@ -175,7 +192,7 @@ export function DealCard({ agreement, address, refetch }: {
     if (!proposeAmount || isNaN(parsed_) || parsed_ <= 0) { toast.error('Enter a valid amount'); return; }
     setBusy(true);
     try {
-      toast('Sign: USDC permit…');
+      toast(tc('sign_wallet'));
       const amountParsed = BigInt(Math.round(parsed_ * 1e6));
       const termsHash = keccak256(toBytes(proposeDesc.trim() || `${proposeAmount} USDC extra`));
       await proposeExtraGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, amountParsed, termsHash);
@@ -217,9 +234,9 @@ export function DealCard({ agreement, address, refetch }: {
           body: JSON.stringify({ agreement: agreement.agreement, raiser: address, reason: disputeReason.trim() }),
         }).catch(() => {});
       }
-      toast('Confirm in wallet…');
+      toast(tc('sign_wallet'));
       await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, 'raiseDispute', AGREEMENT_ABI as Abi);
-      toast.success('Dispute raised. Arbiter will be notified.');
+      toast.success(tc('dispute_success'));
       setDisputeReason('');
       setTimeout(refetch, 2000);
     } catch (err: unknown) {
@@ -235,69 +252,76 @@ export function DealCard({ agreement, address, refetch }: {
         if (!publicClient || !walletClient) { toast.error('Wallet not connected'); return; }
         setBusy(true);
         try {
-          toast('Sign: USDC permit…');
+          toast(tc('sign_wallet'));
           await fundAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, agreement.amount);
-          toast.success('Deal funded!');
+          toast.success(t('deal.fund_success'));
           setTimeout(refetch, 4000);
         } catch (err: unknown) {
           const e = err as { shortMessage?: string; message?: string };
-          const msg = e?.shortMessage || e?.message || 'Fund failed';
-          if (msg.includes('AlreadyFunded')) { toast.error('Already funded'); refetch(); }
+          const msg = e?.shortMessage || e?.message || t('deal.fund_failed');
+          if (msg.includes('AlreadyFunded')) { toast.error(t('deal.already_funded')); refetch(); }
           else toast.error(msg);
         } finally { setBusy(false); }
       }}>
-        {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}Fund
+        {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}{tc('fund_btn')}
       </Button>
       {!hasEnoughUsdc && userUsdcBalance !== undefined && (
         <span className="text-xs text-red-400">
-          Insufficient USDC ({formatAmount(userUsdcBalance)} / {formatAmount(agreement.amount)})
+          {tc('insufficient_usdc')} ({formatAmount(userUsdcBalance)} / {formatAmount(agreement.amount)})
         </span>
       )}
     </div>
   );
   if (liveStatus === 1 && isExecutor) primaryActions.push(
     <div key="activate-group" className="flex flex-col gap-1.5 w-full">
-      <p className="text-xs text-amber-400/70">Deal is funded — start work to begin the countdown</p>
+      <p className="text-xs text-amber-400/70">{tc('activate_hint')}</p>
       <Button size="sm" disabled={busy} onClick={() => run('activate')} className="self-start gap-1">
-        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}Start Work
+        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}{tc('activate_btn')}
       </Button>
     </div>
   );
   if (liveStatus === 2 && isExecutor && markedDoneAt === BigInt(0)) primaryActions.push(
     <Button key="markDone" size="sm" disabled={busy} onClick={() => run('markDone')}>
-      {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}Mark Done
+      {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}{tc('mark_done_btn')}
     </Button>
   );
   if (liveStatus === 2 && isClient && markedDoneAt > BigInt(0)) primaryActions.push(
-    <Button key="release" size="sm" disabled={busy} onClick={() => run('release')}>
-      {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}Release
-    </Button>
+    <div key="release-group" className="flex flex-col gap-1">
+      {autoApproveRemaining > 0n && (
+        <span className="text-[11px] text-white/30">
+          {tc('auto_approve_in', { time: formatTimeLeft(autoApproveRemaining) })}
+        </span>
+      )}
+      <Button size="sm" disabled={busy} onClick={() => run('release')}>
+        {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}{tc('release_btn')}
+      </Button>
+    </div>
   );
   if (liveStatus === 2 && (isClient || isExecutor)) primaryActions.push(
     <Button key="dispute" size="sm" variant="destructive" disabled={busy} onClick={() => setDisputeOpen(v => !v)}>
-      <Flag className="w-3 h-3 mr-1" />Raise Dispute
+      <Flag className="w-3 h-3 mr-1" />{tc('dispute_btn')}
     </Button>
   );
 
   const timeoutActions: React.ReactNode[] = [];
   if (liveStatus === 1 && (isClient || isExecutor) && activationExpired) timeoutActions.push(
     <Button key="actTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerActivationTimeout')}>
-      <Timer className="w-3 h-3 mr-1" />Executor didn't start → Refund
+      <Timer className="w-3 h-3 mr-1" />{t('deal.timeout_activation')}
     </Button>
   );
   if (liveStatus === 2 && (isClient || isExecutor) && markedDoneAt === BigInt(0) && deadlineExpired) timeoutActions.push(
     <Button key="dlTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerDeadlineTimeout')}>
-      <Timer className="w-3 h-3 mr-1" />Deadline passed → Refund
+      <Timer className="w-3 h-3 mr-1" />{t('deal.timeout_deadline')}
     </Button>
   );
   if (liveStatus === 4 && (isClient || isExecutor) && arbiterExpired) timeoutActions.push(
     <Button key="arbTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerArbiterTimeout')}>
-      <Timer className="w-3 h-3 mr-1" />Arbiter idle → Refund
+      <Timer className="w-3 h-3 mr-1" />{t('deal.timeout_arbiter')}
     </Button>
   );
   if (liveStatus === 2 && markedDoneAt > BigInt(0) && autoApproveExpired) timeoutActions.push(
     <Button key="autoApprove" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerAutoApprove')}>
-      <Shield className="w-3 h-3 mr-1" />Client silent → Release to executor
+      <Shield className="w-3 h-3 mr-1" />{t('deal.timeout_auto_approve')}
     </Button>
   );
 
@@ -345,7 +369,7 @@ export function DealCard({ agreement, address, refetch }: {
         {/* Meta line */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
-          <span className={`text-[11px] font-medium ${s.textCls}`}>{s.label}</span>
+          <span className={`text-[11px] font-medium ${s.textCls}`}>{statusLabels[liveStatus] ?? s.label}</span>
           <span className="text-[11px] text-white/15 select-none">·</span>
           <span className="text-[11px] font-mono text-white/55">{formatAmount(agreement.amount)} USDC</span>
           <span className="text-[11px] text-white/15 select-none">·</span>
@@ -383,13 +407,13 @@ export function DealCard({ agreement, address, refetch }: {
         {disputeOpen && (
           <div className="mt-2 rounded-[12px] border border-red-400/20 bg-red-400/[0.03] p-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-red-400/60 font-semibold uppercase tracking-wider">Describe the issue</span>
+              <span className="text-[11px] text-red-400/60 font-semibold uppercase tracking-wider">{tc('dispute_title')}</span>
               <button onClick={() => { setDisputeOpen(false); setDisputeReason(''); }}>
                 <X className="w-3 h-3 text-white/25 hover:text-white/60" />
               </button>
             </div>
             <Textarea
-              placeholder="Explain the problem for the arbiter…"
+              placeholder={tc('dispute_placeholder')}
               value={disputeReason}
               onChange={e => setDisputeReason(e.target.value)}
               maxLength={2000}
@@ -399,7 +423,7 @@ export function DealCard({ agreement, address, refetch }: {
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-white/20">{disputeReason.length}/2000</span>
               <Button size="sm" variant="destructive" className="h-6 text-[11px]" disabled={busy || !disputeReason.trim()} onClick={handleRaiseDispute}>
-                {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Flag className="w-3 h-3 mr-1" />}Confirm Dispute
+                {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Flag className="w-3 h-3 mr-1" />}{tc('dispute_confirm')}
               </Button>
             </div>
           </div>
@@ -411,7 +435,7 @@ export function DealCard({ agreement, address, refetch }: {
             <button onClick={() => setShowTimeouts(v => !v)}
               className="flex items-center gap-1 text-xs text-white/25 hover:text-white/50 transition-colors">
               <ChevronDown className={`w-3 h-3 transition-transform ${showTimeouts ? 'rotate-180' : ''}`} />
-              {showTimeouts ? 'скрыть' : 'таймаут-действия'}
+              {showTimeouts ? tc('timeouts_hide') : tc('timeouts_show')}
             </button>
           </div>
         )}
@@ -432,7 +456,7 @@ export function DealCard({ agreement, address, refetch }: {
               className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/55 transition-colors"
             >
               <ChevronDown className={`w-3 h-3 transition-transform ${showExtras ? 'rotate-180' : ''}`} />
-              Extras
+              {tc('extras_label')}
               {pendingExtras.length > 0 && (
                 <span className="ml-1 bg-amber-400/20 text-amber-400 text-[10px] font-mono px-1.5 py-0.5 rounded-full">
                   {pendingExtras.length}
@@ -444,7 +468,7 @@ export function DealCard({ agreement, address, refetch }: {
                 onClick={() => setProposeOpen(true)}
                 className="flex items-center gap-1 text-[11px] text-white/30 hover:text-white/60 transition-colors"
               >
-                <Plus className="w-3 h-3" />Propose
+                <Plus className="w-3 h-3" />{tc('extras_propose')}
               </button>
             )}
           </div>
@@ -455,25 +479,25 @@ export function DealCard({ agreement, address, refetch }: {
               {proposeOpen && isClient && (
                 <div className="rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-white/40">New extra payment</span>
+                    <span className="text-[11px] text-white/40">{tc('extras_propose_title')}</span>
                     <button onClick={() => { setProposeOpen(false); setProposeAmount(''); setProposeDesc(''); }}>
                       <X className="w-3 h-3 text-white/25 hover:text-white/60" />
                     </button>
                   </div>
                   <div className="flex gap-2">
                     <Input
-                      type="number" placeholder="Amount USDC" value={proposeAmount}
+                      type="number" placeholder={tc('extras_amount')} value={proposeAmount}
                       onChange={e => setProposeAmount(e.target.value)}
                       className="h-7 text-xs bg-white/[0.04] border-white/10 flex-1"
                     />
                     <Input
-                      placeholder="Note (optional)" value={proposeDesc}
+                      placeholder={tc('extras_note')} value={proposeDesc}
                       onChange={e => setProposeDesc(e.target.value)}
                       className="h-7 text-xs bg-white/[0.04] border-white/10 flex-[2]"
                     />
                   </div>
                   <Button size="sm" className="h-6 text-[11px]" disabled={busy || !proposeAmount} onClick={handleProposeExtra}>
-                    {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}Propose Extra
+                    {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}{tc('extras_propose_btn')}
                   </Button>
                 </div>
               )}
@@ -487,25 +511,25 @@ export function DealCard({ agreement, address, refetch }: {
                       onClick={() => handleExtraAction('acceptExtra', extra.id)}
                       disabled={busy}
                       className="text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-40"
-                    >Accept</button>
+                    >{tc('extras_accept')}</button>
                     <span className="text-white/15">·</span>
                     <button
                       onClick={() => handleExtraAction('rejectExtra', extra.id)}
                       disabled={busy}
                       className="text-[11px] text-red-400/60 hover:text-red-400 transition-colors disabled:opacity-40"
-                    >Reject</button>
+                    >{tc('extras_reject')}</button>
                   </div>
                 </div>
               ))}
 
               {extrasList.length === 0 && !proposeOpen && (
-                <p className="text-[11px] text-white/20 text-center py-1">No extras yet</p>
+                <p className="text-[11px] text-white/20 text-center py-1">{tc('extras_empty')}</p>
               )}
 
               {/* Accepted extras summary */}
               {extrasList.filter(e => e.status === EXTRA_STATUS.ACCEPTED).length > 0 && (
                 <p className="text-[11px] text-white/25 text-center">
-                  {extrasList.filter(e => e.status === EXTRA_STATUS.ACCEPTED).length} extra(s) accepted
+                  {tc('extras_accepted', { count: extrasList.filter(e => e.status === EXTRA_STATUS.ACCEPTED).length })}
                 </p>
               )}
             </div>
