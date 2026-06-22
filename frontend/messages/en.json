@@ -205,6 +205,10 @@
     "section_job_postings": "My Job Postings",
     "section_job_receipts": "Job Receipts",
     "section_service_requests": "Service Requests",
+    "listings": {
+      "service_updated": "Service updated.",
+      "job_updated": "Job updated."
+    },
     "card": {
       "fund_btn": "Fund",
       "insufficient_usdc": "Insufficient USDC",

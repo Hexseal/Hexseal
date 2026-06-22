@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useReadContract, useReadContracts, useWalletClient, usePublicClient } from 'wagmi';
 import type { Abi } from 'viem';
@@ -460,6 +461,7 @@ function ServiceCard({
 // ── My Services (executor listings) ──────────────────────────────────────────
 
 export function MyServices({ address, onDealCreated }: { address: string; onDealCreated?: () => void }) {
+  const t = useTranslations('dashboard.listings');
   const [showRemoved, setShowRemoved] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmReq, setConfirmReq] = useState<{ requestId: bigint; client: string; amount: bigint; deadlineDays: bigint } | null>(null);
@@ -590,7 +592,7 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
         [editTarget.id, fields.title, fields.description, fields.price, fields.deadlineDays, fields.region],
         DIAMOND_ABI as Abi,
       );
-      toast.success('Услуга обновлена');
+      toast.success(t('service_updated'));
       setEditTarget(null);
       setTimeout(refetch, 2000);
     } catch (err: any) {
@@ -890,6 +892,7 @@ function JobCard({
 // ── My Jobs (client postings) ─────────────────────────────────────────────────
 
 export function MyJobs({ address, onDealCreated }: { address: string; onDealCreated?: () => void }) {
+  const tj = useTranslations('dashboard.listings');
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
@@ -999,7 +1002,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
         [editTarget.id, fields.title, fields.description, fields.deadlineDays, editTarget.termsHash ?? `0x${'0'.repeat(64)}`, fields.region],
         DIAMOND_ABI as Abi,
       );
-      toast.success('Заказ обновлён');
+      toast.success(tj('job_updated'));
       setEditTarget(null);
       setTimeout(refetch, 2000);
     } catch (err: any) {

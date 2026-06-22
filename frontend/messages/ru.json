@@ -205,6 +205,10 @@
     "section_job_postings": "Мои заказы",
     "section_job_receipts": "Квитанции о работах",
     "section_service_requests": "Запросы услуг",
+    "listings": {
+      "service_updated": "Услуга обновлена.",
+      "job_updated": "Заказ обновлён."
+    },
     "card": {
       "fund_btn": "Пополнить",
       "insufficient_usdc": "Недостаточно USDC",
