@@ -207,7 +207,20 @@
     "section_service_requests": "Запросы услуг",
     "listings": {
       "service_updated": "Услуга обновлена.",
-      "job_updated": "Заказ обновлён."
+      "job_updated": "Заказ обновлён.",
+      "edit_service": "Редактировать услугу",
+      "edit_job": "Редактировать заказ",
+      "field_title": "Заголовок",
+      "field_description": "Описание",
+      "field_price": "Цена (USDC)",
+      "field_budget": "Бюджет (USDC)",
+      "field_deadline": "Срок (дней)",
+      "field_region": "Регион",
+      "budget_locked": "Бюджет нельзя менять — отмени и создай новый",
+      "cancel": "Отмена",
+      "save": "Сохранить",
+      "title_invalid": "Заголовок обязателен (макс 100 символов)",
+      "desc_too_long": "Описание слишком длинное (макс 500)"
     },
     "card": {
       "fund_btn": "Пополнить",

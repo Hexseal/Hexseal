@@ -113,6 +113,8 @@ function EditListingModal({
   onClose: () => void;
   onSave: (fields: { title: string; description: string; price: bigint; deadlineDays: bigint; region: number }) => void;
 }) {
+  const tl = useTranslations('dashboard.listings');
+  const tf = useTranslations('form');
   const [title, setTitle]             = useState(target.title);
   const [description, setDescription] = useState(target.description);
   const [priceStr, setPriceStr]       = useState((Number(target.amount) / 1e6).toString());
@@ -123,20 +125,19 @@ function EditListingModal({
   const isService = target.kind === 'service';
 
   const submit = () => {
-    const t = title.trim();
-    if (!t || t.length > 100) { setErr('Заголовок обязателен (макс 100 символов)'); return; }
-    if (description.length > 500) { setErr('Описание слишком длинное (макс 500)'); return; }
+    const trimmed = title.trim();
+    if (!trimmed || trimmed.length > 100) { setErr(tl('title_invalid')); return; }
+    if (description.length > 500) { setErr(tl('desc_too_long')); return; }
     const days = parseInt(deadlineStr, 10);
-    if (isNaN(days) || days < 1 || days > 365) { setErr('Срок: от 1 до 365 дней'); return; }
-    // For services the price can change; for jobs we keep the original amount.
+    if (isNaN(days) || days < 1 || days > 365) { setErr(tf('deadline_range', { min: 1, max: 365 })); return; }
     let price = target.amount;
     if (isService) {
       const p = parseFloat(priceStr);
-      if (isNaN(p) || p < 1) { setErr('Цена: минимум 1 USDC'); return; }
+      if (isNaN(p) || p < 1) { setErr(tf('price_min', { min: 1 })); return; }
       price = BigInt(Math.round(p * 1e6));
     }
     setErr(null);
-    onSave({ title: t, description: description.trim(), price, deadlineDays: BigInt(days), region });
+    onSave({ title: trimmed, description: description.trim(), price, deadlineDays: BigInt(days), region });
   };
 
   return (
@@ -149,20 +150,20 @@ function EditListingModal({
             <Pencil className="w-4 h-4 text-primary" />
           </div>
           <h2 className="text-base font-bold font-syne text-white">
-            {isService ? 'Редактировать услугу' : 'Редактировать заказ'} #{target.id.toString()}
+            {isService ? tl('edit_service') : tl('edit_job')} #{target.id.toString()}
           </h2>
         </div>
 
         <div className="space-y-3.5">
           <div className="space-y-1.5">
-            <label className="text-xs text-white/50">Заголовок</label>
+            <label className="text-xs text-white/50">{tl('field_title')}</label>
             <input value={title} onChange={e => setTitle(e.target.value)} maxLength={100}
               className="w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/[0.18]" />
             <p className="text-[11px] text-white/25 text-right">{title.length}/100</p>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs text-white/50">Описание</label>
+            <label className="text-xs text-white/50">{tl('field_description')}</label>
             <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4} maxLength={500}
               className="w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm text-white placeholder:text-white/20 resize-none focus:outline-none focus:border-white/[0.18]" />
             <p className="text-[11px] text-white/25 text-right">{description.length}/500</p>
@@ -170,21 +171,21 @@ function EditListingModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="text-xs text-white/50">{isService ? 'Цена (USDC)' : 'Бюджет (USDC)'}</label>
+              <label className="text-xs text-white/50">{isService ? tl('field_price') : tl('field_budget')}</label>
               <input value={priceStr} onChange={e => setPriceStr(e.target.value)} type="number" min={isService ? '1' : '0'}
                 disabled={!isService}
                 className={`w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm rounded-[12px] focus:outline-none focus:border-white/[0.18] ${isService ? 'text-white' : 'text-white/35 cursor-not-allowed'}`} />
-              {!isService && <p className="text-[11px] text-white/25">Бюджет нельзя менять — отмени и создай новый</p>}
+              {!isService && <p className="text-[11px] text-white/25">{tl('budget_locked')}</p>}
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs text-white/50">Срок (дней)</label>
+              <label className="text-xs text-white/50">{tl('field_deadline')}</label>
               <input value={deadlineStr} onChange={e => setDeadlineStr(e.target.value)} type="number" min="1" max="365"
                 className="w-full bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-2 text-sm text-white focus:outline-none focus:border-white/[0.18]" />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs text-white/50">Регион</label>
+            <label className="text-xs text-white/50">{tl('field_region')}</label>
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(REGION_LABELS).map(([val, label]) => (
                 <button key={val} onClick={() => setRegion(Number(val))}
@@ -203,11 +204,11 @@ function EditListingModal({
         <div className="flex gap-2.5 mt-5">
           <Button variant="ghost" className="flex-1 border border-white/10 text-white/50 hover:text-white/80 hover:bg-white/5"
             onClick={onClose} disabled={busy}>
-            Отмена
+            {tl('cancel')}
           </Button>
           <Button className="flex-1 gap-1.5" onClick={submit} disabled={busy}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
-            Сохранить
+            {tl('save')}
           </Button>
         </div>
       </div>

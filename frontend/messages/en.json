@@ -207,7 +207,20 @@
     "section_service_requests": "Service Requests",
     "listings": {
       "service_updated": "Service updated.",
-      "job_updated": "Job updated."
+      "job_updated": "Job updated.",
+      "edit_service": "Edit service",
+      "edit_job": "Edit job",
+      "field_title": "Title",
+      "field_description": "Description",
+      "field_price": "Price (USDC)",
+      "field_budget": "Budget (USDC)",
+      "field_deadline": "Deadline (days)",
+      "field_region": "Region",
+      "budget_locked": "Budget can't be changed — cancel and create a new deal",
+      "cancel": "Cancel",
+      "save": "Save",
+      "title_invalid": "Title required (max 100 characters)",
+      "desc_too_long": "Description too long (max 500 characters)"
     },
     "card": {
       "fund_btn": "Fund",
