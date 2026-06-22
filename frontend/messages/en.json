@@ -653,6 +653,8 @@
     "a_wallets": "MetaMask, Coinbase Wallet, Rainbow, Trust Wallet, Brave Wallet, OKX, Phantom, Ledger, and any injected wallet. WalletConnect lets you connect any mobile wallet.",
     "q_network": "Which network does this run on?",
     "a_network": "Currently deployed on Base Sepolia (testnet, chainId 84532). All USDC used is test USDC — no real money is at risk.",
+    "q_get_usdc": "How do I get test USDC?",
+    "a_get_usdc": "Use the Circle faucet at faucet.circle.com — select Base Sepolia and paste your wallet address. You'll receive test USDC within seconds. This is testnet only; no real money involved.",
     "q_how_deal": "How does a deal work?",
     "a_how_deal": "1. Client creates a deal with executor address, amount, and deadline.\n2. Client funds — USDC is locked in the contract.\n3. Executor activates (accepts work).\n4. Executor marks done.\n5. Client releases payment — or raises a dispute.\n6. If client is silent 5 days after delivery, funds auto-release.",
     "q_no_activate": "What happens if the executor doesn't activate?",

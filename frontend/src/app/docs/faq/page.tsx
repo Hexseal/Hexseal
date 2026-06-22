@@ -44,6 +44,7 @@ export default function FAQPage() {
         { q: t("faq.q_is_free"), a: t("faq.a_is_free") },
         { q: t("faq.q_wallets"), a: t("faq.a_wallets") },
         { q: t("faq.q_network"), a: t("faq.a_network") },
+        { q: t("faq.q_get_usdc"), a: t("faq.a_get_usdc") },
       ],
     },
     {
