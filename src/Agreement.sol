@@ -236,10 +236,11 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 public constant TOKEN_ID          = 1; // NFT клиента
     uint256 public constant EXECUTOR_TOKEN_ID = 2; // NFT исполнителя
 
-    uint256 public constant ACTIVATION_WINDOW  = 3 days; // executor должен подтвердить старт
-    uint256 public constant AUTO_APPROVE_WINDOW = 5 days; // клиент должен ответить после markDone
-    uint256 public constant DISPUTE_WINDOW      = 7 days; // арбитр должен резолвить спор
-    // Если арбитр не резолвит за 7 дней — авторефанд клиенту (защита от неактивного арбитра)
+    uint256 public constant ACTIVATION_WINDOW  = 2 days; // executor должен подтвердить старт
+    uint256 public constant AUTO_APPROVE_WINDOW = 2 days; // клиент должен ответить после markDone
+    uint256 public constant DISPUTE_WINDOW      = 4 days; // арбитр должен резолвить спор
+    uint256 public constant DEADLINE_GRACE      = 1 days; // grace-период после дедлайна перед рефандом
+    // Если арбитр не резолвит за 4 дня — авторефанд клиенту (защита от неактивного арбитра)
 
     // -------- IMMUTABLES (задаются при деплое, никогда не меняются) --------
 
@@ -412,8 +413,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
             return Status.ACTIVE;
         }
 
-        // Дедлайн прошёл и не выполнено → REFUNDED
-        if (block.timestamp > activatedAt + (deadlineDays * 1 days)) {
+        // После grace-периода и без сдачи → REFUNDED (ожидает triggerDeadlineTimeout)
+        if (block.timestamp > activatedAt + (deadlineDays * 1 days) + DEADLINE_GRACE) {
             return Status.REFUNDED;
         }
 
@@ -498,8 +499,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (markedDoneAt != 0) revert AlreadyMarkedDone();
         if (disputedAt != 0) revert AlreadyDisputed();
 
-        // Дедлайн не должен быть пропущен
-        if (block.timestamp > activatedAt + (deadlineDays * 1 days)) revert DeadlinePassed();
+        // Дедлайн + grace период — исполнитель может сдать в течение 1 дня после дедлайна
+        if (block.timestamp > activatedAt + (deadlineDays * 1 days) + DEADLINE_GRACE) revert DeadlinePassed();
 
         markedDoneAt = block.timestamp;
 
@@ -557,7 +558,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // Дедлайн проверяем только если markDone ещё не вызван:
         // если исполнитель успел markDone до дедлайна, клиент должен иметь право
         // поднять спор в пределах AUTO_APPROVE_WINDOW даже если дедлайн уже прошёл
-        if (markedDoneAt == 0 && block.timestamp > activatedAt + (deadlineDays * 1 days)) {
+        if (markedDoneAt == 0 && block.timestamp > activatedAt + (deadlineDays * 1 days) + DEADLINE_GRACE) {
             revert DeadlinePassed();
         }
 
@@ -624,7 +625,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (activatedAt == 0) revert NotActive();
         if (disputedAt != 0) revert AlreadyDisputed();
         if (markedDoneAt != 0) revert AlreadyMarkedDone();
-        if (block.timestamp <= activatedAt + (deadlineDays * 1 days)) revert DeadlineNotPassed();
+        // Рефанд доступен только после дедлайна + grace (1 день), чтобы дать исполнителю шанс сдать
+        if (block.timestamp <= activatedAt + (deadlineDays * 1 days) + DEADLINE_GRACE) revert DeadlineNotPassed();
 
         _settlePending();
         uint256 payout = amount + extrasTotal;

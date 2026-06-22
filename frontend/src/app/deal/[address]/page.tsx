@@ -4,6 +4,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
 import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI } from "@/config/contracts";
+import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from "@/config/constants";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
 import { formatUnits, parseUnits, keccak256, toBytes, isAddress, type Abi } from "viem";
@@ -279,11 +280,11 @@ export default function DealDetailPage() {
 
   const now = Date.now() / 1000;
   const activationWindowPassed = !!parsed && parsed.fundedAt > 0n
-    && now > Number(parsed.fundedAt) + 3 * 24 * 3600;
+    && now > Number(parsed.fundedAt) + Number(ACTIVATION_WINDOW);
   const autoApproveWindowPassed = !!parsed && parsed.markedDoneAt > 0n
-    && now >= Number(parsed.markedDoneAt) + 5 * 24 * 3600;
+    && now >= Number(parsed.markedDoneAt) + Number(AUTO_APPROVE_WINDOW);
   const autoApproveSecondsLeft = parsed && parsed.markedDoneAt > 0n && !autoApproveWindowPassed
-    ? BigInt(Math.max(0, Math.round(Number(parsed.markedDoneAt) + 5 * 24 * 3600 - now)))
+    ? BigInt(Math.max(0, Math.round(Number(parsed.markedDoneAt) + Number(AUTO_APPROVE_WINDOW) - now)))
     : undefined;
 
   const handleAction = async (fn: string, successMsg: string, args: unknown[] = []) => {
