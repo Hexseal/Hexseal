@@ -212,6 +212,10 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
+interface IReputationFacet {
+    function autoAwardXP(address agreement) external;
+}
+
 // ---------- REGISTRY INTERFACE ----------
 // Agreement вызывает Diamond (Registry фасет) для обновления статуса
 
@@ -937,6 +941,11 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         else regStatus = ISignatureRegistry.AgreementStatus.REFUNDED;
 
         _updateRegistry(regStatus);
+
+        // Автоматически начисляем XP обеим сторонам при успешном завершении
+        if (newStatus == Status.COMPLETED || newStatus == Status.RESOLVED) {
+            try IReputationFacet(diamond).autoAwardXP(address(this)) {} catch {}
+        }
 
         // Сжигаем оба NFT в одной операции
         if (_exists(TOKEN_ID))          _burn(TOKEN_ID);

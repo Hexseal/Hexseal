@@ -66,15 +66,44 @@ contract ReputationFacet {
     error DealNotEligible();
     error NotParty();
     error AlreadyClaimed();
+    error NotAgreement();
 
     // -------- ACTIONS --------
 
-    /// @notice Заклеймить XP за завершённую сделку. Вызывать может только клиент или исполнитель.
+    /// @notice Автоматически начислить XP обеим сторонам при завершении сделки.
+    /// Вызывается самим Agreement через Diamond (msg.sender == agreement).
+    /// Только для COMPLETED и RESOLVED — не для REFUNDED.
+    function autoAwardXP(address agreement) external {
+        if (msg.sender != agreement) revert NotAgreement();
+        if (RegistryStorage.layout().agreements[agreement].agreement != agreement)
+            revert AgreementNotRegistered();
+
+        IAgreementView agmt = IAgreementView(agreement);
+        address cli = agmt.client();
+        address exc = agmt.executor();
+        uint256 amt = agmt.amount();
+
+        ReputationStorage.Data storage d = ReputationStorage.data();
+
+        if (d.clientClaimed[agreement] && d.executorClaimed[agreement]) return;
+
+        _evalPairCap(d, agreement, cli, exc, amt);
+
+        if (!d.clientClaimed[agreement]) {
+            d.clientClaimed[agreement] = true;
+            _addXP(d, agreement, cli, amt);
+        }
+        if (!d.executorClaimed[agreement]) {
+            d.executorClaimed[agreement] = true;
+            _addXP(d, agreement, exc, amt);
+        }
+    }
+
+    /// @notice Ручной клейм XP за старые сделки (до autoAwardXP). Fallback для legacy deals.
     /// Каждая сторона вызывает отдельно. Pair cap оценивается при первом вызове.
     function claimXP(address agreement) external {
         ReputationStorage.Data storage d = ReputationStorage.data();
 
-        // Verify: agreement должен быть в реестре Hexseal
         if (RegistryStorage.layout().agreements[agreement].agreement != agreement)
             revert AgreementNotRegistered();
 
@@ -84,14 +113,11 @@ contract ReputationFacet {
         address cli = agmt.client();
         address exc = agmt.executor();
 
-        // Только COMPLETED(3) или RESOLVED(5)
         if (st != STATUS_COMPLETED && st != STATUS_RESOLVED) revert DealNotEligible();
 
-        // Только участник сделки
         address caller = msg.sender;
         if (caller != cli && caller != exc) revert NotParty();
 
-        // Проверка и запись клейма
         bool isClient = (caller == cli);
         if (isClient) {
             if (d.clientClaimed[agreement]) revert AlreadyClaimed();
@@ -101,39 +127,8 @@ contract ReputationFacet {
             d.executorClaimed[agreement] = true;
         }
 
-        // Первый claimer оценивает pair cap (один раз на сделку)
-        if (!d.pairCounted[agreement]) {
-            d.pairCounted[agreement] = true;
-            if (amt >= MIN_WIN_AMOUNT) {
-                bytes32 pk = _pairKey(cli, exc);
-                if (d.pairWins[pk] < MAX_WINS_PAIR) {
-                    d.pairWins[pk]++;
-                    d.dealIsWin[agreement] = true;
-                }
-            }
-        }
-
-        uint256 xpGain = d.dealIsWin[agreement] ? WIN_XP : 0;
-
-        // Volume XP: +1 за каждые $10 USDC, cap MAX_VOLUME_XP на адрес
-        if (amt >= MIN_WIN_AMOUNT) {
-            uint256 accrued = d.volumeXPAccrued[caller];
-            if (accrued < MAX_VOLUME_XP) {
-                uint256 volGain = _min(amt / 10_000_000, MAX_VOLUME_XP - accrued);
-                xpGain += volGain;
-                d.volumeXPAccrued[caller] = accrued + volGain;
-            }
-        }
-
-        if (xpGain > 0) {
-            if (!d.hasEarnedXP[caller]) {
-                d.hasEarnedXP[caller] = true;
-                d.uniqueActiveUsers++;
-            }
-            d.xp[caller] += xpGain;
-        }
-
-        emit XPClaimed(agreement, caller, xpGain);
+        _evalPairCap(d, agreement, cli, exc, amt);
+        _addXP(d, agreement, caller, amt);
     }
 
     // -------- VIEWS --------
@@ -163,6 +158,51 @@ contract ReputationFacet {
     }
 
     // -------- INTERNAL --------
+
+    function _evalPairCap(
+        ReputationStorage.Data storage d,
+        address agreement,
+        address cli,
+        address exc,
+        uint256 amt
+    ) private {
+        if (d.pairCounted[agreement]) return;
+        d.pairCounted[agreement] = true;
+        if (amt >= MIN_WIN_AMOUNT) {
+            bytes32 pk = _pairKey(cli, exc);
+            if (d.pairWins[pk] < MAX_WINS_PAIR) {
+                d.pairWins[pk]++;
+                d.dealIsWin[agreement] = true;
+            }
+        }
+    }
+
+    function _addXP(
+        ReputationStorage.Data storage d,
+        address agreement,
+        address recipient,
+        uint256 amt
+    ) private {
+        uint256 xpGain = d.dealIsWin[agreement] ? WIN_XP : 0;
+
+        if (amt >= MIN_WIN_AMOUNT) {
+            uint256 accrued = d.volumeXPAccrued[recipient];
+            if (accrued < MAX_VOLUME_XP) {
+                uint256 volGain = _min(amt / 10_000_000, MAX_VOLUME_XP - accrued);
+                xpGain += volGain;
+                d.volumeXPAccrued[recipient] = accrued + volGain;
+            }
+        }
+
+        if (xpGain > 0) {
+            if (!d.hasEarnedXP[recipient]) {
+                d.hasEarnedXP[recipient] = true;
+                d.uniqueActiveUsers++;
+            }
+            d.xp[recipient] += xpGain;
+            emit XPClaimed(agreement, recipient, xpGain);
+        }
+    }
 
     function _pairKey(address a, address b) internal pure returns (bytes32) {
         return a < b

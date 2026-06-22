@@ -2,7 +2,8 @@
 
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useAccount } from 'wagmi';
+import { useAccount, useReadContract } from 'wagmi';
+import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { useMyAgreements, type GraphAgreement } from '@/hooks/useMyAgreements';
 import {
   Loader2, Activity, CheckCircle,
@@ -14,7 +15,6 @@ import { MyJobs, MyServices, MyClientRequests } from './components/MyListings';
 import { useTranslations } from 'next-intl';
 import { useMyJobs } from '@/hooks/useMyJobs';
 import { useMyServices } from '@/hooks/useMyServices';
-import { calcXP } from '@/lib/xp';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function xpLevel(xp: number) {
@@ -137,15 +137,20 @@ export default function DashboardPage() {
   const allAgreements = rawAgreements.map(toAgreementRecord);
   const refetch = () => {};
 
+  const { data: onchainXP } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: DIAMOND_ABI,
+    functionName: 'getXP',
+    args: [address],
+    query: { enabled: !!address },
+  });
+  const xp = Number(onchainXP ?? 0n);
+
   // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
   const activeDeals  = allAgreements.filter(d => [0, 1, 2, 4].includes(d.status));
   const historyDeals = allAgreements.filter(d => [3, 5, 6].includes(d.status));
   const completed    = allAgreements.filter(d => d.status === 3 || d.status === 5).length;
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
-  const xp           = calcXP(allAgreements.map(d => ({
-    ...d,
-    pairKey: [d.client, d.executor].map(s => s.toLowerCase()).sort().join(':'),
-  })));
   const level        = xpLevel(xp);
 
   if (status === 'reconnecting' || status === 'connecting') return null;
