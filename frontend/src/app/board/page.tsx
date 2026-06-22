@@ -159,10 +159,14 @@ function JobCard({
     setIsAccepting(executorAddr);
     try {
       toast(t("board.jobs.accepting"));
-      await sendGasless(walletClient, publicClient, "acceptApplicant", [jobId, executorAddr], DIAMOND_ABI as Abi);
+      const result = await sendGasless(walletClient, publicClient, "acceptApplicant", [jobId, executorAddr], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.accepted_deal"));
-      // Navigate to the job page where the freshly created deal is shown
-      setTimeout(() => { onApplied?.(); router.push(`/job/${jobId.toString()}`); }, 2000);
+      const ZERO = "0x0000000000000000000000000000000000000000";
+      if (result.agreementAddr && result.agreementAddr !== ZERO) {
+        setTimeout(() => { onApplied?.(); router.push(`/deal/${result.agreementAddr}`); }, 1500);
+      } else {
+        setTimeout(() => { onApplied?.(); router.push(`/job/${jobId.toString()}`); }, 2000);
+      }
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Accept failed");
     } finally {
