@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Search, X, ArrowRight, Briefcase, Wrench, Handshake } from 'lucide-react';
 import type { GraphAgreement } from '@/hooks/useMyAgreements';
 import type { MyJobEntry } from '@/hooks/useMyJobs';
@@ -48,6 +49,7 @@ export function DashboardSearch({
   jobs: MyJobEntry[];
   services: MyServiceEntry[];
 }) {
+  const t = useTranslations('dashboard.search');
   const [query, setQuery] = useState('');
   const [open, setOpen]   = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -104,7 +106,7 @@ export function DashboardSearch({
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          placeholder="Поиск по сделкам, объявлениям, услугам…"
+          placeholder={t('placeholder')}
           className="w-full h-10 pl-10 pr-9 rounded-[16px] bg-white/[0.04] border border-white/[0.08] text-sm text-white/80 placeholder:text-white/20 outline-none focus:border-white/20 focus:bg-white/[0.06] transition-all duration-150"
         />
         {query && (
@@ -120,7 +122,7 @@ export function DashboardSearch({
       {showDropdown && (
         <div className="absolute top-full left-0 right-0 mt-1.5 z-50 rounded-[18px] border border-white/[0.09] bg-[#0f0f11] overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.6),0_2px_8px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)]">
           {results.length === 0 ? (
-            <p className="px-4 py-3.5 text-sm text-white/25">Ничего не найдено</p>
+            <p className="px-4 py-3.5 text-sm text-white/25">{t('no_results')}</p>
           ) : (
             <div className="py-1">
               {(['deal', 'job', 'service'] as const).map(kind => {
@@ -128,10 +130,10 @@ export function DashboardSearch({
                 if (!group.length) return null;
 
                 const { icon, label, href } = kind === 'deal'
-                  ? { icon: <Handshake className="w-3 h-3" />, label: 'Сделки', href: (r: Result) => `/deal/${(r.data as GraphAgreement).id}` }
+                  ? { icon: <Handshake className="w-3 h-3" />, label: t('type_deals'), href: (r: Result) => `/deal/${(r.data as GraphAgreement).id}` }
                   : kind === 'job'
-                  ? { icon: <Briefcase className="w-3 h-3" />, label: 'Объявления', href: (r: Result) => `/job/${(r.data as MyJobEntry).id}` }
-                  : { icon: <Wrench className="w-3 h-3" />, label: 'Услуги', href: (r: Result) => `/service/${(r.data as MyServiceEntry).id}` };
+                  ? { icon: <Briefcase className="w-3 h-3" />, label: t('type_jobs'), href: (r: Result) => `/job/${(r.data as MyJobEntry).id}` }
+                  : { icon: <Wrench className="w-3 h-3" />, label: t('type_services'), href: (r: Result) => `/service/${(r.data as MyServiceEntry).id}` };
 
                 return (
                   <div key={kind}>

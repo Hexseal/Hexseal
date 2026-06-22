@@ -168,6 +168,13 @@
     "title": "Dashboard",
     "connect_prompt": "Connect your wallet to view your dashboard",
     "go_home": "Go Home",
+    "search": {
+      "placeholder": "Search deals, jobs, services…",
+      "no_results": "Nothing found",
+      "type_deals": "Deals",
+      "type_jobs": "Jobs",
+      "type_services": "Services"
+    },
     "tabs": {
       "active": "Active",
       "completed": "Completed",
@@ -492,7 +499,9 @@
     "click_to_open": "Click to open",
     "e2e_notice": "E2E encrypted · expires in 7 days",
     "cancel_upload": "Cancel upload",
-    "remove_file": "Remove file"
+    "remove_file": "Remove file",
+    "stream_dead": "Connection lost — new messages not arriving",
+    "reconnect": "Reconnect"
   },
   "deal_bar": {
     "application_received": "Application received",
@@ -547,7 +556,8 @@
     "all_caught_up": "All caught up",
     "mark_all_read": "Mark all read",
     "clear_all": "Clear all",
-    "wallet_required": "Connect wallet to view notifications"
+    "wallet_required": "Connect wallet to view notifications",
+    "enable_messaging_hint": "Enable messaging to get notifications about new messages"
   },
   "arbiter": {
     "title": "Arbiter Hub",

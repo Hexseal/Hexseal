@@ -186,7 +186,7 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
                 className="flex items-center gap-2 px-4 py-2.5 border-t border-white/[0.06] text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
               >
                 <MessageCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                Включи мессенджер чтобы получать уведомления о сообщениях
+                {t("notifications.enable_messaging_hint")}
               </Link>
             )}
 

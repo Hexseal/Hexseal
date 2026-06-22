@@ -1088,12 +1088,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         {/* Stream dead banner */}
         {streamDead && (
           <div className="flex items-center justify-between gap-2 px-3 py-2 mx-1 mb-1 rounded-[12px] bg-yellow-500/10 border border-yellow-500/20">
-            <p className="text-xs text-yellow-400/80">Соединение прервано — новые сообщения не приходят</p>
+            <p className="text-xs text-yellow-400/80">{t("chat.stream_dead")}</p>
             <button
               onClick={reconnect}
               className="flex-shrink-0 text-xs font-medium text-yellow-400 hover:text-yellow-300 transition-colors"
             >
-              Переподключиться
+              {t("chat.reconnect")}
             </button>
           </div>
         )}
