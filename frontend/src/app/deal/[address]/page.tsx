@@ -282,6 +282,9 @@ export default function DealDetailPage() {
     && now > Number(parsed.fundedAt) + 3 * 24 * 3600;
   const autoApproveWindowPassed = !!parsed && parsed.markedDoneAt > 0n
     && now >= Number(parsed.markedDoneAt) + 5 * 24 * 3600;
+  const autoApproveSecondsLeft = parsed && parsed.markedDoneAt > 0n && !autoApproveWindowPassed
+    ? BigInt(Math.max(0, Math.round(Number(parsed.markedDoneAt) + 5 * 24 * 3600 - now)))
+    : undefined;
 
   const handleAction = async (fn: string, successMsg: string, args: unknown[] = []) => {
     if (!isValidDeal || !walletClient || !publicClient) return;
@@ -617,10 +620,17 @@ export default function DealDetailPage() {
                 </Button>
               )}
               {parsed.status === 2 && isClient && parsed.markedDoneAt > BigInt(0) && !autoApproveWindowPassed && (
-                <Button size="sm" onClick={() => handleAction('release', t("deal.release_success"))} disabled={busy}>
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
-                  {t("deal.release_funds_btn")}
-                </Button>
+                <div className="flex flex-col gap-1.5">
+                  {autoApproveSecondsLeft !== undefined && (
+                    <p className="text-xs text-white/35">
+                      {t("deal.auto_approve_in", { time: formatTimeLeft(autoApproveSecondsLeft) })}
+                    </p>
+                  )}
+                  <Button size="sm" onClick={() => handleAction('release', t("deal.release_success"))} disabled={busy}>
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
+                    {t("deal.release_funds_btn")}
+                  </Button>
+                </div>
               )}
               {parsed.status === 2 && (isClient || isExecutor) && (
                 <Button size="sm" variant="destructive" onClick={() => setDisputeModal(true)} disabled={busy}>

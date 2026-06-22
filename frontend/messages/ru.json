@@ -369,6 +369,7 @@
     "timeout_deadline_success": "Дедлайн прошёл · Средства возвращены вам.",
     "timeout_arbiter": "Арбитр бездействует → Возврат",
     "timeout_arbiter_success": "Таймаут арбитра · Средства возвращены клиенту.",
+    "auto_approve_in": "Авто-одобрение через {time}, если не выплатить",
     "timeout_auto_approve": "Клиент молчит → Выплата исполнителю",
     "timeout_auto_approve_success": "Авто-одобрение · Средства переведены исполнителю.",
     "status": {

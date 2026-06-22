@@ -379,6 +379,7 @@
     "timeout_deadline_success": "Deadline passed · Budget refunded to you.",
     "timeout_arbiter": "Arbiter idle → Refund",
     "timeout_arbiter_success": "Arbiter timed out · Budget refunded to client.",
+    "auto_approve_in": "Auto-approves in {time} if not released",
     "timeout_auto_approve": "Client silent → Release to executor",
     "timeout_auto_approve_success": "Auto-approved · Funds released to executor.",
     "status": {
