@@ -18,6 +18,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
@@ -211,6 +212,7 @@ function IncomingRequestsPanel({
   onRefresh: () => void;
 }) {
   const t = useTranslations();
+  const router = useRouter();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const [acting, setActing] = useState<string | null>(null);
@@ -273,9 +275,14 @@ function IncomingRequestsPanel({
     const key = `accept-${requestId}`;
     setActing(key);
     try {
-      await sendGasless(walletClient, publicClient, "acceptRequest", [requestId], DIAMOND_ABI as Abi);
+      const result = await sendGasless(walletClient, publicClient, "acceptRequest", [requestId], DIAMOND_ABI as Abi);
       toast.success(t("board.services.accepted_msg"));
-      setTimeout(() => { refetch(); onRefresh(); }, 2000);
+      const ZERO = "0x0000000000000000000000000000000000000000";
+      if (result.agreementAddr && result.agreementAddr !== ZERO) {
+        setTimeout(() => router.push(`/deal/${result.agreementAddr}`), 1500);
+      } else {
+        setTimeout(() => { refetch(); onRefresh(); }, 2000);
+      }
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Failed");
     } finally {

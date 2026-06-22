@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useReadContract, useReadContracts, useWalletClient, usePublicClient } from 'wagmi';
 import type { Abi } from 'viem';
 import { parseAbiItem } from 'viem';
@@ -893,6 +894,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const [editBusy, setEditBusy] = useState(false);
+  const router = useRouter();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
@@ -969,10 +971,15 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
     let success = false;
     try {
       toast('Accepting applicant…');
-      await sendGasless(walletClient, publicClient, 'acceptApplicant', [jobId, executorAddr], DIAMOND_ABI as Abi);
+      const result = await sendGasless(walletClient, publicClient, 'acceptApplicant', [jobId, executorAddr], DIAMOND_ABI as Abi);
       toast.success('Executor accepted! Deal created.');
       success = true;
-      setTimeout(() => { refetch(); onDealCreated?.(); setBusyJobId(null); }, 2000);
+      const ZERO = '0x0000000000000000000000000000000000000000';
+      if (result.agreementAddr && result.agreementAddr !== ZERO) {
+        setTimeout(() => router.push(`/deal/${result.agreementAddr}`), 1500);
+      } else {
+        setTimeout(() => { refetch(); onDealCreated?.(); setBusyJobId(null); }, 2000);
+      }
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Accept failed');
     } finally {
