@@ -451,7 +451,7 @@ export default function DealDetailPage() {
             <button
               onClick={() => { refetchDetails(); refetchStatus(); }}
               className="w-7 h-7 flex items-center justify-center rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
-              title="Обновить статус"
+              title={t("common.refresh")}
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>

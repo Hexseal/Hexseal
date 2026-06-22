@@ -489,7 +489,10 @@
     "decrypt_failed_image": "Failed to decrypt image",
     "decrypt_failed": "Decryption failed",
     "click_to_save": "Encrypted · click to save",
-    "click_to_open": "Click to open"
+    "click_to_open": "Click to open",
+    "e2e_notice": "E2E encrypted · expires in 7 days",
+    "cancel_upload": "Cancel upload",
+    "remove_file": "Remove file"
   },
   "deal_bar": {
     "application_received": "Application received",

@@ -1059,7 +1059,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
                   <div className="flex items-center gap-1 mt-1.5">
                     <Lock className="w-2.5 h-2.5 text-white/25 flex-shrink-0" />
                     <p className="text-[11px] text-white/25 leading-tight">
-                      Зашифрован E2E · удалится через 7 дней
+                      {t("chat.e2e_notice")}
                     </p>
                   </div>
                 )}
@@ -1067,7 +1067,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
               <div className="flex items-center gap-1.5 flex-shrink-0 ml-1 mt-0.5">
                 <button
                   onClick={handleFileCancel}
-                  title={uploading ? 'Отменить загрузку' : 'Убрать файл'}
+                  title={uploading ? t("chat.cancel_upload") : t("chat.remove_file")}
                   className="w-7 h-7 rounded-full flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-white/8 transition-colors"
                 >
                   <X className="w-3.5 h-3.5" />
