@@ -10,6 +10,7 @@ import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from '@/config/constants';
 import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from '@/lib/relay';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'react-hot-toast';
 import {
   Loader2, CheckCircle,
@@ -69,6 +70,8 @@ export function DealCard({ agreement, address, refetch }: {
   const { data: walletClient } = useWalletClient();
   const [busy, setBusy] = useState(false);
   const [showTimeouts, setShowTimeouts] = useState(false);
+  const [disputeOpen, setDisputeOpen]     = useState(false);
+  const [disputeReason, setDisputeReason] = useState('');
 
   // Extras
   const [extrasList, setExtrasList]   = useState<ExtraItem[]>([]);
@@ -202,6 +205,29 @@ export function DealCard({ agreement, address, refetch }: {
 
   const pendingExtras = extrasList.filter(e => e.status === EXTRA_STATUS.PENDING);
 
+  const handleRaiseDispute = async () => {
+    if (!walletClient || !publicClient) return;
+    setDisputeOpen(false);
+    setBusy(true);
+    try {
+      if (disputeReason.trim()) {
+        fetch('/api/dispute-reason', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agreement: agreement.agreement, raiser: address, reason: disputeReason.trim() }),
+        }).catch(() => {});
+      }
+      toast('Confirm in wallet…');
+      await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, 'raiseDispute', AGREEMENT_ABI as Abi);
+      toast.success('Dispute raised. Arbiter will be notified.');
+      setDisputeReason('');
+      setTimeout(refetch, 2000);
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage || e?.message || 'Failed');
+    } finally { setBusy(false); }
+  };
+
   const primaryActions: React.ReactNode[] = [];
   if (liveStatus === 0 && isClient) primaryActions.push(
     <div key="fund-group" className="flex items-center gap-2 flex-wrap">
@@ -248,7 +274,7 @@ export function DealCard({ agreement, address, refetch }: {
     </Button>
   );
   if (liveStatus === 2 && (isClient || isExecutor)) primaryActions.push(
-    <Button key="dispute" size="sm" variant="destructive" disabled={busy} onClick={() => run('raiseDispute')}>
+    <Button key="dispute" size="sm" variant="destructive" disabled={busy} onClick={() => setDisputeOpen(v => !v)}>
       <Flag className="w-3 h-3 mr-1" />Raise Dispute
     </Button>
   );
@@ -351,6 +377,32 @@ export function DealCard({ agreement, address, refetch }: {
         {/* Primary actions */}
         {primaryActions.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-3">{primaryActions}</div>
+        )}
+
+        {/* Dispute reason panel */}
+        {disputeOpen && (
+          <div className="mt-2 rounded-[12px] border border-red-400/20 bg-red-400/[0.03] p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-red-400/60 font-semibold uppercase tracking-wider">Describe the issue</span>
+              <button onClick={() => { setDisputeOpen(false); setDisputeReason(''); }}>
+                <X className="w-3 h-3 text-white/25 hover:text-white/60" />
+              </button>
+            </div>
+            <Textarea
+              placeholder="Explain the problem for the arbiter…"
+              value={disputeReason}
+              onChange={e => setDisputeReason(e.target.value)}
+              maxLength={2000}
+              rows={3}
+              className="text-xs bg-white/[0.04] border-white/10 resize-none"
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-white/20">{disputeReason.length}/2000</span>
+              <Button size="sm" variant="destructive" className="h-6 text-[11px]" disabled={busy || !disputeReason.trim()} onClick={handleRaiseDispute}>
+                {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Flag className="w-3 h-3 mr-1" />}Confirm Dispute
+              </Button>
+            </div>
+          </div>
         )}
 
         {/* Timeout toggle */}
