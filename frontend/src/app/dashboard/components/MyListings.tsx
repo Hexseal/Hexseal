@@ -1195,7 +1195,7 @@ export function MyClientRequests({ address }: { address: string }) {
           <Link href={`/request/${id.toString()}`} className="min-w-0 flex-1 group">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border font-medium ${REQUEST_STATUS[0].cls}`}>
-                Pending
+                {REQUEST_STATUS[0].label}
               </span>
               <span className="text-sm font-semibold text-white/80 font-mono">{fmt(req.amount)} USDC</span>
             </div>

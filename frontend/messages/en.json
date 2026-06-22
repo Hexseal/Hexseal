@@ -633,6 +633,14 @@
     "step5_title": "Gasless by Default",
     "step5_desc": "You sign transactions, the platform pays gas. No ETH needed — just USDC for deal funding."
   },
+  "form": {
+    "required": "Required field",
+    "max_chars": "Max {count} characters",
+    "amount_positive": "Enter an amount greater than 0",
+    "amount_max": "Maximum {max} USDC",
+    "price_min": "Minimum {min} USDC",
+    "deadline_range": "{min} to {max} days"
+  },
   "faq": {
     "back": "Back to home",
     "docs_label": "Docs",

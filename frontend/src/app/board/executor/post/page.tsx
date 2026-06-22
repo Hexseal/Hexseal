@@ -123,12 +123,12 @@ export default function PostServicePage() {
     const trimmedTitle = title.trim();
     const parsedDeadline = parseInt(deadline, 10);
     const errs: Record<string, string> = {};
-    if (!trimmedTitle) errs.title = "Обязательное поле";
-    else if (trimmedTitle.length > 100) errs.title = "Максимум 100 символов";
-    if (!description.trim()) errs.description = "Обязательное поле";
-    if (!price || isNaN(parsedPrice) || parsedPrice < 1) errs.price = "Укажите цену от 1 USDC";
-    else if (parsedPrice > MAX_PRICE) errs.price = `Максимум ${MAX_PRICE} USDC`;
-    if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = "От 1 до 365 дней";
+    if (!trimmedTitle) errs.title = t("form.required");
+    else if (trimmedTitle.length > 100) errs.title = t("form.max_chars", { count: 100 });
+    if (!description.trim()) errs.description = t("form.required");
+    if (!price || isNaN(parsedPrice) || parsedPrice < 1) errs.price = t("form.price_min", { min: 1 });
+    else if (parsedPrice > MAX_PRICE) errs.price = t("form.amount_max", { max: MAX_PRICE });
+    if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = t("form.deadline_range", { min: 1, max: MAX_DEADLINE });
     if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
     setFieldErrors({});
 

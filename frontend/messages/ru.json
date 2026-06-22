@@ -594,6 +594,14 @@
     "step5_title": "Gasless по умолчанию",
     "step5_desc": "Вы подписываете транзакции, платформа платит газ. ETH не нужен — только USDC для пополнения сделки."
   },
+  "form": {
+    "required": "Обязательное поле",
+    "max_chars": "Максимум {count} символов",
+    "amount_positive": "Укажите сумму больше 0",
+    "amount_max": "Максимум {max} USDC",
+    "price_min": "Укажите цену от {min} USDC",
+    "deadline_range": "От {min} до {max} дней"
+  },
   "faq": {
     "back": "На главную",
     "docs_label": "Документация",

@@ -128,12 +128,12 @@ export default function PostJobPage() {
     const trimmedTitle = title.trim();
     const parsedDeadline = parseInt(deadline, 10);
     const errs: Record<string, string> = {};
-    if (!trimmedTitle) errs.title = "Обязательное поле";
-    else if (trimmedTitle.length > 100) errs.title = "Максимум 100 символов";
-    if (!description.trim()) errs.description = "Обязательное поле";
-    if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) errs.amount = "Укажите сумму больше 0";
-    else if (parsedAmount > MAX_AMOUNT) errs.amount = `Максимум ${MAX_AMOUNT} USDC`;
-    if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = "От 1 до 365 дней";
+    if (!trimmedTitle) errs.title = t("form.required");
+    else if (trimmedTitle.length > 100) errs.title = t("form.max_chars", { count: 100 });
+    if (!description.trim()) errs.description = t("form.required");
+    if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) errs.amount = t("form.amount_positive");
+    else if (parsedAmount > MAX_AMOUNT) errs.amount = t("form.amount_max", { max: MAX_AMOUNT });
+    if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = t("form.deadline_range", { min: 1, max: MAX_DEADLINE });
     if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
     setFieldErrors({});
 
