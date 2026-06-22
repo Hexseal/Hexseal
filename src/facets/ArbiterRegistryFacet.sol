@@ -51,6 +51,7 @@ library ArbiterRegistryStorage {
         bool    frozen;         // заморожен owner/DAO (нельзя финализировать)
         bool    finalized;      // исполнен на Agreement
         bool    overturned;     // отменён owner/DAO (выплата не идёт, XP срезан)
+        bool    executing;      // идёт finalizeVerdict — не удалять через clearDisputeClaim
     }
 
     struct Data {
@@ -107,6 +108,7 @@ contract ArbiterRegistryFacet {
     event VaultFunded(address indexed by, uint256 amount);
     event RewardPerDisputeUpdated(uint256 newReward);
     event DAOAddressSet(address indexed daoAddress);
+    event StuckVerdictAutoCleared(address indexed agreement);
 
     // -------- ERRORS --------
 
@@ -308,7 +310,8 @@ contract ArbiterRegistryFacet {
             submittedAt: block.timestamp,
             frozen:      false,
             finalized:   false,
-            overturned:  false
+            overturned:  false,
+            executing:   false
         });
 
         emit VerdictSubmitted(agreement, caller, clientWins);
@@ -324,10 +327,16 @@ contract ArbiterRegistryFacet {
         if (v.finalized) revert AlreadyFinalized();
         if (v.frozen) revert VerdictFrozenError();
 
+        // Защита от авто-удаления в clearDisputeClaim во время этого вызова
+        v.executing = true;
+
         // Diamond (address(this)) вызывает resolveDispute — работает т.к. Diamond = arbiter
         (bool ok, bytes memory ret) = agreement.call(
             abi.encodeWithSignature("resolveDispute(bool)", v.clientWins)
         );
+
+        v.executing = false; // всегда сбрасываем, даже при ревёрте
+
         if (!ok) {
             // пробросить причину ревёрта из Agreement
             assembly { revert(add(ret, 32), mload(ret)) }
@@ -434,6 +443,13 @@ contract ArbiterRegistryFacet {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         if (d.disputeClaims[agreement] != address(0)) {
             delete d.disputeClaims[agreement];
+        }
+        // Авто-очистка застрявшего вердикта: если Agreement вышел из спора через таймаут,
+        // а вердикт ещё не финализирован и не исполняется прямо сейчас — удаляем.
+        ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
+        if (v.submittedAt > 0 && !v.finalized && !v.executing) {
+            delete d.pendingVerdicts[agreement];
+            emit StuckVerdictAutoCleared(agreement);
         }
     }
 
