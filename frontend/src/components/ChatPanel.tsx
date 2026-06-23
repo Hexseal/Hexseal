@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from 'wagmi';
 import { formatUnits, type Abi } from 'viem';
 import { AGREEMENT_ABI, DIAMOND_ABI } from '@/config/contracts';
-import { sendAgreementGasless, sendGasless, requestServiceGasless } from '@/lib/relay';
+import { sendGasless, requestServiceGasless } from '@/lib/relay';
+import { DealActionBar } from '@/components/DealActionBar';
 import { usePreDealBar } from '@/hooks/usePreDealBar';
 import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
@@ -326,8 +327,6 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
   const [atBottom, setAtBottom]     = useState(true);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [confirmAction, setConfirmAction] = useState<'accept' | 'reject' | 'release' | 'dispute' | 'markDone' | null>(null);
-  const [actionBusy, setActionBusy] = useState(false);
   const [preDealConfirm, setPreDealConfirm] = useState<'apply' | 'accept_deploy' | 'request_service' | 'withdraw' | 'reject_app' | null>(null);
   const [preDealBusy, setPreDealBusy] = useState(false);
 
@@ -509,41 +508,6 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
     setPendingFile(null);
     setPendingPreview(null);
     setUploadErr(null);
-  };
-
-  const handleDealAction = async (action: 'accept' | 'reject' | 'release' | 'dispute' | 'markDone') => {
-    if (!dealContext || actionBusy) return;
-    setActionBusy(true);
-    try {
-      if (action === 'reject') {
-        await sendMessage('I have declined this job request.');
-        toast.success('Rejection sent. The deal will expire if not activated.');
-        setConfirmAction(null);
-        return;
-      }
-      if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-      const fnMap: Record<string, string> = {
-        accept: 'activate',
-        release: 'release',
-        dispute: 'raiseDispute',
-        markDone: 'markDone',
-      };
-      const msgMap: Record<string, string> = {
-        accept: 'Deal activated! Work has started.',
-        release: 'Payment released to executor!',
-        dispute: 'Dispute raised. Arbiter will be notified.',
-        markDone: 'Work submitted! Awaiting client review.',
-      };
-      toast('Confirm in wallet…');
-      await sendAgreementGasless(walletClient, publicClient, dealContext.agreementAddr as `0x${string}`, fnMap[action], AGREEMENT_ABI as Abi, []);
-      toast.success(msgMap[action] ?? 'Done!');
-      setConfirmAction(null);
-    } catch (err: unknown) {
-      const e = err as { shortMessage?: string; message?: string };
-      toast.error(e?.shortMessage || e?.message || 'Transaction failed');
-    } finally {
-      setActionBusy(false);
-    }
   };
 
   const handlePreDealAction = async (action: typeof preDealConfirm) => {
@@ -768,76 +732,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         </div>
       )}
 
-      {/* Deal bar */}
+      {/* Deal bar — full action bar for active agreements */}
       {dealContext && (
-        <div className="flex-shrink-0 bg-white/[0.03] border-b border-white/[0.05]">
-          <div className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
-            <div className="flex-1 min-w-0">
-              {dealContext.jobTitle && (
-                <p className="text-xs font-semibold text-white/80 truncate mb-0.5">{dealContext.jobTitle}</p>
-              )}
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="font-mono text-[11px] text-white/50">{formatUnits(dealContext.amount, 6)} USDC</span>
-                {dealMeta?.deadlineDays && dealMeta.deadlineDays > 0n && (
-                  <><span className="text-white/20 text-[11px]">·</span>
-                  <span className="text-[11px] text-white/35">{Number(dealMeta.deadlineDays)}d</span></>
-                )}
-                <span className="text-white/20 text-[11px]">·</span>
-                {dealMeta?.agreementStatus === 2 && dealMeta.markedDoneAt > 0n
-                  ? <span className="text-[11px] text-amber-400/80 font-medium whitespace-nowrap">{t("deal_bar.delivered")}</span>
-                  : <span className={`text-[11px] font-medium whitespace-nowrap ${AGR_STATUS_CLS[dealMeta?.agreementStatus ?? -1] ?? 'text-white/30'}`}>
-                      {dealMeta?.agreementStatus !== undefined && AGR_STATUS_KEY[dealMeta.agreementStatus]
-                        ? t(AGR_STATUS_KEY[dealMeta.agreementStatus] as Parameters<typeof t>[0])
-                        : '…'}
-                    </span>
-                }
-              </div>
-            </div>
-
-            <div className="flex gap-1.5 flex-shrink-0">
-              {dealMeta?.agreementStatus === 1 && dealContext.role === 'executor' && (
-                <>
-                  <button onClick={() => setConfirmAction('reject')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors whitespace-nowrap">
-                    {t("deal_bar.reject_btn")}
-                  </button>
-                  <button onClick={() => setConfirmAction('accept')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
-                    {t("deal_bar.accept_btn")}
-                  </button>
-                </>
-              )}
-              {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt === 0n && (
-                <button onClick={() => setConfirmAction('markDone')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold whitespace-nowrap">
-                  {t("deal_bar.mark_done_btn")}
-                </button>
-              )}
-              {dealMeta?.agreementStatus === 2 && dealContext.role === 'executor' && dealMeta.markedDoneAt > 0n && (
-                <span className="text-[11px] text-amber-400/55 font-medium whitespace-nowrap">{t("deal_bar.awaiting_review")}</span>
-              )}
-              {dealMeta?.agreementStatus === 2 && dealContext.role === 'client' && (
-                <>
-                  <button onClick={() => setConfirmAction('dispute')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors whitespace-nowrap">
-                    {t("deal_bar.dispute_btn")}
-                  </button>
-                  {dealMeta.markedDoneAt > 0n && (
-                    <button onClick={() => setConfirmAction('release')}
-                      className="px-3 py-2.5 rounded-[10px] text-xs bg-emerald-600/80 text-white hover:bg-emerald-600 transition-colors font-semibold whitespace-nowrap">
-                      {t("deal_bar.release_btn")}
-                    </button>
-                  )}
-                </>
-              )}
-              {dealMeta?.agreementStatus === 4 && (
-                <span className="text-[11px] px-2 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400/70 font-medium whitespace-nowrap">
-                  {t("deal_bar.in_arbitration")}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
+        <DealActionBar agreementAddr={dealContext.agreementAddr} />
       )}
 
       {/* Messages */}
@@ -1173,44 +1070,6 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
         </div>
       )}
 
-      {/* Confirm modal */}
-      {confirmAction && dealContext && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-          <div className="border border-white/[0.08] rounded-[22px] p-5 w-full max-w-sm"
-            style={{ background: '#0d0d0f', boxShadow: '0 8px 40px rgba(0,0,0,0.7), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
-            <h3 className="text-sm font-semibold text-white mb-2">
-              {confirmAction === 'accept'   ? t("chat_modal.accept_deal_title") :
-               confirmAction === 'reject'   ? t("chat_modal.decline_job_title") :
-               confirmAction === 'release'  ? t("chat_modal.release_payment_title") :
-               confirmAction === 'markDone' ? t("chat_modal.submit_work_title") :
-                                             t("chat_modal.raise_dispute_title")}
-            </h3>
-            <p className="text-xs text-white/45 mb-5 leading-relaxed">
-              {confirmAction === 'accept'   ? t("chat_modal.accept_deal_desc") :
-               confirmAction === 'reject'   ? t("chat_modal.decline_job_desc") :
-               confirmAction === 'release'  ? `This will release ${formatUnits(dealContext.amount, 6)} USDC to the executor. This action is irreversible — verify the work before confirming.` :
-               confirmAction === 'markDone' ? t("chat_modal.mark_done_desc") :
-                                             t("chat_modal.raise_dispute_desc")}
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setConfirmAction(null)} disabled={actionBusy}
-                className="px-3.5 py-1.5 rounded-[10px] text-xs text-white/45 hover:text-white/70 border border-white/[0.08] hover:bg-white/[0.05] transition-colors disabled:opacity-40">
-                {t("chat_modal.cancel_btn")}
-              </button>
-              <button onClick={() => handleDealAction(confirmAction!)} disabled={actionBusy}
-                className={`px-3.5 py-1.5 rounded-[10px] text-xs font-medium text-white transition-colors disabled:opacity-40 flex items-center gap-1.5 ${
-                  confirmAction === 'dispute' || confirmAction === 'reject'
-                    ? 'bg-red-600 hover:bg-red-500'
-                    : confirmAction === 'release'
-                    ? 'bg-emerald-600 hover:bg-emerald-500'
-                    : 'bg-primary hover:bg-primary/80'
-                }`}>
-                {actionBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : t("chat_modal.confirm_btn")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
