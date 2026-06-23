@@ -51,6 +51,7 @@
       "applied_tag": "подан",
       "apply_btn": "Откликнуться",
       "terms": "Условия работы",
+      "terms_unavailable": "Условия недоступны",
       "full_page": "Полная страница",
       "applicants_tab": "Отклики",
       "chat_tab": "Чат",
@@ -713,6 +714,7 @@
   },
   "common": {
     "loading": "Загрузка…",
+    "loading_short": "Загрузка…",
     "loading_data": "Загружаем данные…",
     "error": "Что-то пошло не так",
     "retry": "Повторить",

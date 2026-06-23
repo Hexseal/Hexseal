@@ -255,6 +255,11 @@ function JobCard({
         {/* ── Expanded ── */}
         {expanded && (
           <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
+            {/* Full title (collapsed row truncates it) */}
+            {job.title && (
+              <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{job.title}</p>
+            )}
+
             <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
               <span>{t("common.by")}</span>
               <UserName address={job.client} link className="font-mono hover:text-white/60 transition-colors" />
@@ -264,15 +269,17 @@ function JobCard({
               <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{displayDesc}</p>
             )}
 
-            {expanded && hasTerms && (
+            {hasTerms && (
               <div className="mb-3">
                 <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
                   <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
                 </p>
-                {termsFetching || !termsText ? (
+                {termsFetching ? (
                   <p className="text-xs text-white/25">{t("common.loading_short")}</p>
-                ) : (
+                ) : termsText ? (
                   <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
+                ) : (
+                  <p className="text-xs text-white/20">{t("board.jobs.terms_unavailable")}</p>
                 )}
               </div>
             )}
@@ -303,10 +310,30 @@ function JobCard({
               <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
             )}
 
-            <div className="pt-2 border-t border-white/6">
-              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5" onClick={e => { e.stopPropagation(); router.push(`/job/${jobId.toString()}`); }}>
+            {/* Footer: full-page link + amount + apply action */}
+            <div className="pt-2.5 border-t border-white/6 flex items-center justify-between gap-3">
+              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-8 px-2 gap-1.5"
+                onClick={e => { e.stopPropagation(); router.push(`/job/${jobId.toString()}`); }}>
                 <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
               </Button>
+
+              {!isClient && address && (
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <span className="text-xs font-mono text-white/45">{formatBudget(job.amount)} USDC</span>
+                  {!hasApplied ? (
+                    <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-7 px-3 text-xs gap-1">
+                      {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                      {t("board.jobs.apply_btn")}
+                    </Button>
+                  ) : job.status === 0 ? (
+                    <Button size="sm" variant="ghost" onClick={handleWithdraw} disabled={isWithdrawing}
+                      className="h-7 px-2 text-xs text-white/30 hover:text-red-400 hover:bg-red-400/10">
+                      {isWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                      {t("board.jobs.withdraw_btn")}
+                    </Button>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
         )}

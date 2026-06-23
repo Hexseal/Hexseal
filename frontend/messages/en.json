@@ -51,6 +51,7 @@
       "applied_tag": "applied",
       "apply_btn": "Apply",
       "terms": "Terms & Conditions",
+      "terms_unavailable": "Terms unavailable",
       "full_page": "Full page",
       "applicants_tab": "Applicants",
       "chat_tab": "Chat",
@@ -752,6 +753,7 @@
   },
   "common": {
     "loading": "Loading…",
+    "loading_short": "Loading…",
     "loading_data": "Loading data…",
     "error": "Something went wrong",
     "retry": "Retry",

@@ -462,10 +462,14 @@ function ServiceCard({
       {/* Expanded */}
       {expanded && (
         <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
+          {/* Full title */}
+          {service.title && (
+            <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{service.title}</p>
+          )}
+
           <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
             <span>{t("common.by")}</span>
             <UserName address={service.executor} link className="font-mono hover:text-white/60 transition-colors" />
-            <span className="text-white/20">· #{service.serviceId}</span>
           </div>
 
           {displayDesc && (
@@ -488,12 +492,23 @@ function ServiceCard({
             </div>
           )}
 
-          <div className="pt-2 border-t border-white/6">
+          {/* Footer: full-page link + price + request action */}
+          <div className="pt-2.5 border-t border-white/6 flex items-center justify-between gap-3">
             <Link href={`/service/${service.serviceId}`} onClick={e => e.stopPropagation()}>
-              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-9 px-2 gap-1.5">
+              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-8 px-2 gap-1.5">
                 <ExternalLink className="w-3 h-3" /> {t("board.service_page.full_page")}
               </Button>
             </Link>
+
+            {isConnected && !isMyService && !myActive && service.status === 0 && (
+              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                <span className="text-xs font-mono text-white/45">{fmtUSDC(service.price)} USDC</span>
+                <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-7 px-3 text-xs gap-1">
+                  {isRequesting ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  {t("board.services.request_btn")}
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       )}

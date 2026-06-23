@@ -540,33 +540,33 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
 
           {/* Description */}
           {displayDesc && (
-            <div>
+            <div className="mb-0">
               <p className="text-xs text-white/30 mb-1.5">{t("board.post_service.field_description")}</p>
               <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{displayDesc}</p>
             </div>
           )}
-        </div>
 
-        {/* ── Action bar ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <Link href="/board/executor">
-            <Button variant="ghost" size="sm" className="text-white/40 hover:text-white/70 border border-white/[0.08]">
-              {t("board.services.title")}
-            </Button>
-          </Link>
-
-          {canRequest && (
-            <Button onClick={() => setRequestModal(true)} disabled={isRequesting} className="gap-1.5">
-              <ArrowRight className="w-4 h-4" />
-              {t("board.services.request_btn")}
-            </Button>
-          )}
-
-          {!isConnected && service.status === 0 && (
-            <Link href="/">
-              <Button variant="outline" size="sm">{t("common.go_home")}</Button>
+          {/* Action row — inside card, mirrors job/[id] style */}
+          <div className="flex items-center gap-2 mt-5 pt-4 border-t border-white/8">
+            <Link href="/board/executor">
+              <Button variant="ghost" size="sm" className="text-white/40 hover:text-white/70 gap-1.5">
+                ← {t("board.services.title")}
+              </Button>
             </Link>
-          )}
+
+            {canRequest && (
+              <Button onClick={() => setRequestModal(true)} disabled={isRequesting} className="gap-1.5 ml-auto">
+                {isRequesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+                {t("board.services.request_btn")}
+              </Button>
+            )}
+
+            {!isConnected && service.status === 0 && (
+              <Link href="/" className="ml-auto">
+                <Button variant="outline" size="sm">{t("common.go_home")}</Button>
+              </Link>
+            )}
+          </div>
         </div>
 
       </motion.div>
