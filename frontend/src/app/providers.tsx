@@ -39,6 +39,7 @@ import { appChain, appChainId, isMainnet } from "@/config/chain";
 import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
 import { isPushSupported, enablePush } from "@/lib/webpush";
+import { NotificationsProvider } from "@/contexts/NotificationsContext";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -203,7 +204,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <VisibilityRefresher queryClient={queryClient} />
           <NextThemesProvider attribute="class" forcedTheme="dark">
             <LocaleProvider>
-              <RainbowKitProviders>{children}</RainbowKitProviders>
+              <NotificationsProvider>
+                <RainbowKitProviders>{children}</RainbowKitProviders>
+              </NotificationsProvider>
             </LocaleProvider>
           </NextThemesProvider>
         </QueryClientProvider>

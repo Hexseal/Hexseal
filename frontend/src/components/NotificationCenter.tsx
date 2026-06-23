@@ -4,7 +4,7 @@ import { useRef, useEffect, useState } from "react";
 import Link from "next/link";
 import { Bell, CheckCheck, Trash2, X, ExternalLink, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useNotifications } from "@/hooks/useNotifications";
+import { useNotificationsCtx } from "@/contexts/NotificationsContext";
 import { useAccount } from "wagmi";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
@@ -64,7 +64,7 @@ interface Props {
 }
 
 export default function NotificationCenter({ open, onOpenChange }: Props) {
-  const { notifications, unreadCount, markRead, markAll, clearAll } = useNotifications();
+  const { notifications, unreadCount, markRead, markAll, clearAll } = useNotificationsCtx();
   const { address } = useAccount();
   const ref = useRef<HTMLDivElement>(null);
   const t = useTranslations();

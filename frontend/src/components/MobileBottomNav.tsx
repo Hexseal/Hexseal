@@ -17,7 +17,7 @@ import {
   User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useNotifications } from "@/hooks/useNotifications";
+import { useNotificationsCtx } from "@/contexts/NotificationsContext";
 import { useTranslations } from "next-intl";
 
 // ─── Single pill button ───────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ export default function MobileBottomNav() {
   const { isConnected } = useAccount();
   const pathname = usePathname();
   const router = useRouter();
-  const { unreadCount, unreadMessageCount } = useNotifications();
+  const { unreadCount, unreadMessageCount } = useNotificationsCtx();
   const [boardMounted, setBoardMounted] = useState(false);
   const [boardVisible, setBoardVisible] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

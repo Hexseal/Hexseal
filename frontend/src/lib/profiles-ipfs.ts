@@ -9,6 +9,11 @@ import { uploadToIPFS } from '@/lib/ipfs';
 const CACHE_PREFIX = 'hexseal-public_';
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
+// Deduplicates concurrent fetchProfile calls for the same address.
+// Without this, 10 ConvoItems mounting simultaneously would fire 10 API calls
+// before any localStorage cache entry exists.
+const _inflight = new Map<string, Promise<UserProfile | null>>();
+
 /**
  * Fetch profile for a specific address.
  * Uses server-side API route (/api/profiles) to read the Filebase S3 index
@@ -21,17 +26,18 @@ export async function fetchProfile(address: string): Promise<UserProfile | null>
   const cached = getCachedProfile(normalizedAddress);
   if (cached) return cached;
 
-  try {
-    const res = await fetch(`/api/profiles?address=${normalizedAddress}`, { cache: 'no-store' });
-    if (!res.ok) return null;
-    const data = await res.json() as UserProfile | null;
-    if (!data) return null;
-    cacheProfile(normalizedAddress, data);
-    return data;
-  } catch (error) {
-    console.error(`Failed to fetch profile for ${address}:`, error);
-    return null;
-  }
+  // Return in-flight promise if this address is already being fetched
+  const inflight = _inflight.get(normalizedAddress);
+  if (inflight) return inflight;
+
+  const promise = fetch(`/api/profiles?address=${normalizedAddress}`, { cache: 'no-store' })
+    .then(res => (res.ok ? res.json() as Promise<UserProfile | null> : null))
+    .then(data => { if (data) cacheProfile(normalizedAddress, data); return data; })
+    .catch(() => null)
+    .finally(() => _inflight.delete(normalizedAddress));
+
+  _inflight.set(normalizedAddress, promise);
+  return promise;
 }
 
 /**

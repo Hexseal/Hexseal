@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, Suspense, useRef, useEffect } from 'react';
+import { useState, useMemo, Suspense, useRef, useEffect, useCallback, memo } from 'react';
 import { useAccount, useReadContract, useReadContracts } from 'wagmi';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -70,8 +70,8 @@ function formatTime(ts: number) {
 
 // ─── Conversation item ─────────────────────────────────────────────────────────
 
-function ConvoItem({
-  peerAddress, lastText, lastAt, lastFromMe, isSelected, isSeen, onClick, dealCtx,
+const ConvoItem = memo(function ConvoItem({
+  peerAddress, lastText, lastAt, lastFromMe, isSelected, isSeen, onSelect, dealCtx,
 }: {
   peerAddress: string;
   lastText: string;
@@ -79,9 +79,10 @@ function ConvoItem({
   lastFromMe: boolean;
   isSelected: boolean;
   isSeen: boolean;
-  onClick: () => void;
+  onSelect: (addr: string) => void;
   dealCtx?: DealContext;
 }) {
+  const onClick = useCallback(() => onSelect(peerAddress), [onSelect, peerAddress]);
   const { displayName, avatarUrl } = useProfile(peerAddress);
   const t = useTranslations();
 
@@ -179,7 +180,7 @@ function ConvoItem({
       </div>
     </button>
   );
-}
+});
 
 // ─── Empty chat state ─────────────────────────────────────────────────────────
 
@@ -354,12 +355,12 @@ function ChatHubPageInner() {
     );
   }
 
-  const handleConvoClick = (addr: string) => {
+  const handleConvoClick = useCallback((addr: string) => {
     const lc = addr.toLowerCase();
     setSeenConvos(prev => new Set([...prev, lc]));
     localStorage.setItem(`hexseal_chat_seen_${lc}`, String(Date.now()));
     router.push(`/chat?peer=${lc}`);
-  };
+  }, [router]);
 
   const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
 
@@ -491,7 +492,7 @@ function ChatHubPageInner() {
               isSelected
               isSeen
               dealCtx={peerDealMap.get(selected)}
-              onClick={() => {}}
+              onSelect={handleConvoClick}
             />
           )}
 
@@ -505,7 +506,7 @@ function ChatHubPageInner() {
               isSelected={selected === peerAddress}
               isSeen={seenConvos.has(peerAddress)}
               dealCtx={peerDealMap.get(peerAddress)}
-              onClick={() => handleConvoClick(peerAddress)}
+              onSelect={handleConvoClick}
             />
           ))}
 

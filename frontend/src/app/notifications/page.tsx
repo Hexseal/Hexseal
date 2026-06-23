@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bell, CheckCheck, Trash2, ExternalLink, BellRing, BellOff, Loader2 } from "lucide-react";
-import { useNotifications } from "@/hooks/useNotifications";
+import { useNotificationsCtx } from "@/contexts/NotificationsContext";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useAccount } from "wagmi";
 import { cn } from "@/lib/utils";
@@ -76,7 +76,7 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
 
 export default function NotificationsPage() {
   const { isConnected, status } = useAccount();
-  const { notifications, unreadCount, markRead, markAll, clearAll } = useNotifications();
+  const { notifications, unreadCount, markRead, markAll, clearAll } = useNotificationsCtx();
   const { supported, subscribed, permission, loading: pushLoading, enable: enablePush, disable: disablePush } = usePushNotifications();
   const t = useTranslations();
 
