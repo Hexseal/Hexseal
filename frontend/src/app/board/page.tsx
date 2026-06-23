@@ -192,70 +192,64 @@ function JobCard({
         onClick={onToggle}
       >
         {/* ── Collapsed row ── */}
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <UserAvatar address={job.client} size={28} link />
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <UserAvatar address={job.client} size={24} link />
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2 mb-1">
+            {/* Title + Amount on same line */}
+            <div className="flex items-baseline justify-between gap-2 mb-0.5">
               <span className="font-semibold text-white/90 text-sm truncate leading-snug">
                 {job.title || `Job #${jobId.toString()}`}
               </span>
-              {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
+              <span className="font-bold text-white/75 font-mono text-xs whitespace-nowrap flex-shrink-0">
+                {formatBudget(job.amount)} USDC
+              </span>
             </div>
-            {/* Row 1: category badge + budget */}
-            <div className="flex items-center gap-2 mb-0.5">
+            {/* Meta row: badge · deadline · region · time */}
+            <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30">
               {catKey && (
                 <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
                   {t(`categories.${catKey}`)}
                 </span>
               )}
-              <span className="font-bold text-white/75 font-mono text-xs">{formatBudget(job.amount)} USDC</span>
+              <span className="whitespace-nowrap">{job.deadlineDays.toString()}d</span>
+              <span className="text-white/15">·</span>
+              <span className="whitespace-nowrap">{REGION_LABELS[job.region] ?? "—"}</span>
+              <span className="text-white/15">·</span>
+              <span className="whitespace-nowrap text-white/20">{timeAgo(job.createdAt)}</span>
               {isClient && applicantCount > 0 && (
-                <span className="text-violet-400/80 font-mono text-[11px]">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
+                <span className="text-violet-400/70 font-mono">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
               )}
               {!isClient && hasApplied && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400/80 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/70 flex-shrink-0" />
+                <span className="inline-flex items-center gap-1 text-emerald-400/70 font-medium">
+                  <span className="w-1 h-1 rounded-full bg-emerald-400/70 flex-shrink-0" />
                   {t("board.jobs.applied_tag")}
                 </span>
               )}
             </div>
-            {/* Row 2: deadline · region · time */}
-            <div className="flex items-center gap-1.5 text-[11px] text-white/25">
-              <span>{job.deadlineDays.toString()}d</span>
-              <span className="text-white/10">·</span>
-              <span>{REGION_LABELS[job.region] ?? "—"}</span>
-              <span className="text-white/10">·</span>
-              <span className="text-white/18">{timeAgo(job.createdAt)}</span>
-            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
             {!isClient && address && (
-              <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary" onClick={() => router.push(`/chat/${job.client}`)}>
+              <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors" onClick={() => router.push(`/chat/${job.client}`)}>
                 <MessageCircle className="w-3.5 h-3.5" />
-              </Button>
+              </button>
             )}
             {!isClient && address && !hasApplied && (
-              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-9 px-3 text-xs gap-1">
+              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-8 px-3 text-xs gap-1">
                 {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                 {t("board.jobs.apply_btn")}
               </Button>
             )}
             {!isClient && address && hasApplied && job.status === 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleWithdraw}
-                disabled={isWithdrawing}
-                className="h-9 px-3 text-xs text-white/30 hover:text-red-400 hover:bg-red-400/10 gap-1"
-              >
+              <Button size="sm" variant="ghost" onClick={handleWithdraw} disabled={isWithdrawing}
+                className="h-8 px-2.5 text-xs text-white/25 hover:text-red-400 hover:bg-red-400/10 gap-1">
                 {isWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                 {t("board.jobs.withdraw_btn")}
               </Button>
             )}
+            <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform ml-0.5 ${expanded ? "rotate-180" : ""}`} />
           </div>
-          <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform flex-shrink-0 ${expanded ? "rotate-180" : ""}`} />
         </div>
 
         {/* ── Expanded ── */}

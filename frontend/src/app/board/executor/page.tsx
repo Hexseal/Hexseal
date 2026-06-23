@@ -401,59 +401,62 @@ function ServiceCard({
       onClick={onToggle}
     >
       {/* Row */}
-      <div className="flex items-center gap-3 px-4 py-3.5">
-        <UserAvatar address={service.executor} size={28} link />
+      <div className="flex items-center gap-2.5 px-4 py-3">
+        <UserAvatar address={service.executor} size={24} link />
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 mb-0.5">
+          {/* Title + Price on same line */}
+          <div className="flex items-baseline justify-between gap-2 mb-0.5">
             <span className="font-semibold text-white/90 text-sm truncate">{service.title}</span>
-            {isMyService && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
+            <span className="font-bold text-white/75 font-mono text-xs whitespace-nowrap flex-shrink-0">
+              {fmtUSDC(service.price)} USDC
+            </span>
           </div>
-          <div className="flex items-center gap-2 text-xs flex-wrap">
+          {/* Meta row */}
+          <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30">
             {catKey && (
-              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
                 {t(`categories.${catKey}`)}
               </span>
             )}
-            <span className="font-bold text-white/75 font-mono">{fmtUSDC(service.price)} USDC</span>
-            <span className="text-white/20">·</span>
-            <span className="text-white/35">{Number(service.deadlineDays)}d</span>
-            <span className="text-white/20">·</span>
-            <span className="text-white/25">{REGION_LABELS[service.region]}</span>
+            <span className="whitespace-nowrap">{Number(service.deadlineDays)}d</span>
+            <span className="text-white/15">·</span>
+            <span className="whitespace-nowrap">{REGION_LABELS[service.region]}</span>
             {Number(service.hiresCount) > 0 && (
               <>
-                <span className="text-white/20">·</span>
-                <span className="text-emerald-400/50 font-mono text-[11px]">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
+                <span className="text-white/15">·</span>
+                <span className="text-emerald-400/50 font-mono">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
               </>
             )}
-            {myPending && <span className="text-yellow-400/70 font-mono text-[11px]">{t("board.services.status_pending")}</span>}
-            {myAccepted && <span className="text-emerald-400/70 font-mono text-[11px]">{t("board.services.status_accepted")}</span>}
+            {isMyService && <span className="text-white/20 font-mono">{t("board.jobs.yours")}</span>}
+            {myPending  && <span className="text-yellow-400/70 font-mono">{t("board.services.status_pending")}</span>}
+            {myAccepted && <span className="text-emerald-400/70 font-mono">{t("board.services.status_accepted")}</span>}
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
           {isConnected && !isMyService && (
             <Link href={`/chat/${service.executor}`}>
-              <Button size="sm" variant="ghost" className="h-9 w-9 p-0 text-white/30 hover:text-primary">
+              <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors">
                 <MessageCircle className="w-3.5 h-3.5" />
-              </Button>
+              </button>
             </Link>
           )}
           {isConnected && !isMyService && myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
             <Link href={`/deal/${myAccepted.agreement}`}>
-              <Button size="sm" variant="outline" className="h-9 px-3 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
+              <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
                 {t("board.services.deal_btn")} <ExternalLink className="w-3 h-3" />
               </Button>
             </Link>
           )}
           {isConnected && !isMyService && !myActive && service.status === 0 && (
-            <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-9 px-3 text-xs gap-1">
+            <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-8 px-3 text-xs gap-1">
               {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               {t("board.services.request_btn")}
             </Button>
           )}
+          <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform ml-0.5 ${expanded ? "rotate-180" : ""}`} />
         </div>
-        <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform flex-shrink-0 ${expanded ? "rotate-180" : ""}`} />
       </div>
 
       {/* Expanded */}

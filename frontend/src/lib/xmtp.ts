@@ -94,12 +94,19 @@ const installIdKey  = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
  *  If it exists, Client.create() will NOT require a wallet signature.
  *  If it's gone (browser cleared storage), signing would be needed — we
  *  avoid that by clearing the session instead.
+ *
+ *  We enumerate the OPFS root directory instead of exact-name lookup because
+ *  the XMTP WASM runtime may append a suffix (.db, .db3, etc.) to dbPath.
  */
 export async function checkXmtpDbExists(address: string): Promise<boolean> {
   try {
-    const root = await navigator.storage.getDirectory();
-    await root.getFileHandle(`xmtp-${address.toLowerCase()}`, { create: false });
-    return true;
+    const root   = await navigator.storage.getDirectory();
+    const prefix = `xmtp-${address.toLowerCase()}`;
+    // FileSystemDirectoryHandle is AsyncIterable<[name, handle]>
+    for await (const [name] of root as unknown as AsyncIterable<[string, FileSystemHandle]>) {
+      if (name.startsWith(prefix)) return true;
+    }
+    return false;
   } catch {
     return false;
   }
