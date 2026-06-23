@@ -23,13 +23,16 @@ import { _notifyEnabled } from './useXmtpStatus';
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
 export function useXmtpSession() {
-  const { address, isConnected } = useAccount();
-  const { data: walletClient }   = useWalletClient();
+  const { address, isConnected, status } = useAccount();
+  const { data: walletClient }           = useWalletClient();
   const prevAddrRef  = useRef<string | undefined>(undefined);
   // Track which addresses were already attempted this page session (in-memory)
   const triedRef = useRef(new Set<string>());
 
-  // Cleanup on wallet disconnect or address switch
+  // Cleanup on wallet disconnect or address switch.
+  // IMPORTANT: skip cleanup during 'reconnecting'/'connecting' — wagmi briefly sets
+  // isConnected=false while restoring the wallet session (PWA restart, page reload).
+  // Clearing the session there would force re-signing on every app open.
   useEffect(() => {
     const prev = prevAddrRef.current;
     const curr = address?.toLowerCase();
@@ -38,12 +41,12 @@ export function useXmtpSession() {
       // Address changed — invalidate old address session
       clearXmtpSession(prev);
     }
-    if (!isConnected && curr) {
+    if (status === 'disconnected' && curr) {
       clearXmtpSession(curr);
     }
 
     prevAddrRef.current = curr;
-  }, [address, isConnected]);
+  }, [address, isConnected, status]);
 
   // Background auto-restore
   useEffect(() => {

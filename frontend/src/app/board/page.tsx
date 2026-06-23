@@ -196,25 +196,20 @@ function JobCard({
           <UserAvatar address={job.client} size={28} link />
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2 mb-0.5">
+            <div className="flex items-baseline gap-2 mb-1">
               <span className="font-semibold text-white/90 text-sm truncate leading-snug">
                 {job.title || `Job #${jobId.toString()}`}
               </span>
               {isClient && <span className="text-[10px] text-white/25 font-mono flex-shrink-0">{t("board.jobs.yours")}</span>}
             </div>
-            <div className="flex items-center gap-2 text-xs flex-wrap">
+            {/* Row 1: category badge + budget */}
+            <div className="flex items-center gap-2 mb-0.5">
               {catKey && (
-                <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
                   {t(`categories.${catKey}`)}
                 </span>
               )}
-              <span className="font-bold text-white/75 font-mono">{formatBudget(job.amount)} USDC</span>
-              <span className="text-white/20">·</span>
-              <span className="text-white/35">{job.deadlineDays.toString()}d</span>
-              <span className="text-white/20">·</span>
-              <span className="text-white/25">{REGION_LABELS[job.region] ?? "—"}</span>
-              <span className="text-white/20">·</span>
-              <span className="text-white/20">{timeAgo(job.createdAt)}</span>
+              <span className="font-bold text-white/75 font-mono text-xs">{formatBudget(job.amount)} USDC</span>
               {isClient && applicantCount > 0 && (
                 <span className="text-violet-400/80 font-mono text-[11px]">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
               )}
@@ -224,6 +219,14 @@ function JobCard({
                   {t("board.jobs.applied_tag")}
                 </span>
               )}
+            </div>
+            {/* Row 2: deadline · region · time */}
+            <div className="flex items-center gap-1.5 text-[11px] text-white/25">
+              <span>{job.deadlineDays.toString()}d</span>
+              <span className="text-white/10">·</span>
+              <span>{REGION_LABELS[job.region] ?? "—"}</span>
+              <span className="text-white/10">·</span>
+              <span className="text-white/18">{timeAgo(job.createdAt)}</span>
             </div>
           </div>
 
@@ -557,7 +560,6 @@ export default function BoardPage() {
                 {key === 'newest' ? t("board.sort.newest") : key === 'oldest' ? t("board.sort.oldest") : key === 'highest' ? t("board.sort.highest") : t("board.sort.lowest")}
               </button>
             ))}
-            <span className="ml-auto text-xs text-white/20">{jobs.length}{hasMore ? '+' : ''}</span>
           </div>
         )}
 
@@ -598,7 +600,7 @@ export default function BoardPage() {
           </div>
         ) : (
           <>
-            <div className="space-y-3">
+            <div className="space-y-4">
               {jobs.map(({ id, job }, index) => (
                 <div key={id.toString()} className="card-enter" style={{ animationDelay: `${Math.min(index, 8) * 0.04}s` }}>
                   <JobCard
