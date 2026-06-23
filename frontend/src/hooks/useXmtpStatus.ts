@@ -26,7 +26,15 @@ function readIsEnabled(addr: string): boolean {
 export function useXmtpStatus() {
   const { data: walletClient } = useWalletClient();
 
-  const [isEnabled,  setIsEnabled]  = useState(false);
+  // Initialise optimistically from localStorage to avoid a flash of MessagingSetup
+  // on page load. We can't read the per-address key yet (no walletClient), so we
+  // check if ANY wallet has XMTP registered — close enough for the first frame.
+  const [isEnabled, setIsEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return Object.keys(localStorage).some(
+      k => k.startsWith('xmtp-registered-') && localStorage.getItem(k) === '1',
+    );
+  });
   const [isEnabling, setIsEnabling] = useState(false);
   const [signStep,   setSignStep]   = useState(0);
   const [error,      setError]      = useState<string | null>(null);

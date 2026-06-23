@@ -338,8 +338,30 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-white/30" />
+      <div className="container mx-auto px-4 pt-4 pb-6 max-w-4xl space-y-4 animate-pulse">
+        <div className="space-y-2">
+          <div className="h-3 w-24 rounded bg-white/[0.06]" />
+          <div className="h-7 w-3/4 rounded-lg bg-white/[0.06]" />
+        </div>
+        <div className="rounded-[22px] border border-white/[0.06] bg-[#0d0d0f] p-5 space-y-5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="space-y-2">
+                <div className="h-2.5 w-12 rounded bg-white/[0.05]" />
+                <div className="h-4 w-20 rounded bg-white/[0.06]" />
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 pt-3 border-t border-white/[0.05]">
+            <div className="w-9 h-9 rounded-full bg-white/[0.06]" />
+            <div className="h-3 w-32 rounded bg-white/[0.06]" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-2.5 w-16 rounded bg-white/[0.05]" />
+            <div className="h-3 w-full rounded bg-white/[0.06]" />
+            <div className="h-3 w-5/6 rounded bg-white/[0.06]" />
+          </div>
+        </div>
       </div>
     );
   }
