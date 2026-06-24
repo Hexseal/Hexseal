@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract } from "wagmi";
-import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
+import { DIAMOND_ABI, REPUTATION_ABI, CONTRACTS } from "@/config/contracts";
 import { fetchProfile } from "@/lib/profiles-ipfs";
 import type { UserProfile } from "@/types/profile";
 import { Button } from "@/components/ui/button";
@@ -183,7 +183,7 @@ export default function ProfilePage() {
 
   const { data: onchainXP } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
-    abi: DIAMOND_ABI,
+    abi: REPUTATION_ABI,
     functionName: 'getXP',
     args: validAddress ? [profileAddress as `0x${string}`] : undefined,
     query: { enabled: validAddress },

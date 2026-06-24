@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useAccount, useReadContract } from 'wagmi';
-import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
+import { DIAMOND_ABI, REPUTATION_ABI, CONTRACTS } from '@/config/contracts';
 import { useMyAgreements, type GraphAgreement } from '@/hooks/useMyAgreements';
 import {
   Loader2, Activity, CheckCircle,
@@ -139,9 +139,9 @@ export default function DashboardPage() {
 
   const { data: onchainXP } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
-    abi: DIAMOND_ABI,
+    abi: REPUTATION_ABI,
     functionName: 'getXP',
-    args: [address],
+    args: address ? [address] : undefined,
     query: { enabled: !!address },
   });
   const xp = Number(onchainXP ?? 0n);
