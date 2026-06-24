@@ -665,7 +665,7 @@ export default function BoardPage() {
               {searchQuery
                 ? t("board.jobs.no_results")
                 : regionFilter !== null
-                  ? `No jobs in ${REGION_LABELS[regionFilter] ?? 'this region'} — try Global`
+                  ? t("board.jobs.no_region_results", { region: REGION_LABELS[regionFilter] ?? '' })
                   : t("board.jobs.empty")}
             </p>
             {!searchQuery && regionFilter !== null ? (

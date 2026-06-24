@@ -57,7 +57,8 @@
       "applicants_count": "{count} 人申请",
       "withdraw_btn": "撤回",
       "withdrawn": "申請已撤回。",
-      "terms_unavailable": "Terms unavailable"
+      "terms_unavailable": "Terms unavailable",
+      "no_region_results": "No jobs in {region} — try Global"
     },
     "services": {
       "title": "服务广场",
@@ -420,7 +421,19 @@
     "active_client_title": "Work in progress",
     "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed.",
     "auto_approve_in": "Auto-approves in {time} if not released",
-    "closed_hint": "This deal is closed. No further actions required."
+    "closed_hint": "This deal is closed. No further actions required.",
+    "insufficient_usdc_need": "Insufficient USDC — need {amount} more",
+    "arbiter_trust": "Protected by {count} independent arbiters — any dispute is resolved on-chain, impartially.",
+    "arbiter_trust_generic": "Dispute resolution is handled on-chain by registered arbiters.",
+    "stale_activation_title": "Executor hasn't started the deal",
+    "stale_activation_body": "The activation window has passed. Either party can trigger a refund — funds will return to the client automatically.",
+    "stale_deadline_title": "Deadline has passed",
+    "stale_deadline_body": "The work deadline has expired with no delivery. Either party can trigger a refund to close this deal.",
+    "stale_autorelease_title": "Auto-release window has passed",
+    "stale_autorelease_body": "Work was marked done and the client didn't review in time. Either party can trigger automatic payment to the executor.",
+    "stale_arbiter_title": "Arbiter timeout reached",
+    "stale_arbiter_body": "No arbiter resolved this dispute in time. Either party can trigger an automatic refund to the client.",
+    "tx_pending_title": "Transaction submitted — confirming on-chain…"
   },
   "job": {
     "status_open": "开放",

@@ -350,7 +350,7 @@ export default function DealDetailPage() {
   const handleFund = async () => {
     if (!isValidDeal || !address || !publicClient || !walletClient || !parsed) return;
     if (usdcShortfall !== undefined) {
-      toast.error(`Insufficient USDC — need ${formatUnits(usdcShortfall, 6)} more`);
+      toast.error(t("deal.insufficient_usdc_need", { amount: formatUnits(usdcShortfall, 6) }));
       return;
     }
     setIsFunding(true);
@@ -553,8 +553,8 @@ export default function DealDetailPage() {
             <Shield className="w-3.5 h-3.5 text-white/20 shrink-0" />
             <p className="text-xs text-white/25">
               {arbiterList.length > 0
-                ? `Protected by ${arbiterList.length} independent arbiter${arbiterList.length !== 1 ? 's' : ''} — any dispute is resolved on-chain, impartially.`
-                : 'Dispute resolution is handled on-chain by registered arbiters.'}
+                ? t("deal.arbiter_trust", { count: arbiterList.length })
+                : t("deal.arbiter_trust_generic")}
             </p>
           </div>
         )}
@@ -642,34 +642,26 @@ export default function DealDetailPage() {
         {/* ── Stale deal banners — explain auto-resolution to non-crypto users ── */}
         {parsed.status === 1 && activationWindowPassed && (
           <div className="rounded-[16px] border border-orange-400/20 bg-orange-400/5 px-4 py-3">
-            <p className="text-xs font-semibold text-orange-300/90 mb-1">Executor hasn't started the deal</p>
-            <p className="text-xs text-white/35 leading-relaxed">
-              The activation window has passed. Either party can trigger a refund — funds will return to the client automatically.
-            </p>
+            <p className="text-xs font-semibold text-orange-300/90 mb-1">{t("deal.stale_activation_title")}</p>
+            <p className="text-xs text-white/35 leading-relaxed">{t("deal.stale_activation_body")}</p>
           </div>
         )}
         {parsed.status === 2 && parsed.markedDoneAt === 0n && timeLeft === 0n && (
           <div className="rounded-[16px] border border-orange-400/20 bg-orange-400/5 px-4 py-3">
-            <p className="text-xs font-semibold text-orange-300/90 mb-1">Deadline has passed</p>
-            <p className="text-xs text-white/35 leading-relaxed">
-              The work deadline has expired with no delivery. Either party can trigger a refund to close this deal.
-            </p>
+            <p className="text-xs font-semibold text-orange-300/90 mb-1">{t("deal.stale_deadline_title")}</p>
+            <p className="text-xs text-white/35 leading-relaxed">{t("deal.stale_deadline_body")}</p>
           </div>
         )}
         {parsed.status === 2 && autoApproveWindowPassed && parsed.markedDoneAt > 0n && (
           <div className="rounded-[16px] border border-emerald-400/20 bg-emerald-400/5 px-4 py-3">
-            <p className="text-xs font-semibold text-emerald-300/90 mb-1">Auto-release window has passed</p>
-            <p className="text-xs text-white/35 leading-relaxed">
-              Work was marked done and the client didn't review in time. Either party can trigger automatic payment to the executor.
-            </p>
+            <p className="text-xs font-semibold text-emerald-300/90 mb-1">{t("deal.stale_autorelease_title")}</p>
+            <p className="text-xs text-white/35 leading-relaxed">{t("deal.stale_autorelease_body")}</p>
           </div>
         )}
         {parsed.status === 4 && arbiterTimeLeft === 0n && (
           <div className="rounded-[16px] border border-purple-400/20 bg-purple-400/5 px-4 py-3">
-            <p className="text-xs font-semibold text-purple-300/90 mb-1">Arbiter timeout reached</p>
-            <p className="text-xs text-white/35 leading-relaxed">
-              No arbiter resolved this dispute in time. Either party can trigger an automatic refund to the client.
-            </p>
+            <p className="text-xs font-semibold text-purple-300/90 mb-1">{t("deal.stale_arbiter_title")}</p>
+            <p className="text-xs text-white/35 leading-relaxed">{t("deal.stale_arbiter_body")}</p>
           </div>
         )}
 
@@ -678,7 +670,7 @@ export default function DealDetailPage() {
           <div className="rounded-[16px] border border-violet-500/20 bg-violet-500/5 px-4 py-3 flex items-center gap-3">
             <Loader2 className="w-4 h-4 animate-spin text-violet-400 shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-violet-300">Transaction submitted — confirming on-chain…</p>
+              <p className="text-xs font-medium text-violet-300">{t("deal.tx_pending_title")}</p>
               <p className="font-mono text-[10px] text-white/30 truncate">{pendingTxHash}</p>
             </div>
             <a
@@ -731,7 +723,7 @@ export default function DealDetailPage() {
                   </Button>
                   {usdcShortfall !== undefined && (
                     <p className="text-xs text-red-400/80">
-                      Insufficient USDC — need {formatUnits(usdcShortfall, 6)} more
+                      {t("deal.insufficient_usdc_need", { amount: formatUnits(usdcShortfall, 6) })}
                     </p>
                   )}
                 </div>
