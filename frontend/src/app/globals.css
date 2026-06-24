@@ -485,3 +485,25 @@ a {
   to   { opacity: 1; }
 }
 .card-enter { animation: card-enter 0.15s ease both; }
+
+/* ContextHint — CSS fade/slide, no framer-motion */
+@keyframes hint-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes hint-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(6px); }
+}
+.hint-wrap {
+  overflow: hidden;
+  transition: max-height 0.2s ease, opacity 0.2s ease;
+  will-change: opacity, transform;
+}
+.hint-visible {
+  display: flex;
+  animation: hint-in 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+.hint-hidden {
+  display: none;
+}

@@ -498,12 +498,7 @@ export default function DealDetailPage() {
         </div>
       </div>
 
-      <motion.div
-        className="container mx-auto px-4 py-5 max-w-4xl space-y-4"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.22 }}
-      >
+      <div className="container mx-auto px-4 py-5 max-w-4xl space-y-4 page-enter">
 
         {/* ── Hero: amount + parties ──────────────────────────────────────────── */}
         <div
@@ -987,7 +982,7 @@ export default function DealDetailPage() {
           </div>
         </div>
 
-      </motion.div>
+      </div>
 
       {/* ── Raise Dispute Modal ─────────────────────────────────────────────── */}
       <AnimatePresence>
@@ -997,13 +992,13 @@ export default function DealDetailPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4"
           >
             <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 10 }}
-              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.15 }}
               className="bg-[#111113] border border-white/[0.08] rounded-[22px] p-5 w-full max-w-md"
               style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}
             >

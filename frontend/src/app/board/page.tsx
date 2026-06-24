@@ -18,7 +18,6 @@ import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
-import { motion } from "framer-motion";
 import { fetchProfile } from "@/lib/profiles-ipfs";
 import type { UserProfile } from "@/types/profile";
 import { Sparkles } from "lucide-react";
@@ -499,11 +498,7 @@ export default function BoardPage() {
   return (
     <>
       {/* Page header */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
-      >
+      <div className="page-enter">
         <div className="container mx-auto px-4 pt-4 pb-6 max-w-6xl">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
@@ -524,7 +519,7 @@ export default function BoardPage() {
             </div>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       <div className="container mx-auto px-4 pt-0 pb-6 max-w-6xl">
         {/* Region filter */}
@@ -541,26 +536,26 @@ export default function BoardPage() {
           ref={catScrollRef}
           className="flex overflow-x-auto gap-1.5 mb-5 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          <motion.button
+          <button
             onClick={() => setCategoryFilter(null)}
-            className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors active:scale-[0.975] transition-transform duration-75 ${
+            className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors active:scale-[0.975] ${
               categoryFilter === null
                 ? "bg-white/10 border-white/20 text-white/80"
                 : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
             }`}
           >
             {t("common.all")}
-          </motion.button>
+          </button>
           {CATEGORIES.map(({ key, badge }) => (
-            <motion.button
+            <button
               key={key}
               onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
-              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors active:scale-[0.975] duration-75 ${
+              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors active:scale-[0.975] ${
                 categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
               }`}
             >
               {t(`categories.${key}`)}
-            </motion.button>
+            </button>
           ))}
         </div>
 
