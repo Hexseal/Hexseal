@@ -405,33 +405,20 @@ function ServiceCard({
         <UserAvatar address={service.executor} size={24} link />
 
         <div className="flex-1 min-w-0">
-          {/* Title + Price on same line */}
-          <div className="flex items-baseline justify-between gap-2 mb-0.5">
+          {/* Title + Price */}
+          <div className="flex items-baseline justify-between gap-2">
             <span className="font-semibold text-white/90 text-sm truncate">{service.title}</span>
             <span className="font-bold text-white/75 font-mono text-xs whitespace-nowrap flex-shrink-0">
               {fmtUSDC(service.price)} USDC
             </span>
           </div>
-          {/* Meta row */}
-          <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30">
-            {catKey && (
-              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
-                {t(`categories.${catKey}`)}
-              </span>
-            )}
-            <span className="whitespace-nowrap">{Number(service.deadlineDays)}d</span>
-            <span className="text-white/15">·</span>
-            <span className="whitespace-nowrap">{REGION_LABELS[service.region]}</span>
-            {Number(service.hiresCount) > 0 && (
-              <>
-                <span className="text-white/15">·</span>
-                <span className="text-emerald-400/50 font-mono">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
-              </>
-            )}
-            {isMyService && <span className="text-white/20 font-mono">{t("board.jobs.yours")}</span>}
-            {myPending  && <span className="text-yellow-400/70 font-mono">{t("board.services.status_pending")}</span>}
-            {myAccepted && <span className="text-emerald-400/70 font-mono">{t("board.services.status_accepted")}</span>}
-          </div>
+          {/* Status tags — only request status visible collapsed */}
+          {(myPending || myAccepted) && (
+            <div className="mt-0.5">
+              {myPending  && <span className="text-[11px] text-yellow-400/70 font-medium">{t("board.services.status_pending")}</span>}
+              {myAccepted && <span className="text-[11px] text-emerald-400/70 font-medium">{t("board.services.status_accepted")}</span>}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
@@ -467,9 +454,28 @@ function ServiceCard({
             <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{service.title}</p>
           )}
 
-          <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
+          <div className="flex items-center gap-2 text-xs text-white/30 mb-2">
             <span>{t("common.by")}</span>
             <UserName address={service.executor} link className="font-mono hover:text-white/60 transition-colors" />
+          </div>
+
+          {/* Meta: category · deadline · region · hires */}
+          <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30 mb-3">
+            {catKey && (
+              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
+                {t(`categories.${catKey}`)}
+              </span>
+            )}
+            <span className="whitespace-nowrap">{Number(service.deadlineDays)}d</span>
+            <span className="text-white/15">·</span>
+            <span className="whitespace-nowrap">{REGION_LABELS[service.region]}</span>
+            {Number(service.hiresCount) > 0 && (
+              <>
+                <span className="text-white/15">·</span>
+                <span className="text-emerald-400/50 font-mono">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
+              </>
+            )}
+            {isMyService && <span className="text-white/20 font-mono ml-1">{t("board.jobs.yours")}</span>}
           </div>
 
           {displayDesc && (

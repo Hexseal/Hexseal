@@ -196,8 +196,8 @@ function JobCard({
           <UserAvatar address={job.client} size={24} link />
 
           <div className="flex-1 min-w-0">
-            {/* Title + Amount on same line */}
-            <div className="flex items-baseline justify-between gap-2 mb-0.5">
+            {/* Title + Amount */}
+            <div className="flex items-baseline justify-between gap-2">
               <span className="font-semibold text-white/90 text-sm truncate leading-snug">
                 {job.title || `Job #${jobId.toString()}`}
               </span>
@@ -205,28 +205,15 @@ function JobCard({
                 {formatBudget(job.amount)} USDC
               </span>
             </div>
-            {/* Meta row: badge · deadline · region · time */}
-            <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30">
-              {catKey && (
-                <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
-                  {t(`categories.${catKey}`)}
-                </span>
-              )}
-              <span className="whitespace-nowrap">{job.deadlineDays.toString()}d</span>
-              <span className="text-white/15">·</span>
-              <span className="whitespace-nowrap">{REGION_LABELS[job.region] ?? "—"}</span>
-              <span className="text-white/15">·</span>
-              <span className="whitespace-nowrap text-white/20">{timeAgo(job.createdAt)}</span>
-              {isClient && applicantCount > 0 && (
-                <span className="text-violet-400/70 font-mono">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
-              )}
-              {!isClient && hasApplied && (
-                <span className="inline-flex items-center gap-1 text-emerald-400/70 font-medium">
+            {/* Status tags — only "Applied" stays visible collapsed */}
+            {!isClient && hasApplied && (
+              <div className="mt-0.5">
+                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400/70 font-medium">
                   <span className="w-1 h-1 rounded-full bg-emerald-400/70 flex-shrink-0" />
                   {t("board.jobs.applied_tag")}
                 </span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
@@ -260,9 +247,26 @@ function JobCard({
               <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{job.title}</p>
             )}
 
-            <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
+            <div className="flex items-center gap-2 text-xs text-white/30 mb-2">
               <span>{t("common.by")}</span>
               <UserName address={job.client} link className="font-mono hover:text-white/60 transition-colors" />
+            </div>
+
+            {/* Meta: category · deadline · region · time · applicants */}
+            <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30 mb-3">
+              {catKey && (
+                <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
+                  {t(`categories.${catKey}`)}
+                </span>
+              )}
+              <span className="whitespace-nowrap">{job.deadlineDays.toString()}d</span>
+              <span className="text-white/15">·</span>
+              <span className="whitespace-nowrap">{REGION_LABELS[job.region] ?? "—"}</span>
+              <span className="text-white/15">·</span>
+              <span className="whitespace-nowrap text-white/20">{timeAgo(job.createdAt)}</span>
+              {isClient && applicantCount > 0 && (
+                <span className="text-violet-400/70 font-mono ml-1">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
+              )}
             </div>
 
             {displayDesc && (
