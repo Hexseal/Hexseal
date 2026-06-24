@@ -270,7 +270,10 @@
     "client_role_badge": "عميل",
     "executor_role_badge": "منفّذ",
     "photo_ready": "الصورة جاهزة",
-    "save_success_no_photo": "تم حفظ الملف الشخصي (فشل تحميل الصورة)"
+    "save_success_no_photo": "تم حفظ الملف الشخصي (فشل تحميل الصورة)",
+    "member_since": "Active since {date}",
+    "refunded_label": "Refunded",
+    "refunded_sub": "deals returned to client"
   },
   "deal_status": {
     "created": "تم الإنشاء",

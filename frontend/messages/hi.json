@@ -270,7 +270,10 @@
     "client_role_badge": "क्लाइंट",
     "executor_role_badge": "एक्जीक्यूटर",
     "photo_ready": "फ़ोटो तैयार",
-    "save_success_no_photo": "प्रोफाइल सेव हुई (फोटो अपलोड विफल)"
+    "save_success_no_photo": "प्रोफाइल सेव हुई (फोटो अपलोड विफल)",
+    "member_since": "Active since {date}",
+    "refunded_label": "Refunded",
+    "refunded_sub": "deals returned to client"
   },
   "deal_status": {
     "created": "बनाई गई",

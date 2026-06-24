@@ -270,7 +270,10 @@
     "client_role_badge": "クライアント",
     "executor_role_badge": "受注者",
     "photo_ready": "写真選択済み",
-    "save_success_no_photo": "プロフィール保存済み（写真アップロード失敗）"
+    "save_success_no_photo": "プロフィール保存済み（写真アップロード失敗）",
+    "member_since": "Active since {date}",
+    "refunded_label": "Refunded",
+    "refunded_sub": "deals returned to client"
   },
   "deal_status": {
     "created": "作成済",

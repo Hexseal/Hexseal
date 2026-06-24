@@ -270,7 +270,10 @@
     "client_role_badge": "客户",
     "executor_role_badge": "执行者",
     "photo_ready": "照片已就绪",
-    "save_success_no_photo": "个人资料已保存（照片上传失败）"
+    "save_success_no_photo": "个人资料已保存（照片上传失败）",
+    "member_since": "Active since {date}",
+    "refunded_label": "Refunded",
+    "refunded_sub": "deals returned to client"
   },
   "deal_status": {
     "created": "已创建",

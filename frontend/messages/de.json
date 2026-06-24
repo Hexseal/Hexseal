@@ -270,7 +270,10 @@
     "client_role_badge": "Kunde",
     "executor_role_badge": "Ausführender",
     "photo_ready": "Foto bereit",
-    "save_success_no_photo": "Profil gespeichert (Foto-Upload fehlgeschlagen)"
+    "save_success_no_photo": "Profil gespeichert (Foto-Upload fehlgeschlagen)",
+    "member_since": "Active since {date}",
+    "refunded_label": "Refunded",
+    "refunded_sub": "deals returned to client"
   },
   "deal_status": {
     "created": "Erstellt",

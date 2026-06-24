@@ -638,6 +638,40 @@ export default function DealDetailPage() {
           </div>
         )}
 
+        {/* ── Stale deal banners — explain auto-resolution to non-crypto users ── */}
+        {parsed.status === 1 && activationWindowPassed && (
+          <div className="rounded-[16px] border border-orange-400/20 bg-orange-400/5 px-4 py-3">
+            <p className="text-xs font-semibold text-orange-300/90 mb-1">Executor hasn't started the deal</p>
+            <p className="text-xs text-white/35 leading-relaxed">
+              The activation window has passed. Either party can trigger a refund — funds will return to the client automatically.
+            </p>
+          </div>
+        )}
+        {parsed.status === 2 && parsed.markedDoneAt === 0n && timeLeft === 0n && (
+          <div className="rounded-[16px] border border-orange-400/20 bg-orange-400/5 px-4 py-3">
+            <p className="text-xs font-semibold text-orange-300/90 mb-1">Deadline has passed</p>
+            <p className="text-xs text-white/35 leading-relaxed">
+              The work deadline has expired with no delivery. Either party can trigger a refund to close this deal.
+            </p>
+          </div>
+        )}
+        {parsed.status === 2 && autoApproveWindowPassed && parsed.markedDoneAt > 0n && (
+          <div className="rounded-[16px] border border-emerald-400/20 bg-emerald-400/5 px-4 py-3">
+            <p className="text-xs font-semibold text-emerald-300/90 mb-1">Auto-release window has passed</p>
+            <p className="text-xs text-white/35 leading-relaxed">
+              Work was marked done and the client didn't review in time. Either party can trigger automatic payment to the executor.
+            </p>
+          </div>
+        )}
+        {parsed.status === 4 && arbiterTimeLeft === 0n && (
+          <div className="rounded-[16px] border border-purple-400/20 bg-purple-400/5 px-4 py-3">
+            <p className="text-xs font-semibold text-purple-300/90 mb-1">Arbiter timeout reached</p>
+            <p className="text-xs text-white/35 leading-relaxed">
+              No arbiter resolved this dispute in time. Either party can trigger an automatic refund to the client.
+            </p>
+          </div>
+        )}
+
         {/* ── Pending tx banner ───────────────────────────────────────────────── */}
         {pendingTxHash && (
           <div className="rounded-[16px] border border-violet-500/20 bg-violet-500/5 px-4 py-3 flex items-center gap-3">

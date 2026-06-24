@@ -207,6 +207,11 @@ export default function ProfilePage() {
   const level           = xpLevel(xp);
   const closedCount     = completedDeals + refundedDeals;
 
+  // "Member since" — earliest deal date
+  const memberSince = allDeals.length > 0
+    ? new Date(Math.min(...allDeals.map(d => Number(d.createdAt))) * 1000)
+    : null;
+
   // History: COMPLETED(1), REFUNDED(2), RESOLVED(4)
   const historyDeals = allDeals
     .filter(d => [1, 2, 4].includes(d.status))
@@ -317,13 +322,20 @@ export default function ProfilePage() {
                 </div>
               )}
             </div>
-            {isOwner && (
-              <Link href="/profile/edit">
-                <Button variant="outline" size="sm" className="flex-shrink-0">
-                  <Edit className="w-3.5 h-3.5 mr-1" />{t("common.edit")}
-                </Button>
-              </Link>
-            )}
+            <div className="flex flex-col items-end gap-2 shrink-0">
+              {memberSince && (
+                <span className="text-[11px] text-white/25">
+                  {t("profile.member_since", { date: memberSince.toLocaleDateString('en', { month: 'short', year: 'numeric' }) })}
+                </span>
+              )}
+              {isOwner && (
+                <Link href="/profile/edit">
+                  <Button variant="outline" size="sm">
+                    <Edit className="w-3.5 h-3.5 mr-1" />{t("common.edit")}
+                  </Button>
+                </Link>
+              )}
+            </div>
           </div>
         </div>
 
@@ -408,6 +420,13 @@ export default function ProfilePage() {
                       {allDeals.length > 0 ? `${Math.round((disputedDeals / allDeals.length) * 100)}%` : "0%"}
                     </p>
                     <p className="text-[10px] text-white/25">{t("profile.disputed_count", { count: disputedDeals })}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-white/35 mb-1">{t("profile.refunded_label")}</p>
+                    <p className={`text-lg font-bold font-mono ${refundedDeals > 0 ? 'text-red-400/80' : 'text-white'}`}>
+                      {refundedDeals}
+                    </p>
+                    <p className="text-[10px] text-white/25">{t("profile.refunded_sub")}</p>
                   </div>
                   <div className="col-span-2 sm:col-span-1">
                     <p className="text-[11px] text-white/35 mb-1">{t("profile.total_deals")}</p>
