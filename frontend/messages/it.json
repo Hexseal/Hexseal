@@ -741,5 +741,12 @@
     "raise_dispute_desc": "La trattativa sarà congelata e un arbitro sarà contattato.",
     "cancel_btn": "Annulla",
     "confirm_btn": "Conferma"
+  },
+  "hints": {
+    "board_apply": "Tap a card to expand it and apply — the client will review your request.",
+    "deal_fund_client": "Fund the escrow to lock your payment on-chain and kick off the deal.",
+    "deal_activate_executor": "Activate to confirm you have started work. This starts the deadline clock.",
+    "deal_markdone_executor": "Mark done when you have delivered. The client then has a window to review.",
+    "deal_release_client": "The executor marked the work done. Review it and release funds when satisfied."
   }
 }

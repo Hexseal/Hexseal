@@ -682,6 +682,13 @@
     "price_min": "Minimum {min} USDC",
     "deadline_range": "{min} to {max} days"
   },
+  "hints": {
+    "board_apply": "Tap a card to expand it and apply — the client will review your request.",
+    "deal_fund_client": "Fund the escrow to lock your payment on-chain and kick off the deal. The executor can't touch the funds until they deliver.",
+    "deal_activate_executor": "Activate to confirm you've started work. This starts the deadline clock.",
+    "deal_markdone_executor": "Mark done when you've delivered. The client then has a window to review — after that it auto-releases.",
+    "deal_release_client": "The executor marked the work done. Review it and release funds when you're satisfied."
+  },
   "faq": {
     "back": "Back to home",
     "docs_label": "Docs",

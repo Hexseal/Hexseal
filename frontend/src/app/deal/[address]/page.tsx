@@ -31,6 +31,7 @@ import { ARBITER_REGISTRY_ABI } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
 import { initXmtpClient, notifyArbiters } from "@/lib/xmtp";
 import { useTranslations } from "next-intl";
+import { ContextHint } from "@/components/ContextHint";
 
 // Agreement status enum matches Solidity:
 // 0=CREATED, 1=FUNDED, 2=ACTIVE, 3=COMPLETED, 4=DISPUTED, 5=RESOLVED, 6=REFUNDED
@@ -698,6 +699,29 @@ export default function DealDetailPage() {
             style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
           >
             <p className="text-xs text-white/35 mb-3">{t("deal.actions_title")}</p>
+
+            {/* Contextual one-time hints per role + status */}
+            {parsed.status === 0 && isClient && (
+              <div className="mb-3">
+                <ContextHint hintKey="deal_fund_client">{t("hints.deal_fund_client")}</ContextHint>
+              </div>
+            )}
+            {parsed.status === 1 && isExecutor && (
+              <div className="mb-3">
+                <ContextHint hintKey="deal_activate_executor">{t("hints.deal_activate_executor")}</ContextHint>
+              </div>
+            )}
+            {parsed.status === 2 && isExecutor && parsed.markedDoneAt === 0n && (
+              <div className="mb-3">
+                <ContextHint hintKey="deal_markdone_executor">{t("hints.deal_markdone_executor")}</ContextHint>
+              </div>
+            )}
+            {parsed.status === 2 && isClient && parsed.markedDoneAt > 0n && (
+              <div className="mb-3">
+                <ContextHint hintKey="deal_release_client">{t("hints.deal_release_client")}</ContextHint>
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-2">
               {parsed.status === 0 && isClient && (
                 <div className="flex flex-col gap-1.5 w-full">

@@ -741,5 +741,12 @@
     "raise_dispute_desc": "交易将被冻结，仲裁员将被通知。",
     "cancel_btn": "取消",
     "confirm_btn": "确认"
+  },
+  "hints": {
+    "board_apply": "Tap a card to expand it and apply — the client will review your request.",
+    "deal_fund_client": "Fund the escrow to lock your payment on-chain and kick off the deal.",
+    "deal_activate_executor": "Activate to confirm you have started work. This starts the deadline clock.",
+    "deal_markdone_executor": "Mark done when you have delivered. The client then has a window to review.",
+    "deal_release_client": "The executor marked the work done. Review it and release funds when satisfied."
   }
 }

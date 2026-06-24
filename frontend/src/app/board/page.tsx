@@ -22,6 +22,7 @@ import { motion } from "framer-motion";
 import { fetchProfile } from "@/lib/profiles-ipfs";
 import type { UserProfile } from "@/types/profile";
 import { Sparkles } from "lucide-react";
+import { ContextHint } from "@/components/ContextHint";
 
 interface JobRecord {
   client: string;
@@ -634,6 +635,12 @@ export default function BoardPage() {
                 {key === 'newest' ? t("board.sort.newest") : key === 'oldest' ? t("board.sort.oldest") : key === 'highest' ? t("board.sort.highest") : t("board.sort.lowest")}
               </button>
             ))}
+          </div>
+        )}
+
+        {!isLoading && jobs.length > 0 && (
+          <div className="mb-4">
+            <ContextHint hintKey="board_apply">{t("hints.board_apply")}</ContextHint>
           </div>
         )}
 
