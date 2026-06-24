@@ -310,30 +310,12 @@ function JobCard({
               <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
             )}
 
-            {/* Footer: full-page link + amount + apply action */}
-            <div className="pt-2.5 border-t border-white/6 flex items-center justify-between gap-3">
+            {/* Footer: full-page link only — actions stay in the header row */}
+            <div className="pt-2.5 border-t border-white/6">
               <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-8 px-2 gap-1.5"
                 onClick={e => { e.stopPropagation(); router.push(`/job/${jobId.toString()}`); }}>
                 <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
               </Button>
-
-              {!isClient && address && (
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                  <span className="text-xs font-mono text-white/45">{formatBudget(job.amount)} USDC</span>
-                  {!hasApplied ? (
-                    <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-7 px-3 text-xs gap-1">
-                      {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                      {t("board.jobs.apply_btn")}
-                    </Button>
-                  ) : job.status === 0 ? (
-                    <Button size="sm" variant="ghost" onClick={handleWithdraw} disabled={isWithdrawing}
-                      className="h-7 px-2 text-xs text-white/30 hover:text-red-400 hover:bg-red-400/10">
-                      {isWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                      {t("board.jobs.withdraw_btn")}
-                    </Button>
-                  ) : null}
-                </div>
-              )}
             </div>
           </div>
         )}
