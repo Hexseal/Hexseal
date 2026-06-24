@@ -405,20 +405,21 @@ function ServiceCard({
         <UserAvatar address={service.executor} size={24} link />
 
         <div className="flex-1 min-w-0">
-          {/* Title + Price */}
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="font-semibold text-white/90 text-sm truncate">{service.title}</span>
-            <span className="font-bold text-white/75 font-mono text-xs whitespace-nowrap flex-shrink-0">
-              {fmtUSDC(service.price)} USDC
-            </span>
+          <p className="text-[13px] font-semibold text-white/90 truncate leading-snug mb-1">{service.title}</p>
+          <div className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+              myAccepted ? 'bg-emerald-400' : myPending ? 'bg-amber-400' : 'bg-violet-400/60'
+            }`} />
+            <span className="text-[11px] font-mono text-white/55">{fmtUSDC(service.price)} USDC</span>
+            <span className="text-[11px] text-white/15">·</span>
+            <span className="text-[11px] text-white/35">{Number(service.deadlineDays)}d</span>
+            {Number(service.hiresCount) > 0 && (
+              <>
+                <span className="text-[11px] text-white/15">·</span>
+                <span className="text-[11px] text-emerald-400/50 font-mono">{Number(service.hiresCount)}×</span>
+              </>
+            )}
           </div>
-          {/* Status tags — only request status visible collapsed */}
-          {(myPending || myAccepted) && (
-            <div className="mt-0.5">
-              {myPending  && <span className="text-[11px] text-yellow-400/70 font-medium">{t("board.services.status_pending")}</span>}
-              {myAccepted && <span className="text-[11px] text-emerald-400/70 font-medium">{t("board.services.status_accepted")}</span>}
-            </div>
-          )}
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>

@@ -192,47 +192,43 @@ function JobCard({
         onClick={onToggle}
       >
         {/* ── Collapsed row ── */}
-        <div className="flex items-center gap-2.5 px-4 py-3">
+        <div className="flex items-center gap-3 px-4 py-3">
           <UserAvatar address={job.client} size={24} link />
 
           <div className="flex-1 min-w-0">
-            {/* Title + Amount */}
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="font-semibold text-white/90 text-sm truncate leading-snug">
-                {job.title || `Job #${jobId.toString()}`}
-              </span>
-              <span className="font-bold text-white/75 font-mono text-xs whitespace-nowrap flex-shrink-0">
-                {formatBudget(job.amount)} USDC
-              </span>
+            <p className="text-[13px] font-semibold text-white/90 truncate leading-snug mb-1">
+              {job.title || `Job #${jobId.toString()}`}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasApplied ? 'bg-emerald-400' : 'bg-sky-400/60'}`} />
+              <span className="text-[11px] font-mono text-white/55">{formatBudget(job.amount)} USDC</span>
+              <span className="text-[11px] text-white/15">·</span>
+              <span className="text-[11px] text-white/35">{job.deadlineDays.toString()}d</span>
+              {isClient && applicantCount > 0 && (
+                <>
+                  <span className="text-[11px] text-white/15">·</span>
+                  <span className="text-[11px] font-medium text-violet-400/70">{applicantCount}</span>
+                </>
+              )}
             </div>
-            {/* Status tags — only "Applied" stays visible collapsed */}
-            {!isClient && hasApplied && (
-              <div className="mt-0.5">
-                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400/70 font-medium">
-                  <span className="w-1 h-1 rounded-full bg-emerald-400/70 flex-shrink-0" />
-                  {t("board.jobs.applied_tag")}
-                </span>
-              </div>
-            )}
           </div>
 
           <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
             {!isClient && address && (
-              <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors" onClick={() => router.push(`/chat/${job.client}`)}>
+              <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors"
+                onClick={() => router.push(`/chat/${job.client}`)}>
                 <MessageCircle className="w-3.5 h-3.5" />
               </button>
             )}
             {!isClient && address && !hasApplied && (
-              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-8 px-3 text-xs gap-1">
-                {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                {t("board.jobs.apply_btn")}
+              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-7 px-2.5 text-xs">
+                {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : t("board.jobs.apply_btn")}
               </Button>
             )}
             {!isClient && address && hasApplied && job.status === 0 && (
               <Button size="sm" variant="ghost" onClick={handleWithdraw} disabled={isWithdrawing}
-                className="h-8 px-2.5 text-xs text-white/25 hover:text-red-400 hover:bg-red-400/10 gap-1">
-                {isWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                {t("board.jobs.withdraw_btn")}
+                className="h-7 px-2 text-xs text-white/25 hover:text-red-400 hover:bg-red-400/10">
+                {isWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : t("board.jobs.withdraw_btn")}
               </Button>
             )}
             <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform ml-0.5 ${expanded ? "rotate-180" : ""}`} />
