@@ -539,7 +539,16 @@
     "step4_title": "完了して解放",
     "step4_desc": "受注者が完了とする。クライアントが支払いを解放。期限後に解放なし？自動承認。紛争？仲裁人が解決。",
     "step5_title": "デフォルトでガスレス",
-    "step5_desc": "トランザクションに署名するとプラットフォームがガスを支払います。ETH不要 — 資金提供にはUSDCのみ。"
+    "step5_desc": "トランザクションに署名するとプラットフォームがガスを支払います。ETH不要 — 資金提供にはUSDCのみ。",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "ホームに戻る",

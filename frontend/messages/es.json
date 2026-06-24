@@ -539,7 +539,16 @@
     "step4_title": "Completar y liberar",
     "step4_desc": "El ejecutor marca como hecho. El cliente libera el pago. ¿Sin liberación después del tiempo de espera? Los fondos se auto-aprueban. ¿Disputa? El árbitro resuelve.",
     "step5_title": "Gasless por defecto",
-    "step5_desc": "Firmas las transacciones, la plataforma paga el gas. No necesitas ETH — solo USDC para fondear el trato."
+    "step5_desc": "Firmas las transacciones, la plataforma paga el gas. No necesitas ETH — solo USDC para fondear el trato.",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "Volver al inicio",

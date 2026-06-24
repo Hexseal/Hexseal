@@ -539,7 +539,16 @@
     "step4_title": "पूर्ण करें और जारी करें",
     "step4_desc": "एक्जीक्यूटर पूर्ण चिह्नित करता है। क्लाइंट भुगतान जारी करता है। टाइमआउट के बाद जारी नहीं? फंड स्वतः-स्वीकृत। विवाद? मध्यस्थ सुलझाता है।",
     "step5_title": "डिफ़ॉल्ट रूप से गैसलेस",
-    "step5_desc": "आप लेनदेन साइन करते हैं, प्लेटफॉर्म गैस देता है। ETH की ज़रूरत नहीं — सिर्फ डील फंडिंग के लिए USDC।"
+    "step5_desc": "आप लेनदेन साइन करते हैं, प्लेटफॉर्म गैस देता है। ETH की ज़रूरत नहीं — सिर्फ डील फंडिंग के लिए USDC।",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "होम पर वापस",

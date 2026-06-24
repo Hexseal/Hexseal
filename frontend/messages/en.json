@@ -658,7 +658,16 @@
     "step4_title": "Complete & Release",
     "step4_desc": "Executor marks done. Client releases payment. No release after timeout? Funds auto-approve. Dispute? Arbiter resolves.",
     "step5_title": "Gasless by Default",
-    "step5_desc": "You sign transactions, the platform pays gas. No ETH needed — just USDC for deal funding."
+    "step5_desc": "You sign transactions, the platform pays gas. No ETH needed — just USDC for deal funding.",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "form": {
     "required": "Required field",

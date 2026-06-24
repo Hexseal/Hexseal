@@ -3,7 +3,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
-import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI } from "@/config/contracts";
+import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI, USDC_ABI } from "@/config/contracts";
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from "@/config/constants";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
@@ -115,6 +115,7 @@ export default function DealDetailPage() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const [isFunding, setIsFunding] = useState(false);
+  const [pendingTxHash, setPendingTxHash] = useState<string | null>(null);
   const [disputeModal, setDisputeModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
   const [proposeModal, setProposeModal] = useState(false);
@@ -252,6 +253,23 @@ export default function DealDetailPage() {
     };
   }, [details, statusNum]);
 
+  // USDC balance for the connected wallet — used to gate Fund button
+  const { data: usdcBalance } = useReadContract({
+    address: CONTRACTS.usdc as `0x${string}`,
+    abi: USDC_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address },
+  }) as { data: bigint | undefined };
+
+  const hasEnoughUsdc = !parsed || usdcBalance === undefined
+    ? true // unknown — don't block, let the tx fail with a proper message
+    : usdcBalance >= parsed.amount;
+
+  const usdcShortfall = parsed && usdcBalance !== undefined && !hasEnoughUsdc
+    ? parsed.amount - usdcBalance
+    : undefined;
+
   const isClient = parsed?.client
     ? parsed.client.toLowerCase() === address?.toLowerCase()
     : false;
@@ -269,6 +287,14 @@ export default function DealDetailPage() {
 
   // Terminal states — deal is fully closed, no further actions possible
   const isTerminal = parsed ? [3, 5, 6].includes(parsed.status) : false;
+
+  // Arbiter registry — used to show trust signal before dispute
+  const { data: arbiterList } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: ARBITER_REGISTRY_ABI,
+    functionName: 'getArbiters',
+    query: { enabled: !!isValidDeal && !isTerminal && parsed?.status !== undefined && parsed.status < 4 },
+  }) as { data: `0x${string}`[] | undefined };
 
   // The person this user should chat with
   const chatPeer = useMemo(() => {
@@ -322,13 +348,19 @@ export default function DealDetailPage() {
 
   const handleFund = async () => {
     if (!isValidDeal || !address || !publicClient || !walletClient || !parsed) return;
+    if (usdcShortfall !== undefined) {
+      toast.error(`Insufficient USDC — need ${formatUnits(usdcShortfall, 6)} more`);
+      return;
+    }
     setIsFunding(true);
+    setPendingTxHash(null);
     try {
       const dealAddr = dealAddress as `0x${string}`;
       toast(t("deal.fund_sign_permit"));
       const { txHash } = await fundAgreementGasless(walletClient, publicClient, dealAddr, parsed.amount);
-      toast.success(`${t("deal.fund_success")} Tx: ${txHash.slice(0, 10)}…`);
-      setTimeout(() => refetchDetails(), 4000);
+      setPendingTxHash(txHash);
+      toast.success(t("deal.fund_success"));
+      setTimeout(() => { refetchDetails(); setPendingTxHash(null); }, 4000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       const msg = e?.shortMessage || e?.message || "Fund failed";
@@ -514,6 +546,18 @@ export default function DealDetailPage() {
           </div>
         </div>
 
+        {/* ── Arbiter trust signal — visible before dispute ───────────────────── */}
+        {parsed.status < 4 && parsed.arbiter === ZERO_ADDR && arbiterList !== undefined && (
+          <div className="flex items-center gap-2 px-1">
+            <Shield className="w-3.5 h-3.5 text-white/20 shrink-0" />
+            <p className="text-xs text-white/25">
+              {arbiterList.length > 0
+                ? `Protected by ${arbiterList.length} independent arbiter${arbiterList.length !== 1 ? 's' : ''} — any dispute is resolved on-chain, impartially.`
+                : 'Dispute resolution is handled on-chain by registered arbiters.'}
+            </p>
+          </div>
+        )}
+
         {/* ── FUNDED state guidance banners ──────────────────────────────────── */}
         {parsed.status === 1 && isExecutor && (
           <div className="rounded-[22px] border border-amber-400/30 bg-amber-400/5 px-5 py-4"
@@ -594,6 +638,25 @@ export default function DealDetailPage() {
           </div>
         )}
 
+        {/* ── Pending tx banner ───────────────────────────────────────────────── */}
+        {pendingTxHash && (
+          <div className="rounded-[16px] border border-violet-500/20 bg-violet-500/5 px-4 py-3 flex items-center gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-violet-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-violet-300">Transaction submitted — confirming on-chain…</p>
+              <p className="font-mono text-[10px] text-white/30 truncate">{pendingTxHash}</p>
+            </div>
+            <a
+              href={explorerUrl('tx', pendingTxHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-white/30 hover:text-white/70 transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        )}
+
         {/* ── Primary actions ─────────────────────────────────────────────────── */}
         {!isTerminal && isConnected && (isParty || isArbiter) && (
           <div
@@ -603,10 +666,17 @@ export default function DealDetailPage() {
             <p className="text-xs text-white/35 mb-3">{t("deal.actions_title")}</p>
             <div className="flex flex-wrap gap-2">
               {parsed.status === 0 && isClient && (
-                <Button size="sm" onClick={handleFund} disabled={busy}>
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
-                  {t("deal.fund_btn")}
-                </Button>
+                <div className="flex flex-col gap-1.5 w-full">
+                  <Button size="sm" onClick={handleFund} disabled={busy || !!usdcShortfall}>
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
+                    {t("deal.fund_btn")}
+                  </Button>
+                  {usdcShortfall !== undefined && (
+                    <p className="text-xs text-red-400/80">
+                      Insufficient USDC — need {formatUnits(usdcShortfall, 6)} more
+                    </p>
+                  )}
+                </div>
               )}
               {parsed.status === 1 && isExecutor && (
                 <Button size="sm" onClick={() => handleAction('activate', t("deal.activate_success"))} disabled={busy}>

@@ -539,7 +539,16 @@
     "step4_title": "완료하고 해제",
     "step4_desc": "실행자가 완료 표시를 합니다. 클라이언트가 지급을 해제합니다. 기한 후에 해제 없으면? 자동 승인. 분쟁? 중재자가 해결합니다.",
     "step5_title": "기본적으로 가스 없음",
-    "step5_desc": "당신이 트랜잭션에 서명하면 플랫폼이 가스를 지불합니다. ETH 불필요 — 자금 제공에는 USDC만 필요합니다."
+    "step5_desc": "당신이 트랜잭션에 서명하면 플랫폼이 가스를 지불합니다. ETH 불필요 — 자금 제공에는 USDC만 필요합니다.",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "홈으로 돌아가기",

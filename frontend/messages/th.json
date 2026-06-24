@@ -539,7 +539,16 @@
     "step4_title": "เสร็จสิ้นและปล่อย",
     "step4_desc": "ผู้รับงานทำเครื่องหมายว่าเสร็จ ลูกค้าปล่อยเงิน ไม่ปล่อยหลังหมดเวลา? เงินอนุมัติอัตโนมัติ มีข้อพิพาท? อนุญาโตตุลาการแก้ไข",
     "step5_title": "Gasless ตั้งแต่ต้น",
-    "step5_desc": "คุณเซ็นธุรกรรม แพลตฟอร์มจ่าย gas ไม่ต้องการ ETH — เพียง USDC สำหรับการฝากเงินดีล"
+    "step5_desc": "คุณเซ็นธุรกรรม แพลตฟอร์มจ่าย gas ไม่ต้องการ ETH — เพียง USDC สำหรับการฝากเงินดีล",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "กลับหน้าแรก",

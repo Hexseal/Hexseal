@@ -539,7 +539,16 @@
     "step4_title": "أنجز وأصدر",
     "step4_desc": "يضع المنفّذ علامة مكتمل. يُصدر العميل الدفعة. لا إصدار بعد المهلة؟ موافقة تلقائية. نزاع؟ المحكّم يحل.",
     "step5_title": "بدون غاز افتراضيًا",
-    "step5_desc": "توقّع المعاملات والمنصة تدفع الغاز. لا حاجة لـ ETH — فقط USDC للتمويل."
+    "step5_desc": "توقّع المعاملات والمنصة تدفع الغاز. لا حاجة لـ ETH — فقط USDC للتمويل.",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "العودة إلى الرئيسية",

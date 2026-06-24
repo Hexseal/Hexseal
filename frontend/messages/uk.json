@@ -539,7 +539,16 @@
     "step4_title": "Завершіть і Звільніть",
     "step4_desc": "Виконавець позначає виконаним. Клієнт звільняє оплату. Немає відповіді після терміну? Автоматично схвалено. Спір? Арбітр вирішує.",
     "step5_title": "Без Газу за Замовчуванням",
-    "step5_desc": "Ви підписуєте транзакції, платформа платить газ. ETH не потрібен — лише USDC для фінансування."
+    "step5_desc": "Ви підписуєте транзакції, платформа платить газ. ETH не потрібен — лише USDC для фінансування.",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "На головну",

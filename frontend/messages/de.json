@@ -539,7 +539,16 @@
     "step4_title": "Abschließen und freigeben",
     "step4_desc": "Ausführender markiert als erledigt. Kunde gibt Zahlung frei. Keine Freigabe nach Timeout? Gelder werden automatisch genehmigt. Streit? Schlichter löst.",
     "step5_title": "Standardmäßig gasless",
-    "step5_desc": "Du signierst Transaktionen, die Plattform zahlt Gas. Kein ETH benötigt — nur USDC für die Deal-Einzahlung."
+    "step5_desc": "Du signierst Transaktionen, die Plattform zahlt Gas. Kein ETH benötigt — nur USDC für die Deal-Einzahlung.",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "Zurück zur Startseite",

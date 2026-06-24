@@ -539,7 +539,16 @@
     "step4_title": "Completa e Rilascia",
     "step4_desc": "L'esecutore segna come fatto. Il cliente rilascia il pagamento. Nessun rilascio dopo la scadenza? Auto-approvazione. Controversia? L'arbitro risolve.",
     "step5_title": "Senza Gas per Impostazione Predefinita",
-    "step5_desc": "Firmi le transazioni, la piattaforma paga il gas. Non è necessario ETH — solo USDC per il finanziamento."
+    "step5_desc": "Firmi le transazioni, la piattaforma paga il gas. Non è necessario ETH — solo USDC per il finanziamento.",
+    "next_btn": "Next",
+    "last_step_btn": "Continue",
+    "final_title": "What are you here for?",
+    "final_desc": "Go straight to where you need to be.",
+    "cta_client": "I'm a Client",
+    "cta_client_sub": "Post a job",
+    "cta_executor": "I'm a Freelancer",
+    "cta_executor_sub": "Offer a service",
+    "skip": "Skip intro"
   },
   "faq": {
     "back": "Torna alla home",
