@@ -9,7 +9,7 @@
  * • disable()  — clears the flag (OPFS keys stay, so re-enable won't require re-signing)
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { useWalletClient } from 'wagmi';
 import { initXmtpClient, clearXmtpSession } from '@/lib/xmtp';
 
@@ -26,15 +26,15 @@ function readIsEnabled(addr: string): boolean {
 export function useXmtpStatus() {
   const { data: walletClient } = useWalletClient();
 
-  // Initialise optimistically from localStorage to avoid a flash of MessagingSetup
-  // on page load. We can't read the per-address key yet (no walletClient), so we
-  // check if ANY wallet has XMTP registered — close enough for the first frame.
-  const [isEnabled, setIsEnabled] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return Object.keys(localStorage).some(
+  // Start false (matches SSR) — no hydration mismatch.
+  // useLayoutEffect reads localStorage before paint so there's no visible flash.
+  const [isEnabled, setIsEnabled] = useState(false);
+  useLayoutEffect(() => {
+    const hasAny = Object.keys(localStorage).some(
       k => k.startsWith('xmtp-registered-') && localStorage.getItem(k) === '1',
     );
-  });
+    if (hasAny) setIsEnabled(true);
+  }, []);
   const [isEnabling, setIsEnabling] = useState(false);
   const [signStep,   setSignStep]   = useState(0);
   const [error,      setError]      = useState<string | null>(null);
