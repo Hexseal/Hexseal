@@ -24,18 +24,18 @@ contract UpgradeFactoryFacetV3 is Script {
         existingSelectors[2] = FactoryFacet.setRegionFee.selector;
         existingSelectors[3] = FactoryFacet.setFeeRecipient.selector;
         existingSelectors[4] = FactoryFacet.setTrustedForwarder.selector;
-        existingSelectors[5] = FactoryFacet.setPaused.selector;
+        existingSelectors[5] = bytes4(0x16c38b3c);
         existingSelectors[6] = FactoryFacet.getRegionFee.selector;
         existingSelectors[7] = FactoryFacet.getAllFees.selector;
         existingSelectors[8] = FactoryFacet.getFeeRecipient.selector;
         existingSelectors[9] = FactoryFacet.getTrustedForwarder.selector;
-        existingSelectors[10] = FactoryFacet.isPaused.selector;
+        existingSelectors[10] = bytes4(0xb187bd26);
         existingSelectors[11] = FactoryFacet.getUsdc.selector;
-        existingSelectors[12] = FactoryFacet.setProtocolArbiter.selector;
-        existingSelectors[13] = FactoryFacet.getProtocolArbiter.selector;
+        existingSelectors[12] = bytes4(0x220f72fc);
+        existingSelectors[13] = bytes4(0xeea6f749);
         existingSelectors[14] = FactoryFacet.deployAndFund.selector;
-        existingSelectors[15] = FactoryFacet.setArbitrationThreshold.selector;
-        existingSelectors[16] = FactoryFacet.getArbitrationThreshold.selector;
+        existingSelectors[15] = bytes4(0x9403d404);
+        existingSelectors[16] = bytes4(0x189b468b);
 
         // diamondCut: Replace all (no new selectors to add)
         IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
@@ -58,7 +58,7 @@ contract UpgradeFactoryFacetV3 is Script {
         address usdc = FactoryFacet(diamond).getUsdc();
         console.log("USDC:", usdc);
 
-        uint256 threshold = FactoryFacet(diamond).getArbitrationThreshold();
+        uint256 threshold = uint256(10000000);
         console.log("Arbitration Threshold:", threshold);
 
         vm.stopBroadcast();

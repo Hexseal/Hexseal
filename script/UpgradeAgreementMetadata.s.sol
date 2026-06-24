@@ -47,18 +47,18 @@ contract UpgradeAgreementMetadata is Script {
         factorySels[2]  = FactoryFacet.setRegionFee.selector;
         factorySels[3]  = FactoryFacet.setFeeRecipient.selector;
         factorySels[4]  = FactoryFacet.setTrustedForwarder.selector;
-        factorySels[5]  = FactoryFacet.setPaused.selector;
+        factorySels[5]  = bytes4(0x16c38b3c);
         factorySels[6]  = FactoryFacet.getRegionFee.selector;
         factorySels[7]  = FactoryFacet.getAllFees.selector;
         factorySels[8]  = FactoryFacet.getFeeRecipient.selector;
         factorySels[9]  = FactoryFacet.getTrustedForwarder.selector;
-        factorySels[10] = FactoryFacet.isPaused.selector;
+        factorySels[10] = bytes4(0xb187bd26);
         factorySels[11] = FactoryFacet.getUsdc.selector;
-        factorySels[12] = FactoryFacet.setProtocolArbiter.selector;
-        factorySels[13] = FactoryFacet.getProtocolArbiter.selector;
+        factorySels[12] = bytes4(0x220f72fc);
+        factorySels[13] = bytes4(0xeea6f749);
         factorySels[14] = FactoryFacet.deployAndFund.selector;
-        factorySels[15] = FactoryFacet.setArbitrationThreshold.selector;
-        factorySels[16] = FactoryFacet.getArbitrationThreshold.selector;
+        factorySels[15] = bytes4(0x9403d404);
+        factorySels[16] = bytes4(0x189b468b);
 
         // --- Cut 2: Add DealMetadataFacet ---
         bytes4[] memory metaSels = new bytes4[](1);

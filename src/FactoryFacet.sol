@@ -87,15 +87,11 @@ contract FactoryFacet {
     event RegionFeeUpdated(uint8 indexed region, uint256 newFee);
     event FeeRecipientUpdated(address indexed newRecipient);
     event TrustedForwarderUpdated(address indexed newForwarder);
-    event FactoryPaused(bool paused);
-    event ProtocolArbiterUpdated(address indexed arbiter);
     event DealFunded(address indexed agreement, address indexed client, uint256 amount);
-    event ArbitrationThresholdUpdated(uint256 newThreshold);
     event AgreementDeployerUpdated(address indexed deployer);
 
     // -------- ERRORS --------
 
-    error FactoryPausedError();
     error ZeroAddress();
     error ZeroAmount();
     error ZeroDeadline();
@@ -115,11 +111,6 @@ contract FactoryFacet {
 
     modifier onlyOwner() {
         if (msg.sender != _owner()) revert NotOwner();
-        _;
-    }
-
-    modifier whenNotPaused() {
-        if (FactoryStorage.layout().paused) revert FactoryPausedError();
         _;
     }
 
@@ -165,7 +156,7 @@ contract FactoryFacet {
         uint256 deadlineDays,
         bytes32 termsHash,
         uint8 region
-    ) external whenNotPaused returns (address agreementAddress) {
+    ) external returns (address agreementAddress) {
         if (client == address(0)) revert ZeroAddress();
         if (executor == address(0)) revert ZeroAddress();
         if (client == executor) revert ClientEqualsExecutor();
@@ -208,7 +199,7 @@ contract FactoryFacet {
         uint8 v,
         bytes32 r,
         bytes32 s
-    ) external whenNotPaused returns (address agreementAddress) {
+    ) external returns (address agreementAddress) {
         if (client == address(0)) revert ZeroAddress();
         if (executor == address(0)) revert ZeroAddress();
         if (client == executor) revert ClientEqualsExecutor();
@@ -273,21 +264,6 @@ contract FactoryFacet {
         emit TrustedForwarderUpdated(newForwarder);
     }
 
-    function setPaused(bool _paused) external onlyOwner {
-        FactoryStorage.layout().paused = _paused;
-        emit FactoryPaused(_paused);
-    }
-
-    function setProtocolArbiter(address arbiter) external onlyOwner {
-        FactoryStorage.layout().protocolArbiter = arbiter;
-        emit ProtocolArbiterUpdated(arbiter);
-    }
-
-    function setArbitrationThreshold(uint256 newThreshold) external onlyOwner {
-        FactoryStorage.layout().arbitrationThreshold = newThreshold;
-        emit ArbitrationThresholdUpdated(newThreshold);
-    }
-
     function setAgreementDeployer(address deployer) external onlyOwner {
         if (deployer == address(0)) revert ZeroAddress();
         FactoryStorage.layout().agreementDeployer = deployer;
@@ -322,20 +298,8 @@ contract FactoryFacet {
         return FactoryStorage.layout().trustedForwarder;
     }
 
-    function isPaused() external view returns (bool) {
-        return FactoryStorage.layout().paused;
-    }
-
     function getUsdc() external view returns (address) {
         return FactoryStorage.layout().usdc;
-    }
-
-    function getProtocolArbiter() external view returns (address) {
-        return FactoryStorage.layout().protocolArbiter;
-    }
-
-    function getArbitrationThreshold() external view returns (uint256) {
-        return FactoryStorage.layout().arbitrationThreshold;
     }
 
     function getAgreementDeployer() external view returns (address) {

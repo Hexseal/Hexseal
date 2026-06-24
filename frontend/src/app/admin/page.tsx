@@ -9,10 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'react-hot-toast';
 import {
-  Loader2, PauseCircle, PlayCircle, DollarSign, Settings,
+  Loader2, DollarSign, Settings,
   Shield, UserCog, AlertTriangle, UserPlus, UserMinus,
   Search, ExternalLink, Crown, BarChart3, Gavel, Activity,
-  TrendingUp, CheckCircle2, XCircle, Wallet,
+  TrendingUp, Wallet, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { isAddress, parseAbi } from 'viem';
 import { cn } from '@/lib/utils';
@@ -122,87 +122,22 @@ function OverviewTab() {
     functionName: 'getActive',
   }) as { data: any[] | undefined };
 
-  const { data: isPaused, refetch: refetchPause } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
-    functionName: 'isPaused',
-  }) as { data: boolean | undefined; refetch: () => void };
-
-  const { writeContract, isPending } = useWriteContract();
-
   const totalVolume = active ? active.reduce((s, a) => s + Number(a.amount), 0) : undefined;
-
-  const handleToggle = async () => {
-    try {
-      await writeContract({
-        address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
-        functionName: 'setPaused', args: [!isPaused], gas: BigInt(80_000),
-      });
-      toast.success(isPaused ? 'Factory unpaused' : 'Factory paused');
-      refetchPause();
-    } catch (err: unknown) {
-      toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed');
-    }
-  };
 
   return (
     <div className="space-y-4">
-      {/* Stat grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <StatTile label="Total agreements" value={total !== undefined ? total.toString() : undefined} icon={TrendingUp} accent="bg-primary/10" />
         <StatTile label="Active deals" value={active !== undefined ? active.length : undefined} icon={Activity} accent="bg-emerald-500/10" />
         <StatTile label="Active volume" value={totalVolume !== undefined ? `$${(totalVolume / 1e6).toFixed(2)}` : undefined} icon={DollarSign} accent="bg-violet-500/10" />
-        {/* Factory status tile */}
-        <div
-          className="rounded-[18px] border border-white/[0.07] bg-white/[0.02] p-4 flex flex-col gap-2"
-          style={{ boxShadow: "0 1px 6px rgba(0,0,0,0.3)" }}
-        >
-          <div className={cn("w-8 h-8 rounded-[10px] flex items-center justify-center", isPaused ? "bg-red-500/15" : "bg-emerald-500/10")}>
-            {isPaused ? <XCircle className="w-4 h-4 text-red-400" /> : <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-          </div>
-          <div className={cn("text-xl font-bold", isPaused ? "text-red-400" : "text-emerald-400")}>
-            {isPaused === undefined ? '…' : isPaused ? 'Paused' : 'Active'}
-          </div>
-          <div className="text-xs text-white/35">Factory status</div>
-        </div>
       </div>
-
-      {/* Factory control */}
-      <Section title="Factory Control" icon={Shield}
-        hint={isPaused ? 'Factory is paused — no new agreements can be created.' : 'Factory is active — users can create new agreements.'}
-      >
-        <Button
-          onClick={handleToggle}
-          disabled={isPending || isPaused === undefined}
-          variant={isPaused ? 'default' : 'destructive'}
-          className="w-full sm:w-auto"
-        >
-          {isPending
-            ? <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            : isPaused ? <PlayCircle className="w-4 h-4 mr-2" /> : <PauseCircle className="w-4 h-4 mr-2" />
-          }
-          {isPaused ? 'Unpause factory' : 'Pause factory'}
-        </Button>
-      </Section>
     </div>
   );
 }
 
 // ─── ARBITERS TAB ─────────────────────────────────────────────────────────────
-// Two sections:
-//   1. Arbiter Registry  — who can claim disputes
-//   2. Dispute Routing   — when/how arbiter is assigned (threshold + protocol arbiter)
 
 function ArbitersTab() {
-  const { data: protocolArbiter, refetch: refetchProtocol } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
-    functionName: 'getProtocolArbiter',
-  }) as { data: `0x${string}` | undefined; refetch: () => void };
-
-  const { data: threshold, refetch: refetchThreshold } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
-    functionName: 'getArbitrationThreshold',
-  }) as { data: bigint | undefined; refetch: () => void };
-
   const { data: arbiters, refetch: refetchArbiters } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
     functionName: 'getArbiters',
@@ -217,40 +152,10 @@ function ArbitersTab() {
 
   const { writeContract, isPending } = useWriteContract();
 
-  const [arbiterAddr,  setArbiterAddr]  = useState('');
-  const [thresholdVal, setThresholdVal] = useState('');
   const [newArbiter,   setNewArbiter]   = useState('');
   const [newChief,     setNewChief]     = useState('');
   const [removingAddr, setRemovingAddr] = useState<string | null>(null);
   const [settingChief, setSettingChief] = useState(false);
-
-  const isTimerOnly = !protocolArbiter || protocolArbiter === ZERO;
-
-  const handleSetProtocol = async () => {
-    try {
-      await writeContract({
-        address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
-        functionName: 'setProtocolArbiter', args: [(arbiterAddr || ZERO) as `0x${string}`], gas: BigInt(100_000),
-      });
-      toast.success(arbiterAddr ? 'Protocol arbiter updated' : 'Arbiter cleared (timer-only)');
-      setArbiterAddr('');
-      refetchProtocol();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
-  };
-
-  const handleSetThreshold = async () => {
-    const v = parseFloat(thresholdVal);
-    if (isNaN(v) || v < 0) { toast.error('Invalid value'); return; }
-    try {
-      await writeContract({
-        address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
-        functionName: 'setArbitrationThreshold', args: [BigInt(Math.floor(v * 1e6))], gas: BigInt(100_000),
-      });
-      toast.success('Threshold updated');
-      setThresholdVal('');
-      refetchThreshold();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
-  };
 
   const handleAddArbiter = async () => {
     if (!isAddress(newArbiter)) { toast.error('Invalid address'); return; }
@@ -374,58 +279,6 @@ function ArbitersTab() {
         </div>
       </Section>
 
-      {/* ── 2. Dispute Routing ── */}
-      <Section
-        title="Dispute Routing"
-        hint="Controls who handles disputes. Deals above the threshold are auto-assigned to the protocol arbiter. Below the threshold (or if no protocol arbiter set) — any registered arbiter can claim the case."
-        icon={UserCog}
-      >
-        <div className="grid md:grid-cols-2 gap-5">
-
-          {/* Protocol arbiter */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-white/50">Protocol arbiter</span>
-              <span className={cn("text-xs px-2 py-0.5 rounded-full", isTimerOnly ? "bg-white/10 text-white/40" : "bg-primary/15 text-primary")}>
-                {isTimerOnly ? 'Timer-only' : 'Human'}
-              </span>
-            </div>
-            {!isTimerOnly && (
-              <p className="font-mono text-xs text-white/50 break-all">{protocolArbiter}</p>
-            )}
-            {isTimerOnly && (
-              <p className="text-xs text-white/30">No protocol arbiter set — disputes go to the registry or auto-resolve by timer.</p>
-            )}
-            <FieldGroup label="Change" hint="Set to 0x0 or leave empty for timer-only.">
-              <div className="flex gap-2">
-                <Input placeholder="0x… or empty" value={arbiterAddr} onChange={e => setArbiterAddr(e.target.value)}
-                  className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]" />
-                <Button onClick={handleSetProtocol} disabled={isPending} size="sm" className="shrink-0">Set</Button>
-              </div>
-            </FieldGroup>
-          </div>
-
-          {/* Threshold */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-white/50">Arbitration threshold</span>
-              <span className="font-mono text-sm font-bold text-white/80">
-                {threshold !== undefined ? `$${(Number(threshold) / 1e6).toFixed(2)} USDC` : '…'}
-              </span>
-            </div>
-            <p className="text-xs text-white/30">
-              Deals at or above this amount are assigned to the protocol arbiter. Set to 0 for timer-only on all deals.
-            </p>
-            <FieldGroup label="Change (USDC)" hint="Default: 10 USDC.">
-              <div className="flex gap-2">
-                <Input type="number" placeholder="10" value={thresholdVal} onChange={e => setThresholdVal(e.target.value)}
-                  className="bg-transparent border-white/[0.08] rounded-[14px]" />
-                <Button onClick={handleSetThreshold} disabled={isPending || !thresholdVal} size="sm" className="shrink-0">Set</Button>
-              </div>
-            </FieldGroup>
-          </div>
-        </div>
-      </Section>
     </div>
   );
 }
@@ -471,26 +324,45 @@ function ActivityTab() {
     functionName: 'getArbiters',
   }) as { data: `0x${string}`[] | undefined };
 
-  // Platform stats from on-chain events
+  // Platform stats from on-chain events — chunked to stay within RPC 2000-block limit
   useEffect(() => {
     if (!publicClient) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const diamond = CONTRACTS.diamond;
+        const diamond = CONTRACTS.diamond as `0x${string}`;
+        const latest  = await publicClient.getBlockNumber();
+        // Fetch from Diamond deployment block (approx) — chunk into 1990-block windows
+        const ORIGIN = BigInt(23_800_000); // Base Sepolia block when Diamond was deployed (approx)
+        const CHUNK  = BigInt(1990);
+        const from   = latest > ORIGIN ? ORIGIN : BigInt(0);
+
+        const ranges: { fromBlock: bigint; toBlock: bigint }[] = [];
+        for (let b = from; b <= latest; b += CHUNK) {
+          ranges.push({ fromBlock: b, toBlock: b + CHUNK - 1n < latest ? b + CHUNK - 1n : latest });
+        }
+
         const statusUpdatedEvent = {
           anonymous: false,
           inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: false, name: 'newStatus', type: 'uint8' }],
           name: 'AgreementStatusUpdated', type: 'event',
         } as const;
+
+        const fetchAll = async <T,>(event: T) =>
+          (await Promise.all(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ranges.map(r => (publicClient.getLogs as any)({ address: diamond, event, ...r }).catch(() => []))
+          )).flat();
+
         const [dealLogs, jobLogs, serviceLogs, statusLogs, revenueLogs] = await Promise.all([
-          publicClient.getLogs({ address: diamond, fromBlock: BigInt(0), toBlock: 'latest', event: { anonymous: false, inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'executor', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }], name: 'AgreementRegistered', type: 'event' } as const }),
-          publicClient.getLogs({ address: diamond, fromBlock: BigInt(0), toBlock: 'latest', event: { anonymous: false, inputs: [{ indexed: true, name: 'jobId', type: 'uint256' }, { indexed: true, name: 'client', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }], name: 'JobPosted', type: 'event' } as const }),
-          publicClient.getLogs({ address: diamond, fromBlock: BigInt(0), toBlock: 'latest', event: SERVICE_BOARD_ABI[0] }),
-          publicClient.getLogs({ address: diamond, fromBlock: BigInt(0), toBlock: 'latest', event: statusUpdatedEvent }),
-          publicClient.getLogs({ address: diamond, fromBlock: BigInt(0), toBlock: 'latest', event: { anonymous: false, inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'executor', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }, { indexed: false, name: 'fee', type: 'uint256' }], name: 'AgreementDeployed', type: 'event' } as const }),
+          fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'executor', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }], name: 'AgreementRegistered', type: 'event' }),
+          fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'jobId', type: 'uint256' }, { indexed: true, name: 'client', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }], name: 'JobPosted', type: 'event' }),
+          fetchAll(SERVICE_BOARD_ABI[0]),
+          fetchAll(statusUpdatedEvent),
+          fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'executor', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }, { indexed: false, name: 'fee', type: 'uint256' }], name: 'AgreementDeployed', type: 'event' }),
         ]);
+
         if (cancelled) return;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const byStatus = (s: number) => (statusLogs as any[]).filter(l => Number(l.args?.newStatus) === s).length;

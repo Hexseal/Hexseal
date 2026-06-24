@@ -48,17 +48,17 @@ contract UpgradeAgreementAndArbiter is Script {
         factorySelectors[3]  = FactoryFacet.setRegionFee.selector;
         factorySelectors[4]  = FactoryFacet.setFeeRecipient.selector;
         factorySelectors[5]  = FactoryFacet.setTrustedForwarder.selector;
-        factorySelectors[6]  = FactoryFacet.setPaused.selector;
-        factorySelectors[7]  = FactoryFacet.setProtocolArbiter.selector;
-        factorySelectors[8]  = FactoryFacet.setArbitrationThreshold.selector;
+        factorySelectors[6]  = bytes4(0x16c38b3c);
+        factorySelectors[7]  = bytes4(0x220f72fc);
+        factorySelectors[8]  = bytes4(0x9403d404);
         factorySelectors[9]  = FactoryFacet.getRegionFee.selector;
         factorySelectors[10] = FactoryFacet.getAllFees.selector;
         factorySelectors[11] = FactoryFacet.getFeeRecipient.selector;
         factorySelectors[12] = FactoryFacet.getTrustedForwarder.selector;
-        factorySelectors[13] = FactoryFacet.isPaused.selector;
+        factorySelectors[13] = bytes4(0xb187bd26);
         factorySelectors[14] = FactoryFacet.getUsdc.selector;
-        factorySelectors[15] = FactoryFacet.getProtocolArbiter.selector;
-        factorySelectors[16] = FactoryFacet.getArbitrationThreshold.selector;
+        factorySelectors[15] = bytes4(0xeea6f749);
+        factorySelectors[16] = bytes4(0x189b468b);
 
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(newFactory),

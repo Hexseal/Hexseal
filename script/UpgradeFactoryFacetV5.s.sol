@@ -48,17 +48,17 @@ contract UpgradeFactoryFacetV5 is Script {
         replaceSelectors[2]  = FactoryFacet.setRegionFee.selector;
         replaceSelectors[3]  = FactoryFacet.setFeeRecipient.selector;
         replaceSelectors[4]  = FactoryFacet.setTrustedForwarder.selector;
-        replaceSelectors[5]  = FactoryFacet.setPaused.selector;
-        replaceSelectors[6]  = FactoryFacet.setProtocolArbiter.selector;
-        replaceSelectors[7]  = FactoryFacet.setArbitrationThreshold.selector;
+        replaceSelectors[5]  = bytes4(0x16c38b3c);
+        replaceSelectors[6]  = bytes4(0x220f72fc);
+        replaceSelectors[7]  = bytes4(0x9403d404);
         replaceSelectors[8]  = FactoryFacet.getRegionFee.selector;
         replaceSelectors[9]  = FactoryFacet.getAllFees.selector;
         replaceSelectors[10] = FactoryFacet.getFeeRecipient.selector;
         replaceSelectors[11] = FactoryFacet.getTrustedForwarder.selector;
-        replaceSelectors[12] = FactoryFacet.isPaused.selector;
+        replaceSelectors[12] = bytes4(0xb187bd26);
         replaceSelectors[13] = FactoryFacet.getUsdc.selector;
-        replaceSelectors[14] = FactoryFacet.getProtocolArbiter.selector;
-        replaceSelectors[15] = FactoryFacet.getArbitrationThreshold.selector;
+        replaceSelectors[14] = bytes4(0xeea6f749);
+        replaceSelectors[15] = bytes4(0x189b468b);
 
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(newFactory),

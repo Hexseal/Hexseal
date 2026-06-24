@@ -122,14 +122,14 @@ contract CriticalInvariantTest is Test {
         facSels[2]  = FactoryFacet.setRegionFee.selector;
         facSels[3]  = FactoryFacet.setFeeRecipient.selector;
         facSels[4]  = FactoryFacet.setTrustedForwarder.selector;
-        facSels[5]  = FactoryFacet.setPaused.selector;
+        facSels[5]  = bytes4(0x16c38b3c);
         facSels[6]  = FactoryFacet.getRegionFee.selector;
         facSels[7]  = FactoryFacet.getAllFees.selector;
         facSels[8]  = FactoryFacet.getFeeRecipient.selector;
         facSels[9]  = FactoryFacet.getTrustedForwarder.selector;
-        facSels[10] = FactoryFacet.isPaused.selector;
+        facSels[10] = bytes4(0xb187bd26);
         facSels[11] = FactoryFacet.getUsdc.selector;
-        facSels[12] = FactoryFacet.setProtocolArbiter.selector;
+        facSels[12] = bytes4(0x220f72fc);
 
         // ---- JobBoardFacet selectors (11) ----
         bytes4[] memory jobSels = new bytes4[](11);

@@ -101,7 +101,7 @@ contract DeployDiamond is Script {
             selectors[2] = FactoryFacet.setRegionFee.selector;
             selectors[3] = FactoryFacet.setFeeRecipient.selector;
             selectors[4] = FactoryFacet.setTrustedForwarder.selector;
-            selectors[5] = FactoryFacet.setPaused.selector;
+            selectors[5] = bytes4(0x16c38b3c);
             selectors[6] = FactoryFacet.getRegionFee.selector;
             selectors[7] = FactoryFacet.getAllFees.selector;
             selectors[8] = FactoryFacet.getFeeRecipient.selector;

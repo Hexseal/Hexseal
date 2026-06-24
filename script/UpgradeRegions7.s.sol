@@ -54,18 +54,18 @@ contract UpgradeRegions7 is Script {
         factorySelectors[2]  = FactoryFacet.setRegionFee.selector;
         factorySelectors[3]  = FactoryFacet.setFeeRecipient.selector;
         factorySelectors[4]  = FactoryFacet.setTrustedForwarder.selector;
-        factorySelectors[5]  = FactoryFacet.setPaused.selector;
-        factorySelectors[6]  = FactoryFacet.setProtocolArbiter.selector;
-        factorySelectors[7]  = FactoryFacet.setArbitrationThreshold.selector;
+        factorySelectors[5]  = bytes4(0x16c38b3c);
+        factorySelectors[6]  = bytes4(0x220f72fc);
+        factorySelectors[7]  = bytes4(0x9403d404);
         factorySelectors[8]  = FactoryFacet.setAgreementDeployer.selector;
         factorySelectors[9]  = FactoryFacet.getRegionFee.selector;
         factorySelectors[10] = FactoryFacet.getAllFees.selector;
         factorySelectors[11] = FactoryFacet.getFeeRecipient.selector;
         factorySelectors[12] = FactoryFacet.getTrustedForwarder.selector;
-        factorySelectors[13] = FactoryFacet.isPaused.selector;
+        factorySelectors[13] = bytes4(0xb187bd26);
         factorySelectors[14] = FactoryFacet.getUsdc.selector;
-        factorySelectors[15] = FactoryFacet.getProtocolArbiter.selector;
-        factorySelectors[16] = FactoryFacet.getArbitrationThreshold.selector;
+        factorySelectors[15] = bytes4(0xeea6f749);
+        factorySelectors[16] = bytes4(0x189b468b);
         factorySelectors[17] = FactoryFacet.getAgreementDeployer.selector;
         factorySelectors[18] = FactoryFacet.initFactory.selector;
 

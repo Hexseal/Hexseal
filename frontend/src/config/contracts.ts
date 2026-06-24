@@ -231,48 +231,6 @@ export const DIAMOND_ABI = [
     type: 'function',
   },
   {
-    inputs: [],
-    name: 'isPaused',
-    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    inputs: [{ internalType: 'bool', name: '_paused', type: 'bool' }],
-    name: 'setPaused',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-  {
-    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
-    name: 'setProtocolArbiter',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-  {
-    inputs: [],
-    name: 'getProtocolArbiter',
-    outputs: [{ internalType: 'address', name: '', type: 'address' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    inputs: [{ internalType: 'uint256', name: 'newThreshold', type: 'uint256' }],
-    name: 'setArbitrationThreshold',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-  {
-    inputs: [],
-    name: 'getArbitrationThreshold',
-    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
     inputs: [
       { internalType: 'uint8', name: 'region', type: 'uint8' },
       { internalType: 'uint256', name: 'newFee', type: 'uint256' },

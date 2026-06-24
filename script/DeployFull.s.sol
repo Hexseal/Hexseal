@@ -108,18 +108,18 @@ contract DeployFull is Script {
         facSels[2]  = FactoryFacet.setRegionFee.selector;
         facSels[3]  = FactoryFacet.setFeeRecipient.selector;
         facSels[4]  = FactoryFacet.setTrustedForwarder.selector;
-        facSels[5]  = FactoryFacet.setPaused.selector;
-        facSels[6]  = FactoryFacet.setProtocolArbiter.selector;
-        facSels[7]  = FactoryFacet.setArbitrationThreshold.selector;
+        facSels[5]  = bytes4(0x16c38b3c);
+        facSels[6]  = bytes4(0x220f72fc);
+        facSels[7]  = bytes4(0x9403d404);
         facSels[8]  = FactoryFacet.setAgreementDeployer.selector;
         facSels[9]  = FactoryFacet.getRegionFee.selector;
         facSels[10] = FactoryFacet.getAllFees.selector;
         facSels[11] = FactoryFacet.getFeeRecipient.selector;
         facSels[12] = FactoryFacet.getTrustedForwarder.selector;
-        facSels[13] = FactoryFacet.isPaused.selector;
+        facSels[13] = bytes4(0xb187bd26);
         facSels[14] = FactoryFacet.getUsdc.selector;
-        facSels[15] = FactoryFacet.getProtocolArbiter.selector;
-        facSels[16] = FactoryFacet.getArbitrationThreshold.selector;
+        facSels[15] = bytes4(0xeea6f749);
+        facSels[16] = bytes4(0x189b468b);
         facSels[17] = FactoryFacet.getAgreementDeployer.selector;
         initCuts[4] = _cut(address(facFacet), IDiamondCut.FacetCutAction.Add, facSels);
 

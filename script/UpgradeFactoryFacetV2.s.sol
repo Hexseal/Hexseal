@@ -24,15 +24,15 @@ contract UpgradeFactoryFacetV2 is Script {
         existingSelectors[2] = FactoryFacet.setRegionFee.selector;
         existingSelectors[3] = FactoryFacet.setFeeRecipient.selector;
         existingSelectors[4] = FactoryFacet.setTrustedForwarder.selector;
-        existingSelectors[5] = FactoryFacet.setPaused.selector;
+        existingSelectors[5] = bytes4(0x16c38b3c);
         existingSelectors[6] = FactoryFacet.getRegionFee.selector;
         existingSelectors[7] = FactoryFacet.getAllFees.selector;
         existingSelectors[8] = FactoryFacet.getFeeRecipient.selector;
         existingSelectors[9] = FactoryFacet.getTrustedForwarder.selector;
-        existingSelectors[10] = FactoryFacet.isPaused.selector;
+        existingSelectors[10] = bytes4(0xb187bd26);
         existingSelectors[11] = FactoryFacet.getUsdc.selector;
-        existingSelectors[12] = FactoryFacet.setProtocolArbiter.selector;
-        existingSelectors[13] = FactoryFacet.getProtocolArbiter.selector;
+        existingSelectors[12] = bytes4(0x220f72fc);
+        existingSelectors[13] = bytes4(0xeea6f749);
 
         // New selector (Add) — only deployAndFund
         bytes4[] memory newSelectors = new bytes4[](1);
@@ -64,7 +64,7 @@ contract UpgradeFactoryFacetV2 is Script {
         address usdc = FactoryFacet(diamond).getUsdc();
         console.log("USDC:", usdc);
 
-        address arbiter = FactoryFacet(diamond).getProtocolArbiter();
+        address arbiter = address(0); // getProtocolArbiter removed
         console.log("Protocol Arbiter:", arbiter);
 
         vm.stopBroadcast();

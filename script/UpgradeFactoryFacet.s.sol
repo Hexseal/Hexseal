@@ -6,52 +6,71 @@ import "forge-std/console.sol";
 import "../src/FactoryFacet.sol";
 import "../src/DiamondProxy.sol";
 
+// Removes pause + dead protocolArbiter/arbitrationThreshold from FactoryFacet.
+// Keeps chiefArbiter (in ArbiterRegistryFacet), that is separate and intentional.
 contract UpgradeFactoryFacet is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address diamond = vm.envOr("DIAMOND_ADDRESS", address(0xF00CC71878c226E0b64253Fb71dD802aF12165D0));
+        address diamond = vm.envOr("DIAMOND_ADDRESS", address(0x7A91d700CF2a201E99F0aD3C3b4f4D79CFE69557));
 
         vm.startBroadcast(deployerKey);
 
-        // 1. Deploy new FactoryFacet
-        FactoryFacet newFactoryFacet = new FactoryFacet();
-        console.log("New FactoryFacet deployed at:", address(newFactoryFacet));
+        // 1. Deploy new FactoryFacet (without pause / protocolArbiter / arbitrationThreshold)
+        FactoryFacet newFacet = new FactoryFacet();
+        console.log("New FactoryFacet deployed at:", address(newFacet));
 
-        // 2. All 17 selectors from FactoryFacet
-        bytes4[] memory selectors = new bytes4[](17);
-        selectors[0]  = FactoryFacet.initFactory.selector;
-        selectors[1]  = FactoryFacet.deployAgreement.selector;
-        selectors[2]  = FactoryFacet.deployAndFund.selector;
-        selectors[3]  = FactoryFacet.setRegionFee.selector;
-        selectors[4]  = FactoryFacet.setFeeRecipient.selector;
-        selectors[5]  = FactoryFacet.setTrustedForwarder.selector;
-        selectors[6]  = FactoryFacet.setPaused.selector;
-        selectors[7]  = FactoryFacet.setProtocolArbiter.selector;
-        selectors[8]  = FactoryFacet.setArbitrationThreshold.selector;
-        selectors[9]  = FactoryFacet.getRegionFee.selector;
-        selectors[10] = FactoryFacet.getAllFees.selector;
-        selectors[11] = FactoryFacet.getFeeRecipient.selector;
-        selectors[12] = FactoryFacet.getTrustedForwarder.selector;
-        selectors[13] = FactoryFacet.isPaused.selector;
-        selectors[14] = FactoryFacet.getUsdc.selector;
-        selectors[15] = FactoryFacet.getProtocolArbiter.selector;
-        selectors[16] = FactoryFacet.getArbitrationThreshold.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
 
-        // 3. Replace existing selectors
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        // ── Cut 1: Remove 6 dead selectors from old facet ──────────────────────
+        bytes4[] memory toRemove = new bytes4[](6);
+        toRemove[0] = bytes4(0x16c38b3c); // setPaused(bool)
+        toRemove[1] = bytes4(0xb187bd26); // isPaused()
+        toRemove[2] = bytes4(0x220f72fc); // setProtocolArbiter(address)
+        toRemove[3] = bytes4(0xeea6f749); // getProtocolArbiter()
+        toRemove[4] = bytes4(0x9403d404); // setArbitrationThreshold(uint256)
+        toRemove[5] = bytes4(0x189b468b); // getArbitrationThreshold()
+
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(newFactoryFacet),
-            action: IDiamondCut.FacetCutAction.Replace,
-            functionSelectors: selectors
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: toRemove
         });
 
-        console.log("Replacing FactoryFacet selectors in Diamond...");
+        // ── Cut 2: Replace 12 existing selectors → new facet address ───────────
+        bytes4[] memory toReplace = new bytes4[](12);
+        toReplace[0]  = FactoryFacet.initFactory.selector;
+        toReplace[1]  = FactoryFacet.deployAgreement.selector;
+        toReplace[2]  = FactoryFacet.setRegionFee.selector;
+        toReplace[3]  = FactoryFacet.setFeeRecipient.selector;
+        toReplace[4]  = FactoryFacet.setTrustedForwarder.selector;
+        toReplace[5]  = FactoryFacet.setAgreementDeployer.selector;
+        toReplace[6]  = FactoryFacet.getRegionFee.selector;
+        toReplace[7]  = FactoryFacet.getAllFees.selector;
+        toReplace[8]  = FactoryFacet.getFeeRecipient.selector;
+        toReplace[9]  = FactoryFacet.getTrustedForwarder.selector;
+        toReplace[10] = FactoryFacet.getUsdc.selector;
+        toReplace[11] = FactoryFacet.getAgreementDeployer.selector;
+
+        cuts[1] = IDiamondCut.FacetCut({
+            facetAddress: address(newFacet),
+            action: IDiamondCut.FacetCutAction.Replace,
+            functionSelectors: toReplace
+        });
+
+        // ── Cut 3: Add deployAndFund (was never registered in Diamond) ──────────
+        bytes4[] memory toAdd = new bytes4[](1);
+        toAdd[0] = FactoryFacet.deployAndFund.selector;
+
+        cuts[2] = IDiamondCut.FacetCut({
+            facetAddress: address(newFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: toAdd
+        });
+
+        console.log("Cutting Diamond: removing 6, replacing 12, adding 1 selector...");
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
-        console.log("FactoryFacet upgraded successfully!");
-        console.log("Diamond:", diamond);
-        console.log("New FactoryFacet:", address(newFactoryFacet));
-
+        console.log("FactoryFacet upgraded. Pause and dead arbiter fields are gone.");
         vm.stopBroadcast();
     }
 }

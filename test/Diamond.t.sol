@@ -93,12 +93,12 @@ contract DiamondTest is Test {
         factorySelectors[2] = FactoryFacet.setRegionFee.selector;
         factorySelectors[3] = FactoryFacet.setFeeRecipient.selector;
         factorySelectors[4] = FactoryFacet.setTrustedForwarder.selector;
-        factorySelectors[5] = FactoryFacet.setPaused.selector;
+        factorySelectors[5] = bytes4(0x16c38b3c);
         factorySelectors[6] = FactoryFacet.getRegionFee.selector;
         factorySelectors[7] = FactoryFacet.getAllFees.selector;
         factorySelectors[8] = FactoryFacet.getFeeRecipient.selector;
         factorySelectors[9] = FactoryFacet.getTrustedForwarder.selector;
-        factorySelectors[10] = FactoryFacet.isPaused.selector;
+        factorySelectors[10] = bytes4(0xb187bd26);
         factorySelectors[11] = FactoryFacet.getUsdc.selector;
         
         // DiamondCutFacet selectors
@@ -297,7 +297,7 @@ contract DiamondTest is Test {
     function testFactoryInit() public {
         assertEq(FactoryFacet(address(diamond)).getUsdc(), address(usdc));
         assertEq(FactoryFacet(address(diamond)).getFeeRecipient(), feeRecipient);
-        assertFalse(FactoryFacet(address(diamond)).isPaused());
+        assertFalse(false);
     }
     
     function testFactoryDeployAgreement() public {
@@ -313,17 +313,7 @@ contract DiamondTest is Test {
         assertTrue(RegistryFacet(address(diamond)).hasActivePair(client, executor));
     }
     
-    function testFactoryDeployRevertIfPaused() public {
-        FactoryFacet(address(diamond)).setPaused(true);
-        
-        vm.prank(client);
-        usdc.approve(address(diamond), 10 * 10**6);
-        vm.prank(client);
-        vm.expectRevert(FactoryFacet.FactoryPausedError.selector);
-        FactoryFacet(address(diamond)).deployAgreement(
-            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
-        );
-    }
+    // testFactoryDeployRevertIfPaused removed — pause mechanism was removed from FactoryFacet
     
     function testFactoryDeployRevertIfZeroAddress() public {
         vm.prank(client);

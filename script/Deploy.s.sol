@@ -129,19 +129,17 @@ contract DeployHexseal is Script {
         });
 
         // FactoryFacet — все селекторы
-        bytes4[] memory facSelectors = new bytes4[](12);
+        bytes4[] memory facSelectors = new bytes4[](10);
         facSelectors[0] = FactoryFacet.initFactory.selector;
         facSelectors[1] = FactoryFacet.deployAgreement.selector;
         facSelectors[2] = FactoryFacet.setRegionFee.selector;
         facSelectors[3] = FactoryFacet.setFeeRecipient.selector;
         facSelectors[4] = FactoryFacet.setTrustedForwarder.selector;
-        facSelectors[5] = FactoryFacet.setPaused.selector;
-        facSelectors[6] = FactoryFacet.getRegionFee.selector;
-        facSelectors[7] = FactoryFacet.getAllFees.selector;
-        facSelectors[8] = FactoryFacet.getFeeRecipient.selector;
-        facSelectors[9] = FactoryFacet.getTrustedForwarder.selector;
-        facSelectors[10] = FactoryFacet.isPaused.selector;
-        facSelectors[11] = FactoryFacet.getUsdc.selector;
+        facSelectors[5] = FactoryFacet.getRegionFee.selector;
+        facSelectors[6] = FactoryFacet.getAllFees.selector;
+        facSelectors[7] = FactoryFacet.getFeeRecipient.selector;
+        facSelectors[8] = FactoryFacet.getTrustedForwarder.selector;
+        facSelectors[9] = FactoryFacet.getUsdc.selector;
         cuts[4] = IDiamondCut.FacetCut({
             facetAddress: factoryFacet,
             action: IDiamondCut.FacetCutAction.Add,
