@@ -70,6 +70,14 @@ function formatTime(ts: number) {
 
 // ─── Conversation item ─────────────────────────────────────────────────────────
 
+const DEAL_STATUS_CLS: Record<number, string> = {
+  0: 'text-violet-400/60',
+  1: 'text-green-400/60',
+  2: 'text-white/25',
+  3: 'text-red-400/60',
+  4: 'text-purple-400/60',
+};
+
 const ConvoItem = memo(function ConvoItem({
   peerAddress, lastText, lastAt, lastFromMe, isSelected, isSeen, onSelect, dealCtx,
 }: {
@@ -86,20 +94,16 @@ const ConvoItem = memo(function ConvoItem({
   const { displayName, avatarUrl } = useProfile(peerAddress);
   const t = useTranslations();
 
-  const seenAt = typeof window !== 'undefined'
-    ? Number(localStorage.getItem(`hexseal_chat_seen_${peerAddress}`) ?? 0)
-    : 0;
+  const seenAt = useMemo(() =>
+    typeof window !== 'undefined'
+      ? Number(localStorage.getItem(`hexseal_chat_seen_${peerAddress}`) ?? 0)
+      : 0,
+    [peerAddress],
+  );
   const hasUnread = !lastFromMe && !isSeen && lastAt > seenAt && lastAt > 0;
 
-  // Registry AgreementStatus enum: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
-  const DEAL_STATUS_LABEL: Record<number, { label: string; cls: string }> = {
-    0: { label: t("deal_status.active"),    cls: 'text-violet-400/60' },
-    1: { label: t("deal_status.completed"), cls: 'text-green-400/60' },
-    2: { label: t("deal_status.refunded"),  cls: 'text-white/25' },
-    3: { label: t("deal_status.disputed"),  cls: 'text-red-400/60' },
-    4: { label: t("deal_status.resolved"),  cls: 'text-purple-400/60' },
-  };
-  const ds = dealCtx ? DEAL_STATUS_LABEL[dealCtx.status] : null;
+  const dsLabel = dealCtx ? t(`deal_status.${['active','completed','refunded','disputed','resolved'][dealCtx.status] ?? 'active'}` as Parameters<typeof t>[0]) : null;
+  const dsCls   = dealCtx ? (DEAL_STATUS_CLS[dealCtx.status] ?? 'text-white/30') : null;
 
   return (
     <button
@@ -164,10 +168,10 @@ const ConvoItem = memo(function ConvoItem({
               <span className="text-[11px] font-mono text-white/30">
                 #{dealCtx.agreementAddr.slice(2, 10).toUpperCase()}
               </span>
-              {ds && (
+              {dsLabel && (
                 <>
                   <span className="text-white/20 text-[11px]">·</span>
-                  <span className={`text-[11px] ${ds.cls}`}>{ds.label}</span>
+                  <span className={`text-[11px] ${dsCls}`}>{dsLabel}</span>
                 </>
               )}
             </div>
@@ -365,7 +369,8 @@ function ChatHubPageInner() {
   const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
 
   return (
-    <div className="flex-1 min-h-0 flex overflow-hidden bg-black">
+    <div className="flex-1 min-h-0 flex overflow-hidden justify-center">
+      <div className="flex w-full max-w-6xl min-h-0 overflow-hidden border-x border-white/[0.04]">
 
       {/* ── Sidebar ── */}
       <aside
@@ -531,6 +536,7 @@ function ChatHubPageInner() {
         }
       </main>
 
+      </div>
     </div>
   );
 }

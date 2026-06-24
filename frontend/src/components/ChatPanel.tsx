@@ -622,14 +622,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelPr
             {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-white/30" />}
             {!isLoading && isInitialized && (
               <span className="flex items-center gap-1 text-[11px] text-emerald-400/60">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
-                </span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
                 live
               </span>
             )}
-            {!isLoading && error && <AlertCircle className="w-3.5 h-3.5 text-red-400/60 animate-pulse" />}
+            {!isLoading && error && <AlertCircle className="w-3.5 h-3.5 text-red-400/60" />}
             <span className="flex items-center gap-1 text-[11px] text-white/20">
               <Lock className="w-2.5 h-2.5" />E2E
             </span>
