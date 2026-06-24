@@ -22,6 +22,8 @@
     "settings": "Settings"
   },
   "board": {
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills",
     "sort": {
       "newest": "Newest",
       "oldest": "Oldest",

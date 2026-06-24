@@ -140,7 +140,9 @@
       "removed_notice": "Questo servizio è stato rimosso",
       "hires_label": "Assunzioni totali",
       "full_page": "Pagina completa"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "Collega",

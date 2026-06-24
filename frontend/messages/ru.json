@@ -22,6 +22,8 @@
     "settings": "Настройки"
   },
   "board": {
+    "matching_title": "Для вас",
+    "matching_sub": "по навыкам из профиля",
     "sort": {
       "newest": "Новые",
       "oldest": "Старые",

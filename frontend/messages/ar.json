@@ -140,7 +140,9 @@
       "removed_notice": "تمت إزالة هذه الخدمة",
       "hires_label": "إجمالي التوظيف",
       "full_page": "الصفحة الكاملة"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "ربط",

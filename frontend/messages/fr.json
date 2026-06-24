@@ -140,7 +140,9 @@
       "removed_notice": "Ce service a été supprimé",
       "hires_label": "Total embauches",
       "full_page": "Page complète"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "Connecter",

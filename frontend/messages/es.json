@@ -140,7 +140,9 @@
       "removed_notice": "Este servicio ha sido eliminado",
       "hires_label": "Total contratado",
       "full_page": "Página completa"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "Conectar",

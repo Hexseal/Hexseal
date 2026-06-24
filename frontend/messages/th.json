@@ -140,7 +140,9 @@
       "removed_notice": "บริการนี้ถูกลบแล้ว",
       "hires_label": "จำนวนการจ้างทั้งหมด",
       "full_page": "หน้าเต็ม"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "เชื่อมต่อ",

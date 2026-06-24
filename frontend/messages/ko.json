@@ -140,7 +140,9 @@
       "removed_notice": "이 서비스는 삭제되었습니다",
       "hires_label": "총 채용",
       "full_page": "전체 페이지"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "지갑 연결",

@@ -19,6 +19,9 @@ import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
 import { motion } from "framer-motion";
+import { fetchProfile } from "@/lib/profiles-ipfs";
+import type { UserProfile } from "@/types/profile";
+import { Sparkles } from "lucide-react";
 
 interface JobRecord {
   client: string;
@@ -329,7 +332,14 @@ export default function BoardPage() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const t = useTranslations();
+
+  // Load viewer's profile for skill-based matching
+  useEffect(() => {
+    if (!address) return;
+    fetchProfile(address).then(setUserProfile).catch(() => {});
+  }, [address]);
 
   const [page, setPage] = useState(0);
   const [allJobs, setAllJobs] = useState<GraphJob[]>([]);
@@ -432,6 +442,20 @@ export default function BoardPage() {
       default:        return [...filtered].sort((a, b) => Number(b.job.createdAt) - Number(a.job.createdAt));
     }
   }, [allJobs, searchQuery, categoryFilter, sortBy]);
+
+  // Skill-based matching — only when no filters/search active and user has specializations
+  const matchedJobs = useMemo(() => {
+    const specs = userProfile?.specializations;
+    if (!specs || specs.length === 0) return [];
+    if (searchQuery || categoryFilter) return [];
+    const keywords = specs.map(s => s.toLowerCase());
+    return allJobs
+      .filter(gj => {
+        const haystack = `${gj.title} ${gj.description}`.toLowerCase();
+        return keywords.some(kw => haystack.includes(kw));
+      })
+      .slice(0, 5);
+  }, [allJobs, userProfile, searchQuery, categoryFilter]);
 
   const { appliedSet, applicantsMap } = useMemo(() => {
     const appliedSet = new Set<string>();
@@ -550,6 +574,53 @@ export default function BoardPage() {
           />
         </div>
 
+
+        {/* "For you" matched jobs section */}
+        {!isLoading && matchedJobs.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-3.5 h-3.5 text-primary/60" />
+              <span className="text-xs font-semibold text-white/40 uppercase tracking-wider">
+                {t("board.matching_title")}
+              </span>
+              <span className="text-xs text-white/20">· {t("board.matching_sub")}</span>
+            </div>
+            <div className="space-y-3">
+              {matchedJobs.map((gj, index) => {
+                const id = BigInt(gj.id);
+                const job: JobRecord = {
+                  client: gj.client,
+                  title: gj.title,
+                  description: gj.description,
+                  amount: BigInt(gj.amount),
+                  deadlineDays: BigInt(gj.deadlineDays),
+                  termsHash: gj.termsHash,
+                  region: gj.region,
+                  status: 0,
+                  createdAt: BigInt(gj.createdAt),
+                  chosenExecutor: '0x0000000000000000000000000000000000000000',
+                  agreement: '0x0000000000000000000000000000000000000000',
+                };
+                return (
+                  <JobCard
+                    key={gj.id}
+                    jobId={id}
+                    job={job}
+                    isClient={address?.toLowerCase() === gj.client?.toLowerCase()}
+                    address={address}
+                    hasApplied={appliedSet.has(gj.id)}
+                    applicants={applicantsMap.get(gj.id)}
+                    onApplied={() => {}}
+                    expanded={expandedJobId === gj.id}
+                    onToggle={() => setExpandedJobId(prev => prev === gj.id ? null : gj.id)}
+                    index={index}
+                  />
+                );
+              })}
+            </div>
+            <div className="mt-3 mb-2 border-t border-white/[0.05]" />
+          </div>
+        )}
 
         {/* Sort controls */}
         {!isLoading && jobs.length > 0 && (

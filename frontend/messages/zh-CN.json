@@ -140,7 +140,9 @@
       "removed_notice": "此服务已被删除",
       "hires_label": "总雇用次数",
       "full_page": "完整页面"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "连接",

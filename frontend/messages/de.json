@@ -140,7 +140,9 @@
       "removed_notice": "Diese Leistung wurde entfernt",
       "hires_label": "Gesamt Aufträge",
       "full_page": "Vollseite"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "Verbinden",

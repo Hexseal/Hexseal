@@ -140,7 +140,9 @@
       "removed_notice": "यह सेवा हटा दी गई है",
       "hires_label": "कुल नियुक्तियाँ",
       "full_page": "पूरा पृष्ठ"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "कनेक्ट करें",

@@ -140,7 +140,9 @@
       "removed_notice": "このサービスは削除されました",
       "hires_label": "採用合計",
       "full_page": "全ページ"
-    }
+    },
+    "matching_title": "For you",
+    "matching_sub": "based on your profile skills"
   },
   "wallet": {
     "connect": "ウォレット接続",
