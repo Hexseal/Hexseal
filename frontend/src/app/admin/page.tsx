@@ -334,7 +334,7 @@ function ActivityTab() {
         const diamond = CONTRACTS.diamond as `0x${string}`;
         const latest  = await publicClient.getBlockNumber();
         // Fetch from Diamond deployment block (approx) — chunk into 1990-block windows
-        const ORIGIN = BigInt(23_800_000); // Base Sepolia block when Diamond was deployed (approx)
+        const ORIGIN = BigInt(42_134_705); // Base Sepolia block of Diamond deployment (Init Factory tx)
         const CHUNK  = BigInt(1990);
         const from   = latest > ORIGIN ? ORIGIN : BigInt(0);
 
