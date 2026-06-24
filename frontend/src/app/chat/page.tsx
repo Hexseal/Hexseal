@@ -224,6 +224,13 @@ function ChatHubPageInner() {
   );
   const router = useRouter();
 
+  const handleConvoClick = useCallback((addr: string) => {
+    const lc = addr.toLowerCase();
+    setSeenConvos(prev => new Set([...prev, lc]));
+    localStorage.setItem(`hexseal_chat_seen_${lc}`, String(Date.now()));
+    router.push(`/chat?peer=${lc}`);
+  }, [router]);
+
   // Load agreements to build peer→deal context map
   const { data: clientDeals } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -354,13 +361,6 @@ function ChatHubPageInner() {
       </div>
     );
   }
-
-  const handleConvoClick = useCallback((addr: string) => {
-    const lc = addr.toLowerCase();
-    setSeenConvos(prev => new Set([...prev, lc]));
-    localStorage.setItem(`hexseal_chat_seen_${lc}`, String(Date.now()));
-    router.push(`/chat?peer=${lc}`);
-  }, [router]);
 
   const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
 
