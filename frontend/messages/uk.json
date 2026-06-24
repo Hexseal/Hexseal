@@ -56,7 +56,8 @@
       "open_count": "{count} відкритих",
       "applicants_count": "{count} відгуків",
       "withdraw_btn": "Відкликати",
-      "withdrawn": "Заявку відкликано."
+      "withdrawn": "Заявку відкликано.",
+      "terms_unavailable": "Terms unavailable"
     },
     "services": {
       "title": "Дошка Послуг",
@@ -142,7 +143,13 @@
       "full_page": "Сторінка"
     },
     "matching_title": "For you",
-    "matching_sub": "based on your profile skills"
+    "matching_sub": "based on your profile skills",
+    "sort": {
+      "highest": "Highest",
+      "lowest": "Lowest",
+      "newest": "Newest",
+      "oldest": "Oldest"
+    }
   },
   "wallet": {
     "connect": "Підключити",
@@ -156,7 +163,9 @@
     "disconnect": "Відключити",
     "copied": "Адресу скопійовано!",
     "copy_failed": "Помилка копіювання",
-    "disable_messaging": "Disable Messaging"
+    "disable_messaging": "Disable Messaging",
+    "applying_arbiter": "Submitting...",
+    "become_arbiter": "Become Arbiter"
   },
   "dashboard": {
     "title": "Панель",
@@ -198,7 +207,60 @@
     "empty_history": "Поки немає історії",
     "section_job_postings": "Мої Оголошення",
     "section_job_receipts": "Квитанції Роботи",
-    "section_service_requests": "Запити на Послуги"
+    "section_service_requests": "Запити на Послуги",
+    "card": {
+      "activate_btn": "Start Work",
+      "activate_hint": "Deal is funded — start work to begin the countdown",
+      "activate_success": "Deal activated! Work has started.",
+      "auto_approve_in": "Auto-approves in {time}",
+      "dispute_btn": "Raise Dispute",
+      "dispute_confirm": "Confirm Dispute",
+      "dispute_placeholder": "Explain the problem for the arbiter…",
+      "dispute_success": "Dispute raised. Arbiter will be notified.",
+      "dispute_title": "Describe the issue",
+      "extras_accept": "Accept",
+      "extras_accepted": "{count} extra(s) accepted",
+      "extras_amount": "Amount USDC",
+      "extras_empty": "No extras yet",
+      "extras_label": "Extras",
+      "extras_note": "Note (optional)",
+      "extras_propose": "Propose",
+      "extras_propose_btn": "Propose Extra",
+      "extras_propose_title": "New extra payment",
+      "extras_reject": "Reject",
+      "fund_btn": "Fund",
+      "insufficient_usdc": "Insufficient USDC",
+      "mark_done_btn": "Mark Done",
+      "release_btn": "Release",
+      "release_success": "Payment released to executor!",
+      "sign_wallet": "Confirm in wallet…",
+      "timeouts_hide": "hide",
+      "timeouts_show": "timeout actions"
+    },
+    "listings": {
+      "budget_locked": "Budget can't be changed — cancel and create a new deal",
+      "cancel": "Cancel",
+      "desc_too_long": "Description too long (max 500 characters)",
+      "edit_job": "Edit job",
+      "edit_service": "Edit service",
+      "field_budget": "Budget (USDC)",
+      "field_deadline": "Deadline (days)",
+      "field_description": "Description",
+      "field_price": "Price (USDC)",
+      "field_region": "Region",
+      "field_title": "Title",
+      "job_updated": "Job updated.",
+      "save": "Save",
+      "service_updated": "Service updated.",
+      "title_invalid": "Title required (max 100 characters)"
+    },
+    "search": {
+      "no_results": "Nothing found",
+      "placeholder": "Search deals, jobs, services…",
+      "type_deals": "Deals",
+      "type_jobs": "Jobs",
+      "type_services": "Services"
+    }
   },
   "profile": {
     "edit_title": "Редагувати Профіль",
@@ -356,7 +418,9 @@
     "active_executor_title": "Work in progress",
     "active_executor_hint": "Complete the work and click Mark Done when ready. The client will review and release payment.",
     "active_client_title": "Work in progress",
-    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed."
+    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed.",
+    "auto_approve_in": "Auto-approves in {time} if not released",
+    "closed_hint": "This deal is closed. No further actions required."
   },
   "job": {
     "status_open": "Відкрита",
@@ -438,7 +502,12 @@
     "decrypt_failed_image": "Не вдалося розшифрувати зображення",
     "decrypt_failed": "Помилка розшифрування",
     "click_to_save": "Зашифровано · натисніть щоб зберегти",
-    "click_to_open": "Натисніть щоб відкрити"
+    "click_to_open": "Натисніть щоб відкрити",
+    "cancel_upload": "Cancel upload",
+    "e2e_notice": "E2E encrypted · expires in 7 days",
+    "reconnect": "Reconnect",
+    "remove_file": "Remove file",
+    "stream_dead": "Connection lost — new messages not arriving"
   },
   "messaging": {
     "enabled_title": "Обмін повідомленнями увімкнено",
@@ -454,7 +523,8 @@
     "all_caught_up": "Все в порядку",
     "mark_all_read": "Позначити всі прочитаними",
     "clear_all": "Очистити все",
-    "wallet_required": "Підключіть гаманець для перегляду сповіщень"
+    "wallet_required": "Підключіть гаманець для перегляду сповіщень",
+    "enable_messaging_hint": "Enable messaging to get notifications about new messages"
   },
   "arbiter": {
     "title": "Хаб Арбітра",
@@ -529,7 +599,17 @@
     "resolving_refund": "Вирішення — повернення клієнту…",
     "resolving_pay": "Вирішення — оплата виконавцю…",
     "add_btn": "Додати",
-    "remove_btn": "Видалити"
+    "remove_btn": "Видалити",
+    "finalize_btn": "Finalize Verdict",
+    "finalizing": "Finalizing verdict…",
+    "reward_title": "Pending Reward",
+    "reward_withdrawn": "Reward withdrawn successfully",
+    "submitting_pay": "Submitting verdict: pay to executor…",
+    "submitting_refund": "Submitting verdict: refund to client…",
+    "verdict_frozen": "Verdict frozen by owner",
+    "verdict_pending": "Verdict submitted — awaiting finalization",
+    "withdraw_btn": "Withdraw",
+    "withdrawing": "Withdrawing…"
   },
   "onboarding": {
     "title": "Як працює Hexseal",
@@ -624,7 +704,9 @@
     "q_source": "Де вихідний код?",
     "a_source": "Доступний на GitHub — дивіться посилання на сторінці.",
     "q_verify": "Як перевірити розгорнуті контракти?",
-    "a_verify": "Перегляньте всі контракти на BaseScan. Адреса Diamond: 0xF00CC71878c226E0b64253Fb71dD802aF12165D0"
+    "a_verify": "Перегляньте всі контракти на BaseScan. Адреса Diamond: 0xF00CC71878c226E0b64253Fb71dD802aF12165D0",
+    "a_get_usdc": "Use the Circle faucet at faucet.circle.com — select Base Sepolia and paste your wallet address. You'll receive test USDC within seconds. This is testnet only; no real money involved.",
+    "q_get_usdc": "How do I get test USDC?"
   },
   "footer": {
     "tagline": "Децентралізований фріланс-протокол на Base. Без адмінів. Код — закон.",
@@ -687,7 +769,10 @@
     "minutes_ago": "{count}хв тому",
     "hours_ago": "{count}год тому",
     "days_ago": "{count}д тому",
-    "total_suffix": "/ {count} всього"
+    "total_suffix": "/ {count} всього",
+    "load_more": "Load more",
+    "loading_short": "Loading…",
+    "sort": "Sort"
   },
   "categories": {
     "design": "Дизайн",
@@ -749,5 +834,13 @@
     "deal_markdone_executor": "Mark done when you have delivered. The client then has a window to review.",
     "deal_release_client": "The executor marked the work done. Review it and release funds when satisfied.",
     "executor_board_request": "Tap a service card to expand it and send a hire request — set your budget and terms, the executor will confirm."
+  },
+  "form": {
+    "amount_max": "Maximum {max} USDC",
+    "amount_positive": "Enter an amount greater than 0",
+    "deadline_range": "{min} to {max} days",
+    "max_chars": "Max {count} characters",
+    "price_min": "Minimum {min} USDC",
+    "required": "Required field"
   }
 }

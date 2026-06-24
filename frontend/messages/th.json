@@ -56,7 +56,8 @@
       "open_count": "{count} รายการ",
       "applicants_count": "{count} สมัคร",
       "withdraw_btn": "ถอนคำขอ",
-      "withdrawn": "ถอนคำขอแล้ว"
+      "withdrawn": "ถอนคำขอแล้ว",
+      "terms_unavailable": "Terms unavailable"
     },
     "services": {
       "title": "กระดานบริการ",
@@ -142,7 +143,13 @@
       "full_page": "หน้าเต็ม"
     },
     "matching_title": "For you",
-    "matching_sub": "based on your profile skills"
+    "matching_sub": "based on your profile skills",
+    "sort": {
+      "highest": "Highest",
+      "lowest": "Lowest",
+      "newest": "Newest",
+      "oldest": "Oldest"
+    }
   },
   "wallet": {
     "connect": "เชื่อมต่อ",
@@ -156,7 +163,9 @@
     "disconnect": "ยกเลิกการเชื่อมต่อ",
     "copied": "คัดลอกที่อยู่แล้ว!",
     "copy_failed": "คัดลอกล้มเหลว",
-    "disable_messaging": "Disable Messaging"
+    "disable_messaging": "Disable Messaging",
+    "applying_arbiter": "Submitting...",
+    "become_arbiter": "Become Arbiter"
   },
   "dashboard": {
     "title": "แดชบอร์ด",
@@ -198,7 +207,60 @@
     "empty_history": "ยังไม่มีประวัติ",
     "section_job_postings": "งานที่ฉันประกาศ",
     "section_job_receipts": "ใบเสร็จงาน",
-    "section_service_requests": "คำขอบริการ"
+    "section_service_requests": "คำขอบริการ",
+    "card": {
+      "activate_btn": "Start Work",
+      "activate_hint": "Deal is funded — start work to begin the countdown",
+      "activate_success": "Deal activated! Work has started.",
+      "auto_approve_in": "Auto-approves in {time}",
+      "dispute_btn": "Raise Dispute",
+      "dispute_confirm": "Confirm Dispute",
+      "dispute_placeholder": "Explain the problem for the arbiter…",
+      "dispute_success": "Dispute raised. Arbiter will be notified.",
+      "dispute_title": "Describe the issue",
+      "extras_accept": "Accept",
+      "extras_accepted": "{count} extra(s) accepted",
+      "extras_amount": "Amount USDC",
+      "extras_empty": "No extras yet",
+      "extras_label": "Extras",
+      "extras_note": "Note (optional)",
+      "extras_propose": "Propose",
+      "extras_propose_btn": "Propose Extra",
+      "extras_propose_title": "New extra payment",
+      "extras_reject": "Reject",
+      "fund_btn": "Fund",
+      "insufficient_usdc": "Insufficient USDC",
+      "mark_done_btn": "Mark Done",
+      "release_btn": "Release",
+      "release_success": "Payment released to executor!",
+      "sign_wallet": "Confirm in wallet…",
+      "timeouts_hide": "hide",
+      "timeouts_show": "timeout actions"
+    },
+    "listings": {
+      "budget_locked": "Budget can't be changed — cancel and create a new deal",
+      "cancel": "Cancel",
+      "desc_too_long": "Description too long (max 500 characters)",
+      "edit_job": "Edit job",
+      "edit_service": "Edit service",
+      "field_budget": "Budget (USDC)",
+      "field_deadline": "Deadline (days)",
+      "field_description": "Description",
+      "field_price": "Price (USDC)",
+      "field_region": "Region",
+      "field_title": "Title",
+      "job_updated": "Job updated.",
+      "save": "Save",
+      "service_updated": "Service updated.",
+      "title_invalid": "Title required (max 100 characters)"
+    },
+    "search": {
+      "no_results": "Nothing found",
+      "placeholder": "Search deals, jobs, services…",
+      "type_deals": "Deals",
+      "type_jobs": "Jobs",
+      "type_services": "Services"
+    }
   },
   "profile": {
     "edit_title": "แก้ไขโปรไฟล์",
@@ -356,7 +418,9 @@
     "active_executor_title": "Work in progress",
     "active_executor_hint": "Complete the work and click Mark Done when ready. The client will review and release payment.",
     "active_client_title": "Work in progress",
-    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed."
+    "active_client_hint": "The executor is working on your task. When they mark it done, review and release payment — or raise a dispute if needed.",
+    "auto_approve_in": "Auto-approves in {time} if not released",
+    "closed_hint": "This deal is closed. No further actions required."
   },
   "job": {
     "status_open": "เปิดรับ",
@@ -438,7 +502,12 @@
     "decrypt_failed_image": "ถอดรหัสรูปภาพล้มเหลว",
     "decrypt_failed": "การถอดรหัสล้มเหลว",
     "click_to_save": "เข้ารหัสแล้ว · คลิกเพื่อบันทึก",
-    "click_to_open": "คลิกเพื่อเปิด"
+    "click_to_open": "คลิกเพื่อเปิด",
+    "cancel_upload": "Cancel upload",
+    "e2e_notice": "E2E encrypted · expires in 7 days",
+    "reconnect": "Reconnect",
+    "remove_file": "Remove file",
+    "stream_dead": "Connection lost — new messages not arriving"
   },
   "messaging": {
     "enabled_title": "เปิดใช้งานระบบข้อความแล้ว",
@@ -454,7 +523,8 @@
     "all_caught_up": "อ่านทั้งหมดแล้ว",
     "mark_all_read": "ทำเครื่องหมายว่าอ่านทั้งหมด",
     "clear_all": "ล้างทั้งหมด",
-    "wallet_required": "เชื่อมต่อกระเป๋าเพื่อดูการแจ้งเตือน"
+    "wallet_required": "เชื่อมต่อกระเป๋าเพื่อดูการแจ้งเตือน",
+    "enable_messaging_hint": "Enable messaging to get notifications about new messages"
   },
   "arbiter": {
     "title": "ศูนย์อนุญาโตตุลาการ",
@@ -529,7 +599,17 @@
     "resolving_refund": "กำลังแก้ไข — คืนเงินให้ลูกค้า…",
     "resolving_pay": "กำลังแก้ไข — จ่ายให้ผู้รับงาน…",
     "add_btn": "เพิ่ม",
-    "remove_btn": "ลบออก"
+    "remove_btn": "ลบออก",
+    "finalize_btn": "Finalize Verdict",
+    "finalizing": "Finalizing verdict…",
+    "reward_title": "Pending Reward",
+    "reward_withdrawn": "Reward withdrawn successfully",
+    "submitting_pay": "Submitting verdict: pay to executor…",
+    "submitting_refund": "Submitting verdict: refund to client…",
+    "verdict_frozen": "Verdict frozen by owner",
+    "verdict_pending": "Verdict submitted — awaiting finalization",
+    "withdraw_btn": "Withdraw",
+    "withdrawing": "Withdrawing…"
   },
   "onboarding": {
     "title": "วิธีการทำงานของ Hexseal",
@@ -624,7 +704,9 @@
     "q_source": "ซอร์สโค้ดอยู่ที่ไหน?",
     "a_source": "มีให้บน GitHub — ดูลิงก์บนหน้า",
     "q_verify": "ฉันจะยืนยันสัญญาที่ติดตั้งได้อย่างไร?",
-    "a_verify": "ตรวจสอบสัญญาทั้งหมดบน BaseScan ที่อยู่ Diamond: 0xF00CC71878c226E0b64253Fb71dD802aF12165D0"
+    "a_verify": "ตรวจสอบสัญญาทั้งหมดบน BaseScan ที่อยู่ Diamond: 0xF00CC71878c226E0b64253Fb71dD802aF12165D0",
+    "a_get_usdc": "Use the Circle faucet at faucet.circle.com — select Base Sepolia and paste your wallet address. You'll receive test USDC within seconds. This is testnet only; no real money involved.",
+    "q_get_usdc": "How do I get test USDC?"
   },
   "footer": {
     "tagline": "โปรโตคอลฟรีแลนซ์แบบกระจายศูนย์บน Base ไม่มีผู้ดูแล โค้ดคือกฎหมาย",
@@ -687,7 +769,10 @@
     "minutes_ago": "{count}น. ที่แล้ว",
     "hours_ago": "{count}ชม. ที่แล้ว",
     "days_ago": "{count}ว. ที่แล้ว",
-    "total_suffix": "/ {count} ทั้งหมด"
+    "total_suffix": "/ {count} ทั้งหมด",
+    "load_more": "Load more",
+    "loading_short": "Loading…",
+    "sort": "Sort"
   },
   "categories": {
     "design": "ออกแบบ",
@@ -749,5 +834,13 @@
     "deal_markdone_executor": "Mark done when you have delivered. The client then has a window to review.",
     "deal_release_client": "The executor marked the work done. Review it and release funds when satisfied.",
     "executor_board_request": "Tap a service card to expand it and send a hire request — set your budget and terms, the executor will confirm."
+  },
+  "form": {
+    "amount_max": "Maximum {max} USDC",
+    "amount_positive": "Enter an amount greater than 0",
+    "deadline_range": "{min} to {max} days",
+    "max_chars": "Max {count} characters",
+    "price_min": "Minimum {min} USDC",
+    "required": "Required field"
   }
 }
