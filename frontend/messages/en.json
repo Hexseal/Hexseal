@@ -687,7 +687,8 @@
     "deal_fund_client": "Fund the escrow to lock your payment on-chain and kick off the deal. The executor can't touch the funds until they deliver.",
     "deal_activate_executor": "Activate to confirm you've started work. This starts the deadline clock.",
     "deal_markdone_executor": "Mark done when you've delivered. The client then has a window to review — after that it auto-releases.",
-    "deal_release_client": "The executor marked the work done. Review it and release funds when you're satisfied."
+    "deal_release_client": "The executor marked the work done. Review it and release funds when you're satisfied.",
+    "executor_board_request": "Tap a service card to expand it and send a hire request — set your budget and terms, the executor will confirm."
   },
   "faq": {
     "back": "Back to home",

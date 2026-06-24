@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
+import { ContextHint } from "@/components/ContextHint";
 import { useAccount, useWalletClient, usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { useServices, type GraphService } from "@/hooks/useServices";
 import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
@@ -884,6 +885,12 @@ export default function ExecutorBoardPage() {
               </button>
             ))}
             <span className="ml-auto text-xs text-white/20">{filtered.length}{hasMore ? '+' : ''}</span>
+          </div>
+        )}
+
+        {!loadingList && filtered.length > 0 && (
+          <div className="mb-4">
+            <ContextHint hintKey="executor_board_request">{t("hints.executor_board_request")}</ContextHint>
           </div>
         )}
 
