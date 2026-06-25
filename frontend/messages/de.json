@@ -98,7 +98,9 @@
       "incoming_empty": "Keine offenen Anfragen",
       "reject_btn": "Ablehnen",
       "accepted_msg": "Angenommen! Deal erstellt.",
-      "rejected_msg": "Anfrage abgelehnt."
+      "rejected_msg": "Anfrage abgelehnt.",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "Leistung veröffentlichen",

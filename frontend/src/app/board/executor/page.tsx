@@ -90,13 +90,13 @@ function RequestModal({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4"
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 10 }}
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        initial={{ opacity: 0, scale: 0.97 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.97 }}
+        transition={{ duration: 0.15 }}
         className="w-full max-w-sm rounded-[22px] border border-white/[0.08] bg-[#111113] p-5"
         style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}
       >
@@ -383,6 +383,19 @@ function ServiceCard({
   const catKey = extractCategory(service.description);
   const displayDesc = stripCategory(service.description);
 
+  // On-chain status re-check when card is expanded — catches subgraph lag
+  const { data: onChainService } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: DIAMOND_ABI as Abi,
+    functionName: 'getService',
+    args: [BigInt(service.serviceId)],
+    query: { enabled: expanded },
+  }) as { data: { status: number } | undefined };
+  const onChainStatus = onChainService ? Number(onChainService.status) : service.status;
+  const isPaused  = onChainStatus === 1;
+  const isRemoved = onChainStatus === 2;
+  const isUnavailable = isPaused || isRemoved;
+
   const myPending   = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 0);
   const myAccepted  = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 1);
   const myActive    = myPending ?? myAccepted;
@@ -439,7 +452,7 @@ function ServiceCard({
             </Link>
           )}
           {isConnected && !isMyService && !myActive && service.status === 0 && (
-            <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting} className="h-8 px-3 text-xs gap-1">
+            <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting || isUnavailable} className="h-8 px-3 text-xs gap-1">
               {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               {t("board.services.request_btn")}
             </Button>
@@ -451,6 +464,14 @@ function ServiceCard({
       {/* Expanded */}
       {expanded && (
         <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
+          {/* Unavailable notice */}
+          {isUnavailable && (
+            <div className="rounded-[12px] border border-orange-400/20 bg-orange-400/5 px-3 py-2 mb-3">
+              <p className="text-xs text-orange-300/80 font-medium">
+                {isRemoved ? t("board.services.service_removed_notice") : t("board.services.service_paused_notice")}
+              </p>
+            </div>
+          )}
           {/* Full title */}
           {service.title && (
             <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{service.title}</p>

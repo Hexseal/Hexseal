@@ -106,7 +106,9 @@
       "incoming_empty": "No pending requests",
       "reject_btn": "Reject",
       "accepted_msg": "Accepted! Deal created.",
-      "rejected_msg": "Request rejected."
+      "rejected_msg": "Request rejected.",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "Post a Service",

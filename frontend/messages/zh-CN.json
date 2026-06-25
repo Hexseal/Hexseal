@@ -98,7 +98,9 @@
       "incoming_empty": "没有待处理的请求",
       "reject_btn": "拒绝",
       "accepted_msg": "已接受！交易已创建。",
-      "rejected_msg": "请求已拒绝。"
+      "rejected_msg": "请求已拒绝。",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "发布服务",

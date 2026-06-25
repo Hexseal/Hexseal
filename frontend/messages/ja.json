@@ -98,7 +98,9 @@
       "incoming_empty": "保留中のリクエストなし",
       "reject_btn": "拒否",
       "accepted_msg": "承認しました！取引が作成されました。",
-      "rejected_msg": "リクエストを拒否しました。"
+      "rejected_msg": "リクエストを拒否しました。",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "サービスを掲載",

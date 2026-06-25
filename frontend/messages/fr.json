@@ -98,7 +98,9 @@
       "incoming_empty": "Aucune demande en attente",
       "reject_btn": "Refuser",
       "accepted_msg": "Accepté ! Deal créé.",
-      "rejected_msg": "Demande refusée."
+      "rejected_msg": "Demande refusée.",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "Publier un Service",

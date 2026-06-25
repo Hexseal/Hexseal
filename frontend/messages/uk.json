@@ -98,7 +98,9 @@
       "incoming_empty": "Немає очікуючих запитів",
       "reject_btn": "Відхилити",
       "accepted_msg": "Прийнято! Угоду створено.",
-      "rejected_msg": "Запит відхилено."
+      "rejected_msg": "Запит відхилено.",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "Опублікувати Послугу",

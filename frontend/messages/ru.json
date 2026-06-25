@@ -106,7 +106,9 @@
       "incoming_empty": "Нет ожидающих запросов",
       "reject_btn": "Отклонить",
       "accepted_msg": "Принято! Сделка создана.",
-      "rejected_msg": "Запрос отклонён."
+      "rejected_msg": "Запрос отклонён.",
+      "service_paused_notice": "Услуга временно приостановлена исполнителем.",
+      "service_removed_notice": "Услуга была удалена и больше недоступна."
     },
     "post_service": {
       "title": "Разместить услугу",

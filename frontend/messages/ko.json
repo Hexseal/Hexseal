@@ -98,7 +98,9 @@
       "incoming_empty": "대기 중인 요청 없음",
       "reject_btn": "거절",
       "accepted_msg": "수락됨! 거래가 생성되었습니다.",
-      "rejected_msg": "요청이 거절되었습니다."
+      "rejected_msg": "요청이 거절되었습니다.",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "서비스 게시",

@@ -98,7 +98,9 @@
       "incoming_empty": "Sin solicitudes pendientes",
       "reject_btn": "Rechazar",
       "accepted_msg": "¡Aceptado! Trato creado.",
-      "rejected_msg": "Solicitud rechazada."
+      "rejected_msg": "Solicitud rechazada.",
+      "service_paused_notice": "This service is temporarily paused by the executor.",
+      "service_removed_notice": "This service has been removed and is no longer available."
     },
     "post_service": {
       "title": "Publicar un Servicio",
