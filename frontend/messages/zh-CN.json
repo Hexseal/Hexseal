@@ -58,7 +58,9 @@
       "withdraw_btn": "撤回",
       "withdrawn": "申请已撤回。",
       "terms_unavailable": "Terms unavailable",
-      "no_region_results": "No jobs in {region} — try Global"
+      "no_region_results": "No jobs in {region} — try Global",
+      "no_longer_open": "This job is no longer open.",
+      "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
     "services": {
       "title": "服务广场",

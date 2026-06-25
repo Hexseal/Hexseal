@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { useAccount, usePublicClient, useWalletClient, useReadContract } from "wagmi";
 import { useJobs, type GraphJob } from "@/hooks/useJobs";
 import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
 import { sendGasless } from "@/lib/relay";
@@ -83,6 +83,7 @@ function JobCard({
   hasApplied,
   applicants,
   onApplied,
+  onJobFilled,
   expanded,
   onToggle,
   index,
@@ -94,6 +95,7 @@ function JobCard({
   hasApplied?: boolean;
   applicants?: string[];
   onApplied?: () => void;
+  onJobFilled?: (id: string) => void;
   expanded: boolean;
   onToggle: () => void;
   index: number;
@@ -108,6 +110,17 @@ function JobCard({
   const t = useTranslations();
   const timeAgo = useTimeAgo();
   const router = useRouter();
+
+  // On-chain status re-check when card is expanded — catches subgraph lag
+  const { data: onChainJob } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: DIAMOND_ABI as Abi,
+    functionName: 'getJob',
+    args: [jobId],
+    query: { enabled: expanded },
+  }) as { data: JobRecord | undefined };
+  const onChainStatus = onChainJob ? Number((onChainJob as any).status ?? 0) : job.status;
+  const isFilled = onChainStatus !== 0;
 
   const ZERO_HASH = "0x" + "0".repeat(64);
   const hasTerms = job.termsHash && job.termsHash !== ZERO_HASH;
@@ -128,7 +141,7 @@ function JobCard({
 
   const handleApply = async () => {
     if (!walletClient || !publicClient || isApplying) return;
-    if (job.status !== 0) { toast.error('This job is no longer open.'); return; }
+    if (isFilled) { toast.error(t("board.jobs.no_longer_open")); return; }
     setIsApplying(true);
     try {
       await sendGasless(walletClient, publicClient, "applyForJob", [jobId], DIAMOND_ABI as Abi);
@@ -143,7 +156,7 @@ function JobCard({
 
   const handleWithdraw = async () => {
     if (!walletClient || !publicClient || isWithdrawing) return;
-    if (job.status !== 0) { toast.error('This job is no longer open.'); return; }
+    if (isFilled) { toast.error(t("board.jobs.no_longer_open")); return; }
     setIsWithdrawing(true);
     try {
       await sendGasless(walletClient, publicClient, "withdrawApplication", [jobId], DIAMOND_ABI as Abi);
@@ -158,17 +171,18 @@ function JobCard({
 
   const handleAccept = async (executorAddr: string) => {
     if (!walletClient || !publicClient) return;
-    if (job.status !== 0) { toast.error('This job is no longer open.'); return; }
+    if (isFilled) { toast.error(t("board.jobs.no_longer_open")); return; }
     setIsAccepting(executorAddr);
     try {
       toast(t("board.jobs.accepting"));
       const result = await sendGasless(walletClient, publicClient, "acceptApplicant", [jobId, executorAddr], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.accepted_deal"));
+      onJobFilled?.(jobId.toString());
       const ZERO = "0x0000000000000000000000000000000000000000";
       if (result.agreementAddr && result.agreementAddr !== ZERO) {
-        setTimeout(() => { onApplied?.(); router.push(`/deal/${result.agreementAddr}`); }, 1500);
+        setTimeout(() => router.push(`/deal/${result.agreementAddr}`), 1500);
       } else {
-        setTimeout(() => { onApplied?.(); router.push(`/job/${jobId.toString()}`); }, 2000);
+        setTimeout(() => router.push(`/job/${jobId.toString()}`), 2000);
       }
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Accept failed");
@@ -224,11 +238,11 @@ function JobCard({
               </button>
             )}
             {!isClient && address && !hasApplied && (
-              <Button size="sm" onClick={handleApply} disabled={isApplying} className="h-7 px-2.5 text-xs">
+              <Button size="sm" onClick={handleApply} disabled={isApplying || isFilled} className="h-7 px-2.5 text-xs">
                 {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : t("board.jobs.apply_btn")}
               </Button>
             )}
-            {!isClient && address && hasApplied && job.status === 0 && (
+            {!isClient && address && hasApplied && !isFilled && (
               <Button size="sm" variant="ghost" onClick={handleWithdraw} disabled={isWithdrawing}
                 className="h-7 px-2 text-xs text-white/25 hover:text-red-400 hover:bg-red-400/10">
                 {isWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : t("board.jobs.withdraw_btn")}
@@ -241,6 +255,12 @@ function JobCard({
         {/* ── Expanded ── */}
         {expanded && (
           <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()}>
+            {/* Filled / cancelled notice */}
+            {isFilled && (
+              <div className="rounded-[12px] border border-orange-400/20 bg-orange-400/5 px-3 py-2 mb-3">
+                <p className="text-xs text-orange-300/80 font-medium">{t("board.jobs.job_filled_notice")}</p>
+              </div>
+            )}
             {/* Full title (collapsed row truncates it) */}
             {job.title && (
               <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{job.title}</p>
@@ -343,6 +363,11 @@ export default function BoardPage() {
 
   const [page, setPage] = useState(0);
   const [allJobs, setAllJobs] = useState<GraphJob[]>([]);
+  const [filledJobIds, setFilledJobIds] = useState<Set<string>>(new Set());
+
+  const handleJobFilled = (id: string) => {
+    setFilledJobIds(prev => new Set([...prev, id]));
+  };
   type SortKey = 'newest' | 'oldest' | 'highest' | 'lowest';
   const [sortBy, setSortBy] = useState<SortKey>('newest');
 
@@ -406,9 +431,12 @@ export default function BoardPage() {
     setAllJobs([]);
   }, [regionFilter]);
 
+  const JOB_STATUS: Record<string, number> = { open: 0, accepted: 1, cancelled: 2 };
+
   const jobs = useMemo(() => {
     const q = searchQuery.toLowerCase();
     const filtered = allJobs
+      .filter(gj => !filledJobIds.has(gj.id))
       .filter(gj => categoryFilter === null || extractCategory(gj.description) === categoryFilter)
       .filter(gj => {
         if (!q) return true;
@@ -429,7 +457,7 @@ export default function BoardPage() {
           deadlineDays: BigInt(gj.deadlineDays),
           termsHash: gj.termsHash,
           region: gj.region,
-          status: 0,
+          status: JOB_STATUS[gj.status] ?? 0,
           createdAt: BigInt(gj.createdAt),
           chosenExecutor: '0x0000000000000000000000000000000000000000',
           agreement: '0x0000000000000000000000000000000000000000',
@@ -441,7 +469,7 @@ export default function BoardPage() {
       case 'lowest':  return [...filtered].sort((a, b) => Number(a.job.amount) - Number(b.job.amount));
       default:        return [...filtered].sort((a, b) => Number(b.job.createdAt) - Number(a.job.createdAt));
     }
-  }, [allJobs, searchQuery, categoryFilter, sortBy]);
+  }, [allJobs, filledJobIds, searchQuery, categoryFilter, sortBy]);
 
   // Skill-based matching — only when no filters/search active and user has specializations
   const matchedJobs = useMemo(() => {
@@ -687,6 +715,7 @@ export default function BoardPage() {
                     hasApplied={appliedSet.has(id.toString())}
                     applicants={applicantsMap.get(id.toString())}
                     onApplied={() => {}}
+                    onJobFilled={handleJobFilled}
                     expanded={expandedJobId === id.toString()}
                     onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
                     index={index}

@@ -58,7 +58,9 @@
       "withdraw_btn": "取り消し",
       "withdrawn": "応募を取り消しました。",
       "terms_unavailable": "Terms unavailable",
-      "no_region_results": "No jobs in {region} — try Global"
+      "no_region_results": "No jobs in {region} — try Global",
+      "no_longer_open": "This job is no longer open.",
+      "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
     "services": {
       "title": "サービスボード",

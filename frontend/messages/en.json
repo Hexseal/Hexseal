@@ -66,7 +66,9 @@
       "applicants_count": "{count} applied",
       "withdraw_btn": "Withdraw",
       "withdrawn": "Application withdrawn.",
-      "no_region_results": "No jobs in {region} — try Global"
+      "no_region_results": "No jobs in {region} — try Global",
+      "no_longer_open": "This job is no longer open.",
+      "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
     "services": {
       "title": "Service Board",
