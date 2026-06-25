@@ -42,7 +42,9 @@ export function useXmtpStatus() {
 
   useEffect(() => {
     const addr = walletClient?.account?.address;
-    if (!addr) { setIsEnabled(false); return; }
+    // Don't reset while wallet is still loading — useLayoutEffect already read localStorage.
+    // Only act once we actually have an address.
+    if (!addr) return;
 
     setIsEnabled(readIsEnabled(addr));
 
