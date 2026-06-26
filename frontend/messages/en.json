@@ -342,6 +342,7 @@
     "client_role_badge": "Client",
     "executor_role_badge": "Executor",
     "photo_ready": "Photo ready",
+    "photo_will_upload": "will upload on save",
     "save_success_no_photo": "Profile saved (photo upload failed)"
   },
   "deal_status": {
