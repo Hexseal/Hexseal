@@ -77,7 +77,7 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
 export default function NotificationsPage() {
   const { isConnected, status } = useAccount();
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotificationsCtx();
-  const { supported, subscribed, permission, loading: pushLoading, enable: enablePush, disable: disablePush } = usePushNotifications();
+  const { supported, subscribed, permission, loading: pushLoading, error: pushError, enable: enablePush, disable: disablePush } = usePushNotifications();
   const t = useTranslations();
 
   if (status === 'reconnecting' || status === 'connecting') return null;
@@ -168,7 +168,15 @@ export default function NotificationsPage() {
         {supported && permission === 'denied' && (
           <div className="px-4 py-3 rounded-[14px] border border-amber-500/20 bg-amber-500/5 mb-4">
             <p className="text-xs text-amber-400/70">
-              Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.
+              {t("notifications.push_blocked")}
+            </p>
+          </div>
+        )}
+
+        {pushError === 'enable_failed' && (
+          <div className="px-4 py-3 rounded-[14px] border border-red-500/20 bg-red-500/5 mb-4">
+            <p className="text-xs text-red-400/70">
+              {t("notifications.push_enable_failed")}
             </p>
           </div>
         )}

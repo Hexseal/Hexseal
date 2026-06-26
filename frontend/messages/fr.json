@@ -541,7 +541,9 @@
     "mark_all_read": "Tout marquer comme lu",
     "clear_all": "Tout effacer",
     "wallet_required": "Connectez votre portefeuille pour voir les notifications",
-    "enable_messaging_hint": "Enable messaging to get notifications about new messages"
+    "enable_messaging_hint": "Enable messaging to get notifications about new messages",
+    "push_blocked": "Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.",
+    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later."
   },
   "arbiter": {
     "title": "Hub Arbitre",

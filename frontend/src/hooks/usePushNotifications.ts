@@ -10,6 +10,7 @@ export function usePushNotifications() {
   const [subscribed,  setSubscribed]  = useState(false);
   const [permission,  setPermission]  = useState<NotificationPermission>('default');
   const [loading,     setLoading]     = useState(false);
+  const [error,       setError]       = useState<string | null>(null);
 
   useEffect(() => {
     const ok = isPushSupported();
@@ -30,10 +31,19 @@ export function usePushNotifications() {
   const enable = useCallback(async () => {
     if (!address || !supported) return;
     setLoading(true);
+    setError(null);
     try {
       const result = await enablePush(address);
       setPermission(Notification.permission);
-      if (result === 'ok') setSubscribed(true);
+      if (result === 'ok') {
+        setSubscribed(true);
+      } else if (result === 'denied') {
+        setError('notifications_blocked');
+      } else {
+        setError('enable_failed');
+      }
+    } catch {
+      setError('enable_failed');
     } finally {
       setLoading(false);
     }
@@ -50,5 +60,5 @@ export function usePushNotifications() {
     }
   }, [address]);
 
-  return { supported, subscribed, permission, loading, enable, disable };
+  return { supported, subscribed, permission, loading, error, enable, disable };
 }

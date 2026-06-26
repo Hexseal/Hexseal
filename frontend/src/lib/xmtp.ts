@@ -102,8 +102,11 @@ export async function checkXmtpDbExists(address: string): Promise<boolean> {
   try {
     const root   = await navigator.storage.getDirectory();
     const prefix = `xmtp-${address.toLowerCase()}`;
-    // FileSystemDirectoryHandle is AsyncIterable<[name, handle]>
-    for await (const [name] of root as unknown as AsyncIterable<[string, FileSystemHandle]>) {
+    // Use .entries() — direct iteration of FileSystemDirectoryHandle is not
+    // supported in all WebKit/iOS versions and silently yields nothing there.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const iter = (root as any).entries() as AsyncIterable<[string, FileSystemHandle]>;
+    for await (const [name] of iter) {
       if (name.startsWith(prefix)) return true;
     }
     return false;
