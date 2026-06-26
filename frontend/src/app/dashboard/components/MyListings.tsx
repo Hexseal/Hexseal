@@ -221,6 +221,7 @@ function EditListingModal({
 function ServiceCard({
   serviceId, service, pendingIds, pendingReqs, busyId,
   onPause, onUnpause, onRemove, onAccept, onReject, onEdit,
+  readOnly,
 }: {
   serviceId: bigint;
   service: ServiceRecord;
@@ -233,6 +234,7 @@ function ServiceCard({
   onAccept: (requestId: bigint, req: HireRequestRecord) => void;
   onReject: (requestId: bigint) => void;
   onEdit: () => void;
+  readOnly?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [histLoaded, setHistLoaded] = useState(false);
@@ -314,25 +316,25 @@ function ServiceCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
-          {service.status !== 2 && (
+          {!readOnly && service.status !== 2 && (
             <Button size="sm" variant="ghost" onClick={onEdit} disabled={!!busyId}
               className="h-7 w-7 p-0 text-white/25 hover:text-primary" title="Edit service">
               <Pencil className="w-3.5 h-3.5" />
             </Button>
           )}
-          {service.status === 0 && (
+          {!readOnly && service.status === 0 && (
             <Button size="sm" variant="ghost" onClick={onPause} disabled={!!busyId}
               className="h-7 w-7 p-0 text-white/25 hover:text-amber-400/80" title="Pause service">
               {serviceBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pause className="w-3.5 h-3.5" />}
             </Button>
           )}
-          {service.status === 1 && (
+          {!readOnly && service.status === 1 && (
             <Button size="sm" variant="ghost" onClick={onUnpause} disabled={!!busyId}
               className="h-7 w-7 p-0 text-white/25 hover:text-emerald-400/80" title="Resume service">
               {serviceBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
             </Button>
           )}
-          {service.status !== 2 && (
+          {!readOnly && service.status !== 2 && (
             <Button size="sm" variant="ghost" onClick={onRemove} disabled={!!busyId}
               className="h-7 w-7 p-0 text-white/25 hover:text-red-400/80" title="Remove service">
               <Trash2 className="w-3.5 h-3.5" />
@@ -375,17 +377,23 @@ function ServiceCard({
                         <Link href={`/request/${rId}`} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
                           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-white/70">Details</Button>
                         </Link>
-                        <Link href={`/chat/${req.client}`} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
-                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-primary">Chat</Button>
-                        </Link>
-                        <Button size="sm" variant="ghost" onClick={() => onReject(rid)} disabled={!!busyId}
-                          className="h-6 px-2 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10">
-                          {busyId === rId ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Reject'}
-                        </Button>
-                        <Button size="sm" onClick={() => onAccept(rid, req)} disabled={!!busyId} className="h-6 px-2 text-xs gap-1">
-                          {busyId === rId ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
-                          {busyId === rId ? 'Accepting…' : 'Accept'}
-                        </Button>
+                        {!readOnly && (
+                          <Link href={`/chat/${req.client}`} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+                            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-primary">Chat</Button>
+                          </Link>
+                        )}
+                        {!readOnly && (
+                          <Button size="sm" variant="ghost" onClick={() => onReject(rid)} disabled={!!busyId}
+                            className="h-6 px-2 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10">
+                            {busyId === rId ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Reject'}
+                          </Button>
+                        )}
+                        {!readOnly && (
+                          <Button size="sm" onClick={() => onAccept(rid, req)} disabled={!!busyId} className="h-6 px-2 text-xs gap-1">
+                            {busyId === rId ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
+                            {busyId === rId ? 'Accepting…' : 'Accept'}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );
@@ -431,7 +439,7 @@ function ServiceCard({
             </div>
           ))}
 
-          {service.status !== 2 && (
+          {!readOnly && service.status !== 2 && (
             <div className="flex items-center gap-2 pt-1 border-t border-white/8">
               {service.status === 0 && (
                 <Button size="sm" variant="ghost" onClick={onPause} disabled={!!busyId}
@@ -461,7 +469,7 @@ function ServiceCard({
 
 // ── My Services (executor listings) ──────────────────────────────────────────
 
-export function MyServices({ address, onDealCreated }: { address: string; onDealCreated?: () => void }) {
+export function MyServices({ address, onDealCreated, readOnly }: { address: string; onDealCreated?: () => void; readOnly?: boolean }) {
   const t = useTranslations('dashboard.listings');
   const [showRemoved, setShowRemoved] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -638,6 +646,7 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
                   onAccept={(rid, req) => setConfirmReq({ requestId: rid, client: req.client, amount: req.amount, deadlineDays: req.deadlineDays })}
                   onReject={handleReject}
                   onEdit={() => setEditTarget({ kind: 'service', id, title: svc.title, description: svc.description, amount: svc.price, deadlineDays: svc.deadlineDays, region: svc.region })}
+                  readOnly={readOnly}
                 />
               </div>
             );
@@ -757,7 +766,7 @@ export function MyServices({ address, onDealCreated }: { address: string; onDeal
 // ── Job Card ──────────────────────────────────────────────────────────────────
 
 function JobCard({
-  jobId, job, applicants, onCancel, onAccept, onEdit, busy,
+  jobId, job, applicants, onCancel, onAccept, onEdit, busy, readOnly,
 }: {
   jobId: bigint;
   job: JobRecord;
@@ -766,6 +775,7 @@ function JobCard({
   onAccept: (executor: string) => void;
   onEdit: () => void;
   busy: boolean;
+  readOnly?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const s = JOB_STATUS[job.status] ?? JOB_STATUS[0];
@@ -812,13 +822,13 @@ function JobCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
-          {canEdit && (
+          {!readOnly && canEdit && (
             <Button size="sm" variant="ghost" onClick={onEdit} disabled={busy}
               className="h-7 w-7 p-0 text-white/25 hover:text-primary" title="Edit job">
               <Pencil className="w-3.5 h-3.5" />
             </Button>
           )}
-          {job.status === 0 && (
+          {!readOnly && job.status === 0 && (
             <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}
               className="h-7 w-7 p-0 text-white/25 hover:text-red-400/80" title="Cancel job">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -852,13 +862,17 @@ function JobCard({
                   <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2">
                     <span className="text-xs font-mono text-white/60 min-w-0 truncate">{shortAddr(addr)}</span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <Link href={`/chat/${addr}`}>
-                        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-primary">Chat</Button>
-                      </Link>
-                      <Button size="sm" onClick={() => onAccept(addr)} disabled={busy} className="h-6 px-2 text-xs gap-1">
-                        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
-                        {busy ? 'Accepting…' : 'Accept'}
-                      </Button>
+                      {!readOnly && (
+                        <Link href={`/chat/${addr}`}>
+                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-primary">Chat</Button>
+                        </Link>
+                      )}
+                      {!readOnly && (
+                        <Button size="sm" onClick={() => onAccept(addr)} disabled={busy} className="h-6 px-2 text-xs gap-1">
+                          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
+                          {busy ? 'Accepting…' : 'Accept'}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -876,7 +890,7 @@ function JobCard({
                 <ExternalLink className="w-3 h-3" /> Full Job Page
               </Button>
             </Link>
-            {job.status === 0 && (
+            {!readOnly && job.status === 0 && (
               <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}
                 className="gap-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-400/10 text-xs">
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
@@ -892,7 +906,7 @@ function JobCard({
 
 // ── My Jobs (client postings) ─────────────────────────────────────────────────
 
-export function MyJobs({ address, onDealCreated }: { address: string; onDealCreated?: () => void }) {
+export function MyJobs({ address, onDealCreated, readOnly }: { address: string; onDealCreated?: () => void; readOnly?: boolean }) {
   const tj = useTranslations('dashboard.listings');
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
@@ -1041,6 +1055,7 @@ export function MyJobs({ address, onDealCreated }: { address: string; onDealCrea
                 onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
                 onEdit={() => setEditTarget({ kind: 'job', id, title: job.title, description: job.description, amount: job.amount, deadlineDays: job.deadlineDays, region: job.region, termsHash: job.termsHash })}
                 busy={busyJobId === id.toString()}
+                readOnly={readOnly}
               />
             </div>
           ))}
