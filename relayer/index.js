@@ -267,7 +267,7 @@ const RPC_URL        = process.env.RPC_URL || process.env.BASE_SEPOLIA_RPC_URL |
 const RELAYER_KEY    = process.env.RELAYER_PRIVATE_KEY;
 const FORWARDER_ADDR = process.env.TRUSTED_FORWARDER;
 const DIAMOND_ADDR   = process.env.DIAMOND_ADDRESS;
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:3001')
   .split(',').map(o => o.trim()).filter(Boolean);
 
 if (!RELAYER_KEY)    throw new Error('RELAYER_PRIVATE_KEY is not set');
