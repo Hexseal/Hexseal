@@ -562,36 +562,60 @@ app.post('/files/public/presign', (req, res) => {
 
 const PROFILE_KEY_RE = /^profile-(0x[a-f0-9]{40})\.json$/i;
 
+// Tracks last-seen updatedAt nonce per address — prevents signature replay.
+// In-memory: resets on restart, but updatedAt = Date.now()/1000 always increases.
+const _profileNonces = new Map();
+
 app.put('/files/public-put/:key', async (req, res) => {
   const key = safeKey(req.params.key);
   if (!key) return res.status(400).json({ error: 'Invalid key' });
 
   const profileMatch = key.match(PROFILE_KEY_RE);
   if (profileMatch) {
-    // ── Signed profile upload: buffer → verify → write ─────────────────────
+    // ── Signed profile upload ──────────────────────────────────────────────
+    // Content-Type is application/octet-stream (set by uploader) so express.json()
+    // never consumes the stream — we read raw bytes here safely.
     const address = profileMatch[1].toLowerCase();
     const sig     = req.headers['x-profile-signature'];
-    if (!sig) {
-      return res.status(401).json({ error: 'Profile upload requires X-Profile-Signature header' });
+    if (!sig) return res.status(401).json({ error: 'Profile upload requires X-Profile-Signature' });
+
+    // 1. Buffer raw body
+    const chunks = [];
+    try { for await (const chunk of req) chunks.push(chunk); }
+    catch { return res.status(400).json({ error: 'Body read error' }); }
+    const body    = Buffer.concat(chunks);
+    const bodyStr = body.toString('utf8');
+
+    // 2. Parse JSON and extract nonce
+    let profileData;
+    try { profileData = JSON.parse(bodyStr); }
+    catch { return res.status(400).json({ error: 'Invalid JSON body' }); }
+
+    const nonce = profileData.updatedAt;
+    if (typeof nonce !== 'number' || !Number.isFinite(nonce)) {
+      return res.status(400).json({ error: 'Missing or invalid updatedAt nonce' });
+    }
+    const lastNonce = _profileNonces.get(address) || 0;
+    if (nonce <= lastNonce) {
+      return res.status(400).json({ error: 'Stale nonce — replay detected' });
     }
 
-    // Verify: ecrecover(hashMessage("hexseal:profile:update:<address>"), sig) === address
-    // Canonical message avoids body-serialization issues (express.json consumes the stream).
-    const message = `hexseal:profile:update:${address}`;
+    // 3. Verify: signed message commits to address + nonce + body hash
+    //    message = "hexseal:profile:update:<addr>:<nonce>:<keccak256(body)>"
+    const bodyHash = ethers.keccak256(ethers.toUtf8Bytes(bodyStr));
+    const message  = `hexseal:profile:update:${address}:${nonce}:${bodyHash}`;
     let recovered;
-    try {
-      recovered = ethers.recoverAddress(ethers.hashMessage(message), sig).toLowerCase();
-    } catch {
-      return res.status(400).json({ error: 'Invalid signature format' });
-    }
+    try { recovered = ethers.recoverAddress(ethers.hashMessage(message), sig).toLowerCase(); }
+    catch { return res.status(400).json({ error: 'Invalid signature format' }); }
+
     if (recovered !== address) {
       console.warn(`[files/public-put] sig mismatch: recovered=${recovered} expected=${address}`);
-      return res.status(403).json({ error: 'Signature mismatch: signer does not match profile address' });
+      return res.status(403).json({ error: 'Signature mismatch' });
     }
 
-    // Body was already parsed by express.json() — write it back as JSON
-    const bodyStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-    fs.writeFile(path.join(DIR_PUBLIC, key), bodyStr, 'utf8', (err) => {
+    // 4. Persist nonce, write file
+    _profileNonces.set(address, nonce);
+    fs.writeFile(path.join(DIR_PUBLIC, key), body, (err) => {
       if (err) { console.error('[files/public-put]', err.message); return res.status(500).json({ error: 'Write error' }); }
       res.status(200).end();
     });

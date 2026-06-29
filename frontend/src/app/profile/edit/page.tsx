@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useAccount, useSignMessage } from "wagmi";
+import { keccak256 } from "viem";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -234,10 +235,13 @@ export default function EditProfilePage() {
         updatedAt: now,
       };
 
-      // Step 3: sign canonical message — relayer verifies signer === profile address
+      // Step 3: sign message that commits to exact body + nonce (replay protection)
+      // message = "hexseal:profile:update:<addr>:<updatedAt>:<keccak256(json)>"
       setStage('signing');
-      const signature = await signMessageAsync({
-        message: `hexseal:profile:update:${address.toLowerCase()}`,
+      const profileJson = JSON.stringify(profileData);
+      const bodyHash    = keccak256(new TextEncoder().encode(profileJson));
+      const signature   = await signMessageAsync({
+        message: `hexseal:profile:update:${address.toLowerCase()}:${profileData.updatedAt}:${bodyHash}`,
       });
 
       setStage('saving');

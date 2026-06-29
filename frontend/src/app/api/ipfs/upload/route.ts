@@ -99,7 +99,9 @@ export async function POST(request: NextRequest) {
         method:  'PUT',
         body:    file,
         headers: {
-          'Content-Type': contentType,
+          // Send as octet-stream so express.json() on the relayer doesn't consume
+          // the request stream — raw bytes must be available for body-hash verification.
+          'Content-Type': 'application/octet-stream',
           'X-Profile-Signature': signature,
           ...NGROK_HEADERS,
         },
