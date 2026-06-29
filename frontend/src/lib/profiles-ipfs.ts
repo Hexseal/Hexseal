@@ -83,34 +83,6 @@ export async function publishProfile(profileData: Omit<UserProfile, 'cid'>): Pro
   return profileRef;
 }
 
-/**
- * Verify profile signature matches address
- */
-export async function verifyProfileSignature(profile: UserProfile): Promise<boolean> {
-  try {
-    const { ethers } = await import('ethers');
-    const message = `Hexseal Profile\n${JSON.stringify({
-      address: profile.address,
-      displayName: profile.displayName,
-      bio: profile.bio,
-      role: profile.role,
-      specializations: profile.specializations,
-      links: profile.links,
-      avatarCid: profile.avatarCid,
-      avatarUrl: profile.avatarUrl,    // undefined on old profiles → omitted in JSON → backward compat
-      createdAt: profile.createdAt,
-      updatedAt: profile.updatedAt,
-    })}\n${profile.updatedAt}`;
-
-    const messageHash = ethers.hashMessage(message);
-    const signer = ethers.recoverAddress(messageHash, profile.signature);
-
-    return signer.toLowerCase() === profile.address.toLowerCase();
-  } catch (error) {
-    console.error('Profile signature verification failed:', error);
-    return false;
-  }
-}
 
 // --- Cache helpers ---
 
