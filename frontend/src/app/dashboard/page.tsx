@@ -153,7 +153,31 @@ export default function DashboardPage() {
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
   const level        = xpLevel(xp);
 
-  if (status === 'reconnecting' || status === 'connecting') return null;
+  if (status === 'reconnecting' || status === 'connecting') {
+    return (
+      <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map(i => <StatCardSkeleton key={i} index={i} />)}
+        </div>
+        <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="h-3 w-16 rounded bg-white/[0.06]" />
+            <div className="h-3 w-10 rounded bg-white/[0.06]" />
+          </div>
+          <div className="h-1.5 rounded-full bg-white/[0.06]" />
+        </div>
+        <div className="animate-pulse h-9 rounded-[12px] bg-white/[0.04] w-full" />
+        <div className="flex gap-1">
+          {[0, 1, 2].map(i => <div key={i} className="animate-pulse h-9 w-24 rounded-[10px] bg-white/[0.04]" />)}
+        </div>
+        <div className="space-y-3">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.06] bg-[#0d0d0f] h-[72px]" style={{ animationDelay: `${i * 0.05}s` }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (!isConnected) {
     return (

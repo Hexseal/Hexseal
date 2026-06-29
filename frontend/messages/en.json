@@ -275,7 +275,7 @@
     "connect_wallet": "Connect Wallet",
     "saved_title": "Profile Saved!",
     "redirecting": "Redirecting to your profile…",
-    "ipfs_info": "Stored on IPFS — no gas required",
+    "ipfs_info": "Profile stored on server — no gas or signature needed",
     "details_section": "Profile Details",
     "fields_info": "All fields optional except display name.",
     "photo_label": "Profile Photo",
@@ -342,7 +342,7 @@
     "client_role_badge": "Client",
     "executor_role_badge": "Executor",
     "photo_ready": "Photo ready",
-    "photo_will_upload": "will upload on save",
+    "photo_will_upload": "will be compressed and uploaded on save",
     "save_success_no_photo": "Profile saved (photo upload failed)"
   },
   "deal_status": {

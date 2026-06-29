@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { useAccount, useSignMessage } from "wagmi";
+import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,12 +64,11 @@ const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://cloudflare
 type Role = 'client' | 'executor' | 'both' | '';
 const ROLE_VALS: ('client' | 'executor' | 'both')[] = ['client', 'executor', 'both'];
 
-type SaveStage = 'idle' | 'uploading-photo' | 'uploading-profile' | 'signing' | 'saving' | 'done';
+type SaveStage = 'idle' | 'uploading-photo' | 'saving' | 'done';
 
 export default function EditProfilePage() {
   const router = useRouter();
   const { address, isConnected, status } = useAccount();
-  const { signMessageAsync } = useSignMessage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const t = useTranslations();
 
@@ -213,8 +212,8 @@ export default function EditProfilePage() {
         }
       }
 
-      // Step 2: sign profile
-      setStage('signing');
+      // Step 2: publish profile
+      setStage('saving');
       const now = Math.floor(Date.now() / 1000);
       const profileData = {
         address: address.toLowerCase(),
@@ -235,24 +234,7 @@ export default function EditProfilePage() {
         updatedAt: now,
       };
 
-      const message = `Hexseal Profile\n${JSON.stringify({
-        address: profileData.address,
-        displayName: profileData.displayName,
-        bio: profileData.bio,
-        role: profileData.role,
-        specializations: profileData.specializations,
-        links: profileData.links,
-        avatarCid: profileData.avatarCid,
-        avatarUrl: profileData.avatarUrl,
-        createdAt: profileData.createdAt,
-        updatedAt: profileData.updatedAt,
-      })}\n${profileData.updatedAt}`;
-
-      const signature = await signMessageAsync({ message });
-
-      // Step 3: publish to IPFS + update index
-      setStage('saving');
-      await publishProfile({ ...profileData, signature });
+      await publishProfile(profileData);
 
       // Invalidate localStorage cache so profile view re-fetches fresh data
       try {
@@ -301,10 +283,9 @@ export default function EditProfilePage() {
 
   const stageLabel = () => {
     switch (stage) {
-      case 'uploading-photo':   return t("common.uploading") + " (1/3)…";
-      case 'signing':           return t("common.signing")   + " (2/3)…";
-      case 'saving':            return t("common.saving")    + " (3/3)…";
-      default:                  return t("profile.save_btn");
+      case 'uploading-photo': return t("common.uploading") + " (1/2)…";
+      case 'saving':          return t("common.saving")    + " (2/2)…";
+      default:                return t("profile.save_btn");
     }
   };
 
@@ -410,7 +391,7 @@ export default function EditProfilePage() {
                     </div>
                     <p className="text-[11px] text-white/30">
                       {pendingAvatarFile
-                        ? `📎 ${pendingAvatarFile.name} · ${(pendingAvatarFile.size / 1024).toFixed(0)} KB — ${t("profile.photo_will_upload")}`
+                        ? `📎 ${pendingAvatarFile.name} · ${(pendingAvatarFile.size / 1024 / 1024).toFixed(1)} MB → ${t("profile.photo_will_upload")}`
                         : t("profile.photo_info")}
                     </p>
                   </div>

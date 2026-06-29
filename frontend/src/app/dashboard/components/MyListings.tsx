@@ -612,7 +612,20 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
   };
 
   if (isLoading) {
-    return <div className="py-8 text-center text-sm text-white/30"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>;
+    return (
+      <div className="space-y-3">
+        {[0, 1, 2].map(i => (
+          <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.06] bg-[#0d0d0f] p-4 flex items-center gap-3" style={{ animationDelay: `${i * 0.05}s` }}>
+            <div className="w-8 h-8 rounded-[10px] bg-white/[0.06] flex-shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3 w-2/5 rounded bg-white/[0.07]" />
+              <div className="h-2.5 w-1/4 rounded bg-white/[0.05]" />
+            </div>
+            <div className="w-16 h-6 rounded-lg bg-white/[0.05]" />
+          </div>
+        ))}
+      </div>
+    );
   }
 
   if (services.length === 0) {
@@ -1027,7 +1040,20 @@ export function MyJobs({ address, onDealCreated, readOnly }: { address: string; 
     }
   };
 
-  if (isLoading) return <div className="py-8 text-center text-sm text-white/30"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>;
+  if (isLoading) return (
+    <div className="space-y-3">
+      {[0, 1, 2].map(i => (
+        <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.06] bg-[#0d0d0f] p-4 flex items-center gap-3" style={{ animationDelay: `${i * 0.05}s` }}>
+          <div className="w-8 h-8 rounded-[10px] bg-white/[0.06] flex-shrink-0" />
+          <div className="flex-1 space-y-2">
+            <div className="h-3 w-2/5 rounded bg-white/[0.07]" />
+            <div className="h-2.5 w-1/4 rounded bg-white/[0.05]" />
+          </div>
+          <div className="w-16 h-6 rounded-lg bg-white/[0.05]" />
+        </div>
+      ))}
+    </div>
+  );
 
   if (jobs.length === 0) {
     return (
@@ -1198,7 +1224,20 @@ export function MyClientRequests({ address }: { address: string }) {
     }
   };
 
-  if (isLoading) return <div className="py-4 text-center"><Loader2 className="w-4 h-4 animate-spin mx-auto text-white/30" /></div>;
+  if (isLoading) return (
+    <div className="space-y-3">
+      {[0, 1, 2].map(i => (
+        <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.06] bg-[#0d0d0f] p-4 flex items-center gap-3" style={{ animationDelay: `${i * 0.05}s` }}>
+          <div className="w-8 h-8 rounded-[10px] bg-white/[0.06] flex-shrink-0" />
+          <div className="flex-1 space-y-2">
+            <div className="h-3 w-2/5 rounded bg-white/[0.07]" />
+            <div className="h-2.5 w-1/4 rounded bg-white/[0.05]" />
+          </div>
+          <div className="w-16 h-6 rounded-lg bg-white/[0.05]" />
+        </div>
+      ))}
+    </div>
+  );
 
   if (requests.length === 0) {
     return <p className="text-xs text-white/25 py-3">No service requests sent yet.</p>;

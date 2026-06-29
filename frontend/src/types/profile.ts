@@ -19,7 +19,7 @@ export interface UserProfile {
   avatarUrl?: string;  // Direct URL (Storj permanent public bucket — primary)
   createdAt: number;
   updatedAt: number;
-  signature: string;
+  signature?: string;
   cid: string;
 }
 
