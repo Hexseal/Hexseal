@@ -3,16 +3,17 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 
 /**
- * File upload endpoint — relayer presign → local server storage.
+ * File upload endpoint — routes to relayer local storage.
  *
- * The relayer (Node.js/Express) handles two buckets:
- *   /files/public/presign  → permanent storage (profiles, avatars)
- *   /files/presign         → encrypted chat files, 7-day TTL
+ * Two flows:
+ *   A) Profile JSON  → PUT /files/public-put/profile-${address}.json  (deterministic key)
+ *   B) Everything else → POST /files/public/presign → PUT to uploadUrl  (random key)
  *
- * No third-party storage — everything on the relayer server.
- * NEXT_PUBLIC_RELAYER_URL must point to a running relayer instance.
+ * Deterministic keys mean no Redis index needed:
+ *   GET ${relayerUrl}/public/profile-${address}.json → profile
  *
- * Response: { cid: '', url, storjUrl, ipfsUrl: null }
+ * NEXT_PUBLIC_RELAYER_URL must point to a running relayer.
+ * ngrok-skip-browser-warning header bypasses ngrok interstitial during local dev.
  */
 
 // ─── Rate limiting ─────────────────────────────────────────────────────────────
@@ -38,6 +39,12 @@ function getClientIp(req: NextRequest): string {
   if (forwarded) return forwarded.split(',')[0].trim();
   return req.headers.get('x-real-ip') ?? 'unknown';
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const PROFILE_KEY_RE = /^profile-0x[a-f0-9]{40}\.json$/i;
+
+const NGROK_HEADERS = { 'ngrok-skip-browser-warning': 'true' };
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
@@ -72,13 +79,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ext         = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
     const contentType = file.type || 'application/octet-stream';
+    const cleanRelayer = relayerUrl.replace(/\/$/, '');
 
-    // 1. Get presigned upload URL from relayer
-    const presignRes = await fetch(`${relayerUrl}/files/public/presign`, {
+    // ── Flow A: named profile JSON ─────────────────────────────────────────────
+    // filename = profile-0x<address>.json → store at deterministic key
+    if (PROFILE_KEY_RE.test(file.name)) {
+      const key       = file.name.toLowerCase();
+      const uploadUrl = `${cleanRelayer}/files/public-put/${key}`;
+      const publicUrl = `${cleanRelayer}/public/${key}`;
+
+      const putRes = await fetch(uploadUrl, {
+        method:  'PUT',
+        body:    file,
+        headers: { 'Content-Type': contentType, ...NGROK_HEADERS },
+        signal:  AbortSignal.timeout(60_000),
+      });
+
+      if (!putRes.ok) {
+        console.error(`[ipfs/upload] Profile PUT failed: ${putRes.status}`);
+        return NextResponse.json({ error: 'Upload failed' }, { status: 502 });
+      }
+
+      return NextResponse.json({ cid: '', url: publicUrl, storjUrl: publicUrl, ipfsUrl: null });
+    }
+
+    // ── Flow B: generic file — presign then PUT ────────────────────────────────
+    const ext = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
+
+    const presignRes = await fetch(`${cleanRelayer}/files/public/presign`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...NGROK_HEADERS },
       body:    JSON.stringify({ ext, contentType }),
       signal:  AbortSignal.timeout(10_000),
     });
@@ -94,11 +125,10 @@ export async function POST(request: NextRequest) {
       publicUrl: string;
     };
 
-    // 2. Upload file to relayer
     const putRes = await fetch(uploadUrl, {
       method:  'PUT',
       body:    file,
-      headers: { 'Content-Type': contentType },
+      headers: { 'Content-Type': contentType, ...NGROK_HEADERS },
       signal:  AbortSignal.timeout(60_000),
     });
 
@@ -107,12 +137,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Upload failed' }, { status: 502 });
     }
 
-    return NextResponse.json({
-      cid:      '',
-      url:      publicUrl,
-      storjUrl: publicUrl,
-      ipfsUrl:  null,
-    });
+    return NextResponse.json({ cid: '', url: publicUrl, storjUrl: publicUrl, ipfsUrl: null });
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

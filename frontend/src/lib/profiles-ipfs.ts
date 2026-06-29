@@ -1,8 +1,3 @@
-/**
- * User Profiles IPFS Manager
- * Handles fetching, caching, and publishing profiles to IPFS via Filebase
- */
-
 import type { UserProfile } from '@/types/profile';
 import { uploadToIPFS } from '@/lib/ipfs';
 
@@ -10,23 +5,18 @@ const CACHE_PREFIX = 'hexseal-public_';
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 // Deduplicates concurrent fetchProfile calls for the same address.
-// Without this, 10 ConvoItems mounting simultaneously would fire 10 API calls
-// before any localStorage cache entry exists.
 const _inflight = new Map<string, Promise<UserProfile | null>>();
 
 /**
  * Fetch profile for a specific address.
- * Uses server-side API route (/api/profiles) to read the Filebase S3 index
- * directly — avoids CORS issues and broken IPFS gateway key-lookups.
+ * Uses /api/profiles which reads directly from the relayer server.
  */
 export async function fetchProfile(address: string): Promise<UserProfile | null> {
   const normalizedAddress = address.toLowerCase();
 
-  // Check localStorage cache first (fast path after first load or own profile)
   const cached = getCachedProfile(normalizedAddress);
   if (cached) return cached;
 
-  // Return in-flight promise if this address is already being fetched
   const inflight = _inflight.get(normalizedAddress);
   if (inflight) return inflight;
 
@@ -41,50 +31,38 @@ export async function fetchProfile(address: string): Promise<UserProfile | null>
 }
 
 /**
- * Publish a profile and update the index.
- *
- * Storage strategy:
- *   PRIMARY   — Storj via relayer presign  → permanent URL stored in Redis
- *   SECONDARY — Lighthouse IPFS pin        → optional, for decentralised redundancy
- *
- * Redis stores the best available ref:
- *   1. Storj URL  (preferred — fast, permanent, no IPFS dependency)
- *   2. IPFS CID   (fallback when Storj is unavailable)
- *
- * LIGHTHOUSE_API_KEY is NOT required — if absent, profiles work via Storj only.
+ * Publish a profile to the relayer server.
+ * Stored at a deterministic URL: /public/profile-${address}.json
+ * No IPFS, no Redis, no index needed.
  */
 export async function publishProfile(profileData: Omit<UserProfile, 'cid'>): Promise<string> {
-  // 1. Upload profile JSON (Storj primary, Lighthouse secondary)
+  const address = profileData.address.toLowerCase();
+  const filename = `profile-${address}.json`;
+
   const profileJson = JSON.stringify(profileData);
   const profileBlob = new Blob([profileJson], { type: 'application/json' });
-  const profileResult = await uploadToIPFS(profileBlob, `profile-${profileData.address}-${Date.now()}.json`);
 
-  // Use Storj URL if available (permanent, no IPFS gateway required).
-  // Fall back to IPFS CID if only Lighthouse succeeded.
-  const profileRef = profileResult.storjUrl || profileResult.cid;
-  if (!profileRef) {
-    throw new Error('Profile upload failed: no storage backend returned a valid reference');
+  const profileResult = await uploadToIPFS(profileBlob, filename);
+
+  const profileUrl = profileResult.storjUrl || profileResult.url;
+  if (!profileUrl) {
+    throw new Error('Profile upload failed: no URL returned from server');
   }
 
-  // 2. Update index via server-side API
-  const res = await fetch('/api/profiles', {
+  // POST to /api/profiles is now a no-op but kept for compatibility
+  await fetch('/api/profiles', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: profileData.address.toLowerCase(), profileCid: profileRef }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'index update failed' })) as { error?: string };
-    throw new Error(err.error || 'Failed to update profile index');
-  }
+    body: JSON.stringify({ address, profileCid: profileUrl }),
+  }).catch(() => {});
 
-  // 3. Cache locally (use the ref as cid field — works for both URLs and CIDs)
-  cacheProfile(profileData.address.toLowerCase(), { ...profileData, cid: profileRef });
+  cacheProfile(address, { ...profileData, cid: profileUrl });
 
-  return profileRef;
+  return profileUrl;
 }
 
 
-// --- Cache helpers ---
+// ─── Cache helpers ────────────────────────────────────────────────────────────
 
 function getCachedProfile(address: string): UserProfile | null {
   try {
@@ -107,6 +85,6 @@ function cacheProfile(address: string, profile: UserProfile): void {
     const key = `${CACHE_PREFIX}${address}`;
     localStorage.setItem(key, JSON.stringify({ data: profile, timestamp: Date.now() }));
   } catch {
-    // Ignore cache errors
+    // ignore
   }
 }
