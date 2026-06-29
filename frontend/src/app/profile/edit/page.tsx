@@ -234,10 +234,11 @@ export default function EditProfilePage() {
         updatedAt: now,
       };
 
-      // Step 3: sign profile JSON — relayer verifies signer === profile address
+      // Step 3: sign canonical message — relayer verifies signer === profile address
       setStage('signing');
-      const profileJson = JSON.stringify(profileData);
-      const signature = await signMessageAsync({ message: profileJson });
+      const signature = await signMessageAsync({
+        message: `hexseal:profile:update:${address.toLowerCase()}`,
+      });
 
       setStage('saving');
       await publishProfile(profileData, signature);

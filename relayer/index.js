@@ -575,19 +575,12 @@ app.put('/files/public-put/:key', async (req, res) => {
       return res.status(401).json({ error: 'Profile upload requires X-Profile-Signature header' });
     }
 
-    const chunks = [];
-    try {
-      for await (const chunk of req) chunks.push(chunk);
-    } catch {
-      return res.status(400).json({ error: 'Body read error' });
-    }
-    const body    = Buffer.concat(chunks);
-    const bodyStr = body.toString('utf8');
-
-    // Verify: ecrecover(hashMessage(profileJson), signature) === address
+    // Verify: ecrecover(hashMessage("hexseal:profile:update:<address>"), sig) === address
+    // Canonical message avoids body-serialization issues (express.json consumes the stream).
+    const message = `hexseal:profile:update:${address}`;
     let recovered;
     try {
-      recovered = ethers.recoverAddress(ethers.hashMessage(bodyStr), sig).toLowerCase();
+      recovered = ethers.recoverAddress(ethers.hashMessage(message), sig).toLowerCase();
     } catch {
       return res.status(400).json({ error: 'Invalid signature format' });
     }
@@ -596,7 +589,9 @@ app.put('/files/public-put/:key', async (req, res) => {
       return res.status(403).json({ error: 'Signature mismatch: signer does not match profile address' });
     }
 
-    fs.writeFile(path.join(DIR_PUBLIC, key), body, (err) => {
+    // Body was already parsed by express.json() — write it back as JSON
+    const bodyStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    fs.writeFile(path.join(DIR_PUBLIC, key), bodyStr, 'utf8', (err) => {
       if (err) { console.error('[files/public-put]', err.message); return res.status(500).json({ error: 'Write error' }); }
       res.status(200).end();
     });
