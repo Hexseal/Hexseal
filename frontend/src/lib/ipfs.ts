@@ -17,16 +17,20 @@ export interface IPFSUploadResult {
 }
 
 /**
- * Upload content to IPFS via Storacha.
- * Always routes through the API — never exposes keys to the browser.
+ * Upload content to own relayer server storage.
+ * Always routes through the API — never exposes server URLs to the browser.
+ * For profile uploads, pass `signature` (eth_sign of the JSON) so the relayer
+ * can verify the uploader owns the wallet matching the profile address.
  */
 export async function uploadToIPFS(
   content: string | Blob,
   filename: string = 'content.json',
+  options?: { signature?: string },
 ): Promise<IPFSUploadResult> {
   const formData = new FormData();
   const blob = content instanceof Blob ? content : new Blob([content], { type: 'application/json' });
   formData.append('file', blob, filename);
+  if (options?.signature) formData.append('signature', options.signature);
 
   const response = await fetch('/api/ipfs/upload', {
     method: 'POST',

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { useAccount } from "wagmi";
+import { useAccount, useSignMessage } from "wagmi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,11 +64,12 @@ const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://cloudflare
 type Role = 'client' | 'executor' | 'both' | '';
 const ROLE_VALS: ('client' | 'executor' | 'both')[] = ['client', 'executor', 'both'];
 
-type SaveStage = 'idle' | 'uploading-photo' | 'saving' | 'done';
+type SaveStage = 'idle' | 'uploading-photo' | 'signing' | 'saving' | 'done';
 
 export default function EditProfilePage() {
   const router = useRouter();
   const { address, isConnected, status } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const t = useTranslations();
 
@@ -212,8 +213,7 @@ export default function EditProfilePage() {
         }
       }
 
-      // Step 2: publish profile
-      setStage('saving');
+      // Step 2: build profile data, sign, then upload
       const now = Math.floor(Date.now() / 1000);
       const profileData = {
         address: address.toLowerCase(),
@@ -234,7 +234,13 @@ export default function EditProfilePage() {
         updatedAt: now,
       };
 
-      await publishProfile(profileData);
+      // Step 3: sign profile JSON — relayer verifies signer === profile address
+      setStage('signing');
+      const profileJson = JSON.stringify(profileData);
+      const signature = await signMessageAsync({ message: profileJson });
+
+      setStage('saving');
+      await publishProfile(profileData, signature);
 
       // Invalidate localStorage cache so profile view re-fetches fresh data
       try {
@@ -283,8 +289,9 @@ export default function EditProfilePage() {
 
   const stageLabel = () => {
     switch (stage) {
-      case 'uploading-photo': return t("common.uploading") + " (1/2)…";
-      case 'saving':          return t("common.saving")    + " (2/2)…";
+      case 'uploading-photo': return t("common.uploading") + " (1/3)…";
+      case 'signing':         return t("common.signing")   + " (2/3)…";
+      case 'saving':          return t("common.saving")    + " (3/3)…";
       default:                return t("profile.save_btn");
     }
   };

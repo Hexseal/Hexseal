@@ -84,15 +84,25 @@ export async function POST(request: NextRequest) {
 
     // ── Flow A: named profile JSON ─────────────────────────────────────────────
     // filename = profile-0x<address>.json → store at deterministic key
+    // Requires X-Profile-Signature header (forwarded from client via FormData field)
     if (PROFILE_KEY_RE.test(file.name)) {
       const key       = file.name.toLowerCase();
       const uploadUrl = `${cleanRelayer}/files/public-put/${key}`;
       const publicUrl = `${cleanRelayer}/public/${key}`;
 
+      const signature = formData.get('signature') as string | null;
+      if (!signature) {
+        return NextResponse.json({ error: 'Profile upload requires a wallet signature' }, { status: 400 });
+      }
+
       const putRes = await fetch(uploadUrl, {
         method:  'PUT',
         body:    file,
-        headers: { 'Content-Type': contentType, ...NGROK_HEADERS },
+        headers: {
+          'Content-Type': contentType,
+          'X-Profile-Signature': signature,
+          ...NGROK_HEADERS,
+        },
         signal:  AbortSignal.timeout(60_000),
       });
 

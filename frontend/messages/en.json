@@ -275,7 +275,7 @@
     "connect_wallet": "Connect Wallet",
     "saved_title": "Profile Saved!",
     "redirecting": "Redirecting to your profile…",
-    "ipfs_info": "Profile stored on server — no gas or signature needed",
+    "ipfs_info": "Profile stored on server — wallet signature required, no gas",
     "details_section": "Profile Details",
     "fields_info": "All fields optional except display name.",
     "photo_label": "Profile Photo",

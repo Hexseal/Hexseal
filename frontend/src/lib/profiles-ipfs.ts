@@ -33,16 +33,22 @@ export async function fetchProfile(address: string): Promise<UserProfile | null>
 /**
  * Publish a profile to the relayer server.
  * Stored at a deterministic URL: /public/profile-${address}.json
- * No IPFS, no Redis, no index needed.
+ *
+ * `signature` — eth_sign of the profile JSON string, used by the relayer to
+ * verify the uploader owns the wallet matching the profile address.
+ * Obtain via wagmi signMessage({ message: JSON.stringify(profileData) }).
  */
-export async function publishProfile(profileData: Omit<UserProfile, 'cid'>): Promise<string> {
+export async function publishProfile(
+  profileData: Omit<UserProfile, 'cid'>,
+  signature: string,
+): Promise<string> {
   const address = profileData.address.toLowerCase();
   const filename = `profile-${address}.json`;
 
   const profileJson = JSON.stringify(profileData);
   const profileBlob = new Blob([profileJson], { type: 'application/json' });
 
-  const profileResult = await uploadToIPFS(profileBlob, filename);
+  const profileResult = await uploadToIPFS(profileBlob, filename, { signature });
 
   const profileUrl = profileResult.storjUrl || profileResult.url;
   if (!profileUrl) {

@@ -557,10 +557,53 @@ app.post('/files/public/presign', (req, res) => {
 });
 
 // ── Public file upload (streaming) ────────────────────────────────────────────
+// Profile JSONs (profile-0x<addr>.json) require an Ethereum signature from
+// the profile owner to prevent unauthorized overwrites.
 
-app.put('/files/public-put/:key', (req, res) => {
+const PROFILE_KEY_RE = /^profile-(0x[a-f0-9]{40})\.json$/i;
+
+app.put('/files/public-put/:key', async (req, res) => {
   const key = safeKey(req.params.key);
   if (!key) return res.status(400).json({ error: 'Invalid key' });
+
+  const profileMatch = key.match(PROFILE_KEY_RE);
+  if (profileMatch) {
+    // ── Signed profile upload: buffer → verify → write ─────────────────────
+    const address = profileMatch[1].toLowerCase();
+    const sig     = req.headers['x-profile-signature'];
+    if (!sig) {
+      return res.status(401).json({ error: 'Profile upload requires X-Profile-Signature header' });
+    }
+
+    const chunks = [];
+    try {
+      for await (const chunk of req) chunks.push(chunk);
+    } catch {
+      return res.status(400).json({ error: 'Body read error' });
+    }
+    const body    = Buffer.concat(chunks);
+    const bodyStr = body.toString('utf8');
+
+    // Verify: ecrecover(hashMessage(profileJson), signature) === address
+    let recovered;
+    try {
+      recovered = ethers.recoverAddress(ethers.hashMessage(bodyStr), sig).toLowerCase();
+    } catch {
+      return res.status(400).json({ error: 'Invalid signature format' });
+    }
+    if (recovered !== address) {
+      console.warn(`[files/public-put] sig mismatch: recovered=${recovered} expected=${address}`);
+      return res.status(403).json({ error: 'Signature mismatch: signer does not match profile address' });
+    }
+
+    fs.writeFile(path.join(DIR_PUBLIC, key), body, (err) => {
+      if (err) { console.error('[files/public-put]', err.message); return res.status(500).json({ error: 'Write error' }); }
+      res.status(200).end();
+    });
+    return;
+  }
+
+  // ── Non-profile files: stream directly ─────────────────────────────────
   const ws = fs.createWriteStream(path.join(DIR_PUBLIC, key));
   req.pipe(ws);
   ws.on('finish', () => res.status(200).end());
