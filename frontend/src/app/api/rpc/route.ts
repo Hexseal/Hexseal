@@ -5,10 +5,10 @@ import { appChain } from '@/config/chain';
 // Only RPC_URL is used (no NEXT_PUBLIC_ vars — those may point to broken endpoints).
 const PRIVATE_RPC = process.env.RPC_URL ?? null;
 
-// Official Base public endpoints — always work, no auth required.
-const PUBLIC_RPC = appChain.id === 8453
-  ? 'https://mainnet.base.org'
-  : 'https://sepolia.base.org';
+// Public fallback RPC endpoints tried in order if private RPC fails.
+const PUBLIC_RPCS: string[] = appChain.id === 8453
+  ? ['https://mainnet.base.org', 'https://base-rpc.publicnode.com']
+  : ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com', 'https://base-sepolia.blockpi.network/v1/rpc/public'];
 
 async function callRpc(url: string, body: unknown, timeoutMs = 6_000): Promise<Response> {
   return fetch(url, {
@@ -30,8 +30,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Try private RPC first (6 s); auto-fallback to public if it fails or returns non-2xx.
-  // Keep total latency under ~14 s so Vercel's 30 s serverless limit is never hit.
+  // Try private RPC first (6 s); auto-fallback to public pool if it fails.
+  // Total budget: 6 s private + up to 3 × 4 s public = 18 s < Vercel 30 s limit.
   if (PRIVATE_RPC) {
     try {
       const res = await callRpc(PRIVATE_RPC, body, 6_000);
@@ -40,20 +40,26 @@ export async function POST(req: NextRequest) {
       }
       console.warn(`[/api/rpc] Private RPC returned ${res.status}, falling back to public`);
     } catch {
-      // Timeout / network error → fall through to public
+      // Timeout / network error → fall through to public pool
     }
   }
 
-  // Public fallback (8 s)
-  try {
-    const res = await callRpc(PUBLIC_RPC, body, 8_000);
-    const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      { jsonrpc: '2.0', error: { code: -32603, message: `RPC proxy error: ${msg}` }, id: null },
-      { status: 502 },
-    );
+  // Try each public fallback in order (4 s each — short enough to stay in budget)
+  let lastErr = 'All RPC endpoints failed';
+  for (const url of PUBLIC_RPCS) {
+    try {
+      const res = await callRpc(url, body, 4_000);
+      if (res.ok) {
+        return NextResponse.json(await res.json());
+      }
+      lastErr = `${url} returned ${res.status}`;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
   }
+
+  return NextResponse.json(
+    { jsonrpc: '2.0', error: { code: -32603, message: `RPC proxy error: ${lastErr}` }, id: null },
+    { status: 502 },
+  );
 }

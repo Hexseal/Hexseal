@@ -4,7 +4,8 @@
  * useXmtpSession — background XMTP session manager.
  *
  * Mounted once globally in client-layout. Handles:
- *  • Silent auto-restore: if localStorage flag set + OPFS DB exists → init without signing
+ *  • Silent auto-restore: OPFS DB is source of truth — if DB exists, init without signing
+ *    even if localStorage flag was accidentally cleared (bug or address switch race).
  *  • OPFS gone (browser cleared storage): clear flag, user sees Enable prompt
  *  • Cleanup: clears session when wallet disconnects or address changes
  *
@@ -54,25 +55,28 @@ export function useXmtpSession() {
 
     const addr = address.toLowerCase();
     if (triedRef.current.has(addr)) return; // already attempted this session
-
-    // No valid session registered — user hasn't enabled messaging
-    if (localStorage.getItem(registeredKey(addr)) !== '1') return;
-
     triedRef.current.add(addr);
 
     (async () => {
       try {
-        // Only init silently if OPFS DB exists — if it's gone (browser cleared storage),
-        // Client.create() would need a wallet signature, which we must not trigger silently.
+        // OPFS is the source of truth — if the DB exists, Client.create() restores without
+        // a wallet signature, regardless of the localStorage flag state.
+        // This handles the case where the flag was accidentally cleared (old bug, address
+        // switch race, etc.) while the user's OPFS keys are still intact.
         const dbExists = await checkXmtpDbExists(addr);
         if (!dbExists) {
-          // OPFS gone — clear flag so user sees Enable prompt instead of a phantom session
-          clearXmtpSession(addr);
+          // No OPFS DB — user never enabled or browser cleared storage.
+          // If localStorage flag is set somehow, clean it up (phantom session).
+          if (localStorage.getItem(registeredKey(addr)) === '1') {
+            clearXmtpSession(addr);
+          }
           return;
         }
 
-        // OPFS intact + flag set → restore client without any wallet signature
+        // OPFS intact → restore client without any wallet signature
         await initXmtpClient(walletClient);
+        // Restore localStorage flag in case it was cleared — next reload skips OPFS check
+        localStorage.setItem(registeredKey(addr), '1');
         _notifyEnabled(); // update any mounted useXmtpStatus instances
       } catch {
         // Transient init error — do NOT clear session or remove localStorage flag.
