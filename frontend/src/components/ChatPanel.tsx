@@ -269,6 +269,9 @@ interface ChatPanelProps {
   recipientAddress: string;
   onBack?: () => void;
   dealContext?: DealContext;
+  // When true, use deal XMTP group for messages (deal page).
+  // When false (default), always show DM — preserves pre-deal history.
+  useDealGroupChat?: boolean;
 }
 
 // Agreement.Status enum (7 states) — from getDetails().status_ (uint8 0-6)
@@ -292,13 +295,14 @@ const AGR_STATUS_KEY: Record<number, string> = {
   6: 'deal_status.refunded',
 };
 
-export function ChatPanel({ recipientAddress, onBack, dealContext }: ChatPanelProps) {
+export function ChatPanel({ recipientAddress, onBack, dealContext, useDealGroupChat: showGroupChat = false }: ChatPanelProps) {
   const { address } = useAccount();
   const t = useTranslations();
   const directChat = useDirectChat(recipientAddress);
+  // groupChat runs in background even when not displayed — keeps XMTP group synced for bot notifications.
   const groupChat  = useDealGroupChat(dealContext?.agreementAddr ?? '');
   const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup } =
-    dealContext ? groupChat : directChat;
+    (showGroupChat && dealContext) ? groupChat : directChat;
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
