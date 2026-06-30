@@ -420,6 +420,10 @@ app.get('/dispute-log/:dealId', async (req, res) => {
   }
 });
 
+// ⚠️  RELAY IS SPLIT: frontend currently calls Vercel /api/relay/route.ts, NOT this endpoint.
+// This endpoint is unused until VPS migration. On VPS: /api/relay/route.ts becomes a thin
+// proxy to this endpoint (localhost:3001/relay) and duplication disappears.
+// Any change to gas cap or relay logic must also be applied to frontend/src/app/api/relay/route.ts.
 app.post('/relay', async (req, res) => {
   try {
     const ip = clientIp(req);

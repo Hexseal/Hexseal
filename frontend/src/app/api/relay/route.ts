@@ -1,3 +1,8 @@
+// ⚠️  RELAY IS SPLIT: this Vercel route is the REAL relay (used by frontend).
+// relayer/index.js also has relay logic but is NOT called for meta-transactions.
+// Any change to gas cap / signature logic / error handling must be applied HERE.
+// On VPS migration: convert this file to a thin proxy → localhost:3001/relay,
+// move all logic to relayer/index.js, and the duplication disappears.
 import { NextRequest, NextResponse } from 'next/server';
 import {
   createPublicClient,
