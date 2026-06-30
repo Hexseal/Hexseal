@@ -3,21 +3,32 @@
 /**
  * useXmtpStatus — tracks XMTP registration for the current user.
  *
- * • isEnabled  — true when user has enabled messaging (persists until explicit disable)
- * • isEnabling — spinner flag while Client.create() is running
- * • enable()   — prompts wallet signature on first use; silent restore if OPFS keys exist
- * • disable()  — clears the flag (OPFS keys stay, so re-enable won't require re-signing)
+ * • isEnabled       — true when user has enabled messaging (persists until explicit disable)
+ * • isAutoRestoring — true while background session restore is in progress (hide banner)
+ * • isEnabling      — spinner flag while Client.create() is running (user clicked Enable)
+ * • enable()        — prompts wallet signature on first use; silent restore if OPFS keys exist
+ * • disable()       — clears the flag (OPFS keys stay, so re-enable won't require re-signing)
  */
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { useWalletClient } from 'wagmi';
-import { initXmtpClient, clearXmtpSession } from '@/lib/xmtp';
+import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached } from '@/lib/xmtp';
 
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
-// Module-level pub-sub: when any hook instance calls enable(), all others update too.
+// ── Pub-sub: enabled ──────────────────────────────────────────────────────────
 const _enabledListeners: Set<() => void> = new Set();
 export function _notifyEnabled() { _enabledListeners.forEach(fn => fn()); }
+
+// ── Pub-sub: auto-restore progress ────────────────────────────────────────────
+// useXmtpSession sets this to true when starting background restore so the
+// banner is suppressed instead of flashing at the user during init.
+let _isRestoringGlobal = false;
+const _restoringListeners: Set<(v: boolean) => void> = new Set();
+export function _setAutoRestoring(v: boolean) {
+  _isRestoringGlobal = v;
+  _restoringListeners.forEach(fn => fn(v));
+}
 
 function readIsEnabled(addr: string): boolean {
   return localStorage.getItem(registeredKey(addr)) === '1';
@@ -35,6 +46,16 @@ export function useXmtpStatus() {
     );
     if (hasAny) setIsEnabled(true);
   }, []);
+
+  // isAutoRestoring: true while useXmtpSession is doing background OPFS restore.
+  // Initialise from the global flag so components that mount mid-restore don't flash.
+  const [isAutoRestoring, setIsAutoRestoring] = useState(_isRestoringGlobal);
+  useEffect(() => {
+    const update = (v: boolean) => setIsAutoRestoring(v);
+    _restoringListeners.add(update);
+    return () => { _restoringListeners.delete(update); };
+  }, []);
+
   const [isEnabling, setIsEnabling] = useState(false);
   const [signStep,   setSignStep]   = useState(0);
   const [error,      setError]      = useState<string | null>(null);
@@ -46,14 +67,29 @@ export function useXmtpStatus() {
     // Only act once we actually have an address.
     if (!addr) return;
 
-    setIsEnabled(readIsEnabled(addr));
+    const lc = addr.toLowerCase();
+    if (readIsEnabled(lc)) {
+      setIsEnabled(true);
+    } else {
+      // localStorage key missing — check if the XMTP client is already in memory
+      // (initialized earlier this session by useXmtpSession in the layout). If so,
+      // restore the key immediately without re-signing. This prevents the banner from
+      // appearing when navigating back to /chat after the layout already did the init.
+      const cached = getXmtpClientIfCached(lc);
+      if (cached) {
+        localStorage.setItem(registeredKey(lc), '1');
+        setIsEnabled(true);
+      } else {
+        setIsEnabled(false);
+      }
+    }
 
-    const refresh = () => setIsEnabled(readIsEnabled(addr));
+    const refresh = () => setIsEnabled(readIsEnabled(lc));
     _enabledListeners.add(refresh);
 
     // React to clearXmtpSession() called from useXmtpSession or elsewhere
     const onCleared = (e: Event) => {
-      if ((e as CustomEvent).detail === addr.toLowerCase()) refresh();
+      if ((e as CustomEvent).detail === lc) refresh();
     };
     window.addEventListener('hexseal:xmtp-session-cleared', onCleared);
 
@@ -106,5 +142,5 @@ export function useXmtpStatus() {
     // readIsEnabled will return false → setIsEnabled(false) via the 'hexseal:xmtp-session-cleared' event
   }, [walletClient]);
 
-  return { isEnabled, isEnabling, signStep, error, enable, disable };
+  return { isEnabled, isAutoRestoring, isEnabling, signStep, error, enable, disable };
 }

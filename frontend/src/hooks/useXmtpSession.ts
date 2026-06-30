@@ -19,7 +19,7 @@ import {
   checkXmtpDbExists,
   clearXmtpSession,
 } from '@/lib/xmtp';
-import { _notifyEnabled } from './useXmtpStatus';
+import { _notifyEnabled, _setAutoRestoring } from './useXmtpStatus';
 
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
@@ -57,6 +57,10 @@ export function useXmtpSession() {
     if (triedRef.current.has(addr)) return; // already attempted this session
     triedRef.current.add(addr);
 
+    // Signal restore in progress — suppresses the "Enable Messaging" banner while
+    // we silently re-init. Without this the banner flashes for 1-3 seconds on every load.
+    _setAutoRestoring(true);
+
     (async () => {
       try {
         // OPFS is the source of truth — if the DB exists, Client.create() restores without
@@ -70,6 +74,7 @@ export function useXmtpSession() {
           if (localStorage.getItem(registeredKey(addr)) === '1') {
             clearXmtpSession(addr);
           }
+          _setAutoRestoring(false);
           return;
         }
 
@@ -82,6 +87,8 @@ export function useXmtpSession() {
         // Transient init error — do NOT clear session or remove localStorage flag.
         // Clearing would force the user to re-sign on every transient network hiccup.
         // The chat hooks will show an error state; user can retry by reloading.
+      } finally {
+        _setAutoRestoring(false);
       }
     })();
   }, [address, walletClient, isConnected]);

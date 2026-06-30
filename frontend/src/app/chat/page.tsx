@@ -212,7 +212,7 @@ function ChatHubPageInner() {
   const searchParams = useSearchParams();
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
-  const { isEnabled: xmtpEnabled }   = useXmtpStatus();
+  const { isEnabled: xmtpEnabled, isAutoRestoring: xmtpRestoring } = useXmtpStatus();
   const { conversations, isLoading, error, reload } = useConversations(xmtpEnabled);
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
@@ -356,6 +356,16 @@ function ChatHubPageInner() {
   }
 
   if (!xmtpEnabled) {
+    // While background auto-restore is running, show a neutral loading state instead
+    // of the "Enable Messaging" banner — the banner would disappear in 1-3 s anyway
+    // and asking users to click every reload is confusing.
+    if (xmtpRestoring) {
+      return (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+        </div>
+      );
+    }
     return (
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-md">
