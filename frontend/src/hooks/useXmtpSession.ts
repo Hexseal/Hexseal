@@ -75,8 +75,9 @@ export function useXmtpSession() {
         await initXmtpClient(walletClient);
         _notifyEnabled(); // update any mounted useXmtpStatus instances
       } catch {
-        // Unexpected error — clear session so user can re-enable cleanly
-        clearXmtpSession(addr);
+        // Transient init error — do NOT clear session or remove localStorage flag.
+        // Clearing would force the user to re-sign on every transient network hiccup.
+        // The chat hooks will show an error state; user can retry by reloading.
       }
     })();
   }, [address, walletClient, isConnected]);

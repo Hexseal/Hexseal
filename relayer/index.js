@@ -435,7 +435,7 @@ app.post('/relay', async (req, res) => {
       return res.status(400).json({ error: 'Invalid address in from/to' });
     }
 
-    const MAX_GAS = 4_000_000n;
+    const MAX_GAS = 8_000_000n; // Agreement deployment (~4.6M) × 1.3 buffer + forwarder overhead
     if (BigInt(gas) > MAX_GAS) {
       return res.status(400).json({ error: `gas exceeds maximum (${MAX_GAS})` });
     }

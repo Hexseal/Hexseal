@@ -59,11 +59,16 @@ export function useDealGroupChat(agreementAddr: string) {
 
   useEffect(() => {
     if (!walletClient || !agreementAddr || !isEnabled) {
-      if (!isEnabled) { setIsLoading(false); setNeedsSetup(true); }
+      // Only show "enable messaging" banner when wallet IS connected but XMTP is not enabled.
+      // Don't show while wallet is still connecting (walletClient is null) — that would
+      // flash the banner on every page load and clear needsSetup would never fire.
+      if (walletClient && !isEnabled) { setIsLoading(false); setNeedsSetup(true); }
       return;
     }
     if (!clientAddr || !executorAddr) return;
 
+    // All conditions met — clear any stale needsSetup state before initialising.
+    setNeedsSetup(false);
     let cancelled = false;
     setStreamDead(false);
 

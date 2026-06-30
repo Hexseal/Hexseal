@@ -10,12 +10,12 @@ const PUBLIC_RPC = appChain.id === 8453
   ? 'https://mainnet.base.org'
   : 'https://sepolia.base.org';
 
-async function callRpc(url: string, body: unknown): Promise<Response> {
+async function callRpc(url: string, body: unknown, timeoutMs = 6_000): Promise<Response> {
   return fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify(body),
-    signal:  AbortSignal.timeout(15_000),
+    signal:  AbortSignal.timeout(timeoutMs),
   });
 }
 
@@ -30,23 +30,23 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Try private RPC first; auto-fallback to public if it fails or returns non-2xx.
+  // Try private RPC first (6 s); auto-fallback to public if it fails or returns non-2xx.
+  // Keep total latency under ~14 s so Vercel's 30 s serverless limit is never hit.
   if (PRIVATE_RPC) {
     try {
-      const res = await callRpc(PRIVATE_RPC, body);
+      const res = await callRpc(PRIVATE_RPC, body, 6_000);
       if (res.ok) {
         return NextResponse.json(await res.json());
       }
-      // Non-2xx from private RPC → fall through to public
       console.warn(`[/api/rpc] Private RPC returned ${res.status}, falling back to public`);
     } catch {
       // Timeout / network error → fall through to public
     }
   }
 
-  // Public fallback
+  // Public fallback (8 s)
   try {
-    const res = await callRpc(PUBLIC_RPC, body);
+    const res = await callRpc(PUBLIC_RPC, body, 8_000);
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (err) {
