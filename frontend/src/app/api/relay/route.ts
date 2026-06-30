@@ -50,11 +50,11 @@ const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,ui
 
 /**
  * Maximum gas units allowed in a single ForwardRequest.
- * 6 M covers acceptApplicant / hireAndCreateDeal / deployAndFund
- * which each deploy an Agreement contract (≈1.5–2.5 M) × 1.3 estimation buffer.
+ * Agreement deployment (acceptApplicant / acceptRequest / deployAndFund) costs ≈4.6–5 M gas.
+ * With 1.3× estimation buffer that's ≈6–6.5 M, so cap at 8 M to give headroom.
  * Rate limiting (10 req/min) prevents relay ETH drain.
  */
-const MAX_FORWARD_GAS = 6_000_000n;
+const MAX_FORWARD_GAS = 8_000_000n;
 
 // ─── Rate limit: 10 req/min per wallet address (Upstash Redis) ───────────────
 // Uses sliding window algorithm, works correctly across serverless cold starts.
