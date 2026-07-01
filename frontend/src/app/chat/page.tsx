@@ -78,12 +78,15 @@ function formatTime(ts: number) {
 
 // ─── Conversation item ─────────────────────────────────────────────────────────
 
+// 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
 const DEAL_STATUS_CLS: Record<number, string> = {
-  0: 'text-violet-400/60',
-  1: 'text-green-400/60',
-  2: 'text-white/25',
-  3: 'text-red-400/60',
-  4: 'text-purple-400/60',
+  0: 'text-white/40',
+  1: 'text-sky-400/70',
+  2: 'text-green-400/70',
+  3: 'text-white/30',
+  4: 'text-red-400/70',
+  5: 'text-white/30',
+  6: 'text-white/30',
 };
 
 const ConvoItem = memo(function ConvoItem({
@@ -110,7 +113,7 @@ const ConvoItem = memo(function ConvoItem({
   );
   const hasUnread = !lastFromMe && !isSeen && lastAt > seenAt && lastAt > 0;
 
-  const dsLabel = dealCtx ? t(`deal_status.${['active','completed','refunded','disputed','resolved'][dealCtx.status] ?? 'active'}` as Parameters<typeof t>[0]) : null;
+  const dsLabel = dealCtx ? t(`deal_status.${(['created','funded','active','completed','disputed','resolved','refunded'] as const)[dealCtx.status] ?? 'active'}` as Parameters<typeof t>[0]) : null;
   const dsCls   = dealCtx ? (DEAL_STATUS_CLS[dealCtx.status] ?? 'text-white/30') : null;
 
   return (
@@ -199,7 +202,8 @@ const ConvoItem = memo(function ConvoItem({
 const DealLinkItem = memo(function DealLinkItem({ deal }: { deal: ActiveDeal }) {
   const t = useTranslations();
   const { displayName, avatarUrl } = useProfile(deal.peerAddress);
-  const dsLabel = t(`deal_status.${['active','completed','refunded','disputed','resolved'][deal.status] ?? 'active'}` as Parameters<typeof t>[0]);
+  const STATUS_KEYS = ['created','funded','active','completed','disputed','resolved','refunded'] as const;
+  const dsLabel = t(`deal_status.${STATUS_KEYS[deal.status] ?? 'active'}` as Parameters<typeof t>[0]);
   const dsCls   = DEAL_STATUS_CLS[deal.status] ?? 'text-white/30';
   return (
     <Link
@@ -346,11 +350,12 @@ function ChatHubPageInner() {
     return map;
   }, [clientJobIds, jobResults]);
 
-  // Active deals (status 0=ACTIVE or 3=DISPUTED) shown as deal chat links in sidebar
+  // Open deals: 0=Created 1=Funded 2=Active 4=Disputed (exclude 3=Completed 5=Resolved 6=Refunded)
   const activeDeals = useMemo<ActiveDeal[]>(() => {
+    const isOpen = (s: number) => s === 0 || s === 1 || s === 2 || s === 4;
     const result: ActiveDeal[] = [];
     for (const d of clientDeals ?? []) {
-      if (d.status === 0 || d.status === 3) {
+      if (isOpen(d.status)) {
         const jobCtx = agreementJobMap.get(d.agreement.toLowerCase());
         result.push({
           agreement: d.agreement,
@@ -362,7 +367,7 @@ function ChatHubPageInner() {
       }
     }
     for (const d of executorDeals ?? []) {
-      if (d.status === 0 || d.status === 3) {
+      if (isOpen(d.status)) {
         result.push({
           agreement: d.agreement,
           role: 'executor',
