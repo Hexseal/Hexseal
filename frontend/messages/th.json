@@ -524,7 +524,8 @@
     "e2e_notice": "E2E encrypted · expires in 7 days",
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
-    "stream_dead": "Connection lost — new messages not arriving"
+    "stream_dead": "Connection lost — new messages not arriving",
+    "deal_chats": "แชทดีล"
   },
   "messaging": {
     "enabled_title": "เปิดใช้งานระบบข้อความแล้ว",

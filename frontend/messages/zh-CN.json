@@ -524,7 +524,8 @@
     "e2e_notice": "E2E encrypted · expires in 7 days",
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
-    "stream_dead": "Connection lost — new messages not arriving"
+    "stream_dead": "Connection lost — new messages not arriving",
+    "deal_chats": "交易聊天"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

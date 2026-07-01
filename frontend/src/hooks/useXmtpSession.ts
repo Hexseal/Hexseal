@@ -7,7 +7,10 @@
  *  • Silent auto-restore: OPFS DB is source of truth — if DB exists, init without signing
  *    even if localStorage flag was accidentally cleared (bug or address switch race).
  *  • OPFS gone (browser cleared storage): clear flag, user sees Enable prompt
- *  • Cleanup: clears session when wallet disconnects or address changes
+ *  • Cleanup: clears session only on address change, NOT on wallet disconnect.
+ *    Disconnect-on-reload causes wagmi to briefly flash 'disconnected' (MetaMask+Brave
+ *    conflict). Clearing on disconnect would wipe the localStorage key and force the
+ *    banner to reappear permanently (triedRef prevents the restore from retrying).
  *
  * No TTL — session lives until user explicitly clicks "Disable Messaging".
  */
@@ -24,61 +27,37 @@ import { _notifyEnabled, _setAutoRestoring } from './useXmtpStatus';
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
 export function useXmtpSession() {
-  const { address, isConnected, status } = useAccount();
-  const { data: walletClient }           = useWalletClient();
-  const prevAddrRef      = useRef<string | undefined>(undefined);
-  const triedRef         = useRef(new Set<string>());
-  const opfsCheckedRef   = useRef(new Set<string>());
-  // Debounce timer for disconnect cleanup — MetaMask+Brave conflict causes wagmi to
-  // briefly flash 'disconnected' while the address is still known. Without debounce,
-  // clearXmtpSession fires, removes the localStorage key, and the banner re-appears
-  // on every reload even though the user never actually disconnected.
-  const disconnectTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { address, isConnected } = useAccount();
+  const { data: walletClient }   = useWalletClient();
+  const prevAddrRef    = useRef<string | undefined>(undefined);
+  const triedRef       = useRef(new Set<string>());
+  const opfsCheckedRef = useRef(new Set<string>());
 
-  // Cleanup on wallet disconnect or address switch.
-  // IMPORTANT: skip cleanup during 'reconnecting'/'connecting' — wagmi briefly sets
-  // isConnected=false while restoring the wallet session (PWA restart, page reload).
-  // Clearing the session there would force re-signing on every app open.
+  // Clear session only when the wallet address actually changes (switch wallet / sign out).
+  // Do NOT clear on disconnect status — wagmi transiently shows 'disconnected' during
+  // page reload with MetaMask+Brave, which would wipe the key and lock the banner open.
   useEffect(() => {
     const prev = prevAddrRef.current;
     const curr = address?.toLowerCase();
-
-    if (prev && prev !== curr) {
-      // Address changed — clear old address immediately, cancel any pending clear
-      if (disconnectTimer.current) { clearTimeout(disconnectTimer.current); disconnectTimer.current = null; }
-      clearXmtpSession(prev);
-    }
-
-    if (status === 'disconnected' && curr) {
-      // Debounce: MetaMask+Brave conflict causes brief 'disconnected' flash.
-      // Only clear after 6 s of continuous disconnect — real logouts stay disconnected.
-      if (!disconnectTimer.current) {
-        disconnectTimer.current = setTimeout(() => {
-          disconnectTimer.current = null;
-          clearXmtpSession(curr);
-        }, 6000);
-      }
-    } else {
-      // Connected/reconnecting — cancel any pending clear
-      if (disconnectTimer.current) { clearTimeout(disconnectTimer.current); disconnectTimer.current = null; }
-    }
-
+    if (prev && prev !== curr) clearXmtpSession(prev);
     prevAddrRef.current = curr;
-  }, [address, isConnected, status]);
+  }, [address]);
 
-  // Early OPFS check — suppress banner as soon as address is known, without waiting
-  // for walletClient. Two wallet extensions (MetaMask + Brave) can briefly delay
-  // walletClient readiness, causing the banner to flash. OPFS check doesn't need wallet.
+  // Early OPFS check — suppress the "Enable Messaging" banner immediately while the
+  // async OPFS check is in flight. Prevents a flash on every reload for existing users.
+  // If OPFS is absent (first use or storage cleared), clear the flag so the banner shows.
   useEffect(() => {
     if (!address) return;
     const addr = address.toLowerCase();
     if (opfsCheckedRef.current.has(addr)) return;
     opfsCheckedRef.current.add(addr);
 
+    // Suppress immediately — don't wait for the async result
+    if (!triedRef.current.has(addr)) _setAutoRestoring(true);
+
     checkXmtpDbExists(addr).then(exists => {
-      // Only suppress if full restore hasn't completed yet (triedRef not set).
-      // If walletClient was already ready and restore finished, don't re-suppress.
-      if (exists && !triedRef.current.has(addr)) _setAutoRestoring(true);
+      // OPFS absent and restore hasn't started → clear the suppress flag so the banner shows
+      if (!exists && !triedRef.current.has(addr)) _setAutoRestoring(false);
     });
   }, [address]);
 

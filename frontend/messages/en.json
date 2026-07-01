@@ -525,7 +525,8 @@
     "cancel_upload": "Cancel upload",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
-    "reconnect": "Reconnect"
+    "reconnect": "Reconnect",
+    "deal_chats": "Deal Chats"
   },
   "deal_bar": {
     "application_received": "Application received",

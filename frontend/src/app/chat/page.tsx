@@ -20,6 +20,14 @@ import { useTranslations } from 'next-intl';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
+interface ActiveDeal {
+  agreement: string;
+  role: 'client' | 'executor';
+  peerAddress: string;
+  status: number;
+  jobTitle?: string;
+}
+
 interface AgreementRecord {
   agreement: string;
   client: string;
@@ -186,6 +194,53 @@ const ConvoItem = memo(function ConvoItem({
   );
 });
 
+// ─── Deal link item ───────────────────────────────────────────────────────────
+
+const DealLinkItem = memo(function DealLinkItem({ deal }: { deal: ActiveDeal }) {
+  const t = useTranslations();
+  const { displayName, avatarUrl } = useProfile(deal.peerAddress);
+  const dsLabel = t(`deal_status.${['active','completed','refunded','disputed','resolved'][deal.status] ?? 'active'}` as Parameters<typeof t>[0]);
+  const dsCls   = DEAL_STATUS_CLS[deal.status] ?? 'text-white/30';
+  return (
+    <Link
+      href={`/deal/${deal.agreement}`}
+      className="w-full flex items-start gap-3 px-3 py-2.5 text-left transition-all rounded-[16px] border bg-white/[0.03] border-white/[0.04] hover:bg-white/[0.05] hover:border-white/[0.07]"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={avatarUrl ?? `https://effigy.im/a/${deal.peerAddress}.svg`}
+        alt=""
+        className="w-9 h-9 rounded-full flex-shrink-0 mt-0.5 bg-white/10 object-cover"
+        onError={(e) => {
+          const img = e.target as HTMLImageElement;
+          if (avatarUrl && img.src !== `https://effigy.im/a/${deal.peerAddress}.svg`) {
+            img.src = `https://effigy.im/a/${deal.peerAddress}.svg`;
+          }
+        }}
+      />
+      <div className="flex-1 min-w-0">
+        <span className="text-sm font-medium text-white/85 truncate block">
+          {displayName ?? shortAddr(deal.peerAddress)}
+        </span>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          {deal.role === 'client'
+            ? <Briefcase className="w-2.5 h-2.5 text-sky-400/60 flex-shrink-0" />
+            : <User      className="w-2.5 h-2.5 text-emerald-400/60 flex-shrink-0" />
+          }
+          <span className={`text-[11px] font-medium ${deal.role === 'client' ? 'text-sky-400/70' : 'text-emerald-400/70'}`}>
+            {deal.role === 'client' ? t('common.role_client') : t('common.role_executor')}
+          </span>
+          <span className="text-white/20 text-[11px]">·</span>
+          <span className={`text-[11px] ${dsCls}`}>{dsLabel}</span>
+        </div>
+        {deal.jobTitle && (
+          <p className="text-xs text-white/30 truncate mt-0.5">{deal.jobTitle}</p>
+        )}
+      </div>
+    </Link>
+  );
+});
+
 // ─── Empty chat state ─────────────────────────────────────────────────────────
 
 function EmptyState() {
@@ -290,6 +345,34 @@ function ChatHubPageInner() {
     });
     return map;
   }, [clientJobIds, jobResults]);
+
+  // Active deals (status 0=ACTIVE or 3=DISPUTED) shown as deal chat links in sidebar
+  const activeDeals = useMemo<ActiveDeal[]>(() => {
+    const result: ActiveDeal[] = [];
+    for (const d of clientDeals ?? []) {
+      if (d.status === 0 || d.status === 3) {
+        const jobCtx = agreementJobMap.get(d.agreement.toLowerCase());
+        result.push({
+          agreement: d.agreement,
+          role: 'client',
+          peerAddress: d.executor.toLowerCase(),
+          status: d.status,
+          jobTitle: jobCtx?.title,
+        });
+      }
+    }
+    for (const d of executorDeals ?? []) {
+      if (d.status === 0 || d.status === 3) {
+        result.push({
+          agreement: d.agreement,
+          role: 'executor',
+          peerAddress: d.client.toLowerCase(),
+          status: d.status,
+        });
+      }
+    }
+    return result;
+  }, [clientDeals, executorDeals, agreementJobMap]);
 
   const peerDealMap = useMemo(() => {
     const map = new Map<string, DealContext>();
@@ -524,6 +607,25 @@ function ChatHubPageInner() {
               onSelect={handleConvoClick}
             />
           ))}
+
+          {/* Active deal chats */}
+          {activeDeals.length > 0 && (
+            <>
+              {conversations.length > 0 && (
+                <div className="px-1 pt-3 pb-1">
+                  <div className="h-px bg-white/[0.06]" />
+                </div>
+              )}
+              <div className="px-2 py-1">
+                <span className="text-[10px] font-medium text-white/25 uppercase tracking-wider">
+                  {t('chat.deal_chats')}
+                </span>
+              </div>
+              {activeDeals.map(deal => (
+                <DealLinkItem key={deal.agreement} deal={deal} />
+              ))}
+            </>
+          )}
 
           {/* Spacer so last items aren't hidden under the bottom nav pill on mobile */}
           <div className="sm:hidden flex-shrink-0" style={{ height: 'calc(98px + env(safe-area-inset-bottom, 0px))' }} />
