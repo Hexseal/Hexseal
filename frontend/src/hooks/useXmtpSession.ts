@@ -26,10 +26,14 @@ const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 export function useXmtpSession() {
   const { address, isConnected, status } = useAccount();
   const { data: walletClient }           = useWalletClient();
-  const prevAddrRef    = useRef<string | undefined>(undefined);
-  const triedRef       = useRef(new Set<string>());
-  // Tracks addresses where OPFS check already ran (may precede walletClient readiness)
-  const opfsCheckedRef = useRef(new Set<string>());
+  const prevAddrRef      = useRef<string | undefined>(undefined);
+  const triedRef         = useRef(new Set<string>());
+  const opfsCheckedRef   = useRef(new Set<string>());
+  // Debounce timer for disconnect cleanup — MetaMask+Brave conflict causes wagmi to
+  // briefly flash 'disconnected' while the address is still known. Without debounce,
+  // clearXmtpSession fires, removes the localStorage key, and the banner re-appears
+  // on every reload even though the user never actually disconnected.
+  const disconnectTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cleanup on wallet disconnect or address switch.
   // IMPORTANT: skip cleanup during 'reconnecting'/'connecting' — wagmi briefly sets
@@ -40,11 +44,23 @@ export function useXmtpSession() {
     const curr = address?.toLowerCase();
 
     if (prev && prev !== curr) {
-      // Address changed — invalidate old address session
+      // Address changed — clear old address immediately, cancel any pending clear
+      if (disconnectTimer.current) { clearTimeout(disconnectTimer.current); disconnectTimer.current = null; }
       clearXmtpSession(prev);
     }
+
     if (status === 'disconnected' && curr) {
-      clearXmtpSession(curr);
+      // Debounce: MetaMask+Brave conflict causes brief 'disconnected' flash.
+      // Only clear after 6 s of continuous disconnect — real logouts stay disconnected.
+      if (!disconnectTimer.current) {
+        disconnectTimer.current = setTimeout(() => {
+          disconnectTimer.current = null;
+          clearXmtpSession(curr);
+        }, 6000);
+      }
+    } else {
+      // Connected/reconnecting — cancel any pending clear
+      if (disconnectTimer.current) { clearTimeout(disconnectTimer.current); disconnectTimer.current = null; }
     }
 
     prevAddrRef.current = curr;

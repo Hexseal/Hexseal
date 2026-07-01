@@ -10,6 +10,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from "@/config/contracts";
 import type { Abi } from "viem";
 import { fetchProfile } from "@/lib/profiles-ipfs";
+import { resolveMediaUrl } from "@/lib/mediaUrl";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -138,12 +139,9 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         if (!alive) return;
         if (profile?.displayName) setDisplayName(profile.displayName);
         // Prefer Storj direct URL; fall back to Lighthouse IPFS CID
-        if (profile?.avatarUrl) {
-          setProfileAvatarUrl(profile.avatarUrl);
-        } else if (profile?.avatarCid) {
-          const gw = process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://gateway.lighthouse.storage";
-          setProfileAvatarUrl(`${gw}/ipfs/${profile.avatarCid}`);
-        }
+        const rawUrl = profile?.avatarUrl
+          ?? (profile?.avatarCid ? `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${profile.avatarCid}` : null);
+        if (rawUrl) setProfileAvatarUrl(resolveMediaUrl(rawUrl) ?? rawUrl);
       } catch {}
     };
     loadProfile();

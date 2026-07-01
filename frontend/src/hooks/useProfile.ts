@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { fetchProfile } from '@/lib/profiles-ipfs';
+import { resolveMediaUrl } from '@/lib/mediaUrl';
 import type { UserProfile } from '@/types/profile';
 
 const gateway = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://dweb.link';
@@ -21,9 +22,11 @@ export function useProfile(address: string | undefined) {
     return () => { cancelled = true; };
   }, [address]);
 
-  // Prefer direct Storj URL (fast), fall back to IPFS gateway
-  const avatarUrl = profile?.avatarUrl
+  const rawAvatarUrl = profile?.avatarUrl
     ?? (profile?.avatarCid ? `${gateway}/ipfs/${profile.avatarCid}` : null);
+  // Route relay/ngrok URLs through /api/media proxy so the browser never hits ngrok
+  // directly (which can return an interstitial page instead of the actual image).
+  const avatarUrl = resolveMediaUrl(rawAvatarUrl);
 
   return {
     profile,

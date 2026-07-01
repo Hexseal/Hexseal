@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract } from "wagmi";
 import { REPUTATION_ABI, CONTRACTS } from "@/config/contracts";
 import { fetchProfile } from "@/lib/profiles-ipfs";
+import { resolveMediaUrl } from "@/lib/mediaUrl";
 import type { UserProfile } from "@/types/profile";
 import { Button } from "@/components/ui/button";
 import {
@@ -201,8 +202,10 @@ export default function ProfilePage() {
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={
-                profile.avatarUrl ||
-                `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${profile.avatarCid}`
+                resolveMediaUrl(
+                  profile.avatarUrl ||
+                  `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${profile.avatarCid}`
+                ) ?? undefined
               }
               alt={profile.displayName || 'Avatar'}
               className="w-[72px] h-[72px] rounded-2xl object-cover flex-shrink-0"
