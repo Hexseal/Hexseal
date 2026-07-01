@@ -26,9 +26,10 @@ const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 export function useXmtpSession() {
   const { address, isConnected, status } = useAccount();
   const { data: walletClient }           = useWalletClient();
-  const prevAddrRef  = useRef<string | undefined>(undefined);
-  // Track which addresses were already attempted this page session (in-memory)
-  const triedRef = useRef(new Set<string>());
+  const prevAddrRef    = useRef<string | undefined>(undefined);
+  const triedRef       = useRef(new Set<string>());
+  // Tracks addresses where OPFS check already ran (may precede walletClient readiness)
+  const opfsCheckedRef = useRef(new Set<string>());
 
   // Cleanup on wallet disconnect or address switch.
   // IMPORTANT: skip cleanup during 'reconnecting'/'connecting' — wagmi briefly sets
@@ -49,6 +50,22 @@ export function useXmtpSession() {
     prevAddrRef.current = curr;
   }, [address, isConnected, status]);
 
+  // Early OPFS check — suppress banner as soon as address is known, without waiting
+  // for walletClient. Two wallet extensions (MetaMask + Brave) can briefly delay
+  // walletClient readiness, causing the banner to flash. OPFS check doesn't need wallet.
+  useEffect(() => {
+    if (!address) return;
+    const addr = address.toLowerCase();
+    if (opfsCheckedRef.current.has(addr)) return;
+    opfsCheckedRef.current.add(addr);
+
+    checkXmtpDbExists(addr).then(exists => {
+      // Only suppress if full restore hasn't completed yet (triedRef not set).
+      // If walletClient was already ready and restore finished, don't re-suppress.
+      if (exists && !triedRef.current.has(addr)) _setAutoRestoring(true);
+    });
+  }, [address]);
+
   // Background auto-restore
   useEffect(() => {
     if (!address || !walletClient || !isConnected) return;
@@ -57,8 +74,7 @@ export function useXmtpSession() {
     if (triedRef.current.has(addr)) return; // already attempted this session
     triedRef.current.add(addr);
 
-    // Signal restore in progress — suppresses the "Enable Messaging" banner while
-    // we silently re-init. Without this the banner flashes for 1-3 seconds on every load.
+    // Ensure isAutoRestoring is true (may already be set by early OPFS check above).
     _setAutoRestoring(true);
 
     (async () => {

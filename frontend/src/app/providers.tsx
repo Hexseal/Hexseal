@@ -68,7 +68,9 @@ const config = projectId
       appName: "Hexseal",
       appDescription: "Decentralized freelance protocol on Base",
       appUrl: typeof window !== "undefined" ? window.location.origin : "https://hexseal.com",
-      appIcon: "/hexseal-app-icon.svg",
+      appIcon: typeof window !== "undefined"
+        ? `${window.location.origin}/hexseal-app-icon.svg`
+        : "https://hexseal.com/hexseal-app-icon.svg",
       projectId,
       chains,
       transports,
