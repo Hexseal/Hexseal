@@ -520,6 +520,67 @@ export async function listDmConversations(client: XmtpClient): Promise<DmConvers
   return result.sort((a, b) => b.lastAt - a.lastAt);
 }
 
+// ─── Pair conversation list (sidebar) ──────────────────────────────────────────
+
+export type PairConversation = {
+  group: XmtpGroup;
+  peerAddress: string;
+  lastText: string;
+  lastAt: number;
+  lastFromMe: boolean;
+};
+
+const PAIR_PREFIX = 'HSEAL-PAIR-';
+
+export async function listPairConversations(
+  client: XmtpClient,
+  myAddress: string,
+): Promise<PairConversation[]> {
+  await client.conversations.sync();
+  const groups = await client.conversations.listGroups();
+  const myInboxId = client.inboxId ?? '';
+  const myLc = myAddress.toLowerCase();
+  const result: PairConversation[] = [];
+
+  for (const g of groups) {
+    const name = g.name ?? '';
+    if (!name.startsWith(PAIR_PREFIX)) continue;
+    try {
+      await g.sync();
+      const members = await g.members();
+      const inboxToAddr = buildInboxAddressMap(members);
+      const peerAddress = [...inboxToAddr.values()].find(addr => addr !== myLc);
+      if (!peerAddress) continue;
+
+      const msgs = await g.messages({ limit: BigInt(1), direction: SortDirection.Descending });
+      const last = msgs[0];
+      let lastText = '';
+      let lastAt = 0;
+      let lastFromMe = true;
+
+      if (last) {
+        lastAt = last.sentAtNs ? Number(last.sentAtNs) / 1_000_000 : 0;
+        lastFromMe = last.senderInboxId === myInboxId;
+        // If the very last message happens to be a silent deal_ctx marker,
+        // parseContent returns null and the preview text stays blank until
+        // the next real message — acceptable, cosmetic only.
+        const parsed = parseContent(last);
+        if (parsed) {
+          lastText = parsed.attachment
+            ? `📎 ${parsed.attachment.name}`
+            : (lastFromMe ? `You: ${parsed.text}` : parsed.text);
+        }
+      }
+
+      result.push({ group: g, peerAddress, lastText, lastAt, lastFromMe });
+    } catch {
+      // skip malformed conversations
+    }
+  }
+
+  return result.sort((a, b) => b.lastAt - a.lastAt);
+}
+
 // ─── Relay bot address ────────────────────────────────────────────────────────
 
 const RELAYER_URL_XMTP = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
