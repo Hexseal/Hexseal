@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useAccount } from 'wagmi';
 import { usePathname } from 'next/navigation';
 import { toast } from 'react-hot-toast';
-import { getXmtpClientIfCached, dealGroupName } from '@/lib/xmtp';
+import { getXmtpClientIfCached } from '@/lib/xmtp';
 import { pushNotif } from '@/lib/notifications';
 
 const flagKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
@@ -66,6 +66,14 @@ export function useXmtpNotifications() {
           const content = typeof msg.content === 'string' ? msg.content : null;
           if (!content) continue;
 
+          // Skip silent deal-context markers — not a real message, never notify on these
+          if (content.startsWith('{')) {
+            try {
+              const probe = JSON.parse(content) as { _type?: string };
+              if (probe._type === 'deal_ctx') continue;
+            } catch { /* not JSON — falls through to normal text handling below */ }
+          }
+
           // Parse file messages to show a friendly preview
           let body: string;
           if (content.startsWith('{')) {
@@ -81,13 +89,19 @@ export function useXmtpNotifications() {
             body = content.length > 80 ? content.slice(0, 80) + '…' : content;
           }
 
-          // Determine link: deal group → /deal/{address}/chat, DM → /chat
+          // Determine link: pair group → /chat?peer={the other member's address}
           const groupName = groupNameById.get(msg.conversationId ?? '');
           let link = '/chat';
-          if (groupName?.startsWith('HSEAL-')) {
-            // Group name format: HSEAL-0x{agreementAddress}
-            const agreementAddr = groupName.slice(6); // strip "HSEAL-" (6 chars)
-            link = `/deal/${agreementAddr}/chat`;
+          if (groupName?.startsWith('HSEAL-PAIR-')) {
+            // Group name format: HSEAL-PAIR-{addrA}-{addrB} (sorted, lowercase,
+            // neither address contains '-' so this split is unambiguous)
+            const rest = groupName.slice('HSEAL-PAIR-'.length);
+            const [a, b] = rest.split('-');
+            if (a && b) {
+              const myLc = address!.toLowerCase();
+              const peer = a === myLc ? b : a;
+              link = `/chat?peer=${peer}`;
+            }
           }
 
           const saved = pushNotif(address!, {
