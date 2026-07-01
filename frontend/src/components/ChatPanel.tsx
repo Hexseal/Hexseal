@@ -1,17 +1,16 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useAccount, useReadContract, usePublicClient, useWalletClient } from 'wagmi';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
 import { formatUnits, type Abi } from 'viem';
-import { AGREEMENT_ABI, DIAMOND_ABI } from '@/config/contracts';
+import { DIAMOND_ABI } from '@/config/contracts';
 import { sendGasless, requestServiceGasless } from '@/lib/relay';
 import { DealActionBar } from '@/components/DealActionBar';
 import { usePreDealBar } from '@/hooks/usePreDealBar';
 import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
 
-import { useDirectChat } from '@/hooks/useDirectChat';
-import { useDealGroupChat } from '@/hooks/useDealGroupChat';
+import { usePairChat } from '@/hooks/usePairChat';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
@@ -268,10 +267,9 @@ interface DealContext {
 interface ChatPanelProps {
   recipientAddress: string;
   onBack?: () => void;
-  dealContext?: DealContext;
-  // When true, use deal XMTP group for messages (deal page).
-  // When false (default), always show DM — preserves pre-deal history.
-  useDealGroupChat?: boolean;
+  // Every non-terminal deal between the current user and this counterparty.
+  // 0 = plain chat, 1 = normal single-deal bar, 2+ = a selector is shown.
+  dealContexts?: DealContext[];
 }
 
 // Agreement.Status enum (7 states) — from getDetails().status_ (uint8 0-6)
@@ -295,29 +293,36 @@ const AGR_STATUS_KEY: Record<number, string> = {
   6: 'deal_status.refunded',
 };
 
-export function ChatPanel({ recipientAddress, onBack, dealContext, useDealGroupChat: showGroupChat = false }: ChatPanelProps) {
+export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelProps) {
   const { address } = useAccount();
   const t = useTranslations();
-  const directChat = useDirectChat(recipientAddress);
-  // groupChat runs in background even when not displayed — keeps XMTP group synced for bot notifications.
-  const groupChat  = useDealGroupChat(dealContext?.agreementAddr ?? '');
-  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup } =
-    (showGroupChat && dealContext) ? groupChat : directChat;
+  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext } =
+    usePairChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
-  const { data: dealDetails } = useReadContract({
-    address: (dealContext?.agreementAddr ?? '0x0000000000000000000000000000000000000000') as `0x${string}`,
-    abi: AGREEMENT_ABI,
-    functionName: 'getDetails',
-    query: { enabled: !!dealContext?.agreementAddr },
-  });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dealMeta = dealDetails ? (() => { const d = dealDetails as any; return {
-    deadlineDays:    (d.deadlineDays_ ?? d[5]  ?? 0n) as bigint,
-    markedDoneAt:    (d.markedDoneAt_ ?? d[8]  ?? 0n) as bigint,
-    agreementStatus: Number(d.status_ ?? d[11] ?? -1),
-  }; })() : null;
+
+  // 0 or 1 active deal: nothing to pick. 2+: user picks which one the action
+  // bar / attach-file gating / header refer to via the selector rendered below.
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const dealContext = useMemo(() => {
+    if (!dealContexts || dealContexts.length === 0) return undefined;
+    if (dealContexts.length === 1) return dealContexts[0];
+    return dealContexts.find(d => d.agreementAddr === selectedDealId) ?? dealContexts[dealContexts.length - 1];
+  }, [dealContexts, selectedDealId]);
+
+  // Tell the shared thread which deal is "current" so the relayer's arbiter
+  // dispute-log bot can tag entries by deal instead of one undifferentiated
+  // stream. Fires once per resolved value (including null, for "just chatting"),
+  // never resent for the same value — see usePairChat.markDealContext.
+  const lastMarkedDealRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!isInitialized) return;
+    const current = dealContext?.agreementAddr?.toLowerCase() ?? null;
+    if (lastMarkedDealRef.current === current) return;
+    lastMarkedDealRef.current = current;
+    markDealContext(current);
+  }, [dealContext?.agreementAddr, isInitialized, markDealContext]);
 
 
   const [text, setText]             = useState('');
@@ -609,9 +614,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContext, useDealGroupC
                     #{dealContext.agreementAddr.slice(2, 10).toUpperCase()}
                   </a>
                   <span className="text-white/20 text-[11px]">·</span>
-                  <span className={`text-[11px] whitespace-nowrap ${AGR_STATUS_CLS[dealMeta?.agreementStatus ?? -1] ?? 'text-white/30'}`}>
-                    {dealMeta?.agreementStatus !== undefined && AGR_STATUS_KEY[dealMeta.agreementStatus]
-                      ? t(AGR_STATUS_KEY[dealMeta.agreementStatus] as Parameters<typeof t>[0])
+                  <span className={`text-[11px] whitespace-nowrap ${AGR_STATUS_CLS[dealContext?.status ?? -1] ?? 'text-white/30'}`}>
+                    {dealContext?.status !== undefined && AGR_STATUS_KEY[dealContext.status]
+                      ? t(AGR_STATUS_KEY[dealContext.status] as Parameters<typeof t>[0])
                       : '…'}
                   </span>
                 </div>
@@ -730,6 +735,24 @@ export function ChatPanel({ recipientAddress, onBack, dealContext, useDealGroupC
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Multi-deal selector — only rendered when 2+ concurrent deals exist with this peer */}
+      {dealContexts && dealContexts.length > 1 && (
+        <div className="flex-shrink-0 bg-white/[0.03] border-b border-white/[0.05] px-4 py-2 flex items-center gap-2">
+          <span className="text-[11px] text-white/35">{t("chat.deal_selector_label")}</span>
+          <select
+            value={dealContext?.agreementAddr ?? ''}
+            onChange={(e) => setSelectedDealId(e.target.value)}
+            className="flex-1 bg-[#111113] border border-white/[0.08] rounded-[10px] px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-white/[0.15]"
+          >
+            {dealContexts.map(d => (
+              <option key={d.agreementAddr} value={d.agreementAddr}>
+                #{d.agreementAddr.slice(2, 10).toUpperCase()} · {t(AGR_STATUS_KEY[d.status] as Parameters<typeof t>[0])}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 
