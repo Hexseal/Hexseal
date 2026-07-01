@@ -36,10 +36,16 @@ export function useXmtpSession() {
   // Clear session only when the wallet address actually changes (switch wallet / sign out).
   // Do NOT clear on disconnect status — wagmi transiently shows 'disconnected' during
   // page reload with MetaMask+Brave, which would wipe the key and lock the banner open.
+  //
+  // The `curr` check matters: a MetaMask+Brave provider conflict transiently flips
+  // wagmi's `address` to undefined for a tick on reload. Without requiring `curr` to be
+  // truthy, that flip satisfies `prev !== curr` and gets misread as "switched accounts",
+  // wiping the session — and triedRef then blocks the same-page auto-restore from fixing
+  // it, so the banner stays stuck until a full reload.
   useEffect(() => {
     const prev = prevAddrRef.current;
     const curr = address?.toLowerCase();
-    if (prev && prev !== curr) clearXmtpSession(prev);
+    if (prev && curr && prev !== curr) clearXmtpSession(prev);
     prevAddrRef.current = curr;
   }, [address]);
 
