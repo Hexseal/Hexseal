@@ -332,7 +332,9 @@ app.use('/public', (req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'");
   next();
-}, express.static(DIR_PUBLIC, { maxAge: '365d', immutable: true }));
+// Note: no 'immutable' — allows hard-refresh (Ctrl+Shift+R) to bypass cache.
+// 'immutable' would lock in a broken cache (e.g. missing CORS headers) for a year.
+}, express.static(DIR_PUBLIC, { maxAge: '1d' }));
 // Serve encrypted chat files — content is always AES-256-GCM ciphertext (never renderable),
 // but defensive headers prevent any accidental MIME-sniffing or rendering attempt
 app.use('/files', (req, res, next) => {
