@@ -16,7 +16,18 @@ const RELAYER_URL = (
   process.env.NEXT_PUBLIC_RELAYER_URL || process.env.RELAYER_PUBLIC_URL || ''
 ).replace(/\/$/, '');
 
-const KEY_RE = /^[\w\-. ]+\.(jpg|jpeg|png|gif|webp|svg|json)$/i;
+// SVG excluded: can contain <script> tags and would execute on app origin.
+// JSON excluded: not needed here (profiles go through /api/profiles).
+const KEY_RE = /^[\w\-.]+\.(jpg|jpeg|png|gif|webp)$/i;
+
+// Server-side content-type map — never trust upstream Content-Type header.
+const EXT_TYPES: Record<string, string> = {
+  jpg:  'image/jpeg',
+  jpeg: 'image/jpeg',
+  png:  'image/png',
+  gif:  'image/gif',
+  webp: 'image/webp',
+};
 
 export async function GET(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key');
@@ -26,6 +37,9 @@ export async function GET(request: NextRequest) {
   if (!RELAYER_URL) {
     return NextResponse.json({ error: 'Relayer not configured' }, { status: 500 });
   }
+
+  const ext = key.split('.').pop()?.toLowerCase() ?? '';
+  const contentType = EXT_TYPES[ext] ?? 'application/octet-stream';
 
   try {
     const res = await fetch(`${RELAYER_URL}/public/${encodeURIComponent(key)}`, {
@@ -37,14 +51,14 @@ export async function GET(request: NextRequest) {
       return new NextResponse(null, { status: res.status });
     }
 
-    const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
     const body = await res.arrayBuffer();
 
     return new NextResponse(body, {
       status: 200,
       headers: {
-        'Content-Type': contentType,
+        'Content-Type': contentType,        // from our allowlist, not upstream
         'Cache-Control': 'public, max-age=86400',
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch {
