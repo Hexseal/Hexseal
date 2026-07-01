@@ -276,6 +276,66 @@ export async function tryAddGroupMember(
   }
 }
 
+// ─── Pair group ────────────────────────────────────────────────────────────────
+// One persistent MLS group per counterparty pair replaces the old DM/deal-group
+// split. Created on first contact (before any deal exists) and reused for every
+// subsequent deal between the same two addresses.
+
+/** Sorts two addresses into a stable, deterministic order (lowercase). */
+export function sortAddressPair(a: string, b: string): [string, string] {
+  const lc: [string, string] = [a.toLowerCase(), b.toLowerCase()];
+  return lc[0] <= lc[1] ? lc : [lc[1], lc[0]];
+}
+
+/** Group name for the single persistent conversation between two addresses. */
+export function pairGroupName(addrA: string, addrB: string): string {
+  const [a, b] = sortAddressPair(addrA, addrB);
+  return `HSEAL-PAIR-${a}-${b}`;
+}
+
+/**
+ * Finds the existing pair group for these two addresses or creates it.
+ * Includes the bot (if reachable) from the very first message, so deal
+ * notifications and dispute logging work before any deal exists.
+ */
+export async function findOrCreatePairGroup(
+  client: XmtpClient,
+  memberAddresses: [string, string],
+  botAddress: string | null,
+): Promise<XmtpGroup> {
+  const name = pairGroupName(memberAddresses[0], memberAddresses[1]);
+
+  await client.conversations.sync();
+
+  const groups = await client.conversations.listGroups();
+  for (const g of groups) {
+    if (g.name === name) {
+      await g.sync();
+      return g;
+    }
+  }
+
+  const allMembers = botAddress ? [...memberAddresses, botAddress] : [...memberAddresses];
+  const identifiers = allMembers.map(toIdentifier);
+  const canMsg = await client.canMessage(identifiers);
+  const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
+
+  return client.conversations.createGroupWithIdentifiers(reachable, {
+    groupName: name,
+    groupDescription: `Hexseal conversation: ${memberAddresses[0]} <-> ${memberAddresses[1]}`,
+  });
+}
+
+// ─── Deal-context marker ───────────────────────────────────────────────────────
+// A silent message that tags "from this point in the group, messages are about
+// deal X" (or null = general chat, no active deal). Consumed only by the relayer
+// bot to tag entries in the arbiter dispute log — parseContent() below filters
+// it out of the UI message list entirely, it never renders as a chat bubble.
+
+export function encodeDealContextMarker(dealId: string | null): string {
+  return JSON.stringify({ _type: 'deal_ctx', dealId });
+}
+
 // ─── Message helpers ──────────────────────────────────────────────────────────
 
 export function buildInboxAddressMap(members: GroupMember[]): Map<string, string> {
@@ -297,6 +357,7 @@ function parseContent(msg: DecodedMessage): ParsedContent | null {
   if (msg.content.startsWith('{')) {
     try {
       const p = JSON.parse(msg.content) as Record<string, unknown>;
+      if (p._type === 'deal_ctx') return null; // silent marker — never rendered
       if (
         (p._type === 'enc_file' || p._type === 'file') &&
         typeof p.name === 'string' &&
