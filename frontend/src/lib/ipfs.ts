@@ -1,26 +1,23 @@
 /**
- * File upload helpers — upload via Storj (through relayer presign).
+ * File upload helpers — routes through the relayer's local disk storage.
  * fetchFromIPFS kept for reading legacy IPFS CIDs (avatarCid on old profiles).
  *
- * Server-side env vars:
- *   NEXT_PUBLIC_RELAYER_URL — relayer base URL (required)
- *
- * Client-side env vars (prefix NEXT_PUBLIC_):
- *   NEXT_PUBLIC_IPFS_GATEWAY  — override default IPFS read gateway (optional)
+ * Env vars:
+ *   NEXT_PUBLIC_RELAYER_URL   — relayer base URL (required)
+ *   NEXT_PUBLIC_IPFS_GATEWAY  — override IPFS read gateway for legacy CIDs (optional)
  */
 
 export interface IPFSUploadResult {
-  cid:      string;       // IPFS CID (from Lighthouse; '' if Lighthouse unavailable)
-  url:      string;       // primary URL: Storj direct URL when available, else Lighthouse gateway
-  storjUrl: string | null; // permanent Storj URL (null if Storj unavailable)
-  ipfsUrl:  string | null; // Lighthouse IPFS gateway URL (null if Lighthouse unavailable)
+  cid:      string;       // always '' for new uploads (legacy field)
+  url:      string;       // relayer URL: ${RELAYER_URL}/public/<key>
+  storjUrl: string | null; // same as url (legacy field name)
+  ipfsUrl:  string | null; // always null for new uploads
 }
 
 /**
- * Upload content to own relayer server storage.
- * Always routes through the API — never exposes server URLs to the browser.
- * For profile uploads, pass `signature` (eth_sign of the JSON) so the relayer
- * can verify the uploader owns the wallet matching the profile address.
+ * Upload content to relayer local storage (storage/public/ for avatars/profiles).
+ * Always routes through the Next.js API — never calls the relayer from the browser.
+ * For profile JSON uploads, pass `signature` so the relayer verifies wallet ownership.
  */
 export async function uploadToIPFS(
   content: string | Blob,
