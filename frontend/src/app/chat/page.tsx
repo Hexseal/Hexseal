@@ -230,11 +230,12 @@ function ChatHubPageInner() {
     initialPeer ? new Set([initialPeer.toLowerCase()]) : new Set()
   );
   const router = useRouter();
-
-  // Skip the "select a conversation" empty state — redirect to most-recent peer
-  // as soon as conversations finish loading. Eliminates the awkward intermediate page.
+  // Only redirect once on first load — never when the user explicitly goes back to the list.
+  const didInitialRedirect = useRef(false);
   useEffect(() => {
+    if (didInitialRedirect.current) return;
     if (!selected && !isLoading && conversations.length > 0) {
+      didInitialRedirect.current = true;
       router.replace(`/chat?peer=${conversations[0].peerAddress}`);
     }
   }, [selected, isLoading, conversations, router]);
