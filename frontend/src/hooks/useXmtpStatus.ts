@@ -10,7 +10,7 @@
  * • disable()       — clears the flag (OPFS keys stay, so re-enable won't require re-signing)
  */
 
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWalletClient } from 'wagmi';
 import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached } from '@/lib/xmtp';
 
@@ -37,19 +37,25 @@ function readIsEnabled(addr: string): boolean {
 export function useXmtpStatus() {
   const { data: walletClient } = useWalletClient();
 
-  // Start false (matches SSR) — no hydration mismatch.
-  // useLayoutEffect reads localStorage before paint so there's no visible flash.
-  const [isEnabled, setIsEnabled] = useState(false);
-  useLayoutEffect(() => {
-    const hasAny = Object.keys(localStorage).some(
+  // Lazy initializer reads localStorage synchronously on first render — no re-render
+  // needed, no useLayoutEffect delay, no hydration mismatch (client-only component).
+  const [isEnabled, setIsEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return Object.keys(localStorage).some(
       k => k.startsWith('xmtp-registered-') && localStorage.getItem(k) === '1',
     );
-    if (hasAny) setIsEnabled(true);
-  }, []);
+  });
 
   // isAutoRestoring: true while useXmtpSession is doing background OPFS restore.
-  // Initialise from the global flag so components that mount mid-restore don't flash.
-  const [isAutoRestoring, setIsAutoRestoring] = useState(_isRestoringGlobal);
+  // If XMTP appears registered but the client isn't in memory yet, start as true
+  // so the chat renders immediately instead of briefly showing the banner.
+  const [isAutoRestoring, setIsAutoRestoring] = useState<boolean>(() => {
+    if (_isRestoringGlobal) return true;
+    if (typeof window === 'undefined') return false;
+    return Object.keys(localStorage).some(
+      k => k.startsWith('xmtp-registered-') && localStorage.getItem(k) === '1',
+    );
+  });
   useEffect(() => {
     const update = (v: boolean) => setIsAutoRestoring(v);
     _restoringListeners.add(update);

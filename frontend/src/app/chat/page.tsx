@@ -231,6 +231,14 @@ function ChatHubPageInner() {
   );
   const router = useRouter();
 
+  // Skip the "select a conversation" empty state — redirect to most-recent peer
+  // as soon as conversations finish loading. Eliminates the awkward intermediate page.
+  useEffect(() => {
+    if (!selected && !isLoading && conversations.length > 0) {
+      router.replace(`/chat?peer=${conversations[0].peerAddress}`);
+    }
+  }, [selected, isLoading, conversations, router]);
+
   const handleConvoClick = useCallback((addr: string) => {
     const lc = addr.toLowerCase();
     setSeenConvos(prev => new Set([...prev, lc]));
