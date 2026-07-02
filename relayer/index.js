@@ -162,12 +162,12 @@ const DIR_LOGS = path.join(STORAGE_DIR, 'logs');
 fs.mkdirSync(DIR_LOGS, { recursive: true });
 
 /**
- * AES-256-GCM key for a given deal.
- * key = keccak256(dealId.toLowerCase() + SERVER_SECRET) → 32 bytes
+ * AES-256-GCM key for a given pair's log.
+ * key = keccak256(pairId.toLowerCase() + SERVER_SECRET) → 32 bytes
  */
-function deriveLogKey(dealId) {
+function deriveLogKey(pairId) {
   return ethers.getBytes(
-    ethers.keccak256(ethers.toUtf8Bytes(dealId.toLowerCase() + SERVER_SECRET))
+    ethers.keccak256(ethers.toUtf8Bytes(pairId.toLowerCase() + SERVER_SECRET))
   );
 }
 
@@ -196,26 +196,37 @@ function decryptEntry(key, { iv, ct, authTag }) {
 }
 
 const ETH_ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
+const PAIR_ID_RE  = /^0x[a-fA-F0-9]{40}-0x[a-fA-F0-9]{40}$/;
 
-function safeLogPath(dealId) {
-  const id = dealId.toLowerCase();
-  if (!ETH_ADDR_RE.test(id)) throw new Error(`invalid dealId: ${id}`);
+function sortAddressPair(a, b) {
+  const lc = [a.toLowerCase(), b.toLowerCase()];
+  return lc[0] <= lc[1] ? lc : [lc[1], lc[0]];
+}
+
+function pairIdFromAddresses(a, b) {
+  const [x, y] = sortAddressPair(a, b);
+  return `${x}-${y}`;
+}
+
+function safeLogPath(pairId) {
+  const id = pairId.toLowerCase();
+  if (!PAIR_ID_RE.test(id)) throw new Error(`invalid pairId: ${id}`);
   const logPath = path.join(DIR_LOGS, `${id}.ndjson`);
   if (!path.resolve(logPath).startsWith(path.resolve(DIR_LOGS) + path.sep)) throw new Error('path escape');
   return logPath;
 }
 
-function appendLogEntry(dealId, entry) {
-  const key = deriveLogKey(dealId);
+function appendLogEntry(pairId, entry) {
+  const key = deriveLogKey(pairId);
   const encrypted = encryptEntry(key, entry);
   const line = JSON.stringify(encrypted) + '\n';
-  fs.appendFileSync(safeLogPath(dealId), line);
+  fs.appendFileSync(safeLogPath(pairId), line);
 }
 
-function readLog(dealId) {
-  const logPath = safeLogPath(dealId);
+function readLog(pairId) {
+  const logPath = safeLogPath(pairId);
   if (!fs.existsSync(logPath)) return [];
-  const key = deriveLogKey(dealId);
+  const key = deriveLogKey(pairId);
   return fs.readFileSync(logPath, 'utf8')
     .split('\n')
     .filter(Boolean)
@@ -414,7 +425,11 @@ app.get('/dispute-log/:dealId', async (req, res) => {
       return res.status(403).json({ error: 'Not the arbiter of this deal' });
     }
 
-    const entries = readLog(dealId);
+    // Log storage is keyed by pair (client+executor), not by this individual deal —
+    // a pair's thread can span casual chat plus multiple deals over time, and the
+    // arbiter is meant to see that full context, not just this deal's slice.
+    const pairId = pairIdFromAddresses(details.client_, details.executor_);
+    const entries = readLog(pairId);
     res.json({ entries });
   } catch (err) {
     console.error('[dispute-log] error:', err.message);
@@ -818,27 +833,47 @@ start();
     });
     console.log(`[bot] XMTP ready: ${botClient.inboxId}`);
 
-    // Stream messages from one group (fire-and-forget)
+    // Stream messages from one group (fire-and-forget). `currentDealId` is a
+    // per-group cursor updated by silent deal_ctx marker messages (sent by the
+    // frontend's ChatPanel) — it tags each logged entry with whichever deal was
+    // "active" when the message was sent, but never gates whether an entry is
+    // written: the log deliberately keeps the whole thread, unfiltered, so an
+    // arbiter can see context from before a deal formally started.
     async function streamGroupMessages(group) {
       const groupName = group.name ?? '';
-      if (!groupName.startsWith('HSEAL-')) return;
-      const dealId = groupName.slice(6).toLowerCase();
-      if (!ETH_ADDR_RE.test(dealId)) return;
+      if (!groupName.startsWith('HSEAL-PAIR-')) return;
+      const pairId = groupName.slice('HSEAL-PAIR-'.length).toLowerCase();
+      if (!PAIR_ID_RE.test(pairId)) return;
+
+      let currentDealId = null;
+
       try {
         const stream = await group.stream();
         for await (const msg of stream) {
           if (typeof msg.content !== 'string' || !msg.content) continue;
+
+          if (msg.content.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(msg.content);
+              if (parsed._type === 'deal_ctx') {
+                currentDealId = typeof parsed.dealId === 'string' ? parsed.dealId.toLowerCase() : null;
+                continue; // marker itself is never a log entry
+              }
+            } catch { /* not JSON — fall through, log as a normal entry */ }
+          }
+
           const members = await group.members();
           const sender = members.find(m => m.inboxId === msg.senderInboxId);
           const from = sender?.accountIdentifiers?.[0]?.identifier?.toLowerCase() ?? msg.senderInboxId;
-          appendLogEntry(dealId, {
-            ts:   msg.sentAt ? msg.sentAt.getTime() : Date.now(),
+          appendLogEntry(pairId, {
+            ts:     msg.sentAt ? msg.sentAt.getTime() : Date.now(),
             from,
-            text: msg.content,
+            text:   msg.content,
+            dealId: currentDealId,
           });
         }
       } catch (err) {
-        console.warn(`[bot] stream error for ${dealId}:`, err.message);
+        console.warn(`[bot] stream error for ${pairId}:`, err.message);
       }
     }
 

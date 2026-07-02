@@ -6,27 +6,19 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import type { Abi } from 'viem';
 import { isAddress } from 'viem';
-import { useConversations } from '@/hooks/useConversations';
+import { usePairConversations } from '@/hooks/usePairConversations';
 import { useXmtpStatus } from '@/hooks/useXmtpStatus';
 import { useProfile } from '@/hooks/useProfile';
 import { ChatPanel } from '@/components/ChatPanel';
 import { MessagingSetup } from '@/components/MessagingSetup';
 import { Button } from '@/components/ui/button';
-import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
+import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
-
-interface ActiveDeal {
-  agreement: string;
-  role: 'client' | 'executor';
-  peerAddress: string;
-  status: number;
-  jobTitle?: string;
-}
 
 interface AgreementRecord {
   agreement: string;
@@ -197,54 +189,6 @@ const ConvoItem = memo(function ConvoItem({
   );
 });
 
-// ─── Deal link item ───────────────────────────────────────────────────────────
-
-const DealLinkItem = memo(function DealLinkItem({ deal }: { deal: ActiveDeal }) {
-  const t = useTranslations();
-  const { displayName, avatarUrl } = useProfile(deal.peerAddress);
-  const STATUS_KEYS = ['created','funded','active','completed','disputed','resolved','refunded'] as const;
-  const dsLabel = t(`deal_status.${STATUS_KEYS[deal.status] ?? 'active'}` as Parameters<typeof t>[0]);
-  const dsCls   = DEAL_STATUS_CLS[deal.status] ?? 'text-white/30';
-  return (
-    <Link
-      href={`/deal/${deal.agreement}`}
-      className="w-full flex items-start gap-3 px-3 py-2.5 text-left transition-all rounded-[16px] border bg-white/[0.03] border-white/[0.04] hover:bg-white/[0.05] hover:border-white/[0.07]"
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={avatarUrl ?? `https://effigy.im/a/${deal.peerAddress}.svg`}
-        alt=""
-        className="w-9 h-9 rounded-full flex-shrink-0 mt-0.5 bg-white/10 object-cover"
-        onError={(e) => {
-          const img = e.target as HTMLImageElement;
-          if (avatarUrl && img.src !== `https://effigy.im/a/${deal.peerAddress}.svg`) {
-            img.src = `https://effigy.im/a/${deal.peerAddress}.svg`;
-          }
-        }}
-      />
-      <div className="flex-1 min-w-0">
-        <span className="text-sm font-medium text-white/85 truncate block">
-          {displayName ?? shortAddr(deal.peerAddress)}
-        </span>
-        <div className="flex items-center gap-1.5 mt-0.5">
-          {deal.role === 'client'
-            ? <Briefcase className="w-2.5 h-2.5 text-sky-400/60 flex-shrink-0" />
-            : <User      className="w-2.5 h-2.5 text-emerald-400/60 flex-shrink-0" />
-          }
-          <span className={`text-[11px] font-medium ${deal.role === 'client' ? 'text-sky-400/70' : 'text-emerald-400/70'}`}>
-            {deal.role === 'client' ? t('common.role_client') : t('common.role_executor')}
-          </span>
-          <span className="text-white/20 text-[11px]">·</span>
-          <span className={`text-[11px] ${dsCls}`}>{dsLabel}</span>
-        </div>
-        {deal.jobTitle && (
-          <p className="text-xs text-white/30 truncate mt-0.5">{deal.jobTitle}</p>
-        )}
-      </div>
-    </Link>
-  );
-});
-
 // ─── Empty chat state ─────────────────────────────────────────────────────────
 
 function EmptyState() {
@@ -272,7 +216,7 @@ function ChatHubPageInner() {
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
   const { isEnabled: xmtpEnabled, isAutoRestoring: xmtpRestoring } = useXmtpStatus();
-  const { conversations, isLoading, error, reload } = useConversations(xmtpEnabled);
+  const { conversations, isLoading, error, reload } = usePairConversations(xmtpEnabled);
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
@@ -350,71 +294,69 @@ function ChatHubPageInner() {
     return map;
   }, [clientJobIds, jobResults]);
 
-  // Open deals: 0=Created 1=Funded 2=Active 4=Disputed (exclude 3=Completed 5=Resolved 6=Refunded)
-  const activeDeals = useMemo<ActiveDeal[]>(() => {
+  // Registry (getByClient/getByExecutor) only enumerates WHICH agreements exist —
+  // its own `status` field is a stale snapshot (frozen near ACTIVE) and must never
+  // be used for display. Every candidate's real status comes from a single batched
+  // live read below.
+  const candidateAgreements = useMemo(() => {
+    const map = new Map<string, { agreement: string; role: 'client' | 'executor'; peerAddress: string }>();
+    for (const d of clientDeals ?? []) {
+      map.set(d.agreement.toLowerCase(), { agreement: d.agreement, role: 'client', peerAddress: d.executor.toLowerCase() });
+    }
+    for (const d of executorDeals ?? []) {
+      map.set(d.agreement.toLowerCase(), { agreement: d.agreement, role: 'executor', peerAddress: d.client.toLowerCase() });
+    }
+    return [...map.values()];
+  }, [clientDeals, executorDeals]);
+
+  const dealDetailContracts = useMemo(() =>
+    candidateAgreements.map(c => ({
+      address: c.agreement as `0x${string}`,
+      abi: AGREEMENT_ABI as Abi,
+      functionName: 'getDetails' as const,
+    })),
+    [candidateAgreements]
+  );
+
+  const { data: dealDetailResults } = useReadContracts({
+    contracts: dealDetailContracts,
+    query: { enabled: dealDetailContracts.length > 0 },
+  });
+
+  // peer address → every non-terminal deal with that counterparty, live status.
+  // Array (not a single "preferred" deal) because the product allows genuinely
+  // parallel deals between the same pair — ChatPanel shows a selector when 2+.
+  const peerDealsMap = useMemo(() => {
+    const map = new Map<string, DealContext[]>();
+    if (!dealDetailResults) return map;
+    // Agreement.Status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
     const isOpen = (s: number) => s === 0 || s === 1 || s === 2 || s === 4;
-    const result: ActiveDeal[] = [];
-    for (const d of clientDeals ?? []) {
-      if (isOpen(d.status)) {
-        const jobCtx = agreementJobMap.get(d.agreement.toLowerCase());
-        result.push({
-          agreement: d.agreement,
-          role: 'client',
-          peerAddress: d.executor.toLowerCase(),
-          status: d.status,
-          jobTitle: jobCtx?.title,
-        });
-      }
-    }
-    for (const d of executorDeals ?? []) {
-      if (isOpen(d.status)) {
-        result.push({
-          agreement: d.agreement,
-          role: 'executor',
-          peerAddress: d.client.toLowerCase(),
-          status: d.status,
-        });
-      }
-    }
-    return result;
-  }, [clientDeals, executorDeals, agreementJobMap]);
 
-  const peerDealMap = useMemo(() => {
-    const map = new Map<string, DealContext>();
+    candidateAgreements.forEach((c, i) => {
+      const result = dealDetailResults[i];
+      if (!result || result.status !== 'success') return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const d = result.result as any;
+      const status = Number(d.status_ ?? d[11] ?? -1);
+      if (!isOpen(status)) return;
 
-    // Registry: 0=ACTIVE and 3=DISPUTED are in-progress; 1=COMPLETED,2=REFUNDED,4=RESOLVED are terminal
-    const isInProgress = (s: number) => s === 0 || s === 3;
+      const jobCtx = agreementJobMap.get(c.agreement.toLowerCase());
+      const ctx: DealContext = {
+        agreementAddr: c.agreement,
+        role: c.role,
+        status,
+        amount: (d.amount_ ?? d[3] ?? 0n) as bigint,
+        jobTitle: jobCtx?.title,
+        jobId: jobCtx?.jobId,
+      };
 
-    const prefer = (peer: string, ctx: DealContext) => {
-      const existing = map.get(peer);
-      if (!existing) { map.set(peer, ctx); return; }
-      if (isInProgress(ctx.status) && !isInProgress(existing.status)) map.set(peer, ctx);
-    };
-
-    for (const d of clientDeals ?? []) {
-      prefer(d.executor.toLowerCase(), {
-        agreementAddr: d.agreement,
-        role: 'client',
-        status: d.status,
-        amount: d.amount,
-      });
-    }
-    for (const d of executorDeals ?? []) {
-      prefer(d.client.toLowerCase(), {
-        agreementAddr: d.agreement,
-        role: 'executor',
-        status: d.status,
-        amount: d.amount,
-      });
-    }
-
-    map.forEach((ctx, peer) => {
-      const jobCtx = agreementJobMap.get(ctx.agreementAddr.toLowerCase());
-      if (jobCtx) map.set(peer, { ...ctx, jobTitle: jobCtx.title, jobId: jobCtx.jobId });
+      const list = map.get(c.peerAddress) ?? [];
+      list.push(ctx);
+      map.set(c.peerAddress, list);
     });
 
     return map;
-  }, [clientDeals, executorDeals, agreementJobMap]);
+  }, [candidateAgreements, dealDetailResults, agreementJobMap]);
 
   const handleOpenNewChat = () => {
     const addr = newChatAddr.trim().toLowerCase();
@@ -464,7 +406,7 @@ function ChatHubPageInner() {
     );
   }
 
-  const selectedDealCtx = selected ? peerDealMap.get(selected) : undefined;
+  const selectedDealCtxs = selected ? (peerDealsMap.get(selected) ?? []) : [];
 
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden justify-center">
@@ -594,7 +536,7 @@ function ChatHubPageInner() {
               lastFromMe={true}
               isSelected
               isSeen
-              dealCtx={peerDealMap.get(selected)}
+              dealCtx={peerDealsMap.get(selected)?.[0]}
               onSelect={handleConvoClick}
             />
           )}
@@ -608,29 +550,10 @@ function ChatHubPageInner() {
               lastFromMe={lastFromMe}
               isSelected={selected === peerAddress}
               isSeen={seenConvos.has(peerAddress)}
-              dealCtx={peerDealMap.get(peerAddress)}
+              dealCtx={peerDealsMap.get(peerAddress)?.[0]}
               onSelect={handleConvoClick}
             />
           ))}
-
-          {/* Active deal chats */}
-          {activeDeals.length > 0 && (
-            <>
-              {conversations.length > 0 && (
-                <div className="px-1 pt-3 pb-1">
-                  <div className="h-px bg-white/[0.06]" />
-                </div>
-              )}
-              <div className="px-2 py-1">
-                <span className="text-[10px] font-medium text-white/25 uppercase tracking-wider">
-                  {t('chat.deal_chats')}
-                </span>
-              </div>
-              {activeDeals.map(deal => (
-                <DealLinkItem key={deal.agreement} deal={deal} />
-              ))}
-            </>
-          )}
 
           {/* Spacer so last items aren't hidden under the bottom nav pill on mobile */}
           <div className="sm:hidden flex-shrink-0" style={{ height: 'calc(98px + env(safe-area-inset-bottom, 0px))' }} />
@@ -646,7 +569,7 @@ function ChatHubPageInner() {
         {selected
           ? <ChatPanel
               recipientAddress={selected}
-              dealContext={selectedDealCtx}
+              dealContexts={selectedDealCtxs}
               onBack={() => router.push('/chat')}
             />
           : <EmptyState />

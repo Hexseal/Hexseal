@@ -556,7 +556,7 @@ function DisputeCard({
 // ─── DisputeLog ───────────────────────────────────────────────────────────────
 
 const RELAYER_URL_ARB = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
-type LogEntry = { ts: number; from: string; text: string };
+type LogEntry = { ts: number; from: string; text: string; dealId: string | null };
 
 function DisputeLog({ dealId, client, executor }: { dealId: string; client?: string; executor?: string }) {
   const { data: walletClient } = useWalletClient();
@@ -629,6 +629,13 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
           {entries.map((e, i) => {
             const role = roleOf(e.from);
             const time = new Date(e.ts).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+            // Entries whose deal_ctx tag doesn't match the deal being viewed are
+            // context from another deal (or from before any deal existed) between
+            // this same pair — shown, but visually de-emphasized and labeled.
+            const isOtherContext = (e.dealId ?? '').toLowerCase() !== dealId.toLowerCase();
+            const contextLabel = !isOtherContext ? null
+              : e.dealId ? `#${e.dealId.slice(2, 8).toUpperCase()}`
+              : t("arbiter.general_chat_label");
             if (role === 'bot') {
               return (
                 <div key={i} className="flex justify-center">
@@ -638,7 +645,7 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
             }
             const isClient = role === 'client';
             return (
-              <div key={i} className={`flex flex-col gap-0.5 ${isClient ? 'items-start' : 'items-end'}`}>
+              <div key={i} className={`flex flex-col gap-0.5 ${isClient ? 'items-start' : 'items-end'} ${isOtherContext ? 'opacity-40' : ''}`}>
                 <span className={`text-[10px] font-medium px-0.5 ${isClient ? 'text-sky-400/50' : 'text-violet-400/50'}`}>
                   {isClient ? t("arbiter.client_label") : t("arbiter.executor_label")}
                   {' · '}<span className="font-mono font-normal">{e.from.slice(0, 6)}…{e.from.slice(-4)}</span>
@@ -648,7 +655,9 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
                     ? 'bg-sky-500/[0.08] border border-sky-500/15 text-white/80 rounded-tl-[3px]'
                     : 'bg-violet-500/[0.08] border border-violet-500/15 text-white/80 rounded-tr-[3px]'
                 }`}>{e.text}</div>
-                <span className="text-[10px] text-white/15 px-0.5">{time}</span>
+                <span className="text-[10px] text-white/15 px-0.5">
+                  {time}{contextLabel && <span className="ml-1 text-white/25">· {contextLabel}</span>}
+                </span>
               </div>
             );
           })}

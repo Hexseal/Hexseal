@@ -62,15 +62,6 @@ export function encodeFileMessage(
 
 export type XmtpClient = Client;
 export type XmtpGroup  = Awaited<ReturnType<XmtpClient['conversations']['createGroupWithIdentifiers']>>;
-export type XmtpDm     = Awaited<ReturnType<XmtpClient['conversations']['createDmWithIdentifier']>>;
-
-export type DmConversation = {
-  dm: XmtpDm;
-  peerAddress: string;
-  lastText: string;
-  lastAt: number;
-  lastFromMe: boolean;
-};
 
 // ─── Identifier helper ────────────────────────────────────────────────────────
 
@@ -222,44 +213,6 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   return promise;
 }
 
-// ─── Deal group ───────────────────────────────────────────────────────────────
-
-export function dealGroupName(agreementAddress: string): string {
-  return `HSEAL-${agreementAddress.toLowerCase()}`;
-}
-
-/**
- * Finds an existing deal group or creates a new one.
- * Only adds members who have XMTP identities (checked via canMessage).
- */
-export async function findOrCreateDealGroup(
-  client: XmtpClient,
-  agreementAddress: string,
-  memberAddresses: string[],
-): Promise<XmtpGroup> {
-  const name = dealGroupName(agreementAddress);
-
-  await client.conversations.sync();
-
-  const groups = await client.conversations.listGroups();
-  for (const g of groups) {
-    if (g.name === name) {
-      await g.sync();
-      return g;
-    }
-  }
-
-  // Filter to addresses that have registered XMTP identities
-  const identifiers = memberAddresses.map(toIdentifier);
-  const canMsg = await client.canMessage(identifiers);
-  const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
-
-  return client.conversations.createGroupWithIdentifiers(reachable, {
-    groupName: name,
-    groupDescription: `Hexseal deal: ${agreementAddress}`,
-  });
-}
-
 /**
  * Tries to add a member to an existing group.
  * Silently skips if the address hasn't registered XMTP yet.
@@ -274,6 +227,66 @@ export async function tryAddGroupMember(
   if (canMsg.get(id.identifier) === true) {
     await group.addMembersByIdentifiers([id]);
   }
+}
+
+// ─── Pair group ────────────────────────────────────────────────────────────────
+// One persistent MLS group per counterparty pair replaces the old DM/deal-group
+// split. Created on first contact (before any deal exists) and reused for every
+// subsequent deal between the same two addresses.
+
+/** Sorts two addresses into a stable, deterministic order (lowercase). */
+export function sortAddressPair(a: string, b: string): [string, string] {
+  const lc: [string, string] = [a.toLowerCase(), b.toLowerCase()];
+  return lc[0] <= lc[1] ? lc : [lc[1], lc[0]];
+}
+
+/** Group name for the single persistent conversation between two addresses. */
+export function pairGroupName(addrA: string, addrB: string): string {
+  const [a, b] = sortAddressPair(addrA, addrB);
+  return `HSEAL-PAIR-${a}-${b}`;
+}
+
+/**
+ * Finds the existing pair group for these two addresses or creates it.
+ * Includes the bot (if reachable) from the very first message, so deal
+ * notifications and dispute logging work before any deal exists.
+ */
+export async function findOrCreatePairGroup(
+  client: XmtpClient,
+  memberAddresses: [string, string],
+  botAddress: string | null,
+): Promise<XmtpGroup> {
+  const name = pairGroupName(memberAddresses[0], memberAddresses[1]);
+
+  await client.conversations.sync();
+
+  const groups = await client.conversations.listGroups();
+  for (const g of groups) {
+    if (g.name === name) {
+      await g.sync();
+      return g;
+    }
+  }
+
+  const allMembers = botAddress ? [...memberAddresses, botAddress] : [...memberAddresses];
+  const identifiers = allMembers.map(toIdentifier);
+  const canMsg = await client.canMessage(identifiers);
+  const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
+
+  return client.conversations.createGroupWithIdentifiers(reachable, {
+    groupName: name,
+    groupDescription: `Hexseal conversation: ${memberAddresses[0]} <-> ${memberAddresses[1]}`,
+  });
+}
+
+// ─── Deal-context marker ───────────────────────────────────────────────────────
+// A silent message that tags "from this point in the group, messages are about
+// deal X" (or null = general chat, no active deal). Consumed only by the relayer
+// bot to tag entries in the arbiter dispute log — parseContent() below filters
+// it out of the UI message list entirely, it never renders as a chat bubble.
+
+export function encodeDealContextMarker(dealId: string | null): string {
+  return JSON.stringify({ _type: 'deal_ctx', dealId });
 }
 
 // ─── Message helpers ──────────────────────────────────────────────────────────
@@ -297,6 +310,7 @@ function parseContent(msg: DecodedMessage): ParsedContent | null {
   if (msg.content.startsWith('{')) {
     try {
       const p = JSON.parse(msg.content) as Record<string, unknown>;
+      if (p._type === 'deal_ctx') return null; // silent marker — never rendered
       if (
         (p._type === 'enc_file' || p._type === 'file') &&
         typeof p.name === 'string' &&
@@ -339,24 +353,6 @@ export function normalizeGroupMessage(
   return { id: msg.id, from, timestamp: msg.sentAt.getTime(), isFromMe, ...parsed };
 }
 
-export function normalizeDmMessage(
-  msg: DecodedMessage,
-  myInboxId: string,
-  myAddress: string,
-  peerAddress: string,
-): ChatMessage | null {
-  const parsed = parseContent(msg);
-  if (!parsed) return null;
-  const isFromMe = msg.senderInboxId === myInboxId;
-  return {
-    id: msg.id,
-    from: isFromMe ? myAddress.toLowerCase() : peerAddress.toLowerCase(),
-    timestamp: msg.sentAt.getTime(),
-    isFromMe,
-    ...parsed,
-  };
-}
-
 // ─── History loading ──────────────────────────────────────────────────────────
 
 
@@ -391,66 +387,59 @@ export async function loadGroupMessages(
   return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs };
 }
 
-export async function loadDmMessages(
-  dm: XmtpDm,
-  myInboxId: string,
+// ─── Pair conversation list (sidebar) ──────────────────────────────────────────
+
+export type PairConversation = {
+  group: XmtpGroup;
+  peerAddress: string;
+  lastText: string;
+  lastAt: number;
+  lastFromMe: boolean;
+};
+
+const PAIR_PREFIX = 'HSEAL-PAIR-';
+
+export async function listPairConversations(
+  client: XmtpClient,
   myAddress: string,
-  peerAddress: string,
-  beforeNs?: bigint,
-): Promise<LoadedMessages> {
-  const raw = await dm.messages({
-    direction: SortDirection.Descending, // newest first
-    limit:     MSG_PAGE_SIZE,
-    ...(beforeNs ? { beforeNs } : {}),
-  });
-
-  const oldestNs = raw.length > 0 ? (raw[raw.length - 1].sentAtNs ?? null) : null;
-  const messages = [...raw]
-    .reverse()
-    .map((m)  => normalizeDmMessage(m, myInboxId, myAddress, peerAddress))
-    .filter((m): m is ChatMessage => m !== null);
-
-  return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs };
-}
-
-// ─── Conversation list ────────────────────────────────────────────────────────
-
-export async function listDmConversations(client: XmtpClient): Promise<DmConversation[]> {
+): Promise<PairConversation[]> {
   await client.conversations.sync();
-  const dms = await client.conversations.listDms();
+  const groups = await client.conversations.listGroups();
   const myInboxId = client.inboxId ?? '';
-  const result: DmConversation[] = [];
+  const myLc = myAddress.toLowerCase();
+  const result: PairConversation[] = [];
 
-  for (const dm of dms) {
+  for (const g of groups) {
+    const name = g.name ?? '';
+    if (!name.startsWith(PAIR_PREFIX)) continue;
     try {
-      await dm.sync();
-      const peerInboxId = await dm.peerInboxId();
-      const members = await dm.members();
-      const peer = members.find(m => m.inboxId === peerInboxId);
-      if (!peer) continue;
-      const peerAddress = peer.accountIdentifiers[0]?.identifier?.toLowerCase();
+      await g.sync();
+      const members = await g.members();
+      const inboxToAddr = buildInboxAddressMap(members);
+      const peerAddress = [...inboxToAddr.values()].find(addr => addr !== myLc);
       if (!peerAddress) continue;
 
-      const msgs = await dm.messages({ limit: BigInt(1), direction: SortDirection.Descending });
+      const msgs = await g.messages({ limit: BigInt(1), direction: SortDirection.Descending });
       const last = msgs[0];
       let lastText = '';
       let lastAt = 0;
-
       let lastFromMe = true;
+
       if (last) {
         lastAt = last.sentAtNs ? Number(last.sentAtNs) / 1_000_000 : 0;
-        const isFromMe = last.senderInboxId === myInboxId;
-        lastFromMe = isFromMe;
-        const content = typeof last.content === 'string' ? last.content : '';
-        if (content.startsWith('{')) {
-          try { const p = JSON.parse(content) as { name?: string }; lastText = p.name ? `📎 ${p.name}` : content; }
-          catch { lastText = content; }
-        } else {
-          lastText = isFromMe ? `You: ${content}` : content;
+        lastFromMe = last.senderInboxId === myInboxId;
+        // If the very last message happens to be a silent deal_ctx marker,
+        // parseContent returns null and the preview text stays blank until
+        // the next real message — acceptable, cosmetic only.
+        const parsed = parseContent(last);
+        if (parsed) {
+          lastText = parsed.attachment
+            ? `📎 ${parsed.attachment.name}`
+            : (lastFromMe ? `You: ${parsed.text}` : parsed.text);
         }
       }
 
-      result.push({ dm, peerAddress, lastText, lastAt, lastFromMe });
+      result.push({ group: g, peerAddress, lastText, lastAt, lastFromMe });
     } catch {
       // skip malformed conversations
     }
