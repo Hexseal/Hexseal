@@ -425,7 +425,11 @@ app.get('/dispute-log/:dealId', async (req, res) => {
       return res.status(403).json({ error: 'Not the arbiter of this deal' });
     }
 
-    const entries = readLog(dealId);
+    // Log storage is keyed by pair (client+executor), not by this individual deal —
+    // a pair's thread can span casual chat plus multiple deals over time, and the
+    // arbiter is meant to see that full context, not just this deal's slice.
+    const pairId = pairIdFromAddresses(details.client_, details.executor_);
+    const entries = readLog(pairId);
     res.json({ entries });
   } catch (err) {
     console.error('[dispute-log] error:', err.message);
