@@ -7,7 +7,7 @@ import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
-import { useXmtpSession } from "@/hooks/useXmtpSession";
+import { XmtpProvider } from "@/contexts/XmtpContext";
 
 // Page transition via pure CSS animation (page-enter keyframe in globals.css).
 // CSS animations run on the compositor thread — independent of JS work — so
@@ -155,8 +155,6 @@ function ChatLayoutInner({
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [onboardingForced, setOnboardingForced] = useState(false);
-  useXmtpSession(); // background session restore + cleanup
-
   useEffect(() => {
     const handler = () => setOnboardingForced(true);
     window.addEventListener('hexseal:open-onboarding', handler);
@@ -231,50 +229,56 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const isChatPage = pathname?.startsWith('/chat');
   if (isChatPage) {
     return (
-      <Suspense fallback={
-        <>
-          <Header />
-          <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
+      <XmtpProvider>
+        <Suspense fallback={
+          <>
+            <Header />
+            <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
+              {children}
+            </main>
+          </>
+        }>
+          <ChatLayoutInner pathname={pathname ?? ''} modal={modal}>
             {children}
-          </main>
-        </>
-      }>
-        <ChatLayoutInner pathname={pathname ?? ''} modal={modal}>
-          {children}
-        </ChatLayoutInner>
-      </Suspense>
+          </ChatLayoutInner>
+        </Suspense>
+      </XmtpProvider>
     );
   }
 
   const isHome = pathname === '/';
   if (isHome) {
     return (
-      <>
-        <Header />
-        <main className="flex-1">
-          <PageFade pathname={pathname ?? ''}>{children}</PageFade>
-        </main>
-        <Footer />
-        {modal}
-        <Toaster />
-      </>
+      <XmtpProvider>
+        <>
+          <Header />
+          <main className="flex-1">
+            <PageFade pathname={pathname ?? ''}>{children}</PageFade>
+          </main>
+          <Footer />
+          {modal}
+          <Toaster />
+        </>
+      </XmtpProvider>
     );
   }
 
   return (
-    <>
-      {topScrim}
-      {bottomScrim}
-      <Header />
-      <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
-        <PageFade pathname={pathname ?? ''}>
-          {children}
-          <div className="md:hidden" style={{ height: 'calc(5.75rem + env(safe-area-inset-bottom, 0px))' }} />
-        </PageFade>
-      </main>
-      <MobileBottomNav />
-      {modal}
-      <Toaster />
-    </>
+    <XmtpProvider>
+      <>
+        {topScrim}
+        {bottomScrim}
+        <Header />
+        <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
+          <PageFade pathname={pathname ?? ''}>
+            {children}
+            <div className="md:hidden" style={{ height: 'calc(5.75rem + env(safe-area-inset-bottom, 0px))' }} />
+          </PageFade>
+        </main>
+        <MobileBottomNav />
+        {modal}
+        <Toaster />
+      </>
+    </XmtpProvider>
   );
 }

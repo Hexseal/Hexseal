@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWalletClient, useAccount } from 'wagmi';
-import { useXmtpStatus } from './useXmtpStatus';
+import { useXmtp } from '@/contexts/XmtpContext';
 import {
   initXmtpClient,
   findOrCreatePairGroup,
@@ -31,7 +31,7 @@ function pushChatNotif(to: string, body: string, url: string) {
 export function usePairChat(peerAddress: string) {
   const { data: walletClient } = useWalletClient();
   const { address } = useAccount();
-  const { isEnabled } = useXmtpStatus();
+  const { status } = useXmtp();
 
   const [messages, setMessages]             = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading]           = useState(true);
@@ -49,7 +49,7 @@ export function usePairChat(peerAddress: string) {
   useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
 
   useEffect(() => {
-    if (!walletClient || !peerAddress || !isEnabled) { setIsLoading(false); return; }
+    if (!walletClient || !peerAddress || status !== 'ready') { setIsLoading(false); return; }
 
     let cancelled = false;
     setStreamDead(false);
@@ -107,7 +107,7 @@ export function usePairChat(peerAddress: string) {
     })();
 
     return () => { cancelled = true; };
-  }, [walletClient, peerAddress, isEnabled, retryKey]);
+  }, [walletClient, peerAddress, status, retryKey]);
 
   const loadMore = useCallback(async () => {
     const group = groupRef.current;
@@ -181,6 +181,6 @@ export function usePairChat(peerAddress: string) {
   return {
     messages, sendMessage, sendFile, loadMore, markDealContext,
     hasMore, isLoading, isInitialized, error, uploadProgress,
-    streamDead, reconnect, needsSetup: !isEnabled,
+    streamDead, reconnect, needsSetup: status !== 'ready',
   };
 }

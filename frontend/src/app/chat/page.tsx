@@ -7,10 +7,9 @@ import { useSearchParams } from 'next/navigation';
 import type { Abi } from 'viem';
 import { isAddress } from 'viem';
 import { usePairConversations } from '@/hooks/usePairConversations';
-import { useXmtpStatus } from '@/hooks/useXmtpStatus';
+import { useXmtp } from '@/contexts/XmtpContext';
 import { useProfile } from '@/hooks/useProfile';
 import { ChatPanel } from '@/components/ChatPanel';
-import { MessagingSetup } from '@/components/MessagingSetup';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
@@ -215,8 +214,8 @@ function ChatHubPageInner() {
   const searchParams = useSearchParams();
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
-  const { isEnabled: xmtpEnabled, isAutoRestoring: xmtpRestoring } = useXmtpStatus();
-  const { conversations, isLoading, error, reload } = usePairConversations(xmtpEnabled);
+  const { status: xmtpStatus } = useXmtp();
+  const { conversations, isLoading, error, reload } = usePairConversations(xmtpStatus === 'ready');
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
@@ -230,15 +229,6 @@ function ChatHubPageInner() {
     initialPeer ? new Set([initialPeer.toLowerCase()]) : new Set()
   );
   const router = useRouter();
-  // Only redirect once on first load — never when the user explicitly goes back to the list.
-  const didInitialRedirect = useRef(false);
-  useEffect(() => {
-    if (didInitialRedirect.current) return;
-    if (!selected && !isLoading && conversations.length > 0) {
-      didInitialRedirect.current = true;
-      router.replace(`/chat?peer=${conversations[0].peerAddress}`);
-    }
-  }, [selected, isLoading, conversations, router]);
 
   const handleConvoClick = useCallback((addr: string) => {
     const lc = addr.toLowerCase();
@@ -389,27 +379,6 @@ function ChatHubPageInner() {
           <h1 className="text-2xl font-bold font-syne mb-2">{t("chat.title")}</h1>
           <p className="text-muted-foreground text-sm mb-6">{t("chat.wallet_required")}</p>
           <Link href="/"><Button variant="outline">{t("common.go_home")}</Button></Link>
-        </div>
-      </div>
-    );
-  }
-
-  if (!xmtpEnabled) {
-    // While background auto-restore is running, show a neutral loading state instead
-    // of the "Enable Messaging" banner — the banner would disappear in 1-3 s anyway
-    // and asking users to click every reload is confusing.
-    if (xmtpRestoring) {
-      return (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
-        </div>
-      );
-    }
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
-        <div className="w-full max-w-md">
-          <h1 className="text-xl font-bold font-syne mb-4">{t("chat.title")}</h1>
-          <MessagingSetup />
         </div>
       </div>
     );

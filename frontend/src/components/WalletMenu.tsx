@@ -25,7 +25,7 @@ import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn } from "@/lib/utils";
-import { useXmtpStatus } from "@/hooks/useXmtpStatus";
+import { useXmtp } from "@/contexts/XmtpContext";
 
 function shortAddr(addr: string) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -44,7 +44,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
-  const { isEnabled: xmtpEnabled, disable: disableXmtp } = useXmtpStatus();
+  const { status: xmtpStatus, disable: disableXmtp } = useXmtp();
   const { address, isConnected, status } = useAccount();
   const { disconnect } = useDisconnect();
   const { openConnectModal } = useConnectModal();
@@ -368,7 +368,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             <HelpCircle className="w-3.5 h-3.5" />
             {t("wallet.how_it_works")}
           </DropdownMenuItem>
-          {xmtpEnabled && (
+          {xmtpStatus === 'ready' && (
             <DropdownMenuItem
               onClick={disableXmtp}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"

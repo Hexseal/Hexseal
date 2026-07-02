@@ -11,7 +11,7 @@ import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
 
 import { usePairChat } from '@/hooks/usePairChat';
-import { MessagingSetup } from '@/components/MessagingSetup';
+import { useXmtp } from '@/contexts/XmtpContext';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, Paperclip, FileText, ExternalLink, Lock,
@@ -228,6 +228,31 @@ function DateDivider({ ts }: { ts: number }) {
       <div className="flex-1 h-px bg-white/[0.06]" />
       <span className="text-[10px] text-white/25 font-medium tracking-wide uppercase">{label}</span>
       <div className="flex-1 h-px bg-white/[0.06]" />
+    </div>
+  );
+}
+
+function XmtpStatusBar() {
+  const { status, error, retry } = useXmtp();
+  if (status === 'loading') {
+    return (
+      <div className="flex items-center justify-center gap-2 px-4 py-3 border-t border-white/[0.06]">
+        <div className="w-4 h-4 border-2 border-white/20 border-t-white/50 rounded-full animate-spin flex-shrink-0" />
+        <span className="text-xs text-white/30">Подключение мессенджера…</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-white/[0.06] bg-white/[0.02]">
+      <p className="text-xs text-white/40 truncate min-w-0">
+        {error ?? 'Мессенджер отключён'}
+      </p>
+      <button
+        onClick={retry}
+        className="flex-shrink-0 text-xs text-white/50 hover:text-white/80 underline underline-offset-2 transition-colors"
+      >
+        {error ? 'Повторить' : 'Включить'}
+      </button>
     </div>
   );
 }
@@ -767,10 +792,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
         <div className="py-4">
 
           {!isLoading && needsSetup && (
-            <div className="flex flex-col items-center justify-center py-16 gap-4 px-4">
-              <div className="w-full max-w-sm">
-                <MessagingSetup />
-              </div>
+            <div className="flex flex-col items-center justify-center py-16 gap-3 px-4 text-center">
+              <div className="w-8 h-8 border-2 border-white/10 border-t-white/30 rounded-full animate-spin" />
+              <p className="text-sm text-white/25">Инициализация мессенджера…</p>
             </div>
           )}
 
@@ -934,7 +958,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
       </div>
 
       {/* Input */}
-      <div
+      {needsSetup ? <XmtpStatusBar /> : <div
         className="flex-shrink-0 px-2 pt-1 flex flex-col gap-1 bg-black"
         style={{
           paddingBottom: '4px',
@@ -1051,7 +1075,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
             {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* Pre-deal confirm modal */}
       {preDealConfirm && preDealCtx && (
