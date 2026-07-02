@@ -62,15 +62,6 @@ export function encodeFileMessage(
 
 export type XmtpClient = Client;
 export type XmtpGroup  = Awaited<ReturnType<XmtpClient['conversations']['createGroupWithIdentifiers']>>;
-export type XmtpDm     = Awaited<ReturnType<XmtpClient['conversations']['createDmWithIdentifier']>>;
-
-export type DmConversation = {
-  dm: XmtpDm;
-  peerAddress: string;
-  lastText: string;
-  lastAt: number;
-  lastFromMe: boolean;
-};
 
 // ─── Identifier helper ────────────────────────────────────────────────────────
 
@@ -222,44 +213,6 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   return promise;
 }
 
-// ─── Deal group ───────────────────────────────────────────────────────────────
-
-export function dealGroupName(agreementAddress: string): string {
-  return `HSEAL-${agreementAddress.toLowerCase()}`;
-}
-
-/**
- * Finds an existing deal group or creates a new one.
- * Only adds members who have XMTP identities (checked via canMessage).
- */
-export async function findOrCreateDealGroup(
-  client: XmtpClient,
-  agreementAddress: string,
-  memberAddresses: string[],
-): Promise<XmtpGroup> {
-  const name = dealGroupName(agreementAddress);
-
-  await client.conversations.sync();
-
-  const groups = await client.conversations.listGroups();
-  for (const g of groups) {
-    if (g.name === name) {
-      await g.sync();
-      return g;
-    }
-  }
-
-  // Filter to addresses that have registered XMTP identities
-  const identifiers = memberAddresses.map(toIdentifier);
-  const canMsg = await client.canMessage(identifiers);
-  const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
-
-  return client.conversations.createGroupWithIdentifiers(reachable, {
-    groupName: name,
-    groupDescription: `Hexseal deal: ${agreementAddress}`,
-  });
-}
-
 /**
  * Tries to add a member to an existing group.
  * Silently skips if the address hasn't registered XMTP yet.
@@ -400,24 +353,6 @@ export function normalizeGroupMessage(
   return { id: msg.id, from, timestamp: msg.sentAt.getTime(), isFromMe, ...parsed };
 }
 
-export function normalizeDmMessage(
-  msg: DecodedMessage,
-  myInboxId: string,
-  myAddress: string,
-  peerAddress: string,
-): ChatMessage | null {
-  const parsed = parseContent(msg);
-  if (!parsed) return null;
-  const isFromMe = msg.senderInboxId === myInboxId;
-  return {
-    id: msg.id,
-    from: isFromMe ? myAddress.toLowerCase() : peerAddress.toLowerCase(),
-    timestamp: msg.sentAt.getTime(),
-    isFromMe,
-    ...parsed,
-  };
-}
-
 // ─── History loading ──────────────────────────────────────────────────────────
 
 
@@ -450,74 +385,6 @@ export async function loadGroupMessages(
     .filter((m): m is ChatMessage => m !== null);
 
   return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs };
-}
-
-export async function loadDmMessages(
-  dm: XmtpDm,
-  myInboxId: string,
-  myAddress: string,
-  peerAddress: string,
-  beforeNs?: bigint,
-): Promise<LoadedMessages> {
-  const raw = await dm.messages({
-    direction: SortDirection.Descending, // newest first
-    limit:     MSG_PAGE_SIZE,
-    ...(beforeNs ? { beforeNs } : {}),
-  });
-
-  const oldestNs = raw.length > 0 ? (raw[raw.length - 1].sentAtNs ?? null) : null;
-  const messages = [...raw]
-    .reverse()
-    .map((m)  => normalizeDmMessage(m, myInboxId, myAddress, peerAddress))
-    .filter((m): m is ChatMessage => m !== null);
-
-  return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs };
-}
-
-// ─── Conversation list ────────────────────────────────────────────────────────
-
-export async function listDmConversations(client: XmtpClient): Promise<DmConversation[]> {
-  await client.conversations.sync();
-  const dms = await client.conversations.listDms();
-  const myInboxId = client.inboxId ?? '';
-  const result: DmConversation[] = [];
-
-  for (const dm of dms) {
-    try {
-      await dm.sync();
-      const peerInboxId = await dm.peerInboxId();
-      const members = await dm.members();
-      const peer = members.find(m => m.inboxId === peerInboxId);
-      if (!peer) continue;
-      const peerAddress = peer.accountIdentifiers[0]?.identifier?.toLowerCase();
-      if (!peerAddress) continue;
-
-      const msgs = await dm.messages({ limit: BigInt(1), direction: SortDirection.Descending });
-      const last = msgs[0];
-      let lastText = '';
-      let lastAt = 0;
-
-      let lastFromMe = true;
-      if (last) {
-        lastAt = last.sentAtNs ? Number(last.sentAtNs) / 1_000_000 : 0;
-        const isFromMe = last.senderInboxId === myInboxId;
-        lastFromMe = isFromMe;
-        const content = typeof last.content === 'string' ? last.content : '';
-        if (content.startsWith('{')) {
-          try { const p = JSON.parse(content) as { name?: string }; lastText = p.name ? `📎 ${p.name}` : content; }
-          catch { lastText = content; }
-        } else {
-          lastText = isFromMe ? `You: ${content}` : content;
-        }
-      }
-
-      result.push({ dm, peerAddress, lastText, lastAt, lastFromMe });
-    } catch {
-      // skip malformed conversations
-    }
-  }
-
-  return result.sort((a, b) => b.lastAt - a.lastAt);
 }
 
 // ─── Pair conversation list (sidebar) ──────────────────────────────────────────
