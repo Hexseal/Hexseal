@@ -469,14 +469,14 @@ function ChatHubPageInner() {
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
 
-          {isLoading && (
+          {(isLoading || xmtpStatus === 'loading') && (
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-white/30">
               <Loader2 className="w-5 h-5 animate-spin" />
               <span className="text-xs">{t("chat.loading_conversations")}</span>
             </div>
           )}
 
-          {!isLoading && error && (
+          {!isLoading && xmtpStatus !== 'loading' && error && (
             <div className="px-4 py-8 text-center space-y-3">
               <p className="text-xs text-red-400/60 leading-relaxed">{error}</p>
               {error.includes('xmtp.chat') && (
@@ -495,7 +495,7 @@ function ChatHubPageInner() {
             </div>
           )}
 
-          {!isLoading && !error && conversations.length === 0 && (
+          {!isLoading && xmtpStatus !== 'loading' && !error && conversations.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center px-4">
               <MessageCircle className="w-8 h-8 text-white/[0.12] mb-3" />
               <p className="text-sm text-white/35 mb-1">{t("chat.no_conversations")}</p>

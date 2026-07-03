@@ -170,7 +170,8 @@
     "disconnect": "Отключить",
     "copied": "Адрес скопирован!",
     "copy_failed": "Не удалось скопировать",
-    "disable_messaging": "Отключить мессенджер"
+    "disable_messaging": "Отключить мессенджер",
+    "arbiter_apply_success": "Заявка отправлена — ждите решения"
   },
   "dashboard": {
     "title": "Личный кабинет",
@@ -597,6 +598,10 @@
     "view_history_btn": "История чата",
     "no_history_log": "Сообщений пока нет",
     "window_expired": "Окно истекло — стороны могут запросить возврат",
+    "time_expired": "Истёк",
+    "time_left_dhm": "осталось {d}д {h}ч",
+    "time_left_hm": "осталось {h}ч {m}м",
+    "time_left_m": "осталось {m}м",
     "verdict_executor_paid": "Исполнитель оплачен",
     "verdict_client_refunded": "Клиенту возвращено",
     "register": "Зарегистрироваться как арбитр",

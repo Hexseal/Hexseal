@@ -66,11 +66,11 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
     }
   }, [isConnected, status]);
 
-  // ENS name (only on mainnet, but we try anyway)
+  // ENS name — disabled on Base Sepolia (no ENS registry on testnet)
   const { data: ensName } = useEnsName({
     address: address as `0x${string}`,
     chainId: appChainId,
-    query: { enabled: !!address },
+    query: { enabled: false },
   });
 
   // Arbiter check
@@ -99,16 +99,22 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
     query: { enabled: !!address },
   }) as { data: bigint | undefined };
 
-  const { writeContract: applyAsArbiterWrite, isPending: applyPending } = useWriteContract();
+  const { writeContractAsync: applyAsArbiterWrite, isPending: applyPending } = useWriteContract();
 
   const canApplyAsArbiter = daoActive && !isArbiter && !!onchainXP && onchainXP >= 3000n;
 
-  const handleApplyAsArbiter = () => {
-    applyAsArbiterWrite({
-      address: CONTRACTS.diamond,
-      abi: ARBITER_REGISTRY_ABI as Abi,
-      functionName: "applyAsArbiter",
-    });
+  const handleApplyAsArbiter = async () => {
+    try {
+      await applyAsArbiterWrite({
+        address: CONTRACTS.diamond,
+        abi: ARBITER_REGISTRY_ABI as Abi,
+        functionName: "applyAsArbiter",
+      });
+      toast.success(t("wallet.arbiter_apply_success"));
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage || e?.message || t("common.error"));
+    }
   };
 
   // Owner check

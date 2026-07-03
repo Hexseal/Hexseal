@@ -336,12 +336,16 @@ function parseContent(msg: DecodedMessage): ParsedContent | null {
         typeof p.name === 'string' &&
         typeof p.url  === 'string'
       ) {
+        const storjKey = typeof p.storjKey === 'string' ? p.storjKey : undefined;
+        // Reconstruct download URL from current relayer base — baked URLs go stale when ngrok rotates
+        const RELAYER = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+        const resolvedUrl = storjKey ? `${RELAYER}/files/${storjKey}` : (p.url as string);
         return {
           text: p.name,
           attachment: {
             name:       p.name,
-            url:        p.url,
-            storjKey:   typeof p.storjKey   === 'string'  ? p.storjKey   : undefined,
+            url:        resolvedUrl,
+            storjKey,
             size:       typeof p.size       === 'number'  ? p.size       : undefined,
             mime:       typeof p.mime       === 'string'  ? p.mime       : undefined,
             key:        typeof p.key        === 'string'  ? p.key        : undefined,

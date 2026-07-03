@@ -293,7 +293,7 @@ export default function PostJobPage() {
                 <Textarea id="terms" placeholder={t("board.post_job.field_brief_hint")} value={jobTerms}
                   onChange={e => setJobTerms(e.target.value)} rows={3}
                   className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-[14px]" />
-                <p className="text-xs text-white/25">Uploaded to IPFS — visible only after match</p>
+                <p className="text-xs text-white/25">Terms hash stored on-chain — text saved to backend</p>
               </div>
             </div>
 
@@ -341,10 +341,10 @@ export default function PostJobPage() {
           <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-16 text-center" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             <Loader2 className="w-10 h-10 animate-spin mx-auto mb-5 text-primary" />
             <h2 className="text-lg font-semibold mb-2">
-              {step === "uploading" ? "Uploading to IPFS…" : "Sending gasless transaction…"}
+              {step === "uploading" ? "Saving terms…" : "Sending gasless transaction…"}
             </h2>
             <p className="text-sm text-white/40">
-              {step === "pending" ? "Sign the USDC permit in your wallet — no ETH needed" : "Pinning terms to IPFS…"}
+              {step === "pending" ? "Sign the USDC permit in your wallet — no ETH needed" : "Uploading terms to backend…"}
             </p>
           </div>
         )}

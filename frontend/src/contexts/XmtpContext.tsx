@@ -2,7 +2,6 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { toast } from 'react-hot-toast';
 import { initXmtpClient, clearXmtpSession } from '@/lib/xmtp';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
@@ -74,16 +73,6 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     if (triedRef.current.has(addr))    return;
     if (disabledRef.current.has(addr)) return;
     triedRef.current.add(addr);
-
-    const hasKey = typeof window !== 'undefined' &&
-      localStorage.getItem(registeredKey(addr)) === '1';
-
-    if (!hasKey) {
-      toast('Подпишите запрос в кошельке чтобы активировать мессенджер', {
-        icon: '🔒',
-        duration: 5000,
-      });
-    }
 
     (async () => {
       try {

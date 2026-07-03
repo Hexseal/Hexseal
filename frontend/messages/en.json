@@ -170,7 +170,8 @@
     "disconnect": "Disconnect",
     "copied": "Address copied!",
     "copy_failed": "Failed to copy",
-    "disable_messaging": "Disable Messaging"
+    "disable_messaging": "Disable Messaging",
+    "arbiter_apply_success": "Application submitted — waiting for review"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -636,6 +637,10 @@
     "view_history_btn": "Chat history",
     "no_history_log": "No messages recorded yet",
     "window_expired": "Window expired — parties can trigger refund",
+    "time_expired": "Expired",
+    "time_left_dhm": "{d}d {h}h left",
+    "time_left_hm": "{h}h {m}m left",
+    "time_left_m": "{m}m left",
     "verdict_executor_paid": "Executor paid",
     "verdict_client_refunded": "Client refunded",
     "register": "Register as Arbiter",

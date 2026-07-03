@@ -298,7 +298,7 @@ export default function ProfilePage() {
               </Link>
             )}
             {!isOwner && viewerAddress && (
-              <Link href={`/chat?address=${profileAddress}`}>
+              <Link href={`/chat?peer=${profileAddress}`}>
                 <Button variant="outline" size="sm">
                   <ExternalLink className="w-3.5 h-3.5 mr-1" />
                   {t("common.message") ?? "Message"}

@@ -438,7 +438,7 @@ function ServiceCard({
 
         <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
           {isConnected && !isMyService && (
-            <Link href={`/chat/${service.executor}`}>
+            <Link href={`/chat?peer=${service.executor}`}>
               <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors">
                 <MessageCircle className="w-3.5 h-3.5" />
               </button>

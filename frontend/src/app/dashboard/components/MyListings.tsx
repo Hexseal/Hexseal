@@ -378,7 +378,7 @@ function ServiceCard({
                           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-white/70">Details</Button>
                         </Link>
                         {!readOnly && (
-                          <Link href={`/chat/${req.client}`} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+                          <Link href={`/chat?peer=${req.client}`} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
                             <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-primary">Chat</Button>
                           </Link>
                         )}
@@ -876,7 +876,7 @@ function JobCard({
                     <span className="text-xs font-mono text-white/60 min-w-0 truncate">{shortAddr(addr)}</span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {!readOnly && (
-                        <Link href={`/chat/${addr}`}>
+                        <Link href={`/chat?peer=${addr}`}>
                           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40 hover:text-primary">Chat</Button>
                         </Link>
                       )}

@@ -49,14 +49,15 @@ type PendingVerdict = {
 function shortAddr(a: string) { return a.slice(0, 6) + "…" + a.slice(-4); }
 function fmtUSDC(v: bigint)   { return (Number(v) / 1e6).toFixed(2); }
 
-function fmtTimeLeft(seconds: bigint | number | undefined): string {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function fmtTimeLeft(seconds: bigint | number | undefined, t: (k: any, v?: any) => string): string {
   if (!seconds) return "—";
   const s = Number(BigInt(seconds));
-  if (s <= 0) return "Expired";
+  if (s <= 0) return t("arbiter.time_expired");
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h left`;
-  if (h > 0) return `${h}h ${m}m left`;
-  return `${m}m left`;
+  if (d > 0) return t("arbiter.time_left_dhm", { d, h });
+  if (h > 0) return t("arbiter.time_left_hm", { h, m });
+  return t("arbiter.time_left_m", { m });
 }
 
 // ─── Tab component ────────────────────────────────────────────────────────────
@@ -351,7 +352,7 @@ export default function ArbiterPage() {
           {tab === "disputes" && (
             loadingDisputed ? (
               <div className="flex items-center justify-center py-12 gap-2 text-white/30">
-                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">Loading…</span>
+                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">{t("common.loading")}</span>
               </div>
             ) : disputedList.length === 0 ? (
               <SectionEmpty
@@ -378,7 +379,7 @@ export default function ArbiterPage() {
           {tab === "mine" && (
             loadingMine ? (
               <div className="flex items-center justify-center py-12 gap-2 text-white/30">
-                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">Loading…</span>
+                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">{t("common.loading")}</span>
               </div>
             ) : !myHistory || myHistory.length === 0 ? (
               <SectionEmpty
@@ -406,7 +407,7 @@ export default function ArbiterPage() {
           {tab === "history" && (
             loadingMine ? (
               <div className="flex items-center justify-center py-12 gap-2 text-white/30">
-                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">Loading…</span>
+                <Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">{t("common.loading")}</span>
               </div>
             ) : !myHistory || myHistory.length === 0 ? (
               <SectionEmpty
@@ -507,7 +508,7 @@ function DisputeCard({
           )}
           {timeLeft !== undefined && timeLeft > 0n && (
             <span className={`text-xs font-mono ${urgent ? "text-red-400" : "text-orange-400"}`}>
-              {fmtTimeLeft(timeLeft)}
+              {fmtTimeLeft(timeLeft, t)}
             </span>
           )}
         </div>
@@ -747,7 +748,7 @@ function MyCaseCard({
             </Badge>
             {timeLeft !== undefined && timeLeft > 0n && (
               <span className={`text-xs font-mono ${urgent ? "text-red-400" : "text-orange-400"}`}>
-                {fmtTimeLeft(timeLeft)}
+                {fmtTimeLeft(timeLeft, t)}
               </span>
             )}
             {expired && (
@@ -960,14 +961,14 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
     functionName: "getArbiters",
   }) as { data: string[] | undefined; refetch: () => void };
 
-  const { writeContract, isPending } = useWriteContract();
+  const { writeContractAsync, isPending } = useWriteContract();
   const [newArbiter,   setNewArbiter]   = useState("");
   const [removingAddr, setRemovingAddr] = useState<string | null>(null);
 
   const handleAdd = async () => {
     if (!isAddress(newArbiter)) { toast.error(t("profile.invalid_address")); return; }
     try {
-      await writeContract({
+      await writeContractAsync({
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: "addArbiter", args: [newArbiter as Address], gas: BigInt(120_000),
       });
@@ -980,7 +981,7 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
   const handleRemove = async (addr: string) => {
     setRemovingAddr(addr);
     try {
-      await writeContract({
+      await writeContractAsync({
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: "removeArbiter", args: [addr as Address], gas: BigInt(120_000),
       });

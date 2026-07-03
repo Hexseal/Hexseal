@@ -233,7 +233,7 @@ function JobCard({
           <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
             {!isClient && address && (
               <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors"
-                onClick={() => router.push(`/chat/${job.client}`)}>
+                onClick={() => router.push(`/chat?peer=${job.client}`)}>
                 <MessageCircle className="w-3.5 h-3.5" />
               </button>
             )}
@@ -317,7 +317,7 @@ function JobCard({
                     <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5">
                       <span className="text-xs font-mono text-white/50 truncate min-w-0">{addr}</span>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary" onClick={() => router.push(`/chat/${addr}`)}>{t("board.jobs.chat_tab")}</Button>
+                        <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-white/35 hover:text-primary" onClick={() => router.push(`/chat?peer=${addr}`)}>{t("board.jobs.chat_tab")}</Button>
                         <Button size="sm" onClick={() => handleAccept(addr)} disabled={!!isAccepting} className="h-8 px-2.5 text-xs gap-1">
                           {isAccepting === addr ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
                           {t("board.jobs.accept_btn")}

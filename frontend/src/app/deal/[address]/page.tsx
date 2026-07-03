@@ -85,7 +85,7 @@ function PartyRow({
         </span>
       )}
       {!isMe && showChat && (
-        <Link href={`/chat/${addr}`}>
+        <Link href={`/chat?peer=${addr}`}>
           <button className="text-white/25 hover:text-primary transition-colors">
             <MessageCircle className="w-3.5 h-3.5" />
           </button>
@@ -918,14 +918,14 @@ export default function DealDetailPage() {
             <p className="text-xs text-white/40 mb-3">{t("deal.dispute_active_hint")}</p>
             <div className="flex gap-2">
               {parsed.arbiter !== ZERO_ADDR && (
-                <Link href={`/chat/${parsed.arbiter}`}>
+                <Link href={`/chat?peer=${parsed.arbiter}`}>
                   <Button size="sm" variant="outline" className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs">
                     <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("arbiter.chat_client_btn")}
                   </Button>
                 </Link>
               )}
               {adminAddress && adminAddress !== ZERO_ADDR && (
-                <Link href={`/chat/${adminAddress.toLowerCase()}`}>
+                <Link href={`/chat?peer=${adminAddress.toLowerCase()}`}>
                   <Button size="sm" variant="ghost" className="text-white/40 text-xs">
                     <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("arbiter.deal_chat_btn")}
                   </Button>
