@@ -553,7 +553,7 @@ export default function ExecutorBoardPage() {
     const handler = (e: WheelEvent) => { e.preventDefault(); el.scrollLeft += e.deltaY; };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, []);
+  }, [mounted]);
   const [userRegion, setUserRegion]     = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [allServices, setAllServices] = useState<GraphService[]>([]);
