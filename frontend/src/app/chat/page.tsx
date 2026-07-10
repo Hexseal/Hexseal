@@ -400,6 +400,20 @@ function ChatHubPageInner() {
 
   const t = useTranslations();
 
+  // Merge on-chain deal counterparties into the conversation list.
+  // Must be before any conditional return to satisfy Rules of Hooks.
+  const allConversations = useMemo(() => {
+    const knownPeers = new Set(conversations.map(c => c.peerAddress));
+    const extras: typeof conversations = [];
+    for (const [peer] of peerDealsMap) {
+      if (!knownPeers.has(peer)) {
+        extras.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
+      }
+    }
+    if (extras.length === 0) return conversations;
+    return [...conversations, ...extras].sort((a, b) => b.lastAt - a.lastAt);
+  }, [conversations, peerDealsMap]);
+
   if (!isConnected) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -414,22 +428,6 @@ function ChatHubPageInner() {
       </div>
     );
   }
-
-  // Merge on-chain deal counterparties into the conversation list.
-  // peerDealsMap contains every active-deal peer from the blockchain (cross-device,
-  // no localStorage). If a peer already has an XMTP pair group they'll appear via
-  // conversations; if not, we surface them here so they're always reachable.
-  const allConversations = useMemo(() => {
-    const knownPeers = new Set(conversations.map(c => c.peerAddress));
-    const extras: typeof conversations = [];
-    for (const [peer] of peerDealsMap) {
-      if (!knownPeers.has(peer)) {
-        extras.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
-      }
-    }
-    if (extras.length === 0) return conversations;
-    return [...conversations, ...extras].sort((a, b) => b.lastAt - a.lastAt);
-  }, [conversations, peerDealsMap]);
 
   const selectedDealCtxs = selected ? (peerDealsMap.get(selected) ?? []) : [];
 
