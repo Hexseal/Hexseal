@@ -20,11 +20,13 @@ import { uploadFileWithEncryption } from '@/lib/fileStorage';
 
 const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 
-function pushChatNotif(to: string, body: string, url: string) {
+function pushChatNotif(to: string, from: string, body: string, url: string) {
   fetch(`${RELAYER_URL}/push/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, title: 'New Message 💬', body, url }),
+    // `from` lets the relayer resolve a profile display name as the notification title.
+    // `tag` groups all messages from this sender so they stack rather than pile up.
+    body: JSON.stringify({ to, from, body, url, tag: `/chat?peer=${from.toLowerCase()}` }),
   }).catch(() => {});
 }
 
@@ -130,7 +132,7 @@ export function usePairChat(peerAddress: string) {
       timestamp: Date.now(), isFromMe: true,
     }]);
     await group.sendText(text.trim());
-    pushChatNotif(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`);
+    pushChatNotif(peerRef.current, address ?? '', text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`);
   }, [address]);
 
   const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
@@ -161,7 +163,7 @@ export function usePairChat(peerAddress: string) {
     }]);
 
     await group.sendText(encoded);
-    pushChatNotif(peerRef.current, `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`);
+    pushChatNotif(peerRef.current, address ?? '', `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`);
   }, [address]);
 
   const markDealContext = useCallback(async (dealId: string | null) => {

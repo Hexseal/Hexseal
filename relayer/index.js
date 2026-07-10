@@ -793,16 +793,38 @@ app.post('/push/unsubscribe', async (req, res) => {
   }
 });
 
+// Resolve a display name for a wallet address: profile displayName → short address
+function resolveDisplayName(addr) {
+  if (!addr || !ethers.isAddress(addr)) return null;
+  try {
+    const profilePath = path.join(DIR_PUBLIC, `profile-${addr.toLowerCase()}.json`);
+    if (fs.existsSync(profilePath)) {
+      const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+      if (profile?.displayName?.trim()) return profile.displayName.trim();
+    }
+  } catch {}
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
 app.post('/push/send', async (req, res) => {
   try {
     const ip = clientIp(req);
     if (!checkRateLimit(ip)) {
       return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
     }
-    const { to, title, body, url } = req.body || {};
-    if (!to || !title || !body) return res.status(400).json({ error: 'to, title, body required' });
+    // `from` is the sender address — used to resolve a human-readable title.
+    // `title` is used as-is when `from` is absent (deal notifications, etc.).
+    const { to, title, body, url, from, tag } = req.body || {};
+    if (!to || !body) return res.status(400).json({ error: 'to and body required' });
     if (!ethers.isAddress(to)) return res.status(400).json({ error: 'Invalid address' });
-    await sendPush(to.toLowerCase(), { title, body: String(body).slice(0, 200), url: url || '/chat' });
+
+    const resolvedTitle = from ? (resolveDisplayName(from) ?? title ?? 'New message') : (title ?? 'Hexseal');
+    await sendPush(to.toLowerCase(), {
+      title: resolvedTitle,
+      body:  String(body).slice(0, 200),
+      url:   url || '/chat',
+      tag:   tag || url || '/chat',
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

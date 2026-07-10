@@ -1,25 +1,25 @@
 // Hexseal Service Worker — handles background push notifications
 
 self.addEventListener('push', (event) => {
-  let data = { title: 'Hexseal', body: 'New update', url: '/' };
+  let data = { title: 'Hexseal', body: '', url: '/' };
   try { data = { ...data, ...event.data?.json() }; } catch {}
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      // Don't show notification if the app is already open and focused
-      const appFocused = list.some(c => c.focused);
-      if (appFocused) return;
+      // Don't show notification if the user is already looking at that exact page
+      const alreadyOpen = list.some(c => c.focused && c.url.includes(data.url.split('?')[0]));
+      if (alreadyOpen) return;
       return self.registration.showNotification(data.title, {
         body: data.body,
         icon: '/icon-192.png',
         badge: '/icon-192.png',
-        tag: data.url,
+        // tag groups notifications from the same sender/deal — new message replaces old
+        tag: data.tag || data.url,
         renotify: true,
         data: { url: data.url },
       });
     })
   );
-});
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
