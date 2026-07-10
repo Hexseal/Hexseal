@@ -201,7 +201,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
   // Track visual viewport dimensions for iOS keyboard handling.
   // --vvh shrinks when the keyboard opens, keeping the input above it.
-  // --vv-offset-top counteracts iOS PWA visual-viewport scroll-to-focus.
+  // --vv-offset-top counteracts iOS PWA visual-viewport displacement on keyboard open.
+  //
+  // NOTE: only 'resize' is used, not 'scroll'. The scroll event fires on user
+  // swipe gestures too (changing vv.offsetTop), which caused the fixed chat
+  // container to slide visibly when swiping in the header area. Keyboard
+  // open/close always fires 'resize', so 'resize' alone is sufficient.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -210,11 +215,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       document.documentElement.style.setProperty('--vv-offset-top', `${vv.offsetTop}px`);
     };
     vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
     update();
     return () => {
       vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
       document.documentElement.style.removeProperty('--vv-offset-top');
     };
   }, []);
