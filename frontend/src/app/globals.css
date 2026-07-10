@@ -479,6 +479,14 @@ a {
 .chat-conv-enter {
   animation: chat-conv-enter 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
+@keyframes chat-conv-leave {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(32px); }
+}
+.chat-conv-leave {
+  animation: chat-conv-leave 0.16s cubic-bezier(0.4, 0, 0.6, 1) both;
+  pointer-events: none;
+}
 
 /* Page transition — pure CSS so iOS compositor thread handles it independently of JS work */
 @keyframes page-enter {

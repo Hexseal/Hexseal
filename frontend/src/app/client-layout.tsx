@@ -53,14 +53,15 @@ const bottomScrim = (
   />
 );
 
-// Reads ?peer to decide which chat layout to use.
+// /chat is always a fixed full-screen layout — list view AND conversation view.
+// This eliminates the layout seam that occurred when ?peer was added/removed:
+// previously the app shell switched between scrollable and fixed, causing a
+// visible jump. Now the shell is stable; only internal CSS handles the panel switch.
+//
+// MobileBottomNav floats (position:fixed) over the list when no peer is selected.
+// Body lock is applied unconditionally by the early ClientLayout effect below.
+//
 // Must be inside Suspense because useSearchParams() needs it in Next.js app router.
-//
-// Chat LIST  (?peer absent): normal scrollable page + floating MobileBottomNav.
-//   Nav appears as a true system element, not embedded in any container.
-//
-// Chat CONVO (?peer=xxx):    position:fixed full-screen layout + body lock.
-//   Prevents iOS Safari from flying the page up when the keyboard opens.
 function ChatLayoutInner({
   children,
   pathname,
@@ -72,83 +73,23 @@ function ChatLayoutInner({
 }) {
   const sp = useSearchParams();
   const hasPeer = !!sp.get('peer');
-  const bodyScrollY = React.useRef(0);
 
-  // body.position=fixed: lock the document only while a conversation is open.
-  // iOS Safari fires "scroll to focused input" before the keyboard appears;
-  // fixing the body is the only reliable way to stop the page from jumping.
-  useEffect(() => {
-    const body = document.body;
-    const html = document.documentElement;
-    if (hasPeer) {
-      bodyScrollY.current = window.scrollY;
-      body.style.position = 'fixed';
-      body.style.top      = `-${bodyScrollY.current}px`;
-      body.style.width    = '100%';
-      body.style.overflow = 'hidden';
-      html.style.overflow = 'hidden';
-    } else {
-      body.style.position = '';
-      body.style.top      = '';
-      body.style.width    = '';
-      body.style.overflow = '';
-      html.style.overflow = '';
-      window.scrollTo(0, bodyScrollY.current);
-    }
-    return () => {
-      body.style.position = '';
-      body.style.top      = '';
-      body.style.width    = '';
-      body.style.overflow = '';
-      html.style.overflow = '';
-      window.scrollTo(0, bodyScrollY.current);
-    };
-  }, [hasPeer]);
-
-  if (hasPeer) {
-    // Conversation: fixed full-screen container.
-    // --chat-top-offset: pixel distance from the top where the chat area starts.
-    // --vvh:            visual viewport height — shrinks when keyboard opens.
-    //
-    // NOTE: --vv-offset-top is intentionally NOT used here. The body is locked
-    // (position:fixed) in chat conversations, so vv.offsetTop is always 0.
-    // Adding it caused a jump: iOS transiently fires resize with offsetTop=
-    // keyboard_height before the body lock reasserts, pushing the container
-    // below the visible viewport (input appeared at the top of the screen).
-    return (
-      <>
-        <Header />
-        <main
-          className="flex flex-col overflow-hidden"
-          style={{
-            position: 'fixed',
-            top: 'var(--chat-top-offset)',
-            left: 0,
-            right: 0,
-            height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset))',
-          }}
-        >
-          <PageFade pathname={pathname}>{children}</PageFade>
-        </main>
-        {modal}
-        <Toaster />
-      </>
-    );
-  }
-
-  // Chat list: normal scrollable page layout — nav is a real floating element.
   return (
     <>
-      {topScrim}
-      {bottomScrim}
       <Header />
-      <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
-        <PageFade pathname={pathname ?? ''}>
-          {children}
-          <div className="md:hidden" style={{ height: 'calc(5.75rem + env(safe-area-inset-bottom, 0px))' }} />
-        </PageFade>
+      <main
+        className="flex flex-col overflow-hidden"
+        style={{
+          position: 'fixed',
+          top: 'var(--chat-top-offset)',
+          left: 0,
+          right: 0,
+          height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset))',
+        }}
+      >
+        <PageFade pathname={pathname}>{children}</PageFade>
       </main>
-      <MobileBottomNav />
+      {!hasPeer && <MobileBottomNav />}
       {modal}
       <Toaster />
     </>
@@ -166,10 +107,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
   // Early body lock: fires before the Suspense/ChatLayoutInner effect has a chance to run.
   // Reads window.location.search directly to avoid needing useSearchParams here.
+  // Early body lock for /chat — fires before ChatLayoutInner mounts.
+  // /chat is always fixed full-screen (list AND conversation), so lock unconditionally.
   useEffect(() => {
     if (!pathname?.startsWith('/chat')) return;
-    const hasPeer = new URLSearchParams(window.location.search).has('peer');
-    if (!hasPeer) return;
     const body = document.body;
     const html = document.documentElement;
     const scrollY = window.scrollY;

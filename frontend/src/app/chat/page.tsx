@@ -9,6 +9,7 @@ import { isAddress } from 'viem';
 import { usePairConversations } from '@/hooks/usePairConversations';
 import { useXmtp } from '@/contexts/XmtpContext';
 import { useProfile } from '@/hooks/useProfile';
+import { getXmtpClientIfCached, toIdentifier } from '@/lib/xmtp';
 import { ChatPanel } from '@/components/ChatPanel';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
@@ -221,6 +222,8 @@ function ChatHubPageInner() {
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
   const [showNewChat, setShowNewChat] = useState(false);
   const [newChatAddr, setNewChatAddr] = useState('');
+  const [newChatChecking, setNewChatChecking] = useState(false);
+  const [newChatError, setNewChatError]       = useState<string | null>(null);
   const newChatInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (showNewChat) newChatInputRef.current?.focus();
@@ -229,6 +232,15 @@ function ChatHubPageInner() {
     initialPeer ? new Set([initialPeer.toLowerCase()]) : new Set()
   );
   const router = useRouter();
+
+  const [isLeaving, setIsLeaving] = useState(false);
+  // Reset leave state when a new conversation is opened
+  useEffect(() => { setIsLeaving(false); }, [selected]);
+
+  const handleBack = useCallback(() => {
+    setIsLeaving(true);
+    setTimeout(() => router.replace('/chat'), 160);
+  }, [router]);
 
   // Pull-to-refresh
   const listRef      = useRef<HTMLDivElement>(null);
@@ -388,11 +400,30 @@ function ChatHubPageInner() {
     return map;
   }, [candidateAgreements, dealDetailResults, agreementJobMap]);
 
-  const handleOpenNewChat = () => {
+  const handleOpenNewChat = async () => {
     const addr = newChatAddr.trim().toLowerCase();
-    if (!isAddress(addr)) return;
+    if (!isAddress(addr) || newChatChecking) return;
+
+    const client = address ? getXmtpClientIfCached(address) : null;
+    if (client) {
+      setNewChatChecking(true);
+      setNewChatError(null);
+      try {
+        const canMsgMap = await client.canMessage([toIdentifier(addr)]);
+        if (canMsgMap.get(addr) !== true) {
+          setNewChatError('This address has not activated XMTP messaging yet. They need to open Hexseal chat first.');
+          return;
+        }
+      } catch {
+        // network check failed — proceed anyway, ChatPanel will surface the error
+      } finally {
+        setNewChatChecking(false);
+      }
+    }
+
     setShowNewChat(false);
     setNewChatAddr('');
+    setNewChatError(null);
     setSeenConvos(prev => new Set([...prev, addr]));
     localStorage.setItem(`hexseal_chat_seen_${addr}`, String(Date.now()));
     router.push(`/chat?peer=${addr}`);
@@ -455,7 +486,7 @@ function ChatHubPageInner() {
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
             <button
-              onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); }}
+              onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); setNewChatError(null); }}
               title={t("chat.new_conversation")}
               className={cn(
                 'p-2 rounded-[12px] transition-colors',
@@ -473,7 +504,7 @@ function ChatHubPageInner() {
             <span className="text-[11px] text-white/20">{t("chat.encrypted")}</span>
           </div>
           <button
-            onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); }}
+            onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); setNewChatError(null); }}
             className={cn(
               'p-3 rounded-[14px] transition-colors',
               showNewChat
@@ -492,25 +523,30 @@ function ChatHubPageInner() {
                 ref={newChatInputRef}
                 type="text"
                 value={newChatAddr}
-                onChange={e => setNewChatAddr(e.target.value)}
+                onChange={e => { setNewChatAddr(e.target.value); setNewChatError(null); }}
                 onKeyDown={e => { if (e.key === 'Enter') handleOpenNewChat(); }}
                 placeholder="0x…"
                 tabIndex={showNewChat ? 0 : -1}
-                className="flex-1 min-w-0 bg-[#0d0d0f] border border-white/[0.08] rounded-[12px] px-3 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-primary/40 focus:bg-[#111113] transition-all font-mono"
+                className={`flex-1 min-w-0 bg-[#0d0d0f] border rounded-[12px] px-3 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:bg-[#111113] transition-all font-mono ${newChatError ? 'border-red-500/40 focus:border-red-500/60' : 'border-white/[0.08] focus:border-primary/40'}`}
               />
               <button
                 onClick={handleOpenNewChat}
-                disabled={!isAddress(newChatAddr.trim())}
+                disabled={!isAddress(newChatAddr.trim()) || newChatChecking}
                 className="px-3 py-1.5 rounded-[12px] bg-primary text-white text-xs font-medium disabled:opacity-30 hover:bg-primary/80 transition-colors flex items-center gap-1 flex-shrink-0">
-                <ArrowRight className="w-3 h-3" />
+                {newChatChecking
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <ArrowRight className="w-3 h-3" />}
               </button>
             </div>
+            {newChatError && (
+              <p className="text-[11px] text-red-400/70 mt-1.5 leading-snug">{newChatError}</p>
+            )}
           </div>
 
         {/* Conversation list */}
         <div
           ref={listRef}
-          className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5 sm:touch-auto"
+          className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5 sm:touch-auto pb-[calc(5.75rem+env(safe-area-inset-bottom,0px))] sm:pb-2"
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
@@ -615,11 +651,14 @@ function ChatHubPageInner() {
         !selected ? 'hidden sm:flex' : 'flex',
       )}>
         {selected
-          ? <div key={selected} className="chat-conv-enter flex flex-col flex-1 min-h-0 overflow-hidden">
+          ? <div
+              key={selected}
+              className={`${isLeaving ? 'chat-conv-leave' : 'chat-conv-enter'} flex flex-col flex-1 min-h-0 overflow-hidden`}
+            >
               <ChatPanel
                 recipientAddress={selected}
                 dealContexts={selectedDealCtxs}
-                onBack={() => router.push('/chat')}
+                onBack={handleBack}
               />
             </div>
           : <EmptyState />
