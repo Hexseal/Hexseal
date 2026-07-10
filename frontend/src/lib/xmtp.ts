@@ -444,11 +444,12 @@ async function _buildPairConversations(
       const peerAddress = [...inboxToAddr.values()].find(addr => addr !== myLc);
       if (!peerAddress) continue;
 
-      // Read up to 5 to skip silent deal_ctx markers when building the preview.
-      const msgs = await g.messages({ limit: BigInt(5), direction: SortDirection.Descending });
+      // Read up to 10 to skip MembershipChange events and deal_ctx markers.
+      // lastText/lastAt/lastFromMe all come from the SAME message so they're consistent.
+      const msgs = await g.messages({ limit: BigInt(10), direction: SortDirection.Descending });
       let lastText = '';
-      let lastAt = msgs[0] ? (msgs[0].sentAtNs ? Number(msgs[0].sentAtNs) / 1_000_000 : 0) : 0;
-      let lastFromMe = msgs[0] ? msgs[0].senderInboxId === myInboxId : true;
+      let lastAt = 0;
+      let lastFromMe = true;
 
       for (const msg of msgs) {
         const parsed = parseContent(msg);
@@ -457,6 +458,8 @@ async function _buildPairConversations(
           lastText = parsed.attachment
             ? `📎 ${parsed.attachment.name}`
             : (fromMe ? `You: ${parsed.text}` : parsed.text);
+          lastAt = msg.sentAtNs ? Number(msg.sentAtNs) / 1_000_000 : 0;
+          lastFromMe = fromMe;
           break;
         }
       }
