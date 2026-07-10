@@ -78,12 +78,15 @@ const AGR_STATUS_EVENT_ABI = [
 ];
 const agrEventInterface = new ethers.Interface(AGR_STATUS_EVENT_ABI);
 
+// Per-status push config: who gets notified and what they see.
+// notify: 'executor' | 'client' | 'both' | 'both+arbiter'
 const AGR_PUSH_MSG = {
-  2: { title: 'Deal Activated ⚡',    body: 'The deal has been activated. Work has started.' },
-  3: { title: 'Deal Complete ✓',     body: 'Payment has been released. Deal is closed.' },
-  4: { title: 'Dispute Raised ⚠️',   body: 'A dispute was opened on your deal. Arbiter will review.' },
-  5: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.' },
-  6: { title: 'Deal Refunded ↩️',    body: 'The deal was refunded.' },
+  1: { title: 'Deal Funded 💵',       body: 'The deal has been funded. Activate it to start work.',   notify: 'executor' },
+  2: { title: 'Deal Activated ⚡',    body: 'Work has started. Track progress in the deal page.',     notify: 'client'   },
+  3: { title: 'Deal Complete ✓',      body: 'Payment has been released. The deal is closed.',         notify: 'both'     },
+  4: { title: 'Dispute Raised ⚠️',   body: 'A dispute was opened. An arbiter will review.',          notify: 'both+arbiter' },
+  5: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.',                  notify: 'both'     },
+  6: { title: 'Deal Refunded ↩️',    body: 'The deal was cancelled and refunded.',                   notify: 'client'   },
 };
 
 async function pushAfterRelay(receipt, agreementAddress) {
@@ -105,16 +108,17 @@ async function pushAfterRelay(receipt, agreementAddress) {
     const client   = details.client_?.toLowerCase();
     const executor = details.executor_?.toLowerCase();
     const arbiter  = details.arbiter_?.toLowerCase();
+    const ZERO     = '0x0000000000000000000000000000000000000000';
 
-    const msg = AGR_PUSH_MSG[newStatus];
+    const cfg = AGR_PUSH_MSG[newStatus];
     const url = `/deal/${agreementAddress}`;
-    const payload = { title: msg.title, body: msg.body, url };
+    const payload = { title: cfg.title, body: cfg.body, url };
 
-    await Promise.allSettled([
-      client   && sendPush(client,   payload),
-      executor && sendPush(executor, payload),
-      arbiter  && arbiter !== '0x0000000000000000000000000000000000000000' && newStatus === 4 && sendPush(arbiter, payload),
-    ]);
+    const sends = [];
+    if (cfg.notify !== 'executor' && client)   sends.push(sendPush(client,   payload));
+    if (cfg.notify !== 'client'   && executor) sends.push(sendPush(executor, payload));
+    if (cfg.notify === 'both+arbiter' && arbiter && arbiter !== ZERO) sends.push(sendPush(arbiter, payload));
+    await Promise.allSettled(sends);
   } catch {
     // push is best-effort
   }
