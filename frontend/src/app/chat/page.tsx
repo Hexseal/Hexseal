@@ -384,6 +384,22 @@ function ChatHubPageInner() {
     );
   }
 
+  // Merge on-chain deal counterparties into the conversation list.
+  // peerDealsMap contains every active-deal peer from the blockchain (cross-device,
+  // no localStorage). If a peer already has an XMTP pair group they'll appear via
+  // conversations; if not, we surface them here so they're always reachable.
+  const allConversations = useMemo(() => {
+    const knownPeers = new Set(conversations.map(c => c.peerAddress));
+    const extras: typeof conversations = [];
+    for (const [peer] of peerDealsMap) {
+      if (!knownPeers.has(peer)) {
+        extras.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
+      }
+    }
+    if (extras.length === 0) return conversations;
+    return [...conversations, ...extras].sort((a, b) => b.lastAt - a.lastAt);
+  }, [conversations, peerDealsMap]);
+
   const selectedDealCtxs = selected ? (peerDealsMap.get(selected) ?? []) : [];
 
   return (
@@ -501,7 +517,7 @@ function ChatHubPageInner() {
             </div>
           )}
 
-          {!isLoading && xmtpStatus !== 'loading' && !error && conversations.length === 0 && xmtpStatus === 'ready' && (
+          {!isLoading && xmtpStatus !== 'loading' && !error && allConversations.length === 0 && xmtpStatus === 'ready' && (
             <div className="flex flex-col items-center justify-center py-16 text-center px-4">
               <MessageCircle className="w-8 h-8 text-white/[0.12] mb-3" />
               <p className="text-sm text-white/35 mb-1">{t("chat.no_conversations")}</p>
@@ -512,7 +528,7 @@ function ChatHubPageInner() {
           )}
 
           {/* If peer from URL is not yet in conversation list, show it at top */}
-          {selected && !conversations.some(c => c.peerAddress === selected) && (
+          {selected && !allConversations.some(c => c.peerAddress === selected) && (
             <ConvoItem
               peerAddress={selected}
               lastText=""
@@ -525,7 +541,7 @@ function ChatHubPageInner() {
             />
           )}
 
-          {!error && conversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
+          {!error && allConversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
             <ConvoItem
               key={peerAddress}
               peerAddress={peerAddress}
