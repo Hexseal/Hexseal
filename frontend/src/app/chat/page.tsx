@@ -230,6 +230,37 @@ function ChatHubPageInner() {
   );
   const router = useRouter();
 
+  // Pull-to-refresh
+  const listRef      = useRef<HTMLDivElement>(null);
+  const pullStartY   = useRef(0);
+  const [pullDist, setPullDist]       = useState(0);
+  const [isPullRefresh, setIsPullRefresh] = useState(false);
+  const PULL_THRESHOLD = 52;
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if ((listRef.current?.scrollTop ?? 0) > 2) return;
+    pullStartY.current = e.touches[0].clientY;
+  }, []);
+
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!pullStartY.current) return;
+    if ((listRef.current?.scrollTop ?? 0) > 2) { pullStartY.current = 0; return; }
+    const delta = e.touches[0].clientY - pullStartY.current;
+    if (delta > 0) setPullDist(Math.min(delta * 0.42, 68));
+    else setPullDist(0);
+  }, []);
+
+  const onTouchEnd = useCallback(async () => {
+    if (pullDist >= PULL_THRESHOLD) {
+      setIsPullRefresh(true);
+      setPullDist(0);
+      try { await reload(); } finally { setIsPullRefresh(false); }
+    } else {
+      setPullDist(0);
+    }
+    pullStartY.current = 0;
+  }, [pullDist, reload]);
+
   const handleConvoClick = useCallback((addr: string) => {
     const lc = addr.toLowerCase();
     setSeenConvos(prev => new Set([...prev, lc]));
@@ -437,24 +468,22 @@ function ChatHubPageInner() {
           </div>
         </div>
 
-        {/* Mobile: minimal action bar */}
+        {/* Mobile: minimal action bar — refresh via pull-to-refresh, only + button here */}
         <div className="sm:hidden flex items-center justify-between px-3 pt-2 pb-1 flex-shrink-0">
           <div className="flex items-center gap-1.5">
             <Lock className="w-3 h-3 text-white/15" />
             <span className="text-[11px] text-white/20">{t("chat.encrypted")}</span>
           </div>
-          <div className="flex items-center gap-1">
-            <button onClick={reload} disabled={isLoading}
-              className="p-2 rounded-[12px] text-white/20 hover:text-white/50 hover:bg-white/[0.06] transition-colors disabled:opacity-30">
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); }}
-              className={cn('p-2 rounded-[12px] transition-colors',
-                showNewChat ? 'bg-white/[0.08] text-white/60' : 'text-white/20 hover:text-white/50 hover:bg-white/[0.06]')}>
-              {showNewChat ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-            </button>
-          </div>
+          <button
+            onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); }}
+            className={cn(
+              'p-3 rounded-[14px] transition-colors',
+              showNewChat
+                ? 'bg-white/[0.10] text-white/70'
+                : 'text-white/35 hover:text-white/60 hover:bg-white/[0.08]',
+            )}>
+            {showNewChat ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+          </button>
         </div>
 
         {/* New chat search */}
@@ -481,7 +510,28 @@ function ChatHubPageInner() {
           </div>
 
         {/* Conversation list */}
-        <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
+        <div
+          ref={listRef}
+          className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5 sm:touch-auto"
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+        >
+
+          {/* Pull-to-refresh indicator (mobile only) */}
+          {(pullDist > 0 || isPullRefresh) && (
+            <div
+              className="sm:hidden flex items-center justify-center flex-shrink-0 transition-[height] duration-150"
+              style={{ height: isPullRefresh ? 40 : pullDist }}
+            >
+              <RefreshCw
+                className={`w-4 h-4 text-white/25 ${
+                  isPullRefresh || pullDist >= PULL_THRESHOLD ? 'animate-spin' : 'transition-transform'
+                }`}
+                style={isPullRefresh ? undefined : { transform: `rotate(${pullDist * 5}deg)` }}
+              />
+            </div>
+          )}
 
           {(isLoading || xmtpStatus === 'loading') && conversations.length === 0 && (
             <div className="space-y-0.5">
