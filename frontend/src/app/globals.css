@@ -471,24 +471,13 @@ a {
 .deal-card__counterparty { font-size:.8rem; color:hsl(var(--muted-foreground)); font-family: var(--font-space-mono), monospace; }
 .deal-card__action { margin-left:auto; }
 
-/* Mobile messenger — native slide between list and conversation (like Telegram) */
-@media (max-width: 639px) {
-  .chat-slide-list {
-    position: absolute;
-    inset: 0;
-    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .chat-slide-list[data-selected="true"] {
-    transform: translateX(-100%);
-  }
-  .chat-slide-conv {
-    position: absolute;
-    inset: 0;
-    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .chat-slide-conv[data-selected="false"] {
-    transform: translateX(100%);
-  }
+/* Mobile messenger — slide-in when opening a conversation */
+@keyframes chat-conv-enter {
+  from { opacity: 0; transform: translateX(32px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.chat-conv-enter {
+  animation: chat-conv-enter 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 /* Page transition — pure CSS so iOS compositor thread handles it independently of JS work */

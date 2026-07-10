@@ -388,15 +388,14 @@ function ChatHubPageInner() {
 
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden justify-center">
-      <div className="relative flex w-full max-w-6xl min-h-0 overflow-hidden border-x border-white/[0.04]">
+      <div className="flex w-full max-w-6xl min-h-0 overflow-hidden border-x border-white/[0.04]">
 
       {/* ── Sidebar ── */}
       <aside
-        data-selected={selected ? 'true' : 'false'}
         className={cn(
-          'chat-slide-list flex flex-col overflow-hidden bg-black',
-          // Desktop: static column with subtle right border (overrides absolute from CSS)
-          'sm:static sm:flex sm:w-80 sm:flex-shrink-0 sm:border-r sm:border-white/[0.04] sm:transform-none sm:transition-none',
+          'flex-shrink-0 flex flex-col overflow-hidden bg-black',
+          'sm:relative sm:flex sm:w-80 sm:border-r sm:border-white/[0.04]',
+          !selected ? 'flex w-full' : 'hidden sm:flex',
         )}
       >
 
@@ -547,16 +546,18 @@ function ChatHubPageInner() {
       </aside>
 
       {/* ── Chat panel ── */}
-      <main
-        data-selected={selected ? 'true' : 'false'}
-        className="chat-slide-conv flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden sm:static sm:flex sm:transform-none sm:transition-none"
-      >
+      <main className={cn(
+        'flex-1 min-w-0 min-h-0 flex-col overflow-hidden',
+        !selected ? 'hidden sm:flex' : 'flex',
+      )}>
         {selected
-          ? <ChatPanel
-              recipientAddress={selected}
-              dealContexts={selectedDealCtxs}
-              onBack={() => router.push('/chat')}
-            />
+          ? <div key={selected} className="chat-conv-enter flex flex-col flex-1 min-h-0 overflow-hidden">
+              <ChatPanel
+                recipientAddress={selected}
+                dealContexts={selectedDealCtxs}
+                onBack={() => router.push('/chat')}
+              />
+            </div>
           : <EmptyState />
         }
       </main>
