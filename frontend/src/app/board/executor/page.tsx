@@ -25,6 +25,17 @@ import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
 
+function useTimeAgo() {
+  const t = useTranslations();
+  return (ts: bigint): string => {
+    const diff = Math.floor(Date.now() / 1000) - Number(ts);
+    if (diff < 60) return t("common.just_now");
+    if (diff < 3600) return t("common.minutes_ago", { count: Math.floor(diff / 60) });
+    if (diff < 86400) return t("common.hours_ago", { count: Math.floor(diff / 3600) });
+    return t("common.days_ago", { count: Math.floor(diff / 86400) });
+  };
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Service {
@@ -380,6 +391,7 @@ function ServiceCard({
 }) {
   const isMyService = address?.toLowerCase() === service.executor.toLowerCase();
   const t = useTranslations();
+  const timeAgo = useTimeAgo();
   const catKey = extractCategory(service.description);
   const displayDesc = stripCategory(service.description);
 
@@ -426,7 +438,9 @@ function ServiceCard({
             }`} />
             <span className="text-[11px] font-mono text-white/55">{fmtUSDC(service.price)} USDC</span>
             <span className="text-[11px] text-white/15">·</span>
-            <span className="text-[11px] text-white/35">{Number(service.deadlineDays)}d</span>
+            <span className="text-[11px] text-white/35">{Number(service.deadlineDays)}d deadline</span>
+            <span className="text-[11px] text-white/15">·</span>
+            <span className="text-[11px] text-white/25">{timeAgo(service.createdAt)}</span>
             {Number(service.hiresCount) > 0 && (
               <>
                 <span className="text-[11px] text-white/15">·</span>
@@ -660,7 +674,7 @@ export default function ExecutorBoardPage() {
     storeBoardRegion(v);
   };
 
-  const { services: pageServices, isLoading: loadingList, isFetching, hasMore, error: svcError } = useServices({
+  const { services: pageServices, isLoading: loadingList, isFetching, hasMore, error: svcError, refetch: refetchServices } = useServices({
     region: regionFilter ?? undefined,
     page,
   });
@@ -823,7 +837,7 @@ export default function ExecutorBoardPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
-              <Button variant="ghost" size="sm" onClick={() => { setPage(0); setAllServices([]); }} disabled={isFetching} className="text-white/40 hover:text-white/70">
+              <Button variant="ghost" size="sm" onClick={() => { setAllServices([]); setPage(0); refetchServices(); }} disabled={isFetching} className="text-white/40 hover:text-white/70">
                 <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
               </Button>
               <Link href="/board/executor/post">
@@ -840,7 +854,7 @@ export default function ExecutorBoardPage() {
           <IncomingRequestsPanel
             address={address}
             services={services}
-            onRefresh={() => { setPage(0); setAllServices([]); }}
+            onRefresh={() => { setAllServices([]); setPage(0); refetchServices(); }}
           />
         )}
 

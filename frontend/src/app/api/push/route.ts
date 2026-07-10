@@ -16,14 +16,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'body required' }, { status: 400 });
     }
 
-    // Forward to relayer with server-side secret — the browser never sees PUSH_SECRET
+    // `from` is intentionally dropped — client-supplied sender address is unverifiable
+    // without a SIWE session, so forwarding it would allow any user to spoof another's
+    // display name in the recipient's push notification.
+    // TODO: re-derive `from` server-side once SIWE sessions are in place.
     const res = await fetch(`${RELAYER_URL}/push/send`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(PUSH_SECRET ? { 'X-Push-Secret': PUSH_SECRET } : {}),
       },
-      body: JSON.stringify({ to, body: msgBody, url, from, tag }),
+      body: JSON.stringify({ to, body: msgBody, url, tag }),
     });
 
     const data = await res.json().catch(() => ({}));

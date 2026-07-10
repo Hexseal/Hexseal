@@ -220,7 +220,9 @@ function JobCard({
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasApplied ? 'bg-emerald-400' : 'bg-sky-400/60'}`} />
               <span className="text-[11px] font-mono text-white/55">{formatBudget(job.amount)} USDC</span>
               <span className="text-[11px] text-white/15">·</span>
-              <span className="text-[11px] text-white/35">{job.deadlineDays.toString()}d</span>
+              <span className="text-[11px] text-white/35">{job.deadlineDays.toString()}d deadline</span>
+              <span className="text-[11px] text-white/15">·</span>
+              <span className="text-[11px] text-white/25">{timeAgo(job.createdAt)}</span>
               {isClient && applicantCount > 0 && (
                 <>
                   <span className="text-[11px] text-white/15">·</span>

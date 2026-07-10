@@ -18,12 +18,13 @@ import {
 } from '@/lib/xmtp';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
 
-function pushChatNotif(to: string, from: string, body: string, url: string) {
+function pushChatNotif(to: string, body: string, url: string) {
   // Routed through Next.js API so the relayer secret never reaches the browser.
+  // `from` is not forwarded — the server drops it to prevent notification impersonation.
   fetch('/api/push', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, from, body, url, tag: `/chat?peer=${from.toLowerCase()}` }),
+    body: JSON.stringify({ to, body, url, tag: `/chat?peer=${to.toLowerCase()}` }),
   }).catch(() => {});
 }
 
@@ -129,7 +130,7 @@ export function usePairChat(peerAddress: string) {
       timestamp: Date.now(), isFromMe: true,
     }]);
     await group.sendText(text.trim());
-    pushChatNotif(peerRef.current, address ?? '', text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`);
+    pushChatNotif(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`);
   }, [address]);
 
   const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
@@ -160,7 +161,7 @@ export function usePairChat(peerAddress: string) {
     }]);
 
     await group.sendText(encoded);
-    pushChatNotif(peerRef.current, address ?? '', `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`);
+    pushChatNotif(peerRef.current, `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`);
   }, [address]);
 
   const markDealContext = useCallback(async (dealId: string | null) => {

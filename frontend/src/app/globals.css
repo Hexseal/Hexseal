@@ -1,3 +1,11 @@
+*, *::before, *::after {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  overscroll-behavior: none;
+}
+
 :root {
   --font-sans: var(--font-inter);
   --font-mono: var(--font-space-mono);

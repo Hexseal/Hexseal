@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import { useQuery } from 'urql'
 import { OPEN_SERVICES_QUERY } from '@/lib/graph'
 
@@ -25,10 +25,14 @@ export function useServices({ region, page = 0 }: { region?: number; page?: numb
     return { where, first: PAGE_SIZE, skip: page * PAGE_SIZE }
   }, [region, page])
 
-  const [{ data, fetching, error }] = useQuery<{ services: GraphService[] }>({
+  const [{ data, fetching, error }, reexecuteQuery] = useQuery<{ services: GraphService[] }>({
     query: OPEN_SERVICES_QUERY,
     variables,
   })
+
+  const refetch = useCallback(() => {
+    reexecuteQuery({ requestPolicy: 'network-only' });
+  }, [reexecuteQuery]);
 
   return {
     services: data?.services ?? EMPTY_SERVICES,
@@ -36,5 +40,6 @@ export function useServices({ region, page = 0 }: { region?: number; page?: numb
     isFetching: fetching,
     hasMore: (data?.services.length ?? 0) === PAGE_SIZE,
     error: error?.message ?? null,
+    refetch,
   }
 }

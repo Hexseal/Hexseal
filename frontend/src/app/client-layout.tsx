@@ -185,6 +185,18 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     };
   }, [pathname]);
 
+  // Clear App Badge whenever the user brings the PWA to the foreground.
+  useEffect(() => {
+    const clear = () => {
+      if (document.visibilityState === 'visible' && 'clearAppBadge' in navigator) {
+        navigator.clearAppBadge().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', clear);
+    clear();
+    return () => document.removeEventListener('visibilitychange', clear);
+  }, []);
+
   // Dynamically measure the real header bottom edge and write --chat-top-offset.
   // Must use .bottom (not .height) because the floating pill header has a top offset.
   // Must scan all <header> elements: on desktop the first one is md:hidden (height=0).
