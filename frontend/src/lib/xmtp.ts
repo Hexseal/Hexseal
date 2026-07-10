@@ -443,23 +443,20 @@ export async function listPairConversations(
       const peerAddress = [...inboxToAddr.values()].find(addr => addr !== myLc);
       if (!peerAddress) continue;
 
-      const msgs = await g.messages({ limit: BigInt(1), direction: SortDirection.Descending });
-      const last = msgs[0];
+      // Read up to 5 to skip silent deal_ctx markers when building the preview.
+      const msgs = await g.messages({ limit: BigInt(5), direction: SortDirection.Descending });
       let lastText = '';
-      let lastAt = 0;
-      let lastFromMe = true;
+      let lastAt = msgs[0] ? (msgs[0].sentAtNs ? Number(msgs[0].sentAtNs) / 1_000_000 : 0) : 0;
+      let lastFromMe = msgs[0] ? msgs[0].senderInboxId === myInboxId : true;
 
-      if (last) {
-        lastAt = last.sentAtNs ? Number(last.sentAtNs) / 1_000_000 : 0;
-        lastFromMe = last.senderInboxId === myInboxId;
-        // If the very last message happens to be a silent deal_ctx marker,
-        // parseContent returns null and the preview text stays blank until
-        // the next real message — acceptable, cosmetic only.
-        const parsed = parseContent(last);
+      for (const msg of msgs) {
+        const parsed = parseContent(msg);
         if (parsed) {
+          const fromMe = msg.senderInboxId === myInboxId;
           lastText = parsed.attachment
             ? `📎 ${parsed.attachment.name}`
-            : (lastFromMe ? `You: ${parsed.text}` : parsed.text);
+            : (fromMe ? `You: ${parsed.text}` : parsed.text);
+          break;
         }
       }
 

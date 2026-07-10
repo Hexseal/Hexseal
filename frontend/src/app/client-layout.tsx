@@ -107,11 +107,14 @@ function ChatLayoutInner({
 
   if (hasPeer) {
     // Conversation: fixed full-screen container.
-    // --chat-top-offset: safe-area-only on mobile (pill header hidden),
-    //                    4rem + safe-area on desktop.
+    // --chat-top-offset: pixel distance from the top where the chat area starts.
     // --vvh:            visual viewport height — shrinks when keyboard opens.
-    // --vv-offset-top:  iOS visual viewport scroll offset — keeps fixed element
-    //                   anchored to visual (not layout) viewport.
+    //
+    // NOTE: --vv-offset-top is intentionally NOT used here. The body is locked
+    // (position:fixed) in chat conversations, so vv.offsetTop is always 0.
+    // Adding it caused a jump: iOS transiently fires resize with offsetTop=
+    // keyboard_height before the body lock reasserts, pushing the container
+    // below the visible viewport (input appeared at the top of the screen).
     return (
       <>
         <Header />
@@ -119,7 +122,7 @@ function ChatLayoutInner({
           className="flex flex-col overflow-hidden"
           style={{
             position: 'fixed',
-            top: 'calc(var(--chat-top-offset) + var(--vv-offset-top, 0px))',
+            top: 'var(--chat-top-offset)',
             left: 0,
             right: 0,
             height: 'calc(var(--vvh, 100dvh) - var(--chat-top-offset))',

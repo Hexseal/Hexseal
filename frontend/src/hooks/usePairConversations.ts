@@ -27,7 +27,20 @@ export function usePairConversations(isEnabled = false) {
     try {
       const xmtp   = await initXmtpClient(wc);
       const convos = await listPairConversations(xmtp, addr);
-      setConversations(convos);
+
+      // Merge with locally-persisted peers so chats that dropped from XMTP
+      // sync (rare race, stale cache, new install) remain accessible.
+      const knownPeers = new Set(convos.map(c => c.peerAddress));
+      const myLc = addr.toLowerCase();
+      const localKeys = Object.keys(localStorage).filter(k => k.startsWith('hexseal_chat_seen_'));
+      for (const key of localKeys) {
+        const peer = key.replace('hexseal_chat_seen_', '');
+        if (peer !== myLc && !knownPeers.has(peer)) {
+          convos.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
+        }
+      }
+
+      setConversations(convos.sort((a, b) => b.lastAt - a.lastAt));
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Failed to load conversations';
       const isLimit = raw.includes('10/10') || raw.includes('registered 10');
