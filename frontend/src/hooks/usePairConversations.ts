@@ -2,7 +2,21 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, listPairConversations, type PairConversation } from '@/lib/xmtp';
+import { initXmtpClient, listPairConversations, listPairConversationsLocal, type PairConversation } from '@/lib/xmtp';
+
+function mergeWithLocalPeers(convos: PairConversation[], addr: string): PairConversation[] {
+  const knownPeers = new Set(convos.map(c => c.peerAddress));
+  const myLc = addr.toLowerCase();
+  const merged = [...convos];
+  const localKeys = Object.keys(localStorage).filter(k => k.startsWith('hexseal_chat_seen_'));
+  for (const key of localKeys) {
+    const peer = key.replace('hexseal_chat_seen_', '');
+    if (peer !== myLc && !knownPeers.has(peer)) {
+      merged.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
+    }
+  }
+  return merged.sort((a, b) => b.lastAt - a.lastAt);
+}
 
 export function usePairConversations(isEnabled = false) {
   const { address } = useAccount();
@@ -25,29 +39,23 @@ export function usePairConversations(isEnabled = false) {
     setIsLoading(true);
     setError(null);
     try {
-      const xmtp   = await initXmtpClient(wc);
-      const convos = await listPairConversations(xmtp, addr);
+      const xmtp = await initXmtpClient(wc);
 
-      // Merge with locally-persisted peers so chats that dropped from XMTP
-      // sync (rare race, stale cache, new install) remain accessible.
-      const knownPeers = new Set(convos.map(c => c.peerAddress));
-      const myLc = addr.toLowerCase();
-      const localKeys = Object.keys(localStorage).filter(k => k.startsWith('hexseal_chat_seen_'));
-      for (const key of localKeys) {
-        const peer = key.replace('hexseal_chat_seen_', '');
-        if (peer !== myLc && !knownPeers.has(peer)) {
-          convos.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
-        }
-      }
+      // Phase 1: read from local SQLite cache — no network, near-instant.
+      // Shows conversations immediately so the UI never stares at a spinner.
+      const local = await listPairConversationsLocal(xmtp, addr);
+      setConversations(mergeWithLocalPeers(local, addr));
+      setIsLoading(false);
 
-      setConversations(convos.sort((a, b) => b.lastAt - a.lastAt));
+      // Phase 2: full network sync in background — updates previews silently.
+      const fresh = await listPairConversations(xmtp, addr);
+      setConversations(mergeWithLocalPeers(fresh, addr));
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Failed to load conversations';
       const isLimit = raw.includes('10/10') || raw.includes('registered 10');
       setError(isLimit
         ? 'Too many active XMTP sessions (10/10). Visit xmtp.chat → Settings → Revoke installations, then reload.'
         : raw);
-    } finally {
       setIsLoading(false);
     }
   }, []); // stable — reads wallet/address via refs

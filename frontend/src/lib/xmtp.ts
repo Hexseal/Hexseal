@@ -423,11 +423,12 @@ export type PairConversation = {
 
 const PAIR_PREFIX = 'HSEAL-PAIR-';
 
-export async function listPairConversations(
+async function _buildPairConversations(
   client: XmtpClient,
   myAddress: string,
+  sync: boolean,
 ): Promise<PairConversation[]> {
-  await client.conversations.sync();
+  if (sync) await client.conversations.sync();
   const groups = await client.conversations.listGroups();
   const myInboxId = client.inboxId ?? '';
   const myLc = myAddress.toLowerCase();
@@ -437,7 +438,7 @@ export async function listPairConversations(
     const name = g.name ?? '';
     if (!name.startsWith(PAIR_PREFIX)) continue;
     try {
-      await g.sync();
+      if (sync) await g.sync();
       const members = await g.members();
       const inboxToAddr = buildInboxAddressMap(members);
       const peerAddress = [...inboxToAddr.values()].find(addr => addr !== myLc);
@@ -467,6 +468,22 @@ export async function listPairConversations(
   }
 
   return result.sort((a, b) => b.lastAt - a.lastAt);
+}
+
+// Reads from local XMTP SQLite cache only — no network sync, returns instantly.
+export function listPairConversationsLocal(
+  client: XmtpClient,
+  myAddress: string,
+): Promise<PairConversation[]> {
+  return _buildPairConversations(client, myAddress, false);
+}
+
+// Full network sync — fetches the latest messages before returning.
+export function listPairConversations(
+  client: XmtpClient,
+  myAddress: string,
+): Promise<PairConversation[]> {
+  return _buildPairConversations(client, myAddress, true);
 }
 
 // ─── Relay bot address ────────────────────────────────────────────────────────

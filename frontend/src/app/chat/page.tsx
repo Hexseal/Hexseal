@@ -388,16 +388,15 @@ function ChatHubPageInner() {
 
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden justify-center">
-      <div className="flex w-full max-w-6xl min-h-0 overflow-hidden border-x border-white/[0.04]">
+      <div className="relative flex w-full max-w-6xl min-h-0 overflow-hidden border-x border-white/[0.04]">
 
       {/* ── Sidebar ── */}
       <aside
+        data-selected={selected ? 'true' : 'false'}
         className={cn(
-          'flex-shrink-0 flex flex-col overflow-hidden bg-black',
-          // Desktop: static column with subtle right border
-          'sm:relative sm:flex sm:w-80 sm:border-r sm:border-white/[0.04]',
-          // Mobile: full-width list OR hidden when in conversation
-          !selected ? 'flex w-full' : 'hidden sm:flex',
+          'chat-slide-list flex flex-col overflow-hidden bg-black',
+          // Desktop: static column with subtle right border (overrides absolute from CSS)
+          'sm:static sm:flex sm:w-80 sm:flex-shrink-0 sm:border-r sm:border-white/[0.04] sm:transform-none sm:transition-none',
         )}
       >
 
@@ -469,10 +468,18 @@ function ChatHubPageInner() {
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
 
-          {(isLoading || xmtpStatus === 'loading') && (
-            <div className="flex flex-col items-center justify-center py-16 gap-2 text-white/30">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-xs">{t("chat.loading_conversations")}</span>
+          {(isLoading || xmtpStatus === 'loading') && conversations.length === 0 && (
+            <div className="space-y-0.5">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="flex items-start gap-3 px-3 py-2.5 rounded-[16px] border border-white/[0.04] bg-white/[0.02]">
+                  <div className="w-9 h-9 rounded-full bg-white/[0.07] flex-shrink-0 mt-0.5 animate-pulse" />
+                  <div className="flex-1 min-w-0 pt-0.5 space-y-1.5">
+                    <div className="h-3 bg-white/[0.07] rounded animate-pulse" style={{ width: `${48 + i * 14}%` }} />
+                    <div className="h-2.5 bg-white/[0.04] rounded animate-pulse" style={{ width: `${60 + i * 8}%` }} />
+                  </div>
+                  <div className="h-2.5 bg-white/[0.04] rounded animate-pulse w-7 mt-1 flex-shrink-0" />
+                </div>
+              ))}
             </div>
           )}
 
@@ -495,7 +502,7 @@ function ChatHubPageInner() {
             </div>
           )}
 
-          {!isLoading && xmtpStatus !== 'loading' && !error && conversations.length === 0 && (
+          {!isLoading && xmtpStatus !== 'loading' && !error && conversations.length === 0 && xmtpStatus === 'ready' && (
             <div className="flex flex-col items-center justify-center py-16 text-center px-4">
               <MessageCircle className="w-8 h-8 text-white/[0.12] mb-3" />
               <p className="text-sm text-white/35 mb-1">{t("chat.no_conversations")}</p>
@@ -519,7 +526,7 @@ function ChatHubPageInner() {
             />
           )}
 
-          {!isLoading && !error && conversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
+          {!error && conversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
             <ConvoItem
               key={peerAddress}
               peerAddress={peerAddress}
@@ -540,10 +547,10 @@ function ChatHubPageInner() {
       </aside>
 
       {/* ── Chat panel ── */}
-      <main className={cn(
-        'flex-1 min-w-0 min-h-0 flex-col overflow-hidden',
-        !selected ? 'hidden sm:flex' : 'flex',
-      )}>
+      <main
+        data-selected={selected ? 'true' : 'false'}
+        className="chat-slide-conv flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden sm:static sm:flex sm:transform-none sm:transition-none"
+      >
         {selected
           ? <ChatPanel
               recipientAddress={selected}
