@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, type ReactNode } from "react";
+import React, { useState, useEffect, useMemo, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract } from "wagmi";
@@ -18,6 +18,7 @@ import { toast } from "react-hot-toast";
 import { isAddress } from "viem";
 import { useTranslations } from "next-intl";
 import { useMyAgreements, type GraphAgreement } from "@/hooks/useMyAgreements";
+import { useAgreementTitles } from "@/hooks/useAgreementTitles";
 import { DealCard, type AgreementRecord } from "@/app/dashboard/components/DealCard";
 import { MyJobs, MyServices, MyClientRequests } from "@/app/dashboard/components/MyListings";
 
@@ -159,7 +160,11 @@ export default function ProfilePage() {
   }, [profileAddress, validAddress]);
 
   const { agreements: rawAgreements, isLoading } = useMyAgreements(validAddress ? profileAddress : undefined);
-  const allAgreements = rawAgreements.map(toAgreementRecord);
+  const titleMap = useAgreementTitles(validAddress ? profileAddress : undefined);
+  const allAgreements = useMemo(
+    () => rawAgreements.map(a => ({ ...toAgreementRecord(a), title: titleMap.get(a.id.toLowerCase()) })),
+    [rawAgreements, titleMap],
+  );
 
   const { data: onchainXP } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,

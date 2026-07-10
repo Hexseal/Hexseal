@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useAccount, useReadContract } from 'wagmi';
 import { DIAMOND_ABI, REPUTATION_ABI, CONTRACTS } from '@/config/contracts';
 import { useMyAgreements, type GraphAgreement } from '@/hooks/useMyAgreements';
+import { useAgreementTitles } from '@/hooks/useAgreementTitles';
 import {
   Loader2, Activity, CheckCircle,
   DollarSign, Star, Zap,
@@ -134,7 +135,11 @@ export default function DashboardPage() {
   const { agreements: rawAgreements, isLoading } = useMyAgreements(address);
   const { jobs: mySearchJobs }     = useMyJobs(address);
   const { services: mySearchSvcs } = useMyServices(address);
-  const allAgreements = rawAgreements.map(toAgreementRecord);
+  const titleMap = useAgreementTitles(address);
+  const allAgreements = useMemo(
+    () => rawAgreements.map(a => ({ ...toAgreementRecord(a), title: titleMap.get(a.id.toLowerCase()) })),
+    [rawAgreements, titleMap],
+  );
   const refetch = () => {};
 
   const { data: onchainXP } = useReadContract({

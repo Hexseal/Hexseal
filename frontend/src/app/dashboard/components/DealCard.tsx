@@ -30,6 +30,7 @@ export interface AgreementRecord {
   status: number;
   createdAt: bigint;
   resolvedAt: bigint;
+  title?: string;
 }
 
 function shortAddr(addr: string) {
@@ -327,32 +328,34 @@ export function DealCard({ agreement, address, refetch }: {
 
   const needsAction = primaryActions.length > 0;
 
-  // Stripe color matches the deal status badge when action is required
-  const stripeColor =
-    liveStatus === 0 ? 'bg-sky-400/70' :      // CREATED — client needs to fund
-    liveStatus === 1 ? 'bg-amber-400/70' :    // FUNDED — executor needs to activate
-    liveStatus === 2 ? 'bg-violet-400/50' :   // ACTIVE — mark done / release
-    liveStatus === 4 ? 'bg-red-400/70' :      // DISPUTED
-    'bg-white/20';
-
   return (
     <div
-      className={`rounded-[22px] border transition-colors relative overflow-hidden ${
+      className={`rounded-[22px] border transition-colors ${
         needsAction ? 'border-white/[0.13] bg-[#0d0d0f]' : 'border-white/[0.08] bg-[#0d0d0f]'
       }`}
       style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
     >
-      {needsAction && (
-        <div className={`absolute top-0 left-0 right-0 h-0.5 rounded-t-[22px] ${stripeColor}`} />
-      )}
       <div className="px-4 py-3.5 sm:px-5">
 
         {/* Title row */}
         <div className="flex items-start justify-between gap-2 mb-1">
-          <p className="text-[13px] font-semibold text-white/90 font-mono truncate leading-snug">
-            #{agreement.agreement.slice(2, 10).toUpperCase()}
-          </p>
-          <div className="flex items-center gap-0.5 flex-shrink-0 -mt-0.5">
+          <div className="min-w-0">
+            {agreement.title ? (
+              <>
+                <p className="text-[13px] font-semibold text-white/90 truncate leading-snug">
+                  {agreement.title}
+                </p>
+                <p className="text-[10px] font-mono text-white/25 leading-none mt-0.5">
+                  #{agreement.agreement.slice(2, 10).toUpperCase()}
+                </p>
+              </>
+            ) : (
+              <p className="text-[13px] font-semibold text-white/90 font-mono truncate leading-snug">
+                #{agreement.agreement.slice(2, 10).toUpperCase()}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-0.5 flex-shrink-0">
             <Link href={`/chat?peer=${counterparty.toLowerCase()}`}>
               <Button size="sm" variant="ghost" className="text-white/25 hover:text-white/60 h-6 w-6 p-0">
                 <MessageCircle className="w-3.5 h-3.5" />
