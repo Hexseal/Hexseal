@@ -12,8 +12,12 @@ export const runtime = 'nodejs';
  * GET /api/media?key=<filename>  →  proxies GET ${RELAYER_URL}/public/<filename>
  */
 
+// Prefer server-side RELAYER_URL (localhost in dev, not set on Vercel).
+// Falls back to the public ngrok URL on Vercel where RELAYER_URL is absent.
 const RELAYER_URL = (
-  process.env.NEXT_PUBLIC_RELAYER_URL || process.env.RELAYER_PUBLIC_URL || ''
+  process.env.RELAYER_URL ||
+  process.env.NEXT_PUBLIC_RELAYER_URL ||
+  process.env.RELAYER_PUBLIC_URL || ''
 ).replace(/\/$/, '');
 
 // SVG excluded: can contain <script> tags and would execute on app origin.

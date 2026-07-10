@@ -132,10 +132,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Relayer unavailable' }, { status: 502 });
     }
 
-    const { uploadUrl, publicUrl } = await presignRes.json() as {
+    let { uploadUrl, publicUrl } = await presignRes.json() as {
       uploadUrl: string;
       publicUrl: string;
     };
+
+    // If relayer returned localhost URLs (RELAYER_PUBLIC_URL not set on relayer),
+    // rewrite them to the public ngrok URL so Vercel can actually PUT to it.
+    const rewriteLocalhost = (u: string) => {
+      try {
+        const parsed = new URL(u);
+        if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+          return `${cleanRelayer}${parsed.pathname}`;
+        }
+      } catch { /* ignore */ }
+      return u;
+    };
+    uploadUrl = rewriteLocalhost(uploadUrl);
+    publicUrl = rewriteLocalhost(publicUrl);
 
     const putRes = await fetch(uploadUrl, {
       method:  'PUT',

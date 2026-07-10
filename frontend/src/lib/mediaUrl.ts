@@ -18,6 +18,11 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
       const match = parsed.pathname.match(/^\/public\/(.+)$/);
       if (match) return `/api/media?key=${encodeURIComponent(match[1])}`;
     }
+    // Proxy localhost relayer URLs (stored when RELAYER_PUBLIC_URL not set on relayer)
+    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+      const match = parsed.pathname.match(/^\/public\/(.+)$/);
+      if (match) return `/api/media?key=${encodeURIComponent(match[1])}`;
+    }
     // Fallback: detect any ngrok domain
     if (parsed.hostname.endsWith('.ngrok-free.app') ||
         parsed.hostname.endsWith('.ngrok-free.dev') ||
