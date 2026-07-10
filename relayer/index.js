@@ -793,7 +793,10 @@ app.post('/push/unsubscribe', async (req, res) => {
   }
 });
 
-// Resolve a display name for a wallet address: profile displayName → short address
+const PUSH_SECRET = process.env.PUSH_SECRET ?? '';
+
+// Resolve a display name for a wallet address: profile displayName → short address.
+// Only called when the request has been authenticated via X-Push-Secret.
 function resolveDisplayName(addr) {
   if (!addr || !ethers.isAddress(addr)) return null;
   try {
@@ -812,13 +815,18 @@ app.post('/push/send', async (req, res) => {
     if (!checkRateLimit(ip)) {
       return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
     }
-    // `from` is the sender address — used to resolve a human-readable title.
-    // `title` is used as-is when `from` is absent (deal notifications, etc.).
     const { to, title, body, url, from, tag } = req.body || {};
     if (!to || !body) return res.status(400).json({ error: 'to and body required' });
     if (!ethers.isAddress(to)) return res.status(400).json({ error: 'Invalid address' });
 
-    const resolvedTitle = from ? (resolveDisplayName(from) ?? title ?? 'New message') : (title ?? 'Hexseal');
+    // `from` (for display-name resolution) is only trusted when the request comes
+    // from our own Next.js server with the shared PUSH_SECRET header.
+    // Without it, `from` is ignored and we fall back to `title` or a generic string.
+    const isTrusted = PUSH_SECRET && req.headers['x-push-secret'] === PUSH_SECRET;
+    const resolvedTitle = isTrusted && from
+      ? (resolveDisplayName(from) ?? title ?? 'New message')
+      : (title ?? 'Hexseal');
+
     await sendPush(to.toLowerCase(), {
       title: resolvedTitle,
       body:  String(body).slice(0, 200),

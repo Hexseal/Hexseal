@@ -18,14 +18,11 @@ import {
 } from '@/lib/xmtp';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
 
-const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
-
 function pushChatNotif(to: string, from: string, body: string, url: string) {
-  fetch(`${RELAYER_URL}/push/send`, {
+  // Routed through Next.js API so the relayer secret never reaches the browser.
+  fetch('/api/push', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // `from` lets the relayer resolve a profile display name as the notification title.
-    // `tag` groups all messages from this sender so they stack rather than pile up.
     body: JSON.stringify({ to, from, body, url, tag: `/chat?peer=${from.toLowerCase()}` }),
   }).catch(() => {});
 }
