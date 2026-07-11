@@ -13,7 +13,7 @@ import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI } from '@/config/contracts';
 import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from '@/config/constants';
 import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from '@/lib/relay';
-import { initXmtpClient, notifyArbiters } from '@/lib/xmtp';
+import { getXmtpClientIfCached, notifyArbiters } from '@/lib/xmtp';
 
 interface Props {
   agreementAddr: string;
@@ -146,8 +146,9 @@ export function DealActionBar({ agreementAddr }: Props) {
             functionName: 'getArbiters',
           }) as string[];
           if (arbiters.length > 0) {
-            const xmtp = await initXmtpClient(walletClient);
-            await notifyArbiters(xmtp, agreementAddr, arbiters);
+            // Use cached client only — never trigger a new wallet signature here.
+            const xmtp = getXmtpClientIfCached(address!);
+            if (xmtp) await notifyArbiters(xmtp, agreementAddr, arbiters);
           }
         } catch { /* non-critical */ }
       }

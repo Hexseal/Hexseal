@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWalletClient, useAccount } from 'wagmi';
 import { useXmtp } from '@/contexts/XmtpContext';
 import {
-  initXmtpClient,
+  getXmtpClientIfCached,
   findOrCreatePairGroup,
   loadGroupMessages,
   normalizeGroupMessage,
@@ -59,7 +59,9 @@ export function usePairChat(peerAddress: string) {
     (async () => {
       try {
         const myAddress = walletClient!.account?.address?.toLowerCase() ?? '';
-        const xmtp = await initXmtpClient(walletClient!);
+        // status === 'ready' guarantees the client is in cache — no need to re-init.
+        const xmtp = getXmtpClientIfCached(myAddress);
+        if (!xmtp) { setError('Messaging not initialized'); setIsLoading(false); return; }
         if (cancelled) return;
         clientRef.current = xmtp;
 

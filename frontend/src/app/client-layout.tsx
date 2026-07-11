@@ -186,9 +186,14 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   );
 
   const isChatPage = pathname?.startsWith('/chat');
-  if (isChatPage) {
-    return (
-      <XmtpProvider>
+  const isHome = pathname === '/';
+
+  // Single XmtpProvider wraps all layout branches so it survives route changes.
+  // Three separate <XmtpProvider> wrappers (one per branch) would remount on every
+  // chat ↔ home ↔ other navigation, resetting the init state and triedRef.
+  return (
+    <XmtpProvider>
+      {isChatPage ? (
         <Suspense fallback={
           <>
             <Header />
@@ -201,14 +206,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             {children}
           </ChatLayoutInner>
         </Suspense>
-      </XmtpProvider>
-    );
-  }
-
-  const isHome = pathname === '/';
-  if (isHome) {
-    return (
-      <XmtpProvider>
+      ) : isHome ? (
         <>
           <Header />
           <main className="flex-1">
@@ -218,26 +216,22 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           {modal}
           <Toaster />
         </>
-      </XmtpProvider>
-    );
-  }
-
-  return (
-    <XmtpProvider>
-      <>
-        {topScrim}
-        {bottomScrim}
-        <Header />
-        <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
-          <PageFade pathname={pathname ?? ''}>
-            {children}
-            <div className="md:hidden" style={{ height: 'calc(5.75rem + env(safe-area-inset-bottom, 0px))' }} />
-          </PageFade>
-        </main>
-        <MobileBottomNav />
-        {modal}
-        <Toaster />
-      </>
+      ) : (
+        <>
+          {topScrim}
+          {bottomScrim}
+          <Header />
+          <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
+            <PageFade pathname={pathname ?? ''}>
+              {children}
+              <div className="md:hidden" style={{ height: 'calc(5.75rem + env(safe-area-inset-bottom, 0px))' }} />
+            </PageFade>
+          </main>
+          <MobileBottomNav />
+          {modal}
+          <Toaster />
+        </>
+      )}
     </XmtpProvider>
   );
 }
