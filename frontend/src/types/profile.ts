@@ -16,7 +16,7 @@ export interface UserProfile {
     website?: string;
   };
   avatarCid?: string;  // IPFS CID (Lighthouse — secondary/decentralised)
-  avatarUrl?: string;  // Direct URL (Storj permanent public bucket — primary)
+  avatarUrl?: string;  // Direct URL (relayer public storage — primary)
   createdAt: number;
   updatedAt: number;
   signature?: string;

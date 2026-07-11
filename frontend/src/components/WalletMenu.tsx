@@ -144,7 +144,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         const profile = await fetchProfile(address);
         if (!alive) return;
         if (profile?.displayName) setDisplayName(profile.displayName);
-        // Prefer Storj direct URL; fall back to Lighthouse IPFS CID
+        // Prefer relayer direct URL; fall back to Lighthouse IPFS CID (legacy)
         const rawUrl = profile?.avatarUrl
           ?? (profile?.avatarCid ? `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${profile.avatarCid}` : null);
         if (rawUrl) setProfileAvatarUrl(resolveMediaUrl(rawUrl) ?? rawUrl);

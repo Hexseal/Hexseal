@@ -30,7 +30,7 @@ export type ChatMessage = {
   attachment?: {          // present for file messages
     name: string;
     url: string;          // presigned download URL (expires in 6 days)
-    storjKey?: string;    // Storj object key — used to refresh expired URL
+    fileKey?: string;     // relayer file key — used to reconstruct download URL
     size?: number;        // original plaintext file size in bytes
     mime?: string;
     key?: string;         // AES-256-GCM key, hex
@@ -42,11 +42,6 @@ export type ChatMessage = {
   };
 };
 
-/**
- * Encode a file message for transmission over XMTP.
- * If key + iv are provided the blob at `url` is AES-256-GCM encrypted;
- * omit them for legacy unencrypted files.
- */
 export function encodeFileMessage(
   name: string,
   url: string,
@@ -55,9 +50,9 @@ export function encodeFileMessage(
   key?: string,
   iv?:  string,
   chunkedOpts?: { chunked: true; chunkCount: number; chunkSize: number },
-  storjKey?: string,
+  fileKey?: string,
 ): string {
-  return JSON.stringify({ _type: 'enc_file', name, url, storjKey, size, mime, key, iv, ...chunkedOpts });
+  return JSON.stringify({ _type: 'enc_file', name, url, fileKey, size, mime, key, iv, ...chunkedOpts });
 }
 
 export type XmtpClient = Client;
@@ -336,16 +331,18 @@ function parseContent(msg: DecodedMessage): ParsedContent | null {
         typeof p.name === 'string' &&
         typeof p.url  === 'string'
       ) {
-        const storjKey = typeof p.storjKey === 'string' ? p.storjKey : undefined;
+        // fileKey is the new field; storjKey is the legacy name — check both for old messages
+        const fileKey = typeof p.fileKey === 'string' ? p.fileKey
+          : typeof p.storjKey === 'string' ? p.storjKey : undefined;
         // Reconstruct download URL from current relayer base — baked URLs go stale when ngrok rotates
         const RELAYER = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
-        const resolvedUrl = storjKey ? `${RELAYER}/files/${storjKey}` : (p.url as string);
+        const resolvedUrl = fileKey ? `${RELAYER}/files/${fileKey}` : (p.url as string);
         return {
           text: p.name,
           attachment: {
             name:       p.name,
             url:        resolvedUrl,
-            storjKey,
+            fileKey,
             size:       typeof p.size       === 'number'  ? p.size       : undefined,
             mime:       typeof p.mime       === 'string'  ? p.mime       : undefined,
             key:        typeof p.key        === 'string'  ? p.key        : undefined,

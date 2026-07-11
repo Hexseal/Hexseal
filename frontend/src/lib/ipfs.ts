@@ -49,7 +49,7 @@ export async function uploadToIPFS(
 }
 
 // Public gateways for reading legacy IPFS CIDs (old avatarCid records).
-// New uploads go to Storj — these are only needed for backward compat.
+// New uploads go to the relayer — these are only needed for legacy avatarCid records.
 const IPFS_GATEWAYS = [
   process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://w3s.link',
   'https://w3s.link',

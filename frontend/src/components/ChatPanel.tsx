@@ -64,9 +64,9 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
     tryDecrypt(a.url)
       .then((url) => { if (active) setSrc(url); })
       .catch(async () => {
-        if (a.storjKey) {
+        if (a.fileKey) {
           try {
-            const fresh = await refreshDownloadUrl(a.storjKey);
+            const fresh = await refreshDownloadUrl(a.fileKey);
             const url = await tryDecrypt(fresh);
             if (active) setSrc(url);
             return;
@@ -76,7 +76,7 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
       })
       .finally(() => { if (active) setDecrypting(false); });
     return () => { active = false; };
-  }, [a.url, a.key, a.iv, a.mime, a.storjKey]);
+  }, [a.url, a.key, a.iv, a.mime, a.fileKey]);
 
   const rounded = isMe ? 'rounded-t-2xl rounded-bl-2xl rounded-br-sm' : 'rounded-t-2xl rounded-br-2xl rounded-bl-sm';
 
@@ -132,10 +132,10 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
     try {
       await doDownload(a.url);
     } catch {
-      // URL might be expired — try refreshing once if we have the Storj key
-      if (a.storjKey) {
+      // URL might be stale — reconstruct from fileKey if available
+      if (a.fileKey) {
         try {
-          const fresh = await refreshDownloadUrl(a.storjKey);
+          const fresh = await refreshDownloadUrl(a.fileKey);
           await doDownload(fresh);
         } catch { setErr(true); }
       } else {

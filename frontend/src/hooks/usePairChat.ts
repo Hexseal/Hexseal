@@ -150,15 +150,15 @@ export function usePairChat(peerAddress: string) {
     }
     signal?.throwIfAborted();
 
-    const { url, storjKey, keyHex, ivHex, chunked, chunkCount, chunkSize } = result;
+    const { url, fileKey, keyHex, ivHex, chunked, chunkCount, chunkSize } = result;
     const chunkedOpts = chunked && chunkCount && chunkSize
       ? { chunked: true as const, chunkCount, chunkSize }
       : undefined;
-    const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex, chunkedOpts, storjKey);
+    const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex, chunkedOpts, fileKey);
 
     setMessages(prev => [...prev, {
       id: `opt-${Date.now()}`, from: myAddress, text: file.name,
-      attachment: { name: file.name, url, storjKey, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex, ...chunkedOpts },
+      attachment: { name: file.name, url, fileKey, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex, ...chunkedOpts },
       timestamp: Date.now(), isFromMe: true,
     }]);
 
