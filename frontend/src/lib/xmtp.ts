@@ -128,7 +128,7 @@ export async function checkXmtpDbExists(address: string): Promise<boolean> {
 
 /** Clear XMTP session state for this address (localStorage flag + in-memory cache).
  *  OPFS keys file is intentionally kept — re-enabling won't require a wallet signature.
- *  Dispatches a DOM event so any mounted useXmtpStatus instances update immediately.
+ *  Dispatches a DOM event so XmtpContext can react immediately.
  */
 export function clearXmtpSession(address: string): void {
   const addr = address.toLowerCase();
