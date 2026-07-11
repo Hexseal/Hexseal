@@ -1,8 +1,8 @@
 /**
- * fileStorage.ts — upload encrypted files to Storj via relayer presigned URLs.
+ * fileStorage.ts — upload encrypted chat files to the relayer (local disk, 7-day TTL).
  *
  * Small files (≤ 20 MB):  encrypt in memory → single presigned PUT
- * Large files (> 20 MB):  encrypt in 8 MB chunks → S3 multipart upload
+ * Large files (> 20 MB):  encrypt in 8 MB chunks → multipart upload
  *   Each chunk is uploaded as one multipart part directly from the browser.
  *   The relayer presigns all part URLs upfront and completes the upload
  *   server-side (reads ETags via ListParts — no CORS ETag header needed).
@@ -59,16 +59,9 @@ export async function uploadEncryptedFile(
   return { url: downloadUrl, storjKey };
 }
 
-/** Refresh an expired presigned download URL using the Storj object key. */
-export async function refreshDownloadUrl(storjKey: string): Promise<string> {
-  const res = await fetch(`${RELAYER_URL}/files/refresh-url`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: storjKey }),
-  });
-  if (!res.ok) throw new Error('Failed to refresh download URL');
-  const { downloadUrl } = await res.json() as { downloadUrl: string };
-  return downloadUrl;
+/** Reconstruct the download URL for a file key (local relayer URLs never expire). */
+export function refreshDownloadUrl(storjKey: string): Promise<string> {
+  return Promise.resolve(`${RELAYER_URL}/files/${storjKey}`);
 }
 
 // ─── Multipart upload (large files) ──────────────────────────────────────────
@@ -130,7 +123,7 @@ async function uploadEncryptedFileMultipart(
     return { url: downloadUrl, storjKey, keyHex, ivHex, chunkCount };
 
   } catch (err) {
-    // Best-effort abort to free Storj storage
+    // Best-effort abort to free relayer storage
     fetch(`${RELAYER_URL}/files/multipart/abort`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

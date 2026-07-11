@@ -15,7 +15,3 @@ export function useXmtpStatus() {
     disable,
   };
 }
-
-// No-op exports kept so nothing that imported these symbols breaks.
-export function _notifyEnabled() {}
-export function _setAutoRestoring(_v: boolean) {}

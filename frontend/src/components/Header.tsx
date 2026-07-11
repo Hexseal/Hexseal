@@ -44,7 +44,7 @@ function NavLink({
   );
 }
 
-export default function Header({ chatMode = false }: { chatMode?: boolean }) {
+export default function Header() {
   const { isConnected, address } = useAccount();
   const [openPanelMobile, setOpenPanelMobile] = useState<"notifications" | "wallet" | null>(null);
   const [openPanelDesktop, setOpenPanelDesktop] = useState<"notifications" | "wallet" | null>(null);
@@ -76,7 +76,7 @@ export default function Header({ chatMode = false }: { chatMode?: boolean }) {
 
       {/* ── Mobile floating pill header ────────────────────────────────── */}
       <header
-        className={chatMode ? "hidden" : "md:hidden fixed left-4 right-4 z-50"}
+        className="md:hidden fixed left-4 right-4 z-50"
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <div

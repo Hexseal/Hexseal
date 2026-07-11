@@ -82,19 +82,3 @@ export async function fetchFromIPFS(cid: string): Promise<Response> {
   }
   throw lastError ?? new Error(`Failed to fetch IPFS CID ${cid} from all gateways`);
 }
-
-/**
- * Convert IPFS CID to bytes32 for contract storage using keccak256 hash
- */
-export function cidToBytes32(cid: string): `0x${string}` {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { keccak256 } = require('viem');
-  return keccak256(new TextEncoder().encode(cid)) as `0x${string}`;
-}
-
-/**
- * Convert bytes32 back to CID string (for display)
- */
-export function bytes32ToCid(bytes32: string): string {
-  return bytes32.replace(/^0x/, '').replace(/0+$/, '') || '';
-}

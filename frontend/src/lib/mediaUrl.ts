@@ -24,11 +24,10 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
     // but the query param works for direct browser requests.
     const relayerBase = process.env.NEXT_PUBLIC_RELAYER_URL ?? '';
     const isNgrok =
-      (relayerBase && url.startsWith(relayerBase) &&
-        (relayerBase.includes('ngrok') || relayerBase.includes('.dev') || relayerBase.includes('.app'))) ||
       parsed.hostname.endsWith('.ngrok-free.app') ||
       parsed.hostname.endsWith('.ngrok-free.dev') ||
-      parsed.hostname.endsWith('.ngrok.io');
+      parsed.hostname.endsWith('.ngrok.io') ||
+      parsed.hostname.endsWith('.ngrok.app');
 
     if (isNgrok && parsed.pathname.startsWith('/public/')) {
       return `${url}?ngrok-skip-browser-warning=true`;
