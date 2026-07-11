@@ -11,22 +11,31 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
 
   try {
     const parsed = new URL(url);
-    // Only proxy our own relay URLs (ngrok or custom domain relayer)
-    const relayerBase = process.env.NEXT_PUBLIC_RELAYER_URL ?? '';
-    if (relayerBase && url.startsWith(relayerBase)) {
-      // Extract filename from /public/<key>
-      const match = parsed.pathname.match(/^\/public\/(.+)$/);
-      if (match) return `/api/media?key=${encodeURIComponent(match[1])}`;
-    }
-    // Proxy localhost relayer URLs (stored when RELAYER_PUBLIC_URL not set on relayer)
+
+    // Localhost URLs (RELAYER_PUBLIC_URL not set on relayer): proxy server-side
+    // so the browser doesn't try to reach localhost:3001 on another machine.
     if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
       const match = parsed.pathname.match(/^\/public\/(.+)$/);
       if (match) return `/api/media?key=${encodeURIComponent(match[1])}`;
     }
-    // Fallback: detect any ngrok domain
-    if (parsed.hostname.endsWith('.ngrok-free.app') ||
-        parsed.hostname.endsWith('.ngrok-free.dev') ||
-        parsed.hostname.endsWith('.ngrok.io')) {
+
+    // ngrok URLs: browser fetches directly with the query-param interstitial bypass.
+    // Server-side proxying from Vercel to ngrok is blocked by ngrok's network rules,
+    // but the query param works for direct browser requests.
+    const relayerBase = process.env.NEXT_PUBLIC_RELAYER_URL ?? '';
+    const isNgrok =
+      (relayerBase && url.startsWith(relayerBase) &&
+        (relayerBase.includes('ngrok') || relayerBase.includes('.dev') || relayerBase.includes('.app'))) ||
+      parsed.hostname.endsWith('.ngrok-free.app') ||
+      parsed.hostname.endsWith('.ngrok-free.dev') ||
+      parsed.hostname.endsWith('.ngrok.io');
+
+    if (isNgrok && parsed.pathname.startsWith('/public/')) {
+      return `${url}?ngrok-skip-browser-warning=true`;
+    }
+
+    // Non-ngrok public relayer (VPS in production): proxy through /api/media.
+    if (relayerBase && url.startsWith(relayerBase)) {
       const match = parsed.pathname.match(/^\/public\/(.+)$/);
       if (match) return `/api/media?key=${encodeURIComponent(match[1])}`;
     }
