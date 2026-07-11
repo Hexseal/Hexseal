@@ -78,31 +78,25 @@ const AGR_STATUS_EVENT_ABI = [
 ];
 const agrEventInterface = new ethers.Interface(AGR_STATUS_EVENT_ABI);
 
-// Per-status push config: who gets notified and what they see.
+// Push config for RegistryFacet.AgreementStatus event (ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4).
+// ACTIVE(0) is omitted — fund() doesn't call updateStatus in the current contract.
 // notify: 'executor' | 'client' | 'both' | 'both+arbiter'
 const AGR_PUSH_MSG = {
-  1: { title: 'Deal Funded 💵',       body: 'The deal has been funded. Activate it to start work.',   notify: 'executor' },
-  2: { title: 'Deal Activated ⚡',    body: 'Work has started. Track progress in the deal page.',     notify: 'client'   },
-  3: { title: 'Deal Complete ✓',      body: 'Payment has been released. The deal is closed.',         notify: 'both'     },
-  4: { title: 'Dispute Raised ⚠️',   body: 'A dispute was opened. An arbiter will review.',          notify: 'both+arbiter' },
-  5: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.',                  notify: 'both'     },
-  6: { title: 'Deal Refunded ↩️',    body: 'The deal was cancelled and refunded.',                   notify: 'client'   },
+  1: { title: 'Deal Complete ✓',      body: 'Payment has been released. The deal is closed.',      notify: 'both'         },
+  2: { title: 'Deal Refunded ↩️',    body: 'The deal was cancelled and refunded.',                notify: 'client'       },
+  3: { title: 'Dispute Raised ⚠️',   body: 'A dispute was opened. An arbiter will review.',      notify: 'both+arbiter' },
+  4: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.',              notify: 'both'         },
 };
 
-async function pushAfterRelay(receipt, agreementAddress) {
-  try {
-    let newStatus = null;
-    for (const log of receipt.logs) {
-      try {
-        const parsed = agrEventInterface.parseLog(log);
-        if (parsed?.name === 'AgreementStatusUpdated') {
-          newStatus = Number(parsed.args.newStatus);
-          break;
-        }
-      } catch {}
-    }
-    if (newStatus === null || !AGR_PUSH_MSG[newStatus]) return;
+// activate() and markDone() don't emit AgreementStatusUpdated, so we detect them
+// by function selector and send push directly.
+const FUNC_PUSH_MSG = {
+  '0x0f15f4c0': { title: 'Deal Activated ⚡',  body: 'Work has started. Track progress in the deal page.',        notify: 'client'   },
+  '0x1bdfc6e3': { title: 'Work Submitted ✔',   body: 'The executor marked the job as done. Please review it.',   notify: 'client'   },
+};
 
+async function pushAfterRelay(receipt, agreementAddress, calldata) {
+  try {
     const agr = new ethers.Contract(agreementAddress, AGREEMENT_MINI_ABI, provider);
     const details = await agr.getDetails();
     const client   = details.client_?.toLowerCase();
@@ -110,15 +104,34 @@ async function pushAfterRelay(receipt, agreementAddress) {
     const arbiter  = details.arbiter_?.toLowerCase();
     const ZERO     = '0x0000000000000000000000000000000000000000';
 
-    const cfg = AGR_PUSH_MSG[newStatus];
-    const url = `/deal/${agreementAddress}`;
-    const payload = { title: cfg.title, body: cfg.body, url };
+    const sendCfg = (cfg) => {
+      const url = `/deal/${agreementAddress}`;
+      const payload = { title: cfg.title, body: cfg.body, url };
+      const sends = [];
+      if (cfg.notify !== 'executor' && client)   sends.push(sendPush(client,   payload));
+      if (cfg.notify !== 'client'   && executor) sends.push(sendPush(executor, payload));
+      if (cfg.notify === 'both+arbiter' && arbiter && arbiter !== ZERO) sends.push(sendPush(arbiter, payload));
+      return Promise.allSettled(sends);
+    };
 
-    const sends = [];
-    if (cfg.notify !== 'executor' && client)   sends.push(sendPush(client,   payload));
-    if (cfg.notify !== 'client'   && executor) sends.push(sendPush(executor, payload));
-    if (cfg.notify === 'both+arbiter' && arbiter && arbiter !== ZERO) sends.push(sendPush(arbiter, payload));
-    await Promise.allSettled(sends);
+    // Check for AgreementStatusUpdated event first (terminal state changes).
+    for (const log of receipt.logs) {
+      try {
+        const parsed = agrEventInterface.parseLog(log);
+        if (parsed?.name === 'AgreementStatusUpdated') {
+          const cfg = AGR_PUSH_MSG[Number(parsed.args.newStatus)];
+          if (cfg) await sendCfg(cfg);
+          return;
+        }
+      } catch {}
+    }
+
+    // No event found — check if the called function is activate() or markDone().
+    const selector = typeof calldata === 'string' ? calldata.slice(0, 10).toLowerCase() : null;
+    if (selector) {
+      const cfg = FUNC_PUSH_MSG[selector];
+      if (cfg) await sendCfg(cfg);
+    }
   } catch {
     // push is best-effort
   }
@@ -476,7 +489,7 @@ app.post('/relay', async (req, res) => {
     if (receipt.status === 0) return res.status(400).json({ error: 'Transaction reverted on-chain' });
 
     res.json({ success: true, txHash: receipt.hash, blockNumber: receipt.blockNumber });
-    pushAfterRelay(receipt, forwardReq.to);
+    pushAfterRelay(receipt, forwardReq.to, data);
   } catch (err) {
     console.error('[relay] error:', err.message);
     res.status(500).json({ error: err.message });
