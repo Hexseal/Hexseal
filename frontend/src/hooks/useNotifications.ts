@@ -276,6 +276,12 @@ export function useNotifications() {
   });
 
   // ─── AgreementStatusUpdated — filter by myDeals ─────────────────────────
+  //
+  // RegistryFacet.AgreementStatus: ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4
+  //
+  // Important: activate() and markDone() do NOT call updateStatus, so this event
+  // only fires for terminal state changes: COMPLETED, REFUNDED, DISPUTED, RESOLVED.
+  // "Deal activated" and "Work submitted" toasts must come from other sources (XMTP bot).
   useWatchContractEvent({
     address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
@@ -290,7 +296,7 @@ export function useNotifications() {
         // Notify registered arbiters about new disputes on deals they're not party to
         if (!dealInfo) {
           const status = Number(newStatus);
-          if (isArbiter && status === 4) {
+          if (isArbiter && status === 3) { // 3 = DISPUTED
             push({
               type: "dispute_new",
               title: "New Dispute Available 🆕",
@@ -305,13 +311,12 @@ export function useNotifications() {
         const status = Number(newStatus);
         const { role } = dealInfo;
 
+        // Registry enum: ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4
         const msgMap: Partial<Record<number, [NotifType, string, string]>> = {
-          1: ["deal_active", "Deal Activated", role === "client" ? "Executor started work on your deal." : "You activated the deal — time to deliver."],
-          2: ["deal_done", "Work Submitted", role === "client" ? "Executor submitted work — review and release payment." : "Work marked done. Awaiting client review."],
-          3: ["deal_completed", "Deal Complete ✓", role === "client" ? "Payment successfully released to executor." : "Payment has been released to your wallet!"],
-          4: ["deal_disputed", "Dispute Raised ⚠️", role === "client" ? "A dispute was opened on your deal." : "Client raised a dispute — arbiter will review."],
-          5: ["deal_resolved", "Dispute Resolved ⚖️", "The arbiter has resolved the dispute."],
-          6: ["deal_refunded", "Deal Refunded", role === "client" ? "Funds returned to your wallet." : "The deal was refunded to the client."],
+          1: ["deal_completed", "Deal Complete ✓", role === "client" ? "Payment successfully released to executor." : "Payment has been released to your wallet!"],
+          2: ["deal_refunded", "Deal Refunded", role === "client" ? "Funds returned to your wallet." : "The deal was refunded to the client."],
+          3: ["deal_disputed", "Dispute Raised ⚠️", role === "client" ? "A dispute was opened on your deal." : "Client raised a dispute — arbiter will review."],
+          4: ["deal_resolved", "Dispute Resolved ⚖️", "The arbiter has resolved the dispute."],
         };
 
         const entry = msgMap[status];
