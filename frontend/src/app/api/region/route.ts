@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Redis } from '@upstash/redis';
 
 const REGION_MAP: Record<string, number> = {
   // CIS = 0
@@ -33,12 +32,6 @@ const FEE_MAP: Record<number, { usdc: number; label: string; contractRegion: num
 };
 
 const CACHE_TTL_SECONDS = 3600;
-const REDIS_PREFIX = 'region:ip:';
-
-let redis: Redis | null = null;
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  redis = Redis.fromEnv();
-}
 
 const _localCache = new Map<string, { region: number; expires: number }>();
 
@@ -50,22 +43,14 @@ function getClientIp(req: NextRequest): string {
   return '127.0.0.1';
 }
 
-async function getCached(ip: string): Promise<number | null> {
-  if (redis) {
-    const val = await redis.get<number>(`${REDIS_PREFIX}${ip}`);
-    return val ?? null;
-  }
+function getCached(ip: string): number | null {
   const entry = _localCache.get(ip);
   if (entry && Date.now() < entry.expires) return entry.region;
   return null;
 }
 
-async function setCached(ip: string, region: number): Promise<void> {
-  if (redis) {
-    await redis.set(`${REDIS_PREFIX}${ip}`, region, { ex: CACHE_TTL_SECONDS });
-  } else {
-    _localCache.set(ip, { region, expires: Date.now() + CACHE_TTL_SECONDS * 1000 });
-  }
+function setCached(ip: string, region: number): void {
+  _localCache.set(ip, { region, expires: Date.now() + CACHE_TTL_SECONDS * 1000 });
 }
 
 // Resolve region code (0-3) and VPN flag using ip-api.com (has free proxy detection).
@@ -113,14 +98,14 @@ async function resolveRegion(ip: string): Promise<{ cacheCode: number; contractR
 export async function GET(req: NextRequest) {
   const ip = getClientIp(req);
 
-  const cached = await getCached(ip);
+  const cached = getCached(ip);
   if (cached !== null) {
     const fee = FEE_MAP[cached] ?? FEE_MAP[1];
     return NextResponse.json({ region: fee.contractRegion, fee: fee.usdc, label: fee.label });
   }
 
   const { cacheCode, contractRegion } = await resolveRegion(ip);
-  await setCached(ip, cacheCode);
+  setCached(ip, cacheCode);
 
   const fee = FEE_MAP[cacheCode] ?? FEE_MAP[1];
   return NextResponse.json({ region: contractRegion, fee: fee.usdc, label: fee.label });

@@ -852,6 +852,63 @@ app.post('/push/send', async (req, res) => {
   }
 });
 
+// ─── Dispute Reasons ──────────────────────────────────────────────────────────
+
+const DISPUTE_REASONS_FILE = path.join(STORAGE_DIR, 'dispute-reasons.json');
+let _disputeReasons = (() => {
+  try { return existsSync(DISPUTE_REASONS_FILE) ? JSON.parse(readFileSync(DISPUTE_REASONS_FILE, 'utf8')) : {}; } catch { return {}; }
+})();
+function _saveDisputeReasons() {
+  try { writeFileSync(DISPUTE_REASONS_FILE, JSON.stringify(_disputeReasons), 'utf8'); } catch {}
+}
+
+app.get('/dispute-reason', (req, res) => {
+  const agreement = String(req.query.agreement || '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/i.test(agreement)) return res.status(400).json({ error: 'Invalid agreement address' });
+  res.json(_disputeReasons[agreement] ?? { reason: null });
+});
+
+app.post('/dispute-reason', express.json(), (req, res) => {
+  const { agreement, raiser, reason } = req.body ?? {};
+  if (!agreement || !/^0x[0-9a-f]{40}$/i.test(agreement)) return res.status(400).json({ error: 'Invalid agreement address' });
+  if (!reason || !reason.trim()) return res.status(400).json({ error: 'Reason is required' });
+  if (reason.length > 2000) return res.status(400).json({ error: 'Reason too long (max 2000 chars)' });
+  _disputeReasons[agreement.toLowerCase()] = {
+    agreement: agreement.toLowerCase(),
+    raiser: raiser?.toLowerCase() ?? '',
+    reason: reason.trim(),
+    timestamp: Date.now(),
+  };
+  _saveDisputeReasons();
+  res.json({ ok: true });
+});
+
+// ─── Job Terms ────────────────────────────────────────────────────────────────
+
+const JOB_TERMS_FILE = path.join(STORAGE_DIR, 'job-terms.json');
+let _jobTerms = (() => {
+  try { return existsSync(JOB_TERMS_FILE) ? JSON.parse(readFileSync(JOB_TERMS_FILE, 'utf8')) : {}; } catch { return {}; }
+})();
+function _saveJobTerms() {
+  try { writeFileSync(JOB_TERMS_FILE, JSON.stringify(_jobTerms), 'utf8'); } catch {}
+}
+
+app.get('/job-terms', (req, res) => {
+  const hash = String(req.query.hash || '');
+  if (!/^0x[0-9a-f]{64}$/i.test(hash)) return res.json({ text: null });
+  res.json({ text: _jobTerms[hash.toLowerCase()] ?? null });
+});
+
+app.post('/job-terms', express.json(), (req, res) => {
+  const { hash, text } = req.body ?? {};
+  if (!hash || !/^0x[0-9a-f]{64}$/i.test(hash)) return res.status(400).json({ error: 'Invalid hash' });
+  if (!text || !text.trim()) return res.status(400).json({ error: 'Text required' });
+  if (text.length > 10000) return res.status(400).json({ error: 'Terms too long (max 10000 chars)' });
+  _jobTerms[hash.toLowerCase()] = text.trim();
+  _saveJobTerms();
+  res.json({ ok: true });
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 async function start() {

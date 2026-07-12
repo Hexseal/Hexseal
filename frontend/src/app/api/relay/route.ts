@@ -1,8 +1,3 @@
-// ⚠️  RELAY IS SPLIT: this Vercel route is the REAL relay (used by frontend).
-// relayer/index.js also has relay logic but is NOT called for meta-transactions.
-// Any change to gas cap / signature logic / error handling must be applied HERE.
-// On VPS migration: convert this file to a thin proxy → localhost:3001/relay,
-// move all logic to relayer/index.js, and the duplication disappears.
 import { NextRequest, NextResponse } from 'next/server';
 import {
   createPublicClient,
@@ -18,8 +13,6 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { appChain, appRpcUrl } from '@/config/chain';
-import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
 import { CONTRACTS } from '@/config/contracts';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -61,23 +54,9 @@ const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,ui
  */
 const MAX_FORWARD_GAS = 8_000_000n;
 
-// ─── Rate limit: 10 req/min per wallet address (Upstash Redis) ───────────────
-// Uses sliding window algorithm, works correctly across serverless cold starts.
-// Requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN env vars.
-// Falls back to a simple in-memory map when env vars are not set (local dev).
-
-let ratelimit: Ratelimit | null = null;
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  ratelimit = new Ratelimit({
-    redis: Redis.fromEnv(),
-    limiter: Ratelimit.slidingWindow(10, '60 s'),
-    prefix: 'relay:rl',
-  });
-}
-
-// In-memory fallback for local dev (not cold-start safe, good enough locally)
+// ─── Rate limit: 10 req/min per wallet address (in-memory) ──────────────────
 const _localMap = new Map<string, { count: number; resetAt: number }>();
-function _localRateLimit(address: string): boolean {
+function checkRateLimit(address: string): boolean {
   const key = address.toLowerCase();
   const now = Date.now();
   const entry = _localMap.get(key);
@@ -88,14 +67,6 @@ function _localRateLimit(address: string): boolean {
   if (entry.count >= 10) return false;
   entry.count++;
   return true;
-}
-
-async function checkRateLimit(address: string): Promise<boolean> {
-  if (ratelimit) {
-    const { success } = await ratelimit.limit(address.toLowerCase());
-    return success;
-  }
-  return _localRateLimit(address);
 }
 
 // ─── Request type ────────────────────────────────────────────────────────────
@@ -190,7 +161,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Rate limit by wallet address ────────────────────────────────────────
-    if (!(await checkRateLimit(from))) {
+    if (!checkRateLimit(from)) {
       return NextResponse.json(
         { error: 'Rate limit exceeded. Max 10 requests per minute.' },
         { status: 429, headers: { 'Retry-After': '60' } }
