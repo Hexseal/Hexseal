@@ -9,6 +9,8 @@ services:
       - relayer_storage:/app/storage
 
   frontend:
+    environment:
+      PORT: "3000"
     build:
       context: ./frontend
       args:
