@@ -33,7 +33,7 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 
 webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-const PUSH_SUBS_FILE = './push_subscriptions.json';
+const PUSH_SUBS_FILE = './storage/push_subscriptions.json';
 function loadPushSubs() {
   try {
     if (existsSync(PUSH_SUBS_FILE)) {

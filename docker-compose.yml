@@ -1,0 +1,12 @@
+services:
+  relayer:
+    build: ./relayer
+    restart: unless-stopped
+    env_file: ./relayer/.env.relayer
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - relayer_storage:/app/storage
+
+volumes:
+  relayer_storage:
