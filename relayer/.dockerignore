@@ -2,3 +2,4 @@ node_modules
 storage
 .env*
 *.log
+push_subscriptions.json
