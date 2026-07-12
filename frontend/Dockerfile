@@ -31,7 +31,7 @@ ENV SUBGRAPH_URL=$SUBGRAPH_URL
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps
 COPY . .
-RUN npm run build
+RUN NODE_OPTIONS="--max-old-space-size=1536" npm run build
 
 FROM node:22-alpine
 WORKDIR /app
