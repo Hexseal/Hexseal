@@ -2,11 +2,34 @@ services:
   relayer:
     build: ./relayer
     restart: unless-stopped
-    env_file: ./relayer/.env.relayer
+    env_file: .env.vps
     ports:
       - "127.0.0.1:3001:3001"
     volumes:
       - relayer_storage:/app/storage
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_RELAYER_URL: ${NEXT_PUBLIC_RELAYER_URL}
+        NEXT_PUBLIC_DIAMOND_ADDRESS: ${NEXT_PUBLIC_DIAMOND_ADDRESS}
+        NEXT_PUBLIC_FORWARDER_ADDRESS: ${NEXT_PUBLIC_FORWARDER_ADDRESS}
+        NEXT_PUBLIC_USDC_ADDRESS: ${NEXT_PUBLIC_USDC_ADDRESS}
+        NEXT_PUBLIC_JOB_RECEIPT_ADDRESS: ${NEXT_PUBLIC_JOB_RECEIPT_ADDRESS}
+        NEXT_PUBLIC_CHAIN_ID: ${NEXT_PUBLIC_CHAIN_ID}
+        NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL: ${NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL}
+        NEXT_PUBLIC_RPC_URL: ${NEXT_PUBLIC_RPC_URL}
+        NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+        NEXT_PUBLIC_IPFS_GATEWAY: ${NEXT_PUBLIC_IPFS_GATEWAY}
+        SUBGRAPH_URL: ${SUBGRAPH_URL}
+    restart: unless-stopped
+    env_file: .env.vps
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - relayer
 
 volumes:
   relayer_storage:

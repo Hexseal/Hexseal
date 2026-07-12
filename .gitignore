@@ -5,6 +5,7 @@
 .envrc
 !.env.example
 !**/.env.example
+!.env.vps.example
 .env.relayer
 
 # ── OS / IDE ──────────────────────────────────────────────────────────────────
