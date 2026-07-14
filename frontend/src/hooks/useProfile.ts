@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { fetchProfile } from '@/lib/profiles-ipfs';
+import { fetchProfile, invalidateProfileCache } from '@/lib/profiles-ipfs';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import type { UserProfile } from '@/types/profile';
 
@@ -14,12 +14,25 @@ export function useProfile(address: string | undefined) {
   useEffect(() => {
     if (!address) { setProfile(null); return; }
     let cancelled = false;
-    setIsLoading(true);
-    fetchProfile(address)
-      .then(p => { if (!cancelled) setProfile(p); })
-      .catch(() => { if (!cancelled) setProfile(null); })
-      .finally(() => { if (!cancelled) setIsLoading(false); });
-    return () => { cancelled = true; };
+
+    const load = (bust = false) => {
+      if (bust) invalidateProfileCache(address);
+      setIsLoading(true);
+      fetchProfile(address)
+        .then(p => { if (!cancelled) setProfile(p); })
+        .catch(() => { if (!cancelled) setProfile(null); })
+        .finally(() => { if (!cancelled) setIsLoading(false); });
+    };
+
+    load();
+
+    const onUpdated = (e: Event) => {
+      const detail = (e as CustomEvent<{ address: string }>).detail;
+      if (detail?.address?.toLowerCase() === address.toLowerCase()) load(true);
+    };
+    window.addEventListener('profile-updated', onUpdated);
+
+    return () => { cancelled = true; window.removeEventListener('profile-updated', onUpdated); };
   }, [address]);
 
   const rawAvatarUrl = profile?.avatarUrl

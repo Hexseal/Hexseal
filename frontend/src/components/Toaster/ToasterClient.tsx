@@ -16,6 +16,7 @@ export default function ToasterClient() {
       position="top-center"
       containerStyle={{
         top: 'calc(env(safe-area-inset-top, 0px) + 84px)',
+        zIndex: 99999,
       }}
       toastOptions={{
         style: {

@@ -64,11 +64,21 @@ export async function publishProfile(
 
   cacheProfile(address, { ...profileData, cid: profileUrl });
 
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { address } }));
+  }
+
   return profileUrl;
 }
 
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
+
+export function invalidateProfileCache(address: string): void {
+  try {
+    localStorage.removeItem(`${CACHE_PREFIX}${address.toLowerCase()}`);
+  } catch { /* ignore */ }
+}
 
 function getCachedProfile(address: string): UserProfile | null {
   try {
