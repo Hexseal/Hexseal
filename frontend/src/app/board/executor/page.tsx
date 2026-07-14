@@ -931,7 +931,7 @@ export default function ExecutorBoardPage() {
 
         {svcError && (
           <div className="mb-4 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
-            Subgraph error: {svcError}
+            {t("common.error")}
           </div>
         )}
 

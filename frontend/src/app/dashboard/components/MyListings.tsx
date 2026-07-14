@@ -17,6 +17,7 @@ import {
   Pause, Play, Inbox, AlertCircle, Pencil,
 } from 'lucide-react';
 import { shortAddr } from "@/lib/utils";
+import { extractCategory, CATEGORY_BADGE } from "@/config/categories";
 
 const REGION_LABELS: Record<number, string> = {
   0: 'CIS', 1: 'Asia', 2: 'Europe', 3: 'US', 4: 'LATAM', 5: 'CA', 6: 'AU',
@@ -344,9 +345,22 @@ function ServiceCard({
 
       {expanded && (
         <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
-          {service.description && (
-            <p className="text-xs text-white/45 mb-3 leading-relaxed">{service.description}</p>
-          )}
+          {(() => {
+            const catKey = extractCategory(service.description);
+            const displayDesc = catKey ? service.description.slice(service.description.indexOf('|') + 1) : service.description;
+            return (
+              <>
+                {catKey && (
+                  <span className={`inline-flex px-1.5 py-0.5 rounded-md border text-[10px] font-medium mb-2 ${CATEGORY_BADGE[catKey]}`}>
+                    {catKey.charAt(0).toUpperCase() + catKey.slice(1)}
+                  </span>
+                )}
+                {displayDesc && (
+                  <p className="text-xs text-white/45 mb-3 leading-relaxed">{displayDesc}</p>
+                )}
+              </>
+            );
+          })()}
           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs mb-3">
             <div><span className="text-white/25">Service ID</span><span className="ml-2 text-white/60 font-mono">#{sId}</span></div>
             <div><span className="text-white/25">Price</span><span className="ml-2 text-white/60 font-mono">{fmt(service.price)} USDC</span></div>
@@ -851,9 +865,22 @@ function JobCard({
 
       {expanded && (
         <div className="border-t border-white/8 px-4 pb-4 pt-3" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
-          {job.description && (
-            <p className="text-xs text-white/45 mb-3 leading-relaxed">{job.description}</p>
-          )}
+          {(() => {
+            const catKey = extractCategory(job.description);
+            const displayDesc = catKey ? job.description.slice(job.description.indexOf('|') + 1) : job.description;
+            return (
+              <>
+                {catKey && (
+                  <span className={`inline-flex px-1.5 py-0.5 rounded-md border text-[10px] font-medium mb-2 ${CATEGORY_BADGE[catKey]}`}>
+                    {catKey.charAt(0).toUpperCase() + catKey.slice(1)}
+                  </span>
+                )}
+                {displayDesc && (
+                  <p className="text-xs text-white/45 mb-3 leading-relaxed">{displayDesc}</p>
+                )}
+              </>
+            );
+          })()}
           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs mb-3">
             <div><span className="text-white/25">Job ID</span><span className="ml-2 text-white/60 font-mono">#{jobId.toString()}</span></div>
             <div><span className="text-white/25">Budget</span><span className="ml-2 text-white/60 font-mono">{fmt(job.amount)} USDC</span></div>

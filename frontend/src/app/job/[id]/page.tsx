@@ -68,12 +68,12 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   const jobId = BigInt(id);
   const t = useTranslations();
 
-  const { data: job, isLoading: jobLoading, refetch } = useReadContract({
+  const { data: job, isLoading: jobLoading, isError: jobError, refetch } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI,
     functionName: "getJob",
     args: [jobId],
-  }) as { data: JobRecord | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: JobRecord | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const { data: applicants, isLoading: applicantsLoading } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -222,6 +222,17 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <div className="h-3 w-32 rounded bg-white/[0.05]" />
         </div>
       </div>
+    );
+  }
+
+  if (jobError) {
+    return (
+      <PageCenter>
+        <div className="text-center space-y-4">
+          <p className="text-white/40 text-sm">{t("common.error")}</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>{t("common.retry")}</Button>
+        </div>
+      </PageCenter>
     );
   }
 

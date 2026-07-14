@@ -145,7 +145,7 @@ export default function DealDetailPage() {
   const isValidDeal = useMemo(() => dealAddress && isAddress(dealAddress), [dealAddress]);
 
   // Read agreement details
-  const { data: details, isLoading: isLoadingDetails, refetch: refetchDetails } = useReadContract({
+  const { data: details, isLoading: isLoadingDetails, isError: isErrorDetails, refetch: refetchDetails } = useReadContract({
     address: dealAddress as `0x${string}`,
     abi: AGREEMENT_ABI,
     functionName: "getDetails",
@@ -158,7 +158,7 @@ export default function DealDetailPage() {
         return status !== undefined && [3, 5, 6].includes(status) ? false : 15_000;
       },
     },
-  }) as { data: [string, string, string, bigint, string, bigint, bigint, bigint, bigint, bigint, bigint, number] | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: [string, string, string, bigint, string, bigint, bigint, bigint, bigint, bigint, bigint, number] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   // Read status separately — poll every 10s for active deals, stop when terminal.
   // refetchInterval uses the callback form so it can read the latest value
@@ -444,10 +444,27 @@ export default function DealDetailPage() {
     );
   }
 
-  if (isLoadingDetails || !parsed) {
+  if (isLoadingDetails) {
     return (
       <PageCenter>
         <Loader2 className="w-8 h-8 animate-spin text-white/30" />
+      </PageCenter>
+    );
+  }
+
+  if (!parsed) {
+    return (
+      <PageCenter>
+        <div className="flex flex-col items-center gap-4">
+          <p className="text-white/40 text-sm">
+            {isErrorDetails ? t("common.error") : t("deal.invalid_address")}
+          </p>
+          {isErrorDetails ? (
+            <Button variant="outline" size="sm" onClick={() => refetchDetails()}>{t("common.retry")}</Button>
+          ) : (
+            <Link href="/dashboard"><Button variant="outline" size="sm">← Dashboard</Button></Link>
+          )}
+        </div>
       </PageCenter>
     );
   }

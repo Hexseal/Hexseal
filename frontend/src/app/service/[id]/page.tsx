@@ -217,7 +217,7 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
 
   // ── Service data ────────────────────────────────────────────────────────────
 
-  const { data: rawService, isLoading } = useReadContract({
+  const { data: rawService, isLoading, isError: serviceError, refetch: refetchService } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI,
     functionName: "getService",
@@ -364,6 +364,17 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
       </div>
+    );
+  }
+
+  if (serviceError) {
+    return (
+      <PageCenter>
+        <div className="text-center space-y-4">
+          <p className="text-white/40 text-sm">{t("common.error")}</p>
+          <Button variant="outline" size="sm" onClick={() => refetchService()}>{t("common.retry")}</Button>
+        </div>
+      </PageCenter>
     );
   }
 

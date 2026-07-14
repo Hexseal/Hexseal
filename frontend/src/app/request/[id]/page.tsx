@@ -89,12 +89,12 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
   const requestId = BigInt(id);
   const [isBusy, setIsBusy] = useState<"accept" | "reject" | "cancel" | null>(null);
 
-  const { data: req, isLoading: reqLoading, refetch } = useReadContract({
+  const { data: req, isLoading: reqLoading, isError: reqError, refetch } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: "getRequest",
     args: [requestId],
-  }) as { data: HireRequestRecord | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: HireRequestRecord | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const { data: service, isLoading: serviceLoading } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -163,6 +163,17 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
     return (
       <PageCenter>
         <Loader2 className="w-8 h-8 animate-spin text-white/30" />
+      </PageCenter>
+    );
+  }
+
+  if (reqError) {
+    return (
+      <PageCenter>
+        <div className="text-center space-y-4">
+          <p className="text-white/40 text-sm">Something went wrong</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+        </div>
       </PageCenter>
     );
   }
