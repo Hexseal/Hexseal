@@ -7,7 +7,7 @@ import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI, USDC_ABI } from "@/config/contra
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from "@/config/constants";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
-import { formatUnits, parseUnits, keccak256, toBytes, isAddress, type Abi } from "viem";
+import { formatUnits, parseUnits, isAddress, type Abi } from "viem";
 import {
   Loader2,
   CheckCircle,
@@ -121,7 +121,7 @@ export default function DealDetailPage() {
   const [proposeModal, setProposeModal] = useState(false);
   const [proposeAmount, setProposeAmount] = useState('');
   const [proposeDesc, setProposeDesc] = useState('');
-  const [extrasList, setExtrasList] = useState<Array<{ id: number; amount: bigint; termsHash: string; status: number }>>([]);
+  const [extrasList, setExtrasList] = useState<Array<{ id: number; amount: bigint; terms: string; status: number }>>([]);
   const [extrasLoading, setExtrasLoading] = useState(false);
   const t = useTranslations();
 
@@ -217,8 +217,8 @@ export default function DealDetailPage() {
           functionName: 'getExtra',
           args: [BigInt(i)],
         }).then(e => {
-          const ex = e as { amount: bigint; termsHash: string; status: number };
-          return { id: i, amount: ex.amount, termsHash: ex.termsHash, status: Number(ex.status) };
+          const ex = e as { amount: bigint; terms: string; status: number };
+          return { id: i, amount: ex.amount, terms: ex.terms, status: Number(ex.status) };
         }).catch(() => null)
       )
     ).then(results => {
@@ -242,7 +242,7 @@ export default function DealDetailPage() {
       executor:     get('executor_',     1) as string,
       arbiter:      get('arbiter_',      2) as string,
       amount,
-      termsHash:    get('termsHash_',    4) as string,
+      terms:        get('terms_',         4) as string,
       deadlineDays: get('deadlineDays_', 5) as bigint,
       fundedAt:     get('fundedAt_',     6) as bigint,
       activatedAt:  get('activatedAt_',  7) as bigint,
@@ -401,12 +401,12 @@ export default function DealDetailPage() {
     if (!isValidDeal || !walletClient || !publicClient || !proposeAmount) return;
     const amountParsed = parseUnits(proposeAmount, 6);
     if (amountParsed === 0n) { toast.error('Amount must be > 0'); return; }
-    const termsHash = keccak256(toBytes(proposeDesc || proposeAmount + ' USDC extra'));
+    const extraTerms = proposeDesc.trim() || proposeAmount + ' USDC extra';
     setProposeModal(false);
     setIsFunding(true);
     try {
       toast(t("common.confirm_in_wallet"));
-      await proposeExtraGasless(walletClient, publicClient, dealAddress as `0x${string}`, amountParsed, termsHash);
+      await proposeExtraGasless(walletClient, publicClient, dealAddress as `0x${string}`, amountParsed, extraTerms);
       toast.success('Extra proposed');
       setProposeAmount('');
       setProposeDesc('');
@@ -880,7 +880,7 @@ export default function DealDetailPage() {
                     <div key={ex.id} className="flex items-center gap-3 rounded-lg bg-white/[0.03] border border-white/[0.06] px-3 py-2.5">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-mono text-white/80">{formatUnits(ex.amount, 6)} USDC</p>
-                        <p className="text-[11px] text-white/25 truncate font-mono">#{ex.termsHash.slice(2, 14)}…</p>
+                        <p className="text-[11px] text-white/25 truncate">{ex.terms.slice(0, 20) || '—'}{ex.terms.length > 20 ? '…' : ''}</p>
                       </div>
                       <span className={`text-xs font-medium ${statusColor} flex-shrink-0`}>{statusLabel}</span>
                       {ex.status === 0 && isExecutor && (

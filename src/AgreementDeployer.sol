@@ -19,7 +19,7 @@ interface IAgreementDeployer {
         address arbiter,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string  calldata terms,
         address diamond,
         address usdc,
         address trustedForwarder,
@@ -34,7 +34,7 @@ contract AgreementDeployer is IAgreementDeployer {
         address arbiter,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string  calldata terms,
         address diamond,
         address usdc,
         address trustedForwarder,
@@ -44,7 +44,7 @@ contract AgreementDeployer is IAgreementDeployer {
             type(Agreement).creationCode,
             abi.encode(
                 client, executor, arbiter,
-                amount, deadlineDays, termsHash,
+                amount, deadlineDays, terms,
                 diamond, usdc, trustedForwarder, factory
             )
         );

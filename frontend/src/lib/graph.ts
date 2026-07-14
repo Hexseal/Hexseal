@@ -31,7 +31,7 @@ export const OPEN_JOBS_QUERY = `
       description
       amount
       deadlineDays
-      termsHash
+      terms
       region
       status
       applicants

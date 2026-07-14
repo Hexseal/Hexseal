@@ -28,7 +28,7 @@ interface JobRecord {
   description: string;
   amount: bigint;
   deadlineDays: bigint;
-  termsHash: string;
+  terms: string;
   region: number;
   status: number;
   createdAt: bigint;
@@ -88,20 +88,6 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   const [acceptingExecutor, setAcceptingExecutor] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [confirmExecutor, setConfirmExecutor] = useState<string | null>(null);
-  const [termsText, setTermsText] = useState<string | null>(null);
-  const [termsFetching, setTermsFetching] = useState(false);
-
-  useEffect(() => {
-    if (!job) return;
-    const ZERO_HASH = "0x" + "0".repeat(64);
-    if (!job.termsHash || job.termsHash === ZERO_HASH) return;
-    setTermsFetching(true);
-    fetch(`/api/job-terms?hash=${job.termsHash}`)
-      .then(r => r.json())
-      .then(data => setTermsText(data.text ?? ''))
-      .catch(() => setTermsText(''))
-      .finally(() => setTermsFetching(false));
-  }, [job?.termsHash]);
 
   const handleAccept = async (executor: string) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
@@ -403,19 +389,13 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             </div>
           )}
 
-          {job.termsHash && job.termsHash !== "0x" + "0".repeat(64) && (
+          {job.terms?.trim() && (
             <div className="mt-3 pt-3 border-t border-white/8">
               <div className="flex items-center gap-2 mb-2">
                 <FileText className="w-3.5 h-3.5 text-white/30 flex-shrink-0" />
                 <p className="text-xs text-white/30 uppercase tracking-widest">{t("job.terms_label")}</p>
               </div>
-              {termsFetching ? (
-                <p className="text-sm text-white/30">Loading…</p>
-              ) : termsText ? (
-                <p className="text-sm text-white/60 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">{termsText}</p>
-              ) : (
-                <p className="text-sm text-white/30">{t("job.terms_on_chain")}</p>
-              )}
+              <p className="text-sm text-white/60 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">{job.terms}</p>
             </div>
           )}
 

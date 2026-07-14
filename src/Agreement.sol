@@ -253,7 +253,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     address public arbiter;                 // арбитр (address(0) до клейма; setArbiter вызывает Diamond)
     uint256 public immutable amount;        // сумма сделки USDC (6 decimals)
     uint256 public immutable deadlineDays;  // дней до авторефанда
-    bytes32 public immutable termsHash;     // IPFS CID hash условий — неизменен
+    string  public terms;                   // условия сделки — задаются при деплое
     address public immutable usdc;          // USDC на Base
     address public immutable diamond;       // Diamond proxy = Registry
     address public immutable factory;       // FactoryFacet address (for fundFromFactory)
@@ -293,7 +293,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
     struct Extra {
         uint256 amount;
-        bytes32 termsHash;
+        string  terms;
         ExtraStatus status;
     }
 
@@ -308,7 +308,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     event DisputeResolved(address indexed arbiter, bool clientWins, uint256 amount);
     event TimedOut(address indexed client, uint256 amount);
     event ArbiterTimedOut(address indexed client, uint256 amount);
-    event ExtraProposed(uint256 indexed extraId, address indexed client, uint256 amount, bytes32 termsHash);
+    event ExtraProposed(uint256 indexed extraId, address indexed client, uint256 amount, string terms);
     event ExtraAccepted(uint256 indexed extraId, uint256 newTotal);
     event ExtraRejected(uint256 indexed extraId);
     // Срабатывает если Registry.updateStatus() упал — сделка завершена, статус в Registry рассинхронизирован.
@@ -350,7 +350,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         address arbiter_,
         uint256 amount_,
         uint256 deadlineDays_,
-        bytes32 termsHash_,
+        string  memory terms_,
         address diamond_,
         address usdc_,
         address trustedForwarder_,
@@ -368,15 +368,15 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         require(deadlineDays_ > 0, "Agreement: zero deadline");
         require(client_ != executor_, "Agreement: client == executor");
 
-        client      = client_;
-        executor    = executor_;
-        arbiter     = arbiter_;
-        amount      = amount_;
+        client       = client_;
+        executor     = executor_;
+        arbiter      = arbiter_;
+        amount       = amount_;
         deadlineDays = deadlineDays_;
-        termsHash   = termsHash_;
-        diamond     = diamond_;
-        usdc        = usdc_;
-        factory     = factory_;
+        terms        = terms_;
+        diamond      = diamond_;
+        usdc         = usdc_;
+        factory      = factory_;
     }
 
     // -------- ARBITER REGISTRY --------
@@ -665,7 +665,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     /// @notice Клиент предлагает доп оплату за переделку / новую задачу.
     /// USDC лочится в Agreement. Исполнитель принимает (acceptExtra) или отклоняет (rejectExtra).
     /// Все принятые extras прибавляются к основному amount при release.
-    function proposeExtra(uint256 extraAmount, bytes32 extraTermsHash) external nonReentrant {
+    function proposeExtra(uint256 extraAmount, string calldata extraTerms) external nonReentrant {
         address sender = _msgSender();
         if (sender != client) revert NotClient();
         if (extraAmount == 0) revert ZeroAmount();
@@ -676,12 +676,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (block.timestamp > activatedAt + (deadlineDays * 1 days)) revert DeadlinePassed();
 
         uint256 extraId = nextExtraId++;
-        extras[extraId] = Extra({ amount: extraAmount, termsHash: extraTermsHash, status: ExtraStatus.PENDING });
+        extras[extraId] = Extra({ amount: extraAmount, terms: extraTerms, status: ExtraStatus.PENDING });
         pendingExtrasTotal += extraAmount;
 
         usdc.safeTransferFrom(sender, address(this), extraAmount);
 
-        emit ExtraProposed(extraId, sender, extraAmount, extraTermsHash);
+        emit ExtraProposed(extraId, sender, extraAmount, extraTerms);
     }
 
     /// @notice Исполнитель принимает extra → добавляется к итоговому payout.
@@ -731,7 +731,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         address executor_,
         address arbiter_,
         uint256 amount_,
-        bytes32 termsHash_,
+        string  memory terms_,
         uint256 deadlineDays_,
         uint256 fundedAt_,
         uint256 activatedAt_,
@@ -744,7 +744,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         executor_     = executor;
         arbiter_      = arbiter;
         amount_       = amount;
-        termsHash_    = termsHash;
+        terms_        = terms;
         deadlineDays_ = deadlineDays;
         fundedAt_     = fundedAt;
         activatedAt_  = activatedAt;
@@ -800,7 +800,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
             '{"trait_type":"Client","value":"',        _toHex(client),          '"},'
             '{"trait_type":"Executor","value":"',      _toHex(executor),        '"},'
             '{"trait_type":"Arbiter","value":"',       _toHex(arbiter),         '"},'
-            '{"trait_type":"Terms Hash","value":"0x',  _bytes32HexShort(termsHash), '"}'
+            '{"trait_type":"Terms","value":"',          _truncateStr(terms, 200),     '"}'
         ));
     }
 
@@ -842,8 +842,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
             '<text x="32" y="268" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">EXECUTOR</text>',
             '<text x="32" y="286" font-family="monospace" font-size="12" fill="#ccc">', _shortAddr(executor), '</text>',
             '<line x1="32" y1="304" x2="368" y2="304" stroke="#1e1e1e" stroke-width="1"/>',
-            '<text x="32" y="326" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">TERMS HASH</text>',
-            '<text x="32" y="344" font-family="monospace" font-size="10" fill="#555">0x', _bytes32HexShort(termsHash), '</text>'
+            '<text x="32" y="326" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">TERMS</text>',
+            '<text x="32" y="344" font-family="monospace" font-size="10" fill="#555">', _truncateStr(terms, 48), '</text>'
         ));
     }
 
@@ -885,15 +885,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         return string(abi.encodePacked(_uint2str(whole), ".", f, " USDC"));
     }
 
-    function _bytes32HexShort(bytes32 b) private pure returns (string memory) {
-        bytes memory r = new bytes(11); // 8 hex chars + "..."
-        bytes memory HEX = "0123456789abcdef";
-        for (uint256 i = 0; i < 4; i++) {
-            uint8 v = uint8(b[i]);
-            r[i * 2]     = HEX[v >> 4];
-            r[i * 2 + 1] = HEX[v & 0xf];
-        }
-        r[8] = '.'; r[9] = '.'; r[10] = '.';
+    function _truncateStr(string memory s, uint256 maxLen) private pure returns (string memory) {
+        bytes memory b = bytes(s);
+        if (b.length <= maxLen) return s;
+        bytes memory r = new bytes(maxLen + 3);
+        for (uint256 i = 0; i < maxLen; i++) r[i] = b[i];
+        r[maxLen] = '.'; r[maxLen + 1] = '.'; r[maxLen + 2] = '.';
         return string(r);
     }
 

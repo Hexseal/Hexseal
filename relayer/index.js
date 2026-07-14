@@ -883,32 +883,6 @@ app.post('/dispute-reason', express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── Job Terms ────────────────────────────────────────────────────────────────
-
-const JOB_TERMS_FILE = path.join(STORAGE_DIR, 'job-terms.json');
-let _jobTerms = (() => {
-  try { return existsSync(JOB_TERMS_FILE) ? JSON.parse(readFileSync(JOB_TERMS_FILE, 'utf8')) : {}; } catch { return {}; }
-})();
-function _saveJobTerms() {
-  try { writeFileSync(JOB_TERMS_FILE, JSON.stringify(_jobTerms), 'utf8'); } catch {}
-}
-
-app.get('/job-terms', (req, res) => {
-  const hash = String(req.query.hash || '');
-  if (!/^0x[0-9a-f]{64}$/i.test(hash)) return res.json({ text: null });
-  res.json({ text: _jobTerms[hash.toLowerCase()] ?? null });
-});
-
-app.post('/job-terms', express.json(), (req, res) => {
-  const { hash, text } = req.body ?? {};
-  if (!hash || !/^0x[0-9a-f]{64}$/i.test(hash)) return res.status(400).json({ error: 'Invalid hash' });
-  if (!text || !text.trim()) return res.status(400).json({ error: 'Text required' });
-  if (text.length > 10000) return res.status(400).json({ error: 'Terms too long (max 10000 chars)' });
-  _jobTerms[hash.toLowerCase()] = text.trim();
-  _saveJobTerms();
-  res.json({ ok: true });
-});
-
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 async function start() {

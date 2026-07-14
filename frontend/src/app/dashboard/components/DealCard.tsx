@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useReadContract, usePublicClient, useWalletClient } from 'wagmi';
-import { isAddress, keccak256, toBytes } from 'viem';
+import { isAddress } from 'viem';
 import type { Abi } from 'viem';
 import { AGREEMENT_ABI, USDC_ABI, CONTRACTS } from '@/config/contracts';
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from '@/config/constants';
@@ -21,7 +21,7 @@ import {
 import { shortAddr } from '@/lib/utils';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
-interface ExtraItem { id: number; amount: bigint; termsHash: string; status: number; }
+interface ExtraItem { id: number; amount: bigint; terms: string; status: number; }
 
 export interface AgreementRecord {
   agreement: string;
@@ -98,7 +98,7 @@ export function DealCard({ agreement, address, refetch }: {
           abi: AGREEMENT_ABI as Abi,
           functionName: 'getExtra',
           args: [BigInt(i)],
-        }).then((e: any) => ({ id: i, amount: e.amount, termsHash: e.termsHash, status: Number(e.status) } satisfies ExtraItem))
+        }).then((e: any) => ({ id: i, amount: e.amount, terms: e.terms, status: Number(e.status) } satisfies ExtraItem))
           .catch(() => null)
       )
     ).then(results => setExtrasList(results.filter((r): r is ExtraItem => r !== null)));
@@ -193,8 +193,8 @@ export function DealCard({ agreement, address, refetch }: {
     try {
       toast(tc('sign_wallet'));
       const amountParsed = BigInt(Math.round(parsed_ * 1e6));
-      const termsHash = keccak256(toBytes(proposeDesc.trim() || `${proposeAmount} USDC extra`));
-      await proposeExtraGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, amountParsed, termsHash);
+      const extraTerms = proposeDesc.trim() || `${proposeAmount} USDC extra`;
+      await proposeExtraGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, amountParsed, extraTerms);
       toast.success('Extra proposed!');
       setProposeOpen(false);
       setProposeAmount('');

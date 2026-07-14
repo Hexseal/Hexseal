@@ -71,7 +71,7 @@ contract CriticalInvariantTest is Test {
     uint256 constant SVC_AMOUNT =   80_000_000;
     uint256 constant SVC2_AMOUNT =  50_000_000;
     uint256 constant DEADLINE   = 7;
-    bytes32 constant TERMS      = keccak256("terms");
+    string constant TERMS = "Standard work terms";
     bytes32 constant SALT       = bytes32("hexseal-invariant-salt");
 
     // ============================================================

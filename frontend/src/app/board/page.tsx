@@ -29,7 +29,7 @@ interface JobRecord {
   description: string;
   amount: bigint;
   deadlineDays: bigint;
-  termsHash: string;
+  terms: string;
   region: number;
   status: number;
   createdAt: bigint;
@@ -100,8 +100,6 @@ function JobCard({
   const [isApplying, setIsApplying] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [isAccepting, setIsAccepting] = useState<string | null>(null);
-  const [termsText, setTermsText] = useState<string | null>(null);
-  const [termsFetching, setTermsFetching] = useState(false);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const t = useTranslations();
@@ -119,22 +117,10 @@ function JobCard({
   const onChainStatus = onChainJob ? Number((onChainJob as any).status ?? 0) : job.status;
   const isFilled = onChainStatus !== 0;
 
-  const ZERO_HASH = "0x" + "0".repeat(64);
-  const hasTerms = job.termsHash && job.termsHash !== ZERO_HASH;
+  const hasTerms = !!job.terms?.trim();
   const applicantCount = applicants?.length ?? 0;
   const catKey = extractCategory(job.description);
   const displayDesc = stripCategory(job.description);
-
-  useEffect(() => {
-    if (!hasTerms || !expanded || termsFetching || termsText !== null) return;
-    setTermsFetching(true);
-    fetch(`/api/job-terms?hash=${job.termsHash}`)
-      .then(r => r.json())
-      .then(data => setTermsText(data.text ?? ''))
-      .catch(() => setTermsText(''))
-      .finally(() => setTermsFetching(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, hasTerms, job.termsHash]);
 
   const handleApply = async () => {
     if (!walletClient || !publicClient || isApplying) return;
@@ -296,13 +282,7 @@ function JobCard({
                 <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
                   <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
                 </p>
-                {termsFetching ? (
-                  <p className="text-xs text-white/25">{t("common.loading_short")}</p>
-                ) : termsText ? (
-                  <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{termsText}</p>
-                ) : (
-                  <p className="text-xs text-white/20">{t("board.jobs.terms_unavailable")}</p>
-                )}
+                <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{job.terms}</p>
               </div>
             )}
 
@@ -448,7 +428,7 @@ export default function BoardPage() {
           description: gj.description,
           amount: BigInt(gj.amount),
           deadlineDays: BigInt(gj.deadlineDays),
-          termsHash: gj.termsHash,
+          terms: gj.terms,
           region: gj.region,
           status: JOB_STATUS[gj.status] ?? 0,
           createdAt: BigInt(gj.createdAt),
@@ -611,7 +591,7 @@ export default function BoardPage() {
                   description: gj.description,
                   amount: BigInt(gj.amount),
                   deadlineDays: BigInt(gj.deadlineDays),
-                  termsHash: gj.termsHash,
+                  terms: gj.terms,
                   region: gj.region,
                   status: 0,
                   createdAt: BigInt(gj.createdAt),

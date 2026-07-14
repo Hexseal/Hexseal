@@ -57,7 +57,7 @@ contract BoardsTest is Test {
     uint256 constant FEE = 2_000_000; // $2 USDC
     uint256 constant AMOUNT = 100_000_000; // $100 USDC
     uint256 constant DEADLINE = 7;
-    bytes32 constant TERMS = keccak256("terms");
+    string constant TERMS = "Standard work terms";
 
     function setUp() public {
         owner = address(this);

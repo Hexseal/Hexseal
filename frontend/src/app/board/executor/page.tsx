@@ -58,7 +58,7 @@ interface HireRequest {
   serviceId: bigint;
   amount: bigint;
   deadlineDays: bigint;
-  termsHash: string;
+  terms: string;
   region: number;
   status: number;   // 0=PENDING 1=ACCEPTED 2=REJECTED 3=CANCELLED
   createdAt: bigint;
@@ -627,7 +627,7 @@ export default function ExecutorBoardPage() {
           serviceId: r.serviceId,
           amount: r.amount,
           deadlineDays: r.deadlineDays,
-          termsHash: r.termsHash,
+          terms: r.terms,
           region: r.region,
           status: r.status,
           createdAt: r.createdAt,
@@ -734,27 +734,12 @@ export default function ExecutorBoardPage() {
       const amount = parseUnits(amountStr, 6);
       const days   = BigInt(daysStr);
 
-      let termsHash = ("0x" + "0".repeat(64)) as `0x${string}`;
-      if (termsText.trim()) {
-        const encoded = new TextEncoder().encode(termsText.trim());
-        termsHash = keccak256(encoded) as `0x${string}`;
-        try {
-          await fetch('/api/job-terms', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hash: termsHash, text: termsText.trim() }),
-          });
-        } catch {
-          toast("Terms save failed — continuing", { icon: "⚠️" });
-        }
-      }
-
       toast(t("board.services.sign_permit"));
       await requestServiceGasless(walletClient, publicClient, {
         serviceId:    BigInt(requestModal.serviceId),
         amount,
         deadlineDays: days,
-        termsHash,
+        terms:        termsText.trim(),
         region,
       });
 

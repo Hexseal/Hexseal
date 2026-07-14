@@ -140,22 +140,6 @@ export default function PostJobPage() {
 
     if (!hasBalance) { toast.error(`Need ${totalNeeded.toFixed(2)} USDC, have ${usdcBalance.toFixed(2)}`); return; }
 
-    let termsHash: Hex = `0x${"0".repeat(64)}` as Hex;
-    if (jobTerms.trim()) {
-      setStep("uploading");
-      const termsText = sanitizeHtml(jobTerms.trim());
-      termsHash = keccak256(new TextEncoder().encode(termsText)) as Hex;
-      try {
-        await fetch('/api/job-terms', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hash: termsHash, text: termsText }),
-        });
-      } catch {
-        toast("Terms save failed — continuing", { icon: "⚠️" });
-      }
-    }
-
     setStep("pending");
     try {
       toast("Sign: USDC permit in wallet…");
@@ -164,7 +148,7 @@ export default function PostJobPage() {
         description:  withCategory(category, description.trim()),
         amount:       parseUnits(amount, 6),
         deadlineDays: BigInt(parsedDeadline),
-        termsHash,
+        terms:        jobTerms.trim() ? sanitizeHtml(jobTerms.trim()) : "",
         region:       regionData?.region ?? 1,
         fee:          effectiveFee,
       });

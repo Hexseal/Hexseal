@@ -70,8 +70,8 @@ contract ExtrasTest is Test {
     uint256 constant EXTRA_A    =  20_000_000; // first extra
     uint256 constant EXTRA_B    =  10_000_000; // second extra
     uint256 constant DEADLINE   = 7;
-    bytes32 constant TERMS      = keccak256("terms");
-    bytes32 constant EXTRA_HASH = keccak256("extra-terms");
+    string constant TERMS = "Standard work terms";
+    string constant EXTRA_HASH = "Extra work terms";
     bytes32 constant SALT       = bytes32("hexseal-extras-salt");
 
     // ============================================================

@@ -23,7 +23,6 @@ import { MAX_FILE_SIZE, refreshDownloadUrl } from '@/lib/fileStorage';
 import { useProfile } from '@/hooks/useProfile';
 import { shortAddr } from "@/lib/utils";
 
-const ZERO_HASH = ('0x' + '00'.repeat(32)) as `0x${string}`;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -570,7 +569,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
           serviceId:    preDealCtx.serviceId!,
           amount:       preDealCtx.amount,
           deadlineDays: preDealCtx.deadlineDays,
-          termsHash:    ZERO_HASH,
+          terms:        '',
           region:       0,
         });
         toast.success('Service request sent!');

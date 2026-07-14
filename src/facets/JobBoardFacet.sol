@@ -65,7 +65,7 @@ library JobBoardStorage {
         string description;     // max 500 chars
         uint256 amount;         // сумма сделки USDC (6 decimals)
         uint256 deadlineDays;   // для Agreement
-        bytes32 termsHash;      // IPFS CID условий
+        string  terms;          // условия работы (on-chain)
         uint8 region;           // PPP регион (0=CIS,1=Asia,2=EU,3=US,4=LATAM,5=CA,6=AU)
         JobStatus status;
         uint256 createdAt;
@@ -97,12 +97,12 @@ contract JobBoardFacet {
 
     // -------- EVENTS --------
 
-    event JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region, string title, string description, uint256 deadlineDays, bytes32 termsHash);
+    event JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region, string title, string description, uint256 deadlineDays, string terms);
     event JobApplied(uint256 indexed jobId, address indexed executor);
     event JobWithdrawn(uint256 indexed jobId, address indexed executor);
     event JobAccepted(uint256 indexed jobId, address indexed client, address indexed executor, address agreement);
     event JobCancelled(uint256 indexed jobId, address indexed client, uint256 refundAmount);
-    event JobEdited(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadlineDays, bytes32 termsHash, uint8 region);
+    event JobEdited(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadlineDays, string terms, uint8 region);
 
     // -------- ERRORS --------
 
@@ -161,7 +161,7 @@ contract JobBoardFacet {
         string memory description,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string  memory terms,
         uint8 region,
         uint256 permitDeadline,
         uint8 v,
@@ -194,7 +194,7 @@ contract JobBoardFacet {
             description:    description,
             amount:         amount,
             deadlineDays:   deadlineDays,
-            termsHash:      termsHash,
+            terms:          terms,
             region:         region,
             status:         JobBoardStorage.JobStatus.OPEN,
             createdAt:      block.timestamp,
@@ -211,7 +211,7 @@ contract JobBoardFacet {
         // --- Auto-mint job receipt NFT (non-blocking) ---
         try IJobReceiptMint(address(this)).mintJobReceipt(client, jobId, amount, deadlineDays, region, title) {} catch {}
 
-        emit JobPosted(jobId, client, amount, region, title, description, deadlineDays, termsHash);
+        emit JobPosted(jobId, client, amount, region, title, description, deadlineDays, terms);
     }
 
     /// @notice Клиент создаёт заказ
@@ -221,7 +221,7 @@ contract JobBoardFacet {
         string memory description,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string  memory terms,
         uint8 region
     ) external nonReentrant whenNotPaused returns (uint256 jobId) {
         // --- Валидация ---
@@ -246,7 +246,7 @@ contract JobBoardFacet {
             description:    description,
             amount:         amount,
             deadlineDays:   deadlineDays,
-            termsHash:      termsHash,
+            terms:          terms,
             region:         region,
             status:         JobBoardStorage.JobStatus.OPEN,
             createdAt:      block.timestamp,
@@ -265,7 +265,7 @@ contract JobBoardFacet {
         // --- Auto-mint job receipt NFT (non-blocking) ---
         try IJobReceiptMint(address(this)).mintJobReceipt(msg.sender, jobId, amount, deadlineDays, region, title) {} catch {}
 
-        emit JobPosted(jobId, msg.sender, amount, region, title, description, deadlineDays, termsHash);
+        emit JobPosted(jobId, msg.sender, amount, region, title, description, deadlineDays, terms);
     }
 
     /// @notice Исполнитель отзывает отклик (пока заказ OPEN, gasless-совместим)
@@ -335,7 +335,7 @@ contract JobBoardFacet {
                 address(0),
                 job.amount,
                 job.deadlineDays,
-                job.termsHash,
+                job.terms,
                 job.region
             )
         );
@@ -393,7 +393,7 @@ contract JobBoardFacet {
         string memory title,
         string memory description,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string  memory terms,
         uint8 region
     ) external whenNotPaused {
         address sender = _msgSender();
@@ -415,10 +415,10 @@ contract JobBoardFacet {
         job.title        = title;
         job.description  = description;
         job.deadlineDays = deadlineDays;
-        job.termsHash    = termsHash;
+        job.terms        = terms;
         job.region       = region;
 
-        emit JobEdited(jobId, sender, title, description, deadlineDays, termsHash, region);
+        emit JobEdited(jobId, sender, title, description, deadlineDays, terms, region);
     }
 
     // -------- VIEW --------

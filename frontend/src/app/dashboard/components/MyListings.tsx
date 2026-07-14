@@ -42,7 +42,7 @@ interface HireRequestRecord {
   serviceId: bigint;
   amount: bigint;
   deadlineDays: bigint;
-  termsHash: string;
+  terms: string;
   region: number;
   status: number; // 0=PENDING 1=ACCEPTED 2=REJECTED 3=CANCELLED
   createdAt: bigint;
@@ -55,7 +55,7 @@ interface JobRecord {
   description: string;
   amount: bigint;
   deadlineDays: bigint;
-  termsHash: string;
+  terms: string;
   region: number;
   status: number; // 0=OPEN 1=ACCEPTED 2=CANCELLED
   createdAt: bigint;
@@ -101,7 +101,7 @@ export interface EditTarget {
   amount: bigint;        // job budget OR service price
   deadlineDays: bigint;
   region: number;
-  termsHash?: string;    // job only — passed through unchanged
+  terms?: string;        // job only — passed through unchanged
 }
 
 function EditListingModal({
@@ -1049,10 +1049,9 @@ export function MyJobs({ address, onDealCreated, readOnly }: { address: string; 
     if (!walletClient || !publicClient || !editTarget) { toast.error('Wallet not connected'); return; }
     setEditBusy(true);
     try {
-      // editJob(jobId, title, description, deadlineDays, termsHash, region) — amount is immutable
       await sendGasless(
         walletClient, publicClient, 'editJob',
-        [editTarget.id, fields.title, fields.description, fields.deadlineDays, editTarget.termsHash ?? `0x${'0'.repeat(64)}`, fields.region],
+        [editTarget.id, fields.title, fields.description, fields.deadlineDays, editTarget.terms ?? '', fields.region],
         DIAMOND_ABI as Abi,
       );
       toast.success(tj('job_updated'));
@@ -1104,7 +1103,7 @@ export function MyJobs({ address, onDealCreated, readOnly }: { address: string; 
                 applicants={applicantsMap.get(id.toString())}
                 onCancel={() => handleCancel(id)}
                 onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
-                onEdit={() => setEditTarget({ kind: 'job', id, title: job.title, description: job.description, amount: job.amount, deadlineDays: job.deadlineDays, region: job.region, termsHash: job.termsHash })}
+                onEdit={() => setEditTarget({ kind: 'job', id, title: job.title, description: job.description, amount: job.amount, deadlineDays: job.deadlineDays, region: job.region, terms: job.terms })}
                 busy={busyJobId === id.toString()}
                 readOnly={readOnly}
               />

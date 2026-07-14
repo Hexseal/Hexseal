@@ -8,7 +8,7 @@ interface IFactory {
         address arbiter,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string calldata terms,
         uint8 region
     ) external returns (address agreementAddress);
 }

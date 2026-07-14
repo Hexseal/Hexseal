@@ -21,7 +21,7 @@ import { PageCenter } from '@/components/PageCenter';
 // ─── Mini ABI ────────────────────────────────────────────────────────────────
 
 const AGREEMENT_ABI_MINI = parseAbi([
-  'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, bytes32 termsHash_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
+  'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, string terms_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
 ]);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

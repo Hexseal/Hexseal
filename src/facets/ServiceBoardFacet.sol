@@ -44,7 +44,7 @@ library ServiceBoardStorage {
         uint256 serviceId;
         uint256 amount;         // сумма сделки (client заблокировал в Diamond)
         uint256 deadlineDays;
-        bytes32 termsHash;
+        string  terms;
         uint8 region;
         RequestStatus status;
         uint256 createdAt;
@@ -317,7 +317,7 @@ contract ServiceBoardFacet {
         uint256 serviceId,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string  calldata terms,
         uint8 region
     ) external nonReentrant whenNotPaused returns (uint256 requestId) {
         if (amount == 0) revert ZeroAmount();
@@ -337,7 +337,7 @@ contract ServiceBoardFacet {
             serviceId:   serviceId,
             amount:      amount,
             deadlineDays: deadlineDays,
-            termsHash:   termsHash,
+            terms:       terms,
             region:      region,
             status:      ServiceBoardStorage.RequestStatus.PENDING,
             createdAt:   block.timestamp,
@@ -361,7 +361,7 @@ contract ServiceBoardFacet {
         uint256 serviceId,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string  calldata terms,
         uint8   region,
         uint256 permitDeadline,
         uint8   v,
@@ -389,7 +389,7 @@ contract ServiceBoardFacet {
             serviceId:    serviceId,
             amount:       amount,
             deadlineDays: deadlineDays,
-            termsHash:    termsHash,
+            terms:        terms,
             region:       region,
             status:       ServiceBoardStorage.RequestStatus.PENDING,
             createdAt:    block.timestamp,
@@ -428,7 +428,7 @@ contract ServiceBoardFacet {
         address client   = req.client;
         uint256 amount   = req.amount;
         uint256 deadline = req.deadlineDays;
-        bytes32 terms    = req.termsHash;
+        string memory terms = req.terms;
         uint8   region   = req.region;
 
         // Deploy Agreement через Factory

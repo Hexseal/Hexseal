@@ -50,7 +50,7 @@ contract DiamondTest is Test {
     
     uint256 constant AMOUNT = 100 * 10**6;
     uint256 constant DEADLINE = 7;
-    bytes32 constant TERMS_HASH = keccak256("test");
+    string constant TERMS_HASH = "test terms";
     bytes32 constant DISPUTE_SALT = bytes32("hexseal-test-salt");
     
     function setUp() public {

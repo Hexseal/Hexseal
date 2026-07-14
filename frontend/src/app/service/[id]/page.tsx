@@ -4,7 +4,7 @@ import { use, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract, useWalletClient, usePublicClient } from "wagmi";
 import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
-import { parseUnits, keccak256, type Abi } from "viem";
+import { parseUnits, type Abi } from "viem";
 import { requestServiceGasless, sendGasless } from "@/lib/relay";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -287,21 +287,9 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
       const amount = parseUnits(amountStr, 6);
       const days   = BigInt(daysStr);
 
-      let termsHash = ("0x" + "0".repeat(64)) as `0x${string}`;
-      if (termsText.trim()) {
-        termsHash = keccak256(new TextEncoder().encode(termsText.trim())) as `0x${string}`;
-        try {
-          await fetch("/api/job-terms", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ hash: termsHash, text: termsText.trim() }),
-          });
-        } catch { /* non-fatal */ }
-      }
-
       toast(t("board.services.sign_permit"));
       await requestServiceGasless(walletClient, publicClient, {
-        serviceId, amount, deadlineDays: days, termsHash, region,
+        serviceId, amount, deadlineDays: days, terms: termsText.trim(), region,
       });
 
       toast.success(t("board.services.request_sent"));

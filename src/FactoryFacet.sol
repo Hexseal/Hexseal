@@ -154,7 +154,7 @@ contract FactoryFacet {
         address, // arbiter — ignored, assigned at dispute claim time
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string calldata terms,
         uint8 region
     ) external returns (address agreementAddress) {
         if (client == address(0)) revert ZeroAddress();
@@ -177,7 +177,7 @@ contract FactoryFacet {
 
         agreementAddress = IAgreementDeployer(fs.agreementDeployer).deploy(
             client, executor, address(0),
-            amount, deadlineDays, termsHash,
+            amount, deadlineDays, terms,
             fs.diamond, fs.usdc, fs.trustedForwarder, address(this)
         );
 
@@ -193,7 +193,7 @@ contract FactoryFacet {
         address executor,
         uint256 amount,
         uint256 deadlineDays,
-        bytes32 termsHash,
+        string calldata terms,
         uint8 region,
         uint256 permitDeadline,
         uint8 v,
@@ -221,7 +221,7 @@ contract FactoryFacet {
 
         agreementAddress = IAgreementDeployer(fs.agreementDeployer).deploy(
             client, executor, address(0),
-            amount, deadlineDays, termsHash,
+            amount, deadlineDays, terms,
             fs.diamond, fs.usdc, fs.trustedForwarder, address(this)
         );
 

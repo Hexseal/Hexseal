@@ -246,7 +246,7 @@ export async function deployAndFundGasless(
     executor:     Address;
     amount:       bigint;  // deal amount, 6 decimals
     deadlineDays: bigint;
-    termsHash:    Hex;     // bytes32
+    terms:        string;  // условия сделки (on-chain)
     region:       number;  // 0-3
     fee:          bigint;  // PPP fee, 6 decimals
   },
@@ -254,7 +254,7 @@ export async function deployAndFundGasless(
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
 
-  const { executor, amount, deadlineDays, termsHash, region, fee } = params;
+  const { executor, amount, deadlineDays, terms, region, fee } = params;
   const total = amount + fee;
 
   // Step 1 — get USDC permit nonce + реальный EIP-712 домен
@@ -300,7 +300,7 @@ export async function deployAndFundGasless(
       executor,      // executor
       amount,        // amount (6 dec)
       deadlineDays,  // deadline in days
-      termsHash,     // bytes32
+      terms,         // string
       region,        // uint8
       permitDeadline,// uint256
       vNum,          // uint8 v
@@ -339,7 +339,7 @@ export async function mintJobGasless(
     description:  string;
     amount:       bigint;  // deal amount, 6 decimals
     deadlineDays: bigint;
-    termsHash:    Hex;     // bytes32
+    terms:        string;  // условия работы (on-chain)
     region:       number;  // 0-3
     fee:          bigint;  // PPP fee, 6 decimals
   },
@@ -347,7 +347,7 @@ export async function mintJobGasless(
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
 
-  const { title, description, amount, deadlineDays, termsHash, region, fee } = params;
+  const { title, description, amount, deadlineDays, terms, region, fee } = params;
   const total = amount + fee;
 
   // Step 1 — get USDC permit nonce + реальный EIP-712 домен
@@ -394,7 +394,7 @@ export async function mintJobGasless(
       description,
       amount,
       deadlineDays,
-      termsHash,
+      terms,
       region,
       permitDeadline,
       vNum,
@@ -492,14 +492,14 @@ export async function requestServiceGasless(
     serviceId:    bigint;
     amount:       bigint;  // deal amount, 6 decimals
     deadlineDays: bigint;
-    termsHash:    Hex;     // bytes32
+    terms:        string;  // условия (on-chain)
     region:       number;  // 0-3
   },
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
 
-  const { serviceId, amount, deadlineDays, termsHash, region } = params;
+  const { serviceId, amount, deadlineDays, terms, region } = params;
 
   const [usdcNonce, usdcDomain] = await Promise.all([
     publicClient.readContract({ address: USDC, abi: USDC_READ_ABI, functionName: 'nonces', args: [userAddress] }),
@@ -522,7 +522,7 @@ export async function requestServiceGasless(
   const calldata = encodeFunctionData({
     abi: DIAMOND_ABI as Abi,
     functionName: 'requestServiceWithPermit',
-    args: [userAddress, serviceId, amount, deadlineDays, termsHash, region, permitDeadline, vNum, r, s],
+    args: [userAddress, serviceId, amount, deadlineDays, terms, region, permitDeadline, vNum, r, s],
   });
 
   try {
@@ -732,7 +732,7 @@ export async function sendGasless(
  *   2. ForwardRequest (EIP-712) — proposeExtra() calldata → Agreement
  */
 const PROPOSE_EXTRA_ABI = parseAbi([
-  'function proposeExtra(uint256 extraAmount, bytes32 extraTermsHash)',
+  'function proposeExtra(uint256 extraAmount, string extraTerms)',
 ]);
 
 export async function proposeExtraGasless(
@@ -740,7 +740,7 @@ export async function proposeExtraGasless(
   publicClient: PublicClient,
   agreementAddress: Address,
   extraAmount: bigint,
-  extraTermsHash: `0x${string}`,
+  extraTerms: string,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
@@ -790,7 +790,7 @@ export async function proposeExtraGasless(
   const calldata = encodeFunctionData({
     abi: PROPOSE_EXTRA_ABI,
     functionName: 'proposeExtra',
-    args: [extraAmount, extraTermsHash],
+    args: [extraAmount, extraTerms],
   });
 
   let gasLimit: bigint;
@@ -854,7 +854,7 @@ export async function proposeExtraGasless(
       address: agreementAddress,
       abi: PROPOSE_EXTRA_ABI,
       functionName: 'proposeExtra',
-      args: [extraAmount, extraTermsHash],
+      args: [extraAmount, extraTerms],
       account,
       chain: walletClient.chain,
     });

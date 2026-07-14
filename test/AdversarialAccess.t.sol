@@ -71,7 +71,7 @@ contract AdversarialAccessTest is Test {
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =  80_000_000;
     uint256 constant DEADLINE   = 7;
-    bytes32 constant TERMS      = keccak256("terms");
+    string constant TERMS = "Standard work terms";
     bytes32 constant SALT       = bytes32("hexseal-adv-salt");
     bytes32 constant SALT2      = bytes32("hexseal-adv-salt2");
 

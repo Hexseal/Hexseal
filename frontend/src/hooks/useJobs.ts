@@ -9,7 +9,7 @@ export interface GraphJob {
   description: string
   amount: string
   deadlineDays: string
-  termsHash: string
+  terms: string
   region: number
   status: string
   applicants: string[]
