@@ -2,20 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-/**
- * File upload endpoint — routes to relayer local storage.
- *
- * Two flows:
- *   A) Profile JSON  → PUT /files/public-put/profile-${address}.json  (deterministic key)
- *   B) Everything else → POST /files/public/presign → PUT to uploadUrl  (random key)
- *
- * Deterministic keys mean no Redis index needed:
- *   GET ${relayerUrl}/public/profile-${address}.json → profile
- *
- * NEXT_PUBLIC_RELAYER_URL must point to a running relayer.
- * ngrok-skip-browser-warning header bypasses ngrok interstitial during local dev.
- */
-
 // ─── Rate limiting ─────────────────────────────────────────────────────────────
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -44,11 +30,9 @@ function getClientIp(req: NextRequest): string {
 
 const PROFILE_KEY_RE = /^profile-0x[a-f0-9]{40}\.json$/i;
 
-const NGROK_HEADERS = { 'ngrok-skip-browser-warning': 'true' };
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
-
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 export async function POST(request: NextRequest) {
   if (!checkRateLimit(getClientIp(request))) {
@@ -58,13 +42,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const relayerUrl = process.env.NEXT_PUBLIC_RELAYER_URL;
-  if (!relayerUrl) {
-    return NextResponse.json(
-      { error: 'NEXT_PUBLIC_RELAYER_URL is not configured.' },
-      { status: 500 },
-    );
-  }
+  // Server-side fetches use internal Docker network URL (http://relayer:3001).
+  // Public URLs returned to the browser use the external URL (https://api.hexseal.net).
+  const INTERNAL = (process.env.RELAYER_INTERNAL_URL ?? process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+  const PUBLIC   = (process.env.NEXT_PUBLIC_RELAYER_URL ?? INTERNAL).replace(/\/$/, '');
 
   try {
     const formData = await request.formData();
@@ -80,15 +61,12 @@ export async function POST(request: NextRequest) {
     }
 
     const contentType = file.type || 'application/octet-stream';
-    const cleanRelayer = relayerUrl.replace(/\/$/, '');
 
     // ── Flow A: named profile JSON ─────────────────────────────────────────────
-    // filename = profile-0x<address>.json → store at deterministic key
-    // Requires X-Profile-Signature header (forwarded from client via FormData field)
     if (PROFILE_KEY_RE.test(file.name)) {
       const key       = file.name.toLowerCase();
-      const uploadUrl = `${cleanRelayer}/files/public-put/${key}`;
-      const publicUrl = `${cleanRelayer}/public/${key}`;
+      const uploadUrl = `${INTERNAL}/files/public-put/${key}`;
+      const publicUrl = `${PUBLIC}/public/${key}`;
 
       const signature = formData.get('signature') as string | null;
       if (!signature) {
@@ -99,17 +77,15 @@ export async function POST(request: NextRequest) {
         method:  'PUT',
         body:    file,
         headers: {
-          // Send as octet-stream so express.json() on the relayer doesn't consume
-          // the request stream — raw bytes must be available for body-hash verification.
           'Content-Type': 'application/octet-stream',
           'X-Profile-Signature': signature,
-          ...NGROK_HEADERS,
         },
-        signal:  AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!putRes.ok) {
-        console.error(`[ipfs/upload] Profile PUT failed: ${putRes.status}`);
+        const text = await putRes.text().catch(() => putRes.statusText);
+        console.error(`[ipfs/upload] Profile PUT failed: ${putRes.status} ${text}`);
         return NextResponse.json({ error: 'Upload failed' }, { status: 502 });
       }
 
@@ -119,9 +95,9 @@ export async function POST(request: NextRequest) {
     // ── Flow B: generic file — presign then PUT ────────────────────────────────
     const ext = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
 
-    const presignRes = await fetch(`${cleanRelayer}/files/public/presign`, {
+    const presignRes = await fetch(`${INTERNAL}/files/public/presign`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', ...NGROK_HEADERS },
+      headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ ext, contentType }),
       signal:  AbortSignal.timeout(10_000),
     });
@@ -137,24 +113,24 @@ export async function POST(request: NextRequest) {
       publicUrl: string;
     };
 
-    // If relayer returned localhost URLs (RELAYER_PUBLIC_URL not set on relayer),
-    // rewrite them to the public ngrok URL so Vercel can actually PUT to it.
-    const rewriteLocalhost = (u: string) => {
+    // Rewrite any localhost/127.0.0.1 URLs the relayer returns when RELAYER_PUBLIC_URL is not set.
+    // Upload goes to internal, public URL goes to external.
+    const rewrite = (u: string, base: string) => {
       try {
         const parsed = new URL(u);
         if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-          return `${cleanRelayer}${parsed.pathname}`;
+          return `${base}${parsed.pathname}`;
         }
       } catch { /* ignore */ }
       return u;
     };
-    uploadUrl = rewriteLocalhost(uploadUrl);
-    publicUrl = rewriteLocalhost(publicUrl);
+    uploadUrl = rewrite(uploadUrl, INTERNAL);
+    publicUrl = rewrite(publicUrl, PUBLIC);
 
     const putRes = await fetch(uploadUrl, {
       method:  'PUT',
       body:    file,
-      headers: { 'Content-Type': contentType, ...NGROK_HEADERS },
+      headers: { 'Content-Type': contentType },
       signal:  AbortSignal.timeout(60_000),
     });
 
