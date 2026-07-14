@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { publishProfile, fetchProfile } from "@/lib/profiles-ipfs";
+import { useQueryClient } from "@tanstack/react-query";
+import { profileQueryKey } from "@/hooks/useProfile";
 import { uploadToIPFS } from "@/lib/ipfs";
 import { Loader2, CheckCircle, AlertCircle, X, Upload, UserCircle, ChevronLeft } from "lucide-react";
 import Link from "next/link";
@@ -70,6 +72,7 @@ type SaveStage = 'idle' | 'uploading-photo' | 'signing' | 'saving' | 'done';
 
 export default function EditProfilePage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { address, isConnected, status } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -248,11 +251,7 @@ export default function EditProfilePage() {
       setStage('saving');
       await publishProfile(profileData, signature);
 
-      // Invalidate localStorage cache so profile view re-fetches fresh data
-      try {
-        localStorage.removeItem(`hexseal-public_${address.toLowerCase()}`);
-        localStorage.removeItem(`sig404_profile_${address.toLowerCase()}`);
-      } catch { /* ignore */ }
+      queryClient.invalidateQueries({ queryKey: profileQueryKey(address.toLowerCase()) });
 
       setStage('done');
       toast.success(t("profile.save_success"));

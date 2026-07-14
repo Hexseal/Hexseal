@@ -18,8 +18,7 @@ import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
-import { fetchProfile } from "@/lib/profiles-ipfs";
-import type { UserProfile } from "@/types/profile";
+import { useProfile } from "@/hooks/useProfile";
 import { Sparkles } from "lucide-react";
 import { ContextHint } from "@/components/ContextHint";
 import { shortAddr } from "@/lib/utils";
@@ -352,14 +351,8 @@ export default function BoardPage() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const { profile: userProfile } = useProfile(address);
   const t = useTranslations();
-
-  // Load viewer's profile for skill-based matching
-  useEffect(() => {
-    if (!address) return;
-    fetchProfile(address).then(setUserProfile).catch(() => {});
-  }, [address]);
 
   const [page, setPage] = useState(0);
   const [allJobs, setAllJobs] = useState<GraphJob[]>([]);

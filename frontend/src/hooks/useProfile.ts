@@ -1,48 +1,30 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { fetchProfile, invalidateProfileCache } from '@/lib/profiles-ipfs';
+import { useQuery } from '@tanstack/react-query';
+import { fetchProfile } from '@/lib/profiles-ipfs';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import type { UserProfile } from '@/types/profile';
 
 const gateway = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://dweb.link';
 
+export const profileQueryKey = (address: string) =>
+  ['profile', address.toLowerCase()] as const;
+
 export function useProfile(address: string | undefined) {
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!address) { setProfile(null); return; }
-    let cancelled = false;
-
-    const load = (bust = false) => {
-      if (bust) invalidateProfileCache(address);
-      setIsLoading(true);
-      fetchProfile(address)
-        .then(p => { if (!cancelled) setProfile(p); })
-        .catch(() => { if (!cancelled) setProfile(null); })
-        .finally(() => { if (!cancelled) setIsLoading(false); });
-    };
-
-    load();
-
-    const onUpdated = (e: Event) => {
-      const detail = (e as CustomEvent<{ address: string }>).detail;
-      if (detail?.address?.toLowerCase() === address.toLowerCase()) load(true);
-    };
-    window.addEventListener('profile-updated', onUpdated);
-
-    return () => { cancelled = true; window.removeEventListener('profile-updated', onUpdated); };
-  }, [address]);
+  const { data: profile, isLoading } = useQuery<UserProfile | null>({
+    queryKey: profileQueryKey(address ?? ''),
+    queryFn: () => fetchProfile(address!),
+    enabled: !!address,
+    staleTime: 5 * 60 * 1000, // 5 min — profiles don't change often
+    gcTime:   10 * 60 * 1000, // keep in cache 10 min after last subscriber
+  });
 
   const rawAvatarUrl = profile?.avatarUrl
     ?? (profile?.avatarCid ? `${gateway}/ipfs/${profile.avatarCid}` : null);
-  // Route relay/ngrok URLs through /api/media proxy so the browser never hits ngrok
-  // directly (which can return an interstitial page instead of the actual image).
-  const avatarUrl = resolveMediaUrl(rawAvatarUrl);
+  const avatarUrl = resolveMediaUrl(rawAvatarUrl) ?? rawAvatarUrl ?? null;
 
   return {
-    profile,
+    profile: profile ?? null,
     displayName: profile?.displayName ?? null,
     avatarUrl,
     isLoading,

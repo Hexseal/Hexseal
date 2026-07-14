@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useProfile } from "@/hooks/useProfile";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -9,8 +10,6 @@ import { appChainId } from "@/config/chain";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from "@/config/contracts";
 import type { Abi } from "viem";
-import { fetchProfile, invalidateProfileCache } from "@/lib/profiles-ipfs";
-import { resolveMediaUrl } from "@/lib/mediaUrl";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -49,8 +48,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   const [mounted, setMounted] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
+  const { displayName, avatarUrl: profileAvatarUrl } = useProfile(address);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -132,36 +130,9 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   });
   const usdcBalance = usdcBalanceData?.value ?? BigInt(0);
 
-  // Fetch profile from IPFS (name + avatar)
-  useEffect(() => {
-    if (!address) return;
-    let alive = true;
-    const loadProfile = async (bust = false) => {
-      try {
-        if (bust) invalidateProfileCache(address);
-        const profile = await fetchProfile(address);
-        if (!alive) return;
-        if (profile?.displayName) setDisplayName(profile.displayName);
-        // Prefer relayer direct URL; fall back to Lighthouse IPFS CID (legacy)
-        const rawUrl = profile?.avatarUrl
-          ?? (profile?.avatarCid ? `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${profile.avatarCid}` : null);
-        if (rawUrl) setProfileAvatarUrl(resolveMediaUrl(rawUrl) ?? rawUrl);
-      } catch {}
-    };
-    loadProfile();
-
-    const onUpdated = (e: Event) => {
-      const detail = (e as CustomEvent<{ address: string }>).detail;
-      if (detail?.address?.toLowerCase() === address.toLowerCase()) loadProfile(true);
-    };
-    window.addEventListener('profile-updated', onUpdated);
-
-    return () => { alive = false; window.removeEventListener('profile-updated', onUpdated); };
-  }, [address]);
-
   // Display name priority: ENS > profile name > truncated address
   const displayText = ensName || displayName || (address ? shortAddr(address) : "");
-  // Avatar priority: IPFS profile > effigy identicon
+  // Avatar priority: profile > effigy identicon
   const avatarUrl = profileAvatarUrl || (address ? `https://effigy.im/a/${address}.svg` : "");
 
   const handleCopy = async () => {

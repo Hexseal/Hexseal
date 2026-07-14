@@ -1,50 +1,30 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
-import { fetchProfile } from "@/lib/profiles-ipfs";
+import { useProfile } from "@/hooks/useProfile";
 import { shortAddr } from "@/lib/utils";
 
 // ─── UserAvatar ───────────────────────────────────────────────────────────────
-// Small avatar circle: profile pic or initials fallback. Lazy-fetches on mount.
 
 interface UserAvatarProps {
   address: string;
-  size?: number;       // px, default 22
+  size?: number;
   link?: boolean;
   className?: string;
 }
 
 export function UserAvatar({ address, size = 22, link = false, className = "" }: UserAvatarProps) {
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [name, setName] = useState<string | null>(null);
+  const { avatarUrl, displayName } = useProfile(address);
 
-  useEffect(() => {
-    if (!address) return;
-    let alive = true;
-    fetchProfile(address)
-      .then(p => {
-        if (!alive) return;
-        if (p?.avatarUrl) setAvatarUrl(p.avatarUrl);
-        else if (p?.avatarCid) {
-          const gw = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://dweb.link';
-          setAvatarUrl(`${gw}/ipfs/${p.avatarCid}`);
-        }
-        if (p?.displayName) setName(p.displayName);
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [address]);
-
-  const initials = name
-    ? name.slice(0, 2).toUpperCase()
+  const initials = displayName
+    ? displayName.slice(0, 2).toUpperCase()
     : address.slice(2, 4).toUpperCase();
 
   const circle = (
     <div
       className={`rounded-full overflow-hidden flex-shrink-0 bg-white/[0.08] border border-white/[0.08] flex items-center justify-center ${className}`}
       style={{ width: size, height: size }}
-      title={name ?? address}
+      title={displayName ?? address}
     >
       {avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -61,6 +41,7 @@ export function UserAvatar({ address, size = 22, link = false, className = "" }:
   return circle;
 }
 
+// ─── UserName ─────────────────────────────────────────────────────────────────
 
 interface UserNameProps {
   address: string;
@@ -70,25 +51,9 @@ interface UserNameProps {
 }
 
 export function UserName({ address, link = false, className, fallback }: UserNameProps) {
-  const [name, setName] = useState<string | null>(null);
+  const { displayName } = useProfile(address);
+  const display = displayName ?? fallback ?? shortAddr(address);
 
-  useEffect(() => {
-    if (!address) return;
-    let alive = true;
-    fetchProfile(address)
-      .then(p => { if (alive && p?.displayName) setName(p.displayName); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [address]);
-
-  const display = name ?? fallback ?? shortAddr(address);
-
-  if (link) {
-    return (
-      <Link href={`/profile/${address}`} className={className}>
-        {display}
-      </Link>
-    );
-  }
+  if (link) return <Link href={`/profile/${address}`} className={className}>{display}</Link>;
   return <span className={className}>{display}</span>;
 }

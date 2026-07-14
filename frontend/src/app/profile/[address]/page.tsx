@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract } from "wagmi";
 import { REPUTATION_ABI, CONTRACTS } from "@/config/contracts";
-import { fetchProfile } from "@/lib/profiles-ipfs";
+import { useProfile } from "@/hooks/useProfile";
 import { resolveMediaUrl } from "@/lib/mediaUrl";
 import type { UserProfile } from "@/types/profile";
 import { Button } from "@/components/ui/button";
@@ -149,14 +149,9 @@ export default function ProfilePage() {
   const isOwner = viewerAddress?.toLowerCase() === profileAddress;
   const validAddress = isAddress(profileAddress);
 
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const { profile } = useProfile(validAddress ? profileAddress : undefined);
   const [tab, setTab] = useState<TabKey>('listings');
   const [listingsSub, setListingsSub] = useState<ListingsSub>('jobs');
-
-  useEffect(() => {
-    if (!validAddress) return;
-    fetchProfile(profileAddress).then(setProfile).catch(() => {});
-  }, [profileAddress, validAddress]);
 
   const { agreements: rawAgreements, isLoading } = useMyAgreements(validAddress ? profileAddress : undefined);
   const titleMap = useAgreementTitles(validAddress ? profileAddress : undefined);
