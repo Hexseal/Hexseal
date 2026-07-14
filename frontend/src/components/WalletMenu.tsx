@@ -9,7 +9,7 @@ import { appChainId } from "@/config/chain";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from "@/config/contracts";
 import type { Abi } from "viem";
-import { fetchProfile } from "@/lib/profiles-ipfs";
+import { fetchProfile, invalidateProfileCache } from "@/lib/profiles-ipfs";
 import { resolveMediaUrl } from "@/lib/mediaUrl";
 import {
   DropdownMenu,
@@ -139,8 +139,9 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   useEffect(() => {
     if (!address) return;
     let alive = true;
-    const loadProfile = async () => {
+    const loadProfile = async (bust = false) => {
       try {
+        if (bust) invalidateProfileCache(address);
         const profile = await fetchProfile(address);
         if (!alive) return;
         if (profile?.displayName) setDisplayName(profile.displayName);
@@ -151,7 +152,14 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
       } catch {}
     };
     loadProfile();
-    return () => { alive = false; };
+
+    const onUpdated = (e: Event) => {
+      const detail = (e as CustomEvent<{ address: string }>).detail;
+      if (detail?.address?.toLowerCase() === address.toLowerCase()) loadProfile(true);
+    };
+    window.addEventListener('profile-updated', onUpdated);
+
+    return () => { alive = false; window.removeEventListener('profile-updated', onUpdated); };
   }, [address]);
 
   // Display name priority: ENS > profile name > truncated address
