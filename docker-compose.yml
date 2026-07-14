@@ -34,5 +34,13 @@ services:
     depends_on:
       - relayer
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - frontend
+      - relayer
+
 volumes:
   relayer_storage:
