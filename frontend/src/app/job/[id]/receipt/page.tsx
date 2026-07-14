@@ -9,6 +9,7 @@ import Link from "next/link";
 import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
 import { DIAMOND_ABI, JOB_RECEIPT_FACET_ABI, CONTRACTS } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
+import { shortAddr } from "@/lib/utils";
 
 // ── Region helpers (mirrors SVGRenderer._regionLabel / _regionFeeRaw) ─────────
 
@@ -50,9 +51,6 @@ function padId(id: bigint): string {
   return String(id).padStart(4, "0");
 }
 
-function shortAddr(addr: string): string {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
 
 // ── Job status ──────────────────────────────────────────────────────────────
 

@@ -24,12 +24,9 @@ import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
 import { locales, localeNames, type Locale } from "@/i18n/config";
-import { cn } from "@/lib/utils";
+import { cn, shortAddr } from "@/lib/utils";
 import { useXmtp } from "@/contexts/XmtpContext";
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
 
 interface Props {
   open?: boolean;

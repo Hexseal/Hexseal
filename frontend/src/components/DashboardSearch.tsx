@@ -7,10 +7,8 @@ import { Search, X, ArrowRight, Briefcase, Wrench, Handshake } from 'lucide-reac
 import type { GraphAgreement } from '@/hooks/useMyAgreements';
 import type { MyJobEntry } from '@/hooks/useMyJobs';
 import type { MyServiceEntry } from '@/hooks/useMyServices';
+import { shortAddr } from '@/lib/utils';
 
-function shortAddr(a: string) {
-  return `${a.slice(0, 6)}…${a.slice(-4)}`;
-}
 
 function fmtUsdc(v: string) {
   const n = Number(v);

@@ -70,11 +70,9 @@ async function getUsdcDomain(publicClient: PublicClient): Promise<Record<string,
       publicClient.readContract({ address: USDC, abi: USDC_READ_ABI, functionName: 'version' }),
     ]);
     const domain = { name: usdcName, version: usdcVersion, chainId: BigInt(CHAIN_ID), verifyingContract: USDC };
-    console.log('[permit] domain:', JSON.stringify(domain, (_, v) => typeof v === 'bigint' ? v.toString() + 'n' : v));
     return domain;
   } catch {
     const domain = { name: 'USDC', version: '2', chainId: BigInt(CHAIN_ID), verifyingContract: USDC };
-    console.log('[permit] fallback domain:', JSON.stringify(domain, (_, v) => typeof v === 'bigint' ? v.toString() + 'n' : v));
     return domain;
   }
 }
@@ -292,7 +290,6 @@ export async function deployAndFundGasless(
   const { r, s, v } = parseSignature(permitSig);
   // v может быть 0/1 (yParity) у некоторых кошельков — нормализуем до 27/28
   const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
-  console.log('[permit] deployAndFund sig v:', v?.toString(), '→ vNum:', vNum, 'r:', r, 's:', s);
 
   // Step 5 — encode deployAndFund calldata
   const calldata = encodeFunctionData({
@@ -386,7 +383,6 @@ export async function mintJobGasless(
   const { r, s, v } = parseSignature(permitSig);
   // v может быть 0/1 (yParity) у некоторых кошельков — нормализуем до 27/28
   const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
-  console.log('[permit] mintJob sig v:', v?.toString(), '→ vNum:', vNum, 'r:', r, 's:', s);
 
   // Step 5 — encode mintJobWithPermit calldata
   const calldata = encodeFunctionData({
@@ -462,7 +458,6 @@ export async function mintServiceGasless(
 
   const { r, s, v } = parseSignature(permitSig);
   const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
-  console.log('[permit] mintService sig v:', v?.toString(), '→ vNum:', vNum, 'r:', r, 's:', s);
 
   const calldata = encodeFunctionData({
     abi: DIAMOND_ABI as Abi,

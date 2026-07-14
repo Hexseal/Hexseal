@@ -18,6 +18,7 @@ import { useMyJobs } from '@/hooks/useMyJobs';
 import { useMyServices } from '@/hooks/useMyServices';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageCenter } from "@/components/PageCenter";
+import { Button } from '@/components/ui/button';
 
 function xpLevel(xp: number) {
   // pct = progress within current tier (0–100). Minimum 3 so bar is always visible once unlocked.
@@ -194,7 +195,7 @@ export default function DashboardPage() {
           </div>
           <h1 className="text-2xl font-bold font-syne mb-2">{t("dashboard.title")}</h1>
           <p className="text-muted-foreground text-sm mb-6">{t("dashboard.connect_prompt")}</p>
-          <Link href="/"><button className="border border-white/15 rounded-lg px-4 py-2 text-sm text-white/60 hover:text-white hover:border-white/30 transition-colors">{t("dashboard.go_home")}</button></Link>
+          <Link href="/"><Button variant="outline">{t("dashboard.go_home")}</Button></Link>
         </div>
       </PageCenter>
     );

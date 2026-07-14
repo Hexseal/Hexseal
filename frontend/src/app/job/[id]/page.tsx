@@ -21,6 +21,7 @@ import { useTranslations } from "next-intl";
 import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { PageCenter } from "@/components/PageCenter";
+import { shortAddr } from "@/lib/utils";
 interface JobRecord {
   client: string;
   title: string;
@@ -51,9 +52,6 @@ const JOB_STATUS: Record<number, { label: string; color: string }> = {
   2: { label: "Cancelled", color: "bg-gray-400/10 text-gray-400 border-gray-400/20" },
 };
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 function timeAgo(ts: bigint): string {
   const diff = Math.floor(Date.now() / 1000) - Number(ts);

@@ -24,6 +24,7 @@ import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
+import { shortAddr } from "@/lib/utils";
 
 function useTimeAgo() {
   const t = useTranslations();
@@ -67,7 +68,6 @@ interface HireRequest {
 const REQUEST_STATUS: Record<number, string> = { 0: "Pending", 1: "Accepted", 2: "Rejected", 3: "Cancelled" };
 const DEAL_STATUS: Record<number, string> = { 0: "Created", 1: "Funded", 2: "Active", 3: "Done", 4: "Disputed", 5: "Resolved", 6: "Refunded" };
 
-function shortAddr(addr: string) { return `${addr.slice(0, 6)}…${addr.slice(-4)}`; }
 function fmtUSDC(val: bigint) { return (Number(val) / 1e6).toFixed(2); }
 
 // ─── Request Modal ─────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
 import { PageCenter } from "@/components/PageCenter";
+import { shortAddr } from "@/lib/utils";
 
 interface HireRequestRecord {
   client: string;
@@ -67,9 +68,6 @@ function fmt(amount: bigint) {
   return (Number(amount) / 1e6).toFixed(2);
 }
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 function timeAgo(ts: bigint): string {
   const diff = Math.floor(Date.now() / 1000) - Number(ts);

@@ -21,6 +21,7 @@ import type { ChatMessage } from '@/lib/xmtp';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
 import { MAX_FILE_SIZE, refreshDownloadUrl } from '@/lib/fileStorage';
 import { useProfile } from '@/hooks/useProfile';
+import { shortAddr } from "@/lib/utils";
 
 const ZERO_HASH = ('0x' + '00'.repeat(32)) as `0x${string}`;
 
@@ -32,9 +33,6 @@ function formatBytes(b: number): string {
   return `${(b / 1048576).toFixed(1)} MB`;
 }
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

@@ -22,6 +22,7 @@ import { fetchProfile } from "@/lib/profiles-ipfs";
 import type { UserProfile } from "@/types/profile";
 import { Sparkles } from "lucide-react";
 import { ContextHint } from "@/components/ContextHint";
+import { shortAddr } from "@/lib/utils";
 
 interface JobRecord {
   client: string;
@@ -37,9 +38,6 @@ interface JobRecord {
   agreement: string;
 }
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 function formatBudget(budget: bigint): string {
   return (Number(budget) / 1e6).toFixed(2);

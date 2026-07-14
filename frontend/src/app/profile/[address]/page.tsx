@@ -22,12 +22,10 @@ import { useAgreementTitles } from "@/hooks/useAgreementTitles";
 import { DealCard, type AgreementRecord } from "@/app/dashboard/components/DealCard";
 import { MyJobs, MyServices, MyClientRequests } from "@/app/dashboard/components/MyListings";
 import { PageCenter } from "@/components/PageCenter";
+import { shortAddr } from "@/lib/utils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 function fmtVolume(microUsdc: number): string {
   const v = microUsdc / 1e6;

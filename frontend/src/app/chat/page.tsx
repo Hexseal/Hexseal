@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { cn } from '@/lib/utils';
+import { cn, shortAddr } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -55,9 +55,6 @@ interface DealContext {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 function formatTime(ts: number) {
   if (!ts) return '';

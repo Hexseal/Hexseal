@@ -16,6 +16,7 @@ import {
   CheckCircle, XCircle, Users, Zap, Loader2, UserCheck, Trash2,
   Pause, Play, Inbox, AlertCircle, Pencil,
 } from 'lucide-react';
+import { shortAddr } from "@/lib/utils";
 
 const REGION_LABELS: Record<number, string> = {
   0: 'CIS', 1: 'Asia', 2: 'Europe', 3: 'US', 4: 'LATAM', 5: 'CA', 6: 'AU',
@@ -65,9 +66,6 @@ interface JobRecord {
 
 function fmt(amount: bigint) {
   return (Number(amount) / 1e6).toFixed(2);
-}
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
 const SERVICE_STATUS: Record<number, { label: string; icon: React.ReactNode; cls: string; dot: string; textCls: string }> = {

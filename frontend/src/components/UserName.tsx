@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { fetchProfile } from "@/lib/profiles-ipfs";
+import { shortAddr } from "@/lib/utils";
 
 // ─── UserAvatar ───────────────────────────────────────────────────────────────
 // Small avatar circle: profile pic or initials fallback. Lazy-fetches on mount.
@@ -60,9 +61,6 @@ export function UserAvatar({ address, size = 22, link = false, className = "" }:
   return circle;
 }
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 interface UserNameProps {
   address: string;

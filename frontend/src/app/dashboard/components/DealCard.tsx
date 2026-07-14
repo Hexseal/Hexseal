@@ -18,6 +18,7 @@ import {
   Copy, ExternalLink, Play, Flag, Shield, Timer,
   ChevronDown, MessageCircle, Plus, X,
 } from 'lucide-react';
+import { shortAddr } from '@/lib/utils';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem { id: number; amount: bigint; termsHash: string; status: number; }
@@ -33,9 +34,6 @@ export interface AgreementRecord {
   title?: string;
 }
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 function formatAmount(amount: bigint): string {
   return (Number(amount) / 1e6).toFixed(2);
 }

@@ -20,6 +20,7 @@ import { useTranslations } from "next-intl";
 import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless } from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex } from "viem";
+import { shortAddr } from "@/lib/utils";
 
 // Agreement.Status: 0=CREATED 1=FUNDED 2=ACTIVE 3=COMPLETED 4=DISPUTED 5=RESOLVED 6=REFUNDED
 const AGREEMENT_STATUS_DISPUTED = 4;
@@ -46,7 +47,6 @@ type PendingVerdict = {
   frozen: boolean; finalized: boolean; overturned: boolean;
 };
 
-function shortAddr(a: string) { return a.slice(0, 6) + "…" + a.slice(-4); }
 function fmtUSDC(v: bigint)   { return (Number(v) / 1e6).toFixed(2); }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

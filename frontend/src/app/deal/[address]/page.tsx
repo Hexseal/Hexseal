@@ -32,13 +32,12 @@ import { explorerUrl } from "@/config/chain";
 import { initXmtpClient, notifyArbiters } from "@/lib/xmtp";
 import { useTranslations } from "next-intl";
 import { ContextHint } from "@/components/ContextHint";
+import { shortAddr } from "@/lib/utils";
+import { PageCenter } from "@/components/PageCenter";
 
 // Agreement status enum matches Solidity:
 // 0=CREATED, 1=FUNDED, 2=ACTIVE, 3=COMPLETED, 4=DISPUTED, 5=RESOLVED, 6=REFUNDED
 
-function shortAddr(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
 
 // ─── Party row with profile name + avatar ─────────────────────────────────────
 
@@ -436,18 +435,20 @@ export default function DealDetailPage() {
 
   if (!isValidDeal) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <p className="text-white/50 text-sm">{t("deal.invalid_address")}</p>
-        <Link href="/dashboard"><Button variant="outline" size="sm">← Dashboard</Button></Link>
-      </div>
+      <PageCenter>
+        <div className="flex flex-col items-center gap-4">
+          <p className="text-white/50 text-sm">{t("deal.invalid_address")}</p>
+          <Link href="/dashboard"><Button variant="outline" size="sm">← Dashboard</Button></Link>
+        </div>
+      </PageCenter>
     );
   }
 
   if (isLoadingDetails || !parsed) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <PageCenter>
         <Loader2 className="w-8 h-8 animate-spin text-white/30" />
-      </div>
+      </PageCenter>
     );
   }
 

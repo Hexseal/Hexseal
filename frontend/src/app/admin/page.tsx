@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { isAddress, parseAbi } from 'viem';
 import { cn } from '@/lib/utils';
+import { PageCenter } from '@/components/PageCenter';
 
 // ─── Mini ABI ────────────────────────────────────────────────────────────────
 
@@ -721,15 +722,15 @@ export default function AdminPage() {
 
   if (!isMounted || isChecking) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <PageCenter>
         <Loader2 className="w-6 h-6 animate-spin text-white/30" />
-      </div>
+      </PageCenter>
     );
   }
 
   if (!isConnected || !isOwner) {
     return (
-      <div className="flex-1 flex items-center justify-center p-4">
+      <PageCenter>
         <div className="max-w-sm w-full text-center space-y-4">
           <div className="w-14 h-14 rounded-[18px] bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto">
             <Shield className="w-6 h-6 text-white/30" />
@@ -744,7 +745,7 @@ export default function AdminPage() {
             <Button variant="outline" className="mt-2 border-white/15 text-white/50">← Go back</Button>
           </Link>
         </div>
-      </div>
+      </PageCenter>
     );
   }
 
