@@ -893,9 +893,14 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
                       ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
                         <img
-                          src={`https://effigy.im/a/${msg.from}.svg`}
+                          src={avatarUrl ?? `https://effigy.im/a/${msg.from}.svg`}
                           alt=""
                           className="w-7 h-7 rounded-full flex-shrink-0 mb-0.5 bg-white/10 object-cover"
+                          onError={(e) => {
+                            const img = e.target as HTMLImageElement;
+                            const fallback = `https://effigy.im/a/${msg.from}.svg`;
+                            if (img.src !== fallback) img.src = fallback;
+                          }}
                         />
                       )
                       : <div className="w-7 flex-shrink-0" />
