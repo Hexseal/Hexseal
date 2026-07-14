@@ -1,0 +1,7 @@
+tunnel: b9656259-6f7b-4376-a881-181fc7671fae
+ingress:
+  - hostname: hexseal.net
+    service: http://frontend:3000
+  - hostname: api.hexseal.net
+    service: http://relayer:3001
+  - service: http_status:404
