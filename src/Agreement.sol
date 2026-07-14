@@ -809,11 +809,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         string memory st  = _statusStr(s);
         return string(abi.encodePacked(
             '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="520" viewBox="0 0 400 520">',
+            '<style>text{font-family:monospace}.lb{font-size:9px;fill:#555;letter-spacing:1}.v{font-size:12px;fill:#ccc}.vl{font-size:13px;fill:#fff}.hd{font-size:11px}.c{text-anchor:middle}line{stroke:#1e1e1e;stroke-width:1}</style>',
             '<rect width="400" height="520" fill="#0d0d0d"/>',
             '<rect x="0" y="0" width="400" height="3" fill="', col, '"/>',
-            '<text x="32" y="44" font-family="monospace" font-size="11" fill="#555" letter-spacing="2">DEAL AGREEMENT</text>',
-            '<text x="368" y="44" font-family="monospace" font-size="11" fill="#333" text-anchor="end">HSEAL</text>',
-            '<text x="32" y="66" font-family="monospace" font-size="11" fill="#444">', _shortAddr(address(this)), '</text>',
+            '<text x="32" y="44" class="hd" fill="#555">DEAL AGREEMENT</text>',
+            '<text x="368" y="44" class="hd" fill="#333" text-anchor="end">HSEAL</text>',
+            '<text x="32" y="66" class="hd" fill="#444">', _shortAddr(address(this)), '</text>',
             _buildSVGStatus(col, st),
             _buildSVGData(),
             _buildSVGFooter()
@@ -822,36 +823,36 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
     function _buildSVGStatus(string memory col, string memory st) private pure returns (string memory) {
         return string(abi.encodePacked(
-            '<line x1="32" y1="82" x2="368" y2="82" stroke="#1e1e1e" stroke-width="1"/>',
+            '<line x1="32" y1="82" x2="368" y2="82"/>',
             '<rect x="32" y="94" width="336" height="36" rx="4" fill="', col, '" fill-opacity="0.12"/>',
             '<rect x="32" y="94" width="3" height="36" rx="1" fill="', col, '"/>',
-            '<text x="46" y="117" font-family="monospace" font-size="14" fill="', col, '" font-weight="bold">', st, '</text>',
-            '<line x1="32" y1="144" x2="368" y2="144" stroke="#1e1e1e" stroke-width="1"/>'
+            '<text x="46" y="117" font-size="14" fill="', col, '" font-weight="bold">', st, '</text>',
+            '<line x1="32" y1="144" x2="368" y2="144"/>'
         ));
     }
 
     function _buildSVGData() private view returns (string memory) {
         return string(abi.encodePacked(
-            '<text x="32"  y="164" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">AMOUNT</text>',
-            '<text x="200" y="164" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">DEADLINE</text>',
-            '<text x="32"  y="183" font-family="monospace" font-size="13" fill="#fff">', _formatUSDC(amount), '</text>',
-            '<text x="200" y="183" font-family="monospace" font-size="13" fill="#fff">', _uint2str(deadlineDays), ' days</text>',
-            '<line x1="32" y1="200" x2="368" y2="200" stroke="#1e1e1e" stroke-width="1"/>',
-            '<text x="32" y="222" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">CLIENT</text>',
-            '<text x="32" y="240" font-family="monospace" font-size="12" fill="#ccc">', _shortAddr(client), '</text>',
-            '<text x="32" y="268" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">EXECUTOR</text>',
-            '<text x="32" y="286" font-family="monospace" font-size="12" fill="#ccc">', _shortAddr(executor), '</text>',
-            '<line x1="32" y1="304" x2="368" y2="304" stroke="#1e1e1e" stroke-width="1"/>',
-            '<text x="32" y="326" font-family="monospace" font-size="9" fill="#555" letter-spacing="1">TERMS</text>',
-            '<text x="32" y="344" font-family="monospace" font-size="10" fill="#555">', _truncateStr(terms, 48), '</text>'
+            '<text x="32"  y="164" class="lb">AMOUNT</text>',
+            '<text x="200" y="164" class="lb">DEADLINE</text>',
+            '<text x="32"  y="183" class="vl">', _formatUSDC(amount), '</text>',
+            '<text x="200" y="183" class="vl">', _uint2str(deadlineDays), ' days</text>',
+            '<line x1="32" y1="200" x2="368" y2="200"/>',
+            '<text x="32" y="222" class="lb">CLIENT</text>',
+            '<text x="32" y="240" class="v">', _shortAddr(client), '</text>',
+            '<text x="32" y="268" class="lb">EXECUTOR</text>',
+            '<text x="32" y="286" class="v">', _shortAddr(executor), '</text>',
+            '<line x1="32" y1="304" x2="368" y2="304"/>',
+            '<text x="32" y="326" class="lb">TERMS</text>',
+            '<text x="32" y="344" font-size="10" fill="#555">', _truncateStr(terms, 48), '</text>'
         ));
     }
 
     function _buildSVGFooter() private pure returns (string memory) {
         return string(abi.encodePacked(
-            '<line x1="32" y1="396" x2="368" y2="396" stroke="#1a1a1a" stroke-width="1"/>',
-            '<text x="200" y="428" font-family="monospace" font-size="9" fill="#333" text-anchor="middle">SOULBOUND  *  Burns on completion</text>',
-            '<text x="200" y="448" font-family="monospace" font-size="9" fill="#333" text-anchor="middle">hexseal.com</text>',
+            '<line x1="32" y1="396" x2="368" y2="396"/>',
+            '<text x="200" y="428" class="lb c" fill="#333">SOULBOUND</text>',
+            '<text x="200" y="448" class="lb c" fill="#333">hexseal.com</text>',
             '</svg>'
         ));
     }
