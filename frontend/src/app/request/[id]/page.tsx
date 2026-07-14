@@ -20,6 +20,7 @@ import {
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
+import { PageCenter } from "@/components/PageCenter";
 
 interface HireRequestRecord {
   client: string;
@@ -162,17 +163,17 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <PageCenter>
         <Loader2 className="w-8 h-8 animate-spin text-white/30" />
-      </div>
+      </PageCenter>
     );
   }
 
   if (!req) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <PageCenter>
         <p className="text-white/40 text-sm">Request not found</p>
-      </div>
+      </PageCenter>
     );
   }
 

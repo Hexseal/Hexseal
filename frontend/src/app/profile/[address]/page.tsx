@@ -21,6 +21,7 @@ import { useMyAgreements, type GraphAgreement } from "@/hooks/useMyAgreements";
 import { useAgreementTitles } from "@/hooks/useAgreementTitles";
 import { DealCard, type AgreementRecord } from "@/app/dashboard/components/DealCard";
 import { MyJobs, MyServices, MyClientRequests } from "@/app/dashboard/components/MyListings";
+import { PageCenter } from "@/components/PageCenter";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -188,9 +189,9 @@ export default function ProfilePage() {
 
   if (!validAddress) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <PageCenter>
         <p className="text-white/40 text-sm">{t("profile.invalid_address")}</p>
-      </div>
+      </PageCenter>
     );
   }
 

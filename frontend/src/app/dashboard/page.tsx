@@ -17,6 +17,7 @@ import { useTranslations } from 'next-intl';
 import { useMyJobs } from '@/hooks/useMyJobs';
 import { useMyServices } from '@/hooks/useMyServices';
 import { motion, AnimatePresence } from 'framer-motion';
+import { PageCenter } from "@/components/PageCenter";
 
 function xpLevel(xp: number) {
   // pct = progress within current tier (0–100). Minimum 3 so bar is always visible once unlocked.
@@ -186,7 +187,7 @@ export default function DashboardPage() {
 
   if (!isConnected) {
     return (
-      <div className="flex-1 flex items-center justify-center px-4">
+      <PageCenter>
         <div className="text-center max-w-sm">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <Activity className="w-7 h-7 text-primary" />
@@ -195,7 +196,7 @@ export default function DashboardPage() {
           <p className="text-muted-foreground text-sm mb-6">{t("dashboard.connect_prompt")}</p>
           <Link href="/"><button className="border border-white/15 rounded-lg px-4 py-2 text-sm text-white/60 hover:text-white hover:border-white/30 transition-colors">{t("dashboard.go_home")}</button></Link>
         </div>
-      </div>
+      </PageCenter>
     );
   }
 

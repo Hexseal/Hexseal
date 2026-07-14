@@ -24,6 +24,7 @@ import Link from "next/link";
 import { pushNotif } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
 import { CATEGORIES, DEFAULT_CATEGORY, type CategoryKey, withCategory } from "@/config/categories";
+import { PageCenter } from "@/components/PageCenter";
 
 interface RegionData { region: number; fee: bigint; label: string; }
 
@@ -176,7 +177,7 @@ export default function PostServicePage() {
 
   if (!isConnected) {
     return (
-      <div className="flex-1 flex items-center justify-center px-4">
+      <PageCenter>
         <div className="text-center max-w-sm">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
             <User className="w-7 h-7 text-primary" />
@@ -185,7 +186,7 @@ export default function PostServicePage() {
           <p className="text-muted-foreground text-sm mb-6">{t("common.connect_wallet")}</p>
           <Link href="/"><Button variant="outline">Go Home</Button></Link>
         </div>
-      </div>
+      </PageCenter>
     );
   }
 

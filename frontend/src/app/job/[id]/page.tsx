@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
 import { UserName, UserAvatar } from "@/components/UserName";
+import { PageCenter } from "@/components/PageCenter";
 interface JobRecord {
   client: string;
   title: string;
@@ -228,9 +229,9 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   if (!job) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <PageCenter>
         <p className="text-white/40 text-sm">Job not found</p>
-      </div>
+      </PageCenter>
     );
   }
 

@@ -16,6 +16,7 @@ import { Loader2, CheckCircle, AlertCircle, X, Upload, UserCircle, ChevronLeft }
 import Link from "next/link";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
+import { PageCenter } from "@/components/PageCenter";
 
 const SPECIALIZATIONS = [
   "Smart Contracts", "Frontend Dev", "Backend Dev", "Full-Stack",
@@ -269,24 +270,24 @@ export default function EditProfilePage() {
 
   if (!isConnected) {
     return (
-      <div className="flex-1 flex items-center justify-center px-4">
+      <PageCenter>
         <div className="text-center">
           <p className="text-white/40 text-sm mb-4">{t("profile.connect_required")}</p>
           <Link href="/"><Button variant="outline">{t("dashboard.go_home")}</Button></Link>
         </div>
-      </div>
+      </PageCenter>
     );
   }
 
   if (stage === 'done') {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <PageCenter>
         <div className="text-center">
           <CheckCircle className="w-14 h-14 mx-auto mb-4 text-emerald-400" />
           <h2 className="text-xl font-bold text-white mb-1">{t("profile.saved_title")}</h2>
           <p className="text-white/40 text-sm">{t("profile.redirecting")}</p>
         </div>
-      </div>
+      </PageCenter>
     );
   }
 

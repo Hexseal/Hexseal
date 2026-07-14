@@ -21,6 +21,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { extractCategory, stripCategory, CATEGORY_BADGE } from "@/config/categories";
+import { PageCenter } from "@/components/PageCenter";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -369,14 +370,14 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
   const ZERO = "0x0000000000000000000000000000000000000000";
   if (!service || !service.executor || service.executor === ZERO) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <PageCenter>
         <div className="text-center space-y-4">
           <p className="text-white/40 text-sm">{t("board.service_page.not_found")}</p>
           <Link href="/board/executor">
             <Button variant="outline" size="sm">{t("board.services.title")}</Button>
           </Link>
         </div>
-      </div>
+      </PageCenter>
     );
   }
 

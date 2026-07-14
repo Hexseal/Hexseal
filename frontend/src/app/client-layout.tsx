@@ -20,7 +20,7 @@ function PageFade({ children, pathname }: { children: React.ReactNode; pathname:
   return (
     <div
       key={pathname}
-      className={`min-h-0 flex flex-col flex-1 ${_pageHasLoaded ? 'page-enter' : ''} ${isChat ? 'overflow-hidden' : ''}`}
+      className={`relative min-h-0 flex flex-col flex-1 ${_pageHasLoaded ? 'page-enter' : ''} ${isChat ? 'overflow-hidden' : ''}`}
     >
       {children}
     </div>
