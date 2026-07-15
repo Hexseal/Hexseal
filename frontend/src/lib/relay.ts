@@ -143,6 +143,8 @@ const WRITE_USDC_ABI = parseAbi([
   'function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)',
 ]);
 
+const TRUSTED_FORWARDER_ABI = parseAbi(['function trustedForwarder() view returns (address)']);
+
 // ─── Internal: build & send ForwardRequest ────────────────────────────────────
 
 type PermitParams = {
@@ -902,8 +904,6 @@ export async function proposeExtraGasless(
  * Gasless вызов любой функции Agreement (activate, markDone, release, raiseDispute, etc.).
  * Пользователь подписывает одну ForwardRequest (EIP-712). Газ платит relay.
  */
-const TRUSTED_FORWARDER_ABI = parseAbi(['function trustedForwarder() view returns (address)']);
-
 export async function sendAgreementGasless(
   walletClient: WalletClient,
   publicClient: PublicClient,

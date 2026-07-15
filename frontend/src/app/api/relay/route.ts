@@ -219,9 +219,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── USDC permit (for gasless Agreement.fund()) ───────────────────────────
-    // If permit params are provided, call USDC.permit() first so the agreement
-    // contract can do transferFrom on behalf of the user inside fund().
+    // ── USDC permit (for gasless fund / mintJob / mintService / requestService) ─
+    // If permit params are provided, call USDC.permit() first so the target
+    // contract can do transferFrom on behalf of the user.
     if (isPermitFund) {
       try {
         const permitTxHash = await walletClient.writeContract({

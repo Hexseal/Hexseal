@@ -177,6 +177,7 @@ function RequestModal({
               value={terms}
               onChange={e => setTerms(e.target.value)}
               rows={3}
+              maxLength={2000}
               className="bg-white/[0.04] border-white/10 text-white resize-none text-sm placeholder:text-white/20 rounded-[10px]"
             />
             <p className="text-xs text-white/20 mt-1">{t("board.services.terms_hint")}</p>

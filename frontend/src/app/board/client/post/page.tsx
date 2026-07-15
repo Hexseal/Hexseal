@@ -236,7 +236,7 @@ export default function PostJobPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_job.field_description")}</Label>
                 <Textarea id="description" placeholder="Describe requirements, deliverables…" value={description}
-                  onChange={e => { setDescription(e.target.value); if (fieldErrors.description) setFieldErrors(p => ({ ...p, description: "" })); }} rows={4}
+                  onChange={e => { setDescription(e.target.value); if (fieldErrors.description) setFieldErrors(p => ({ ...p, description: "" })); }} rows={4} maxLength={500}
                   className={`bg-[#0d0d0f] placeholder:text-white/20 resize-none rounded-[14px] ${fieldErrors.description ? "border-red-500/60" : "border-white/[0.08]"}`} />
                 {fieldErrors.description && <p className="text-xs text-red-400">{fieldErrors.description}</p>}
               </div>
@@ -276,7 +276,7 @@ export default function PostJobPage() {
                   {t("board.post_job.field_brief")} <span className="text-white/25">(optional)</span>
                 </Label>
                 <Textarea id="terms" placeholder={t("board.post_job.field_brief_hint")} value={jobTerms}
-                  onChange={e => setJobTerms(e.target.value)} rows={3}
+                  onChange={e => setJobTerms(e.target.value)} rows={3} maxLength={2000}
                   className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-[14px]" />
                 <p className="text-xs text-white/25">Terms hash stored on-chain — text saved to backend</p>
               </div>
