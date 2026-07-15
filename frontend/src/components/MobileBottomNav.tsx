@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 
-// Only animate the nav entrance once per page load — not on every route change
-let _navHasAppeared = false;
 import { motion } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
@@ -115,10 +113,6 @@ export default function MobileBottomNav() {
   // Close on navigation.
   useEffect(() => { closeBoard(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Must be before early return — hooks cannot be called conditionally.
-  const isFirstAppear = !_navHasAppeared;
-  useEffect(() => { _navHasAppeared = true; }, []);
-
   if (!isConnected) return null;
 
   const isActive = (path: string) =>
@@ -207,10 +201,7 @@ export default function MobileBottomNav() {
       )}
 
       {/* ── Floating pill ─────────────────────────────────────────────────── */}
-      <motion.nav
-        initial={isFirstAppear ? { y: 20, opacity: 0 } : false}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
+      <nav
         className="md:hidden fixed left-3 right-3 z-50"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)" }}
       >
@@ -263,7 +254,7 @@ export default function MobileBottomNav() {
             <Settings className="w-[24px] h-[24px]" />
           </PillBtn>
         </div>
-      </motion.nav>
+      </nav>
     </>
   );
 }
