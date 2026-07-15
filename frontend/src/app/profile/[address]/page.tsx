@@ -316,36 +316,61 @@ export default function ProfilePage() {
 
       {/* ── Stats row ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard index={0} icon={<Zap className="w-4 h-4 text-violet-400" />}           label={t("dashboard.stat_level")}     value={t(level.labelKey)} sub={`${xp} XP`} />
-        <StatCard index={1} icon={<Activity className="w-4 h-4 text-sky-400" />}         label={t("dashboard.stat_active")}    value={activeDeals.length} sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
-        <StatCard index={2} icon={<CheckCircle className="w-4 h-4 text-emerald-400" />}  label={t("dashboard.stat_completed")} value={completed} sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
-        <StatCard index={3} icon={<DollarSign className="w-4 h-4 text-amber-400" />}     label={t("dashboard.stat_volume")}   value={fmtVolume(totalVolume)} sub={t("dashboard.stat_usdc_total")} />
+        {isLoading ? (
+          [0, 1, 2, 3].map(i => (
+            <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3" style={{ animationDelay: `${i * 0.05}s` }}>
+              <div className="w-9 h-9 rounded-[12px] bg-white/[0.06] flex-shrink-0" />
+              <div className="min-w-0 space-y-2">
+                <div className="h-2.5 w-16 rounded bg-white/[0.06]" />
+                <div className="h-5 w-10 rounded bg-white/[0.08]" />
+                <div className="h-2 w-12 rounded bg-white/[0.04]" />
+              </div>
+            </div>
+          ))
+        ) : (
+          <>
+            <StatCard index={0} icon={<Zap className="w-4 h-4 text-violet-400" />}           label={t("dashboard.stat_level")}     value={t(level.labelKey)} sub={`${xp} XP`} />
+            <StatCard index={1} icon={<Activity className="w-4 h-4 text-sky-400" />}         label={t("dashboard.stat_active")}    value={activeDeals.length} sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
+            <StatCard index={2} icon={<CheckCircle className="w-4 h-4 text-emerald-400" />}  label={t("dashboard.stat_completed")} value={completed} sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
+            <StatCard index={3} icon={<DollarSign className="w-4 h-4 text-amber-400" />}     label={t("dashboard.stat_volume")}   value={fmtVolume(totalVolume)} sub={t("dashboard.stat_usdc_total")} />
+          </>
+        )}
       </div>
 
       {/* ── XP bar ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3, type: 'tween', duration: 0.25, ease: 'easeOut' }}
-        className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
-        style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <Star className="w-3.5 h-3.5 text-white/30" />
-            <span className={`text-xs font-semibold ${level.color}`}>{t(level.labelKey)}</span>
+      {isLoading ? (
+        <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="h-3 w-16 rounded bg-white/[0.06]" />
+            <div className="h-3 w-10 rounded bg-white/[0.06]" />
           </div>
-          <span className="text-xs font-mono text-white/30">{xp} XP</span>
+          <div className="h-1.5 rounded-full bg-white/[0.06]" />
         </div>
-        <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
-          <motion.div
-            className={`h-full rounded-full origin-left ${level.bar}`}
-            initial={{ scaleX: 0 }}
-            animate={{ scaleX: Math.min(100, level.pct) / 100 }}
-            transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
-          />
-        </div>
-      </motion.div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, type: 'tween', duration: 0.25, ease: 'easeOut' }}
+          className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
+          style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Star className="w-3.5 h-3.5 text-white/30" />
+              <span className={`text-xs font-semibold ${level.color}`}>{t(level.labelKey)}</span>
+            </div>
+            <span className="text-xs font-mono text-white/30">{xp} XP</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
+            <motion.div
+              className={`h-full rounded-full origin-left ${level.bar}`}
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: Math.min(100, level.pct) / 100 }}
+              transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
+            />
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Tabs ── */}
       <div>
