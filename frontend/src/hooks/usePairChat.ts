@@ -42,17 +42,19 @@ export function usePairChat(peerAddress: string) {
   const [streamDead, setStreamDead]         = useState(false);
   const [retryKey, setRetryKey]             = useState(0);
 
-  const clientRef    = useRef<XmtpClient | null>(null);
-  const groupRef      = useRef<XmtpGroup | null>(null);
-  const oldestNsRef   = useRef<bigint | null>(null);
-  const peerRef       = useRef(peerAddress);
-  const streamRef     = useRef<{ return: () => void } | null>(null);
+  const clientRef         = useRef<XmtpClient | null>(null);
+  const groupRef          = useRef<XmtpGroup | null>(null);
+  const oldestNsRef       = useRef<bigint | null>(null);
+  const peerRef           = useRef(peerAddress);
+  const streamRef         = useRef<{ return: () => void } | null>(null);
+  const autoReconnectRef  = useRef(false);
   useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
 
   useEffect(() => {
     if (!walletClient || !peerAddress || status !== 'ready') { setIsLoading(false); return; }
 
     let cancelled = false;
+    autoReconnectRef.current = false;
     setStreamDead(false);
     setIsLoading(true);
     setError(null);
@@ -101,7 +103,16 @@ export function usePairChat(peerAddress: string) {
             return [...prev, norm];
           });
         }
-        if (!cancelled) setStreamDead(true);
+        // Stream ended (network drop, VPN reconnect, server timeout).
+        // Auto-reconnect once after 3s. If it fails again → show manual banner.
+        if (!cancelled) {
+          if (!autoReconnectRef.current) {
+            autoReconnectRef.current = true;
+            setTimeout(() => { if (!cancelled) setRetryKey(k => k + 1); }, 3_000);
+          } else {
+            setStreamDead(true);
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Chat error');
@@ -133,12 +144,19 @@ export function usePairChat(peerAddress: string) {
     const xmtp  = clientRef.current;
     if (!group || !text.trim()) return;
     const myAddress = xmtp?.accountIdentifier?.identifier?.toLowerCase() ?? '';
+    const optId = `opt-${Date.now()}`;
     setMessages(prev => [...prev, {
-      id: `opt-${Date.now()}`, from: myAddress, text: text.trim(),
+      id: optId, from: myAddress, text: text.trim(),
       timestamp: Date.now(), isFromMe: true,
     }]);
-    await group.sendText(text.trim());
-    pushChatNotif(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`);
+    try {
+      await group.sendText(text.trim());
+      pushChatNotif(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`);
+    } catch (err) {
+      // Remove the optimistic message so user knows the send failed
+      setMessages(prev => prev.filter(m => m.id !== optId));
+      throw err;
+    }
   }, [address]);
 
   const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
