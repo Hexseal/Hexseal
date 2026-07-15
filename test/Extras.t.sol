@@ -375,7 +375,7 @@ contract ExtrasTest is Test {
         _proposeExtra(agr, EXTRA_A); // pending, not accepted
         assertEq(Agreement(agr).pendingExtrasTotal(), EXTRA_A);
 
-        vm.warp(block.timestamp + DEADLINE * 1 days + 1);
+        vm.warp(block.timestamp + DEADLINE * 1 days + 1 days + 1); // + DEADLINE_GRACE(1d)
         vm.prank(client);
         Agreement(agr).triggerDeadlineTimeout();
 
@@ -400,7 +400,7 @@ contract ExtrasTest is Test {
         assertEq(Agreement(agr).pendingExtrasTotal(), EXTRA_B, "pending");
 
         // Deadline timeout: executor gets nothing (refund path), client gets base + pending
-        vm.warp(block.timestamp + DEADLINE * 1 days + 1);
+        vm.warp(block.timestamp + DEADLINE * 1 days + 1 days + 1); // + DEADLINE_GRACE(1d)
         vm.prank(client);
         Agreement(agr).triggerDeadlineTimeout();
 

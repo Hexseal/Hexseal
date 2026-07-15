@@ -414,8 +414,8 @@ contract CriticalInvariantTest is Test {
         Agreement(agr).activate();
         assertEq(_systemBalance(agr), INITIAL_TOTAL, "after activate");
 
-        // Past deadline
-        vm.warp(block.timestamp + DEADLINE * 1 days + 1);
+        // Past deadline + DEADLINE_GRACE(1d)
+        vm.warp(block.timestamp + DEADLINE * 1 days + 1 days + 1);
 
         vm.prank(client);
         Agreement(agr).triggerDeadlineTimeout();

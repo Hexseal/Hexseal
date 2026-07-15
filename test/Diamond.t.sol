@@ -773,8 +773,8 @@ contract DiamondTest is Test {
         vm.prank(executor);
         Agreement(agreementAddr).activate();
         
-        vm.warp(block.timestamp + 2 days);
-        
+        vm.warp(block.timestamp + 2 days + 1); // DEADLINE(1d) + DEADLINE_GRACE(1d) + 1sec
+
         uint256 clientBalanceBefore = usdc.balanceOf(client);
         vm.prank(client);
         Agreement(agreementAddr).triggerDeadlineTimeout();
@@ -1151,7 +1151,7 @@ contract DiamondTest is Test {
         vm.prank(client); Agreement(agreementAddr).fund();
         vm.prank(executor); Agreement(agreementAddr).activate();
 
-        vm.warp(block.timestamp + 2 days); // дедлайн = 1 день, прошёл
+        vm.warp(block.timestamp + 2 days + 1); // DEADLINE(1d) + DEADLINE_GRACE(1d) + 1sec
 
         vm.prank(client);
         vm.expectRevert(Agreement.DeadlinePassed.selector);
@@ -1266,8 +1266,8 @@ contract DiamondTest is Test {
         vm.prank(executor); Agreement(agreementAddr).activate();
         vm.prank(client); Agreement(agreementAddr).raiseDispute();
 
-        // DISPUTE_WINDOW = 7 days, 5 дней прошло — рано
-        vm.warp(block.timestamp + 5 days);
+        // DISPUTE_WINDOW = 4 days, 3 дня прошло — рано
+        vm.warp(block.timestamp + 3 days);
 
         vm.prank(client);
         vm.expectRevert(Agreement.WindowNotPassed.selector);
@@ -1309,7 +1309,7 @@ contract DiamondTest is Test {
         vm.prank(client); Agreement(agreementAddr).fund();
         vm.prank(executor); Agreement(agreementAddr).activate();
 
-        vm.warp(block.timestamp + 2 days); // дедлайн прошёл
+        vm.warp(block.timestamp + 2 days + 1); // DEADLINE(1d) + DEADLINE_GRACE(1d) + 1sec
 
         vm.prank(executor);
         vm.expectRevert(Agreement.DeadlinePassed.selector);

@@ -406,7 +406,7 @@ contract ReentrancyTest is Test {
 
     function testReentrancy_TriggerDeadlineTimeout() public {
         address agr = _deployActive();
-        vm.warp(block.timestamp + DEADLINE * 1 days + 1);
+        vm.warp(block.timestamp + DEADLINE * 1 days + 1 days + 1); // + DEADLINE_GRACE(1d)
 
         uint256 clientBefore = malUSDC.balanceOf(client);
 
