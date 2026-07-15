@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { appChain } from '@/config/chain';
 
 // Private RPC with API key — never exposed to client.
-// Only RPC_URL is used (no NEXT_PUBLIC_ vars — those may point to broken endpoints).
-const PRIVATE_RPC = process.env.RPC_URL ?? null;
+const PRIVATE_RPC =
+  process.env.DRPC_URL ??
+  process.env.BASE_SEPOLIA_RPC_URL ??
+  process.env.RPC_URL ??
+  null;
 
 // Public fallback RPC endpoints tried in order if private RPC fails.
 const PUBLIC_RPCS: string[] = appChain.id === 8453

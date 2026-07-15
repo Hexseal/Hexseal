@@ -22,9 +22,9 @@ dataSources:
         - name: Diamond
           file: ./abis/Diamond.json
       eventHandlers:
-        - event: JobPosted(indexed uint256,indexed address,uint256,uint8,string,string,uint256,bytes32)
+        - event: JobPosted(indexed uint256,indexed address,uint256,uint8,string,string,uint256,string)
           handler: handleJobPosted
-        - event: JobEdited(indexed uint256,indexed address,string,string,uint256,bytes32,uint8)
+        - event: JobEdited(indexed uint256,indexed address,string,string,uint256,string,uint8)
           handler: handleJobEdited
         - event: JobApplied(indexed uint256,indexed address)
           handler: handleJobApplied

@@ -5,7 +5,7 @@ type Job @entity {
   description: String!
   amount: BigInt!
   deadlineDays: BigInt!
-  termsHash: Bytes!
+  terms: String!
   region: Int!
   status: String!
   executor: Bytes

@@ -26,7 +26,7 @@ export function handleJobPosted(event: JobPosted): void {
   job.title = event.params.title
   job.description = event.params.description
   job.deadlineDays = event.params.deadlineDays
-  job.termsHash = event.params.termsHash
+  job.terms = event.params.terms
   job.status = 'open'
   job.applicants = []
   job.createdAt = event.block.timestamp
@@ -40,7 +40,7 @@ export function handleJobEdited(event: JobEdited): void {
   job.title = event.params.title
   job.description = event.params.description
   job.deadlineDays = event.params.deadlineDays
-  job.termsHash = event.params.termsHash
+  job.terms = event.params.terms
   job.region = event.params.region
   job.updatedAt = event.block.timestamp
   job.save()
