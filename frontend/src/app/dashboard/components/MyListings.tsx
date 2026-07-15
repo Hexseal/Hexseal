@@ -13,8 +13,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'react-hot-toast';
 import {
   Briefcase, ChevronDown, ExternalLink, Clock,
-  CheckCircle, XCircle, Users, Zap, Loader2, UserCheck, Trash2,
-  Pause, Play, Inbox, AlertCircle, Pencil,
+  CheckCircle, XCircle, Zap, Loader2, UserCheck, Trash2,
+  Pause, Play, AlertCircle, Pencil,
 } from 'lucide-react';
 import { shortAddr } from "@/lib/utils";
 import { extractCategory, CATEGORY_BADGE } from "@/config/categories";
@@ -942,6 +942,64 @@ function JobCard({
   );
 }
 
+// ── Closed Jobs history (accepted / cancelled) ────────────────────────────────
+
+function ClosedJobsSection({ jobs }: { jobs: { id: bigint; job: JobRecord }[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-2 mb-2 group w-full text-left">
+        <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
+        <span className="text-xs font-semibold text-white/35 uppercase tracking-wider group-hover:text-white/55 transition-colors">
+          Closed · {jobs.length}
+        </span>
+        <ChevronDown className={`w-3 h-3 text-white/25 ml-0.5 transition-transform group-hover:text-white/50 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="space-y-2 opacity-75">
+          {jobs.map(({ id, job }) => {
+            const s = JOB_STATUS[job.status] ?? JOB_STATUS[0];
+            return (
+              <div key={id.toString()} className="rounded-[18px] border border-white/[0.07] bg-[#0d0d0f] px-4 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-white/70 truncate leading-snug mb-1">{job.title}</p>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
+                    <span className={`text-[11px] font-medium ${s.textCls}`}>{s.label}</span>
+                    <span className="text-[11px] text-white/15 select-none">·</span>
+                    <span className="text-[11px] font-mono text-white/40">{fmt(job.amount)} USDC</span>
+                    {job.status === 1 && job.chosenExecutor !== '0x0000000000000000000000000000000000000000' && (
+                      <>
+                        <span className="text-[11px] text-white/15 select-none">·</span>
+                        <span className="text-[11px] text-white/35">exec: {shortAddr(job.chosenExecutor)}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {job.status === 1 && job.agreement !== '0x0000000000000000000000000000000000000000' && (
+                    <Link href={`/deal/${job.agreement}`}>
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs gap-1 text-violet-400/60 hover:text-violet-400">
+                        <ExternalLink className="w-3 h-3" />Deal
+                      </Button>
+                    </Link>
+                  )}
+                  <Link href={`/job/${id.toString()}`}>
+                    <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/30 hover:text-white/60">
+                      View
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── My Jobs (client postings) ─────────────────────────────────────────────────
 
 export function MyJobs({ address, onDealCreated, readOnly }: { address: string; onDealCreated?: () => void; readOnly?: boolean }) {
@@ -1004,7 +1062,8 @@ export function MyJobs({ address, onDealCreated, readOnly }: { address: string; 
     .map((id, i) => ({ id, job: jobResults?.[i]?.result as JobRecord | undefined }))
     .filter((x): x is { id: bigint; job: JobRecord } => !!x.job);
 
-  const active = jobs.filter(x => x.job.status === 0);
+  const active  = jobs.filter(x => x.job.status === 0);
+  const closed  = jobs.filter(x => x.job.status !== 0);
 
   const handleCancel = async (jobId: bigint) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
@@ -1112,6 +1171,9 @@ export function MyJobs({ address, onDealCreated, readOnly }: { address: string; 
         </div>
       )}
 
+      {closed.length > 0 && (
+        <ClosedJobsSection jobs={closed} />
+      )}
 
       {/* Edit Job Modal */}
       {editTarget && editTarget.kind === 'job' && (
@@ -1363,7 +1425,7 @@ export function MyJobReceipts({ address }: { address: string }) {
           address: CONTRACTS.diamond,
           event: parseAbiItem('event JobReceiptMinted(uint256 indexed tokenId, uint256 indexed jobId, address indexed client)'),
           args:  { client: address as `0x${string}` },
-          fromBlock: 'earliest',
+          fromBlock: 42134705n,
           toBlock:   'latest',
         });
 

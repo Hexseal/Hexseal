@@ -134,7 +134,7 @@ export default function DashboardPage() {
   const [listingsSub, setListingsSub] = useState<ListingsSub>('jobs');
   const t = useTranslations();
 
-  const { agreements: rawAgreements, isLoading } = useMyAgreements(address);
+  const { agreements: rawAgreements, isLoading, refetch } = useMyAgreements(address);
   const { jobs: mySearchJobs }     = useMyJobs(address);
   const { services: mySearchSvcs } = useMyServices(address);
   const titleMap = useAgreementTitles(address);
@@ -142,7 +142,6 @@ export default function DashboardPage() {
     () => rawAgreements.map(a => ({ ...toAgreementRecord(a), title: titleMap.get(a.id.toLowerCase()) })),
     [rawAgreements, titleMap],
   );
-  const refetch = () => {};
 
   const { data: onchainXP } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,

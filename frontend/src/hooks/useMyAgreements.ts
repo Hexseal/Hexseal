@@ -21,7 +21,7 @@ export function useMyAgreements(address: string | undefined) {
   const addr = address?.toLowerCase() ?? ''
   const variables = useMemo(() => ({ client: addr, executor: addr }), [addr])
 
-  const [{ data, fetching, error }] = useQuery<MyAgreementsData>({
+  const [{ data, fetching, error }, reexecute] = useQuery<MyAgreementsData>({
     query: MY_AGREEMENTS_QUERY,
     variables,
     pause: !addr || !SUBGRAPH_URL,
@@ -40,5 +40,6 @@ export function useMyAgreements(address: string | undefined) {
     isLoading: fetching && !data,
     isFetching: fetching,
     error: error?.message ?? null,
+    refetch: () => reexecute({ requestPolicy: 'network-only' }),
   }
 }
