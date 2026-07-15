@@ -647,23 +647,6 @@ export default function ExecutorBoardPage() {
       .filter(Boolean) as HireRequest[];
   }, [myRequestsData, myRequestIds]);
 
-  // page=0: use pageServices directly so urql cache renders immediately on mount/remount.
-  // page>0: use the accumulated array (Load More appends to allServices via effect).
-  const displayServices = page === 0 ? pageServices : allServices;
-
-  const services: Service[] = useMemo(() => displayServices.map(gs => ({
-    serviceId: gs.id,
-    executor: gs.executor,
-    title: gs.title,
-    description: gs.description,
-    price: BigInt(gs.price),
-    deadlineDays: BigInt(gs.deadlineDays),
-    region: gs.region,
-    status: gs.status === 'active' ? 0 : gs.status === 'paused' ? 1 : 2,
-    createdAt: BigInt(gs.createdAt),
-    hiresCount: BigInt(gs.hiresCount),
-  })), [displayServices]);
-
   useEffect(() => {
     setMounted(true);
     const stored = getStoredBoardRegion();
@@ -711,6 +694,22 @@ export default function ExecutorBoardPage() {
     setAllServices([]);
   }, [regionFilter]);
 
+  // page=0: use pageServices directly so urql cache renders immediately on mount/remount.
+  // page>0: use the accumulated array (Load More appends to allServices via effect).
+  const displayServices = page === 0 ? pageServices : allServices;
+
+  const services: Service[] = useMemo(() => displayServices.map(gs => ({
+    serviceId: gs.id,
+    executor: gs.executor,
+    title: gs.title,
+    description: gs.description,
+    price: BigInt(gs.price),
+    deadlineDays: BigInt(gs.deadlineDays),
+    region: gs.region,
+    status: gs.status === 'active' ? 0 : gs.status === 'paused' ? 1 : 2,
+    createdAt: BigInt(gs.createdAt),
+    hiresCount: BigInt(gs.hiresCount),
+  })), [displayServices]);
 
   const filtered = useMemo(() => {
     let list = services.filter(s => s.status === 0);

@@ -5,6 +5,11 @@ import { useAccount } from 'wagmi';
 import { useXmtp } from '@/contexts/XmtpContext';
 import { getXmtpClientIfCached, listPairConversations, listPairConversationsLocal, type PairConversation } from '@/lib/xmtp';
 
+// Module-level cache — survives navigation (same as board page SWR pattern).
+// Keyed by wallet address lowercase → last known conversation list.
+// Populated after every successful load so the next mount renders instantly.
+const _convCache = new Map<string, PairConversation[]>();
+
 function mergeWithLocalPeers(convos: PairConversation[], addr: string): PairConversation[] {
   const knownPeers = new Set(convos.map(c => c.peerAddress));
   const myLc = addr.toLowerCase();
@@ -22,7 +27,11 @@ function mergeWithLocalPeers(convos: PairConversation[], addr: string): PairConv
 export function usePairConversations(isEnabled = false) {
   const { address } = useAccount();
   const { status } = useXmtp();
-  const [conversations, setConversations] = useState<PairConversation[]>([]);
+
+  const addrLc = address?.toLowerCase();
+  const [conversations, setConversations] = useState<PairConversation[]>(() =>
+    addrLc ? (_convCache.get(addrLc) ?? []) : []
+  );
   const [isLoading, setIsLoading]         = useState(false);
   const [error, setError]                 = useState<string | null>(null);
 
@@ -42,12 +51,16 @@ export function usePairConversations(isEnabled = false) {
       // Phase 1: read from local SQLite cache — no network, near-instant.
       // Shows conversations immediately so the UI never stares at a spinner.
       const local = await listPairConversationsLocal(xmtp, addr);
-      setConversations(mergeWithLocalPeers(local, addr));
+      const merged1 = mergeWithLocalPeers(local, addr);
+      _convCache.set(addr.toLowerCase(), merged1);
+      setConversations(merged1);
       setIsLoading(false);
 
       // Phase 2: full network sync in background — updates previews silently.
       const fresh = await listPairConversations(xmtp, addr);
-      setConversations(mergeWithLocalPeers(fresh, addr));
+      const merged2 = mergeWithLocalPeers(fresh, addr);
+      _convCache.set(addr.toLowerCase(), merged2);
+      setConversations(merged2);
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Failed to load conversations';
       const isLimit = raw.includes('10/10') || raw.includes('registered 10');

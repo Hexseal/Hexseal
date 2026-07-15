@@ -18,6 +18,10 @@ import {
 } from '@/lib/xmtp';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
 
+// Module-level cache — survives navigation (same as board/conversation-list pattern).
+// Keyed by peerAddress lowercase → last confirmed (non-optimistic) messages.
+const _msgCache = new Map<string, ChatMessage[]>();
+
 function pushChatNotif(to: string, body: string, url: string) {
   // Routed through Next.js API so the relayer secret never reaches the browser.
   // `from` is not forwarded — the server drops it to prevent notification impersonation.
@@ -33,9 +37,13 @@ export function usePairChat(peerAddress: string) {
   const { address } = useAccount();
   const { status } = useXmtp();
 
-  const [messages, setMessages]             = useState<ChatMessage[]>([]);
-  const [isLoading, setIsLoading]           = useState(true);
-  const [isInitialized, setIsInitialized]   = useState(false);
+  const peerLc = peerAddress.toLowerCase();
+
+  const [messages, setMessages]             = useState<ChatMessage[]>(() => _msgCache.get(peerLc) ?? []);
+  // Skip the loading screen if we already have cached messages — show them
+  // instantly (SWR pattern) while the effect quietly re-syncs in the background.
+  const [isLoading, setIsLoading]           = useState(() => (_msgCache.get(peerLc) ?? []).length === 0);
+  const [isInitialized, setIsInitialized]   = useState(() => (_msgCache.get(peerLc) ?? []).length > 0);
   const [error, setError]                   = useState<string | null>(null);
   const [hasMore, setHasMore]               = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -56,7 +64,8 @@ export function usePairChat(peerAddress: string) {
     let cancelled = false;
     autoReconnectRef.current = false;
     setStreamDead(false);
-    setIsLoading(true);
+    // If we have cached messages, don't show the loading screen — silently re-sync.
+    if (!_msgCache.has(peerLc)) setIsLoading(true);
     setError(null);
 
     (async () => {
@@ -75,6 +84,7 @@ export function usePairChat(peerAddress: string) {
 
         const loaded = await loadGroupMessages(group, xmtp.inboxId ?? '', myAddress);
         if (cancelled) return;
+        _msgCache.set(peerLc, loaded.messages);
         setMessages(loaded.messages);
         setHasMore(loaded.hasMore);
         oldestNsRef.current = loaded.oldestNs;
@@ -90,17 +100,21 @@ export function usePairChat(peerAddress: string) {
           if (!norm) continue;
           setMessages(prev => {
             if (prev.some(m => m.id === norm.id)) return prev;
+            let next: ChatMessage[];
             if (norm.isFromMe) {
               let optIdx = -1;
               for (let i = prev.length - 1; i >= 0; i--) {
                 if (prev[i].id.startsWith('opt-') && prev[i].text === norm.text) { optIdx = i; break; }
               }
-              if (optIdx >= 0) return prev.map((m, i) => i === optIdx ? norm : m);
+              next = optIdx >= 0 ? prev.map((m, i) => i === optIdx ? norm : m) : [...prev, norm];
             } else {
               // Notify the sidebar to refresh immediately (only for incoming messages)
               window.dispatchEvent(new Event('hexseal-conv-update'));
+              next = [...prev, norm];
             }
-            return [...prev, norm];
+            // Keep module-level cache current (exclude optimistic placeholders)
+            _msgCache.set(peerLc, next.filter(m => !m.id.startsWith('opt-')));
+            return next;
           });
         }
         // Stream ended (network drop, VPN reconnect, server timeout).
@@ -199,10 +213,13 @@ export function usePairChat(peerAddress: string) {
   const reconnect = useCallback(() => {
     setStreamDead(false);
     setIsInitialized(false);
-    setIsLoading(true);
-    setMessages([]);
+    // Keep cached messages visible during reconnect — no jarring blank screen
+    if (!_msgCache.has(peerLc)) {
+      setIsLoading(true);
+      setMessages([]);
+    }
     setRetryKey(k => k + 1);
-  }, []);
+  }, [peerLc]);
 
   return {
     messages, sendMessage, sendFile, loadMore, markDealContext,
