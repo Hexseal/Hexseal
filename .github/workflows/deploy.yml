@@ -1,0 +1,68 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push relayer
+        uses: docker/build-push-action@v5
+        with:
+          context: ./relayer
+          push: true
+          tags: ghcr.io/hexseal/relayer:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ghcr.io/hexseal/frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_RELAYER_URL=${{ secrets.NEXT_PUBLIC_RELAYER_URL }}
+            NEXT_PUBLIC_DIAMOND_ADDRESS=${{ secrets.NEXT_PUBLIC_DIAMOND_ADDRESS }}
+            NEXT_PUBLIC_FORWARDER_ADDRESS=${{ secrets.NEXT_PUBLIC_FORWARDER_ADDRESS }}
+            NEXT_PUBLIC_USDC_ADDRESS=${{ secrets.NEXT_PUBLIC_USDC_ADDRESS }}
+            NEXT_PUBLIC_JOB_RECEIPT_ADDRESS=${{ secrets.NEXT_PUBLIC_JOB_RECEIPT_ADDRESS }}
+            NEXT_PUBLIC_CHAIN_ID=${{ secrets.NEXT_PUBLIC_CHAIN_ID }}
+            NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL=${{ secrets.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL }}
+            NEXT_PUBLIC_RPC_URL=${{ secrets.NEXT_PUBLIC_RPC_URL }}
+            NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=${{ secrets.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID }}
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+            NEXT_PUBLIC_IPFS_GATEWAY=${{ secrets.NEXT_PUBLIC_IPFS_GATEWAY }}
+            SUBGRAPH_URL=${{ secrets.SUBGRAPH_URL }}
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_IP }}
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/hexseal/app
+            docker compose pull frontend relayer
+            docker compose up -d frontend relayer
+            docker image prune -f
