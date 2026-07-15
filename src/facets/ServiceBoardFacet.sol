@@ -148,7 +148,9 @@ contract ServiceBoardFacet {
 
     // -------- EXECUTOR: POST SERVICE --------
 
-    /// @notice Исполнитель публикует услугу. Требует approve(diamond, fee) до вызова.
+    /// @notice Исполнитель публикует услугу — gasless-совместим (ERC-2771).
+    /// @dev Для gasless-пути relay вызывает USDC.permit() отдельно перед ForwardRequest.
+    ///      Для прямого пути требует approve(diamond, fee) до вызова.
     function mintService(
         string memory title,
         string memory description,
@@ -156,6 +158,8 @@ contract ServiceBoardFacet {
         uint256 deadlineDays,
         uint8 region
     ) external nonReentrant whenNotPaused returns (uint256 serviceId) {
+        address executor = _msgSender();
+
         uint256 titleLen = bytes(title).length;
         if (titleLen == 0 || titleLen > 100) revert TitleInvalid();
         if (bytes(description).length > 500) revert DescriptionTooLong();
@@ -170,7 +174,7 @@ contract ServiceBoardFacet {
         serviceId = s.nextServiceId++;
 
         s.services[serviceId] = ServiceBoardStorage.Service({
-            executor:    msg.sender,
+            executor:    executor,
             title:       title,
             description: description,
             price:       price,
@@ -180,12 +184,12 @@ contract ServiceBoardFacet {
             createdAt:   block.timestamp,
             hiresCount:  0
         });
-        s.executorServices[msg.sender].push(serviceId);
+        s.executorServices[executor].push(serviceId);
 
         // Антиспам fee → feeRecipient (не возвращается)
-        _safeTransferFrom(fs.usdc, msg.sender, fs.feeRecipient, fee);
+        _safeTransferFrom(fs.usdc, executor, fs.feeRecipient, fee);
 
-        emit ServicePosted(serviceId, msg.sender, price, region, title, description, deadlineDays);
+        emit ServicePosted(serviceId, executor, price, region, title, description, deadlineDays);
     }
 
     /// @notice Gasless-вариант mintService с EIP-2612 permit (один вызов без предварительного approve).
@@ -309,10 +313,10 @@ contract ServiceBoardFacet {
 
     // -------- CLIENT: REQUEST SERVICE --------
 
-    /// @notice Клиент запрашивает найм. Требует approve(diamond, amount) до вызова.
-    /// @dev PPP fee уже уплачен исполнителем при mintService — здесь только amount.
-    /// @param serviceId  ID услуги
-    /// @param amount     Сумма сделки (может отличаться от price — договорились off-chain)
+    /// @notice Клиент запрашивает найм — gasless-совместим (ERC-2771).
+    /// @dev Для gasless-пути relay вызывает USDC.permit() отдельно перед ForwardRequest.
+    ///      Для прямого пути требует approve(diamond, amount) до вызова.
+    ///      PPP fee уже уплачен исполнителем при mintService — здесь только amount.
     function requestService(
         uint256 serviceId,
         uint256 amount,
@@ -320,6 +324,8 @@ contract ServiceBoardFacet {
         string  calldata terms,
         uint8 region
     ) external nonReentrant whenNotPaused returns (uint256 requestId) {
+        address client = _msgSender();
+
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
         if (region > 6) revert InvalidRegion();
@@ -328,30 +334,30 @@ contract ServiceBoardFacet {
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
         if (svc.status != ServiceBoardStorage.ServiceStatus.ACTIVE) revert ServiceNotActive();
-        if (msg.sender == svc.executor) revert SelfRequest();
+        if (client == svc.executor) revert SelfRequest();
 
         requestId = s.nextRequestId++;
 
         s.requests[requestId] = ServiceBoardStorage.HireRequest({
-            client:      msg.sender,
-            serviceId:   serviceId,
-            amount:      amount,
+            client:       client,
+            serviceId:    serviceId,
+            amount:       amount,
             deadlineDays: deadlineDays,
-            terms:       terms,
-            region:      region,
-            status:      ServiceBoardStorage.RequestStatus.PENDING,
-            createdAt:   block.timestamp,
-            agreement:   address(0)
+            terms:        terms,
+            region:       region,
+            status:       ServiceBoardStorage.RequestStatus.PENDING,
+            createdAt:    block.timestamp,
+            agreement:    address(0)
         });
         s.serviceRequests[serviceId].push(requestId);
-        s.clientRequests[msg.sender].push(requestId);
+        s.clientRequests[client].push(requestId);
 
         // Amount → Diamond (вернётся при reject/cancel или уйдёт в Agreement при accept)
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
-        _safeTransferFrom(fs.usdc, msg.sender, address(this), amount);
+        _safeTransferFrom(fs.usdc, client, address(this), amount);
         s.requestFunds[requestId] = amount;
 
-        emit ServiceRequested(requestId, serviceId, msg.sender, amount);
+        emit ServiceRequested(requestId, serviceId, client, amount);
     }
 
     /// @notice Gasless-вариант requestService с EIP-2612 permit.

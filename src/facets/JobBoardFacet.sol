@@ -214,8 +214,9 @@ contract JobBoardFacet {
         emit JobPosted(jobId, client, amount, region, title, description, deadlineDays, terms);
     }
 
-    /// @notice Клиент создаёт заказ
-    /// @dev Требует approve(diamond, fee + amount) до вызова
+    /// @notice Клиент создаёт заказ — gasless-совместим (ERC-2771).
+    /// @dev Для gasless-пути relay вызывает USDC.permit() отдельно перед ForwardRequest.
+    ///      Для прямого пути требует approve(diamond, fee + amount) до вызова.
     function mintJob(
         string memory title,
         string memory description,
@@ -224,6 +225,8 @@ contract JobBoardFacet {
         string  memory terms,
         uint8 region
     ) external nonReentrant whenNotPaused returns (uint256 jobId) {
+        address client = _msgSender();
+
         // --- Валидация ---
         uint256 titleLen = bytes(title).length;
         if (titleLen == 0 || titleLen > 100) revert TitleInvalid();
@@ -241,7 +244,7 @@ contract JobBoardFacet {
         jobId = s.nextJobId++;
 
         s.jobs[jobId] = JobBoardStorage.Job({
-            client:         msg.sender,
+            client:         client,
             title:          title,
             description:    description,
             amount:         amount,
@@ -253,19 +256,17 @@ contract JobBoardFacet {
             chosenExecutor: address(0),
             agreement:      address(0)
         });
-        s.clientJobs[msg.sender].push(jobId);
+        s.clientJobs[client].push(jobId);
 
         // --- Transfers ---
-        // Fee → feeRecipient (сгорает, не возвращается)
-        _safeTransferFrom(fs.usdc, msg.sender, fs.feeRecipient, fee);
-        // Amount → Diamond (хранится до acceptApplicant/cancelJob)
-        _safeTransferFrom(fs.usdc, msg.sender, address(this), amount);
+        _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
+        _safeTransferFrom(fs.usdc, client, address(this), amount);
         s.jobFunds[jobId] = amount;
 
         // --- Auto-mint job receipt NFT (non-blocking) ---
-        try IJobReceiptMint(address(this)).mintJobReceipt(msg.sender, jobId, amount, deadlineDays, region, title) {} catch {}
+        try IJobReceiptMint(address(this)).mintJobReceipt(client, jobId, amount, deadlineDays, region, title) {} catch {}
 
-        emit JobPosted(jobId, msg.sender, amount, region, title, description, deadlineDays, terms);
+        emit JobPosted(jobId, client, amount, region, title, description, deadlineDays, terms);
     }
 
     /// @notice Исполнитель отзывает отклик (пока заказ OPEN, gasless-совместим)
