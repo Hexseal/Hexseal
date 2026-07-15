@@ -79,14 +79,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (res.ok) {
-    _cache.set(body, { data, expiresAt: Date.now() + CACHE_TTL });
-    // Evict expired entries when cache grows large
-    if (_cache.size > 200) {
+  if (res.ok && body.length <= 8_000) {
+    if (_cache.size >= 100) {
       const now = Date.now();
       for (const [k, v] of _cache) {
         if (v.expiresAt < now) _cache.delete(k);
       }
+    }
+    if (_cache.size < 100) {
+      _cache.set(body, { data, expiresAt: Date.now() + CACHE_TTL });
     }
   }
 
