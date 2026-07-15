@@ -128,7 +128,7 @@ export default function OnboardingModal({ forceOpen, onClose }: Props) {
           {isFinal && (
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => handleCta("/board/client")}
+                onClick={() => handleCta("/board")}
                 className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-white/10 hover:border-primary/40 hover:bg-primary/5 transition-all text-center"
               >
                 <Briefcase className="w-4 h-4 text-primary" />

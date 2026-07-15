@@ -4,6 +4,11 @@ import { NextRequest, NextResponse } from 'next/server';
 // Set it in Vercel env vars — update to switch subgraph versions without redeploying.
 const SUBGRAPH_URL = process.env.SUBGRAPH_URL;
 
+// Server-side cache: avoids hitting the subgraph on every board reload.
+// Key = query body string, Value = parsed response + expiry timestamp.
+const _cache = new Map<string, { data: unknown; expiresAt: number }>();
+const CACHE_TTL = 30_000; // 30 seconds
+
 export async function POST(req: NextRequest) {
   if (!SUBGRAPH_URL) {
     return NextResponse.json(
@@ -17,6 +22,11 @@ export async function POST(req: NextRequest) {
     body = await req.text();
   } catch {
     return NextResponse.json({ errors: [{ message: 'Bad request body' }] }, { status: 400 });
+  }
+
+  const cached = _cache.get(body);
+  if (cached && cached.expiresAt > Date.now()) {
+    return NextResponse.json(cached.data);
   }
 
   const controller = new AbortController();
@@ -67,6 +77,17 @@ export async function POST(req: NextRequest) {
       { errors: [{ message: `Subgraph non-JSON (HTTP ${res.status}): ${preview}` }] },
       { status: 502 },
     );
+  }
+
+  if (res.ok) {
+    _cache.set(body, { data, expiresAt: Date.now() + CACHE_TTL });
+    // Evict expired entries when cache grows large
+    if (_cache.size > 200) {
+      const now = Date.now();
+      for (const [k, v] of _cache) {
+        if (v.expiresAt < now) _cache.delete(k);
+      }
+    }
   }
 
   return NextResponse.json(data, { status: res.status });

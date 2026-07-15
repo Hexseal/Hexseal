@@ -7,7 +7,7 @@ import { useAccount, useWalletClient, usePublicClient, useReadContract, useReadC
 import { useServices, type GraphService } from "@/hooks/useServices";
 import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
 import type { Abi } from "viem";
-import { parseUnits, keccak256 } from "viem";
+import { parseUnits } from "viem";
 import { requestServiceGasless, sendGasless } from "@/lib/relay";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -600,29 +600,38 @@ export default function ExecutorBoardPage() {
     query: { enabled: !!address && !!requestModal },
   }) as { data: bigint | undefined };
 
-  // My outgoing requests (as client)
+  // My outgoing requests (as client) — batched via multicall
   const { data: myRequestIds, refetch: refetchMyRequests } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: 'getClientRequests',
-    args: address ? [address] : undefined,
+    args: address ? [address as `0x${string}`] : undefined,
     query: { enabled: !!address },
   }) as { data: bigint[] | undefined; refetch: () => void };
 
-  const [myRequests, setMyRequests] = useState<HireRequest[]>([]);
+  const myRequestContracts = useMemo(() =>
+    (myRequestIds ?? []).map(id => ({
+      address: CONTRACTS.diamond as `0x${string}`,
+      abi: DIAMOND_ABI as Abi,
+      functionName: 'getRequest' as const,
+      args: [id] as const,
+    })),
+    [myRequestIds]
+  );
 
-  // Load request details when IDs change
-  useEffect(() => {
-    if (!myRequestIds || !publicClient || myRequestIds.length === 0) { setMyRequests([]); return; }
-    Promise.all(
-      myRequestIds.map(id =>
-        publicClient.readContract({
-          address: CONTRACTS.diamond as `0x${string}`,
-          abi: DIAMOND_ABI as Abi,
-          functionName: 'getRequest',
-          args: [id],
-        }).then((r: any) => ({
-          requestId: String(id),
+  const { data: myRequestsData } = useReadContracts({
+    contracts: myRequestContracts,
+    query: { enabled: myRequestContracts.length > 0 },
+  });
+
+  const myRequests = useMemo<HireRequest[]>(() => {
+    if (!myRequestsData || !myRequestIds) return [];
+    return myRequestsData
+      .map((d, i) => {
+        if (d.status !== 'success') return null;
+        const r = d.result as any;
+        return {
+          requestId: String(myRequestIds[i]),
           client: r.client,
           serviceId: r.serviceId,
           amount: r.amount,
@@ -632,10 +641,10 @@ export default function ExecutorBoardPage() {
           status: r.status,
           createdAt: r.createdAt,
           agreement: r.agreement,
-        } as HireRequest)).catch(() => null)
-      )
-    ).then(results => setMyRequests(results.filter(Boolean) as HireRequest[]));
-  }, [myRequestIds, publicClient]);
+        } as HireRequest;
+      })
+      .filter(Boolean) as HireRequest[];
+  }, [myRequestsData, myRequestIds]);
 
   const services: Service[] = useMemo(() => allServices.map(gs => ({
     serviceId: gs.id,
