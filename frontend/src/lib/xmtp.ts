@@ -275,12 +275,17 @@ export async function findOrCreatePairGroup(
 
   await client.conversations.sync();
 
+  // Collect ALL groups matching this name — duplicates can appear when both
+  // parties call findOrCreatePairGroup simultaneously before either has synced
+  // the other's newly-created group. Always pick the one with the smallest ID:
+  // MLS group IDs are shared across all members, so both sides converge on the
+  // same canonical group deterministically.
   const groups = await client.conversations.listGroups();
-  for (const g of groups) {
-    if (g.name === name) {
-      await g.sync();
-      return g;
-    }
+  const matches = groups.filter(g => g.name === name);
+  if (matches.length > 0) {
+    const canonical = matches.reduce((best, g) => g.id < best.id ? g : best);
+    await canonical.sync();
+    return canonical;
   }
 
   const allMembers = botAddress ? [...memberAddresses, botAddress] : [...memberAddresses];
@@ -288,10 +293,20 @@ export async function findOrCreatePairGroup(
   const canMsg = await client.canMessage(identifiers);
   const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
 
-  return client.conversations.createGroupWithIdentifiers(reachable, {
+  const created = await client.conversations.createGroupWithIdentifiers(reachable, {
     groupName: name,
     groupDescription: `Hexseal conversation: ${memberAddresses[0]} <-> ${memberAddresses[1]}`,
   });
+
+  // Re-sync after creation: if the peer raced us and created their own group,
+  // we'll see both now and can converge to the canonical one.
+  await client.conversations.sync();
+  const afterCreate = await client.conversations.listGroups();
+  const allMatches = afterCreate.filter(g => g.name === name);
+  if (allMatches.length > 1) {
+    return allMatches.reduce((best, g) => g.id < best.id ? g : best);
+  }
+  return created;
 }
 
 // ─── Deal-context marker ───────────────────────────────────────────────────────
