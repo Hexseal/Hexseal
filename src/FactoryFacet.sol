@@ -17,24 +17,6 @@ interface IRegistry {
     function hasActivePair(address client, address executor) external view returns (bool);
 }
 
-// USDC permit interface (EIP-2612)
-interface IUSDC {
-    function permit(
-        address owner,
-        address spender,
-        uint256 value,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external;
-
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) external returns (bool);
-}
 
 // ---------- STORAGE ----------
 
@@ -188,17 +170,22 @@ contract FactoryFacet {
 
     // -------- DEPLOY AND FUND --------
 
+    function _msgSender() internal view returns (address sender) {
+        address forwarder = FactoryStorage.layout().trustedForwarder;
+        if (msg.sender == forwarder && msg.data.length >= 20) {
+            assembly { sender := shr(96, calldataload(sub(calldatasize(), 20))) }
+        } else {
+            sender = msg.sender;
+        }
+    }
+
     function deployAndFund(
         address client,
         address executor,
         uint256 amount,
         uint256 deadlineDays,
         string calldata terms,
-        uint8 region,
-        uint256 permitDeadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        uint8 region
     ) external returns (address agreementAddress) {
         if (client == address(0)) revert ZeroAddress();
         if (executor == address(0)) revert ZeroAddress();
@@ -206,6 +193,7 @@ contract FactoryFacet {
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0) revert ZeroDeadline();
         if (region > 6) revert InvalidRegion();
+        if (_msgSender() != client) revert NotClient();
 
         FactoryStorage.Layout storage fs = FactoryStorage.layout();
         if (fs.agreementDeployer == address(0)) revert DeployerNotSet();
@@ -213,9 +201,6 @@ contract FactoryFacet {
         if (IRegistry(fs.diamond).hasActivePair(client, executor)) revert ActiveDealExists();
 
         uint256 fee = fs.regionFee[region];
-        uint256 total = amount + fee;
-
-        IUSDC(fs.usdc).permit(client, address(this), total, permitDeadline, v, r, s);
 
         _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
 

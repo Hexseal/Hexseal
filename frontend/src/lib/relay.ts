@@ -145,6 +145,11 @@ const WRITE_USDC_ABI = parseAbi([
 
 // ─── Internal: build & send ForwardRequest ────────────────────────────────────
 
+type PermitParams = {
+  permitOwner: string; permitSpender: string; permitValue: string;
+  permitDeadline: string; permitV: number; permitR: string; permitS: string;
+};
+
 async function _sendForwardRequest(
   walletClient: WalletClient,
   publicClient: PublicClient,
@@ -152,6 +157,7 @@ async function _sendForwardRequest(
   functionName: string,
   targetAddress: Address = DIAMOND,
   forwarderOverride?: Address,
+  permitParams?: PermitParams,
 ): Promise<{ txHash: string; agreementAddr?: string; jobId?: string }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
@@ -215,6 +221,7 @@ async function _sendForwardRequest(
       data:      message.data,
       signature,
       ...(forwarderOverride ? { forwarderOverride: effectiveForwarder } : {}),
+      ...(permitParams ?? {}),
     }),
   });
 
@@ -291,30 +298,37 @@ export async function deployAndFundGasless(
   // v может быть 0/1 (yParity) у некоторых кошельков — нормализуем до 27/28
   const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
 
-  // Step 5 — encode deployAndFund calldata
+  // Step 5 — encode deployAndFund calldata WITHOUT permit params
+  // Permit is sent separately in body; relay calls USDC.permit() before ForwardRequest
   const calldata = encodeFunctionData({
     abi: DIAMOND_ABI as Abi,
     functionName: 'deployAndFund',
     args: [
-      userAddress,   // client
-      executor,      // executor
-      amount,        // amount (6 dec)
-      deadlineDays,  // deadline in days
-      terms,         // string
-      region,        // uint8
-      permitDeadline,// uint256
-      vNum,          // uint8 v
-      r,             // bytes32 r
-      s,             // bytes32 s
+      userAddress,  // client (_msgSender() check enforces this)
+      executor,
+      amount,
+      deadlineDays,
+      terms,
+      region,
     ],
   });
 
-  // Step 6 — sign ForwardRequest and send; fallback: submit calldata directly to Diamond
+  const permitParams: PermitParams = {
+    permitOwner:    userAddress,
+    permitSpender:  DIAMOND,
+    permitValue:    total.toString(),
+    permitDeadline: permitDeadline.toString(),
+    permitV:        vNum,
+    permitR:        r,
+    permitS:        s,
+  };
+
+  // Step 6 — sign ForwardRequest and send; fallback: require user to approve USDC first
   try {
-    return await _sendForwardRequest(walletClient, publicClient, calldata, 'deployAndFund');
+    return await _sendForwardRequest(walletClient, publicClient, calldata, 'deployAndFund', DIAMOND, undefined, permitParams);
   } catch (err) {
     if (!isRelayDown(err)) throw err;
-    // Permit params are baked into calldata — Diamond processes them directly
+    // Relay down — fallback: user must have approved USDC separately (or do it now)
     console.warn('[relay] down → direct deployAndFund');
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
