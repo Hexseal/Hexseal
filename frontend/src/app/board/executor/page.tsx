@@ -949,12 +949,12 @@ export default function ExecutorBoardPage() {
               {searchQuery
                 ? t("board.services.no_results")
                 : regionFilter !== null
-                  ? `No services in ${REGION_LABELS[regionFilter] ?? 'this region'} — try Global`
+                  ? t("board.services.no_region_results", { region: REGION_LABELS[regionFilter] ?? '' })
                   : t("board.services.empty")}
             </p>
             {!searchQuery && regionFilter !== null ? (
               <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => handleRegionChange(null)}>
-                Show Global
+                {t("board.services.show_global")}
               </Button>
             ) : !searchQuery && (
               <Link href="/board/executor/post">

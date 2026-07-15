@@ -611,6 +611,7 @@ export default function BoardPage() {
                     hasApplied={appliedSet.has(gj.id)}
                     applicants={applicantsMap.get(gj.id)}
                     onApplied={() => {}}
+                    onJobFilled={handleJobFilled}
                     expanded={expandedJobId === gj.id}
                     onToggle={() => setExpandedJobId(prev => prev === gj.id ? null : gj.id)}
                     index={index}
@@ -643,17 +644,20 @@ export default function BoardPage() {
           </div>
         )}
 
-        {jobsError && (
-          <div className="mb-4 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
-            {t("common.error")}
-          </div>
-        )}
-
         {isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
               <JobCardSkeleton key={i} />
             ))}
+          </div>
+        ) : jobsError ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="mb-4 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+              {t("common.error")}
+            </div>
+            <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={() => refetchJobs()}>
+              {t("common.retry")}
+            </Button>
           </div>
         ) : jobs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -669,7 +673,7 @@ export default function BoardPage() {
             </p>
             {!searchQuery && regionFilter !== null ? (
               <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => handleRegionChange(null)}>
-                Show Global
+                {t("board.jobs.show_global")}
               </Button>
             ) : !searchQuery && (
               <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/60" onClick={() => router.push("/board/client/post")}>

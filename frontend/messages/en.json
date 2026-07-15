@@ -67,6 +67,7 @@
       "withdraw_btn": "Withdraw",
       "withdrawn": "Application withdrawn.",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "Show All Regions",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -80,6 +81,8 @@
       "loading": "Loading services…",
       "empty": "No services yet",
       "no_results": "No services match your search",
+      "no_region_results": "No services in {region} — try Global",
+      "show_global": "Show All Regions",
       "connect_prompt": "Connect your wallet to browse services",
       "amount_label": "Amount (USDC)",
       "request_confirm": "Confirm Request",
