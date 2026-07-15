@@ -5,6 +5,7 @@ import { useAccount } from 'wagmi';
 import { usePathname } from 'next/navigation';
 import { toast } from 'react-hot-toast';
 import { getXmtpClientIfCached } from '@/lib/xmtp';
+import { useXmtp } from '@/contexts/XmtpContext';
 import { pushNotif } from '@/lib/notifications';
 
 const flagKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
@@ -16,6 +17,7 @@ function isChatPage(pathname: string): boolean {
 
 export function useXmtpNotifications() {
   const { address } = useAccount();
+  const { status } = useXmtp();
   const pathname = usePathname();
   const pathnameRef = useRef(pathname);
   const streamRef = useRef<{ return: () => void } | null>(null);
@@ -156,5 +158,7 @@ export function useXmtpNotifications() {
       streamRef.current?.return();
       streamRef.current = null;
     };
-  }, [address]);
+  // status dep: re-run when XmtpContext transitions to 'ready' so the stream
+  // starts even if XMTP init completed after this hook's first render.
+  }, [address, status]);
 }

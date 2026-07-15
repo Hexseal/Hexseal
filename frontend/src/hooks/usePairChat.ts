@@ -46,6 +46,7 @@ export function usePairChat(peerAddress: string) {
   const groupRef      = useRef<XmtpGroup | null>(null);
   const oldestNsRef   = useRef<bigint | null>(null);
   const peerRef       = useRef(peerAddress);
+  const streamRef     = useRef<{ return: () => void } | null>(null);
   useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ export function usePairChat(peerAddress: string) {
         setIsLoading(false);
 
         const stream = await group.stream();
+        streamRef.current = stream as unknown as { return: () => void };
         const inboxToAddr = buildInboxAddressMap(await group.members());
         for await (const msg of stream) {
           if (cancelled) break;
@@ -108,7 +110,11 @@ export function usePairChat(peerAddress: string) {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      streamRef.current?.return();
+      streamRef.current = null;
+    };
   }, [walletClient, peerAddress, status, retryKey]);
 
   const loadMore = useCallback(async () => {
