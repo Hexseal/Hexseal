@@ -311,6 +311,7 @@
     "display_name_required": "Имя обязательно",
     "display_name_max": "Имя не более 50 символов",
     "bio_max": "О себе не более 500 символов",
+    "website_invalid": "Сайт должен быть корректным http/https URL",
     "save_btn": "Сохранить профиль",
     "save_success": "Профиль сохранён!",
     "ipfs_signed_info": "Ваш профиль хранится в IPFS и подписан вашим кошельком.",

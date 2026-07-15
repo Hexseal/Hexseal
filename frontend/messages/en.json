@@ -311,6 +311,7 @@
     "display_name_required": "Display name is required",
     "display_name_max": "Display name must be 50 characters or less",
     "bio_max": "Bio must be 500 characters or less",
+    "website_invalid": "Website must be a valid http/https URL",
     "save_btn": "Save Profile",
     "save_success": "Profile saved!",
     "ipfs_signed_info": "Your profile is stored on IPFS and signed by your wallet.",

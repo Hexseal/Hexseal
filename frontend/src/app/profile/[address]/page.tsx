@@ -153,7 +153,13 @@ export default function ProfilePage() {
   const [tab, setTab] = useState<TabKey>('listings');
   const [listingsSub, setListingsSub] = useState<ListingsSub>('jobs');
 
-  const { agreements: rawAgreements, isLoading } = useMyAgreements(validAddress ? profileAddress : undefined);
+  // Reset sub-tab when navigating between different profiles
+  useEffect(() => {
+    setListingsSub('jobs');
+    setTab('listings');
+  }, [profileAddress]);
+
+  const { agreements: rawAgreements, isLoading, refetch } = useMyAgreements(validAddress ? profileAddress : undefined);
   const titleMap = useAgreementTitles(validAddress ? profileAddress : undefined);
   const allAgreements = useMemo(
     () => rawAgreements.map(a => ({ ...toAgreementRecord(a), title: titleMap.get(a.id.toLowerCase()) })),
@@ -203,7 +209,7 @@ export default function ProfilePage() {
               src={
                 resolveMediaUrl(
                   profile.avatarUrl ||
-                  `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.lighthouse.storage'}/ipfs/${profile.avatarCid}`
+                  `${process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://cloudflare-ipfs.com'}/ipfs/${profile.avatarCid}`
                 ) ?? undefined
               }
               alt={profile.displayName || 'Avatar'}
@@ -426,7 +432,7 @@ export default function ProfilePage() {
                         className="card-enter active:scale-[0.985] transition-transform duration-100 cursor-pointer"
                         style={{ animationDelay: `${Math.min(index, 5) * 0.06}s` }}
                       >
-                        <DealCard agreement={a} address={viewerAddress ?? profileAddress} refetch={() => {}} />
+                        <DealCard agreement={a} address={viewerAddress ?? ''} refetch={refetch} />
                       </div>
                     ))}
                   </div>
@@ -447,7 +453,7 @@ export default function ProfilePage() {
                         className="card-enter active:scale-[0.985] transition-transform duration-100 cursor-pointer"
                         style={{ animationDelay: `${Math.min(index, 5) * 0.06}s` }}
                       >
-                        <DealCard agreement={a} address={viewerAddress ?? profileAddress} refetch={() => {}} />
+                        <DealCard agreement={a} address={viewerAddress ?? ''} refetch={refetch} />
                       </div>
                     ))}
                   </div>
@@ -458,19 +464,6 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {allAgreements.length === 0 && !isLoading && tab !== 'listings' && (
-        <div className="flex flex-col items-center justify-center py-16 text-center rounded-2xl border border-white/6 bg-white/[0.02]">
-          <Star className="w-8 h-8 text-white/15 mb-3" />
-          <p className="text-white/35 text-sm">{t("profile.no_deals")}</p>
-          {isOwner && (
-            <Link href="/board">
-              <Button size="sm" variant="outline" className="mt-4 border-white/15 text-white/50">
-                {t("profile.create_first_deal")}
-              </Button>
-            </Link>
-          )}
-        </div>
-      )}
     </div>
   );
 }

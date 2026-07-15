@@ -172,6 +172,7 @@ export default function EditProfilePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (stage !== 'idle') return;
     setError(null);
 
     if (!isConnected || !address) {
@@ -192,6 +193,19 @@ export default function EditProfilePage() {
     if (trimmedBio.length > MAX_BIO_LENGTH) {
       setError(t("profile.bio_max"));
       return;
+    }
+    const trimmedWebsite = website.trim();
+    if (trimmedWebsite) {
+      try {
+        const u = new URL(trimmedWebsite);
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+          setError(t("profile.website_invalid"));
+          return;
+        }
+      } catch {
+        setError(t("profile.website_invalid"));
+        return;
+      }
     }
 
     let finalAvatarCid = avatarCid;
