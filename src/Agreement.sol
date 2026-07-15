@@ -36,6 +36,8 @@ abstract contract MinimalERC721 {
     // ---- Errors ----
     error ERC721NonexistentToken(uint256 tokenId);
     error ERC721NotOwnerOrApproved();
+    error ERC721NotAuthorized();
+    error ERC721WrongOwner();
     error ERC721TransferToZeroAddress();
     error ERC721AlreadyMinted();
     error TokenSoulbound(); // soulbound — нельзя передать пока ACTIVE
@@ -68,7 +70,7 @@ abstract contract MinimalERC721 {
 
     function approve(address to, uint256 tokenId) external {
         address owner = ownerOf(tokenId);
-        require(msg.sender == owner || _operatorApprovals[owner][msg.sender], "ERC721: not authorized");
+        if (msg.sender != owner && !_operatorApprovals[owner][msg.sender]) revert ERC721NotAuthorized();
         _tokenApprovals[tokenId] = to;
         emit Approval(owner, to, tokenId);
     }
@@ -96,13 +98,9 @@ abstract contract MinimalERC721 {
     function _transfer(address from, address to, uint256 tokenId) internal {
         if (to == address(0)) revert ERC721TransferToZeroAddress();
         address owner = ownerOf(tokenId);
-        require(owner == from, "ERC721: wrong owner");
-        require(
-            msg.sender == owner ||
-            _tokenApprovals[tokenId] == msg.sender ||
-            _operatorApprovals[owner][msg.sender],
-            "ERC721: not authorized"
-        );
+        if (owner != from) revert ERC721WrongOwner();
+        if (msg.sender != owner && _tokenApprovals[tokenId] != msg.sender && !_operatorApprovals[owner][msg.sender])
+            revert ERC721NotAuthorized();
         _beforeTransfer(from, to, tokenId);
         delete _tokenApprovals[tokenId];
         unchecked {
@@ -148,10 +146,12 @@ abstract contract ReentrancyGuard {
     uint256 private constant NOT_ENTERED = 1;
     uint256 private constant ENTERED = 2;
 
+    error Reentrancy();
+
     constructor() { _status = NOT_ENTERED; }
 
     modifier nonReentrant() {
-        require(_status != ENTERED, "ReentrancyGuard: reentrant call");
+        if (_status == ENTERED) revert Reentrancy();
         _status = ENTERED;
         _;
         _status = NOT_ENTERED;
@@ -191,18 +191,20 @@ abstract contract ERC2771Context {
 // ---------- MINIMAL SAFE ERC20 TRANSFER ----------
 
 library SafeUSDC {
+    error TransferFailed();
+
     function safeTransfer(address token, address to, uint256 amount) internal {
         (bool success, bytes memory data) = token.call(
             abi.encodeWithSelector(0xa9059cbb, to, amount) // transfer(address,uint256)
         );
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "USDC: transfer failed");
+        if (!(success && (data.length == 0 || abi.decode(data, (bool))))) revert TransferFailed();
     }
 
     function safeTransferFrom(address token, address from, address to, uint256 amount) internal {
         (bool success, bytes memory data) = token.call(
             abi.encodeWithSelector(0x23b872dd, from, to, amount) // transferFrom
         );
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "USDC: transferFrom failed");
+        if (!(success && (data.length == 0 || abi.decode(data, (bool))))) revert TransferFailed();
     }
 }
 
@@ -318,6 +320,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
     // -------- ERRORS --------
 
+    error ZeroAddress();
+    error ClientEqualsExecutor();
+    error NotDiamond();
+    error ArbiterIsParty();
+    error ArbiterNotRegistered();
+    error InsufficientBalance();
     error NotClient();
     error NotFactory();
     error NotExecutor();
@@ -361,14 +369,14 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         MinimalERC721("Hexseal Deal", "HSEAL")
         ERC2771Context(trustedForwarder_)
     {
-        require(client_ != address(0), "Agreement: zero client");
-        require(executor_ != address(0), "Agreement: zero executor");
-        require(diamond_ != address(0), "Agreement: zero diamond");
-        require(usdc_ != address(0), "Agreement: zero usdc");
-        require(factory_ != address(0), "Agreement: zero factory");
-        require(amount_ > 0, "Agreement: zero amount");
-        require(deadlineDays_ > 0, "Agreement: zero deadline");
-        require(client_ != executor_, "Agreement: client == executor");
+        if (client_   == address(0)) revert ZeroAddress();
+        if (executor_ == address(0)) revert ZeroAddress();
+        if (diamond_  == address(0)) revert ZeroAddress();
+        if (usdc_     == address(0)) revert ZeroAddress();
+        if (factory_  == address(0)) revert ZeroAddress();
+        if (amount_      == 0) revert ZeroAmount();
+        if (deadlineDays_ == 0) revert ZeroAmount();
+        if (client_ == executor_) revert ClientEqualsExecutor();
 
         client       = client_;
         executor     = executor_;
@@ -386,14 +394,14 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     /// @notice Diamond (ArbiterRegistryFacet) устанавливает арбитра при клейме спора.
     /// Только Diamond может вызвать — проверяем msg.sender напрямую (не ERC-2771).
     function setArbiter(address newArbiter) external {
-        require(msg.sender == diamond, "Agreement: only Diamond");
+        if (msg.sender != diamond) revert NotDiamond();
         // Diamond сам может быть арбитром (Diamond-as-arbiter паттерн) — пропускаем проверку реестра
         if (newArbiter != address(0) && newArbiter != diamond) {
-            require(newArbiter != client && newArbiter != executor, "Agreement: arbiter is party");
+            if (newArbiter == client || newArbiter == executor) revert ArbiterIsParty();
             (bool ok, bytes memory data) = diamond.staticcall(
                 abi.encodeWithSignature("isRegisteredArbiter(address)", newArbiter)
             );
-            require(ok && abi.decode(data, (bool)), "Agreement: arbiter not registered");
+            if (!ok || !abi.decode(data, (bool))) revert ArbiterNotRegistered();
         }
         arbiter = newArbiter;
     }
@@ -474,7 +482,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
         // Verify USDC balance is sufficient
         uint256 balance = IERC20(usdc).balanceOf(address(this));
-        require(balance >= amount, "Agreement: insufficient balance");
+        if (balance < amount) revert InsufficientBalance();
 
         fundedAt = block.timestamp;
         _mint(client,   TOKEN_ID);
