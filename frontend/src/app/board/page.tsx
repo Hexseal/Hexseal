@@ -404,11 +404,15 @@ export default function BoardPage() {
     setAllJobs([]);
   }, [regionFilter]);
 
+  // page=0: use pageJobs directly so urql cache renders immediately on mount/remount.
+  // page>0: use the accumulated array (Load More appends to allJobs via effect).
+  const displayJobs = page === 0 ? pageJobs : allJobs;
+
   const JOB_STATUS: Record<string, number> = { open: 0, accepted: 1, cancelled: 2 };
 
   const jobs = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    const filtered = allJobs
+    const filtered = displayJobs
       .filter(gj => !filledJobIds.has(gj.id))
       .filter(gj => categoryFilter === null || extractCategory(gj.description) === categoryFilter)
       .filter(gj => {
@@ -442,7 +446,7 @@ export default function BoardPage() {
       case 'lowest':  return [...filtered].sort((a, b) => Number(a.job.amount) - Number(b.job.amount));
       default:        return [...filtered].sort((a, b) => Number(b.job.createdAt) - Number(a.job.createdAt));
     }
-  }, [allJobs, filledJobIds, searchQuery, categoryFilter, sortBy]);
+  }, [displayJobs, filledJobIds, searchQuery, categoryFilter, sortBy]);
 
   // Skill-based matching — only when no filters/search active and user has specializations
   const matchedJobs = useMemo(() => {
@@ -450,26 +454,26 @@ export default function BoardPage() {
     if (!specs || specs.length === 0) return [];
     if (searchQuery || categoryFilter) return [];
     const keywords = specs.map(s => s.toLowerCase());
-    return allJobs
+    return displayJobs
       .filter(gj => gj.client.toLowerCase() !== address?.toLowerCase())
       .filter(gj => {
         const haystack = `${gj.title} ${gj.description}`.toLowerCase();
         return keywords.some(kw => haystack.includes(kw));
       })
       .slice(0, 5);
-  }, [allJobs, userProfile, searchQuery, categoryFilter]);
+  }, [displayJobs, userProfile, searchQuery, categoryFilter]);
 
   const { appliedSet, applicantsMap } = useMemo(() => {
     const appliedSet = new Set<string>();
     const applicantsMap = new Map<string, string[]>();
-    allJobs.forEach(gj => {
+    displayJobs.forEach(gj => {
       applicantsMap.set(gj.id, gj.applicants);
       if (address && gj.applicants.some(a => a.toLowerCase() === address.toLowerCase())) {
         appliedSet.add(gj.id);
       }
     });
     return { appliedSet, applicantsMap };
-  }, [allJobs, address]);
+  }, [displayJobs, address]);
 
   // Wallet reconnecting on page reload — show skeleton to avoid flash of "connect" screen
   if (status === 'reconnecting' || status === 'connecting') {
