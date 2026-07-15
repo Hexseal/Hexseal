@@ -558,7 +558,6 @@ export default function ExecutorBoardPage() {
   const publicClient = usePublicClient();
   const t = useTranslations();
 
-  const [mounted, setMounted]         = useState(false);
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
   const catScrollRef = useRef<HTMLDivElement>(null);
@@ -568,7 +567,7 @@ export default function ExecutorBoardPage() {
     const handler = (e: WheelEvent) => { e.preventDefault(); el.scrollLeft += e.deltaY; };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, [mounted]);
+  }, []);
   const [userRegion, setUserRegion]     = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [allServices, setAllServices] = useState<GraphService[]>([]);
@@ -648,7 +647,6 @@ export default function ExecutorBoardPage() {
   }, [myRequestsData, myRequestIds]);
 
   useEffect(() => {
-    setMounted(true);
     const stored = getStoredBoardRegion();
     fetch("/api/region")
       .then(r => r.json())
@@ -767,7 +765,7 @@ export default function ExecutorBoardPage() {
   };
 
   // Wallet reconnecting on page reload — show skeleton to avoid flash of "connect" screen
-  if (!mounted || status === 'reconnecting' || status === 'connecting') {
+  if (status === 'reconnecting' || status === 'connecting') {
     return (
       <div className="container mx-auto px-4 pt-4 pb-6 max-w-6xl space-y-3">
         {[...Array(5)].map((_, i) => (
