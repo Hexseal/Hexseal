@@ -28,6 +28,8 @@ const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
 function trimXmtpError(raw: string): string {
   const msg = raw.split('=====')[0].split('\n')[0].trim();
+  if (raw === 'XMTP_TIMEOUT')
+    return 'Мессенджер не смог подключиться (90 сек). Проверь интернет и попробуй снова. Если ты в стране с блокировками — включи VPN.';
   if (raw.toLowerCase().includes('already pending') || raw.toLowerCase().includes('pending for origin'))
     return 'Есть незакрытый запрос в кошельке. Открой его, прими или отклони, затем повтори.';
   if (raw.includes('10/10') || raw.includes('registered 10'))

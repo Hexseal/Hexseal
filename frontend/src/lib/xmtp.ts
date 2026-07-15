@@ -164,6 +164,12 @@ export function createXmtpSigner(
 
 // ─── Client init ──────────────────────────────────────────────────────────────
 
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  let id: ReturnType<typeof setTimeout>;
+  const timer = new Promise<never>((_, reject) => { id = setTimeout(() => reject(new Error(msg)), ms); });
+  return Promise.race([p, timer]).finally(() => clearTimeout(id));
+}
+
 // Singleton caches — prevent multiple Client.create() calls for the same address
 // (React StrictMode double-mounts, concurrent hooks, etc.)
 const _clientCache:  Map<string, Client>          = new Map();
@@ -203,8 +209,15 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
       const signer = createXmtpSigner(walletClient, onSignStep);
       // dbPath: per-address OPFS path so different wallets on the same browser
       // don't share (and clobber) each other's MLS database.
+      // 90-second timeout: covers wallet signature + XMTP network identity publication.
+      // If network is unreachable (e.g. blocked by ISP/firewall), surfaces an error
+      // instead of spinning forever. The user can retry after checking connectivity.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const client = await Client.create(signer, { env: 'production', dbPath: `xmtp-${address}` } as any);
+      const client = await withTimeout(
+        Client.create(signer, { env: 'production', dbPath: `xmtp-${address}` } as any),
+        90_000,
+        'XMTP_TIMEOUT',
+      );
 
       // Track installationId to detect OPFS clears across sessions.
       // We do NOT auto-revoke other installations here — revokeAllOtherInstallations()
@@ -470,7 +483,11 @@ async function _buildPairConversations(
   myAddress: string,
   sync: boolean,
 ): Promise<PairConversation[]> {
-  if (sync) await client.conversations.sync();
+  // Network sync with timeout — on mobile or poor connectivity this can hang indefinitely.
+  // If global sync times out, we continue with whatever is already in the local OPFS cache.
+  if (sync) {
+    await withTimeout(client.conversations.sync(), 15_000, 'sync_timeout').catch(() => {});
+  }
   const groups = await client.conversations.listGroups();
   const myInboxId = client.inboxId ?? '';
   const myLc = myAddress.toLowerCase();
@@ -480,7 +497,9 @@ async function _buildPairConversations(
     const name = g.name ?? '';
     if (!name.startsWith(PAIR_PREFIX)) continue;
     try {
-      if (sync) await g.sync();
+      if (sync) {
+        await withTimeout(g.sync(), 5_000, 'group_sync_timeout').catch(() => {});
+      }
       const members = await g.members();
       const inboxToAddr = buildInboxAddressMap(members);
       const peerAddress = [...inboxToAddr.values()].find(addr => addr !== myLc);
