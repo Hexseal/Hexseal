@@ -12,6 +12,8 @@ services:
     environment:
       PORT: "3000"
       RELAYER_INTERNAL_URL: "http://relayer:3001"
+      # Server-only secret — injected at runtime, never baked into the JS bundle
+      DRPC_URL: ${DRPC_URL}
     build:
       context: ./frontend
       args:
@@ -27,7 +29,6 @@ services:
         NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
         NEXT_PUBLIC_IPFS_GATEWAY: ${NEXT_PUBLIC_IPFS_GATEWAY}
         SUBGRAPH_URL: ${SUBGRAPH_URL}
-        DRPC_URL: ${DRPC_URL}
     restart: unless-stopped
     env_file: .env.vps
     ports:

@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { appChain } from '@/config/chain';
 
-// Private RPC with API key.
-// Prefer DRPC_URL / BASE_SEPOLIA_RPC_URL (server-only, no NEXT_PUBLIC_ prefix) —
-// these keep the key out of the client bundle. NEXT_PUBLIC_ variant is accepted
-// as a fallback for deployments that only set the public-prefixed form.
+// Private RPC with API key — server-only, never exposed to client.
+// Set DRPC_URL (no NEXT_PUBLIC_ prefix) in .env.vps so the key stays
+// out of the JS bundle. docker-compose injects it at container runtime.
 const PRIVATE_RPC =
   process.env.DRPC_URL ??
   process.env.BASE_SEPOLIA_RPC_URL ??
   process.env.RPC_URL ??
-  process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ??
-  process.env.NEXT_PUBLIC_RPC_URL ??
   null;
 
 // Public fallback RPC endpoints tried in order if private RPC fails.
