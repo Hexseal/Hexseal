@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import { useQuery } from 'urql'
 import { OPEN_JOBS_QUERY } from '@/lib/graph'
 
@@ -26,10 +26,14 @@ export function useJobs({ region, page = 0 }: { region?: number; page?: number }
     return { where, first: PAGE_SIZE, skip: page * PAGE_SIZE }
   }, [region, page])
 
-  const [{ data, fetching, error }] = useQuery<{ jobs: GraphJob[] }>({
+  const [{ data, fetching, error }, reexecuteQuery] = useQuery<{ jobs: GraphJob[] }>({
     query: OPEN_JOBS_QUERY,
     variables,
   })
+
+  const refetch = useCallback(() => {
+    reexecuteQuery({ requestPolicy: 'network-only' });
+  }, [reexecuteQuery]);
 
   return {
     jobs: data?.jobs ?? EMPTY_JOBS,
@@ -37,5 +41,6 @@ export function useJobs({ region, page = 0 }: { region?: number; page?: number }
     isFetching: fetching,
     hasMore: (data?.jobs.length ?? 0) === PAGE_SIZE,
     error: error?.message ?? null,
+    refetch,
   }
 }

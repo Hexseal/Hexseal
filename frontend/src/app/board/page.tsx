@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "react-hot-toast";
 import {
   Search, Loader2, Briefcase, Plus, MessageCircle,
-  ChevronDown, UserCheck, ExternalLink, FileText,
+  ChevronDown, UserCheck, ExternalLink, FileText, RefreshCw,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { UserName, UserAvatar } from "@/components/UserName";
@@ -380,7 +380,7 @@ export default function BoardPage() {
     storeBoardRegion(v);
   };
 
-  const { jobs: pageJobs, isLoading, isFetching, hasMore, error: jobsError } = useJobs({
+  const { jobs: pageJobs, isLoading, isFetching, hasMore, error: jobsError, refetch: refetchJobs } = useJobs({
     region: regionFilter ?? undefined,
     page,
   });
@@ -451,6 +451,7 @@ export default function BoardPage() {
     if (searchQuery || categoryFilter) return [];
     const keywords = specs.map(s => s.toLowerCase());
     return allJobs
+      .filter(gj => gj.client.toLowerCase() !== address?.toLowerCase())
       .filter(gj => {
         const haystack = `${gj.title} ${gj.description}`.toLowerCase();
         return keywords.some(kw => haystack.includes(kw));
@@ -511,8 +512,10 @@ export default function BoardPage() {
                 </button>
               </p>
             </div>
-            {/* Mobile: Post Job button */}
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
+              <Button variant="ghost" size="sm" onClick={() => { setAllJobs([]); setPage(0); refetchJobs(); }} disabled={isFetching} className="text-white/40 hover:text-white/70">
+                <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
+              </Button>
               <Button size="sm" onClick={() => router.push("/board/client/post")}>
                 <Plus className="w-4 h-4 mr-1" />
                 {t("board.jobs.post_btn")}
