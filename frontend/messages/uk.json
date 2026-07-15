@@ -169,6 +169,7 @@
     "copied": "Адресу скопійовано!",
     "copy_failed": "Помилка копіювання",
     "disable_messaging": "Disable Messaging",
+    "enable_messaging": "Увімкнути месенджер",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },

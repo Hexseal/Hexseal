@@ -169,6 +169,7 @@
     "copied": "Adresse kopiert!",
     "copy_failed": "Kopieren fehlgeschlagen",
     "disable_messaging": "Disable Messaging",
+    "enable_messaging": "Messaging aktivieren",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },

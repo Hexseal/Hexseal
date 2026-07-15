@@ -169,6 +169,7 @@
     "copied": "アドレスをコピーしました！",
     "copy_failed": "コピーに失敗しました",
     "disable_messaging": "Disable Messaging",
+    "enable_messaging": "メッセージを有効にする",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },

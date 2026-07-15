@@ -169,6 +169,7 @@
     "copied": "คัดลอกที่อยู่แล้ว!",
     "copy_failed": "คัดลอกล้มเหลว",
     "disable_messaging": "Disable Messaging",
+    "enable_messaging": "เปิดใช้งานการส่งข้อความ",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },

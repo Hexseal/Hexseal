@@ -40,7 +40,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
-  const { status: xmtpStatus, disable: disableXmtp } = useXmtp();
+  const { status: xmtpStatus, disable: disableXmtp, retry: retryXmtp } = useXmtp();
   const { address, isConnected, status, chain } = useAccount();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
@@ -386,6 +386,15 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             >
               <MessageCircleOff className="w-3.5 h-3.5" />
               {t("wallet.disable_messaging")}
+            </DropdownMenuItem>
+          )}
+          {xmtpStatus === 'error' && (
+            <DropdownMenuItem
+              onClick={retryXmtp}
+              className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              {t("wallet.enable_messaging")}
             </DropdownMenuItem>
           )}
         </div>
