@@ -76,10 +76,12 @@ contract DeployFull is Script {
         loupeSels[4] = IERC165.supportsInterface.selector;
         initCuts[1] = _cut(address(loupeFacet), IDiamondCut.FacetCutAction.Add, loupeSels);
 
-        // OwnershipFacet — 2 селектора
-        bytes4[] memory ownSels = new bytes4[](2);
+        // OwnershipFacet — 4 селектора
+        bytes4[] memory ownSels = new bytes4[](4);
         ownSels[0] = OwnershipFacet.transferOwnership.selector;
         ownSels[1] = OwnershipFacet.owner.selector;
+        ownSels[2] = OwnershipFacet.acceptOwnership.selector;
+        ownSels[3] = OwnershipFacet.pendingOwner.selector;
         initCuts[2] = _cut(address(ownFacet), IDiamondCut.FacetCutAction.Add, ownSels);
 
         // RegistryFacet — 13 селекторов

@@ -158,9 +158,11 @@ contract BoardsTest is Test {
         loupeSels[3] = DiamondLoupeFacet.facetAddress.selector;
         loupeSels[4] = DiamondLoupeFacet.supportsInterface.selector;
 
-        bytes4[] memory ownSels = new bytes4[](2);
+        bytes4[] memory ownSels = new bytes4[](4);
         ownSels[0] = OwnershipFacet.transferOwnership.selector;
         ownSels[1] = OwnershipFacet.owner.selector;
+        ownSels[2] = OwnershipFacet.acceptOwnership.selector;
+        ownSels[3] = OwnershipFacet.pendingOwner.selector;
 
         // --- JobReceiptFacet selectors (supportsInterface excluded — already in DiamondLoupe) ---
         bytes4[] memory receiptSels = new bytes4[](21);

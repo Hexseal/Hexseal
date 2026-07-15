@@ -97,9 +97,11 @@ contract DeployHexseal is Script {
         });
 
         // OwnershipFacet
-        bytes4[] memory ownSelectors = new bytes4[](2);
+        bytes4[] memory ownSelectors = new bytes4[](4);
         ownSelectors[0] = OwnershipFacet.transferOwnership.selector;
         ownSelectors[1] = OwnershipFacet.owner.selector;
+        ownSelectors[2] = OwnershipFacet.acceptOwnership.selector;
+        ownSelectors[3] = OwnershipFacet.pendingOwner.selector;
         cuts[2] = IDiamondCut.FacetCut({
             facetAddress: ownershipFacet,
             action: IDiamondCut.FacetCutAction.Add,

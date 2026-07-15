@@ -67,6 +67,8 @@ library DiamondStorage {
         mapping(bytes4 => bool) supportedInterfaces;
         // owner (multisig)
         address contractOwner;
+        // two-step ownership transfer
+        address pendingOwner;
     }
 
     function layout() internal pure returns (Layout storage ds) {
@@ -348,15 +350,28 @@ contract DiamondLoupeFacet is IDiamondLoupe, IERC165 {
 // ---------- OWNERSHIP FACET ----------
 
 contract OwnershipFacet {
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     function transferOwnership(address _newOwner) external {
         OwnershipLib.enforceIsContractOwner();
         require(_newOwner != address(0), "Diamond: zero owner");
-        OwnershipLib.setContractOwner(_newOwner);
+        DiamondStorage.layout().pendingOwner = _newOwner;
+        emit OwnershipTransferStarted(OwnershipLib.contractOwner(), _newOwner);
+    }
+
+    function acceptOwnership() external {
+        address pending = DiamondStorage.layout().pendingOwner;
+        require(msg.sender == pending, "Diamond: not pending owner");
+        DiamondStorage.layout().pendingOwner = address(0);
+        OwnershipLib.setContractOwner(pending);
     }
 
     function owner() external view returns (address owner_) {
         owner_ = OwnershipLib.contractOwner();
+    }
+
+    function pendingOwner() external view returns (address) {
+        return DiamondStorage.layout().pendingOwner;
     }
 }

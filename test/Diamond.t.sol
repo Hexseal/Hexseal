@@ -114,9 +114,11 @@ contract DiamondTest is Test {
         loupeSelectors[4] = DiamondLoupeFacet.supportsInterface.selector;
         
         // OwnershipFacet selectors
-        bytes4[] memory ownerSelectors = new bytes4[](2);
+        bytes4[] memory ownerSelectors = new bytes4[](4);
         ownerSelectors[0] = OwnershipFacet.transferOwnership.selector;
         ownerSelectors[1] = OwnershipFacet.owner.selector;
+        ownerSelectors[2] = OwnershipFacet.acceptOwnership.selector;
+        ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
         bytes4[] memory arbiterSelectors = new bytes4[](33);

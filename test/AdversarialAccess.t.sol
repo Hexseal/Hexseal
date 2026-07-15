@@ -210,9 +210,11 @@ contract AdversarialAccessTest is Test {
         loupeSels[3] = DiamondLoupeFacet.facetAddress.selector;
         loupeSels[4] = DiamondLoupeFacet.supportsInterface.selector;
 
-        bytes4[] memory ownSels = new bytes4[](2);
+        bytes4[] memory ownSels = new bytes4[](4);
         ownSels[0] = OwnershipFacet.transferOwnership.selector;
         ownSels[1] = OwnershipFacet.owner.selector;
+        ownSels[2] = OwnershipFacet.acceptOwnership.selector;
+        ownSels[3] = OwnershipFacet.pendingOwner.selector;
 
         IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](8);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet),        IDiamondCut.FacetCutAction.Add, regSels);

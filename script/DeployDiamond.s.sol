@@ -122,9 +122,11 @@ contract DeployDiamond is Script {
             selectors[4] = DiamondLoupeFacet.supportsInterface.selector;
             return selectors;
         } else if (keccak256(bytes(facetName)) == keccak256(bytes("OwnershipFacet"))) {
-            bytes4[] memory selectors = new bytes4[](2);
+            bytes4[] memory selectors = new bytes4[](4);
             selectors[0] = OwnershipFacet.transferOwnership.selector;
             selectors[1] = OwnershipFacet.owner.selector;
+            selectors[2] = OwnershipFacet.acceptOwnership.selector;
+            selectors[3] = OwnershipFacet.pendingOwner.selector;
             return selectors;
         }
         revert("Unknown facet");
