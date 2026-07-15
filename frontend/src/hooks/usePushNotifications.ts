@@ -26,13 +26,8 @@ export function usePushNotifications() {
     return walletClient.signMessage({ account: address as `0x${string}`, message: msg });
   }, [walletClient, address]);
 
-  // Auto-resubscribe silently when wallet connects and permission was already granted.
-  // This re-registers the subscription with the relayer after restarts, without prompting.
-  useEffect(() => {
-    if (!address || !supported || !walletClient) return;
-    if (Notification.permission !== 'granted') return;
-    enablePush(address, buildSignMsg).catch(() => {});
-  }, [address, supported, walletClient, buildSignMsg]);
+  // Note: auto-resubscribe is handled globally by PushAutoMount in providers.tsx (rate-limited).
+  // This hook only exposes enable/disable for explicit user actions.
 
   const enable = useCallback(async () => {
     if (!address || !supported) return;

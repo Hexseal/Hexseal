@@ -45,13 +45,16 @@ export async function enablePush(
   if (!reg) return 'error';
 
   try {
-    const existing = await reg.pushManager.getSubscription();
-    if (existing) await existing.unsubscribe();
-
-    const subscription = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-    });
+    // Reuse an existing subscription — don't force-rotate it on every call.
+    // Rotation only happens when the user explicitly disables then re-enables push,
+    // or when the browser invalidates the subscription (VAPID key change, etc.).
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
 
     if (!signMessage) return 'ok';
 

@@ -119,17 +119,32 @@ function XmtpNotificationsMount() {
   return null;
 }
 
-// Silently re-registers push subscription on every page load if permission already granted.
-// Keeps the relayer's subscription list fresh after restarts or expiry.
+// Re-registers push subscription with the relayer at most once per 24 h.
+// Keeps the relayer's subscription list fresh after restarts without
+// prompting a wallet signature on every page load.
+const PUSH_REG_KEY = (addr: string) => `hexseal-push-reg-${addr.toLowerCase()}`;
+const PUSH_REG_TTL = 24 * 60 * 60 * 1000; // 24 h
+
 function PushAutoMount() {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
   useEffect(() => {
     if (!address || !isPushSupported() || !walletClient) return;
     if (Notification.permission !== 'granted') return;
+    // Rate-limit: skip if re-registered within the last 24 h
+    try {
+      const last = Number(localStorage.getItem(PUSH_REG_KEY(address)) ?? 0);
+      if (Date.now() - last < PUSH_REG_TTL) return;
+    } catch { /* localStorage unavailable */ }
     const signMsg = (msg: string) =>
       walletClient.signMessage({ account: address as `0x${string}`, message: msg });
-    enablePush(address, signMsg).catch(() => {});
+    enablePush(address, signMsg)
+      .then(result => {
+        if (result === 'ok') {
+          try { localStorage.setItem(PUSH_REG_KEY(address), String(Date.now())); } catch {}
+        }
+      })
+      .catch(() => {});
   }, [address, walletClient]);
   return null;
 }

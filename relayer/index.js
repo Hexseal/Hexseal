@@ -88,9 +88,10 @@ const AGR_PUSH_MSG = {
   4: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.',              notify: 'both'         },
 };
 
-// activate() and markDone() don't emit AgreementStatusUpdated, so we detect them
-// by function selector and send push directly.
+// activate(), markDone(), and fund() don't emit AgreementStatusUpdated,
+// so we detect them by function selector and send push directly.
 const FUNC_PUSH_MSG = {
+  '0xb60d4288': { title: 'Deal Funded 💰',      body: 'Your deal has been funded. Activate to start working.',    notify: 'executor' },
   '0x0f15f4c0': { title: 'Deal Activated ⚡',  body: 'Work has started. Track progress in the deal page.',        notify: 'client'   },
   '0x1bdfc6e3': { title: 'Work Submitted ✔',   body: 'The executor marked the job as done. Please review it.',   notify: 'client'   },
 };
