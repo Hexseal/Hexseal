@@ -273,17 +273,44 @@ export async function findOrCreatePairGroup(
 ): Promise<XmtpGroup> {
   const name = pairGroupName(memberAddresses[0], memberAddresses[1]);
 
+  // Only these addresses are allowed in a legitimate pair group.
+  // MLS invariant: the group creator is always a member.
+  // An attacker who creates a spoofed group with this name will always appear
+  // in its member list — so filtering by expectedAddrs detects and skips it.
+  const expectedAddrs = new Set<string>([
+    memberAddresses[0].toLowerCase(),
+    memberAddresses[1].toLowerCase(),
+    ...(botAddress ? [botAddress.toLowerCase()] : []),
+  ]);
+
+  /** Returns true only if every member of g is in expectedAddrs. */
+  async function isLegitimate(g: XmtpGroup): Promise<boolean> {
+    try {
+      const members = await g.members();
+      return members.every(m => {
+        const addr = m.accountIdentifiers[0]?.identifier?.toLowerCase() ?? '';
+        return expectedAddrs.has(addr);
+      });
+    } catch {
+      return false;
+    }
+  }
+
   await client.conversations.sync();
 
-  // Collect ALL groups matching this name — duplicates can appear when both
-  // parties call findOrCreatePairGroup simultaneously before either has synced
-  // the other's newly-created group. Always pick the one with the smallest ID:
-  // MLS group IDs are shared across all members, so both sides converge on the
-  // same canonical group deterministically.
   const groups = await client.conversations.listGroups();
-  const matches = groups.filter(g => g.name === name);
-  if (matches.length > 0) {
-    const canonical = matches.reduce((best, g) => g.id < best.id ? g : best);
+  const nameMatches = groups.filter(g => g.name === name);
+
+  // Filter out attacker-created groups (unexpected members), then pick the
+  // group with the smallest ID among legitimate ones so both clients converge
+  // deterministically in the race-condition case (both created simultaneously).
+  const legitGroups: XmtpGroup[] = [];
+  for (const g of nameMatches) {
+    if (await isLegitimate(g)) legitGroups.push(g);
+  }
+
+  if (legitGroups.length > 0) {
+    const canonical = legitGroups.reduce((best, g) => g.id < best.id ? g : best);
     await canonical.sync();
     return canonical;
   }
@@ -298,13 +325,16 @@ export async function findOrCreatePairGroup(
     groupDescription: `Hexseal conversation: ${memberAddresses[0]} <-> ${memberAddresses[1]}`,
   });
 
-  // Re-sync after creation: if the peer raced us and created their own group,
-  // we'll see both now and can converge to the canonical one.
+  // Re-sync after creation: if the peer raced us, their group is now visible.
+  // Apply the same membership filter so a racing attacker is still rejected.
   await client.conversations.sync();
-  const afterCreate = await client.conversations.listGroups();
-  const allMatches = afterCreate.filter(g => g.name === name);
-  if (allMatches.length > 1) {
-    return allMatches.reduce((best, g) => g.id < best.id ? g : best);
+  const afterMatches = (await client.conversations.listGroups()).filter(g => g.name === name);
+  const afterLegit: XmtpGroup[] = [];
+  for (const g of afterMatches) {
+    if (await isLegitimate(g)) afterLegit.push(g);
+  }
+  if (afterLegit.length > 1) {
+    return afterLegit.reduce((best, g) => g.id < best.id ? g : best);
   }
   return created;
 }
