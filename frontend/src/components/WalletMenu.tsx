@@ -5,8 +5,8 @@ import { useProfile } from "@/hooks/useProfile";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract, useWriteContract } from "wagmi";
-import { appChainId } from "@/config/chain";
+import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract, useWriteContract, useSwitchChain } from "wagmi";
+import { appChainId, appChain } from "@/config/chain";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from "@/config/contracts";
 import type { Abi } from "viem";
@@ -18,7 +18,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -41,8 +41,10 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
   const { status: xmtpStatus, disable: disableXmtp } = useXmtp();
-  const { address, isConnected, status } = useAccount();
+  const { address, isConnected, status, chain } = useAccount();
   const { disconnect } = useDisconnect();
+  const { switchChainAsync } = useSwitchChain();
+  const isWrongChain = isConnected && !!chain && chain.id !== appChainId;
   const { openConnectModal } = useConnectModal();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
@@ -208,25 +210,35 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         {hideNavItems ? (
           // Mobile pill: icon-style, matches the Bell button (transparent p-2, no border)
           <button className="relative flex items-center gap-0.5 p-2 rounded-lg hover:bg-white/5 transition-colors outline-none">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={avatarUrl}
-              alt="avatar"
-              className="w-4 h-4 rounded-full ring-1 ring-white/[0.08]"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-            />
+            <div className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={avatarUrl}
+                alt="avatar"
+                className="w-4 h-4 rounded-full ring-1 ring-white/[0.08]"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+              {isWrongChain && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-orange-500 rounded-full border border-[#111113]" />
+              )}
+            </div>
             <ChevronDown className="w-3 h-3 text-white/35" />
           </button>
         ) : (
-          <button className={`flex items-center gap-2 ${btnH} px-2.5 rounded-lg border border-white/[0.10] bg-white/[0.06] hover:bg-white/[0.10] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20`}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={avatarUrl}
-              alt="avatar"
-              className="w-5 h-5 rounded-full ring-1 ring-white/[0.08]"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-            />
-            <span className="hidden sm:inline font-mono text-sm">{displayText}</span>
+          <button className={`flex items-center gap-2 ${btnH} px-2.5 rounded-lg border ${isWrongChain ? 'border-orange-500/40 bg-orange-500/5' : 'border-white/[0.10] bg-white/[0.06]'} hover:bg-white/[0.10] transition-colors text-white/75 hover:text-white/90 outline-none focus-visible:ring-1 focus-visible:ring-white/20`}>
+            <div className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={avatarUrl}
+                alt="avatar"
+                className="w-5 h-5 rounded-full ring-1 ring-white/[0.08]"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+              {isWrongChain && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-orange-500 rounded-full border border-[#111113]" />
+              )}
+            </div>
+            <span className="hidden sm:inline font-mono text-sm">{isWrongChain ? 'Wrong Network' : displayText}</span>
             <ChevronDown className="w-3 h-3 text-white/35" />
           </button>
         )}
@@ -262,6 +274,23 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             </div>
           </div>
         </div>
+
+        {/* ── Wrong network banner ── */}
+        {isWrongChain && (
+          <>
+            <div className="h-px bg-white/[0.06]" />
+            <div className="p-2">
+              <button
+                type="button"
+                onClick={async () => { try { await switchChainAsync({ chainId: appChainId }); } catch {} }}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 transition-colors"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                Switch to {appChain.name}
+              </button>
+            </div>
+          </>
+        )}
 
         {/* ── Navigation (hidden on mobile — bottom nav handles these) ── */}
         {!hideNavItems && (
