@@ -21,7 +21,6 @@ contract DeployDiamond is Script {
         // 1. Деплоим фасеты
         RegistryFacet registryFacet = new RegistryFacet();
         FactoryFacet factoryFacet = new FactoryFacet();
-        AgreementDeployer agreementDeployer = new AgreementDeployer();
         DiamondCutFacet diamondCutFacet = new DiamondCutFacet();
         DiamondLoupeFacet diamondLoupeFacet = new DiamondLoupeFacet();
         OwnershipFacet ownershipFacet = new OwnershipFacet();
@@ -67,6 +66,9 @@ contract DeployDiamond is Script {
         // 3. Деплоим DiamondProxy
         DiamondProxy diamond = new DiamondProxy(deployer, cut, address(0), "");
         
+        // AgreementDeployer needs Diamond as authorizedCaller — deploy after Diamond is known
+        AgreementDeployer agreementDeployer = new AgreementDeployer(address(diamond));
+
         // 4. Инициализируем фасеты
         RegistryFacet(address(diamond)).initRegistry(address(diamond)); // FactoryFacet = Diamond address
         FactoryFacet(address(diamond)).initFactory(usdc, feeRecipient, trustedForwarder, address(diamond), address(agreementDeployer));

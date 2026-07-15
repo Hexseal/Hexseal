@@ -28,7 +28,7 @@ contract UpgradeFactoryFacetV5 is Script {
         vm.startBroadcast(deployerKey);
 
         // 1. Deploy external AgreementDeployer (holds Agreement creation code)
-        AgreementDeployer agDeployer = new AgreementDeployer();
+        AgreementDeployer agDeployer = new AgreementDeployer(diamond);
         console.log("AgreementDeployer deployed at:", address(agDeployer));
 
         // 2. Deploy new FactoryFacet (now tiny — no Agreement bytecode)

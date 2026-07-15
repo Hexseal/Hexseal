@@ -28,6 +28,13 @@ interface IAgreementDeployer {
 }
 
 contract AgreementDeployer is IAgreementDeployer {
+    address public immutable authorizedCaller;
+
+    constructor(address authorizedCaller_) {
+        require(authorizedCaller_ != address(0), "AgreementDeployer: zero caller");
+        authorizedCaller = authorizedCaller_;
+    }
+
     function deploy(
         address client,
         address executor,
@@ -40,6 +47,7 @@ contract AgreementDeployer is IAgreementDeployer {
         address trustedForwarder,
         address factory
     ) external returns (address addr) {
+        require(msg.sender == authorizedCaller, "AgreementDeployer: unauthorized");
         bytes memory bytecode = abi.encodePacked(
             type(Agreement).creationCode,
             abi.encode(

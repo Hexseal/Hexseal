@@ -164,7 +164,7 @@ contract DiamondTest is Test {
         cut[5] = IDiamondCut.FacetCut(address(arbiterRegistryFacet), IDiamondCut.FacetCutAction.Add, arbiterSelectors);
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
-        AgreementDeployer agDeployer = new AgreementDeployer();
+        AgreementDeployer agDeployer = new AgreementDeployer(address(diamond));
 
         RegistryFacet(address(diamond)).initRegistry(address(diamond));
         FactoryFacet(address(diamond)).initFactory(address(usdc), feeRecipient, address(0), address(diamond), address(agDeployer));
@@ -187,6 +187,7 @@ contract DiamondTest is Test {
     function _resolveDispute(address agreementAddr, bool clientWins) internal {
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, clientWins);
+        vm.warp(block.timestamp + 1 hours + 1);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
     }
 
@@ -1289,9 +1290,10 @@ contract DiamondTest is Test {
 
         vm.warp(block.timestamp + 8 days); // DISPUTE_WINDOW = 7 days
 
-        // Арбитр подаёт вердикт, но finalizeVerdict должен ревертить — окно истекло
+        // Арбитр подаёт вердикт, затем ждём finalize delay, потом finalizeVerdict реверт — окно истекло
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, true);
+        vm.warp(block.timestamp + 1 hours + 1); // satisfy FINALIZE_DELAY — Agreement window still passed
         vm.expectRevert(Agreement.WindowAlreadyPassed.selector);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
     }

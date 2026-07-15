@@ -226,7 +226,7 @@ contract AdversarialAccessTest is Test {
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
 
-        AgreementDeployer agDeployer = new AgreementDeployer();
+        AgreementDeployer agDeployer = new AgreementDeployer(address(diamond));
         RegistryFacet(address(diamond)).initRegistry(address(diamond));
         FactoryFacet(address(diamond)).initFactory(
             address(usdc), feeRecipient, address(0), address(diamond), address(agDeployer)

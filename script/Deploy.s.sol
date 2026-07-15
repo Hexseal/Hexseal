@@ -56,7 +56,6 @@ contract DeployHexseal is Script {
         OwnershipFacet    ownFacet    = new OwnershipFacet();
         RegistryFacet     regFacet    = new RegistryFacet();
         FactoryFacet      facFacet    = new FactoryFacet();
-        AgreementDeployer agDeployer  = new AgreementDeployer();
 
         diamondCutFacet   = address(cutFacet);
         diamondLoupeFacet = address(loupeFacet);
@@ -69,7 +68,6 @@ contract DeployHexseal is Script {
         console.log("OwnershipFacet:    ", ownershipFacet);
         console.log("RegistryFacet:     ", registryFacet);
         console.log("FactoryFacet:      ", factoryFacet);
-        console.log("AgreementDeployer: ", address(agDeployer));
 
         // ----------------------------------------------------------------
         // 2. Собираем FacetCut[] для Diamond
@@ -159,6 +157,10 @@ contract DeployHexseal is Script {
         );
         diamond = address(dp);
         console.log("Diamond:           ", diamond);
+
+        // AgreementDeployer needs Diamond as authorizedCaller — deploy after Diamond is known
+        AgreementDeployer agDeployer  = new AgreementDeployer(diamond);
+        console.log("AgreementDeployer: ", address(agDeployer));
 
         // ----------------------------------------------------------------
         // 4. Инициализация фасетов через Diamond

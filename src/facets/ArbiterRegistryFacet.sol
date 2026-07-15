@@ -82,11 +82,12 @@ contract ArbiterRegistryFacet {
 
     // -------- CONSTANTS --------
 
-    uint256 private constant COMMIT_MAX_BLOCKS  = 50;      // ~100s на Base
-    uint256 private constant DAO_THRESHOLD      = 100_000; // uniqueActiveUsers для авто-DAO
-    uint256 private constant MIN_XP_TO_REGISTER = 3_000;   // ~30 сделок с разными людьми
-    uint256 private constant OVERTURN_XP_SLASH  = 200;     // XP штраф при overturn
+    uint256 private constant COMMIT_MAX_BLOCKS  = 50;         // ~100s на Base
+    uint256 private constant DAO_THRESHOLD      = 100_000;   // uniqueActiveUsers для авто-DAO
+    uint256 private constant MIN_XP_TO_REGISTER = 3_000;     // ~30 сделок с разными людьми
+    uint256 private constant OVERTURN_XP_SLASH  = 200;       // XP штраф при overturn
     uint256 private constant DEFAULT_REWARD      = 5_000_000; // 5 USDC (6 decimals)
+    uint256 private constant FINALIZE_DELAY      = 1 hours;   // окно для owner/DAO чтобы overturn до финализации
 
     // -------- EVENTS --------
 
@@ -256,6 +257,14 @@ contract ArbiterRegistryFacet {
         uint8 agreementStatus = abi.decode(statusData, (uint8));
         if (agreementStatus != 4) revert NotDisputed();
 
+        // Арбитр не может быть стороной спора
+        (bool clientOk, bytes memory clientData) = agreement.staticcall(abi.encodeWithSignature("client()"));
+        (bool execOk,   bytes memory execData)   = agreement.staticcall(abi.encodeWithSignature("executor()"));
+        require(clientOk && execOk, "ArbiterRegistry: failed to read parties");
+        address agreementClient   = abi.decode(clientData,  (address));
+        address agreementExecutor = abi.decode(execData,    (address));
+        require(caller != agreementClient && caller != agreementExecutor, "ArbiterRegistry: arbiter is party");
+
         // Diamond становится арбитром в Agreement — это позволяет контролировать вердикт
         (bool setOk,) = agreement.call(
             abi.encodeWithSignature("setArbiter(address)", address(this))
@@ -326,6 +335,7 @@ contract ArbiterRegistryFacet {
         if (v.submittedAt == 0) revert NoVerdict();
         if (v.finalized) revert AlreadyFinalized();
         if (v.frozen) revert VerdictFrozenError();
+        require(block.timestamp >= v.submittedAt + FINALIZE_DELAY, "ArbiterRegistry: finalize delay not passed");
 
         // Защита от авто-удаления в clearDisputeClaim во время этого вызова
         v.executing = true;

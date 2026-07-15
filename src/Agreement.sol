@@ -267,7 +267,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 public resolvedAt;    // когда арбитр резолвил
 
     // Флаг финализации — предотвращает двойное завершение при гонке resolveDispute / triggerArbiterTimeout
-    bool private _finalized;
+    bool    private _finalized;
+    Status  private _finalStatus;
 
     // Extras: доп оплата за переделки/доп работу (клиент предлагает → исполнитель принимает)
     mapping(uint256 => Extra) public extras;
@@ -318,6 +319,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     // -------- ERRORS --------
 
     error NotClient();
+    error NotFactory();
     error NotExecutor();
     error NotArbiter();
     error NotParty();
@@ -387,6 +389,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         require(msg.sender == diamond, "Agreement: only Diamond");
         // Diamond сам может быть арбитром (Diamond-as-arbiter паттерн) — пропускаем проверку реестра
         if (newArbiter != address(0) && newArbiter != diamond) {
+            require(newArbiter != client && newArbiter != executor, "Agreement: arbiter is party");
             (bool ok, bytes memory data) = diamond.staticcall(
                 abi.encodeWithSignature("isRegisteredArbiter(address)", newArbiter)
             );
@@ -398,6 +401,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     // -------- STATUS VIEW --------
 
     function status() public view returns (Status) {
+        if (_finalized)       return _finalStatus;
         if (fundedAt == 0)    return Status.CREATED;
         if (activatedAt == 0) return Status.FUNDED;
 
@@ -465,7 +469,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     /// @notice Factory-funded path: USDC already transferred by factory
     /// Only factory can call this — used by deployAndFund()
     function fundFromFactory() external nonReentrant {
-        if (msg.sender != factory) revert NotClient();
+        if (msg.sender != factory) revert NotFactory();
         if (fundedAt != 0) revert AlreadyFunded();
 
         // Verify USDC balance is sufficient
@@ -550,6 +554,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     /// Можно поднять спор даже после markDone, если AUTO_APPROVE_WINDOW ещё не прошёл
     function raiseDispute() external {
         address sender = _msgSender();
+        if (_finalized) revert AlreadyFinalized();
         if (sender != client && sender != executor) revert NotParty();
         if (activatedAt == 0) revert NotActive();
         if (disputedAt != 0) revert AlreadyDisputed();
@@ -930,7 +935,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
     function _complete(Status newStatus) private {
         if (_finalized) revert AlreadyFinalized();
-        _finalized = true;
+        _finalized   = true;
+        _finalStatus = newStatus;
 
         // Обновляем Registry через Diamond
         ISignatureRegistry.AgreementStatus regStatus;
@@ -1007,15 +1013,6 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         for (uint256 i = 0; i < 20; i++) {
             hex_[2 + i * 2]     = _hexChar(uint8(b[i]) >> 4);
             hex_[3 + i * 2]     = _hexChar(uint8(b[i]) & 0xf);
-        }
-        return string(hex_);
-    }
-
-    function _bytes32Hex(bytes32 b) private pure returns (string memory) {
-        bytes memory hex_ = new bytes(64);
-        for (uint256 i = 0; i < 32; i++) {
-            hex_[i * 2]     = _hexChar(uint8(b[i]) >> 4);
-            hex_[i * 2 + 1] = _hexChar(uint8(b[i]) & 0xf);
         }
         return string(hex_);
     }

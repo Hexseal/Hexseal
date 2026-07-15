@@ -292,7 +292,7 @@ contract DiamondProxy {
         }
     }
 
-    receive() external payable {}
+    receive() external payable { revert("Diamond: ETH not accepted"); }
 }
 
 // ---------- DIAMOND CUT FACET ----------

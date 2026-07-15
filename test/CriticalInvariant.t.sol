@@ -231,7 +231,7 @@ contract CriticalInvariantTest is Test {
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
 
-        AgreementDeployer agDeployer = new AgreementDeployer();
+        AgreementDeployer agDeployer = new AgreementDeployer(address(diamond));
         RegistryFacet(address(diamond)).initRegistry(address(diamond));
         FactoryFacet(address(diamond)).initFactory(
             address(usdc),
@@ -321,6 +321,7 @@ contract CriticalInvariantTest is Test {
     function _resolveDispute(address agr, bool clientWins) internal {
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agr, clientWins);
+        vm.warp(block.timestamp + 1 hours + 1);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
     }
 

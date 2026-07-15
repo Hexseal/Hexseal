@@ -37,7 +37,6 @@ contract DeployFull is Script {
         OwnershipFacet         ownFacet     = new OwnershipFacet();
         RegistryFacet          regFacet     = new RegistryFacet();
         FactoryFacet           facFacet     = new FactoryFacet();
-        AgreementDeployer      agDeployer   = new AgreementDeployer();
         JobBoardFacet          jobBoard     = new JobBoardFacet();
         ServiceBoardFacet      serviceBoard = new ServiceBoardFacet();
         ArbiterRegistryFacet   arbiterFacet = new ArbiterRegistryFacet();
@@ -51,7 +50,6 @@ contract DeployFull is Script {
         console.log("OwnershipFacet:       ", address(ownFacet));
         console.log("RegistryFacet:        ", address(regFacet));
         console.log("FactoryFacet:         ", address(facFacet));
-        console.log("AgreementDeployer:    ", address(agDeployer));
         console.log("JobBoardFacet:        ", address(jobBoard));
         console.log("ServiceBoardFacet:    ", address(serviceBoard));
         console.log("ArbiterRegistryFacet: ", address(arbiterFacet));
@@ -127,6 +125,10 @@ contract DeployFull is Script {
         DiamondProxy diamond = new DiamondProxy(owner, initCuts, address(0), "");
         console.log("--- Diamond ---");
         console.log("DiamondProxy:         ", address(diamond));
+
+        // AgreementDeployer needs Diamond as authorizedCaller — deploy after Diamond is known
+        AgreementDeployer      agDeployer   = new AgreementDeployer(address(diamond));
+        console.log("AgreementDeployer:    ", address(agDeployer));
 
         // ── 4. Инициализация Registry + Factory ──────────────────────────────
         RegistryFacet(address(diamond)).initRegistry(address(diamond));

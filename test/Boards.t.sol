@@ -202,7 +202,7 @@ contract BoardsTest is Test {
         RegistryFacet(address(diamond)).initRegistry(address(diamond));
 
         // Init Factory
-        AgreementDeployer agDeployer = new AgreementDeployer();
+        AgreementDeployer agDeployer = new AgreementDeployer(address(diamond));
         FactoryFacet(address(diamond)).initFactory(
             address(usdc),
             feeRecipient,
