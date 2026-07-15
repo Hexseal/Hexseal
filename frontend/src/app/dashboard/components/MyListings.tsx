@@ -1002,7 +1002,7 @@ function ClosedJobsSection({ jobs }: { jobs: { id: bigint; job: JobRecord }[] })
 
 // ── My Jobs (client postings) ─────────────────────────────────────────────────
 
-export function MyJobs({ address, onDealCreated, readOnly }: { address: string; onDealCreated?: () => void; readOnly?: boolean }) {
+export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { address: string; onDealCreated?: () => void; readOnly?: boolean; hideClosed?: boolean }) {
   const tj = useTranslations('dashboard.listings');
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
@@ -1171,7 +1171,7 @@ export function MyJobs({ address, onDealCreated, readOnly }: { address: string; 
         </div>
       )}
 
-      {closed.length > 0 && (
+      {!hideClosed && closed.length > 0 && (
         <ClosedJobsSection jobs={closed} />
       )}
 

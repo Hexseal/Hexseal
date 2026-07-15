@@ -409,7 +409,7 @@ export default function ProfilePage() {
                       exit={{ opacity: 0, y: -3 }}
                       transition={{ type: 'tween', duration: 0.13 }}
                     >
-                      {listingsSub === 'jobs'     && <MyJobs address={profileAddress as `0x${string}`} onDealCreated={() => {}} readOnly={!isOwner} />}
+                      {listingsSub === 'jobs'     && <MyJobs address={profileAddress as `0x${string}`} onDealCreated={() => {}} readOnly={!isOwner} hideClosed />}
                       {listingsSub === 'services' && <MyServices address={profileAddress as `0x${string}`} onDealCreated={() => {}} readOnly={!isOwner} />}
                       {listingsSub === 'requests' && isOwner && <MyClientRequests address={profileAddress as `0x${string}`} />}
                     </motion.div>
