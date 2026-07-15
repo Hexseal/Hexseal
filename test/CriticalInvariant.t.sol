@@ -238,7 +238,7 @@ contract CriticalInvariantTest is Test {
         FactoryFacet(address(diamond)).initFactory(
             address(usdc),
             feeRecipient,
-            address(0),
+            address(0xDEAD),
             address(diamond),
             address(agDeployer)
         );

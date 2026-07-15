@@ -261,7 +261,7 @@ contract ReentrancyTest is Test {
         AgreementDeployer agDeployer = new AgreementDeployer(address(diamond));
         RegistryFacet(address(diamond)).initRegistry(address(diamond));
         FactoryFacet(address(diamond)).initFactory(
-            address(malUSDC), feeRecipient, address(0), address(diamond), address(agDeployer)
+            address(malUSDC), feeRecipient, address(0xDEAD), address(diamond), address(agDeployer)
         );
         ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
     }

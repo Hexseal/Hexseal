@@ -208,7 +208,7 @@ contract BoardsTest is Test {
         FactoryFacet(address(diamond)).initFactory(
             address(usdc),
             feeRecipient,
-            address(0), // no forwarder
+            address(0xDEAD),
             address(diamond),
             address(agDeployer)
         );

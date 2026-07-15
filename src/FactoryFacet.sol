@@ -111,6 +111,7 @@ contract FactoryFacet {
 
         if (usdc_ == address(0)) revert ZeroAddress();
         if (feeRecipient_ == address(0)) revert ZeroAddress();
+        if (trustedForwarder_ == address(0)) revert ZeroAddress();
         if (diamond_ == address(0)) revert ZeroAddress();
         if (agreementDeployer_ == address(0)) revert ZeroAddress();
 
