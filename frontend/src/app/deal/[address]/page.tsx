@@ -104,8 +104,10 @@ function formatTimeLeft(seconds: bigint | number | undefined, expiredLabel = "Ex
   const s = Number(BigInt(seconds));
   const days = Math.floor(s / 86400);
   const hours = Math.floor((s % 86400) / 3600);
+  const mins = Math.floor((s % 3600) / 60);
   if (days > 0) return `${days}d ${hours}h`;
-  return `${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
 }
 
 export default function DealDetailPage() {
@@ -123,6 +125,7 @@ export default function DealDetailPage() {
   const [proposeDesc, setProposeDesc] = useState('');
   const [extrasList, setExtrasList] = useState<Array<{ id: number; amount: bigint; terms: string; status: number }>>([]);
   const [extrasLoading, setExtrasLoading] = useState(false);
+  const [extrasVersion, setExtrasVersion] = useState(0);
   const t = useTranslations();
 
   const AGREEMENT_STATUS: Record<number, { label: string; color: string; dot: string; icon: React.ReactNode }> = {
@@ -225,7 +228,7 @@ export default function DealDetailPage() {
       setExtrasList(results.filter(Boolean) as typeof extrasList);
     }).finally(() => setExtrasLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextExtraId, publicClient, dealAddress, isValidDeal]);
+  }, [nextExtraId, extrasVersion, publicClient, dealAddress, isValidDeal]);
 
   // Parse details
   // viem v2 returns named-output results as an object { field_: value }
@@ -313,8 +316,8 @@ export default function DealDetailPage() {
     ? BigInt(Math.max(0, Math.round(Number(parsed.markedDoneAt) + Number(AUTO_APPROVE_WINDOW) - now)))
     : undefined;
 
-  const handleAction = async (fn: string, successMsg: string, args: unknown[] = []) => {
-    if (!isValidDeal || !walletClient || !publicClient) return;
+  const handleAction = async (fn: string, successMsg: string, args: unknown[] = []): Promise<boolean> => {
+    if (!isValidDeal || !walletClient || !publicClient) return false;
     setIsFunding(true);
     try {
       toast(t("common.confirm_in_wallet"));
@@ -338,9 +341,11 @@ export default function DealDetailPage() {
         }
       }
 
-      setTimeout(() => refetchDetails(), 2000);
+      setTimeout(() => { refetchDetails(); refetchStatus(); }, 2000);
+      return true;
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
+      return false;
     } finally {
       setIsFunding(false);
     }
@@ -378,32 +383,29 @@ export default function DealDetailPage() {
   const handleRaiseDispute = async () => {
     if (!isValidDeal || !address || !walletClient || !publicClient) return;
     setDisputeModal(false);
-    try {
-      if (disputeReason.trim()) {
-        try {
-          const ts = Math.floor(Date.now() / 1000);
-          const reasonHash = keccak256(new TextEncoder().encode(disputeReason.trim()));
-          const msg = `hexseal:dispute-reason:${dealAddress!.toLowerCase()}:${ts}:${reasonHash}`;
-          const sig = await walletClient.signMessage({ account: address as `0x${string}`, message: msg });
-          fetch('/api/dispute-reason', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agreement: dealAddress,
-              raiser: address,
-              reason: disputeReason.trim(),
-              ts,
-              sig,
-            }),
-          }).catch(() => {});
-        } catch {
-          // non-critical
-        }
+    if (disputeReason.trim()) {
+      try {
+        const ts = Math.floor(Date.now() / 1000);
+        const reasonHash = keccak256(new TextEncoder().encode(disputeReason.trim()));
+        const msg = `hexseal:dispute-reason:${dealAddress!.toLowerCase()}:${ts}:${reasonHash}`;
+        const sig = await walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+        fetch('/api/dispute-reason', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agreement: dealAddress,
+            raiser: address,
+            reason: disputeReason.trim(),
+            ts,
+            sig,
+          }),
+        }).catch(() => {});
+      } catch {
+        // non-critical
       }
-      await handleAction('raiseDispute', 'Dispute raised!');
-    } finally {
-      setDisputeReason('');
     }
+    const ok = await handleAction('raiseDispute', 'Dispute raised!');
+    if (ok) setDisputeReason('');
   };
 
   const handleProposeExtra = async () => {
@@ -434,7 +436,7 @@ export default function DealDetailPage() {
       toast(t("common.confirm_in_wallet"));
       await sendAgreementGasless(walletClient, publicClient, dealAddress as `0x${string}`, fn, AGREEMENT_ABI as Abi, [BigInt(extraId)]);
       toast.success(fn === 'acceptExtra' ? 'Extra accepted' : 'Extra rejected');
-      setTimeout(() => { refetchNextExtraId(); }, 3000);
+      setTimeout(() => { refetchNextExtraId(); setExtrasVersion(v => v + 1); }, 3000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
     } finally {
@@ -646,10 +648,10 @@ export default function DealDetailPage() {
             parsed!.status === 5 ? 'border-purple-500/20 bg-purple-500/5' :
                                    'border-white/[0.07] bg-white/[0.02]'
           }`}>
-            <CheckCircle className={`w-4 h-4 flex-shrink-0 ${
-              parsed!.status === 3 ? 'text-green-400' :
-              parsed!.status === 5 ? 'text-purple-400' : 'text-white/30'
-            }`} />
+            {parsed!.status === 6
+              ? <ArrowRight className="w-4 h-4 flex-shrink-0 text-white/30" />
+              : <CheckCircle className={`w-4 h-4 flex-shrink-0 ${parsed!.status === 3 ? 'text-green-400' : 'text-purple-400'}`} />
+            }
             <div>
               <p className="text-sm font-medium text-white/70">
                 {parsed!.status === 3 ? t("deal_status.completed") :
