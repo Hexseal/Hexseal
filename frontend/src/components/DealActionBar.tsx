@@ -217,11 +217,19 @@ export function DealActionBar({ agreementAddr }: Props) {
     if (!walletClient || !publicClient || !address) { toast.error('Wallet not connected'); return; }
     setDisputeModal(false);
     if (disputeReason.trim()) {
-      fetch('/api/dispute-reason', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agreement: agreementAddr, raiser: address, reason: disputeReason.trim() }),
-      }).catch(() => {});
+      try {
+        const ts = Math.floor(Date.now() / 1000);
+        const reasonHash = keccak256(new TextEncoder().encode(disputeReason.trim()));
+        const msg = `hexseal:dispute-reason:${agreementAddr.toLowerCase()}:${ts}:${reasonHash}`;
+        const sig = await walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+        fetch('/api/dispute-reason', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agreement: agreementAddr, raiser: address, reason: disputeReason.trim(), ts, sig }),
+        }).catch(() => {});
+      } catch {
+        // non-critical — proceed with raiseDispute even if signing fails
+      }
     }
     await run('raiseDispute', 'Dispute raised!');
     setDisputeReason('');

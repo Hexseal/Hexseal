@@ -5,7 +5,7 @@ import { Provider as UrqlProvider } from 'urql'
 import { createGraphClient } from '@/lib/graph'
 
 const graphClient = createGraphClient()
-import { WagmiProvider, createStorage, useAccount } from "wagmi";
+import { WagmiProvider, createStorage, useAccount, useWalletClient } from "wagmi";
 import { http, fallback } from "viem";
 import {
   RainbowKitProvider,
@@ -123,11 +123,14 @@ function XmtpNotificationsMount() {
 // Keeps the relayer's subscription list fresh after restarts or expiry.
 function PushAutoMount() {
   const { address } = useAccount();
+  const { data: walletClient } = useWalletClient();
   useEffect(() => {
-    if (!address || !isPushSupported()) return;
+    if (!address || !isPushSupported() || !walletClient) return;
     if (Notification.permission !== 'granted') return;
-    enablePush(address).catch(() => {});
-  }, [address]);
+    const signMsg = (msg: string) =>
+      walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+    enablePush(address, signMsg).catch(() => {});
+  }, [address, walletClient]);
   return null;
 }
 

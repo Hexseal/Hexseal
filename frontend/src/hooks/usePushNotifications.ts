@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useWalletClient } from 'wagmi';
 import { isPushSupported, getPushSubscription, enablePush, disablePush } from '@/lib/webpush';
 
 export function usePushNotifications() {
   const { address } = useAccount();
+  const { data: walletClient } = useWalletClient();
   const [supported,   setSupported]   = useState(false);
   const [subscribed,  setSubscribed]  = useState(false);
   const [permission,  setPermission]  = useState<NotificationPermission>('default');
@@ -20,20 +21,25 @@ export function usePushNotifications() {
     getPushSubscription().then(sub => setSubscribed(!!sub));
   }, []);
 
+  const buildSignMsg = useCallback((msg: string) => {
+    if (!walletClient || !address) throw new Error('no wallet');
+    return walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+  }, [walletClient, address]);
+
   // Auto-resubscribe silently when wallet connects and permission was already granted.
   // This re-registers the subscription with the relayer after restarts, without prompting.
   useEffect(() => {
-    if (!address || !supported) return;
+    if (!address || !supported || !walletClient) return;
     if (Notification.permission !== 'granted') return;
-    enablePush(address).catch(() => {});
-  }, [address, supported]);
+    enablePush(address, buildSignMsg).catch(() => {});
+  }, [address, supported, walletClient, buildSignMsg]);
 
   const enable = useCallback(async () => {
     if (!address || !supported) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await enablePush(address);
+      const result = await enablePush(address, buildSignMsg);
       setPermission(Notification.permission);
       if (result === 'ok') {
         setSubscribed(true);
@@ -47,7 +53,7 @@ export function usePushNotifications() {
     } finally {
       setLoading(false);
     }
-  }, [address, supported]);
+  }, [address, supported, buildSignMsg]);
 
   const disable = useCallback(async () => {
     if (!address) return;

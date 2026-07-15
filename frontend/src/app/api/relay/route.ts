@@ -291,6 +291,14 @@ export async function POST(req: NextRequest) {
           '0x1f2a2005': 'ZeroAmount',
           '0x2e020977': 'ExtraNotPending',
           '0x475a2535': 'AlreadyFinalized',
+          '0xd92e233d': 'ZeroAddress',
+          '0xd45bbaf9': 'ClientEqualsExecutor',
+          '0xd04b63aa': 'NotDiamond',
+          '0xad32732c': 'ArbiterIsParty',
+          '0xa22d819e': 'ArbiterNotRegistered',
+          '0xf4d678b8': 'InsufficientBalance',
+          '0x32cc7236': 'NotFactory',
+          '0x90b8ec18': 'TransferFailed',
         };
 
         let reason = 'Inner call reverted';

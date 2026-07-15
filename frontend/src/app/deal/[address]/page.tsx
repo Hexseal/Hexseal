@@ -7,7 +7,7 @@ import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI, USDC_ABI } from "@/config/contra
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from "@/config/constants";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
-import { formatUnits, parseUnits, isAddress, type Abi } from "viem";
+import { formatUnits, parseUnits, isAddress, keccak256, type Abi } from "viem";
 import {
   Loader2,
   CheckCircle,
@@ -379,17 +379,26 @@ export default function DealDetailPage() {
     if (!isValidDeal || !address || !walletClient || !publicClient) return;
     setDisputeModal(false);
     try {
-      // Save reason to storage (best-effort, non-blocking)
       if (disputeReason.trim()) {
-        fetch('/api/dispute-reason', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            agreement: dealAddress,
-            raiser: address,
-            reason: disputeReason.trim(),
-          }),
-        }).catch(() => {});
+        try {
+          const ts = Math.floor(Date.now() / 1000);
+          const reasonHash = keccak256(new TextEncoder().encode(disputeReason.trim()));
+          const msg = `hexseal:dispute-reason:${dealAddress!.toLowerCase()}:${ts}:${reasonHash}`;
+          const sig = await walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+          fetch('/api/dispute-reason', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agreement: dealAddress,
+              raiser: address,
+              reason: disputeReason.trim(),
+              ts,
+              sig,
+            }),
+          }).catch(() => {});
+        } catch {
+          // non-critical
+        }
       }
       await handleAction('raiseDispute', 'Dispute raised!');
     } finally {

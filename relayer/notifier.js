@@ -1,5 +1,5 @@
 /**
- * notifier.js — XMTP event notifier
+ * notifier.js — XMTP v3 event notifier
  *
  * Watches on-chain Agreement events and sends XMTP DMs to deal parties.
  * Runs as a standalone process: `node relayer/notifier.js`
@@ -9,26 +9,36 @@
  *   NOTIFIER_PRIVATE_KEY    — wallet key for the XMTP notifier identity
  *   DIAMOND_ADDRESS         — Diamond proxy address
  *
- * Install dependency: npm install @xmtp/xmtp-js
+ * Optional:
+ *   NOTIFIER_DB_PATH        — path for XMTP MLS database (default: storage/xmtp-notifier)
  */
 
-import { Client } from '@xmtp/xmtp-js';
+import { Client, IdentifierKind } from '@xmtp/node-sdk';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 dotenv.config();
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const RPC_URL        = process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
 const NOTIFIER_KEY   = process.env.NOTIFIER_PRIVATE_KEY;
 const DIAMOND        = process.env.DIAMOND_ADDRESS;
-const POLL_INTERVAL  = 60_000; // ms — how often to check for new agreements
+const POLL_INTERVAL  = 60_000; // ms
+const DB_PATH        = process.env.NOTIFIER_DB_PATH
+  ?? path.join(__dirname, '../storage/xmtp-notifier');
 
 if (!NOTIFIER_KEY) {
   console.error('[notifier] NOTIFIER_PRIVATE_KEY is required');
   process.exit(1);
 }
+
+fs.mkdirSync(DB_PATH, { recursive: true });
 
 // ─── Contract ABIs ───────────────────────────────────────────────────────────
 
@@ -53,9 +63,21 @@ const AGREEMENT_ABI = [
 // ─── Setup ───────────────────────────────────────────────────────────────────
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
-const notifierWallet = new ethers.Wallet(NOTIFIER_KEY, provider);
+const notifierWallet = new ethers.Wallet(NOTIFIER_KEY);
 
 console.log('[notifier] wallet:', notifierWallet.address);
+
+const notifierSigner = {
+  type: 'EOA',
+  getIdentifier: () => ({
+    identifier: notifierWallet.address.toLowerCase(),
+    identifierKind: IdentifierKind.Ethereum,
+  }),
+  signMessage: async (message) => {
+    const sig = await notifierWallet.signMessage(message);
+    return ethers.getBytes(sig);
+  },
+};
 
 /** @type {Client} */
 let xmtp;
@@ -66,8 +88,11 @@ const watched = new Set();
 // ─── XMTP helpers ────────────────────────────────────────────────────────────
 
 async function initXmtp() {
-  xmtp = await Client.create(notifierWallet, { env: 'production' });
-  console.log('[notifier] XMTP ready:', xmtp.address);
+  xmtp = await Client.create(notifierSigner, {
+    env: 'production',
+    dbPath: DB_PATH,
+  });
+  console.log('[notifier] XMTP ready:', xmtp.inboxId);
 }
 
 /**
@@ -78,10 +103,16 @@ async function initXmtp() {
 async function notify(to, text) {
   if (!to || to === ethers.ZeroAddress) return;
   try {
-    const canMessage = await Client.canMessage(to, { env: 'production' });
-    if (!canMessage) return; // recipient not on XMTP yet
-    const convo = await xmtp.conversations.newConversation(to);
-    await convo.send(text);
+    const canMsg = await xmtp.canMessage([{
+      identifier: to.toLowerCase(),
+      identifierKind: IdentifierKind.Ethereum,
+    }]);
+    if (!canMsg.get(to.toLowerCase())) return; // recipient not on XMTP yet
+    const dm = await xmtp.conversations.createDmWithIdentifier({
+      identifier: to.toLowerCase(),
+      identifierKind: IdentifierKind.Ethereum,
+    });
+    await dm.send(text);
     console.log('[notifier] →', to.slice(0, 8), text.slice(0, 60));
   } catch (e) {
     console.warn('[notifier] DM failed to', to.slice(0, 8), e.message);
@@ -203,7 +234,6 @@ async function main() {
   await initXmtp();
   await loadAgreements();
 
-  // Poll for new agreements
   setInterval(pollNewAgreements, POLL_INTERVAL);
 
   console.log('[notifier] running — polling every', POLL_INTERVAL / 1000, 's');

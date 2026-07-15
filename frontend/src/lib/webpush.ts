@@ -32,7 +32,10 @@ export async function getPushSubscription(): Promise<PushSubscription | null> {
   return reg?.pushManager.getSubscription() ?? null;
 }
 
-export async function enablePush(address: string): Promise<'ok' | 'denied' | 'error'> {
+export async function enablePush(
+  address: string,
+  signMessage?: (msg: string) => Promise<string>
+): Promise<'ok' | 'denied' | 'error'> {
   if (!isPushSupported() || !address) return 'error';
 
   const permission = await Notification.requestPermission();
@@ -50,10 +53,15 @@ export async function enablePush(address: string): Promise<'ok' | 'denied' | 'er
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
     });
 
+    if (!signMessage) return 'ok';
+
+    const msg = `hexseal:push-subscribe:${address.toLowerCase()}:${subscription.endpoint}`;
+    const sig = await signMessage(msg);
+
     const res = await fetch(`${RELAYER_URL}/push/subscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: address.toLowerCase(), subscription }),
+      body: JSON.stringify({ address: address.toLowerCase(), subscription, sig }),
     });
 
     return res.ok ? 'ok' : 'error';

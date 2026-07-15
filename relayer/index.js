@@ -70,7 +70,7 @@ async function sendPush(address, payload) {
 // ─── Agreement ABI ────────────────────────────────────────────────────────────
 
 const AGREEMENT_MINI_ABI = [
-  'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, bytes32 termsHash_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
+  'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, string terms_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
 ];
 
 const AGR_STATUS_EVENT_ABI = [
@@ -373,10 +373,16 @@ app.use('/files', (req, res, next) => {
   next();
 }, express.static(DIR_FILES, { maxAge: '1h' }));
 
+// TRUST_PROXY=true only if running behind a reverse proxy (nginx/caddy) that sets
+// X-Forwarded-For correctly. Without it, the header is spoofable by any client.
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+
 function clientIp(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0].trim()
-    || req.socket.remoteAddress
-    || 'unknown';
+  if (TRUST_PROXY) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) return forwarded.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || 'unknown';
 }
 
 // ─── Core routes ──────────────────────────────────────────────────────────────
@@ -538,16 +544,36 @@ app.post('/files/presign', (req, res) => {
   }
 });
 
-// ── Small encrypted file upload (streaming, up to 5 GB) ──────────────────────
+// ── Small encrypted file upload (streaming, size-limited) ────────────────────
+
+const MAX_FILE_SIZE   = 5 * 1024 * 1024 * 1024; // 5 GB — encrypted chat files
+const MAX_PUBLIC_SIZE =           5 * 1024 * 1024; // 5 MB — avatars, profiles
+const MAX_PART_SIZE   =          50 * 1024 * 1024; // 50 MB — per multipart chunk
+
+function streamWithSizeLimit(req, res, filePath, maxBytes) {
+  let received = 0;
+  let aborted  = false;
+  const ws = fs.createWriteStream(filePath);
+  req.on('data', (chunk) => {
+    received += chunk.length;
+    if (!aborted && received > maxBytes) {
+      aborted = true;
+      ws.destroy();
+      fs.unlink(filePath, () => {});
+      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)` });
+      req.destroy();
+    }
+  });
+  req.pipe(ws);
+  ws.on('finish', () => { if (!aborted && !res.headersSent) res.status(200).end(); });
+  ws.on('error', (err) => { if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); } });
+  req.on('error', () => ws.destroy());
+}
 
 app.put('/files/upload-put/:key', (req, res) => {
   const key = safeKey(req.params.key);
   if (!key) return res.status(400).json({ error: 'Invalid key' });
-  const ws = fs.createWriteStream(path.join(DIR_FILES, key));
-  req.pipe(ws);
-  ws.on('finish', () => res.status(200).end());
-  ws.on('error', (err) => { console.error('[files/upload-put]', err.message); res.status(500).json({ error: 'Write error' }); });
-  req.on('error', () => ws.destroy());
+  streamWithSizeLimit(req, res, path.join(DIR_FILES, key), MAX_FILE_SIZE);
 });
 
 // ── URL refresh (local files don't expire by URL, only by TTL cleanup) ────────
@@ -660,12 +686,8 @@ app.put('/files/public-put/:key', async (req, res) => {
     return;
   }
 
-  // ── Non-profile files: stream directly ─────────────────────────────────
-  const ws = fs.createWriteStream(path.join(DIR_PUBLIC, key));
-  req.pipe(ws);
-  ws.on('finish', () => res.status(200).end());
-  ws.on('error', (err) => { console.error('[files/public-put]', err.message); res.status(500).json({ error: 'Write error' }); });
-  req.on('error', () => ws.destroy());
+  // ── Non-profile files: stream with size limit ───────────────────────────
+  streamWithSizeLimit(req, res, path.join(DIR_PUBLIC, key), MAX_PUBLIC_SIZE);
 });
 
 // ── Multipart create ──────────────────────────────────────────────────────────
@@ -704,11 +726,7 @@ app.put('/files/part/:uploadId/:partNum', (req, res) => {
   if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Upload session not found' });
 
   const filename = String(partNum).padStart(6, '0');
-  const ws = fs.createWriteStream(path.join(dir, filename));
-  req.pipe(ws);
-  ws.on('finish', () => res.status(200).end());
-  ws.on('error', (err) => { console.error('[files/part]', err.message); res.status(500).json({ error: err.message }); });
-  req.on('error', () => ws.destroy());
+  streamWithSizeLimit(req, res, path.join(dir, filename), MAX_PART_SIZE);
 });
 
 // ── Multipart complete — concatenate chunks ───────────────────────────────────
@@ -771,16 +789,27 @@ app.get('/push/vapid-key', (_req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
+// POST /push/subscribe — requires ownership proof.
+// Client signs: "hexseal:push-subscribe:<address>:<endpoint>"
 app.post('/push/subscribe', async (req, res) => {
   try {
-    const { address, subscription } = req.body || {};
+    const { address, subscription, sig } = req.body || {};
     if (!address || !subscription?.endpoint) {
       return res.status(400).json({ error: 'address and subscription required' });
     }
-    const key = address.toLowerCase();
-    const existing = _pushSubs.get(key) ?? [];
+    if (!sig) return res.status(401).json({ error: 'Missing sig — sign hexseal:push-subscribe:<address>:<endpoint>' });
+
+    const addr = address.toLowerCase();
+    const message  = `hexseal:push-subscribe:${addr}:${subscription.endpoint}`;
+    let recovered;
+    try { recovered = ethers.verifyMessage(message, sig).toLowerCase(); }
+    catch { return res.status(400).json({ error: 'Invalid signature' }); }
+
+    if (recovered !== addr) return res.status(403).json({ error: 'Signature mismatch' });
+
+    const existing = _pushSubs.get(addr) ?? [];
     if (!existing.some(s => s.endpoint === subscription.endpoint)) {
-      _pushSubs.set(key, [...existing, subscription]);
+      _pushSubs.set(addr, [...existing, subscription]);
       savePushSubs();
     }
     res.json({ ok: true });
@@ -868,19 +897,55 @@ app.get('/dispute-reason', (req, res) => {
   res.json(_disputeReasons[agreement] ?? { reason: null });
 });
 
-app.post('/dispute-reason', express.json(), (req, res) => {
-  const { agreement, raiser, reason } = req.body ?? {};
+// POST /dispute-reason — requires Ethereum signature from the raiser (client or executor).
+// Message: "hexseal:dispute-reason:<agreement>:<ts>:<keccak256(reason)>"
+// Timestamp must be within ±5 minutes. Signer must be client or executor of the agreement.
+app.post('/dispute-reason', async (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(ip)) {
+    return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
+  }
+
+  const { agreement, reason, ts, sig } = req.body ?? {};
   if (!agreement || !/^0x[0-9a-f]{40}$/i.test(agreement)) return res.status(400).json({ error: 'Invalid agreement address' });
   if (!reason || !reason.trim()) return res.status(400).json({ error: 'Reason is required' });
   if (reason.length > 2000) return res.status(400).json({ error: 'Reason too long (max 2000 chars)' });
-  _disputeReasons[agreement.toLowerCase()] = {
-    agreement: agreement.toLowerCase(),
-    raiser: raiser?.toLowerCase() ?? '',
-    reason: reason.trim(),
-    timestamp: Date.now(),
-  };
-  _saveDisputeReasons();
-  res.json({ ok: true });
+  if (!ts || !sig) return res.status(401).json({ error: 'Missing ts or sig' });
+
+  // Replay protection: timestamp must be within ±5 minutes
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSec - Number(ts)) > 300) {
+    return res.status(401).json({ error: 'Timestamp out of window' });
+  }
+
+  try {
+    // Recover signer from EIP-191 signed message
+    const reasonHash = ethers.keccak256(ethers.toUtf8Bytes(reason.trim()));
+    const message    = `hexseal:dispute-reason:${agreement.toLowerCase()}:${ts}:${reasonHash}`;
+    const raiser     = ethers.verifyMessage(message, sig).toLowerCase();
+
+    // Verify on-chain: signer must be client or executor of this agreement
+    const agr        = new ethers.Contract(agreement, AGREEMENT_MINI_ABI, provider);
+    const details    = await agr.getDetails();
+    const onChainClient   = details.client_?.toLowerCase();
+    const onChainExecutor = details.executor_?.toLowerCase();
+
+    if (raiser !== onChainClient && raiser !== onChainExecutor) {
+      return res.status(403).json({ error: 'Not a party to this agreement' });
+    }
+
+    _disputeReasons[agreement.toLowerCase()] = {
+      agreement: agreement.toLowerCase(),
+      raiser,
+      reason: reason.trim(),
+      timestamp: Date.now(),
+    };
+    _saveDisputeReasons();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[dispute-reason] error:', err.message);
+    res.status(500).json({ error: 'Internal error' });
+  }
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
