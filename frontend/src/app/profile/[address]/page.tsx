@@ -135,6 +135,44 @@ function Tab({ active, onClick, children, count }: {
   );
 }
 
+// ─── Bottom-half skeleton — one block for stats + xp bar + tabs + content, all of
+// which key off the same useMyAgreements isLoading. Previously this was checked
+// independently in three places, so the three sections could flash out of step. ──
+
+function ProfileBottomSkeleton() {
+  return (
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3" style={{ animationDelay: `${i * 0.05}s` }}>
+            <div className="w-9 h-9 rounded-[12px] bg-white/[0.06] flex-shrink-0" />
+            <div className="min-w-0 space-y-2">
+              <div className="h-2.5 w-16 rounded bg-white/[0.06]" />
+              <div className="h-5 w-10 rounded bg-white/[0.08]" />
+              <div className="h-2 w-12 rounded bg-white/[0.04]" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="h-3 w-16 rounded bg-white/[0.06]" />
+          <div className="h-3 w-10 rounded bg-white/[0.06]" />
+        </div>
+        <div className="h-1.5 rounded-full bg-white/[0.06]" />
+      </div>
+      <div className="flex gap-1">
+        {[0, 1, 2].map(i => <div key={i} className="animate-pulse h-9 w-24 rounded-[10px] bg-white/[0.04]" />)}
+      </div>
+      <div className="space-y-3">
+        {[0, 1, 2].map(i => (
+          <div key={i} className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] h-[72px]" style={{ animationDelay: `${i * 0.1}s` }} />
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 type TabKey = 'listings' | 'deals' | 'history';
@@ -314,90 +352,57 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* ── Stats row ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {isLoading ? (
-          [0, 1, 2, 3].map(i => (
-            <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3 flex items-center gap-3" style={{ animationDelay: `${i * 0.05}s` }}>
-              <div className="w-9 h-9 rounded-[12px] bg-white/[0.06] flex-shrink-0" />
-              <div className="min-w-0 space-y-2">
-                <div className="h-2.5 w-16 rounded bg-white/[0.06]" />
-                <div className="h-5 w-10 rounded bg-white/[0.08]" />
-                <div className="h-2 w-12 rounded bg-white/[0.04]" />
-              </div>
-            </div>
-          ))
-        ) : (
-          <>
+      {/* ── Bottom half: stats + xp bar + tabs + content — one loading guard, since
+           all of it keys off the same useMyAgreements isLoading. ── */}
+      {isLoading ? (
+        <ProfileBottomSkeleton />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard index={0} icon={<Zap className="w-4 h-4 text-violet-400" />}           label={t("dashboard.stat_level")}     value={t(level.labelKey)} sub={`${xp} XP`} />
             <StatCard index={1} icon={<Activity className="w-4 h-4 text-sky-400" />}         label={t("dashboard.stat_active")}    value={activeDeals.length} sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
             <StatCard index={2} icon={<CheckCircle className="w-4 h-4 text-emerald-400" />}  label={t("dashboard.stat_completed")} value={completed} sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
             <StatCard index={3} icon={<DollarSign className="w-4 h-4 text-amber-400" />}     label={t("dashboard.stat_volume")}   value={fmtVolume(totalVolume)} sub={t("dashboard.stat_usdc_total")} />
-          </>
-        )}
-      </div>
-
-      {/* ── XP bar ── */}
-      {isLoading ? (
-        <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="h-3 w-16 rounded bg-white/[0.06]" />
-            <div className="h-3 w-10 rounded bg-white/[0.06]" />
           </div>
-          <div className="h-1.5 rounded-full bg-white/[0.06]" />
-        </div>
-      ) : (
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3, type: 'tween', duration: 0.25, ease: 'easeOut' }}
-          className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
-          style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Star className="w-3.5 h-3.5 text-white/30" />
-              <span className={`text-xs font-semibold ${level.color}`}>{t(level.labelKey)}</span>
+
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3, type: 'tween', duration: 0.25, ease: 'easeOut' }}
+            className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Star className="w-3.5 h-3.5 text-white/30" />
+                <span className={`text-xs font-semibold ${level.color}`}>{t(level.labelKey)}</span>
+              </div>
+              <span className="text-xs font-mono text-white/30">{xp} XP</span>
             </div>
-            <span className="text-xs font-mono text-white/30">{xp} XP</span>
-          </div>
-          <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
-            <motion.div
-              className={`h-full rounded-full origin-left ${level.bar}`}
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: Math.min(100, level.pct) / 100 }}
-              transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
-            />
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── Tabs ── */}
-      <div>
-        <div className="flex gap-1 overflow-x-auto scrollbar-none mb-4">
-              <Tab active={tab === 'listings'} onClick={() => setTab('listings')}>
-              {t("dashboard.tabs.listings")}
-            </Tab>
-          <Tab active={tab === 'deals'} onClick={() => setTab('deals')} count={activeDeals.length}>
-            {t("dashboard.tabs.deals")}
-          </Tab>
-          <Tab active={tab === 'history'} onClick={() => setTab('history')} count={historyDeals.length}>
-            {t("dashboard.tabs.history")}
-          </Tab>
-        </div>
-
-        {isLoading ? (
-          <div className="space-y-3">
-            {[0, 1, 2].map(i => (
-              <div
-                key={i}
-                className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] h-[72px]"
-                style={{ animationDelay: `${i * 0.1}s` }}
+            <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
+              <motion.div
+                className={`h-full rounded-full origin-left ${level.bar}`}
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: Math.min(100, level.pct) / 100 }}
+                transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
               />
-            ))}
-          </div>
-        ) : (
-          <AnimatePresence mode="wait" initial={false}>
+            </div>
+          </motion.div>
+
+          <div>
+            <div className="flex gap-1 overflow-x-auto scrollbar-none mb-4">
+                  <Tab active={tab === 'listings'} onClick={() => setTab('listings')}>
+                  {t("dashboard.tabs.listings")}
+                </Tab>
+              <Tab active={tab === 'deals'} onClick={() => setTab('deals')} count={activeDeals.length}>
+                {t("dashboard.tabs.deals")}
+              </Tab>
+              <Tab active={tab === 'history'} onClick={() => setTab('history')} count={historyDeals.length}>
+                {t("dashboard.tabs.history")}
+              </Tab>
+            </div>
+
+            <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={tab}
               initial={{ opacity: 0, y: 6 }}
@@ -486,8 +491,9 @@ export default function ProfilePage() {
               )}
             </motion.div>
           </AnimatePresence>
-        )}
-      </div>
+          </div>
+        </>
+      )}
 
     </div>
   );

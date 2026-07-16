@@ -668,6 +668,13 @@ function ChatHubPageInner() {
 }
 
 // ─── Page wrapper (Suspense for useSearchParams) ──────────────────────────────
+// This boundary is required, not redundant: Next.js's static-generation check for
+// useSearchParams() is per-page, so it doesn't credit the Suspense that
+// ClientLayout puts around ChatLayoutInner (which needs one for its own
+// useSearchParams() call) — removing this one breaks `next build` on /chat with
+// "useSearchParams() should be wrapped in a suspense boundary". Both boundaries
+// are independently mandatory; the double-fallback-flash on navigation this
+// causes is a real but lower-priority cosmetic cost, not something to "fix" here.
 
 export default function ChatHubPage() {
   return (

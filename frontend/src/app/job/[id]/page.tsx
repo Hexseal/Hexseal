@@ -268,7 +268,10 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       >
 
         {/* ── Status guidance banner ── */}
-        {job.status === 0 && isClient && (
+        {/* Gated on !applicantsLoading too: applicants is undefined until it resolves,
+            so rendering this before then would flash "waiting for applicants" even
+            when applicants already exist, then flip once the count comes in. */}
+        {job.status === 0 && isClient && !applicantsLoading && (
           <div className={`rounded-[22px] border px-4 py-3 flex items-start gap-3 ${
             (applicants?.length ?? 0) > 0
               ? 'border-violet-400/30 bg-violet-400/5'

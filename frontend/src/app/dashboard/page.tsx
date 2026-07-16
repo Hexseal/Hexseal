@@ -56,6 +56,39 @@ function StatCardSkeleton({ index = 0 }: { index?: number }) {
   );
 }
 
+// ─── Shared skeleton pieces — one definition, reused by both the wallet-connecting
+// early return and the data-isLoading branch below, so the two states can't drift ──
+
+function StatsRowSkeleton() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {[0, 1, 2, 3].map(i => <StatCardSkeleton key={i} index={i} />)}
+    </div>
+  );
+}
+
+function XpBarSkeleton() {
+  return (
+    <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="h-3 w-16 rounded bg-white/[0.06]" />
+        <div className="h-3 w-10 rounded bg-white/[0.06]" />
+      </div>
+      <div className="h-1.5 rounded-full bg-white/[0.06]" />
+    </div>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="space-y-3">
+      {[0, 1, 2].map(i => (
+        <div key={i} className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] h-[72px]" style={{ animationDelay: `${i * 0.1}s` }} />
+      ))}
+    </div>
+  );
+}
+
 // ─── Stat card — tween entrance, no hover/tap springs ────────────────────────
 
 function StatCard({ icon, label, value, sub, index = 0 }: {
@@ -162,25 +195,13 @@ export default function DashboardPage() {
   if (status === 'reconnecting' || status === 'connecting') {
     return (
       <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[0, 1, 2, 3].map(i => <StatCardSkeleton key={i} index={i} />)}
-        </div>
-        <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="h-3 w-16 rounded bg-white/[0.06]" />
-            <div className="h-3 w-10 rounded bg-white/[0.06]" />
-          </div>
-          <div className="h-1.5 rounded-full bg-white/[0.06]" />
-        </div>
+        <StatsRowSkeleton />
+        <XpBarSkeleton />
         <div className="animate-pulse h-9 rounded-[12px] bg-white/[0.04] w-full" />
         <div className="flex gap-1">
           {[0, 1, 2].map(i => <div key={i} className="animate-pulse h-9 w-24 rounded-[10px] bg-white/[0.04]" />)}
         </div>
-        <div className="space-y-3">
-          {[0, 1, 2].map(i => (
-            <div key={i} className="animate-pulse rounded-[20px] border border-white/[0.06] bg-[#0d0d0f] h-[72px]" style={{ animationDelay: `${i * 0.05}s` }} />
-          ))}
-        </div>
+        <ListSkeleton />
       </div>
     );
   }
@@ -203,53 +224,45 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
 
-        {/* ── Stats row ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {isLoading ? (
-            [0, 1, 2, 3].map(i => <StatCardSkeleton key={i} index={i} />)
-          ) : (
-            <>
+        {/* ── Stats row + XP bar — one guard, since both key off the same isLoading ── */}
+        {isLoading ? (
+          <>
+            <StatsRowSkeleton />
+            <XpBarSkeleton />
+          </>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <StatCard index={0} icon={<Zap className="w-4 h-4 text-violet-400" />} label={t("dashboard.stat_level")} value={level.label} sub={`${xp} XP`} />
               <StatCard index={1} icon={<Activity className="w-4 h-4 text-sky-400" />} label={t("dashboard.stat_active")} value={activeDeals.length} sub={activeDeals.length === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
               <StatCard index={2} icon={<CheckCircle className="w-4 h-4 text-emerald-400" />} label={t("dashboard.stat_completed")} value={completed} sub={completed === 1 ? t("dashboard.stat_deal") : t("dashboard.stat_deals")} />
               <StatCard index={3} icon={<DollarSign className="w-4 h-4 text-amber-400" />} label={t("dashboard.stat_volume")} value={fmtVolume(totalVolume)} sub={t("dashboard.stat_usdc_total")} />
-            </>
-          )}
-        </div>
+            </div>
 
-        {/* ── XP progress bar ── */}
-        {isLoading ? (
-          <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="h-3 w-16 rounded bg-white/[0.06]" />
-              <div className="h-3 w-10 rounded bg-white/[0.06]" />
-            </div>
-            <div className="h-1.5 rounded-full bg-white/[0.06]" />
-          </div>
-        ) : (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, type: 'tween', duration: 0.25, ease: 'easeOut' }}
-            className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
-            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Star className="w-3.5 h-3.5 text-white/30" />
-                <span className={`text-xs font-semibold ${level.color}`}>{level.label}</span>
+            <motion.div
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, type: 'tween', duration: 0.25, ease: 'easeOut' }}
+              className="rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3"
+              style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Star className="w-3.5 h-3.5 text-white/30" />
+                  <span className={`text-xs font-semibold ${level.color}`}>{level.label}</span>
+                </div>
+                <span className="text-xs font-mono text-white/30">{xp} XP</span>
               </div>
-              <span className="text-xs font-mono text-white/30">{xp} XP</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
-              <motion.div
-                className={`h-full rounded-full origin-left ${level.bar}`}
-                initial={{ scaleX: 0 }}
-                animate={{ scaleX: Math.min(100, level.pct) / 100 }}
-                transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
-              />
-            </div>
-          </motion.div>
+              <div className="h-1.5 rounded-full bg-white/8 overflow-hidden">
+                <motion.div
+                  className={`h-full rounded-full origin-left ${level.bar}`}
+                  initial={{ scaleX: 0 }}
+                  animate={{ scaleX: Math.min(100, level.pct) / 100 }}
+                  transition={{ delay: 0.4, type: 'tween', duration: 0.6, ease: [0.25, 1, 0.5, 1] }}
+                />
+              </div>
+            </motion.div>
+          </>
         )}
 
         {/* ── Unified search ── */}
@@ -274,15 +287,7 @@ export default function DashboardPage() {
           </div>
 
           {isLoading ? (
-            <div className="space-y-3">
-              {[0, 1, 2].map(i => (
-                <div
-                  key={i}
-                  className="animate-pulse rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] h-[72px]"
-                  style={{ animationDelay: `${i * 0.1}s` }}
-                />
-              ))}
-            </div>
+            <ListSkeleton />
           ) : (
             <AnimatePresence mode="wait" initial={false}>
               <motion.div

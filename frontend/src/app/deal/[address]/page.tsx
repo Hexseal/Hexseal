@@ -163,23 +163,6 @@ export default function DealDetailPage() {
     },
   }) as { data: [string, string, string, bigint, string, bigint, bigint, bigint, bigint, bigint, bigint, number] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
-  // Read status separately — poll every 10s for active deals, stop when terminal.
-  // refetchInterval uses the callback form so it can read the latest value
-  // without a forward reference to statusNum.
-  const { data: statusNum, refetch: refetchStatus } = useReadContract({
-    address: dealAddress as `0x${string}`,
-    abi: AGREEMENT_ABI,
-    functionName: "status",
-    query: {
-      enabled: !!isValidDeal,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      refetchInterval: (query: any) => {
-        const s = query.state.data as number | undefined;
-        return s !== undefined && [3, 5, 6].includes(s) ? false : 10_000;
-      },
-    },
-  }) as { data: number | undefined; refetch: () => void };
-
   // Read timeLeft
   const { data: timeLeft } = useReadContract({
     address: dealAddress as `0x${string}`,
@@ -252,9 +235,9 @@ export default function DealDetailPage() {
       markedDoneAt: get('markedDoneAt_', 8) as bigint,
       disputedAt:   get('disputedAt_',   9) as bigint,
       resolvedAt:   get('resolvedAt_',  10) as bigint,
-      status:       (statusNum ?? 0) as number,
+      status:       get('status_',      11) as number,
     };
-  }, [details, statusNum]);
+  }, [details]);
 
   // USDC balance for the connected wallet — used to gate Fund button
   const { data: usdcBalance } = useReadContract({
@@ -341,7 +324,7 @@ export default function DealDetailPage() {
         }
       }
 
-      setTimeout(() => { refetchDetails(); refetchStatus(); }, 2000);
+      setTimeout(() => { refetchDetails(); }, 2000);
       return true;
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
@@ -512,7 +495,7 @@ export default function DealDetailPage() {
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
-              onClick={() => { refetchDetails(); refetchStatus(); }}
+              onClick={() => { refetchDetails(); }}
               className="w-7 h-7 flex items-center justify-center rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
               title={t("common.refresh")}
             >
