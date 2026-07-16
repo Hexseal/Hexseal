@@ -17,6 +17,11 @@ const RELAYER_URL = (
 
 const MAX_ADDRESSES = 100;
 
+// Addresses are interpolated straight into the relayer path below — restrict
+// to exactly what an address can be so nothing (`../`, `/`, query strings) can
+// escape the `profile-<addr>.json` filename it's meant to stay inside.
+const ETH_ADDR = /^0x[0-9a-f]{40}$/;
+
 // POST /api/profiles/batch  { addresses: string[] }  →  { [address]: profile | null }
 export async function POST(request: NextRequest) {
   let body: { addresses?: unknown };
@@ -31,7 +36,10 @@ export async function POST(request: NextRequest) {
   }
 
   const addresses = Array.from(new Set(
-    body.addresses.filter((a): a is string => typeof a === 'string').map(a => a.toLowerCase())
+    body.addresses
+      .filter((a): a is string => typeof a === 'string')
+      .map(a => a.toLowerCase())
+      .filter(a => ETH_ADDR.test(a))
   )).slice(0, MAX_ADDRESSES);
 
   if (!RELAYER_URL || addresses.length === 0) {
