@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState, useRef, Suspense } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -74,6 +74,30 @@ function ChatLayoutInner({
   const sp = useSearchParams();
   const hasPeer = !!sp.get('peer');
 
+  // Body lock only when a conversation is open — prevents iOS from scrolling the
+  // page behind the keyboard. The list view never has a keyboard, so no lock needed,
+  // and locking it was breaking the nav's fixed positioning on iOS.
+  const scrollYRef = useRef(0);
+  useEffect(() => {
+    if (!hasPeer) return;
+    const body = document.body;
+    const html = document.documentElement;
+    scrollYRef.current = window.scrollY;
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollYRef.current}px`;
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+    html.style.overflow = 'hidden';
+    return () => {
+      body.style.position = '';
+      body.style.top = '';
+      body.style.width = '';
+      body.style.overflow = '';
+      html.style.overflow = '';
+      window.scrollTo(0, scrollYRef.current);
+    };
+  }, [hasPeer]);
+
   return (
     <>
       <Header />
@@ -106,29 +130,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => window.removeEventListener('hexseal:open-onboarding', handler);
   }, []);
 
-  // Early body lock: fires before the Suspense/ChatLayoutInner effect has a chance to run.
-  // Reads window.location.search directly to avoid needing useSearchParams here.
-  // Early body lock for /chat — fires before ChatLayoutInner mounts.
-  // /chat is always fixed full-screen (list AND conversation), so lock unconditionally.
-  useEffect(() => {
-    if (!pathname?.startsWith('/chat')) return;
-    const body = document.body;
-    const html = document.documentElement;
-    const scrollY = window.scrollY;
-    body.style.position = 'fixed';
-    body.style.top = `-${scrollY}px`;
-    body.style.width = '100%';
-    body.style.overflow = 'hidden';
-    html.style.overflow = 'hidden';
-    return () => {
-      body.style.position = '';
-      body.style.top = '';
-      body.style.width = '';
-      body.style.overflow = '';
-      html.style.overflow = '';
-      window.scrollTo(0, scrollY);
-    };
-  }, [pathname]);
 
   // Clear App Badge whenever the user brings the PWA to the foreground.
   useEffect(() => {
