@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, clearXmtpSession } from '@/lib/xmtp';
+import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached } from '@/lib/xmtp';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
 
@@ -93,6 +93,37 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   // retryToken forces a re-run when retry() is called
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, walletClient, isConnected, retryToken]);
+
+  // Background conversations stream — registers a listener for incoming MLS
+  // session_request events so the WASM layer never fires "without any listeners".
+  // Also dispatches hexseal-conv-update so the sidebar refreshes in real-time
+  // when someone starts a new conversation with us.
+  const convStreamRef = useRef<AsyncIterable<unknown> & { return?: () => void } | null>(null);
+  useEffect(() => {
+    if (status !== 'ready' || !address) return;
+    const xmtp = getXmtpClientIfCached(address.toLowerCase());
+    if (!xmtp) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const stream = await xmtp.conversations.stream();
+        convStreamRef.current = stream as typeof convStreamRef.current;
+        for await (const _ of stream) {
+          if (cancelled) break;
+          window.dispatchEvent(new Event('hexseal-conv-update'));
+        }
+      } catch {
+        // Stream ended or failed — non-critical
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      convStreamRef.current?.return?.();
+      convStreamRef.current = null;
+    };
+  }, [status, address]);
 
   const retry = useCallback(() => {
     if (!address) return;
