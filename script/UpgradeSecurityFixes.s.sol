@@ -5,5 +5,5 @@ import "forge-std/console.sol";
 // DEPRECATED — historical upgrade script, already applied on-chain.
 // OfferNFT offer-posting functions removed in cleanup (2026-05).
 contract _DeprecatedOfferUpgrade is Script {
-    function run() external view { console.log("DEPRECATED: script already applied."); }
+    function run() external pure { console.log("DEPRECATED: script already applied."); }
 }

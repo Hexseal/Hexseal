@@ -195,16 +195,16 @@ contract DiamondTest is Test {
 
     // ============ DIAMOND PROXY TESTS ============
     
-    function testDiamondOwner() public {
+    function testDiamondOwner() public view {
         assertEq(OwnershipFacet(address(diamond)).owner(), owner);
     }
     
-    function testDiamondLoupe() public {
+    function testDiamondLoupe() public view {
         IDiamondLoupe.Facet[] memory facets = DiamondLoupeFacet(address(diamond)).facets();
         assertGe(facets.length, 5);
     }
     
-    function testDiamondSupportsInterface() public {
+    function testDiamondSupportsInterface() public view {
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IERC165).interfaceId));
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondCut).interfaceId));
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondLoupe).interfaceId));
@@ -212,7 +212,7 @@ contract DiamondTest is Test {
     
     // ============ REGISTRY FACET TESTS ============
     
-    function testRegistryInit() public {
+    function testRegistryInit() public view {
         assertEq(RegistryFacet(address(diamond)).authorizedFactory(), address(diamond));
     }
     
@@ -221,7 +221,7 @@ contract DiamondTest is Test {
         RegistryFacet(address(diamond)).initRegistry(address(0x5));
     }
     
-    function testRegistryTotalAgreements() public {
+    function testRegistryTotalAgreements() public view {
         assertEq(RegistryFacet(address(diamond)).totalAgreements(), 0);
     }
     
@@ -297,7 +297,7 @@ contract DiamondTest is Test {
     
     // ============ FACTORY FACET TESTS ============
     
-    function testFactoryInit() public {
+    function testFactoryInit() public view {
         assertEq(FactoryFacet(address(diamond)).getUsdc(), address(usdc));
         assertEq(FactoryFacet(address(diamond)).getFeeRecipient(), feeRecipient);
         assertFalse(false);
@@ -395,7 +395,7 @@ contract DiamondTest is Test {
         FactoryFacet(address(diamond)).setTrustedForwarder(address(0x6));
         assertEq(FactoryFacet(address(diamond)).getTrustedForwarder(), address(0x6));
         
-        (uint256 cis, uint256 asia, uint256 eu, uint256 us, uint256 latam, uint256 ca, uint256 au) = FactoryFacet(address(diamond)).getAllFees();
+        (uint256 cis,,,,,,) = FactoryFacet(address(diamond)).getAllFees();
         assertGt(cis, 0);
     }
     

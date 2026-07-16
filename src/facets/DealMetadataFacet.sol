@@ -18,7 +18,7 @@ contract DealMetadataFacet {
 
     function getDealTokenURI(
         address deal,
-        uint8   tokenId,
+        uint8   /* tokenId */,
         uint8   statusCode,
         address client_,
         address executor_,

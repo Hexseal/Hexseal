@@ -10,7 +10,7 @@ import "../src/DiamondProxy.sol";
 contract CheckDiamondSelectors is Script {
     address DIAMOND = vm.envAddress("DIAMOND_ADDRESS");
     
-    function run() external {
+    function run() external view {
         console.log("=== DIAMOND SELECTORS CHECK ===");
         console.log("Diamond address:", DIAMOND);
         

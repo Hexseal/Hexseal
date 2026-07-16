@@ -681,7 +681,7 @@ contract BoardsTest is Test {
         assertEq(JobReceiptFacet(address(diamond)).balanceOf(client), 2);
     }
 
-    function testJobReceiptNotReceiptToken() public {
+    function testJobReceiptNotReceiptToken() public view {
         assertFalse(JobReceiptFacet(address(diamond)).isJobReceiptToken(99));
     }
 
@@ -735,7 +735,7 @@ contract BoardsTest is Test {
         JobReceiptFacet(address(diamond)).burnJobReceipt(0);
     }
 
-    function testGetTokenIdByJobIdBeforeMint() public {
+    function testGetTokenIdByJobIdBeforeMint() public view {
         (, bool exists) = JobReceiptFacet(address(diamond)).getTokenIdByJobId(99);
         assertFalse(exists);
     }
