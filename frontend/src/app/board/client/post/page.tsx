@@ -107,6 +107,7 @@ export default function PostJobPage() {
   const [deadline,   setDeadline]   = useState("7");
   const [jobTerms,   setJobTerms]   = useState("");
   const [category,   setCategory]   = useState<CategoryKey>(DEFAULT_CATEGORY);
+  const [customTag,  setCustomTag]  = useState("");
   const [step,       setStep]       = useState<Step>("form");
   const [errorMsg,   setErrorMsg]   = useState("");
   const [txHash,     setTxHash]     = useState("");
@@ -145,7 +146,11 @@ export default function PostJobPage() {
       toast("Sign: USDC permit in wallet…");
       const { txHash: hash } = await mintJobGasless(walletClient, publicClient, {
         title:        sanitizeHtml(trimmedTitle),
-        description:  withCategory(category, description.trim()),
+        description:  withCategory(category,
+          category === 'other' && customTag.trim()
+            ? `[${customTag.trim()}] ${description.trim()}`
+            : description.trim()
+        ),
         amount:       parseUnits(amount, 6),
         deadlineDays: BigInt(parsedDeadline),
         terms:        jobTerms.trim() ? sanitizeHtml(jobTerms.trim()) : "",
@@ -211,7 +216,7 @@ export default function PostJobPage() {
       </div>
 
       <motion.div
-        className="container mx-auto px-4 py-8 max-w-2xl space-y-4"
+        className="container mx-auto px-4 pt-3 pb-8 max-w-2xl space-y-4"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22 }}
@@ -262,13 +267,26 @@ export default function PostJobPage() {
                 <Label className="text-sm text-white/70">{t("board.post_job.field_category")}</Label>
                 <div className="flex flex-wrap gap-2">
                   {CATEGORIES.map(({ key, badge }) => (
-                    <button key={key} type="button" onClick={() => setCategory(key)}
+                    <button key={key} type="button"
+                      onClick={() => { setCategory(key); if (key !== 'other') setCustomTag(""); }}
                       className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
                         category === key ? badge : "border-white/8 text-white/40 hover:text-white/60 hover:border-white/15"
                       }`}
                     >{t(`categories.${key}`)}</button>
                   ))}
                 </div>
+                {category === 'other' && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-white/30 text-xs flex-shrink-0">#</span>
+                    <Input
+                      placeholder="Название тега (напр. Архитектура)"
+                      value={customTag}
+                      onChange={e => setCustomTag(e.target.value.slice(0, 40))}
+                      maxLength={40}
+                      className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 rounded-[14px] text-sm h-8"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5">

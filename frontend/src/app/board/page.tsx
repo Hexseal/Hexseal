@@ -17,7 +17,7 @@ import { useRouter } from "next/navigation";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
-import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
+import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory, extractCustomTag, stripCustomTag } from "@/config/categories";
 import { useProfile } from "@/hooks/useProfile";
 import { Sparkles } from "lucide-react";
 import { ContextHint } from "@/components/ContextHint";
@@ -120,7 +120,9 @@ function JobCard({
   const hasTerms = !!job.terms?.trim();
   const applicantCount = applicants?.length ?? 0;
   const catKey = extractCategory(job.description);
-  const displayDesc = stripCategory(job.description);
+  const strippedDesc = stripCategory(job.description);
+  const customTagLabel = catKey === 'other' ? extractCustomTag(strippedDesc) : null;
+  const displayDesc = catKey === 'other' ? stripCustomTag(strippedDesc) : strippedDesc;
 
   const handleApply = async () => {
     if (!walletClient || !publicClient || isApplying) return;
@@ -260,7 +262,7 @@ function JobCard({
             <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30 mb-3">
               {catKey && (
                 <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
-                  {t(`categories.${catKey}`)}
+                  {customTagLabel ? `#${customTagLabel}` : t(`categories.${catKey}`)}
                 </span>
               )}
               <span className="whitespace-nowrap">{job.deadlineDays.toString()}d</span>
@@ -348,6 +350,7 @@ export default function BoardPage() {
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [userRegion, setUserRegion] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
+  const [customTagFilter, setCustomTagFilter] = useState<string | null>(null);
   const catScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = catScrollRef.current;
@@ -410,11 +413,30 @@ export default function BoardPage() {
 
   const JOB_STATUS: Record<string, number> = { open: 0, accepted: 1, cancelled: 2 };
 
+  const popularCustomTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    displayJobs.forEach(gj => {
+      if (extractCategory(gj.description) !== 'other') return;
+      const tag = extractCustomTag(stripCategory(gj.description));
+      if (tag) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .filter(([, n]) => n >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([tag]) => tag);
+  }, [displayJobs]);
+
   const jobs = useMemo(() => {
     const q = searchQuery.toLowerCase();
     const filtered = displayJobs
       .filter(gj => !filledJobIds.has(gj.id))
       .filter(gj => categoryFilter === null || extractCategory(gj.description) === categoryFilter)
+      .filter(gj => {
+        if (!customTagFilter) return true;
+        if (extractCategory(gj.description) !== 'other') return false;
+        return stripCategory(gj.description).startsWith(`[${customTagFilter}] `);
+      })
       .filter(gj => {
         if (!q) return true;
         return (
@@ -446,7 +468,7 @@ export default function BoardPage() {
       case 'lowest':  return [...filtered].sort((a, b) => Number(a.job.amount) - Number(b.job.amount));
       default:        return [...filtered].sort((a, b) => Number(b.job.createdAt) - Number(a.job.createdAt));
     }
-  }, [displayJobs, filledJobIds, searchQuery, categoryFilter, sortBy]);
+  }, [displayJobs, filledJobIds, searchQuery, categoryFilter, customTagFilter, sortBy]);
 
   // Skill-based matching — only when no filters/search active and user has specializations
   const matchedJobs = useMemo(() => {
@@ -545,7 +567,7 @@ export default function BoardPage() {
           className="flex overflow-x-auto gap-1.5 mb-5 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <button
-            onClick={() => setCategoryFilter(null)}
+            onClick={() => { setCategoryFilter(null); setCustomTagFilter(null); }}
             className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors active:scale-[0.975] ${
               categoryFilter === null
                 ? "bg-white/10 border-white/20 text-white/80"
@@ -557,12 +579,28 @@ export default function BoardPage() {
           {CATEGORIES.map(({ key, badge }) => (
             <button
               key={key}
-              onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
+              onClick={() => { setCategoryFilter(categoryFilter === key ? null : key); setCustomTagFilter(null); }}
               className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors active:scale-[0.975] ${
-                categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+                categoryFilter === key && !customTagFilter ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
               }`}
             >
               {t(`categories.${key}`)}
+            </button>
+          ))}
+          {popularCustomTags.map(tag => (
+            <button
+              key={`ctag-${tag}`}
+              onClick={() => {
+                if (customTagFilter === tag) { setCustomTagFilter(null); setCategoryFilter(null); }
+                else { setCategoryFilter('other'); setCustomTagFilter(tag); }
+              }}
+              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors active:scale-[0.975] ${
+                customTagFilter === tag
+                  ? CATEGORY_BADGE['other']
+                  : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+              }`}
+            >
+              #{tag}
             </button>
           ))}
         </div>

@@ -48,3 +48,14 @@ export function stripCategory(description: string): string {
 export function withCategory(key: CategoryKey, description: string): string {
   return `${key}|${description}`;
 }
+
+/** Extract custom [tag] from the start of a stripped description (other category) */
+export function extractCustomTag(strippedDesc: string): string | null {
+  const m = strippedDesc.match(/^\[([^\]]{1,40})\] /);
+  return m ? m[1] : null;
+}
+
+/** Strip custom [tag] prefix from a stripped description */
+export function stripCustomTag(strippedDesc: string): string {
+  return strippedDesc.replace(/^\[([^\]]{1,40})\] /, '');
+}
