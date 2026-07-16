@@ -560,6 +560,7 @@ export default function ExecutorBoardPage() {
 
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
+  const [customTagFilter, setCustomTagFilter] = useState<string | null>(null);
   const catScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = catScrollRef.current;
@@ -709,6 +710,20 @@ export default function ExecutorBoardPage() {
     hiresCount: BigInt(gs.hiresCount),
   })), [displayServices]);
 
+  const popularCustomTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    displayServices.forEach(gs => {
+      if (extractCategory(gs.description ?? '') !== 'other') return;
+      const tag = extractCustomTag(stripCategory(gs.description ?? ''));
+      if (tag) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .filter(([, n]) => n >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([tag]) => tag);
+  }, [displayServices]);
+
   const filtered = useMemo(() => {
     let list = services.filter(s => s.status === 0);
     if (regionFilter !== null) {
@@ -716,6 +731,12 @@ export default function ExecutorBoardPage() {
     }
     if (categoryFilter !== null) {
       list = list.filter(s => extractCategory(s.description) === categoryFilter);
+    }
+    if (customTagFilter) {
+      list = list.filter(s =>
+        extractCategory(s.description) === 'other' &&
+        stripCategory(s.description).startsWith(`[${customTagFilter}] `)
+      );
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -734,7 +755,7 @@ export default function ExecutorBoardPage() {
       case 'lowest':  return [...list].sort((a, b) => Number(a.price) - Number(b.price));
       default:        return [...list].sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
     }
-  }, [services, searchQuery, regionFilter, categoryFilter, sortBy]);
+  }, [services, searchQuery, regionFilter, categoryFilter, customTagFilter, sortBy]);
 
   const handleRequest = async (amountStr: string, daysStr: string, region: number, termsText: string) => {
     if (!requestModal || !walletClient || !publicClient || !address) return;
@@ -872,7 +893,7 @@ export default function ExecutorBoardPage() {
           className="flex overflow-x-auto gap-1.5 mb-5 pb-0.5 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <button
-            onClick={() => setCategoryFilter(null)}
+            onClick={() => { setCategoryFilter(null); setCustomTagFilter(null); }}
             className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
               categoryFilter === null
                 ? "bg-white/10 border-white/20 text-white/80"
@@ -884,12 +905,28 @@ export default function ExecutorBoardPage() {
           {CATEGORIES.map(({ key, badge }) => (
             <button
               key={key}
-              onClick={() => setCategoryFilter(categoryFilter === key ? null : key)}
+              onClick={() => { setCategoryFilter(categoryFilter === key ? null : key); setCustomTagFilter(null); }}
               className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
-                categoryFilter === key ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+                categoryFilter === key && !customTagFilter ? badge : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
               }`}
             >
               {t(`categories.${key}`)}
+            </button>
+          ))}
+          {popularCustomTags.map(tag => (
+            <button
+              key={`ctag-${tag}`}
+              onClick={() => {
+                if (customTagFilter === tag) { setCustomTagFilter(null); setCategoryFilter(null); }
+                else { setCategoryFilter('other'); setCustomTagFilter(tag); }
+              }}
+              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs border transition-colors ${
+                customTagFilter === tag
+                  ? CATEGORY_BADGE['other']
+                  : "border-white/[0.07] text-white/30 hover:border-white/15 hover:text-white/50"
+              }`}
+            >
+              #{tag}
             </button>
           ))}
         </div>
