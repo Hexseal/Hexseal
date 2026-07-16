@@ -89,6 +89,7 @@ function ChatLayoutInner({
       >
         <PageFade pathname={pathname}>{children}</PageFade>
       </main>
+      {!hasPeer && bottomScrim}
       {!hasPeer && <MobileBottomNav />}
       {modal}
       <Toaster />

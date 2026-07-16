@@ -141,10 +141,10 @@ const ConvoItem = memo(function ConvoItem({
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {lastAt > 0 && (
-              <span className="text-[11px] text-white/25">{formatTime(lastAt)}</span>
+              <span className={`text-[11px] ${hasUnread ? 'text-primary/70' : 'text-white/25'}`}>{formatTime(lastAt)}</span>
             )}
             {hasUnread && (
-              <span className="w-2 h-2 rounded-full bg-primary flex-shrink-0" />
+              <span className="w-2.5 h-2.5 rounded-full bg-primary flex-shrink-0" />
             )}
           </div>
         </div>
@@ -179,7 +179,7 @@ const ConvoItem = memo(function ConvoItem({
         )}
 
         {lastText && (
-          <p className="text-xs text-white/30 truncate mt-0.5">{lastText}</p>
+          <p className={`text-xs truncate mt-0.5 ${hasUnread ? 'text-white/70 font-medium' : 'text-white/30'}`}>{lastText}</p>
         )}
       </div>
     </button>
