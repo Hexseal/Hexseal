@@ -70,6 +70,7 @@
     "typescript": "^5"
   },
   "overrides": {
-    "axios": "^1.9.0"
+    "axios": "^1.9.0",
+    "qr": "0.5.5"
   }
 }
