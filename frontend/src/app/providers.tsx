@@ -49,7 +49,7 @@ const chains = [appChain] as any;
 const publicRpc = isMainnet ? "https://mainnet.base.org" : "https://sepolia.base.org";
 // /api/rpc proxies through Next.js (uses server-side RPC_URL with API key).
 // On the server (SSR) relative URLs don't work — fall back to publicRpc directly.
-const clientRpc = typeof window !== "undefined" ? "/api/rpc" : publicRpc;
+const clientRpc = typeof window !== "undefined" ? `${window.location.origin}/api/rpc` : publicRpc;
 const transports = {
   [appChainId]: fallback([
     http(clientRpc,  { timeout: 20_000 }), // /api/rpc → private RPC with key
@@ -67,10 +67,10 @@ const config = projectId
   ? getDefaultConfig({
       appName: "Hexseal",
       appDescription: "Decentralized freelance protocol on Base",
-      appUrl: typeof window !== "undefined" ? window.location.origin : "https://hexseal.com",
+      appUrl: typeof window !== "undefined" ? window.location.origin : "https://hexseal.net",
       appIcon: typeof window !== "undefined"
         ? `${window.location.origin}/hexseal-app-icon.svg`
-        : "https://hexseal.com/hexseal-app-icon.svg",
+        : "https://hexseal.net/hexseal-app-icon.svg",
       projectId,
       chains,
       transports,
