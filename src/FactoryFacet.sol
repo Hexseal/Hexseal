@@ -43,7 +43,7 @@ library FactoryStorage {
         address agreementDeployer;
     }
 
-    function layout() internal pure returns (Layout storage fs) {
+    function store() internal pure returns (Layout storage fs) {
         bytes32 position = FACTORY_STORAGE_POSITION;
         assembly {
             fs.slot := position
@@ -105,7 +105,7 @@ contract FactoryFacet {
         address diamond_,
         address agreementDeployer_
     ) external {
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         if (fs.usdc != address(0)) revert AlreadyInitialized();
         if (msg.sender != _owner()) revert NotOwner();
 
@@ -148,7 +148,7 @@ contract FactoryFacet {
         if (region > 6) revert InvalidRegion();
         if (msg.sender != client && msg.sender != address(this)) revert NotClient();
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         if (fs.agreementDeployer == address(0)) revert DeployerNotSet();
 
         if (IRegistry(fs.diamond).hasActivePair(client, executor)) revert ActiveDealExists();
@@ -172,7 +172,7 @@ contract FactoryFacet {
     // -------- DEPLOY AND FUND --------
 
     function _msgSender() internal view returns (address sender) {
-        address forwarder = FactoryStorage.layout().trustedForwarder;
+        address forwarder = FactoryStorage.store().trustedForwarder;
         if (msg.sender == forwarder && msg.data.length >= 20) {
             assembly { sender := shr(96, calldataload(sub(calldatasize(), 20))) }
         } else {
@@ -196,7 +196,7 @@ contract FactoryFacet {
         if (region > 6) revert InvalidRegion();
         if (_msgSender() != client) revert NotClient();
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         if (fs.agreementDeployer == address(0)) revert DeployerNotSet();
 
         if (IRegistry(fs.diamond).hasActivePair(client, executor)) revert ActiveDealExists();
@@ -235,24 +235,24 @@ contract FactoryFacet {
 
     function setRegionFee(uint8 region, uint256 newFee) external onlyOwner {
         if (region > 6) revert InvalidRegion();
-        FactoryStorage.layout().regionFee[region] = newFee;
+        FactoryStorage.store().regionFee[region] = newFee;
         emit RegionFeeUpdated(region, newFee);
     }
 
     function setFeeRecipient(address newRecipient) external onlyOwner {
         if (newRecipient == address(0)) revert ZeroAddress();
-        FactoryStorage.layout().feeRecipient = newRecipient;
+        FactoryStorage.store().feeRecipient = newRecipient;
         emit FeeRecipientUpdated(newRecipient);
     }
 
     function setTrustedForwarder(address newForwarder) external onlyOwner {
-        FactoryStorage.layout().trustedForwarder = newForwarder;
+        FactoryStorage.store().trustedForwarder = newForwarder;
         emit TrustedForwarderUpdated(newForwarder);
     }
 
     function setAgreementDeployer(address deployer) external onlyOwner {
         if (deployer == address(0)) revert ZeroAddress();
-        FactoryStorage.layout().agreementDeployer = deployer;
+        FactoryStorage.store().agreementDeployer = deployer;
         emit AgreementDeployerUpdated(deployer);
     }
 
@@ -260,13 +260,13 @@ contract FactoryFacet {
 
     function getRegionFee(uint8 region) external view returns (uint256) {
         if (region > 6) revert InvalidRegion();
-        return FactoryStorage.layout().regionFee[region];
+        return FactoryStorage.store().regionFee[region];
     }
 
     function getAllFees() external view returns (
         uint256 cis, uint256 asia, uint256 eu, uint256 us, uint256 latam, uint256 ca, uint256 au
     ) {
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         cis   = fs.regionFee[0];
         asia  = fs.regionFee[1];
         eu    = fs.regionFee[2];
@@ -277,18 +277,18 @@ contract FactoryFacet {
     }
 
     function getFeeRecipient() external view returns (address) {
-        return FactoryStorage.layout().feeRecipient;
+        return FactoryStorage.store().feeRecipient;
     }
 
     function getTrustedForwarder() external view returns (address) {
-        return FactoryStorage.layout().trustedForwarder;
+        return FactoryStorage.store().trustedForwarder;
     }
 
     function getUsdc() external view returns (address) {
-        return FactoryStorage.layout().usdc;
+        return FactoryStorage.store().usdc;
     }
 
     function getAgreementDeployer() external view returns (address) {
-        return FactoryStorage.layout().agreementDeployer;
+        return FactoryStorage.store().agreementDeployer;
     }
 }

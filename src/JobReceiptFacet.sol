@@ -47,7 +47,7 @@ library ReceiptStorage {
         mapping(uint256 => bool)    jobIdToTokenIdSet; // sentinel to distinguish tokenId=0 from "not set"
     }
 
-    function layout() internal pure returns (Layout storage l) {
+    function store() internal pure returns (Layout storage l) {
         bytes32 pos = POSITION;
         assembly { l.slot := pos }
     }
@@ -82,17 +82,17 @@ contract JobReceiptFacet {
 
     function balanceOf(address owner) external view returns (uint256) {
         require(owner != address(0), "ERC721: zero address");
-        return ReceiptStorage.layout().balances[owner];
+        return ReceiptStorage.store().balances[owner];
     }
 
     function ownerOf(uint256 tokenId) external view returns (address) {
-        address owner = ReceiptStorage.layout().owners[tokenId];
+        address owner = ReceiptStorage.store().owners[tokenId];
         require(owner != address(0), "ERC721: nonexistent token");
         return owner;
     }
 
     function tokenURI(uint256 tokenId) external view returns (string memory) {
-        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        ReceiptStorage.Layout storage s = ReceiptStorage.store();
         require(s.owners[tokenId] != address(0), "ERC721: nonexistent token");
         require(s.isJobReceipt[tokenId], "Not a receipt token");
 
@@ -141,12 +141,12 @@ contract JobReceiptFacet {
 
     function setSvgRenderer(address renderer) external onlyOwner {
         require(renderer != address(0), "Zero address");
-        ReceiptStorage.layout().svgRenderer = renderer;
+        ReceiptStorage.store().svgRenderer = renderer;
         emit SvgRendererUpdated(renderer);
     }
 
     function getSvgRenderer() external view returns (address) {
-        return ReceiptStorage.layout().svgRenderer;
+        return ReceiptStorage.store().svgRenderer;
     }
 
     // ─── Core: Mint Receipt ───────────────────────────────────────────────────
@@ -161,7 +161,7 @@ contract JobReceiptFacet {
     ) external returns (uint256 tokenId) {
         require(msg.sender == address(this), "Only Diamond");
 
-        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        ReceiptStorage.Layout storage s = ReceiptStorage.store();
         if (s.jobReceiptMinted[jobId]) return type(uint256).max;
 
         s.jobReceiptMinted[jobId] = true;
@@ -188,7 +188,7 @@ contract JobReceiptFacet {
 
     function burnJobReceipt(uint256 jobId) external returns (bool burned) {
         require(msg.sender == address(this), "Only Diamond");
-        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        ReceiptStorage.Layout storage s = ReceiptStorage.store();
         if (!s.jobIdToTokenIdSet[jobId]) return false;
         uint256 tokenId = s.jobIdToTokenId[jobId];
         address owner = s.owners[tokenId];
@@ -205,26 +205,26 @@ contract JobReceiptFacet {
     // ─── Views ────────────────────────────────────────────────────────────────
 
     function getJobReceiptData(uint256 tokenId) external view returns (ReceiptStorage.JobReceiptData memory) {
-        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        ReceiptStorage.Layout storage s = ReceiptStorage.store();
         require(s.isJobReceipt[tokenId], "Not a receipt token");
         return s.jobReceiptData[tokenId];
     }
 
     function isJobReceiptToken(uint256 tokenId) external view returns (bool) {
-        return ReceiptStorage.layout().isJobReceipt[tokenId];
+        return ReceiptStorage.store().isJobReceipt[tokenId];
     }
 
     function isJobReceiptBurned(uint256 tokenId) external view returns (bool) {
-        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        ReceiptStorage.Layout storage s = ReceiptStorage.store();
         return s.isJobReceipt[tokenId] && s.owners[tokenId] == address(0);
     }
 
     function getTokenIdByJobId(uint256 jobId) external view returns (uint256 tokenId, bool exists) {
-        ReceiptStorage.Layout storage s = ReceiptStorage.layout();
+        ReceiptStorage.Layout storage s = ReceiptStorage.store();
         return (s.jobIdToTokenId[jobId], s.jobIdToTokenIdSet[jobId]);
     }
 
     function getReceiptTotalSupply() external view returns (uint256) {
-        return ReceiptStorage.layout().nextTokenId;
+        return ReceiptStorage.store().nextTokenId;
     }
 }

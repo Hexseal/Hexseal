@@ -161,7 +161,7 @@ contract ArbiterRegistryFacet {
     // -------- ERC-2771 SENDER --------
 
     function _msgSender() internal view returns (address sender) {
-        address forwarder = FactoryStorage.layout().trustedForwarder;
+        address forwarder = FactoryStorage.store().trustedForwarder;
         if (msg.sender == forwarder && msg.data.length >= 20) {
             assembly { sender := shr(96, calldataload(sub(calldatasize(), 20))) }
         } else {
@@ -418,7 +418,7 @@ contract ArbiterRegistryFacet {
 
         d.arbiterRewards[caller] = 0;
 
-        address usdc = FactoryStorage.layout().usdc;
+        address usdc = FactoryStorage.store().usdc;
         bool ok = IUSDCFull(usdc).transfer(caller, amount);
         require(ok, "ArbiterRegistry: USDC transfer failed");
 
@@ -428,7 +428,7 @@ contract ArbiterRegistryFacet {
     /// @notice Owner пополняет vault (переводит USDC на Diamond).
     function fundVault(uint256 amount) external onlyOwner {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        address usdc = FactoryStorage.layout().usdc;
+        address usdc = FactoryStorage.store().usdc;
         bool ok = IUSDCFull(usdc).transferFrom(msg.sender, address(this), amount);
         require(ok, "ArbiterRegistry: USDC transfer failed");
         d.vaultBalance += amount;

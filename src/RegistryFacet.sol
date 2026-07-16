@@ -48,7 +48,7 @@ library RegistryStorage {
         address authorizedFactory;
     }
 
-    function layout() internal pure returns (Layout storage rs) {
+    function store() internal pure returns (Layout storage rs) {
         bytes32 position = REGISTRY_STORAGE_POSITION;
         assembly {
             rs.slot := position
@@ -90,7 +90,7 @@ contract RegistryFacet {
     // -------- MODIFIERS --------
 
     modifier onlyFactory() {
-        if (msg.sender != RegistryStorage.layout().authorizedFactory)
+        if (msg.sender != RegistryStorage.store().authorizedFactory)
             revert OnlyAuthorizedFactory();
         _;
     }
@@ -99,7 +99,7 @@ contract RegistryFacet {
         // Agreement сам себя регистрирует как msg.sender
         if (msg.sender != agreement) revert OnlyAgreementItself();
         // И должен быть реально зарегистрирован
-        if (RegistryStorage.layout().agreements[agreement].agreement != agreement)
+        if (RegistryStorage.store().agreements[agreement].agreement != agreement)
             revert AgreementNotRegistered();
         _;
     }
@@ -107,7 +107,7 @@ contract RegistryFacet {
     // -------- INIT (вызывается один раз при деплое Diamond) --------
 
     function initRegistry(address factory_) external {
-        RegistryStorage.Layout storage rs = RegistryStorage.layout();
+        RegistryStorage.Layout storage rs = RegistryStorage.store();
         if (rs.authorizedFactory != address(0)) revert AlreadyInitialized();
         if (factory_ == address(0)) revert ZeroAddress();
         // Защита от frontrun: проверяем что вызывающий — owner Diamond
@@ -129,7 +129,7 @@ contract RegistryFacet {
         if (client == address(0)) revert ZeroAddress();
         if (executor == address(0)) revert ZeroAddress();
 
-        RegistryStorage.Layout storage rs = RegistryStorage.layout();
+        RegistryStorage.Layout storage rs = RegistryStorage.store();
 
         bytes32 pairKey = _pairKey(client, executor);
 
@@ -158,7 +158,7 @@ contract RegistryFacet {
         address agreement,
         RegistryStorage.AgreementStatus newStatus
     ) external onlyAgreement(agreement) {
-        RegistryStorage.Layout storage rs = RegistryStorage.layout();
+        RegistryStorage.Layout storage rs = RegistryStorage.store();
         RegistryStorage.AgreementRecord storage record = rs.agreements[agreement];
 
         record.status = newStatus;
@@ -180,7 +180,7 @@ contract RegistryFacet {
     function setAuthorizedFactory(address newFactory) external {
         if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
         if (newFactory == address(0)) revert ZeroAddress();
-        RegistryStorage.layout().authorizedFactory = newFactory;
+        RegistryStorage.store().authorizedFactory = newFactory;
         emit AuthorizedFactorySet(newFactory);
     }
 
@@ -188,34 +188,34 @@ contract RegistryFacet {
 
     /// @notice Есть ли активная сделка между этой парой
     function hasActivePair(address client, address executor) external view returns (bool) {
-        return RegistryStorage.layout().activePartyPairs[_pairKey(client, executor)] != address(0);
+        return RegistryStorage.store().activePartyPairs[_pairKey(client, executor)] != address(0);
     }
 
     /// @notice Адрес активной сделки между парой (address(0) если нет)
     function getActivePair(address client, address executor) external view returns (address) {
-        return RegistryStorage.layout().activePartyPairs[_pairKey(client, executor)];
+        return RegistryStorage.store().activePartyPairs[_pairKey(client, executor)];
     }
 
     /// @notice Полная запись по адресу Agreement
     function getRecord(address agreement) external view returns (RegistryStorage.AgreementRecord memory) {
-        return RegistryStorage.layout().agreements[agreement];
+        return RegistryStorage.store().agreements[agreement];
     }
 
     /// @notice Все сделки клиента
     function getByClient(address client) external view returns (RegistryStorage.AgreementRecord[] memory) {
-        RegistryStorage.Layout storage rs = RegistryStorage.layout();
+        RegistryStorage.Layout storage rs = RegistryStorage.store();
         return _filter(rs, client, true);
     }
 
     /// @notice Все сделки исполнителя
     function getByExecutor(address executor) external view returns (RegistryStorage.AgreementRecord[] memory) {
-        RegistryStorage.Layout storage rs = RegistryStorage.layout();
+        RegistryStorage.Layout storage rs = RegistryStorage.store();
         return _filter(rs, executor, false);
     }
 
     /// @notice Все активные сделки (для борды)
     function getActive() external view returns (RegistryStorage.AgreementRecord[] memory) {
-        RegistryStorage.Layout storage rs = RegistryStorage.layout();
+        RegistryStorage.Layout storage rs = RegistryStorage.store();
         uint256 count;
         for (uint256 i; i < rs.allAgreements.length; i++) {
             if (rs.agreements[rs.allAgreements[i]].status == RegistryStorage.AgreementStatus.ACTIVE) {
@@ -234,7 +234,7 @@ contract RegistryFacet {
 
     /// @notice Все спорные сделки (для борды арбитров)
     function getDisputed() external view returns (RegistryStorage.AgreementRecord[] memory) {
-        RegistryStorage.Layout storage rs = RegistryStorage.layout();
+        RegistryStorage.Layout storage rs = RegistryStorage.store();
         uint256 count;
         for (uint256 i; i < rs.allAgreements.length; i++) {
             if (rs.agreements[rs.allAgreements[i]].status == RegistryStorage.AgreementStatus.DISPUTED) {
@@ -253,12 +253,12 @@ contract RegistryFacet {
 
     /// @notice Общее количество сделок
     function totalAgreements() external view returns (uint256) {
-        return RegistryStorage.layout().allAgreements.length;
+        return RegistryStorage.store().allAgreements.length;
     }
 
     /// @notice Адрес авторизованного Factory
     function authorizedFactory() external view returns (address) {
-        return RegistryStorage.layout().authorizedFactory;
+        return RegistryStorage.store().authorizedFactory;
     }
 
     // -------- INTERNAL --------

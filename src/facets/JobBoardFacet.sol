@@ -85,7 +85,7 @@ library JobBoardStorage {
         mapping(uint256 => uint256) jobFunds;
     }
 
-    function layout() internal pure returns (Layout storage s) {
+    function store() internal pure returns (Layout storage s) {
         bytes32 p = POSITION;
         assembly { s.slot := p }
     }
@@ -133,7 +133,7 @@ contract JobBoardFacet {
     // -------- PAUSE CHECK --------
 
     modifier whenNotPaused() {
-        if (FactoryStorage.layout().paused) revert FactoryPaused();
+        if (FactoryStorage.store().paused) revert FactoryPaused();
         _;
     }
 
@@ -141,7 +141,7 @@ contract JobBoardFacet {
 
     function _msgSender() internal view returns (address sender) {
         if (
-            msg.sender == FactoryStorage.layout().trustedForwarder &&
+            msg.sender == FactoryStorage.store().trustedForwarder &&
             msg.data.length >= 20
         ) {
             assembly {
@@ -176,7 +176,7 @@ contract JobBoardFacet {
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
         if (region > 6) revert InvalidRegion();
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         uint256 fee = fs.regionFee[region];
         if (fee == 0) revert ZeroFee();
 
@@ -185,7 +185,7 @@ contract JobBoardFacet {
         IJobBoardUSDC(fs.usdc).permit(client, address(this), total, permitDeadline, v, r, s);
 
         // --- Effects ---
-        JobBoardStorage.Layout storage jbs = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage jbs = JobBoardStorage.store();
         jobId = jbs.nextJobId++;
 
         jbs.jobs[jobId] = JobBoardStorage.Job({
@@ -235,12 +235,12 @@ contract JobBoardFacet {
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
         if (region > 6) revert InvalidRegion();
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         uint256 fee = fs.regionFee[region];
         if (fee == 0) revert ZeroFee();
 
         // --- Effects ---
-        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage s = JobBoardStorage.store();
         jobId = s.nextJobId++;
 
         s.jobs[jobId] = JobBoardStorage.Job({
@@ -272,7 +272,7 @@ contract JobBoardFacet {
     /// @notice Исполнитель отзывает отклик (пока заказ OPEN, gasless-совместим)
     function withdrawApplication(uint256 jobId) external {
         address sender = _msgSender();
-        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage s = JobBoardStorage.store();
         JobBoardStorage.Job storage job = s.jobs[jobId];
 
         if (job.status != JobBoardStorage.JobStatus.OPEN) revert JobNotOpen();
@@ -297,7 +297,7 @@ contract JobBoardFacet {
     /// @notice Исполнитель откликается на заказ (gasless-совместим через ERC-2771)
     function applyForJob(uint256 jobId) external {
         address sender = _msgSender();
-        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage s = JobBoardStorage.store();
         JobBoardStorage.Job storage job = s.jobs[jobId];
 
         if (job.status != JobBoardStorage.JobStatus.OPEN) revert JobNotOpen();
@@ -316,7 +316,7 @@ contract JobBoardFacet {
         address executor
     ) external nonReentrant whenNotPaused returns (address agreementAddr) {
         address sender = _msgSender();
-        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage s = JobBoardStorage.store();
         JobBoardStorage.Job storage job = s.jobs[jobId];
 
         if (sender != job.client) revert NotClient();
@@ -346,7 +346,7 @@ contract JobBoardFacet {
         job.agreement = agreementAddr;
 
         // --- Перевод amount из Diamond → Agreement ---
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         uint256 held = s.jobFunds[jobId];
         require(held == job.amount, "JobBoard: ledger mismatch");
         s.jobFunds[jobId] = 0;
@@ -362,7 +362,7 @@ contract JobBoardFacet {
     /// @notice Клиент отменяет заказ (amount рефандится, fee нет) — gasless-совместим
     function cancelJob(uint256 jobId) external nonReentrant {
         address sender = _msgSender();
-        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage s = JobBoardStorage.store();
         JobBoardStorage.Job storage job = s.jobs[jobId];
 
         if (sender != job.client) revert NotClient();
@@ -375,7 +375,7 @@ contract JobBoardFacet {
         s.jobFunds[jobId] = 0;
 
         // --- Interaction ---
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         _safeTransfer(fs.usdc, job.client, refund);
 
         // Burn receipt NFT — non-blocking so a failure doesn't block the refund
@@ -398,7 +398,7 @@ contract JobBoardFacet {
         uint8 region
     ) external whenNotPaused {
         address sender = _msgSender();
-        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage s = JobBoardStorage.store();
         JobBoardStorage.Job storage job = s.jobs[jobId];
 
         if (sender != job.client) revert NotClient();
@@ -425,24 +425,24 @@ contract JobBoardFacet {
     // -------- VIEW --------
 
     function getJob(uint256 jobId) external view returns (JobBoardStorage.Job memory) {
-        return JobBoardStorage.layout().jobs[jobId];
+        return JobBoardStorage.store().jobs[jobId];
     }
 
     function getClientJobs(address client) external view returns (uint256[] memory) {
-        return JobBoardStorage.layout().clientJobs[client];
+        return JobBoardStorage.store().clientJobs[client];
     }
 
     function getApplicants(uint256 jobId) external view returns (address[] memory) {
-        return JobBoardStorage.layout().applicants[jobId];
+        return JobBoardStorage.store().applicants[jobId];
     }
 
     function totalJobs() external view returns (uint256) {
-        return JobBoardStorage.layout().nextJobId;
+        return JobBoardStorage.store().nextJobId;
     }
 
     /// @notice Возвращает все OPEN-заказы с их ID
     function getOpenJobs() external view returns (uint256[] memory ids, JobBoardStorage.Job[] memory openJobs) {
-        JobBoardStorage.Layout storage s = JobBoardStorage.layout();
+        JobBoardStorage.Layout storage s = JobBoardStorage.store();
         uint256 total = s.nextJobId;
 
         uint256 count = 0;

@@ -75,7 +75,7 @@ contract ReputationFacet {
     /// Только для COMPLETED и RESOLVED — не для REFUNDED.
     function autoAwardXP(address agreement) external {
         if (msg.sender != agreement) revert NotAgreement();
-        if (RegistryStorage.layout().agreements[agreement].agreement != agreement)
+        if (RegistryStorage.store().agreements[agreement].agreement != agreement)
             revert AgreementNotRegistered();
 
         IAgreementView agmt = IAgreementView(agreement);
@@ -104,7 +104,7 @@ contract ReputationFacet {
     function claimXP(address agreement) external {
         ReputationStorage.Data storage d = ReputationStorage.data();
 
-        if (RegistryStorage.layout().agreements[agreement].agreement != agreement)
+        if (RegistryStorage.store().agreements[agreement].agreement != agreement)
             revert AgreementNotRegistered();
 
         IAgreementView agmt = IAgreementView(agreement);

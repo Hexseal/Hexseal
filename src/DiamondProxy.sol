@@ -71,7 +71,7 @@ library DiamondStorage {
         address pendingOwner;
     }
 
-    function layout() internal pure returns (Layout storage ds) {
+    function store() internal pure returns (Layout storage ds) {
         bytes32 position = DIAMOND_STORAGE_POSITION;
         assembly {
             ds.slot := position
@@ -105,18 +105,18 @@ library OwnershipLib {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     function setContractOwner(address _newOwner) internal {
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         address previousOwner = ds.contractOwner;
         ds.contractOwner = _newOwner;
         emit OwnershipTransferred(previousOwner, _newOwner);
     }
 
     function contractOwner() internal view returns (address owner_) {
-        owner_ = DiamondStorage.layout().contractOwner;
+        owner_ = DiamondStorage.store().contractOwner;
     }
 
     function enforceIsContractOwner() internal view {
-        require(msg.sender == DiamondStorage.layout().contractOwner, "Diamond: not owner");
+        require(msg.sender == DiamondStorage.store().contractOwner, "Diamond: not owner");
     }
 }
 
@@ -151,7 +151,7 @@ library DiamondCutLib {
 
     function addFunctions(address _facetAddress, bytes4[] memory _functionSelectors) internal {
         require(_functionSelectors.length > 0, "Diamond: no selectors");
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         require(_facetAddress != address(0), "Diamond: zero facet address");
         uint96 selectorPosition = uint96(ds.facetFunctionSelectors[_facetAddress].functionSelectors.length);
         if (selectorPosition == 0) {
@@ -168,7 +168,7 @@ library DiamondCutLib {
 
     function replaceFunctions(address _facetAddress, bytes4[] memory _functionSelectors) internal {
         require(_functionSelectors.length > 0, "Diamond: no selectors");
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         require(_facetAddress != address(0), "Diamond: zero facet address");
         uint96 selectorPosition = uint96(ds.facetFunctionSelectors[_facetAddress].functionSelectors.length);
         if (selectorPosition == 0) {
@@ -186,7 +186,7 @@ library DiamondCutLib {
 
     function removeFunctions(address _facetAddress, bytes4[] memory _functionSelectors) internal {
         require(_functionSelectors.length > 0, "Diamond: no selectors");
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         require(_facetAddress == address(0), "Diamond: remove needs zero address");
         for (uint256 selectorIndex; selectorIndex < _functionSelectors.length; selectorIndex++) {
             bytes4 selector = _functionSelectors[selectorIndex];
@@ -272,7 +272,7 @@ contract DiamondProxy {
         OwnershipLib.setContractOwner(_owner);
         DiamondCutLib.diamondCut(_diamondCut, _init, _calldata);
 
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
 
         // ERC165
         ds.supportedInterfaces[type(IERC165).interfaceId] = true;
@@ -281,7 +281,7 @@ contract DiamondProxy {
     }
 
     fallback() external payable {
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         address facet = ds.selectorToFacetAndPosition[msg.sig].facetAddress;
         require(facet != address(0), "Diamond: function not found");
         assembly {
@@ -316,7 +316,7 @@ contract DiamondCutFacet is IDiamondCut {
 
 contract DiamondLoupeFacet is IDiamondLoupe, IERC165 {
     function facets() external view override returns (Facet[] memory facets_) {
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         uint256 numFacets = ds.facetAddresses.length;
         facets_ = new Facet[](numFacets);
         for (uint256 i; i < numFacets; i++) {
@@ -327,22 +327,22 @@ contract DiamondLoupeFacet is IDiamondLoupe, IERC165 {
     }
 
     function facetFunctionSelectors(address _facet) external view override returns (bytes4[] memory facetFunctionSelectors_) {
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         facetFunctionSelectors_ = ds.facetFunctionSelectors[_facet].functionSelectors;
     }
 
     function facetAddresses() external view override returns (address[] memory facetAddresses_) {
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         facetAddresses_ = ds.facetAddresses;
     }
 
     function facetAddress(bytes4 _functionSelector) external view override returns (address facetAddress_) {
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         facetAddress_ = ds.selectorToFacetAndPosition[_functionSelector].facetAddress;
     }
 
     function supportsInterface(bytes4 _interfaceId) external view override returns (bool) {
-        DiamondStorage.Layout storage ds = DiamondStorage.layout();
+        DiamondStorage.Layout storage ds = DiamondStorage.store();
         return ds.supportedInterfaces[_interfaceId];
     }
 }
@@ -356,14 +356,14 @@ contract OwnershipFacet {
     function transferOwnership(address _newOwner) external {
         OwnershipLib.enforceIsContractOwner();
         require(_newOwner != address(0), "Diamond: zero owner");
-        DiamondStorage.layout().pendingOwner = _newOwner;
+        DiamondStorage.store().pendingOwner = _newOwner;
         emit OwnershipTransferStarted(OwnershipLib.contractOwner(), _newOwner);
     }
 
     function acceptOwnership() external {
-        address pending = DiamondStorage.layout().pendingOwner;
+        address pending = DiamondStorage.store().pendingOwner;
         require(msg.sender == pending, "Diamond: not pending owner");
-        DiamondStorage.layout().pendingOwner = address(0);
+        DiamondStorage.store().pendingOwner = address(0);
         OwnershipLib.setContractOwner(pending);
     }
 
@@ -372,6 +372,6 @@ contract OwnershipFacet {
     }
 
     function pendingOwner() external view returns (address) {
-        return DiamondStorage.layout().pendingOwner;
+        return DiamondStorage.store().pendingOwner;
     }
 }

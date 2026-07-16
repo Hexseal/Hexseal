@@ -66,7 +66,7 @@ library ServiceBoardStorage {
         mapping(uint256 => uint256) requestFunds;       // requestId → USDC locked in Diamond
     }
 
-    function layout() internal pure returns (Layout storage s) {
+    function store() internal pure returns (Layout storage s) {
         bytes32 p = POSITION;
         assembly { s.slot := p }
     }
@@ -127,7 +127,7 @@ contract ServiceBoardFacet {
     }
 
     modifier whenNotPaused() {
-        if (FactoryStorage.layout().paused) revert FactoryPaused();
+        if (FactoryStorage.store().paused) revert FactoryPaused();
         _;
     }
 
@@ -135,7 +135,7 @@ contract ServiceBoardFacet {
 
     function _msgSender() internal view returns (address sender) {
         if (
-            msg.sender == FactoryStorage.layout().trustedForwarder &&
+            msg.sender == FactoryStorage.store().trustedForwarder &&
             msg.data.length >= 20
         ) {
             assembly {
@@ -166,11 +166,11 @@ contract ServiceBoardFacet {
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
         if (region > 6) revert InvalidRegion();
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         uint256 fee = fs.regionFee[region];
         if (fee == 0) revert ZeroFee();
 
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         serviceId = s.nextServiceId++;
 
         s.services[serviceId] = ServiceBoardStorage.Service({
@@ -212,13 +212,13 @@ contract ServiceBoardFacet {
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
         if (region > 6) revert InvalidRegion();
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         uint256 fee = fs.regionFee[region];
         if (fee == 0) revert ZeroFee();
 
         IServiceBoardUSDC(fs.usdc).permit(executor, address(this), fee, permitDeadline, v, r, s);
 
-        ServiceBoardStorage.Layout storage sbl = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage sbl = ServiceBoardStorage.store();
         serviceId = sbl.nextServiceId++;
 
         sbl.services[serviceId] = ServiceBoardStorage.Service({
@@ -241,7 +241,7 @@ contract ServiceBoardFacet {
 
     function removeService(uint256 serviceId) external {
         address sender = _msgSender();
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
         if (sender != svc.executor) revert NotExecutor();
@@ -253,7 +253,7 @@ contract ServiceBoardFacet {
 
     function pauseService(uint256 serviceId) external {
         address sender = _msgSender();
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
         if (sender != svc.executor) revert NotExecutor();
@@ -265,7 +265,7 @@ contract ServiceBoardFacet {
 
     function unpauseService(uint256 serviceId) external {
         address sender = _msgSender();
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
         if (sender != svc.executor) revert NotExecutor();
@@ -288,7 +288,7 @@ contract ServiceBoardFacet {
         uint8 region
     ) external whenNotPaused {
         address sender = _msgSender();
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
         if (sender != svc.executor) revert NotExecutor();
@@ -330,7 +330,7 @@ contract ServiceBoardFacet {
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
         if (region > 6) revert InvalidRegion();
 
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.Service storage svc = s.services[serviceId];
 
         if (svc.status != ServiceBoardStorage.ServiceStatus.ACTIVE) revert ServiceNotActive();
@@ -353,7 +353,7 @@ contract ServiceBoardFacet {
         s.clientRequests[client].push(requestId);
 
         // Amount → Diamond (вернётся при reject/cancel или уйдёт в Agreement при accept)
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         _safeTransferFrom(fs.usdc, client, address(this), amount);
         s.requestFunds[requestId] = amount;
 
@@ -378,13 +378,13 @@ contract ServiceBoardFacet {
         if (deadlineDays == 0 || deadlineDays > 365) revert DeadlineInvalid();
         if (region > 6) revert InvalidRegion();
 
-        ServiceBoardStorage.Layout storage st = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage st = ServiceBoardStorage.store();
         ServiceBoardStorage.Service storage svc = st.services[serviceId];
 
         if (svc.status != ServiceBoardStorage.ServiceStatus.ACTIVE) revert ServiceNotActive();
         if (client == svc.executor) revert SelfRequest();
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
 
         IServiceBoardUSDC(fs.usdc).permit(client, address(this), amount, permitDeadline, v, r, s);
 
@@ -417,7 +417,7 @@ contract ServiceBoardFacet {
         external nonReentrant whenNotPaused returns (address agreementAddr)
     {
         address sender = _msgSender();
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.HireRequest storage req = s.requests[requestId];
         ServiceBoardStorage.Service storage svc = s.services[req.serviceId];
 
@@ -456,7 +456,7 @@ contract ServiceBoardFacet {
         req.agreement = agreementAddr;
 
         // Amount из Diamond → Agreement
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         _safeTransfer(fs.usdc, agreementAddr, held);
 
         // Активируем Agreement
@@ -469,7 +469,7 @@ contract ServiceBoardFacet {
     /// @notice Исполнитель отклоняет запрос → amount рефандится клиенту.
     function rejectRequest(uint256 requestId) external nonReentrant {
         address sender = _msgSender();
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.HireRequest storage req = s.requests[requestId];
         ServiceBoardStorage.Service storage svc = s.services[req.serviceId];
 
@@ -480,7 +480,7 @@ contract ServiceBoardFacet {
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         _safeTransfer(fs.usdc, req.client, refund);
 
         emit RequestRejected(requestId, sender, req.client);
@@ -491,7 +491,7 @@ contract ServiceBoardFacet {
     /// @notice Клиент отменяет запрос пока он PENDING → amount рефандится.
     function cancelRequest(uint256 requestId) external nonReentrant {
         address sender = _msgSender();
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.HireRequest storage req = s.requests[requestId];
 
         if (sender != req.client) revert NotClient();
@@ -501,7 +501,7 @@ contract ServiceBoardFacet {
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;
 
-        FactoryStorage.Layout storage fs = FactoryStorage.layout();
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
         _safeTransfer(fs.usdc, sender, refund);
 
         emit RequestCancelled(requestId, sender);
@@ -510,39 +510,39 @@ contract ServiceBoardFacet {
     // -------- VIEW --------
 
     function getService(uint256 serviceId) external view returns (ServiceBoardStorage.Service memory) {
-        return ServiceBoardStorage.layout().services[serviceId];
+        return ServiceBoardStorage.store().services[serviceId];
     }
 
     function getExecutorServices(address executor) external view returns (uint256[] memory) {
-        return ServiceBoardStorage.layout().executorServices[executor];
+        return ServiceBoardStorage.store().executorServices[executor];
     }
 
     function getServiceClients(uint256 serviceId) external view returns (address[] memory) {
-        return ServiceBoardStorage.layout().serviceClients[serviceId];
+        return ServiceBoardStorage.store().serviceClients[serviceId];
     }
 
     function totalServices() external view returns (uint256) {
-        return ServiceBoardStorage.layout().nextServiceId;
+        return ServiceBoardStorage.store().nextServiceId;
     }
 
     function getRequest(uint256 requestId) external view returns (ServiceBoardStorage.HireRequest memory) {
-        return ServiceBoardStorage.layout().requests[requestId];
+        return ServiceBoardStorage.store().requests[requestId];
     }
 
     function getServiceRequests(uint256 serviceId) external view returns (uint256[] memory) {
-        return ServiceBoardStorage.layout().serviceRequests[serviceId];
+        return ServiceBoardStorage.store().serviceRequests[serviceId];
     }
 
     function getClientRequests(address client) external view returns (uint256[] memory) {
-        return ServiceBoardStorage.layout().clientRequests[client];
+        return ServiceBoardStorage.store().clientRequests[client];
     }
 
     function totalRequests() external view returns (uint256) {
-        return ServiceBoardStorage.layout().nextRequestId;
+        return ServiceBoardStorage.store().nextRequestId;
     }
 
     function getRequestFunds(uint256 requestId) external view returns (uint256) {
-        return ServiceBoardStorage.layout().requestFunds[requestId];
+        return ServiceBoardStorage.store().requestFunds[requestId];
     }
 
     /// @notice Все активные услуги с их ID
@@ -550,7 +550,7 @@ contract ServiceBoardFacet {
         uint256[] memory ids,
         ServiceBoardStorage.Service[] memory activeServices
     ) {
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         uint256 total = s.nextServiceId;
 
         uint256 count = 0;
@@ -575,7 +575,7 @@ contract ServiceBoardFacet {
         uint256[] memory ids,
         ServiceBoardStorage.HireRequest[] memory pendingReqs
     ) {
-        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.layout();
+        ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         uint256[] storage reqIds = s.serviceRequests[serviceId];
         uint256 count = 0;
         for (uint256 i = 0; i < reqIds.length; i++) {
