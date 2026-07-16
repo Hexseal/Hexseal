@@ -244,11 +244,11 @@ library DiamondCutLib {
     function initializeDiamondCut(address _init, bytes memory _calldata) internal {
         if (_init == address(0)) return;
         enforceHasContractCode(_init, "Diamond: init no code");
-        (bool success, bytes memory error) = _init.delegatecall(_calldata);
+        (bool success, bytes memory errData) = _init.delegatecall(_calldata);
         if (!success) {
-            if (error.length > 0) {
+            if (errData.length > 0) {
                 assembly {
-                    revert(add(32, error), mload(error))
+                    revert(add(32, errData), mload(errData))
                 }
             } else {
                 revert("Diamond: init reverted");
