@@ -141,9 +141,9 @@ export default function MobileBottomNav() {
       {/* Board popup */}
       {boardMounted && (
         <div
-          className="fixed z-50 left-3 right-3"
+          className="fixed z-50 left-0 right-0 px-3"
           style={{
-            bottom: "calc(env(safe-area-inset-bottom, 0px) + 94px)",
+            bottom: "calc(env(safe-area-inset-bottom, 0px) + 90px)",
             transform: boardVisible ? "translateY(0) scale(1)" : "translateY(16px) scale(0.97)",
             opacity: boardVisible ? 1 : 0,
             pointerEvents: boardVisible ? "auto" : "none",
@@ -202,8 +202,8 @@ export default function MobileBottomNav() {
 
       {/* ── Floating pill ─────────────────────────────────────────────────── */}
       <nav
-        className="md:hidden fixed left-0 right-0 px-3 z-50"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)" }}
+        className="md:hidden fixed left-0 right-0 bottom-0 px-3 z-50"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)" }}
       >
         <div
           className="flex items-center bg-black/95 backdrop-blur-xl border border-white/[0.08] rounded-[32px] px-4 h-[86px]"
