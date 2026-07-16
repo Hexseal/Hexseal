@@ -82,6 +82,11 @@ export function usePairChat(peerAddress: string) {
         if (cancelled) return;
         groupRef.current = group;
 
+        // Sync group state from network before loading messages.
+        // Fetches missing identity updates and resolves MLS install diffs.
+        try { await group.sync(); } catch { /* non-critical */ }
+        if (cancelled) return;
+
         const loaded = await loadGroupMessages(group, xmtp.inboxId ?? '', myAddress);
         if (cancelled) return;
         _msgCache.set(peerLc, loaded.messages);

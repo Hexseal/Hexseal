@@ -337,7 +337,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
   // dispute-log bot can tag entries by deal instead of one undifferentiated
   // stream. Fires once per resolved value (including null, for "just chatting"),
   // never resent for the same value — see usePairChat.markDealContext.
-  const lastMarkedDealRef = useRef<string | null | undefined>(undefined);
+  const lastMarkedDealRef = useRef<string | null | undefined>(null);
   useEffect(() => {
     if (!isInitialized) return;
     const current = dealContext?.agreementAddr?.toLowerCase() ?? null;
