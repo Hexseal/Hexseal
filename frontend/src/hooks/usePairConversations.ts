@@ -54,9 +54,12 @@ export function usePairConversations(isEnabled = false) {
       const merged1 = mergeWithLocalPeers(local, addr);
       _convCache.set(addr.toLowerCase(), merged1);
       setConversations(merged1);
-      setIsLoading(false);
+      // Only stop loading after Phase 1 if we already have data.
+      // If local cache is empty, keep the skeleton visible during Phase 2
+      // (network sync) so the user never sees the false "no conversations" state.
+      if (merged1.length > 0) setIsLoading(false);
 
-      // Phase 2: full network sync in background — updates previews silently.
+      // Phase 2: full network sync — fetches groups/messages from XMTP network.
       const fresh = await listPairConversations(xmtp, addr);
       const merged2 = mergeWithLocalPeers(fresh, addr);
       _convCache.set(addr.toLowerCase(), merged2);

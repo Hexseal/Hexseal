@@ -59,7 +59,7 @@ const bottomScrim = (
 // visible jump. Now the shell is stable; only internal CSS handles the panel switch.
 //
 // MobileBottomNav floats (position:fixed) over the list when no peer is selected.
-// Body lock is applied unconditionally by the early ClientLayout effect below.
+// Body lock is applied by ChatLayoutInner only when a conversation is open (hasPeer).
 //
 // Must be inside Suspense because useSearchParams() needs it in Next.js app router.
 function ChatLayoutInner({
