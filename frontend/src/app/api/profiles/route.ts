@@ -15,10 +15,16 @@ const RELAYER_URL = (
   process.env.NEXT_PUBLIC_RELAYER_URL || process.env.RELAYER_PUBLIC_URL || ''
 ).replace(/\/$/, '');
 
+// address is interpolated straight into the relayer path below — restrict to
+// exactly what an address can be so nothing (`../`, `/`, query strings) can
+// escape the `profile-<addr>.json` filename it's meant to stay inside.
+const ETH_ADDR = /^0x[0-9a-f]{40}$/;
+
 // GET /api/profiles?address=0x...
 export async function GET(request: NextRequest) {
   const address = request.nextUrl.searchParams.get('address')?.toLowerCase();
   if (!address) return NextResponse.json({ error: 'address required' }, { status: 400 });
+  if (!ETH_ADDR.test(address)) return NextResponse.json({ error: 'invalid address' }, { status: 400 });
   if (!RELAYER_URL) return NextResponse.json(null);
 
   try {
