@@ -13,6 +13,8 @@ import {
   ServiceRemoved,
   ServiceRequested,
   RequestAccepted,
+  RequestRejected,
+  RequestCancelled,
   AgreementDeployed,
 } from '../generated/Diamond/Diamond'
 import { Job, Service, ServiceRequest, Agreement } from '../generated/schema'
@@ -152,6 +154,7 @@ export function handleServiceRequested(event: ServiceRequested): void {
   req.serviceId = event.params.serviceId.toString()
   req.client = event.params.client
   req.amount = event.params.amount
+  req.status = 'pending'
   req.createdAt = event.block.timestamp
   req.save()
 }
@@ -159,6 +162,8 @@ export function handleServiceRequested(event: ServiceRequested): void {
 export function handleRequestAccepted(event: RequestAccepted): void {
   let req = ServiceRequest.load(event.params.requestId.toString())
   if (!req) return
+  req.status = 'accepted'
+  req.save()
   let service = Service.load(req.serviceId)
   if (!service) return
   service.hiresCount = service.hiresCount.plus(BigInt.fromI32(1))
@@ -172,6 +177,20 @@ export function handleRequestAccepted(event: RequestAccepted): void {
     agreement.requestId = event.params.requestId.toString()
     agreement.save()
   }
+}
+
+export function handleRequestRejected(event: RequestRejected): void {
+  let req = ServiceRequest.load(event.params.requestId.toString())
+  if (!req) return
+  req.status = 'rejected'
+  req.save()
+}
+
+export function handleRequestCancelled(event: RequestCancelled): void {
+  let req = ServiceRequest.load(event.params.requestId.toString())
+  if (!req) return
+  req.status = 'cancelled'
+  req.save()
 }
 
 export function handleAgreementDeployed(event: AgreementDeployed): void {

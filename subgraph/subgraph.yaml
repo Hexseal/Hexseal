@@ -48,6 +48,10 @@ dataSources:
           handler: handleServiceRequested
         - event: RequestAccepted(indexed uint256,indexed address,indexed address,address)
           handler: handleRequestAccepted
+        - event: RequestRejected(indexed uint256,indexed address,indexed address)
+          handler: handleRequestRejected
+        - event: RequestCancelled(indexed uint256,indexed address)
+          handler: handleRequestCancelled
         - event: AgreementDeployed(indexed address,indexed address,indexed address,uint256,uint8,uint256)
           handler: handleAgreementDeployed
       file: ./src/diamond.ts

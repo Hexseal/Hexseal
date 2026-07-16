@@ -202,7 +202,7 @@ export default function MobileBottomNav() {
 
       {/* ── Floating pill ─────────────────────────────────────────────────── */}
       <nav
-        className="md:hidden fixed left-3 right-3 z-50"
+        className="md:hidden fixed left-0 right-0 px-3 z-50"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 2px)" }}
       >
         <div

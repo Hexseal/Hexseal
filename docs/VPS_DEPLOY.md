@@ -215,6 +215,9 @@ nano /opt/hexseal/frontend/.env.local
 ```
 
 ```env
+# ── Subgraph (The Graph Studio) ───────────────────────────────────────────────
+SUBGRAPH_URL=https://api.studio.thegraph.com/query/1755241/hexseal/latest
+
 # ── Chain ─────────────────────────────────────────────────────────────────────
 NEXT_PUBLIC_CHAIN_ID=84532
 

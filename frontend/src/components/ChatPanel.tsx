@@ -257,7 +257,7 @@ function XmtpStatusBar() {
 function XmtpConnecting() {
   const t = useTranslations();
   return (
-    <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
+    <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-4">
       <div className="relative w-12 h-12">
         <div className="absolute inset-0 rounded-full border-2 border-white/[0.06]" />
         <div className="absolute inset-0 rounded-full border-2 border-t-primary/60 animate-spin" />
@@ -785,6 +785,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black" style={{ overscrollBehavior: 'none', overflowAnchor: 'none' }}>
+        {isLoading && <XmtpConnecting />}
         {!isLoading && !needsSetup && !error && messages.length > 0 && <div className="flex-1" />}
         <div className="py-4">
 
@@ -794,8 +795,6 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
               <p className="text-sm text-white/25">Инициализация мессенджера…</p>
             </div>
           )}
-
-          {isLoading && <XmtpConnecting />}
 
           {!isLoading && error && (
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
