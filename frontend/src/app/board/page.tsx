@@ -439,12 +439,12 @@ export default function BoardPage() {
       })
       .filter(gj => {
         if (!q) return true;
-        return (
-          gj.title.toLowerCase().includes(q) ||
-          gj.description.toLowerCase().includes(q) ||
-          gj.client.toLowerCase().includes(q) ||
-          gj.id.includes(q)
-        );
+        const catKey = extractCategory(gj.description) ?? '';
+        const stripped = stripCategory(gj.description);
+        const tag = catKey === 'other' ? (extractCustomTag(stripped) ?? '') : '';
+        const cleanDesc = catKey === 'other' ? stripCustomTag(stripped) : stripped;
+        const hay = `${gj.title} ${cleanDesc} ${catKey} ${tag}`.toLowerCase();
+        return hay.includes(q);
       })
       .map(gj => ({
         id: BigInt(gj.id),

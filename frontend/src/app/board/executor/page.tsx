@@ -23,7 +23,7 @@ import { useRouter } from "next/navigation";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
-import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory } from "@/config/categories";
+import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory, extractCustomTag, stripCustomTag } from "@/config/categories";
 import { shortAddr } from "@/lib/utils";
 
 function useTimeAgo() {
@@ -719,11 +719,14 @@ export default function ExecutorBoardPage() {
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      list = list.filter(s =>
-        s.title.toLowerCase().includes(q) ||
-        s.description?.toLowerCase().includes(q) ||
-        s.executor.toLowerCase().includes(q)
-      );
+      list = list.filter(s => {
+        const catKey = extractCategory(s.description ?? '') ?? '';
+        const stripped = stripCategory(s.description ?? '');
+        const tag = catKey === 'other' ? (extractCustomTag(stripped) ?? '') : '';
+        const cleanDesc = catKey === 'other' ? stripCustomTag(stripped) : stripped;
+        const hay = `${s.title} ${cleanDesc} ${catKey} ${tag}`.toLowerCase();
+        return hay.includes(q);
+      });
     }
     switch (sortBy) {
       case 'oldest':  return [...list].sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
