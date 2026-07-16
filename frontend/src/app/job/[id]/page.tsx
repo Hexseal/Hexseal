@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
+import { CATEGORY_BADGE, extractCategory, stripCategory, extractCustomTag, stripCustomTag } from "@/config/categories";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { PageCenter } from "@/components/PageCenter";
 import { shortAddr } from "@/lib/utils";
@@ -232,7 +232,9 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   const statusInfo = JOB_STATUS[job.status] ?? JOB_STATUS[0];
   const catKey = extractCategory(job.description);
-  const displayDesc = stripCategory(job.description);
+  const strippedDesc = stripCategory(job.description);
+  const customTagLabel = catKey === 'other' ? extractCustomTag(strippedDesc) : null;
+  const displayDesc = catKey === 'other' ? stripCustomTag(strippedDesc) : strippedDesc;
 
   return (
     <>
@@ -247,7 +249,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               </Badge>
               {catKey && (
                 <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
-                  {t(`categories.${catKey}`)}
+                  {customTagLabel ? `#${customTagLabel}` : t(`categories.${catKey}`)}
                 </span>
               )}
             </div>

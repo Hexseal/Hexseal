@@ -66,7 +66,7 @@ const REGION_LABELS: Record<number, string> = {
 type Step = "form" | "uploading" | "pending" | "success" | "error";
 
 export default function PostServicePage() {
-  const { address, isConnected, chainId } = useAccount();
+  const { address, isConnected, chainId, status } = useAccount();
   const t = useTranslations();
   const { switchChainAsync } = useSwitchChain();
   const { data: walletClient } = useWalletClient();
@@ -137,7 +137,6 @@ export default function PostServicePage() {
 
     setStep("pending");
     try {
-      toast("Sign: USDC permit in wallet…");
       const { txHash: hash } = await mintServiceGasless(walletClient, publicClient, {
         title:        sanitizeHtml(trimmedTitle),
         description:  withCategory(category, sanitizeHtml(description.trim())),
@@ -174,6 +173,25 @@ export default function PostServicePage() {
       setStep("error");
     }
   };
+
+  if (status === 'reconnecting' || status === 'connecting') {
+    return (
+      <div className="container mx-auto px-4 pt-4 pb-8 max-w-2xl space-y-4 animate-pulse">
+        <div className="h-7 w-48 rounded-lg bg-white/[0.06]" />
+        <div className="h-4 w-72 rounded bg-white/[0.04]" />
+        <div className="rounded-[22px] border border-white/[0.06] bg-[#0d0d0f] px-5 py-4 space-y-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="space-y-2">
+              <div className="h-3 w-20 rounded bg-white/[0.05]" />
+              <div className="h-10 rounded-[14px] bg-white/[0.04]" />
+            </div>
+          ))}
+        </div>
+        <div className="rounded-[22px] border border-white/[0.06] bg-[#0d0d0f] px-5 py-4 h-32" />
+        <div className="h-11 rounded-lg bg-white/[0.05]" />
+      </div>
+    );
+  }
 
   if (!isConnected) {
     return (
@@ -305,7 +323,7 @@ export default function PostServicePage() {
           <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-16 text-center" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             <Loader2 className="w-10 h-10 animate-spin mx-auto mb-5 text-primary" />
             <h2 className="text-lg font-semibold mb-2">Sending gasless transaction…</h2>
-            <p className="text-sm text-white/40">Sign the USDC permit in your wallet — no ETH needed</p>
+            <p className="text-sm text-white/40">2 wallet signatures required — no ETH needed</p>
           </div>
         )}
 

@@ -198,9 +198,16 @@ function JobCard({
           <UserAvatar address={job.client} size={24} link />
 
           <div className="flex-1 min-w-0">
-            <p className="text-[13px] font-semibold text-white/90 truncate leading-snug mb-1">
-              {job.title || `Job #${jobId.toString()}`}
-            </p>
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <p className="text-[13px] font-semibold text-white/90 truncate leading-snug">
+                {job.title || `Job #${jobId.toString()}`}
+              </p>
+              {catKey && (
+                <span className={`flex-shrink-0 px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
+                  {customTagLabel ? `#${customTagLabel}` : t(`categories.${catKey}`)}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-1.5">
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasApplied ? 'bg-emerald-400' : 'bg-sky-400/60'}`} />
               <span className="text-[11px] font-mono text-white/55">{formatBudget(job.amount)} USDC</span>

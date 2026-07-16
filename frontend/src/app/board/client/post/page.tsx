@@ -143,7 +143,6 @@ export default function PostJobPage() {
 
     setStep("pending");
     try {
-      toast("Sign: USDC permit in wallet…");
       const { txHash: hash } = await mintJobGasless(walletClient, publicClient, {
         title:        sanitizeHtml(trimmedTitle),
         description:  withCategory(category,
@@ -188,7 +187,24 @@ export default function PostJobPage() {
     }
   };
 
-  if (status === 'reconnecting' || status === 'connecting') return null;
+  if (status === 'reconnecting' || status === 'connecting') {
+    return (
+      <div className="container mx-auto px-4 pt-4 pb-8 max-w-2xl space-y-4 animate-pulse">
+        <div className="h-7 w-48 rounded-lg bg-white/[0.06]" />
+        <div className="h-4 w-72 rounded bg-white/[0.04]" />
+        <div className="rounded-[22px] border border-white/[0.06] bg-[#0d0d0f] px-5 py-4 space-y-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="space-y-2">
+              <div className="h-3 w-20 rounded bg-white/[0.05]" />
+              <div className="h-10 rounded-[14px] bg-white/[0.04]" />
+            </div>
+          ))}
+        </div>
+        <div className="rounded-[22px] border border-white/[0.06] bg-[#0d0d0f] px-5 py-4 h-32" />
+        <div className="h-11 rounded-lg bg-white/[0.05]" />
+      </div>
+    );
+  }
 
   if (!isConnected) {
     return (
@@ -347,7 +363,7 @@ export default function PostJobPage() {
               {step === "uploading" ? "Saving terms…" : "Sending gasless transaction…"}
             </h2>
             <p className="text-sm text-white/40">
-              {step === "pending" ? "Sign the USDC permit in your wallet — no ETH needed" : "Uploading terms to backend…"}
+              {step === "pending" ? "2 wallet signatures required — no ETH needed" : "Uploading terms to backend…"}
             </p>
           </div>
         )}

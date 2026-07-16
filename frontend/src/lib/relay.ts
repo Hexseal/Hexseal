@@ -100,7 +100,8 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   cancelJob:            150_000n,
   applyForJob:          150_000n,
   withdrawApplication:  150_000n,
-  mintService:          800_000n,
+  mintService:              800_000n,
+  mintServiceWithPermit:    800_000n,
   requestService:       800_000n,
   acceptRequest:      5_500_000n, // also deploys Agreement
   rejectRequest:        120_000n,
@@ -400,29 +401,19 @@ export async function mintJobGasless(
   // v может быть 0/1 (yParity) у некоторых кошельков — нормализуем до 27/28
   const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
 
-  // Step 5 — encode mintJob calldata (no permit params — relay calls USDC.permit() separately)
+  // Step 5 — encode mintJobWithPermit calldata (permit params embedded, atomic in one tx)
   const calldata = encodeFunctionData({
     abi: DIAMOND_ABI as Abi,
-    functionName: 'mintJob',
-    args: [title, description, amount, deadlineDays, terms, region],
+    functionName: 'mintJobWithPermit',
+    args: [userAddress, title, description, amount, deadlineDays, terms, region, permitDeadline, vNum, r, s],
   });
 
-  const permitParams: PermitParams = {
-    permitOwner:    userAddress,
-    permitSpender:  DIAMOND,
-    permitValue:    total.toString(),
-    permitDeadline: permitDeadline.toString(),
-    permitV:        vNum,
-    permitR:        r,
-    permitS:        s,
-  };
-
-  // Step 6 — sign ForwardRequest and send; fallback: submit calldata directly to Diamond
+  // Step 6 — sign ForwardRequest and send; no separate permitParams — relay doesn't call USDC.permit()
   try {
-    return await _sendForwardRequest(walletClient, publicClient, calldata, 'mintJob', DIAMOND, undefined, permitParams);
+    return await _sendForwardRequest(walletClient, publicClient, calldata, 'mintJobWithPermit', DIAMOND);
   } catch (err) {
     if (!isRelayDown(err)) throw err;
-    console.warn('[relay] down → direct mintJob');
+    console.warn('[relay] down → direct mintJobWithPermit');
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
@@ -473,28 +464,18 @@ export async function mintServiceGasless(
   const { r, s, v } = parseSignature(permitSig);
   const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
 
-  // encode mintService calldata (no permit params — relay calls USDC.permit() separately)
+  // encode mintServiceWithPermit calldata (permit params embedded, atomic in one tx)
   const calldata = encodeFunctionData({
     abi: DIAMOND_ABI as Abi,
-    functionName: 'mintService',
-    args: [title, description, price, deadlineDays, region],
+    functionName: 'mintServiceWithPermit',
+    args: [userAddress, title, description, price, deadlineDays, region, permitDeadline, vNum, r, s],
   });
 
-  const permitParams: PermitParams = {
-    permitOwner:    userAddress,
-    permitSpender:  DIAMOND,
-    permitValue:    fee.toString(),
-    permitDeadline: permitDeadline.toString(),
-    permitV:        vNum,
-    permitR:        r,
-    permitS:        s,
-  };
-
   try {
-    return await _sendForwardRequest(walletClient, publicClient, calldata, 'mintService', DIAMOND, undefined, permitParams);
+    return await _sendForwardRequest(walletClient, publicClient, calldata, 'mintServiceWithPermit', DIAMOND);
   } catch (err) {
     if (!isRelayDown(err)) throw err;
-    console.warn('[relay] down → direct mintService');
+    console.warn('[relay] down → direct mintServiceWithPermit');
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });

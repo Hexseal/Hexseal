@@ -13,16 +13,12 @@ const Toaster = dynamic(
 export default function ToasterClient() {
   return (
     <Toaster
-      position="top-center"
-      gutter={10}
+      position="bottom-right"
+      gutter={8}
       containerStyle={{
-        // True vertical center of the viewport.
-        // Container top lands at ~50% — react-hot-toast adds a 16px gutter then
-        // the first toast (~44px tall), so its visual center sits at ≈ 50dvh.
-        top: 'calc(50dvh - 60px)',
+        bottom: 24,
+        right: 16,
         zIndex: 99999,
-        // Prevent the invisible container div from eating pointer events
-        // between toasts; individual toasts restore pointer-events themselves.
         pointerEvents: 'none',
       }}
       toastOptions={{
