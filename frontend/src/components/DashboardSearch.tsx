@@ -15,13 +15,13 @@ function fmtUsdc(v: string) {
   return isNaN(n) ? v : (n / 1e6).toFixed(0);
 }
 
-const DEAL_STATUS: Record<number, { label: string; dot: string }> = {
-  0: { label: 'Pending',   dot: 'bg-white/30' },
-  1: { label: 'Active',    dot: 'bg-violet-400' },
-  2: { label: 'Done',      dot: 'bg-emerald-400' },
-  3: { label: 'Refunded',  dot: 'bg-white/30' },
-  4: { label: 'Disputed',  dot: 'bg-orange-400' },
-  5: { label: 'Resolved',  dot: 'bg-blue-400' },
+// Matches Agreement.sol Status enum: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
+// (same order as DealCard.tsx's DEAL_STATUS — kept as separate constants here since this one uses i18n keys, not English labels)
+const DEAL_STATUS_KEY: Record<number, string> = {
+  0: 'created', 1: 'funded', 2: 'active', 3: 'completed', 4: 'disputed', 5: 'resolved', 6: 'refunded',
+};
+const DEAL_STATUS_DOT: Record<number, string> = {
+  0: 'bg-sky-400', 1: 'bg-emerald-400', 2: 'bg-violet-400', 3: 'bg-green-400', 4: 'bg-red-400', 5: 'bg-purple-400', 6: 'bg-gray-400',
 };
 
 const JOB_STATUS_LABEL: Record<string, string> = {
@@ -48,6 +48,7 @@ export function DashboardSearch({
   services: MyServiceEntry[];
 }) {
   const t = useTranslations('dashboard.search');
+  const tStatus = useTranslations('deal_status');
   const [query, setQuery] = useState('');
   const [open, setOpen]   = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -150,8 +151,8 @@ export function DashboardSearch({
                           {r.kind === 'deal' && (
                             <>
                               <div className="flex items-center gap-1.5 mb-0.5">
-                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${DEAL_STATUS[r.data.status]?.dot ?? 'bg-white/20'}`} />
-                                <span className="text-[11px] font-medium text-white/50">{DEAL_STATUS[r.data.status]?.label ?? `#${r.data.status}`}</span>
+                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${DEAL_STATUS_DOT[r.data.status] ?? 'bg-white/20'}`} />
+                                <span className="text-[11px] font-medium text-white/50">{DEAL_STATUS_KEY[r.data.status] ? tStatus(DEAL_STATUS_KEY[r.data.status]) : `#${r.data.status}`}</span>
                                 <span className="text-[11px] text-white/20">·</span>
                                 <span className="text-[11px] font-mono text-white/40">{fmtUsdc(r.data.amount)} USDC</span>
                               </div>

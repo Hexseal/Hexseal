@@ -52,4 +52,5 @@ type Agreement @entity {
   jobId: String
   serviceId: String
   requestId: String
+  clientWon: Boolean
 }

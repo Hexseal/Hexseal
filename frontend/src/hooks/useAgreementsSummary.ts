@@ -32,6 +32,7 @@ function toAgreementRecord(a: GraphAgreement): AgreementRecord {
     status: a.status,
     createdAt: BigInt(a.createdAt),
     resolvedAt: a.resolvedAt ? BigInt(a.resolvedAt) : BigInt(0),
+    clientWon: a.clientWon,
   };
 }
 
@@ -42,7 +43,7 @@ function toAgreementRecord(a: GraphAgreement): AgreementRecord {
  */
 export function useAgreementsSummary(address: string | undefined) {
   const { agreements: rawAgreements, isLoading, refetch } = useMyAgreements(address);
-  const titleMap = useAgreementTitles(address);
+  const titleMap = useAgreementTitles(rawAgreements);
   const allAgreements = useMemo(
     () => rawAgreements.map(a => ({ ...toAgreementRecord(a), title: titleMap.get(a.id.toLowerCase()) })),
     [rawAgreements, titleMap],
@@ -61,7 +62,18 @@ export function useAgreementsSummary(address: string | undefined) {
   // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
   const activeDeals  = allAgreements.filter(d => [0, 1, 2, 4].includes(d.status));
   const historyDeals = allAgreements.filter(d => [3, 5, 6].includes(d.status));
-  const completed    = allAgreements.filter(d => d.status === 3 || d.status === 5).length;
+  // "Completed" = deals that went well for *this* viewer. A plain release (status 3) always
+  // counts; a RESOLVED dispute (status 5) only counts if the viewer's side won it — otherwise
+  // an executor who lost a dispute (client refunded) would see it inflate their success count.
+  const addrLower = address?.toLowerCase();
+  const completed = allAgreements.filter(d => {
+    if (d.status === 3) return true;
+    if (d.status === 5 && d.clientWon !== null && d.clientWon !== undefined) {
+      const isClient = addrLower === d.client.toLowerCase();
+      return isClient ? d.clientWon : !d.clientWon;
+    }
+    return false;
+  }).length;
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
 
   return { rawAgreements, isLoading, refetch, xp, level, activeDeals, historyDeals, completed, totalVolume };

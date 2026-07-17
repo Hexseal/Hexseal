@@ -99,6 +99,9 @@ export const MY_AGREEMENTS_QUERY = `
       status
       createdAt
       resolvedAt
+      jobId
+      serviceId
+      clientWon
     }
     asExecutor: agreements(where: { executor: $executor }) {
       id
@@ -108,6 +111,30 @@ export const MY_AGREEMENTS_QUERY = `
       status
       createdAt
       resolvedAt
+      jobId
+      serviceId
+      clientWon
+    }
+  }
+`
+
+// jobId/serviceId on Agreement are set (via handleJobAccepted/handleRequestAccepted) in the
+// same tx as AgreementDeployed, so they're already resolvable straight off the rows above —
+// no need to reverse-lookup through getClientJobs/getExecutorServices on-chain.
+export const AGREEMENT_JOB_TITLES_QUERY = `
+  query AgreementJobTitles($ids: [String!]!) {
+    jobs(where: { id_in: $ids }) {
+      id
+      title
+    }
+  }
+`
+
+export const AGREEMENT_SERVICE_TITLES_QUERY = `
+  query AgreementServiceTitles($ids: [String!]!) {
+    services(where: { id_in: $ids }) {
+      id
+      title
     }
   }
 `

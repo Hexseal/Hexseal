@@ -32,6 +32,7 @@ export interface AgreementRecord {
   createdAt: bigint;
   resolvedAt: bigint;
   title?: string;
+  clientWon?: boolean | null; // set only once status===RESOLVED (5) — who the arbiter ruled for
 }
 
 function formatAmount(amount: bigint): string {

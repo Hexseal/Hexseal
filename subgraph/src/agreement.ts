@@ -56,6 +56,7 @@ export function handleDisputeResolved(event: DisputeResolved): void {
   let a = Agreement.load(event.address.toHexString())
   if (!a) return
   a.status = 5
+  a.clientWon = event.params.clientWins
   a.resolvedAt = event.block.timestamp
   a.updatedAt = event.block.timestamp
   a.save()

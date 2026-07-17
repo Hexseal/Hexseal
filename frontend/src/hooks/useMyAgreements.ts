@@ -10,6 +10,9 @@ export interface GraphAgreement {
   status: number
   createdAt: string
   resolvedAt: string | null
+  jobId: string | null
+  serviceId: string | null
+  clientWon: boolean | null
 }
 
 interface MyAgreementsData {
