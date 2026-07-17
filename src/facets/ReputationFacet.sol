@@ -7,6 +7,11 @@ pragma solidity ^0.8.20;
 // On-chain XP система. Пользователи клеймят XP после завершения сделки.
 // Anti-gaming: deal >= 10 USDC, cap 3 wins на пару адресов.
 // uniqueActiveUsers — счётчик уникальных адресов с XP > 0 (триггер DAO).
+//
+// Фаза 2 (xp >= PHASE2_XP_THRESHOLD): клиентский XP замораживается, XP
+// исполнителя растёт только пока его cleanStreak (подряд идущие чистые
+// закрытия) >= CLEAN_STREAK_REQUIRED — иначе капитал в одной крупной сделке
+// покупал бы репутацию наравне с годами честной работы.
 // ============================================================
 
 import "../RegistryFacet.sol"; // RegistryStorage — для верификации соглашений
@@ -34,6 +39,8 @@ library ReputationStorage {
         mapping(bytes32 => uint256) pairWins;          // keccak(sortedPair) → кол-во побед
         mapping(address => bool)    hasEarnedXP;       // для uniqueActiveUsers
         uint256                     uniqueActiveUsers;
+        mapping(address => uint256) cleanStreak;        // executor → подряд идущие чистые (без спора) закрытия
+        mapping(address => bool)    streakEvaluated;    // agreement → cleanStreak уже обновлён по этой сделке
     }
 
     function data() internal pure returns (Data storage d) {
@@ -48,11 +55,13 @@ contract ReputationFacet {
 
     // -------- CONSTANTS --------
 
-    uint256 private constant WIN_XP          = 100;
-    uint256 private constant LOSS_XP_PENALTY = WIN_XP / 2; // проигравший спор теряет половину XP, что дала бы победа — сигнал реален, но не убийственный
-    uint256 private constant MIN_WIN_AMOUNT  = 10_000_000; // 10 USDC (6 decimals)
-    uint256 private constant MAX_WINS_PAIR   = 3;
-    uint256 private constant MAX_VOLUME_XP   = 300;
+    uint256 private constant WIN_XP               = 100;
+    uint256 private constant LOSS_XP_PENALTY       = WIN_XP / 2; // проигравший спор теряет половину XP, что дала бы победа — сигнал реален, но не убийственный
+    uint256 private constant MIN_WIN_AMOUNT        = 10_000_000; // 10 USDC (6 decimals)
+    uint256 private constant MAX_WINS_PAIR         = 3;
+    uint256 private constant MAX_VOLUME_XP         = 300;
+    uint256 private constant PHASE2_XP_THRESHOLD   = 1000; // выше этого — XP клиента заморожен, XP исполнителя гейтится серией
+    uint256 private constant CLEAN_STREAK_REQUIRED = 10;   // подряд чистых закрытий для роста XP исполнителя после PHASE2_XP_THRESHOLD
 
     // Agreement.sol 7-state enum
     uint8 private constant STATUS_COMPLETED = 3;
@@ -95,22 +104,23 @@ contract ReputationFacet {
         if (d.clientClaimed[agreement] && d.executorClaimed[agreement]) return;
 
         _evalPairCap(d, agreement, cli, exc, amt);
+        _evalStreakOnce(d, agreement, st, exc, agmt);
 
         if (st == STATUS_RESOLVED) {
             bool clientWon = agmt.clientWonDispute();
             (address winner, address loser) = clientWon ? (cli, exc) : (exc, cli);
             if (!d.clientClaimed[agreement]) d.clientClaimed[agreement] = true;
             if (!d.executorClaimed[agreement]) d.executorClaimed[agreement] = true;
-            _addXP(d, agreement, winner, amt);
+            _awardXP(d, agreement, winner, exc, amt);
             _penalizeXP(d, agreement, loser);
         } else {
             if (!d.clientClaimed[agreement]) {
                 d.clientClaimed[agreement] = true;
-                _addXP(d, agreement, cli, amt);
+                _awardXP(d, agreement, cli, exc, amt);
             }
             if (!d.executorClaimed[agreement]) {
                 d.executorClaimed[agreement] = true;
-                _addXP(d, agreement, exc, amt);
+                _awardXP(d, agreement, exc, exc, amt);
             }
         }
     }
@@ -144,12 +154,24 @@ contract ReputationFacet {
         }
 
         _evalPairCap(d, agreement, cli, exc, amt);
+        _evalStreakOnce(d, agreement, st, exc, agmt);
 
         if (st == STATUS_RESOLVED && agmt.clientWonDispute() != isClient) {
             _penalizeXP(d, agreement, caller);
         } else {
-            _addXP(d, agreement, caller, amt);
+            _awardXP(d, agreement, caller, exc, amt);
         }
+    }
+
+    /// @notice Вызывается Agreement при таймауте активации/дедлайна (вина исполнителя) —
+    /// обнуляет его чистую серию. Никогда не вызывается при arbiter-таймауте (не его вина).
+    function notifyExecutorFault(address agreement) external {
+        if (msg.sender != agreement) revert NotAgreement();
+        if (RegistryStorage.store().agreements[agreement].agreement != agreement)
+            revert AgreementNotRegistered();
+
+        address exc = IAgreementView(agreement).executor();
+        ReputationStorage.data().cleanStreak[exc] = 0;
     }
 
     // -------- VIEWS --------
@@ -178,6 +200,10 @@ contract ReputationFacet {
         return ReputationStorage.data().dealIsWin[agreement];
     }
 
+    function getCleanStreak(address addr) external view returns (uint256) {
+        return ReputationStorage.data().cleanStreak[addr];
+    }
+
     // -------- INTERNAL --------
 
     function _evalPairCap(
@@ -196,6 +222,46 @@ contract ReputationFacet {
                 d.dealIsWin[agreement] = true;
             }
         }
+    }
+
+    /// @notice Обновляет чистую серию исполнителя ровно один раз на сделку, независимо от
+    /// того, сколько раз autoAwardXP/claimXP вызваны для неё (claimXP вызывается отдельно
+    /// каждой стороной). COMPLETED — сделка вообще не могла уйти в спор, значит чистая:
+    /// +1. RESOLVED — спор был; исполнитель проиграл: обнуление; выиграл: без изменений.
+    function _evalStreakOnce(
+        ReputationStorage.Data storage d,
+        address agreement,
+        uint8 st,
+        address exc,
+        IAgreementView agmt
+    ) private {
+        if (d.streakEvaluated[agreement]) return;
+        d.streakEvaluated[agreement] = true;
+
+        if (st == STATUS_COMPLETED) {
+            d.cleanStreak[exc]++;
+        } else if (st == STATUS_RESOLVED && agmt.clientWonDispute()) {
+            d.cleanStreak[exc] = 0;
+        }
+    }
+
+    /// @notice Начисляет XP по обычной формуле (_addXP), но гейтит начисление выше
+    /// PHASE2_XP_THRESHOLD: клиент выше порога больше не получает XP вообще, исполнитель —
+    /// только пока его cleanStreak >= CLEAN_STREAK_REQUIRED. Порог сверяется с балансом ДО
+    /// начисления этой сделки — сделка, которая доводит серию ровно до требуемой длины, сама
+    /// уже засчитывается по новым правилам.
+    function _awardXP(
+        ReputationStorage.Data storage d,
+        address agreement,
+        address recipient,
+        address exc,
+        uint256 amt
+    ) private {
+        if (d.xp[recipient] >= PHASE2_XP_THRESHOLD) {
+            if (recipient != exc) return;
+            if (d.cleanStreak[recipient] < CLEAN_STREAK_REQUIRED) return;
+        }
+        _addXP(d, agreement, recipient, amt);
     }
 
     function _addXP(
