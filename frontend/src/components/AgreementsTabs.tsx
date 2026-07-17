@@ -4,8 +4,8 @@ import { useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Activity, CheckCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { DealCard, type AgreementRecord } from '@/app/dashboard/components/DealCard';
-import { MyJobs, MyServices, MyClientRequests } from '@/app/dashboard/components/MyListings';
+import { DealCard, type AgreementRecord } from '@/components/DealCard';
+import { MyJobs, MyServices, MyClientRequests } from '@/components/MyListings';
 import { ListSkeleton } from '@/components/AgreementsSkeleton';
 
 // Shared by /dashboard and /profile/[address] — tab row + tab content

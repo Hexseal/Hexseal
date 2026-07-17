@@ -3,7 +3,7 @@ import { useReadContract } from 'wagmi';
 import { REPUTATION_ABI, CONTRACTS } from '@/config/contracts';
 import { useMyAgreements, type GraphAgreement } from '@/hooks/useMyAgreements';
 import { useAgreementTitles } from '@/hooks/useAgreementTitles';
-import type { AgreementRecord } from '@/app/dashboard/components/DealCard';
+import type { AgreementRecord } from '@/components/DealCard';
 
 // pct = progress within current tier (0–100). Minimum 3 so bar is always visible once unlocked.
 export function xpLevel(xp: number) {
