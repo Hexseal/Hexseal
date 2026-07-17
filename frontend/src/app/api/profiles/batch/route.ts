@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isAddress } from 'viem';
+import { fetchRelayerProfile } from '../_relayer';
 
 export const runtime = 'nodejs';
 
@@ -8,19 +10,18 @@ export const runtime = 'nodejs';
  *
  * fetchProfile() in lib/profiles-ipfs.ts coalesces same-tick calls into a
  * single request here, so a list of N cards (each calling useProfile) fires
- * one round-trip instead of N parallel ones.
+ * one round-trip instead of N parallel ones. Note this only collapses the
+ * browser→Next.js hop — the relayer itself is still one file read per
+ * address, just issued server-side and chunked below rather than fired as
+ * N unbounded client requests.
  */
 
-const RELAYER_URL = (
-  process.env.NEXT_PUBLIC_RELAYER_URL || process.env.RELAYER_PUBLIC_URL || ''
-).replace(/\/$/, '');
-
 const MAX_ADDRESSES = 100;
-
-// Addresses are interpolated straight into the relayer path below — restrict
-// to exactly what an address can be so nothing (`../`, `/`, query strings) can
-// escape the `profile-<addr>.json` filename it's meant to stay inside.
-const ETH_ADDR = /^0x[0-9a-f]{40}$/;
+// Cap how many relayer requests this route fires at once — MAX_ADDRESSES is a
+// hard ceiling, not the typical batch size, but without a cap a single call
+// with a full batch would open up to 100 concurrent connections to one
+// relayer process.
+const CONCURRENCY = 20;
 
 // POST /api/profiles/batch  { addresses: string[] }  →  { [address]: profile | null }
 export async function POST(request: NextRequest) {
@@ -39,27 +40,15 @@ export async function POST(request: NextRequest) {
     body.addresses
       .filter((a): a is string => typeof a === 'string')
       .map(a => a.toLowerCase())
-      .filter(a => ETH_ADDR.test(a))
+      .filter(a => isAddress(a))
   )).slice(0, MAX_ADDRESSES);
 
-  if (!RELAYER_URL || addresses.length === 0) {
-    return NextResponse.json({});
+  const result: Record<string, unknown> = {};
+  for (let i = 0; i < addresses.length; i += CONCURRENCY) {
+    const chunk = addresses.slice(i, i + CONCURRENCY);
+    const profiles = await Promise.all(chunk.map(fetchRelayerProfile));
+    chunk.forEach((address, j) => { result[address] = profiles[j]; });
   }
 
-  const entries = await Promise.all(addresses.map(async (address) => {
-    try {
-      const res = await fetch(`${RELAYER_URL}/public/profile-${address}.json`, {
-        headers: { 'ngrok-skip-browser-warning': 'true' },
-        signal: AbortSignal.timeout(8_000),
-        cache: 'no-store',
-      });
-      if (!res.ok) return [address, null] as const;
-      const profile = await res.json();
-      return [address, { ...profile, cid: `profile-${address}.json` }] as const;
-    } catch {
-      return [address, null] as const;
-    }
-  }));
-
-  return NextResponse.json(Object.fromEntries(entries));
+  return NextResponse.json(result);
 }
