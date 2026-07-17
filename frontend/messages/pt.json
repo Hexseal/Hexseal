@@ -439,7 +439,9 @@
     "stale_autorelease_body": "Work was marked done and the client didn't review in time. Either party can trigger automatic payment to the executor.",
     "stale_arbiter_title": "Arbiter timeout reached",
     "stale_arbiter_body": "No arbiter resolved this dispute in time. Either party can trigger an automatic refund to the client.",
-    "tx_pending_title": "Transaction submitted — confirming on-chain…"
+    "tx_pending_title": "Transaction submitted — confirming on-chain…",
+    "receipt_title": "Deal Certificate",
+    "receipt_hint": "A permanent on-chain NFT record of this deal. Non-transferable — yours to keep."
   },
   "job": {
     "status_open": "Aberto",

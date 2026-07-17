@@ -179,6 +179,38 @@ export default function DealDetailPage() {
     query: { enabled: !!isValidDeal },
   }) as { data: bigint | undefined };
 
+  // Read deal receipt NFT (TOKEN_ID=1 client, EXECUTOR_TOKEN_ID=2 executor —
+  // mirrors the constants in Agreement.sol, minted at fund(), never burned).
+  const myReceiptTokenId = useMemo(() => {
+    if (!details || !address) return undefined;
+    const obj = details as unknown as Record<string, unknown>;
+    const arr = details as unknown as readonly unknown[];
+    const client = (obj['client_'] ?? arr[0]) as string | undefined;
+    const executor = (obj['executor_'] ?? arr[1]) as string | undefined;
+    if (client?.toLowerCase() === address.toLowerCase()) return 1n;
+    if (executor?.toLowerCase() === address.toLowerCase()) return 2n;
+    return undefined;
+  }, [details, address]);
+
+  const { data: receiptTokenUri } = useReadContract({
+    address: dealAddress as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: "tokenURI",
+    args: myReceiptTokenId !== undefined ? [myReceiptTokenId] : undefined,
+    query: { enabled: !!isValidDeal && myReceiptTokenId !== undefined },
+  }) as { data: string | undefined };
+
+  const receiptImage = useMemo(() => {
+    if (!receiptTokenUri) return null;
+    try {
+      const json = receiptTokenUri.slice(receiptTokenUri.indexOf(',') + 1);
+      const meta = JSON.parse(json) as { image?: string };
+      return meta.image ?? null;
+    } catch {
+      return null;
+    }
+  }, [receiptTokenUri]);
+
   // Read extras count
   const { data: nextExtraId, refetch: refetchNextExtraId } = useReadContract({
     address: dealAddress as `0x${string}`,
@@ -553,6 +585,21 @@ export default function DealDetailPage() {
             </div>
           </div>
         </div>
+
+        {/* ── Deal receipt NFT — permanent certificate, minted at fund() ──────── */}
+        {receiptImage && (
+          <div
+            className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 flex items-center gap-4"
+            style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={receiptImage} alt="" className="w-20 rounded-lg flex-shrink-0 border border-white/[0.06]" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white/80">{t("deal.receipt_title")}</p>
+              <p className="text-xs text-white/35 leading-relaxed">{t("deal.receipt_hint")}</p>
+            </div>
+          </div>
+        )}
 
         {/* ── Arbiter trust signal — visible before dispute ───────────────────── */}
         {parsed.status < 4 && parsed.arbiter === ZERO_ADDR && arbiterList !== undefined && (

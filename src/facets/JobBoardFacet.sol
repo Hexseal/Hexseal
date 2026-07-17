@@ -356,6 +356,10 @@ contract JobBoardFacet {
         (bool funded, ) = agreementAddr.call(abi.encodeWithSignature("fundFromFactory()"));
         require(funded, "JobBoard: fund failed");
 
+        // Posting-чек устарел — деньги теперь в Agreement, у которого свой
+        // NFT-чек на обе стороны. Burn non-blocking, как и в cancelJob.
+        try IJobReceiptBurn(address(this)).burnJobReceipt(jobId) {} catch {}
+
         emit JobAccepted(jobId, job.client, executor, agreementAddr);
     }
 

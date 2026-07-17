@@ -439,13 +439,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
     // -------- SOULBOUND --------
 
-    // Блокируем transfer пока сделка ACTIVE или DISPUTED
-    function _beforeTransfer(address from, address /*to*/, uint256 /*tokenId*/) internal view override {
+    // Полностью non-transferable: NFT больше не сжигается по завершении и
+    // остаётся постоянным сертификатом сделки — передавать/продавать его нельзя
+    // ни во время сделки, ни после.
+    function _beforeTransfer(address from, address /*to*/, uint256 /*tokenId*/) internal pure override {
         if (from == address(0)) return; // mint разрешён
-        Status s = status();
-        if (s == Status.ACTIVE || s == Status.DISPUTED || s == Status.FUNDED) {
-            revert TokenSoulbound();
-        }
+        revert TokenSoulbound();
     }
 
     // -------- ДЕЙСТВИЯ --------
@@ -959,9 +958,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
             try IReputationFacet(diamond).autoAwardXP(address(this)) {} catch {}
         }
 
-        // Сжигаем оба NFT в одной операции
-        if (_exists(TOKEN_ID))          _burn(TOKEN_ID);
-        if (_exists(EXECUTOR_TOKEN_ID)) _burn(EXECUTOR_TOKEN_ID);
+        // NFT больше не сжигаются при финализации — они остаются как
+        // постоянный сертификат сделки, tokenURI() уже отражает финальный
+        // статус (COMPLETED/RESOLVED/REFUNDED) через живой status().
     }
 
     function _updateRegistry(ISignatureRegistry.AgreementStatus regStatus) private {
