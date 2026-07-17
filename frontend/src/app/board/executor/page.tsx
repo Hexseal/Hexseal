@@ -428,30 +428,29 @@ function ServiceCard({
       onClick={onToggle}
     >
       {/* Row */}
-      <div className="flex items-center gap-2.5 px-4 py-3">
-        <UserAvatar address={service.executor} size={24} link />
+      <div className="flex items-start gap-3 px-4 py-3.5">
+        <UserAvatar address={service.executor} size={40} link />
 
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-semibold text-white/90 truncate leading-snug mb-1">{service.title}</p>
-          <div className="flex items-center gap-1.5">
+        <div className="flex-1 min-w-0 pt-0.5">
+          <p className="text-[15px] font-semibold text-white/90 leading-snug line-clamp-2 mb-2">{service.title}</p>
+          <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
               myAccepted ? 'bg-emerald-400' : myPending ? 'bg-amber-400' : 'bg-violet-400/60'
             }`} />
-            <span className="text-[11px] font-mono text-white/55">{fmtUSDC(service.price)} USDC</span>
-            <span className="text-[11px] text-white/15">·</span>
-            <span className="text-[11px] text-white/35">{Number(service.deadlineDays)}d deadline</span>
-            <span className="text-[11px] text-white/15">·</span>
-            <span className="text-[11px] text-white/25">{timeAgo(service.createdAt)}</span>
+            <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-primary/15 text-sky-400">
+              {fmtUSDC(service.price)} USDC
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/[0.06] text-white/50">
+              {Number(service.deadlineDays)}d deadline
+            </span>
+            <span className="text-xs text-white/25">{timeAgo(service.createdAt)}</span>
             {Number(service.hiresCount) > 0 && (
-              <>
-                <span className="text-[11px] text-white/15">·</span>
-                <span className="text-[11px] text-emerald-400/50 font-mono">{Number(service.hiresCount)}×</span>
-              </>
+              <span className="text-xs font-medium text-emerald-400/60">{Number(service.hiresCount)}×</span>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-1 flex-shrink-0 pt-1" onClick={e => e.stopPropagation()}>
           {isConnected && !isMyService && (
             <Link href={`/chat?peer=${service.executor}`}>
               <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors">
@@ -492,33 +491,29 @@ function ServiceCard({
             <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{service.title}</p>
           )}
 
-          <div className="flex items-center gap-2 text-xs text-white/30 mb-2">
+          <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
             <span>{t("common.by")}</span>
             <UserName address={service.executor} link className="font-mono hover:text-white/60 transition-colors" />
           </div>
 
-          {/* Meta: category · deadline · region · hires */}
-          <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30 mb-3">
+          {displayDesc && (
+            <p className="text-sm text-white/60 leading-relaxed mb-4">{displayDesc}</p>
+          )}
+
+          {/* Meta recap: category · deadline · region · hires */}
+          <div className="flex items-center gap-1.5 flex-wrap mb-3 pb-3 border-b border-white/6">
             {catKey && (
-              <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
+              <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
                 {t(`categories.${catKey}`)}
               </span>
             )}
-            <span className="whitespace-nowrap">{Number(service.deadlineDays)}d</span>
-            <span className="text-white/15">·</span>
-            <span className="whitespace-nowrap">{REGION_LABELS[service.region]}</span>
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/[0.06] text-white/50">{Number(service.deadlineDays)}d</span>
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/[0.06] text-white/50">{REGION_LABELS[service.region]}</span>
             {Number(service.hiresCount) > 0 && (
-              <>
-                <span className="text-white/15">·</span>
-                <span className="text-emerald-400/50 font-mono">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
-              </>
+              <span className="text-[11px] font-medium text-emerald-400/60">{t("board.services.hired", { count: Number(service.hiresCount) })}</span>
             )}
-            {isMyService && <span className="text-white/20 font-mono ml-1">{t("board.jobs.yours")}</span>}
+            {isMyService && <span className="text-[11px] text-white/20">{t("board.jobs.yours")}</span>}
           </div>
-
-          {displayDesc && (
-            <p className="text-sm text-white/60 leading-relaxed mb-3">{displayDesc}</p>
-          )}
 
           {myActive && (
             <div className="mb-3 rounded-[14px] bg-white/[0.04] border border-white/[0.07] px-3 py-2.5">

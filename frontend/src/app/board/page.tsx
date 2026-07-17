@@ -204,37 +204,29 @@ function JobCard({
         onClick={onToggle}
       >
         {/* ── Collapsed row ── */}
-        <div className="flex items-center gap-3 px-4 py-3">
-          <UserAvatar address={job.client} size={24} link />
+        <div className="flex items-start gap-3 px-4 py-3.5">
+          <UserAvatar address={job.client} size={40} link />
 
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 mb-0.5">
-              <p className="text-[13px] font-semibold text-white/90 truncate leading-snug">
-                {job.title || `Job #${jobId.toString()}`}
-              </p>
-              {catKey && (
-                <span className={`flex-shrink-0 px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${CATEGORY_BADGE[catKey]}`}>
-                  {customTagLabel ? `#${customTagLabel}` : t(`categories.${catKey}`)}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5">
+          <div className="flex-1 min-w-0 pt-0.5">
+            <p className="text-[15px] font-semibold text-white/90 leading-snug line-clamp-2 mb-2">
+              {job.title || `Job #${jobId.toString()}`}
+            </p>
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasApplied ? 'bg-emerald-400' : 'bg-sky-400/60'}`} />
-              <span className="text-[11px] font-mono text-white/55">{formatBudget(job.amount)} USDC</span>
-              <span className="text-[11px] text-white/15">·</span>
-              <span className="text-[11px] text-white/35">{job.deadlineDays.toString()}d deadline</span>
-              <span className="text-[11px] text-white/15">·</span>
-              <span className="text-[11px] text-white/25">{timeAgo(job.createdAt)}</span>
+              <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-primary/15 text-sky-400">
+                {formatBudget(job.amount)} USDC
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/[0.06] text-white/50">
+                {job.deadlineDays.toString()}d deadline
+              </span>
+              <span className="text-xs text-white/25">{timeAgo(job.createdAt)}</span>
               {isClient && applicantCount > 0 && (
-                <>
-                  <span className="text-[11px] text-white/15">·</span>
-                  <span className="text-[11px] font-medium text-violet-400/70">{applicantCount}</span>
-                </>
+                <span className="text-xs font-medium text-violet-400/70">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
               )}
             </div>
           </div>
 
-          <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-1 flex-shrink-0 pt-1" onClick={e => e.stopPropagation()}>
             {!isClient && address && (
               <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors"
                 onClick={() => router.push(`/chat?peer=${job.client}`)}>
@@ -270,40 +262,39 @@ function JobCard({
               <p className="font-semibold text-white/90 text-sm mb-2 leading-snug">{job.title}</p>
             )}
 
-            <div className="flex items-center gap-2 text-xs text-white/30 mb-2">
+            <div className="flex items-center gap-2 text-xs text-white/30 mb-3">
               <span>{t("common.by")}</span>
               <UserName address={job.client} link className="font-mono hover:text-white/60 transition-colors" />
             </div>
 
-            {/* Meta: category · deadline · region · time · applicants */}
-            <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-white/30 mb-3">
+            {displayDesc && (
+              <p className="text-sm text-white/60 leading-relaxed mb-4 whitespace-pre-wrap">{displayDesc}</p>
+            )}
+
+            {/* Terms — always shown now, not just when present */}
+            <div className="mb-4">
+              <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
+              </p>
+              <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">
+                {hasTerms ? job.terms : <span className="text-white/20 italic">{t("board.jobs.terms_unavailable")}</span>}
+              </p>
+            </div>
+
+            {/* Meta recap: category · deadline · region · time · applicants */}
+            <div className="flex items-center gap-1.5 flex-wrap mb-3 pb-3 border-b border-white/6">
               {catKey && (
-                <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
+                <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
                   {customTagLabel ? `#${customTagLabel}` : t(`categories.${catKey}`)}
                 </span>
               )}
-              <span className="whitespace-nowrap">{job.deadlineDays.toString()}d</span>
-              <span className="text-white/15">·</span>
-              <span className="whitespace-nowrap">{REGION_LABELS[job.region] ?? "—"}</span>
-              <span className="text-white/15">·</span>
-              <span className="whitespace-nowrap text-white/20">{timeAgo(job.createdAt)}</span>
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/[0.06] text-white/50">{job.deadlineDays.toString()}d</span>
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/[0.06] text-white/50">{REGION_LABELS[job.region] ?? "—"}</span>
+              <span className="text-[11px] text-white/20">{timeAgo(job.createdAt)}</span>
               {isClient && applicantCount > 0 && (
-                <span className="text-violet-400/70 font-mono ml-1">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
+                <span className="text-[11px] font-medium text-violet-400/70">{t("board.jobs.applicants_count", { count: applicantCount })}</span>
               )}
             </div>
-
-            {displayDesc && (
-              <p className="text-sm text-white/60 leading-relaxed mb-3 whitespace-pre-wrap">{displayDesc}</p>
-            )}
-
-            {hasTerms && (
-              <div className="mb-3">
-                <p className="text-[10px] text-white/25 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                  <FileText className="w-3 h-3" /> {t("board.jobs.terms")}
-                </p>
-                <p className="text-xs text-white/55 leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">{job.terms}</p>
-              </div>
-            )}
 
             {isClient && applicantCount > 0 && (
               <div className="mb-3">
