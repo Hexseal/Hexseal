@@ -9,6 +9,7 @@ import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
 import type { Abi } from "viem";
 import { parseUnits } from "viem";
 import { requestServiceGasless, sendGasless } from "@/lib/relay";
+import { notifyPush } from "@/lib/webpush";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -774,6 +775,15 @@ export default function ExecutorBoardPage() {
       });
 
       toast.success(t("board.services.request_sent"));
+      // Live in-app notifications only fire while the executor happens to have
+      // the site open at that exact moment — a push is the only way this
+      // reaches them if they're away (mirrors the job-board apply push).
+      notifyPush(
+        requestModal.executor,
+        `Someone requested your service: ${requestModal.title || `Service #${requestModal.serviceId}`}`,
+        `/service/${requestModal.serviceId}`,
+        `/service/${requestModal.serviceId}`,
+      );
       setRequestModal(null);
       setTimeout(() => { refetchMyRequests(); }, 2000);
     } catch (err: any) {
