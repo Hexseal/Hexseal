@@ -14,7 +14,7 @@ import { usePairChat } from '@/hooks/usePairChat';
 import { useXmtp } from '@/contexts/XmtpContext';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
-  Copy, Check, Paperclip, FileText, ExternalLink, Lock,
+  Copy, Check, CheckCheck, Paperclip, FileText, ExternalLink, Lock,
   ChevronDown, Download, Search, X, Clock,
 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/xmtp';
@@ -318,7 +318,7 @@ const AGR_STATUS_KEY: Record<number, string> = {
 export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelProps) {
   const { address } = useAccount();
   const t = useTranslations();
-  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext } =
+  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext, peerLastReadAt } =
     usePairChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   const publicClient = usePublicClient();
@@ -926,13 +926,25 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
                               }`
                         }`}>
                           <MessageText text={msg.text} />
+                          {isLast && (
+                            <div className="flex items-center justify-end gap-1 mt-1 -mb-0.5 text-[10px] text-white/50">
+                              <span>{formatTime(msg.timestamp)}</span>
+                              {isMe && (
+                                msg.id.startsWith('opt-')
+                                  ? <Clock className="w-2.5 h-2.5 flex-shrink-0" />
+                                  : msg.timestamp <= (peerLastReadAt ?? -Infinity)
+                                    ? <CheckCheck className="w-3 h-3 text-white flex-shrink-0" />
+                                    : <Check className="w-3 h-3 flex-shrink-0" />
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     }
-                    {isLast && (
+                    {isLast && msg.attachment && (
                       <span className="text-[10px] text-white/20 mt-1 px-1 flex items-center gap-1">
                         {formatTime(msg.timestamp)}
-                        {msg.id.startsWith('opt-') && (
+                        {isMe && msg.id.startsWith('opt-') && (
                           <Clock className="w-2.5 h-2.5 opacity-60" />
                         )}
                       </span>

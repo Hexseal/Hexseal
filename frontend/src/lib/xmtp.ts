@@ -13,6 +13,7 @@ import {
   GroupMessageKind,
   IdentifierKind,
   SortDirection,
+  isReadReceipt,
 } from '@xmtp/browser-sdk';
 import type { DecodedMessage, GroupMember, Identifier } from '@xmtp/browser-sdk';
 import type { Signer } from '@xmtp/browser-sdk';
@@ -482,10 +483,19 @@ export function normalizeGroupMessage(
 
 const MSG_PAGE_SIZE = 50n;
 
+// A read receipt means "everything up to here is read" — not a per-message
+// flag. Returns the receipt's timestamp (ms) only if it came from the peer,
+// never our own echoed back through the group.
+export function readReceiptTimestampMs(msg: DecodedMessage, myInboxId: string): number | null {
+  if (msg.senderInboxId === myInboxId || !isReadReceipt(msg)) return null;
+  return msg.sentAtNs ? Number(msg.sentAtNs) / 1_000_000 : 0;
+}
+
 export interface LoadedMessages {
-  messages:  ChatMessage[];
-  hasMore:   boolean;       // true if there may be older messages to load
-  oldestNs:  bigint | null; // sentAtNs of the oldest message — cursor for next page
+  messages:       ChatMessage[];
+  hasMore:        boolean;       // true if there may be older messages to load
+  oldestNs:       bigint | null; // sentAtNs of the oldest message — cursor for next page
+  peerLastReadAt: number | null; // ms — latest read-receipt seen from the peer in this page
 }
 
 export async function loadGroupMessages(
@@ -508,7 +518,13 @@ export async function loadGroupMessages(
     .map((m)  => normalizeGroupMessage(m, myInboxId, myAddress, inboxToAddr))
     .filter((m): m is ChatMessage => m !== null);
 
-  return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs };
+  let peerLastReadAt: number | null = null;
+  for (const m of raw) {
+    const ms = readReceiptTimestampMs(m, myInboxId);
+    if (ms !== null && (peerLastReadAt === null || ms > peerLastReadAt)) peerLastReadAt = ms;
+  }
+
+  return { messages, hasMore: BigInt(raw.length) === MSG_PAGE_SIZE, oldestNs, peerLastReadAt };
 }
 
 // ─── Pair conversation list (sidebar) ──────────────────────────────────────────

@@ -12,6 +12,7 @@ import {
   encodeFileMessage,
   encodeDealContextMarker,
   getBotAddress,
+  readReceiptTimestampMs,
   type ChatMessage,
   type XmtpClient,
   type XmtpGroup,
@@ -40,6 +41,9 @@ export function usePairChat(peerAddress: string) {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [streamDead, setStreamDead]         = useState(false);
   const [retryKey, setRetryKey]             = useState(0);
+  // Latest read-receipt timestamp (ms) the peer has sent us — any of our own
+  // messages at or before this time are "read" (2 checks); after it, just "sent".
+  const [peerLastReadAt, setPeerLastReadAt] = useState<number | null>(null);
 
   const clientRef         = useRef<XmtpClient | null>(null);
   const groupRef          = useRef<XmtpGroup | null>(null);
@@ -83,15 +87,31 @@ export function usePairChat(peerAddress: string) {
         _msgCache.set(peerLc, loaded.messages);
         setMessages(loaded.messages);
         setHasMore(loaded.hasMore);
+        setPeerLastReadAt(loaded.peerLastReadAt);
         oldestNsRef.current = loaded.oldestNs;
         setIsInitialized(true);
         setIsLoading(false);
+
+        // Opening the conversation counts as reading whatever the peer already
+        // sent — best-effort, never blocks rendering.
+        if (loaded.messages.some(m => !m.isFromMe)) {
+          group.sendReadReceipt().catch(() => {});
+        }
 
         const stream = await group.stream();
         streamRef.current = stream as unknown as { return: () => void };
         const inboxToAddr = buildInboxAddressMap(await group.members());
         for await (const msg of stream) {
           if (cancelled) break;
+
+          // Read receipts aren't chat messages — they update peerLastReadAt
+          // (for our own sent messages' check marks) and never render.
+          const readMs = readReceiptTimestampMs(msg, xmtp.inboxId ?? '');
+          if (readMs !== null) {
+            setPeerLastReadAt(prev => (prev === null || readMs > prev) ? readMs : prev);
+            continue;
+          }
+
           const norm = normalizeGroupMessage(msg, xmtp.inboxId ?? '', myAddress, inboxToAddr);
           if (!norm) continue;
           setMessages(prev => {
@@ -106,6 +126,8 @@ export function usePairChat(peerAddress: string) {
             } else {
               // Notify the sidebar to refresh immediately (only for incoming messages)
               window.dispatchEvent(new Event('hexseal-conv-update'));
+              // The chat panel is open and just received this — mark it read.
+              group.sendReadReceipt().catch(() => {});
               next = [...prev, norm];
             }
             // Keep module-level cache current (exclude optimistic placeholders)
@@ -220,6 +242,6 @@ export function usePairChat(peerAddress: string) {
   return {
     messages, sendMessage, sendFile, loadMore, markDealContext,
     hasMore, isLoading, isInitialized, error, uploadProgress,
-    streamDead, reconnect, needsSetup: status !== 'ready',
+    streamDead, reconnect, needsSetup: status !== 'ready', peerLastReadAt,
   };
 }
