@@ -21,7 +21,8 @@ pragma solidity ^0.8.20;
 
 import "../../src/FactoryFacet.sol";         // FactoryStorage (trustedForwarder, usdc)
 import "../../src/DiamondProxy.sol";          // OwnershipLib
-import "../../src/facets/ReputationFacet.sol"; // ReputationStorage (XP + uniqueActiveUsers)
+import "../../src/facets/ReputationFacet.sol"; // ReputationStorage (XP + cleanStreak + uniqueActiveUsers)
+import "../RegistryFacet.sol";                // RegistryStorage — verifying notifyArbiterTimeout's caller
 
 // ---------- INTERFACES ----------
 
@@ -68,6 +69,8 @@ library ArbiterRegistryStorage {
         uint256                            rewardPerDispute; // USDC per resolved dispute (default 5 USDC)
         uint256                            vaultBalance;     // USDC held by Diamond for rewards
         address                            daoAddress;       // future DAO governance contract
+        // ── Provisional status ──
+        mapping(address => uint256)        arbiterMistakeStreak; // arbiter → подряд идущие судейские ошибки
     }
 
     function data() internal pure returns (Data storage d) {
@@ -88,6 +91,10 @@ contract ArbiterRegistryFacet {
     uint256 private constant OVERTURN_XP_SLASH  = 200;       // XP штраф при overturn
     uint256 private constant DEFAULT_REWARD      = 5_000_000; // 5 USDC (6 decimals)
     uint256 private constant FINALIZE_DELAY      = 1 hours;   // окно для owner/DAO чтобы overturn до финализации
+
+    uint256 private constant MIN_CLEAN_STREAK_TO_REGISTER = 10;   // та же серия, что держит XP исполнителя выше 1000
+    uint256 private constant MAX_ARBITER_MISTAKES         = 3;    // подряд ошибок до снятия статуса
+    uint256 private constant DEMOTION_XP_RESET            = 2500; // фиксированный сброс при снятии — не вычитание
 
     // -------- EVENTS --------
 
@@ -110,6 +117,7 @@ contract ArbiterRegistryFacet {
     event RewardPerDisputeUpdated(uint256 newReward);
     event DAOAddressSet(address indexed daoAddress);
     event StuckVerdictAutoCleared(address indexed agreement);
+    event ArbiterDemoted(address indexed arbiter);
 
     // -------- ERRORS --------
 
@@ -136,6 +144,7 @@ contract ArbiterRegistryFacet {
     error VaultInsufficient();
     error NoRewardToClaim();
     error ZeroAddress();
+    error InsufficientCleanStreak(uint256 have, uint256 need);
 
     // -------- MODIFIERS --------
 
@@ -180,8 +189,11 @@ contract ArbiterRegistryFacet {
         if (!isDaoActive()) revert DAONotActive();
 
         address caller = _msgSender();
-        uint256 xp = ReputationStorage.data().xp[caller];
+        ReputationStorage.Data storage rep = ReputationStorage.data();
+        uint256 xp = rep.xp[caller];
         if (xp < MIN_XP_TO_REGISTER) revert InsufficientXP(xp, MIN_XP_TO_REGISTER);
+        uint256 streak = rep.cleanStreak[caller];
+        if (streak < MIN_CLEAN_STREAK_TO_REGISTER) revert InsufficientCleanStreak(streak, MIN_CLEAN_STREAK_TO_REGISTER);
 
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         if (d.isArbiter[caller]) revert AlreadyArbiter();
@@ -354,6 +366,12 @@ contract ArbiterRegistryFacet {
 
         v.finalized = true;
 
+        // Вердикт дошёл до финализации без overturn — судейская ошибка не подтвердилась,
+        // серия ошибок сбрасывается.
+        if (!v.overturned) {
+            d.arbiterMistakeStreak[v.arbiter] = 0;
+        }
+
         // Начислить награду только если вердикт не отменён и в vault достаточно средств
         if (!v.overturned && d.vaultBalance >= d.rewardPerDispute && d.rewardPerDispute > 0) {
             d.arbiterRewards[v.arbiter] += d.rewardPerDispute;
@@ -386,7 +404,59 @@ contract ArbiterRegistryFacet {
             rep.xp[slashedArbiter] = 0;
         }
 
+        _recordArbiterMistake(d, rep, slashedArbiter);
+
         emit VerdictOverturned(agreement, slashedArbiter, newClientWins);
+    }
+
+    /// @notice Вызывается Agreement, когда арбитр не успел вынести вердикт за DISPUTE_WINDOW
+    /// (triggerArbiterTimeout). Считается судейской ошибкой для демоушена (в отличие от
+    /// overturnVerdict — XP при этом не режется, вердикт ведь не был неверным, его просто
+    /// не было). Реальный арбитр читается из disputeClaims, а НЕ из Agreement.arbiter() —
+    /// после claimDispute() тот указывает на сам Diamond (паттерн Diamond-as-arbiter для
+    /// контроля вердикта), а не на человека, который забрал спор. Вызывается ДО
+    /// _clearDisputeClaim() внутри triggerArbiterTimeout, так что запись ещё на месте.
+    function notifyArbiterTimeout(address agreement) external {
+        if (msg.sender != agreement) revert NotAuthorized();
+        if (RegistryStorage.store().agreements[agreement].agreement != agreement) revert NotAuthorized();
+
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        address arbiterAddr = d.disputeClaims[agreement];
+        if (arbiterAddr == address(0)) return; // никто не забирал спор — не на кого списывать
+
+        ReputationStorage.Data storage rep = ReputationStorage.data();
+        _recordArbiterMistake(d, rep, arbiterAddr);
+    }
+
+    /// @notice Общий счётчик судейских ошибок для overturnVerdict и notifyArbiterTimeout.
+    /// На 3-й подряд ошибке: статус снят, XP жёстко сброшен на DEMOTION_XP_RESET (не
+    /// вычитание — одна и та же точка приземления вне зависимости от прежнего баланса),
+    /// счётчик ошибок обнулён. cleanStreak (исполнительская серия) не трогается — судейство
+    /// и исполнение заказов разные навыки.
+    function _recordArbiterMistake(
+        ArbiterRegistryStorage.Data storage d,
+        ReputationStorage.Data storage rep,
+        address arbiterAddr
+    ) private {
+        uint256 mistakes = d.arbiterMistakeStreak[arbiterAddr] + 1;
+        d.arbiterMistakeStreak[arbiterAddr] = mistakes;
+
+        if (mistakes >= MAX_ARBITER_MISTAKES) {
+            d.isArbiter[arbiterAddr] = false;
+            rep.xp[arbiterAddr] = DEMOTION_XP_RESET;
+            d.arbiterMistakeStreak[arbiterAddr] = 0;
+
+            uint256 len = d.arbiterList.length;
+            for (uint256 i = 0; i < len; i++) {
+                if (d.arbiterList[i] == arbiterAddr) {
+                    d.arbiterList[i] = d.arbiterList[len - 1];
+                    d.arbiterList.pop();
+                    break;
+                }
+            }
+
+            emit ArbiterDemoted(arbiterAddr);
+        }
     }
 
     /// @notice Заморозить вердикт (например пока идёт расследование).
@@ -500,4 +570,5 @@ contract ArbiterRegistryFacet {
     function getVaultBalance()  external view returns (uint256) { return ArbiterRegistryStorage.data().vaultBalance; }
     function getRewardPerDispute() external view returns (uint256) { return ArbiterRegistryStorage.data().rewardPerDispute; }
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
+    function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
 }
