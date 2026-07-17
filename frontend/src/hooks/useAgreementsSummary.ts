@@ -6,13 +6,15 @@ import { useAgreementTitles } from '@/hooks/useAgreementTitles';
 import type { AgreementRecord } from '@/components/DealCard';
 
 // pct = progress within current tier (0–100). Minimum 3 so bar is always visible once unlocked.
+// nextThreshold/nextLabelKey = XP needed for and name of the tier above this one; both null at
+// the top tier (master) since there's nothing to count up to.
 export function xpLevel(xp: number) {
   const p = (v: number) => Math.max(3, Math.min(100, Math.round(v)));
-  if (xp >= 1000) return { labelKey: 'xp_level.master',   color: 'text-yellow-400',  bar: 'bg-yellow-400',  pct: 100 };
-  if (xp >= 500)  return { labelKey: 'xp_level.expert',   color: 'text-violet-400',  bar: 'bg-violet-400',  pct: p((xp - 500) / 5) };
-  if (xp >= 200)  return { labelKey: 'xp_level.trusted',  color: 'text-blue-400',    bar: 'bg-blue-400',    pct: p((xp - 200) / 3) };
-  if (xp >= 50)   return { labelKey: 'xp_level.rising',   color: 'text-emerald-400', bar: 'bg-emerald-400', pct: p((xp - 50) / 1.5) };
-  return               { labelKey: 'xp_level.newcomer', color: 'text-white/40',    bar: 'bg-white/20',    pct: Math.round(xp / 0.5) };
+  if (xp >= 1000) return { labelKey: 'xp_level.master',   color: 'text-yellow-400',  bar: 'bg-yellow-400',  pct: 100,               nextThreshold: null, nextLabelKey: null };
+  if (xp >= 500)  return { labelKey: 'xp_level.expert',   color: 'text-violet-400',  bar: 'bg-violet-400',  pct: p((xp - 500) / 5), nextThreshold: 1000, nextLabelKey: 'xp_level.master' };
+  if (xp >= 200)  return { labelKey: 'xp_level.trusted',  color: 'text-blue-400',    bar: 'bg-blue-400',    pct: p((xp - 200) / 3), nextThreshold: 500,  nextLabelKey: 'xp_level.expert' };
+  if (xp >= 50)   return { labelKey: 'xp_level.rising',   color: 'text-emerald-400', bar: 'bg-emerald-400', pct: p((xp - 50) / 1.5), nextThreshold: 200, nextLabelKey: 'xp_level.trusted' };
+  return               { labelKey: 'xp_level.newcomer', color: 'text-white/40',    bar: 'bg-white/20',    pct: Math.round(xp / 0.5), nextThreshold: 50,  nextLabelKey: 'xp_level.rising' };
 }
 
 export function fmtVolume(microUsdc: number): string {
