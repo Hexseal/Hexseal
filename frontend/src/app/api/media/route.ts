@@ -12,9 +12,10 @@ export const runtime = 'nodejs';
  * GET /api/media?key=<filename>  →  proxies GET ${RELAYER_URL}/public/<filename>
  */
 
-// Prefer server-side RELAYER_URL (localhost in dev, not set on Vercel).
-// Falls back to the public ngrok URL on Vercel where RELAYER_URL is absent.
+// Prefer RELAYER_INTERNAL_URL (Docker-internal, VPS) > RELAYER_URL (localhost
+// in dev) > public URL fallbacks (Vercel/ngrok era, where neither is set).
 const RELAYER_URL = (
+  process.env.RELAYER_INTERNAL_URL ||
   process.env.RELAYER_URL ||
   process.env.NEXT_PUBLIC_RELAYER_URL ||
   process.env.RELAYER_PUBLIC_URL || ''

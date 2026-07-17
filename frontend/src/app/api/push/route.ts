@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAddress } from 'viem';
 
-const RELAYER_URL  = process.env.RELAYER_URL ?? process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
+const RELAYER_URL  = process.env.RELAYER_INTERNAL_URL ?? process.env.RELAYER_URL ?? process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 const PUSH_SECRET  = process.env.PUSH_SECRET ?? '';
 
 export async function POST(req: NextRequest) {

@@ -58,7 +58,13 @@ async function sendPush(address, payload) {
     try {
       await webpush.sendNotification(sub, JSON.stringify(payload));
     } catch (e) {
-      if (e.statusCode === 404 || e.statusCode === 410) dead.push(sub.endpoint);
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        dead.push(sub.endpoint);
+      } else {
+        // Anything else (401/403 VAPID mismatch, 429, network errors, ...) would
+        // otherwise fail completely silently — log it so it's actually diagnosable.
+        console.error('[push] sendNotification failed:', e.statusCode ?? '', e.body ?? e.message ?? e);
+      }
     }
   }
   if (dead.length) {
