@@ -204,6 +204,8 @@
     "stat_deal": "اتفاق",
     "stat_deals": "اتفاقيات",
     "stat_xp_until_next": "· {n} حتى {tier}",
+    "stat_streak_building": "· تتابع {n}/{need}",
+    "stat_streak_unlocked": "· تتابع {n} 🔥",
     "action_post_job": "نشر وظيفة",
     "action_post_job_sub": "توظيف منفّذ",
     "action_find_work": "إيجاد عمل",

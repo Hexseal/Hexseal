@@ -215,6 +215,8 @@
     "stat_deal": "deal",
     "stat_deals": "deals",
     "stat_xp_until_next": "· {n} to {tier}",
+    "stat_streak_building": "· streak {n}/{need}",
+    "stat_streak_unlocked": "· streak {n} 🔥",
     "action_post_job": "Post a Job",
     "action_post_job_sub": "Hire an executor",
     "action_find_work": "Find Work",

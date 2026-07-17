@@ -204,6 +204,8 @@
     "stat_deal": "acordo",
     "stat_deals": "acordos",
     "stat_xp_until_next": "· mais {n} até {tier}",
+    "stat_streak_building": "· sequência {n}/{need}",
+    "stat_streak_unlocked": "· sequência {n} 🔥",
     "action_post_job": "Publicar Trabalho",
     "action_post_job_sub": "Contratar um executor",
     "action_find_work": "Encontrar Trabalho",

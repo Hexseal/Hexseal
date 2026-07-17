@@ -12,20 +12,29 @@ import { fmtVolume, type xpLevel } from '@/hooks/useAgreementsSummary';
 // one plain three-column stats row, replacing the old 4-card grid + separate
 // XP-bar card (which duplicated the level name/XP in two places).
 
+// Must match ReputationFacet.CLEAN_STREAK_REQUIRED / ArbiterRegistryFacet.MIN_CLEAN_STREAK_TO_REGISTER.
+const CLEAN_STREAK_REQUIRED = 10;
+
 interface AgreementsStatsProps {
   level: ReturnType<typeof xpLevel>;
   xp: number;
+  cleanStreak: number;
   activeCount: number;
   completedCount: number;
   totalVolume: number;
 }
 
-export function AgreementsStats({ level, xp, activeCount, completedCount, totalVolume }: AgreementsStatsProps) {
+export function AgreementsStats({ level, xp, cleanStreak, activeCount, completedCount, totalVolume }: AgreementsStatsProps) {
   const t = useTranslations();
 
+  // Below master tier: normal "until next tier" hint. At master (nextThreshold/nextLabelKey
+  // are null — nothing above it), that slot would otherwise sit empty, so it shows the clean
+  // streak instead — the thing that actually gates further XP growth past this point.
   const xpLine = level.nextThreshold !== null && level.nextLabelKey !== null
     ? `${xp} XP ${t('dashboard.stat_xp_until_next', { n: level.nextThreshold - xp, tier: t(level.nextLabelKey) })}`
-    : `${xp} XP`;
+    : cleanStreak < CLEAN_STREAK_REQUIRED
+      ? `${xp} XP ${t('dashboard.stat_streak_building', { n: cleanStreak, need: CLEAN_STREAK_REQUIRED })}`
+      : `${xp} XP ${t('dashboard.stat_streak_unlocked', { n: cleanStreak })}`;
 
   const stats: { value: string | number; label: string }[] = [
     { value: activeCount, label: t('dashboard.stat_active') },

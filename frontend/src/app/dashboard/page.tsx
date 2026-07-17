@@ -20,7 +20,7 @@ export default function DashboardPage() {
 
   const {
     rawAgreements, isLoading, refetch,
-    xp, level, activeDeals, historyDeals, completed, totalVolume,
+    xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
   } = useAgreementsSummary(address);
   const { jobs: mySearchJobs }     = useMyJobs(address);
   const { services: mySearchSvcs } = useMyServices(address);
@@ -62,7 +62,7 @@ export default function DashboardPage() {
             <StatsRowSkeleton />
           </>
         ) : (
-          <AgreementsStats level={level} xp={xp} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
+          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
         )}
 
         {/* ── Unified search ── */}

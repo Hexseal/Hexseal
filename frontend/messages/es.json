@@ -204,6 +204,8 @@
     "stat_deal": "trato",
     "stat_deals": "tratos",
     "stat_xp_until_next": "· {n} para {tier}",
+    "stat_streak_building": "· racha {n}/{need}",
+    "stat_streak_unlocked": "· racha {n} 🔥",
     "action_post_job": "Publicar un trabajo",
     "action_post_job_sub": "Contratar un ejecutor",
     "action_find_work": "Encontrar trabajo",

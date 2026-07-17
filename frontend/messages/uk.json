@@ -204,6 +204,8 @@
     "stat_deal": "угода",
     "stat_deals": "угоди",
     "stat_xp_until_next": "· ще {n} до «{tier}»",
+    "stat_streak_building": "· серія {n}/{need}",
+    "stat_streak_unlocked": "· серія {n} 🔥",
     "action_post_job": "Опублікувати Роботу",
     "action_post_job_sub": "Найняти виконавця",
     "action_find_work": "Знайти Роботу",

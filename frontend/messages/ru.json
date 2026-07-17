@@ -215,6 +215,8 @@
     "stat_deal": "сделка",
     "stat_deals": "сделок",
     "stat_xp_until_next": "· ещё {n} до «{tier}»",
+    "stat_streak_building": "· серия {n}/{need}",
+    "stat_streak_unlocked": "· серия {n} 🔥",
     "action_post_job": "Разместить заказ",
     "action_post_job_sub": "Нанять исполнителя",
     "action_find_work": "Найти работу",

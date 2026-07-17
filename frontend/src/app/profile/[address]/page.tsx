@@ -72,7 +72,7 @@ export default function ProfilePage() {
 
   const {
     rawAgreements, isLoading, refetch,
-    xp, level, activeDeals, historyDeals, completed, totalVolume,
+    xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
   } = useAgreementsSummary(validAddress ? profileAddress : undefined);
 
   const memberSince = rawAgreements.length > 0
@@ -213,7 +213,7 @@ export default function ProfilePage() {
         <ProfileBottomSkeleton />
       ) : (
         <>
-          <AgreementsStats level={level} xp={xp} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
+          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
           <AgreementsTabs
             key={profileAddress}
             listingsAddress={profileAddress as `0x${string}`}

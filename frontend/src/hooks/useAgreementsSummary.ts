@@ -61,6 +61,15 @@ export function useAgreementsSummary(address: string | undefined) {
   const xp = Number(onchainXP ?? 0n);
   const level = xpLevel(xp);
 
+  const { data: onchainCleanStreak } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: REPUTATION_ABI,
+    functionName: 'getCleanStreak',
+    args: address ? [address as `0x${string}`] : undefined,
+    query: { enabled: !!address },
+  });
+  const cleanStreak = Number(onchainCleanStreak ?? 0n);
+
   // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
   const activeDeals  = allAgreements.filter(d => [0, 1, 2, 4].includes(d.status));
   const historyDeals = allAgreements.filter(d => [3, 5, 6].includes(d.status));
@@ -78,5 +87,5 @@ export function useAgreementsSummary(address: string | undefined) {
   }).length;
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
 
-  return { rawAgreements, isLoading, refetch, xp, level, activeDeals, historyDeals, completed, totalVolume };
+  return { rawAgreements, isLoading, refetch, xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume };
 }
