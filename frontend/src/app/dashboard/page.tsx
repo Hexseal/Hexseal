@@ -5,7 +5,7 @@ import { useAccount } from 'wagmi';
 import { useAgreementsSummary } from '@/hooks/useAgreementsSummary';
 import { Activity } from 'lucide-react';
 import { DashboardSearch } from '@/components/DashboardSearch';
-import { StatsRowSkeleton, XpBarSkeleton, TabsRowSkeleton, ListSkeleton } from '@/components/AgreementsSkeleton';
+import { LevelCardSkeleton, StatsRowSkeleton, TabsRowSkeleton, ListSkeleton } from '@/components/AgreementsSkeleton';
 import { AgreementsStats } from '@/components/AgreementsStats';
 import { AgreementsTabs } from '@/components/AgreementsTabs';
 import { useTranslations } from 'next-intl';
@@ -28,8 +28,8 @@ export default function DashboardPage() {
   if (status === 'reconnecting' || status === 'connecting') {
     return (
       <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
+        <LevelCardSkeleton />
         <StatsRowSkeleton />
-        <XpBarSkeleton />
         <div className="animate-pulse h-9 rounded-[12px] bg-white/[0.04] w-full" />
         <TabsRowSkeleton />
         <ListSkeleton />
@@ -58,8 +58,8 @@ export default function DashboardPage() {
         {/* ── Stats row + XP bar — one guard, since both key off the same isLoading ── */}
         {isLoading ? (
           <>
+            <LevelCardSkeleton />
             <StatsRowSkeleton />
-            <XpBarSkeleton />
           </>
         ) : (
           <AgreementsStats level={level} xp={xp} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
