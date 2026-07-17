@@ -123,7 +123,7 @@ contract DiamondTest is Test {
         ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](33);
+        bytes4[] memory arbiterSelectors = new bytes4[](35);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -158,15 +158,19 @@ contract DiamondTest is Test {
         arbiterSelectors[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         arbiterSelectors[31] = ArbiterRegistryFacet.getDAOAddress.selector;
         arbiterSelectors[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+        arbiterSelectors[33] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
+        arbiterSelectors[34] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
 
         // ReputationFacet selectors
-        bytes4[] memory reputationSelectors = new bytes4[](6);
+        bytes4[] memory reputationSelectors = new bytes4[](8);
         reputationSelectors[0] = ReputationFacet.claimXP.selector;
         reputationSelectors[1] = ReputationFacet.getXP.selector;
         reputationSelectors[2] = ReputationFacet.getUniqueActiveUsers.selector;
         reputationSelectors[3] = ReputationFacet.hasClaimed.selector;
         reputationSelectors[4] = ReputationFacet.isDealWin.selector;
         reputationSelectors[5] = ReputationFacet.autoAwardXP.selector;
+        reputationSelectors[6] = ReputationFacet.notifyExecutorFault.selector;
+        reputationSelectors[7] = ReputationFacet.getCleanStreak.selector;
 
         IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](7);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet), IDiamondCut.FacetCutAction.Add, registrySelectors);
@@ -189,12 +193,53 @@ contract DiamondTest is Test {
     // ============ HELPERS ============
 
     function _claimDispute(address agreementAddr) internal {
-        bytes32 commitment = keccak256(abi.encodePacked(agreementAddr, arbiter, DISPUTE_SALT));
-        vm.prank(arbiter);
+        _claimDisputeAs(agreementAddr, arbiter);
+    }
+
+    // Parametrized version of _claimDispute for tests using a non-default arbiter address.
+    // Isolated in its own function (not inlined at each call site) — inlining this sequence
+    // more than once directly inside one large test function was observed to make the second
+    // vm.roll(block.number + 1) not take effect, even though the same pattern works fine via
+    // a helper call.
+    function _claimDisputeAs(address agreementAddr, address arbiterAddr) internal {
+        bytes32 commitment = keccak256(abi.encodePacked(agreementAddr, arbiterAddr, DISPUTE_SALT));
+        vm.prank(arbiterAddr);
         ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
-        vm.roll(block.number + 1);
-        vm.prank(arbiter);
+        uint256 nextBlock = block.number + 1;
+        vm.roll(nextBlock);
+        vm.prank(arbiterAddr);
         ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+    }
+
+    // Full deploy -> fund -> activate -> dispute -> claim -> submit -> overturn cycle against a
+    // single fresh counterparty pair, for arbiter-mistake-streak tests. Kept as its own
+    // function (called explicitly per-mistake rather than from a `for` loop) — looping this
+    // sequence directly inside one test function was observed to make later vm.roll calls not
+    // take effect under this repo's via_ir compilation; calling a helper repeatedly does not
+    // have that problem.
+    function _disputeAndOverturn(address cli, address exec, address arbiterAddr) internal returns (address agreementAddr) {
+        usdc.mint(cli, 1_000_000 * 10**6);
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(cli);
+        agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            cli, exec, arbiterAddr, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(cli);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agreementAddr).fund();
+        vm.prank(exec);
+        Agreement(agreementAddr).activate();
+        vm.prank(cli);
+        Agreement(agreementAddr).raiseDispute();
+
+        _claimDisputeAs(agreementAddr, arbiterAddr);
+
+        vm.prank(arbiterAddr);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, true);
+
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agreementAddr, false);
     }
 
     // Новый флоу: арбитр через Diamond (submitVerdict → finalizeVerdict)
@@ -203,6 +248,48 @@ contract DiamondTest is Test {
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, clientWins);
         vm.warp(block.timestamp + 1 hours + 1);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
+    }
+
+    // Completes a full deal (fund -> activate -> markDone -> release) between the given
+    // client/executor pair. Assumes cli already holds enough USDC (setUp mints 10000 USDC
+    // to the shared `client` constant; fresh addresses need minting by the caller first).
+    function _completeDeal(address cli, address exc) internal returns (address agreementAddr) {
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(cli);
+        agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            cli, exc, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(cli);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agreementAddr).fund();
+        vm.prank(exc);
+        Agreement(agreementAddr).activate();
+        vm.prank(exc);
+        Agreement(agreementAddr).markDone();
+        vm.prank(cli);
+        Agreement(agreementAddr).release();
+    }
+
+    // Grows `party`'s XP to >= targetXP via clean, fully-released deals, cycling to a fresh
+    // counterparty every 3 deals so the per-pair win cap (MAX_WINS_PAIR) never stalls
+    // progress. `asExecutor` selects which role `party` plays; the counterparty always takes
+    // the other role and gets freshly minted USDC. `baseAddr` seeds the counterparty address
+    // range so parallel calls in different tests never collide.
+    function _growXP(address party, bool asExecutor, uint256 targetXP, uint256 baseAddr) internal {
+        usdc.mint(party, 1_000_000 * 10**6);
+        uint256 dealIndex = 0;
+        while (ReputationFacet(address(diamond)).getXP(party) < targetXP) {
+            address counterparty = address(uint160(baseAddr + dealIndex / 3));
+            usdc.mint(counterparty, 1_000_000 * 10**6);
+            if (asExecutor) {
+                _completeDeal(counterparty, party);
+            } else {
+                _completeDeal(party, counterparty);
+            }
+            dealIndex++;
+        }
     }
 
     // ============ DIAMOND PROXY TESTS ============
@@ -454,7 +541,421 @@ contract DiamondTest is Test {
         assertEq(usdc.balanceOf(executor), executorBalanceBefore + AMOUNT);
         assertEq(usdc.balanceOf(executor), executorBalanceBefore + AMOUNT);
     }
-    
+
+    // ============ CLEAN STREAK / PHASE-2 XP GATING ============
+
+    function testCleanStreakIncrementsOnCompleted() public {
+        address freshExecutor = address(uint160(30001));
+        _completeDeal(client, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+    }
+
+    function testCleanStreakUnchangedOnExecutorWonDispute() public {
+        address freshExecutor = address(uint160(30002));
+        _completeDeal(client, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, freshExecutor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client);
+        Agreement(agreementAddr).fund();
+        vm.prank(freshExecutor);
+        Agreement(agreementAddr).activate();
+        vm.prank(freshExecutor);
+        Agreement(agreementAddr).raiseDispute();
+        _claimDispute(agreementAddr);
+        _resolveDispute(agreementAddr, false); // executor wins
+
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+    }
+
+    function testCleanStreakResetsOnExecutorLostDispute() public {
+        address freshExecutor = address(uint160(30003));
+        _completeDeal(client, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, freshExecutor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client);
+        Agreement(agreementAddr).fund();
+        vm.prank(freshExecutor);
+        Agreement(agreementAddr).activate();
+        vm.prank(client);
+        Agreement(agreementAddr).raiseDispute();
+        _claimDispute(agreementAddr);
+        _resolveDispute(agreementAddr, true); // client wins — executor loses
+
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 0);
+    }
+
+    function testNotifyExecutorFaultResetsStreak() public {
+        address freshExecutor = address(uint160(34001));
+        _completeDeal(client, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, freshExecutor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+
+        vm.prank(agreementAddr);
+        ReputationFacet(address(diamond)).notifyExecutorFault(agreementAddr);
+
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 0);
+    }
+
+    function testNotifyExecutorFaultRevertsIfNotAgreement() public {
+        vm.expectRevert(ReputationFacet.NotAgreement.selector);
+        ReputationFacet(address(diamond)).notifyExecutorFault(address(0xBAD));
+    }
+
+    function testClientXPFrozenAbove1000() public {
+        address bigClient = address(uint160(31000));
+        _growXP(bigClient, false, 1000, 31500);
+        uint256 xpAtThreshold = ReputationFacet(address(diamond)).getXP(bigClient);
+        assertGe(xpAtThreshold, 1000);
+
+        address freshExecutor = address(uint160(31999));
+        _completeDeal(bigClient, freshExecutor);
+
+        assertEq(ReputationFacet(address(diamond)).getXP(bigClient), xpAtThreshold);
+    }
+
+    function testExecutorXPGatedByStreakAbove1000() public {
+        address bigExecutor = address(uint160(32000));
+        _growXP(bigExecutor, true, 1000, 32500);
+        uint256 xpAtThreshold = ReputationFacet(address(diamond)).getXP(bigExecutor);
+        assertGe(xpAtThreshold, 1000);
+        // _growXP only ever uses fresh counterparties with clean releases, so by construction
+        // the streak that carried this address past 1000 XP is already >= CLEAN_STREAK_REQUIRED (10).
+        assertGe(ReputationFacet(address(diamond)).getCleanStreak(bigExecutor), 10);
+
+        // Break the streak with a lost dispute.
+        address disputeClient = address(uint160(32900));
+        usdc.mint(disputeClient, 1_000_000 * 10**6);
+        vm.prank(disputeClient);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(disputeClient);
+        address disputedAgreement = FactoryFacet(address(diamond)).deployAgreement(
+            disputeClient, bigExecutor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(disputeClient);
+        usdc.approve(disputedAgreement, AMOUNT);
+        vm.prank(disputeClient);
+        Agreement(disputedAgreement).fund();
+        vm.prank(bigExecutor);
+        Agreement(disputedAgreement).activate();
+        vm.prank(disputeClient);
+        Agreement(disputedAgreement).raiseDispute();
+        _claimDispute(disputedAgreement);
+        _resolveDispute(disputedAgreement, true); // client wins — executor loses, streak resets to 0
+
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(bigExecutor), 0);
+
+        // One clean deal right after the reset: streak becomes 1, still < 10 — no XP granted.
+        uint256 xpAfterLoss = ReputationFacet(address(diamond)).getXP(bigExecutor);
+        address freshClient1 = address(uint160(32901));
+        usdc.mint(freshClient1, 1_000_000 * 10**6);
+        _completeDeal(freshClient1, bigExecutor);
+        assertEq(ReputationFacet(address(diamond)).getXP(bigExecutor), xpAfterLoss);
+
+        // Rebuild the streak to 10 with fresh single-use counterparties.
+        for (uint256 i = 0; i < 9; i++) {
+            address freshClient = address(uint160(33000 + i));
+            usdc.mint(freshClient, 1_000_000 * 10**6);
+            _completeDeal(freshClient, bigExecutor);
+        }
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(bigExecutor), 10);
+
+        // The deal that brought the streak to exactly 10 already counts under the new rule.
+        uint256 xpAtStreak10 = ReputationFacet(address(diamond)).getXP(bigExecutor);
+        assertGt(xpAtStreak10, xpAfterLoss);
+
+        // One more deal, streak still >= 10 — XP keeps growing.
+        address freshClient2 = address(uint160(33100));
+        usdc.mint(freshClient2, 1_000_000 * 10**6);
+        _completeDeal(freshClient2, bigExecutor);
+        assertGt(ReputationFacet(address(diamond)).getXP(bigExecutor), xpAtStreak10);
+    }
+
+    // ============ ARBITER DEMOTION ============
+
+    function testApplyAsArbiterRevertsIfStreakTooLow() public {
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+
+        address candidate = address(uint160(40000));
+        _growXP(candidate, true, 3000, 40500);
+        // Break the streak right before applying, without dropping XP below 3000: one lost
+        // dispute costs LOSS_XP_PENALTY (50), which candidate's balance easily absorbs.
+        address disputeClient = address(uint160(40900));
+        usdc.mint(disputeClient, 1_000_000 * 10**6);
+        vm.prank(disputeClient);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(disputeClient);
+        address disputedAgreement = FactoryFacet(address(diamond)).deployAgreement(
+            disputeClient, candidate, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(disputeClient);
+        usdc.approve(disputedAgreement, AMOUNT);
+        vm.prank(disputeClient);
+        Agreement(disputedAgreement).fund();
+        vm.prank(candidate);
+        Agreement(disputedAgreement).activate();
+        vm.prank(disputeClient);
+        Agreement(disputedAgreement).raiseDispute();
+        _claimDispute(disputedAgreement);
+        _resolveDispute(disputedAgreement, true); // candidate loses — streak resets to 0
+
+        assertGe(ReputationFacet(address(diamond)).getXP(candidate), 3000);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(candidate), 0);
+
+        vm.prank(candidate);
+        vm.expectRevert(abi.encodeWithSelector(ArbiterRegistryFacet.InsufficientCleanStreak.selector, 0, 10));
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+    }
+
+    function testApplyAsArbiterSucceedsWithBothConditions() public {
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+
+        address candidate = address(uint160(41000));
+        _growXP(candidate, true, 3000, 41500);
+        assertGe(ReputationFacet(address(diamond)).getXP(candidate), 3000);
+        assertGe(ReputationFacet(address(diamond)).getCleanStreak(candidate), 10);
+
+        vm.prank(candidate);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate));
+    }
+
+    function testArbiterDemotedAfterThreeOverturns() public {
+        address flakyArbiter = address(uint160(42000));
+        ArbiterRegistryFacet(address(diamond)).addArbiter(flakyArbiter);
+
+        _disputeAndOverturn(address(uint160(42100)), address(uint160(42200)), flakyArbiter);
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
+
+        _disputeAndOverturn(address(uint160(42101)), address(uint160(42201)), flakyArbiter);
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
+
+        _disputeAndOverturn(address(uint160(42102)), address(uint160(42202)), flakyArbiter);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
+        assertEq(ReputationFacet(address(diamond)).getXP(flakyArbiter), 2500);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(flakyArbiter), 0);
+    }
+
+    function testArbiterDemotionResetIsFlatNotSubtractive() public {
+        // An arbiter with a large pre-existing XP balance must still land at exactly 2500,
+        // not 2500-minus-something or their-balance-minus-a-fixed-amount.
+        address veteranArbiter = address(uint160(43000));
+        _growXP(veteranArbiter, true, 10_000, 43500);
+        uint256 xpBeforeDemotion = ReputationFacet(address(diamond)).getXP(veteranArbiter);
+        assertGe(xpBeforeDemotion, 10_000);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(veteranArbiter);
+
+        _disputeAndOverturn(address(uint160(43100)), address(uint160(43200)), veteranArbiter);
+        _disputeAndOverturn(address(uint160(43101)), address(uint160(43201)), veteranArbiter);
+        _disputeAndOverturn(address(uint160(43102)), address(uint160(43202)), veteranArbiter);
+
+        assertEq(ReputationFacet(address(diamond)).getXP(veteranArbiter), 2500);
+    }
+
+    function testFinalizedVerdictResetsMistakeStreak() public {
+        address recoveringArbiter = address(uint160(44000));
+        ArbiterRegistryFacet(address(diamond)).addArbiter(recoveringArbiter);
+
+        // One overturn — mistake streak becomes 1.
+        address cli1 = address(uint160(44100));
+        usdc.mint(cli1, 1_000_000 * 10**6);
+        vm.prank(cli1);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(cli1);
+        address exec1 = address(uint160(44200));
+        address agreement1 = FactoryFacet(address(diamond)).deployAgreement(
+            cli1, exec1, recoveringArbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(cli1);
+        usdc.approve(agreement1, AMOUNT);
+        vm.prank(cli1);
+        Agreement(agreement1).fund();
+        vm.prank(exec1);
+        Agreement(agreement1).activate();
+        vm.prank(cli1);
+        Agreement(agreement1).raiseDispute();
+        _claimDisputeAs(agreement1, recoveringArbiter);
+        vm.prank(recoveringArbiter);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agreement1, true);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agreement1, false);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(recoveringArbiter), 1);
+
+        // A correctly finalized verdict resets the streak back to 0.
+        address cli2 = address(uint160(44300));
+        usdc.mint(cli2, 1_000_000 * 10**6);
+        vm.prank(cli2);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(cli2);
+        address exec2 = address(uint160(44400));
+        address agreement2 = FactoryFacet(address(diamond)).deployAgreement(
+            cli2, exec2, recoveringArbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(cli2);
+        usdc.approve(agreement2, AMOUNT);
+        vm.prank(cli2);
+        Agreement(agreement2).fund();
+        vm.prank(exec2);
+        Agreement(agreement2).activate();
+        vm.prank(cli2);
+        Agreement(agreement2).raiseDispute();
+        _claimDisputeAs(agreement2, recoveringArbiter);
+        vm.prank(recoveringArbiter);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agreement2, true);
+        vm.warp(block.timestamp + 1 hours + 1);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreement2);
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(recoveringArbiter), 0);
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(recoveringArbiter));
+    }
+
+    // ============ AGREEMENT TIMEOUT INTEGRATION ============
+
+    function testActivationTimeoutResetsExecutorStreak() public {
+        address freshExecutor = address(uint160(50001));
+        _completeDeal(client, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, freshExecutor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client);
+        Agreement(agreementAddr).fund();
+
+        vm.warp(block.timestamp + 6 days); // > ACTIVATION_WINDOW, executor never activated
+        vm.prank(client);
+        Agreement(agreementAddr).triggerActivationTimeout();
+
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 0);
+    }
+
+    function testDeadlineTimeoutResetsExecutorStreak() public {
+        address freshExecutor = address(uint160(50002));
+        _completeDeal(client, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, freshExecutor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client);
+        Agreement(agreementAddr).fund();
+        vm.prank(freshExecutor);
+        Agreement(agreementAddr).activate();
+
+        vm.warp(block.timestamp + (DEADLINE * 1 days) + 2 days); // past deadline + grace, never marked done
+        vm.prank(client);
+        Agreement(agreementAddr).triggerDeadlineTimeout();
+
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 0);
+    }
+
+    function testArbiterTimeoutDoesNotTouchExecutorStreakButCountsAgainstArbiter() public {
+        address freshExecutor = address(uint160(50003));
+        _completeDeal(client, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, freshExecutor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client);
+        Agreement(agreementAddr).fund();
+        vm.prank(freshExecutor);
+        Agreement(agreementAddr).activate();
+        vm.prank(client);
+        Agreement(agreementAddr).raiseDispute();
+        _claimDispute(agreementAddr);
+
+        vm.warp(block.timestamp + 8 days); // > DISPUTE_WINDOW, arbiter never submitted a verdict
+        vm.prank(client);
+        Agreement(agreementAddr).triggerArbiterTimeout();
+
+        // Executor's streak is untouched — the arbiter, not the executor, failed here.
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+        // The arbiter's mistake streak did register the failure.
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 1);
+    }
+
+    // Full deploy -> fund -> activate -> dispute -> claim -> (arbiter never responds) ->
+    // triggerArbiterTimeout cycle against a single fresh counterparty pair. Kept as its own
+    // function for the same reason as _disputeAndOverturn (see its comment) — no `for` loop.
+    function _disputeAndArbiterTimeout(address cli, address exec, address arbiterAddr, uint256 warpTo) internal {
+        usdc.mint(cli, 1_000_000 * 10**6);
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(cli);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            cli, exec, arbiterAddr, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(cli);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agreementAddr).fund();
+        vm.prank(exec);
+        Agreement(agreementAddr).activate();
+        vm.prank(cli);
+        Agreement(agreementAddr).raiseDispute();
+
+        _claimDisputeAs(agreementAddr, arbiterAddr);
+
+        // Absolute target, not block.timestamp + N: computing the warp target from a live
+        // block.timestamp read was observed to silently no-op on the second+ call to this
+        // helper within one test (same class of issue noted on _claimDisputeAs's vm.roll).
+        // warpTo is always well past disputedAt + DISPUTE_WINDOW (4 days) as long as callers
+        // space their warpTo values generously (see call sites).
+        vm.warp(warpTo);
+        vm.prank(cli);
+        Agreement(agreementAddr).triggerArbiterTimeout();
+    }
+
+    function testThreeArbiterTimeoutsDemoteTheArbiter() public {
+        address flakyArbiter = address(uint160(51000));
+        ArbiterRegistryFacet(address(diamond)).addArbiter(flakyArbiter);
+
+        _disputeAndArbiterTimeout(address(uint160(51100)), address(uint160(51200)), flakyArbiter, 10_000_000);
+        _disputeAndArbiterTimeout(address(uint160(51101)), address(uint160(51201)), flakyArbiter, 20_000_000);
+        _disputeAndArbiterTimeout(address(uint160(51102)), address(uint160(51202)), flakyArbiter, 30_000_000);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
+        assertEq(ReputationFacet(address(diamond)).getXP(flakyArbiter), 2500);
+    }
+
     function testAgreementRevertIfNotClientFund() public {
         vm.prank(client);
         usdc.approve(address(diamond), 10 * 10**6);
