@@ -170,6 +170,7 @@
     "copy_failed": "复制失败",
     "disable_messaging": "Disable Messaging",
     "enable_messaging": "启用消息",
+    "connecting_messaging": "正在连接消息…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },

@@ -170,6 +170,7 @@
     "copy_failed": "복사 실패",
     "disable_messaging": "Disable Messaging",
     "enable_messaging": "메시징 활성화",
+    "connecting_messaging": "메시징 연결 중…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },

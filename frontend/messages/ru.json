@@ -175,6 +175,7 @@
     "copy_failed": "Не удалось скопировать",
     "disable_messaging": "Отключить мессенджер",
     "enable_messaging": "Подключить мессенджер",
+    "connecting_messaging": "Подключение мессенджера…",
     "arbiter_apply_success": "Заявка отправлена — ждите решения"
   },
   "dashboard": {

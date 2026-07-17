@@ -18,7 +18,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -379,6 +379,15 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             <HelpCircle className="w-3.5 h-3.5" />
             {t("wallet.how_it_works")}
           </DropdownMenuItem>
+          {xmtpStatus === 'loading' && (
+            <DropdownMenuItem
+              disabled
+              className="flex items-center gap-2.5 text-white/25"
+            >
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              {t("wallet.connecting_messaging")}
+            </DropdownMenuItem>
+          )}
           {xmtpStatus === 'ready' && (
             <DropdownMenuItem
               onClick={disableXmtp}

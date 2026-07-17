@@ -170,6 +170,7 @@
     "copy_failed": "فشل النسخ",
     "disable_messaging": "Disable Messaging",
     "enable_messaging": "تفعيل المراسلة",
+    "connecting_messaging": "جارٍ تفعيل المراسلة…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },

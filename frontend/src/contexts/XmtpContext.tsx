@@ -47,9 +47,13 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   const [error,      setError]      = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
 
-  const prevAddrRef = useRef<string | undefined>(undefined);
-  const triedRef    = useRef(new Set<string>());
-  const disabledRef = useRef(new Set<string>());
+  const prevAddrRef  = useRef<string | undefined>(undefined);
+  const triedRef     = useRef(new Set<string>());
+  const disabledRef  = useRef(new Set<string>());
+  // Bumped on every connect attempt (auto-init or retry()) so a late-resolving
+  // attempt can tell it's been superseded and skip applying its result — see
+  // the comment above the auto-init effect below for the race this closes.
+  const attemptIdRef = useRef(0);
 
   // Clear session when wallet address switches
   useEffect(() => {
@@ -65,7 +69,18 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     prevAddrRef.current = curr;
   }, [address]);
 
-  // Auto-init XMTP when wallet connects
+  // Auto-init XMTP when wallet connects.
+  //
+  // initXmtpClient() can take a while (wallet signature + up to 90s network
+  // timeout), and neither disable() nor a fresh retry() cancels an attempt
+  // already in flight. Without the attemptIdRef/disabledRef checks below, a
+  // stale attempt resolving *after* the user clicked disable (or after a
+  // newer retry() already started) would silently overwrite whatever status
+  // the user's later action set — e.g. clicking "Disable messaging" would
+  // flip the menu to "Enable messaging" for a moment, then flip back to
+  // "Disable messaging" on its own once the old in-flight connect finally
+  // resolved, with no action from the user. Each attempt now tags itself
+  // with an id and only applies its result if it's still the latest one.
   useEffect(() => {
     if (!address || !walletClient || !isConnected) {
       // No wallet — stay in loading state silently (not an error)
@@ -76,15 +91,20 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     if (disabledRef.current.has(addr)) return;
     triedRef.current.add(addr);
 
+    const myAttempt = ++attemptIdRef.current;
+    const isStale = () => attemptIdRef.current !== myAttempt || disabledRef.current.has(addr);
+
     (async () => {
       try {
         await initXmtpClient(walletClient);
+        if (isStale()) return;
         if (typeof window !== 'undefined') {
           localStorage.setItem(registeredKey(addr), '1');
         }
         setStatus('ready');
         setError(null);
       } catch (err: unknown) {
+        if (isStale()) return;
         const raw = err instanceof Error ? err.message : 'Failed to enable messaging';
         setError(trimXmtpError(raw));
         setStatus('error');

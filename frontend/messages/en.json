@@ -175,6 +175,7 @@
     "copy_failed": "Failed to copy",
     "disable_messaging": "Disable Messaging",
     "enable_messaging": "Enable Messaging",
+    "connecting_messaging": "Connecting messaging…",
     "arbiter_apply_success": "Application submitted — waiting for review"
   },
   "dashboard": {

@@ -170,6 +170,7 @@
     "copy_failed": "Error al copiar",
     "disable_messaging": "Disable Messaging",
     "enable_messaging": "Activar mensajería",
+    "connecting_messaging": "Conectando mensajería…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter"
   },
