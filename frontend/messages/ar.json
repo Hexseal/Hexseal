@@ -491,6 +491,7 @@
     "new_conversation": "محادثة جديدة",
     "paste_address_hint": "الصق عنوان محفظة لبدء المحادثة",
     "no_conversations": "لا توجد محادثات بعد",
+    "no_messages_yet": "لا توجد رسائل بعد",
     "start_hint": "ابدأ محادثة من اتفاق أو استخدم زر + أعلاه",
     "select_conversation": "اختر محادثة",
     "empty_state_hint": "اختر من القائمة أو ابدأ محادثة جديدة",

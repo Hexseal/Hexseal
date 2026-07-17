@@ -109,7 +109,7 @@ const ConvoItem = memo(function ConvoItem({
     <button
       onClick={onClick}
       className={cn(
-        'w-full flex items-start gap-3 px-3 py-2.5 text-left transition-all rounded-[16px] border',
+        'w-full flex items-center gap-3.5 px-3 py-2.5 text-left transition-all rounded-[16px] border',
         isSelected
           ? 'bg-white/[0.07] border-white/[0.08]'
           : 'bg-white/[0.03] border-white/[0.04] hover:bg-white/[0.05] hover:border-white/[0.07]',
@@ -119,7 +119,7 @@ const ConvoItem = memo(function ConvoItem({
       <img
         src={avatarUrl ?? `https://effigy.im/a/${peerAddress}.svg`}
         alt=""
-        className="w-9 h-9 rounded-full flex-shrink-0 mt-0.5 bg-white/10 object-cover"
+        className="w-12 h-12 rounded-full flex-shrink-0 bg-white/10 object-cover"
         onError={(e) => {
           const img = e.target as HTMLImageElement;
           if (avatarUrl && img.src !== `https://effigy.im/a/${peerAddress}.svg`) {
@@ -134,7 +134,7 @@ const ConvoItem = memo(function ConvoItem({
               {displayName ?? shortAddr(peerAddress)}
             </span>
             {displayName && (
-              <span className="text-[10px] text-white/25 font-mono truncate block -mt-0.5">
+              <span className="text-[10px] text-white/25 font-mono truncate block mt-0.5">
                 {shortAddr(peerAddress)}
               </span>
             )}
@@ -150,7 +150,7 @@ const ConvoItem = memo(function ConvoItem({
         </div>
 
         {dealCtx && (
-          <div className="mt-0.5">
+          <div className="mt-1">
             {dealCtx.jobTitle && (
               <p className="text-[11px] text-white/55 truncate leading-tight mb-0.5 font-medium">
                 {dealCtx.jobTitle}
@@ -178,8 +178,12 @@ const ConvoItem = memo(function ConvoItem({
           </div>
         )}
 
-        {lastText && (
-          <p className={`text-xs truncate mt-0.5 ${hasUnread ? 'text-white/70 font-medium' : 'text-white/30'}`}>{lastText}</p>
+        {/* Always reserve this line — an empty conversation with no dealCtx would
+            otherwise render one line shorter than every other row in the list. */}
+        {lastText ? (
+          <p className={`text-xs truncate mt-1 ${hasUnread ? 'text-white/70 font-medium' : 'text-white/30'}`}>{lastText}</p>
+        ) : (
+          <p className="text-xs truncate mt-1 text-white/15 italic">{t("chat.no_messages_yet")}</p>
         )}
       </div>
     </button>
@@ -543,7 +547,7 @@ function ChatHubPageInner() {
         {/* Conversation list */}
         <div
           ref={listRef}
-          className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5 sm:touch-auto pb-[calc(5.75rem+env(safe-area-inset-bottom,0px))] sm:pb-2"
+          className="flex-1 overflow-y-auto px-2 py-2 space-y-2 sm:touch-auto pb-[calc(5.75rem+env(safe-area-inset-bottom,0px))] sm:pb-2"
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
@@ -565,11 +569,11 @@ function ChatHubPageInner() {
           )}
 
           {(isLoading || xmtpStatus === 'loading') && conversations.length === 0 && (
-            <div className="space-y-0.5">
+            <div className="space-y-2">
               {[1, 2, 3].map(i => (
-                <div key={i} className="flex items-start gap-3 px-3 py-2.5 rounded-[16px] border border-white/[0.04] bg-white/[0.02]">
-                  <div className="w-9 h-9 rounded-full bg-white/[0.07] flex-shrink-0 mt-0.5 animate-pulse" />
-                  <div className="flex-1 min-w-0 pt-0.5 space-y-1.5">
+                <div key={i} className="flex items-center gap-3.5 px-3 py-2.5 rounded-[16px] border border-white/[0.04] bg-white/[0.02]">
+                  <div className="w-12 h-12 rounded-full bg-white/[0.07] flex-shrink-0 animate-pulse" />
+                  <div className="flex-1 min-w-0 space-y-1.5">
                     <div className="h-3 bg-white/[0.07] rounded animate-pulse" style={{ width: `${48 + i * 14}%` }} />
                     <div className="h-2.5 bg-white/[0.04] rounded animate-pulse" style={{ width: `${60 + i * 8}%` }} />
                   </div>

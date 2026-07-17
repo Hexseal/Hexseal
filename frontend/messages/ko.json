@@ -491,6 +491,7 @@
     "new_conversation": "새 대화",
     "paste_address_hint": "지갑 주소를 붙여넣어 채팅 시작",
     "no_conversations": "아직 대화가 없습니다",
+    "no_messages_yet": "아직 메시지가 없습니다",
     "start_hint": "계약에서 채팅을 시작하거나 위의 + 버튼을 사용하세요",
     "select_conversation": "대화 선택",
     "empty_state_hint": "목록에서 선택하거나 새 채팅을 시작하세요",

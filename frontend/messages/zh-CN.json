@@ -491,6 +491,7 @@
     "new_conversation": "新会话",
     "paste_address_hint": "粘贴钱包地址以开始聊天",
     "no_conversations": "暂无会话",
+    "no_messages_yet": "暂无消息",
     "start_hint": "从交易中开始聊天，或使用上方的 + 按钮",
     "select_conversation": "选择一个会话",
     "empty_state_hint": "从列表中选择或开始新聊天",

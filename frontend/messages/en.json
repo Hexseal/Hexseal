@@ -497,6 +497,7 @@
     "new_conversation": "New conversation",
     "paste_address_hint": "Paste a wallet address to start chatting",
     "no_conversations": "No conversations yet",
+    "no_messages_yet": "No messages yet",
     "start_hint": "Start a chat from a deal or use the + button above",
     "select_conversation": "Select a conversation",
     "empty_state_hint": "Choose from the list or start a new chat",

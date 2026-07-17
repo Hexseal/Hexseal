@@ -491,6 +491,7 @@
     "new_conversation": "การสนทนาใหม่",
     "paste_address_hint": "วางที่อยู่กระเป๋าเพื่อเริ่มแชท",
     "no_conversations": "ยังไม่มีการสนทนา",
+    "no_messages_yet": "ยังไม่มีข้อความ",
     "start_hint": "เริ่มแชทจากดีลหรือใช้ปุ่ม + ด้านบน",
     "select_conversation": "เลือกการสนทนา",
     "empty_state_hint": "เลือกจากรายการหรือเริ่มแชทใหม่",

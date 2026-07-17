@@ -491,6 +491,7 @@
     "new_conversation": "नई बातचीत",
     "paste_address_hint": "चैट शुरू करने के लिए वॉलेट पता पेस्ट करें",
     "no_conversations": "अभी कोई बातचीत नहीं",
+    "no_messages_yet": "अभी कोई संदेश नहीं",
     "start_hint": "किसी डील से चैट शुरू करें या ऊपर + बटन का उपयोग करें",
     "select_conversation": "बातचीत चुनें",
     "empty_state_hint": "सूची से चुनें या नई चैट शुरू करें",

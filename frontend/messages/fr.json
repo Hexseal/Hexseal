@@ -491,6 +491,7 @@
     "new_conversation": "Nouvelle conversation",
     "paste_address_hint": "Collez une adresse de portefeuille pour commencer à chatter",
     "no_conversations": "Pas encore de conversations",
+    "no_messages_yet": "Pas encore de messages",
     "start_hint": "Commencez un chat depuis un accord ou utilisez le bouton + ci-dessus",
     "select_conversation": "Sélectionnez une conversation",
     "empty_state_hint": "Choisissez dans la liste ou commencez un nouveau chat",
