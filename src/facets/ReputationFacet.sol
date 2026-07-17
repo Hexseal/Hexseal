@@ -12,10 +12,11 @@ pragma solidity ^0.8.20;
 import "../RegistryFacet.sol"; // RegistryStorage — для верификации соглашений
 
 interface IAgreementView {
-    function status()   external view returns (uint8);
-    function amount()   external view returns (uint256);
-    function client()   external view returns (address);
-    function executor() external view returns (address);
+    function status()           external view returns (uint8);
+    function amount()           external view returns (uint256);
+    function client()           external view returns (address);
+    function executor()         external view returns (address);
+    function clientWonDispute() external view returns (bool);
 }
 
 // ---------- STORAGE ----------
@@ -47,10 +48,11 @@ contract ReputationFacet {
 
     // -------- CONSTANTS --------
 
-    uint256 private constant WIN_XP         = 100;
-    uint256 private constant MIN_WIN_AMOUNT = 10_000_000; // 10 USDC (6 decimals)
-    uint256 private constant MAX_WINS_PAIR  = 3;
-    uint256 private constant MAX_VOLUME_XP  = 300;
+    uint256 private constant WIN_XP          = 100;
+    uint256 private constant LOSS_XP_PENALTY = WIN_XP / 2; // проигравший спор теряет половину XP, что дала бы победа — сигнал реален, но не убийственный
+    uint256 private constant MIN_WIN_AMOUNT  = 10_000_000; // 10 USDC (6 decimals)
+    uint256 private constant MAX_WINS_PAIR   = 3;
+    uint256 private constant MAX_VOLUME_XP   = 300;
 
     // Agreement.sol 7-state enum
     uint8 private constant STATUS_COMPLETED = 3;
@@ -59,6 +61,7 @@ contract ReputationFacet {
     // -------- EVENTS --------
 
     event XPClaimed(address indexed agreement, address indexed claimant, uint256 xpGained);
+    event XPPenalized(address indexed agreement, address indexed loser, uint256 xpLost);
 
     // -------- ERRORS --------
 
@@ -73,6 +76,9 @@ contract ReputationFacet {
     /// @notice Автоматически начислить XP обеим сторонам при завершении сделки.
     /// Вызывается самим Agreement через Diamond (msg.sender == agreement).
     /// Только для COMPLETED и RESOLVED — не для REFUNDED.
+    /// На RESOLVED (спор) XP получает только выигравшая сторона, проигравшая — теряет часть XP:
+    /// иначе исполнитель, проваливший сделку и проигравший арбитраж, получал репутацию наравне
+    /// с честно закрытой сделкой.
     function autoAwardXP(address agreement) external {
         if (msg.sender != agreement) revert NotAgreement();
         if (RegistryStorage.store().agreements[agreement].agreement != agreement)
@@ -82,6 +88,7 @@ contract ReputationFacet {
         address cli = agmt.client();
         address exc = agmt.executor();
         uint256 amt = agmt.amount();
+        uint8   st  = agmt.status();
 
         ReputationStorage.Data storage d = ReputationStorage.data();
 
@@ -89,13 +96,22 @@ contract ReputationFacet {
 
         _evalPairCap(d, agreement, cli, exc, amt);
 
-        if (!d.clientClaimed[agreement]) {
-            d.clientClaimed[agreement] = true;
-            _addXP(d, agreement, cli, amt);
-        }
-        if (!d.executorClaimed[agreement]) {
-            d.executorClaimed[agreement] = true;
-            _addXP(d, agreement, exc, amt);
+        if (st == STATUS_RESOLVED) {
+            bool clientWon = agmt.clientWonDispute();
+            (address winner, address loser) = clientWon ? (cli, exc) : (exc, cli);
+            if (!d.clientClaimed[agreement]) d.clientClaimed[agreement] = true;
+            if (!d.executorClaimed[agreement]) d.executorClaimed[agreement] = true;
+            _addXP(d, agreement, winner, amt);
+            _penalizeXP(d, agreement, loser);
+        } else {
+            if (!d.clientClaimed[agreement]) {
+                d.clientClaimed[agreement] = true;
+                _addXP(d, agreement, cli, amt);
+            }
+            if (!d.executorClaimed[agreement]) {
+                d.executorClaimed[agreement] = true;
+                _addXP(d, agreement, exc, amt);
+            }
         }
     }
 
@@ -128,7 +144,12 @@ contract ReputationFacet {
         }
 
         _evalPairCap(d, agreement, cli, exc, amt);
-        _addXP(d, agreement, caller, amt);
+
+        if (st == STATUS_RESOLVED && agmt.clientWonDispute() != isClient) {
+            _penalizeXP(d, agreement, caller);
+        } else {
+            _addXP(d, agreement, caller, amt);
+        }
     }
 
     // -------- VIEWS --------
@@ -202,6 +223,24 @@ contract ReputationFacet {
             d.xp[recipient] += xpGain;
             emit XPClaimed(agreement, recipient, xpGain);
         }
+    }
+
+    /// @notice Списывает XP проигравшей стороне спора. Тот же порог, что и для побед
+    /// (>=10 USDC, cap 3 события на пару через dealIsWin) — иначе можно было бы фармить
+    /// чужой рейтинг вниз серией мелких проигранных споров. Никогда не уводит xp[loser] в минус.
+    function _penalizeXP(
+        ReputationStorage.Data storage d,
+        address agreement,
+        address loser
+    ) private {
+        if (!d.dealIsWin[agreement]) return;
+
+        uint256 current = d.xp[loser];
+        uint256 penalty = _min(LOSS_XP_PENALTY, current);
+        if (penalty == 0) return;
+
+        d.xp[loser] = current - penalty;
+        emit XPPenalized(agreement, loser, penalty);
     }
 
     function _pairKey(address a, address b) internal pure returns (bytes32) {

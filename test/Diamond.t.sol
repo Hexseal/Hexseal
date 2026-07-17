@@ -7,6 +7,7 @@ import "../src/RegistryFacet.sol";
 import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import "../src/facets/ReputationFacet.sol";
 
 contract MockUSDC {
     mapping(address => uint256) public balanceOf;
@@ -70,6 +71,7 @@ contract DiamondTest is Test {
         DiamondLoupeFacet diamondLoupeFacet = new DiamondLoupeFacet();
         OwnershipFacet ownershipFacet = new OwnershipFacet();
         ArbiterRegistryFacet arbiterRegistryFacet = new ArbiterRegistryFacet();
+        ReputationFacet reputationFacet = new ReputationFacet();
         
         // RegistryFacet selectors
         bytes4[] memory registrySelectors = new bytes4[](12);
@@ -157,13 +159,23 @@ contract DiamondTest is Test {
         arbiterSelectors[31] = ArbiterRegistryFacet.getDAOAddress.selector;
         arbiterSelectors[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
 
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](6);
+        // ReputationFacet selectors
+        bytes4[] memory reputationSelectors = new bytes4[](6);
+        reputationSelectors[0] = ReputationFacet.claimXP.selector;
+        reputationSelectors[1] = ReputationFacet.getXP.selector;
+        reputationSelectors[2] = ReputationFacet.getUniqueActiveUsers.selector;
+        reputationSelectors[3] = ReputationFacet.hasClaimed.selector;
+        reputationSelectors[4] = ReputationFacet.isDealWin.selector;
+        reputationSelectors[5] = ReputationFacet.autoAwardXP.selector;
+
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](7);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet), IDiamondCut.FacetCutAction.Add, registrySelectors);
         cut[1] = IDiamondCut.FacetCut(address(factoryFacet), IDiamondCut.FacetCutAction.Add, factorySelectors);
         cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet), IDiamondCut.FacetCutAction.Add, cutSelectors);
         cut[3] = IDiamondCut.FacetCut(address(diamondLoupeFacet), IDiamondCut.FacetCutAction.Add, loupeSelectors);
         cut[4] = IDiamondCut.FacetCut(address(ownershipFacet), IDiamondCut.FacetCutAction.Add, ownerSelectors);
         cut[5] = IDiamondCut.FacetCut(address(arbiterRegistryFacet), IDiamondCut.FacetCutAction.Add, arbiterSelectors);
+        cut[6] = IDiamondCut.FacetCut(address(reputationFacet), IDiamondCut.FacetCutAction.Add, reputationSelectors);
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
         AgreementDeployer agDeployer = new AgreementDeployer(address(diamond));
@@ -685,7 +697,81 @@ contract DiamondTest is Test {
 
         assertEq(usdc.balanceOf(executor), executorBalanceBefore + AMOUNT);
     }
-    
+
+    // Winner of a resolved dispute earns XP; loser earns none (baseline, no prior XP).
+    function testAutoAwardXPWinnerOnlyOnResolved() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+
+        vm.prank(client);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(client);
+        Agreement(agreementAddr).fund();
+
+        vm.prank(executor);
+        Agreement(agreementAddr).activate();
+
+        vm.prank(client);
+        Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+        _resolveDispute(agreementAddr, true); // client wins — executor loses
+
+        assertTrue(ReputationFacet(address(diamond)).getXP(client) > 0);
+        assertEq(ReputationFacet(address(diamond)).getXP(executor), 0);
+    }
+
+    // A dispute loss must actually subtract XP the loser already earned from a prior
+    // completed deal — not just withhold new XP. Regression guard for the exploit where
+    // losing a dispute cost nothing, letting a bad-faith executor farm reputation for free.
+    function testAutoAwardXPPenalizesDisputeLoser() public {
+        // Deal 1: honest completion — both sides earn XP (100 win + 10 volume = 110).
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address deal1 = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(deal1, AMOUNT);
+        vm.prank(client);
+        Agreement(deal1).fund();
+        vm.prank(executor);
+        Agreement(deal1).activate();
+        vm.prank(executor);
+        Agreement(deal1).markDone();
+        vm.prank(client);
+        Agreement(deal1).release();
+
+        uint256 executorXPAfterDeal1 = ReputationFacet(address(diamond)).getXP(executor);
+        assertEq(executorXPAfterDeal1, 110);
+
+        // Deal 2: same pair, disputed — client wins, executor loses.
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address deal2 = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(deal2, AMOUNT);
+        vm.prank(client);
+        Agreement(deal2).fund();
+        vm.prank(executor);
+        Agreement(deal2).activate();
+        vm.prank(client);
+        Agreement(deal2).raiseDispute();
+        _claimDispute(deal2);
+        _resolveDispute(deal2, true); // client wins — executor loses
+
+        // Executor loses 50 XP (half of WIN_XP) off their deal-1 balance.
+        assertEq(ReputationFacet(address(diamond)).getXP(executor), executorXPAfterDeal1 - 50);
+    }
+
     function testAgreementRevertIfNotArbiterResolve() public {
         vm.prank(client);
         usdc.approve(address(diamond), 10 * 10**6);

@@ -267,6 +267,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 public markedDoneAt;  // когда исполнитель отметил выполнение
     uint256 public disputedAt;    // когда поднят спор
     uint256 public resolvedAt;    // когда арбитр резолвил
+    bool    public clientWonDispute; // итог арбитража — читается ReputationFacet при начислении/списании XP (валидно только когда resolvedAt > 0)
 
     // Флаг финализации — предотвращает двойное завершение при гонке resolveDispute / triggerArbiterTimeout
     bool    private _finalized;
@@ -600,6 +601,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (block.timestamp > disputedAt + DISPUTE_WINDOW) revert WindowAlreadyPassed();
 
         resolvedAt = block.timestamp;
+        clientWonDispute = clientWins;
 
         _settlePending();
         uint256 payout = amount + extrasTotal;
