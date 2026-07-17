@@ -30,7 +30,7 @@ export function AgreementsStats({ level, xp, activeCount, completedCount, totalV
   const stats: { value: string | number; label: string }[] = [
     { value: activeCount, label: t('dashboard.stat_active') },
     { value: completedCount, label: t('dashboard.stat_completed') },
-    { value: fmtVolume(totalVolume), label: t('dashboard.stat_usdc_total') },
+    { value: fmtVolume(totalVolume), label: t('dashboard.stat_volume') },
   ];
 
   return (
