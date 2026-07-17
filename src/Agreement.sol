@@ -216,6 +216,11 @@ interface IERC20 {
 
 interface IReputationFacet {
     function autoAwardXP(address agreement) external;
+    function notifyExecutorFault(address agreement) external;
+}
+
+interface IArbiterRegistryFacet {
+    function notifyArbiterTimeout(address agreement) external;
 }
 
 // ---------- REGISTRY INTERFACE ----------
@@ -632,6 +637,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, payout);
 
+        try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+
         emit TimedOut(client, payout);
     }
 
@@ -652,6 +659,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, payout);
 
+        try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+
         emit TimedOut(client, payout);
     }
 
@@ -669,6 +678,8 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, payout);
+
+        try IArbiterRegistryFacet(diamond).notifyArbiterTimeout(address(this)) {} catch {}
 
         _clearDisputeClaim();
         emit ArbiterTimedOut(client, payout);
