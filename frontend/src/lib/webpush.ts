@@ -73,6 +73,17 @@ export async function enablePush(
   }
 }
 
+// Sends a push notification via the relayer, routed through the Next.js API so
+// the relayer secret never reaches the browser. `from` is never accepted here —
+// the server drops any client-supplied sender to prevent notification impersonation.
+export function notifyPush(to: string, body: string, url?: string, tag?: string): void {
+  fetch('/api/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, body, url, tag }),
+  }).catch(() => {});
+}
+
 export async function disablePush(address: string): Promise<void> {
   const reg = await getSwRegistration();
   const sub = await reg?.pushManager.getSubscription();

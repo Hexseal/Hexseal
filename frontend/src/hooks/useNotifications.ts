@@ -388,7 +388,7 @@ export function useNotifications() {
           type: "job_cancelled",
           title: "Job Cancelled",
           body: `Job #${jobId} cancelled. $${fmtUSDC(refundAmount)} USDC refunded.`,
-          link: "/dashboard",
+          link: `/job/${jobId}`,
           txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
         });
       }
@@ -446,11 +446,12 @@ export function useNotifications() {
     enabled: !!address,
     onLogs(logs) {
       for (const log of logs) {
+        const { requestId } = a(log);
         push({
           type: "service_rejected",
           title: "Request Declined 🚫",
           body: "The executor declined your service request.",
-          link: "/board/executor",
+          link: requestId !== undefined ? `/request/${requestId}` : "/dashboard",
           txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
         });
       }
@@ -549,15 +550,16 @@ export function useNotifications() {
     enabled: !!address,
     onLogs(logs) {
       for (const log of logs) {
-        const { serviceId, client, amount } = a(log);
+        const { requestId, serviceId, client, amount } = a(log);
         const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
+        const link = requestId !== undefined ? `/request/${requestId}` : "/dashboard";
         // Client sent the request — confirm to them
         if (client?.toLowerCase() === address?.toLowerCase()) {
           push({
             type: "service_requested",
             title: "Request Sent 📬",
             body: `Your request for $${fmtUSDC(amount)} USDC has been sent. Waiting for executor.`,
-            link: "/dashboard",
+            link,
             txHash,
           });
           continue;
@@ -568,7 +570,7 @@ export function useNotifications() {
             type: "service_requested",
             title: "New Service Request! 📬",
             body: `A client requested your service for $${fmtUSDC(amount)} USDC.`,
-            link: "/dashboard",
+            link,
             txHash,
           });
         }

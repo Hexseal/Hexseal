@@ -17,20 +17,11 @@ import {
   type XmtpGroup,
 } from '@/lib/xmtp';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
+import { notifyPush } from '@/lib/webpush';
 
 // Module-level cache — survives navigation (same as board/conversation-list pattern).
 // Keyed by peerAddress lowercase → last confirmed (non-optimistic) messages.
 const _msgCache = new Map<string, ChatMessage[]>();
-
-function pushChatNotif(to: string, body: string, url: string) {
-  // Routed through Next.js API so the relayer secret never reaches the browser.
-  // `from` is not forwarded — the server drops it to prevent notification impersonation.
-  fetch('/api/push', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, body, url, tag: `/chat?peer=${to.toLowerCase()}` }),
-  }).catch(() => {});
-}
 
 export function usePairChat(peerAddress: string) {
   const { data: walletClient } = useWalletClient();
@@ -170,7 +161,7 @@ export function usePairChat(peerAddress: string) {
     }]);
     try {
       await group.sendText(text.trim());
-      pushChatNotif(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`);
+      notifyPush(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
     } catch (err) {
       // Remove the optimistic message so user knows the send failed
       setMessages(prev => prev.filter(m => m.id !== optId));
@@ -206,7 +197,7 @@ export function usePairChat(peerAddress: string) {
     }]);
 
     await group.sendText(encoded);
-    pushChatNotif(peerRef.current, `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`);
+    notifyPush(peerRef.current, `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
   }, [address]);
 
   const markDealContext = useCallback(async (dealId: string | null) => {

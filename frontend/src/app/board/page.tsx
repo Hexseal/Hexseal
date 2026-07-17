@@ -22,6 +22,7 @@ import { useProfile } from "@/hooks/useProfile";
 import { Sparkles } from "lucide-react";
 import { ContextHint } from "@/components/ContextHint";
 import { shortAddr } from "@/lib/utils";
+import { notifyPush } from "@/lib/webpush";
 
 interface JobRecord {
   client: string;
@@ -131,6 +132,15 @@ function JobCard({
     try {
       await sendGasless(walletClient, publicClient, "applyForJob", [jobId], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.applied_waiting"));
+      // Live in-app notifications (useNotifications' JobApplied watcher) only fire
+      // while the client happens to have the site open at that exact moment — a
+      // push is the only way this reaches them if they're away.
+      notifyPush(
+        job.client,
+        `Someone applied to your job: ${job.title || `Job #${jobId.toString()}`}`,
+        `/job/${jobId.toString()}`,
+        `/job/${jobId.toString()}`,
+      );
       onApplied?.();
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Apply failed");
