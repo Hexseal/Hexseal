@@ -214,6 +214,7 @@
     "stat_usdc_total": "USDC total",
     "stat_deal": "deal",
     "stat_deals": "deals",
+    "stat_xp_until_next": "· {n} to {tier}",
     "action_post_job": "Post a Job",
     "action_post_job_sub": "Hire an executor",
     "action_find_work": "Find Work",

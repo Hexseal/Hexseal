@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC合計",
     "stat_deal": "契約",
     "stat_deals": "契約",
+    "stat_xp_until_next": "· {tier}まであと{n}",
     "action_post_job": "仕事を掲載",
     "action_post_job_sub": "受注者を雇う",
     "action_find_work": "仕事を探す",

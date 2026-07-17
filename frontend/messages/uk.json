@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC всього",
     "stat_deal": "угода",
     "stat_deals": "угоди",
+    "stat_xp_until_next": "· ще {n} до «{tier}»",
     "action_post_job": "Опублікувати Роботу",
     "action_post_job_sub": "Найняти виконавця",
     "action_find_work": "Знайти Роботу",

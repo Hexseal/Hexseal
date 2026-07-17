@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC ทั้งหมด",
     "stat_deal": "ดีล",
     "stat_deals": "ดีล",
+    "stat_xp_until_next": "· อีก {n} ถึง {tier}",
     "action_post_job": "ประกาศงาน",
     "action_post_job_sub": "จ้างผู้รับงาน",
     "action_find_work": "หางาน",

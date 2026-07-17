@@ -203,6 +203,7 @@
     "stat_usdc_total": "कुल USDC",
     "stat_deal": "डील",
     "stat_deals": "डील",
+    "stat_xp_until_next": "· {tier} तक {n} और",
     "action_post_job": "काम पोस्ट करें",
     "action_post_job_sub": "एक्जीक्यूटर नियुक्त करें",
     "action_find_work": "काम खोजें",

@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC 합계",
     "stat_deal": "계약",
     "stat_deals": "계약",
+    "stat_xp_until_next": "· {tier}까지 {n} 남음",
     "action_post_job": "일자리 게시",
     "action_post_job_sub": "실행자 고용",
     "action_find_work": "일 찾기",

@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC 总计",
     "stat_deal": "笔",
     "stat_deals": "笔",
+    "stat_xp_until_next": "· 距{tier}还需{n}",
     "action_post_job": "发布工作",
     "action_post_job_sub": "雇佣执行者",
     "action_find_work": "找工作",

@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC total",
     "stat_deal": "accord",
     "stat_deals": "accords",
+    "stat_xp_until_next": "· encore {n} avant {tier}",
     "action_post_job": "Publier un Emploi",
     "action_post_job_sub": "Engager un exécutant",
     "action_find_work": "Trouver du Travail",

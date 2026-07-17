@@ -214,6 +214,7 @@
     "stat_usdc_total": "USDC всего",
     "stat_deal": "сделка",
     "stat_deals": "сделок",
+    "stat_xp_until_next": "· ещё {n} до «{tier}»",
     "action_post_job": "Разместить заказ",
     "action_post_job_sub": "Нанять исполнителя",
     "action_find_work": "Найти работу",

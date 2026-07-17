@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC gesamt",
     "stat_deal": "Deal",
     "stat_deals": "Deals",
+    "stat_xp_until_next": "· noch {n} bis {tier}",
     "action_post_job": "Job veröffentlichen",
     "action_post_job_sub": "Ausführenden beauftragen",
     "action_find_work": "Arbeit finden",

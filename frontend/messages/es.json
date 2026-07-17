@@ -203,6 +203,7 @@
     "stat_usdc_total": "USDC total",
     "stat_deal": "trato",
     "stat_deals": "tratos",
+    "stat_xp_until_next": "· {n} para {tier}",
     "action_post_job": "Publicar un trabajo",
     "action_post_job_sub": "Contratar un ejecutor",
     "action_find_work": "Encontrar trabajo",

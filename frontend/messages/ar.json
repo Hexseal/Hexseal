@@ -203,6 +203,7 @@
     "stat_usdc_total": "إجمالي USDC",
     "stat_deal": "اتفاق",
     "stat_deals": "اتفاقيات",
+    "stat_xp_until_next": "· {n} حتى {tier}",
     "action_post_job": "نشر وظيفة",
     "action_post_job_sub": "توظيف منفّذ",
     "action_find_work": "إيجاد عمل",
