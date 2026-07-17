@@ -64,5 +64,5 @@ export function useAgreementsSummary(address: string | undefined) {
   const completed    = allAgreements.filter(d => d.status === 3 || d.status === 5).length;
   const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
 
-  return { rawAgreements, allAgreements, isLoading, refetch, xp, level, activeDeals, historyDeals, completed, totalVolume };
+  return { rawAgreements, isLoading, refetch, xp, level, activeDeals, historyDeals, completed, totalVolume };
 }

@@ -6,6 +6,7 @@ import { Activity, CheckCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { DealCard, type AgreementRecord } from '@/app/dashboard/components/DealCard';
 import { MyJobs, MyServices, MyClientRequests } from '@/app/dashboard/components/MyListings';
+import { ListSkeleton } from '@/components/AgreementsSkeleton';
 
 // Shared by /dashboard and /profile/[address] — tab row + tab content
 // (listings sub-tabs, active deals, history). The two pages differ only in
@@ -17,7 +18,7 @@ type ListingsSub = 'jobs' | 'services' | 'requests';
 
 // ─── Tab button ───────────────────────────────────────────────────────────────
 
-export function Tab({ active, onClick, children, count }: {
+function Tab({ active, onClick, children, count }: {
   active: boolean; onClick: () => void; children: ReactNode; count?: number;
 }) {
   return (
@@ -46,10 +47,9 @@ interface AgreementsTabsProps {
   historyDeals: AgreementRecord[];
   refetch: () => void;
   onListingsChange?: () => void;      // fired when MyJobs/MyServices create a deal — dashboard refetches its own agreements; omitted on a read-only profile view
-  showRequestsTab?: boolean;          // default true
-  readOnlyListings?: boolean;         // default false
-  hideClosedJobs?: boolean;           // default false
-  showEmptyActiveHint?: boolean;      // default true
+  isLoading?: boolean;                // default false. Tab row always renders; only the content pane swaps to a skeleton. Callers that want the whole component (tabs included) to stay hidden until data is ready should gate the AgreementsTabs call itself instead of using this prop.
+  editable?: boolean;                 // default true. Dashboard is always the viewer's own data (no concept of ownership); profile passes its isOwner check. Gates the "requests" sub-tab, whether listings are read-only, and whether the empty-active-deals hint shows — these three always move together in this app, so one prop says what's actually true instead of three that happen to agree.
+  hideClosedJobs?: boolean;           // default false — independent of `editable`; profile always hides closed job postings regardless of ownership, dashboard never does
 }
 
 export function AgreementsTabs({
@@ -59,10 +59,9 @@ export function AgreementsTabs({
   historyDeals,
   refetch,
   onListingsChange,
-  showRequestsTab = true,
-  readOnlyListings = false,
+  isLoading = false,
+  editable = true,
   hideClosedJobs = false,
-  showEmptyActiveHint = true,
 }: AgreementsTabsProps) {
   const t = useTranslations();
   const [tab, setTab] = useState<TabKey>('listings');
@@ -71,7 +70,7 @@ export function AgreementsTabs({
   const listingsTabs: [ListingsSub, string][] = [
     ['jobs', t('dashboard.section_job_postings')],
     ['services', t('nav.services')],
-    ...(showRequestsTab ? ([['requests', t('dashboard.section_service_requests')]] as [ListingsSub, string][]) : []),
+    ...(editable ? ([['requests', t('dashboard.section_service_requests')]] as [ListingsSub, string][]) : []),
   ];
 
   return (
@@ -88,6 +87,9 @@ export function AgreementsTabs({
         </Tab>
       </div>
 
+      {isLoading ? (
+        <ListSkeleton />
+      ) : (
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={tab}
@@ -122,12 +124,12 @@ export function AgreementsTabs({
                   transition={{ type: 'tween', duration: 0.13 }}
                 >
                   {listingsSub === 'jobs' && (
-                    <MyJobs address={listingsAddress} onDealCreated={onListingsChange} readOnly={readOnlyListings} hideClosed={hideClosedJobs} />
+                    <MyJobs address={listingsAddress} onDealCreated={onListingsChange} readOnly={!editable} hideClosed={hideClosedJobs} />
                   )}
                   {listingsSub === 'services' && (
-                    <MyServices address={listingsAddress} onDealCreated={onListingsChange} readOnly={readOnlyListings} />
+                    <MyServices address={listingsAddress} onDealCreated={onListingsChange} readOnly={!editable} />
                   )}
-                  {listingsSub === 'requests' && showRequestsTab && (
+                  {listingsSub === 'requests' && editable && (
                     <MyClientRequests address={listingsAddress} />
                   )}
                 </motion.div>
@@ -142,7 +144,7 @@ export function AgreementsTabs({
                   <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
                 </div>
                 <p className="text-sm text-white/30">{t("dashboard.empty_active")}</p>
-                {showEmptyActiveHint && <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>}
+                {editable && <p className="text-xs text-white/20 mt-1">{t("dashboard.empty_active_hint")}</p>}
               </div>
             ) : (
               <div className="space-y-3">
@@ -183,6 +185,7 @@ export function AgreementsTabs({
           )}
         </motion.div>
       </AnimatePresence>
+      )}
     </div>
   );
 }

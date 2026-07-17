@@ -221,10 +221,8 @@ export default function ProfilePage() {
             activeDeals={activeDeals}
             historyDeals={historyDeals}
             refetch={refetch}
-            showRequestsTab={isOwner}
-            readOnlyListings={!isOwner}
+            editable={isOwner}
             hideClosedJobs
-            showEmptyActiveHint={isOwner}
           />
         </>
       )}

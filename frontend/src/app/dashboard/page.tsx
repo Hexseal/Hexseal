@@ -72,22 +72,18 @@ export default function DashboardPage() {
           services={mySearchSvcs}
         />
 
-        {/* ── Tabs ── */}
-        {isLoading ? (
-          <div>
-            <TabsRowSkeleton />
-            <div className="mt-4"><ListSkeleton /></div>
-          </div>
-        ) : (
-          <AgreementsTabs
-            listingsAddress={address!}
-            viewerAddress={address!}
-            activeDeals={activeDeals}
-            historyDeals={historyDeals}
-            refetch={refetch}
-            onListingsChange={refetch}
-          />
-        )}
+        {/* ── Tabs — rendered unconditionally so the tab row stays visible/clickable
+             while agreements load, matching the original dashboard's timing; only
+             the content pane swaps to a skeleton (via AgreementsTabs' isLoading prop) ── */}
+        <AgreementsTabs
+          listingsAddress={address!}
+          viewerAddress={address!}
+          activeDeals={activeDeals}
+          historyDeals={historyDeals}
+          refetch={refetch}
+          onListingsChange={refetch}
+          isLoading={isLoading}
+        />
       </div>
   );
 }

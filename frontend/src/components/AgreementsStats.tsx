@@ -11,7 +11,7 @@ import { fmtVolume, type xpLevel } from '@/hooks/useAgreementsSummary';
 
 // ─── Stat card — tween entrance, no hover/tap springs ────────────────────────
 
-export function StatCard({ icon, label, value, sub, index = 0 }: {
+function StatCard({ icon, label, value, sub, index = 0 }: {
   icon: ReactNode; label: string; value: string | number; sub?: string; index?: number;
 }) {
   return (
