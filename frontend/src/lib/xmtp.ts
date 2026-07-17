@@ -284,6 +284,11 @@ export async function findOrCreatePairGroup(
   memberAddresses: [string, string],
   botAddress: string | null,
 ): Promise<XmtpGroup> {
+  // Positional convention (see the one call site in usePairChat.ts): self first,
+  // peer second. Needed below to tell "the group is missing someone" apart from
+  // "the group is missing *the peer specifically*".
+  const [myAddress, peerAddress] = memberAddresses;
+  const peerLc = peerAddress.toLowerCase();
   const name = pairGroupName(memberAddresses[0], memberAddresses[1]);
 
   // Only these addresses are allowed in a legitimate pair group.
@@ -325,6 +330,31 @@ export async function findOrCreatePairGroup(
   if (legitGroups.length > 0) {
     const canonical = legitGroups.reduce((best, g) => g.id < best.id ? g : best);
     await canonical.sync();
+
+    // Self-heal: the peer may have had no reachable installation at all when
+    // this group was first created (e.g. mid session churn on their end) and
+    // so was silently left out of it — every message sent since then exists
+    // in a group they were never a member of and can never see. If they're
+    // reachable now, add them so the conversation recovers instead of staying
+    // one-sided forever. Best-effort: never block opening an existing
+    // conversation over this.
+    try {
+      const members = await canonical.members();
+      const hasPeer = members.some(m =>
+        (m.accountIdentifiers[0]?.identifier?.toLowerCase() ?? '') === peerLc
+      );
+      if (!hasPeer) {
+        const peerId = toIdentifier(peerAddress);
+        const canMsg = await client.canMessage([peerId]);
+        if (canMsg.get(peerId.identifier) === true) {
+          await canonical.addMembersByIdentifiers([peerId]);
+          await canonical.sync();
+        }
+      }
+    } catch {
+      // Non-critical — worst case the peer stays missing until the next open.
+    }
+
     return canonical;
   }
 
@@ -333,9 +363,24 @@ export async function findOrCreatePairGroup(
   const canMsg = await client.canMessage(identifiers);
   const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
 
+  // Refuse to create a conversation the peer can never see. Without this check,
+  // an unreachable peer (no currently-registered XMTP installation — e.g. mid
+  // session churn, or genuinely never opened Hexseal chat) is silently dropped
+  // from `reachable` and the group gets created without them: the sender's
+  // message goes into a group the recipient was never part of, with no error
+  // and no way to ever discover it by re-syncing. Fail loudly instead so the
+  // sender knows to retry rather than wonder why nothing arrived.
+  const peerIdentifier = toIdentifier(peerAddress);
+  if (canMsg.get(peerIdentifier.identifier) !== true) {
+    // Message matched against in ChatPanel.tsx (error.includes('not registered')) to
+    // trigger the "share an invite" UI instead of the generic connection-failed one —
+    // covers both "never opened Hexseal chat" and "temporarily between XMTP installations".
+    throw new Error('This address is not registered on XMTP right now — they need to open Hexseal chat first.');
+  }
+
   const created = await client.conversations.createGroupWithIdentifiers(reachable, {
     groupName: name,
-    groupDescription: `Hexseal conversation: ${memberAddresses[0]} <-> ${memberAddresses[1]}`,
+    groupDescription: `Hexseal conversation: ${myAddress} <-> ${peerAddress}`,
   });
 
   // Re-sync after creation: if the peer raced us, their group is now visible.
