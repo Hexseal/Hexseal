@@ -71,6 +71,8 @@ library ArbiterRegistryStorage {
         address                            daoAddress;       // future DAO governance contract
         // ── Provisional status ──
         mapping(address => uint256)        arbiterMistakeStreak; // arbiter → подряд идущие судейские ошибки
+        // ── Sybil-resistance: forfeitable bond ──
+        mapping(address => uint256)        arbiterBond;           // arbiter → залоченный USDC-бонд
     }
 
     function data() internal pure returns (Data storage d) {
@@ -95,6 +97,7 @@ contract ArbiterRegistryFacet {
     uint256 private constant MIN_CLEAN_STREAK_TO_REGISTER = 10;   // та же серия, что держит XP исполнителя выше 1000
     uint256 private constant MAX_ARBITER_MISTAKES         = 3;    // подряд ошибок до снятия статуса
     uint256 private constant DEMOTION_XP_RESET            = 2500; // фиксированный сброс при снятии — не вычитание
+    uint256 private constant ARBITER_BOND                 = 50_000_000; // 50 USDC (6 decimals) — форфейтится при демоушене, возвращается при resignAsArbiter()
 
     // -------- EVENTS --------
 
@@ -118,6 +121,7 @@ contract ArbiterRegistryFacet {
     event DAOAddressSet(address indexed daoAddress);
     event StuckVerdictAutoCleared(address indexed agreement);
     event ArbiterDemoted(address indexed arbiter);
+    event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
 
     // -------- ERRORS --------
 
@@ -198,11 +202,47 @@ contract ArbiterRegistryFacet {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         if (d.isArbiter[caller]) revert AlreadyArbiter();
 
+        address usdc = FactoryStorage.store().usdc;
+        bool bondOk = IUSDCFull(usdc).transferFrom(caller, address(this), ARBITER_BOND);
+        require(bondOk, "ArbiterRegistry: bond transfer failed");
+        d.arbiterBond[caller] = ARBITER_BOND;
+
         d.isArbiter[caller] = true;
         d.arbiterList.push(caller);
 
         emit ArbiterAdded(caller);
         emit ArbiterApplied(caller);
+    }
+
+    /// @notice Самостоятельный выход из статуса арбитра, без штрафа. Возвращает бонд
+    /// полностью. Без этого статус арбитра был бы дорогой в один конец для тех, кого
+    /// никогда не демоушенили — бонд лочился бы навечно в момент, когда человек просто
+    /// хочет остановиться.
+    function resignAsArbiter() external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (!d.isArbiter[caller]) revert NotAnArbiter();
+
+        d.isArbiter[caller] = false;
+
+        uint256 len = d.arbiterList.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (d.arbiterList[i] == caller) {
+                d.arbiterList[i] = d.arbiterList[len - 1];
+                d.arbiterList.pop();
+                break;
+            }
+        }
+
+        uint256 bond = d.arbiterBond[caller];
+        d.arbiterBond[caller] = 0;
+        if (bond > 0) {
+            address usdc = FactoryStorage.store().usdc;
+            bool ok = IUSDCFull(usdc).transfer(caller, bond);
+            require(ok, "ArbiterRegistry: bond refund failed");
+        }
+
+        emit ArbiterResigned(caller, bond);
     }
 
     // -------- ADMIN: MANAGE ARBITERS --------
@@ -446,6 +486,12 @@ contract ArbiterRegistryFacet {
             rep.xp[arbiterAddr] = DEMOTION_XP_RESET;
             d.arbiterMistakeStreak[arbiterAddr] = 0;
 
+            uint256 forfeited = d.arbiterBond[arbiterAddr];
+            if (forfeited > 0) {
+                d.arbiterBond[arbiterAddr] = 0;
+                d.vaultBalance += forfeited;
+            }
+
             uint256 len = d.arbiterList.length;
             for (uint256 i = 0; i < len; i++) {
                 if (d.arbiterList[i] == arbiterAddr) {
@@ -571,4 +617,5 @@ contract ArbiterRegistryFacet {
     function getRewardPerDispute() external view returns (uint256) { return ArbiterRegistryStorage.data().rewardPerDispute; }
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
     function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
+    function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
 }

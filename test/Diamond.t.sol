@@ -53,6 +53,7 @@ contract DiamondTest is Test {
     uint256 constant DEADLINE = 7;
     string constant TERMS_HASH = "test terms";
     bytes32 constant DISPUTE_SALT = bytes32("hexseal-test-salt");
+    uint256 constant ARBITER_BOND = 50 * 10**6; // must match ArbiterRegistryFacet.ARBITER_BOND
     
     function setUp() public {
         owner = address(this);
@@ -123,7 +124,7 @@ contract DiamondTest is Test {
         ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](35);
+        bytes4[] memory arbiterSelectors = new bytes4[](37);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -160,6 +161,8 @@ contract DiamondTest is Test {
         arbiterSelectors[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
         arbiterSelectors[33] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
         arbiterSelectors[34] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        arbiterSelectors[35] = ArbiterRegistryFacet.resignAsArbiter.selector;
+        arbiterSelectors[36] = ArbiterRegistryFacet.getArbiterBond.selector;
 
         // ReputationFacet selectors
         bytes4[] memory reputationSelectors = new bytes4[](8);
@@ -806,9 +809,12 @@ contract DiamondTest is Test {
         assertGe(ReputationFacet(address(diamond)).getCleanStreak(candidate), 10);
 
         vm.prank(candidate);
+        usdc.approve(address(diamond), ARBITER_BOND);
+        vm.prank(candidate);
         ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
 
         assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate));
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(candidate), ARBITER_BOND);
     }
 
     function testArbiterDemotedAfterThreeOverturns() public {
@@ -842,6 +848,76 @@ contract DiamondTest is Test {
         _disputeAndOverturn(address(uint160(43102)), address(uint160(43202)), veteranArbiter);
 
         assertEq(ReputationFacet(address(diamond)).getXP(veteranArbiter), 2500);
+    }
+
+    function testApplyAsArbiterPullsBond() public {
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+        address candidate = address(uint160(45000));
+        _growXP(candidate, true, 3000, 45500);
+
+        uint256 balanceBefore = usdc.balanceOf(candidate);
+        vm.prank(candidate);
+        usdc.approve(address(diamond), ARBITER_BOND);
+        vm.prank(candidate);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(candidate), ARBITER_BOND);
+        assertEq(usdc.balanceOf(candidate), balanceBefore - ARBITER_BOND);
+    }
+
+    function testApplyAsArbiterRevertsWithoutBondApproval() public {
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+        address candidate = address(uint160(45100));
+        _growXP(candidate, true, 3000, 45600);
+
+        vm.prank(candidate);
+        vm.expectRevert("Allowance exceeded");
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+    }
+
+    function testArbiterBondForfeitedOnDemotion() public {
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+        address candidate = address(uint160(45200));
+        _growXP(candidate, true, 3000, 45700);
+        vm.prank(candidate);
+        usdc.approve(address(diamond), ARBITER_BOND);
+        vm.prank(candidate);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+
+        uint256 vaultBefore = ArbiterRegistryFacet(address(diamond)).getVaultBalance();
+
+        _disputeAndOverturn(address(uint160(45800)), address(uint160(45900)), candidate);
+        _disputeAndOverturn(address(uint160(45801)), address(uint160(45901)), candidate);
+        _disputeAndOverturn(address(uint160(45802)), address(uint160(45902)), candidate);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate));
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(candidate), 0);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore + ARBITER_BOND);
+    }
+
+    function testResignAsArbiterRefundsBondAndClearsStatus() public {
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+        address candidate = address(uint160(45300));
+        _growXP(candidate, true, 3000, 45400);
+        vm.prank(candidate);
+        usdc.approve(address(diamond), ARBITER_BOND);
+        vm.prank(candidate);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+
+        uint256 balanceAfterApply = usdc.balanceOf(candidate);
+
+        vm.prank(candidate);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate));
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(candidate), 0);
+        assertEq(usdc.balanceOf(candidate), balanceAfterApply + ARBITER_BOND);
+    }
+
+    function testResignAsArbiterRevertsIfNotArbiter() public {
+        vm.prank(address(uint160(45999)));
+        vm.expectRevert(ArbiterRegistryFacet.NotAnArbiter.selector);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
     }
 
     function testFinalizedVerdictResetsMistakeStreak() public {
