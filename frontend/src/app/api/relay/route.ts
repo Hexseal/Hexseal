@@ -32,6 +32,7 @@ const KNOWN_FORWARDERS = new Set([
 
 const USDC_PERMIT_ABI = parseAbi([
   'function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)',
+  'function allowance(address owner, address spender) view returns (uint256)',
 ]);
 
 const FORWARDER_ABI = parseAbi([
@@ -241,6 +242,37 @@ export async function POST(req: NextRequest) {
         });
         await publicClient.waitForTransactionReceipt({ hash: permitTxHash });
         console.log('[relay] USDC permit set, txHash:', permitTxHash);
+
+        // ── Read-after-write guard ──────────────────────────────────────────
+        // waitForTransactionReceipt only proves the permit tx was mined — with
+        // a load-balanced RPC endpoint (e.g. drpc.live proxying multiple node
+        // providers behind one URL), the *next* read on this same client can
+        // still land on a node that hasn't caught up to that block yet, so
+        // allowance() can read back as stale/zero right after a confirmed
+        // permit. Poll briefly until the allowance we just set is actually
+        // visible before simulating the transferFrom that depends on it.
+        const expectedAllowance = BigInt(permitValue!);
+        let observedAllowance = 0n;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          observedAllowance = await publicClient.readContract({
+            address: USDC,
+            abi: USDC_PERMIT_ABI,
+            functionName: 'allowance',
+            args: [permitOwner! as Address, permitSpender! as Address],
+          });
+          if (observedAllowance >= expectedAllowance) break;
+          await new Promise(r => setTimeout(r, 400));
+        }
+        if (observedAllowance < expectedAllowance) {
+          console.error(
+            '[relay] allowance not visible after permit confirmation:',
+            `expected >= ${expectedAllowance}, observed ${observedAllowance}`,
+          );
+          return NextResponse.json(
+            { error: 'USDC permit confirmed but allowance not yet visible — please retry' },
+            { status: 400 },
+          );
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[relay] USDC permit failed:', msg);
@@ -268,6 +300,7 @@ export async function POST(req: NextRequest) {
         // Known custom error selectors (Agreement.sol + FactoryFacet.sol)
         const CUSTOM_ERRORS: Record<string, string> = {
           '0xf12ce677': 'ActivationWindowPassed',
+          '0x30b29a76': 'ActiveDealExists',
           '0xf9be60a2': 'AlreadyActive',
           '0x09dd1236': 'AlreadyDisputed',
           '0x5adf6387': 'AlreadyFunded',
