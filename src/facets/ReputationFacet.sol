@@ -104,24 +104,30 @@ contract ReputationFacet {
 
         if (d.clientClaimed[agreement] && d.executorClaimed[agreement]) return;
 
+        // Snapshotted once, before either side's XP is touched below — _awardXP runs
+        // twice in this same transaction (client then executor), and a live re-read of
+        // d.xp[cli] on the second call would see the client's own just-granted Phase-1
+        // XP from THIS deal, defeating the "counterparty had PRIOR standing" requirement.
+        bool counterpartyQualified = d.xp[cli] >= MIN_COUNTERPARTY_XP;
+
         _evalPairCap(d, agreement, cli, exc, amt);
-        _evalStreakOnce(d, agreement, st, cli, exc, agmt);
+        _evalStreakOnce(d, agreement, st, exc, counterpartyQualified, agmt);
 
         if (st == STATUS_RESOLVED) {
             bool clientWon = agmt.clientWonDispute();
             (address winner, address loser) = clientWon ? (cli, exc) : (exc, cli);
             if (!d.clientClaimed[agreement]) d.clientClaimed[agreement] = true;
             if (!d.executorClaimed[agreement]) d.executorClaimed[agreement] = true;
-            _awardXP(d, agreement, winner, exc, cli, amt);
+            _awardXP(d, agreement, winner, exc, counterpartyQualified, amt);
             _penalizeXP(d, agreement, loser);
         } else {
             if (!d.clientClaimed[agreement]) {
                 d.clientClaimed[agreement] = true;
-                _awardXP(d, agreement, cli, exc, cli, amt);
+                _awardXP(d, agreement, cli, exc, counterpartyQualified, amt);
             }
             if (!d.executorClaimed[agreement]) {
                 d.executorClaimed[agreement] = true;
-                _awardXP(d, agreement, exc, exc, cli, amt);
+                _awardXP(d, agreement, exc, exc, counterpartyQualified, amt);
             }
         }
     }
@@ -154,13 +160,15 @@ contract ReputationFacet {
             d.executorClaimed[agreement] = true;
         }
 
+        bool counterpartyQualified = d.xp[cli] >= MIN_COUNTERPARTY_XP;
+
         _evalPairCap(d, agreement, cli, exc, amt);
-        _evalStreakOnce(d, agreement, st, cli, exc, agmt);
+        _evalStreakOnce(d, agreement, st, exc, counterpartyQualified, agmt);
 
         if (st == STATUS_RESOLVED && agmt.clientWonDispute() != isClient) {
             _penalizeXP(d, agreement, caller);
         } else {
-            _awardXP(d, agreement, caller, exc, cli, amt);
+            _awardXP(d, agreement, caller, exc, counterpartyQualified, amt);
         }
     }
 
@@ -228,23 +236,25 @@ contract ReputationFacet {
     /// @notice Обновляет чистую серию исполнителя ровно один раз на сделку, независимо от
     /// того, сколько раз autoAwardXP/claimXP вызваны для неё (claimXP вызывается отдельно
     /// каждой стороной). COMPLETED — сделка вообще не могла уйти в спор, значит чистая:
-    /// +1, но только если клиент этой сделки уже имеет xp >= MIN_COUNTERPARTY_XP — иначе
-    /// sybil-кольцо свежих кошельков могло бы бесплатно набить серию друг на друге до того,
-    /// как у кого-то из них вообще появится репутация. RESOLVED — спор был; исполнитель
+    /// +1, но только если контрагент этой сделки уже имел xp >= MIN_COUNTERPARTY_XP до неё —
+    /// иначе sybil-кольцо свежих кошельков могло бы бесплатно набить серию друг на друге.
+    /// Квалификация снимается один раз перед любыми награждениями в этой транзакции (в
+    /// autoAwardXP клиент награждается первым, увеличивая d.xp[cli], поэтому второе чтение
+    /// executor-ом видело бы уже изменённый баланс). RESOLVED — спор был; исполнитель
     /// проиграл: обнуление; выиграл: без изменений.
     function _evalStreakOnce(
         ReputationStorage.Data storage d,
         address agreement,
         uint8 st,
-        address cli,
         address exc,
+        bool counterpartyQualified,
         IAgreementView agmt
     ) private {
         if (d.streakEvaluated[agreement]) return;
         d.streakEvaluated[agreement] = true;
 
         if (st == STATUS_COMPLETED) {
-            if (d.xp[cli] >= MIN_COUNTERPARTY_XP) {
+            if (counterpartyQualified) {
                 d.cleanStreak[exc]++;
             }
         } else if (st == STATUS_RESOLVED && agmt.clientWonDispute()) {
@@ -255,23 +265,23 @@ contract ReputationFacet {
     /// @notice Начисляет XP по обычной формуле (_addXP), но гейтит начисление выше
     /// PHASE2_XP_THRESHOLD: клиент выше порога больше не получает XP вообще, исполнитель —
     /// только пока его cleanStreak >= CLEAN_STREAK_REQUIRED И контрагент этой конкретной
-    /// сделки уже имеет xp >= MIN_COUNTERPARTY_XP — без этой второй проверки можно было бы
-    /// один раз честно набить серию, а затем фармить оставшийся Phase-2 XP на собственных
-    /// sybil-кошельках, раз проверка серии уже читалась бы как "выполнена". Порог сверяется
-    /// с балансом ДО начисления этой сделки — сделка, которая доводит серию ровно до нужной
-    /// длины, сама уже засчитывается по новым правилам.
+    /// сделки уже имел xp >= MIN_COUNTERPARTY_XP до неё (не результат этой же сделки) —
+    /// без этой второй проверки можно было бы один раз честно набить серию, а затем
+    /// фармить оставшийся Phase-2 XP на собственных sybil-кошельках. Квалификация
+    /// контрагента снимается один раз перед любыми награждениями в этой транзакции
+    /// (в autoAwardXP клиент награждается первым).
     function _awardXP(
         ReputationStorage.Data storage d,
         address agreement,
         address recipient,
         address exc,
-        address cli,
+        bool counterpartyQualified,
         uint256 amt
     ) private {
         if (d.xp[recipient] >= PHASE2_XP_THRESHOLD) {
             if (recipient != exc) return;
             if (d.cleanStreak[recipient] < CLEAN_STREAK_REQUIRED) return;
-            if (d.xp[cli] < MIN_COUNTERPARTY_XP) return;
+            if (!counterpartyQualified) return;
         }
         _addXP(d, agreement, recipient, amt);
     }

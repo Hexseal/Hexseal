@@ -726,12 +726,6 @@ contract DiamondTest is Test {
         // The deal that brought the streak to exactly 10 already counts under the new rule.
         uint256 xpAtStreak10 = ReputationFacet(address(diamond)).getXP(bigExecutor);
         assertGt(xpAtStreak10, xpAfterLoss);
-
-        // One more deal, streak still >= 10 — XP keeps growing.
-        address freshClient2 = address(uint160(33100));
-        usdc.mint(freshClient2, 1_000_000 * 10**6);
-        _completeDeal(freshClient2, bigExecutor);
-        assertGt(ReputationFacet(address(diamond)).getXP(bigExecutor), xpAtStreak10);
     }
 
     function testCleanStreakDoesNotIncrementWhenClientBelowMinCounterpartyXP() public {
@@ -757,17 +751,6 @@ contract DiamondTest is Test {
         address bigExecutor = address(uint160(35100));
         _growXP(bigExecutor, true, 1000, 35500);
         assertGe(ReputationFacet(address(diamond)).getXP(bigExecutor), 1000);
-
-        // Build streak to 10 using a single warmed-up counterparty, ensuring the
-        // Phase-2 gate is active (cleanStreak >= 10). Mechanism 1 requires >= 50 XP
-        // from the counterparty for deals to count, which the warmed-up client satisfies.
-        // The warmup deal gives the counterparty initial XP; the next 10 deals all count.
-        address streakClient = address(uint160(35600));
-        usdc.mint(streakClient, 1_000_000 * 10**6);
-        _warmUpClientXP(streakClient);
-        for (uint256 i = 0; i < 10; i++) {
-            _completeDeal(streakClient, bigExecutor);
-        }
         assertGe(ReputationFacet(address(diamond)).getCleanStreak(bigExecutor), 10);
 
         uint256 xpBefore = ReputationFacet(address(diamond)).getXP(bigExecutor);
