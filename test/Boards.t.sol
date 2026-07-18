@@ -670,6 +670,37 @@ contract BoardsTest is Test {
         assertEq(uint256(req2.status), uint256(ServiceBoardStorage.RequestStatus.PENDING));
     }
 
+    function testRequestServiceRevertsWhenPendingCapReached() public {
+        uint256 serviceId = _mintService();
+
+        // Ensure client has enough balance for 20 requests
+        usdc.mint(client, 1_100_000_000);
+
+        // Fill the cap with PENDING requests to the same executor (different
+        // client so hasActivePair never trips — this is purely exercising the
+        // count cap, not the active-pair guard).
+        vm.startPrank(client);
+        for (uint256 i = 0; i < 20; i++) {
+            usdc.approve(address(diamond), AMOUNT);
+            ServiceBoardFacet(address(diamond)).requestService(serviceId, AMOUNT, DEADLINE, TERMS, REGION);
+        }
+        usdc.approve(address(diamond), AMOUNT);
+        vm.expectRevert(ServiceBoardFacet.TooManyPendingRequests.selector);
+        ServiceBoardFacet(address(diamond)).requestService(serviceId, AMOUNT, DEADLINE, TERMS, REGION);
+        vm.stopPrank();
+
+        // Cancelling one frees a slot.
+        uint256[] memory pending = ServiceBoardFacet(address(diamond)).getPendingRequestIdsByClientAndExecutor(client, executor);
+        assertEq(pending.length, 20);
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(pending[0]);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), AMOUNT);
+        ServiceBoardFacet(address(diamond)).requestService(serviceId, AMOUNT, DEADLINE, TERMS, REGION);
+        vm.stopPrank();
+    }
+
     function testRemoveService() public {
         uint256 serviceId = _mintService();
 

@@ -124,6 +124,7 @@ contract ServiceBoardFacet {
     error FactoryPaused();
     error SelfRequest();
     error ActiveDealExists();
+    error TooManyPendingRequests();
 
     // -------- REENTRANCY --------
 
@@ -321,6 +322,8 @@ contract ServiceBoardFacet {
 
     // -------- CLIENT: REQUEST SERVICE --------
 
+    uint256 constant MAX_PENDING_PER_PAIR = 20;
+
     /// @notice Клиент запрашивает найм — gasless-совместим (ERC-2771).
     /// @dev Для gasless-пути relay вызывает USDC.permit() отдельно перед ForwardRequest.
     ///      Для прямого пути требует approve(diamond, amount) до вызова.
@@ -346,6 +349,7 @@ contract ServiceBoardFacet {
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
         if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
+        if (s.pendingRequestIdsByClientAndExecutor[client][svc.executor].length >= MAX_PENDING_PER_PAIR) revert TooManyPendingRequests();
 
         requestId = s.nextRequestId++;
 
@@ -397,6 +401,7 @@ contract ServiceBoardFacet {
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
         if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
+        if (st.pendingRequestIdsByClientAndExecutor[client][svc.executor].length >= MAX_PENDING_PER_PAIR) revert TooManyPendingRequests();
 
         IServiceBoardUSDC(fs.usdc).permit(client, address(this), amount, permitDeadline, v, r, s);
 
