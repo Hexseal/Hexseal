@@ -13,10 +13,9 @@ import { notifyPush } from "@/lib/webpush";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Search, Loader2, Briefcase, Plus, ArrowRight,
-  MessageCircle, RefreshCw, ChevronDown, X, ExternalLink,
+  Search, Loader2, Briefcase, Plus,
+  MessageCircle, RefreshCw, ChevronDown, ExternalLink,
   UserCheck,
 } from "lucide-react";
 import Link from "next/link";
@@ -26,6 +25,7 @@ import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory, extractCustomTag, stripCustomTag } from "@/config/categories";
 import { shortAddr } from "@/lib/utils";
+import { RequestServiceModal } from "@/components/RequestServiceModal";
 
 function useTimeAgo() {
   const t = useTranslations();
@@ -66,153 +66,10 @@ interface HireRequest {
   agreement: string;
 }
 
-const REQUEST_STATUS: Record<number, string> = { 0: "Pending", 1: "Accepted", 2: "Rejected", 3: "Cancelled" };
+const REQUEST_STATUS: Record<number, string> = { 0: "Pending", 1: "Accepted", 2: "Rejected", 3: "Cancelled", 4: "Superseded" };
 const DEAL_STATUS: Record<number, string> = { 0: "Created", 1: "Funded", 2: "Active", 3: "Done", 4: "Disputed", 5: "Resolved", 6: "Refunded" };
 
 function fmtUSDC(val: bigint) { return (Number(val) / 1e6).toFixed(2); }
-
-// ─── Request Modal ─────────────────────────────────────────────────────────
-
-function RequestModal({
-  service,
-  onClose,
-  onSubmit,
-  loading,
-  userUsdcBalance,
-}: {
-  service: Service;
-  onClose: () => void;
-  onSubmit: (amount: string, days: string, region: number, terms: string) => void;
-  loading: boolean;
-  userUsdcBalance?: bigint;
-}) {
-  const [amount, setAmount] = useState(fmtUSDC(service.price));
-  const [days, setDays]     = useState(String(Number(service.deadlineDays)));
-  const [region, setRegion] = useState(service.region);
-  const [terms, setTerms]   = useState("");
-  const t = useTranslations();
-
-  const parsedAmount = parseFloat(amount || "0");
-  const requiredRaw  = parsedAmount > 0 ? BigInt(Math.round(parsedAmount * 1e6)) : 0n;
-  const hasEnough    = userUsdcBalance === undefined || userUsdcBalance >= requiredRaw;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4"
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.97 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.97 }}
-        transition={{ duration: 0.15 }}
-        className="w-full max-w-sm rounded-[22px] border border-white/[0.08] bg-[#111113] p-5"
-        style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)' }}
-      >
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="font-syne font-bold text-lg">{t("board.services.request_btn")}</h2>
-          <button onClick={onClose} className="text-white/30 hover:text-white/60">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <p className="text-sm text-white/50 mb-5 border-b border-white/8 pb-4">
-          <span className="text-white/80 font-medium">{service.title}</span>
-          <br />
-          <UserName address={service.executor} link className="font-mono text-xs text-white/30 hover:text-white/60 transition-colors" />
-        </p>
-
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.amount_label")}</label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
-              className="bg-white/[0.04] border-white/10 text-white"
-              placeholder="10.00"
-            />
-            <p className="text-xs text-white/25 mt-1">{t("board.services.amount_suggested", { amount: fmtUSDC(service.price) })}</p>
-          </div>
-
-          <div>
-            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.deadline_label")}</label>
-            <Input
-              type="number"
-              min="1"
-              max="365"
-              value={days}
-              onChange={e => setDays(e.target.value)}
-              className="bg-white/[0.04] border-white/10 text-white"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.region_label")}</label>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(REGION_LABELS).map(([k, v]) => (
-                <button
-                  key={k}
-                  onClick={() => setRegion(Number(k))}
-                  className={`rounded-[10px] border py-2 text-xs transition-colors ${
-                    region === Number(k)
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-white/10 text-white/40 hover:border-white/20"
-                  }`}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-white/40 block mb-1.5">{t("board.services.terms_label")}</label>
-            <Textarea
-              placeholder={t("board.services.terms_placeholder")}
-              value={terms}
-              onChange={e => setTerms(e.target.value)}
-              rows={3}
-              maxLength={2000}
-              className="bg-white/[0.04] border-white/10 text-white resize-none text-sm placeholder:text-white/20 rounded-[10px]"
-            />
-            <p className="text-xs text-white/20 mt-1">{t("board.services.terms_hint")}</p>
-          </div>
-        </div>
-
-        <div className="mt-6 flex gap-2">
-          <Button variant="ghost" className="flex-1 border border-white/10 text-white/50" onClick={onClose} disabled={loading}>
-            {t("common.cancel")}
-          </Button>
-          <Button
-            className="flex-1 gap-1.5"
-            disabled={loading || !amount || !days || !hasEnough}
-            onClick={() => onSubmit(amount, days, region, terms)}
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
-            {t("board.services.request_confirm")}
-          </Button>
-        </div>
-
-        {!hasEnough && userUsdcBalance !== undefined && (
-          <p className="text-xs text-red-400 text-center mt-2">
-            {t("board.services.insufficient_usdc", { have: fmtUSDC(userUsdcBalance), need: parsedAmount.toFixed(2) })}
-          </p>
-        )}
-        {hasEnough && (
-          <p className="text-xs text-white/25 text-center mt-3">
-            {t("board.services.fee_notice")}
-          </p>
-        )}
-      </motion.div>
-    </motion.div>
-  );
-}
 
 // ─── Incoming Requests Panel ──────────────────────────────────────────────────
 
@@ -379,6 +236,8 @@ function ServiceCard({
   myRequests,
   onRequest,
   isRequesting,
+  onCancelRequest,
+  isCancelling,
   expanded,
   onToggle,
 }: {
@@ -388,6 +247,8 @@ function ServiceCard({
   myRequests: HireRequest[];
   onRequest: (service: Service) => void;
   isRequesting: boolean;
+  onCancelRequest: (requestId: string) => void;
+  isCancelling: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -452,26 +313,6 @@ function ServiceCard({
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0 pt-1" onClick={e => e.stopPropagation()}>
-          {isConnected && !isMyService && (
-            <Link href={`/chat?peer=${service.executor}`}>
-              <button className="w-7 h-7 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors">
-                <MessageCircle className="w-3.5 h-3.5" />
-              </button>
-            </Link>
-          )}
-          {isConnected && !isMyService && myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
-            <Link href={`/deal/${myAccepted.agreement}`}>
-              <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
-                {t("board.services.deal_btn")} <ExternalLink className="w-3 h-3" />
-              </Button>
-            </Link>
-          )}
-          {isConnected && !isMyService && !myActive && service.status === 0 && (
-            <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting || isUnavailable} className="h-8 px-3 text-xs gap-1">
-              {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              {t("board.services.request_btn")}
-            </Button>
-          )}
           <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform ml-0.5 ${expanded ? "rotate-180" : ""}`} />
         </div>
       </div>
@@ -532,9 +373,38 @@ function ServiceCard({
             </div>
           )}
 
-          {/* Footer: full-page link only — actions stay in the header row */}
-          <div className="pt-2.5 border-t border-white/6">
-            <Link href={`/service/${service.serviceId}`} onClick={e => e.stopPropagation()}>
+          {/* Footer: chat + primary action + full-page link */}
+          <div className="pt-2.5 border-t border-white/6 flex items-center gap-1.5">
+            {isConnected && !isMyService && (
+              <Link href={`/chat?peer=${service.executor}`}>
+                <button className="w-8 h-8 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors">
+                  <MessageCircle className="w-3.5 h-3.5" />
+                </button>
+              </Link>
+            )}
+            {isConnected && !isMyService && myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
+              <Link href={`/deal/${myAccepted.agreement}`}>
+                <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
+                  {t("board.services.deal_btn")} <ExternalLink className="w-3 h-3" />
+                </Button>
+              </Link>
+            )}
+            {isConnected && !isMyService && myPending && (
+              <Button
+                size="sm" variant="ghost" onClick={() => onCancelRequest(myPending.requestId)}
+                disabled={isCancelling}
+                className="h-8 px-2.5 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10"
+              >
+                {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("board.services.cancel_request_btn")}
+              </Button>
+            )}
+            {isConnected && !isMyService && !myActive && service.status === 0 && (
+              <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting || isUnavailable} className="h-8 px-3 text-xs gap-1">
+                {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                {t("board.services.request_btn")}
+              </Button>
+            )}
+            <Link href={`/service/${service.serviceId}`} onClick={e => e.stopPropagation()} className="ml-auto">
               <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-8 px-2 gap-1.5">
                 <ExternalLink className="w-3 h-3" /> {t("board.service_page.full_page")}
               </Button>
@@ -753,7 +623,7 @@ export default function ExecutorBoardPage() {
     }
   }, [services, searchQuery, regionFilter, categoryFilter, customTagFilter, sortBy]);
 
-  const handleRequest = async (amountStr: string, daysStr: string, region: number, termsText: string) => {
+  const handleRequest = async (amountStr: string, daysStr: string, termsText: string) => {
     if (!requestModal || !walletClient || !publicClient || !address) return;
     if (requestModal.status !== 0) {
       toast.error("This service is no longer active.");
@@ -771,7 +641,7 @@ export default function ExecutorBoardPage() {
         amount,
         deadlineDays: days,
         terms:        termsText.trim(),
-        region,
+        region:       requestModal.region,
       });
 
       toast.success(t("board.services.request_sent"));
@@ -790,6 +660,22 @@ export default function ExecutorBoardPage() {
       toast.error(err?.shortMessage || err?.message || "Transaction failed");
     } finally {
       setIsRequesting(false);
+    }
+  };
+
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const handleCancelRequest = async (requestId: string) => {
+    if (!walletClient || !publicClient) return;
+    setIsCancelling(true);
+    try {
+      await sendGasless(walletClient, publicClient, "cancelRequest", [BigInt(requestId)], DIAMOND_ABI as Abi);
+      toast.success(t("board.services.request_cancelled"));
+      setTimeout(() => { refetchMyRequests(); }, 2000);
+    } catch (err: any) {
+      toast.error(err?.shortMessage || err?.message || "Failed");
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -837,7 +723,7 @@ export default function ExecutorBoardPage() {
   return (
     <>
       {requestModal && (
-        <RequestModal
+        <RequestServiceModal
           service={requestModal}
           onClose={() => setRequestModal(null)}
           onSubmit={handleRequest}
@@ -1022,6 +908,8 @@ export default function ExecutorBoardPage() {
                     myRequests={myRequests.filter(r => String(r.serviceId) === svc.serviceId)}
                     onRequest={() => setRequestModal(svc)}
                     isRequesting={isRequesting}
+                    onCancelRequest={handleCancelRequest}
+                    isCancelling={isCancelling}
                     expanded={expandedServiceId === svc.serviceId}
                     onToggle={() => setExpandedServiceId(prev => prev === svc.serviceId ? null : svc.serviceId)}
                   />
