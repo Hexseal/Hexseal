@@ -125,7 +125,7 @@ contract BoardsTest is Test {
         jobSels[10] = JobBoardFacet.getOpenJobs.selector;
 
         // --- ServiceBoardFacet selectors ---
-        bytes4[] memory svcSels = new bytes4[](20);
+        bytes4[] memory svcSels = new bytes4[](21);
         svcSels[0]  = ServiceBoardFacet.mintService.selector;
         svcSels[1]  = ServiceBoardFacet.requestService.selector;
         svcSels[2]  = ServiceBoardFacet.acceptRequest.selector;
@@ -146,6 +146,7 @@ contract BoardsTest is Test {
         svcSels[17] = ServiceBoardFacet.getRequestFunds.selector;
         svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
+        svcSels[20] = ServiceBoardFacet.getPendingRequestIdsByClientAndExecutor.selector;
 
         // --- Infrastructure selectors ---
         bytes4[] memory cutSels = new bytes4[](1);
@@ -565,6 +566,108 @@ contract BoardsTest is Test {
         vm.expectRevert(ServiceBoardFacet.ActiveDealExists.selector);
         ServiceBoardFacet(address(diamond)).requestService(serviceId2, AMOUNT, DEADLINE, TERMS, REGION);
         vm.stopPrank();
+    }
+
+    function testAcceptRequestSupersedesSiblingPendingFromSameClient() public {
+        uint256 serviceId1 = _mintService();
+        uint256 serviceId2 = _mintService();
+
+        uint256 requestId1 = _requestService(serviceId1);
+
+        // Client submits a second pending request to the SAME executor (different
+        // service) before either is accepted — hasActivePair doesn't block this since
+        // neither is active yet.
+        vm.startPrank(client);
+        usdc.approve(address(diamond), AMOUNT);
+        uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId2, AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId1);
+
+        // requestId1: accepted normally
+        ServiceBoardStorage.HireRequest memory req1 = ServiceBoardFacet(address(diamond)).getRequest(requestId1);
+        assertEq(uint256(req1.status), uint256(ServiceBoardStorage.RequestStatus.ACCEPTED));
+
+        // requestId2: auto-superseded and refunded, even though nobody called cancel/reject
+        ServiceBoardStorage.HireRequest memory req2 = ServiceBoardFacet(address(diamond)).getRequest(requestId2);
+        assertEq(uint256(req2.status), uint256(ServiceBoardStorage.RequestStatus.SUPERSEDED));
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT);
+    }
+
+    function testAcceptRequestDoesNotReprocessAlreadyResolvedSibling() public {
+        uint256 serviceId1 = _mintService();
+        uint256 serviceId2 = _mintService();
+
+        uint256 requestId1 = _requestService(serviceId1);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), AMOUNT);
+        uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId2, AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        // Client cancels requestId1 themselves before the executor does anything.
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId1);
+
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        // Executor accepts requestId2 — requestId1 is already CANCELLED (not PENDING),
+        // must not be touched again (no double refund, stays CANCELLED).
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId2);
+
+        ServiceBoardStorage.HireRequest memory req1 = ServiceBoardFacet(address(diamond)).getRequest(requestId1);
+        assertEq(uint256(req1.status), uint256(ServiceBoardStorage.RequestStatus.CANCELLED));
+        assertEq(usdc.balanceOf(client), clientBefore);
+    }
+
+    function testRejectAndCancelPruneThePendingPairList() public {
+        uint256 serviceId = _mintService();
+
+        uint256 requestId1 = _requestService(serviceId);
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).rejectRequest(requestId1);
+
+        uint256[] memory afterReject = ServiceBoardFacet(address(diamond)).getPendingRequestIdsByClientAndExecutor(client, executor);
+        assertEq(afterReject.length, 0);
+
+        uint256 requestId2 = _requestService(serviceId);
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId2);
+
+        uint256[] memory afterCancel = ServiceBoardFacet(address(diamond)).getPendingRequestIdsByClientAndExecutor(client, executor);
+        assertEq(afterCancel.length, 0);
+    }
+
+    function testAcceptRequestDoesNotSupersedeOtherClientsPendingRequests() public {
+        uint256 serviceId = _mintService();
+
+        address client2 = address(0x5);
+        usdc.mint(client2, 500_000_000);
+
+        uint256 requestId1 = _requestService(serviceId);
+
+        vm.startPrank(client2);
+        usdc.approve(address(diamond), AMOUNT);
+        uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId, AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId1);
+
+        // client2's pending request for the SAME service is untouched — multi-buyer
+        // per listing (see testServiceMultipleAccepts) is not affected.
+        ServiceBoardStorage.HireRequest memory req2 = ServiceBoardFacet(address(diamond)).getRequest(requestId2);
+        assertEq(uint256(req2.status), uint256(ServiceBoardStorage.RequestStatus.PENDING));
     }
 
     function testRemoveService() public {

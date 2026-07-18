@@ -25,7 +25,7 @@ library ServiceBoardStorage {
     bytes32 constant POSITION = keccak256("hexseal.serviceboard.storage");
 
     enum ServiceStatus { ACTIVE, PAUSED, REMOVED }
-    enum RequestStatus { PENDING, ACCEPTED, REJECTED, CANCELLED }
+    enum RequestStatus { PENDING, ACCEPTED, REJECTED, CANCELLED, SUPERSEDED }
 
     struct Service {
         address executor;
@@ -64,6 +64,12 @@ library ServiceBoardStorage {
         mapping(uint256 => uint256[]) serviceRequests;  // serviceId → requestIds
         mapping(address => uint256[]) clientRequests;   // client → requestIds
         mapping(uint256 => uint256) requestFunds;       // requestId → USDC locked in Diamond
+
+        // Bounded list of currently-PENDING request IDs per (client, executor) pair —
+        // NOT a full history (that only ever grows). Used by acceptRequest() to find
+        // and auto-refund sibling requests that can never be accepted once one from
+        // this pair is accepted (hasActivePair blocks them forever after).
+        mapping(address => mapping(address => uint256[])) pendingRequestIdsByClientAndExecutor;
     }
 
     function store() internal pure returns (Layout storage s) {
@@ -100,6 +106,7 @@ contract ServiceBoardFacet {
     event RequestAccepted(uint256 indexed requestId, address indexed executor, address indexed client, address agreement);
     event RequestRejected(uint256 indexed requestId, address indexed executor, address indexed client);
     event RequestCancelled(uint256 indexed requestId, address indexed client);
+    event RequestSuperseded(uint256 indexed requestId, address indexed client, address indexed executor, uint256 refundAmount);
 
     // -------- ERRORS --------
 
@@ -355,6 +362,7 @@ contract ServiceBoardFacet {
         });
         s.serviceRequests[serviceId].push(requestId);
         s.clientRequests[client].push(requestId);
+        s.pendingRequestIdsByClientAndExecutor[client][svc.executor].push(requestId);
 
         // Amount → Diamond (вернётся при reject/cancel или уйдёт в Agreement при accept)
         _safeTransferFrom(fs.usdc, client, address(this), amount);
@@ -407,6 +415,7 @@ contract ServiceBoardFacet {
         });
         st.serviceRequests[serviceId].push(requestId);
         st.clientRequests[client].push(requestId);
+        st.pendingRequestIdsByClientAndExecutor[client][svc.executor].push(requestId);
 
         _safeTransferFrom(fs.usdc, client, address(this), amount);
         st.requestFunds[requestId] = amount;
@@ -468,6 +477,23 @@ contract ServiceBoardFacet {
         require(funded, "ServiceBoard: fund failed");
 
         emit RequestAccepted(requestId, sender, client, agreementAddr);
+
+        // Any other PENDING request from this same client to this same executor can
+        // never be accepted now (hasActivePair blocks it) — refund and mark it
+        // SUPERSEDED so it doesn't sit stuck forever.
+        uint256[] storage siblings = s.pendingRequestIdsByClientAndExecutor[client][sender];
+        for (uint256 i = 0; i < siblings.length; i++) {
+            uint256 siblingId = siblings[i];
+            if (siblingId == requestId) continue;
+            ServiceBoardStorage.HireRequest storage siblingReq = s.requests[siblingId];
+            if (siblingReq.status != ServiceBoardStorage.RequestStatus.PENDING) continue;
+            siblingReq.status = ServiceBoardStorage.RequestStatus.SUPERSEDED;
+            uint256 siblingRefund = s.requestFunds[siblingId];
+            s.requestFunds[siblingId] = 0;
+            _safeTransfer(fs.usdc, client, siblingRefund);
+            emit RequestSuperseded(siblingId, client, sender, siblingRefund);
+        }
+        delete s.pendingRequestIdsByClientAndExecutor[client][sender];
     }
 
     /// @notice Исполнитель отклоняет запрос → amount рефандится клиенту.
@@ -481,6 +507,7 @@ contract ServiceBoardFacet {
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.REJECTED;
+        _removePendingPair(req.client, svc.executor, requestId);
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;
 
@@ -497,11 +524,13 @@ contract ServiceBoardFacet {
         address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         ServiceBoardStorage.HireRequest storage req = s.requests[requestId];
+        ServiceBoardStorage.Service storage svc = s.services[req.serviceId];
 
         if (sender != req.client) revert NotClient();
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.CANCELLED;
+        _removePendingPair(req.client, svc.executor, requestId);
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;
 
@@ -547,6 +576,10 @@ contract ServiceBoardFacet {
 
     function getRequestFunds(uint256 requestId) external view returns (uint256) {
         return ServiceBoardStorage.store().requestFunds[requestId];
+    }
+
+    function getPendingRequestIdsByClientAndExecutor(address clientAddr, address executorAddr) external view returns (uint256[] memory) {
+        return ServiceBoardStorage.store().pendingRequestIdsByClientAndExecutor[clientAddr][executorAddr];
     }
 
     /// @notice Все активные услуги с их ID
@@ -598,6 +631,18 @@ contract ServiceBoardFacet {
     }
 
     // -------- INTERNAL --------
+
+    function _removePendingPair(address clientAddr, address executorAddr, uint256 requestId) internal {
+        uint256[] storage list = ServiceBoardStorage.store().pendingRequestIdsByClientAndExecutor[clientAddr][executorAddr];
+        uint256 len = list.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (list[i] == requestId) {
+                list[i] = list[len - 1];
+                list.pop();
+                break;
+            }
+        }
+    }
 
     function _safeTransferFrom(address token, address from, address to, uint256 amount) internal {
         (bool success, bytes memory data) = token.call(
