@@ -277,12 +277,31 @@ contract DiamondTest is Test {
     // progress. `asExecutor` selects which role `party` plays; the counterparty always takes
     // the other role and gets freshly minted USDC. `baseAddr` seeds the counterparty address
     // range so parallel calls in different tests never collide.
+    //
+    // NOTE: Under Mechanism 1 (Reputation gate), each counterparty's *first* deal doesn't
+    // count toward `party`'s cleanStreak (counterparty starts at 0 XP, so the client-XP
+    // check fails). Without a warm-up, 1 in every 3 deals silently stops counting, and
+    // by the time XP crosses targetXP, the streak is well behind what callers expect.
+    // A one-deal warm-up per counterparty (pushing its XP past MIN_COUNTERPARTY_XP)
+    // restores the invariant: every counted deal moves the streak.
     function _growXP(address party, bool asExecutor, uint256 targetXP, uint256 baseAddr) internal {
         usdc.mint(party, 1_000_000 * 10**6);
         uint256 dealIndex = 0;
+        address lastCounterparty = address(0);
         while (ReputationFacet(address(diamond)).getXP(party) < targetXP) {
             address counterparty = address(uint160(baseAddr + dealIndex / 3));
-            usdc.mint(counterparty, 1_000_000 * 10**6);
+            if (counterparty != lastCounterparty) {
+                usdc.mint(counterparty, 1_000_000 * 10**6);
+                // Warm up: Mechanism 1 requires a deal's client to already have
+                // >= MIN_COUNTERPARTY_XP (50) for it to count toward cleanStreak.
+                // A single throwaway deal pushes counterparty past that threshold
+                // before it's used for real below — otherwise 1 in every 3 deals
+                // in this loop would silently not count toward party's streak.
+                address throwaway = address(uint160(uint256(keccak256(abi.encodePacked("growxp-warmup", counterparty)))));
+                usdc.mint(throwaway, 1_000_000 * 10**6);
+                _completeDeal(counterparty, throwaway);
+                lastCounterparty = counterparty;
+            }
             if (asExecutor) {
                 _completeDeal(counterparty, party);
             } else {
