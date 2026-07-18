@@ -55,3 +55,7 @@ docs/CHAT_PROMPT.md
 docs/CLAUDE_CODE_PROMPT.md
 docs/thoughts/
 
+deploy-local.sh
+
+# ── Superpowers brainstorming companion (local mockups, not project artifacts) ─
+.superpowers/

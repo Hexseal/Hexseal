@@ -14,7 +14,7 @@ api.hexseal.net     → relayer   (Node.js  :3001)
 
 | Что | Где |
 |---|---|
-| VPS | Hetzner `<адрес сервера>` |
+| VPS | 1984 `IP_VPS` |
 | Путь на VPS | `/opt/hexseal/app/` |
 | Деплой | `bash deploy-local.sh` (локальный сборки → SSH → VPS) |
 | Хранилище файлов | Docker volume `relayer_storage` → `/app/storage/` |
@@ -53,7 +53,7 @@ DIAMOND_ADDRESS=0x7A91d700CF2a201E99F0aD3C3b4f4D79CFE69557
 NEXT_PUBLIC_CHAIN_ID=84532
 
 # ── Subgraph ───────────────────────────────────────────────────────────────────
-SUBGRAPH_URL=https://api.studio.thegraph.com/query/1755241/hexseal/latest
+SUBGRAPH_URL=https://api.studio.thegraph.com/query/***/hexseal/latest
 
 # ── Релеер ────────────────────────────────────────────────────────────────────
 RELAYER_PRIVATE_KEY=0xВАШ_КЛЮЧ_РЕЛЕЕРА
@@ -94,7 +94,7 @@ CLOUDFLARE_TUNNEL_TOKEN=ВАШ_TUNNEL_TOKEN
 ### 1. Подготовка VPS
 
 ```bash
-ssh root@<адрес сервера>
+ssh root@IP_VPS
 
 # Docker
 curl -fsSL https://get.docker.com | sh
@@ -110,14 +110,14 @@ mkdir -p /opt/hexseal/app
 
 ```bash
 # С локальной машины:
-scp docker-compose.yml root@<адрес сервера>:/opt/hexseal/app/
-scp -r cloudflared root@<адрес сервера>:/opt/hexseal/app/
+scp docker-compose.yml root@IP_VPS:/opt/hexseal/app/
+scp -r cloudflared root@IP_VPS:/opt/hexseal/app/
 ```
 
 ### 3. Создать `.env.vps` на VPS
 
 ```bash
-ssh root@<адрес сервера>
+ssh root@IP_VPS
 nano /opt/hexseal/app/.env.vps
 # Заполнить по шаблону выше
 ```
@@ -168,7 +168,7 @@ bash deploy-local.sh --all
 ## Мониторинг
 
 ```bash
-ssh root@<адрес сервера>
+ssh root@IP_VPS
 cd /opt/hexseal/app
 
 # Статус контейнеров
