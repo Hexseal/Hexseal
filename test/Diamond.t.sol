@@ -292,6 +292,18 @@ contract DiamondTest is Test {
         }
     }
 
+    // Gives `cli` a single throwaway completed deal so its own XP crosses
+    // MIN_COUNTERPARTY_XP (50) before it's used as the client in a deal whose
+    // cleanStreak effect on the executor is under test. `cli` itself starts at
+    // 0 XP in every fresh test, and Mechanism 1 requires prior standing, not
+    // standing gained from the deal being measured. Caller must ensure `cli`
+    // already holds USDC (setUp's shared `client` does; fresh addresses need
+    // `usdc.mint(cli, ...)` first).
+    function _warmUpClientXP(address cli) internal {
+        address throwaway = address(uint160(uint256(keccak256(abi.encodePacked("warmup", cli)))));
+        _completeDeal(cli, throwaway);
+    }
+
     // ============ DIAMOND PROXY TESTS ============
     
     function testDiamondOwner() public view {
@@ -545,12 +557,14 @@ contract DiamondTest is Test {
     // ============ CLEAN STREAK / PHASE-2 XP GATING ============
 
     function testCleanStreakIncrementsOnCompleted() public {
+        _warmUpClientXP(client);
         address freshExecutor = address(uint160(30001));
         _completeDeal(client, freshExecutor);
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
     }
 
     function testCleanStreakUnchangedOnExecutorWonDispute() public {
+        _warmUpClientXP(client);
         address freshExecutor = address(uint160(30002));
         _completeDeal(client, freshExecutor);
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
@@ -576,6 +590,7 @@ contract DiamondTest is Test {
     }
 
     function testCleanStreakResetsOnExecutorLostDispute() public {
+        _warmUpClientXP(client);
         address freshExecutor = address(uint160(30003));
         _completeDeal(client, freshExecutor);
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
@@ -601,6 +616,7 @@ contract DiamondTest is Test {
     }
 
     function testNotifyExecutorFaultResetsStreak() public {
+        _warmUpClientXP(client);
         address freshExecutor = address(uint160(34001));
         _completeDeal(client, freshExecutor);
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
@@ -666,18 +682,25 @@ contract DiamondTest is Test {
 
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(bigExecutor), 0);
 
-        // One clean deal right after the reset: streak becomes 1, still < 10 — no XP granted.
+        // One clean deal right after the reset: streak stays below 10 either way (this
+        // counterparty is also fresh, so it doesn't even count toward the streak under
+        // Mechanism 1) — no XP granted regardless.
         uint256 xpAfterLoss = ReputationFacet(address(diamond)).getXP(bigExecutor);
         address freshClient1 = address(uint160(32901));
         usdc.mint(freshClient1, 1_000_000 * 10**6);
         _completeDeal(freshClient1, bigExecutor);
         assertEq(ReputationFacet(address(diamond)).getXP(bigExecutor), xpAfterLoss);
 
-        // Rebuild the streak to 10 with fresh single-use counterparties.
-        for (uint256 i = 0; i < 9; i++) {
-            address freshClient = address(uint160(33000 + i));
-            usdc.mint(freshClient, 1_000_000 * 10**6);
-            _completeDeal(freshClient, bigExecutor);
+        // Rebuild the streak to 10. Mechanism 1 requires each deal's client to already
+        // have >= MIN_COUNTERPARTY_XP (50) — a single warmed-up counterparty, reused
+        // across all 11 deals (warmup + 10 counted), satisfies this without hitting MAX_WINS_PAIR
+        // (that cap only gates the win/volume XP bonus, not cleanStreak accounting). The warmup
+        // deal gives the counterparty initial XP; the next 10 deals all count toward the streak.
+        address streakClient = address(uint160(33000));
+        usdc.mint(streakClient, 1_000_000 * 10**6);
+        _warmUpClientXP(streakClient);
+        for (uint256 i = 0; i < 10; i++) {
+            _completeDeal(streakClient, bigExecutor);
         }
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(bigExecutor), 10);
 
@@ -690,6 +713,50 @@ contract DiamondTest is Test {
         usdc.mint(freshClient2, 1_000_000 * 10**6);
         _completeDeal(freshClient2, bigExecutor);
         assertGt(ReputationFacet(address(diamond)).getXP(bigExecutor), xpAtStreak10);
+    }
+
+    function testCleanStreakDoesNotIncrementWhenClientBelowMinCounterpartyXP() public {
+        address freshClient = address(uint160(35001));
+        address freshExecutor = address(uint160(35002));
+        usdc.mint(freshClient, 1_000_000 * 10**6);
+        _completeDeal(freshClient, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 0);
+    }
+
+    function testCleanStreakIncrementsOnceClientAboveMinCounterpartyXP() public {
+        address warmClient = address(uint160(35003));
+        address freshExecutor = address(uint160(35004));
+        usdc.mint(warmClient, 1_000_000 * 10**6);
+        _warmUpClientXP(warmClient);
+        assertGe(ReputationFacet(address(diamond)).getXP(warmClient), 50);
+
+        _completeDeal(warmClient, freshExecutor);
+        assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
+    }
+
+    function testPhase2XPBlockedWhenDealCounterpartyBelowMinXP() public {
+        address bigExecutor = address(uint160(35100));
+        _growXP(bigExecutor, true, 1000, 35500);
+        assertGe(ReputationFacet(address(diamond)).getXP(bigExecutor), 1000);
+
+        // Build streak to 10 using a single warmed-up counterparty, ensuring the
+        // Phase-2 gate is active (cleanStreak >= 10). Mechanism 1 requires >= 50 XP
+        // from the counterparty for deals to count, which the warmed-up client satisfies.
+        // The warmup deal gives the counterparty initial XP; the next 10 deals all count.
+        address streakClient = address(uint160(35600));
+        usdc.mint(streakClient, 1_000_000 * 10**6);
+        _warmUpClientXP(streakClient);
+        for (uint256 i = 0; i < 10; i++) {
+            _completeDeal(streakClient, bigExecutor);
+        }
+        assertGe(ReputationFacet(address(diamond)).getCleanStreak(bigExecutor), 10);
+
+        uint256 xpBefore = ReputationFacet(address(diamond)).getXP(bigExecutor);
+        address freshClient = address(uint160(35999));
+        usdc.mint(freshClient, 1_000_000 * 10**6);
+        _completeDeal(freshClient, bigExecutor);
+
+        assertEq(ReputationFacet(address(diamond)).getXP(bigExecutor), xpBefore);
     }
 
     // ============ ARBITER DEMOTION ============
@@ -834,6 +901,7 @@ contract DiamondTest is Test {
     // ============ AGREEMENT TIMEOUT INTEGRATION ============
 
     function testActivationTimeoutResetsExecutorStreak() public {
+        _warmUpClientXP(client);
         address freshExecutor = address(uint160(50001));
         _completeDeal(client, freshExecutor);
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
@@ -857,6 +925,7 @@ contract DiamondTest is Test {
     }
 
     function testDeadlineTimeoutResetsExecutorStreak() public {
+        _warmUpClientXP(client);
         address freshExecutor = address(uint160(50002));
         _completeDeal(client, freshExecutor);
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);
@@ -882,6 +951,7 @@ contract DiamondTest is Test {
     }
 
     function testArbiterTimeoutDoesNotTouchExecutorStreakButCountsAgainstArbiter() public {
+        _warmUpClientXP(client);
         address freshExecutor = address(uint160(50003));
         _completeDeal(client, freshExecutor);
         assertEq(ReputationFacet(address(diamond)).getCleanStreak(freshExecutor), 1);

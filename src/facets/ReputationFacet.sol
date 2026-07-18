@@ -62,6 +62,7 @@ contract ReputationFacet {
     uint256 private constant MAX_VOLUME_XP         = 300;
     uint256 private constant PHASE2_XP_THRESHOLD   = 1000; // выше этого — XP клиента заморожен, XP исполнителя гейтится серией
     uint256 private constant CLEAN_STREAK_REQUIRED = 10;   // подряд чистых закрытий для роста XP исполнителя после PHASE2_XP_THRESHOLD
+    uint256 private constant MIN_COUNTERPARTY_XP   = 50;    // деал считается в cleanStreak/Phase-2 XP только если у контрагента уже есть эта репутация — не с этой же сделки
 
     // Agreement.sol 7-state enum
     uint8 private constant STATUS_COMPLETED = 3;
@@ -104,23 +105,23 @@ contract ReputationFacet {
         if (d.clientClaimed[agreement] && d.executorClaimed[agreement]) return;
 
         _evalPairCap(d, agreement, cli, exc, amt);
-        _evalStreakOnce(d, agreement, st, exc, agmt);
+        _evalStreakOnce(d, agreement, st, cli, exc, agmt);
 
         if (st == STATUS_RESOLVED) {
             bool clientWon = agmt.clientWonDispute();
             (address winner, address loser) = clientWon ? (cli, exc) : (exc, cli);
             if (!d.clientClaimed[agreement]) d.clientClaimed[agreement] = true;
             if (!d.executorClaimed[agreement]) d.executorClaimed[agreement] = true;
-            _awardXP(d, agreement, winner, exc, amt);
+            _awardXP(d, agreement, winner, exc, cli, amt);
             _penalizeXP(d, agreement, loser);
         } else {
             if (!d.clientClaimed[agreement]) {
                 d.clientClaimed[agreement] = true;
-                _awardXP(d, agreement, cli, exc, amt);
+                _awardXP(d, agreement, cli, exc, cli, amt);
             }
             if (!d.executorClaimed[agreement]) {
                 d.executorClaimed[agreement] = true;
-                _awardXP(d, agreement, exc, exc, amt);
+                _awardXP(d, agreement, exc, exc, cli, amt);
             }
         }
     }
@@ -154,12 +155,12 @@ contract ReputationFacet {
         }
 
         _evalPairCap(d, agreement, cli, exc, amt);
-        _evalStreakOnce(d, agreement, st, exc, agmt);
+        _evalStreakOnce(d, agreement, st, cli, exc, agmt);
 
         if (st == STATUS_RESOLVED && agmt.clientWonDispute() != isClient) {
             _penalizeXP(d, agreement, caller);
         } else {
-            _awardXP(d, agreement, caller, exc, amt);
+            _awardXP(d, agreement, caller, exc, cli, amt);
         }
     }
 
@@ -227,11 +228,15 @@ contract ReputationFacet {
     /// @notice Обновляет чистую серию исполнителя ровно один раз на сделку, независимо от
     /// того, сколько раз autoAwardXP/claimXP вызваны для неё (claimXP вызывается отдельно
     /// каждой стороной). COMPLETED — сделка вообще не могла уйти в спор, значит чистая:
-    /// +1. RESOLVED — спор был; исполнитель проиграл: обнуление; выиграл: без изменений.
+    /// +1, но только если клиент этой сделки уже имеет xp >= MIN_COUNTERPARTY_XP — иначе
+    /// sybil-кольцо свежих кошельков могло бы бесплатно набить серию друг на друге до того,
+    /// как у кого-то из них вообще появится репутация. RESOLVED — спор был; исполнитель
+    /// проиграл: обнуление; выиграл: без изменений.
     function _evalStreakOnce(
         ReputationStorage.Data storage d,
         address agreement,
         uint8 st,
+        address cli,
         address exc,
         IAgreementView agmt
     ) private {
@@ -239,7 +244,9 @@ contract ReputationFacet {
         d.streakEvaluated[agreement] = true;
 
         if (st == STATUS_COMPLETED) {
-            d.cleanStreak[exc]++;
+            if (d.xp[cli] >= MIN_COUNTERPARTY_XP) {
+                d.cleanStreak[exc]++;
+            }
         } else if (st == STATUS_RESOLVED && agmt.clientWonDispute()) {
             d.cleanStreak[exc] = 0;
         }
@@ -247,19 +254,24 @@ contract ReputationFacet {
 
     /// @notice Начисляет XP по обычной формуле (_addXP), но гейтит начисление выше
     /// PHASE2_XP_THRESHOLD: клиент выше порога больше не получает XP вообще, исполнитель —
-    /// только пока его cleanStreak >= CLEAN_STREAK_REQUIRED. Порог сверяется с балансом ДО
-    /// начисления этой сделки — сделка, которая доводит серию ровно до требуемой длины, сама
-    /// уже засчитывается по новым правилам.
+    /// только пока его cleanStreak >= CLEAN_STREAK_REQUIRED И контрагент этой конкретной
+    /// сделки уже имеет xp >= MIN_COUNTERPARTY_XP — без этой второй проверки можно было бы
+    /// один раз честно набить серию, а затем фармить оставшийся Phase-2 XP на собственных
+    /// sybil-кошельках, раз проверка серии уже читалась бы как "выполнена". Порог сверяется
+    /// с балансом ДО начисления этой сделки — сделка, которая доводит серию ровно до нужной
+    /// длины, сама уже засчитывается по новым правилам.
     function _awardXP(
         ReputationStorage.Data storage d,
         address agreement,
         address recipient,
         address exc,
+        address cli,
         uint256 amt
     ) private {
         if (d.xp[recipient] >= PHASE2_XP_THRESHOLD) {
             if (recipient != exc) return;
             if (d.cleanStreak[recipient] < CLEAN_STREAK_REQUIRED) return;
+            if (d.xp[cli] < MIN_COUNTERPARTY_XP) return;
         }
         _addXP(d, agreement, recipient, amt);
     }
