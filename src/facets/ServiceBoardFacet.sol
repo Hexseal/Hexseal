@@ -8,7 +8,7 @@ pragma solidity ^0.8.20;
 //
 // Симметричный двусторонний флоу:
 //   mintService():    executor платит fee → feeRecipient (антиспам)
-//   requestService(): client платит fee → feeRecipient
+//   requestService(): client НЕ платит fee (уже уплачен исполнителем при mintService)
 //                     client amount → хранится в Diamond
 //   acceptRequest():  executor принимает → amount Diamond → Agreement
 //   rejectRequest():  executor отклоняет → amount рефанд client
@@ -116,6 +116,7 @@ contract ServiceBoardFacet {
     error Reentrant();
     error FactoryPaused();
     error SelfRequest();
+    error ActiveDealExists();
 
     // -------- REENTRANCY --------
 
@@ -336,6 +337,9 @@ contract ServiceBoardFacet {
         if (svc.status != ServiceBoardStorage.ServiceStatus.ACTIVE) revert ServiceNotActive();
         if (client == svc.executor) revert SelfRequest();
 
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
+        if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
+
         requestId = s.nextRequestId++;
 
         s.requests[requestId] = ServiceBoardStorage.HireRequest({
@@ -353,7 +357,6 @@ contract ServiceBoardFacet {
         s.clientRequests[client].push(requestId);
 
         // Amount → Diamond (вернётся при reject/cancel или уйдёт в Agreement при accept)
-        FactoryStorage.Layout storage fs = FactoryStorage.store();
         _safeTransferFrom(fs.usdc, client, address(this), amount);
         s.requestFunds[requestId] = amount;
 
@@ -385,6 +388,7 @@ contract ServiceBoardFacet {
         if (client == svc.executor) revert SelfRequest();
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
+        if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
 
         IServiceBoardUSDC(fs.usdc).permit(client, address(this), amount, permitDeadline, v, r, s);
 

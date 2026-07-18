@@ -545,6 +545,28 @@ contract BoardsTest is Test {
         ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
     }
 
+    function testRequestServiceRevertsIfActivePairExists() public {
+        // Client already has an active deal with this executor (from a prior service).
+        uint256 serviceId1 = _mintService();
+        uint256 requestId1 = _requestService(serviceId1);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId1);
+
+        assertTrue(RegistryFacet(address(diamond)).hasActivePair(client, executor));
+
+        // Same executor posts a second service.
+        uint256 serviceId2 = _mintService();
+
+        // Client tries to hire them again while the first deal is still active —
+        // must fail fast here, not lock funds only to have acceptRequest() revert later.
+        vm.startPrank(client);
+        usdc.approve(address(diamond), AMOUNT);
+        vm.expectRevert(ServiceBoardFacet.ActiveDealExists.selector);
+        ServiceBoardFacet(address(diamond)).requestService(serviceId2, AMOUNT, DEADLINE, TERMS, REGION);
+        vm.stopPrank();
+    }
+
     function testRemoveService() public {
         uint256 serviceId = _mintService();
 
