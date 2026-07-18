@@ -73,6 +73,7 @@ library ArbiterRegistryStorage {
         mapping(address => uint256)        arbiterMistakeStreak; // arbiter → подряд идущие судейские ошибки
         // ── Sybil-resistance: forfeitable bond ──
         mapping(address => uint256)        arbiterBond;           // arbiter → залоченный USDC-бонд
+        mapping(address => uint256)        openClaimCount;        // arbiter → сколько споров сейчас забрано и не закрыто
     }
 
     function data() internal pure returns (Data storage d) {
@@ -149,6 +150,7 @@ contract ArbiterRegistryFacet {
     error NoRewardToClaim();
     error ZeroAddress();
     error InsufficientCleanStreak(uint256 have, uint256 need);
+    error HasOpenDisputeClaims();
 
     // -------- MODIFIERS --------
 
@@ -222,6 +224,7 @@ contract ArbiterRegistryFacet {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         if (!d.isArbiter[caller]) revert NotAnArbiter();
+        if (d.openClaimCount[caller] > 0) revert HasOpenDisputeClaims();
 
         d.isArbiter[caller] = false;
 
@@ -334,6 +337,7 @@ contract ArbiterRegistryFacet {
 
         d.disputeClaims[agreement] = caller;
         d.arbiterDeals[caller].push(agreement);
+        d.openClaimCount[caller]++;
 
         emit DisputeClaimed(agreement, caller);
     }
@@ -350,6 +354,7 @@ contract ArbiterRegistryFacet {
         require(d.pendingVerdicts[agreement].submittedAt == 0, "ArbiterRegistry: verdict pending");
 
         delete d.disputeClaims[agreement];
+        if (d.openClaimCount[current] > 0) d.openClaimCount[current]--;
 
         (bool ok,) = agreement.call(
             abi.encodeWithSignature("setArbiter(address)", address(0))
@@ -576,8 +581,10 @@ contract ArbiterRegistryFacet {
     function clearDisputeClaim(address agreement) external {
         require(msg.sender == agreement, "ArbiterRegistry: only agreement");
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        if (d.disputeClaims[agreement] != address(0)) {
+        address claimedArbiter = d.disputeClaims[agreement];
+        if (claimedArbiter != address(0)) {
             delete d.disputeClaims[agreement];
+            if (d.openClaimCount[claimedArbiter] > 0) d.openClaimCount[claimedArbiter]--;
         }
         // Авто-очистка застрявшего вердикта: если Agreement вышел из спора через таймаут,
         // а вердикт ещё не финализирован и не исполняется прямо сейчас — удаляем.
@@ -627,4 +634,5 @@ contract ArbiterRegistryFacet {
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
     function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
     function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
+    function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
 }
