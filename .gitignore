@@ -59,3 +59,6 @@ deploy-local.sh
 
 # ── Superpowers brainstorming companion (local mockups, not project artifacts) ─
 .superpowers/
+
+# ── Superpowers isolated worktrees ────────────────────────────────────────────
+.worktrees/
