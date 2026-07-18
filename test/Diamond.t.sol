@@ -920,6 +920,34 @@ contract DiamondTest is Test {
         ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
     }
 
+    function testRemoveArbiterRefundsBond() public {
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+        address candidate = address(uint160(47200));
+        _growXP(candidate, true, 3000, 47300);
+        vm.prank(candidate);
+        usdc.approve(address(diamond), ARBITER_BOND);
+        vm.prank(candidate);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+
+        uint256 balanceAfterApply = usdc.balanceOf(candidate);
+
+        ArbiterRegistryFacet(address(diamond)).removeArbiter(candidate);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate));
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(candidate), 0);
+        assertEq(usdc.balanceOf(candidate), balanceAfterApply + ARBITER_BOND);
+    }
+
+    function testRemoveArbiterNoOpsOnZeroBond() public {
+        address seeded = address(uint160(47400));
+        ArbiterRegistryFacet(address(diamond)).addArbiter(seeded);
+
+        ArbiterRegistryFacet(address(diamond)).removeArbiter(seeded);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(seeded));
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(seeded), 0);
+    }
+
     function testFinalizedVerdictResetsMistakeStreak() public {
         address recoveringArbiter = address(uint160(44000));
         ArbiterRegistryFacet(address(diamond)).addArbiter(recoveringArbiter);

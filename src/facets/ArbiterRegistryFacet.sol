@@ -273,6 +273,15 @@ contract ArbiterRegistryFacet {
                 break;
             }
         }
+
+        uint256 bond = d.arbiterBond[arbiter];
+        if (bond > 0) {
+            d.arbiterBond[arbiter] = 0;
+            address usdc = FactoryStorage.store().usdc;
+            bool ok = IUSDCFull(usdc).transfer(arbiter, bond);
+            require(ok, "ArbiterRegistry: bond refund failed");
+        }
+
         emit ArbiterRemoved(arbiter);
     }
 
