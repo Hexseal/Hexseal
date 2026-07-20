@@ -540,6 +540,17 @@ app.post('/files/presign', (req, res) => {
     // We ignore whatever ext the client sends and always use .bin so that
     // express.static never serves them with a text/html or image MIME type.
     const key = `${Date.now()}-${randomUUID()}.bin`;
+
+    // Optional: tag this file with the chat pair it belongs to, so the nightly
+    // cleanup job can protect it while that pair has a disputed agreement.
+    // Best-effort only — an invalid/missing pair just skips tagging, it never
+    // blocks the upload itself.
+    const { peerA, peerB } = req.body || {};
+    if (peerA && peerB && ETH_ADDR_RE.test(peerA) && ETH_ADDR_RE.test(peerB)) {
+      _filePairs[key] = pairIdFromAddresses(peerA, peerB);
+      _saveFilePairs();
+    }
+
     res.json({
       uploadUrl:   `${BASE_URL}/files/upload-put/${key}`,
       downloadUrl: `${BASE_URL}/files/${key}`,
@@ -896,6 +907,20 @@ let _disputeReasons = (() => {
 })();
 function _saveDisputeReasons() {
   try { writeFileSync(DISPUTE_REASONS_FILE, JSON.stringify(_disputeReasons), 'utf8'); } catch {}
+}
+
+// ─── File → pair manifest (protects evidence from TTL cleanup mid-dispute) ────
+// Chat files carry no association to a deal on their own — chats are one MLS
+// group per client/executor pair, not per deal (findOrCreatePairGroup). Tagging
+// a file with its pairId lets the nightly cleanup job (see below) check whether
+// that pair currently has a disputed agreement before deleting an expired file.
+
+const FILE_PAIRS_FILE = path.join(STORAGE_DIR, 'file-pairs.json');
+let _filePairs = (() => {
+  try { return existsSync(FILE_PAIRS_FILE) ? JSON.parse(readFileSync(FILE_PAIRS_FILE, 'utf8')) : {}; } catch { return {}; }
+})();
+function _saveFilePairs() {
+  try { writeFileSync(FILE_PAIRS_FILE, JSON.stringify(_filePairs), 'utf8'); } catch {}
 }
 
 app.get('/dispute-reason', (req, res) => {
