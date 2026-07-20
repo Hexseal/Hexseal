@@ -136,6 +136,7 @@ contract ArbiterRegistryFacet {
     event StuckVerdictAutoCleared(address indexed agreement);
     event AppealRaised(address indexed agreement, address indexed appellant);
     event AppealVoteCast(address indexed agreement, address indexed arbiter, bool overturn);
+    event AppealResolved(address indexed agreement, address indexed appellant, bool overturned);
     event ArbiterDemoted(address indexed arbiter);
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
 
@@ -166,6 +167,7 @@ contract ArbiterRegistryFacet {
     error AlreadyVoted();
     error CannotVoteOnOwnVerdict();
     error AppealAlreadyResolved();
+    error AppealWindowNotClosed();
     error AlreadyFinalized();
     error VerdictFrozenError();
     error VerdictAlreadySubmitted();
@@ -651,6 +653,48 @@ contract ArbiterRegistryFacet {
         emit AppealVoteCast(agreement, caller, overturn);
     }
 
+    /// @notice Подводит итог голосования по апелляции. Можно звать сразу как кворум
+    /// (APPEAL_MIN_VOTES) набран — не дожидаясь конца окна. Если окно закрылось без
+    /// кворума, апелляция отклоняется по умолчанию (не зависаем навечно).
+    function resolveAppeal(address agreement) external {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
+
+        if (!v.appealed) revert NoAppeal();
+        if (v.appealResolved) revert AppealAlreadyResolved();
+
+        bool quorumReached = v.votesUphold + v.votesOverturn >= APPEAL_MIN_VOTES;
+        bool windowClosed  = block.timestamp >= v.appealDeadline;
+        if (!quorumReached && !windowClosed) revert AppealWindowNotClosed();
+
+        v.appealResolved = true;
+        v.frozen         = false;
+
+        bool overturn = quorumReached && v.votesOverturn > v.votesUphold;
+        address usdc  = FactoryStorage.store().usdc;
+
+        if (overturn) {
+            address slashedArbiter = v.arbiter;
+            v.clientWins = !v.clientWins;
+            v.overturned = true;
+
+            ReputationStorage.Data storage rep = ReputationStorage.data();
+            if (rep.xp[slashedArbiter] >= OVERTURN_XP_SLASH) {
+                rep.xp[slashedArbiter] -= OVERTURN_XP_SLASH;
+            } else {
+                rep.xp[slashedArbiter] = 0;
+            }
+            _recordArbiterMistake(d, rep, slashedArbiter);
+
+            bool refundOk = IUSDCFull(usdc).transfer(v.appellant, APPEAL_DEPOSIT);
+            require(refundOk, "ArbiterRegistry: deposit refund failed");
+        } else {
+            d.vaultBalance += APPEAL_DEPOSIT;
+        }
+
+        emit AppealResolved(agreement, v.appellant, overturn);
+    }
+
     // -------- REWARDS --------
 
     /// @notice Арбитр забирает накопленное вознаграждение.
@@ -750,6 +794,14 @@ contract ArbiterRegistryFacet {
     function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
     function hasSubmittedVerdict(address agreement) external view returns (bool) {
         return ArbiterRegistryStorage.data().pendingVerdicts[agreement].submittedAt != 0;
+    }
+    function getAppealVotes(address agreement) external view returns (uint256 uphold, uint256 overturnVotes) {
+        ArbiterRegistryStorage.PendingVerdict storage v = ArbiterRegistryStorage.data().pendingVerdicts[agreement];
+        return (v.votesUphold, v.votesOverturn);
+    }
+
+    function hasVotedOnAppeal(address agreement, address arbiterAddr) external view returns (bool) {
+        return ArbiterRegistryStorage.data().hasVotedAppeal[agreement][arbiterAddr];
     }
     function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
     function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }

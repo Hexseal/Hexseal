@@ -124,7 +124,7 @@ contract DiamondTest is Test {
         ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](41);
+        bytes4[] memory arbiterSelectors = new bytes4[](44);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -167,6 +167,9 @@ contract DiamondTest is Test {
         arbiterSelectors[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
         arbiterSelectors[39] = ArbiterRegistryFacet.raiseAppeal.selector;
         arbiterSelectors[40] = ArbiterRegistryFacet.voteOnAppeal.selector;
+        arbiterSelectors[41] = ArbiterRegistryFacet.resolveAppeal.selector;
+        arbiterSelectors[42] = ArbiterRegistryFacet.getAppealVotes.selector;
+        arbiterSelectors[43] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
 
         // ReputationFacet selectors
         bytes4[] memory reputationSelectors = new bytes4[](8);
@@ -2567,5 +2570,140 @@ contract DiamondTest is Test {
         vm.prank(a2);
         vm.expectRevert(ArbiterRegistryFacet.AppealWindowClosed.selector);
         ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+    }
+
+    function testResolveAppeal_OverturnFlipsVerdictAndPenalizesArbiter() public {
+        (address a2, address a3, address a4) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true); // client wins, executor loses
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        uint256 executorBalBefore = usdc.balanceOf(executor);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true); // overturn
+        vm.prank(a3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true); // overturn
+        vm.prank(a4);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        // Deposit refunded to the appellant (executor).
+        assertEq(usdc.balanceOf(executor), executorBalBefore - 20 * 10**6 + 20 * 10**6);
+        // Ruling arbiter penalized exactly like today's overturnVerdict.
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 1);
+
+        // Verdict flipped — finalizing now pays the executor, not the client.
+        vm.warp(block.timestamp + 24 hours + 1);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
+        assertEq(usdc.balanceOf(executor), executorBalBefore - 20 * 10**6 + 20 * 10**6 + AMOUNT);
+    }
+
+    function testResolveAppeal_UpholdForfeitsDepositNoPenalty() public {
+        (address a2, address a3, address a4) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        uint256 vaultBefore = ArbiterRegistryFacet(address(diamond)).getVaultBalance();
+
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+        vm.prank(a3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+        vm.prank(a4);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true); // overturn
+
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore + 20 * 10**6);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0);
+
+        // Original verdict stands — client (winner) gets paid at finalization.
+        vm.warp(block.timestamp + 24 hours + 1);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
+        assertEq(uint8(Agreement(agr).status()), uint8(Agreement.Status.RESOLVED));
+    }
+
+    function testResolveAppeal_NoQuorumUpholdsByDefaultAtWindowClose() public {
+        (address a2,,) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        uint256 vaultBefore = ArbiterRegistryFacet(address(diamond)).getVaultBalance();
+
+        // Only 1 of 3 needed votes cast — quorum never reached.
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+
+        vm.warp(block.timestamp + 4 days + 1); // APPEAL_REVIEW_WINDOW closes
+
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore + 20 * 10**6);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0);
+    }
+
+    function testResolveAppeal_RevertsBeforeQuorumOrWindowClose() public {
+        (address a2,,) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true); // only 1 of 3
+
+        vm.expectRevert(ArbiterRegistryFacet.AppealWindowNotClosed.selector);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+    }
+
+    // Brief's Step 5 only exercises the AppealWindowNotClosed guard. resolveAppeal() has two
+    // other guards (NoAppeal, AppealAlreadyResolved) that the task's own guard-trace
+    // requirement calls for — neither was covered by the brief's own test list. Regression
+    // test added during self-review, same pattern as Task 3/4's fix rounds.
+    function testResolveAppeal_RevertsIfNoAppealOrAlreadyResolved() public {
+        // NoAppeal: nobody ever called raiseAppeal on this verdict.
+        address agrNoAppeal = _disputeToVerdict(client, executor, true);
+        vm.expectRevert(ArbiterRegistryFacet.NoAppeal.selector);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agrNoAppeal);
+
+        // AppealAlreadyResolved: resolve once successfully via quorum, then try again.
+        (address a2, address a3, address a4) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+        vm.prank(a3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+        vm.prank(a4);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr); // resolves fine
+
+        vm.expectRevert(ArbiterRegistryFacet.AppealAlreadyResolved.selector);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr); // second call must revert
     }
 }
