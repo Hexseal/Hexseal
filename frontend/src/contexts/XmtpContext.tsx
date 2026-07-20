@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached } from '@/lib/xmtp';
+import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit } from '@/lib/xmtp';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
 
@@ -148,6 +148,10 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   const retry = useCallback(() => {
     if (!address) return;
     const addr = address.toLowerCase();
+    // Evict any stuck in-flight attempt first — otherwise the auto-init effect's
+    // initXmtpClient() call below would just re-attach to the same zombie promise
+    // (its own dedup) instead of actually starting over.
+    abandonXmtpInit(addr);
     disabledRef.current.delete(addr);
     triedRef.current.delete(addr);
     setStatus('loading');
@@ -158,6 +162,7 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   const disable = useCallback(() => {
     if (!address) return;
     const addr = address.toLowerCase();
+    abandonXmtpInit(addr);
     disabledRef.current.add(addr);
     clearXmtpSession(addr);
     setStatus('error');

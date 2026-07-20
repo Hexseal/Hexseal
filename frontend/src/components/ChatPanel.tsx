@@ -230,12 +230,18 @@ function DateDivider({ ts }: { ts: number }) {
 }
 
 function XmtpStatusBar() {
-  const { status, error, retry } = useXmtp();
+  const { status, error, retry, disable } = useXmtp();
   if (status === 'loading') {
     return (
       <div className="flex items-center justify-center gap-2 px-4 py-3 border-t border-white/[0.06]">
         <div className="w-4 h-4 border-2 border-white/20 border-t-white/50 rounded-full animate-spin flex-shrink-0" />
         <span className="text-xs text-white/30">Подключение мессенджера…</span>
+        <button
+          onClick={disable}
+          className="flex-shrink-0 text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors"
+        >
+          Отмена
+        </button>
       </div>
     );
   }

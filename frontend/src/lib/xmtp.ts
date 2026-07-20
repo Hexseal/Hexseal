@@ -175,11 +175,29 @@ function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
 // (React StrictMode double-mounts, concurrent hooks, etc.)
 const _clientCache:  Map<string, Client>          = new Map();
 const _initPromises: Map<string, Promise<Client>> = new Map();
+// Bumped by abandonXmtpInit() so a still-running attempt (Client.create() has
+// no AbortSignal — it can't actually be cancelled) can recognize, once it
+// finally does resolve, that it's been superseded and must not overwrite
+// whatever a newer attempt already produced (or clear a session the user
+// just disabled).
+const _generation: Map<string, number> = new Map();
 
 // Returns the cached client for this address if it was already initialized in this
 // browser session — without triggering any wallet signatures. Returns null otherwise.
 export function getXmtpClientIfCached(address: string): Client | null {
   return _clientCache.get(address.toLowerCase()) ?? null;
+}
+
+/** Evicts any in-flight initXmtpClient() attempt for this address, so the next
+ *  call starts a fresh Client.create() instead of re-attaching to one that's
+ *  stuck (e.g. waiting on a wallet signature the user backed out of, or a
+ *  page that got backgrounded mid-signature — both common on Android), and
+ *  marks the stuck attempt as superseded so if it does eventually resolve on
+ *  its own, initXmtpClient() closes it instead of caching it. */
+export function abandonXmtpInit(address: string): void {
+  const addr = address.toLowerCase();
+  _initPromises.delete(addr);
+  _generation.set(addr, (_generation.get(addr) ?? 0) + 1);
 }
 
 export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (step: number) => void): Promise<Client> {
@@ -205,20 +223,37 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   const inFlight = _initPromises.get(address);
   if (inFlight) return inFlight;
 
-  const promise = (async () => {
+  // Captured now, before any await — identifies this specific attempt so it
+  // can tell later whether abandonXmtpInit() superseded it in the meantime.
+  const myGeneration = _generation.get(address) ?? 0;
+
+  const signer = createXmtpSigner(walletClient, onSignStep);
+  // dbPath: per-address OPFS path so different wallets on the same browser
+  // don't share (and clobber) each other's MLS database.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawCreate = Client.create(signer, { env: 'production', dbPath: `xmtp-${address}` } as any) as Promise<Client>;
+
+  // Declared with a definite-assignment assertion (not `const promise =
+  // (async () => {...})()`) so the finally block below can reference
+  // `promise` itself — by the time that block runs, the assignment two
+  // lines down has long since completed; TypeScript's control-flow analysis
+  // just can't see that across the closure boundary.
+  let promise!: Promise<Client>;
+  promise = (async () => {
     try {
-      const signer = createXmtpSigner(walletClient, onSignStep);
-      // dbPath: per-address OPFS path so different wallets on the same browser
-      // don't share (and clobber) each other's MLS database.
       // 90-second timeout: covers wallet signature + XMTP network identity publication.
       // If network is unreachable (e.g. blocked by ISP/firewall), surfaces an error
       // instead of spinning forever. The user can retry after checking connectivity.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const client = await withTimeout(
-        Client.create(signer, { env: 'production', dbPath: `xmtp-${address}` } as any),
-        90_000,
-        'XMTP_TIMEOUT',
-      );
+      const client = await withTimeout(rawCreate, 90_000, 'XMTP_TIMEOUT');
+
+      if ((_generation.get(address) ?? 0) !== myGeneration) {
+        // abandonXmtpInit() ran while Client.create() was still in flight — a
+        // newer attempt has since taken over (or the address was disabled).
+        // Close this straggler instead of overwriting what the newer one
+        // produced (or reviving messaging the user just turned off).
+        client.close();
+        throw new Error('XMTP_ABANDONED');
+      }
 
       // Track installationId to detect OPFS clears across sessions.
       // We do NOT auto-revoke other installations here — revokeAllOtherInstallations()
@@ -233,8 +268,26 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
 
       _clientCache.set(address, client);
       return client;
+    } catch (err) {
+      // Client.create() has no AbortSignal — timing out on it (or abandoning
+      // it above) doesn't stop its WASM worker from running in the
+      // background. If it resolves later, close it then instead of leaking
+      // its worker for the rest of the page's lifetime. Attached only here,
+      // strictly after we've already given up on this attempt, so it can
+      // never race the success path above.
+      if (!(err instanceof Error && err.message === 'XMTP_ABANDONED')) {
+        rawCreate.then(client => { try { client.close(); } catch { /* already closed / never fully opened */ } })
+          .catch(() => { /* Client.create() itself failed — nothing to close */ });
+      }
+      throw err;
     } finally {
-      _initPromises.delete(address);
+      // Only remove our own map entry — a stuck attempt resolving late
+      // (after abandonXmtpInit() already evicted it and a newer attempt
+      // registered its own promise under the same address) must not delete
+      // that newer, still in-flight promise out from under it.
+      if (_initPromises.get(address) === promise) {
+        _initPromises.delete(address);
+      }
     }
   })();
 
