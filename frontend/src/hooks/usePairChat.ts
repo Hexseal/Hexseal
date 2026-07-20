@@ -200,7 +200,7 @@ export function usePairChat(peerAddress: string) {
     setUploadProgress(0);
     let result: Awaited<ReturnType<typeof uploadFileWithEncryption>>;
     try {
-      result = await uploadFileWithEncryption(file, file.name, setUploadProgress, signal, address ? { self: address, peer: peerAddress } : undefined);
+      result = await uploadFileWithEncryption(file, file.name, setUploadProgress, signal, address ? { self: address, peer: peerRef.current } : undefined);
     } finally {
       setUploadProgress(null);
     }
