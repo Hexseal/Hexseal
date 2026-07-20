@@ -124,7 +124,7 @@ contract DiamondTest is Test {
         ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](40);
+        bytes4[] memory arbiterSelectors = new bytes4[](41);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -166,6 +166,7 @@ contract DiamondTest is Test {
         arbiterSelectors[37] = ArbiterRegistryFacet.getOpenClaimCount.selector;
         arbiterSelectors[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
         arbiterSelectors[39] = ArbiterRegistryFacet.raiseAppeal.selector;
+        arbiterSelectors[40] = ArbiterRegistryFacet.voteOnAppeal.selector;
 
         // ReputationFacet selectors
         bytes4[] memory reputationSelectors = new bytes4[](8);
@@ -2460,5 +2461,64 @@ contract DiamondTest is Test {
 
         ArbiterRegistryStorage.PendingVerdict memory v = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
         assertFalse(v.appealed);
+    }
+
+    function testVoteOnAppeal_ArbiterCanVoteOnce() public {
+        (address a2,,) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+
+        vm.prank(a2);
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyVoted.selector);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+    }
+
+    function testVoteOnAppeal_RulingArbiterCannotVoteOnOwnVerdict() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(arbiter); // the one who ruled
+        vm.expectRevert(ArbiterRegistryFacet.CannotVoteOnOwnVerdict.selector);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+    }
+
+    function testVoteOnAppeal_RevertsWithoutAppeal() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        vm.prank(address(0x30));
+        vm.expectRevert(ArbiterRegistryFacet.NoAppeal.selector);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+    }
+
+    function testVoteOnAppeal_RevertsAfterWindowCloses() public {
+        (address a2,,) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.warp(block.timestamp + 4 days + 1); // APPEAL_REVIEW_WINDOW
+
+        vm.prank(a2);
+        vm.expectRevert(ArbiterRegistryFacet.AppealWindowClosed.selector);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
     }
 }

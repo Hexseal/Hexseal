@@ -135,6 +135,7 @@ contract ArbiterRegistryFacet {
     event DAOAddressSet(address indexed daoAddress);
     event StuckVerdictAutoCleared(address indexed agreement);
     event AppealRaised(address indexed agreement, address indexed appellant);
+    event AppealVoteCast(address indexed agreement, address indexed arbiter, bool overturn);
     event ArbiterDemoted(address indexed arbiter);
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
 
@@ -161,6 +162,10 @@ contract ArbiterRegistryFacet {
     error AlreadyAppealed();
     error AppealWindowClosed();
     error InsufficientArbitersForAppeal();
+    error NoAppeal();
+    error AlreadyVoted();
+    error CannotVoteOnOwnVerdict();
+    error AppealAlreadyResolved();
     error AlreadyFinalized();
     error VerdictFrozenError();
     error VerdictAlreadySubmitted();
@@ -621,6 +626,29 @@ contract ArbiterRegistryFacet {
         v.appealDeadline = block.timestamp + APPEAL_REVIEW_WINDOW;
 
         emit AppealRaised(agreement, caller);
+    }
+
+    /// @notice Любой зарегистрированный арбитр, кроме вынесшего вердикт, голосует один раз.
+    function voteOnAppeal(address agreement, bool overturn) external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
+
+        if (!d.isArbiter[caller]) revert NotArbiter();
+        if (!v.appealed) revert NoAppeal();
+        if (v.appealResolved) revert AppealAlreadyResolved();
+        if (caller == v.arbiter) revert CannotVoteOnOwnVerdict();
+        if (block.timestamp >= v.appealDeadline) revert AppealWindowClosed();
+        if (d.hasVotedAppeal[agreement][caller]) revert AlreadyVoted();
+
+        d.hasVotedAppeal[agreement][caller] = true;
+        if (overturn) {
+            v.votesOverturn++;
+        } else {
+            v.votesUphold++;
+        }
+
+        emit AppealVoteCast(agreement, caller, overturn);
     }
 
     // -------- REWARDS --------
