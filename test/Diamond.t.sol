@@ -2473,12 +2473,59 @@ contract DiamondTest is Test {
         vm.prank(executor);
         ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
 
+        ArbiterRegistryStorage.PendingVerdict memory before = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
+        assertEq(before.votesOverturn, 0);
+        assertEq(before.votesUphold, 0);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ArbiterRegistryFacet.AppealVoteCast(agr, a2, true);
         vm.prank(a2);
         ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+
+        // Successful vote incremented the right tally (overturn) and left the other untouched.
+        ArbiterRegistryStorage.PendingVerdict memory afterVote = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
+        assertEq(afterVote.votesOverturn, 1);
+        assertEq(afterVote.votesUphold, 0);
 
         vm.prank(a2);
         vm.expectRevert(ArbiterRegistryFacet.AlreadyVoted.selector);
         ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+
+        // Repeat-vote revert must not have double-counted.
+        ArbiterRegistryStorage.PendingVerdict memory afterRevert = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
+        assertEq(afterRevert.votesOverturn, 1);
+        assertEq(afterRevert.votesUphold, 0);
+    }
+
+    function testVoteOnAppeal_DifferentArbitersCanEachVoteOnce() public {
+        (address a2, address a3,) = _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ArbiterRegistryFacet.AppealVoteCast(agr, a2, true);
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true); // a2 votes to overturn
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ArbiterRegistryFacet.AppealVoteCast(agr, a3, false);
+        vm.prank(a3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // a3 votes to uphold — different arbiter, no revert
+
+        // Both votes recorded distinctly in the tally.
+        ArbiterRegistryStorage.PendingVerdict memory v = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
+        assertEq(v.votesOverturn, 1);
+        assertEq(v.votesUphold, 1);
+
+        // a3 can't vote again either, but a2's earlier vote didn't block a3 in the first place.
+        vm.prank(a3);
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyVoted.selector);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
     }
 
     function testVoteOnAppeal_RulingArbiterCannotVoteOnOwnVerdict() public {
