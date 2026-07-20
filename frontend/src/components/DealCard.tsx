@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useReadContract, useReadContracts, usePublicClient, useWalletClient } from 'wagmi';
@@ -19,6 +19,7 @@ import {
   ChevronDown, MessageCircle, Plus, X,
 } from 'lucide-react';
 import { shortAddr } from '@/lib/utils';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem { id: number; amount: bigint; terms: string; status: number; }
@@ -62,7 +63,7 @@ export const DEAL_STATUS: Record<number, { label: string; dot: string; textCls: 
   6: { label: 'Refunded',  dot: 'bg-gray-400',    textCls: 'text-white/35' },
 };
 
-export function DealCard({ agreement, address, refetch }: {
+function DealCardImpl({ agreement, address, refetch }: {
   agreement: AgreementRecord;
   address: string;
   refetch: () => void;
@@ -71,6 +72,7 @@ export function DealCard({ agreement, address, refetch }: {
   const { data: walletClient } = useWalletClient();
   const t  = useTranslations();
   const tc = useTranslations('dashboard.card');
+  const mountedRef = useMountedRef();
   const [busy, setBusy] = useState(false);
   const [showTimeouts, setShowTimeouts] = useState(false);
   const [disputeOpen, setDisputeOpen]     = useState(false);
@@ -201,7 +203,7 @@ export function DealCard({ agreement, address, refetch }: {
       setTimeout(refetch, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || 'Transaction failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const handleProposeExtra = async () => {
@@ -215,14 +217,16 @@ export function DealCard({ agreement, address, refetch }: {
       const extraTerms = proposeDesc.trim() || `${proposeAmount} USDC extra`;
       await proposeExtraGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, amountParsed, extraTerms);
       toast.success('Extra proposed!');
-      setProposeOpen(false);
-      setProposeAmount('');
-      setProposeDesc('');
+      if (mountedRef.current) {
+        setProposeOpen(false);
+        setProposeAmount('');
+        setProposeDesc('');
+      }
       setTimeout(() => refetchExtras(), 3000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const handleExtraAction = async (fn: 'acceptExtra' | 'rejectExtra', extraId: number) => {
@@ -235,7 +239,7 @@ export function DealCard({ agreement, address, refetch }: {
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const pendingExtras = extrasList.filter(e => e.status === EXTRA_STATUS.PENDING);
@@ -263,12 +267,12 @@ export function DealCard({ agreement, address, refetch }: {
       toast(tc('sign_wallet'));
       await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, 'raiseDispute', AGREEMENT_ABI as Abi);
       toast.success(tc('dispute_success'));
-      setDisputeReason('');
+      if (mountedRef.current) setDisputeReason('');
       setTimeout(refetch, 2000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const primaryActions: React.ReactNode[] = [];
@@ -287,7 +291,7 @@ export function DealCard({ agreement, address, refetch }: {
           const msg = e?.shortMessage || e?.message || t('deal.fund_failed');
           if (msg.includes('AlreadyFunded')) { toast.error(t('deal.already_funded')); refetch(); }
           else toast.error(msg);
-        } finally { setBusy(false); }
+        } finally { if (mountedRef.current) setBusy(false); }
       }}>
         {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}{tc('fund_btn')}
       </Button>
@@ -567,3 +571,5 @@ export function DealCard({ agreement, address, refetch }: {
     </div>
   );
 }
+
+export const DealCard = memo(DealCardImpl);
