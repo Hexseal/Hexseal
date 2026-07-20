@@ -2442,4 +2442,23 @@ contract DiamondTest is Test {
         vm.expectRevert(ArbiterRegistryFacet.InsufficientArbitersForAppeal.selector);
         ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
     }
+
+    function testRaiseAppeal_RevertsIfOwnerFrozeBeforeAnyAppeal() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true); // client wins, executor loses
+
+        // Owner/DAO freezes the verdict (e.g. pending investigation) before anyone appeals.
+        ArbiterRegistryFacet(address(diamond)).freezeVerdict(agr);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+
+        vm.prank(executor);
+        vm.expectRevert(ArbiterRegistryFacet.VerdictFrozenError.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        ArbiterRegistryStorage.PendingVerdict memory v = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
+        assertFalse(v.appealed);
+    }
 }
