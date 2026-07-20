@@ -2633,6 +2633,52 @@ contract DiamondTest is Test {
         assertEq(uint8(Agreement(agr).status()), uint8(Agreement.Status.RESOLVED));
     }
 
+    // Tie vote (2 overturn vs. 2 uphold) at/above quorum must resolve to UPHOLD, not overturn,
+    // since resolveAppeal() uses strict `>` (votesOverturn > votesUphold) to decide overturn.
+    // Requires a 4th eligible voter beyond the 3 from _addAppealQuorumArbiters(), since the
+    // ruling arbiter can't vote on its own verdict and 3 eligible voters can never tie.
+    function testResolveAppeal_TiedVoteUpholdsNotOverturn() public {
+        (address a2, address a3, address a4) = _addAppealQuorumArbiters();
+        address a5 = address(0x33);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(a5);
+
+        address agr = _disputeToVerdict(client, executor, true); // client wins, executor loses
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        uint256 vaultBefore = ArbiterRegistryFacet(address(diamond)).getVaultBalance();
+
+        vm.prank(a2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true); // overturn
+        vm.prank(a3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true); // overturn
+        vm.prank(a4);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+        vm.prank(a5);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false); // uphold
+
+        // Confirm the tally really is a 2-vs-2 tie before resolving.
+        (uint256 uphold, uint256 overturnVotes) = ArbiterRegistryFacet(address(diamond)).getAppealVotes(agr);
+        assertEq(uphold, 2);
+        assertEq(overturnVotes, 2);
+
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        // Tie at quorum -> uphold path taken: deposit forfeited to the vault, ruling arbiter
+        // not penalized.
+        assertEq(ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore + 20 * 10**6);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0);
+
+        // Original verdict stands — client (winner) gets paid at finalization, not the executor.
+        vm.warp(block.timestamp + 24 hours + 1);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
+        assertEq(uint8(Agreement(agr).status()), uint8(Agreement.Status.RESOLVED));
+    }
+
     function testResolveAppeal_NoQuorumUpholdsByDefaultAtWindowClose() public {
         (address a2,,) = _addAppealQuorumArbiters();
         address agr = _disputeToVerdict(client, executor, true);
