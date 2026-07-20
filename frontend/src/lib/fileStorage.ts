@@ -23,18 +23,25 @@ const MULTIPART_THRESHOLD = 20 * 1024 * 1024; // 20 MB
 
 // ─── Single-PUT upload (small files) ─────────────────────────────────────────
 
+export type PeerContext = { self: string; peer: string };
+
 export async function uploadEncryptedFile(
   encryptedBlob: File | Blob,
   originalName: string,
   onProgress?: (pct: number) => void,
   signal?: AbortSignal,
+  peerContext?: PeerContext,
 ): Promise<{ url: string; fileKey: string }> {
   const ext = originalName.includes('.') ? `.${originalName.split('.').pop()!.slice(0, 10)}` : '';
 
   const presignRes = await fetch(`${RELAYER_URL}/files/presign`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ext }),
+    body: JSON.stringify(
+      peerContext
+        ? { ext, peerA: peerContext.self, peerB: peerContext.peer }
+        : { ext },
+    ),
     signal,
   });
   if (!presignRes.ok) {
@@ -154,6 +161,7 @@ export async function uploadFileWithEncryption(
   originalName: string,
   onProgress?: (pct: number) => void,
   signal?: AbortSignal,
+  peerContext?: PeerContext,
 ): Promise<UploadResult> {
   if (file.size > MAX_FILE_SIZE) {
     const mb = MAX_FILE_SIZE / (1024 * 1024 * 1024);
@@ -164,10 +172,12 @@ export async function uploadFileWithEncryption(
     const { encryptedBlob, keyHex, ivHex } = await encryptFile(file);
     signal?.throwIfAborted();
     onProgress?.(50);
-    const { url, fileKey } = await uploadEncryptedFile(encryptedBlob, originalName, (p) => onProgress?.(50 + p / 2), signal);
+    const { url, fileKey } = await uploadEncryptedFile(encryptedBlob, originalName, (p) => onProgress?.(50 + p / 2), signal, peerContext);
     return { url, fileKey, keyHex, ivHex, chunked: false };
   }
 
+  // Multipart (>20 MB) uploads are not tagged with a pairId — see plan/spec for why
+  // (evidence-TTL protection is scoped to the common small-file case only).
   const { url, fileKey, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress, signal);
   return { url, fileKey, keyHex, ivHex, chunked: true, chunkCount, chunkSize: CHUNK_SIZE };
 }
