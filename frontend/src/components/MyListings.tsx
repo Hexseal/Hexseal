@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { useMountedRef } from '@/hooks/useMountedRef';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
@@ -218,7 +218,7 @@ function EditListingModal({
 
 // ── Service Card ──────────────────────────────────────────────────────────────
 
-function ServiceCard({
+const ServiceCard = memo(function ServiceCard({
   serviceId, service, pendingIds, pendingReqs, busyId,
   onPause, onUnpause, onRemove, onAccept, onReject, onEdit,
   readOnly,
@@ -478,7 +478,7 @@ function ServiceCard({
       )}
     </div>
   );
-}
+});
 
 // ── My Services (executor listings) ──────────────────────────────────────────
 
@@ -810,7 +810,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
 
 // ── Job Card ──────────────────────────────────────────────────────────────────
 
-function JobCard({
+const JobCard = memo(function JobCard({
   jobId, job, applicants, onCancel, onAccept, onEdit, busy, readOnly,
 }: {
   jobId: bigint;
@@ -960,7 +960,7 @@ function JobCard({
       )}
     </div>
   );
-}
+});
 
 // ── Closed Jobs history (accepted / cancelled) ────────────────────────────────
 
