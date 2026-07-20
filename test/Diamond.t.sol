@@ -2752,4 +2752,27 @@ contract DiamondTest is Test {
         vm.expectRevert(ArbiterRegistryFacet.AppealAlreadyResolved.selector);
         ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr); // second call must revert
     }
+
+    function testAppealUnavailableBelowQuorum_OverturnVerdictStillWorks() public {
+        // setUp() registers only the default `arbiter` — no extra arbiters here.
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+
+        vm.prank(executor);
+        vm.expectRevert(ArbiterRegistryFacet.InsufficientArbitersForAppeal.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        // The pre-existing owner/DAO safety valve is untouched.
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 1);
+
+        vm.warp(block.timestamp + 24 hours + 1);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
+        // raiseAppeal reverted before ever pulling the deposit (the quorum check runs
+        // before transferFrom) — executor keeps the full 100 USDC mint, plus the payout.
+        assertEq(usdc.balanceOf(executor), 100 * 10**6 + AMOUNT);
+    }
 }
