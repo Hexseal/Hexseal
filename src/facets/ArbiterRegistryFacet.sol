@@ -93,7 +93,7 @@ contract ArbiterRegistryFacet {
     uint256 private constant MIN_XP_TO_REGISTER = 3_000;     // ~30 сделок с разными людьми
     uint256 private constant OVERTURN_XP_SLASH  = 200;       // XP штраф при overturn
     uint256 private constant DEFAULT_REWARD      = 5_000_000; // 5 USDC (6 decimals)
-    uint256 private constant FINALIZE_DELAY      = 1 hours;   // окно для owner/DAO чтобы overturn до финализации
+    uint256 private constant FINALIZE_DELAY      = 24 hours;  // окно для owner/DAO/апелляции до финализации (было 1 час — недостаточно для обычного пользователя)
 
     uint256 private constant MIN_CLEAN_STREAK_TO_REGISTER = 10;   // та же серия, что держит XP исполнителя выше 1000
     uint256 private constant MAX_ARBITER_MISTAKES         = 3;    // подряд ошибок до снятия статуса

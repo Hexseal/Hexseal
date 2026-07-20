@@ -250,7 +250,7 @@ contract DiamondTest is Test {
     function _resolveDispute(address agreementAddr, bool clientWins) internal {
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, clientWins);
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 24 hours + 1);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
     }
 
@@ -1096,7 +1096,7 @@ contract DiamondTest is Test {
         _claimDisputeAs(agreementAddr, candidate);
         vm.prank(candidate);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, true);
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 24 hours + 1);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
 
         assertEq(ArbiterRegistryFacet(address(diamond)).getOpenClaimCount(candidate), 0);
@@ -1156,7 +1156,7 @@ contract DiamondTest is Test {
         _claimDisputeAs(agreement2, recoveringArbiter);
         vm.prank(recoveringArbiter);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreement2, true);
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 24 hours + 1);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreement2);
 
         assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(recoveringArbiter), 0);
@@ -2217,7 +2217,7 @@ contract DiamondTest is Test {
         // Арбитр подаёт вердикт, затем ждём finalize delay, потом finalizeVerdict реверт — окно истекло
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, true);
-        vm.warp(block.timestamp + 1 hours + 1); // satisfy FINALIZE_DELAY — Agreement window still passed
+        vm.warp(block.timestamp + 24 hours + 1); // satisfy FINALIZE_DELAY — Agreement window still passed
         vm.expectRevert(Agreement.WindowAlreadyPassed.selector);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
     }

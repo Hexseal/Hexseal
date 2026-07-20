@@ -323,7 +323,7 @@ contract CriticalInvariantTest is Test {
     function _resolveDispute(address agr, bool clientWins) internal {
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agr, clientWins);
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 24 hours + 1);
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
     }
 
