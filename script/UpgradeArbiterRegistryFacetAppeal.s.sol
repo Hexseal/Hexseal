@@ -10,10 +10,18 @@ pragma solidity ^0.8.20;
 //    FactoryFacet at it via setAgreementDeployer(). Only affects deals
 //    created after this runs — already-deployed Agreement instances keep
 //    their original (already-correct-for-their-time) bytecode.
-// 2. Replaces ArbiterRegistryFacet (all 44 selectors after this upgrade):
-//    FINALIZE_DELAY 1h -> 24h, submitVerdict DISPUTE_WINDOW check, new
-//    hasSubmittedVerdict/raiseAppeal/voteOnAppeal/resolveAppeal/
-//    getAppealVotes/hasVotedOnAppeal.
+// 2. Replaces ArbiterRegistryFacet (44 selectors total after this upgrade):
+//    - 38 pre-existing selectors (already live on the diamond) go through
+//      FacetCutAction.Replace: FINALIZE_DELAY 1h -> 24h, submitVerdict
+//      DISPUTE_WINDOW check, etc.
+//    - 6 brand-new selectors introduced by THIS plan (Tasks 2-5; never
+//      deployed before) go through FacetCutAction.Add instead:
+//      hasSubmittedVerdict, raiseAppeal, voteOnAppeal, resolveAppeal,
+//      getAppealVotes, hasVotedOnAppeal. Diamond's Replace path calls
+//      removeFunction() on whatever facet is CURRENTLY registered for a
+//      selector and reverts with "Diamond: selector not found" if none is
+//      — so any of these 6 must go in addSels, never replaceSels, or the
+//      real diamondCut() reverts entirely.
 //
 // Usage:
 //   forge script script/UpgradeArbiterRegistryFacetAppeal.s.sol \
@@ -51,7 +59,7 @@ contract UpgradeArbiterRegistryFacetAppeal is Script {
         ArbiterRegistryFacet facet = new ArbiterRegistryFacet();
         console.log("New ArbiterRegistryFacet:", address(facet));
 
-        bytes4[] memory replaceSels = new bytes4[](39);
+        bytes4[] memory replaceSels = new bytes4[](38);
         replaceSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         replaceSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         replaceSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -90,14 +98,14 @@ contract UpgradeArbiterRegistryFacetAppeal is Script {
         replaceSels[35] = ArbiterRegistryFacet.resignAsArbiter.selector;
         replaceSels[36] = ArbiterRegistryFacet.getArbiterBond.selector;
         replaceSels[37] = ArbiterRegistryFacet.getOpenClaimCount.selector;
-        replaceSels[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
 
-        bytes4[] memory addSels = new bytes4[](5);
+        bytes4[] memory addSels = new bytes4[](6);
         addSels[0] = ArbiterRegistryFacet.raiseAppeal.selector;
         addSels[1] = ArbiterRegistryFacet.voteOnAppeal.selector;
         addSels[2] = ArbiterRegistryFacet.resolveAppeal.selector;
         addSels[3] = ArbiterRegistryFacet.getAppealVotes.selector;
         addSels[4] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
+        addSels[5] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({
