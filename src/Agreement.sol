@@ -221,6 +221,7 @@ interface IReputationFacet {
 
 interface IArbiterRegistryFacet {
     function notifyArbiterTimeout(address agreement) external;
+    function hasSubmittedVerdict(address agreement) external view returns (bool);
 }
 
 // ---------- REGISTRY INTERFACE ----------
@@ -353,6 +354,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     error DeadlineNotPassed();
     error ActivationWindowPassed();
     error ArbiterWindowNotPassed();
+    error VerdictInFlight();
     error NoArbiterSet();
     error WrongAmount();
     error ExtraNotPending();
@@ -602,9 +604,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (disputedAt == 0) revert NotDisputed();
         if (resolvedAt != 0) revert AlreadyResolved();
 
-        // Арбитр должен успеть за DISPUTE_WINDOW
-        if (block.timestamp > disputedAt + DISPUTE_WINDOW) revert WindowAlreadyPassed();
-
+        // Тайминг DISPUTE_WINDOW теперь проверяется один раз, в момент подачи вердикта
+        // (ArbiterRegistryFacet.submitVerdict) — не здесь. Исполнение (через finalizeVerdict
+        // или после апелляции) легитимно происходит позже, чем сама подача.
         resolvedAt = block.timestamp;
         clientWonDispute = clientWins;
 
@@ -672,6 +674,10 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (disputedAt == 0) revert NotDisputed();
         if (resolvedAt != 0) revert AlreadyResolved();
         if (block.timestamp <= disputedAt + DISPUTE_WINDOW) revert WindowNotPassed();
+        // Арбитр уже подал вердикт (в срок — submitVerdict это гарантирует) — таймаут не
+        // для этого случая. Иначе сторона могла бы форсировать рефанд прямо во время
+        // FINALIZE_DELAY/апелляции, обнуляя голосование других арбитров.
+        if (IArbiterRegistryFacet(diamond).hasSubmittedVerdict(address(this))) revert VerdictInFlight();
 
         _settlePending();
         uint256 payout = amount + extrasTotal;

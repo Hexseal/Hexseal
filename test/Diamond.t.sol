@@ -124,7 +124,7 @@ contract DiamondTest is Test {
         ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](38);
+        bytes4[] memory arbiterSelectors = new bytes4[](39);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -164,6 +164,7 @@ contract DiamondTest is Test {
         arbiterSelectors[35] = ArbiterRegistryFacet.resignAsArbiter.selector;
         arbiterSelectors[36] = ArbiterRegistryFacet.getArbiterBond.selector;
         arbiterSelectors[37] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        arbiterSelectors[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
 
         // ReputationFacet selectors
         bytes4[] memory reputationSelectors = new bytes4[](8);
@@ -2198,28 +2199,65 @@ contract DiamondTest is Test {
         Agreement(agreementAddr).triggerArbiterTimeout();
     }
 
-    function testAgreementResolveDisputeRevertIfWindowPassed() public {
+    function testSubmitVerdict_RevertsAfterDisputeWindow() public {
         vm.prank(client);
         usdc.approve(address(diamond), 10 * 10**6);
         vm.prank(client);
-        address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+        address agr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
         );
-        vm.prank(client); usdc.approve(agreementAddr, AMOUNT);
-        vm.prank(client); Agreement(agreementAddr).fund();
-        vm.prank(executor); Agreement(agreementAddr).activate();
-        vm.prank(client); Agreement(agreementAddr).raiseDispute();
+        vm.prank(client);
+        usdc.approve(agr, AMOUNT);
+        vm.prank(client);
+        Agreement(agr).fund();
+        vm.prank(executor);
+        Agreement(agr).activate();
+        vm.prank(client);
+        Agreement(agr).raiseDispute();
 
-        _claimDispute(agreementAddr);
+        _claimDispute(agr);
 
-        vm.warp(block.timestamp + 8 days); // DISPUTE_WINDOW = 7 days
+        // DISPUTE_WINDOW is 4 days — warp past it before the arbiter ever submits.
+        vm.warp(block.timestamp + 4 days + 1);
 
-        // Арбитр подаёт вердикт, затем ждём finalize delay, потом finalizeVerdict реверт — окно истекло
         vm.prank(arbiter);
-        ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, true);
-        vm.warp(block.timestamp + 24 hours + 1); // satisfy FINALIZE_DELAY — Agreement window still passed
-        vm.expectRevert(Agreement.WindowAlreadyPassed.selector);
-        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
+        vm.expectRevert(ArbiterRegistryFacet.DisputeWindowPassed.selector);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agr, true);
+    }
+
+    function testTriggerArbiterTimeout_RevertsIfVerdictAlreadySubmitted() public {
+        vm.prank(client);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(client);
+        address agr = FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(client);
+        usdc.approve(agr, AMOUNT);
+        vm.prank(client);
+        Agreement(agr).fund();
+        vm.prank(executor);
+        Agreement(agr).activate();
+        vm.prank(client);
+        Agreement(agr).raiseDispute();
+
+        _claimDispute(agr);
+
+        // Arbiter submits promptly (well within DISPUTE_WINDOW).
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agr, true);
+
+        // Time still passes disputedAt + DISPUTE_WINDOW while FINALIZE_DELAY/appeal run.
+        vm.warp(block.timestamp + 4 days + 1);
+
+        vm.prank(client);
+        vm.expectRevert(Agreement.VerdictInFlight.selector);
+        Agreement(agr).triggerArbiterTimeout();
+
+        // And finalization still succeeds — the removed execution-time check isn't missed.
+        vm.warp(block.timestamp + 24 hours + 1);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
+        assertEq(uint8(Agreement(agr).status()), uint8(Agreement.Status.RESOLVED));
     }
 
     function testAgreementMarkDoneRevertAfterDeadline() public {

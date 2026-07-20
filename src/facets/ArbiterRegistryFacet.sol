@@ -142,6 +142,7 @@ contract ArbiterRegistryFacet {
     error DAONotActive();
     error InsufficientXP(uint256 have, uint256 need);
     error NoVerdict();
+    error DisputeWindowPassed();
     error AlreadyFinalized();
     error VerdictFrozenError();
     error VerdictAlreadySubmitted();
@@ -378,6 +379,20 @@ contract ArbiterRegistryFacet {
         (bool ok, bytes memory st) = agreement.staticcall(abi.encodeWithSignature("status()"));
         require(ok, "ArbiterRegistry: status read failed");
         require(abi.decode(st, (uint8)) == 4, "ArbiterRegistry: not disputed");
+
+        // Арбитр должен успеть подать вердикт за DISPUTE_WINDOW от disputedAt. Раньше эта
+        // проверка жила в Agreement.resolveDispute() и срабатывала в момент ИСПОЛНЕНИЯ —
+        // из-за FINALIZE_DELAY/апелляции исполнение легитимно происходит намного позже
+        // подачи, так что единственное место, где время должно проверяться — подача.
+        (bool disputedOk, bytes memory disputedData) = agreement.staticcall(abi.encodeWithSignature("disputedAt()"));
+        require(disputedOk, "ArbiterRegistry: disputedAt read failed");
+        uint256 disputedAt = abi.decode(disputedData, (uint256));
+
+        (bool windowOk, bytes memory windowData) = agreement.staticcall(abi.encodeWithSignature("DISPUTE_WINDOW()"));
+        require(windowOk, "ArbiterRegistry: DISPUTE_WINDOW read failed");
+        uint256 disputeWindow = abi.decode(windowData, (uint256));
+
+        if (block.timestamp > disputedAt + disputeWindow) revert DisputeWindowPassed();
 
         d.pendingVerdicts[agreement] = ArbiterRegistryStorage.PendingVerdict({
             arbiter:     caller,
@@ -633,6 +648,9 @@ contract ArbiterRegistryFacet {
     function getRewardPerDispute() external view returns (uint256) { return ArbiterRegistryStorage.data().rewardPerDispute; }
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
     function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
+    function hasSubmittedVerdict(address agreement) external view returns (bool) {
+        return ArbiterRegistryStorage.data().pendingVerdicts[agreement].submittedAt != 0;
+    }
     function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
     function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
 }
