@@ -2775,4 +2775,53 @@ contract DiamondTest is Test {
         // before transferFrom) — executor keeps the full 100 USDC mint, plus the payout.
         assertEq(usdc.balanceOf(executor), 100 * 10**6 + AMOUNT);
     }
+
+    // Final-review Finding A: owner's overturnVerdict() and unfreezeVerdict() must not be
+    // usable while an appeal is actively in progress (appealed=true, appealResolved=false) —
+    // otherwise overturnVerdict could double-slash the same arbiter on top of resolveAppeal,
+    // and unfreezeVerdict could let finalizeVerdict bypass the in-flight vote entirely.
+    function testOverturnVerdict_RevertsDuringActiveAppeal() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true); // client wins, executor loses
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.expectRevert(ArbiterRegistryFacet.AppealInProgress.selector);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
+    }
+
+    function testUnfreezeVerdict_RevertsDuringActiveAppeal() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true); // client wins, executor loses
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        // Owner (test contract) attempts to unfreeze mid-appeal — must revert, not bypass
+        // the in-progress vote.
+        vm.expectRevert(ArbiterRegistryFacet.AppealInProgress.selector);
+        ArbiterRegistryFacet(address(diamond)).unfreezeVerdict(agr);
+    }
+
+    // Sanity check: unfreezeVerdict() still works fine outside of any appeal (the guard only
+    // fires when appealed && !appealResolved — freezeVerdict()'s own standalone use, with no
+    // appeal ever raised, must be unaffected).
+    function testUnfreezeVerdict_WorksWithNoAppealInProgress() public {
+        address agr = _disputeToVerdict(client, executor, true);
+
+        ArbiterRegistryFacet(address(diamond)).freezeVerdict(agr);
+        ArbiterRegistryStorage.PendingVerdict memory frozen = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
+        assertTrue(frozen.frozen);
+
+        ArbiterRegistryFacet(address(diamond)).unfreezeVerdict(agr);
+        ArbiterRegistryStorage.PendingVerdict memory unfrozen = ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agr);
+        assertFalse(unfrozen.frozen);
+    }
 }

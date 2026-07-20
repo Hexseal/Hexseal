@@ -177,6 +177,7 @@ contract ArbiterRegistryFacet {
     error ZeroAddress();
     error InsufficientCleanStreak(uint256 have, uint256 need);
     error HasOpenDisputeClaims();
+    error AppealInProgress();
 
     // -------- MODIFIERS --------
 
@@ -490,6 +491,7 @@ contract ArbiterRegistryFacet {
 
         if (v.submittedAt == 0) revert NoVerdict();
         if (v.finalized) revert AlreadyFinalized();
+        if (v.appealed && !v.appealResolved) revert AppealInProgress();
 
         address slashedArbiter = v.arbiter;
         v.clientWins = newClientWins;
@@ -498,11 +500,7 @@ contract ArbiterRegistryFacet {
 
         // Slash XP арбитра
         ReputationStorage.Data storage rep = ReputationStorage.data();
-        if (rep.xp[slashedArbiter] >= OVERTURN_XP_SLASH) {
-            rep.xp[slashedArbiter] -= OVERTURN_XP_SLASH;
-        } else {
-            rep.xp[slashedArbiter] = 0;
-        }
+        _slashArbiterXP(rep, slashedArbiter);
 
         _recordArbiterMistake(d, rep, slashedArbiter);
 
@@ -526,6 +524,16 @@ contract ArbiterRegistryFacet {
 
         ReputationStorage.Data storage rep = ReputationStorage.data();
         _recordArbiterMistake(d, rep, arbiterAddr);
+    }
+
+    /// @notice Списывает OVERTURN_XP_SLASH у арбитра, не давая уйти в underflow.
+    /// Общий хелпер для overturnVerdict и resolveAppeal (оба режут XP одинаково).
+    function _slashArbiterXP(ReputationStorage.Data storage rep, address arbiterAddr) private {
+        if (rep.xp[arbiterAddr] >= OVERTURN_XP_SLASH) {
+            rep.xp[arbiterAddr] -= OVERTURN_XP_SLASH;
+        } else {
+            rep.xp[arbiterAddr] = 0;
+        }
     }
 
     /// @notice Общий счётчик судейских ошибок для overturnVerdict и notifyArbiterTimeout.
@@ -578,7 +586,9 @@ contract ArbiterRegistryFacet {
     /// @notice Разморозить вердикт.
     function unfreezeVerdict(address agreement) external onlyOwnerOrDAO {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        d.pendingVerdicts[agreement].frozen = false;
+        ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
+        if (v.appealed && !v.appealResolved) revert AppealInProgress();
+        v.frozen = false;
         emit VerdictUnfrozen(agreement);
     }
 
@@ -679,11 +689,7 @@ contract ArbiterRegistryFacet {
             v.overturned = true;
 
             ReputationStorage.Data storage rep = ReputationStorage.data();
-            if (rep.xp[slashedArbiter] >= OVERTURN_XP_SLASH) {
-                rep.xp[slashedArbiter] -= OVERTURN_XP_SLASH;
-            } else {
-                rep.xp[slashedArbiter] = 0;
-            }
+            _slashArbiterXP(rep, slashedArbiter);
             _recordArbiterMistake(d, rep, slashedArbiter);
 
             bool refundOk = IUSDCFull(usdc).transfer(v.appellant, APPEAL_DEPOSIT);
