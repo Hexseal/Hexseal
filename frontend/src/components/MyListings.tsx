@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useMountedRef } from '@/hooks/useMountedRef';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
@@ -482,7 +483,9 @@ function ServiceCard({
 // ── My Services (executor listings) ──────────────────────────────────────────
 
 export function MyServices({ address, onDealCreated, readOnly }: { address: string; onDealCreated?: () => void; readOnly?: boolean }) {
-  const t = useTranslations('dashboard.listings');
+  const tl = useTranslations('dashboard.listings');
+  const t = useTranslations();
+  const mountedRef = useMountedRef();
   const [showRemoved, setShowRemoved] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmReq, setConfirmReq] = useState<{ requestId: bigint; client: string; amount: bigint; deadlineDays: bigint } | null>(null);
@@ -491,13 +494,13 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
-  const { data: serviceIds, isLoading: loadingIds, refetch: refetchIds } = useReadContract({
+  const { data: serviceIds, isLoading: loadingIds, isError: idsError, refetch: refetchIds } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: 'getExecutorServices',
     args: [address as `0x${string}`],
     query: { enabled: !!address },
-  }) as { data: bigint[] | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: bigint[] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const svcContracts = (serviceIds || []).map(id => ({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -506,7 +509,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     args: [id],
   }));
 
-  const { data: svcResults, isLoading: loadingSvcs, refetch: refetchSvcs } = useReadContracts({
+  const { data: svcResults, isLoading: loadingSvcs, isError: svcsError, refetch: refetchSvcs } = useReadContracts({
     contracts: svcContracts,
     query: { enabled: (serviceIds || []).length > 0 },
   });
@@ -540,6 +543,10 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
 
   const refetch = () => { refetchIds(); refetchSvcs(); refetchPending(); };
   const isLoading = loadingIds || loadingSvcs;
+  // pendingResults (getPendingRequests) is deliberately excluded: a failure
+  // there should just mean pending-request badges don't show, not blank the
+  // whole list with an error state.
+  const isError = idsError || svcsError;
 
   const services: { id: bigint; svc: ServiceRecord }[] = (serviceIds || [])
     .map((id, i) => ({ id, svc: svcResults?.[i]?.result as ServiceRecord | undefined }))
@@ -566,7 +573,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Action failed');
     } finally {
-      setBusyId(null);
+      if (mountedRef.current) setBusyId(null);
     }
   };
 
@@ -579,11 +586,11 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
       await sendGasless(walletClient, publicClient, 'acceptRequest', [requestId], DIAMOND_ABI as Abi);
       toast.success('Request accepted! Deal created.');
       success = true;
-      setTimeout(() => { refetch(); onDealCreated?.(); setBusyId(null); }, 2000);
+      setTimeout(() => { refetch(); onDealCreated?.(); if (mountedRef.current) setBusyId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Accept failed');
     } finally {
-      if (!success) setBusyId(null);
+      if (!success && mountedRef.current) setBusyId(null);
     }
   };
 
@@ -598,7 +605,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Reject failed');
     } finally {
-      setBusyId(null);
+      if (mountedRef.current) setBusyId(null);
     }
   };
 
@@ -613,13 +620,13 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
         [editTarget.id, fields.title, fields.description, fields.price, fields.deadlineDays, fields.region],
         DIAMOND_ABI as Abi,
       );
-      toast.success(t('service_updated'));
-      setEditTarget(null);
+      toast.success(tl('service_updated'));
+      if (mountedRef.current) setEditTarget(null);
       setTimeout(refetch, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Edit failed');
     } finally {
-      setEditBusy(false);
+      if (mountedRef.current) setEditBusy(false);
     }
   };
 
@@ -636,6 +643,19 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
             <div className="w-16 h-6 rounded-lg bg-white/[0.05]" />
           </div>
         ))}
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+          {t('common.error')}
+        </div>
+        <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+          {t('common.retry')}
+        </Button>
       </div>
     );
   }
