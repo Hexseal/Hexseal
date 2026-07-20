@@ -11,7 +11,7 @@ import Link from "next/link";
 import { toast } from "react-hot-toast";
 import { isAddress } from "viem";
 import { useTranslations } from "next-intl";
-import { LevelCardSkeleton, StatsRowSkeleton, TabsRowSkeleton, ListSkeleton } from "@/components/AgreementsSkeleton";
+import { StatsCardSkeleton, TabsRowSkeleton, ListSkeleton } from "@/components/AgreementsSkeleton";
 import { AgreementsStats } from "@/components/AgreementsStats";
 import { AgreementsTabs } from "@/components/AgreementsTabs";
 import { PageCenter } from "@/components/PageCenter";
@@ -49,8 +49,7 @@ function AddressAvatar({ address, size = 64 }: { address: string; size?: number 
 function ProfileBottomSkeleton() {
   return (
     <>
-      <LevelCardSkeleton />
-      <StatsRowSkeleton />
+      <StatsCardSkeleton />
       <TabsRowSkeleton />
       <ListSkeleton />
     </>
@@ -71,7 +70,7 @@ export default function ProfilePage() {
   const { profile } = useProfile(validAddress ? profileAddress : undefined);
 
   const {
-    rawAgreements, isLoading, refetch,
+    rawAgreements, isLoading, error, refetch,
     xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
   } = useAgreementsSummary(validAddress ? profileAddress : undefined);
 
@@ -223,6 +222,7 @@ export default function ProfilePage() {
             refetch={refetch}
             editable={isOwner}
             hideClosedJobs
+            error={error}
           />
         </>
       )}

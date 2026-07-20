@@ -5,7 +5,7 @@ import { useAccount } from 'wagmi';
 import { useAgreementsSummary } from '@/hooks/useAgreementsSummary';
 import { Activity } from 'lucide-react';
 import { DashboardSearch } from '@/components/DashboardSearch';
-import { LevelCardSkeleton, StatsRowSkeleton, TabsRowSkeleton, ListSkeleton } from '@/components/AgreementsSkeleton';
+import { StatsCardSkeleton, TabsRowSkeleton, ListSkeleton } from '@/components/AgreementsSkeleton';
 import { AgreementsStats } from '@/components/AgreementsStats';
 import { AgreementsTabs } from '@/components/AgreementsTabs';
 import { useTranslations } from 'next-intl';
@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const t = useTranslations();
 
   const {
-    rawAgreements, isLoading, refetch,
+    rawAgreements, isLoading, error, refetch,
     xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
   } = useAgreementsSummary(address);
   const { jobs: mySearchJobs }     = useMyJobs(address);
@@ -28,8 +28,7 @@ export default function DashboardPage() {
   if (status === 'reconnecting' || status === 'connecting') {
     return (
       <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
-        <LevelCardSkeleton />
-        <StatsRowSkeleton />
+        <StatsCardSkeleton />
         <div className="animate-pulse h-9 rounded-[12px] bg-white/[0.04] w-full" />
         <TabsRowSkeleton />
         <ListSkeleton />
@@ -55,12 +54,9 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
 
-        {/* ── Stats row + XP bar — one guard, since both key off the same isLoading ── */}
+        {/* ── Stats card — loading and loaded states are both one block ── */}
         {isLoading ? (
-          <>
-            <LevelCardSkeleton />
-            <StatsRowSkeleton />
-          </>
+          <StatsCardSkeleton />
         ) : (
           <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
         )}
@@ -83,6 +79,7 @@ export default function DashboardPage() {
           refetch={refetch}
           onListingsChange={refetch}
           isLoading={isLoading}
+          error={error}
         />
       </div>
   );

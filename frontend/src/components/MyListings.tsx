@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
+import { useMountedRef } from '@/hooks/useMountedRef';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
@@ -217,7 +218,7 @@ function EditListingModal({
 
 // ── Service Card ──────────────────────────────────────────────────────────────
 
-function ServiceCard({
+const ServiceCard = memo(function ServiceCard({
   serviceId, service, pendingIds, pendingReqs, busyId,
   onPause, onUnpause, onRemove, onAccept, onReject, onEdit,
   readOnly,
@@ -477,12 +478,14 @@ function ServiceCard({
       )}
     </div>
   );
-}
+});
 
 // ── My Services (executor listings) ──────────────────────────────────────────
 
 export function MyServices({ address, onDealCreated, readOnly }: { address: string; onDealCreated?: () => void; readOnly?: boolean }) {
-  const t = useTranslations('dashboard.listings');
+  const tl = useTranslations('dashboard.listings');
+  const t = useTranslations();
+  const mountedRef = useMountedRef();
   const [showRemoved, setShowRemoved] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmReq, setConfirmReq] = useState<{ requestId: bigint; client: string; amount: bigint; deadlineDays: bigint } | null>(null);
@@ -491,13 +494,13 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
-  const { data: serviceIds, isLoading: loadingIds, refetch: refetchIds } = useReadContract({
+  const { data: serviceIds, isLoading: loadingIds, isError: idsError, refetch: refetchIds } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: 'getExecutorServices',
     args: [address as `0x${string}`],
     query: { enabled: !!address },
-  }) as { data: bigint[] | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: bigint[] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const svcContracts = (serviceIds || []).map(id => ({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -506,7 +509,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     args: [id],
   }));
 
-  const { data: svcResults, isLoading: loadingSvcs, refetch: refetchSvcs } = useReadContracts({
+  const { data: svcResults, isLoading: loadingSvcs, isError: svcsError, refetch: refetchSvcs } = useReadContracts({
     contracts: svcContracts,
     query: { enabled: (serviceIds || []).length > 0 },
   });
@@ -540,6 +543,10 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
 
   const refetch = () => { refetchIds(); refetchSvcs(); refetchPending(); };
   const isLoading = loadingIds || loadingSvcs;
+  // pendingResults (getPendingRequests) is deliberately excluded: a failure
+  // there should just mean pending-request badges don't show, not blank the
+  // whole list with an error state.
+  const isError = idsError || svcsError;
 
   const services: { id: bigint; svc: ServiceRecord }[] = (serviceIds || [])
     .map((id, i) => ({ id, svc: svcResults?.[i]?.result as ServiceRecord | undefined }))
@@ -566,7 +573,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Action failed');
     } finally {
-      setBusyId(null);
+      if (mountedRef.current) setBusyId(null);
     }
   };
 
@@ -579,11 +586,11 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
       await sendGasless(walletClient, publicClient, 'acceptRequest', [requestId], DIAMOND_ABI as Abi);
       toast.success('Request accepted! Deal created.');
       success = true;
-      setTimeout(() => { refetch(); onDealCreated?.(); setBusyId(null); }, 2000);
+      setTimeout(() => { refetch(); onDealCreated?.(); if (mountedRef.current) setBusyId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Accept failed');
     } finally {
-      if (!success) setBusyId(null);
+      if (!success && mountedRef.current) setBusyId(null);
     }
   };
 
@@ -598,7 +605,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Reject failed');
     } finally {
-      setBusyId(null);
+      if (mountedRef.current) setBusyId(null);
     }
   };
 
@@ -613,13 +620,13 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
         [editTarget.id, fields.title, fields.description, fields.price, fields.deadlineDays, fields.region],
         DIAMOND_ABI as Abi,
       );
-      toast.success(t('service_updated'));
-      setEditTarget(null);
+      toast.success(tl('service_updated'));
+      if (mountedRef.current) setEditTarget(null);
       setTimeout(refetch, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Edit failed');
     } finally {
-      setEditBusy(false);
+      if (mountedRef.current) setEditBusy(false);
     }
   };
 
@@ -636,6 +643,19 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
             <div className="w-16 h-6 rounded-lg bg-white/[0.05]" />
           </div>
         ))}
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+          {t('common.error')}
+        </div>
+        <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+          {t('common.retry')}
+        </Button>
       </div>
     );
   }
@@ -790,7 +810,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
 
 // ── Job Card ──────────────────────────────────────────────────────────────────
 
-function JobCard({
+const JobCard = memo(function JobCard({
   jobId, job, applicants, onCancel, onAccept, onEdit, busy, readOnly,
 }: {
   jobId: bigint;
@@ -940,7 +960,7 @@ function JobCard({
       )}
     </div>
   );
-}
+});
 
 // ── Closed Jobs history (accepted / cancelled) ────────────────────────────────
 
@@ -1004,6 +1024,8 @@ function ClosedJobsSection({ jobs }: { jobs: { id: bigint; job: JobRecord }[] })
 
 export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { address: string; onDealCreated?: () => void; readOnly?: boolean; hideClosed?: boolean }) {
   const tj = useTranslations('dashboard.listings');
+  const t = useTranslations();
+  const mountedRef = useMountedRef();
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
@@ -1012,13 +1034,13 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
-  const { data: jobIds, isLoading: loadingIds, refetch: refetchIds } = useReadContract({
+  const { data: jobIds, isLoading: loadingIds, isError: idsError, refetch: refetchIds } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: 'getClientJobs',
     args: [address as `0x${string}`],
     query: { enabled: !!address },
-  }) as { data: bigint[] | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: bigint[] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const jobContracts = (jobIds || []).map(id => ({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -1027,7 +1049,7 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
     args: [id],
   }));
 
-  const { data: jobResults, isLoading: loadingJobs, refetch: refetchJobs } = useReadContracts({
+  const { data: jobResults, isLoading: loadingJobs, isError: jobsError, refetch: refetchJobs } = useReadContracts({
     contracts: jobContracts,
     query: { enabled: (jobIds || []).length > 0 },
   });
@@ -1057,6 +1079,9 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
 
   const refetch = () => { refetchIds(); refetchJobs(); refetchApplicants(); };
   const isLoading = loadingIds || loadingJobs;
+  // applicantResults (getApplicants) deliberately excluded — a failure there
+  // just means the applicant list doesn't show, not that the whole tab fails.
+  const isError = idsError || jobsError;
 
   const jobs: { id: bigint; job: JobRecord }[] = (jobIds || [])
     .map((id, i) => ({ id, job: jobResults?.[i]?.result as JobRecord | undefined }))
@@ -1076,7 +1101,7 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Cancel failed');
     } finally {
-      setBusyJobId(null);
+      if (mountedRef.current) setBusyJobId(null);
     }
   };
 
@@ -1093,12 +1118,12 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
       if (result.agreementAddr && result.agreementAddr !== ZERO) {
         setTimeout(() => router.push(`/deal/${result.agreementAddr}`), 1500);
       } else {
-        setTimeout(() => { refetch(); onDealCreated?.(); setBusyJobId(null); }, 2000);
+        setTimeout(() => { refetch(); onDealCreated?.(); if (mountedRef.current) setBusyJobId(null); }, 2000);
       }
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Accept failed');
     } finally {
-      if (!success) setBusyJobId(null);
+      if (!success && mountedRef.current) setBusyJobId(null);
     }
   };
 
@@ -1114,12 +1139,12 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
         DIAMOND_ABI as Abi,
       );
       toast.success(tj('job_updated'));
-      setEditTarget(null);
+      if (mountedRef.current) setEditTarget(null);
       setTimeout(refetch, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Edit failed');
     } finally {
-      setEditBusy(false);
+      if (mountedRef.current) setEditBusy(false);
     }
   };
 
@@ -1137,6 +1162,19 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
       ))}
     </div>
   );
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+          {t('common.error')}
+        </div>
+        <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+          {t('common.retry')}
+        </Button>
+      </div>
+    );
+  }
 
   if (jobs.length === 0) {
     return (
@@ -1260,18 +1298,20 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
 // ── My Client Requests (service board) ───────────────────────────────────────
 
 export function MyClientRequests({ address }: { address: string }) {
+  const t = useTranslations();
+  const mountedRef = useMountedRef();
   const [showHistory, setShowHistory] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
-  const { data: reqIds, isLoading: loadingIds, refetch: refetchIds } = useReadContract({
+  const { data: reqIds, isLoading: loadingIds, isError: idsError, refetch: refetchIds } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: 'getClientRequests',
     args: [address as `0x${string}`],
     query: { enabled: !!address },
-  }) as { data: bigint[] | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: bigint[] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const reqContracts = (reqIds || []).map(id => ({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -1280,13 +1320,14 @@ export function MyClientRequests({ address }: { address: string }) {
     args: [id],
   }));
 
-  const { data: reqResults, isLoading: loadingReqs, refetch: refetchReqs } = useReadContracts({
+  const { data: reqResults, isLoading: loadingReqs, isError: reqsError, refetch: refetchReqs } = useReadContracts({
     contracts: reqContracts,
     query: { enabled: (reqIds || []).length > 0 },
   });
 
   const refetch = () => { refetchIds(); refetchReqs(); };
   const isLoading = loadingIds || loadingReqs;
+  const isError = idsError || reqsError;
 
   const requests: { id: bigint; req: HireRequestRecord }[] = (reqIds || [])
     .map((id, i) => ({ id, req: reqResults?.[i]?.result as HireRequestRecord | undefined }))
@@ -1306,7 +1347,7 @@ export function MyClientRequests({ address }: { address: string }) {
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Cancel failed');
     } finally {
-      setBusyId(null);
+      if (mountedRef.current) setBusyId(null);
     }
   };
 
@@ -1324,6 +1365,19 @@ export function MyClientRequests({ address }: { address: string }) {
       ))}
     </div>
   );
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-6 text-center">
+        <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+          {t('common.error')}
+        </div>
+        <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+          {t('common.retry')}
+        </Button>
+      </div>
+    );
+  }
 
   if (requests.length === 0) {
     return <p className="text-xs text-white/25 py-3">No service requests sent yet.</p>;

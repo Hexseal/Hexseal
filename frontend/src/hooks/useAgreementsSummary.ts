@@ -44,7 +44,7 @@ function toAgreementRecord(a: GraphAgreement): AgreementRecord {
  * so the two pages can't compute activeDeals/historyDeals/xp differently.
  */
 export function useAgreementsSummary(address: string | undefined) {
-  const { agreements: rawAgreements, isLoading, refetch } = useMyAgreements(address);
+  const { agreements: rawAgreements, isLoading, error, refetch } = useMyAgreements(address);
   const titleMap = useAgreementTitles(rawAgreements);
   const allAgreements = useMemo(
     () => rawAgreements.map(a => ({ ...toAgreementRecord(a), title: titleMap.get(a.id.toLowerCase()) })),
@@ -70,22 +70,26 @@ export function useAgreementsSummary(address: string | undefined) {
   });
   const cleanStreak = Number(onchainCleanStreak ?? 0n);
 
-  // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
-  const activeDeals  = allAgreements.filter(d => [0, 1, 2, 4].includes(d.status));
-  const historyDeals = allAgreements.filter(d => [3, 5, 6].includes(d.status));
-  // "Completed" = deals that went well for *this* viewer. A plain release (status 3) always
-  // counts; a RESOLVED dispute (status 5) only counts if the viewer's side won it — otherwise
-  // an executor who lost a dispute (client refunded) would see it inflate their success count.
   const addrLower = address?.toLowerCase();
-  const completed = allAgreements.filter(d => {
-    if (d.status === 3) return true;
-    if (d.status === 5 && d.clientWon !== null && d.clientWon !== undefined) {
-      const isClient = addrLower === d.client.toLowerCase();
-      return isClient ? d.clientWon : !d.clientWon;
-    }
-    return false;
-  }).length;
-  const totalVolume  = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
 
-  return { rawAgreements, isLoading, refetch, xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume };
+  // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
+  const { activeDeals, historyDeals, completed, totalVolume } = useMemo(() => {
+    const activeDeals  = allAgreements.filter(d => [0, 1, 2, 4].includes(d.status));
+    const historyDeals = allAgreements.filter(d => [3, 5, 6].includes(d.status));
+    // "Completed" = deals that went well for *this* viewer. A plain release (status 3) always
+    // counts; a RESOLVED dispute (status 5) only counts if the viewer's side won it — otherwise
+    // an executor who lost a dispute (client refunded) would see it inflate their success count.
+    const completed = allAgreements.filter(d => {
+      if (d.status === 3) return true;
+      if (d.status === 5 && d.clientWon !== null && d.clientWon !== undefined) {
+        const isClient = addrLower === d.client.toLowerCase();
+        return isClient ? d.clientWon : !d.clientWon;
+      }
+      return false;
+    }).length;
+    const totalVolume = allAgreements.reduce((s, d) => s + Number(d.amount), 0);
+    return { activeDeals, historyDeals, completed, totalVolume };
+  }, [allAgreements, addrLower]);
+
+  return { rawAgreements, isLoading, error, refetch, xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume };
 }

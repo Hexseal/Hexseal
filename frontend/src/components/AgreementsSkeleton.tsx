@@ -5,7 +5,7 @@
 // tab row and deal list, so their loading placeholders live here once instead
 // of as two hand-copied definitions that can drift apart.
 
-export function LevelCardSkeleton() {
+export function StatsCardSkeleton() {
   return (
     <div className="animate-pulse rounded-[20px] border border-white/[0.08] bg-[#0d0d0f] px-4 py-3">
       <div className="flex items-center gap-3 mb-2">
@@ -16,19 +16,15 @@ export function LevelCardSkeleton() {
         </div>
       </div>
       <div className="h-1.5 rounded-full bg-white/[0.06]" />
-    </div>
-  );
-}
 
-export function StatsRowSkeleton() {
-  return (
-    <div className="flex items-center justify-between px-2">
-      {[0, 1, 2].map(i => (
-        <div key={i} className="flex flex-col items-center gap-1.5">
-          <div className="animate-pulse h-5 w-8 rounded bg-white/[0.08]" style={{ animationDelay: `${i * 0.05}s` }} />
-          <div className="animate-pulse h-2.5 w-14 rounded bg-white/[0.04]" style={{ animationDelay: `${i * 0.05}s` }} />
-        </div>
-      ))}
+      <div className="flex items-center justify-between px-2 mt-3 pt-3 border-t border-white/[0.08]">
+        {[0, 1, 2].map(i => (
+          <div key={i} className="flex flex-col items-center gap-1.5">
+            <div className="h-5 w-8 rounded bg-white/[0.08]" style={{ animationDelay: `${i * 0.05}s` }} />
+            <div className="h-2.5 w-14 rounded bg-white/[0.04]" style={{ animationDelay: `${i * 0.05}s` }} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

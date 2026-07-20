@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useMemo, memo } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { useReadContract, usePublicClient, useWalletClient } from 'wagmi';
+import { useReadContract, useReadContracts, usePublicClient, useWalletClient } from 'wagmi';
 import { isAddress, keccak256 } from 'viem';
 import type { Abi } from 'viem';
 import { AGREEMENT_ABI, USDC_ABI, CONTRACTS } from '@/config/contracts';
@@ -19,6 +19,7 @@ import {
   ChevronDown, MessageCircle, Plus, X,
 } from 'lucide-react';
 import { shortAddr } from '@/lib/utils';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem { id: number; amount: bigint; terms: string; status: number; }
@@ -62,7 +63,7 @@ export const DEAL_STATUS: Record<number, { label: string; dot: string; textCls: 
   6: { label: 'Refunded',  dot: 'bg-gray-400',    textCls: 'text-white/35' },
 };
 
-export function DealCard({ agreement, address, refetch }: {
+function DealCardImpl({ agreement, address, refetch }: {
   agreement: AgreementRecord;
   address: string;
   refetch: () => void;
@@ -71,52 +72,43 @@ export function DealCard({ agreement, address, refetch }: {
   const { data: walletClient } = useWalletClient();
   const t  = useTranslations();
   const tc = useTranslations('dashboard.card');
+  const mountedRef = useMountedRef();
   const [busy, setBusy] = useState(false);
   const [showTimeouts, setShowTimeouts] = useState(false);
   const [disputeOpen, setDisputeOpen]     = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
 
   // Extras
-  const [extrasList, setExtrasList]   = useState<ExtraItem[]>([]);
   const [showExtras, setShowExtras]   = useState(false);
   const [proposeOpen, setProposeOpen] = useState(false);
   const [proposeAmount, setProposeAmount] = useState('');
   const [proposeDesc, setProposeDesc]     = useState('');
 
-  const { data: nextExtraId, refetch: refetchExtras } = useReadContract({
-    address: agreement.agreement as `0x${string}`,
-    abi: AGREEMENT_ABI, functionName: 'nextExtraId',
-    query: { enabled: isAddress(agreement.agreement) },
-  }) as { data: bigint | undefined; refetch: () => void };
+  // One multicall for this card's 6 reads instead of 6 separate RPC round
+  // trips (see docs/superpowers/specs/2026-07-20-dashboard-correctness-fixes-design.md).
+  // staleTime 30s: none of these tick client-side (timeLeft is a static
+  // snapshot, not a live countdown), so 30s of staleness is invisible and
+  // absorbs the cost of AgreementsTabs' tab-switch remount for free.
+  const isValidAgreement = isAddress(agreement.agreement);
 
-  useEffect(() => {
-    if (!publicClient || !nextExtraId || nextExtraId === 0n) { setExtrasList([]); return; }
-    const count = Number(nextExtraId);
-    Promise.all(
-      Array.from({ length: count }, (_, i) =>
-        publicClient.readContract({
-          address: agreement.agreement as `0x${string}`,
-          abi: AGREEMENT_ABI as Abi,
-          functionName: 'getExtra',
-          args: [BigInt(i)],
-        }).then((e: any) => ({ id: i, amount: e.amount, terms: e.terms, status: Number(e.status) } satisfies ExtraItem))
-          .catch(() => null)
-      )
-    ).then(results => setExtrasList(results.filter((r): r is ExtraItem => r !== null)));
-  }, [nextExtraId, publicClient, agreement.agreement]);
+  const { data: coreData, refetch: refetchCore } = useReadContracts({
+    contracts: [
+      { address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI as Abi, functionName: 'nextExtraId' },
+      { address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI as Abi, functionName: 'status' },
+      { address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI as Abi, functionName: 'timeLeft' },
+      { address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI as Abi, functionName: 'arbiterTimeLeft' },
+      { address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI as Abi, functionName: 'getDetails' },
+      { address: CONTRACTS.usdc as `0x${string}`, abi: USDC_ABI as Abi, functionName: 'balanceOf', args: [agreement.agreement as `0x${string}`] },
+    ],
+    query: { enabled: isValidAgreement, staleTime: 30_000 },
+  });
 
-  const { data: liveStatusData } = useReadContract({
-    address: agreement.agreement as `0x${string}`,
-    abi: AGREEMENT_ABI, functionName: 'status',
-    query: { enabled: isAddress(agreement.agreement) },
-  }) as { data: number | undefined };
-
-  const { data: agreementBalance } = useReadContract({
-    address: CONTRACTS.usdc as `0x${string}`,
-    abi: USDC_ABI, functionName: 'balanceOf',
-    args: [agreement.agreement as `0x${string}`],
-    query: { enabled: isAddress(agreement.agreement) },
-  }) as { data: bigint | undefined };
+  const nextExtraId      = coreData?.[0]?.result as bigint | undefined;
+  const liveStatusData   = coreData?.[1]?.result as number | undefined;
+  const timeLeft         = coreData?.[2]?.result as bigint | undefined;
+  const arbiterTimeLeft  = coreData?.[3]?.result as bigint | undefined;
+  const details          = coreData?.[4]?.result;
+  const agreementBalance = coreData?.[5]?.result as bigint | undefined;
 
   const computedLive = liveStatusData !== undefined ? Number(liveStatusData) : agreement.status;
   const balanceOverride =
@@ -124,9 +116,37 @@ export function DealCard({ agreement, address, refetch }: {
     computedLive >= 1 && computedLive <= 2 ? 3 : computedLive;
   const liveStatus = Math.max(balanceOverride, agreement.status);
 
-  const { data: timeLeft }       = useReadContract({ address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI, functionName: 'timeLeft',       query: { enabled: isAddress(agreement.agreement) } }) as { data: bigint | undefined };
-  const { data: arbiterTimeLeft } = useReadContract({ address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI, functionName: 'arbiterTimeLeft', query: { enabled: isAddress(agreement.agreement) } }) as { data: bigint | undefined };
-  const { data: details }         = useReadContract({ address: agreement.agreement as `0x${string}`, abi: AGREEMENT_ABI, functionName: 'getDetails',      query: { enabled: isAddress(agreement.agreement) } });
+  // Extras depend on nextExtraId's resolved count, so they can't join the
+  // multicall above — but they're still one batched call instead of a
+  // hand-rolled Promise.all of N separate readContract calls.
+  const extraCount = nextExtraId ? Number(nextExtraId) : 0;
+  const { data: extraResults, refetch: refetchExtraBatch } = useReadContracts({
+    contracts: Array.from({ length: extraCount }, (_, i) => ({
+      address: agreement.agreement as `0x${string}`,
+      abi: AGREEMENT_ABI as Abi,
+      functionName: 'getExtra' as const,
+      args: [BigInt(i)] as const,
+    })),
+    query: { enabled: extraCount > 0, staleTime: 30_000 },
+  });
+
+  const extrasList: ExtraItem[] = useMemo(() => {
+    if (!extraResults) return [];
+    return extraResults
+      .map((r, i) => {
+        if (r.status !== 'success') return null;
+        const e = r.result as { amount: bigint; terms: string; status: number };
+        return { id: i, amount: e.amount, terms: e.terms, status: Number(e.status) } satisfies ExtraItem;
+      })
+      .filter((x): x is ExtraItem => x !== null);
+  }, [extraResults]);
+
+  // propose/accept/reject all need a fresh read afterward: propose changes
+  // nextExtraId (part of coreData, which then grows the extras contracts
+  // array above and auto-refetches it); accept/reject change an existing
+  // extra's status without changing the count, so the extras batch itself
+  // needs its own refetch too. Refetching both covers both cases.
+  const refetchExtras = () => { refetchCore(); refetchExtraBatch(); };
 
   const statusLabels: Record<number, string> = {
     0: t('deal_status.created'),
@@ -183,7 +203,7 @@ export function DealCard({ agreement, address, refetch }: {
       setTimeout(refetch, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || 'Transaction failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const handleProposeExtra = async () => {
@@ -197,14 +217,16 @@ export function DealCard({ agreement, address, refetch }: {
       const extraTerms = proposeDesc.trim() || `${proposeAmount} USDC extra`;
       await proposeExtraGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, amountParsed, extraTerms);
       toast.success('Extra proposed!');
-      setProposeOpen(false);
-      setProposeAmount('');
-      setProposeDesc('');
+      if (mountedRef.current) {
+        setProposeOpen(false);
+        setProposeAmount('');
+        setProposeDesc('');
+      }
       setTimeout(() => refetchExtras(), 3000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const handleExtraAction = async (fn: 'acceptExtra' | 'rejectExtra', extraId: number) => {
@@ -217,7 +239,7 @@ export function DealCard({ agreement, address, refetch }: {
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const pendingExtras = extrasList.filter(e => e.status === EXTRA_STATUS.PENDING);
@@ -245,12 +267,12 @@ export function DealCard({ agreement, address, refetch }: {
       toast(tc('sign_wallet'));
       await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, 'raiseDispute', AGREEMENT_ABI as Abi);
       toast.success(tc('dispute_success'));
-      setDisputeReason('');
+      if (mountedRef.current) setDisputeReason('');
       setTimeout(refetch, 2000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const primaryActions: React.ReactNode[] = [];
@@ -269,7 +291,7 @@ export function DealCard({ agreement, address, refetch }: {
           const msg = e?.shortMessage || e?.message || t('deal.fund_failed');
           if (msg.includes('AlreadyFunded')) { toast.error(t('deal.already_funded')); refetch(); }
           else toast.error(msg);
-        } finally { setBusy(false); }
+        } finally { if (mountedRef.current) setBusy(false); }
       }}>
         {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}{tc('fund_btn')}
       </Button>
@@ -549,3 +571,5 @@ export function DealCard({ agreement, address, refetch }: {
     </div>
   );
 }
+
+export const DealCard = memo(DealCardImpl);

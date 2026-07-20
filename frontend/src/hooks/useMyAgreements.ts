@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import { useQuery } from 'urql'
 import { MY_AGREEMENTS_QUERY, SUBGRAPH_URL } from '@/lib/graph'
 
@@ -38,11 +38,13 @@ export function useMyAgreements(address: string | undefined) {
     return Array.from(map.values())
   }, [data])
 
+  const refetch = useCallback(() => reexecute({ requestPolicy: 'network-only' }), [reexecute])
+
   return {
     agreements: allAgreements,
     isLoading: fetching && !data,
     isFetching: fetching,
     error: error?.message ?? null,
-    refetch: () => reexecute({ requestPolicy: 'network-only' }),
+    refetch,
   }
 }

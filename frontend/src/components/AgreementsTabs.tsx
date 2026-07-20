@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl';
 import { DealCard, type AgreementRecord } from '@/components/DealCard';
 import { MyJobs, MyServices, MyClientRequests } from '@/components/MyListings';
 import { ListSkeleton } from '@/components/AgreementsSkeleton';
+import { Button } from '@/components/ui/button';
 
 // Shared by /dashboard and /profile/[address] — tab row + tab content
 // (listings sub-tabs, active deals, history). The two pages differ only in
@@ -48,6 +49,7 @@ interface AgreementsTabsProps {
   refetch: () => void;
   onListingsChange?: () => void;      // fired when MyJobs/MyServices create a deal — dashboard refetches its own agreements; omitted on a read-only profile view
   isLoading?: boolean;                // default false. Tab row always renders; only the content pane swaps to a skeleton. Callers that want the whole component (tabs included) to stay hidden until data is ready should gate the AgreementsTabs call itself instead of using this prop.
+  error?: string | null;              // set when the underlying agreements fetch failed — the Deals/History panes show a retry block instead of empty-state copy, so a failed fetch doesn't read as "you have nothing"
   editable?: boolean;                 // default true. Dashboard is always the viewer's own data (no concept of ownership); profile passes its isOwner check. Gates the "requests" sub-tab, whether listings are read-only, and whether the empty-active-deals hint shows — these three always move together in this app, so one prop says what's actually true instead of three that happen to agree.
   hideClosedJobs?: boolean;           // default false — independent of `editable`; profile always hides closed job postings regardless of ownership, dashboard never does
 }
@@ -60,6 +62,7 @@ export function AgreementsTabs({
   refetch,
   onListingsChange,
   isLoading = false,
+  error = null,
   editable = true,
   hideClosedJobs = false,
 }: AgreementsTabsProps) {
@@ -138,7 +141,16 @@ export function AgreementsTabs({
           )}
 
           {tab === 'deals' && (
-            activeDeals.length === 0 ? (
+            error ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+                  {t("common.error")}
+                </div>
+                <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+                  {t("common.retry")}
+                </Button>
+              </div>
+            ) : activeDeals.length === 0 ? (
               <div className="text-center py-10">
                 <div className="float-icon">
                   <Activity className="w-8 h-8 text-white/10 mx-auto mb-3" />
@@ -162,7 +174,16 @@ export function AgreementsTabs({
           )}
 
           {tab === 'history' && (
-            historyDeals.length === 0 ? (
+            error ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+                  {t("common.error")}
+                </div>
+                <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+                  {t("common.retry")}
+                </Button>
+              </div>
+            ) : historyDeals.length === 0 ? (
               <div className="text-center py-10">
                 <div className="float-icon">
                   <CheckCircle className="w-8 h-8 text-white/10 mx-auto mb-3" />
