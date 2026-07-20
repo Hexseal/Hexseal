@@ -1298,18 +1298,20 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
 // ── My Client Requests (service board) ───────────────────────────────────────
 
 export function MyClientRequests({ address }: { address: string }) {
+  const t = useTranslations();
+  const mountedRef = useMountedRef();
   const [showHistory, setShowHistory] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
-  const { data: reqIds, isLoading: loadingIds, refetch: refetchIds } = useReadContract({
+  const { data: reqIds, isLoading: loadingIds, isError: idsError, refetch: refetchIds } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: 'getClientRequests',
     args: [address as `0x${string}`],
     query: { enabled: !!address },
-  }) as { data: bigint[] | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: bigint[] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const reqContracts = (reqIds || []).map(id => ({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -1318,13 +1320,14 @@ export function MyClientRequests({ address }: { address: string }) {
     args: [id],
   }));
 
-  const { data: reqResults, isLoading: loadingReqs, refetch: refetchReqs } = useReadContracts({
+  const { data: reqResults, isLoading: loadingReqs, isError: reqsError, refetch: refetchReqs } = useReadContracts({
     contracts: reqContracts,
     query: { enabled: (reqIds || []).length > 0 },
   });
 
   const refetch = () => { refetchIds(); refetchReqs(); };
   const isLoading = loadingIds || loadingReqs;
+  const isError = idsError || reqsError;
 
   const requests: { id: bigint; req: HireRequestRecord }[] = (reqIds || [])
     .map((id, i) => ({ id, req: reqResults?.[i]?.result as HireRequestRecord | undefined }))
@@ -1344,7 +1347,7 @@ export function MyClientRequests({ address }: { address: string }) {
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Cancel failed');
     } finally {
-      setBusyId(null);
+      if (mountedRef.current) setBusyId(null);
     }
   };
 
@@ -1362,6 +1365,19 @@ export function MyClientRequests({ address }: { address: string }) {
       ))}
     </div>
   );
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-6 text-center">
+        <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+          {t('common.error')}
+        </div>
+        <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+          {t('common.retry')}
+        </Button>
+      </div>
+    );
+  }
 
   if (requests.length === 0) {
     return <p className="text-xs text-white/25 py-3">No service requests sent yet.</p>;
