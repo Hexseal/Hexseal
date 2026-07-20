@@ -79,6 +79,23 @@ const AGREEMENT_MINI_ABI = [
   'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, string terms_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
 ];
 
+const REGISTRY_MINI_ABI = [
+  'function getDisputed() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
+];
+
+// Set of pairIds currently holding a DISPUTED agreement — one on-chain call per
+// cleanup run, not per file.
+async function getDisputedPairIds() {
+  try {
+    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
+    const disputed = await registry.getDisputed();
+    return new Set(disputed.map((r) => pairIdFromAddresses(r.client, r.executor)));
+  } catch (e) {
+    console.error('[files] getDisputed lookup failed, skipping TTL protection this run:', e.message);
+    return new Set(); // fail open on the on-chain read — never block cleanup entirely
+  }
+}
+
 const AGR_STATUS_EVENT_ABI = [
   'event AgreementStatusUpdated(address indexed agreement, uint8 newStatus)',
 ];
@@ -267,20 +284,35 @@ function safeKey(key) {
 }
 
 // Cleanup: delete expired chat files and orphaned temp dirs — runs daily at 03:00
-cron.schedule('0 3 * * *', () => {
+cron.schedule('0 3 * * *', async () => {
   const cutoff   = Date.now() - FILE_TTL_MS;
   const cutoff1d = Date.now() - 24 * 60 * 60 * 1000;
+  const disputedPairIds = await getDisputedPairIds();
 
-  // Expired chat files
+  // Expired chat files — skip any still tagged to a currently-disputed pair
   try {
     let removed = 0;
+    let protectedCount = 0;
     for (const f of fs.readdirSync(DIR_FILES)) {
       const fp = path.join(DIR_FILES, f);
       try {
-        if (fs.statSync(fp).mtimeMs < cutoff) { fs.unlinkSync(fp); removed++; }
+        if (fs.statSync(fp).mtimeMs < cutoff) {
+          const pairId = _filePairs[f];
+          if (pairId && disputedPairIds.has(pairId)) {
+            protectedCount++;
+            continue;
+          }
+          fs.unlinkSync(fp);
+          removed++;
+          if (pairId) {
+            delete _filePairs[f];
+          }
+        }
       } catch {}
     }
+    if (removed || protectedCount) _saveFilePairs();
     if (removed) console.log(`[files] cleanup: removed ${removed} expired file(s)`);
+    if (protectedCount) console.log(`[files] cleanup: protected ${protectedCount} file(s) — pair still disputed`);
   } catch (e) {
     console.error('[files] cleanup error:', e.message);
   }
