@@ -53,6 +53,13 @@ library ArbiterRegistryStorage {
         bool    finalized;      // исполнен на Agreement
         bool    overturned;     // отменён owner/DAO (выплата не идёт, XP срезан)
         bool    executing;      // идёт finalizeVerdict — не удалять через clearDisputeClaim
+        // ── User-initiated appeal (pre-finalization only) ──
+        bool    appealed;        // апелляция подана
+        bool    appealResolved;  // голосование по апелляции завершено
+        address appellant;       // кто подал апелляцию — для рефанда/форфейта депозита
+        uint256 appealDeadline;  // дедлайн окна голосования
+        uint256 votesUphold;     // голосов "оставить как есть"
+        uint256 votesOverturn;   // голосов "перевернуть"
     }
 
     struct Data {
@@ -74,6 +81,8 @@ library ArbiterRegistryStorage {
         // ── Sybil-resistance: forfeitable bond ──
         mapping(address => uint256)        arbiterBond;           // arbiter → залоченный USDC-бонд
         mapping(address => uint256)        openClaimCount;        // arbiter → сколько споров сейчас забрано и не закрыто
+        // ── Appeal voting ──
+        mapping(address => mapping(address => bool)) hasVotedAppeal; // agreement → arbiter → уже проголосовал
     }
 
     function data() internal pure returns (Data storage d) {
@@ -100,6 +109,10 @@ contract ArbiterRegistryFacet {
     uint256 private constant DEMOTION_XP_RESET            = 2500; // фиксированный сброс при снятии — не вычитание
     uint256 private constant ARBITER_BOND                 = 50_000_000; // 50 USDC (6 decimals) — форфейтится при демоушене, возвращается при resignAsArbiter()
 
+    uint256 private constant APPEAL_REVIEW_WINDOW = 4 days;     // столько же, сколько DISPUTE_WINDOW даёт арбитру
+    uint256 private constant APPEAL_MIN_VOTES     = 3;          // кворум других арбитров
+    uint256 private constant APPEAL_DEPOSIT       = 20_000_000; // 20 USDC (6 decimals) — flat, НЕ % от суммы сделки
+
     // -------- EVENTS --------
 
     event ArbiterAdded(address indexed arbiter);
@@ -121,6 +134,7 @@ contract ArbiterRegistryFacet {
     event RewardPerDisputeUpdated(uint256 newReward);
     event DAOAddressSet(address indexed daoAddress);
     event StuckVerdictAutoCleared(address indexed agreement);
+    event AppealRaised(address indexed agreement, address indexed appellant);
     event ArbiterDemoted(address indexed arbiter);
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
 
@@ -143,6 +157,10 @@ contract ArbiterRegistryFacet {
     error InsufficientXP(uint256 have, uint256 need);
     error NoVerdict();
     error DisputeWindowPassed();
+    error NotLosingParty();
+    error AlreadyAppealed();
+    error AppealWindowClosed();
+    error InsufficientArbitersForAppeal();
     error AlreadyFinalized();
     error VerdictFrozenError();
     error VerdictAlreadySubmitted();
@@ -395,13 +413,19 @@ contract ArbiterRegistryFacet {
         if (block.timestamp > disputedAt + disputeWindow) revert DisputeWindowPassed();
 
         d.pendingVerdicts[agreement] = ArbiterRegistryStorage.PendingVerdict({
-            arbiter:     caller,
-            clientWins:  clientWins,
-            submittedAt: block.timestamp,
-            frozen:      false,
-            finalized:   false,
-            overturned:  false,
-            executing:   false
+            arbiter:        caller,
+            clientWins:     clientWins,
+            submittedAt:    block.timestamp,
+            frozen:         false,
+            finalized:      false,
+            overturned:     false,
+            executing:      false,
+            appealed:       false,
+            appealResolved: false,
+            appellant:      address(0),
+            appealDeadline: 0,
+            votesUphold:    0,
+            votesOverturn:  0
         });
 
         emit VerdictSubmitted(agreement, caller, clientWins);
@@ -549,6 +573,54 @@ contract ArbiterRegistryFacet {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         d.pendingVerdicts[agreement].frozen = false;
         emit VerdictUnfrozen(agreement);
+    }
+
+    // -------- APPEAL FLOW (user-initiated, pre-finalization only) --------
+
+    /// @notice Проигравшая сторона оспаривает вердикт до того как деньги ушли исполнителю/клиенту.
+    /// Требует APPEAL_DEPOSIT — флэт, не % от суммы сделки (сумма выбрана сторонами, ей нельзя
+    /// доверять как входу для чего-либо, что можно проиграть/выиграть).
+    function raiseAppeal(address agreement) external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
+
+        if (v.submittedAt == 0) revert NoVerdict();
+        if (v.finalized) revert AlreadyFinalized();
+        // Checked before `frozen`: raiseAppeal() itself sets frozen=true as a side effect, so
+        // once appealed, frozen is always already true too — checking frozen first would make
+        // AlreadyAppealed unreachable on a second call to this same function.
+        if (v.appealed) revert AlreadyAppealed();
+        if (v.frozen) revert VerdictFrozenError();
+        if (block.timestamp >= v.submittedAt + FINALIZE_DELAY) revert AppealWindowClosed();
+
+        (bool clientOk, bytes memory clientData) = agreement.staticcall(abi.encodeWithSignature("client()"));
+        (bool execOk,   bytes memory execData)   = agreement.staticcall(abi.encodeWithSignature("executor()"));
+        require(clientOk && execOk, "ArbiterRegistry: failed to read parties");
+        address agreementClient   = abi.decode(clientData, (address));
+        address agreementExecutor = abi.decode(execData,   (address));
+
+        bool callerIsLosingClient   = caller == agreementClient   && !v.clientWins;
+        bool callerIsLosingExecutor = caller == agreementExecutor &&  v.clientWins;
+        if (!callerIsLosingClient && !callerIsLosingExecutor) revert NotLosingParty();
+
+        uint256 eligibleVoters;
+        uint256 len = d.arbiterList.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (d.arbiterList[i] != v.arbiter) eligibleVoters++;
+        }
+        if (eligibleVoters < APPEAL_MIN_VOTES) revert InsufficientArbitersForAppeal();
+
+        address usdc = FactoryStorage.store().usdc;
+        bool ok = IUSDCFull(usdc).transferFrom(caller, address(this), APPEAL_DEPOSIT);
+        require(ok, "ArbiterRegistry: deposit transfer failed");
+
+        v.appealed       = true;
+        v.frozen         = true;
+        v.appellant      = caller;
+        v.appealDeadline = block.timestamp + APPEAL_REVIEW_WINDOW;
+
+        emit AppealRaised(agreement, caller);
     }
 
     // -------- REWARDS --------

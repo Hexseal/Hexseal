@@ -124,7 +124,7 @@ contract DiamondTest is Test {
         ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](39);
+        bytes4[] memory arbiterSelectors = new bytes4[](40);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -165,6 +165,7 @@ contract DiamondTest is Test {
         arbiterSelectors[36] = ArbiterRegistryFacet.getArbiterBond.selector;
         arbiterSelectors[37] = ArbiterRegistryFacet.getOpenClaimCount.selector;
         arbiterSelectors[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        arbiterSelectors[39] = ArbiterRegistryFacet.raiseAppeal.selector;
 
         // ReputationFacet selectors
         bytes4[] memory reputationSelectors = new bytes4[](8);
@@ -245,6 +246,44 @@ contract DiamondTest is Test {
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, true);
 
         ArbiterRegistryFacet(address(diamond)).overturnVerdict(agreementAddr, false);
+    }
+
+    // Fresh deploy -> fund -> activate -> dispute -> claim -> submitVerdict cycle, stopping
+    // right before finalization — the starting state every appeal test needs. `clientWins`
+    // is the arbiter's ruling (true = client wins, executor loses and can appeal, and vice
+    // versa).
+    function _disputeToVerdict(address cli, address exc, bool clientWins) internal returns (address agreementAddr) {
+        usdc.mint(cli, 1_000_000 * 10**6);
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10**6);
+        vm.prank(cli);
+        agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            cli, exc, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
+        );
+        vm.prank(cli);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agreementAddr).fund();
+        vm.prank(exc);
+        Agreement(agreementAddr).activate();
+        vm.prank(cli);
+        Agreement(agreementAddr).raiseDispute();
+
+        _claimDispute(agreementAddr);
+
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, clientWins);
+    }
+
+    // Registers 3 extra arbiters (beyond the default `arbiter`) so appeal quorum
+    // (APPEAL_MIN_VOTES = 3 others) is always reachable in appeal tests.
+    function _addAppealQuorumArbiters() internal returns (address a2, address a3, address a4) {
+        a2 = address(0x30);
+        a3 = address(0x31);
+        a4 = address(0x32);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(a2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(a3);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(a4);
     }
 
     // Новый флоу: арбитр через Diamond (submitVerdict → finalizeVerdict)
@@ -2328,5 +2367,79 @@ contract DiamondTest is Test {
 
         // After resolution, the claim should be cleared by Agreement's callback
         assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeClaimer(agreementAddr), address(0));
+    }
+
+    function testRaiseAppeal_LosingExecutorCanAppeal() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true); // client wins, executor loses
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+
+        uint256 diamondBalBefore = usdc.balanceOf(address(diamond));
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+        assertEq(usdc.balanceOf(address(diamond)), diamondBalBefore + 20 * 10**6);
+
+        // Frozen — finalizeVerdict can't proceed until the appeal resolves.
+        vm.warp(block.timestamp + 24 hours + 1);
+        vm.expectRevert(ArbiterRegistryFacet.VerdictFrozenError.selector);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
+    }
+
+    function testRaiseAppeal_RevertsForWinningParty() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true); // client wins
+
+        usdc.mint(client, 100 * 10**6);
+        vm.prank(client);
+        usdc.approve(address(diamond), 20 * 10**6);
+
+        vm.prank(client); // client already won — not the losing party
+        vm.expectRevert(ArbiterRegistryFacet.NotLosingParty.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+    }
+
+    function testRaiseAppeal_RevertsIfAlreadyAppealed() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 40 * 10**6);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(executor);
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyAppealed.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+    }
+
+    function testRaiseAppeal_RevertsAfterWindowCloses() public {
+        _addAppealQuorumArbiters();
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+
+        vm.warp(block.timestamp + 24 hours + 1);
+        vm.prank(executor);
+        vm.expectRevert(ArbiterRegistryFacet.AppealWindowClosed.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+    }
+
+    function testRaiseAppeal_RevertsWithTooFewArbiters() public {
+        // No extra arbiters registered — only the default `arbiter` exists.
+        address agr = _disputeToVerdict(client, executor, true);
+
+        usdc.mint(executor, 100 * 10**6);
+        vm.prank(executor);
+        usdc.approve(address(diamond), 20 * 10**6);
+
+        vm.prank(executor);
+        vm.expectRevert(ArbiterRegistryFacet.InsufficientArbitersForAppeal.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
     }
 }
