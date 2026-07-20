@@ -1024,6 +1024,8 @@ function ClosedJobsSection({ jobs }: { jobs: { id: bigint; job: JobRecord }[] })
 
 export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { address: string; onDealCreated?: () => void; readOnly?: boolean; hideClosed?: boolean }) {
   const tj = useTranslations('dashboard.listings');
+  const t = useTranslations();
+  const mountedRef = useMountedRef();
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [confirmHire, setConfirmHire] = useState<{ jobId: bigint; executor: string; amount: bigint; deadlineDays: bigint } | null>(null);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
@@ -1032,13 +1034,13 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
-  const { data: jobIds, isLoading: loadingIds, refetch: refetchIds } = useReadContract({
+  const { data: jobIds, isLoading: loadingIds, isError: idsError, refetch: refetchIds } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
     abi: DIAMOND_ABI as Abi,
     functionName: 'getClientJobs',
     args: [address as `0x${string}`],
     query: { enabled: !!address },
-  }) as { data: bigint[] | undefined; isLoading: boolean; refetch: () => void };
+  }) as { data: bigint[] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
   const jobContracts = (jobIds || []).map(id => ({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -1047,7 +1049,7 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
     args: [id],
   }));
 
-  const { data: jobResults, isLoading: loadingJobs, refetch: refetchJobs } = useReadContracts({
+  const { data: jobResults, isLoading: loadingJobs, isError: jobsError, refetch: refetchJobs } = useReadContracts({
     contracts: jobContracts,
     query: { enabled: (jobIds || []).length > 0 },
   });
@@ -1077,6 +1079,9 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
 
   const refetch = () => { refetchIds(); refetchJobs(); refetchApplicants(); };
   const isLoading = loadingIds || loadingJobs;
+  // applicantResults (getApplicants) deliberately excluded — a failure there
+  // just means the applicant list doesn't show, not that the whole tab fails.
+  const isError = idsError || jobsError;
 
   const jobs: { id: bigint; job: JobRecord }[] = (jobIds || [])
     .map((id, i) => ({ id, job: jobResults?.[i]?.result as JobRecord | undefined }))
@@ -1096,7 +1101,7 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Cancel failed');
     } finally {
-      setBusyJobId(null);
+      if (mountedRef.current) setBusyJobId(null);
     }
   };
 
@@ -1113,12 +1118,12 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
       if (result.agreementAddr && result.agreementAddr !== ZERO) {
         setTimeout(() => router.push(`/deal/${result.agreementAddr}`), 1500);
       } else {
-        setTimeout(() => { refetch(); onDealCreated?.(); setBusyJobId(null); }, 2000);
+        setTimeout(() => { refetch(); onDealCreated?.(); if (mountedRef.current) setBusyJobId(null); }, 2000);
       }
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Accept failed');
     } finally {
-      if (!success) setBusyJobId(null);
+      if (!success && mountedRef.current) setBusyJobId(null);
     }
   };
 
@@ -1134,12 +1139,12 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
         DIAMOND_ABI as Abi,
       );
       toast.success(tj('job_updated'));
-      setEditTarget(null);
+      if (mountedRef.current) setEditTarget(null);
       setTimeout(refetch, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Edit failed');
     } finally {
-      setEditBusy(false);
+      if (mountedRef.current) setEditBusy(false);
     }
   };
 
@@ -1157,6 +1162,19 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
       ))}
     </div>
   );
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-400/5 px-4 py-3 text-xs text-red-400/80">
+          {t('common.error')}
+        </div>
+        <Button size="sm" variant="outline" className="border-white/15 text-white/60" onClick={refetch}>
+          {t('common.retry')}
+        </Button>
+      </div>
+    );
+  }
 
   if (jobs.length === 0) {
     return (
