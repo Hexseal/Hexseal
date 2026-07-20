@@ -70,7 +70,7 @@ export default function ProfilePage() {
   const { profile } = useProfile(validAddress ? profileAddress : undefined);
 
   const {
-    rawAgreements, isLoading, refetch,
+    rawAgreements, isLoading, error, refetch,
     xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
   } = useAgreementsSummary(validAddress ? profileAddress : undefined);
 
@@ -222,6 +222,7 @@ export default function ProfilePage() {
             refetch={refetch}
             editable={isOwner}
             hideClosedJobs
+            error={error}
           />
         </>
       )}

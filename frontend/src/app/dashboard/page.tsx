@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const t = useTranslations();
 
   const {
-    rawAgreements, isLoading, refetch,
+    rawAgreements, isLoading, error, refetch,
     xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
   } = useAgreementsSummary(address);
   const { jobs: mySearchJobs }     = useMyJobs(address);
@@ -79,6 +79,7 @@ export default function DashboardPage() {
           refetch={refetch}
           onListingsChange={refetch}
           isLoading={isLoading}
+          error={error}
         />
       </div>
   );
