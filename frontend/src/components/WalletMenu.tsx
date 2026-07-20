@@ -1,15 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { useProfile } from "@/hooks/useProfile";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { useAccount, useDisconnect, useBalance, useEnsName, useReadContract, useWriteContract, useSwitchChain } from "wagmi";
+import { useDisconnect, useSwitchChain } from "wagmi";
 import { appChainId, appChain } from "@/config/chain";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from "@/config/contracts";
-import type { Abi } from "viem";
+import type { WalletAccountData } from "@/hooks/useWalletAccountData";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -28,6 +25,10 @@ import { useXmtp } from "@/contexts/XmtpContext";
 
 
 interface Props {
+  /** Account/profile/contract data — computed once by Header via useWalletAccountData()
+   *  and shared between the mobile and desktop instances, so neither this component
+   *  nor its sibling re-runs the same balance/XP/role reads independently. */
+  data: WalletAccountData;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /** On mobile: hide Dashboard/Messages/Settings (already in bottom nav) */
@@ -36,21 +37,22 @@ interface Props {
   hideLocale?: boolean;
 }
 
-export default function WalletMenu({ open, onOpenChange, hideNavItems = false, hideLocale = false }: Props) {
+export default function WalletMenu({ data, open, onOpenChange, hideNavItems = false, hideLocale = false }: Props) {
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
   const { status: xmtpStatus, disable: disableXmtp, retry: retryXmtp } = useXmtp();
-  const { address, isConnected, status, chain } = useAccount();
-  const { disconnect } = useDisconnect();
+  const {
+    address, isConnected, status, isWrongChain,
+    displayText, avatarUrl, usdcBalance,
+    isArbiter, isOwner, canApplyAsArbiter, applyPending, handleApplyAsArbiter,
+  } = data;
+  const { disconnectAsync } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
-  const isWrongChain = isConnected && !!chain && chain.id !== appChainId;
   const { openConnectModal } = useConnectModal();
-  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const { displayName, avatarUrl: profileAvatarUrl } = useProfile(address);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -62,80 +64,6 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
       document.cookie = 'has-wallet=; path=/; max-age=0; SameSite=Lax';
     }
   }, [isConnected, status]);
-
-  // ENS name — disabled on Base Sepolia (no ENS registry on testnet)
-  const { data: ensName } = useEnsName({
-    address: address as `0x${string}`,
-    chainId: appChainId,
-    query: { enabled: false },
-  });
-
-  // Arbiter check
-  const { data: isArbiter } = useReadContract({
-    address: CONTRACTS.diamond,
-    abi: ARBITER_REGISTRY_ABI as Abi,
-    functionName: "isRegisteredArbiter",
-    args: [address ?? "0x0000000000000000000000000000000000000000"],
-    query: { enabled: !!address },
-  }) as { data: boolean | undefined };
-
-  // DAO active check
-  const { data: daoActive } = useReadContract({
-    address: CONTRACTS.diamond,
-    abi: ARBITER_REGISTRY_ABI as Abi,
-    functionName: "isDaoActive",
-    query: { enabled: !!address },
-  }) as { data: boolean | undefined };
-
-  // On-chain XP
-  const { data: onchainXP } = useReadContract({
-    address: CONTRACTS.diamond,
-    abi: REPUTATION_ABI as Abi,
-    functionName: "getXP",
-    args: [address ?? "0x0000000000000000000000000000000000000000"],
-    query: { enabled: !!address },
-  }) as { data: bigint | undefined };
-
-  const { writeContractAsync: applyAsArbiterWrite, isPending: applyPending } = useWriteContract();
-
-  const canApplyAsArbiter = daoActive && !isArbiter && !!onchainXP && onchainXP >= 3000n;
-
-  const handleApplyAsArbiter = async () => {
-    try {
-      await applyAsArbiterWrite({
-        address: CONTRACTS.diamond,
-        abi: ARBITER_REGISTRY_ABI as Abi,
-        functionName: "applyAsArbiter",
-      });
-      toast.success(t("wallet.arbiter_apply_success"));
-    } catch (err: unknown) {
-      const e = err as { shortMessage?: string; message?: string };
-      toast.error(e?.shortMessage || e?.message || t("common.error"));
-    }
-  };
-
-  // Owner check
-  const { data: diamondOwner } = useReadContract({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI as Abi,
-    functionName: "owner",
-    query: { enabled: !!address },
-  }) as { data: string | undefined };
-  const isOwner = !!address && !!diamondOwner &&
-    address.toLowerCase() === diamondOwner.toLowerCase();
-
-  // USDC balance
-  const { data: usdcBalanceData } = useBalance({
-    address: address,
-    token: CONTRACTS.usdc as `0x${string}`,
-    query: { enabled: !!address },
-  });
-  const usdcBalance = usdcBalanceData?.value ?? BigInt(0);
-
-  // Display name priority: ENS > profile name > truncated address
-  const displayText = ensName || displayName || (address ? shortAddr(address) : "");
-  // Avatar priority: profile > effigy identicon
-  const avatarUrl = profileAvatarUrl || (address ? `https://effigy.im/a/${address}.svg` : "");
 
   const handleCopy = async () => {
     if (!address) return;
@@ -149,11 +77,36 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
     }
   };
 
+  const handleSwitchChain = async () => {
+    try {
+      await switchChainAsync({ chainId: appChainId });
+    } catch (err: unknown) {
+      const e = err as { name?: string; message?: string };
+      // Silently ignore the user closing the wallet's network-switch prompt —
+      // only surface genuine failures (unsupported chain, RPC error, etc.),
+      // which previously vanished with no feedback at all.
+      if (e?.name === 'UserRejectedRequestError' || /user rejected/i.test(e?.message ?? '')) return;
+      toast.error(e?.message || t("common.error"));
+    }
+  };
+
   const handleDisconnect = useCallback(() => {
     setDisconnecting(true);
-    // Brief fade-out, then soft-navigate (no hard reload = no squeezing)
-    setTimeout(() => {
-      disconnect();
+    // Brief fade-out, then hard-navigate.
+    //
+    // This MUST be a real navigation, not router.push(). Wagmi's WalletConnect
+    // connector caches its EthereumProvider in a module-level closure variable
+    // that lives for the tab's lifetime — disconnect() never resets it (it even
+    // silently swallows "No matching key", the exact error a stale session
+    // throws, without clearing the cached provider's in-memory session). A soft
+    // SPA navigation leaves that stale provider alive, so the next connect()
+    // call reuses its dead session instead of starting a fresh handshake — that
+    // mismatch is what makes reconnect hang forever waiting on WalletConnect.
+    // Only a full reload tears down the module and forces a clean provider.
+    setTimeout(async () => {
+      try {
+        await disconnectAsync();
+      } catch {}
       document.cookie = 'has-wallet=; path=/; max-age=0; SameSite=Lax';
       try {
         const keys = Object.keys(localStorage).filter(k =>
@@ -161,9 +114,15 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
         );
         keys.forEach(k => localStorage.removeItem(k));
       } catch {}
-      router.push('/');
+      // WalletConnect's Core also keeps its session/pairing/keychain state in
+      // IndexedDB (WALLET_CONNECT_V2_INDEXED_DB), not localStorage — clear that
+      // too so a fresh provider (after the reload below) has nothing stale to resume.
+      try {
+        indexedDB.deleteDatabase('WALLET_CONNECT_V2_INDEXED_DB');
+      } catch {}
+      window.location.assign('/');
     }, 280);
-  }, [disconnect, router]);
+  }, [disconnectAsync]);
 
   // While mounting or wagmi is reconnecting a saved session: show a fixed-size
   // skeleton so the header right column doesn't shift when the wallet button appears.
@@ -282,7 +241,7 @@ export default function WalletMenu({ open, onOpenChange, hideNavItems = false, h
             <div className="p-2">
               <button
                 type="button"
-                onClick={async () => { try { await switchChainAsync({ chainId: appChainId }); } catch {} }}
+                onClick={handleSwitchChain}
                 className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 transition-colors"
               >
                 <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />

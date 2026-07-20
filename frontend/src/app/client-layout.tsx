@@ -100,7 +100,6 @@ function ChatLayoutInner({
 
   return (
     <>
-      <Header />
       <main
         className="flex flex-col overflow-hidden"
         style={{
@@ -193,16 +192,21 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   // Single XmtpProvider wraps all layout branches so it survives route changes.
   // Three separate <XmtpProvider> wrappers (one per branch) would remount on every
   // chat ↔ home ↔ other navigation, resetting the init state and triedRef.
+  //
+  // <Header/> is hoisted above the branches for the same reason: it used to be
+  // rendered separately inside each branch (plus a 4th copy in the chat Suspense
+  // fallback), so React treated it as a brand-new subtree on every chat ↔ home ↔
+  // other navigation and remounted it — resetting WalletMenu's local state and
+  // re-firing every account/profile/contract read it holds. One instance here
+  // survives all of that; only the content below it changes per branch.
   return (
     <XmtpProvider>
+      <Header />
       {isChatPage ? (
         <Suspense fallback={
-          <>
-            <Header />
-            <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
-              {children}
-            </main>
-          </>
+          <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
+            {children}
+          </main>
         }>
           <ChatLayoutInner pathname={pathname ?? ''} modal={modal}>
             {children}
@@ -210,7 +214,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         </Suspense>
       ) : isHome ? (
         <>
-          <Header />
           <main className="flex-1">
             <PageFade pathname={pathname ?? ''}>{children}</PageFade>
           </main>
@@ -222,7 +225,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         <>
           {topScrim}
           {bottomScrim}
-          <Header />
           <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
             <PageFade pathname={pathname ?? ''}>
               {children}

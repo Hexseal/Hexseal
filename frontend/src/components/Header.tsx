@@ -2,14 +2,11 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { useAccount } from "wagmi";
 import { usePathname, useRouter } from "next/navigation";
 import WalletMenu from "@/components/WalletMenu";
 import NotificationCenter from "@/components/NotificationCenter";
 import { Briefcase, User, ShieldCheck, ArrowLeft } from "lucide-react";
-import { useReadContract } from "wagmi";
-import { ARBITER_REGISTRY_ABI, CONTRACTS } from "@/config/contracts";
-import type { Abi } from "viem";
+import { useWalletAccountData } from "@/hooks/useWalletAccountData";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
 
@@ -45,7 +42,8 @@ function NavLink({
 }
 
 export default function Header() {
-  const { isConnected, address } = useAccount();
+  const accountData = useWalletAccountData();
+  const { isConnected, isArbiter } = accountData;
   const [openPanelMobile, setOpenPanelMobile] = useState<"notifications" | "wallet" | null>(null);
   const [openPanelDesktop, setOpenPanelDesktop] = useState<"notifications" | "wallet" | null>(null);
   const pathname = usePathname();
@@ -53,14 +51,6 @@ export default function Header() {
   const showBack = pathname !== "/";
   const isHome = pathname === "/";
   const t = useTranslations();
-
-  const { data: isArbiter } = useReadContract({
-    address: CONTRACTS.diamond,
-    abi: ARBITER_REGISTRY_ABI as Abi,
-    functionName: "isRegisteredArbiter",
-    args: [address ?? "0x0000000000000000000000000000000000000000"],
-    query: { enabled: !!address },
-  }) as { data: boolean | undefined };
 
   const glassStyle = {
     boxShadow: "0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)",
@@ -112,6 +102,7 @@ export default function Header() {
               />
             </div>
             <WalletMenu
+              data={accountData}
               open={openPanelMobile === "wallet"}
               onOpenChange={(o) => setOpenPanelMobile(o ? "wallet" : null)}
               hideNavItems
@@ -183,6 +174,7 @@ export default function Header() {
                 />
               </div>
               <WalletMenu
+                data={accountData}
                 open={openPanelDesktop === "wallet"}
                 onOpenChange={(o) => setOpenPanelDesktop(o ? "wallet" : null)}
                 hideLocale={isHome}
