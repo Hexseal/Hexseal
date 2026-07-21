@@ -234,6 +234,14 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
     );
   }
 
+  // Ask the browser to keep OPFS durable so the MLS identity survives across
+  // sessions. Without this, storage-tight mobile browsers (Brave especially)
+  // evict the XMTP db between visits — forcing a brand-new installation, a fresh
+  // wallet signature, and lost history every time (and burning toward the 10/10
+  // installation cap). Best-effort and silent: never blocks init, granted by the
+  // browser's own engagement heuristics.
+  try { await navigator.storage.persist?.(); } catch { /* not supported */ }
+
   const address = walletClient.account!.address.toLowerCase();
 
   // Return already-built client
