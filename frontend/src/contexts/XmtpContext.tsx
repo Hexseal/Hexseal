@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb } from '@/lib/xmtp';
+import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb, checkXmtpDbExists } from '@/lib/xmtp';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
 
@@ -54,6 +54,9 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   // attempt can tell it's been superseded and skip applying its result — see
   // the comment above the auto-init effect below for the race this closes.
   const attemptIdRef = useRef(0);
+  // true for one run when the user explicitly tapped "Enable messaging" (retry()),
+  // so that run is allowed to prompt a wallet signature; auto-on-connect runs aren't.
+  const manualRef    = useRef(false);
 
   // Clear session when wallet address switches
   useEffect(() => {
@@ -94,9 +97,31 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     const myAttempt = ++attemptIdRef.current;
     const isStale = () => attemptIdRef.current !== myAttempt || disabledRef.current.has(addr);
 
+    // Was this run triggered by an explicit Enable-messaging tap (retry()) or is it
+    // the automatic on-connect run? Consume the flag so the next auto-run is auto.
+    const manual = manualRef.current;
+    manualRef.current = false;
+
     (async () => {
       try {
-        xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)}`);
+        // Never pop a wallet signature during the connect handshake. On mobile,
+        // connecting already deep-links out to the wallet app; if XMTP auto-fires
+        // Client.create()'s signature the instant walletClient is ready, that second
+        // request collides with the WalletConnect return and bounces the user back to
+        // the wallet picker (and piles WASM memory onto the fragile connect window).
+        // So auto-resume messaging only when the OPFS keys already exist (no signature
+        // needed); for a first-time setup wait for an explicit Enable-messaging tap.
+        if (!manual) {
+          const dbExists = await checkXmtpDbExists(addr);
+          if (isStale()) return;
+          if (!dbExists) {
+            xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} skip-nodb`);
+            setStatus('error');   // WalletMenu renders this as "Enable messaging"
+            setError(null);
+            return;
+          }
+        }
+        xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} ${manual ? 'manual' : 'auto'}`);
         await initXmtpClient(walletClient);
         if (isStale()) return;
         if (typeof window !== 'undefined') {
@@ -150,6 +175,8 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   const retry = useCallback(() => {
     if (!address) return;
     const addr = address.toLowerCase();
+    // Explicit user action — this run is allowed to prompt a wallet signature.
+    manualRef.current = true;
     // Evict any stuck in-flight attempt first — otherwise the auto-init effect's
     // initXmtpClient() call below would just re-attach to the same zombie promise
     // (its own dedup) instead of actually starting over.

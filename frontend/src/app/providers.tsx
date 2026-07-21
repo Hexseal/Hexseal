@@ -5,7 +5,7 @@ import { Provider as UrqlProvider } from 'urql'
 import { createGraphClient } from '@/lib/graph'
 
 const graphClient = createGraphClient()
-import { WagmiProvider, createStorage, useAccount, useWalletClient, useReconnect } from "wagmi";
+import { WagmiProvider, createStorage, useAccount, useWalletClient } from "wagmi";
 import { http, fallback } from "viem";
 import {
   RainbowKitProvider,
@@ -43,17 +43,32 @@ import { NotificationsProvider } from "@/contexts/NotificationsContext";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
-// Snapshot last load's XMTP breadcrumb trail *before* this load's XMTP code starts
-// overwriting it. Module eval runs during hydration — before any React effect, so
-// it always beats initXmtpClient()'s crumbs. After a crash-reload, the "-prev" copy
-// holds exactly what ran right before the tab died (see xmtpCrumb in lib/xmtp.ts).
+// ── Debug breadcrumb trail (temporary Android diagnostic) ──────────────────────
+// A shared localStorage trail that both the wallet-connect tracer (below) and the
+// XMTP init path (xmtpCrumb in lib/xmtp.ts) append to. localStorage survives a tab
+// crash *and* a tab kill+recreate, so after the tester returns from the wallet app
+// we can read the exact sequence — and, via the per-load id, tell whether Android
+// threw the whole tab away and recreated it (trail restarts with a new load id) or
+// kept it alive (same id, more lines appended).
 const XMTP_CRUMB_KEY = "hexseal-xmtp-crumb";
 const XMTP_DEBUG_KEY = "hexseal-xmtp-debug";
+function dbgCrumb(step: string): void {
+  try {
+    const t = new Date().toISOString().slice(11, 23);
+    const prev = localStorage.getItem(XMTP_CRUMB_KEY);
+    const trail = (prev ? prev.split("\n") : []).concat(`${t} ${step}`).slice(-28);
+    localStorage.setItem(XMTP_CRUMB_KEY, trail.join("\n"));
+  } catch { /* localStorage unavailable */ }
+}
+// Runs at module eval — before any React effect — so it always beats the app's own
+// crumbs. Snapshots the previous load's trail to "-prev" (survives a crash), then
+// starts this load's trail with a fresh random id.
 if (typeof window !== "undefined") {
   try {
     const live = localStorage.getItem(XMTP_CRUMB_KEY);
     if (live) localStorage.setItem(`${XMTP_CRUMB_KEY}-prev`, live);
     localStorage.removeItem(XMTP_CRUMB_KEY);
+    dbgCrumb(`load:${Math.random().toString(36).slice(2, 7)} ${location.pathname}`);
   } catch { /* localStorage unavailable */ }
 }
 
@@ -198,60 +213,56 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
   );
 }
 
-// On Android, connecting via WalletConnect deep-links out to the wallet app, which
-// backgrounds this tab. Mobile browsers suspend the WC relay WebSocket while
-// backgrounded, so the wallet's approval arrives on a dead socket and wagmi's
-// connector never fires "connect" — useAccount() stays 'disconnected' even though
-// WalletConnect Core has already persisted the session to IndexedDB. That's why a
-// full page reload "fixes" it: reconnectOnMount re-reads the persisted session.
-// This does the same reconnect the moment the tab returns to the foreground, so the
-// user never has to reload. reconnect() is a no-op when there's nothing persisted,
-// so firing it on every foreground-while-disconnected is safe.
-function WalletReconnector() {
-  const { status } = useAccount();
-  const { reconnect } = useReconnect();
-  const statusRef = useRef(status);
-  useEffect(() => { statusRef.current = status; }, [status]);
+// Traces the wagmi connection state machine into the debug trail so the tester can
+// see, on screen, how far the WalletConnect handshake actually got after returning
+// from the wallet app: disconnected → connecting → connected (good) vs. bouncing
+// back to disconnected (the bug). Combined with the per-load id above, a trail that
+// *restarts* with a new load id on return proves Android recreated the whole tab.
+function WalletConnectTracer() {
+  const { status, address } = useAccount();
+  const last = useRef("");
   useEffect(() => {
-    const tryReconnect = () => {
-      if (document.visibilityState !== "visible") return;
-      if (statusRef.current === "disconnected") reconnect();
-    };
-    document.addEventListener("visibilitychange", tryReconnect);
-    window.addEventListener("focus", tryReconnect);
-    return () => {
-      document.removeEventListener("visibilitychange", tryReconnect);
-      window.removeEventListener("focus", tryReconnect);
-    };
-  }, [reconnect]);
+    const line = `wc:${status}${address ? " " + address.slice(0, 6) : ""}`;
+    if (line !== last.current) { last.current = line; dbgCrumb(line); }
+  }, [status, address]);
   return null;
 }
 
-// Temporary Android crash diagnostic. Open the app once with ?xmtpdebug=1 to arm it
-// (?xmtpdebug=0 to disarm). While armed, every page load shows the XMTP breadcrumb
-// trail from the *previous* load in a fixed banner — so after the tab crashes and
-// reloads, the tester can read which XMTP operation was in flight when it died,
-// with no USB / remote debugger needed. Remove once the crash is diagnosed.
+// Temporary Android diagnostic overlay. Arm once with ?xmtpdebug=1 (?xmtpdebug=0 to
+// disarm). While armed it shows, live (refreshing every second, no reload needed),
+// this load's trail plus the previous load's trail — so both the no-reload connect
+// flow AND the crash-on-reload are visible on the device with no USB / debugger.
 function XmtpDebugOverlay() {
-  const [trail, setTrail] = useState<string | null>(null);
+  const [armed, setArmed] = useState(false);
+  const [text, setText] = useState("");
   const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
+    let iv: ReturnType<typeof setInterval> | undefined;
     try {
       const q = new URLSearchParams(window.location.search).get("xmtpdebug");
       if (q === "1") localStorage.setItem(XMTP_DEBUG_KEY, "1");
       if (q === "0") localStorage.removeItem(XMTP_DEBUG_KEY);
-      if (localStorage.getItem(XMTP_DEBUG_KEY) === "1") {
-        setTrail(localStorage.getItem(`${XMTP_CRUMB_KEY}-prev`) || "(no XMTP steps recorded before this load)");
-      }
+      if (localStorage.getItem(XMTP_DEBUG_KEY) !== "1") return;
+      setArmed(true);
+      const read = () => {
+        try {
+          const prev = localStorage.getItem(`${XMTP_CRUMB_KEY}-prev`) || "";
+          const cur = localStorage.getItem(XMTP_CRUMB_KEY) || "(no steps yet)";
+          setText((prev ? `── previous load ──\n${prev}\n\n` : "") + `── this load ──\n${cur}`);
+        } catch { /* ignore */ }
+      };
+      read();
+      iv = setInterval(read, 1000);
     } catch { /* localStorage unavailable */ }
+    return () => { if (iv) clearInterval(iv); };
   }, []);
-  if (!trail || dismissed) return null;
+  if (!armed || dismissed) return null;
   return (
-    <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 99999, background: "rgba(0,0,0,0.92)", color: "#9f9", font: "11px/1.45 monospace", padding: "8px 10px", borderTop: "1px solid #2a2", whiteSpace: "pre-wrap", maxHeight: "45vh", overflowY: "auto" }}>
-      <div style={{ color: "#fff", marginBottom: 4 }}>XMTP trail — last steps before this load (crash lands on the last line):</div>
-      {trail}
+    <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 99999, background: "rgba(0,0,0,0.93)", color: "#9f9", font: "11px/1.45 monospace", padding: "8px 10px", borderTop: "1px solid #2a2", whiteSpace: "pre-wrap", maxHeight: "50vh", overflowY: "auto" }}>
+      <div style={{ color: "#fff", marginBottom: 4 }}>Hexseal debug trail (live) — newest at bottom:</div>
+      {text}
       <div style={{ marginTop: 8, display: "flex", gap: 12 }}>
-        <button onClick={() => { try { localStorage.removeItem(`${XMTP_CRUMB_KEY}-prev`); } catch {} setTrail("(cleared)"); }} style={{ color: "#ff8", background: "none", border: "1px solid #663", padding: "2px 10px", borderRadius: 4 }}>clear</button>
+        <button onClick={() => { try { localStorage.removeItem(XMTP_CRUMB_KEY); localStorage.removeItem(`${XMTP_CRUMB_KEY}-prev`); } catch {} }} style={{ color: "#ff8", background: "none", border: "1px solid #663", padding: "2px 10px", borderRadius: 4 }}>clear</button>
         <button onClick={() => setDismissed(true)} style={{ color: "#8ff", background: "none", border: "1px solid #366", padding: "2px 10px", borderRadius: 4 }}>close</button>
       </div>
     </div>
@@ -296,7 +307,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <WagmiProvider config={config}>
         <QueryClientProvider client={queryClient}>
           <VisibilityRefresher queryClient={queryClient} />
-          <WalletReconnector />
+          <WalletConnectTracer />
           <XmtpDebugOverlay />
           <NextThemesProvider attribute="class" forcedTheme="dark">
             <LocaleProvider>

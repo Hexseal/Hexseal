@@ -179,7 +179,7 @@ export function xmtpCrumb(step: string): void {
     const heap = mem ? ` [${Math.round(mem / 1048576)}mb]` : '';
     const t = new Date().toISOString().slice(11, 23);
     const prev = localStorage.getItem(CRUMB_KEY);
-    const trail = (prev ? prev.split('\n') : []).concat(`${t} ${step}${heap}`).slice(-16);
+    const trail = (prev ? prev.split('\n') : []).concat(`${t} ${step}${heap}`).slice(-28);
     localStorage.setItem(CRUMB_KEY, trail.join('\n'));
   } catch { /* localStorage unavailable — diagnostics are best-effort */ }
 }
