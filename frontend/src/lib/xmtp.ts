@@ -660,7 +660,11 @@ async function _buildPairConversations(
   const groups = await client.conversations.listGroups();
   const myInboxId = client.inboxId ?? '';
   const myLc = myAddress.toLowerCase();
-  const result: PairConversation[] = [];
+  // Keyed by peer address, NOT by group: the pre-persist-fix installation churn could
+  // leave several HSEAL-PAIR groups for the same pair (each new install couldn't see
+  // the old group, so it made a new one), which showed up as a separate one-message
+  // "chat" per group. Collapse them into a single row per contact (Telegram-style).
+  const byPeer = new Map<string, PairConversation>();
 
   for (const g of groups) {
     const name = g.name ?? '';
@@ -694,13 +698,21 @@ async function _buildPairConversations(
         }
       }
 
-      result.push({ group: g, peerAddress, lastText, lastAt, lastFromMe });
+      // Keep, per peer, the group whose latest message is newest — so the sidebar
+      // preview stays meaningful. Opening is by peer address (findOrCreatePairGroup
+      // converges on the canonical group), so which group object we keep here only
+      // affects the preview text, not which conversation opens.
+      const peerLc = peerAddress.toLowerCase();
+      const existing = byPeer.get(peerLc);
+      if (!existing || lastAt > existing.lastAt) {
+        byPeer.set(peerLc, { group: g, peerAddress, lastText, lastAt, lastFromMe });
+      }
     } catch {
       // skip malformed conversations
     }
   }
 
-  return result.sort((a, b) => b.lastAt - a.lastAt);
+  return [...byPeer.values()].sort((a, b) => b.lastAt - a.lastAt);
 }
 
 // Reads from local XMTP SQLite cache only — no network sync, returns instantly.
