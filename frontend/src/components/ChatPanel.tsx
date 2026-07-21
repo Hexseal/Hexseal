@@ -700,12 +700,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-white/30" />}
-            {!isLoading && isInitialized && (
-              <span className="flex items-center gap-1 text-[11px] text-emerald-400/60">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
-                live
-              </span>
-            )}
+            {/* No "live" badge here: a green dot next to someone's name reads as
+                "this person is online", and XMTP has no presence concept at all — it
+                only ever meant "my own stream is attached". The signal that actually
+                matters (a dead stream) is already surfaced by the streamDead banner. */}
             {!isLoading && error && <AlertCircle className="w-3.5 h-3.5 text-red-400/60" />}
             <span className="flex items-center gap-1 text-[11px] text-white/20">
               <Lock className="w-2.5 h-2.5" />E2E
