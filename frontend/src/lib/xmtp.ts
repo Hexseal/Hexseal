@@ -93,18 +93,25 @@ export async function checkXmtpDbExists(address: string): Promise<boolean> {
     // Primary: .entries() scan works in Chrome/Firefox.
     // On some WebKit/iOS versions it silently yields nothing even when files exist,
     // so we track whether it ever yielded an entry; if it did, the scan was complete.
-    let yieldedAny = false;
+    const seen: string[] = [];
+    let hit = false;
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const iter = (root as any).entries() as AsyncIterable<[string, FileSystemHandle]>;
       for await (const [name] of iter) {
-        yieldedAny = true;
-        if (name.startsWith(prefix)) return true;
+        seen.push(name);
+        if (name.startsWith(prefix)) hit = true;
       }
     } catch { /* entries() not supported — fall through to direct probe */ }
 
+    // Diagnostic: log what OPFS actually holds. Distinguishes "db evicted / never
+    // persisted" (n=0) from "db present but our xmtp-<addr> prefix didn't match it"
+    // (n>0, hit=false → detection bug: XMTP wrote it under a different name/layout).
+    xmtpCrumb(`dbcheck hit=${hit} n=${seen.length} [${seen.slice(0, 6).join('|')}]`);
+
+    if (hit) return true;
     // If entries() yielded at least one file we trust it found everything.
-    if (yieldedAny) return false;
+    if (seen.length > 0) return false;
 
     // entries() yielded nothing — could be iOS WebKit bug rather than truly empty.
     // Probe known file-name patterns the XMTP WASM runtime may use.
@@ -113,6 +120,7 @@ export async function checkXmtpDbExists(address: string): Promise<boolean> {
     for (const suffix of ['.db3', '.db', '-shm', '-wal', '']) {
       try {
         await rootHandle.getFileHandle(`${prefix}${suffix}`);
+        xmtpCrumb(`dbcheck probe-hit ${suffix}`);
         return true;
       } catch { /* not found with this suffix */ }
     }

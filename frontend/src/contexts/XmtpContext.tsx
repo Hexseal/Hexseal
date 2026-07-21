@@ -61,6 +61,15 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   // without re-subscribing / going stale in its useCallback closure.
   const statusRef    = useRef<XmtpStatus>(status);
   useEffect(() => { statusRef.current = status; }, [status]);
+  // Brave silently blocks XMTP's network/OPFS, so Client.create() there just spins
+  // to the 90s timeout with a generic message. Detect it once so we can tell the
+  // user WHY instead of leaving them on an endless spinner.
+  const isBraveRef   = useRef(false);
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const b = (navigator as any).brave;
+    if (b?.isBrave) b.isBrave().then((v: boolean) => { isBraveRef.current = v; }).catch(() => {});
+  }, []);
 
   // Clear session when wallet address switches
   useEffect(() => {
@@ -136,7 +145,11 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
       } catch (err: unknown) {
         if (isStale()) return;
         const raw = err instanceof Error ? err.message : 'Failed to enable messaging';
-        setError(trimXmtpError(raw));
+        setError(
+          isBraveRef.current && raw === 'XMTP_TIMEOUT'
+            ? 'Похоже, ты в Brave — его Shields блокируют мессенджер, поэтому он не подключается. Нажми на иконку льва в адресной строке, отключи Shields для этого сайта и попробуй снова. Либо открой сайт в Chrome.'
+            : trimXmtpError(raw),
+        );
         setStatus('error');
       }
     })();
