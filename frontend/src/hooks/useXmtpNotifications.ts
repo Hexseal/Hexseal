@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useAccount } from 'wagmi';
 import { usePathname } from 'next/navigation';
 import { toast } from 'react-hot-toast';
-import { getXmtpClientIfCached } from '@/lib/xmtp';
+import { getXmtpClientIfCached, xmtpCrumb } from '@/lib/xmtp';
 import { useXmtp } from '@/contexts/XmtpContext';
 import { pushNotif } from '@/lib/notifications';
 
@@ -44,15 +44,19 @@ export function useXmtpNotifications() {
         if (!client) return;
         if (cancelledRef.current) return;
 
+        xmtpCrumb('notif:sync-start');
         await client.conversations.sync();
         if (cancelledRef.current) return;
 
+        xmtpCrumb('notif:streamAll-start');
         const stream = await client.conversations.streamAllMessages();
         if (cancelledRef.current) { stream.return(); return; }
         streamRef.current = stream;
 
         // Build a map: conversationId → group name (for deal groups)
+        xmtpCrumb('notif:listGroups-start');
         const groups = await client.conversations.listGroups();
+        xmtpCrumb('notif:ready');
         const groupNameById = new Map<string, string>();
         for (const g of groups) groupNameById.set(g.id, g.name ?? '');
 

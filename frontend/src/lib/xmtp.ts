@@ -163,6 +163,27 @@ export function createXmtpSigner(
   } as unknown as Signer;
 }
 
+// ─── Crash breadcrumbs (temporary Android debug) ────────────────────────────────
+// The XMTP WASM worker can take down the whole browser tab on memory-tight Android
+// devices — and a crashing tab wipes the console before any remote debugger (which
+// we can't attach to a borrowed test phone anyway) could read it. So we drop a
+// timestamped step into localStorage before every heavy XMTP operation. localStorage
+// survives the crash, so the next page load can show exactly which operation was
+// in flight when the tab died. Key is mirrored (snapshot + reader) in providers.tsx.
+const CRUMB_KEY = 'hexseal-xmtp-crumb';
+export function xmtpCrumb(step: string): void {
+  try {
+    // WASM linear memory isn't counted here, but a climbing JS heap is still a hint.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mem = (performance as any)?.memory?.usedJSHeapSize as number | undefined;
+    const heap = mem ? ` [${Math.round(mem / 1048576)}mb]` : '';
+    const t = new Date().toISOString().slice(11, 23);
+    const prev = localStorage.getItem(CRUMB_KEY);
+    const trail = (prev ? prev.split('\n') : []).concat(`${t} ${step}${heap}`).slice(-16);
+    localStorage.setItem(CRUMB_KEY, trail.join('\n'));
+  } catch { /* localStorage unavailable — diagnostics are best-effort */ }
+}
+
 // ─── Client init ──────────────────────────────────────────────────────────────
 
 function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
@@ -230,6 +251,7 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   const signer = createXmtpSigner(walletClient, onSignStep);
   // dbPath: per-address OPFS path so different wallets on the same browser
   // don't share (and clobber) each other's MLS database.
+  xmtpCrumb(`init:create-start ${address.slice(0, 6)}`);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawCreate = Client.create(signer, { env: 'production', dbPath: `xmtp-${address}` } as any) as Promise<Client>;
 
@@ -245,6 +267,7 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
       // If network is unreachable (e.g. blocked by ISP/firewall), surfaces an error
       // instead of spinning forever. The user can retry after checking connectivity.
       const client = await withTimeout(rawCreate, 90_000, 'XMTP_TIMEOUT');
+      xmtpCrumb('init:create-done');
 
       if ((_generation.get(address) ?? 0) !== myGeneration) {
         // abandonXmtpInit() ran while Client.create() was still in flight — a
@@ -254,6 +277,7 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
         client.close();
         throw new Error('XMTP_ABANDONED');
       }
+      xmtpCrumb('init:ok');
 
       // Track installationId to detect OPFS clears across sessions.
       // We do NOT auto-revoke other installations here — revokeAllOtherInstallations()
@@ -269,6 +293,7 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
       _clientCache.set(address, client);
       return client;
     } catch (err) {
+      xmtpCrumb(`init:error ${err instanceof Error ? err.message.slice(0, 40) : 'unknown'}`);
       // Client.create() has no AbortSignal — timing out on it (or abandoning
       // it above) doesn't stop its WASM worker from running in the
       // background. If it resolves later, close it then instead of leaking

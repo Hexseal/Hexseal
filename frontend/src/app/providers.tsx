@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Provider as UrqlProvider } from 'urql'
 import { createGraphClient } from '@/lib/graph'
 
 const graphClient = createGraphClient()
-import { WagmiProvider, createStorage, useAccount, useWalletClient } from "wagmi";
+import { WagmiProvider, createStorage, useAccount, useWalletClient, useReconnect } from "wagmi";
 import { http, fallback } from "viem";
 import {
   RainbowKitProvider,
@@ -42,6 +42,20 @@ import { isPushSupported, enablePush } from "@/lib/webpush";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
+
+// Snapshot last load's XMTP breadcrumb trail *before* this load's XMTP code starts
+// overwriting it. Module eval runs during hydration — before any React effect, so
+// it always beats initXmtpClient()'s crumbs. After a crash-reload, the "-prev" copy
+// holds exactly what ran right before the tab died (see xmtpCrumb in lib/xmtp.ts).
+const XMTP_CRUMB_KEY = "hexseal-xmtp-crumb";
+const XMTP_DEBUG_KEY = "hexseal-xmtp-debug";
+if (typeof window !== "undefined") {
+  try {
+    const live = localStorage.getItem(XMTP_CRUMB_KEY);
+    if (live) localStorage.setItem(`${XMTP_CRUMB_KEY}-prev`, live);
+    localStorage.removeItem(XMTP_CRUMB_KEY);
+  } catch { /* localStorage unavailable */ }
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const chains = [appChain] as any;
@@ -184,6 +198,66 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
   );
 }
 
+// On Android, connecting via WalletConnect deep-links out to the wallet app, which
+// backgrounds this tab. Mobile browsers suspend the WC relay WebSocket while
+// backgrounded, so the wallet's approval arrives on a dead socket and wagmi's
+// connector never fires "connect" — useAccount() stays 'disconnected' even though
+// WalletConnect Core has already persisted the session to IndexedDB. That's why a
+// full page reload "fixes" it: reconnectOnMount re-reads the persisted session.
+// This does the same reconnect the moment the tab returns to the foreground, so the
+// user never has to reload. reconnect() is a no-op when there's nothing persisted,
+// so firing it on every foreground-while-disconnected is safe.
+function WalletReconnector() {
+  const { status } = useAccount();
+  const { reconnect } = useReconnect();
+  const statusRef = useRef(status);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => {
+    const tryReconnect = () => {
+      if (document.visibilityState !== "visible") return;
+      if (statusRef.current === "disconnected") reconnect();
+    };
+    document.addEventListener("visibilitychange", tryReconnect);
+    window.addEventListener("focus", tryReconnect);
+    return () => {
+      document.removeEventListener("visibilitychange", tryReconnect);
+      window.removeEventListener("focus", tryReconnect);
+    };
+  }, [reconnect]);
+  return null;
+}
+
+// Temporary Android crash diagnostic. Open the app once with ?xmtpdebug=1 to arm it
+// (?xmtpdebug=0 to disarm). While armed, every page load shows the XMTP breadcrumb
+// trail from the *previous* load in a fixed banner — so after the tab crashes and
+// reloads, the tester can read which XMTP operation was in flight when it died,
+// with no USB / remote debugger needed. Remove once the crash is diagnosed.
+function XmtpDebugOverlay() {
+  const [trail, setTrail] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get("xmtpdebug");
+      if (q === "1") localStorage.setItem(XMTP_DEBUG_KEY, "1");
+      if (q === "0") localStorage.removeItem(XMTP_DEBUG_KEY);
+      if (localStorage.getItem(XMTP_DEBUG_KEY) === "1") {
+        setTrail(localStorage.getItem(`${XMTP_CRUMB_KEY}-prev`) || "(no XMTP steps recorded before this load)");
+      }
+    } catch { /* localStorage unavailable */ }
+  }, []);
+  if (!trail || dismissed) return null;
+  return (
+    <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 99999, background: "rgba(0,0,0,0.92)", color: "#9f9", font: "11px/1.45 monospace", padding: "8px 10px", borderTop: "1px solid #2a2", whiteSpace: "pre-wrap", maxHeight: "45vh", overflowY: "auto" }}>
+      <div style={{ color: "#fff", marginBottom: 4 }}>XMTP trail — last steps before this load (crash lands on the last line):</div>
+      {trail}
+      <div style={{ marginTop: 8, display: "flex", gap: 12 }}>
+        <button onClick={() => { try { localStorage.removeItem(`${XMTP_CRUMB_KEY}-prev`); } catch {} setTrail("(cleared)"); }} style={{ color: "#ff8", background: "none", border: "1px solid #663", padding: "2px 10px", borderRadius: 4 }}>clear</button>
+        <button onClick={() => setDismissed(true)} style={{ color: "#8ff", background: "none", border: "1px solid #366", padding: "2px 10px", borderRadius: 4 }}>close</button>
+      </div>
+    </div>
+  );
+}
+
 // Forces all queries to refetch when user returns to the tab/PWA.
 // React Query's built-in refetchOnWindowFocus is unreliable in iOS standalone mode.
 function VisibilityRefresher({ queryClient }: { queryClient: QueryClient }) {
@@ -222,6 +296,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <WagmiProvider config={config}>
         <QueryClientProvider client={queryClient}>
           <VisibilityRefresher queryClient={queryClient} />
+          <WalletReconnector />
+          <XmtpDebugOverlay />
           <NextThemesProvider attribute="class" forcedTheme="dark">
             <LocaleProvider>
               <NotificationsProvider>

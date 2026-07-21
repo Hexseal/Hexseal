@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit } from '@/lib/xmtp';
+import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb } from '@/lib/xmtp';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
 
@@ -96,6 +96,7 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
 
     (async () => {
       try {
+        xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)}`);
         await initXmtpClient(walletClient);
         if (isStale()) return;
         if (typeof window !== 'undefined') {
@@ -127,6 +128,7 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
+        xmtpCrumb('ctx:convstream-start');
         const stream = await xmtp.conversations.stream();
         convStreamRef.current = stream as typeof convStreamRef.current;
         for await (const _ of stream) {
