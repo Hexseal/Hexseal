@@ -125,10 +125,17 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
         // So auto-resume messaging only when the OPFS keys already exist (no signature
         // needed); for a first-time setup wait for an explicit Enable-messaging tap.
         if (!manual) {
+          const enabledBefore = typeof window !== 'undefined'
+            && localStorage.getItem(registeredKey(addr)) === '1';
           const dbExists = await checkXmtpDbExists(addr);
           if (isStale()) return;
-          if (!dbExists) {
-            xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} skip-nodb`);
+          // Auto-resume silently only when this address enabled messaging before on
+          // this device (flag) AND libxmtp's OPFS data is still present — then
+          // Client.create() re-opens the persisted identity: fast, no signature,
+          // full history. Otherwise (first time, or storage was wiped) defer to an
+          // explicit Enable tap so we never surprise-sign during the connect flow.
+          if (!enabledBefore || !dbExists) {
+            xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} skip flag=${enabledBefore ? 1 : 0} db=${dbExists ? 1 : 0}`);
             setStatus('error');   // WalletMenu renders this as "Enable messaging"
             setError(null);
             return;

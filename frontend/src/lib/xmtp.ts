@@ -85,6 +85,20 @@ const installIdKey  = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
  *  We enumerate the OPFS root directory instead of exact-name lookup because
  *  the XMTP WASM runtime may append a suffix (.db, .db3, etc.) to dbPath.
  */
+/** True if an OPFS root entry name looks like XMTP/libxmtp storage.
+ *  Covers XMTP browser-sdk v7's layout (`.opfs-libxmtp-metadata` + the OPFS SAH
+ *  pool, e.g. `.opfs-sahpool`) as well as the older per-address `xmtp-<addr>` db
+ *  path used by earlier sessions. Broad on purpose — a false positive only means
+ *  we auto-resume messaging (which then no-ops if there's genuinely nothing to
+ *  open), whereas a false negative forces a needless manual Enable + re-create. */
+function isXmtpOpfsEntry(name: string, addressPrefix: string): boolean {
+  return (
+    name.startsWith(addressPrefix) ||
+    name.includes('libxmtp') ||
+    name.startsWith('.opfs-')
+  );
+}
+
 export async function checkXmtpDbExists(address: string): Promise<boolean> {
   try {
     const root   = await navigator.storage.getDirectory();
@@ -100,13 +114,12 @@ export async function checkXmtpDbExists(address: string): Promise<boolean> {
       const iter = (root as any).entries() as AsyncIterable<[string, FileSystemHandle]>;
       for await (const [name] of iter) {
         seen.push(name);
-        if (name.startsWith(prefix)) hit = true;
+        if (isXmtpOpfsEntry(name, prefix)) hit = true;
       }
     } catch { /* entries() not supported — fall through to direct probe */ }
 
     // Diagnostic: log what OPFS actually holds. Distinguishes "db evicted / never
-    // persisted" (n=0) from "db present but our xmtp-<addr> prefix didn't match it"
-    // (n>0, hit=false → detection bug: XMTP wrote it under a different name/layout).
+    // persisted" (n=0) from "db present but our name check missed it" (n>0, hit=false).
     xmtpCrumb(`dbcheck hit=${hit} n=${seen.length} [${seen.slice(0, 6).join('|')}]`);
 
     if (hit) return true;
@@ -114,15 +127,16 @@ export async function checkXmtpDbExists(address: string): Promise<boolean> {
     if (seen.length > 0) return false;
 
     // entries() yielded nothing — could be iOS WebKit bug rather than truly empty.
-    // Probe known file-name patterns the XMTP WASM runtime may use.
+    // Probe the names the XMTP WASM runtime may use (v7's libxmtp marker + the old
+    // per-address db path, for older sessions).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rootHandle = root as any;
-    for (const suffix of ['.db3', '.db', '-shm', '-wal', '']) {
+    for (const name of ['.opfs-libxmtp-metadata', `${prefix}.db3`, `${prefix}.db`, prefix]) {
       try {
-        await rootHandle.getFileHandle(`${prefix}${suffix}`);
-        xmtpCrumb(`dbcheck probe-hit ${suffix}`);
+        await rootHandle.getFileHandle(name);
+        xmtpCrumb(`dbcheck probe-hit ${name}`);
         return true;
-      } catch { /* not found with this suffix */ }
+      } catch { /* not found with this name */ }
     }
     return false;
   } catch {
