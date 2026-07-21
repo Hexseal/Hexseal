@@ -503,6 +503,16 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     catch (err) {
       console.error('[ChatPanel] send failed:', err);
       setText(trimmed);
+      // The conversation is only created on the first send, so "this peer has no XMTP
+      // identity yet" surfaces HERE rather than when opening the chat. Without a toast
+      // the message just vanished from the thread with nothing on screen explaining why.
+      const msg = err instanceof Error ? err.message : '';
+      toast.error(
+        msg.includes('not registered') || msg.includes('not set up')
+          ? t("chat.recipient_no_messaging")
+          : (msg ? msg.slice(0, 120) : t("common.error")),
+        { duration: 6000 },
+      );
     }
     finally { setSending(false); }
   };
