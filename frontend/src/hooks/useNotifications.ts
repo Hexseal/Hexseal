@@ -243,8 +243,8 @@ export function useNotifications() {
         myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: amount ?? BigInt(0) });
         push({
           type: "deal_new",
-          title: "Deal Created",
-          body: `New deal for $${fmtUSDC(amount)} USDC. Awaiting executor activation.`,
+          title: "Deal Created ✓",
+          body: `Deal funded for $${fmtUSDC(amount)} USDC — the executor can now activate to start.`,
           link: `/deal/${agreement}`,
           txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
         });

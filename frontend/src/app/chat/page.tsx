@@ -464,6 +464,14 @@ function ChatHubPageInner() {
   }
 
   const selectedDealCtxs = selected ? (peerDealsMap.get(selected) ?? []) : [];
+  // True while the deal-context read waterfall is still resolving, so ChatPanel can
+  // hold back its pre-deal bar (which would otherwise briefly show the peer's board
+  // offers before an existing deal's status loads — see ChatPanel dealsLoading).
+  const dealsLoading = !!address && (
+    clientDeals === undefined ||
+    executorDeals === undefined ||
+    (dealDetailContracts.length > 0 && dealDetailResults === undefined)
+  );
 
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden justify-center">
@@ -661,6 +669,7 @@ function ChatHubPageInner() {
               <ChatPanel
                 recipientAddress={selected}
                 dealContexts={selectedDealCtxs}
+                dealsLoading={dealsLoading}
                 onBack={handleBack}
               />
             </div>

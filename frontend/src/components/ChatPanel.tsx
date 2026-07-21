@@ -9,6 +9,7 @@ import { DealActionBar } from '@/components/DealActionBar';
 import { usePreDealBar } from '@/hooks/usePreDealBar';
 import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { usePairChat } from '@/hooks/usePairChat';
 import { useXmtp } from '@/contexts/XmtpContext';
@@ -298,6 +299,10 @@ interface ChatPanelProps {
   // Every non-terminal deal between the current user and this counterparty.
   // 0 = plain chat, 1 = normal single-deal bar, 2+ = a selector is shown.
   dealContexts?: DealContext[];
+  /** True while the parent's deal-context reads are still resolving. Holds back the
+   *  pre-deal bar so it doesn't briefly show the peer's ServiceBoard offers before an
+   *  existing deal's status finishes loading (and never offers a second parallel deal). */
+  dealsLoading?: boolean;
 }
 
 // Agreement.Status enum (7 states) — from getDetails().status_ (uint8 0-6)
@@ -321,9 +326,10 @@ const AGR_STATUS_KEY: Record<number, string> = {
   6: 'deal_status.refunded',
 };
 
-export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelProps) {
+export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading }: ChatPanelProps) {
   const { address } = useAccount();
   const t = useTranslations();
+  const queryClient = useQueryClient();
   const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext, peerLastReadAt } =
     usePairChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
@@ -367,7 +373,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
   const [preDealConfirm, setPreDealConfirm] = useState<'apply' | 'accept_deploy' | 'request_service' | 'withdraw' | 'reject_app' | null>(null);
   const [preDealBusy, setPreDealBusy] = useState(false);
 
-  const preDealCtx = usePreDealBar(address, recipientAddress, !!dealContext);
+  // Skip pre-deal reads while a deal is already resolved OR while the parent's deal
+  // reads are still loading — otherwise, during the initial read waterfall, this
+  // would fall through to the peer's ServiceBoard offers instead of the real deal.
+  const preDealCtx = usePreDealBar(address, recipientAddress, !!dealContext || !!dealsLoading);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const fileRef       = useRef<HTMLInputElement>(null);
@@ -563,24 +572,40 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
       }
       if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
       toast('Confirm in wallet…');
+      let txHash: `0x${string}` | undefined;
       if (action === 'apply') {
-        await sendGasless(walletClient, publicClient, 'applyForJob', [preDealCtx.jobId!], DIAMOND_ABI as Abi);
+        const res = await sendGasless(walletClient, publicClient, 'applyForJob', [preDealCtx.jobId!], DIAMOND_ABI as Abi);
+        txHash = res.txHash as `0x${string}`;
         toast.success('Application submitted!');
       } else if (action === 'accept_deploy') {
         const res = await sendGasless(walletClient, publicClient, 'acceptApplicant', [preDealCtx.jobId!, recipientAddress as `0x${string}`], DIAMOND_ABI as Abi);
+        txHash = res.txHash as `0x${string}`;
         toast.success(res.agreementAddr ? `Agreement deployed: ${res.agreementAddr.slice(0, 10)}…` : 'Accepted!');
       } else if (action === 'request_service') {
         toast('Sign: USDC permit in wallet…');
-        await requestServiceGasless(walletClient, publicClient, {
+        const res = await requestServiceGasless(walletClient, publicClient, {
           serviceId:    preDealCtx.serviceId!,
           amount:       preDealCtx.amount,
           deadlineDays: preDealCtx.deadlineDays,
           terms:        '',
           region:       0,
         });
+        txHash = res.txHash as `0x${string}`;
         toast.success('Service request sent!');
       }
       setPreDealConfirm(null);
+
+      // Refresh deal state so the panel switches from the pre-deal bar to the live
+      // DealActionBar on its own — no manual reload. Wait for the receipt first: the
+      // relay returns after submit, not mining, so refetching earlier would read
+      // stale pre-confirmation escrow state. Best-effort — the 30s poll / focus
+      // refetch is the fallback if the receipt wait fails.
+      if (txHash) {
+        try {
+          await publicClient.waitForTransactionReceipt({ hash: txHash });
+          await queryClient.invalidateQueries();
+        } catch { /* receipt check failed — background refetch will catch up */ }
+      }
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Transaction failed');
@@ -716,8 +741,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
         )}
       </div>
 
-      {/* Pre-deal bar */}
-      {!dealContext && preDealCtx && (
+      {/* Pre-deal bar — suppressed while deals are still loading (see dealsLoading) */}
+      {!dealContext && !dealsLoading && preDealCtx && (
         <div className="flex-shrink-0 bg-white/[0.03] border-b border-white/[0.05]">
           <div className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
             <div className="flex-1 min-w-0">
