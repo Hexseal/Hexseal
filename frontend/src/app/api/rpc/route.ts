@@ -4,11 +4,14 @@ import { appChain } from '@/config/chain';
 // Private RPC with API key — server-only, never exposed to client.
 // Set DRPC_URL (no NEXT_PUBLIC_ prefix) in .env.vps so the key stays
 // out of the JS bundle. docker-compose injects it at container runtime.
+// Pick the first NON-EMPTY candidate. `??` alone was wrong here: an env var set to
+// an empty string (e.g. a docker-compose `environment:` entry interpolating an unset
+// ${DRPC_URL}) is not nullish, so it won the chain and silently disabled the private
+// RPC — pushing every call onto rate-limited public endpoints.
 const PRIVATE_RPC =
-  process.env.DRPC_URL ??
-  process.env.BASE_SEPOLIA_RPC_URL ??
-  process.env.RPC_URL ??
-  null;
+  [process.env.DRPC_URL, process.env.BASE_SEPOLIA_RPC_URL, process.env.RPC_URL]
+    .map(v => v?.trim())
+    .find((v): v is string => !!v) ?? null;
 
 // Public fallback RPC endpoints tried in order if private RPC fails.
 const PUBLIC_RPCS: string[] = appChain.id === 8453
