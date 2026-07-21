@@ -76,6 +76,12 @@ export default function EditProfilePage() {
   const { address, isConnected, status } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Flips true the first time we have a connected address; never back. Lets the
+  // render guards ride out a transient Android reconnect instead of unmounting.
+  const everConnectedRef = useRef(false);
+  // Address we've already loaded the profile for — so a transient reconnect doesn't
+  // re-fire the loader and clobber the user's in-progress edits.
+  const populatedForRef  = useRef<string | null>(null);
   const t = useTranslations();
 
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -98,9 +104,14 @@ export default function EditProfilePage() {
 
   const submitting = stage !== 'idle' && stage !== 'done';
 
-  // Load profile: localStorage first (fast), fallback to API
+  // Load profile: localStorage first (fast), fallback to API.
+  // Runs once per address — guarded so a transient reconnect (Android backgrounding
+  // the tab for a wallet signature) doesn't re-fire and overwrite in-progress edits.
   useEffect(() => {
     if (!address) return;
+    const addrLc = address.toLowerCase();
+    if (populatedForRef.current === addrLc) return;
+    populatedForRef.current = addrLc;
 
     const populateFrom = (data: Record<string, unknown>) => {
       setDisplayName((data.displayName as string) || "");
@@ -279,9 +290,21 @@ export default function EditProfilePage() {
     }
   };
 
-  if (status === 'reconnecting' || status === 'connecting') return null;
+  // Remember once we've had a connected address. On Android, saving deep-links to
+  // the wallet for the signature, which backgrounds the tab; on return wagmi briefly
+  // flips to 'reconnecting' with a momentarily-undefined address. The old guards
+  // below then unmounted the whole page — blanking the form and dropping the
+  // in-flight save ("тухнет"). Once we've been connected, we ride out that transient.
+  if (address) everConnectedRef.current = true;
+  const everConnected = everConnectedRef.current;
 
-  if (!isConnected) {
+  // Initial connection still resolving (never had an address here): render nothing
+  // rather than flashing "connect required" before wagmi finishes restoring session.
+  if (!everConnected && (status === 'reconnecting' || status === 'connecting')) return null;
+
+  // Prompt to connect only if we've genuinely never connected. If we HAD an address,
+  // keep the form mounted through a transient reconnect so an in-flight save survives.
+  if (!isConnected && !everConnected) {
     return (
       <PageCenter>
         <div className="text-center">
