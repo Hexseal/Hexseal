@@ -44,7 +44,24 @@ export function usePairChat(peerAddress: string) {
   const [retryKey, setRetryKey]             = useState(0);
   // Latest read-receipt timestamp (ms) the peer has sent us — any of our own
   // messages at or before this time are "read" (2 checks); after it, just "sent".
-  const [peerLastReadAt, setPeerLastReadAt] = useState<number | null>(null);
+  // Persisted in localStorage: read status is monotonic ("read" never becomes
+  // "unread"), and MLS forward-secrecy can make the peer's read-receipt
+  // undecryptable when re-reading history on reload (SecretReuseError / "secret
+  // deleted to preserve forward secrecy"). Seeding from the cache and only ever
+  // increasing keeps the "read" tick from reverting to a single tick on reload.
+  const peerReadKey = `hexseal_peerread_${peerLc}`;
+  const [peerLastReadAt, setPeerLastReadAt] = useState<number | null>(() => {
+    try { const v = localStorage.getItem(peerReadKey); return v ? Number(v) : null; }
+    catch { return null; }
+  });
+  const bumpPeerRead = (ms: number | null | undefined) => {
+    if (ms == null) return;
+    setPeerLastReadAt(prev => {
+      const next = prev == null ? ms : Math.max(prev, ms);
+      try { localStorage.setItem(peerReadKey, String(next)); } catch { /* unavailable */ }
+      return next;
+    });
+  };
 
   const clientRef         = useRef<XmtpClient | null>(null);
   const groupRef          = useRef<XmtpGroup | null>(null);
@@ -88,7 +105,7 @@ export function usePairChat(peerAddress: string) {
         _msgCache.set(peerLc, loaded.messages);
         setMessages(loaded.messages);
         setHasMore(loaded.hasMore);
-        setPeerLastReadAt(loaded.peerLastReadAt);
+        bumpPeerRead(loaded.peerLastReadAt);
         xmtpCrumb(`rr:load peerLastReadAt=${loaded.peerLastReadAt ?? 'null'}`);
         oldestNsRef.current = loaded.oldestNs;
         setIsInitialized(true);
@@ -113,7 +130,7 @@ export function usePairChat(peerAddress: string) {
           const readMs = readReceiptTimestampMs(msg, xmtp.inboxId ?? '');
           if (readMs !== null) {
             xmtpCrumb(`rr:recv ${readMs}`);
-            setPeerLastReadAt(prev => (prev === null || readMs > prev) ? readMs : prev);
+            bumpPeerRead(readMs);
             continue;
           }
 
