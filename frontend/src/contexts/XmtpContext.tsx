@@ -57,6 +57,10 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   // true for one run when the user explicitly tapped "Enable messaging" (retry()),
   // so that run is allowed to prompt a wallet signature; auto-on-connect runs aren't.
   const manualRef    = useRef(false);
+  // Mirror of `status` so retry() (an event handler) can read the latest value
+  // without re-subscribing / going stale in its useCallback closure.
+  const statusRef    = useRef<XmtpStatus>(status);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   // Clear session when wallet address switches
   useEffect(() => {
@@ -174,6 +178,13 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
 
   const retry = useCallback(() => {
     if (!address) return;
+    // Ignore Enable taps unless a previous attempt actually failed. The first-time
+    // Client.create() can take ~a minute; while it's in flight (status 'loading') a
+    // second tap — e.g. from the chat page's Enable bar while the menu one is still
+    // running — would abandon that healthy attempt and start a fresh one, forcing a
+    // needless SECOND wallet signature (the "two signatures to enable chat" bug).
+    // When it's already 'ready' there's nothing to retry.
+    if (statusRef.current !== 'error') return;
     const addr = address.toLowerCase();
     // Explicit user action — this run is allowed to prompt a wallet signature.
     manualRef.current = true;
