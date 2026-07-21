@@ -73,9 +73,6 @@ export function useXmtpNotifications() {
           // Skip own messages
           if (msg.senderInboxId === client.inboxId) continue;
 
-          // Skip when user is already viewing chat/deal pages
-          if (isChatPage(pathnameRef.current)) continue;
-
           const content = typeof msg.content === 'string' ? msg.content : null;
           if (!content) continue;
 
@@ -116,6 +113,15 @@ export function useXmtpNotifications() {
               link = `/chat?peer=${peer}`;
             }
           }
+
+          // Suppress ONLY the conversation the user is actually looking at. The old
+          // check skipped every /chat and /deal/ page wholesale, so a message from a
+          // different peer while you had any chat open produced nothing at all — no
+          // toast and no entry in the notification centre. Now it's per-conversation.
+          const openPeer = isChatPage(pathnameRef.current)
+            ? new URLSearchParams(window.location.search).get('peer')?.toLowerCase() ?? null
+            : null;
+          if (openPeer && link === `/chat?peer=${openPeer}`) continue;
 
           const saved = pushNotif(address!, {
             type: 'message_new',
