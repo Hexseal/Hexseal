@@ -790,7 +790,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black" style={{ overscrollBehavior: 'none', overflowAnchor: 'none' }}>
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black px-3" style={{ overscrollBehavior: 'none', overflowAnchor: 'none' }}>
         {isLoading && <XmtpConnecting />}
         {!isLoading && !needsSetup && !error && messages.length > 0 && <div className="flex-1" />}
         <div className="py-4">
