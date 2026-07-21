@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { usePathname } from 'next/navigation';
 import { toast } from 'react-hot-toast';
@@ -27,6 +27,25 @@ export function useXmtpNotifications() {
   useEffect(() => {
     pathnameRef.current = pathname;
   }, [pathname]);
+
+  // An installed PWA gets aggressively suspended when backgrounded (iOS especially),
+  // which kills the streamAllMessages subscription. Nothing used to restart it, so
+  // after the first background→foreground cycle notifications went silent for good —
+  // no toast, no bell count, nothing written to the notification centre — until a full
+  // reload. Bump a key on foreground so the stream is re-established, the same way
+  // usePairConversations re-syncs on focus.
+  const [restartKey, setRestartKey] = useState(0);
+  useEffect(() => {
+    const onForeground = () => {
+      if (document.visibilityState === 'visible') setRestartKey(k => k + 1);
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
+    return () => {
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
+    };
+  }, []);
 
   useEffect(() => {
     if (!address) return;
@@ -177,5 +196,7 @@ export function useXmtpNotifications() {
     };
   // status dep: re-run when XmtpContext transitions to 'ready' so the stream
   // starts even if XMTP init completed after this hook's first render.
-  }, [address, status]);
+  // restartKey dep: re-establish the stream when the PWA returns to the foreground,
+  // since a suspended app has its subscription torn down.
+  }, [address, status, restartKey]);
 }
