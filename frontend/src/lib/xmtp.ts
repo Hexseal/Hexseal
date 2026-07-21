@@ -392,7 +392,12 @@ export async function findOrCreatePairGroup(
   client: XmtpClient,
   memberAddresses: [string, string],
   botAddress: string | null,
-): Promise<XmtpGroup> {
+  /** false = look up only, never create (used when merely OPENING a chat).
+   *  Creation — and the "peer must be XMTP-reachable" requirement — is deferred to
+   *  the first actual send, so browsing leaves no empty groups behind and you can
+   *  open/type a chat with someone who hasn't enabled messaging yet. */
+  createIfMissing = true,
+): Promise<XmtpGroup | null> {
   // Positional convention (see the one call site in usePairChat.ts): self first,
   // peer second. Needed below to tell "the group is missing someone" apart from
   // "the group is missing *the peer specifically*".
@@ -471,6 +476,10 @@ export async function findOrCreatePairGroup(
 
     return canonical;
   }
+
+  // No existing conversation. When we're only opening the chat, stop here and let
+  // the UI render an empty (but usable) thread — the group is created on first send.
+  if (!createIfMissing) return null;
 
   const allMembers = botAddress ? [...memberAddresses, botAddress] : [...memberAddresses];
   const identifiers = allMembers.map(toIdentifier);

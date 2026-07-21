@@ -91,9 +91,21 @@ export function usePairChat(peerAddress: string) {
         clientRef.current = xmtp;
 
         const botAddr = await getBotAddress();
-        const group = await findOrCreatePairGroup(xmtp, [myAddress, peerAddress], botAddr);
+        // Look up only — the group is created on the first send (see sendMessage).
+        const group = await findOrCreatePairGroup(xmtp, [myAddress, peerAddress], botAddr, false);
         if (cancelled) return;
         groupRef.current = group;
+
+        if (!group) {
+          // No conversation exists yet. Render an empty but fully usable thread so
+          // the user can type; sending is what actually creates the group.
+          _msgCache.set(peerLc, []);
+          setMessages([]);
+          setHasMore(false);
+          setIsInitialized(true);
+          setIsLoading(false);
+          return;
+        }
 
         // Sync group state from network before loading messages.
         // Fetches missing identity updates and resolves MLS install diffs.
@@ -196,9 +208,8 @@ export function usePairChat(peerAddress: string) {
   }, []);
 
   const sendMessage = useCallback(async (text: string) => {
-    const group = groupRef.current;
-    const xmtp  = clientRef.current;
-    if (!group || !text.trim()) return;
+    const xmtp = clientRef.current;
+    if (!text.trim()) return;
     const myAddress = xmtp?.accountIdentifier?.identifier?.toLowerCase() ?? '';
     const optId = `opt-${Date.now()}`;
     setMessages(prev => [...prev, {
@@ -206,8 +217,23 @@ export function usePairChat(peerAddress: string) {
       timestamp: Date.now(), isFromMe: true,
     }]);
     try {
+      let group = groupRef.current;
+      let created = false;
+      // Lazy creation: the MLS group is made on the FIRST send, not on open. If the
+      // peer never enabled XMTP, that surfaces here (ChatPanel matches the message to
+      // show the "share an invite" UI) instead of blocking the chat from opening.
+      if (!group) {
+        if (!xmtp) throw new Error('Messaging not initialized');
+        const botAddr = await getBotAddress();
+        group = await findOrCreatePairGroup(xmtp, [myAddress, peerRef.current], botAddr, true);
+        if (!group) throw new Error('Could not start the conversation');
+        groupRef.current = group;
+        created = true;
+      }
       await group.sendText(text.trim());
       notifyPush(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
+      // Re-run the open effect so the brand-new group gets its message stream.
+      if (created) setRetryKey(k => k + 1);
     } catch (err) {
       // Remove the optimistic message so user knows the send failed
       setMessages(prev => prev.filter(m => m.id !== optId));
@@ -216,10 +242,21 @@ export function usePairChat(peerAddress: string) {
   }, [address]);
 
   const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
-    const group = groupRef.current;
-    const xmtp  = clientRef.current;
-    if (!group) return;
+    const xmtp = clientRef.current;
     const myAddress = xmtp?.accountIdentifier?.identifier?.toLowerCase() ?? '';
+
+    // Lazy creation, same as sendMessage — done BEFORE the upload so an unreachable
+    // peer fails fast instead of after a pointless multi-MB upload.
+    let group = groupRef.current;
+    let created = false;
+    if (!group) {
+      if (!xmtp) throw new Error('Messaging not initialized');
+      const botAddr = await getBotAddress();
+      group = await findOrCreatePairGroup(xmtp, [myAddress, peerRef.current], botAddr, true);
+      if (!group) throw new Error('Could not start the conversation');
+      groupRef.current = group;
+      created = true;
+    }
 
     setUploadProgress(0);
     let result: Awaited<ReturnType<typeof uploadFileWithEncryption>>;
@@ -244,6 +281,8 @@ export function usePairChat(peerAddress: string) {
 
     await group.sendText(encoded);
     notifyPush(peerRef.current, `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
+    // Re-run the open effect so the brand-new group gets its message stream.
+    if (created) setRetryKey(k => k + 1);
   }, [address]);
 
   const markDealContext = useCallback(async (dealId: string | null) => {

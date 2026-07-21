@@ -407,23 +407,10 @@ function ChatHubPageInner() {
     const addr = newChatAddr.trim().toLowerCase();
     if (!isAddress(addr) || newChatChecking) return;
 
-    const client = address ? getXmtpClientIfCached(address) : null;
-    if (client) {
-      setNewChatChecking(true);
-      setNewChatError(null);
-      try {
-        const canMsgMap = await client.canMessage([toIdentifier(addr)]);
-        if (canMsgMap.get(addr) !== true) {
-          setNewChatError('This address has not activated XMTP messaging yet. They need to open Hexseal chat first.');
-          return;
-        }
-      } catch {
-        // network check failed — proceed anyway, ChatPanel will surface the error
-      } finally {
-        setNewChatChecking(false);
-      }
-    }
-
+    // No reachability gate here any more. Opening a chat is free — the conversation
+    // is only created on the first send (see usePairChat.sendMessage). If the peer
+    // never enabled XMTP, sending is what surfaces it, and ChatPanel then shows the
+    // "share an invite" UI right inside the thread instead of blocking entry here.
     setShowNewChat(false);
     setNewChatAddr('');
     setNewChatError(null);
