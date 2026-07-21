@@ -62,3 +62,6 @@ deploy-local.sh
 
 # ── Superpowers isolated worktrees ────────────────────────────────────────────
 .worktrees/
+# Real user push endpoints + auth keys — never commit
+relayer/push_subscriptions.json
+relayer/storage/

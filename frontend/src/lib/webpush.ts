@@ -10,6 +10,16 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array([...raw].map(c => c.charCodeAt(0))) as Uint8Array<ArrayBuffer>;
 }
 
+/** True if `sub` was created with exactly this applicationServerKey. Used to detect a
+ *  rotated VAPID key, which permanently breaks delivery to the old subscription. */
+function usesAppServerKey(sub: PushSubscription, key: Uint8Array): boolean {
+  const existing = sub.options?.applicationServerKey;
+  if (!existing) return false;
+  const a = new Uint8Array(existing as ArrayBuffer);
+  if (a.length !== key.length) return false;
+  return a.every((byte, i) => byte === key[i]);
+}
+
 export async function getSwRegistration(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return null;
   try {
@@ -45,14 +55,24 @@ export async function enablePush(
   if (!reg) return 'error';
 
   try {
-    // Reuse an existing subscription — don't force-rotate it on every call.
-    // Rotation only happens when the user explicitly disables then re-enables push,
-    // or when the browser invalidates the subscription (VAPID key change, etc.).
+    const appServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
     let subscription = await reg.pushManager.getSubscription();
+
+    // A PushSubscription is cryptographically bound to the VAPID key it was created
+    // with. The browser does NOT invalidate it when the server key is rotated — the
+    // old comment claimed otherwise, and that assumption was the bug: getSubscription()
+    // kept handing back a stale subscription, we happily reused and re-registered it,
+    // and every send failed with 403 VapidPkHashMismatch forever. So regenerating VAPID
+    // keys appeared to change nothing. Detect the mismatch and re-subscribe.
+    if (subscription && !usesAppServerKey(subscription, appServerKey)) {
+      try { await subscription.unsubscribe(); } catch { /* best effort */ }
+      subscription = null;
+    }
+
     if (!subscription) {
       subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        applicationServerKey: appServerKey,
       });
     }
 

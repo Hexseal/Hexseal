@@ -38,7 +38,7 @@ import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
 import { appChain, appChainId, isMainnet } from "@/config/chain";
 import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
-import { isPushSupported, enablePush } from "@/lib/webpush";
+import { isPushSupported, enablePush, getSwRegistration } from "@/lib/webpush";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
@@ -157,6 +157,14 @@ const PUSH_REG_TTL = 24 * 60 * 60 * 1000; // 24 h
 function PushAutoMount() {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
+
+  // Register the service worker at app start. It used to be registered lazily, only
+  // from lib/webpush's helpers — i.e. only if the user happened to open /notifications.
+  // useXmtpNotifications awaits navigator.serviceWorker.ready before showing a native
+  // notification while backgrounded, and that promise never resolved for anyone who
+  // hadn't visited that page, silently killing the in-app native-notification path too.
+  useEffect(() => { void getSwRegistration(); }, []);
+
   useEffect(() => {
     if (!address || !isPushSupported() || !walletClient) return;
     if (Notification.permission !== 'granted') return;

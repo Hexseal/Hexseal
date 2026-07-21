@@ -33,7 +33,16 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 
 webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-const PUSH_SUBS_FILE = './storage/push_subscriptions.json';
+// Absolute, and honours STORAGE_DIR like every other storage path (see STORAGE_DIR
+// below — this constant is declared earlier, so the same default is inlined). It used
+// to be the relative './storage/push_subscriptions.json', which only resolved by
+// accident from the container WORKDIR and silently pointed at a file that did not
+// exist after the store was moved — so the relayer loaded an empty map and every push
+// was sent to zero subscriptions with no error logged anywhere.
+const PUSH_SUBS_FILE = path.join(
+  process.env.STORAGE_DIR || path.join(__dirname, 'storage'),
+  'push_subscriptions.json',
+);
 function loadPushSubs() {
   try {
     if (existsSync(PUSH_SUBS_FILE)) {
@@ -46,6 +55,9 @@ function loadPushSubs() {
 function savePushSubs() {
   try {
     const obj = Object.fromEntries(_pushSubs);
+    // loadPushSubs()/savePushSubs() run at module load, before the storage dirs are
+    // created further down — make sure the directory exists or the write is lost.
+    fs.mkdirSync(path.dirname(PUSH_SUBS_FILE), { recursive: true });
     writeFileSync(PUSH_SUBS_FILE, JSON.stringify(obj), 'utf8');
   } catch {}
 }
@@ -58,11 +70,15 @@ async function sendPush(address, payload) {
     try {
       await webpush.sendNotification(sub, JSON.stringify(payload));
     } catch (e) {
-      if (e.statusCode === 404 || e.statusCode === 410) {
+      // 404/410 = endpoint gone. 400/401/403 = the subscription was created with a
+      // DIFFERENT VAPID key (VapidPkHashMismatch) and can never be delivered to
+      // again — it was previously only logged and kept, so a stale subscription was
+      // retried forever and the user's push stayed dead even after re-subscribing.
+      if ([400, 401, 403, 404, 410].includes(e.statusCode)) {
         dead.push(sub.endpoint);
+        console.warn('[push] dropping undeliverable subscription:', e.statusCode, e.body ?? e.message ?? '');
       } else {
-        // Anything else (401/403 VAPID mismatch, 429, network errors, ...) would
-        // otherwise fail completely silently — log it so it's actually diagnosable.
+        // Anything else (429, network errors, ...) is transient — log, keep, retry.
         console.error('[push] sendNotification failed:', e.statusCode ?? '', e.body ?? e.message ?? e);
       }
     }
