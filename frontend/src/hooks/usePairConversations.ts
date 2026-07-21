@@ -10,19 +10,14 @@ import { getXmtpClientIfCached, listPairConversations, listPairConversationsLoca
 // Populated after every successful load so the next mount renders instantly.
 const _convCache = new Map<string, PairConversation[]>();
 
-function mergeWithLocalPeers(convos: PairConversation[], addr: string): PairConversation[] {
-  const knownPeers = new Set(convos.map(c => c.peerAddress));
-  const myLc = addr.toLowerCase();
-  const merged = [...convos];
-  const localKeys = Object.keys(localStorage).filter(k => k.startsWith('hexseal_chat_seen_'));
-  for (const key of localKeys) {
-    const peer = key.replace('hexseal_chat_seen_', '');
-    if (peer !== myLc && !knownPeers.has(peer)) {
-      merged.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
-    }
-  }
-  return merged.sort((a, b) => b.lastAt - a.lastAt);
-}
+// NOTE: a former mergeWithLocalPeers() helper used to surface every
+// `hexseal_chat_seen_*` localStorage key as a conversation row. Those keys are
+// written eagerly just by opening /chat?peer=X (ChatPanel mount/focus) — long
+// before any real message or MLS group exists — and are never cleaned up, so they
+// showed up as permanent PHANTOM conversations. Removed: real conversations come
+// from _buildPairConversations, on-chain deal counterparties are merged in
+// chat/page.tsx, and the URL-selected peer is force-rendered there too. The
+// seen-keys remain solely for unread tracking (seenAt / hasUnread).
 
 export function usePairConversations(isEnabled = false) {
   const { address } = useAccount();
@@ -51,19 +46,17 @@ export function usePairConversations(isEnabled = false) {
       // Phase 1: read from local SQLite cache — no network, near-instant.
       // Shows conversations immediately so the UI never stares at a spinner.
       const local = await listPairConversationsLocal(xmtp, addr);
-      const merged1 = mergeWithLocalPeers(local, addr);
-      _convCache.set(addr.toLowerCase(), merged1);
-      setConversations(merged1);
+      _convCache.set(addr.toLowerCase(), local);
+      setConversations(local);
       // Only stop loading after Phase 1 if we already have data.
       // If local cache is empty, keep the skeleton visible during Phase 2
       // (network sync) so the user never sees the false "no conversations" state.
-      if (merged1.length > 0) setIsLoading(false);
+      if (local.length > 0) setIsLoading(false);
 
       // Phase 2: full network sync — fetches groups/messages from XMTP network.
       const fresh = await listPairConversations(xmtp, addr);
-      const merged2 = mergeWithLocalPeers(fresh, addr);
-      _convCache.set(addr.toLowerCase(), merged2);
-      setConversations(merged2);
+      _convCache.set(addr.toLowerCase(), fresh);
+      setConversations(fresh);
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Failed to load conversations';
       const isLimit = raw.includes('10/10') || raw.includes('registered 10');

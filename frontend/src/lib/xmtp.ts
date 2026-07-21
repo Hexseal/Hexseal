@@ -423,7 +423,10 @@ export async function findOrCreatePairGroup(
     }
   }
 
-  await client.conversations.sync();
+  // Best-effort: a churn-corrupted group can throw here (openmls SecretReuseError).
+  // Swallow it so one bad group doesn't blank the whole chat to "unavailable" —
+  // we proceed with whatever groups are already in the local cache.
+  await client.conversations.sync().catch(() => {});
 
   const groups = await client.conversations.listGroups();
   const nameMatches = groups.filter(g => g.name === name);
@@ -438,7 +441,9 @@ export async function findOrCreatePairGroup(
 
   if (legitGroups.length > 0) {
     const canonical = legitGroups.reduce((best, g) => g.id < best.id ? g : best);
-    await canonical.sync();
+    // Best-effort: if this specific group is churn-corrupted, load its cached
+    // history rather than throwing and blanking the chat to "unavailable".
+    await canonical.sync().catch(() => {});
 
     // Self-heal: the peer may have had no reachable installation at all when
     // this group was first created (e.g. mid session churn on their end) and
