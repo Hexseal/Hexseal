@@ -157,12 +157,14 @@ const ConvoItem = memo(function ConvoItem({
               </p>
             )}
             <div className="flex items-center gap-1.5">
-              {dealCtx.role === 'client'
+              {/* Show the COUNTERPARTY's role (dealCtx.role is MY role): the badge sits
+                  by their name, so it should read as their side. I'm client → they exec. */}
+              {dealCtx.role === 'executor'
                 ? <Briefcase className="w-2.5 h-2.5 text-sky-400/60 flex-shrink-0" />
                 : <User      className="w-2.5 h-2.5 text-emerald-400/60 flex-shrink-0" />
               }
-              <span className={`text-[11px] font-medium ${dealCtx.role === 'client' ? 'text-sky-400/70' : 'text-emerald-400/70'}`}>
-                {dealCtx.role === 'client' ? t("common.role_client") : t("common.role_executor")}
+              <span className={`text-[11px] font-medium ${dealCtx.role === 'executor' ? 'text-sky-400/70' : 'text-emerald-400/70'}`}>
+                {dealCtx.role === 'executor' ? t("common.role_client") : t("common.role_executor")}
               </span>
               <span className="text-white/20 text-[11px]">·</span>
               <span className="text-[11px] font-mono text-white/30">

@@ -602,22 +602,27 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
               <PanelLeftOpen className="w-4.5 h-4.5" />
             </button>
           )}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={avatarUrl ?? `https://effigy.im/a/${recipientAddress}.svg`}
-            alt=""
-            className="w-8 h-8 rounded-full flex-shrink-0 bg-white/10 object-cover"
-            onError={(e) => {
-              const img = e.target as HTMLImageElement;
-              if (avatarUrl && img.src !== `https://effigy.im/a/${recipientAddress}.svg`) {
-                img.src = `https://effigy.im/a/${recipientAddress}.svg`;
-              }
-            }}
-          />
+          {/* Avatar + name link to the counterparty's profile. */}
+          <a href={`/profile/${recipientAddress}`} className="flex-shrink-0" title={t("wallet.my_profile")}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={avatarUrl ?? `https://effigy.im/a/${recipientAddress}.svg`}
+              alt=""
+              className="w-8 h-8 rounded-full bg-white/10 object-cover hover:opacity-80 transition-opacity"
+              onError={(e) => {
+                const img = e.target as HTMLImageElement;
+                if (avatarUrl && img.src !== `https://effigy.im/a/${recipientAddress}.svg`) {
+                  img.src = `https://effigy.im/a/${recipientAddress}.svg`;
+                }
+              }}
+            />
+          </a>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-white/90 leading-none">
-              {displayName ?? shortAddr(recipientAddress)}
-            </p>
+            <a href={`/profile/${recipientAddress}`} className="inline-block hover:text-white transition-colors">
+              <p className="text-sm font-semibold text-white/90 leading-none">
+                {displayName ?? shortAddr(recipientAddress)}
+              </p>
+            </a>
             {dealContext ? (
               <div className="mt-0.5">
                 {displayName && (
@@ -631,10 +636,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts }: ChatPanelP
                   </p>
                 )}
                 <div className="flex items-center gap-1.5 flex-wrap">
+                  {/* dealContext.role is MY role in the deal; show the COUNTERPARTY's
+                      role here, since this badge sits next to their name (a badge by a
+                      name reads as that person's role). I'm client → they're executor. */}
                   <span className={`text-[11px] font-medium whitespace-nowrap ${
-                    dealContext.role === 'client' ? 'text-sky-400/70' : 'text-emerald-400/70'
+                    dealContext.role === 'executor' ? 'text-sky-400/70' : 'text-emerald-400/70'
                   }`}>
-                    {dealContext.role === 'client' ? t("common.role_client") : t("common.role_executor")}
+                    {dealContext.role === 'executor' ? t("common.role_client") : t("common.role_executor")}
                   </span>
                   <span className="text-white/20 text-[11px]">·</span>
                   <a href={`/deal/${dealContext.agreementAddr}`}
