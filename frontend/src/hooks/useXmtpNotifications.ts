@@ -63,6 +63,13 @@ export function useXmtpNotifications() {
         for await (const msg of stream) {
           if (cancelledRef.current) break;
 
+          // Any inbound activity anywhere → refresh the conversation list live
+          // (bumps last-message preview + ordering) even for chats that aren't
+          // currently open. Without this the sidebar only updated on the 30s poll,
+          // on window focus, or on a manual swipe-to-refresh. Fires before the
+          // skips below because those are about NOTIFICATIONS, not the list.
+          window.dispatchEvent(new Event('hexseal-conv-update'));
+
           // Skip own messages
           if (msg.senderInboxId === client.inboxId) continue;
 

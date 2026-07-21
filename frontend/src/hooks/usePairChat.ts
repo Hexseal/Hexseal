@@ -13,6 +13,7 @@ import {
   encodeDealContextMarker,
   getBotAddress,
   readReceiptTimestampMs,
+  xmtpCrumb,
   type ChatMessage,
   type XmtpClient,
   type XmtpGroup,
@@ -88,6 +89,7 @@ export function usePairChat(peerAddress: string) {
         setMessages(loaded.messages);
         setHasMore(loaded.hasMore);
         setPeerLastReadAt(loaded.peerLastReadAt);
+        xmtpCrumb(`rr:load peerLastReadAt=${loaded.peerLastReadAt ?? 'null'}`);
         oldestNsRef.current = loaded.oldestNs;
         setIsInitialized(true);
         setIsLoading(false);
@@ -95,7 +97,9 @@ export function usePairChat(peerAddress: string) {
         // Opening the conversation counts as reading whatever the peer already
         // sent — best-effort, never blocks rendering.
         if (loaded.messages.some(m => !m.isFromMe)) {
-          group.sendReadReceipt().catch(() => {});
+          group.sendReadReceipt()
+            .then(() => xmtpCrumb('rr:send-ok open'))
+            .catch(e => xmtpCrumb(`rr:send-FAIL open ${e instanceof Error ? e.message.slice(0, 40) : e}`));
         }
 
         const stream = await group.stream();
@@ -108,6 +112,7 @@ export function usePairChat(peerAddress: string) {
           // (for our own sent messages' check marks) and never render.
           const readMs = readReceiptTimestampMs(msg, xmtp.inboxId ?? '');
           if (readMs !== null) {
+            xmtpCrumb(`rr:recv ${readMs}`);
             setPeerLastReadAt(prev => (prev === null || readMs > prev) ? readMs : prev);
             continue;
           }
@@ -127,7 +132,9 @@ export function usePairChat(peerAddress: string) {
               // Notify the sidebar to refresh immediately (only for incoming messages)
               window.dispatchEvent(new Event('hexseal-conv-update'));
               // The chat panel is open and just received this — mark it read.
-              group.sendReadReceipt().catch(() => {});
+              group.sendReadReceipt()
+                .then(() => xmtpCrumb('rr:send-ok inbound'))
+                .catch(e => xmtpCrumb(`rr:send-FAIL inbound ${e instanceof Error ? e.message.slice(0, 40) : e}`));
               next = [...prev, norm];
             }
             // Keep module-level cache current (exclude optimistic placeholders)
