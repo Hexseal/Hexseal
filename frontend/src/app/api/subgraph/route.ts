@@ -69,6 +69,14 @@ if (SUBGRAPH_URL) {
 }
 
 export async function POST(req: NextRequest) {
+  // Cache invalidation — post-job/post-service flows call this right after a
+  // successful mint so the next board visit refetches instead of serving a
+  // pre-mint snapshot for up to FRESH_TTL.
+  if (req.nextUrl.searchParams.get('invalidate') === '1') {
+    _cache.clear();
+    return NextResponse.json({ ok: true });
+  }
+
   if (!SUBGRAPH_URL) {
     return NextResponse.json(
       { errors: [{ message: 'SUBGRAPH_URL env var is not configured' }] },
@@ -83,8 +91,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ errors: [{ message: 'Bad request body' }] }, { status: 400 });
   }
 
+  // x-fresh: 1 — explicit user refresh, bypass the cache and fetch synchronously
+  const forceFresh = req.headers.get('x-fresh') === '1';
+
   const entry = _cache.get(body);
-  if (entry) {
+  if (entry && !forceFresh) {
     const age = Date.now() - entry.storedAt;
     if (age > FRESH_TTL) {
       // Stale — return immediately, refresh in background
@@ -93,10 +104,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(entry.data);
   }
 
-  // Cache miss — first request for this query, must wait
+  // Cache miss (or forced refresh) — must wait for the subgraph
   pruneCache();
   const data = await fetchSubgraph(body);
   if (!data) {
+    // Forced refresh failed — serve the cached copy rather than erroring
+    if (entry) return NextResponse.json(entry.data);
     return NextResponse.json(
       { errors: [{ message: 'Subgraph unavailable' }] },
       { status: 502 },

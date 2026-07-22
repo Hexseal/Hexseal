@@ -32,7 +32,8 @@ export function useJobs({ region, page = 0 }: { region?: number; page?: number }
   })
 
   const refetch = useCallback(() => {
-    reexecuteQuery({ requestPolicy: 'network-only' });
+    // x-fresh makes the /api/subgraph proxy bypass its server-side cache
+    reexecuteQuery({ requestPolicy: 'network-only', fetchOptions: { headers: { 'x-fresh': '1' } } });
   }, [reexecuteQuery]);
 
   return {
