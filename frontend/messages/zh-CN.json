@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "客户向您发起请求 — 您接受或拒绝。"
+      "subtitle": "客户向您发起请求 — 您接受或拒绝。",
+      "field_title_ph": "例如：DeFi 协议智能合约审计",
+      "field_description_ph": "描述您的服务、交付物、技术栈…",
+      "price_row": "您的价格（对客户可见）",
+      "success_sub": "服务已上线 — 客户现在可以下单。",
+      "service_number": "服务 #{id}",
+      "open_service_btn": "查看服务"
     },
     "post_job": {
       "title": "发布工作",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "执行者申请 — 您选择雇用谁。"
+      "subtitle": "执行者申请 — 您选择雇用谁。",
+      "section_details": "任务详情",
+      "field_title_ph": "例如：开发一个 React Web 应用",
+      "field_description_ph": "描述需求和交付物…",
+      "custom_tag_ph": "标签名称（例如：架构）",
+      "field_brief_note": "存储在链上 — 执行者可见",
+      "success_sub": "任务已上线 — 执行者现在可以申请。",
+      "job_number": "任务 #{id}",
+      "open_job_btn": "查看任务",
+      "receipt_minted_note": "收据 NFT 已自动铸造到您的钱包 — 灵魂绑定，不可转让"
     },
     "service_page": {
       "not_found": "找不到服务",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "检测中…",
+      "arbiter_row": "仲裁员：协议（自动分配）",
+      "gasless_row": "免 Gas — 中继支付 Gas，您只需签名",
+      "receipt_row": "发布时铸造收据 NFT",
+      "budget_label": "预算",
+      "total_label": "总计",
+      "balance_label": "余额",
+      "pending_title": "正在发送免 Gas 交易…",
+      "pending_hint": "需 2 次钱包签名 — 无需 ETH",
+      "view_tx": "在 Basescan 上查看",
+      "switch_network": "请切换到 Base Sepolia 网络",
+      "insufficient_balance": "需要 {need} USDC，当前 {have}"
     }
   },
   "wallet": {
@@ -508,7 +537,6 @@
     "retry": "重试",
     "connecting": "连接中…",
     "connecting_desc": "正在设置端对端加密消息",
-    "no_messages_yet": "暂无消息",
     "no_match": "没有匹配的消息",
     "search_placeholder": "搜索消息…",
     "search_history_hint": "仅搜索已加载的消息 — 加载更多以搜索历史记录",

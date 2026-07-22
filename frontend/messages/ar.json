@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "يطلب العملاء خدمتك — أنت تقبل أو ترفض."
+      "subtitle": "يطلب العملاء خدمتك — أنت تقبل أو ترفض.",
+      "field_title_ph": "مثال: تدقيق عقد ذكي لبروتوكول DeFi",
+      "field_description_ph": "صف خدمتك والمخرجات والتقنيات…",
+      "price_row": "سعرك (يظهر للعملاء)",
+      "success_sub": "خدمتك منشورة الآن — يمكن للعملاء طلبها.",
+      "service_number": "الخدمة #{id}",
+      "open_service_btn": "فتح الخدمة"
     },
     "post_job": {
       "title": "نشر وظيفة",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "يتقدم المنفذون — اختر من تريد توظيفه."
+      "subtitle": "يتقدم المنفذون — اختر من تريد توظيفه.",
+      "section_details": "تفاصيل المهمة",
+      "field_title_ph": "مثال: بناء تطبيق ويب بـ React",
+      "field_description_ph": "صف المتطلبات والمخرجات…",
+      "custom_tag_ph": "اسم الوسم (مثال: العمارة)",
+      "field_brief_note": "يُخزَّن على السلسلة — مرئي للمنفّذين",
+      "success_sub": "مهمتك منشورة الآن — يمكن للمنفّذين التقدّم.",
+      "job_number": "المهمة #{id}",
+      "open_job_btn": "فتح المهمة",
+      "receipt_minted_note": "سُكّ NFT الإيصال تلقائيًا في محفظتك — مرتبط بالروح وغير قابل للتحويل"
     },
     "service_page": {
       "not_found": "الخدمة غير موجودة",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "جارٍ الكشف…",
+      "arbiter_row": "المحكّم: البروتوكول (يُعيَّن تلقائيًا)",
+      "gasless_row": "بدون غاز — يدفع المُرحِّل الغاز، أنت توقّع فقط",
+      "receipt_row": "يُسكّ NFT الإيصال عند النشر",
+      "budget_label": "الميزانية",
+      "total_label": "الإجمالي",
+      "balance_label": "الرصيد",
+      "pending_title": "جارٍ إرسال المعاملة بدون غاز…",
+      "pending_hint": "توقيعان من المحفظة — لا حاجة إلى ETH",
+      "view_tx": "عرض على Basescan",
+      "switch_network": "بدّل إلى Base Sepolia للمتابعة",
+      "insufficient_balance": "مطلوب {need} USDC، لديك {have}"
     }
   },
   "wallet": {
@@ -508,7 +537,6 @@
     "retry": "إعادة المحاولة",
     "connecting": "جارٍ الاتصال…",
     "connecting_desc": "إعداد الرسائل المشفرة من طرف إلى طرف",
-    "no_messages_yet": "لا توجد رسائل بعد",
     "no_match": "لا توجد رسائل مطابقة",
     "search_placeholder": "البحث في الرسائل…",
     "search_history_hint": "البحث في الرسائل المحملة فقط — حمّل المزيد للبحث في السجل",

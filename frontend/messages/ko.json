@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "클라이언트가 요청합니다 — 수락 또는 거절하세요."
+      "subtitle": "클라이언트가 요청합니다 — 수락 또는 거절하세요.",
+      "field_title_ph": "예: DeFi 프로토콜 스마트 컨트랙트 감사",
+      "field_description_ph": "서비스, 결과물, 기술 스택을 설명하세요…",
+      "price_row": "내 가격(클라이언트에게 표시)",
+      "success_sub": "서비스가 게시되었습니다 — 이제 클라이언트가 요청할 수 있습니다.",
+      "service_number": "서비스 #{id}",
+      "open_service_btn": "서비스 열기"
     },
     "post_job": {
       "title": "일자리 게시",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "실행자가 지원합니다 — 채용할 사람을 선택하세요."
+      "subtitle": "실행자가 지원합니다 — 채용할 사람을 선택하세요.",
+      "section_details": "작업 상세",
+      "field_title_ph": "예: React 웹 앱 개발",
+      "field_description_ph": "요구 사항과 결과물을 설명하세요…",
+      "custom_tag_ph": "태그 이름(예: 아키텍처)",
+      "field_brief_note": "온체인에 저장 — 수행자에게 공개",
+      "success_sub": "작업이 게시되었습니다 — 이제 수행자가 지원할 수 있습니다.",
+      "job_number": "작업 #{id}",
+      "open_job_btn": "작업 열기",
+      "receipt_minted_note": "영수증 NFT가 지갑에 자동 발행됨 — 소울바운드, 양도 불가"
     },
     "service_page": {
       "not_found": "서비스를 찾을 수 없습니다",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "감지 중…",
+      "arbiter_row": "중재자: 프로토콜(자동 배정)",
+      "gasless_row": "가스리스 — 릴레이가 가스를 지불, 서명만 하면 됩니다",
+      "receipt_row": "게시 시 영수증 NFT 발행",
+      "budget_label": "예산",
+      "total_label": "합계",
+      "balance_label": "잔액",
+      "pending_title": "가스리스 트랜잭션 전송 중…",
+      "pending_hint": "지갑 서명 2회 — ETH 불필요",
+      "view_tx": "Basescan에서 보기",
+      "switch_network": "계속하려면 Base Sepolia로 전환하세요",
+      "insufficient_balance": "{need} USDC 필요, 보유 {have}"
     }
   },
   "wallet": {
@@ -508,7 +537,6 @@
     "retry": "재시도",
     "connecting": "연결 중…",
     "connecting_desc": "종단간 암호화 메시지 설정 중",
-    "no_messages_yet": "아직 메시지가 없습니다",
     "no_match": "일치하는 메시지가 없습니다",
     "search_placeholder": "메시지 검색…",
     "search_history_hint": "로드된 메시지만 검색 — 기록 검색은 더 불러오세요",

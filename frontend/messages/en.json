@@ -136,7 +136,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Clients request you — you accept or decline."
+      "subtitle": "Clients request you — you accept or decline.",
+      "field_title_ph": "e.g. Smart Contract Audit for DeFi Protocol",
+      "field_description_ph": "Describe your service, deliverables, tech stack…",
+      "price_row": "Your price (shown to clients)",
+      "success_sub": "Your service is live — clients can now request you.",
+      "service_number": "Service #{id}",
+      "open_service_btn": "Open Service"
     },
     "post_job": {
       "title": "Post a Job",
@@ -151,7 +157,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Executors apply — you pick who to hire."
+      "subtitle": "Executors apply — you pick who to hire.",
+      "section_details": "Job Details",
+      "field_title_ph": "e.g. Build a React Web Application",
+      "field_description_ph": "Describe requirements, deliverables…",
+      "custom_tag_ph": "Tag name (e.g. Architecture)",
+      "field_brief_note": "Stored on-chain — visible to executors",
+      "success_sub": "Your job is live — executors can now apply.",
+      "job_number": "Job #{id}",
+      "open_job_btn": "Open Job",
+      "receipt_minted_note": "Receipt NFT auto-minted to your wallet — soulbound, non-transferable"
     },
     "service_page": {
       "not_found": "Service not found",
@@ -159,6 +174,20 @@
       "removed_notice": "This service has been removed",
       "hires_label": "Total hires",
       "full_page": "Full page"
+    },
+    "post_common": {
+      "detecting": "Detecting…",
+      "arbiter_row": "Arbiter: protocol (auto-assigned)",
+      "gasless_row": "Gasless — the relay pays gas, you only sign",
+      "receipt_row": "Receipt NFT minted on posting",
+      "budget_label": "Budget",
+      "total_label": "Total",
+      "balance_label": "Balance",
+      "pending_title": "Sending gasless transaction…",
+      "pending_hint": "2 wallet signatures — no ETH needed",
+      "view_tx": "View on Basescan",
+      "switch_network": "Switch to Base Sepolia to continue",
+      "insufficient_balance": "Need {need} USDC, have {have}"
     }
   },
   "wallet": {
@@ -514,7 +543,6 @@
     "retry": "Retry",
     "connecting": "Connecting…",
     "connecting_desc": "Setting up end-to-end encrypted messaging",
-    "no_messages_yet": "No messages yet",
     "no_match": "No messages match",
     "search_placeholder": "Search messages…",
     "search_history_hint": "Searching loaded messages only — load more to search history",

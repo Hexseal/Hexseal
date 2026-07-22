@@ -305,29 +305,31 @@ function JobCard({
               <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
             )}
 
-            {/* Footer: chat + apply/withdraw + full-page link */}
-            <div className="pt-2.5 border-t border-white/6 flex items-center gap-1.5">
-              {!isClient && address && (
-                <button className="w-8 h-8 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors"
-                  onClick={() => router.push(`/chat?peer=${job.client}`)}>
-                  <MessageCircle className="w-3.5 h-3.5" />
-                </button>
-              )}
-              {!isClient && address && !hasApplied && (
-                <Button size="sm" onClick={handleApply} disabled={isApplying || isFilled} className="h-8 px-2.5 text-xs">
-                  {isApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("board.jobs.apply_btn")}
-                </Button>
-              )}
-              {!isClient && address && hasApplied && !isFilled && (
-                <Button size="sm" variant="ghost" onClick={handleWithdraw} disabled={isWithdrawing}
-                  className="h-8 px-2.5 text-xs text-white/25 hover:text-red-400 hover:bg-red-400/10">
-                  {isWithdrawing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("board.jobs.withdraw_btn")}
-                </Button>
-              )}
-              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-8 px-2 gap-1.5 ml-auto"
+            {/* Footer: full-page link (left) + chat/apply/withdraw actions (right) */}
+            <div className="pt-2.5 border-t border-white/6 flex items-center justify-between gap-1.5">
+              <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-8 px-2 gap-1.5"
                 onClick={e => { e.stopPropagation(); router.push(`/job/${jobId.toString()}`); }}>
                 <ExternalLink className="w-3 h-3" /> {t("board.jobs.full_page")}
               </Button>
+              <div className="flex items-center gap-1.5">
+                {!isClient && address && (
+                  <button className="w-8 h-8 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors"
+                    onClick={() => router.push(`/chat?peer=${job.client}`)}>
+                    <MessageCircle className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {!isClient && address && !hasApplied && (
+                  <Button size="sm" onClick={handleApply} disabled={isApplying || isFilled} className="h-8 px-2.5 text-xs">
+                    {isApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("board.jobs.apply_btn")}
+                  </Button>
+                )}
+                {!isClient && address && hasApplied && !isFilled && (
+                  <Button size="sm" variant="ghost" onClick={handleWithdraw} disabled={isWithdrawing}
+                    className="h-8 px-2.5 text-xs text-white/25 hover:text-red-400 hover:bg-red-400/10">
+                    {isWithdrawing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("board.jobs.withdraw_btn")}
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         )}

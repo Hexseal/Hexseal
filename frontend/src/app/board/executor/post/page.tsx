@@ -32,6 +32,8 @@ const EXPECTED_CHAIN_ID = CHAIN_ID;
 const MAX_PRICE   = MAX_DEAL_AMOUNT;
 const MAX_DEADLINE = MAX_DEADLINE_DAYS;
 
+// Must match the 7-param event in ServiceBoardFacet.sol exactly,
+// otherwise topic0 never matches and serviceId is null
 const SERVICE_POSTED_ABI = [{
   anonymous: false,
   inputs: [
@@ -39,6 +41,9 @@ const SERVICE_POSTED_ABI = [{
     { indexed: true,  internalType: "address", name: "executor",  type: "address" },
     { indexed: false, internalType: "uint256", name: "price",     type: "uint256" },
     { indexed: false, internalType: "uint8",   name: "region",    type: "uint8"   },
+    { indexed: false, internalType: "string",  name: "title",     type: "string"  },
+    { indexed: false, internalType: "string",  name: "description", type: "string" },
+    { indexed: false, internalType: "uint256", name: "deadlineDays", type: "uint256" },
   ],
   name: "ServicePosted",
   type: "event",
@@ -63,7 +68,7 @@ const REGION_LABELS: Record<number, string> = {
   6: "AU",
 };
 
-type Step = "form" | "uploading" | "pending" | "success" | "error";
+type Step = "form" | "pending" | "success" | "error";
 
 export default function PostServicePage() {
   const { address, isConnected, chainId, status } = useAccount();
@@ -115,10 +120,10 @@ export default function PostServicePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isConnected || !walletClient || !publicClient) { toast.error("Connect your wallet"); return; }
+    if (!isConnected || !walletClient || !publicClient) { toast.error(t("common.connect_wallet")); return; }
     if (isWrongChain) {
       try { await switchChainAsync({ chainId: EXPECTED_CHAIN_ID }); }
-      catch { toast.error("Switch to Base Sepolia to continue"); return; }
+      catch { toast.error(t("board.post_common.switch_network")); return; }
     }
 
     const trimmedTitle = title.trim();
@@ -133,7 +138,7 @@ export default function PostServicePage() {
     if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
     setFieldErrors({});
 
-    if (!hasBalance) { toast.error(`Need ${feeAmount.toFixed(2)} USDC for PPP fee, have ${usdcBalance.toFixed(2)}`); return; }
+    if (!hasBalance) { toast.error(t("board.post_common.insufficient_balance", { need: feeAmount.toFixed(2), have: usdcBalance.toFixed(2) })); return; }
 
     setStep("pending");
     try {
@@ -158,7 +163,9 @@ export default function PostServicePage() {
 
       setTxHash(hash);
       setStep("success");
-      toast.success("Service published!");
+      toast.success(t("board.post_service.success"));
+      // Bust the server-side subgraph cache so the board shows the new service
+      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
       if (address) {
         pushNotif(address, {
           type: "service_posted",
@@ -202,7 +209,7 @@ export default function PostServicePage() {
           </div>
           <h1 className="text-2xl font-bold font-syne mb-2">{t("board.post_service.title")}</h1>
           <p className="text-muted-foreground text-sm mb-6">{t("common.connect_wallet")}</p>
-          <Link href="/"><Button variant="outline">Go Home</Button></Link>
+          <Link href="/"><Button variant="outline">{t("common.go_home")}</Button></Link>
         </div>
       </PageCenter>
     );
@@ -232,7 +239,7 @@ export default function PostServicePage() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_service.field_title")}</Label>
-                <Input id="title" placeholder="e.g. Smart Contract Audit for DeFi Protocol" value={title}
+                <Input id="title" placeholder={t("board.post_service.field_title_ph")} value={title}
                   onChange={e => { setTitle(e.target.value); if (fieldErrors.title) setFieldErrors(p => ({ ...p, title: "" })); }} maxLength={100}
                   className={`bg-[#0d0d0f] placeholder:text-white/20 rounded-xl ${fieldErrors.title ? "border-red-500/60" : "border-white/[0.08]"}`} />
                 <div className="flex justify-between">
@@ -243,7 +250,7 @@ export default function PostServicePage() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_service.field_description")}</Label>
-                <Textarea id="description" placeholder="Describe your service, deliverables, tech stack, requirements…" value={description}
+                <Textarea id="description" placeholder={t("board.post_service.field_description_ph")} value={description}
                   onChange={e => { setDescription(e.target.value); if (fieldErrors.description) setFieldErrors(p => ({ ...p, description: "" })); }} rows={4} maxLength={500}
                   className={`bg-[#0d0d0f] placeholder:text-white/20 resize-none rounded-xl ${fieldErrors.description ? "border-red-500/60" : "border-white/[0.08]"}`} />
                 <div className="flex justify-between">
@@ -287,19 +294,19 @@ export default function PostServicePage() {
             <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 space-y-2.5 text-sm" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
               <div className="flex items-center gap-2 text-white/40">
                 <Globe className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>Region: {regionData?.label ?? "Detecting…"}</span>
+                <span>{t("board.post_job.field_region")}: {regionData?.label ?? t("board.post_common.detecting")}</span>
               </div>
               <div className="flex items-center gap-2 text-white/40">
                 <Shield className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>Arbiter: Protocol (auto-assigned on hire)</span>
+                <span>{t("board.post_common.arbiter_row")}</span>
               </div>
               <div className="flex items-center gap-2 text-white/40">
                 <Zap className="w-3.5 h-3.5 flex-shrink-0 text-primary" />
-                <span>Gasless — relay pays gas, you only sign</span>
+                <span>{t("board.post_common.gasless_row")}</span>
               </div>
               <div className="border-t border-white/8 pt-2.5 space-y-1">
                 <div className="flex justify-between text-white/50">
-                  <span>Your price (shown to clients)</span><span className="font-mono">{price || "0"} USDC</span>
+                  <span>{t("board.post_service.price_row")}</span><span className="font-mono">{price || "0"} USDC</span>
                 </div>
                 <div className="flex justify-between text-white/50">
                   <span>{t("board.post_service.fee_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
@@ -308,7 +315,7 @@ export default function PostServicePage() {
                   <span>{t("board.post_service.sign_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
                 </div>
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>
-                  Balance: {usdcBalance.toFixed(2)} USDC
+                  {t("board.post_common.balance_label")}: {usdcBalance.toFixed(2)} USDC
                 </p>
               </div>
             </div>
@@ -322,8 +329,8 @@ export default function PostServicePage() {
         {step === "pending" && (
           <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-16 text-center" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             <Loader2 className="w-10 h-10 animate-spin mx-auto mb-5 text-primary" />
-            <h2 className="text-lg font-semibold mb-2">Sending gasless transaction…</h2>
-            <p className="text-sm text-white/40">2 wallet signatures required — no ETH needed</p>
+            <h2 className="text-lg font-semibold mb-2">{t("board.post_common.pending_title")}</h2>
+            <p className="text-sm text-white/40">{t("board.post_common.pending_hint")}</p>
           </div>
         )}
 
@@ -334,19 +341,20 @@ export default function PostServicePage() {
                 <CheckCircle className="w-7 h-7 text-emerald-400" />
               </div>
               <h2 className="text-xl font-bold font-syne mb-1">{t("board.post_service.success")}</h2>
-              <p className="text-sm text-white/50 mb-2">Your service is live. Clients can now request you.</p>
+              <p className="text-sm text-white/50 mb-2">{t("board.post_service.success_sub")}</p>
               {serviceId && (
-                <p className="text-xs font-mono text-white/30 mb-4">Service #{serviceId}</p>
+                <p className="text-xs font-mono text-white/30 mb-4">{t("board.post_service.service_number", { id: serviceId })}</p>
               )}
               {txHash && (
                 <a href={explorerUrl('tx', txHash)} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-primary hover:underline mb-5">
-                  View on Basescan <ExternalLink className="w-3 h-3" />
+                  {t("board.post_common.view_tx")} <ExternalLink className="w-3 h-3" />
                 </a>
               )}
-              <div className="flex gap-3 justify-center mt-4">
-                <Link href="/dashboard"><Button>Dashboard</Button></Link>
-                <Link href="/board/executor"><Button variant="outline" className="border-white/15 text-white/60">Board</Button></Link>
+              <div className="flex gap-3 justify-center mt-4 flex-wrap">
+                {serviceId && <Link href={`/service/${serviceId}`}><Button>{t("board.post_service.open_service_btn")}</Button></Link>}
+                <Link href="/dashboard"><Button variant={serviceId ? "outline" : "default"} className={serviceId ? "border-white/15 text-white/60" : undefined}>{t("nav.dashboard")}</Button></Link>
+                <Link href="/board/executor"><Button variant="outline" className="border-white/15 text-white/60">{t("nav.board")}</Button></Link>
               </div>
             </div>
 
@@ -358,9 +366,9 @@ export default function PostServicePage() {
             <div className="w-14 h-14 rounded-2xl bg-red-400/10 border border-red-400/20 flex items-center justify-center mx-auto mb-5">
               <AlertCircle className="w-7 h-7 text-red-400" />
             </div>
-            <h2 className="text-xl font-bold font-syne mb-2">Transaction Failed</h2>
+            <h2 className="text-xl font-bold font-syne mb-2">{t("common.transaction_failed")}</h2>
             <p className="text-sm text-white/40 mb-5 max-w-sm mx-auto break-words">{errorMsg}</p>
-            <Button onClick={() => { setStep("form"); setErrorMsg(""); }}>Try Again</Button>
+            <Button onClick={() => { setStep("form"); setErrorMsg(""); }}>{t("common.retry")}</Button>
           </div>
         )}
       </motion.div>

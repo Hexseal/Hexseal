@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "ลูกค้าส่งคำขอ — คุณรับหรือปฏิเสธ"
+      "subtitle": "ลูกค้าส่งคำขอ — คุณรับหรือปฏิเสธ",
+      "field_title_ph": "เช่น ตรวจสอบสมาร์ทคอนแทรกต์โปรโตคอล DeFi",
+      "field_description_ph": "อธิบายบริการ งานส่งมอบ เทคโนโลยี…",
+      "price_row": "ราคาของคุณ (แสดงต่อลูกค้า)",
+      "success_sub": "บริการของคุณออนไลน์แล้ว — ลูกค้าสั่งได้ทันที",
+      "service_number": "บริการ #{id}",
+      "open_service_btn": "เปิดบริการ"
     },
     "post_job": {
       "title": "ประกาศงาน",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "ผู้ดำเนินการสมัคร — คุณเลือกว่าจะจ้างใคร"
+      "subtitle": "ผู้ดำเนินการสมัคร — คุณเลือกว่าจะจ้างใคร",
+      "section_details": "รายละเอียดงาน",
+      "field_title_ph": "เช่น สร้างเว็บแอป React",
+      "field_description_ph": "อธิบายข้อกำหนดและงานส่งมอบ…",
+      "custom_tag_ph": "ชื่อแท็ก (เช่น สถาปัตยกรรม)",
+      "field_brief_note": "จัดเก็บบนเชน — ผู้รับงานมองเห็นได้",
+      "success_sub": "งานของคุณออนไลน์แล้ว — ผู้รับงานสมัครได้ทันที",
+      "job_number": "งาน #{id}",
+      "open_job_btn": "เปิดงาน",
+      "receipt_minted_note": "มินต์ NFT ใบเสร็จเข้ากระเป๋าของคุณแล้ว — soulbound โอนไม่ได้"
     },
     "service_page": {
       "not_found": "ไม่พบบริการ",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "กำลังตรวจหา…",
+      "arbiter_row": "อนุญาโตตุลาการ: โปรโตคอล (กำหนดอัตโนมัติ)",
+      "gasless_row": "ไม่มีค่าแก๊ส — รีเลย์จ่ายแก๊สให้ คุณแค่เซ็น",
+      "receipt_row": "มินต์ NFT ใบเสร็จเมื่อโพสต์",
+      "budget_label": "งบประมาณ",
+      "total_label": "รวม",
+      "balance_label": "ยอดคงเหลือ",
+      "pending_title": "กำลังส่งธุรกรรมไร้ค่าแก๊ส…",
+      "pending_hint": "ลงนามกระเป๋า 2 ครั้ง — ไม่ต้องใช้ ETH",
+      "view_tx": "ดูบน Basescan",
+      "switch_network": "สลับไปที่ Base Sepolia เพื่อดำเนินการต่อ",
+      "insufficient_balance": "ต้องการ {need} USDC มีอยู่ {have}"
     }
   },
   "wallet": {
@@ -508,7 +537,6 @@
     "retry": "ลองอีกครั้ง",
     "connecting": "กำลังเชื่อมต่อ…",
     "connecting_desc": "กำลังตั้งค่าการส่งข้อความแบบเข้ารหัสต้นทางถึงปลายทาง",
-    "no_messages_yet": "ยังไม่มีข้อความ",
     "no_match": "ไม่พบข้อความที่ตรงกัน",
     "search_placeholder": "ค้นหาข้อความ…",
     "search_history_hint": "ค้นหาเฉพาะข้อความที่โหลดแล้ว — โหลดเพิ่มเติมเพื่อค้นหาประวัติ",

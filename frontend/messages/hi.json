@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "ग्राहक आपसे अनुरोध करते हैं — आप स्वीकार या अस्वीकार करते हैं।"
+      "subtitle": "ग्राहक आपसे अनुरोध करते हैं — आप स्वीकार या अस्वीकार करते हैं।",
+      "field_title_ph": "जैसे: DeFi प्रोटोकॉल स्मार्ट कॉन्ट्रैक्ट ऑडिट",
+      "field_description_ph": "अपनी सेवा, डिलिवरेबल्स, टेक स्टैक बताएं…",
+      "price_row": "आपकी कीमत (क्लाइंट को दिखेगी)",
+      "success_sub": "आपकी सेवा लाइव है — क्लाइंट अब अनुरोध कर सकते हैं।",
+      "service_number": "सेवा #{id}",
+      "open_service_btn": "सेवा खोलें"
     },
     "post_job": {
       "title": "काम पोस्ट करें",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "निष्पादक आवेदन करते हैं — आप तय करते हैं किसे नियुक्त करें।"
+      "subtitle": "निष्पादक आवेदन करते हैं — आप तय करते हैं किसे नियुक्त करें।",
+      "section_details": "कार्य विवरण",
+      "field_title_ph": "जैसे: React वेब ऐप बनाएं",
+      "field_description_ph": "आवश्यकताएँ और डिलिवरेबल्स बताएं…",
+      "custom_tag_ph": "टैग नाम (जैसे: आर्किटेक्चर)",
+      "field_brief_note": "ऑन-चेन संग्रहीत — निष्पादकों को दिखेगा",
+      "success_sub": "आपका कार्य लाइव है — निष्पादक अब आवेदन कर सकते हैं।",
+      "job_number": "कार्य #{id}",
+      "open_job_btn": "कार्य खोलें",
+      "receipt_minted_note": "रसीद NFT आपके वॉलेट में मिंट हुई — सोलबाउंड, अहस्तांतरणीय"
     },
     "service_page": {
       "not_found": "सेवा नहीं मिली",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "पता लगाया जा रहा है…",
+      "arbiter_row": "मध्यस्थ: प्रोटोकॉल (स्वतः नियुक्त)",
+      "gasless_row": "गैसलेस — रिले गैस देता है, आप केवल हस्ताक्षर करें",
+      "receipt_row": "पोस्ट करने पर रसीद NFT मिंट होगी",
+      "budget_label": "बजट",
+      "total_label": "कुल",
+      "balance_label": "बैलेंस",
+      "pending_title": "गैसलेस लेनदेन भेजा जा रहा है…",
+      "pending_hint": "2 वॉलेट हस्ताक्षर — ETH की ज़रूरत नहीं",
+      "view_tx": "Basescan पर देखें",
+      "switch_network": "जारी रखने के लिए Base Sepolia पर स्विच करें",
+      "insufficient_balance": "{need} USDC चाहिए, आपके पास {have} है"
     }
   },
   "wallet": {
@@ -499,7 +528,7 @@
     "new_conversation": "नई बातचीत",
     "paste_address_hint": "चैट शुरू करने के लिए वॉलेट पता पेस्ट करें",
     "no_conversations": "अभी कोई बातचीत नहीं",
-    "no_messages_yet": "अभी कोई संदेश नहीं",
+    "no_messages_yet": "अभी तक कोई संदेश नहीं",
     "start_hint": "किसी डील से चैट शुरू करें या ऊपर + बटन का उपयोग करें",
     "select_conversation": "बातचीत चुनें",
     "empty_state_hint": "सूची से चुनें या नई चैट शुरू करें",
@@ -508,7 +537,6 @@
     "retry": "पुनः प्रयास",
     "connecting": "कनेक्ट हो रहा है…",
     "connecting_desc": "एंड-टू-एंड एन्क्रिप्टेड मैसेजिंग सेट अप हो रही है",
-    "no_messages_yet": "अभी तक कोई संदेश नहीं",
     "no_match": "कोई संदेश मेल नहीं खाता",
     "search_placeholder": "संदेश खोजें…",
     "search_history_hint": "केवल लोड किए गए संदेशों में खोज — इतिहास खोजने के लिए अधिक लोड करें",

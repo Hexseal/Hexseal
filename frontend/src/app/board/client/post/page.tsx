@@ -14,14 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "react-hot-toast";
-import { parseUnits, type Hex, parseEventLogs, keccak256 } from "viem";
+import { parseUnits, parseEventLogs } from "viem";
 import { mintJobGasless } from "@/lib/relay";
 import {
   Loader2, CheckCircle, AlertCircle, Globe, Shield, Zap, Briefcase,
   ExternalLink, Sparkles, Receipt,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { pushNotif } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
 import { CATEGORIES, DEFAULT_CATEGORY, type CategoryKey, withCategory } from "@/config/categories";
@@ -33,7 +32,8 @@ const EXPECTED_CHAIN_ID = CHAIN_ID;
 const MAX_AMOUNT  = MAX_DEAL_AMOUNT;
 const MAX_DEADLINE = MAX_DEADLINE_DAYS;
 
-// JobPosted event ABI (для парсинга jobId из receipt)
+// JobPosted event ABI (для парсинга jobId из receipt) — must match the 8-param
+// event in JobBoardFacet.sol exactly, otherwise topic0 never matches and jobId is null
 const JOB_POSTED_ABI = [{
   anonymous: false,
   inputs: [
@@ -41,6 +41,10 @@ const JOB_POSTED_ABI = [{
     { indexed: true,  internalType: "address", name: "client", type: "address" },
     { indexed: false, internalType: "uint256", name: "amount", type: "uint256" },
     { indexed: false, internalType: "uint8",   name: "region", type: "uint8"   },
+    { indexed: false, internalType: "string",  name: "title",  type: "string"  },
+    { indexed: false, internalType: "string",  name: "description", type: "string" },
+    { indexed: false, internalType: "uint256", name: "deadlineDays", type: "uint256" },
+    { indexed: false, internalType: "string",  name: "terms",  type: "string"  },
   ],
   name: "JobPosted",
   type: "event",
@@ -65,10 +69,9 @@ const REGION_LABELS: Record<number, string> = {
   6: "AU",
 };
 
-type Step = "form" | "uploading" | "pending" | "success" | "error";
+type Step = "form" | "pending" | "success" | "error";
 
 export default function PostJobPage() {
-  const router = useRouter();
   const { address, isConnected, chainId, status } = useAccount();
   const t = useTranslations();
   const { switchChainAsync } = useSwitchChain();
@@ -121,10 +124,10 @@ export default function PostJobPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isConnected || !walletClient || !publicClient) { toast.error("Connect your wallet"); return; }
+    if (!isConnected || !walletClient || !publicClient) { toast.error(t("common.connect_wallet")); return; }
     if (isWrongChain) {
       try { await switchChainAsync({ chainId: EXPECTED_CHAIN_ID }); }
-      catch { toast.error("Switch to Base Sepolia to continue"); return; }
+      catch { toast.error(t("board.post_common.switch_network")); return; }
     }
 
     const trimmedTitle = title.trim();
@@ -133,13 +136,14 @@ export default function PostJobPage() {
     if (!trimmedTitle) errs.title = t("form.required");
     else if (trimmedTitle.length > 100) errs.title = t("form.max_chars", { count: 100 });
     if (!description.trim()) errs.description = t("form.required");
+    if (!jobTerms.trim()) errs.terms = t("form.required");
     if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) errs.amount = t("form.amount_positive");
     else if (parsedAmount > MAX_AMOUNT) errs.amount = t("form.amount_max", { max: MAX_AMOUNT });
     if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = t("form.deadline_range", { min: 1, max: MAX_DEADLINE });
     if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
     setFieldErrors({});
 
-    if (!hasBalance) { toast.error(`Need ${totalNeeded.toFixed(2)} USDC, have ${usdcBalance.toFixed(2)}`); return; }
+    if (!hasBalance) { toast.error(t("board.post_common.insufficient_balance", { need: totalNeeded.toFixed(2), have: usdcBalance.toFixed(2) })); return; }
 
     setStep("pending");
     try {
@@ -152,7 +156,7 @@ export default function PostJobPage() {
         ),
         amount:       parseUnits(amount, 6),
         deadlineDays: BigInt(parsedDeadline),
-        terms:        jobTerms.trim() ? sanitizeHtml(jobTerms.trim()) : "",
+        terms:        sanitizeHtml(jobTerms.trim()),
         region:       regionData?.region ?? 1,
         fee:          effectiveFee,
       });
@@ -171,7 +175,9 @@ export default function PostJobPage() {
 
       setTxHash(hash);
       setStep("success");
-      toast.success("Job posted!");
+      toast.success(t("board.post_job.success"));
+      // Bust the server-side subgraph cache so the board shows the new job
+      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
       if (address) {
         pushNotif(address, {
           type: "job_posted",
@@ -215,7 +221,7 @@ export default function PostJobPage() {
           </div>
           <h1 className="text-2xl font-bold font-syne mb-2">{t("board.post_job.title")}</h1>
           <p className="text-muted-foreground text-sm mb-6">{t("common.connect_wallet")}</p>
-          <Link href="/"><Button variant="outline">Go Home</Button></Link>
+          <Link href="/"><Button variant="outline">{t("common.go_home")}</Button></Link>
         </div>
       </PageCenter>
     );
@@ -241,11 +247,11 @@ export default function PostJobPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Job info */}
             <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 space-y-4" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
-              <h2 className="text-sm font-semibold text-white/60">{t("board.post_job.field_title")} Details</h2>
+              <h2 className="text-sm font-semibold text-white/60">{t("board.post_job.section_details")}</h2>
 
               <div className="space-y-1.5">
                 <Label htmlFor="title" className="text-sm text-white/70">{t("board.post_job.field_title")}</Label>
-                <Input id="title" placeholder="e.g. Build a React Web Application" value={title}
+                <Input id="title" placeholder={t("board.post_job.field_title_ph")} value={title}
                   onChange={e => { setTitle(e.target.value); if (fieldErrors.title) setFieldErrors(p => ({ ...p, title: "" })); }} maxLength={100}
                   className={`bg-[#0d0d0f] placeholder:text-white/20 rounded-[14px] ${fieldErrors.title ? "border-red-500/60" : "border-white/[0.08]"}`} />
                 <div className="flex justify-between">
@@ -256,10 +262,20 @@ export default function PostJobPage() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="description" className="text-sm text-white/70">{t("board.post_job.field_description")}</Label>
-                <Textarea id="description" placeholder="Describe requirements, deliverables…" value={description}
+                <Textarea id="description" placeholder={t("board.post_job.field_description_ph")} value={description}
                   onChange={e => { setDescription(e.target.value); if (fieldErrors.description) setFieldErrors(p => ({ ...p, description: "" })); }} rows={4} maxLength={500}
                   className={`bg-[#0d0d0f] placeholder:text-white/20 resize-none rounded-[14px] ${fieldErrors.description ? "border-red-500/60" : "border-white/[0.08]"}`} />
                 {fieldErrors.description && <p className="text-xs text-red-400">{fieldErrors.description}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="terms" className="text-sm text-white/70">{t("board.post_job.field_brief")}</Label>
+                <Textarea id="terms" placeholder={t("board.post_job.field_brief_hint")} value={jobTerms}
+                  onChange={e => { setJobTerms(e.target.value); if (fieldErrors.terms) setFieldErrors(p => ({ ...p, terms: "" })); }} rows={3} maxLength={2000}
+                  className={`bg-[#0d0d0f] placeholder:text-white/20 resize-none rounded-[14px] ${fieldErrors.terms ? "border-red-500/60" : "border-white/[0.08]"}`} />
+                {fieldErrors.terms
+                  ? <p className="text-xs text-red-400">{fieldErrors.terms}</p>
+                  : <p className="text-xs text-white/25">{t("board.post_job.field_brief_note")}</p>}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -295,7 +311,7 @@ export default function PostJobPage() {
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-white/30 text-xs flex-shrink-0">#</span>
                     <Input
-                      placeholder="Название тега (напр. Архитектура)"
+                      placeholder={t("board.post_job.custom_tag_ph")}
                       value={customTag}
                       onChange={e => setCustomTag(e.target.value.slice(0, 40))}
                       maxLength={40}
@@ -305,47 +321,38 @@ export default function PostJobPage() {
                 )}
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="terms" className="text-sm text-white/70">
-                  {t("board.post_job.field_brief")} <span className="text-white/25">(optional)</span>
-                </Label>
-                <Textarea id="terms" placeholder={t("board.post_job.field_brief_hint")} value={jobTerms}
-                  onChange={e => setJobTerms(e.target.value)} rows={3} maxLength={2000}
-                  className="bg-[#0d0d0f] border-white/[0.08] placeholder:text-white/20 resize-none rounded-[14px]" />
-                <p className="text-xs text-white/25">Terms hash stored on-chain — text saved to backend</p>
-              </div>
             </div>
 
             {/* Summary */}
             <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4 space-y-2.5 text-sm" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
               <div className="flex items-center gap-2 text-white/40">
                 <Globe className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>Region: {regionData?.label ?? "Detecting…"}</span>
+                <span>{t("board.post_job.field_region")}: {regionData?.label ?? t("board.post_common.detecting")}</span>
               </div>
               <div className="flex items-center gap-2 text-white/40">
                 <Shield className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>Arbiter: Protocol (auto-assigned)</span>
+                <span>{t("board.post_common.arbiter_row")}</span>
               </div>
               <div className="flex items-center gap-2 text-white/40">
                 <Zap className="w-3.5 h-3.5 flex-shrink-0 text-primary" />
-                <span>Gasless — relay pays gas, you only sign</span>
+                <span>{t("board.post_common.gasless_row")}</span>
               </div>
               <div className="flex items-center gap-2 text-white/40">
                 <Receipt className="w-3.5 h-3.5 flex-shrink-0 text-emerald-400/60" />
-                <span>Receipt NFT minted on posting</span>
+                <span>{t("board.post_common.receipt_row")}</span>
               </div>
               <div className="border-t border-white/8 pt-2.5 space-y-1">
                 <div className="flex justify-between text-white/50">
-                  <span>Budget</span><span className="font-mono">{amount || "0"} USDC</span>
+                  <span>{t("board.post_common.budget_label")}</span><span className="font-mono">{amount || "0"} USDC</span>
                 </div>
                 <div className="flex justify-between text-white/50">
                   <span>{t("board.post_job.fee_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
                 </div>
                 <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
-                  <span>{t("board.post_job.submit_btn")}</span><span className="font-mono">{totalNeeded.toFixed(2)} USDC</span>
+                  <span>{t("board.post_common.total_label")}</span><span className="font-mono">{totalNeeded.toFixed(2)} USDC</span>
                 </div>
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>
-                  Balance: {usdcBalance.toFixed(2)} USDC
+                  {t("board.post_common.balance_label")}: {usdcBalance.toFixed(2)} USDC
                 </p>
               </div>
             </div>
@@ -356,15 +363,11 @@ export default function PostJobPage() {
           </form>
         )}
 
-        {(step === "uploading" || step === "pending") && (
+        {step === "pending" && (
           <div className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-6 py-16 text-center" style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}>
             <Loader2 className="w-10 h-10 animate-spin mx-auto mb-5 text-primary" />
-            <h2 className="text-lg font-semibold mb-2">
-              {step === "uploading" ? "Saving terms…" : "Sending gasless transaction…"}
-            </h2>
-            <p className="text-sm text-white/40">
-              {step === "pending" ? "2 wallet signatures required — no ETH needed" : "Uploading terms to backend…"}
-            </p>
+            <h2 className="text-lg font-semibold mb-2">{t("board.post_common.pending_title")}</h2>
+            <p className="text-sm text-white/40">{t("board.post_common.pending_hint")}</p>
           </div>
         )}
 
@@ -376,19 +379,20 @@ export default function PostJobPage() {
                 <CheckCircle className="w-7 h-7 text-emerald-400" />
               </div>
               <h2 className="text-xl font-bold font-syne mb-1">{t("board.post_job.success")}</h2>
-              <p className="text-sm text-white/50 mb-2">Your job is live. Executors can now apply.</p>
+              <p className="text-sm text-white/50 mb-2">{t("board.post_job.success_sub")}</p>
               {jobId && (
-                <p className="text-xs font-mono text-white/30 mb-4">Job #{jobId}</p>
+                <p className="text-xs font-mono text-white/30 mb-4">{t("board.post_job.job_number", { id: jobId })}</p>
               )}
               {txHash && (
                 <a href={explorerUrl('tx', txHash)} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-primary hover:underline mb-5">
-                  View on Basescan <ExternalLink className="w-3 h-3" />
+                  {t("board.post_common.view_tx")} <ExternalLink className="w-3 h-3" />
                 </a>
               )}
-              <div className="flex gap-3 justify-center mt-4">
-                <Link href="/dashboard"><Button>Dashboard</Button></Link>
-                <Link href="/board"><Button variant="outline" className="border-white/15 text-white/60">Board</Button></Link>
+              <div className="flex gap-3 justify-center mt-4 flex-wrap">
+                {jobId && <Link href={`/job/${jobId}`}><Button>{t("board.post_job.open_job_btn")}</Button></Link>}
+                <Link href="/dashboard"><Button variant={jobId ? "outline" : "default"} className={jobId ? "border-white/15 text-white/60" : undefined}>{t("nav.dashboard")}</Button></Link>
+                <Link href="/board"><Button variant="outline" className="border-white/15 text-white/60">{t("nav.board")}</Button></Link>
               </div>
             </div>
 
@@ -444,7 +448,7 @@ export default function PostJobPage() {
                 {/* Auto-minted indicator */}
                 <div className="flex items-center gap-2 text-xs text-emerald-400/70">
                   <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>Receipt NFT auto-minted to your wallet — soulbound, non-transferable</span>
+                  <span>{t("board.post_job.receipt_minted_note")}</span>
                 </div>
               </div>
             )}
@@ -456,9 +460,9 @@ export default function PostJobPage() {
             <div className="w-14 h-14 rounded-[18px] bg-red-400/10 border border-red-400/20 flex items-center justify-center mx-auto mb-5">
               <AlertCircle className="w-7 h-7 text-red-400" />
             </div>
-            <h2 className="text-xl font-bold font-syne mb-2">Transaction Failed</h2>
+            <h2 className="text-xl font-bold font-syne mb-2">{t("common.transaction_failed")}</h2>
             <p className="text-sm text-white/40 mb-5 max-w-sm mx-auto break-words">{errorMsg}</p>
-            <Button onClick={() => { setStep("form"); setErrorMsg(""); }}>Try Again</Button>
+            <Button onClick={() => { setStep("form"); setErrorMsg(""); }}>{t("common.retry")}</Button>
           </div>
         )}
       </motion.div>

@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Kunden fordern Sie an — Sie nehmen an oder lehnen ab."
+      "subtitle": "Kunden fordern Sie an — Sie nehmen an oder lehnen ab.",
+      "field_title_ph": "z. B. Smart-Contract-Audit für DeFi-Protokoll",
+      "field_description_ph": "Beschreibe deinen Service, Ergebnisse, Tech-Stack…",
+      "price_row": "Dein Preis (für Kunden sichtbar)",
+      "success_sub": "Dein Service ist live — Kunden können dich jetzt anfragen.",
+      "service_number": "Service #{id}",
+      "open_service_btn": "Service öffnen"
     },
     "post_job": {
       "title": "Job veröffentlichen",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Ausführende bewerben sich — Sie wählen, wen Sie einstellen."
+      "subtitle": "Ausführende bewerben sich — Sie wählen, wen Sie einstellen.",
+      "section_details": "Auftragsdetails",
+      "field_title_ph": "z. B. React-Webanwendung entwickeln",
+      "field_description_ph": "Beschreibe Anforderungen und Ergebnisse…",
+      "custom_tag_ph": "Tag-Name (z. B. Architektur)",
+      "field_brief_note": "On-chain gespeichert — für Executor sichtbar",
+      "success_sub": "Dein Auftrag ist live — Executor können sich jetzt bewerben.",
+      "job_number": "Auftrag #{id}",
+      "open_job_btn": "Auftrag öffnen",
+      "receipt_minted_note": "Beleg-NFT automatisch in deine Wallet geminted — soulbound, nicht übertragbar"
     },
     "service_page": {
       "not_found": "Leistung nicht gefunden",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "Wird erkannt…",
+      "arbiter_row": "Schiedsrichter: Protokoll (automatisch zugewiesen)",
+      "gasless_row": "Gasless — das Relay zahlt das Gas, du signierst nur",
+      "receipt_row": "Beleg-NFT wird beim Veröffentlichen geminted",
+      "budget_label": "Budget",
+      "total_label": "Gesamt",
+      "balance_label": "Guthaben",
+      "pending_title": "Gasless-Transaktion wird gesendet…",
+      "pending_hint": "2 Wallet-Signaturen — kein ETH nötig",
+      "view_tx": "Auf Basescan ansehen",
+      "switch_network": "Wechsle zu Base Sepolia, um fortzufahren",
+      "insufficient_balance": "{need} USDC benötigt, {have} vorhanden"
     }
   },
   "wallet": {
@@ -508,7 +537,6 @@
     "retry": "Erneut versuchen",
     "connecting": "Verbinde…",
     "connecting_desc": "Ende-zu-Ende-Verschlüsselung wird eingerichtet",
-    "no_messages_yet": "Noch keine Nachrichten",
     "no_match": "Keine passenden Nachrichten",
     "search_placeholder": "Nachrichten suchen…",
     "search_history_hint": "Suche nur in geladenen Nachrichten — lade mehr für die Verlaufssuche",

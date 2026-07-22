@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Клієнти надсилають запити — ви приймаєте або відхиляєте."
+      "subtitle": "Клієнти надсилають запити — ви приймаєте або відхиляєте.",
+      "field_title_ph": "Напр. Аудит смартконтракту DeFi-протоколу",
+      "field_description_ph": "Опишіть послугу, результати, стек…",
+      "price_row": "Ваша ціна (видима клієнтам)",
+      "success_sub": "Послугу опубліковано — клієнти вже можуть її замовити.",
+      "service_number": "Послуга #{id}",
+      "open_service_btn": "До послуги"
     },
     "post_job": {
       "title": "Опублікувати Роботу",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Виконавці подають заявки — ви обираєте кого найняти."
+      "subtitle": "Виконавці подають заявки — ви обираєте кого найняти.",
+      "section_details": "Деталі замовлення",
+      "field_title_ph": "Напр. Розробити вебзастосунок на React",
+      "field_description_ph": "Опишіть вимоги та результати…",
+      "custom_tag_ph": "Назва тегу (напр. Архітектура)",
+      "field_brief_note": "Зберігається ончейн — видно виконавцям",
+      "success_sub": "Замовлення опубліковано — виконавці вже можуть відгукуватися.",
+      "job_number": "Замовлення #{id}",
+      "open_job_btn": "До замовлення",
+      "receipt_minted_note": "NFT-чек закарбовано у ваш гаманець — soulbound, без права передачі"
     },
     "service_page": {
       "not_found": "Послугу не знайдено",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "Визначаємо…",
+      "arbiter_row": "Арбітр: протокол (призначається автоматично)",
+      "gasless_row": "Без газу — газ сплачує релеєр, ви лише підписуєте",
+      "receipt_row": "Під час розміщення карбується NFT-чек",
+      "budget_label": "Бюджет",
+      "total_label": "Разом",
+      "balance_label": "Баланс",
+      "pending_title": "Надсилаємо gasless-транзакцію…",
+      "pending_hint": "2 підписи гаманця — ETH не потрібен",
+      "view_tx": "Переглянути на Basescan",
+      "switch_network": "Перемкніться на мережу Base Sepolia",
+      "insufficient_balance": "Потрібно {need} USDC, доступно {have}"
     }
   },
   "wallet": {
@@ -499,7 +528,7 @@
     "new_conversation": "Нова розмова",
     "paste_address_hint": "Вставте адресу гаманця для початку розмови",
     "no_conversations": "Поки немає розмов",
-    "no_messages_yet": "Поки немає повідомлень",
+    "no_messages_yet": "Повідомлень поки немає",
     "start_hint": "Почніть чат з угоди або використайте кнопку + вище",
     "select_conversation": "Виберіть розмову",
     "empty_state_hint": "Оберіть зі списку або почніть новий чат",
@@ -508,7 +537,6 @@
     "retry": "Повторити",
     "connecting": "Підключення…",
     "connecting_desc": "Налаштування наскрізного шифрування",
-    "no_messages_yet": "Повідомлень поки немає",
     "no_match": "Повідомлень не знайдено",
     "search_placeholder": "Пошук повідомлень…",
     "search_history_hint": "Пошук лише по завантажених — завантажте більше для пошуку по історії",

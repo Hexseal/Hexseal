@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "クライアントがリクエスト — 承認または拒否します。"
+      "subtitle": "クライアントがリクエスト — 承認または拒否します。",
+      "field_title_ph": "例：DeFiプロトコルのスマートコントラクト監査",
+      "field_description_ph": "サービス内容・成果物・技術スタックを記載…",
+      "price_row": "あなたの価格（クライアントに表示）",
+      "success_sub": "サービスが公開されました — クライアントが依頼できます。",
+      "service_number": "サービス #{id}",
+      "open_service_btn": "サービスを開く"
     },
     "post_job": {
       "title": "仕事を掲載",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "受注者が応募 — 採用する人を選んでください。"
+      "subtitle": "受注者が応募 — 採用する人を選んでください。",
+      "section_details": "ジョブの詳細",
+      "field_title_ph": "例：ReactでWebアプリを構築",
+      "field_description_ph": "要件・成果物を記載…",
+      "custom_tag_ph": "タグ名（例：アーキテクチャ）",
+      "field_brief_note": "オンチェーンに保存 — 受注者に表示されます",
+      "success_sub": "ジョブが公開されました — 受注者が応募できます。",
+      "job_number": "ジョブ #{id}",
+      "open_job_btn": "ジョブを開く",
+      "receipt_minted_note": "レシートNFTをウォレットに自動ミント — ソウルバウンド・譲渡不可"
     },
     "service_page": {
       "not_found": "サービスが見つかりません",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "検出中…",
+      "arbiter_row": "仲裁者：プロトコル（自動割り当て）",
+      "gasless_row": "ガスレス — リレーがガス代を負担、署名するだけ",
+      "receipt_row": "投稿時にレシートNFTをミント",
+      "budget_label": "予算",
+      "total_label": "合計",
+      "balance_label": "残高",
+      "pending_title": "ガスレストランザクションを送信中…",
+      "pending_hint": "ウォレット署名2回 — ETH不要",
+      "view_tx": "Basescanで見る",
+      "switch_network": "続行するにはBase Sepoliaに切り替えてください",
+      "insufficient_balance": "{need} USDCが必要です（残高 {have}）"
     }
   },
   "wallet": {
@@ -499,7 +528,7 @@
     "new_conversation": "新しい会話",
     "paste_address_hint": "ウォレットアドレスを貼り付けてチャットを開始",
     "no_conversations": "まだ会話がありません",
-    "no_messages_yet": "まだメッセージがありません",
+    "no_messages_yet": "メッセージはまだありません",
     "start_hint": "契約からチャットを開始するか上の+ボタンを使用",
     "select_conversation": "会話を選択",
     "empty_state_hint": "リストから選択するか新しいチャットを開始",
@@ -508,7 +537,6 @@
     "retry": "再試行",
     "connecting": "接続中…",
     "connecting_desc": "エンドツーエンド暗号化メッセージを設定中",
-    "no_messages_yet": "メッセージはまだありません",
     "no_match": "一致するメッセージがありません",
     "search_placeholder": "メッセージを検索…",
     "search_history_hint": "読み込み済みのメッセージのみ検索 — 履歴検索はさらに読み込んでください",

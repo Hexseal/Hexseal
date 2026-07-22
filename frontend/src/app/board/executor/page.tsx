@@ -373,42 +373,44 @@ function ServiceCard({
             </div>
           )}
 
-          {/* Footer: chat + primary action + full-page link */}
-          <div className="pt-2.5 border-t border-white/6 flex items-center gap-1.5">
-            {isConnected && !isMyService && (
-              <Link href={`/chat?peer=${service.executor}`}>
-                <button className="w-8 h-8 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                </button>
-              </Link>
-            )}
-            {isConnected && !isMyService && myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
-              <Link href={`/deal/${myAccepted.agreement}`}>
-                <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
-                  {t("board.services.deal_btn")} <ExternalLink className="w-3 h-3" />
-                </Button>
-              </Link>
-            )}
-            {isConnected && !isMyService && myPending && (
-              <Button
-                size="sm" variant="ghost" onClick={() => onCancelRequest(myPending.requestId)}
-                disabled={isCancelling}
-                className="h-8 px-2.5 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10"
-              >
-                {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("board.services.cancel_request_btn")}
-              </Button>
-            )}
-            {isConnected && !isMyService && !myActive && service.status === 0 && (
-              <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting || isUnavailable} className="h-8 px-3 text-xs gap-1">
-                {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                {t("board.services.request_btn")}
-              </Button>
-            )}
-            <Link href={`/service/${service.serviceId}`} onClick={e => e.stopPropagation()} className="ml-auto">
+          {/* Footer: full-page link (left) + chat/primary actions (right) */}
+          <div className="pt-2.5 border-t border-white/6 flex items-center justify-between gap-1.5">
+            <Link href={`/service/${service.serviceId}`} onClick={e => e.stopPropagation()}>
               <Button size="sm" variant="ghost" className="text-xs text-white/30 hover:text-white/60 h-8 px-2 gap-1.5">
                 <ExternalLink className="w-3 h-3" /> {t("board.service_page.full_page")}
               </Button>
             </Link>
+            <div className="flex items-center gap-1.5">
+              {isConnected && !isMyService && (
+                <Link href={`/chat?peer=${service.executor}`}>
+                  <button className="w-8 h-8 flex items-center justify-center text-white/25 hover:text-white/60 transition-colors">
+                    <MessageCircle className="w-3.5 h-3.5" />
+                  </button>
+                </Link>
+              )}
+              {isConnected && !isMyService && myAccepted && myAccepted.agreement !== "0x0000000000000000000000000000000000000000" && (
+                <Link href={`/deal/${myAccepted.agreement}`}>
+                  <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs gap-1 border-emerald-400/30 text-emerald-400/80">
+                    {t("board.services.deal_btn")} <ExternalLink className="w-3 h-3" />
+                  </Button>
+                </Link>
+              )}
+              {isConnected && !isMyService && myPending && (
+                <Button
+                  size="sm" variant="ghost" onClick={() => onCancelRequest(myPending.requestId)}
+                  disabled={isCancelling}
+                  className="h-8 px-2.5 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10"
+                >
+                  {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("board.services.cancel_request_btn")}
+                </Button>
+              )}
+              {isConnected && !isMyService && !myActive && service.status === 0 && (
+                <Button size="sm" onClick={() => onRequest(service)} disabled={isRequesting || isUnavailable} className="h-8 px-3 text-xs gap-1">
+                  {isRequesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  {t("board.services.request_btn")}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}

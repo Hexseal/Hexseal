@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Les clients vous sollicitent — vous acceptez ou refusez."
+      "subtitle": "Les clients vous sollicitent — vous acceptez ou refusez.",
+      "field_title_ph": "ex. Audit de smart contract pour protocole DeFi",
+      "field_description_ph": "Décrivez votre service, livrables, stack…",
+      "price_row": "Votre prix (visible par les clients)",
+      "success_sub": "Votre service est en ligne — les clients peuvent vous solliciter.",
+      "service_number": "Service #{id}",
+      "open_service_btn": "Voir le service"
     },
     "post_job": {
       "title": "Publier un Emploi",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Les prestataires postulent — vous choisissez qui embaucher."
+      "subtitle": "Les prestataires postulent — vous choisissez qui embaucher.",
+      "section_details": "Détails de la mission",
+      "field_title_ph": "ex. Développer une application web React",
+      "field_description_ph": "Décrivez les exigences, les livrables…",
+      "custom_tag_ph": "Nom du tag (ex. Architecture)",
+      "field_brief_note": "Stocké on-chain — visible par les exécutants",
+      "success_sub": "Votre mission est en ligne — les exécutants peuvent postuler.",
+      "job_number": "Mission #{id}",
+      "open_job_btn": "Voir la mission",
+      "receipt_minted_note": "NFT de reçu minté dans votre wallet — soulbound, non transférable"
     },
     "service_page": {
       "not_found": "Service introuvable",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "Détection…",
+      "arbiter_row": "Arbitre : protocole (assigné automatiquement)",
+      "gasless_row": "Sans gas — le relais paie le gas, vous signez seulement",
+      "receipt_row": "NFT de reçu minté à la publication",
+      "budget_label": "Budget",
+      "total_label": "Total",
+      "balance_label": "Solde",
+      "pending_title": "Envoi de la transaction sans gas…",
+      "pending_hint": "2 signatures du wallet — pas d'ETH requis",
+      "view_tx": "Voir sur Basescan",
+      "switch_network": "Passez sur Base Sepolia pour continuer",
+      "insufficient_balance": "{need} USDC requis, vous avez {have}"
     }
   },
   "wallet": {
@@ -508,7 +537,6 @@
     "retry": "Réessayer",
     "connecting": "Connexion…",
     "connecting_desc": "Configuration du chiffrement de bout en bout",
-    "no_messages_yet": "Pas encore de messages",
     "no_match": "Aucun message ne correspond",
     "search_placeholder": "Rechercher des messages…",
     "search_history_hint": "Recherche dans les messages chargés uniquement — chargez-en plus pour l'historique",

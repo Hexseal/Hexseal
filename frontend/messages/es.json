@@ -125,7 +125,13 @@
       },
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Los clientes te solicitan — tú aceptas o rechazas."
+      "subtitle": "Los clientes te solicitan — tú aceptas o rechazas.",
+      "field_title_ph": "p. ej. Auditoría de smart contracts para protocolo DeFi",
+      "field_description_ph": "Describe tu servicio, entregables, stack…",
+      "price_row": "Tu precio (visible para clientes)",
+      "success_sub": "Tu servicio está publicado: los clientes ya pueden solicitarlo.",
+      "service_number": "Servicio #{id}",
+      "open_service_btn": "Abrir servicio"
     },
     "post_job": {
       "title": "Publicar un Trabajo",
@@ -140,7 +146,16 @@
       "field_category": "Category",
       "field_brief": "Full Brief",
       "field_brief_hint": "Detailed specs, acceptance criteria, deliverables",
-      "subtitle": "Los ejecutores se postulan — tú eliges a quién contratar."
+      "subtitle": "Los ejecutores se postulan — tú eliges a quién contratar.",
+      "section_details": "Detalles del trabajo",
+      "field_title_ph": "p. ej. Crear una aplicación web en React",
+      "field_description_ph": "Describe requisitos y entregables…",
+      "custom_tag_ph": "Nombre de etiqueta (p. ej. Arquitectura)",
+      "field_brief_note": "Guardado on-chain: visible para los ejecutores",
+      "success_sub": "Tu trabajo está publicado: los ejecutores ya pueden postularse.",
+      "job_number": "Trabajo #{id}",
+      "open_job_btn": "Abrir trabajo",
+      "receipt_minted_note": "NFT de recibo acuñado en tu wallet: soulbound, intransferible"
     },
     "service_page": {
       "not_found": "Servicio no encontrado",
@@ -156,6 +171,20 @@
       "lowest": "Lowest",
       "newest": "Newest",
       "oldest": "Oldest"
+    },
+    "post_common": {
+      "detecting": "Detectando…",
+      "arbiter_row": "Árbitro: protocolo (asignado automáticamente)",
+      "gasless_row": "Sin gas: el relay paga el gas, tú solo firmas",
+      "receipt_row": "NFT de recibo acuñado al publicar",
+      "budget_label": "Presupuesto",
+      "total_label": "Total",
+      "balance_label": "Saldo",
+      "pending_title": "Enviando transacción sin gas…",
+      "pending_hint": "2 firmas de la wallet — no se necesita ETH",
+      "view_tx": "Ver en Basescan",
+      "switch_network": "Cambia a Base Sepolia para continuar",
+      "insufficient_balance": "Se necesitan {need} USDC, tienes {have}"
     }
   },
   "wallet": {
@@ -499,7 +528,7 @@
     "new_conversation": "Nueva conversación",
     "paste_address_hint": "Pega una dirección de billetera para iniciar un chat",
     "no_conversations": "Sin conversaciones aún",
-    "no_messages_yet": "Sin mensajes aún",
+    "no_messages_yet": "Aún no hay mensajes",
     "start_hint": "Inicia un chat desde un trato o usa el botón + arriba",
     "select_conversation": "Selecciona una conversación",
     "empty_state_hint": "Elige de la lista o inicia un nuevo chat",
@@ -508,7 +537,6 @@
     "retry": "Reintentar",
     "connecting": "Conectando…",
     "connecting_desc": "Configurando mensajería cifrada de extremo a extremo",
-    "no_messages_yet": "Aún no hay mensajes",
     "no_match": "No hay mensajes que coincidan",
     "search_placeholder": "Buscar mensajes…",
     "search_history_hint": "Buscando solo en mensajes cargados — carga más para buscar en el historial",
