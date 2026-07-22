@@ -8,6 +8,7 @@ import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
 import { XmtpProvider } from "@/contexts/XmtpContext";
+import { XmtpNotificationsMount } from "./providers";
 
 // Page transition via pure CSS animation (page-enter keyframe in globals.css).
 // CSS animations run on the compositor thread — independent of JS work — so
@@ -201,6 +202,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   // survives all of that; only the content below it changes per branch.
   return (
     <XmtpProvider>
+      {/* Mounted HERE (under XmtpProvider) — not in providers.tsx — so useXmtpNotifications
+          sees the real XMTP status and its effect re-runs on ready. Single instance above
+          the route branches, so it survives navigation like <Header/>. */}
+      <XmtpNotificationsMount />
       <Header />
       {isChatPage ? (
         <Suspense fallback={

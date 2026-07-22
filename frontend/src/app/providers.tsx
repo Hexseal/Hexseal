@@ -143,7 +143,11 @@ const config = projectId
       pollingInterval: 6_000,
     });
 
-function XmtpNotificationsMount() {
+// NOTE: this MUST be rendered as a descendant of <XmtpProvider> (it lives under it in
+// client-layout.tsx), otherwise useXmtp() inside useXmtpNotifications reads the default
+// context value and its `status` is frozen at 'loading' forever — the effect then never
+// re-runs on ready and the in-app notification store is never fed on a resumed PWA.
+export function XmtpNotificationsMount() {
   useXmtpNotifications();
   return null;
 }
@@ -214,7 +218,8 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <RainbowKitProvider theme={rkTheme}>
-      <XmtpNotificationsMount />
+      {/* XmtpNotificationsMount is NOT rendered here — it must live under <XmtpProvider>
+          (see client-layout.tsx) so useXmtp()'s status isn't frozen at 'loading'. */}
       <PushAutoMount />
       {children}
     </RainbowKitProvider>
