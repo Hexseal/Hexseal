@@ -143,18 +143,18 @@ const agrEventInterface = new ethers.Interface(AGR_STATUS_EVENT_ABI);
 // ACTIVE(0) is omitted — fund() doesn't call updateStatus in the current contract.
 // notify: 'executor' | 'client' | 'both' | 'both+arbiter'
 const AGR_PUSH_MSG = {
-  1: { title: 'Deal Complete ✓',      body: 'Payment has been released. The deal is closed.',      notify: 'both'         },
-  2: { title: 'Deal Refunded ↩️',    body: 'The deal was cancelled and refunded.',                notify: 'both'         },
-  3: { title: 'Dispute Raised ⚠️',   body: 'A dispute was opened. An arbiter will review.',      notify: 'both+arbiter' },
-  4: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.',              notify: 'both'         },
+  1: { title: 'Deal Complete',      body: 'Payment has been released. The deal is closed.',      notify: 'both'         },
+  2: { title: 'Deal Refunded',       body: 'The deal was cancelled and refunded.',                notify: 'both'         },
+  3: { title: 'Dispute Raised',   body: 'A dispute was opened. An arbiter will review.',      notify: 'both+arbiter' },
+  4: { title: 'Dispute Resolved', body: 'The arbiter has resolved the dispute.',              notify: 'both'         },
 };
 
 // activate(), markDone(), and fund() don't emit AgreementStatusUpdated,
 // so we detect them by function selector and send push directly.
 const FUNC_PUSH_MSG = {
-  '0xb60d4288': { title: 'Deal Funded 💰',      body: 'Your deal has been funded. Activate to start working.',    notify: 'executor' },
-  '0x0f15f4c0': { title: 'Deal Activated ⚡',  body: 'Work has started. Track progress in the deal page.',        notify: 'client'   },
-  '0x1bdfc6e3': { title: 'Work Submitted ✔',   body: 'The executor marked the job as done. Please review it.',   notify: 'client'   },
+  '0xb60d4288': { title: 'Deal Funded',      body: 'Your deal has been funded. Activate to start working.',    notify: 'executor' },
+  '0x0f15f4c0': { title: 'Deal Activated',  body: 'Work has started. Track progress in the deal page.',        notify: 'client'   },
+  '0x1bdfc6e3': { title: 'Work Submitted',   body: 'The executor marked the job as done. Please review it.',   notify: 'client'   },
 };
 
 // OS pushes for Diamond-emitted board / service / dispute-claim events. Recipients come
@@ -169,21 +169,21 @@ async function pushBoardEvents(receipt) {
       switch (ev.name) {
         case 'JobAccepted':
           await sendPush(ev.args.executor.toLowerCase(), {
-            title: "You're Hired! 🎉",
+            title: "You're Hired",
             body:  'Your application was accepted. The deal is funded — activate to start.',
             url:   `/deal/${ev.args.agreement}`,
           });
           break;
         case 'RequestAccepted':
           await sendPush(ev.args.client.toLowerCase(), {
-            title: 'Request Accepted ✅',
+            title: 'Request Accepted',
             body:  'The executor accepted your request. The deal is live.',
             url:   `/deal/${ev.args.agreement}`,
           });
           break;
         case 'RequestRejected':
           await sendPush(ev.args.client.toLowerCase(), {
-            title: 'Request Declined 🚫',
+            title: 'Request Declined',
             body:  'The executor declined your request. Your funds were refunded.',
             url:   '/dashboard',
           });
@@ -192,7 +192,7 @@ async function pushBoardEvents(receipt) {
           const board = new ethers.Contract(DIAMOND_ADDR, JOB_MINI_ABI, provider);
           const job = await board.getJob(ev.args.jobId);
           if (job?.client) await sendPush(job.client.toLowerCase(), {
-            title: 'New Applicant 📩',
+            title: 'New Applicant',
             body:  'Someone applied to your job. Review and pick your executor.',
             url:   `/job/${ev.args.jobId}`,
           });
@@ -202,7 +202,7 @@ async function pushBoardEvents(receipt) {
           const board = new ethers.Contract(DIAMOND_ADDR, SERVICE_MINI_ABI, provider);
           const svc = await board.getService(ev.args.serviceId);
           if (svc?.executor) await sendPush(svc.executor.toLowerCase(), {
-            title: 'New Service Request 📬',
+            title: 'New Service Request',
             body:  `A client requested your service (${(Number(ev.args.amount) / 1e6).toFixed(2)} USDC). Accept to start.`,
             url:   `/request/${ev.args.requestId}`,
           });
@@ -211,7 +211,7 @@ async function pushBoardEvents(receipt) {
         case 'DisputeClaimed': {
           const agr = new ethers.Contract(ev.args.agreement, AGREEMENT_MINI_ABI, provider);
           const d = await agr.getDetails();
-          const payload = { title: 'Arbiter Assigned 🤝', body: 'An arbiter took your dispute. Expect a resolution soon.', url: `/deal/${ev.args.agreement}` };
+          const payload = { title: 'Arbiter Assigned', body: 'An arbiter took your dispute. Expect a resolution soon.', url: `/deal/${ev.args.agreement}` };
           if (d.client_)   await sendPush(d.client_.toLowerCase(),   payload);
           if (d.executor_) await sendPush(d.executor_.toLowerCase(), payload);
           break;
@@ -222,7 +222,7 @@ async function pushBoardEvents(receipt) {
           const appellant = ev.args.appellant.toLowerCase();
           const other = d.client_?.toLowerCase() === appellant ? d.executor_ : d.client_;
           if (other) await sendPush(other.toLowerCase(), {
-            title: 'Verdict Appealed 🔁',
+            title: 'Verdict Appealed',
             body:  'The dispute verdict was appealed and is under review.',
             url:   `/deal/${ev.args.agreement}`,
           });

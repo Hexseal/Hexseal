@@ -157,7 +157,7 @@ export function useXmtpNotifications() {
 
           const saved = pushNotif(address!, {
             type: 'message_new',
-            title: 'New Message 💬',
+            title: 'New Message',
             body,
             link,
           });
@@ -171,7 +171,7 @@ export function useXmtpNotifications() {
             ) {
               navigator.serviceWorker.ready.then((reg) => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                reg.showNotification('New Message 💬', {
+                reg.showNotification('New Message', {
                   body,
                   icon: '/icon-192.png',
                   badge: '/icon-192.png',
@@ -180,7 +180,7 @@ export function useXmtpNotifications() {
                 } as any);
               }).catch(() => {});
             } else {
-              toast(`💬  New Message\n${body}`, {
+              toast(`New Message\n${body}`, {
                 duration: 5000,
                 style: {
                   background: '#050505',
