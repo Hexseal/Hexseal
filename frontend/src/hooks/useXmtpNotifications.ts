@@ -4,15 +4,58 @@ import { useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { usePathname } from 'next/navigation';
 import { toast } from 'react-hot-toast';
+import { SortDirection } from '@xmtp/browser-sdk';
 import { getXmtpClientIfCached, xmtpCrumb } from '@/lib/xmtp';
 import { useXmtp } from '@/contexts/XmtpContext';
-import { pushNotif } from '@/lib/notifications';
+import {
+  pushNotif,
+  loadNotifs,
+  loadMsgWatermark,
+  bumpMsgWatermark,
+  selectUnnotifiedMessages,
+} from '@/lib/notifications';
 
 const flagKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
 // Suppresses message notifications when user is already viewing chat
 function isChatPage(pathname: string): boolean {
   return pathname.startsWith('/chat') || pathname.startsWith('/deal/');
+}
+
+// Friendly one-line preview for the notification body. File messages show the
+// attachment name; text is truncated. Shared by the live stream and the backfill.
+function messageBody(content: string): string {
+  if (content.startsWith('{')) {
+    try {
+      const p = JSON.parse(content) as { _type?: string; name?: string };
+      return (p._type === 'enc_file' || p._type === 'file') && p.name
+        ? `📎 ${p.name}`
+        : content.slice(0, 80);
+    } catch {
+      return content.slice(0, 80);
+    }
+  }
+  return content.length > 80 ? content.slice(0, 80) + '…' : content;
+}
+
+// Deep link for a message: pair groups → /chat?peer={the other member}. Shared by
+// the live stream and the backfill so both point at the exact same conversation.
+function messageLink(
+  conversationId: string | undefined,
+  groupNameById: Map<string, string>,
+  myAddrLc: string,
+): string {
+  const groupName = groupNameById.get(conversationId ?? '');
+  if (groupName?.startsWith('HSEAL-PAIR-')) {
+    // HSEAL-PAIR-{addrA}-{addrB} (sorted, lowercase, neither address contains '-').
+    const rest = groupName.slice('HSEAL-PAIR-'.length);
+    const [a, b] = rest.split('-');
+    if (a && b) {
+      const peer = a === myAddrLc ? b : a;
+      return `/chat?peer=${peer}`;
+    }
+  }
+  return '/chat';
 }
 
 export function useXmtpNotifications() {
@@ -85,6 +128,60 @@ export function useXmtpNotifications() {
         const groupNameById = new Map<string, string>();
         for (const g of groups) groupNameById.set(g.id, g.name ?? '');
 
+        // ── Backfill: reconcile messages that arrived while this tab was dead ──
+        // The live stream below only fires for messages received while the tab is
+        // alive. A suspended / again-cold PWA gets those as service-worker push (OS
+        // banner) but they never reach the in-app store, so the centre + badges go
+        // stale. On every (re)start, pull recent inbound messages and top the store
+        // up for anything newer than the watermark (idempotent via dedupeKey).
+        try {
+          const myAddrLc = address!.toLowerCase();
+          const openPeer = isChatPage(pathnameRef.current)
+            ? new URLSearchParams(window.location.search).get('peer')?.toLowerCase() ?? null
+            : null;
+          type Cand = { id: string; sentAtNs: bigint; content: string; convId: string };
+          const cands: Cand[] = [];
+          for (const g of groups) {
+            if (cancelled) return;
+            const raw = await g.messages({ limit: BigInt(30), direction: SortDirection.Descending });
+            for (const m of raw) {
+              if (m.senderInboxId === client.inboxId) continue;
+              const c = typeof m.content === 'string' ? m.content : null;
+              if (!c || !m.sentAtNs) continue;
+              if (c.startsWith('{')) {
+                try { if ((JSON.parse(c) as { _type?: string })._type === 'deal_ctx') continue; }
+                catch { /* not JSON — treat as text */ }
+              }
+              cands.push({ id: m.id, sentAtNs: m.sentAtNs, content: c, convId: g.id });
+            }
+          }
+          if (cancelled) return;
+          const store = loadNotifs(address!);
+          const seen = new Set(store.filter(n => n.dedupeKey).map(n => n.dedupeKey!));
+          const { toNotify, watermark } = selectUnnotifiedMessages(
+            loadMsgWatermark(address!),
+            cands.map(c => ({ id: c.id, sentAtNs: c.sentAtNs })),
+            (k) => seen.has(k),
+          );
+          const byId = new Map(cands.map(c => [c.id, c]));
+          for (const meta of toNotify) {
+            const src = byId.get(meta.id);
+            if (!src) continue;
+            const link = messageLink(src.convId, groupNameById, myAddrLc);
+            // Don't badge the conversation the user is looking at right now.
+            if (openPeer && link === `/chat?peer=${openPeer}`) continue;
+            notifiedRef.current.add(meta.id);
+            pushNotif(address!, {
+              type: 'message_new',
+              title: 'New Message',
+              body: messageBody(src.content),
+              link,
+              dedupeKey: meta.id,
+            });
+          }
+          if (watermark !== null) bumpMsgWatermark(address!, watermark);
+        } catch { /* backfill is best-effort; the live stream still runs below */ }
+
         for await (const msg of s) {
           if (cancelled) break;
 
@@ -109,6 +206,10 @@ export function useXmtpNotifications() {
             } catch { /* not JSON — falls through to normal text handling below */ }
           }
 
+          // Advance the backfill watermark for every real inbound message so the
+          // cold-start reconciler never re-notifies one already handled live.
+          if (msg.sentAtNs) bumpMsgWatermark(address!, msg.sentAtNs);
+
           // Notify each message at most once — dedups across stream restarts / redelivery.
           if (notifiedRef.current.has(msg.id)) continue;
           notifiedRef.current.add(msg.id);
@@ -116,35 +217,8 @@ export function useXmtpNotifications() {
             notifiedRef.current = new Set([...notifiedRef.current].slice(-250));
           }
 
-          // Parse file messages to show a friendly preview
-          let body: string;
-          if (content.startsWith('{')) {
-            try {
-              const p = JSON.parse(content) as { _type?: string; name?: string };
-              body = (p._type === 'enc_file' || p._type === 'file') && p.name
-                ? `📎 ${p.name}`
-                : content.slice(0, 80);
-            } catch {
-              body = content.slice(0, 80);
-            }
-          } else {
-            body = content.length > 80 ? content.slice(0, 80) + '…' : content;
-          }
-
-          // Determine link: pair group → /chat?peer={the other member's address}
-          const groupName = groupNameById.get(msg.conversationId ?? '');
-          let link = '/chat';
-          if (groupName?.startsWith('HSEAL-PAIR-')) {
-            // Group name format: HSEAL-PAIR-{addrA}-{addrB} (sorted, lowercase,
-            // neither address contains '-' so this split is unambiguous)
-            const rest = groupName.slice('HSEAL-PAIR-'.length);
-            const [a, b] = rest.split('-');
-            if (a && b) {
-              const myLc = address!.toLowerCase();
-              const peer = a === myLc ? b : a;
-              link = `/chat?peer=${peer}`;
-            }
-          }
+          const body = messageBody(content);
+          const link = messageLink(msg.conversationId, groupNameById, address!.toLowerCase());
 
           // Suppress ONLY the conversation the user is actually looking at. The old
           // check skipped every /chat and /deal/ page wholesale, so a message from a
@@ -160,6 +234,7 @@ export function useXmtpNotifications() {
             title: 'New Message',
             body,
             link,
+            dedupeKey: msg.id,
           });
 
           if (saved) {
