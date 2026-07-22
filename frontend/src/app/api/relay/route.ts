@@ -420,6 +420,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── On-chain push notifications ──────────────────────────────────────────
+    // Hand the confirmed tx to the standalone relayer so it sends the OS push
+    // (Deal Funded / Activated / Work Submitted / Complete / Refunded / Dispute) via
+    // pushAfterRelay, which owns the push-subscription store. The relayer acks
+    // immediately and pushes in the background, so this adds negligible latency and
+    // never fails the user's tx over a notification. For a deploy the target is the
+    // freshly created agreement; otherwise it's whatever the action hit.
+    const relayerInternal = (process.env.RELAYER_INTERNAL_URL ?? process.env.NEXT_PUBLIC_RELAYER_URL ?? '').replace(/\/$/, '');
+    const pushSecret = process.env.PUSH_SECRET;
+    if (relayerInternal && pushSecret) {
+      try {
+        await fetch(`${relayerInternal}/relay/notify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Push-Secret': pushSecret },
+          body: JSON.stringify({ txHash, agreement: agreementAddr ?? forwardReq.to, calldata: data }),
+          signal: AbortSignal.timeout(3000),
+        });
+      } catch { /* best-effort — never fail the user's tx over a push */ }
+    }
+
     return NextResponse.json({
       success: true,
       txHash,

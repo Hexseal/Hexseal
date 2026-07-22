@@ -949,6 +949,32 @@ app.post('/push/send', async (req, res) => {
   }
 });
 
+// Called server-to-server by the Next.js /api/relay after a meta-transaction confirms.
+// pushAfterRelay + the push-subscription store live here, so the Next route just hands us
+// the tx hash + the target it acted on, and we send the deal-lifecycle OS notifications
+// (Funded / Activated / Work Submitted / Complete / Refunded / Dispute). Trusted by
+// PUSH_SECRET only. Historically /api/relay never called this, so on-chain OS pushes
+// never fired — only in-app (event-watching) notifications did, and only while the app
+// was open. This closes that gap.
+app.post('/relay/notify', (req, res) => {
+  if (!PUSH_SECRET || req.headers['x-push-secret'] !== PUSH_SECRET) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const { txHash, agreement, calldata } = req.body || {};
+  if (!txHash || !agreement) return res.status(400).json({ error: 'txHash and agreement required' });
+  // Ack immediately so the caller's relay response isn't delayed; fetch the receipt and
+  // fan out the pushes in the background. Best-effort — a push must never block a tx.
+  res.json({ ok: true });
+  (async () => {
+    try {
+      const receipt = await provider.getTransactionReceipt(txHash);
+      if (receipt) await pushAfterRelay(receipt, agreement, calldata);
+    } catch (e) {
+      console.error('[push] relay/notify failed:', e.message);
+    }
+  })();
+});
+
 // ─── Dispute Reasons ──────────────────────────────────────────────────────────
 
 const DISPUTE_REASONS_FILE = path.join(STORAGE_DIR, 'dispute-reasons.json');
