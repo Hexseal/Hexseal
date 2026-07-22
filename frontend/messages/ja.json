@@ -171,6 +171,7 @@
     "copied": "アドレスをコピーしました！",
     "copy_failed": "コピーに失敗しました",
     "disable_messaging": "Disable Messaging",
+    "disable_notifications": "通知をオフにする",
     "enable_messaging": "メッセージを有効にする",
     "connecting_messaging": "メッセージ機能に接続中…",
     "applying_arbiter": "Submitting...",

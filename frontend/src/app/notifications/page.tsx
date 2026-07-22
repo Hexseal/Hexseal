@@ -130,8 +130,8 @@ export default function NotificationsPage() {
           </div>
         </div>
 
-        {/* Push notification toggle */}
-        {supported && permission !== 'denied' && (
+        {/* Push notification toggle — shown only while OFF; turn it back off from the wallet menu */}
+        {supported && permission !== 'denied' && !subscribed && (
           <div className="flex items-center justify-between px-4 py-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] mb-4">
             <div className="flex items-center gap-3">
               {subscribed

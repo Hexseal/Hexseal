@@ -171,6 +171,7 @@
     "copied": "¡Dirección copiada!",
     "copy_failed": "Error al copiar",
     "disable_messaging": "Disable Messaging",
+    "disable_notifications": "Desactivar notificaciones",
     "enable_messaging": "Activar mensajería",
     "connecting_messaging": "Conectando mensajería…",
     "applying_arbiter": "Submitting...",

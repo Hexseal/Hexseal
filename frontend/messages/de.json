@@ -171,6 +171,7 @@
     "copied": "Adresse kopiert!",
     "copy_failed": "Kopieren fehlgeschlagen",
     "disable_messaging": "Disable Messaging",
+    "disable_notifications": "Benachrichtigungen deaktivieren",
     "enable_messaging": "Messaging aktivieren",
     "connecting_messaging": "Messaging wird verbunden…",
     "applying_arbiter": "Submitting...",

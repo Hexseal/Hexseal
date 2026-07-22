@@ -15,10 +15,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
 import { useXmtp } from "@/contexts/XmtpContext";
@@ -42,6 +43,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
   const { status: xmtpStatus, disable: disableXmtp, retry: retryXmtp } = useXmtp();
+  const { subscribed: pushOn, disable: disablePushNotif } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
     displayText, avatarUrl, usdcBalance,
@@ -363,6 +365,15 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
             >
               <MessageCircle className="w-3.5 h-3.5" />
               {t("wallet.enable_messaging")}
+            </DropdownMenuItem>
+          )}
+          {pushOn && (
+            <DropdownMenuItem
+              onClick={() => { void disablePushNotif(); }}
+              className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+            >
+              <BellOff className="w-3.5 h-3.5" />
+              {t("wallet.disable_notifications")}
             </DropdownMenuItem>
           )}
         </div>

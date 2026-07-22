@@ -171,6 +171,7 @@
     "copied": "Адресу скопійовано!",
     "copy_failed": "Помилка копіювання",
     "disable_messaging": "Disable Messaging",
+    "disable_notifications": "Вимкнути сповіщення",
     "enable_messaging": "Увімкнути месенджер",
     "connecting_messaging": "Підключення месенджера…",
     "applying_arbiter": "Submitting...",

@@ -171,6 +171,7 @@
     "copied": "คัดลอกที่อยู่แล้ว!",
     "copy_failed": "คัดลอกล้มเหลว",
     "disable_messaging": "Disable Messaging",
+    "disable_notifications": "ปิดการแจ้งเตือน",
     "enable_messaging": "เปิดใช้งานการส่งข้อความ",
     "connecting_messaging": "กำลังเชื่อมต่อการส่งข้อความ…",
     "applying_arbiter": "Submitting...",

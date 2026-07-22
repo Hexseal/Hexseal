@@ -171,6 +171,7 @@
     "copied": "تم نسخ العنوان!",
     "copy_failed": "فشل النسخ",
     "disable_messaging": "Disable Messaging",
+    "disable_notifications": "إيقاف الإشعارات",
     "enable_messaging": "تفعيل المراسلة",
     "connecting_messaging": "جارٍ تفعيل المراسلة…",
     "applying_arbiter": "Submitting...",
