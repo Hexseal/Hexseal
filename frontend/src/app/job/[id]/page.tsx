@@ -417,23 +417,22 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             </div>
           )}
 
-          {isClient && (
-            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/8">
-              <Link href={`/job/${id}/receipt`}>
-                <Button variant="ghost" size="sm" className="gap-1.5 text-white/40 hover:text-white/70 hover:bg-white/5">
-                  <Receipt className="w-3.5 h-3.5" />
-                  Receipt
-                </Button>
-              </Link>
-              {job.status === 0 && (
-                <Button variant="ghost" size="sm" onClick={handleCancel} disabled={isBusy}
-                  className="gap-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-400/10">
-                  {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
-                  Cancel Job
-                </Button>
-              )}
-            </div>
-          )}
+          {/* Receipt is public (on-chain data); Cancel stays client-only */}
+          <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/8">
+            <Link href={`/job/${id}/receipt`}>
+              <Button variant="ghost" size="sm" className="gap-1.5 text-white/40 hover:text-white/70 hover:bg-white/5">
+                <Receipt className="w-3.5 h-3.5" />
+                Receipt
+              </Button>
+            </Link>
+            {isClient && job.status === 0 && (
+              <Button variant="ghost" size="sm" onClick={handleCancel} disabled={isBusy}
+                className="gap-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-400/10">
+                {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
+                Cancel Job
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Applicants */}
