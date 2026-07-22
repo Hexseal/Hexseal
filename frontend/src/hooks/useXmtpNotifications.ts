@@ -20,8 +20,9 @@ export function useXmtpNotifications() {
   const { status } = useXmtp();
   const pathname = usePathname();
   const pathnameRef = useRef(pathname);
-  const streamRef = useRef<{ return: () => void } | null>(null);
-  const cancelledRef = useRef(false);
+  // Message ids we've already raised a notification for — dedups across stream
+  // restarts / redelivery so a single message never produces multiple notifications.
+  const notifiedRef = useRef<Set<string>>(new Set());
 
   // Keep pathname ref up to date without restarting the stream
   useEffect(() => {
@@ -53,24 +54,29 @@ export function useXmtpNotifications() {
     // Only stream if user has explicitly enabled XMTP on this device
     if (localStorage.getItem(flagKey(address)) !== '1') return;
 
-    cancelledRef.current = false;
+    // Per-run cancellation + stream handle — MUST be local, not shared refs. restartKey
+    // re-runs this effect on every foreground; a shared cancel flag got reset to false
+    // by the new run while an old for-await loop was still alive, so several streams ran
+    // at once and each fired a notification (3 toasts for one message).
+    let cancelled = false;
+    let stream: { return: () => void } | null = null;
 
-    async function startStream() {
+    (async () => {
       try {
         // Only use an already-initialized client — never trigger wallet signatures automatically.
         // If the client isn't cached yet, the user must explicitly click Enable Messaging.
         const client = getXmtpClientIfCached(address!);
         if (!client) return;
-        if (cancelledRef.current) return;
+        if (cancelled) return;
 
         xmtpCrumb('notif:sync-start');
         await client.conversations.sync();
-        if (cancelledRef.current) return;
+        if (cancelled) return;
 
         xmtpCrumb('notif:streamAll-start');
-        const stream = await client.conversations.streamAllMessages();
-        if (cancelledRef.current) { stream.return(); return; }
-        streamRef.current = stream;
+        const s = await client.conversations.streamAllMessages();
+        if (cancelled) { s.return(); return; }
+        stream = s;
 
         // Build a map: conversationId → group name (for deal groups)
         xmtpCrumb('notif:listGroups-start');
@@ -79,8 +85,8 @@ export function useXmtpNotifications() {
         const groupNameById = new Map<string, string>();
         for (const g of groups) groupNameById.set(g.id, g.name ?? '');
 
-        for await (const msg of stream) {
-          if (cancelledRef.current) break;
+        for await (const msg of s) {
+          if (cancelled) break;
 
           // Any inbound activity anywhere → refresh the conversation list live
           // (bumps last-message preview + ordering) even for chats that aren't
@@ -101,6 +107,13 @@ export function useXmtpNotifications() {
               const probe = JSON.parse(content) as { _type?: string };
               if (probe._type === 'deal_ctx') continue;
             } catch { /* not JSON — falls through to normal text handling below */ }
+          }
+
+          // Notify each message at most once — dedups across stream restarts / redelivery.
+          if (notifiedRef.current.has(msg.id)) continue;
+          notifiedRef.current.add(msg.id);
+          if (notifiedRef.current.size > 500) {
+            notifiedRef.current = new Set([...notifiedRef.current].slice(-250));
           }
 
           // Parse file messages to show a friendly preview
@@ -185,14 +198,11 @@ export function useXmtpNotifications() {
       } catch {
         // Silent fail — XMTP not available, user not registered, or network error
       }
-    }
-
-    startStream();
+    })();
 
     return () => {
-      cancelledRef.current = true;
-      streamRef.current?.return();
-      streamRef.current = null;
+      cancelled = true;
+      stream?.return();
     };
   // status dep: re-run when XmtpContext transitions to 'ready' so the stream
   // starts even if XMTP init completed after this hook's first render.
