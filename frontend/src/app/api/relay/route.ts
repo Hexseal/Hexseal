@@ -44,8 +44,8 @@ const FORWARDER_ABI = parseAbi([
 // AgreementDeployed(address indexed agreement, address indexed client, address indexed executor, uint256 amount, uint8 region, uint256 fee)
 const AGREEMENT_DEPLOYED_TOPIC = keccak256(toBytes('AgreementDeployed(address,address,address,uint256,uint8,uint256)'));
 
-// JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region)
-const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,uint8)'));
+// JobPosted(uint256 indexed jobId, address indexed client, uint256 amount, uint8 region, string title, string description, uint256 deadlineDays, string terms)
+const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,uint8,string,string,uint256,string)'));
 
 /**
  * Maximum gas units allowed in a single ForwardRequest.

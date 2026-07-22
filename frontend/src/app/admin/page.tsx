@@ -358,7 +358,7 @@ function ActivityTab() {
 
         const [dealLogs, jobLogs, serviceLogs, statusLogs, revenueLogs] = await Promise.all([
           fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'executor', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }], name: 'AgreementRegistered', type: 'event' }),
-          fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'jobId', type: 'uint256' }, { indexed: true, name: 'client', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }], name: 'JobPosted', type: 'event' }),
+          fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'jobId', type: 'uint256' }, { indexed: true, name: 'client', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }, { indexed: false, name: 'title', type: 'string' }, { indexed: false, name: 'description', type: 'string' }, { indexed: false, name: 'deadlineDays', type: 'uint256' }, { indexed: false, name: 'terms', type: 'string' }], name: 'JobPosted', type: 'event' }),
           fetchAll(SERVICE_BOARD_ABI[0]),
           fetchAll(statusUpdatedEvent),
           fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'executor', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }, { indexed: false, name: 'fee', type: 'uint256' }], name: 'AgreementDeployed', type: 'event' }),
