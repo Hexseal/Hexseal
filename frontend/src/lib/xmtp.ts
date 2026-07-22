@@ -278,7 +278,44 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   // can tell later whether abandonXmtpInit() superseded it in the meantime.
   const myGeneration = _generation.get(address) ?? 0;
 
-  const signer = createXmtpSigner(walletClient, onSignStep);
+  // Wrap onSignStep so we always crumb when the signer is actually invoked. A wallet
+  // signature is only requested during register() — the FINAL phase, after WASM +
+  // OPFS are already up. So if a device trail hits XMTP_TIMEOUT *without* an
+  // `init:sign` crumb, the hang is in WASM/OPFS/worker (phases A–C), not at network
+  // register (phase D). That single bit splits the tree in half.
+  const signer = createXmtpSigner(walletClient, (step) => {
+    xmtpCrumb(`init:sign step=${step}`);
+    onSignStep?.(step);
+  });
+
+  // Fire-and-forget preflight probes — run CONCURRENTLY with Client.create() below so
+  // they add zero latency to the happy path. XMTP's worker swallows WASM/OPFS failures
+  // (it logs to the worker console and never rejects create()), so those otherwise
+  // surface only as our opaque 90s XMTP_TIMEOUT — invisible on iOS where you can't open
+  // the worker console. These crumb the two cheapest independent failure modes so a
+  // device trail reads e.g. `probe:wasm=BLOCKED` (iOS Lockdown Mode disables WASM
+  // engine-wide) or `probe:net=BLOCKED`, instead of one blind timeout.
+  void (async () => {
+    try {
+      await WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+      xmtpCrumb('probe:wasm=ok');
+    } catch {
+      xmtpCrumb('probe:wasm=BLOCKED');
+    }
+  })();
+  void (async () => {
+    try {
+      await withTimeout(
+        fetch('https://api.production.xmtp.network', { mode: 'no-cors' }).then(() => {}),
+        8_000,
+        'PROBE_NET',
+      );
+      xmtpCrumb('probe:net=ok');
+    } catch {
+      xmtpCrumb('probe:net=BLOCKED');
+    }
+  })();
+
   // dbPath: per-address OPFS path so different wallets on the same browser
   // don't share (and clobber) each other's MLS database.
   xmtpCrumb(`init:create-start ${address.slice(0, 6)}`);
