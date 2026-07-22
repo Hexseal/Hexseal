@@ -158,8 +158,16 @@ export function useXmtpNotifications() {
           if (cancelled) return;
           const store = loadNotifs(address!);
           const seen = new Set(store.filter(n => n.dedupeKey).map(n => n.dedupeKey!));
+          // First run on this device (no watermark yet, e.g. the PWA's separate storage
+          // bucket): instead of silently absorbing everything into the baseline, seed the
+          // watermark a few hours back so recent messages — the ones that likely arrived
+          // while the PWA was suspended, just before the user opened it — still surface,
+          // without flooding the centre with old history.
+          const FIRST_RUN_GRACE_MS = 6 * 60 * 60 * 1000;
+          const wmBase = loadMsgWatermark(address!)
+            ?? (BigInt(Date.now() - FIRST_RUN_GRACE_MS) * BigInt(1_000_000));
           const { toNotify, watermark } = selectUnnotifiedMessages(
-            loadMsgWatermark(address!),
+            wmBase,
             cands.map(c => ({ id: c.id, sentAtNs: c.sentAtNs })),
             (k) => seen.has(k),
           );
