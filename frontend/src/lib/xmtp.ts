@@ -12,6 +12,7 @@ import {
   Client,
   GroupMessageKind,
   IdentifierKind,
+  LogLevel,
   SortDirection,
   isReadReceipt,
 } from '@xmtp/browser-sdk';
@@ -319,8 +320,12 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   // dbPath: per-address OPFS path so different wallets on the same browser
   // don't share (and clobber) each other's MLS database.
   xmtpCrumb(`init:create-start ${address.slice(0, 6)}`);
+  // loggingLevel Error: the WASM layer otherwise floods the console with INFO/WARN
+  // noise on every stream reconnect (`stream closed`, `msg … has been seen, skipping`)
+  // — benign, but it buries real errors and alarms users looking at the console.
+  // Error keeps genuine failures; our own xmtpCrumb trail is separate and unaffected.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawCreate = Client.create(signer, { env: 'production', dbPath: `xmtp-${address}` } as any) as Promise<Client>;
+  const rawCreate = Client.create(signer, { env: 'production', dbPath: `xmtp-${address}`, loggingLevel: LogLevel.Error } as any) as Promise<Client>;
 
   // Declared with a definite-assignment assertion (not `const promise =
   // (async () => {...})()`) so the finally block below can reference
