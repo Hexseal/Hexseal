@@ -164,6 +164,44 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, walletClient, isConnected, retryToken]);
 
+  // Cold-open / resume rescue for XMTP.
+  //
+  // A suspended PWA (iOS especially) returns in a FRESH JS context: the in-memory
+  // client cache is gone and the wallet is still reconnecting, so status starts at
+  // 'loading'. The auto-init effect above runs once when walletClient arrives, but
+  // nothing re-arms it if that single pass is too early (OPFS not yet queryable →
+  // dbExists briefly false → 'error') or transiently fails. Result: a chat opened
+  // from a notification sits on an empty thread forever, since usePairChat only
+  // loads history once status === 'ready'.
+  //
+  // On return-to-foreground, if this address previously enabled messaging here
+  // (a persisted identity exists) and we're not already ready/disabled, clear the
+  // tried-flag and re-fire auto-init. The auto path re-opens the persisted keys with
+  // NO wallet signature, so this is safe during the connect window — it never fires
+  // the surprise-signature the guards above exist to prevent. First-time setups are
+  // untouched: their registered flag isn't set until init actually succeeds.
+  useEffect(() => {
+    const rearm = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (!address) return;
+      const addr = address.toLowerCase();
+      if (statusRef.current === 'ready') return;
+      if (disabledRef.current.has(addr)) return;
+      const enabledBefore = typeof window !== 'undefined'
+        && localStorage.getItem(registeredKey(addr)) === '1';
+      if (!enabledBefore) return;
+      xmtpCrumb(`ctx:resume-rearm ${addr.slice(0, 6)} st=${statusRef.current}`);
+      triedRef.current.delete(addr);
+      setRetryToken(t => t + 1);
+    };
+    document.addEventListener('visibilitychange', rearm);
+    window.addEventListener('focus', rearm);
+    return () => {
+      document.removeEventListener('visibilitychange', rearm);
+      window.removeEventListener('focus', rearm);
+    };
+  }, [address]);
+
   // Background conversations stream — registers a listener for incoming MLS
   // session_request events so the WASM layer never fires "without any listeners".
   // Also dispatches hexseal-conv-update so the sidebar refreshes in real-time
