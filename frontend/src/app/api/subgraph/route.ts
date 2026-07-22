@@ -11,9 +11,16 @@ const SUBGRAPH_URL = process.env.SUBGRAPH_URL;
 const FRESH_TTL  = 120_000; // 2 min — serve from cache, no fetch
 const STALE_TTL  =  30_000; // extra 30s stale window served instantly
 
+// Abuse bounds — invalidate/x-fresh are unauthenticated, so cap how hard they
+// can drive traffic to the subgraph.
+const INVALIDATE_COOLDOWN = 5_000; // ignore repeat cache clears within 5s
+const FORCE_FRESH_MIN_AGE = 3_000; // x-fresh still serves cache younger than 3s
+const MAX_CACHE_ENTRIES   = 200;   // hard cap on distinct cached bodies
+
 interface CacheEntry { data: unknown; storedAt: number }
 const _cache      = new Map<string, CacheEntry>();
 const _inFlight   = new Set<string>();            // prevent duplicate background fetches
+let _lastInvalidate = 0;
 
 async function fetchSubgraph(body: string): Promise<unknown | null> {
   const controller = new AbortController();
@@ -50,6 +57,11 @@ function pruneCache() {
   for (const [k, v] of _cache) {
     if (v.storedAt < cutoff) _cache.delete(k);
   }
+  // Still over the hard cap (flood of distinct bodies) — evict oldest first
+  if (_cache.size >= MAX_CACHE_ENTRIES) {
+    const oldest = [..._cache.entries()].sort((a, b) => a[1].storedAt - b[1].storedAt);
+    for (const [k] of oldest.slice(0, _cache.size - MAX_CACHE_ENTRIES + 1)) _cache.delete(k);
+  }
 }
 
 // Warm the cache for the two most-visited board queries after server start.
@@ -71,9 +83,14 @@ if (SUBGRAPH_URL) {
 export async function POST(req: NextRequest) {
   // Cache invalidation — post-job/post-service flows call this right after a
   // successful mint so the next board visit refetches instead of serving a
-  // pre-mint snapshot for up to FRESH_TTL.
+  // pre-mint snapshot for up to FRESH_TTL. Cooldown-limited since it is
+  // unauthenticated; always answers ok so callers can fire-and-forget.
   if (req.nextUrl.searchParams.get('invalidate') === '1') {
-    _cache.clear();
+    const now = Date.now();
+    if (now - _lastInvalidate >= INVALIDATE_COOLDOWN) {
+      _lastInvalidate = now;
+      _cache.clear();
+    }
     return NextResponse.json({ ok: true });
   }
 
@@ -91,11 +108,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ errors: [{ message: 'Bad request body' }] }, { status: 400 });
   }
 
-  // x-fresh: 1 — explicit user refresh, bypass the cache and fetch synchronously
+  // x-fresh: 1 — explicit user refresh, bypass the cache and fetch synchronously.
+  // A just-fetched entry (<FORCE_FRESH_MIN_AGE) is served anyway, bounding
+  // forced subgraph hits to one per query shape per few seconds.
   const forceFresh = req.headers.get('x-fresh') === '1';
 
   const entry = _cache.get(body);
-  if (entry && !forceFresh) {
+  if (entry && (!forceFresh || Date.now() - entry.storedAt < FORCE_FRESH_MIN_AGE)) {
     const age = Date.now() - entry.storedAt;
     if (age > FRESH_TTL) {
       // Stale — return immediately, refresh in background
