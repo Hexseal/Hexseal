@@ -99,6 +99,28 @@ const REGISTRY_MINI_ABI = [
   'function getDisputed() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
 ];
 
+// Board / service / dispute-claim events. These are emitted by the Diamond (not an
+// Agreement), so they can't be resolved from the relayed tx target the way
+// AGR_PUSH_MSG/FUNC_PUSH_MSG are — pushBoardEvents() scans the receipt logs and
+// resolves recipients from the event args (JobApplied/ServiceRequested need one
+// follow-up read via getJob/getService for the poster's address).
+const BOARD_EVENT_ABI = [
+  'event JobApplied(uint256 indexed jobId, address indexed executor)',
+  'event JobAccepted(uint256 indexed jobId, address indexed client, address indexed executor, address agreement)',
+  'event ServiceRequested(uint256 indexed requestId, uint256 indexed serviceId, address indexed client, uint256 amount)',
+  'event RequestAccepted(uint256 indexed requestId, address indexed executor, address indexed client, address agreement)',
+  'event RequestRejected(uint256 indexed requestId, address indexed executor, address indexed client)',
+  'event DisputeClaimed(address indexed agreement, address indexed arbiter)',
+  'event AppealRaised(address indexed agreement, address indexed appellant)',
+];
+const boardEventInterface = new ethers.Interface(BOARD_EVENT_ABI);
+const JOB_MINI_ABI = [
+  'function getJob(uint256) view returns (tuple(address client, string title, string description, uint256 amount, uint256 deadlineDays, string terms, uint8 region, uint8 status, uint256 createdAt, address chosenExecutor, address agreement))',
+];
+const SERVICE_MINI_ABI = [
+  'function getService(uint256) view returns (tuple(address executor, string title, string description, uint256 price, uint256 deadlineDays, uint8 region, uint8 status, uint256 createdAt, uint256 hiresCount))',
+];
+
 // Set of pairIds currently holding a DISPUTED agreement — one on-chain call per
 // cleanup run, not per file.
 async function getDisputedPairIds() {
@@ -122,7 +144,7 @@ const agrEventInterface = new ethers.Interface(AGR_STATUS_EVENT_ABI);
 // notify: 'executor' | 'client' | 'both' | 'both+arbiter'
 const AGR_PUSH_MSG = {
   1: { title: 'Deal Complete ✓',      body: 'Payment has been released. The deal is closed.',      notify: 'both'         },
-  2: { title: 'Deal Refunded ↩️',    body: 'The deal was cancelled and refunded.',                notify: 'client'       },
+  2: { title: 'Deal Refunded ↩️',    body: 'The deal was cancelled and refunded.',                notify: 'both'         },
   3: { title: 'Dispute Raised ⚠️',   body: 'A dispute was opened. An arbiter will review.',      notify: 'both+arbiter' },
   4: { title: 'Dispute Resolved ⚖️', body: 'The arbiter has resolved the dispute.',              notify: 'both'         },
 };
@@ -135,7 +157,92 @@ const FUNC_PUSH_MSG = {
   '0x1bdfc6e3': { title: 'Work Submitted ✔',   body: 'The executor marked the job as done. Please review it.',   notify: 'client'   },
 };
 
+// OS pushes for Diamond-emitted board / service / dispute-claim events. Recipients come
+// straight from the event args, except JobApplied/ServiceRequested where the poster's
+// address is read via getJob/getService. Independent of the relayed tx target.
+async function pushBoardEvents(receipt) {
+  for (const log of receipt.logs) {
+    let ev;
+    try { ev = boardEventInterface.parseLog(log); } catch { continue; }
+    if (!ev) continue;
+    try {
+      switch (ev.name) {
+        case 'JobAccepted':
+          await sendPush(ev.args.executor.toLowerCase(), {
+            title: "You're Hired! 🎉",
+            body:  'Your application was accepted. The deal is funded — activate to start.',
+            url:   `/deal/${ev.args.agreement}`,
+          });
+          break;
+        case 'RequestAccepted':
+          await sendPush(ev.args.client.toLowerCase(), {
+            title: 'Request Accepted ✅',
+            body:  'The executor accepted your request. The deal is live.',
+            url:   `/deal/${ev.args.agreement}`,
+          });
+          break;
+        case 'RequestRejected':
+          await sendPush(ev.args.client.toLowerCase(), {
+            title: 'Request Declined 🚫',
+            body:  'The executor declined your request. Your funds were refunded.',
+            url:   '/dashboard',
+          });
+          break;
+        case 'JobApplied': {
+          const board = new ethers.Contract(DIAMOND_ADDR, JOB_MINI_ABI, provider);
+          const job = await board.getJob(ev.args.jobId);
+          if (job?.client) await sendPush(job.client.toLowerCase(), {
+            title: 'New Applicant 📩',
+            body:  'Someone applied to your job. Review and pick your executor.',
+            url:   `/job/${ev.args.jobId}`,
+          });
+          break;
+        }
+        case 'ServiceRequested': {
+          const board = new ethers.Contract(DIAMOND_ADDR, SERVICE_MINI_ABI, provider);
+          const svc = await board.getService(ev.args.serviceId);
+          if (svc?.executor) await sendPush(svc.executor.toLowerCase(), {
+            title: 'New Service Request 📬',
+            body:  `A client requested your service (${(Number(ev.args.amount) / 1e6).toFixed(2)} USDC). Accept to start.`,
+            url:   `/request/${ev.args.requestId}`,
+          });
+          break;
+        }
+        case 'DisputeClaimed': {
+          const agr = new ethers.Contract(ev.args.agreement, AGREEMENT_MINI_ABI, provider);
+          const d = await agr.getDetails();
+          const payload = { title: 'Arbiter Assigned 🤝', body: 'An arbiter took your dispute. Expect a resolution soon.', url: `/deal/${ev.args.agreement}` };
+          if (d.client_)   await sendPush(d.client_.toLowerCase(),   payload);
+          if (d.executor_) await sendPush(d.executor_.toLowerCase(), payload);
+          break;
+        }
+        case 'AppealRaised': {
+          const agr = new ethers.Contract(ev.args.agreement, AGREEMENT_MINI_ABI, provider);
+          const d = await agr.getDetails();
+          const appellant = ev.args.appellant.toLowerCase();
+          const other = d.client_?.toLowerCase() === appellant ? d.executor_ : d.client_;
+          if (other) await sendPush(other.toLowerCase(), {
+            title: 'Verdict Appealed 🔁',
+            body:  'The dispute verdict was appealed and is under review.',
+            url:   `/deal/${ev.args.agreement}`,
+          });
+          break;
+        }
+      }
+    } catch (e) {
+      console.error('[push] board event', ev.name, 'failed:', e.message);
+    }
+  }
+}
+
 async function pushAfterRelay(receipt, agreementAddress, calldata) {
+  // Diamond-emitted board/service/dispute events — resolved from logs, independent of
+  // the tx target, so this runs for every relayed tx.
+  await pushBoardEvents(receipt);
+
+  // Agreement-lifecycle events need getDetails() on the agreement, so this only fires
+  // when the tx actually targeted (or deployed) one. Wrapped separately so a
+  // non-agreement target (a board action) can't abort the board pushes above.
   try {
     const agr = new ethers.Contract(agreementAddress, AGREEMENT_MINI_ABI, provider);
     const details = await agr.getDetails();
@@ -166,14 +273,14 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
       } catch {}
     }
 
-    // No event found — check if the called function is activate() or markDone().
+    // No status event — check if the called function is fund()/activate()/markDone().
     const selector = typeof calldata === 'string' ? calldata.slice(0, 10).toLowerCase() : null;
     if (selector) {
       const cfg = FUNC_PUSH_MSG[selector];
       if (cfg) await sendCfg(cfg);
     }
   } catch {
-    // push is best-effort
+    // not an agreement target (e.g. a board action) — board pushes already handled
   }
 }
 
