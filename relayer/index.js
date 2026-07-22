@@ -931,9 +931,11 @@ app.post('/push/send', async (req, res) => {
     // from our own Next.js server with the shared PUSH_SECRET header.
     // Without it, `from` is ignored and we fall back to `title` or a generic string.
     const isTrusted = PUSH_SECRET && req.headers['x-push-secret'] === PUSH_SECRET;
+    // Fallback is 'New message', NOT 'Hexseal': the OS already shows the app name
+    // ("from Hexseal") as the source, so a 'Hexseal' title read as "Hexseal from Hexseal".
     const resolvedTitle = isTrusted && from
       ? (resolveDisplayName(from) ?? title ?? 'New message')
-      : (title ?? 'Hexseal');
+      : (title ?? 'New message');
 
     await sendPush(to.toLowerCase(), {
       title: resolvedTitle,

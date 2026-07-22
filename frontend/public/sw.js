@@ -17,7 +17,8 @@ async function updateBadge() {
 // ─── Push ─────────────────────────────────────────────────────────────────────
 
 self.addEventListener('push', (event) => {
-  let data = { title: 'Hexseal', body: '', url: '/' };
+  // 'New message', not 'Hexseal': the OS shows the app name as the source already.
+  let data = { title: 'New message', body: '', url: '/' };
   try { data = { ...data, ...event.data?.json() }; } catch {}
 
   event.waitUntil(
