@@ -30,6 +30,11 @@ ENV SUBGRAPH_URL=$SUBGRAPH_URL
 
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps
+# Cache-bust: the legacy Docker builder over-caches `COPY . .` on exFAT (flaky mtime),
+# so source edits were silently building into a stale image. deploy-local.sh passes a
+# changing CACHEBUST, which invalidates from here down (COPY + build) while keeping the
+# slow `npm ci` above cached.
+ARG CACHEBUST=0
 COPY . .
 RUN NODE_OPTIONS="--max-old-space-size=1536" npm run build
 
