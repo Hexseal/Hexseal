@@ -1,9 +1,8 @@
 "use client";
 
-import React, { use, useState, useEffect } from "react";
+import React, { use } from "react";
 import { motion } from "framer-motion";
-import { usePublicClient, useReadContract } from "wagmi";
-import { parseAbiItem } from "viem";
+import { useReadContract } from "wagmi";
 import type { Abi } from "viem";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
@@ -213,39 +212,17 @@ function Receipt({ data }: { data: ReceiptData }) {
 export default function ReceiptPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const jobId  = BigInt(id);
-  const publicClient = usePublicClient();
 
-  const [tokenId, setTokenId]     = useState<bigint | null>(null);
-  const [logsLoading, setLogsLoading] = useState(true);
+  // jobId → tokenId via on-chain mapping. The old getLogs(earliest→latest) scan
+  // was rejected by the RPC (free-plan 10k-block range cap) → receipt never loaded.
+  const { data: tokenLookup, isLoading: lookupLoading } = useReadContract({
+    address:      CONTRACTS.diamond,
+    abi:          JOB_RECEIPT_FACET_ABI as Abi,
+    functionName: "getTokenIdByJobId",
+    args:         [jobId],
+  }) as { data: readonly [bigint, boolean] | undefined; isLoading: boolean };
 
-  // Find tokenId from event log
-  useEffect(() => {
-    if (!publicClient) return;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const logs = await publicClient.getLogs({
-          address: CONTRACTS.diamond,
-          event: parseAbiItem(
-            "event JobReceiptMinted(uint256 indexed tokenId, uint256 indexed jobId, address indexed client)"
-          ),
-          args:      { jobId },
-          fromBlock: "earliest",
-          toBlock:   "latest",
-        });
-        if (!cancelled && logs.length > 0) {
-          setTokenId(logs[0].args.tokenId ?? null);
-        }
-      } catch {
-        // non-fatal — page shows "not found"
-      } finally {
-        if (!cancelled) setLogsLoading(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [publicClient, jobId]);
+  const tokenId: bigint | null = tokenLookup && tokenLookup[1] ? tokenLookup[0] : null;
 
   // Receipt data
   const { data: receiptData } = useReadContract({
@@ -264,7 +241,7 @@ export default function ReceiptPage({ params }: { params: Promise<{ id: string }
     args:         [jobId],
   }) as { data: { status: number } | undefined };
 
-  const isLoading = logsLoading || (tokenId !== null && !receiptData);
+  const isLoading = lookupLoading || (tokenId !== null && !receiptData);
 
   const receiptProps: ReceiptData | null = receiptData && tokenId !== null
     ? {
