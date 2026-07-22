@@ -580,6 +580,41 @@ export function useNotifications() {
   const unreadCount = notifications.filter((n) => !n.read).length;
   const unreadMessageCount = notifications.filter((n) => !n.read && n.type === 'message_new').length;
 
+  // Drive the OS app-icon badge (installed PWA) from the REAL in-app unread count.
+  // Previously the badge came only from the service worker counting undismissed push
+  // banners (getNotifications().length), so it stuck at a stale number ("always 3")
+  // instead of tracking what's actually unread. Here it follows the store and clears
+  // to 0 when everything is read; on foreground we also dismiss lingering tray banners
+  // so the SW's own badge update can't re-inflate it.
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    const syncBadge = () => {
+      try {
+        if ('setAppBadge' in navigator) {
+          if (unreadCount > 0) navigator.setAppBadge(unreadCount);
+          else navigator.clearAppBadge?.();
+        }
+      } catch { /* Badging API unavailable */ }
+    };
+    syncBadge();
+    const onForeground = () => {
+      if (document.visibilityState !== 'visible') return;
+      syncBadge();
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.ready
+          .then((reg) => reg.getNotifications())
+          .then((ns) => ns.forEach((n) => n.close()))
+          .catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
+    return () => {
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
+    };
+  }, [unreadCount]);
+
   const markRead = useCallback(
     (id: string) => { if (address) setNotifications(markReadById(address, id)); },
     [address]
