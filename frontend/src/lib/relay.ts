@@ -142,6 +142,22 @@ const DEFAULT_GAS = 500_000n;
 // finish (success or failure) before it even reads a nonce.
 const _walletLocks = new Map<string, Promise<void>>();
 
+// A held lock is only ever released from the holder's own `finally` — and the
+// operations it guards (a wallet-signature popup with no code-level timeout,
+// a WalletConnect mobile round-trip) can hang indefinitely on ordinary,
+// non-adversarial wallet behavior (user backgrounds the tab mid-signature,
+// abandons an open popup, a dropped mobile session that never rejects).
+// Without a ceiling, one abandoned call would silently wedge every OTHER
+// gasless action for that wallet — anywhere in the app — for the rest of the
+// session, with no error and no way out short of a full page reload. Give up
+// waiting after this long and let the next queued call proceed anyway,
+// treating the holder as abandoned. This reopens a narrow window for the
+// original nonce race this lock exists to prevent (only if the abandoned call
+// is somehow later resurrected past this point), but a rare, low-cost repeat
+// of that already-handled failure mode is far better than an indefinite,
+// unrecoverable stall.
+const WALLET_LOCK_TIMEOUT_MS = 3 * 60_000; // 3 min — generous for a real signature wait
+
 /** Waits for any earlier-queued gasless call for this wallet to finish (success
  *  or failure — either way its nonce has already been consumed or never sent),
  *  then reserves the lock for the caller. Returns a release callback that MUST
@@ -154,7 +170,10 @@ async function acquireWalletLock(address: string): Promise<() => void> {
   // Install ourselves as the new tail of the queue before awaiting anything, so a
   // third concurrent call queues behind us, not behind whoever was ahead of us.
   _walletLocks.set(key, ours);
-  await ahead.then(() => {}, () => {});
+  await Promise.race([
+    ahead.then(() => {}, () => {}),
+    new Promise<void>(resolve => setTimeout(resolve, WALLET_LOCK_TIMEOUT_MS)),
+  ]);
   return () => {
     release();
     // Only clear the map entry if nobody has queued behind us since — otherwise
