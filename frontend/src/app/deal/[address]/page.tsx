@@ -388,13 +388,20 @@ export default function DealDetailPage() {
         }
       }
 
-      setTimeout(() => { refetchDetails(); }, 2000);
+      // Keep `busy` set until this delayed refetch actually lands, instead of
+      // clearing it immediately in a blanket finally — the relay call already
+      // waits for on-chain confirmation, but the refetch is deliberately
+      // delayed to dodge read-after-write lag on the load-balanced RPC, so
+      // parsed.status stays stale for that whole window. Clearing busy right
+      // away re-enabled every action button gated on that stale status,
+      // letting a same/related action re-fire against state that had already
+      // moved on (wasting a signature on a guaranteed on-chain revert).
+      setTimeout(() => { refetchDetails(); setIsFunding(false); }, 2000);
       return true;
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
-      return false;
-    } finally {
       setIsFunding(false);
+      return false;
     }
   };
 
@@ -412,18 +419,19 @@ export default function DealDetailPage() {
       const { txHash } = await fundAgreementGasless(walletClient, publicClient, dealAddr, parsed.amount);
       setPendingTxHash(txHash);
       toast.success(t("deal.fund_success"));
-      setTimeout(() => { refetchDetails(); setPendingTxHash(null); }, 4000);
+      // See handleAction's comment above — keep busy set until the delayed
+      // refetch lands, not cleared immediately.
+      setTimeout(() => { refetchDetails(); setPendingTxHash(null); setIsFunding(false); }, 4000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       const msg = e?.shortMessage || e?.message || "Fund failed";
       if (msg.includes('AlreadyFunded')) {
         toast.error(t("deal.already_funded"));
-        setTimeout(() => refetchDetails(), 1000);
+        setTimeout(() => { refetchDetails(); setIsFunding(false); }, 1000);
       } else {
         toast.error(msg);
+        setIsFunding(false);
       }
-    } finally {
-      setIsFunding(false);
     }
   };
 
@@ -476,10 +484,11 @@ export default function DealDetailPage() {
       toast.success('Extra proposed');
       setProposeAmount('');
       setProposeDesc('');
-      setTimeout(() => { refetchNextExtraId(); }, 3000);
+      // See handleAction's comment above — keep busy set until the delayed
+      // refetch lands, not cleared immediately.
+      setTimeout(() => { refetchNextExtraId(); setIsFunding(false); }, 3000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
-    } finally {
       setIsFunding(false);
     }
   };
@@ -491,10 +500,9 @@ export default function DealDetailPage() {
       toast(t("common.confirm_in_wallet"));
       await sendAgreementGasless(walletClient, publicClient, dealAddress as `0x${string}`, fn, AGREEMENT_ABI as Abi, [BigInt(extraId)]);
       toast.success(fn === 'acceptExtra' ? 'Extra accepted' : 'Extra rejected');
-      setTimeout(() => { refetchNextExtraId(); setExtrasVersion(v => v + 1); }, 3000);
+      setTimeout(() => { refetchNextExtraId(); setExtrasVersion(v => v + 1); setIsFunding(false); }, 3000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
-    } finally {
       setIsFunding(false);
     }
   };
