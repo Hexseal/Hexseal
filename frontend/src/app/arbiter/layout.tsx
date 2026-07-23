@@ -50,6 +50,13 @@ export default function ArbiterLayout({ children }: { children: React.ReactNode 
       chiefArbiterAddr.toLowerCase() === address.toLowerCase();
 
     if (!isArbiter && !isOwner && !isChief) {
+      // `checked` is otherwise never reset to false — if the wallet switches from
+      // an authorized address to one that isn't (no reload needed, wagmi updates
+      // reactively), the stale `checked===true` from the previous address let
+      // children render for one commit before router.replace() took effect. Clear
+      // it here so the render guard below correctly falls back to the spinner for
+      // this newly-rejected address instead.
+      setChecked(false);
       router.replace("/");
       return;
     }
