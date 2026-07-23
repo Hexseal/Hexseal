@@ -363,7 +363,10 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
       }
       xmtpCrumb('init:ok');
 
-      // Track installationId to detect OPFS clears across sessions.
+      // Persist installationId — write-only telemetry for manual debugging (e.g.
+      // via xmtp.chat's installation list); nothing in this codebase reads it back
+      // to compare against a fresh id and detect an OPFS clear automatically, so
+      // don't rely on this for that despite what it might look like at a glance.
       // We do NOT auto-revoke other installations here — revokeAllOtherInstallations()
       // requires a wallet signature even when nothing to revoke, which was triggering
       // an extra sign prompt on every fresh installation (first use AND OPFS clear).
