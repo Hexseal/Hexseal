@@ -163,21 +163,26 @@ export default function DealDetailPage() {
     },
   }) as { data: [string, string, string, bigint, string, bigint, bigint, bigint, bigint, bigint, bigint, number] | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
 
-  // Read timeLeft
-  const { data: timeLeft } = useReadContract({
+  // Read timeLeft — no refetchInterval/watch of its own (unlike `details`), so
+  // it only ever updates via an explicit refetch() call (wired into the manual
+  // Refresh button below) or a tab visibility-change triggering the app-wide
+  // invalidateQueries(). Without that wiring, the Refresh button visibly
+  // refreshed status/timestamps while silently leaving this (and the trigger-
+  // timeout buttons gated on it) stale.
+  const { data: timeLeft, refetch: refetchTimeLeft } = useReadContract({
     address: dealAddress as `0x${string}`,
     abi: AGREEMENT_ABI,
     functionName: "timeLeft",
     query: { enabled: !!isValidDeal },
-  }) as { data: bigint | undefined };
+  }) as { data: bigint | undefined; refetch: () => void };
 
-  // Read arbiterTimeLeft
-  const { data: arbiterTimeLeft } = useReadContract({
+  // Read arbiterTimeLeft — same staleness gap as timeLeft above.
+  const { data: arbiterTimeLeft, refetch: refetchArbiterTimeLeft } = useReadContract({
     address: dealAddress as `0x${string}`,
     abi: AGREEMENT_ABI,
     functionName: "arbiterTimeLeft",
     query: { enabled: !!isValidDeal },
-  }) as { data: bigint | undefined };
+  }) as { data: bigint | undefined; refetch: () => void };
 
   // Read deal receipt NFT (TOKEN_ID=1 client, EXECUTOR_TOKEN_ID=2 executor —
   // mirrors the constants in Agreement.sol, minted at fund(), never burned).
@@ -562,7 +567,13 @@ export default function DealDetailPage() {
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
-              onClick={() => { refetchDetails(); }}
+              onClick={() => {
+                refetchDetails();
+                refetchTimeLeft();
+                refetchArbiterTimeLeft();
+                refetchNextExtraId();
+                setExtrasVersion(v => v + 1);
+              }}
               className="w-7 h-7 flex items-center justify-center rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
               title={t("common.refresh")}
             >
