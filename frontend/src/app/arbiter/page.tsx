@@ -559,10 +559,20 @@ function DisputeCard({
 const RELAYER_URL_ARB = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 type LogEntry = { ts: number; from: string; text: string; dealId: string | null };
 
+// Module-level cache, keyed by dealId — survives DisputeLog remounting. The parent
+// page bakes a single page-wide `refresh` counter into every card's React key so
+// ANY action anywhere on the page (release, submit/finalize verdict, withdraw
+// reward — not just an action on this specific case) remounts every card,
+// including this one, collapsing an already-fetched log back to its "View
+// history" button. Without this cache, re-viewing it demands a brand-new
+// hexseal:dispute-log:... signature caused by unrelated page activity rather
+// than the arbiter's own intent to re-view.
+const _disputeLogCache = new Map<string, LogEntry[]>();
+
 function DisputeLog({ dealId, client, executor }: { dealId: string; client?: string; executor?: string }) {
   const { data: walletClient } = useWalletClient();
   const { address } = useAccount();
-  const [entries, setEntries] = useState<LogEntry[] | null>(null);
+  const [entries, setEntries] = useState<LogEntry[] | null>(() => _disputeLogCache.get(dealId) ?? null);
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState<string | null>(null);
   const t = useTranslations();
@@ -582,6 +592,7 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
       const data = await res.json() as { entries: LogEntry[] };
+      _disputeLogCache.set(dealId, data.entries ?? []);
       setEntries(data.entries ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to load');
