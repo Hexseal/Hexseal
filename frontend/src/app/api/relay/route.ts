@@ -338,9 +338,36 @@ export async function POST(req: NextRequest) {
       // sim.result is [success: boolean, retdata: Hex]
       const [innerSuccess, retdata] = sim.result as [boolean, Hex];
       if (!innerSuccess) {
-        // Known custom error selectors (Agreement.sol + FactoryFacet.sol)
+        // Known custom error selectors (Agreement.sol + FactoryFacet.sol +
+        // ArbiterRegistryFacet.sol). This route forwards arbitrary calldata to
+        // any target through MinimalForwarder.execute() — it's the same generic
+        // path used for arbiter actions (commit/claim/verdict/appeal), not just
+        // Agreement/FactoryFacet calls, despite what the comment used to imply.
+        // Without the ArbiterRegistryFacet entries, e.g. two arbiters racing to
+        // claim the same dispute left the losing one with a raw "Call failed:
+        // Inner call reverted" instead of a message identifying what happened.
         const CUSTOM_ERRORS: Record<string, string> = {
           '0xf12ce677': 'ActivationWindowPassed',
+          '0x646cf558': 'AlreadyClaimed',
+          '0xb6682ad2': 'CommitmentNotFound',
+          '0x8e128786': 'CommitmentTooEarly',
+          '0x53adc965': 'CommitmentExpired',
+          '0xb737f1d8': 'NotTheClaimer',
+          '0xb78c9549': 'DisputeWindowPassed',
+          '0x422a8e97': 'VerdictAlreadySubmitted',
+          '0x7fcc22c9': 'HasOpenDisputeClaims',
+          '0xf1898254': 'AppealInProgress',
+          '0xdf726563': 'NoVerdict',
+          '0x7c9a1cf9': 'AlreadyVoted',
+          '0x4dcfa42d': 'AlreadyAppealed',
+          '0x7401943d': 'AppealWindowClosed',
+          '0x2b6484d8': 'NoAppeal',
+          '0xb4021411': 'CannotVoteOnOwnVerdict',
+          '0xe3c5eb52': 'AppealAlreadyResolved',
+          '0x1285c993': 'AppealWindowNotClosed',
+          '0x0cdc2cad': 'VerdictFrozenError',
+          '0x5216eba1': 'InsufficientArbitersForAppeal',
+          '0x630ed4c8': 'NotLosingParty',
           '0x30b29a76': 'ActiveDealExists',
           '0xf9be60a2': 'AlreadyActive',
           '0x09dd1236': 'AlreadyDisputed',
