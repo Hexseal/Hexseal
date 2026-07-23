@@ -633,6 +633,7 @@
     "chat_client_btn": "محادثة العميل",
     "chat_executor_btn": "محادثة المنفّذ",
     "view_history_btn": "سجل المحادثة",
+    "dispute_log_sign_timeout": "استغرق التوقيع وقتًا طويلاً — انتهت صلاحية الطلب. حاول مرة أخرى.",
     "no_history_log": "لا توجد رسائل مسجلة بعد",
     "window_expired": "انتهت المهلة — يمكن للطرفين تفعيل الاسترداد",
     "verdict_executor_paid": "تم الدفع للمنفّذ",

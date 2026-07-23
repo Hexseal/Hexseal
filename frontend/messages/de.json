@@ -632,6 +632,7 @@
     "chat_client_btn": "Mit Kunden chatten",
     "chat_executor_btn": "Mit Ausführendem chatten",
     "view_history_btn": "Chatverlauf",
+    "dispute_log_sign_timeout": "Die Signatur hat zu lange gedauert — die Anfrage ist abgelaufen. Bitte erneut versuchen.",
     "no_history_log": "Noch keine Nachrichten aufgezeichnet",
     "window_expired": "Fenster abgelaufen — Parteien können Erstattung auslösen",
     "verdict_executor_paid": "Ausführender bezahlt",

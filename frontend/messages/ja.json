@@ -633,6 +633,7 @@
     "chat_client_btn": "クライアントとチャット",
     "chat_executor_btn": "受注者とチャット",
     "view_history_btn": "チャット履歴",
+    "dispute_log_sign_timeout": "署名に時間がかかりすぎました — リクエストの有効期限が切れました。もう一度お試しください。",
     "no_history_log": "まだメッセージの記録はありません",
     "window_expired": "ウィンドウが期限切れ — 当事者は返金をトリガーできます",
     "verdict_executor_paid": "受注者に支払い済",

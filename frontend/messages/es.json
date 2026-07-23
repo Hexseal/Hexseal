@@ -632,6 +632,7 @@
     "chat_client_btn": "Chatear con Cliente",
     "chat_executor_btn": "Chatear con Ejecutor",
     "view_history_btn": "Historial de chat",
+    "dispute_log_sign_timeout": "La firma tardó demasiado — la solicitud expiró. Inténtalo de nuevo.",
     "no_history_log": "No hay mensajes registrados aún",
     "window_expired": "Ventana vencida — las partes pueden solicitar reembolso",
     "verdict_executor_paid": "Ejecutor pagado",

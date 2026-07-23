@@ -633,6 +633,7 @@
     "chat_client_btn": "Chat Cliente",
     "chat_executor_btn": "Chat Executor",
     "view_history_btn": "Histórico do chat",
+    "dispute_log_sign_timeout": "A assinatura demorou demais — a solicitação expirou. Tente novamente.",
     "no_history_log": "Nenhuma mensagem registrada ainda",
     "window_expired": "Janela expirada — as partes podem acionar reembolso",
     "verdict_executor_paid": "Executor pago",

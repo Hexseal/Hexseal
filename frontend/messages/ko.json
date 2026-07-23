@@ -633,6 +633,7 @@
     "chat_client_btn": "클라이언트 채팅",
     "chat_executor_btn": "실행자 채팅",
     "view_history_btn": "채팅 기록",
+    "dispute_log_sign_timeout": "서명이 너무 오래 걸려 요청이 만료되었습니다. 다시 시도해 주세요.",
     "no_history_log": "아직 기록된 메시지가 없습니다",
     "window_expired": "기간 만료 — 당사자들이 환불을 트리거할 수 있습니다",
     "verdict_executor_paid": "실행자에게 지급됨",

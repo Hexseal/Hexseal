@@ -607,18 +607,32 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
   };
 
   if (entries === null) {
+    // `err` can only ever be set while entries is still null — a failed fetchLog()
+    // never populates entries, so the (err) branch that used to follow this one was
+    // unreachable dead code: on failure, the button just silently reverted to idle
+    // with zero explanation, including for a signature that arrived too late for the
+    // server's 5-minute replay window. Render the error alongside the (still
+    // clickable, to retry) button instead of only after it.
     return (
-      <button
-        onClick={fetchLog}
-        disabled={loading}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium border border-white/15 text-white/50 hover:bg-white/[0.06] transition-colors disabled:opacity-50"
-      >
-        {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageCircle className="w-3 h-3" />}
-        {t("arbiter.view_history_btn")}
-      </button>
+      <div className="space-y-1">
+        <button
+          onClick={fetchLog}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium border border-white/15 text-white/50 hover:bg-white/[0.06] transition-colors disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageCircle className="w-3 h-3" />}
+          {t("arbiter.view_history_btn")}
+        </button>
+        {err && (
+          <p className="text-xs text-red-400/70 px-1">
+            {err.toLowerCase().includes('timestamp out of window')
+              ? t("arbiter.dispute_log_sign_timeout")
+              : err}
+          </p>
+        )}
+      </div>
     );
   }
-  if (err) return <p className="text-xs text-red-400/70 px-1">{err}</p>;
 
   return (
     <div className="mt-1 rounded-[14px] border border-white/[0.07] bg-[#080809] overflow-hidden">

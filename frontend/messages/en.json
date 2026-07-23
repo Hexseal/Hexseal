@@ -678,6 +678,7 @@
     "chat_client_btn": "Chat Client",
     "chat_executor_btn": "Chat Executor",
     "view_history_btn": "Chat history",
+    "dispute_log_sign_timeout": "Signing took too long — the request expired. Try again.",
     "no_history_log": "No messages recorded yet",
     "window_expired": "Window expired — parties can trigger refund",
     "time_expired": "Expired",

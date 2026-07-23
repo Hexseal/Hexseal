@@ -633,6 +633,7 @@
     "chat_client_btn": "Chatta Cliente",
     "chat_executor_btn": "Chatta Esecutore",
     "view_history_btn": "Cronologia chat",
+    "dispute_log_sign_timeout": "La firma ha richiesto troppo tempo — la richiesta è scaduta. Riprova.",
     "no_history_log": "Nessun messaggio registrato ancora",
     "window_expired": "Finestra scaduta — le parti possono attivare il rimborso",
     "verdict_executor_paid": "Esecutore pagato",

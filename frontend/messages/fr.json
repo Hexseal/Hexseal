@@ -633,6 +633,7 @@
     "chat_client_btn": "Chatter avec le Client",
     "chat_executor_btn": "Chatter avec l'Exécutant",
     "view_history_btn": "Historique des chats",
+    "dispute_log_sign_timeout": "La signature a pris trop de temps — la demande a expiré. Réessayez.",
     "no_history_log": "Aucun message enregistré pour l'instant",
     "window_expired": "Fenêtre expirée — les parties peuvent déclencher un remboursement",
     "verdict_executor_paid": "Exécutant payé",
