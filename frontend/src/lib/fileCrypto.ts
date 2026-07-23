@@ -130,6 +130,12 @@ export async function decryptAndSave(
   const a = document.createElement('a');
   a.href = objectUrl;
   a.download = filename;
+  // target=_blank: some Android PWA/in-app-browser contexts ignore `download` on a
+  // blob: URL and navigate the current window to it instead of saving — closing that
+  // (a non-renderable blob shows blank) leaves the chat SPA unmounted, stranding the
+  // user on a white page instead of back in the chat. Hinting a new context keeps the
+  // navigation (if it happens) off the window the chat is actually running in.
+  a.target = '_blank';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -233,6 +239,8 @@ export async function decryptAndSaveChunked(
   const a = document.createElement('a');
   a.href = objectUrl;
   a.download = filename;
+  // See the comment in decryptAndSave above — same Android PWA blob-navigation guard.
+  a.target = '_blank';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
