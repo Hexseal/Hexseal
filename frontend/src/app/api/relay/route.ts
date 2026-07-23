@@ -55,6 +55,40 @@ const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,ui
  */
 const MAX_FORWARD_GAS = 8_000_000n;
 
+// ─── Relayer hot-wallet nonce serialization ──────────────────────────────────
+//
+// Every request here signs and broadcasts transaction(s) from the SAME relayer
+// hot-wallet account (RELAYER_PRIVATE_KEY) — viem determines each tx's nonce
+// via eth_getTransactionCount(address,'pending') at send time (no nonceManager
+// is configured on the account), and nothing serialized that across concurrent
+// invocations of this route handler. Two ordinary gasless actions from
+// different users (or the same user's own second browser tab) arriving close
+// together — completely normal during any period of overlapping marketplace
+// activity — could both read the same "next" nonce and race; one (often both)
+// gets rejected/dropped by the node with a raw, unhelpful 500. This process is
+// a persistent Node server (VPS Docker deploy, not a serverless function that
+// resets per invocation), so a plain module-level queue genuinely serializes
+// real concurrent requests. Capped so one slow request can't wedge every
+// other user's action behind it indefinitely.
+let _relayerLock: Promise<void> = Promise.resolve();
+const RELAYER_LOCK_TIMEOUT_MS = 4 * 60_000; // a bit over viem's 180s receipt-wait default
+
+async function withRelayerLock<T>(fn: () => Promise<T>): Promise<T> {
+  const ahead = _relayerLock;
+  let release!: () => void;
+  const ours = new Promise<void>(resolve => { release = resolve; });
+  _relayerLock = ours; // install as the new tail before awaiting anything
+  await Promise.race([
+    ahead.then(() => {}, () => {}),
+    new Promise<void>(resolve => setTimeout(resolve, RELAYER_LOCK_TIMEOUT_MS)),
+  ]);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 // ─── Rate limit: 10 req/min per wallet address (in-memory) ──────────────────
 const _localMap = new Map<string, { count: number; resetAt: number }>();
 function checkRateLimit(address: string): boolean {
@@ -220,6 +254,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Everything from here through the receipt wait below consumes the relayer
+    // hot-wallet's own tx nonce (permit, then execute) — see withRelayerLock's
+    // own comment for why this must be serialized across concurrent requests.
+    // The callback returns a NextResponse directly for every early-exit path
+    // (permit failure, simulation failure, etc.) so none of those need to
+    // change — only the final success path returns the {receipt, txHash} pair.
+    const relayResult = await withRelayerLock(async (): Promise<NextResponse | { receipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>; txHash: Hex }> => {
     // ── USDC permit (for gasless fund / mintJob / mintService / requestService) ─
     // If permit params are provided, call USDC.permit() first so the target
     // contract can do transferFrom on behalf of the user.
@@ -398,6 +439,12 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    return { receipt, txHash };
+    });
+
+    if (relayResult instanceof NextResponse) return relayResult;
+    const { receipt, txHash } = relayResult;
 
     // ── Parse event logs ─────────────────────────────────────────────────────
     let agreementAddr: string | undefined;
