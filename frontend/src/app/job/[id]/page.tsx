@@ -73,7 +73,10 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
     abi: DIAMOND_ABI,
     functionName: "getJob",
     args: [jobId],
-  }) as { data: JobRecord | undefined; isLoading: boolean; isError: boolean; refetch: () => void };
+  }) as {
+    data: JobRecord | undefined; isLoading: boolean; isError: boolean;
+    refetch: () => Promise<{ data: JobRecord | undefined }>;
+  };
 
   const { data: applicants, isLoading: applicantsLoading } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -137,13 +140,16 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       if (result.agreementAddr && result.agreementAddr !== "0x0000000000000000000000000000000000000000") {
         router.push(`/deal/${result.agreementAddr}`);
       } else {
-        // Fallback: refetch job and navigate to agreement address
-        await refetch();
-        setTimeout(() => {
-          if (job?.agreement && job.agreement !== "0x0000000000000000000000000000000000000000") {
-            router.push(`/deal/${job.agreement}`);
-          }
-        }, 2000);
+        // Fallback: refetch job and navigate to agreement address. Reads the
+        // refetch's OWN returned data, not the outer `job` — that variable is
+        // fixed at the value this closure captured when the click happened
+        // (still the pre-accept zero address), and a later re-render creates
+        // a brand-new closure that this already-running one has no way to see.
+        const fresh = await refetch();
+        const freshJob = fresh.data as JobRecord | undefined;
+        if (freshJob?.agreement && freshJob.agreement !== "0x0000000000000000000000000000000000000000") {
+          router.push(`/deal/${freshJob.agreement}`);
+        }
       }
     } catch (err: any) {
       const msg = err?.message ?? String(err);
