@@ -200,6 +200,21 @@ function isRelayDown(err: unknown): boolean {
   );
 }
 
+// Every "relay down" fallback below sends a direct on-chain tx and used to
+// return fallbackUsed:true the moment walletClient.sendTransaction/writeContract
+// resolved — which for a browser/injected wallet is mempool-ACCEPTANCE, not
+// mining. Unlike the primary relay path (which waits for + checks the real
+// receipt server-side before ever reporting success), nothing here verified the
+// fallback tx actually succeeded. Most dangerously: isRelayDown() fires on a
+// "failed to fetch" network error, which can happen AFTER the server already
+// fully processed the original relay call — so the fallback can reuse an
+// already-consumed permit signature, which then deterministically reverts on
+// this exact retry, while the caller's success toast fires regardless.
+async function assertFallbackMined(publicClient: PublicClient, txHash: Hex): Promise<void> {
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+  if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain (fallback send)');
+}
+
 const WRITE_USDC_ABI = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
   'function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)',
@@ -399,6 +414,7 @@ export async function deployAndFundGasless(
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -485,6 +501,7 @@ export async function mintJobGasless(
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -552,6 +569,7 @@ export async function mintServiceGasless(
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -628,6 +646,7 @@ export async function requestServiceGasless(
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -786,7 +805,11 @@ export async function fundAgreementGasless(
       account,
       chain: walletClient.chain,
     });
-    await publicClient.waitForTransactionReceipt({ hash: permitTx });
+    // A reused/already-consumed permit signature (isRelayDown can fire on a
+    // network drop AFTER the server already processed the original call)
+    // reverts right here — waitForTransactionReceipt alone wouldn't catch it,
+    // since it resolves on a reverted receipt too.
+    await assertFallbackMined(publicClient, permitTx);
     const txHash = await walletClient.writeContract({
       address: agreementAddress,
       abi: FUND_ABI,
@@ -794,6 +817,7 @@ export async function fundAgreementGasless(
       account,
       chain: walletClient.chain,
     });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -829,6 +853,7 @@ export async function sendGasless(
     const txHash = await walletClient.writeContract({
       address: DIAMOND, abi, functionName, args, account, chain: walletClient.chain,
     });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -964,7 +989,7 @@ export async function proposeExtraGasless(
       account,
       chain: walletClient.chain,
     });
-    await publicClient.waitForTransactionReceipt({ hash: permitTx });
+    await assertFallbackMined(publicClient, permitTx);
     const txHash = await walletClient.writeContract({
       address: agreementAddress,
       abi: PROPOSE_EXTRA_ABI,
@@ -973,6 +998,7 @@ export async function proposeExtraGasless(
       account,
       chain: walletClient.chain,
     });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -1032,6 +1058,7 @@ export async function sendAgreementGasless(
     const txHash = await walletClient.writeContract({
       address: agreementAddress, abi, functionName, args, account, chain: walletClient.chain,
     });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -1073,6 +1100,7 @@ export async function claimDisputeGasless(
       address: DIAMOND, abi: CLAIM_ABI, functionName: 'claimDispute',
       args: [agreementAddress, salt], account, chain: walletClient.chain,
     });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -1111,6 +1139,7 @@ export async function releaseDisputeGasless(
       address: DIAMOND, abi: RELEASE_ABI, functionName: 'releaseDisputeClaim',
       args: [agreementAddress], account, chain: walletClient.chain,
     });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
@@ -1151,6 +1180,7 @@ export async function commitDisputeClaimGasless(
       address: DIAMOND, abi: COMMIT_ABI, functionName: 'commitDisputeClaim',
       args: [commitment], account, chain: walletClient.chain,
     });
+    await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
   } finally {
