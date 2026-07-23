@@ -132,6 +132,9 @@ function JobCard({
     try {
       await sendGasless(walletClient, publicClient, "applyForJob", [jobId], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.applied_waiting"));
+      // Bust the server-side subgraph cache so the client sees this applicant
+      // without waiting out the up-to-2-minute proxy cache TTL.
+      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
       // Live in-app notifications (useNotifications' JobApplied watcher) only fire
       // while the client happens to have the site open at that exact moment — a
       // push is the only way this reaches them if they're away.
@@ -156,6 +159,7 @@ function JobCard({
     try {
       await sendGasless(walletClient, publicClient, "withdrawApplication", [jobId], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.withdrawn"));
+      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
       onApplied?.();
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Withdraw failed");
@@ -172,6 +176,7 @@ function JobCard({
       toast(t("board.jobs.accepting"));
       const result = await sendGasless(walletClient, publicClient, "acceptApplicant", [jobId, executorAddr], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.accepted_deal"));
+      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
       onJobFilled?.(jobId.toString());
       const ZERO = "0x0000000000000000000000000000000000000000";
       if (result.agreementAddr && result.agreementAddr !== ZERO) {
@@ -662,7 +667,7 @@ export default function BoardPage() {
                     address={address}
                     hasApplied={appliedSet.has(gj.id)}
                     applicants={applicantsMap.get(gj.id)}
-                    onApplied={() => {}}
+                    onApplied={refetchJobs}
                     onJobFilled={handleJobFilled}
                     expanded={expandedJobId === gj.id}
                     onToggle={() => setExpandedJobId(prev => prev === gj.id ? null : gj.id)}
@@ -746,7 +751,7 @@ export default function BoardPage() {
                     address={address}
                     hasApplied={appliedSet.has(id.toString())}
                     applicants={applicantsMap.get(id.toString())}
-                    onApplied={() => {}}
+                    onApplied={refetchJobs}
                     onJobFilled={handleJobFilled}
                     expanded={expandedJobId === id.toString()}
                     onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
