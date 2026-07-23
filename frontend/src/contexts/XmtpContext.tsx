@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb, checkXmtpDbExists } from '@/lib/xmtp';
+import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb, checkXmtpDbExists, isXmtpInitPending } from '@/lib/xmtp';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
 
@@ -180,6 +180,15 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   // NO wallet signature, so this is safe during the connect window — it never fires
   // the surprise-signature the guards above exist to prevent. First-time setups are
   // untouched: their registered flag isn't set until init actually succeeds.
+  //
+  // Must NOT fire while an attempt for this address is already in flight — on
+  // Android, signing anything (push enable, profile save, this very init's own
+  // wallet signature) backgrounds the tab via a wallet-app deep link, and coming
+  // back fires visibilitychange/focus just like a real suspend/resume would. Without
+  // this guard that re-fires auto-init on top of the attempt still running, re-doing
+  // its OPFS checks over and over for as long as the original attempt is pending
+  // (observed as a repeating dbcheck/autoinit loop until the 90s XMTP_TIMEOUT) —
+  // instead of leaving it alone to actually finish.
   useEffect(() => {
     const rearm = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
@@ -187,6 +196,7 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
       const addr = address.toLowerCase();
       if (statusRef.current === 'ready') return;
       if (disabledRef.current.has(addr)) return;
+      if (isXmtpInitPending(addr)) return;
       const enabledBefore = typeof window !== 'undefined'
         && localStorage.getItem(registeredKey(addr)) === '1';
       if (!enabledBefore) return;

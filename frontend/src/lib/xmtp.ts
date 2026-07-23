@@ -232,6 +232,18 @@ export function getXmtpClientIfCached(address: string): Client | null {
   return _clientCache.get(address.toLowerCase()) ?? null;
 }
 
+/** True while a Client.create() attempt for this address is already in flight.
+ *  Callers that might re-fire auto-init (e.g. a visibilitychange/focus rearm)
+ *  must check this first — retriggering while an attempt is already running
+ *  doesn't start a second Client.create() (initXmtpClient dedupes via
+ *  _initPromises), but it does re-run the caller's own pre-flight work
+ *  (OPFS enumeration, etc.) on every foreground event, competing with the
+ *  in-flight attempt's own OPFS/network access for the entire time it's
+ *  pending — including while it's genuinely waiting on the wallet signature. */
+export function isXmtpInitPending(address: string): boolean {
+  return _initPromises.has(address.toLowerCase());
+}
+
 /** Evicts any in-flight initXmtpClient() attempt for this address, so the next
  *  call starts a fresh Client.create() instead of re-attaching to one that's
  *  stuck (e.g. waiting on a wallet signature the user backed out of, or a
