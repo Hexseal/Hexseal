@@ -296,9 +296,28 @@ export default function DealDetailPage() {
     ? parsed.executor.toLowerCase() === address?.toLowerCase()
     : false;
 
-  const isArbiter = parsed?.arbiter &&
-    parsed.arbiter !== "0x0000000000000000000000000000000000000000"
-    ? parsed.arbiter.toLowerCase() === address?.toLowerCase()
+  // claimDispute() sets Agreement.arbiter to the DIAMOND's own address, never
+  // the claiming arbiter's EOA (Diamond-as-arbiter by design — resolution goes
+  // through ArbiterRegistryFacet on the Diamond, not a direct Agreement call
+  // from the arbiter's own wallet). Comparing parsed.arbiter to the connected
+  // wallet here can therefore never match a real arbiter once a dispute is
+  // claimed — isArbiter was permanently false past that point (dead-code
+  // resolveDispute buttons gated on it) and the "chat with arbiter" link below
+  // pointed at the Diamond contract instead of the real person. The real
+  // claiming arbiter is only recoverable via getDisputeClaimer() — the same
+  // getter arbiter/page.tsx already uses for its own dashboard.
+  const isDisputedStatus = parsed?.status === 4;
+  const { data: realArbiter } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: ARBITER_REGISTRY_ABI,
+    functionName: 'getDisputeClaimer',
+    args: [dealAddress as `0x${string}`],
+    query: { enabled: !!isValidDeal && isDisputedStatus },
+  }) as { data: `0x${string}` | undefined };
+
+  const isArbiter = !!realArbiter &&
+    realArbiter !== "0x0000000000000000000000000000000000000000"
+    ? realArbiter.toLowerCase() === address?.toLowerCase()
     : false;
 
   const isParty = isClient || isExecutor;
@@ -589,13 +608,17 @@ export default function DealDetailPage() {
             <div className="flex flex-col gap-2 text-right">
               <PartyRow role={t("common.role_client")}   addr={parsed.client}   isMe={isClient}            showChat={!!address} />
               <PartyRow role={t("common.role_executor")} addr={parsed.executor} isMe={isExecutor}           showChat={!!address} />
-              {parsed.arbiter !== ZERO_ADDR && (
+              {parsed.arbiter !== ZERO_ADDR && realArbiter && (
+                // realArbiter (getDisputeClaimer), not parsed.arbiter — claimDispute()
+                // sets Agreement.arbiter to the Diamond's own address, never the
+                // claiming arbiter's EOA, so parsed.arbiter would show/link to the
+                // contract itself here instead of the real person.
                 <PartyRow
                   role={t("common.role_arbiter")}
-                  addr={parsed.arbiter}
+                  addr={realArbiter}
                   isMe={isArbiter as boolean}
                   showChat={!!address}
-                  fixedLabel={`#${parsed.arbiter.slice(-6).toUpperCase()}`}
+                  fixedLabel={`#${realArbiter.slice(-6).toUpperCase()}`}
                 />
               )}
             </div>
@@ -992,8 +1015,11 @@ export default function DealDetailPage() {
             </div>
             <p className="text-xs text-white/40 mb-3">{t("deal.dispute_active_hint")}</p>
             <div className="flex gap-2">
-              {parsed.arbiter !== ZERO_ADDR && (
-                <Link href={`/chat?peer=${parsed.arbiter}`}>
+              {parsed.arbiter !== ZERO_ADDR && realArbiter && (
+                // realArbiter, not parsed.arbiter — see the PartyRow comment above.
+                // Without this the link went straight to the Diamond contract's own
+                // address, never reaching the person actually deciding the case.
+                <Link href={`/chat?peer=${realArbiter}`}>
                   <Button size="sm" variant="outline" className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs">
                     <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("arbiter.chat_client_btn")}
                   </Button>

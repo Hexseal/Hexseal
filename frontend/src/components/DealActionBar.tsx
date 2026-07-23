@@ -118,7 +118,20 @@ export function DealActionBar({ agreementAddr }: Props) {
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
   const isClient   = !!parsed?.client   && parsed.client.toLowerCase()   === address?.toLowerCase();
   const isExecutor = !!parsed?.executor && parsed.executor.toLowerCase() === address?.toLowerCase();
-  const isArbiter  = !!parsed?.arbiter  && parsed.arbiter !== ZERO_ADDR  && parsed.arbiter.toLowerCase() === address?.toLowerCase();
+  // claimDispute() sets Agreement.arbiter to the DIAMOND's own address, never
+  // the claiming arbiter's EOA — comparing parsed.arbiter here can never match
+  // a real wallet once a dispute is claimed, permanently dead-coding the
+  // resolveDispute buttons gated on isArbiter below. The real claiming arbiter
+  // is only recoverable via getDisputeClaimer() (same getter arbiter/page.tsx
+  // already uses for its own dashboard).
+  const { data: realArbiter } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: 'getDisputeClaimer',
+    args: [agreementAddr as `0x${string}`],
+    query: { enabled: statusNum === 4 },
+  }) as { data: `0x${string}` | undefined };
+  const isArbiter  = !!realArbiter && realArbiter !== ZERO_ADDR && realArbiter.toLowerCase() === address?.toLowerCase();
   const isParty    = isClient || isExecutor;
 
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
