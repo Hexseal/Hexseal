@@ -89,6 +89,38 @@ async function withRelayerLock<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// ─── Relayer balance visibility ──────────────────────────────────────────────
+//
+// Nothing anywhere checked the relayer hot wallet's own ETH balance before
+// attempting to send — a dry wallet just fails every request identically via
+// the generic catch-all with a raw, untranslated viem error ("insufficient
+// funds for gas..."), giving no actionable signal that the relay itself is
+// dry versus any other failure class, and nothing prompted a refill. This
+// doesn't prevent that outage (needs a real top-up), but logs it loudly and
+// distinctly the moment it becomes likely, instead of leaving it silent until
+// someone notices failures or happens to check relayer/index.js's /balance
+// endpoint manually. Cached briefly so it doesn't add an RPC round-trip (or
+// meaningful load) to every single relay request.
+const LOW_BALANCE_THRESHOLD_WEI = 5_000_000_000_000_000n; // 0.005 ETH
+const LOW_BALANCE_CHECK_INTERVAL_MS = 60_000;
+let _lastBalanceCheckAt = 0;
+
+function checkRelayerBalance(publicClient: ReturnType<typeof createPublicClient>, address: Address): void {
+  const now = Date.now();
+  if (now - _lastBalanceCheckAt < LOW_BALANCE_CHECK_INTERVAL_MS) return;
+  _lastBalanceCheckAt = now;
+  publicClient.getBalance({ address })
+    .then(balance => {
+      if (balance < LOW_BALANCE_THRESHOLD_WEI) {
+        console.error(
+          `[relay] LOW BALANCE WARNING: relayer hot wallet ${address} has ${balance} wei ` +
+          `(below ${LOW_BALANCE_THRESHOLD_WEI} wei threshold) — top up soon or gasless relay will start failing.`
+        );
+      }
+    })
+    .catch(() => { /* best-effort visibility only — never block/fail a request over this */ });
+}
+
 // ─── Rate limit: 10 req/min per wallet address (in-memory) ──────────────────
 const _localMap = new Map<string, { count: number; resetAt: number }>();
 function checkRateLimit(address: string): boolean {
@@ -222,6 +254,10 @@ export async function POST(req: NextRequest) {
       chain: appChain,
       transport,
     });
+
+    // Fire-and-forget, rate-limited to once per LOW_BALANCE_CHECK_INTERVAL_MS —
+    // never awaited, so it adds no latency to this (or any) request.
+    checkRelayerBalance(publicClient, account.address);
 
     const walletClient = createWalletClient({
       account,
