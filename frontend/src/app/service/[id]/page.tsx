@@ -183,6 +183,13 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
       await sendGasless(walletClient, publicClient, fn, [serviceId], DIAMOND_ABI as Abi);
       toast.success(msgs[fn]);
       if (fn === "removeService") router.push("/board/executor");
+      // pauseService/unpauseService change on-chain status but nothing refetched
+      // it before — the badge and Pause/Resume button kept showing the PRE-action
+      // state indefinitely (no polling, no watch), so a click here would look
+      // like it did nothing, and a same-action re-click reverted with a raw
+      // "Call failed: Inner call reverted" (ServiceNotActive isn't in the relay's
+      // known-error map) right after the FIRST click's success toast.
+      else refetchService();
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");
     } finally {
