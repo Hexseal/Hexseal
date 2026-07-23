@@ -161,6 +161,12 @@ const PUSH_REG_TTL = 24 * 60 * 60 * 1000; // 24 h
 function PushAutoMount() {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
+  // Addresses already attempted this page load — walletClient's object reference
+  // can change mid-session for reasons that have nothing to do with the user (wallet
+  // reconnect, chain re-sync, etc.). Without this guard, every such change re-runs
+  // the effect below, and once the 24h TTL has elapsed, the very next one pops a
+  // wallet signature with no visible trigger — an "out of nowhere" auth prompt.
+  const attemptedRef = useRef<Set<string>>(new Set());
 
   // Register the service worker at app start. It used to be registered lazily, only
   // from lib/webpush's helpers — i.e. only if the user happened to open /notifications.
@@ -172,11 +178,14 @@ function PushAutoMount() {
   useEffect(() => {
     if (!address || !isPushSupported() || !walletClient) return;
     if (Notification.permission !== 'granted') return;
+    const addr = address.toLowerCase();
+    if (attemptedRef.current.has(addr)) return;
     // Rate-limit: skip if re-registered within the last 24 h
     try {
       const last = Number(localStorage.getItem(PUSH_REG_KEY(address)) ?? 0);
       if (Date.now() - last < PUSH_REG_TTL) return;
     } catch { /* localStorage unavailable */ }
+    attemptedRef.current.add(addr);
     const signMsg = (msg: string) =>
       walletClient.signMessage({ account: address as `0x${string}`, message: msg });
     enablePush(address, signMsg)
@@ -245,6 +254,12 @@ function WalletConnectTracer() {
 // disarm). While armed it shows, live (refreshing every second, no reload needed),
 // this load's trail plus the previous load's trail — so both the no-reload connect
 // flow AND the crash-on-reload are visible on the device with no USB / debugger.
+//
+// Stored as an expiry timestamp, not a plain "1" flag — a tester device that was
+// armed once and never explicitly revisited with ?xmtpdebug=0 used to run the 1s
+// poll loop (and show the panel, if the trail is non-empty) forever. Auto-expires
+// instead so a forgotten test device doesn't stay armed indefinitely.
+const XMTP_DEBUG_TTL = 48 * 60 * 60 * 1000; // 48h — long enough to cover a test session
 function XmtpDebugOverlay() {
   const [armed, setArmed] = useState(false);
   const [text, setText] = useState("");
@@ -253,9 +268,13 @@ function XmtpDebugOverlay() {
     let iv: ReturnType<typeof setInterval> | undefined;
     try {
       const q = new URLSearchParams(window.location.search).get("xmtpdebug");
-      if (q === "1") localStorage.setItem(XMTP_DEBUG_KEY, "1");
+      if (q === "1") localStorage.setItem(XMTP_DEBUG_KEY, String(Date.now() + XMTP_DEBUG_TTL));
       if (q === "0") localStorage.removeItem(XMTP_DEBUG_KEY);
-      if (localStorage.getItem(XMTP_DEBUG_KEY) !== "1") return;
+      const expiry = Number(localStorage.getItem(XMTP_DEBUG_KEY));
+      if (!expiry || Date.now() > expiry) {
+        localStorage.removeItem(XMTP_DEBUG_KEY);
+        return;
+      }
       setArmed(true);
       const read = () => {
         try {
@@ -284,12 +303,22 @@ function XmtpDebugOverlay() {
 
 // Forces all queries to refetch when user returns to the tab/PWA.
 // React Query's built-in refetchOnWindowFocus is unreliable in iOS standalone mode.
+const VISIBILITY_REFRESH_MIN_GAP = 8_000; // matches the QueryClient's own staleTime below
+
 function VisibilityRefresher({ queryClient }: { queryClient: QueryClient }) {
+  const lastRef = useRef(0);
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        queryClient.invalidateQueries();
-      }
+      if (document.visibilityState !== 'visible') return;
+      // Unfiltered invalidateQueries() force-refetches every active query, bypassing
+      // staleTime entirely. Without this gap check, any two real tab-resume events
+      // within staleTime — e.g. backgrounding the tab for two wallet signatures in a
+      // row (approve, then confirm) — refetch everything twice back to back, defeating
+      // the staleTime setting's whole purpose.
+      const now = Date.now();
+      if (now - lastRef.current < VISIBILITY_REFRESH_MIN_GAP) return;
+      lastRef.current = now;
+      queryClient.invalidateQueries();
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
