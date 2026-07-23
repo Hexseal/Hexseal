@@ -103,7 +103,13 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   mintService:              800_000n,
   mintServiceWithPermit:    800_000n,
   requestService:       800_000n,
-  acceptRequest:      5_500_000n, // also deploys Agreement
+  // also deploys Agreement (~4.6M) PLUS a loop refunding every OTHER still-pending
+  // request from the same client to this executor (up to MAX_PENDING_PER_PAIR-1=19
+  // siblings) — measured ~5.17M gas at the 19-sibling worst case, unlike
+  // acceptApplicant/deployAndFund which share this same flat constant but have no
+  // such loop. This fallback value gets no automatic buffer (unlike the live-estimate
+  // path's 130%), so size it with real margin over the measured worst case.
+  acceptRequest:      6_500_000n,
   rejectRequest:        120_000n,
   cancelRequest:        120_000n,
   pauseService:          80_000n,
