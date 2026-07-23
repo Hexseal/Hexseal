@@ -673,12 +673,11 @@ export default function DealDetailPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-amber-300/90 mb-0.5">{t("deal.funded_executor_title")}</p>
-                <p className="text-xs text-white/40 leading-relaxed mb-3">{t("deal.funded_executor_hint")}</p>
-                <Button size="sm" onClick={() => handleAction('activate', t("deal.activate_success"))} disabled={busy}
-                  className="gap-1.5">
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
-                  {t("deal.activate_btn")}
-                </Button>
+                {/* Actual Activate button lives in Primary actions below, under the
+                    identical parsed.status===1 && isExecutor condition — this was a
+                    second, independent copy of the same button wired to the same
+                    handleAction call, rendered simultaneously. */}
+                <p className="text-xs text-white/40 leading-relaxed">{t("deal.funded_executor_hint")}</p>
               </div>
             </div>
           </div>
