@@ -29,7 +29,7 @@ import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from 
 import { useProfile } from "@/hooks/useProfile";
 import { ARBITER_REGISTRY_ABI } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
-import { initXmtpClient, notifyArbiters } from "@/lib/xmtp";
+import { getXmtpClientIfCached, notifyArbiters } from "@/lib/xmtp";
 import { useTranslations } from "next-intl";
 import { ContextHint } from "@/components/ContextHint";
 import { shortAddr } from "@/lib/utils";
@@ -348,8 +348,16 @@ export default function DealDetailPage() {
             functionName: 'getArbiters',
           }) as string[];
           if (arbiters.length > 0) {
-            const xmtp = await initXmtpClient(walletClient);
-            await notifyArbiters(xmtp, dealAddress as string, arbiters);
+            // Use cached client only — never trigger a new wallet signature here.
+            // initXmtpClient() used to be called instead, which can itself demand a
+            // fresh signature (up to a 90s wait) — since this whole notify step runs
+            // before the outer finally clears `busy`, every action button on the page
+            // stayed disabled for that entire window right after a dispute had
+            // already succeeded on-chain. DealActionBar's equivalent path already
+            // uses getXmtpClientIfCached for this exact reason; this wasn't updated
+            // to match.
+            const xmtp = getXmtpClientIfCached(address!);
+            if (xmtp) await notifyArbiters(xmtp, dealAddress as string, arbiters);
           }
         } catch {
           // Non-critical — arbiter notification is best-effort
@@ -398,6 +406,14 @@ export default function DealDetailPage() {
   const handleRaiseDispute = async () => {
     if (!isValidDeal || !address || !walletClient || !publicClient) return;
     setDisputeModal(false);
+    // Set busy BEFORE the dispute-reason signature below, not just inside
+    // handleAction() afterward — otherwise the modal is already closed and the
+    // trigger button (gated only on `busy`) stays enabled for the whole
+    // signMessage wait, letting a second click reopen the modal and fire a
+    // second, concurrent raiseDispute attempt (duplicate signatures, a
+    // guaranteed on-chain revert for the loser, and a duplicate
+    // /api/dispute-reason POST). handleAction's own finally still clears this.
+    setIsFunding(true);
     if (disputeReason.trim()) {
       try {
         const ts = Math.floor(Date.now() / 1000);

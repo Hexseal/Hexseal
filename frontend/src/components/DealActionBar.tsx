@@ -216,6 +216,11 @@ export function DealActionBar({ agreementAddr }: Props) {
   const handleRaiseDispute = async () => {
     if (!walletClient || !publicClient || !address) { toast.error('Wallet not connected'); return; }
     setDisputeModal(false);
+    // Set busy BEFORE the dispute-reason signature below — otherwise the modal is
+    // already closed and the "Dispute" button (gated only on `busy`) stays enabled
+    // for the whole signMessage wait, letting it reopen the modal and fire a
+    // second, concurrent raiseDispute attempt. run()'s own finally still clears this.
+    setBusy(true);
     if (disputeReason.trim()) {
       try {
         const ts = Math.floor(Date.now() / 1000);
