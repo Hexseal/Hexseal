@@ -633,6 +633,7 @@
     "add_btn": "添加",
     "remove_btn": "移除",
     "finalize_btn": "Finalize Verdict",
+    "finalize_available_in": "{time}后可最终确定",
     "finalizing": "Finalizing verdict…",
     "reward_title": "Pending Reward",
     "reward_withdrawn": "Reward withdrawn successfully",

@@ -662,6 +662,7 @@
     "add_btn": "Adicionar",
     "remove_btn": "Remover",
     "finalize_btn": "Finalize Verdict",
+    "finalize_available_in": "Disponível para finalizar em {time}",
     "finalizing": "Finalizing verdict…",
     "reward_title": "Pending Reward",
     "reward_withdrawn": "Reward withdrawn successfully",

@@ -662,6 +662,7 @@
     "add_btn": "إضافة",
     "remove_btn": "إزالة",
     "finalize_btn": "Finalize Verdict",
+    "finalize_available_in": "متاح للإنهاء خلال {time}",
     "finalizing": "Finalizing verdict…",
     "reward_title": "Pending Reward",
     "reward_withdrawn": "Reward withdrawn successfully",

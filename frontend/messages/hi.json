@@ -662,6 +662,7 @@
     "add_btn": "जोड़ें",
     "remove_btn": "हटाएं",
     "finalize_btn": "Finalize Verdict",
+    "finalize_available_in": "{time} में अंतिम रूप देने के लिए उपलब्ध",
     "finalizing": "Finalizing verdict…",
     "reward_title": "Pending Reward",
     "reward_withdrawn": "Reward withdrawn successfully",

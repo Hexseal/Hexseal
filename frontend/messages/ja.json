@@ -662,6 +662,7 @@
     "add_btn": "追加",
     "remove_btn": "削除",
     "finalize_btn": "Finalize Verdict",
+    "finalize_available_in": "{time}後に確定できます",
     "finalizing": "Finalizing verdict…",
     "reward_title": "Pending Reward",
     "reward_withdrawn": "Reward withdrawn successfully",

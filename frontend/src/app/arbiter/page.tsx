@@ -19,8 +19,18 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless } from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
-import type { Abi, Address, Hex } from "viem";
+import type { Abi, Address, Hex, TransactionReceipt } from "viem";
 import { shortAddr } from "@/lib/utils";
+import { FINALIZE_DELAY } from "@/config/constants";
+
+// viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
+// only rejects if the receipt never arrives. Every call site below must check
+// this explicitly, or a reverted tx (e.g. finalizeVerdict called before
+// FINALIZE_DELAY has passed) shows the same success toast as a real one,
+// telling the arbiter a case is resolved when nothing actually happened.
+function assertMined(receipt: TransactionReceipt): void {
+  if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
+}
 
 // Agreement.Status: 0=CREATED 1=FUNDED 2=ACTIVE 3=COMPLETED 4=DISPUTED 5=RESOLVED 6=REFUNDED
 const AGREEMENT_STATUS_DISPUTED = 4;
@@ -186,9 +196,10 @@ export default function ArbiterPage() {
       const commitToast = toast.loading(t("arbiter.claim_step1"));
       const { txHash: commitTx } = await commitDisputeClaimGasless(walletClient, publicClient, commitment);
       toast.loading(t("arbiter.claim_confirming"), { id: commitToast });
-      await publicClient.waitForTransactionReceipt({ hash: commitTx as `0x${string}` });
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: commitTx as `0x${string}` }));
       toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-      await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
+      const { txHash: claimTx } = await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
       toast.success(t("arbiter.claim_success"), { id: commitToast });
       bump();
     } catch (err: any) {
@@ -201,7 +212,8 @@ export default function ArbiterPage() {
     setBusy(agreement);
     try {
       toast(t("arbiter.releasing"));
-      await releaseDisputeGasless(walletClient, publicClient, agreement as Address);
+      const { txHash } = await releaseDisputeGasless(walletClient, publicClient, agreement as Address);
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}` }));
       toast.success(t("arbiter.release_success"));
       bump();
     } catch (err: any) {
@@ -209,7 +221,16 @@ export default function ArbiterPage() {
     } finally { setBusy(null); }
   };
 
-  // New verdict flow: submitVerdict → auto finalizeVerdict
+  // submitVerdict only — finalizeVerdict is a SEPARATE step, gated by the
+  // contract's own FINALIZE_DELAY (24h) after submittedAt. Calling it right
+  // after submit is guaranteed to revert every time, and viem's
+  // waitForTransactionReceipt resolves on a reverted receipt too (it doesn't
+  // throw), so an auto-chained call here used to show a false "resolved"
+  // success toast for a verdict that was never actually finalized — no funds
+  // moved, Agreement.status stayed DISPUTED, and the arbiter believed the
+  // case was closed when it wasn't. The MyCaseCard's own "Finalize Verdict"
+  // button (verdictReady state, gated on the 24h window below) is the only
+  // place finalizeVerdict is called from now.
   const handleSubmitVerdict = async (agreement: string, clientWins: boolean) => {
     if (!publicClient) { toast.error(t("common.error")); return; }
     setBusy(agreement);
@@ -219,23 +240,16 @@ export default function ArbiterPage() {
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: "submitVerdict", args: [agreement as Address, clientWins],
       });
-      await publicClient.waitForTransactionReceipt({ hash: hash1 });
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: hash1 }));
 
-      toast.loading(t("arbiter.finalizing"), { id });
-      const hash2 = await writeContractAsync({
-        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
-        functionName: "finalizeVerdict", args: [agreement as Address],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: hash2 });
-
-      toast.success(clientWins ? t("arbiter.refund_success") : t("arbiter.pay_success"), { id });
+      toast.success(t("arbiter.verdict_pending"), { id });
       bump();
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("arbiter.resolve_failed"), { id });
     } finally { setBusy(null); }
   };
 
-  // Finalize an already-submitted verdict (e.g. if first attempt failed)
+  // Finalize an already-submitted verdict, once FINALIZE_DELAY has passed.
   const handleFinalizeVerdict = async (agreement: string) => {
     if (!publicClient) { toast.error(t("common.error")); return; }
     setBusy(agreement);
@@ -245,7 +259,7 @@ export default function ArbiterPage() {
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: "finalizeVerdict", args: [agreement as Address],
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      assertMined(await publicClient.waitForTransactionReceipt({ hash }));
       toast.success(t("arbiter.pay_success"), { id });
       bump();
     } catch (err: any) {
@@ -262,7 +276,7 @@ export default function ArbiterPage() {
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: "withdrawArbiterReward",
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      assertMined(await publicClient.waitForTransactionReceipt({ hash }));
       toast.success(t("arbiter.reward_withdrawn"), { id });
       refetchReward();
       bump();
@@ -750,6 +764,14 @@ function MyCaseCard({
   const hasVerdict   = pendingVerdict && pendingVerdict.submittedAt > 0n;
   const verdictReady = hasVerdict && !pendingVerdict!.finalized && !pendingVerdict!.frozen;
   const verdictFrozen = hasVerdict && pendingVerdict!.frozen && !pendingVerdict!.finalized;
+  // finalizeVerdict() reverts on-chain until FINALIZE_DELAY has passed since
+  // submittedAt — the button used to be always-clickable here regardless,
+  // guaranteed to fail (and, before assertMined was added, to show a false
+  // success toast) for the entire 24h window after every single verdict.
+  const finalizeEligibleIn = hasVerdict
+    ? pendingVerdict!.submittedAt + FINALIZE_DELAY - BigInt(Math.floor(Date.now() / 1000))
+    : 0n;
+  const finalizeEligible = finalizeEligibleIn <= 0n;
 
   if (!isMineClaim && !isDisputed) return null;
   if (isTerminal) return null;
@@ -854,9 +876,14 @@ function MyCaseCard({
                   {pendingVerdict!.clientWins ? t("arbiter.refund_client_btn") : t("arbiter.pay_executor_btn")}
                 </span>
               </div>
+              {!finalizeEligible && (
+                <p className="text-[11px] text-white/35">
+                  {t("arbiter.finalize_available_in", { time: fmtTimeLeft(finalizeEligibleIn, t) })}
+                </p>
+              )}
               <button
                 className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-[10px] text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
-                disabled={!!busy}
+                disabled={!!busy || !finalizeEligible}
                 onClick={() => onFinalizeVerdict(agreement)}
               >
                 {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}

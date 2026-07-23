@@ -662,6 +662,7 @@
     "add_btn": "추가",
     "remove_btn": "제거",
     "finalize_btn": "Finalize Verdict",
+    "finalize_available_in": "{time} 후에 확정 가능",
     "finalizing": "Finalizing verdict…",
     "reward_title": "Pending Reward",
     "reward_withdrawn": "Reward withdrawn successfully",
