@@ -346,6 +346,7 @@
     "bio_max": "Biografie darf maximal 500 Zeichen haben",
     "save_btn": "Profil speichern",
     "save_success": "Profil gespeichert!",
+    "account_switched_reload": "Wallet gewechselt — Formular für das neue Konto neu geladen. Ungespeicherte Änderungen für das vorherige gingen verloren.",
     "ipfs_signed_info": "Dein Profil ist auf IPFS gespeichert und von deiner Wallet signiert.",
     "xp_title": "Erfahrungspunkte",
     "max_level": "Maximales Level erreicht",

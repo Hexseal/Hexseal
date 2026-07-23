@@ -346,6 +346,7 @@
     "bio_max": "La bio deve essere di 500 caratteri o meno",
     "save_btn": "Salva Profilo",
     "save_success": "Profilo salvato!",
+    "account_switched_reload": "Wallet cambiato — modulo ricaricato per il nuovo account. Le modifiche non salvate del precedente sono andate perse.",
     "ipfs_signed_info": "Il tuo profilo è archiviato su IPFS e firmato dal tuo portafoglio.",
     "xp_title": "Punti Esperienza",
     "max_level": "Livello massimo raggiunto",

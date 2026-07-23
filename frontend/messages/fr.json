@@ -346,6 +346,7 @@
     "bio_max": "La bio doit faire 500 caractères maximum",
     "save_btn": "Sauvegarder le Profil",
     "save_success": "Profil sauvegardé !",
+    "account_switched_reload": "Portefeuille changé — formulaire rechargé pour le nouveau compte. Les modifications non enregistrées de l'ancien ont été perdues.",
     "ipfs_signed_info": "Votre profil est stocké sur IPFS et signé par votre portefeuille.",
     "xp_title": "Points d'Expérience",
     "max_level": "Niveau maximum atteint",

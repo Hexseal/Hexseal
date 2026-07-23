@@ -111,6 +111,14 @@ export default function EditProfilePage() {
     if (!address) return;
     const addrLc = address.toLowerCase();
     if (populatedForRef.current === addrLc) return;
+    // A genuine account switch while this page was already open (not the initial
+    // load — populatedForRef already pointed at a different address) reloads the
+    // form for the new address below, silently discarding whatever wasn't saved
+    // for the old one. There's no reload/navigation the user would otherwise
+    // notice this from, so say so explicitly instead of leaving it silent.
+    if (populatedForRef.current !== null) {
+      toast(t("profile.account_switched_reload"));
+    }
     populatedForRef.current = addrLc;
 
     const populateFrom = (data: Record<string, unknown>) => {

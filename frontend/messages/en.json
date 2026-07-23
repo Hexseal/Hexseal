@@ -351,6 +351,7 @@
     "website_invalid": "Website must be a valid http/https URL",
     "save_btn": "Save Profile",
     "save_success": "Profile saved!",
+    "account_switched_reload": "Wallet switched — form reloaded for the new account. Unsaved changes for the previous one were not saved.",
     "ipfs_signed_info": "Your profile is stored on IPFS and signed by your wallet.",
     "xp_title": "Experience Points",
     "max_level": "Max level reached",

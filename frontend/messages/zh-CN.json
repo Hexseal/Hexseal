@@ -346,6 +346,7 @@
     "bio_max": "简介不得超过 500 个字符",
     "save_btn": "保存资料",
     "save_success": "资料已保存！",
+    "account_switched_reload": "钱包已切换——已为新账户重新加载表单。之前账户未保存的更改已丢失。",
     "ipfs_signed_info": "您的资料存储于 IPFS 并由您的钱包签名。",
     "xp_title": "经验值",
     "max_level": "已达最高等级",

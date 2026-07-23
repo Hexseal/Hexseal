@@ -346,6 +346,7 @@
     "bio_max": "La biografía debe tener 500 caracteres o menos",
     "save_btn": "Guardar Perfil",
     "save_success": "¡Perfil guardado!",
+    "account_switched_reload": "Billetera cambiada — formulario recargado para la nueva cuenta. Los cambios no guardados de la anterior se perdieron.",
     "ipfs_signed_info": "Tu perfil está almacenado en IPFS y firmado por tu billetera.",
     "xp_title": "Puntos de Experiencia",
     "max_level": "Nivel máximo alcanzado",
