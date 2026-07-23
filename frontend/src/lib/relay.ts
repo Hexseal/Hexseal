@@ -167,7 +167,18 @@ const WALLET_LOCK_TIMEOUT_MS = 3 * 60_000; // 3 min — generous for a real sign
 /** Waits for any earlier-queued gasless call for this wallet to finish (success
  *  or failure — either way its nonce has already been consumed or never sent),
  *  then reserves the lock for the caller. Returns a release callback that MUST
- *  be called in a `finally` block so the next queued call can proceed. */
+ *  be called in a `finally` block so the next queued call can proceed.
+ *
+ *  The in-memory Map above only serializes calls within THIS ONE tab's JS
+ *  runtime — the same wallet acting from two companion surfaces open in
+ *  separate tabs/windows (the deal page + its own chat, or the board list +
+ *  a job's own detail page — genuinely plausible pairings, not a contrived
+ *  scenario) shares no state and can still race the same nonce. Where
+ *  available, also take a Web Locks API lock keyed the same way: it's a real
+ *  cross-tab/cross-window mutex, and the browser auto-releases it if the
+ *  holding tab is closed/crashes — which the in-memory Map alone can't do for
+ *  a DIFFERENT tab. Degrades gracefully (same-tab-only protection, as before)
+ *  on browsers without navigator.locks. */
 async function acquireWalletLock(address: string): Promise<() => void> {
   const key = address.toLowerCase();
   const ahead = _walletLocks.get(key) ?? Promise.resolve();
@@ -180,11 +191,28 @@ async function acquireWalletLock(address: string): Promise<() => void> {
     ahead.then(() => {}, () => {}),
     new Promise<void>(resolve => setTimeout(resolve, WALLET_LOCK_TIMEOUT_MS)),
   ]);
+
+  let releaseWebLock: (() => void) | undefined;
+  if (typeof navigator !== 'undefined' && 'locks' in navigator) {
+    try {
+      await Promise.race([
+        new Promise<void>(resolveAcquired => {
+          navigator.locks.request(`hexseal-wallet-${key}`, () => new Promise<void>(resolveRelease => {
+            releaseWebLock = resolveRelease;
+            resolveAcquired();
+          })).catch(() => { resolveAcquired(); }); // unsupported/errored — proceed without cross-tab protection
+        }),
+        new Promise<void>(resolve => setTimeout(resolve, WALLET_LOCK_TIMEOUT_MS)),
+      ]);
+    } catch { /* proceed without cross-tab protection */ }
+  }
+
   return () => {
     release();
     // Only clear the map entry if nobody has queued behind us since — otherwise
     // this would drop the reference the next-in-line's "ahead" still points to.
     if (_walletLocks.get(key) === ours) _walletLocks.delete(key);
+    releaseWebLock?.();
   };
 }
 
