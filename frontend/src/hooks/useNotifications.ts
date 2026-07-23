@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useAccount, useReadContract, useWatchContractEvent } from "wagmi";
 import { toast } from "react-hot-toast";
 import {
@@ -227,27 +227,275 @@ export function useNotifications() {
     [address]
   );
 
+  // ─── Stable args/onLogs for every useWatchContractEvent below ───────────
+  //
+  // Passing inline object/function literals as `args`/`onLogs` used to mean a NEW
+  // reference on every render of this hook (e.g. every single push() call, since
+  // that updates `notifications` state and re-renders whatever mounts
+  // useNotifications — NotificationsProvider, at the app root). wagmi's
+  // useWatchContractEvent depends on both by reference, so each render was tearing
+  // down and re-establishing all 13 watchers' underlying filters/poll loops, not
+  // just when address/deal-set actually changed. Since polling (not websocket) is
+  // used here, that teardown+recreate has a real async gap (uninstall the old
+  // filter, then create a new one) during which a log from a *different* event can
+  // land and be silently dropped — most of these notification types have no
+  // backfill to recover it. Memoizing both closes that gap: watchers now only
+  // rebuild when address (or the specific ref/state they read) actually changes.
+  const clientArgs   = useMemo(() => ({ client:   address ?? ZERO }), [address]);
+  const executorArgs = useMemo(() => ({ executor: address ?? ZERO }), [address]);
+  const arbiterArgs  = useMemo(() => ({ arbiter:  address ?? ZERO }), [address]);
+
+  const onAgreementRegisteredAsClient = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { agreement, amount } = a(log);
+      if (!agreement) continue;
+      myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: amount ?? BigInt(0) });
+      push({
+        type: "deal_new",
+        title: "Deal Created",
+        body: `Deal funded for $${fmtUSDC(amount)} USDC — the executor can now activate to start.`,
+        link: `/deal/${agreement}`,
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onAgreementRegisteredAsExecutor = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { agreement, amount } = a(log);
+      if (!agreement) continue;
+      myDeals.current.set(agreement.toLowerCase(), { role: "executor", amount: amount ?? BigInt(0) });
+      push({
+        type: "deal_new",
+        title: "You've Been Hired!",
+        body: `New deal for $${fmtUSDC(amount)} USDC. Activate to start working.`,
+        link: `/deal/${agreement}`,
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onAgreementStatusUpdated = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { agreement, newStatus } = a(log);
+      if (!agreement) continue;
+      const dealInfo = myDeals.current.get(agreement.toLowerCase());
+
+      // Notify registered arbiters about new disputes on deals they're not party to
+      if (!dealInfo) {
+        const status = Number(newStatus);
+        if (isArbiter && status === 3) { // 3 = DISPUTED
+          push({
+            type: "dispute_new",
+            title: "New Dispute Available",
+            body: "A dispute is open — be the first to claim and resolve it.",
+            link: "/arbiter",
+            txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+          });
+        }
+        continue;
+      }
+
+      const status = Number(newStatus);
+      const { role } = dealInfo;
+
+      // Registry enum: ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4
+      const msgMap: Partial<Record<number, [NotifType, string, string]>> = {
+        1: ["deal_completed", "Deal Complete", role === "client" ? "Payment successfully released to executor." : "Payment has been released to your wallet!"],
+        2: ["deal_refunded", "Deal Refunded", role === "client" ? "Funds returned to your wallet." : "The deal was refunded to the client."],
+        3: ["deal_disputed", "Dispute Raised", role === "client" ? "A dispute was opened on your deal." : "Client raised a dispute — arbiter will review."],
+        4: ["deal_resolved", "Dispute Resolved", "The arbiter has resolved the dispute."],
+      };
+
+      const entry = msgMap[status];
+      if (!entry) continue;
+      push({
+        type: entry[0],
+        title: entry[1],
+        body: entry[2],
+        link: `/deal/${agreement}`,
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [isArbiter, push]);
+
+  const onJobAcceptedAsExecutor = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { jobId, agreement } = a(log);
+      push({
+        type: "deal_new",
+        title: "Application Accepted",
+        body: `Your application for Job #${jobId} was accepted.`,
+        link: agreement ? `/deal/${agreement}` : "/dashboard",
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onJobAcceptedAsClient = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { jobId, agreement } = a(log);
+      push({
+        type: "deal_new",
+        title: "Executor Accepted",
+        body: `Executor confirmed for Job #${jobId}. Deal is ready.`,
+        link: agreement ? `/deal/${agreement}` : "/dashboard",
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onJobCancelledAsClient = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { jobId, refundAmount } = a(log);
+      push({
+        type: "job_cancelled",
+        title: "Job Cancelled",
+        body: `Job #${jobId} cancelled. $${fmtUSDC(refundAmount)} USDC refunded.`,
+        link: `/job/${jobId}`,
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onRequestAcceptedAsClient = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { agreement } = a(log);
+      push({
+        type: "deal_new",
+        title: "Request Accepted",
+        body: "Your service request was accepted. Deal has been created.",
+        link: agreement ? `/deal/${agreement}` : "/dashboard",
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onRequestAcceptedAsExecutor = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { agreement } = a(log);
+      push({
+        type: "deal_new",
+        title: "Request Accepted",
+        body: "You accepted a service request. Deal has been created.",
+        link: agreement ? `/deal/${agreement}` : "/dashboard",
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onRequestRejectedAsClient = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { requestId } = a(log);
+      push({
+        type: "service_rejected",
+        title: "Request Declined",
+        body: "The executor declined your service request.",
+        link: requestId !== undefined ? `/request/${requestId}` : "/dashboard",
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onDisputeClaimedAsArbiter = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { agreement } = a(log);
+      if (agreement) {
+        myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: BigInt(0) });
+      }
+      push({
+        type: "dispute_claimed",
+        title: "Dispute Claimed",
+        body: "You have 7 days to review and resolve this case.",
+        link: "/arbiter",
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [push]);
+
+  const onDisputeClaimedNotifyParties = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { agreement, arbiter } = a(log);
+      if (!agreement) continue;
+      // Skip: the arbiter themselves already get notified by the watcher above
+      if (arbiter?.toLowerCase() === address?.toLowerCase()) continue;
+      const dealInfo = myDeals.current.get(agreement.toLowerCase());
+      if (!dealInfo) continue;
+      push({
+        type: "dispute_arbiter_claimed",
+        title: "Arbiter Assigned",
+        body: "An arbiter has taken your dispute. Resolution expected within 7 days.",
+        link: `/deal/${agreement}`,
+        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+      });
+    }
+  }, [address, push]);
+
+  const onJobApplied = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { jobId, executor } = a(log);
+      const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
+      // Executor applied — confirm to them
+      if (executor?.toLowerCase() === address?.toLowerCase()) {
+        push({
+          type: "job_applied",
+          title: "Application Submitted",
+          body: `Applied to Job #${jobId}. Waiting for client to review.`,
+          link: `/job/${jobId}`,
+          txHash,
+        });
+        continue;
+      }
+      // Notify client if this is their job
+      if (jobId !== undefined && myJobIds.current.has(jobId.toString())) {
+        push({
+          type: "job_applied",
+          title: "New Applicant",
+          body: `Someone applied to your Job #${jobId}. Review on the job page.`,
+          link: `/job/${jobId}`,
+          txHash,
+        });
+      }
+    }
+  }, [address, push]);
+
+  const onServiceRequested = useCallback((logs: unknown[]) => {
+    for (const log of logs) {
+      const { requestId, serviceId, client, amount } = a(log);
+      const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
+      const link = requestId !== undefined ? `/request/${requestId}` : "/dashboard";
+      // Client sent the request — confirm to them
+      if (client?.toLowerCase() === address?.toLowerCase()) {
+        push({
+          type: "service_requested",
+          title: "Request Sent",
+          body: `Your request for $${fmtUSDC(amount)} USDC has been sent. Waiting for executor.`,
+          link,
+          txHash,
+        });
+        continue;
+      }
+      // Notify executor if this is their service
+      if (serviceId !== undefined && myServiceIds.current.has(serviceId.toString())) {
+        push({
+          type: "service_requested",
+          title: "New Service Request",
+          body: `A client requested your service for $${fmtUSDC(amount)} USDC.`,
+          link,
+          txHash,
+        });
+      }
+    }
+  }, [address, push]);
+
   // ─── AgreementRegistered as client ──────────────────────────────────────
   useWatchContractEvent({
     address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
     eventName: "AgreementRegistered",
-    args: { client: address ?? ZERO },
+    args: clientArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { agreement, amount } = a(log);
-        if (!agreement) continue;
-        myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: amount ?? BigInt(0) });
-        push({
-          type: "deal_new",
-          title: "Deal Created",
-          body: `Deal funded for $${fmtUSDC(amount)} USDC — the executor can now activate to start.`,
-          link: `/deal/${agreement}`,
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onAgreementRegisteredAsClient,
   });
 
   // ─── AgreementRegistered as executor ────────────────────────────────────
@@ -255,22 +503,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
     eventName: "AgreementRegistered",
-    args: { executor: address ?? ZERO },
+    args: executorArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { agreement, amount } = a(log);
-        if (!agreement) continue;
-        myDeals.current.set(agreement.toLowerCase(), { role: "executor", amount: amount ?? BigInt(0) });
-        push({
-          type: "deal_new",
-          title: "You've Been Hired!",
-          body: `New deal for $${fmtUSDC(amount)} USDC. Activate to start working.`,
-          link: `/deal/${agreement}`,
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onAgreementRegisteredAsExecutor,
   });
 
   // ─── AgreementStatusUpdated — filter by myDeals ─────────────────────────
@@ -285,49 +520,7 @@ export function useNotifications() {
     abi: DIAMOND_ABI,
     eventName: "AgreementStatusUpdated",
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { agreement, newStatus } = a(log);
-        if (!agreement) continue;
-        const dealInfo = myDeals.current.get(agreement.toLowerCase());
-
-        // Notify registered arbiters about new disputes on deals they're not party to
-        if (!dealInfo) {
-          const status = Number(newStatus);
-          if (isArbiter && status === 3) { // 3 = DISPUTED
-            push({
-              type: "dispute_new",
-              title: "New Dispute Available",
-              body: "A dispute is open — be the first to claim and resolve it.",
-              link: "/arbiter",
-              txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-            });
-          }
-          continue;
-        }
-
-        const status = Number(newStatus);
-        const { role } = dealInfo;
-
-        // Registry enum: ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4
-        const msgMap: Partial<Record<number, [NotifType, string, string]>> = {
-          1: ["deal_completed", "Deal Complete", role === "client" ? "Payment successfully released to executor." : "Payment has been released to your wallet!"],
-          2: ["deal_refunded", "Deal Refunded", role === "client" ? "Funds returned to your wallet." : "The deal was refunded to the client."],
-          3: ["deal_disputed", "Dispute Raised", role === "client" ? "A dispute was opened on your deal." : "Client raised a dispute — arbiter will review."],
-          4: ["deal_resolved", "Dispute Resolved", "The arbiter has resolved the dispute."],
-        };
-
-        const entry = msgMap[status];
-        if (!entry) continue;
-        push({
-          type: entry[0],
-          title: entry[1],
-          body: entry[2],
-          link: `/deal/${agreement}`,
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onAgreementStatusUpdated,
   });
 
   // ─── JobAccepted as executor ─────────────────────────────────────────────
@@ -335,20 +528,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
     eventName: "JobAccepted",
-    args: { executor: address ?? ZERO },
+    args: executorArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { jobId, agreement } = a(log);
-        push({
-          type: "deal_new",
-          title: "Application Accepted",
-          body: `Your application for Job #${jobId} was accepted.`,
-          link: agreement ? `/deal/${agreement}` : "/dashboard",
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onJobAcceptedAsExecutor,
   });
 
   // ─── JobAccepted as client ────────────────────────────────────────────────
@@ -356,20 +538,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
     eventName: "JobAccepted",
-    args: { client: address ?? ZERO },
+    args: clientArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { jobId, agreement } = a(log);
-        push({
-          type: "deal_new",
-          title: "Executor Accepted",
-          body: `Executor confirmed for Job #${jobId}. Deal is ready.`,
-          link: agreement ? `/deal/${agreement}` : "/dashboard",
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onJobAcceptedAsClient,
   });
 
   // ─── JobCancelled as client ──────────────────────────────────────────────
@@ -377,20 +548,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
     eventName: "JobCancelled",
-    args: { client: address ?? ZERO },
+    args: clientArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { jobId, refundAmount } = a(log);
-        push({
-          type: "job_cancelled",
-          title: "Job Cancelled",
-          body: `Job #${jobId} cancelled. $${fmtUSDC(refundAmount)} USDC refunded.`,
-          link: `/job/${jobId}`,
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onJobCancelledAsClient,
   });
 
   // ─── RequestAccepted as client ───────────────────────────────────────────
@@ -398,20 +558,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: SERVICE_BOARD_ABI,
     eventName: "RequestAccepted",
-    args: { client: address ?? ZERO },
+    args: clientArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { agreement } = a(log);
-        push({
-          type: "deal_new",
-          title: "Request Accepted",
-          body: "Your service request was accepted. Deal has been created.",
-          link: agreement ? `/deal/${agreement}` : "/dashboard",
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onRequestAcceptedAsClient,
   });
 
   // ─── RequestAccepted as executor ─────────────────────────────────────────
@@ -419,20 +568,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: SERVICE_BOARD_ABI,
     eventName: "RequestAccepted",
-    args: { executor: address ?? ZERO },
+    args: executorArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { agreement } = a(log);
-        push({
-          type: "deal_new",
-          title: "Request Accepted",
-          body: "You accepted a service request. Deal has been created.",
-          link: agreement ? `/deal/${agreement}` : "/dashboard",
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onRequestAcceptedAsExecutor,
   });
 
   // ─── RequestRejected as client ───────────────────────────────────────────
@@ -440,20 +578,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: SERVICE_BOARD_ABI,
     eventName: "RequestRejected",
-    args: { client: address ?? ZERO },
+    args: clientArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { requestId } = a(log);
-        push({
-          type: "service_rejected",
-          title: "Request Declined",
-          body: "The executor declined your service request.",
-          link: requestId !== undefined ? `/request/${requestId}` : "/dashboard",
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onRequestRejectedAsClient,
   });
 
   // ─── DisputeClaimed as arbiter ───────────────────────────────────────────
@@ -461,23 +588,9 @@ export function useNotifications() {
     address: CONTRACTS.diamond,
     abi: ARBITER_REGISTRY_ABI,
     eventName: "DisputeClaimed",
-    args: { arbiter: address ?? ZERO },
+    args: arbiterArgs,
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { agreement } = a(log);
-        if (agreement) {
-          myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: BigInt(0) });
-        }
-        push({
-          type: "dispute_claimed",
-          title: "Dispute Claimed",
-          body: "You have 7 days to review and resolve this case.",
-          link: "/arbiter",
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onDisputeClaimedAsArbiter,
   });
 
   // ─── DisputeClaimed — notify deal parties (client/executor) ─────────────
@@ -486,23 +599,7 @@ export function useNotifications() {
     abi: ARBITER_REGISTRY_ABI,
     eventName: "DisputeClaimed",
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { agreement, arbiter } = a(log);
-        if (!agreement) continue;
-        // Skip: the arbiter themselves already get notified by the watcher above
-        if (arbiter?.toLowerCase() === address?.toLowerCase()) continue;
-        const dealInfo = myDeals.current.get(agreement.toLowerCase());
-        if (!dealInfo) continue;
-        push({
-          type: "dispute_arbiter_claimed",
-          title: "Arbiter Assigned",
-          body: "An arbiter has taken your dispute. Resolution expected within 7 days.",
-          link: `/deal/${agreement}`,
-          txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-        });
-      }
-    },
+    onLogs: onDisputeClaimedNotifyParties,
   });
 
   // ─── JobApplied — notify client (new applicant) + executor (submitted) ───
@@ -511,33 +608,7 @@ export function useNotifications() {
     abi: DIAMOND_ABI,
     eventName: "JobApplied",
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { jobId, executor } = a(log);
-        const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
-        // Executor applied — confirm to them
-        if (executor?.toLowerCase() === address?.toLowerCase()) {
-          push({
-            type: "job_applied",
-            title: "Application Submitted",
-            body: `Applied to Job #${jobId}. Waiting for client to review.`,
-            link: `/job/${jobId}`,
-            txHash,
-          });
-          continue;
-        }
-        // Notify client if this is their job
-        if (jobId !== undefined && myJobIds.current.has(jobId.toString())) {
-          push({
-            type: "job_applied",
-            title: "New Applicant",
-            body: `Someone applied to your Job #${jobId}. Review on the job page.`,
-            link: `/job/${jobId}`,
-            txHash,
-          });
-        }
-      }
-    },
+    onLogs: onJobApplied,
   });
 
   // ─── ServiceRequested — notify executor (new request) + client (sent) ────
@@ -546,34 +617,7 @@ export function useNotifications() {
     abi: SERVICE_BOARD_ABI,
     eventName: "ServiceRequested",
     enabled: !!address,
-    onLogs(logs) {
-      for (const log of logs) {
-        const { requestId, serviceId, client, amount } = a(log);
-        const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
-        const link = requestId !== undefined ? `/request/${requestId}` : "/dashboard";
-        // Client sent the request — confirm to them
-        if (client?.toLowerCase() === address?.toLowerCase()) {
-          push({
-            type: "service_requested",
-            title: "Request Sent",
-            body: `Your request for $${fmtUSDC(amount)} USDC has been sent. Waiting for executor.`,
-            link,
-            txHash,
-          });
-          continue;
-        }
-        // Notify executor if this is their service
-        if (serviceId !== undefined && myServiceIds.current.has(serviceId.toString())) {
-          push({
-            type: "service_requested",
-            title: "New Service Request",
-            body: `A client requested your service for $${fmtUSDC(amount)} USDC.`,
-            link,
-            txHash,
-          });
-        }
-      }
-    },
+    onLogs: onServiceRequested,
   });
 
   // ─── Public API ───────────────────────────────────────────────────────────
