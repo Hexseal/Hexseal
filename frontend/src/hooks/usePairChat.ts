@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useWalletClient, useAccount } from 'wagmi';
+import { useAccount } from 'wagmi';
 import { useXmtp } from '@/contexts/XmtpContext';
 import {
   getXmtpClientIfCached,
@@ -26,7 +26,6 @@ import { notifyPush } from '@/lib/webpush';
 const _msgCache = new Map<string, ChatMessage[]>();
 
 export function usePairChat(peerAddress: string) {
-  const { data: walletClient } = useWalletClient();
   const { address } = useAccount();
   const { status } = useXmtp();
 
@@ -72,7 +71,7 @@ export function usePairChat(peerAddress: string) {
   useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
 
   useEffect(() => {
-    if (!walletClient || !peerAddress || status !== 'ready') { setIsLoading(false); return; }
+    if (!address || !peerAddress || status !== 'ready') { setIsLoading(false); return; }
 
     let cancelled = false;
     autoReconnectRef.current = false;
@@ -83,7 +82,7 @@ export function usePairChat(peerAddress: string) {
 
     (async () => {
       try {
-        const myAddress = walletClient!.account?.address?.toLowerCase() ?? '';
+        const myAddress = address.toLowerCase();
         // status === 'ready' guarantees the client is in cache — no need to re-init.
         const xmtp = getXmtpClientIfCached(myAddress);
         if (!xmtp) { setError('Messaging not initialized'); setIsLoading(false); return; }
@@ -194,7 +193,15 @@ export function usePairChat(peerAddress: string) {
       streamRef.current?.return();
       streamRef.current = null;
     };
-  }, [walletClient, peerAddress, status, retryKey]);
+  // address (not walletClient): walletClient's object reference can change mid-session
+  // for reasons unrelated to any user action (wallet reconnect, chain re-sync, etc — the
+  // same reference-churn class fixed in providers.tsx's PushAutoMount and guarded against
+  // in XmtpContext's triedRef) — keying on it here tore down and rebuilt the whole open
+  // chat (killed the live stream, reloaded the full message history, sent a duplicate
+  // read receipt) whenever that happened, even though status stayed 'ready' throughout.
+  // address is the only thing this effect actually derives from walletClient, and it's
+  // a stable string that only changes when the connected account itself changes.
+  }, [address, peerAddress, status, retryKey]);
 
   const loadMore = useCallback(async () => {
     const group = groupRef.current;
