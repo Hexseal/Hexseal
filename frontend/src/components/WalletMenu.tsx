@@ -43,7 +43,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
   const { status: xmtpStatus, disable: disableXmtp, retry: retryXmtp } = useXmtp();
-  const { subscribed: pushOn, disable: disablePushNotif } = usePushNotifications();
+  const { subscribed: pushOn, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
     displayText, avatarUrl, usdcBalance,
@@ -369,7 +369,8 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
           )}
           {pushOn && (
             <DropdownMenuItem
-              onClick={() => { void disablePushNotif(); }}
+              disabled={pushLoading}
+              onClick={() => { if (!pushLoading) void disablePushNotif(); }}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
               <BellOff className="w-3.5 h-3.5" />

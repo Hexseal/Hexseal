@@ -3,6 +3,39 @@
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '';
 const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 
+// ─── Shared registration bookkeeping ────────────────────────────────────────────
+//
+// Both the explicit "Enable notifications" toggle (usePushNotifications.ts) and
+// providers.tsx's background PushAutoMount call enablePush()/disablePush(). They
+// used to keep no shared state at all: PushAutoMount alone wrote the "last
+// registered at" timestamp (only from ITS OWN success handler), and neither path
+// recorded an explicit opt-out. That caused two real bugs:
+//   1. A user who tapped the explicit "Enable" button never got the timestamp
+//      written, so on the next reload PushAutoMount saw "never registered" and
+//      silently re-subscribed (a second, unrequested wallet signature right
+//      after the user's own).
+//   2. "Disable notifications" unsubscribed but recorded no opt-out, and OS
+//      Notification permission can't be revoked by script — so once the (never
+//      reset) TTL aged past 24h, PushAutoMount silently re-enabled push the user
+//      had explicitly turned off, popping another unrequested signature.
+// Centralizing both the write (on any successful enable, from either path) and
+// an explicit opt-out flag here means every caller shares one source of truth.
+const PUSH_REG_KEY      = (addr: string) => `hexseal-push-reg-${addr.toLowerCase()}`;
+const PUSH_DISABLED_KEY = (addr: string) => `hexseal-push-disabled-${addr.toLowerCase()}`;
+const PUSH_REG_TTL      = 24 * 60 * 60 * 1000; // 24h
+
+/** Whether a background auto-registration attempt should even be tried for this
+ *  address: not explicitly opted out, and not already (re-)registered recently. */
+export function shouldAutoRegisterPush(address: string): boolean {
+  try {
+    if (localStorage.getItem(PUSH_DISABLED_KEY(address)) === '1') return false;
+    const last = Number(localStorage.getItem(PUSH_REG_KEY(address)) ?? 0);
+    return Date.now() - last >= PUSH_REG_TTL;
+  } catch {
+    return true; // localStorage unavailable — let the caller's own guards decide
+  }
+}
+
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
   const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -87,6 +120,12 @@ export async function enablePush(
       body: JSON.stringify({ address: address.toLowerCase(), subscription, sig }),
     });
 
+    if (res.ok) {
+      try {
+        localStorage.setItem(PUSH_REG_KEY(address), String(Date.now()));
+        localStorage.removeItem(PUSH_DISABLED_KEY(address));
+      } catch { /* localStorage unavailable */ }
+    }
     return res.ok ? 'ok' : 'error';
   } catch {
     return 'error';
@@ -105,6 +144,12 @@ export function notifyPush(to: string, body: string, url?: string, tag?: string)
 }
 
 export async function disablePush(address: string): Promise<void> {
+  // Record the opt-out FIRST and unconditionally — regardless of whether an
+  // active subscription is actually found below — so PushAutoMount respects it
+  // from this point on. Notification.permission can't be revoked by script, so
+  // this flag is the only durable record that the user explicitly said no.
+  try { localStorage.setItem(PUSH_DISABLED_KEY(address), '1'); } catch { /* unavailable */ }
+
   const reg = await getSwRegistration();
   const sub = await reg?.pushManager.getSubscription();
   if (!sub) return;

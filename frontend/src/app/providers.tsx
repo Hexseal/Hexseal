@@ -38,7 +38,7 @@ import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
 import { appChain, appChainId, isMainnet } from "@/config/chain";
 import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
-import { isPushSupported, enablePush, getSwRegistration } from "@/lib/webpush";
+import { isPushSupported, enablePush, getSwRegistration, shouldAutoRegisterPush } from "@/lib/webpush";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
@@ -155,9 +155,6 @@ export function XmtpNotificationsMount() {
 // Re-registers push subscription with the relayer at most once per 24 h.
 // Keeps the relayer's subscription list fresh after restarts without
 // prompting a wallet signature on every page load.
-const PUSH_REG_KEY = (addr: string) => `hexseal-push-reg-${addr.toLowerCase()}`;
-const PUSH_REG_TTL = 24 * 60 * 60 * 1000; // 24 h
-
 function PushAutoMount() {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -180,21 +177,17 @@ function PushAutoMount() {
     if (Notification.permission !== 'granted') return;
     const addr = address.toLowerCase();
     if (attemptedRef.current.has(addr)) return;
-    // Rate-limit: skip if re-registered within the last 24 h
-    try {
-      const last = Number(localStorage.getItem(PUSH_REG_KEY(address)) ?? 0);
-      if (Date.now() - last < PUSH_REG_TTL) return;
-    } catch { /* localStorage unavailable */ }
+    // Respects an explicit "Disable notifications" opt-out and the 24h TTL —
+    // both bookkept in lib/webpush.ts, shared with the explicit Enable/Disable
+    // toggle in usePushNotifications.ts so neither path can silently undo the
+    // other (a user's explicit disable used to get silently reversed here once
+    // the TTL aged past 24h; an explicit enable used to leave no timestamp,
+    // causing this effect to immediately re-fire and pop a second signature).
+    if (!shouldAutoRegisterPush(address)) return;
     attemptedRef.current.add(addr);
     const signMsg = (msg: string) =>
       walletClient.signMessage({ account: address as `0x${string}`, message: msg });
-    enablePush(address, signMsg)
-      .then(result => {
-        if (result === 'ok') {
-          try { localStorage.setItem(PUSH_REG_KEY(address), String(Date.now())); } catch {}
-        }
-      })
-      .catch(() => {});
+    enablePush(address, signMsg).catch(() => {});
   }, [address, walletClient]);
   return null;
 }
