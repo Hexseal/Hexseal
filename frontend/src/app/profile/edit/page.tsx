@@ -146,10 +146,16 @@ export default function EditProfilePage() {
     setLoadingProfile(true);
     fetchProfile(address.toLowerCase())
       .then(profile => {
+        // Stale-response guard: if the connected address has since switched again
+        // (populatedForRef now points at a different, newer address), this fetch
+        // belongs to an address the user has already moved on from — applying it
+        // would silently overwrite the new address's form with the old one's data,
+        // and a subsequent Save would publish it as the new address's profile.
+        if (populatedForRef.current !== addrLc) return;
         if (profile) populateFrom(profile as unknown as Record<string, unknown>);
       })
       .catch(() => {})
-      .finally(() => setLoadingProfile(false));
+      .finally(() => { if (populatedForRef.current === addrLc) setLoadingProfile(false); });
   }, [address]);
 
   const toggleSpecialization = (spec: string) => {
@@ -270,6 +276,15 @@ export default function EditProfilePage() {
       const profileJson = JSON.stringify(profileData);
       const bodyHash    = keccak256(new TextEncoder().encode(profileJson));
       const signature   = await signMessageAsync({
+        // Pin the account explicitly — without this, wagmi signs with whatever
+        // account is CURRENTLY active in the wallet at signing time, not the one
+        // this message/profileData was built for. The avatar upload above can take
+        // several seconds; switching the wallet's active account during that
+        // window used to sign address A's message with address B's key, which the
+        // relayer's signature check always rejects — a confusing failure after a
+        // full multi-step submit. Pinning makes wagmi itself surface the mismatch
+        // immediately instead.
+        account: address as `0x${string}`,
         message: `hexseal:profile:update:${address.toLowerCase()}:${profileData.updatedAt}:${bodyHash}`,
       });
 
