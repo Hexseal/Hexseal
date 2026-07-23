@@ -186,24 +186,53 @@ export default function ArbiterPage() {
   const handleClaim = async (agreement: string) => {
     if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
     setBusy(agreement);
+    // The salt used to live only in this closure's local memory — if the tab
+    // closed/reloaded (or the wallet/network hung and the user gave up) in the
+    // ~100s window between the commit landing and the reveal completing, it
+    // was permanently and unrecoverably lost: the on-chain commitment sat
+    // forever unused, and completing the claim needed starting over from a
+    // brand-new commit. Persist it immediately so a resumed attempt for the
+    // same agreement can go straight to the reveal instead.
+    const storageKey = `hexseal-arb-salt-${agreement.toLowerCase()}`;
+    const commitToast = toast.loading(t("arbiter.claim_step1"));
     try {
+      let salt = (() => { try { return localStorage.getItem(storageKey) as Hex | null; } catch { return null; } })();
+      if (salt) {
+        try {
+          toast.loading(t("arbiter.claim_step2"), { id: commitToast });
+          const { txHash: claimTx } = await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
+          assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
+          try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
+          toast.success(t("arbiter.claim_success"), { id: commitToast });
+          bump();
+          return;
+        } catch {
+          // Persisted commitment is gone, expired, or never actually landed —
+          // fall through to a fresh commit+reveal instead of getting stuck.
+          try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
+          salt = null;
+        }
+      }
+
       const saltBytes = crypto.getRandomValues(new Uint8Array(32));
-      const salt = ("0x" + Array.from(saltBytes).map(b => b.toString(16).padStart(2, "0")).join("")) as Hex;
+      salt = ("0x" + Array.from(saltBytes).map(b => b.toString(16).padStart(2, "0")).join("")) as Hex;
+      try { localStorage.setItem(storageKey, salt); } catch { /* unavailable — resume just won't work */ }
       const commitment = keccak256(encodePacked(
         ["address", "address", "bytes32"],
         [agreement as Address, address as Address, salt],
       ));
-      const commitToast = toast.loading(t("arbiter.claim_step1"));
+      toast.loading(t("arbiter.claim_step1"), { id: commitToast });
       const { txHash: commitTx } = await commitDisputeClaimGasless(walletClient, publicClient, commitment);
       toast.loading(t("arbiter.claim_confirming"), { id: commitToast });
       assertMined(await publicClient.waitForTransactionReceipt({ hash: commitTx as `0x${string}` }));
       toast.loading(t("arbiter.claim_step2"), { id: commitToast });
       const { txHash: claimTx } = await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
       assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
+      try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
       toast.success(t("arbiter.claim_success"), { id: commitToast });
       bump();
     } catch (err: any) {
-      toast.error(err?.message || t("common.error"));
+      toast.error(err?.message || t("common.error"), { id: commitToast });
     } finally { setBusy(null); }
   };
 
