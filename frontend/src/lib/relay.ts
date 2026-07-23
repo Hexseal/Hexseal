@@ -127,6 +127,42 @@ const GAS_DEFAULTS: Record<string, bigint> = {
 
 const DEFAULT_GAS = 500_000n;
 
+// ─── Per-wallet serialization ─────────────────────────────────────────────────
+//
+// Every gasless call for a given wallet reads a nonce (the MinimalForwarder's
+// getNonce(from), and/or the USDC contract's EIP-2612 permit nonce for that
+// owner) and signs against it — but nothing coordinated two gasless calls for
+// the SAME wallet started close together (e.g. applying to two jobs, or acting
+// on two different deals shown on the same dashboard). Both would read the
+// same nonce, both get signed, and the second one to actually land on-chain
+// reverts with a nonce mismatch — the user pays the friction of a real wallet
+// signature for the losing one too, then sees a cryptic contract-error dump
+// with no indication that simply retrying (once the first has landed) would
+// work. Queue calls per wallet address so a second one waits for the first to
+// finish (success or failure) before it even reads a nonce.
+const _walletLocks = new Map<string, Promise<void>>();
+
+/** Waits for any earlier-queued gasless call for this wallet to finish (success
+ *  or failure — either way its nonce has already been consumed or never sent),
+ *  then reserves the lock for the caller. Returns a release callback that MUST
+ *  be called in a `finally` block so the next queued call can proceed. */
+async function acquireWalletLock(address: string): Promise<() => void> {
+  const key = address.toLowerCase();
+  const ahead = _walletLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const ours = new Promise<void>(resolve => { release = resolve; });
+  // Install ourselves as the new tail of the queue before awaiting anything, so a
+  // third concurrent call queues behind us, not behind whoever was ahead of us.
+  _walletLocks.set(key, ours);
+  await ahead.then(() => {}, () => {});
+  return () => {
+    release();
+    // Only clear the map entry if nobody has queued behind us since — otherwise
+    // this would drop the reference the next-in-line's "ahead" still points to.
+    if (_walletLocks.get(key) === ours) _walletLocks.delete(key);
+  };
+}
+
 // ─── Relay availability detection ────────────────────────────────────────────
 
 /** True if error is relay SERVER failure (5xx / network down) — not a contract revert. */
@@ -263,6 +299,8 @@ export async function deployAndFundGasless(
 ): Promise<{ txHash: string; agreementAddr?: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
 
   const { executor, amount, deadlineDays, terms, region, fee } = params;
   const total = amount + fee;
@@ -338,6 +376,9 @@ export async function deployAndFundGasless(
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── mintJobGasless ───────────────────────────────────────────────────────────
@@ -363,6 +404,8 @@ export async function mintJobGasless(
 ): Promise<{ txHash: string; jobId?: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
 
   const { title, description, amount, deadlineDays, terms, region, fee } = params;
   const total = amount + fee;
@@ -419,6 +462,9 @@ export async function mintJobGasless(
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── mintServiceGasless ───────────────────────────────────────────────────────
@@ -443,6 +489,8 @@ export async function mintServiceGasless(
 ): Promise<{ txHash: string; serviceId?: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
 
   const { title, description, price, deadlineDays, region, fee } = params;
 
@@ -481,6 +529,9 @@ export async function mintServiceGasless(
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── requestServiceGasless ────────────────────────────────────────────────────
@@ -504,6 +555,8 @@ export async function requestServiceGasless(
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
 
   const { serviceId, amount, deadlineDays, terms, region } = params;
 
@@ -552,6 +605,9 @@ export async function requestServiceGasless(
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── fundAgreementGasless ─────────────────────────────────────────────────────
@@ -584,9 +640,14 @@ export async function fundAgreementGasless(
       args: [userAddress, agreementAddress],
     }) as bigint;
     if (currentAllowance >= amount) {
+      // Delegates entirely to sendAgreementGasless, which acquires its own lock —
+      // do not also acquire one here, or this would deadlock against itself.
       return sendAgreementGasless(walletClient, publicClient, agreementAddress, 'fund', FUND_ABI_CALL as Abi);
     }
   } catch { /* proceed with full permit flow */ }
+
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
 
   // Step 1 — detect agreement's forwarder (handles legacy agreements)
   let agreementForwarder: Address = FORWARDER;
@@ -710,6 +771,9 @@ export async function fundAgreementGasless(
     });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── sendGasless ──────────────────────────────────────────────────────────────
@@ -725,6 +789,10 @@ export async function sendGasless(
   args: unknown[],
   abi: Abi,
 ): Promise<{ txHash: string; agreementAddr?: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
   const calldata = encodeFunctionData({ abi, functionName, args });
   try {
     return await _sendForwardRequest(walletClient, publicClient, calldata as Hex, functionName);
@@ -737,6 +805,9 @@ export async function sendGasless(
       address: DIAMOND, abi, functionName, args, account, chain: walletClient.chain,
     });
     return { txHash, fallbackUsed: true };
+  }
+  } finally {
+    releaseLock();
   }
 }
 
@@ -761,6 +832,8 @@ export async function proposeExtraGasless(
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
 
   let agreementForwarder: Address = FORWARDER;
   try {
@@ -877,6 +950,9 @@ export async function proposeExtraGasless(
     });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── sendAgreementGasless ─────────────────────────────────────────────────────
@@ -893,6 +969,10 @@ export async function sendAgreementGasless(
   abi: Abi,
   args: unknown[] = [],
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
   // Detect which forwarder the Agreement trusts — handles legacy agreements
   let agreementForwarder: Address = FORWARDER;
   try {
@@ -929,6 +1009,9 @@ export async function sendAgreementGasless(
     });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── claimDisputeGasless ──────────────────────────────────────────────────────
@@ -944,6 +1027,10 @@ export async function claimDisputeGasless(
   agreementAddress: Address,
   salt: Hex,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
   const CLAIM_ABI = parseAbi(['function claimDispute(address agreement, bytes32 salt)']);
   const calldata = encodeFunctionData({
     abi: CLAIM_ABI,
@@ -963,6 +1050,9 @@ export async function claimDisputeGasless(
     });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── releaseDisputeGasless ────────────────────────────────────────────────────
@@ -975,6 +1065,10 @@ export async function releaseDisputeGasless(
   publicClient: PublicClient,
   agreementAddress: Address,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
   const RELEASE_ABI = parseAbi(['function releaseDisputeClaim(address agreement)']);
   const calldata = encodeFunctionData({
     abi: RELEASE_ABI,
@@ -994,6 +1088,9 @@ export async function releaseDisputeGasless(
     });
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
 }
 
 // ─── commitDisputeClaimGasless ────────────────────────────────────────────────
@@ -1008,6 +1105,10 @@ export async function commitDisputeClaimGasless(
   publicClient: PublicClient,
   commitment: Hex,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
   const COMMIT_ABI = parseAbi(['function commitDisputeClaim(bytes32 commitment)']);
   const calldata = encodeFunctionData({
     abi: COMMIT_ABI,
@@ -1026,6 +1127,9 @@ export async function commitDisputeClaimGasless(
       args: [commitment], account, chain: walletClient.chain,
     });
     return { txHash, fallbackUsed: true };
+  }
+  } finally {
+    releaseLock();
   }
 }
 
