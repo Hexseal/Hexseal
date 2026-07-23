@@ -50,6 +50,13 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   const prevAddrRef  = useRef<string | undefined>(undefined);
   const triedRef     = useRef(new Set<string>());
   const disabledRef  = useRef(new Set<string>());
+  // Addresses whose auto-init effect body is currently executing — covers the
+  // checkXmtpDbExists() preamble too, not just the initXmtpClient() phase that
+  // isXmtpInitPending() (lib/xmtp.ts) tracks. checkXmtpDbExists has no timeout of
+  // its own, so without this, a resume-rearm firing while it's still resolving
+  // (isXmtpInitPending would say "not pending" — initXmtpClient hasn't been
+  // called yet) could kick off a second, redundant concurrent OPFS scan.
+  const inFlightRef  = useRef(new Set<string>());
   // Bumped on every connect attempt (auto-init or retry()) so a late-resolving
   // attempt can tell it's been superseded and skip applying its result — see
   // the comment above the auto-init effect below for the race this closes.
@@ -115,6 +122,7 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     const manual = manualRef.current;
     manualRef.current = false;
 
+    inFlightRef.current.add(addr);
     (async () => {
       try {
         // Never pop a wallet signature during the connect handshake. On mobile,
@@ -158,6 +166,8 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
             : trimXmtpError(raw),
         );
         setStatus('error');
+      } finally {
+        inFlightRef.current.delete(addr);
       }
     })();
   // retryToken forces a re-run when retry() is called
@@ -197,6 +207,7 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
       if (statusRef.current === 'ready') return;
       if (disabledRef.current.has(addr)) return;
       if (isXmtpInitPending(addr)) return;
+      if (inFlightRef.current.has(addr)) return;
       const enabledBefore = typeof window !== 'undefined'
         && localStorage.getItem(registeredKey(addr)) === '1';
       if (!enabledBefore) return;
