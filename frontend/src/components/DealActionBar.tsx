@@ -165,15 +165,22 @@ export function DealActionBar({ agreementAddr }: Props) {
           }
         } catch { /* non-critical */ }
       }
+      // Keep `busy` set until this delayed refetch actually lands, instead of
+      // clearing it immediately in a blanket finally — the relay call already
+      // waits for on-chain confirmation, but the refetch is deliberately
+      // delayed to dodge read-after-write lag on the load-balanced RPC, so
+      // `parsed` stays stale for that whole window. Clearing busy right away
+      // re-enabled every action button gated on that stale state, letting a
+      // same/related action re-fire against state that had already moved on
+      // (wasting a signature on a guaranteed on-chain revert).
       if (fn === 'acceptExtra' || fn === 'rejectExtra') {
-        setTimeout(() => refetchExtras(), 2000);
+        setTimeout(() => { refetchExtras(); setBusy(false); }, 2000);
       } else {
-        setTimeout(() => refetch(), 2000);
+        setTimeout(() => { refetch(); setBusy(false); }, 2000);
       }
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Transaction failed');
-    } finally {
       setBusy(false);
     }
   };
@@ -185,18 +192,17 @@ export function DealActionBar({ agreementAddr }: Props) {
       toast('Sign 1/2: USDC permit in wallet…');
       await fundAgreementGasless(walletClient, publicClient, agreementAddr as `0x${string}`, parsed.amount);
       toast.success('Deal funded!');
-      setTimeout(() => refetch(), 4000);
+      setTimeout(() => { refetch(); setBusy(false); }, 4000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       const msg = e?.shortMessage || e?.message || 'Fund failed';
       if (msg.includes('AlreadyFunded')) {
         toast.error('Already funded — refreshing…');
-        setTimeout(() => refetch(), 1000);
+        setTimeout(() => { refetch(); setBusy(false); }, 1000);
       } else {
         toast.error(msg);
+        setBusy(false);
       }
-    } finally {
-      setBusy(false);
     }
   };
 
