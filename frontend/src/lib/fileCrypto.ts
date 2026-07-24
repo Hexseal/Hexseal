@@ -218,12 +218,13 @@ export async function decryptAndSaveChunked(
 
   // ── Try streaming save to disk (Chrome / Edge) ────────────────────────────
   if ('showSaveFilePicker' in window) {
+    let writable: FileSystemWritableFileStream | undefined;
     try {
       type SavePicker = (opts?: object) => Promise<FileSystemFileHandle>;
       const handle = await (window as unknown as { showSaveFilePicker: SavePicker }).showSaveFilePicker({
         suggestedName: filename,
       });
-      const writable = await handle.createWritable();
+      writable = await handle.createWritable();
       const br = new ByteReader(response.body!.getReader());
 
       for (let i = 0; i < chunkCount; i++) {
@@ -241,7 +242,18 @@ export async function decryptAndSaveChunked(
       return;
     } catch (e: unknown) {
       if ((e as DOMException).name === 'AbortError') return; // user cancelled picker
-      // showSaveFilePicker failed — fall through to in-memory approach
+      if (writable) {
+        // A failure happened AFTER the picker succeeded — most likely an
+        // AES-GCM authentication failure on a tampered/corrupted chunk, or a
+        // disk write error. The partial file on disk is invalid either way.
+        // Abort it and surface the real error instead of falling through to
+        // the in-memory fallback, which would try to re-read the same
+        // (already partially-consumed) response stream and fail confusingly.
+        try { await writable.abort(); } catch { /* best-effort */ }
+        throw e;
+      }
+      // showSaveFilePicker itself failed before any writable existed (API
+      // unsupported, permission denied) — fall through to in-memory approach.
     }
   }
 
