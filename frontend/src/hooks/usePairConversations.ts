@@ -33,6 +33,18 @@ export function usePairConversations(isEnabled = false) {
   const addressRef = useRef(address);
   useEffect(() => { addressRef.current = address; });
 
+  // Reset the visible list the instant the wallet address changes — before load()
+  // has a chance to run. Without this, a same-device account switch keeps showing
+  // the PREVIOUS account's conversation list (peer addresses, last messages) until
+  // the effect below re-fires and load() actually resolves, which can take a while
+  // (or never happen at all if XMTP isn't cached yet for the new address).
+  const prevAddrRef = useRef(addrLc);
+  useEffect(() => {
+    if (prevAddrRef.current === addrLc) return;
+    prevAddrRef.current = addrLc;
+    setConversations(addrLc ? (_convCache.get(addrLc) ?? []) : []);
+  }, [addrLc]);
+
   const load = useCallback(async () => {
     const addr = addressRef.current;
     if (!addr) return;
