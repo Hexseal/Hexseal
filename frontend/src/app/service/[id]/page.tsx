@@ -161,10 +161,9 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
     try {
       await sendGasless(walletClient, publicClient, "cancelRequest", [myRequest.id], DIAMOND_ABI as Abi);
       toast.success(t("board.services.request_cancelled"));
-      setTimeout(() => refetchRequests(), 2000);
+      setTimeout(() => { refetchRequests(); setIsCancelling(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");
-    } finally {
       setIsCancelling(false);
     }
   };
@@ -182,14 +181,17 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
       };
       await sendGasless(walletClient, publicClient, fn, [serviceId], DIAMOND_ABI as Abi);
       toast.success(msgs[fn]);
-      if (fn === "removeService") router.push("/board/executor");
-      // pauseService/unpauseService change on-chain status but nothing refetched
-      // it before — the badge and Pause/Resume button kept showing the PRE-action
-      // state indefinitely (no polling, no watch), so a click here would look
-      // like it did nothing, and a same-action re-click reverted with a raw
-      // "Call failed: Inner call reverted" (ServiceNotActive isn't in the relay's
-      // known-error map) right after the FIRST click's success toast.
-      else refetchService();
+      if (fn === "removeService") {
+        router.push("/board/executor");
+        return;
+      }
+      // Wait for the refetch to actually land before re-enabling the buttons —
+      // otherwise the badge and Pause/Resume button kept showing the PRE-action
+      // state, so a click here would look like it did nothing, and a same-action
+      // re-click reverted with a raw "Call failed: Inner call reverted"
+      // (ServiceNotActive isn't in the relay's known-error map) right after the
+      // FIRST click's success toast.
+      await refetchService();
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");
     } finally {
