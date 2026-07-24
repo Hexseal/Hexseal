@@ -240,7 +240,8 @@ export function DealActionBar({ agreementAddr }: Props) {
     // Set busy BEFORE the dispute-reason signature below — otherwise the modal is
     // already closed and the "Dispute" button (gated only on `busy`) stays enabled
     // for the whole signMessage wait, letting it reopen the modal and fire a
-    // second, concurrent raiseDispute attempt. run()'s own finally still clears this.
+    // second, concurrent raiseDispute attempt. run() still clears this — either
+    // in its delayed success callback or in its catch block.
     setBusy(true);
     if (disputeReason.trim()) {
       try {
