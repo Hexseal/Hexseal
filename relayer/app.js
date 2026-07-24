@@ -327,13 +327,13 @@ fs.mkdirSync(DIR_LOGS, { recursive: true });
  * AES-256-GCM key for a given pair's log.
  * key = keccak256(pairId.toLowerCase() + SERVER_SECRET) → 32 bytes
  */
-function deriveLogKey(pairId) {
+export function deriveLogKey(pairId) {
   return ethers.getBytes(
     ethers.keccak256(ethers.toUtf8Bytes(pairId.toLowerCase() + SERVER_SECRET))
   );
 }
 
-function encryptEntry(key, obj) {
+export function encryptEntry(key, obj) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const ct = Buffer.concat([
@@ -347,7 +347,7 @@ function encryptEntry(key, obj) {
   };
 }
 
-function decryptEntry(key, { iv, ct, authTag }) {
+export function decryptEntry(key, { iv, ct, authTag }) {
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
   decipher.setAuthTag(Buffer.from(authTag, 'hex'));
   const plain = Buffer.concat([
@@ -371,7 +371,7 @@ const PUSH_SERVICE_HOST_SUFFIXES = [
   'web.push.apple.com',
 ];
 
-function isKnownPushServiceEndpoint(endpoint) {
+export function isKnownPushServiceEndpoint(endpoint) {
   try {
     const u = new URL(endpoint);
     if (u.protocol !== 'https:') return false;
@@ -387,12 +387,12 @@ function sortAddressPair(a, b) {
   return lc[0] <= lc[1] ? lc : [lc[1], lc[0]];
 }
 
-function pairIdFromAddresses(a, b) {
+export function pairIdFromAddresses(a, b) {
   const [x, y] = sortAddressPair(a, b);
   return `${x}-${y}`;
 }
 
-function safeLogPath(pairId) {
+export function safeLogPath(pairId) {
   const id = pairId.toLowerCase();
   if (!PAIR_ID_RE.test(id)) throw new Error(`invalid pairId: ${id}`);
   const logPath = path.join(DIR_LOGS, `${id}.ndjson`);
@@ -422,7 +422,7 @@ function readLog(pairId) {
 }
 
 // Strips path traversal and unsafe chars — returns just the basename
-function safeKey(key) {
+export function safeKey(key) {
   return path.basename(String(key).replace(/[^a-zA-Z0-9.\-_]/g, '')).slice(0, 200);
 }
 
@@ -501,7 +501,7 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX       = 10;
 const _rateMap       = new Map();
 
-function checkRateLimit(ip) {
+export function checkRateLimit(ip) {
   const now = Date.now();
   const entry = _rateMap.get(ip);
   if (!entry || now > entry.resetAt) {
