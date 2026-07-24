@@ -37,7 +37,7 @@ describe('POST /push/subscribe', () => {
     const address = (await wallet.getAddress()).toLowerCase();
     const res = await request(app).post('/push/subscribe').send({
       address,
-      subscription: { endpoint: FCM_ENDPOINT },
+      subscription: { endpoint: FCM_ENDPOINT, keys: { p256dh: 'test-p256dh', auth: 'test-auth' } },
     });
     expect(res.status).toBe(401);
   });
@@ -49,7 +49,7 @@ describe('POST /push/subscribe', () => {
     const badSig = await signMessage(attackerWallet, `hexseal:push-subscribe:${address}:${FCM_ENDPOINT}`);
     const res = await request(app).post('/push/subscribe').send({
       address,
-      subscription: { endpoint: FCM_ENDPOINT },
+      subscription: { endpoint: FCM_ENDPOINT, keys: { p256dh: 'test-p256dh', auth: 'test-auth' } },
       sig: badSig,
     });
     expect(res.status).toBe(403);

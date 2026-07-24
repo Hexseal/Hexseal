@@ -8,6 +8,10 @@ export const contractMocks = new Map();
  * `methods` maps method names to either a plain value (wrapped in an async fn
  * that resolves to it) or a function (called with the same args the route
  * handler passed, for tests that need per-call logic).
+ *
+ * Passing a `connect` key in `methods` overrides FakeContract's default
+ * live-lookup `connect` fallback (test/setup.js) — most callers should NOT,
+ * so that a `.connect()` result keeps resolving against the current registry.
  */
 export function mockContract(address, methods) {
   const key = String(address).toLowerCase();

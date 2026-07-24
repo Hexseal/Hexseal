@@ -1,18 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import { app } from '../app.js';
-
-// The /files prefix middleware in app.js (registered ahead of every /files/* route)
-// unconditionally sets Content-Type: application/octet-stream on every response under
-// /files — success bodies as well as error bodies (Express's res.json() only sets
-// Content-Type when it isn't already set, and this middleware always sets it first).
-// supertest therefore can't auto-parse ANY /files/* JSON response: res.body comes back
-// as a raw Buffer and res.text is left undefined. Parse it ourselves — same workaround
-// as test/profileUpload.test.js's errorBody(), just needed on every response here, not
-// only error ones.
-function jsonBody(res) {
-  return JSON.parse(Buffer.isBuffer(res.body) ? res.body.toString('utf8') : res.text);
-}
+import { jsonBody } from './helpers/httpBody.js';
 
 describe('POST /files/presign', () => {
   it('returns an upload/download URL pair with a 7-day expiry', async () => {
@@ -96,6 +85,20 @@ describe('POST /files/public/presign', () => {
   it('accepts no extension at all', async () => {
     const res = await request(app).post('/files/public/presign').send({});
     expect(res.status).toBe(200);
+  });
+});
+
+describe('upload size limit', () => {
+  it('rejects an oversized public upload with 413', async () => {
+    // MAX_PUBLIC_SIZE is 5 MB; streamWithSizeLimit aborts as soon as the running
+    // total crosses it, so this never buffers the whole payload server-side.
+    const payload = Buffer.alloc(6 * 1024 * 1024, 1); // 6 MB > 5 MB cap
+    const res = await request(app)
+      .put('/files/public-put/oversized-avatar.png')
+      .set('Content-Type', 'application/octet-stream')
+      .send(payload);
+    expect(res.status).toBe(413);
+    expect(jsonBody(res).error).toMatch(/too large/i);
   });
 });
 

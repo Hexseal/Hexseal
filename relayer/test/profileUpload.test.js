@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import request from 'supertest';
 import { app } from '../app.js';
 import { signProfileUpdate } from './helpers/signing.js';
+import { jsonBody } from './helpers/httpBody.js';
 
 function uploadProfile(address, body, sig) {
   const key = `profile-${address}.json`;
@@ -11,15 +12,6 @@ function uploadProfile(address, body, sig) {
     .set('Content-Type', 'application/octet-stream')
     .set('X-Profile-Signature', sig)
     .send(body);
-}
-
-// The /files prefix middleware in app.js (registered ahead of this route) unconditionally
-// sets Content-Type: application/octet-stream on every /files/* response, including this
-// route's own res.json() error bodies (Express's res.json only sets Content-Type when it
-// isn't already set). supertest therefore can't auto-parse these as JSON — it hands back
-// the raw bytes as a Buffer in res.body instead of a parsed object. Parse it ourselves.
-function errorBody(res) {
-  return JSON.parse(Buffer.isBuffer(res.body) ? res.body.toString('utf8') : res.text);
 }
 
 describe('PUT /files/public-put/:key — profile branch', () => {
@@ -41,7 +33,7 @@ describe('PUT /files/public-put/:key — profile branch', () => {
 
     const res = await uploadProfile(address, body, sig);
     expect(res.status).toBe(400);
-    expect(errorBody(res).error).toMatch(/http\(s\)/);
+    expect(jsonBody(res).error).toMatch(/http\(s\)/);
   });
 
   it('accepts a profile with no website field at all', async () => {
@@ -93,7 +85,7 @@ describe('PUT /files/public-put/:key — profile branch', () => {
     const replay = await signProfileUpdate(wallet, nonce, body2);
     const res = await uploadProfile(replay.address, body2, replay.sig);
     expect(res.status).toBe(400);
-    expect(errorBody(res).error).toMatch(/replay/i);
+    expect(jsonBody(res).error).toMatch(/replay/i);
   });
 
   it('accepts a later nonce for the same address after an earlier one succeeded', async () => {
@@ -101,7 +93,8 @@ describe('PUT /files/public-put/:key — profile branch', () => {
     const nonce1 = Date.now();
     const body1  = JSON.stringify({ displayName: 'V1', updatedAt: nonce1 });
     const first  = await signProfileUpdate(wallet, nonce1, body1);
-    await uploadProfile(first.address, body1, first.sig);
+    const firstRes = await uploadProfile(first.address, body1, first.sig);
+    expect(firstRes.status).toBe(200);
 
     const nonce2 = nonce1 + 1000;
     const body2  = JSON.stringify({ displayName: 'V2', updatedAt: nonce2 });
