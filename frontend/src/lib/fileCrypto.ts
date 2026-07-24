@@ -12,6 +12,28 @@ function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+// ─── Trusted attachment origin ────────────────────────────────────────────────
+
+const RELAYER_ORIGIN = (() => {
+  try { return new URL(process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').origin; }
+  catch { return null; }
+})();
+
+/** True only for http(s) URLs on this app's own relayer origin. A chat
+ *  attachment's `url` field comes from the OTHER party's freely-crafted
+ *  message JSON — without this check, a forged message could point it at a
+ *  javascript: URI or an arbitrary external host, with nothing anywhere in
+ *  the pipeline (client render, decrypt fetch, or the relayer itself) ever
+ *  validating it. */
+export function isTrustedAttachmentUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (u.protocol === 'https:' || u.protocol === 'http:') && u.origin === RELAYER_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Plaintext bytes per chunk for large-file encryption. */
@@ -92,7 +114,9 @@ export async function decryptToObjectUrl(
   ivHex: string,
   mime?: string,
 ): Promise<string> {
-  const cacheKey = `${encryptedUrl}:${keyHex}`;
+  if (!isTrustedAttachmentUrl(encryptedUrl)) throw new Error('Untrusted attachment URL');
+
+  const cacheKey = `${encryptedUrl}:${keyHex}:${ivHex}`;
   const cached = _cache.get(cacheKey);
   if (cached) return cached;
 
@@ -182,6 +206,8 @@ export async function decryptAndSaveChunked(
   originalSize: number, // total plaintext file size
   onProgress?: (pct: number) => void,
 ): Promise<void> {
+  if (!isTrustedAttachmentUrl(encryptedUrl)) throw new Error('Untrusted attachment URL');
+
   const keyBytes = hexToBytes(keyHex);
   const baseIv   = hexToBytes(ivHex);
 

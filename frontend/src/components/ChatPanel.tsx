@@ -19,7 +19,7 @@ import {
   ChevronDown, Download, Search, X, Clock,
 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/xmtp';
-import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
+import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE, isTrustedAttachmentUrl } from '@/lib/fileCrypto';
 import { MAX_FILE_SIZE, refreshDownloadUrl } from '@/lib/fileStorage';
 import { useProfile } from '@/hooks/useProfile';
 import { shortAddr } from "@/lib/utils";
@@ -55,7 +55,14 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
   const t = useTranslations();
 
   useEffect(() => {
-    if (!a.key || !a.iv) { setSrc(a.url); return; }
+    if (!a.key || !a.iv) {
+      // Unencrypted attachments have no decrypt step to gate the fetch — an
+      // untrusted url must never even be handed to <img src>, since that loads
+      // with zero user interaction the instant this renders.
+      if (!isTrustedAttachmentUrl(a.url)) { setDecryptErr(true); return; }
+      setSrc(a.url);
+      return;
+    }
     let active = true;
     setDecrypting(true);
     const tryDecrypt = (url: string) => decryptToObjectUrl(url, a.key!, a.iv!, a.mime);
@@ -116,7 +123,11 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
 
   const handleDownload = async () => {
     if (saving) return;
-    if (!a.key || !a.iv) { window.open(a.url, '_blank'); return; }
+    if (!a.key || !a.iv) {
+      if (!isTrustedAttachmentUrl(a.url)) { setErr(true); return; }
+      window.open(a.url, '_blank', 'noopener');
+      return;
+    }
     setSaving(true); setErr(false); setDlProgress(0);
 
     const doDownload = async (url: string) => {
