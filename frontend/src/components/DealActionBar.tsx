@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from 'wagmi';
-import { formatUnits, keccak256, toBytes, type Abi } from 'viem';
+import { formatUnits, keccak256, type Abi } from 'viem';
 import { toast } from 'react-hot-toast';
 import {
   DollarSign, Shield, CheckCircle, AlertTriangle, Loader2,
@@ -25,7 +25,7 @@ const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem {
   id: number;
   amount: bigint;
-  termsHash: string;
+  terms: string;
   status: number;
 }
 
@@ -90,8 +90,8 @@ export function DealActionBar({ agreementAddr }: Props) {
           functionName: 'getExtra',
           args: [BigInt(i)],
         }).then(raw => {
-          const e = raw as { amount: bigint; termsHash: string; status: number };
-          return { id: i, amount: e.amount, termsHash: e.termsHash, status: Number(e.status) } satisfies ExtraItem;
+          const e = raw as { amount: bigint; terms: string; status: number };
+          return { id: i, amount: e.amount, terms: e.terms, status: Number(e.status) } satisfies ExtraItem;
         }).catch(() => null)
       )
     ).then(results => setExtrasList(results.filter((r): r is ExtraItem => r !== null)));
@@ -217,17 +217,19 @@ export function DealActionBar({ agreementAddr }: Props) {
     setBusy(true);
     try {
       toast('Sign 1/2: USDC permit in wallet…');
-      const termsHash = keccak256(toBytes(proposeDesc.trim() || `${proposeAmount} USDC extra`));
-      await proposeExtraGasless(walletClient, publicClient, agreementAddr as `0x${string}`, amountParsed, termsHash);
+      // Agreement.sol stores extraTerms verbatim (never hashed) as Extra.terms —
+      // sending a hash here (as this used to) permanently corrupts the
+      // description into an unrecoverable hex string every time.
+      const extraTerms = proposeDesc.trim() || `${proposeAmount} USDC extra`;
+      await proposeExtraGasless(walletClient, publicClient, agreementAddr as `0x${string}`, amountParsed, extraTerms);
       toast.success('Extra proposed!');
       setExtraModal(false);
       setProposeAmount('');
       setProposeDesc('');
-      setTimeout(() => refetchExtras(), 3000);
+      setTimeout(() => { refetchExtras(); setBusy(false); }, 3000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed to propose extra');
-    } finally {
       setBusy(false);
     }
   };
