@@ -176,7 +176,10 @@ export function notifyPush(to: string, body: string, url?: string, tag?: string)
   }).catch(() => {});
 }
 
-export async function disablePush(address: string): Promise<void> {
+export async function disablePush(
+  address: string,
+  signMessage?: (msg: string) => Promise<string>,
+): Promise<void> {
   // Record the opt-out FIRST and unconditionally — regardless of whether an
   // active subscription is actually found below — so PushAutoMount respects it
   // from this point on. Notification.permission can't be revoked by script, so
@@ -187,9 +190,25 @@ export async function disablePush(address: string): Promise<void> {
   const sub = await reg?.pushManager.getSubscription();
   if (!sub) return;
   await sub.unsubscribe();
+
+  // The relayer requires proof this address's own wallet actually requested
+  // the unsubscribe — without it, anyone who knows a wallet address could
+  // silently delete another user's push subscription with zero verification.
+  // If signing isn't available or the user doesn't complete it, the LOCAL
+  // unsubscribe above still took effect (no more pushes will arrive on this
+  // device) — the relayer's own dead-subscription cleanup (a 404/410 on the
+  // next send attempt) will drop the stale server-side record regardless.
+  if (!signMessage) return;
+  let sig: string;
+  try {
+    sig = await signMessage(`hexseal:push-unsubscribe:${address.toLowerCase()}:${sub.endpoint}`);
+  } catch {
+    return;
+  }
+
   await fetch(`${RELAYER_URL}/push/unsubscribe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: address.toLowerCase(), endpoint: sub.endpoint }),
+    body: JSON.stringify({ address: address.toLowerCase(), endpoint: sub.endpoint, sig }),
   }).catch(() => {});
 }

@@ -128,12 +128,12 @@ export function PushProvider({ children }: { children: ReactNode }) {
     const myAttempt = ++attemptIdRef.current; // supersede any enable() (explicit or background) still in flight
     setLoading(true);
     try {
-      await disablePush(address);
+      await disablePush(address, buildSignMsg);
       if (attemptIdRef.current === myAttempt) setSubscribed(false); // an enable() that started after us and already won must not be reverted
     } finally {
       if (attemptIdRef.current === myAttempt) setLoading(false);
     }
-  }, [address]);
+  }, [address, buildSignMsg]);
 
   return (
     <PushContext.Provider value={{ supported, subscribed, permission, loading, error, enable, disable }}>

@@ -1038,11 +1038,21 @@ app.post('/push/subscribe', async (req, res) => {
   }
 });
 
+// POST /push/unsubscribe — requires ownership proof, mirroring /push/subscribe.
+// Client signs: "hexseal:push-unsubscribe:<address>:<endpoint>"
 app.post('/push/unsubscribe', async (req, res) => {
   try {
-    const { address, endpoint } = req.body || {};
+    const { address, endpoint, sig } = req.body || {};
     if (!address) return res.status(400).json({ error: 'address required' });
+    if (!sig) return res.status(401).json({ error: 'Missing sig — sign hexseal:push-unsubscribe:<address>:<endpoint>' });
+
     const key = address.toLowerCase();
+    const message = `hexseal:push-unsubscribe:${key}:${endpoint || 'all'}`;
+    let recovered;
+    try { recovered = ethers.verifyMessage(message, sig).toLowerCase(); }
+    catch { return res.status(400).json({ error: 'Invalid signature' }); }
+    if (recovered !== key) return res.status(403).json({ error: 'Signature mismatch' });
+
     if (endpoint) {
       _pushSubs.set(key, (_pushSubs.get(key) ?? []).filter(s => s.endpoint !== endpoint));
     } else {
