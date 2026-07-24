@@ -443,13 +443,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
 
   // Mark conversation as seen whenever this chat is open
   useEffect(() => {
-    if (!recipientAddress) return;
-    const key = `hexseal_chat_seen_${recipientAddress.toLowerCase()}`;
+    if (!recipientAddress || !address) return;
+    const key = `hexseal_chat_seen_${address.toLowerCase()}:${recipientAddress.toLowerCase()}`;
     const mark = () => localStorage.setItem(key, String(Date.now()));
     mark();
     window.addEventListener('focus', mark);
     return () => window.removeEventListener('focus', mark);
-  }, [recipientAddress]);
+  }, [recipientAddress, address]);
 
   useEffect(() => {
     const newCount = messages.length;

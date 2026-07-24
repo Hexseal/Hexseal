@@ -79,7 +79,7 @@ const DEAL_STATUS_CLS: Record<number, string> = {
 };
 
 const ConvoItem = memo(function ConvoItem({
-  peerAddress, lastText, lastAt, lastFromMe, isSelected, isSeen, onSelect, dealCtx,
+  peerAddress, lastText, lastAt, lastFromMe, isSelected, isSeen, onSelect, dealCtx, myAddress,
 }: {
   peerAddress: string;
   lastText: string;
@@ -89,6 +89,7 @@ const ConvoItem = memo(function ConvoItem({
   isSeen: boolean;
   onSelect: (addr: string) => void;
   dealCtx?: DealContext;
+  myAddress: string;
 }) {
   const onClick = useCallback(() => onSelect(peerAddress), [onSelect, peerAddress]);
   const { displayName, avatarUrl } = useProfile(peerAddress);
@@ -96,9 +97,9 @@ const ConvoItem = memo(function ConvoItem({
 
   const seenAt = useMemo(() =>
     typeof window !== 'undefined'
-      ? Number(localStorage.getItem(`hexseal_chat_seen_${peerAddress}`) ?? 0)
+      ? Number(localStorage.getItem(`hexseal_chat_seen_${myAddress.toLowerCase()}:${peerAddress}`) ?? 0)
       : 0,
-    [peerAddress],
+    [myAddress, peerAddress],
   );
   const hasUnread = !lastFromMe && !isSeen && lastAt > seenAt && lastAt > 0;
 
@@ -279,9 +280,9 @@ function ChatHubPageInner() {
   const handleConvoClick = useCallback((addr: string) => {
     const lc = addr.toLowerCase();
     setSeenConvos(prev => new Set([...prev, lc]));
-    localStorage.setItem(`hexseal_chat_seen_${lc}`, String(Date.now()));
+    localStorage.setItem(`hexseal_chat_seen_${(address ?? '').toLowerCase()}:${lc}`, String(Date.now()));
     router.push(`/chat?peer=${lc}`);
-  }, [router]);
+  }, [router, address]);
 
   // Load agreements to build peer→deal context map
   const { data: clientDeals } = useReadContract({
@@ -415,7 +416,7 @@ function ChatHubPageInner() {
     setNewChatAddr('');
     setNewChatError(null);
     setSeenConvos(prev => new Set([...prev, addr]));
-    localStorage.setItem(`hexseal_chat_seen_${addr}`, String(Date.now()));
+    localStorage.setItem(`hexseal_chat_seen_${(address ?? '').toLowerCase()}:${addr}`, String(Date.now()));
     router.push(`/chat?peer=${addr}`);
   };
 
@@ -620,6 +621,7 @@ function ChatHubPageInner() {
               isSeen
               dealCtx={peerDealsMap.get(selected)?.[0]}
               onSelect={handleConvoClick}
+              myAddress={address ?? ''}
             />
           )}
 
@@ -634,6 +636,7 @@ function ChatHubPageInner() {
               isSeen={seenConvos.has(peerAddress)}
               dealCtx={peerDealsMap.get(peerAddress)?.[0]}
               onSelect={handleConvoClick}
+              myAddress={address ?? ''}
             />
           ))}
 
