@@ -114,7 +114,7 @@ contract SVGRenderer is ISVGRenderer {
             '<rect width="380" height="5" fill="#6366f1" rx="2"/>',
             '<text x="190" y="46" text-anchor="middle" ',
               'font-family="monospace,Courier New" font-size="17" ',
-              'fill="#6366f1" font-weight="bold" letter-spacing="2">SIGNATURE 404</text>',
+              'fill="#6366f1" font-weight="bold" letter-spacing="2">HEXSEAL</text>',
             '<text x="190" y="64" text-anchor="middle" ',
               'font-family="monospace,Courier New" font-size="10" ',
               'fill="#334155" letter-spacing="3">EXECUTOR OFFER RECEIPT</text>',
@@ -189,7 +189,7 @@ contract SVGRenderer is ISVGRenderer {
             '<circle cx="0"   cy="440" r="10" fill="#0d0d1f"/>',
             '<circle cx="380" cy="440" r="10" fill="#0d0d1f"/>',
             '<text x="190" y="462" text-anchor="middle" ',
-              'font-family="monospace,Courier New" font-size="9" fill="#1e293b" letter-spacing="2">hexseal.com</text>',
+              'font-family="monospace,Courier New" font-size="9" fill="#1e293b" letter-spacing="2">hexseal.net</text>',
             '<rect y="495" width="380" height="5" fill="#6366f1" rx="2"/>'
         ));
     }
@@ -203,7 +203,7 @@ contract SVGRenderer is ISVGRenderer {
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 520" width="380" height="520">',
             '<rect width="380" height="520" fill="#0a0a0a" rx="12"/>',
             '<rect width="380" height="4" fill="#ffffff" rx="2"/>',
-            '<text x="190" y="38" text-anchor="middle" font-family="monospace,Courier New" font-size="16" fill="#ffffff" font-weight="bold" letter-spacing="2">SIGNATURE 404</text>',
+            '<text x="190" y="38" text-anchor="middle" font-family="monospace,Courier New" font-size="16" fill="#ffffff" font-weight="bold" letter-spacing="2">HEXSEAL</text>',
             '<text x="190" y="54" text-anchor="middle" font-family="monospace,Courier New" font-size="9" fill="#444444" letter-spacing="3">JOB RECEIPT</text>',
             '<line x1="20" y1="66" x2="360" y2="66" stroke="#1e1e1e" stroke-width="1" stroke-dasharray="5,4"/>',
             _receiptHeader(p.tokenId, p.createdAt),
@@ -266,7 +266,7 @@ contract SVGRenderer is ISVGRenderer {
             '<line x1="0" y1="454" x2="380" y2="454" stroke="#222222" stroke-width="1" stroke-dasharray="2,6"/>',
             '<circle cx="0"   cy="454" r="10" fill="#0a0a0a"/>',
             '<circle cx="380" cy="454" r="10" fill="#0a0a0a"/>',
-            '<text x="190" y="476" text-anchor="middle" font-family="monospace,Courier New" font-size="9" fill="#333333" letter-spacing="2">hexseal.com</text>'
+            '<text x="190" y="476" text-anchor="middle" font-family="monospace,Courier New" font-size="9" fill="#333333" letter-spacing="2">hexseal.net</text>'
         ));
     }
 
