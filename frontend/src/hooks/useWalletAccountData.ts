@@ -73,6 +73,7 @@ export function useWalletAccountData() {
   const canApplyAsArbiter = !!daoActive && !isArbiter && !!onchainXP && onchainXP >= 3000n;
 
   const handleApplyAsArbiter = async () => {
+    if (!publicClient) { toast.error(t('common.error')); return; }
     setIsApplying(true);
     try {
       const hash = await applyAsArbiterWrite({
@@ -85,10 +86,8 @@ export function useWalletAccountData() {
       // explicitly refetching isRegisteredArbiter/getXP, closes the window
       // where "Become Arbiter" stayed enabled with stale pre-application
       // state and could fire a second, guaranteed-to-revert applyAsArbiter().
-      if (publicClient) {
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
-        if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
-      }
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success(t('wallet.arbiter_apply_success'));
       refetchIsArbiter();
       refetchXP();
