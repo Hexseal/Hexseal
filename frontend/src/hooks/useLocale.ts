@@ -25,6 +25,25 @@ export function useLocale() {
     setLocaleState(stored && (locales as readonly string[]).includes(stored)
       ? stored
       : detectBrowserLocale());
+
+    // Mirrors LocaleProvider.tsx's own listeners: without these, a second
+    // useLocale() instance on the same page (e.g. WalletMenu's mobile + desktop
+    // renders) never learns that another instance called setLocale() — it keeps
+    // showing the old locale until it happens to re-render for an unrelated reason.
+    function onStorage(e: StorageEvent) {
+      if (e.key === STORAGE_KEY && e.newValue && (locales as readonly string[]).includes(e.newValue)) {
+        setLocaleState(e.newValue as Locale);
+      }
+    }
+    function onLocaleChange(e: Event) {
+      setLocaleState((e as CustomEvent<Locale>).detail);
+    }
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("hexseal:locale", onLocaleChange);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("hexseal:locale", onLocaleChange);
+    };
   }, []);
 
   const setLocale = useCallback((next: Locale) => {
