@@ -207,10 +207,33 @@ export default function ArbiterPage() {
           bump();
           return;
         } catch {
-          // Persisted commitment is gone, expired, or never actually landed —
-          // fall through to a fresh commit+reveal instead of getting stuck.
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           salt = null;
+          // A failed reveal doesn't necessarily mean the commitment is stale —
+          // e.g. two tabs on the same arbiter wallet both claiming the same
+          // dispute: the second tab's reveal correctly fails because the FIRST
+          // tab's claim already landed. Falling through to a brand-new commit
+          // in that case burns a real relayer-paid transaction for a claim
+          // that can never succeed. Check on-chain first and stop here if
+          // someone (including this same arbiter, via another tab) already
+          // claimed it.
+          const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+          try {
+            const claimer = await publicClient.readContract({
+              address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+              functionName: "getDisputeClaimer", args: [agreement as Address],
+            }) as Address;
+            if (claimer && claimer !== ZERO_ADDR) {
+              toast.error(
+                claimer.toLowerCase() === address.toLowerCase()
+                  ? 'You already claimed this dispute in another tab.'
+                  : 'Someone else already claimed this dispute.',
+                { id: commitToast },
+              );
+              bump();
+              return;
+            }
+          } catch { /* on-chain check failed — fall through and try a fresh commit */ }
         }
       }
 
@@ -437,6 +460,7 @@ export default function ArbiterPage() {
                     agreement={addr}
                     myAddress={address}
                     busy={busy}
+                    refresh={refresh}
                     onRelease={handleRelease}
                     onSubmitVerdict={handleSubmitVerdict}
                     onFinalizeVerdict={handleFinalizeVerdict}
@@ -739,9 +763,9 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
 // ─── MyCaseCard ───────────────────────────────────────────────────────────────
 
 function MyCaseCard({
-  agreement, myAddress, busy, onRelease, onSubmitVerdict, onFinalizeVerdict,
+  agreement, myAddress, busy, refresh, onRelease, onSubmitVerdict, onFinalizeVerdict,
 }: {
-  agreement: string; myAddress?: string; busy: string | null;
+  agreement: string; myAddress?: string; busy: string | null; refresh: number;
   onRelease: (a: string) => void;
   onSubmitVerdict: (a: string, clientWins: boolean) => void;
   onFinalizeVerdict: (a: string) => void;
@@ -771,6 +795,7 @@ function MyCaseCard({
   const { data: pendingVerdict } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "getPendingVerdict", args: [agreement as Address],
+    scopeKey: `arbiter-${refresh}`,
   }) as { data: PendingVerdict | undefined };
 
   const [disputeReason, setDisputeReason] = useState<string | null>(null);
