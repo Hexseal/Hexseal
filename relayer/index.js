@@ -412,16 +412,24 @@ cron.schedule('0 3 * * *', async () => {
   const cutoff1d = Date.now() - 24 * 60 * 60 * 1000;
   const disputedPairIds = await getDisputedPairIds();
 
-  // Expired chat files — skip any still tagged to a currently-disputed pair
+  // Expired chat files — skip any still tagged to a currently-disputed pair,
+  // but only up to MAX_PROTECTED_AGE_MS. peerA/peerB tagging on /files/presign
+  // has no proof-of-participation check — any caller can tag their own upload
+  // with a real, public agreement's addresses even if they're not a party to
+  // it, which would otherwise let unrelated content be "protected" forever for
+  // as long as that agreement's dispute stays open. This ceiling bounds that.
   try {
     let removed = 0;
     let protectedCount = 0;
+    const MAX_PROTECTED_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
     for (const f of fs.readdirSync(DIR_FILES)) {
       const fp = path.join(DIR_FILES, f);
       try {
-        if (fs.statSync(fp).mtimeMs < cutoff) {
+        const mtimeMs = fs.statSync(fp).mtimeMs;
+        if (mtimeMs < cutoff) {
           const pairId = _filePairs[f];
-          if (pairId && disputedPairIds.has(pairId)) {
+          const withinProtectionCeiling = mtimeMs > Date.now() - MAX_PROTECTED_AGE_MS;
+          if (pairId && disputedPairIds.has(pairId) && withinProtectionCeiling) {
             protectedCount++;
             continue;
           }
