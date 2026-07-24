@@ -152,11 +152,10 @@ function IncomingRequestsPanel({
       if (result.agreementAddr && result.agreementAddr !== ZERO) {
         setTimeout(() => router.push(`/deal/${result.agreementAddr}`), 1500);
       } else {
-        setTimeout(() => { refetch(); onRefresh(); }, 2000);
+        setTimeout(() => { refetch(); onRefresh(); setActing(null); }, 2000);
       }
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Failed");
-    } finally {
       setActing(null);
     }
   };
@@ -168,10 +167,9 @@ function IncomingRequestsPanel({
     try {
       await sendGasless(walletClient, publicClient, "rejectRequest", [requestId], DIAMOND_ABI as Abi);
       toast.success(t("board.services.rejected_msg"));
-      setTimeout(() => { refetch(); }, 1500);
+      setTimeout(() => { refetch(); setActing(null); }, 1500);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Failed");
-    } finally {
       setActing(null);
     }
   };
@@ -673,10 +671,9 @@ export default function ExecutorBoardPage() {
     try {
       await sendGasless(walletClient, publicClient, "cancelRequest", [BigInt(requestId)], DIAMOND_ABI as Abi);
       toast.success(t("board.services.request_cancelled"));
-      setTimeout(() => { refetchMyRequests(); }, 2000);
+      setTimeout(() => { refetchMyRequests(); setIsCancelling(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");
-    } finally {
       setIsCancelling(false);
     }
   };
