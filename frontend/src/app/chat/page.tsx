@@ -97,7 +97,7 @@ const ConvoItem = memo(function ConvoItem({
 
   const seenAt = useMemo(() =>
     typeof window !== 'undefined'
-      ? Number(localStorage.getItem(`hexseal_chat_seen_${myAddress.toLowerCase()}:${peerAddress}`) ?? 0)
+      ? Number(localStorage.getItem(`hexseal_chat_seen_${myAddress.toLowerCase()}:${peerAddress.toLowerCase()}`) ?? 0)
       : 0,
     [myAddress, peerAddress],
   );

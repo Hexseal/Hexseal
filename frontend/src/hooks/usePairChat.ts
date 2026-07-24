@@ -99,6 +99,13 @@ export function usePairChat(peerAddress: string) {
         const v = localStorage.getItem(peerReadKey);
         setPeerLastReadAt(v ? Number(v) : null);
       } catch { setPeerLastReadAt(null); }
+      // Also drop the OLD pair's group/client refs so a send() that somehow fires
+      // in the brief window before the reload below resolves can't go out through
+      // the previous account's XMTP client/group — sendMessage/sendFile's `if
+      // (!group)` path rebuilds a fresh one for the new pair.
+      groupRef.current = null;
+      clientRef.current = null;
+      oldestNsRef.current = null;
     }
 
     // If we have cached messages, don't show the loading screen — silently re-sync.
