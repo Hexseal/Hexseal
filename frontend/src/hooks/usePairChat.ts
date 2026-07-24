@@ -22,7 +22,10 @@ import { uploadFileWithEncryption } from '@/lib/fileStorage';
 import { notifyPush } from '@/lib/webpush';
 
 // Module-level cache — survives navigation (same as board/conversation-list pattern).
-// Keyed by peerAddress lowercase → last confirmed (non-optimistic) messages.
+// Keyed by `${myAddressLc}:${peerAddressLc}` — NOT peer-only. A bare peer key let one
+// wallet account's real, decrypted message content (and its isFromMe bit, computed
+// for the WRONG account) render under a different account after a same-device wallet
+// switch, until the reload effect below finished — a genuine cross-account leak.
 const _msgCache = new Map<string, ChatMessage[]>();
 
 export function usePairChat(peerAddress: string) {
@@ -30,12 +33,14 @@ export function usePairChat(peerAddress: string) {
   const { status } = useXmtp();
 
   const peerLc = peerAddress.toLowerCase();
+  const myLc = address?.toLowerCase() ?? '';
+  const pairKey = `${myLc}:${peerLc}`;
 
-  const [messages, setMessages]             = useState<ChatMessage[]>(() => _msgCache.get(peerLc) ?? []);
+  const [messages, setMessages]             = useState<ChatMessage[]>(() => _msgCache.get(pairKey) ?? []);
   // Skip the loading screen if we already have cached messages — show them
   // instantly (SWR pattern) while the effect quietly re-syncs in the background.
-  const [isLoading, setIsLoading]           = useState(() => (_msgCache.get(peerLc) ?? []).length === 0);
-  const [isInitialized, setIsInitialized]   = useState(() => (_msgCache.get(peerLc) ?? []).length > 0);
+  const [isLoading, setIsLoading]           = useState(() => (_msgCache.get(pairKey) ?? []).length === 0);
+  const [isInitialized, setIsInitialized]   = useState(() => (_msgCache.get(pairKey) ?? []).length > 0);
   const [error, setError]                   = useState<string | null>(null);
   const [hasMore, setHasMore]               = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -48,7 +53,8 @@ export function usePairChat(peerAddress: string) {
   // undecryptable when re-reading history on reload (SecretReuseError / "secret
   // deleted to preserve forward secrecy"). Seeding from the cache and only ever
   // increasing keeps the "read" tick from reverting to a single tick on reload.
-  const peerReadKey = `hexseal_peerread_${peerLc}`;
+  // Scoped by `${myLc}:${peerLc}` for the same reason as _msgCache above.
+  const peerReadKey = `hexseal_peerread_${pairKey}`;
   const [peerLastReadAt, setPeerLastReadAt] = useState<number | null>(() => {
     try { const v = localStorage.getItem(peerReadKey); return v ? Number(v) : null; }
     catch { return null; }
@@ -68,6 +74,7 @@ export function usePairChat(peerAddress: string) {
   const peerRef           = useRef(peerAddress);
   const streamRef         = useRef<{ return: () => void } | null>(null);
   const autoReconnectRef  = useRef(false);
+  const pairKeyRef        = useRef(pairKey);
   useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
 
   useEffect(() => {
@@ -76,8 +83,26 @@ export function usePairChat(peerAddress: string) {
     let cancelled = false;
     autoReconnectRef.current = false;
     setStreamDead(false);
+
+    // Reset synchronously (before any async work) whenever the (my address, peer)
+    // pair actually changed — e.g. a same-device wallet-account switch while this
+    // chat stayed open (chat/page.tsx keys its wrapper by peer only, not by
+    // address, so this hook instance survives the switch). Without this, the
+    // PREVIOUS pair's messages/read-state keep rendering — under the NEW
+    // account's identity — until the reload below resolves.
+    if (pairKeyRef.current !== pairKey) {
+      pairKeyRef.current = pairKey;
+      const cached = _msgCache.get(pairKey) ?? [];
+      setMessages(cached);
+      setIsInitialized(cached.length > 0);
+      try {
+        const v = localStorage.getItem(peerReadKey);
+        setPeerLastReadAt(v ? Number(v) : null);
+      } catch { setPeerLastReadAt(null); }
+    }
+
     // If we have cached messages, don't show the loading screen — silently re-sync.
-    if (!_msgCache.has(peerLc)) setIsLoading(true);
+    if (!_msgCache.has(pairKey)) setIsLoading(true);
     setError(null);
 
     (async () => {
@@ -98,7 +123,7 @@ export function usePairChat(peerAddress: string) {
         if (!group) {
           // No conversation exists yet. Render an empty but fully usable thread so
           // the user can type; sending is what actually creates the group.
-          _msgCache.set(peerLc, []);
+          _msgCache.set(pairKey, []);
           setMessages([]);
           setHasMore(false);
           setIsInitialized(true);
@@ -113,7 +138,7 @@ export function usePairChat(peerAddress: string) {
 
         const loaded = await loadGroupMessages(group, xmtp.inboxId ?? '', myAddress);
         if (cancelled) return;
-        _msgCache.set(peerLc, loaded.messages);
+        _msgCache.set(pairKey, loaded.messages);
         setMessages(loaded.messages);
         setHasMore(loaded.hasMore);
         bumpPeerRead(loaded.peerLastReadAt);
@@ -166,7 +191,7 @@ export function usePairChat(peerAddress: string) {
               next = [...prev, norm];
             }
             // Keep module-level cache current (exclude optimistic placeholders)
-            _msgCache.set(peerLc, next.filter(m => !m.id.startsWith('opt-')));
+            _msgCache.set(pairKey, next.filter(m => !m.id.startsWith('opt-')));
             return next;
           });
         }
@@ -302,12 +327,12 @@ export function usePairChat(peerAddress: string) {
     setStreamDead(false);
     setIsInitialized(false);
     // Keep cached messages visible during reconnect — no jarring blank screen
-    if (!_msgCache.has(peerLc)) {
+    if (!_msgCache.has(pairKey)) {
       setIsLoading(true);
       setMessages([]);
     }
     setRetryKey(k => k + 1);
-  }, [peerLc]);
+  }, [pairKey]);
 
   return {
     messages, sendMessage, sendFile, loadMore, markDealContext,
