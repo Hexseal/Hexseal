@@ -362,6 +362,28 @@ function decryptEntry(key, { iv, ct, authTag }) {
 const ETH_ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 const PAIR_ID_RE  = /^0x[a-fA-F0-9]{40}-0x[a-fA-F0-9]{40}$/;
 
+// Known push-service endpoint hosts. A subscription's `endpoint` is a URL the
+// relayer later POSTs to (via web-push's sendNotification) — accepting an
+// arbitrary client-supplied host here would let a malicious "subscription"
+// turn the relayer into an SSRF proxy against any URL of the attacker's choosing.
+const PUSH_SERVICE_HOST_SUFFIXES = [
+  'fcm.googleapis.com',
+  'updates.push.services.mozilla.com',
+  'notify.windows.com',
+  'web.push.apple.com',
+];
+
+function isKnownPushServiceEndpoint(endpoint) {
+  try {
+    const u = new URL(endpoint);
+    if (u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    return PUSH_SERVICE_HOST_SUFFIXES.some(suffix => host === suffix || host.endsWith(`.${suffix}`));
+  } catch {
+    return false;
+  }
+}
+
 function sortAddressPair(a, b) {
   const lc = [a.toLowerCase(), b.toLowerCase()];
   return lc[0] <= lc[1] ? lc : [lc[1], lc[0]];
@@ -1000,6 +1022,10 @@ app.post('/push/subscribe', async (req, res) => {
     catch { return res.status(400).json({ error: 'Invalid signature' }); }
 
     if (recovered !== addr) return res.status(403).json({ error: 'Signature mismatch' });
+
+    if (!isKnownPushServiceEndpoint(subscription.endpoint)) {
+      return res.status(400).json({ error: 'Unrecognized push service endpoint' });
+    }
 
     const existing = _pushSubs.get(addr) ?? [];
     if (!existing.some(s => s.endpoint === subscription.endpoint)) {
