@@ -36,6 +36,22 @@ export function shouldAutoRegisterPush(address: string): boolean {
   }
 }
 
+/** True only if THIS address has a recorded successful registration and hasn't
+ *  been explicitly opted out. A live device PushSubscription alone (checked by
+ *  the caller separately) doesn't mean push works for a given address — it's
+ *  device/service-worker-scoped, not account-scoped, so it stays truthy across
+ *  a wallet-account switch on the same device even though the relayer has never
+ *  seen the new address. Callers should treat "subscribed" as BOTH a live
+ *  device subscription AND this returning true. */
+export function isPushRegisteredForAddress(address: string): boolean {
+  try {
+    if (localStorage.getItem(PUSH_DISABLED_KEY(address)) === '1') return false;
+    return localStorage.getItem(PUSH_REG_KEY(address)) !== null;
+  } catch {
+    return false;
+  }
+}
+
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
   const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -81,6 +97,14 @@ export async function enablePush(
 ): Promise<'ok' | 'denied' | 'error'> {
   if (!isPushSupported() || !address) return 'error';
 
+  // Captured BEFORE any await below, so we can tell whether a disablePush() call
+  // raced in and set the opt-out flag WHILE this call was waiting on the wallet
+  // signature / relayer round trip (see the write at the end of this function).
+  const wasDisabledBefore = (() => {
+    try { return localStorage.getItem(PUSH_DISABLED_KEY(address)) === '1'; }
+    catch { return false; }
+  })();
+
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return 'denied';
 
@@ -122,8 +146,17 @@ export async function enablePush(
 
     if (res.ok) {
       try {
-        localStorage.setItem(PUSH_REG_KEY(address), String(Date.now()));
-        localStorage.removeItem(PUSH_DISABLED_KEY(address));
+        // An explicit disable that happened DURING this call must win over this
+        // slower, now-superseded enable — otherwise a disablePush() the user fired
+        // while this was still waiting on a signature gets silently reversed the
+        // moment this finally resolves. wasDisabledBefore=true means the disabled
+        // flag predates this call (this IS the user's own explicit re-enable
+        // action) and should still clear it normally.
+        const disabledNow = localStorage.getItem(PUSH_DISABLED_KEY(address)) === '1';
+        if (wasDisabledBefore || !disabledNow) {
+          localStorage.setItem(PUSH_REG_KEY(address), String(Date.now()));
+          localStorage.removeItem(PUSH_DISABLED_KEY(address));
+        }
       } catch { /* localStorage unavailable */ }
     }
     return res.ok ? 'ok' : 'error';
