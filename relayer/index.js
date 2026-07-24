@@ -830,8 +830,24 @@ app.post('/files/public/presign', (req, res) => {
 const PROFILE_KEY_RE = /^profile-(0x[a-f0-9]{40})\.json$/i;
 
 // Tracks last-seen updatedAt nonce per address — prevents signature replay.
-// In-memory: resets on restart, but updatedAt = Date.now()/1000 always increases.
-const _profileNonces = new Map();
+// Persisted to disk (mirrors _filePairs'/_pushSubs' own load/save pattern in
+// this same file) so a server restart doesn't reset every address's floor
+// back to 0 and allow a previously-valid, since-superseded signed profile
+// update to be replayed.
+const PROFILE_NONCES_FILE = path.join(STORAGE_DIR, 'profile_nonces.json');
+function loadProfileNonces() {
+  try {
+    if (existsSync(PROFILE_NONCES_FILE)) {
+      const raw = JSON.parse(readFileSync(PROFILE_NONCES_FILE, 'utf8'));
+      return new Map(Object.entries(raw));
+    }
+  } catch {}
+  return new Map();
+}
+function saveProfileNonces() {
+  try { writeFileSync(PROFILE_NONCES_FILE, JSON.stringify(Object.fromEntries(_profileNonces)), 'utf8'); } catch {}
+}
+const _profileNonces = loadProfileNonces();
 
 app.put('/files/public-put/:key', async (req, res) => {
   const key = safeKey(req.params.key);
@@ -895,6 +911,7 @@ app.put('/files/public-put/:key', async (req, res) => {
 
     // 4. Persist nonce, write file
     _profileNonces.set(address, nonce);
+    saveProfileNonces();
     fs.writeFile(path.join(DIR_PUBLIC, key), body, (err) => {
       if (err) { console.error('[files/public-put]', err.message); return res.status(500).json({ error: 'Write error' }); }
       res.status(200).end();
