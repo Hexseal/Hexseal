@@ -670,9 +670,23 @@ export async function requestServiceGasless(
     return await _sendForwardRequest(walletClient, publicClient, calldata, 'requestService', DIAMOND, undefined, permitParams);
   } catch (err) {
     if (!isRelayDown(err)) throw err;
-    console.warn('[relay] down → direct requestService');
+    // Direct fallback: the relay would have called USDC.permit() itself before
+    // requestService() — without an on-chain permit first, the client has no
+    // standing USDC allowance to the Diamond, so a direct requestService() call
+    // is guaranteed to revert. Submit the already-signed permit ourselves
+    // first, the same two-tx fallback fundAgreementGasless already uses.
+    console.warn('[relay] down → direct permit+requestService');
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
+    const permitTx = await walletClient.writeContract({
+      address: USDC,
+      abi: WRITE_USDC_ABI,
+      functionName: 'permit',
+      args: [userAddress, DIAMOND, amount, permitDeadline, vNum, r, s],
+      account,
+      chain: walletClient.chain,
+    });
+    await assertFallbackMined(publicClient, permitTx);
     const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
