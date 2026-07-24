@@ -151,52 +151,73 @@ function ArbitersTab() {
 
   const chiefArbiter = chiefRaw && chiefRaw !== ZERO ? chiefRaw.toLowerCase() : null;
 
-  const { writeContract, isPending } = useWriteContract();
+  const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
 
-  const [newArbiter,   setNewArbiter]   = useState('');
-  const [newChief,     setNewChief]     = useState('');
-  const [removingAddr, setRemovingAddr] = useState<string | null>(null);
-  const [settingChief, setSettingChief] = useState(false);
+  const [newArbiter,    setNewArbiter]    = useState('');
+  const [newChief,      setNewChief]      = useState('');
+  const [addingArbiter, setAddingArbiter] = useState(false);
+  const [removingAddr,  setRemovingAddr]  = useState<string | null>(null);
+  const [settingChief,  setSettingChief]  = useState(false);
 
   const handleAddArbiter = async () => {
     if (!isAddress(newArbiter)) { toast.error('Invalid address'); return; }
+    if (!publicClient) { toast.error('Failed'); return; }
+    setAddingArbiter(true);
     try {
-      await writeContract({
+      const hash = await writeContractAsync({
         address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
         functionName: 'addArbiter', args: [newArbiter as `0x${string}`], gas: BigInt(120_000),
       });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success('Arbiter added');
       setNewArbiter('');
       refetchArbiters();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
+    } finally { setAddingArbiter(false); }
   };
 
   const handleRemove = async (addr: string) => {
+    if (!publicClient) { toast.error('Failed'); return; }
     setRemovingAddr(addr);
     try {
-      await writeContract({
+      const hash = await writeContractAsync({
         address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
         functionName: 'removeArbiter', args: [addr as `0x${string}`], gas: BigInt(120_000),
       });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success('Arbiter removed');
       refetchArbiters();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
+    }
     finally { setRemovingAddr(null); }
   };
 
   const handleSetChief = async () => {
     const addr = newChief.trim();
     if (addr && !isAddress(addr)) { toast.error('Invalid address'); return; }
+    if (!publicClient) { toast.error('Failed'); return; }
     setSettingChief(true);
     try {
-      await writeContract({
+      const hash = await writeContractAsync({
         address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
         functionName: 'setChiefArbiter', args: [(addr || ZERO) as `0x${string}`], gas: BigInt(80_000),
       });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success(addr ? 'Chief arbiter set' : 'Chief arbiter cleared');
       setNewChief('');
       refetchChief();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
+    }
     finally { setSettingChief(false); }
   };
 
@@ -256,8 +277,8 @@ function ArbitersTab() {
             <div className="flex gap-2">
               <Input placeholder="0x…" value={newArbiter} onChange={e => setNewArbiter(e.target.value)}
                 className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]" />
-              <Button onClick={handleAddArbiter} disabled={isPending || !newArbiter} size="sm" className="gap-1 shrink-0">
-                <UserPlus className="w-3.5 h-3.5" /> Add
+              <Button onClick={handleAddArbiter} disabled={addingArbiter || !newArbiter} size="sm" className="gap-1 shrink-0">
+                {addingArbiter ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />} Add
               </Button>
             </div>
           </FieldGroup>
@@ -580,7 +601,8 @@ function ActivityTab() {
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
 
 function SettingsTab() {
-  const { writeContract, isPending } = useWriteContract();
+  const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
 
   const { data: currentFeeRecipient, refetch: refetchFee } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
@@ -601,6 +623,9 @@ function SettingsTab() {
   const [forwarder,       setForwarder]       = useState('');
   const [newFee,          setNewFee]          = useState('');
   const [selectedRegion,  setSelectedRegion]  = useState(0);
+  const [settingFeeRecipient, setSettingFeeRecipient] = useState(false);
+  const [settingForwarder,    setSettingForwarder]    = useState(false);
+  const [settingRegionFee,    setSettingRegionFee]    = useState(false);
 
   const regions = [
     { idx: 0, name: 'CIS',    fee: fees?.[0] },
@@ -614,26 +639,47 @@ function SettingsTab() {
 
   const handleSetFeeRecipient = async () => {
     if (!isAddress(feeRecipient)) { toast.error('Invalid address'); return; }
+    if (!publicClient) { toast.error('Failed'); return; }
+    setSettingFeeRecipient(true);
     try {
-      await writeContract({ address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'setFeeRecipient', args: [feeRecipient as `0x${string}`], gas: BigInt(100_000) });
+      const hash = await writeContractAsync({ address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'setFeeRecipient', args: [feeRecipient as `0x${string}`], gas: BigInt(100_000) });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success('Fee recipient updated'); setFeeRecipient(''); refetchFee();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
+    } finally { setSettingFeeRecipient(false); }
   };
 
   const handleSetForwarder = async () => {
     if (!isAddress(forwarder)) { toast.error('Invalid address'); return; }
+    if (!publicClient) { toast.error('Failed'); return; }
+    setSettingForwarder(true);
     try {
-      await writeContract({ address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'setTrustedForwarder', args: [forwarder as `0x${string}`], gas: BigInt(100_000) });
+      const hash = await writeContractAsync({ address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'setTrustedForwarder', args: [forwarder as `0x${string}`], gas: BigInt(100_000) });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success('Forwarder updated'); setForwarder(''); refetchFwd();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
+    } finally { setSettingForwarder(false); }
   };
 
   const handleSetFee = async () => {
     if (!newFee || parseFloat(newFee) <= 0) { toast.error('Invalid fee'); return; }
+    if (!publicClient) { toast.error('Failed'); return; }
+    setSettingRegionFee(true);
     try {
-      await writeContract({ address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'setRegionFee', args: [selectedRegion, BigInt(Math.floor(parseFloat(newFee) * 1e6))], gas: BigInt(100_000) });
+      const hash = await writeContractAsync({ address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'setRegionFee', args: [selectedRegion, BigInt(Math.floor(parseFloat(newFee) * 1e6))], gas: BigInt(100_000) });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success('Fee updated'); setNewFee(''); refetchFees();
-    } catch (err: unknown) { toast.error((err as { shortMessage?: string })?.shortMessage ?? 'Failed'); }
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
+    } finally { setSettingRegionFee(false); }
   };
 
   return (
@@ -664,7 +710,9 @@ function SettingsTab() {
             </select>
             <Input type="number" placeholder="USDC amount" value={newFee} onChange={e => setNewFee(e.target.value)}
               className="flex-1 min-w-[120px] bg-transparent border-white/[0.08] rounded-[14px]" />
-            <Button onClick={handleSetFee} disabled={isPending || !newFee} size="sm">Update</Button>
+            <Button onClick={handleSetFee} disabled={settingRegionFee || !newFee} size="sm">
+              {settingRegionFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Update'}
+            </Button>
           </div>
         </FieldGroup>
       </Section>
@@ -678,7 +726,9 @@ function SettingsTab() {
           <div className="flex gap-2">
             <Input placeholder="0x…" value={feeRecipient} onChange={e => setFeeRecipient(e.target.value)}
               className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]" />
-            <Button onClick={handleSetFeeRecipient} disabled={isPending || !feeRecipient} size="sm">Set</Button>
+            <Button onClick={handleSetFeeRecipient} disabled={settingFeeRecipient || !feeRecipient} size="sm">
+              {settingFeeRecipient ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+            </Button>
           </div>
         </FieldGroup>
 
@@ -691,7 +741,9 @@ function SettingsTab() {
           <div className="flex gap-2">
             <Input placeholder="0x…" value={forwarder} onChange={e => setForwarder(e.target.value)}
               className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]" />
-            <Button onClick={handleSetForwarder} disabled={isPending || !forwarder} size="sm">Set</Button>
+            <Button onClick={handleSetForwarder} disabled={settingForwarder || !forwarder} size="sm">
+              {settingForwarder ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+            </Button>
           </div>
         </FieldGroup>
       </Section>
