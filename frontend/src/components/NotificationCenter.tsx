@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
 import Link from "next/link";
 import { Bell, CheckCheck, Trash2, X, ExternalLink, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNotificationsCtx } from "@/contexts/NotificationsContext";
+import { useXmtp } from "@/contexts/XmtpContext";
 import { useAccount } from "wagmi";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
@@ -69,11 +70,8 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const t = useTranslations();
 
-  const [xmtpEnabled, setXmtpEnabled] = useState(true);
-  useEffect(() => {
-    if (!address) return;
-    setXmtpEnabled(localStorage.getItem(`xmtp-registered-${address.toLowerCase()}`) === '1');
-  }, [address, open]);
+  const { status: xmtpStatus } = useXmtp();
+  const xmtpEnabled = xmtpStatus === 'ready';
 
   useEffect(() => {
     if (!open) return;
