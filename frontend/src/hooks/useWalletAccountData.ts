@@ -1,6 +1,7 @@
 'use client';
 
-import { useAccount, useBalance, useReadContract, useWriteContract } from 'wagmi';
+import { useState } from 'react';
+import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
 import type { Abi } from 'viem';
 import { useTranslations } from 'next-intl';
 import { toast } from 'react-hot-toast';
@@ -27,13 +28,13 @@ export function useWalletAccountData() {
 
   const { displayName, avatarUrl: profileAvatarUrl } = useProfile(address);
 
-  const { data: isArbiterRaw } = useReadContract({
+  const { data: isArbiterRaw, refetch: refetchIsArbiter } = useReadContract({
     address: CONTRACTS.diamond,
     abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: 'isRegisteredArbiter',
     args: [address ?? ZERO_ADDRESS],
     query: { enabled: !!address },
-  }) as { data: boolean | undefined };
+  }) as { data: boolean | undefined; refetch: () => void };
   const isArbiter = !!isArbiterRaw;
 
   const { data: daoActive } = useReadContract({
@@ -43,13 +44,13 @@ export function useWalletAccountData() {
     query: { enabled: !!address },
   }) as { data: boolean | undefined };
 
-  const { data: onchainXP } = useReadContract({
+  const { data: onchainXP, refetch: refetchXP } = useReadContract({
     address: CONTRACTS.diamond,
     abi: REPUTATION_ABI as Abi,
     functionName: 'getXP',
     args: [address ?? ZERO_ADDRESS],
     query: { enabled: !!address },
-  }) as { data: bigint | undefined };
+  }) as { data: bigint | undefined; refetch: () => void };
 
   const { data: diamondOwner } = useReadContract({
     address: CONTRACTS.diamond,
@@ -66,20 +67,36 @@ export function useWalletAccountData() {
   });
   const usdcBalance = usdcBalanceData?.value ?? BigInt(0);
 
-  const { writeContractAsync: applyAsArbiterWrite, isPending: applyPending } = useWriteContract();
+  const [isApplying, setIsApplying] = useState(false);
+  const publicClient = usePublicClient();
+  const { writeContractAsync: applyAsArbiterWrite } = useWriteContract();
   const canApplyAsArbiter = !!daoActive && !isArbiter && !!onchainXP && onchainXP >= 3000n;
 
   const handleApplyAsArbiter = async () => {
+    setIsApplying(true);
     try {
-      await applyAsArbiterWrite({
+      const hash = await applyAsArbiterWrite({
         address: CONTRACTS.diamond,
         abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: 'applyAsArbiter',
       });
+      // wagmi's own useWriteContract().isPending flips false as soon as the tx
+      // is BROADCAST, not mined — waiting for the receipt here, then
+      // explicitly refetching isRegisteredArbiter/getXP, closes the window
+      // where "Become Arbiter" stayed enabled with stale pre-application
+      // state and could fire a second, guaranteed-to-revert applyAsArbiter().
+      if (publicClient) {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
+      }
       toast.success(t('wallet.arbiter_apply_success'));
+      refetchIsArbiter();
+      refetchXP();
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || t('common.error'));
+    } finally {
+      setIsApplying(false);
     }
   };
 
@@ -100,7 +117,7 @@ export function useWalletAccountData() {
     isArbiter,
     isOwner,
     canApplyAsArbiter,
-    applyPending,
+    applyPending: isApplying,
     handleApplyAsArbiter,
   };
 }
