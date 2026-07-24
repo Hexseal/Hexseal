@@ -2,7 +2,12 @@ import { vi, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { contractMocks, resetContractMocks } from './mocks/ethersRegistry.js';
+import {
+  contractMocks,
+  resetContractMocks,
+  providerMocks,
+  resetProviderMocks,
+} from './mocks/ethersRegistry.js';
 
 // Fresh, disposable storage dir per test process — never the real relayer/storage.
 const TEST_STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-relayer-test-'));
@@ -44,14 +49,17 @@ process.env.ALLOWED_ORIGINS     = 'http://localhost:3000';
 // cover them. Patching these two instance methods in place (rather than
 // swapping the whole class) keeps everything else about JsonRpcProvider
 // (construction, other methods) real; it just stops these from ever dialing
-// the deliberately-unreachable RPC_URL.
+// the deliberately-unreachable RPC_URL. Delegating to `providerMocks`
+// (test/mocks/ethersRegistry.js), reset every beforeEach the same as
+// `contractMocks`, gives a future test a place to override either value
+// per-test without hand-patching the prototype again.
 vi.mock('ethers', async (importOriginal) => {
   const actual = await importOriginal();
-  actual.JsonRpcProvider.prototype.getBalance = async function () {
-    return 1_000000000000000000n; // 1 ETH — fixed; no test asserts a specific value
+  actual.JsonRpcProvider.prototype.getBalance = async function (...args) {
+    return providerMocks.getBalance(...args);
   };
-  actual.JsonRpcProvider.prototype.getTransactionReceipt = async function () {
-    return null;
+  actual.JsonRpcProvider.prototype.getTransactionReceipt = async function (...args) {
+    return providerMocks.getTransactionReceipt(...args);
   };
   class FakeContract {
     constructor(address) {
@@ -88,4 +96,5 @@ vi.mock('web-push', async (importOriginal) => {
 
 beforeEach(() => {
   resetContractMocks();
+  resetProviderMocks();
 });
