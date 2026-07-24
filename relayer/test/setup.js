@@ -19,17 +19,59 @@ process.env.ALLOWED_ORIGINS     = 'http://localhost:3000';
 // Every ethers.Contract instance the app constructs looks itself up in the
 // shared registry by address; tests populate that registry via mockContract()
 // (test/mocks/ethersRegistry.js) before making a request.
+//
+// Two things make a naive "copy mocked methods onto `this` in the constructor"
+// approach insufficient here:
+//
+// 1. app.js imports the package as `import { ethers } from 'ethers'` — the
+//    `ethers` binding is itself a separate module-namespace object (ethers v6
+//    re-exports one), not just an alias for the top-level named exports. Only
+//    overriding the top-level `Contract` export (as this mock used to) leaves
+//    `ethers.Contract` pointing at the real class, so `new ethers.Contract(...)`
+//    inside app.js never picked up the fake at all — it opened a real socket to
+//    the (unreachable) RPC_URL. Both the top-level export AND the nested
+//    `ethers` namespace object's own `Contract` property must be replaced.
+// 2. Some contracts (e.g. the module-level `forwarder` singleton in app.js)
+//    are constructed once, at import time — before any test's mockContract()
+//    call has run. A one-shot `Object.assign` at construction time captures
+//    "no mock yet" forever. Resolving methods lazily via a Proxy (on every
+//    property access, against the CURRENT contents of the registry) makes
+//    mockContract() work no matter when it's called relative to construction.
+//
+// GET /balance (and the receipt lookup in /relay/notify) calls methods
+// directly on the module-level `provider` singleton — not through
+// `ethers.Contract` at all — so the Contract-mocking machinery above doesn't
+// cover them. Patching these two instance methods in place (rather than
+// swapping the whole class) keeps everything else about JsonRpcProvider
+// (construction, other methods) real; it just stops these from ever dialing
+// the deliberately-unreachable RPC_URL.
 vi.mock('ethers', async (importOriginal) => {
   const actual = await importOriginal();
+  actual.JsonRpcProvider.prototype.getBalance = async function () {
+    return 1_000000000000000000n; // 1 ETH — fixed; no test asserts a specific value
+  };
+  actual.JsonRpcProvider.prototype.getTransactionReceipt = async function () {
+    return null;
+  };
   class FakeContract {
     constructor(address) {
-      const mocked = contractMocks.get(String(address).toLowerCase());
-      if (mocked) Object.assign(this, mocked);
-      this.address = address;
-      if (typeof this.connect !== 'function') this.connect = () => this;
+      const key = String(address).toLowerCase();
+      return new Proxy(this, {
+        get(target, prop, receiver) {
+          if (prop === 'address') return address;
+          const mocked = contractMocks.get(key);
+          if (mocked && prop in mocked) return mocked[prop];
+          if (prop === 'connect') return () => receiver;
+          return Reflect.get(target, prop, receiver);
+        },
+      });
     }
   }
-  return { ...actual, Contract: FakeContract };
+  return {
+    ...actual,
+    Contract: FakeContract,
+    ethers: { ...actual.ethers, Contract: FakeContract },
+  };
 });
 
 // sendPush() calls webpush.sendNotification() — the only network-reaching call
