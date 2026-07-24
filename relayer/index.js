@@ -828,6 +828,19 @@ app.put('/files/public-put/:key', async (req, res) => {
     try { profileData = JSON.parse(bodyStr); }
     catch { return res.status(400).json({ error: 'Invalid JSON body' }); }
 
+    // The edit-form UI already checks this client-side, but a caller who signs
+    // and uploads a profile JSON directly bypasses that entirely — their own
+    // wallet signature is always valid for their own address. Reject an unsafe
+    // scheme here so a javascript: URI can never be persisted and served back.
+    const website = profileData?.links?.website;
+    if (website && typeof website === 'string') {
+      let scheme = null;
+      try { scheme = new URL(website).protocol; } catch { /* invalid URL */ }
+      if (scheme !== 'http:' && scheme !== 'https:') {
+        return res.status(400).json({ error: 'links.website must be an http(s) URL' });
+      }
+    }
+
     const nonce = profileData.updatedAt;
     if (typeof nonce !== 'number' || !Number.isFinite(nonce)) {
       return res.status(400).json({ error: 'Missing or invalid updatedAt nonce' });

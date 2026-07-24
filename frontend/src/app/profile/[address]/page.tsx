@@ -17,6 +17,15 @@ import { AgreementsTabs } from "@/components/AgreementsTabs";
 import { PageCenter } from "@/components/PageCenter";
 import { shortAddr } from "@/lib/utils";
 
+function isSafeWebsiteUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 // ─── Address Avatar ───────────────────────────────────────────────────────────
 
 function AddressAvatar({ address, size = 64 }: { address: string; size?: number }) {
@@ -171,7 +180,7 @@ export default function ProfilePage() {
                 {profile.links.discord && (
                   <span className="text-xs text-white/35">discord: {profile.links.discord}</span>
                 )}
-                {profile.links.website && (
+                {profile.links.website && isSafeWebsiteUrl(profile.links.website) && (
                   <a href={profile.links.website} target="_blank" rel="noopener noreferrer"
                     className="text-xs text-white/35 hover:text-white/70 transition-colors truncate max-w-[160px]">
                     {profile.links.website.replace(/^https?:\/\//, '')}
