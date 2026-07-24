@@ -13,7 +13,7 @@
 
 import { encryptFile, encryptFileChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
 
-const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL || 'http://localhost:3001';
+const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 
 /** Maximum allowed file size (5 GB). */
 export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;
