@@ -5,7 +5,7 @@ import { Provider as UrqlProvider } from 'urql'
 import { createGraphClient } from '@/lib/graph'
 
 const graphClient = createGraphClient()
-import { WagmiProvider, createStorage, useAccount, useWalletClient } from "wagmi";
+import { WagmiProvider, createStorage, useAccount } from "wagmi";
 import { http, fallback } from "viem";
 import {
   RainbowKitProvider,
@@ -38,7 +38,7 @@ import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
 import { appChain, appChainId, isMainnet } from "@/config/chain";
 import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
-import { isPushSupported, enablePush, getSwRegistration, shouldAutoRegisterPush } from "@/lib/webpush";
+import { PushProvider } from "@/contexts/PushContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
@@ -152,47 +152,6 @@ export function XmtpNotificationsMount() {
   return null;
 }
 
-// Re-registers push subscription with the relayer at most once per 24 h.
-// Keeps the relayer's subscription list fresh after restarts without
-// prompting a wallet signature on every page load.
-function PushAutoMount() {
-  const { address } = useAccount();
-  const { data: walletClient } = useWalletClient();
-  // Addresses already attempted this page load — walletClient's object reference
-  // can change mid-session for reasons that have nothing to do with the user (wallet
-  // reconnect, chain re-sync, etc.). Without this guard, every such change re-runs
-  // the effect below, and once the 24h TTL has elapsed, the very next one pops a
-  // wallet signature with no visible trigger — an "out of nowhere" auth prompt.
-  const attemptedRef = useRef<Set<string>>(new Set());
-
-  // Register the service worker at app start. It used to be registered lazily, only
-  // from lib/webpush's helpers — i.e. only if the user happened to open /notifications.
-  // useXmtpNotifications awaits navigator.serviceWorker.ready before showing a native
-  // notification while backgrounded, and that promise never resolved for anyone who
-  // hadn't visited that page, silently killing the in-app native-notification path too.
-  useEffect(() => { void getSwRegistration(); }, []);
-
-  useEffect(() => {
-    if (!address || !isPushSupported() || !walletClient) return;
-    if (Notification.permission !== 'granted') return;
-    const addr = address.toLowerCase();
-    if (attemptedRef.current.has(addr)) return;
-    // Respects an explicit "Disable notifications" opt-out and the 24h TTL —
-    // both bookkept in lib/webpush.ts, shared with the explicit Enable/Disable
-    // toggle in usePushNotifications.ts so neither path can silently undo the
-    // other (a user's explicit disable used to get silently reversed here once
-    // the TTL aged past 24h; an explicit enable used to leave no timestamp,
-    // causing this effect to immediately re-fire and pop a second signature).
-    if (!shouldAutoRegisterPush(address)) return;
-    attemptedRef.current.add(addr);
-    const signMsg = (msg: string) =>
-      walletClient.signMessage({ account: address as `0x${string}`, message: msg });
-    enablePush(address, signMsg).catch(() => {});
-  }, [address, walletClient]);
-  return null;
-}
-
-
 function RainbowKitProviders({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const { resolvedTheme } = useTheme();
@@ -222,7 +181,6 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
     <RainbowKitProvider theme={rkTheme}>
       {/* XmtpNotificationsMount is NOT rendered here — it must live under <XmtpProvider>
           (see client-layout.tsx) so useXmtp()'s status isn't frozen at 'loading'. */}
-      <PushAutoMount />
       {children}
     </RainbowKitProvider>
   );
@@ -347,7 +305,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <NextThemesProvider attribute="class" forcedTheme="dark">
             <LocaleProvider>
               <NotificationsProvider>
-                <RainbowKitProviders>{children}</RainbowKitProviders>
+                <PushProvider>
+                  <RainbowKitProviders>{children}</RainbowKitProviders>
+                </PushProvider>
               </NotificationsProvider>
             </LocaleProvider>
           </NextThemesProvider>
