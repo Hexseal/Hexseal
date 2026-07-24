@@ -559,6 +559,10 @@ app.use('/public', (req, res, next) => {
 // Serve encrypted chat files — content is always AES-256-GCM ciphertext (never renderable),
 // but defensive headers prevent any accidental MIME-sniffing or rendering attempt
 app.use('/files', (req, res, next) => {
+  // Only the actual file-download path (express.static below) needs these forced —
+  // the JSON API routes nested under /files/* (presign, multipart, ...) must keep
+  // their own real Content-Type so res.json() isn't silently mislabeled.
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'");
   res.setHeader('Content-Disposition', 'attachment');
