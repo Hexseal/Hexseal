@@ -46,8 +46,10 @@ export function PushProvider({ children }: { children: ReactNode }) {
   // tell it lost the race and skip applying its result — same pattern as
   // XmtpContext.tsx's attemptIdRef/isStale(), needed for the identical race:
   // enablePush() can take a while (signature + network) and nothing previously
-  // stopped a stale success from silently overwriting a newer disable() (or
-  // vice versa).
+  // stopped a stale success from silently overwriting a newer disable(), or a
+  // stale disable() from silently overwriting a newer enable() — both enable()
+  // and disable() capture their own attempt id and check it before applying
+  // their result.
   const attemptIdRef = useRef(0);
   // Addresses the background auto-registration has already tried THIS page load —
   // ported as-is from providers.tsx's former PushAutoMount.
@@ -123,13 +125,13 @@ export function PushProvider({ children }: { children: ReactNode }) {
 
   const disable = useCallback(async () => {
     if (!address) return;
-    ++attemptIdRef.current; // supersede any enable() (explicit or background) still in flight
+    const myAttempt = ++attemptIdRef.current; // supersede any enable() (explicit or background) still in flight
     setLoading(true);
     try {
       await disablePush(address);
-      setSubscribed(false);
+      if (attemptIdRef.current === myAttempt) setSubscribed(false); // an enable() that started after us and already won must not be reverted
     } finally {
-      setLoading(false);
+      if (attemptIdRef.current === myAttempt) setLoading(false);
     }
   }, [address]);
 
