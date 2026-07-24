@@ -116,6 +116,7 @@ export default function PostJobPage() {
   const [txHash,     setTxHash]     = useState("");
   const [jobId,      setJobId]      = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const parsedAmount = parseFloat(amount || "0");
   const totalNeeded  = parsedAmount + feeAmount;
@@ -124,10 +125,16 @@ export default function PostJobPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!isConnected || !walletClient || !publicClient) { toast.error(t("common.connect_wallet")); return; }
+    // Set BEFORE the chain-switch await below — otherwise the submit button
+    // (gated only on hasBalance) stays enabled for the whole duration of the
+    // wallet's network-switch prompt, and a second click starts a fully
+    // independent run that reaches mintJobGasless a second time.
+    setIsSubmitting(true);
     if (isWrongChain) {
       try { await switchChainAsync({ chainId: EXPECTED_CHAIN_ID }); }
-      catch { toast.error(t("board.post_common.switch_network")); return; }
+      catch { toast.error(t("board.post_common.switch_network")); setIsSubmitting(false); return; }
     }
 
     const trimmedTitle = title.trim();
@@ -140,10 +147,10 @@ export default function PostJobPage() {
     if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) errs.amount = t("form.amount_positive");
     else if (parsedAmount > MAX_AMOUNT) errs.amount = t("form.amount_max", { max: MAX_AMOUNT });
     if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = t("form.deadline_range", { min: 1, max: MAX_DEADLINE });
-    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); setIsSubmitting(false); return; }
     setFieldErrors({});
 
-    if (!hasBalance) { toast.error(t("board.post_common.insufficient_balance", { need: totalNeeded.toFixed(2), have: usdcBalance.toFixed(2) })); return; }
+    if (!hasBalance) { toast.error(t("board.post_common.insufficient_balance", { need: totalNeeded.toFixed(2), have: usdcBalance.toFixed(2) })); setIsSubmitting(false); return; }
 
     setStep("pending");
     try {
@@ -190,6 +197,8 @@ export default function PostJobPage() {
     } catch (err: any) {
       setErrorMsg(err?.message || "Transaction failed");
       setStep("error");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -357,7 +366,7 @@ export default function PostJobPage() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full" size="lg" disabled={!hasBalance}>
+            <Button type="submit" className="w-full" size="lg" disabled={!hasBalance || isSubmitting}>
               <Briefcase className="w-4 h-4 mr-2" />{t("board.post_job.submit_btn")}
             </Button>
           </form>
