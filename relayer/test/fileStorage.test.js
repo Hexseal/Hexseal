@@ -1,0 +1,149 @@
+import { describe, it, expect } from 'vitest';
+import request from 'supertest';
+import { app } from '../app.js';
+
+// The /files prefix middleware in app.js (registered ahead of every /files/* route)
+// unconditionally sets Content-Type: application/octet-stream on every response under
+// /files — success bodies as well as error bodies (Express's res.json() only sets
+// Content-Type when it isn't already set, and this middleware always sets it first).
+// supertest therefore can't auto-parse ANY /files/* JSON response: res.body comes back
+// as a raw Buffer and res.text is left undefined. Parse it ourselves — same workaround
+// as test/profileUpload.test.js's errorBody(), just needed on every response here, not
+// only error ones.
+function jsonBody(res) {
+  return JSON.parse(Buffer.isBuffer(res.body) ? res.body.toString('utf8') : res.text);
+}
+
+describe('POST /files/presign', () => {
+  it('returns an upload/download URL pair with a 7-day expiry', async () => {
+    const res = await request(app).post('/files/presign').send({});
+    expect(res.status).toBe(200);
+    const body = jsonBody(res);
+    expect(body).toHaveProperty('uploadUrl');
+    expect(body).toHaveProperty('downloadUrl');
+    expect(body).toHaveProperty('key');
+    expect(body.expiresIn).toBe('7 days');
+  });
+
+  it('accepts an optional valid peerA/peerB pair without erroring', async () => {
+    const res = await request(app).post('/files/presign').send({
+      peerA: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      peerB: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('silently ignores a malformed peerA/peerB pair (best-effort tagging, never blocks upload)', async () => {
+    const res = await request(app).post('/files/presign').send({ peerA: 'not-an-address', peerB: 'also-not' });
+    expect(res.status).toBe(200);
+    expect(jsonBody(res)).toHaveProperty('uploadUrl');
+  });
+});
+
+describe('PUT /files/upload-put/:key then GET /files/:key', () => {
+  it('round-trips a small encrypted file', async () => {
+    const presign = await request(app).post('/files/presign').send({});
+    const { key } = jsonBody(presign);
+
+    const payload = Buffer.from('encrypted-bytes-here');
+    const putRes = await request(app)
+      .put(`/files/upload-put/${key}`)
+      .set('Content-Type', 'application/octet-stream')
+      .send(payload);
+    expect(putRes.status).toBe(200);
+
+    const getRes = await request(app).get(`/files/${key}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.headers['content-disposition']).toMatch(/attachment/);
+    expect(getRes.headers['x-content-type-options']).toBe('nosniff');
+    // Same Content-Type-mislabeling quirk applies to served bytes: res.text is left
+    // undefined, the raw bytes land in res.body as a Buffer instead.
+    expect(getRes.body.toString('utf8')).toBe('encrypted-bytes-here');
+  });
+});
+
+describe('POST /files/refresh-url', () => {
+  it('returns 404 for a key that does not exist', async () => {
+    const res = await request(app).post('/files/refresh-url').send({ key: 'nonexistent-key.bin' });
+    expect(res.status).toBe(404);
+  });
+
+  it('returns a download URL for an existing key', async () => {
+    const presign = await request(app).post('/files/presign').send({});
+    const { key } = jsonBody(presign);
+    await request(app).put(`/files/upload-put/${key}`).set('Content-Type', 'application/octet-stream').send(Buffer.from('x'));
+
+    const res = await request(app).post('/files/refresh-url').send({ key });
+    expect(res.status).toBe(200);
+    expect(jsonBody(res)).toHaveProperty('downloadUrl');
+  });
+});
+
+describe('POST /files/public/presign', () => {
+  it('accepts an allowed extension', async () => {
+    const res = await request(app).post('/files/public/presign').send({ ext: '.png' });
+    expect(res.status).toBe(200);
+    const body = jsonBody(res);
+    expect(body).toHaveProperty('uploadUrl');
+    expect(body).toHaveProperty('publicUrl');
+  });
+
+  it('rejects a disallowed extension', async () => {
+    const res = await request(app).post('/files/public/presign').send({ ext: '.html' });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts no extension at all', async () => {
+    const res = await request(app).post('/files/public/presign').send({});
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('multipart upload (create → part → complete)', () => {
+  it('rejects an invalid chunkCount', async () => {
+    const res = await request(app).post('/files/multipart/create').send({ chunkCount: 0 });
+    expect(res.status).toBe(400);
+  });
+
+  it('completes a 2-part upload and serves the concatenated result', async () => {
+    const create = await request(app).post('/files/multipart/create').send({ chunkCount: 2 });
+    expect(create.status).toBe(200);
+    const { uploadId, key } = jsonBody(create);
+
+    const part1 = await request(app)
+      .put(`/files/part/${uploadId}/1`)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('hello-'));
+    expect(part1.status).toBe(200);
+
+    const part2 = await request(app)
+      .put(`/files/part/${uploadId}/2`)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('world'));
+    expect(part2.status).toBe(200);
+
+    const complete = await request(app).post('/files/multipart/complete').send({ uploadId, key });
+    expect(complete.status).toBe(200);
+    expect(jsonBody(complete)).toHaveProperty('downloadUrl');
+
+    const getRes = await request(app).get(`/files/${key}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.toString('utf8')).toBe('hello-world');
+  });
+
+  it('404s a part upload for an unknown uploadId', async () => {
+    const res = await request(app)
+      .put('/files/part/nonexistent-upload-id/1')
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('x'));
+    expect(res.status).toBe(404);
+  });
+
+  it('aborts an in-progress upload without error', async () => {
+    const create = await request(app).post('/files/multipart/create').send({ chunkCount: 1 });
+    const { uploadId } = jsonBody(create);
+    const res = await request(app).post('/files/multipart/abort').send({ uploadId });
+    expect(res.status).toBe(200);
+    expect(jsonBody(res)).toEqual({ ok: true });
+  });
+});
