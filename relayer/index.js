@@ -1047,6 +1047,14 @@ function resolveDisplayName(addr) {
 
 app.post('/push/send', async (req, res) => {
   try {
+    // Only this server's own Next.js /api/push route is a legitimate caller —
+    // it already sends this header on every request. Without a hard gate here,
+    // anyone could send an arbitrary push notification (any title/body/url) to
+    // any wallet address just by knowing it, since `to` is only ever validated
+    // as a well-formed address, never tied to who's actually asking.
+    if (!PUSH_SECRET || req.headers['x-push-secret'] !== PUSH_SECRET) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
     const ip = clientIp(req);
     if (!checkRateLimit(ip)) {
       return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
@@ -1055,13 +1063,11 @@ app.post('/push/send', async (req, res) => {
     if (!to || !body) return res.status(400).json({ error: 'to and body required' });
     if (!ethers.isAddress(to)) return res.status(400).json({ error: 'Invalid address' });
 
-    // `from` (for display-name resolution) is only trusted when the request comes
-    // from our own Next.js server with the shared PUSH_SECRET header.
-    // Without it, `from` is ignored and we fall back to `title` or a generic string.
-    const isTrusted = PUSH_SECRET && req.headers['x-push-secret'] === PUSH_SECRET;
+    // The gate above already proves this request is from our own server, so
+    // `from` is always safe to trust for display-name resolution now.
     // Fallback is 'New message', NOT 'Hexseal': the OS already shows the app name
     // ("from Hexseal") as the source, so a 'Hexseal' title read as "Hexseal from Hexseal".
-    const resolvedTitle = isTrusted && from
+    const resolvedTitle = from
       ? (resolveDisplayName(from) ?? title ?? 'New message')
       : (title ?? 'New message');
 
