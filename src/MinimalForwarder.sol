@@ -65,17 +65,29 @@ contract MinimalForwarder is EIP712 {
 
         // EIP-2771: append original sender (req.from) to calldata so receiving
         // contracts can recover it via _msgSender() when msg.sender == trustedForwarder
-        // Второй возврат намеренно отброшен: так компилятор не копирует returndata
-        // в память целиком, и мы забираем его сами, с капом.
-        (success, ) = req.to.call{value: req.value, gas: req.gas}(
-            abi.encodePacked(req.data, req.from)
-        );
+        bytes memory payload = abi.encodePacked(req.data, req.from);
 
+        // Вызов сделан вручную в assembly с нулевым выходным буфером (последние
+        // 0, 0 у call) — это, а не отбрасывание переменной на уровне Solidity,
+        // и есть фикс: `.call(...)` на уровне языка всегда тянет за собой
+        // стандартный хелпер компилятора, который копирует ответ в память
+        // целиком ещё до того, как мы успеваем его ограничить (проверено
+        // дизассемблингом — там был безусловный returndatacopy на весь размер).
+        // Здесь CALL не копирует ничего сам, а returndata мы забираем ниже
+        // вручную, с капом.
+        address to = req.to;
+        uint256 value = req.value;
+        uint256 gasLimit = req.gas;
         uint256 size;
-        assembly { size := returndatasize() }
+        assembly ("memory-safe") {
+            success := call(gasLimit, to, value, add(payload, 0x20), mload(payload), 0, 0)
+            size := returndatasize()
+        }
         if (size > MAX_RETURNDATA) size = MAX_RETURNDATA;
         retdata = new bytes(size);
-        assembly { returndatacopy(add(retdata, 0x20), 0, size) }
+        assembly ("memory-safe") {
+            returndatacopy(add(retdata, 0x20), 0, size)
+        }
 
         emit Executed(req.from, req.to, success);
     }

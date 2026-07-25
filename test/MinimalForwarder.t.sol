@@ -21,12 +21,14 @@ contract Echo2771 {
     }
 }
 
-/// Возвращает гигантский буфер — модель return-bomb.
+/// Возвращает буфер заданного размера — параметризованная модель
+/// return-bomb. Размер варьируется аргументом, а не отдельными контрактами,
+/// чтобы в газ-дифференциальном тесте (L4) сравнивать маленький и большой
+/// возврат при прочих равных.
 contract Bomb {
-    function boom() external pure {
+    function boom(uint256 size) external pure {
         assembly {
-            // 200_000 байт нулей
-            return(0, 200000)
+            return(0, size)
         }
     }
 }
@@ -112,9 +114,12 @@ contract MinimalForwarderTest is Test {
     function testAppendsOriginalSenderToCalldata() public {
         MinimalForwarder.ForwardRequest memory req =
             _req(address(echo), 0, abi.encodeWithSelector(Echo2771.ping.selector));
-        (bool ok,) = forwarder.execute(req, _sign(USER_PK, req));
+        (bool ok, bytes memory ret) = forwarder.execute(req, _sign(USER_PK, req));
         assertTrue(ok);
         assertEq(echo.lastSender(), user);
+        // Возврат самого echo (адрес sender) должен дойти до вызывающего
+        // форвардера нетронутым — ловит порчу destination при ручном копировании.
+        assertEq(abi.decode(ret, (address)), user);
     }
 
     // ── nonce / replay ────────────────────────────────────────────────────
@@ -175,9 +180,49 @@ contract MinimalForwarderTest is Test {
 
     function testReturndataIsCapped() public {
         MinimalForwarder.ForwardRequest memory req =
-            _req(address(bomb), 0, abi.encodeWithSelector(Bomb.boom.selector));
+            _req(address(bomb), 0, abi.encodeWithSelector(Bomb.boom.selector, uint256(200_000)));
         (bool ok, bytes memory ret) = forwarder.execute(req, _sign(USER_PK, req));
         assertTrue(ok);
-        assertLe(ret.length, 4096, "returndata not capped");
+        // Точное равенство, а не "<=": иначе испорченный destination
+        // (например обнулённая длина) тоже прошёл бы проверку.
+        assertEq(ret.length, 4096, "returndata not capped to expected size");
+    }
+
+    /// Ядро L4, газовое измерение. До фикса `.call(...)` на уровне Solidity
+    /// тянет за собой стандартный хелпер компилятора, который копирует ВЕСЬ
+    /// ответ вызываемого контракта в память форвардера ещё до того, как мы
+    /// успеваем его закапить (см. дизассемблинг в отчёте) — эта копия растёт
+    /// квадратично с размером ответа и сжигает газ релеера сверх капа. После
+    /// фикса (сырой CALL в assembly с нулевым выходным буфером) форвардер
+    /// сам ничего не копирует до капа, поэтому разница в газе между большим
+    /// и маленьким возвратом объясняется только собственным исполнением
+    /// bomb-контракта (расширение памяти в ЕГО фрейме под req.gas), а не
+    /// работой форвардера.
+    function testReturndataCopyGasDoesNotScaleWithBombSize() public {
+        uint256 smallSize = 32;
+        uint256 largeSize = 200_000;
+
+        MinimalForwarder.ForwardRequest memory reqSmall =
+            _req(address(bomb), 0, abi.encodeWithSelector(Bomb.boom.selector, smallSize));
+        bytes memory sigSmall = _sign(USER_PK, reqSmall);
+        uint256 gasBeforeSmall = gasleft();
+        forwarder.execute(reqSmall, sigSmall);
+        uint256 gasUsedSmall = gasBeforeSmall - gasleft();
+
+        MinimalForwarder.ForwardRequest memory reqLarge =
+            _req(address(bomb), 0, abi.encodeWithSelector(Bomb.boom.selector, largeSize));
+        bytes memory sigLarge = _sign(USER_PK, reqLarge);
+        uint256 gasBeforeLarge = gasleft();
+        forwarder.execute(reqLarge, sigLarge);
+        uint256 gasUsedLarge = gasBeforeLarge - gasleft();
+
+        // Порог между «дельта объясняется только исполнением bomb» (после
+        // фикса) и «дельта включает ещё и лишнюю полную копию ответа внутри
+        // форвардера» (до фикса, кратно больше) — конкретные числа в отчёте.
+        assertLt(
+            gasUsedLarge - gasUsedSmall,
+            140_000,
+            "returndata copy gas scales with bomb size"
+        );
     }
 }
