@@ -1,0 +1,510 @@
+'forge clean' running (wd: ~/dev/Hexseal)
+'forge config --json' running
+'forge build --build-info --skip ./test/** ./script/** --force' running (wd: ~/dev/Hexseal)
+
+Detector: arbitrary-send-eth
+MinimalForwarder.execute(MinimalForwarder.ForwardRequest,bytes) (src/MinimalForwarder.sol#48-63) sends eth to arbitrary user
+	Dangerous calls:
+	- (success,retdata) = req.to.call{gas: req.gas,value: req.value}(abi.encodePacked(req.data,req.from)) (src/MinimalForwarder.sol#58-60)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#functions-that-send-ether-to-arbitrary-destinations
+
+Detector: encode-packed-collision
+SVGRenderer._buildOfferSVG(ISVGRenderer.OfferParams) (src/SVGRenderer.sol#94-102) calls abi.encodePacked() with multiple dynamic arguments:
+	- string(abi.encodePacked(_offerSvgHeader(),_offerSvgServiceBlock(p),_offerSvgFinancialBlock(p),_offerSvgFooterBlock(p),</svg>)) (src/SVGRenderer.sol#95-101)
+SVGRenderer._buildReceiptSVG(ISVGRenderer.ReceiptParams) (src/SVGRenderer.sol#201-215) calls abi.encodePacked() with multiple dynamic arguments:
+	- string(abi.encodePacked(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 520" width="380" height="520">,<rect width="380" height="520" fill="#0a0a0a" rx="12"/>,<rect width="380" height="4" fill="#ffffff" rx="2"/>,<text x="190" y="38" text-anchor="middle" font-family="monospace,Courier New" font-size="16" fill="#ffffff" font-weight="bold" letter-spacing="2">HEXSEAL</text>,<text x="190" y="54" text-anchor="middle" font-family="monospace,Courier New" font-size="9" fill="#444444" letter-spacing="3">JOB RECEIPT</text>,<line x1="20" y1="66" x2="360" y2="66" stroke="#1e1e1e" stroke-width="1" stroke-dasharray="5,4"/>,_receiptHeader(p.tokenId,p.createdAt),_receiptItems(p),_receiptFooter(p.client),<rect y="516" width="380" height="4" fill="#ffffff" rx="2"/>,</svg>)) (src/SVGRenderer.sol#202-214)
+SVGRenderer._receiptItems(ISVGRenderer.ReceiptParams) (src/SVGRenderer.sol#226-231) calls abi.encodePacked() with multiple dynamic arguments:
+	- string(abi.encodePacked(_receiptItemsTop(p),_receiptItemsBottom(p))) (src/SVGRenderer.sol#227-230)
+SVGRenderer._receiptItemsTop(ISVGRenderer.ReceiptParams) (src/SVGRenderer.sol#233-241) calls abi.encodePacked() with multiple dynamic arguments:
+	- string(abi.encodePacked(_rowDark(130,TITLE,_truncate(_xmlEscape(p.title),20)),_rowDark(148,BUDGET,string(abi.encodePacked(_formatPrice(p.amount), USDC))),_rowDark(166,DEADLINE,string(abi.encodePacked(p.deadlineDays.toString(), DAYS))),_rowDark(184,REGION,_regionLabel(p.region)),<line x1="20" y1="196" x2="360" y2="196" stroke="#1e1e1e" stroke-width="1" stroke-dasharray="5,4"/>)) (src/SVGRenderer.sol#234-240)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#abi-encodePacked-collision
+
+Detector: divide-before-multiply
+Agreement._base64Encode(bytes) (src/Agreement.sol#929-949) performs a multiplication on the result of a division:
+	- outLen = 4 * ((len + 2) / 3) (src/Agreement.sol#933)
+SVGRenderer._fmtDate(uint256) (src/SVGRenderer.sol#376-395) performs a multiplication on the result of a division:
+	- era = z / 146097 (src/SVGRenderer.sol#379)
+	- doe = z - era * 146097 (src/SVGRenderer.sol#380)
+SVGRenderer._fmtDate(uint256) (src/SVGRenderer.sol#376-395) performs a multiplication on the result of a division:
+	- era = z / 146097 (src/SVGRenderer.sol#379)
+	- y = yoe + era * 400 (src/SVGRenderer.sol#382)
+SVGRenderer._fmtDate(uint256) (src/SVGRenderer.sol#376-395) performs a multiplication on the result of a division:
+	- yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 (src/SVGRenderer.sol#381)
+	- doy = doe - (365 * yoe + yoe / 4 - yoe / 100) (src/SVGRenderer.sol#383)
+SVGRenderer._fmtDate(uint256) (src/SVGRenderer.sol#376-395) performs a multiplication on the result of a division:
+	- mp = (5 * doy + 2) / 153 (src/SVGRenderer.sol#384)
+	- d = doy - (153 * mp + 2) / 5 + 1 (src/SVGRenderer.sol#385)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#divide-before-multiply
+
+Detector: incorrect-equality
+Agreement.arbiterTimeLeft() (src/Agreement.sol#797-802) uses a dangerous strict equality:
+	- disputedAt == 0 (src/Agreement.sol#798)
+Agreement.status() (src/Agreement.sol#419-446) uses a dangerous strict equality:
+	- fundedAt == 0 (src/Agreement.sol#421)
+Agreement.status() (src/Agreement.sol#419-446) uses a dangerous strict equality:
+	- activatedAt == 0 (src/Agreement.sol#422)
+Agreement.timeLeft() (src/Agreement.sol#789-794) uses a dangerous strict equality:
+	- activatedAt == 0 (src/Agreement.sol#790)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+
+Detector: uninitialized-local
+RegistryFacet.getDisputed().count (src/RegistryFacet.sol#238) is a local variable never initialized
+RegistryFacet.getActive().count (src/RegistryFacet.sol#219) is a local variable never initialized
+RegistryFacet.getDisputed().idx (src/RegistryFacet.sol#245) is a local variable never initialized
+RegistryFacet.getActive().idx (src/RegistryFacet.sol#226) is a local variable never initialized
+RegistryFacet._filter(RegistryStorage.Layout,address,bool).idx (src/RegistryFacet.sol#281) is a local variable never initialized
+ArbiterRegistryFacet.raiseAppeal(address).eligibleVoters (src/facets/ArbiterRegistryFacet.sol#624) is a local variable never initialized
+RegistryFacet._filter(RegistryStorage.Layout,address,bool).count (src/RegistryFacet.sol#275) is a local variable never initialized
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#uninitialized-local-variables
+
+Detector: unused-return
+JobBoardFacet.mintJobWithPermit(address,string,string,uint256,uint256,string,uint8,uint256,uint8,bytes32,bytes32) (src/facets/JobBoardFacet.sol#158-215) ignores return value by IJobReceiptMint(address(this)).mintJobReceipt(client,jobId,amount,deadlineDays,region,title) (src/facets/JobBoardFacet.sol#212)
+JobBoardFacet.mintJob(string,string,uint256,uint256,string,uint8) (src/facets/JobBoardFacet.sol#220-270) ignores return value by IJobReceiptMint(address(this)).mintJobReceipt(client,jobId,amount,deadlineDays,region,title) (src/facets/JobBoardFacet.sol#267)
+JobBoardFacet.acceptApplicant(uint256,address) (src/facets/JobBoardFacet.sol#314-364) ignores return value by IJobReceiptBurn(address(this)).burnJobReceipt(jobId) (src/facets/JobBoardFacet.sol#361)
+JobBoardFacet.cancelJob(uint256) (src/facets/JobBoardFacet.sol#367-389) ignores return value by IJobReceiptBurn(address(this)).burnJobReceipt(jobId) (src/facets/JobBoardFacet.sol#386)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+
+Detector: missing-zero-check
+Agreement.constructor(address,address,address,uint256,uint256,string,address,address,address,address).arbiter_ (src/Agreement.sol#368) lacks a zero-check on :
+		- arbiter = arbiter_ (src/Agreement.sol#391)
+FactoryFacet.deployAndFund(address,address,uint256,uint256,string,uint8).agreementAddress (src/FactoryFacet.sol#190) lacks a zero-check on :
+		- (success,None) = agreementAddress.call(abi.encodeWithSignature(fundFromFactory())) (src/FactoryFacet.sol#218)
+ArbiterRegistryFacet.finalizeVerdict(address).agreement (src/facets/ArbiterRegistryFacet.sol#444) lacks a zero-check on :
+		- (ok,ret) = agreement.call(abi.encodeWithSignature(resolveDispute(bool),v.clientWins)) (src/facets/ArbiterRegistryFacet.sol#457-459)
+ArbiterRegistryFacet.raiseAppeal(address).agreement (src/facets/ArbiterRegistryFacet.sol#600) lacks a zero-check on :
+		- (clientOk,clientData) = agreement.staticcall(abi.encodeWithSignature(client())) (src/facets/ArbiterRegistryFacet.sol#614)
+		- (execOk,execData) = agreement.staticcall(abi.encodeWithSignature(executor())) (src/facets/ArbiterRegistryFacet.sol#615)
+ArbiterRegistryFacet.clearStuckVerdict(address).agreement (src/facets/ArbiterRegistryFacet.sol#766) lacks a zero-check on :
+		- (ok,st) = agreement.staticcall(abi.encodeWithSignature(status())) (src/facets/ArbiterRegistryFacet.sol#769)
+JobBoardFacet.acceptApplicant(uint256,address).agreementAddr (src/facets/JobBoardFacet.sol#317) lacks a zero-check on :
+		- (funded,None) = agreementAddr.call(abi.encodeWithSignature(fundFromFactory())) (src/facets/JobBoardFacet.sol#356)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#missing-zero-address-validation
+
+Detector: reentrancy-benign
+Reentrancy in Agreement.fund() (src/Agreement.sol#462-482):
+	External calls:
+	- usdc.safeTransferFrom(sender,address(this),amount) (src/Agreement.sol#471)
+	State variables written after the call(s):
+	- _mint(client,TOKEN_ID) (src/Agreement.sol#474)
+		- _balances[to] ++ (src/Agreement.sol#117)
+	- _mint(executor,EXECUTOR_TOKEN_ID) (src/Agreement.sol#475)
+		- _balances[to] ++ (src/Agreement.sol#117)
+	- _mint(client,TOKEN_ID) (src/Agreement.sol#474)
+		- _owners[tokenId] = to (src/Agreement.sol#118)
+	- _mint(executor,EXECUTOR_TOKEN_ID) (src/Agreement.sol#475)
+		- _owners[tokenId] = to (src/Agreement.sol#118)
+Reentrancy in Agreement.release() (src/Agreement.sol#534-550):
+	External calls:
+	- _settlePending() (src/Agreement.sol#543)
+		- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/Agreement.sol#197-199)
+		- usdc.safeTransfer(client,pending) (src/Agreement.sol#958)
+	- _complete(Status.COMPLETED) (src/Agreement.sol#546)
+		- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+		- IReputationFacet(diamond).autoAwardXP(address(this)) (src/Agreement.sol#977)
+	State variables written after the call(s):
+	- _complete(Status.COMPLETED) (src/Agreement.sol#546)
+		- _finalStatus = newStatus (src/Agreement.sol#965)
+Reentrancy in Agreement.resolveDispute(bool) (src/Agreement.sol#599-626):
+	External calls:
+	- _settlePending() (src/Agreement.sol#613)
+		- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/Agreement.sol#197-199)
+		- usdc.safeTransfer(client,pending) (src/Agreement.sol#958)
+	- _complete(Status.RESOLVED) (src/Agreement.sol#617)
+		- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+		- IReputationFacet(diamond).autoAwardXP(address(this)) (src/Agreement.sol#977)
+	State variables written after the call(s):
+	- _complete(Status.RESOLVED) (src/Agreement.sol#617)
+		- _finalStatus = newStatus (src/Agreement.sol#965)
+Reentrancy in Agreement.resolveDispute(bool) (src/Agreement.sol#599-626):
+	External calls:
+	- _settlePending() (src/Agreement.sol#613)
+		- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/Agreement.sol#197-199)
+		- usdc.safeTransfer(client,pending) (src/Agreement.sol#958)
+	- _complete(Status.RESOLVED) (src/Agreement.sol#620)
+		- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+		- IReputationFacet(diamond).autoAwardXP(address(this)) (src/Agreement.sol#977)
+	State variables written after the call(s):
+	- _complete(Status.RESOLVED) (src/Agreement.sol#620)
+		- _finalStatus = newStatus (src/Agreement.sol#965)
+Reentrancy in Agreement.triggerArbiterTimeout() (src/Agreement.sol#671-692):
+	External calls:
+	- _settlePending() (src/Agreement.sol#682)
+		- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/Agreement.sol#197-199)
+		- usdc.safeTransfer(client,pending) (src/Agreement.sol#958)
+	- _complete(Status.REFUNDED) (src/Agreement.sol#685)
+		- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+		- IReputationFacet(diamond).autoAwardXP(address(this)) (src/Agreement.sol#977)
+	State variables written after the call(s):
+	- _complete(Status.REFUNDED) (src/Agreement.sol#685)
+		- _finalStatus = newStatus (src/Agreement.sol#965)
+Reentrancy in Agreement.triggerAutoApprove() (src/Agreement.sol#554-566):
+	External calls:
+	- _settlePending() (src/Agreement.sol#559)
+		- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/Agreement.sol#197-199)
+		- usdc.safeTransfer(client,pending) (src/Agreement.sol#958)
+	- _complete(Status.COMPLETED) (src/Agreement.sol#562)
+		- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+		- IReputationFacet(diamond).autoAwardXP(address(this)) (src/Agreement.sol#977)
+	State variables written after the call(s):
+	- _complete(Status.COMPLETED) (src/Agreement.sol#562)
+		- _finalStatus = newStatus (src/Agreement.sol#965)
+Reentrancy in Agreement.triggerDeadlineTimeout() (src/Agreement.sol#649-667):
+	External calls:
+	- _settlePending() (src/Agreement.sol#658)
+		- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/Agreement.sol#197-199)
+		- usdc.safeTransfer(client,pending) (src/Agreement.sol#958)
+	- _complete(Status.REFUNDED) (src/Agreement.sol#661)
+		- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+		- IReputationFacet(diamond).autoAwardXP(address(this)) (src/Agreement.sol#977)
+	State variables written after the call(s):
+	- _complete(Status.REFUNDED) (src/Agreement.sol#661)
+		- _finalStatus = newStatus (src/Agreement.sol#965)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-3
+
+Detector: reentrancy-events
+Reentrancy in Agreement._updateRegistry(ISignatureRegistry.AgreementStatus) (src/Agreement.sol#985-991):
+	External calls:
+	- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+	Event emitted after the call(s):
+	- RegistrySyncFailed(address(this),uint8(regStatus)) (src/Agreement.sol#989)
+Reentrancy in ArbiterRegistryFacet.applyAsArbiter() (src/facets/ArbiterRegistryFacet.sol#221-244):
+	External calls:
+	- bondOk = IUSDCFull(usdc).transferFrom(caller,address(this),ARBITER_BOND) (src/facets/ArbiterRegistryFacet.sol#235)
+	Event emitted after the call(s):
+	- ArbiterAdded(caller) (src/facets/ArbiterRegistryFacet.sol#242)
+	- ArbiterApplied(caller) (src/facets/ArbiterRegistryFacet.sol#243)
+Reentrancy in ArbiterRegistryFacet.claimDispute(address,bytes32) (src/facets/ArbiterRegistryFacet.sol#330-370):
+	External calls:
+	- (setOk,None) = agreement.call(abi.encodeWithSignature(setArbiter(address),address(this))) (src/facets/ArbiterRegistryFacet.sol#360-362)
+	Event emitted after the call(s):
+	- DisputeClaimed(agreement,caller) (src/facets/ArbiterRegistryFacet.sol#369)
+Reentrancy in FactoryFacet.deployAgreement(address,address,address,uint256,uint256,string,uint8) (src/FactoryFacet.sol#134-170):
+	External calls:
+	- _safeTransferFrom(fs.usdc,msg.sender,fs.feeRecipient,fee) (src/FactoryFacet.sol#158)
+		- (success,data) = token.call(abi.encodeWithSelector(0x23b872dd,from,to,amount)) (src/FactoryFacet.sol#228-230)
+	- agreementAddress = IAgreementDeployer(fs.agreementDeployer).deploy(client,executor,address(0),amount,deadlineDays,terms,fs.diamond,fs.usdc,fs.trustedForwarder,address(this)) (src/FactoryFacet.sol#161-165)
+	- IRegistry(fs.diamond).register(agreementAddress,client,executor,amount) (src/FactoryFacet.sol#167)
+	Event emitted after the call(s):
+	- AgreementDeployed(agreementAddress,client,executor,amount,region,fee) (src/FactoryFacet.sol#169)
+Reentrancy in FactoryFacet.deployAndFund(address,address,uint256,uint256,string,uint8) (src/FactoryFacet.sol#183-223):
+	External calls:
+	- _safeTransferFrom(fs.usdc,client,fs.feeRecipient,fee) (src/FactoryFacet.sol#206)
+		- (success,data) = token.call(abi.encodeWithSelector(0x23b872dd,from,to,amount)) (src/FactoryFacet.sol#228-230)
+	- agreementAddress = IAgreementDeployer(fs.agreementDeployer).deploy(client,executor,address(0),amount,deadlineDays,terms,fs.diamond,fs.usdc,fs.trustedForwarder,address(this)) (src/FactoryFacet.sol#208-212)
+	- IRegistry(fs.diamond).register(agreementAddress,client,executor,amount) (src/FactoryFacet.sol#214)
+	- _safeTransferFrom(fs.usdc,client,agreementAddress,amount) (src/FactoryFacet.sol#216)
+		- (success,data) = token.call(abi.encodeWithSelector(0x23b872dd,from,to,amount)) (src/FactoryFacet.sol#228-230)
+	- (success,None) = agreementAddress.call(abi.encodeWithSignature(fundFromFactory())) (src/FactoryFacet.sol#218)
+	Event emitted after the call(s):
+	- AgreementDeployed(agreementAddress,client,executor,amount,region,fee) (src/FactoryFacet.sol#221)
+	- DealFunded(agreementAddress,client,amount) (src/FactoryFacet.sol#222)
+Reentrancy in MinimalForwarder.execute(MinimalForwarder.ForwardRequest,bytes) (src/MinimalForwarder.sol#48-63):
+	External calls:
+	- (success,retdata) = req.to.call{gas: req.gas,value: req.value}(abi.encodePacked(req.data,req.from)) (src/MinimalForwarder.sol#58-60)
+	Event emitted after the call(s):
+	- Executed(req.from,req.to,success) (src/MinimalForwarder.sol#62)
+Reentrancy in ArbiterRegistryFacet.finalizeVerdict(address) (src/facets/ArbiterRegistryFacet.sol#444-484):
+	External calls:
+	- (ok,ret) = agreement.call(abi.encodeWithSignature(resolveDispute(bool),v.clientWins)) (src/facets/ArbiterRegistryFacet.sol#457-459)
+	Event emitted after the call(s):
+	- ArbiterRewarded(v.arbiter,d.rewardPerDispute) (src/facets/ArbiterRegistryFacet.sol#480)
+	- VerdictFinalized(agreement,v.arbiter,v.clientWins) (src/facets/ArbiterRegistryFacet.sol#483)
+Reentrancy in ArbiterRegistryFacet.fundVault(uint256) (src/facets/ArbiterRegistryFacet.sol#724-731):
+	External calls:
+	- ok = IUSDCFull(usdc).transferFrom(msg.sender,address(this),amount) (src/facets/ArbiterRegistryFacet.sol#727)
+	Event emitted after the call(s):
+	- VaultFunded(msg.sender,amount) (src/facets/ArbiterRegistryFacet.sol#730)
+Reentrancy in ArbiterRegistryFacet.raiseAppeal(address) (src/facets/ArbiterRegistryFacet.sol#600-641):
+	External calls:
+	- ok = IUSDCFull(usdc).transferFrom(caller,address(this),APPEAL_DEPOSIT) (src/facets/ArbiterRegistryFacet.sol#632)
+	Event emitted after the call(s):
+	- AppealRaised(agreement,caller) (src/facets/ArbiterRegistryFacet.sol#640)
+Reentrancy in Agreement.raiseDispute() (src/Agreement.sol#570-594):
+	External calls:
+	- _updateRegistry(ISignatureRegistry.AgreementStatus.DISPUTED) (src/Agreement.sol#591)
+		- ISignatureRegistry(diamond).updateStatus(address(this),regStatus) (src/Agreement.sol#986-990)
+	Event emitted after the call(s):
+	- DisputeRaised(sender) (src/Agreement.sol#593)
+Reentrancy in ArbiterRegistryFacet.releaseDisputeClaim(address) (src/facets/ArbiterRegistryFacet.sol#372-392):
+	External calls:
+	- (ok,None) = agreement.call(abi.encodeWithSignature(setArbiter(address),address(0))) (src/facets/ArbiterRegistryFacet.sol#386-388)
+	Event emitted after the call(s):
+	- DisputeReleased(agreement,current) (src/facets/ArbiterRegistryFacet.sol#391)
+Reentrancy in ArbiterRegistryFacet.removeArbiter(address) (src/facets/ArbiterRegistryFacet.sol#294-316):
+	External calls:
+	- ok = IUSDCFull(usdc).transfer(arbiter,bond) (src/facets/ArbiterRegistryFacet.sol#311)
+	Event emitted after the call(s):
+	- ArbiterRemoved(arbiter) (src/facets/ArbiterRegistryFacet.sol#315)
+Reentrancy in ArbiterRegistryFacet.resignAsArbiter() (src/facets/ArbiterRegistryFacet.sol#250-276):
+	External calls:
+	- ok = IUSDCFull(usdc).transfer(caller,bond) (src/facets/ArbiterRegistryFacet.sol#271)
+	Event emitted after the call(s):
+	- ArbiterResigned(caller,bond) (src/facets/ArbiterRegistryFacet.sol#275)
+Reentrancy in ArbiterRegistryFacet.resolveAppeal(address) (src/facets/ArbiterRegistryFacet.sol#669-702):
+	External calls:
+	- refundOk = IUSDCFull(usdc).transfer(v.appellant,APPEAL_DEPOSIT) (src/facets/ArbiterRegistryFacet.sol#695)
+	Event emitted after the call(s):
+	- AppealResolved(agreement,v.appellant,overturn) (src/facets/ArbiterRegistryFacet.sol#701)
+Reentrancy in ArbiterRegistryFacet.withdrawArbiterReward() (src/facets/ArbiterRegistryFacet.sol#707-721):
+	External calls:
+	- ok = IUSDCFull(usdc).transfer(caller,amount) (src/facets/ArbiterRegistryFacet.sol#717)
+	Event emitted after the call(s):
+	- ArbiterRewardWithdrawn(caller,amount) (src/facets/ArbiterRegistryFacet.sol#720)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+
+Detector: return-bomb
+MinimalForwarder.execute(MinimalForwarder.ForwardRequest,bytes) (src/MinimalForwarder.sol#48-63) tries to limit the gas of an external call that controls implicit decoding
+	(success,retdata) = req.to.call{gas: req.gas,value: req.value}(abi.encodePacked(req.data,req.from)) (src/MinimalForwarder.sol#58-60)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#return-bomb
+
+Detector: timestamp
+Agreement.status() (src/Agreement.sol#419-446) uses timestamp for comparisons
+	Dangerous comparisons:
+	- fundedAt == 0 (src/Agreement.sol#421)
+	- activatedAt == 0 (src/Agreement.sol#422)
+	- disputedAt > 0 (src/Agreement.sol#425)
+	- resolvedAt > 0 (src/Agreement.sol#426)
+	- markedDoneAt > 0 (src/Agreement.sol#432)
+	- block.timestamp >= markedDoneAt + AUTO_APPROVE_WINDOW (src/Agreement.sol#434)
+	- block.timestamp > activatedAt + (deadlineDays * 86400) + DEADLINE_GRACE (src/Agreement.sol#441)
+Agreement.fund() (src/Agreement.sol#462-482) uses timestamp for comparisons
+	Dangerous comparisons:
+	- fundedAt != 0 (src/Agreement.sol#465)
+Agreement.fundFromFactory() (src/Agreement.sol#486-499) uses timestamp for comparisons
+	Dangerous comparisons:
+	- fundedAt != 0 (src/Agreement.sol#488)
+Agreement.activate() (src/Agreement.sol#503-515) uses timestamp for comparisons
+	Dangerous comparisons:
+	- fundedAt == 0 (src/Agreement.sol#506)
+	- activatedAt != 0 (src/Agreement.sol#507)
+	- block.timestamp > fundedAt + ACTIVATION_WINDOW (src/Agreement.sol#510)
+Agreement.markDone() (src/Agreement.sol#518-531) uses timestamp for comparisons
+	Dangerous comparisons:
+	- activatedAt == 0 (src/Agreement.sol#521)
+	- markedDoneAt != 0 (src/Agreement.sol#522)
+	- disputedAt != 0 (src/Agreement.sol#523)
+	- block.timestamp > activatedAt + (deadlineDays * 86400) + DEADLINE_GRACE (src/Agreement.sol#526)
+Agreement.release() (src/Agreement.sol#534-550) uses timestamp for comparisons
+	Dangerous comparisons:
+	- markedDoneAt == 0 (src/Agreement.sol#537)
+	- disputedAt != 0 (src/Agreement.sol#538)
+	- block.timestamp >= markedDoneAt + AUTO_APPROVE_WINDOW (src/Agreement.sol#541)
+Agreement.triggerAutoApprove() (src/Agreement.sol#554-566) uses timestamp for comparisons
+	Dangerous comparisons:
+	- markedDoneAt == 0 (src/Agreement.sol#555)
+	- disputedAt != 0 (src/Agreement.sol#556)
+	- block.timestamp < markedDoneAt + AUTO_APPROVE_WINDOW (src/Agreement.sol#557)
+Agreement.raiseDispute() (src/Agreement.sol#570-594) uses timestamp for comparisons
+	Dangerous comparisons:
+	- activatedAt == 0 (src/Agreement.sol#574)
+	- disputedAt != 0 (src/Agreement.sol#575)
+	- markedDoneAt != 0 && block.timestamp >= markedDoneAt + AUTO_APPROVE_WINDOW (src/Agreement.sol#578)
+	- markedDoneAt == 0 && block.timestamp > activatedAt + (deadlineDays * 86400) + DEADLINE_GRACE (src/Agreement.sol#585)
+Agreement.resolveDispute(bool) (src/Agreement.sol#599-626) uses timestamp for comparisons
+	Dangerous comparisons:
+	- disputedAt == 0 (src/Agreement.sol#604)
+	- resolvedAt != 0 (src/Agreement.sol#605)
+Agreement.triggerActivationTimeout() (src/Agreement.sol#630-645) uses timestamp for comparisons
+	Dangerous comparisons:
+	- fundedAt == 0 (src/Agreement.sol#633)
+	- activatedAt != 0 (src/Agreement.sol#634)
+	- block.timestamp <= fundedAt + ACTIVATION_WINDOW (src/Agreement.sol#635)
+Agreement.triggerDeadlineTimeout() (src/Agreement.sol#649-667) uses timestamp for comparisons
+	Dangerous comparisons:
+	- activatedAt == 0 (src/Agreement.sol#652)
+	- disputedAt != 0 (src/Agreement.sol#653)
+	- markedDoneAt != 0 (src/Agreement.sol#654)
+	- block.timestamp <= activatedAt + (deadlineDays * 86400) + DEADLINE_GRACE (src/Agreement.sol#656)
+Agreement.triggerArbiterTimeout() (src/Agreement.sol#671-692) uses timestamp for comparisons
+	Dangerous comparisons:
+	- disputedAt == 0 (src/Agreement.sol#674)
+	- resolvedAt != 0 (src/Agreement.sol#675)
+	- block.timestamp <= disputedAt + DISPUTE_WINDOW (src/Agreement.sol#676)
+Agreement.proposeExtra(uint256,string) (src/Agreement.sol#699-716) uses timestamp for comparisons
+	Dangerous comparisons:
+	- activatedAt == 0 (src/Agreement.sol#703)
+	- markedDoneAt != 0 (src/Agreement.sol#704)
+	- disputedAt != 0 (src/Agreement.sol#705)
+	- block.timestamp > activatedAt + (deadlineDays * 86400) (src/Agreement.sol#707)
+Agreement.timeLeft() (src/Agreement.sol#789-794) uses timestamp for comparisons
+	Dangerous comparisons:
+	- activatedAt == 0 (src/Agreement.sol#790)
+	- block.timestamp >= deadline (src/Agreement.sol#792)
+Agreement.arbiterTimeLeft() (src/Agreement.sol#797-802) uses timestamp for comparisons
+	Dangerous comparisons:
+	- disputedAt == 0 (src/Agreement.sol#798)
+	- block.timestamp >= deadline (src/Agreement.sol#800)
+ArbiterRegistryFacet.submitVerdict(address,bool) (src/facets/ArbiterRegistryFacet.sol#397-440) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > disputedAt + disputeWindow (src/facets/ArbiterRegistryFacet.sol#421)
+ArbiterRegistryFacet.finalizeVerdict(address) (src/facets/ArbiterRegistryFacet.sol#444-484) uses timestamp for comparisons
+	Dangerous comparisons:
+	- require(bool,string)(block.timestamp >= v.submittedAt + FINALIZE_DELAY,ArbiterRegistry: finalize delay not passed) (src/facets/ArbiterRegistryFacet.sol#451)
+ArbiterRegistryFacet.raiseAppeal(address) (src/facets/ArbiterRegistryFacet.sol#600-641) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp >= v.submittedAt + FINALIZE_DELAY (src/facets/ArbiterRegistryFacet.sol#612)
+ArbiterRegistryFacet.voteOnAppeal(address,bool) (src/facets/ArbiterRegistryFacet.sol#644-664) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp >= v.appealDeadline (src/facets/ArbiterRegistryFacet.sol#653)
+ArbiterRegistryFacet.resolveAppeal(address) (src/facets/ArbiterRegistryFacet.sol#669-702) uses timestamp for comparisons
+	Dangerous comparisons:
+	- windowClosed = block.timestamp >= v.appealDeadline (src/facets/ArbiterRegistryFacet.sol#677)
+	- ! quorumReached && ! windowClosed (src/facets/ArbiterRegistryFacet.sol#678)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+
+Detector: assembly
+ERC2771Context._msgSender() (src/Agreement.sol#180-188) uses assembly
+	- INLINE ASM (src/Agreement.sol#182-184)
+AgreementDeployer.deploy(address,address,address,uint256,uint256,string,address,address,address,address) (src/AgreementDeployer.sol#38-63) uses assembly
+	- INLINE ASM (src/AgreementDeployer.sol#59-61)
+DiamondStorage.store() (src/DiamondProxy.sol#74-79) uses assembly
+	- INLINE ASM (src/DiamondProxy.sol#76-78)
+DiamondGuard.status() (src/DiamondProxy.sol#91-94) uses assembly
+	- INLINE ASM (src/DiamondProxy.sol#93)
+DiamondGuard.setStatus(uint256) (src/DiamondProxy.sol#96-99) uses assembly
+	- INLINE ASM (src/DiamondProxy.sol#98)
+DiamondCutLib.initializeDiamondCut(address,bytes) (src/DiamondProxy.sol#244-257) uses assembly
+	- INLINE ASM (src/DiamondProxy.sol#250-252)
+DiamondCutLib.enforceHasContractCode(address,string) (src/DiamondProxy.sol#259-265) uses assembly
+	- INLINE ASM (src/DiamondProxy.sol#261-263)
+DiamondProxy.fallback() (src/DiamondProxy.sol#283-295) uses assembly
+	- INLINE ASM (src/DiamondProxy.sol#287-294)
+FactoryStorage.store() (src/FactoryFacet.sol#46-51) uses assembly
+	- INLINE ASM (src/FactoryFacet.sol#48-50)
+FactoryFacet._msgSender() (src/FactoryFacet.sol#174-181) uses assembly
+	- INLINE ASM (src/FactoryFacet.sol#177)
+ReceiptStorage.store() (src/JobReceiptFacet.sol#50-53) uses assembly
+	- INLINE ASM (src/JobReceiptFacet.sol#52)
+RegistryStorage.store() (src/RegistryFacet.sol#51-56) uses assembly
+	- INLINE ASM (src/RegistryFacet.sol#53-55)
+ArbiterRegistryStorage.data() (src/facets/ArbiterRegistryFacet.sol#88-91) uses assembly
+	- INLINE ASM (src/facets/ArbiterRegistryFacet.sol#90)
+ArbiterRegistryFacet._msgSender() (src/facets/ArbiterRegistryFacet.sol#205-212) uses assembly
+	- INLINE ASM (src/facets/ArbiterRegistryFacet.sol#208)
+ArbiterRegistryFacet.finalizeVerdict(address) (src/facets/ArbiterRegistryFacet.sol#444-484) uses assembly
+	- INLINE ASM (src/facets/ArbiterRegistryFacet.sol#465)
+JobBoardStorage.store() (src/facets/JobBoardFacet.sol#88-91) uses assembly
+	- INLINE ASM (src/facets/JobBoardFacet.sol#90)
+JobBoardFacet._msgSender() (src/facets/JobBoardFacet.sol#142-153) uses assembly
+	- INLINE ASM (src/facets/JobBoardFacet.sol#147-149)
+ReputationStorage.data() (src/facets/ReputationFacet.sol#46-49) uses assembly
+	- INLINE ASM (src/facets/ReputationFacet.sol#48)
+ServiceBoardStorage.store() (src/facets/ServiceBoardFacet.sol#75-78) uses assembly
+	- INLINE ASM (src/facets/ServiceBoardFacet.sol#77)
+ServiceBoardFacet._msgSender() (src/facets/ServiceBoardFacet.sol#145-156) uses assembly
+	- INLINE ASM (src/facets/ServiceBoardFacet.sol#150-152)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#assembly-usage
+
+Detector: cyclomatic-complexity
+SVGRenderer._xmlEscape(string) (src/SVGRenderer.sol#351-374) has a high cyclomatic complexity (12).
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#cyclomatic-complexity
+
+Detector: dead-code
+MinimalERC721._beforeTransfer(address,address,uint256) (src/Agreement.sol#96) is never used and should be removed
+MinimalERC721._burn(uint256) (src/Agreement.sol#122-128) is never used and should be removed
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dead-code
+
+Detector: low-level-calls
+Low level call in SafeUSDC.safeTransfer(address,address,uint256) (src/Agreement.sol#196-201):
+	- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/Agreement.sol#197-199)
+Low level call in SafeUSDC.safeTransferFrom(address,address,address,uint256) (src/Agreement.sol#203-208):
+	- (success,data) = token.call(abi.encodeWithSelector(0x23b872dd,from,to,amount)) (src/Agreement.sol#204-206)
+Low level call in Agreement.setArbiter(address) (src/Agreement.sol#404-415):
+	- (ok,data) = diamond.staticcall(abi.encodeWithSignature(isRegisteredArbiter(address),newArbiter)) (src/Agreement.sol#409-411)
+Low level call in DiamondCutLib.initializeDiamondCut(address,bytes) (src/DiamondProxy.sol#244-257):
+	- (success,errData) = _init.delegatecall(_calldata) (src/DiamondProxy.sol#247)
+Low level call in FactoryFacet.deployAndFund(address,address,uint256,uint256,string,uint8) (src/FactoryFacet.sol#183-223):
+	- (success,None) = agreementAddress.call(abi.encodeWithSignature(fundFromFactory())) (src/FactoryFacet.sol#218)
+Low level call in FactoryFacet._safeTransferFrom(address,address,address,uint256) (src/FactoryFacet.sol#227-232):
+	- (success,data) = token.call(abi.encodeWithSelector(0x23b872dd,from,to,amount)) (src/FactoryFacet.sol#228-230)
+Low level call in MinimalForwarder.execute(MinimalForwarder.ForwardRequest,bytes) (src/MinimalForwarder.sol#48-63):
+	- (success,retdata) = req.to.call{gas: req.gas,value: req.value}(abi.encodePacked(req.data,req.from)) (src/MinimalForwarder.sol#58-60)
+Low level call in ArbiterRegistryFacet.claimDispute(address,bytes32) (src/facets/ArbiterRegistryFacet.sol#330-370):
+	- (statusOk,statusData) = agreement.staticcall(abi.encodeWithSignature(status())) (src/facets/ArbiterRegistryFacet.sol#344-346)
+	- (clientOk,clientData) = agreement.staticcall(abi.encodeWithSignature(client())) (src/facets/ArbiterRegistryFacet.sol#352)
+	- (execOk,execData) = agreement.staticcall(abi.encodeWithSignature(executor())) (src/facets/ArbiterRegistryFacet.sol#353)
+	- (setOk,None) = agreement.call(abi.encodeWithSignature(setArbiter(address),address(this))) (src/facets/ArbiterRegistryFacet.sol#360-362)
+Low level call in ArbiterRegistryFacet.releaseDisputeClaim(address) (src/facets/ArbiterRegistryFacet.sol#372-392):
+	- (ok,None) = agreement.call(abi.encodeWithSignature(setArbiter(address),address(0))) (src/facets/ArbiterRegistryFacet.sol#386-388)
+Low level call in ArbiterRegistryFacet.submitVerdict(address,bool) (src/facets/ArbiterRegistryFacet.sol#397-440):
+	- (ok,st) = agreement.staticcall(abi.encodeWithSignature(status())) (src/facets/ArbiterRegistryFacet.sol#405)
+	- (disputedOk,disputedData) = agreement.staticcall(abi.encodeWithSignature(disputedAt())) (src/facets/ArbiterRegistryFacet.sol#413)
+	- (windowOk,windowData) = agreement.staticcall(abi.encodeWithSignature(DISPUTE_WINDOW())) (src/facets/ArbiterRegistryFacet.sol#417)
+Low level call in ArbiterRegistryFacet.finalizeVerdict(address) (src/facets/ArbiterRegistryFacet.sol#444-484):
+	- (ok,ret) = agreement.call(abi.encodeWithSignature(resolveDispute(bool),v.clientWins)) (src/facets/ArbiterRegistryFacet.sol#457-459)
+Low level call in ArbiterRegistryFacet.raiseAppeal(address) (src/facets/ArbiterRegistryFacet.sol#600-641):
+	- (clientOk,clientData) = agreement.staticcall(abi.encodeWithSignature(client())) (src/facets/ArbiterRegistryFacet.sol#614)
+	- (execOk,execData) = agreement.staticcall(abi.encodeWithSignature(executor())) (src/facets/ArbiterRegistryFacet.sol#615)
+Low level call in ArbiterRegistryFacet.clearStuckVerdict(address) (src/facets/ArbiterRegistryFacet.sol#766-773):
+	- (ok,st) = agreement.staticcall(abi.encodeWithSignature(status())) (src/facets/ArbiterRegistryFacet.sol#769)
+Low level call in JobBoardFacet.acceptApplicant(uint256,address) (src/facets/JobBoardFacet.sol#314-364):
+	- (ok,ret) = address(this).call(abi.encodeWithSelector(IFactory.deployAgreement.selector,job.client,executor,address(0),job.amount,job.deadlineDays,job.terms,job.region)) (src/facets/JobBoardFacet.sol#331-342)
+	- (funded,None) = agreementAddr.call(abi.encodeWithSignature(fundFromFactory())) (src/facets/JobBoardFacet.sol#356)
+Low level call in JobBoardFacet._safeTransferFrom(address,address,address,uint256) (src/facets/JobBoardFacet.sol#471-476):
+	- (success,data) = token.call(abi.encodeWithSelector(0x23b872dd,from,to,amount)) (src/facets/JobBoardFacet.sol#472-474)
+Low level call in JobBoardFacet._safeTransfer(address,address,uint256) (src/facets/JobBoardFacet.sol#478-483):
+	- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/facets/JobBoardFacet.sol#479-481)
+Low level call in ServiceBoardFacet.acceptRequest(uint256) (src/facets/ServiceBoardFacet.sol#434-502):
+	- (ok,ret) = address(this).call(abi.encodeWithSelector(IFactory.deployAgreement.selector,client,sender,address(0),amount,deadline,terms,region)) (src/facets/ServiceBoardFacet.sol#459-470)
+	- (funded,None) = agreementAddr.call(abi.encodeWithSignature(fundFromFactory())) (src/facets/ServiceBoardFacet.sol#481)
+Low level call in ServiceBoardFacet._safeTransferFrom(address,address,address,uint256) (src/facets/ServiceBoardFacet.sol#652-657):
+	- (success,data) = token.call(abi.encodeWithSelector(0x23b872dd,from,to,amount)) (src/facets/ServiceBoardFacet.sol#653-655)
+Low level call in ServiceBoardFacet._safeTransfer(address,address,uint256) (src/facets/ServiceBoardFacet.sol#659-664):
+	- (success,data) = token.call(abi.encodeWithSelector(0xa9059cbb,to,amount)) (src/facets/ServiceBoardFacet.sol#660-662)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#low-level-calls
+
+Detector: missing-inheritance
+FactoryFacet (src/FactoryFacet.sol#56-294) should inherit from IFactory (src/facets/IFactory.sol#4-14)
+JobReceiptFacet (src/JobReceiptFacet.sol#58-230) should inherit from IERC20 (src/Agreement.sol#213-215)
+JobReceiptFacet (src/JobReceiptFacet.sol#58-230) should inherit from IJobReceiptBurn (src/facets/JobBoardFacet.sol#24-26)
+JobReceiptFacet (src/JobReceiptFacet.sol#58-230) should inherit from IJobReceiptMint (src/facets/JobBoardFacet.sol#28-37)
+RegistryFacet (src/RegistryFacet.sol#61-290) should inherit from IRegistry (src/FactoryFacet.sol#15-18)
+ArbiterRegistryFacet (src/facets/ArbiterRegistryFacet.sol#96-814) should inherit from IArbiterRegistryFacet (src/Agreement.sol#222-225)
+ArbiterRegistryFacet (src/facets/ArbiterRegistryFacet.sol#96-814) should inherit from IArbiterRegistry (src/Agreement.sol#235-237)
+ReputationFacet (src/facets/ReputationFacet.sol#54-343) should inherit from IReputationFacet (src/Agreement.sol#217-220)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#missing-inheritance
+
+Detector: naming-convention
+Parameter OwnershipLib.setContractOwner(address)._newOwner (src/DiamondProxy.sol#107) is not in mixedCase
+Parameter DiamondCutLib.diamondCut(IDiamondCut.FacetCut[],address,bytes)._diamondCut (src/DiamondProxy.sol#132) is not in mixedCase
+Parameter DiamondCutLib.diamondCut(IDiamondCut.FacetCut[],address,bytes)._init (src/DiamondProxy.sol#133) is not in mixedCase
+Parameter DiamondCutLib.diamondCut(IDiamondCut.FacetCut[],address,bytes)._calldata (src/DiamondProxy.sol#134) is not in mixedCase
+Parameter DiamondCutLib.addFunctions(address,bytes4[])._facetAddress (src/DiamondProxy.sol#152) is not in mixedCase
+Parameter DiamondCutLib.addFunctions(address,bytes4[])._functionSelectors (src/DiamondProxy.sol#152) is not in mixedCase
+Parameter DiamondCutLib.replaceFunctions(address,bytes4[])._facetAddress (src/DiamondProxy.sol#169) is not in mixedCase
+Parameter DiamondCutLib.replaceFunctions(address,bytes4[])._functionSelectors (src/DiamondProxy.sol#169) is not in mixedCase
+Parameter DiamondCutLib.removeFunctions(address,bytes4[])._facetAddress (src/DiamondProxy.sol#187) is not in mixedCase
+Parameter DiamondCutLib.removeFunctions(address,bytes4[])._functionSelectors (src/DiamondProxy.sol#187) is not in mixedCase
+Parameter DiamondCutLib.addFacet(DiamondStorage.Layout,address)._facetAddress (src/DiamondProxy.sol#198) is not in mixedCase
+Parameter DiamondCutLib.addFunction(DiamondStorage.Layout,bytes4,uint96,address)._selector (src/DiamondProxy.sol#206) is not in mixedCase
+Parameter DiamondCutLib.addFunction(DiamondStorage.Layout,bytes4,uint96,address)._selectorPosition (src/DiamondProxy.sol#207) is not in mixedCase
+Parameter DiamondCutLib.addFunction(DiamondStorage.Layout,bytes4,uint96,address)._facetAddress (src/DiamondProxy.sol#208) is not in mixedCase
+Parameter DiamondCutLib.removeFunction(DiamondStorage.Layout,address,bytes4)._facetAddress (src/DiamondProxy.sol#217) is not in mixedCase
+Parameter DiamondCutLib.removeFunction(DiamondStorage.Layout,address,bytes4)._selector (src/DiamondProxy.sol#218) is not in mixedCase
+Parameter DiamondCutLib.initializeDiamondCut(address,bytes)._init (src/DiamondProxy.sol#244) is not in mixedCase
+Parameter DiamondCutLib.initializeDiamondCut(address,bytes)._calldata (src/DiamondProxy.sol#244) is not in mixedCase
+Parameter DiamondCutLib.enforceHasContractCode(address,string)._contract (src/DiamondProxy.sol#259) is not in mixedCase
+Parameter DiamondCutLib.enforceHasContractCode(address,string)._errorMessage (src/DiamondProxy.sol#259) is not in mixedCase
+Parameter DiamondCutFacet.diamondCut(IDiamondCut.FacetCut[],address,bytes)._diamondCut (src/DiamondProxy.sol#305) is not in mixedCase
+Parameter DiamondCutFacet.diamondCut(IDiamondCut.FacetCut[],address,bytes)._init (src/DiamondProxy.sol#306) is not in mixedCase
+Parameter DiamondCutFacet.diamondCut(IDiamondCut.FacetCut[],address,bytes)._calldata (src/DiamondProxy.sol#307) is not in mixedCase
+Parameter DiamondLoupeFacet.facetFunctionSelectors(address)._facet (src/DiamondProxy.sol#329) is not in mixedCase
+Parameter DiamondLoupeFacet.facetAddress(bytes4)._functionSelector (src/DiamondProxy.sol#339) is not in mixedCase
+Parameter DiamondLoupeFacet.supportsInterface(bytes4)._interfaceId (src/DiamondProxy.sol#344) is not in mixedCase
+Parameter OwnershipFacet.transferOwnership(address)._newOwner (src/DiamondProxy.sol#356) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+
+Detector: too-many-digits
+AgreementDeployer.deploy(address,address,address,uint256,uint256,string,address,address,address,address) (src/AgreementDeployer.sol#38-63) uses literals with too many digits:
+	- bytecode = abi.encodePacked(type()(Agreement).creationCode,abi.encode(client,executor,arbiter,amount,deadlineDays,terms,diamond,usdc,trustedForwarder,factory)) (src/AgreementDeployer.sol#51-58)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#too-many-digits
+
+Detector: unindexed-event-address
+Event IDiamondCut.DiamondCut(IDiamondCut.FacetCut[],address,bytes) (src/DiamondProxy.sol#27) has address parameters but no indexed parameters
+Event DiamondCutLib.DiamondCut(IDiamondCut.FacetCut[],address,bytes) (src/DiamondProxy.sol#126) has address parameters but no indexed parameters
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unindexed-event-address-parameters
+
+Detector: unused-state
+ArbiterRegistryFacet.DEFAULT_REWARD (src/facets/ArbiterRegistryFacet.sol#104) is never used in ArbiterRegistryFacet (src/facets/ArbiterRegistryFacet.sol#96-814)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
+. analyzed (63 contracts with 101 detectors), 155 result(s) found
