@@ -12,11 +12,12 @@ import "../src/facets/JobBoardFacet.sol";
  *
  * Добавляет burn-on-cancel: при cancelJob() NFT-чек сжигается.
  *
- * [Replace 19] JobReceiptFacet — все существующие селекторы на новый адрес:
- *   ERC-721: name, symbol, supportsInterface, balanceOf, ownerOf, tokenURI
+ * [Replace 18] JobReceiptFacet — все существующие селекторы на новый адрес:
+ *   ERC-721: name, symbol, balanceOf, ownerOf, tokenURI
  *   Soulbound stubs: transferFrom x3, approve, setApprovalForAll, getApproved, isApprovedForAll
  *   Core: mintJobReceipt, setSvgRenderer, getSvgRenderer
  *   Views: getJobReceiptData, isJobReceiptToken, getReceiptTotalSupply
+ *   (supportsInterface сюда не входит — он принадлежит DiamondLoupeFacet)
  *
  * [Add 3] JobReceiptFacet — новые функции:
  *   burnJobReceipt, isJobReceiptBurned, getTokenIdByJobId
@@ -45,27 +46,32 @@ contract UpgradeBurnReceipt is Script {
         // 2. Build cuts
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
 
-        // ── [0] REPLACE 19: all existing JobReceiptFacet selectors ───────────
-        bytes4[] memory receiptReplace = new bytes4[](19);
+        // ── [0] REPLACE 18: all existing JobReceiptFacet selectors ───────────
+        // supportsInterface(bytes4) — 0x01ffc9a7 — сюда не входит: с этого
+        // момента на диаманде он принадлежит DiamondLoupeFacet, а не
+        // JobReceiptFacet (коллизия была устранена удалением supportsInterface
+        // из JobReceiptFacet). Replace на этот селектор здесь сломал бы
+        // IDiamondCut/IDiamondLoupe ERC-165-ответы диаманда — никогда не
+        // возвращать его в этот массив.
+        bytes4[] memory receiptReplace = new bytes4[](18);
         receiptReplace[0]  = JobReceiptFacet.name.selector;
         receiptReplace[1]  = JobReceiptFacet.symbol.selector;
-        receiptReplace[2]  = bytes4(0x01ffc9a7); // supportsInterface(bytes4) — историческая замена, функция с тех пор удалена из JobReceiptFacet
-        receiptReplace[3]  = JobReceiptFacet.balanceOf.selector;
-        receiptReplace[4]  = JobReceiptFacet.ownerOf.selector;
-        receiptReplace[5]  = JobReceiptFacet.tokenURI.selector;
-        receiptReplace[6]  = bytes4(0x23b872dd); // transferFrom(address,address,uint256)
-        receiptReplace[7]  = bytes4(0x42842e0e); // safeTransferFrom(address,address,uint256)
-        receiptReplace[8]  = bytes4(0xb88d4fde); // safeTransferFrom(address,address,uint256,bytes)
-        receiptReplace[9]  = JobReceiptFacet.approve.selector;
-        receiptReplace[10] = JobReceiptFacet.setApprovalForAll.selector;
-        receiptReplace[11] = JobReceiptFacet.getApproved.selector;
-        receiptReplace[12] = JobReceiptFacet.isApprovedForAll.selector;
-        receiptReplace[13] = JobReceiptFacet.mintJobReceipt.selector;
-        receiptReplace[14] = JobReceiptFacet.setSvgRenderer.selector;
-        receiptReplace[15] = JobReceiptFacet.getSvgRenderer.selector;
-        receiptReplace[16] = JobReceiptFacet.getJobReceiptData.selector;
-        receiptReplace[17] = JobReceiptFacet.isJobReceiptToken.selector;
-        receiptReplace[18] = JobReceiptFacet.getReceiptTotalSupply.selector;
+        receiptReplace[2]  = JobReceiptFacet.balanceOf.selector;
+        receiptReplace[3]  = JobReceiptFacet.ownerOf.selector;
+        receiptReplace[4]  = JobReceiptFacet.tokenURI.selector;
+        receiptReplace[5]  = bytes4(0x23b872dd); // transferFrom(address,address,uint256)
+        receiptReplace[6]  = bytes4(0x42842e0e); // safeTransferFrom(address,address,uint256)
+        receiptReplace[7]  = bytes4(0xb88d4fde); // safeTransferFrom(address,address,uint256,bytes)
+        receiptReplace[8]  = JobReceiptFacet.approve.selector;
+        receiptReplace[9]  = JobReceiptFacet.setApprovalForAll.selector;
+        receiptReplace[10] = JobReceiptFacet.getApproved.selector;
+        receiptReplace[11] = JobReceiptFacet.isApprovedForAll.selector;
+        receiptReplace[12] = JobReceiptFacet.mintJobReceipt.selector;
+        receiptReplace[13] = JobReceiptFacet.setSvgRenderer.selector;
+        receiptReplace[14] = JobReceiptFacet.getSvgRenderer.selector;
+        receiptReplace[15] = JobReceiptFacet.getJobReceiptData.selector;
+        receiptReplace[16] = JobReceiptFacet.isJobReceiptToken.selector;
+        receiptReplace[17] = JobReceiptFacet.getReceiptTotalSupply.selector;
 
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(receiptFacet),
@@ -118,7 +124,7 @@ contract UpgradeBurnReceipt is Script {
         });
 
         // 3. Apply — atomic: burnJobReceipt добавляется до того как cancelJob его вызывает
-        console.log("Applying diamond cut (Replace 19 + Add 3 + Replace 11 + Add 1)...");
+        console.log("Applying diamond cut (Replace 18 + Add 3 + Replace 11 + Add 1)...");
         IDiamondCut(DIAMOND).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
