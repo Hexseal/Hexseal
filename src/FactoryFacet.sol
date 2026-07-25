@@ -31,6 +31,7 @@ library FactoryStorage {
     uint8 constant REGION_US    = 3;
     uint8 constant REGION_LATAM = 4;
     uint8 constant REGION_CA    = 5;
+    uint8 constant REGION_AU    = 6;
 
     struct Layout {
         address usdc;
