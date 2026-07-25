@@ -135,11 +135,20 @@ forge build
 # Test
 forge test -vvv
 
-# Deploy everything
-forge script script/Deploy.s.sol \
+# Deploy everything (order matters: forwarder first, then the rest)
+# 1. Forwarder — copy the printed address into TRUSTED_FORWARDER before step 2
+forge script script/DeployForwarder.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL \
   --private-key $PRIVATE_KEY \
-  --broadcast
+  --broadcast --verify
+
+# 2. Diamond + all facets — requires TRUSTED_FORWARDER, FEE_RECIPIENT,
+#    INITIAL_ARBITER and USDC_ADDRESS set in the environment (the script
+#    reverts pre-flight if any is missing/zero)
+forge script script/DeployFull.s.sol \
+  --rpc-url $BASE_SEPOLIA_RPC_URL \
+  --private-key $PRIVATE_KEY \
+  --broadcast --verify
 
 # Read from contract
 cast call $DIAMOND_ADDRESS "getFeeRecipient()(address)" \
