@@ -33,10 +33,25 @@ contract Bomb {
     }
 }
 
+/// Именованная кастомная ошибка, которой ревертит `Reverter` ниже —
+/// нужна тесту F-3, чтобы проверить, что `retdata` содержит именно её,
+/// а не просто непустой буфер.
+error MockRevertError(uint256 code);
+
+/// Всегда ревертит заданной кастомной ошибкой — отдельный моковый колли
+/// для теста F-3 (путь провала внутреннего вызова), не переиспользует
+/// Echo2771/Bomb, у которых другое назначение.
+contract Reverter {
+    function explode(uint256 code) external pure {
+        revert MockRevertError(code);
+    }
+}
+
 contract MinimalForwarderTest is Test {
     MinimalForwarder forwarder;
     Echo2771 echo;
     Bomb bomb;
+    Reverter reverter;
 
     uint256 constant USER_PK = 0xA11CE;
     address user;
@@ -49,6 +64,7 @@ contract MinimalForwarderTest is Test {
         forwarder = new MinimalForwarder();
         echo = new Echo2771();
         bomb = new Bomb();
+        reverter = new Reverter();
         user = vm.addr(USER_PK);
         vm.deal(user, 100 ether);
         vm.deal(address(this), 100 ether);
@@ -224,5 +240,59 @@ contract MinimalForwarderTest is Test {
             140_000,
             "returndata copy gas scales with bomb size"
         );
+    }
+
+    // ── F-3: провал внутреннего вызова ──────────────────────────────────────
+
+    /// Вспомогательное: отбрасывает первые 4 байта (селектор) буфера, чтобы
+    /// декодировать оставшийся ABI-payload кастомной ошибки через abi.decode.
+    function _dropSelector(bytes memory data) internal pure returns (bytes memory out) {
+        out = new bytes(data.length - 4);
+        for (uint256 i = 0; i < out.length; i++) {
+            out[i] = data[i + 4];
+        }
+    }
+
+    /// ХАРАКТЕРИЗАЦИОННЫЙ тест: `execute()` осознанно НЕ ревертит, когда
+    /// вложенный вызов проваливается — жжёт nonce, эмитит
+    /// `Executed(from, to, false)` и кладёт revert-данные вызванного
+    /// контракта в `retdata`. На это поведение опирается
+    /// `frontend/src/app/api/relay/route.ts`: он симулирует `execute()`
+    /// именно для того, чтобы отличить "execute вернулся нормально, но
+    /// success == false" от настоящего успеха, и разбирает `retdata`, чтобы
+    /// показать пользователю название конкретной ошибки, а не общий "Call
+    /// failed". Если когда-нибудь захочется "починить" execute() так, чтобы
+    /// он сам ревертил при провале вложенного вызова — это сломает симуляцию
+    /// на фронте. Этот тест фиксирует текущее поведение, чтобы такое
+    /// изменение не проскочило незамеченным.
+    function testExecuteDoesNotRevertOnInnerCallFailure() public {
+        uint256 code = 1337;
+        MinimalForwarder.ForwardRequest memory req =
+            _req(address(reverter), 0, abi.encodeWithSelector(Reverter.explode.selector, code));
+        bytes memory sig = _sign(USER_PK, req);
+
+        uint256 nonceBefore = forwarder.getNonce(user);
+
+        vm.expectEmit(true, true, false, true);
+        emit MinimalForwarder.Executed(user, address(reverter), false);
+
+        (bool ok, bytes memory retdata) = forwarder.execute(req, sig);
+
+        assertFalse(ok, "execute() must report inner-call failure via success == false, not revert");
+        assertEq(forwarder.getNonce(user), nonceBefore + 1, "nonce must be consumed even when inner call fails");
+
+        // retdata должен быть ИМЕННО revert-данными Reverter.explode(code),
+        // а не просто непустым буфером — сравниваем побайтово с ожидаемой
+        // ABI-кодировкой кастомной ошибки...
+        assertEq(retdata, abi.encodeWithSelector(MockRevertError.selector, code), "retdata does not match callee's revert data");
+
+        // ...и дополнительно декодируем селектор и payload по отдельности.
+        bytes4 selector;
+        assembly {
+            selector := mload(add(retdata, 32))
+        }
+        assertEq(selector, MockRevertError.selector, "retdata selector mismatch");
+        uint256 decodedCode = abi.decode(_dropSelector(retdata), (uint256));
+        assertEq(decodedCode, code, "retdata payload mismatch");
     }
 }
