@@ -59,7 +59,7 @@ CREATED → FUNDED → ACTIVE → [COMPLETED | DISPUTED]
 | Contract | Address |
 |----------|---------|
 | DiamondProxy | `0xF00CC71878c226E0b64253Fb71dD802aF12165D0` |
-| MinimalForwarder | `0x41c66b80B1445F48AF3863763BC0EC0549413CD7` |
+| MinimalForwarder | `0x268dCfa7ab0DC134d01C5cBcAa7d2834d6dD0f0f` |
 | USDC (test) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 
 ---

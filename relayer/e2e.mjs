@@ -33,8 +33,8 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') });
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const CHAIN_ID   = 84532;
-const DIAMOND    = process.env.DIAMOND_ADDRESS    || '0x7A91d700CF2a201E99F0aD3C3b4f4D79CFE69557';
-const FORWARDER  = process.env.TRUSTED_FORWARDER  || '0x41c66b80B1445F48AF3863763BC0EC0549413CD7';
+const DIAMOND    = process.env.DIAMOND_ADDRESS    || '0x760F07367888C62f7c2Dfb619A5e534132855ce5';
+const FORWARDER  = process.env.TRUSTED_FORWARDER  || '0x268dCfa7ab0DC134d01C5cBcAa7d2834d6dD0f0f';
 const USDC       = process.env.USDC_ADDRESS       || '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 const RELAY_URL  = process.env.RELAY_URL || 'http://localhost:3000/api/relay';
 const RPC_URL    = process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';

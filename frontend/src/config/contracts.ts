@@ -1200,8 +1200,8 @@ export const AGREEMENT_ABI = [
 
 // Адреса контрактов
 export const CONTRACTS = {
-  diamond:    (process.env.NEXT_PUBLIC_DIAMOND_ADDRESS     || '0x7A91d700CF2a201E99F0aD3C3b4f4D79CFE69557') as `0x${string}`,
-  forwarder:  (process.env.NEXT_PUBLIC_FORWARDER_ADDRESS   || '0x41c66b80B1445F48AF3863763BC0EC0549413CD7') as `0x${string}`,
+  diamond:    (process.env.NEXT_PUBLIC_DIAMOND_ADDRESS     || '0x760F07367888C62f7c2Dfb619A5e534132855ce5') as `0x${string}`,
+  forwarder:  (process.env.NEXT_PUBLIC_FORWARDER_ADDRESS   || '0x268dCfa7ab0DC134d01C5cBcAa7d2834d6dD0f0f') as `0x${string}`,
   usdc:       (process.env.NEXT_PUBLIC_USDC_ADDRESS        || '0x036CbD53842c5426634e7929541eC2318f3dCF7e') as `0x${string}`,
   jobReceipt: (process.env.NEXT_PUBLIC_JOB_RECEIPT_ADDRESS || '0x0000000000000000000000000000000000000000') as `0x${string}`,
 } as const;
