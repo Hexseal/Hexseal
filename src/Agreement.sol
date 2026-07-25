@@ -258,6 +258,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
     address public immutable client;        // заказчик
     address public immutable executor;      // исполнитель
+    /// address(0) — штатное значение: арбитр не назначен, пока нет спора.
+    /// Поэтому конструктор намеренно не проверяет arbiter_ на ноль,
+    /// хотя Slither и помечает это как missing-zero-check.
     address public arbiter;                 // арбитр (address(0) до клейма; setArbiter вызывает Diamond)
     uint256 public immutable amount;        // сумма сделки USDC (6 decimals)
     uint256 public immutable deadlineDays;  // дней до авторефанда

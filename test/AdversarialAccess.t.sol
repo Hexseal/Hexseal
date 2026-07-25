@@ -165,7 +165,7 @@ contract AdversarialAccessTest is Test {
         svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
 
-        bytes4[] memory arbSels = new bytes4[](33);
+        bytes4[] memory arbSels = new bytes4[](34);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -199,6 +199,7 @@ contract AdversarialAccessTest is Test {
         arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
         arbSels[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+        arbSels[33] = ArbiterRegistryFacet.raiseAppeal.selector;
 
         bytes4[] memory cutSels = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -513,5 +514,21 @@ contract AdversarialAccessTest is Test {
         vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.CommitmentTooEarly.selector);
         ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+    }
+
+    function testFinalizeVerdictRejectsZeroAgreement() public {
+        vm.expectRevert(ArbiterRegistryFacet.ZeroAddress.selector);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(address(0));
+    }
+
+    function testRaiseAppealRejectsZeroAgreement() public {
+        vm.expectRevert(ArbiterRegistryFacet.ZeroAddress.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(address(0));
+    }
+
+    function testClearStuckVerdictRejectsZeroAgreement() public {
+        vm.prank(owner);
+        vm.expectRevert(ArbiterRegistryFacet.ZeroAddress.selector);
+        ArbiterRegistryFacet(address(diamond)).clearStuckVerdict(address(0));
     }
 }

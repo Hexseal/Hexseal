@@ -212,6 +212,7 @@ contract FactoryFacet {
             amount, deadlineDays, terms,
             fs.diamond, fs.usdc, fs.trustedForwarder, address(this)
         );
+        if (agreementAddress == address(0)) revert ZeroAddress();
 
         IRegistry(fs.diamond).register(agreementAddress, client, executor, amount);
 

@@ -444,6 +444,7 @@ contract ArbiterRegistryFacet {
     /// @notice Исполнить вердикт. Любой может вызвать. Diamond вызывает resolveDispute на Agreement.
     /// Если вердикт заморожен (frozen) — ждём пока owner/DAO разморозит или отменит.
     function finalizeVerdict(address agreement) external {
+        if (agreement == address(0)) revert ZeroAddress();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
 
@@ -600,6 +601,7 @@ contract ArbiterRegistryFacet {
     /// Требует APPEAL_DEPOSIT — флэт, не % от суммы сделки (сумма выбрана сторонами, ей нельзя
     /// доверять как входу для чего-либо, что можно проиграть/выиграть).
     function raiseAppeal(address agreement) external {
+        if (agreement == address(0)) revert ZeroAddress();
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
@@ -767,6 +769,7 @@ contract ArbiterRegistryFacet {
     /// Agreement уходит в REFUNDED, а pendingVerdicts остаётся висеть навечно.
     function clearStuckVerdict(address agreement) external {
         if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
+        if (agreement == address(0)) revert ZeroAddress();
         // Убеждаемся что Agreement уже в терминальном состоянии (не DISPUTED = 4)
         (bool ok, bytes memory st) = agreement.staticcall(abi.encodeWithSignature("status()"));
         require(ok, "ArbiterRegistry: status read failed");
