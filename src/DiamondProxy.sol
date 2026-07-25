@@ -282,6 +282,12 @@ contract DiamondProxy {
         ds.supportedInterfaces[type(IERC165).interfaceId] = true;
         ds.supportedInterfaces[type(IDiamondCut).interfaceId] = true;
         ds.supportedInterfaces[type(IDiamondLoupe).interfaceId] = true;
+        // Диамонд минтит soulbound receipt-NFT через JobReceiptFacet, поэтому
+        // объявляет ERC-721 и ERC721Metadata здесь, а не отдельной реализацией
+        // supportsInterface в самом фасете — иначе селектор 0x01ffc9a7 достаётся
+        // двум фасетам сразу и loupe-интерфейсы перестают опознаваться.
+        ds.supportedInterfaces[0x80ac58cd] = true; // ERC-721
+        ds.supportedInterfaces[0x5b5e139f] = true; // ERC-721 Metadata
     }
 
     fallback() external payable {

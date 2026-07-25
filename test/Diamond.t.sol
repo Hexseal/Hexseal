@@ -386,6 +386,11 @@ contract DiamondTest is Test {
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IERC165).interfaceId));
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondCut).interfaceId));
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondLoupe).interfaceId));
+        // Диамонд держит soulbound receipt-NFT, поэтому обязан опознаваться и как ERC-721
+        assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(0x80ac58cd), "ERC721");
+        assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(0x5b5e139f), "ERC721Metadata");
+        // Неизвестный интерфейс — false
+        assertFalse(DiamondLoupeFacet(address(diamond)).supportsInterface(0xdeadbeef));
     }
     
     // ============ REGISTRY FACET TESTS ============

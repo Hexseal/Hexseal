@@ -74,12 +74,6 @@ contract JobReceiptFacet {
     function name()   external pure returns (string memory) { return "Hexseal Receipt"; }
     function symbol() external pure returns (string memory) { return "HSEALR"; }
 
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == 0x80ac58cd
-            || interfaceId == 0x5b5e139f
-            || interfaceId == 0x01ffc9a7;
-    }
-
     // ─── ERC-721 Views ────────────────────────────────────────────────────────
 
     function balanceOf(address owner) external view returns (uint256) {

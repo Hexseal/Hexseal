@@ -49,7 +49,7 @@ contract UpgradeBurnReceipt is Script {
         bytes4[] memory receiptReplace = new bytes4[](19);
         receiptReplace[0]  = JobReceiptFacet.name.selector;
         receiptReplace[1]  = JobReceiptFacet.symbol.selector;
-        receiptReplace[2]  = JobReceiptFacet.supportsInterface.selector;
+        receiptReplace[2]  = bytes4(0x01ffc9a7); // supportsInterface(bytes4) — историческая замена, функция с тех пор удалена из JobReceiptFacet
         receiptReplace[3]  = JobReceiptFacet.balanceOf.selector;
         receiptReplace[4]  = JobReceiptFacet.ownerOf.selector;
         receiptReplace[5]  = JobReceiptFacet.tokenURI.selector;

@@ -47,7 +47,7 @@ contract MigrateToJobReceiptFacet is Script {
         bytes4[] memory replaceSelectors = new bytes4[](16);
         replaceSelectors[0]  = JobReceiptFacet.name.selector;
         replaceSelectors[1]  = JobReceiptFacet.symbol.selector;
-        replaceSelectors[2]  = JobReceiptFacet.supportsInterface.selector;
+        replaceSelectors[2]  = bytes4(0x01ffc9a7); // supportsInterface(bytes4) — историческая замена, функция с тех пор удалена из JobReceiptFacet
         replaceSelectors[3]  = JobReceiptFacet.balanceOf.selector;
         replaceSelectors[4]  = JobReceiptFacet.ownerOf.selector;
         replaceSelectors[5]  = JobReceiptFacet.tokenURI.selector;
