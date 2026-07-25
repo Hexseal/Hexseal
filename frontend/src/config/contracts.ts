@@ -1198,11 +1198,37 @@ export const AGREEMENT_ABI = [
   },
 ];
 
+// Раньше diamond/forwarder/usdc падали обратно на захардкоженный литерал, если
+// переменная окружения отсутствовала — то есть два источника правды на один и тот
+// же адрес. Именно так словили реальный баг: frontend/.env.local держал старый
+// адрес diamond, который молча перебивал уже поправленный хардкод, и фронт бы
+// продолжил стучаться в брошенный контракт, при этом выглядя в репозитории
+// корректно. NEXT_PUBLIC_* инлайнятся Next.js на этапе билда — значит и упасть
+// это должно на билде/старте, а не позже на каком-то клике пользователя.
+// Bare `process.env.NEXT_PUBLIC_...` (dot-notation, без переменной вместо имени)
+// нужен на каждом вызове отдельно — только так Next.js статически подставляет
+// значение в клиентский бандл.
+function requiredAddress(value: string | undefined, label: string): `0x${string}` {
+  if (!value) {
+    throw new Error(
+      `${label} is not set. This must come from the environment (see .env.vps.example) — ` +
+      `there is no hardcoded fallback on purpose, since a stale one previously masked a ` +
+      `real contract-address change.`
+    );
+  }
+  return value as `0x${string}`;
+}
+
 // Адреса контрактов
 export const CONTRACTS = {
-  diamond:    (process.env.NEXT_PUBLIC_DIAMOND_ADDRESS     || '0x760F07367888C62f7c2Dfb619A5e534132855ce5') as `0x${string}`,
-  forwarder:  (process.env.NEXT_PUBLIC_FORWARDER_ADDRESS   || '0x268dCfa7ab0DC134d01C5cBcAa7d2834d6dD0f0f') as `0x${string}`,
-  usdc:       (process.env.NEXT_PUBLIC_USDC_ADDRESS        || '0x036CbD53842c5426634e7929541eC2318f3dCF7e') as `0x${string}`,
+  diamond:   requiredAddress(process.env.NEXT_PUBLIC_DIAMOND_ADDRESS,   'NEXT_PUBLIC_DIAMOND_ADDRESS'),
+  forwarder: requiredAddress(process.env.NEXT_PUBLIC_FORWARDER_ADDRESS, 'NEXT_PUBLIC_FORWARDER_ADDRESS'),
+  usdc:      requiredAddress(process.env.NEXT_PUBLIC_USDC_ADDRESS,      'NEXT_PUBLIC_USDC_ADDRESS'),
+  // Легаси: отдельный "PlatformReceiptNFT" не задеплоен и нигде в коде не используется
+  // (JobReceiptFacet — это фасет диамонда, адрес приходит через CONTRACTS.diamond).
+  // NEXT_PUBLIC_JOB_RECEIPT_ADDRESS нет ни в одном .env — намеренно оставлен мягким
+  // fallback'ом на нулевой адрес, а не requiredAddress(), чтобы не ронять билд ради
+  // мёртвого поля.
   jobReceipt: (process.env.NEXT_PUBLIC_JOB_RECEIPT_ADDRESS || '0x0000000000000000000000000000000000000000') as `0x${string}`,
 } as const;
 
