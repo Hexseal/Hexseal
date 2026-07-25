@@ -165,6 +165,11 @@ contract FactoryFacet {
             amount, deadlineDays, terms,
             fs.diamond, fs.usdc, fs.trustedForwarder, address(this)
         );
+        // Симметрично deployAndFund: agreementDeployer подключается через
+        // onlyOwner setAgreementDeployer и уже менялся несколько раз
+        // (UpgradeAgreementDeployerV2/V3/V4) — будущий деплойер без
+        // собственной проверки на ноль не должен молча пройти дальше в register().
+        if (agreementAddress == address(0)) revert ZeroAddress();
 
         IRegistry(fs.diamond).register(agreementAddress, client, executor, amount);
 
