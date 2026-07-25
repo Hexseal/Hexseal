@@ -180,8 +180,67 @@ Restored `NEXT_PUBLIC_DIAMOND_ADDRESS`, cleared `.next/`, reran `npm run build`:
 
 ---
 
-## Summary of what could not be verified
+## Summary of what could not be verified (fixes 1 and 2)
 
 - The relayer's `/relay` endpoint was never exercised against a real chain — verification is via the Vitest suite's mocked `ethers.Contract`, not a live Base Sepolia transaction, per the task's "do not send any transaction" constraint. The mocked `Executed` logs are built with a real `ethers.Interface.encodeEventLog`/`.parseLog` round-trip (not hand-written topic strings), so the parsing logic itself is exercised faithfully; what isn't verified is the real `MinimalForwarder` contract's actual on-chain log shape at the new addresses, which I did not query (no RPC calls were made).
-- `route.ts`'s own post-mine gap (see "Same blind spot elsewhere?" above) is reported, not fixed — it was out of scope for this task.
 - `relayer/index.js`, `relayer/e2e.mjs` were not modified or re-run; `index.js` only re-exports/bootstraps `app.js` per the existing refactor and has no `/relay`-related logic of its own to check. `e2e.mjs` looked like a live-network script (not part of the Vitest suite) and was left untouched.
+
+---
+
+## Fix 3 — closed the same gap in `frontend/src/app/api/relay/route.ts` (follow-up)
+
+Commit: `d739afc` — `fix(frontend): re-verify the forwarder's Executed event after mining in /api/relay`
+
+`route.ts` already did the pre-send `simulateContract()` half of this fix (that's what Fix 1 above was built from as a reference), but its post-mine check only looked at `receipt.status === 'reverted'` — the outer tx status — never the forwarder's own `Executed` log. That is the exact same gap `relayer/app.js` had before Fix 1, in the mirror path, and leaving it open meant the two relay paths could now disagree about whether an identical on-chain outcome was a success.
+
+### What changed
+
+1. Added the same event to this file's `FORWARDER_ABI` (`parseAbi`, viem, not ethers — same fragment, different ABI-building call):
+   ```ts
+   'event Executed(address indexed from, address indexed to, bool success)',
+   ```
+2. After `const { receipt, txHash } = relayResult;` (right after `waitForTransactionReceipt()`, before event-log parsing and before the on-chain push-notify call), added a loop over `receipt.logs` filtered by `effectiveForwarder`, decoding each with viem's `decodeEventLog({ abi: FORWARDER_ABI, data, topics })` and reading `Executed`'s `success` field. `success === false` returns `NextResponse.json({ error: ... }, { status: 400 })` instead of the `{success: true}` shape — same verdict-producing condition as `relayer/app.js`'s Fix 1, just expressed in viem instead of ethers (`decodeEventLog` vs. `Interface.parseLog`).
+3. **Reason decoding — could not be done, and I said so in the code and here rather than faking it.** The task asked me to decode the reason using the CUSTOM_ERRORS table already in this file. That table decodes `retdata` — the revert bytes `execute()` returns from its pre-send `staticCall`/`simulateContract`. The `Executed` event carries only `(address from, address to, bool success)` — no revert bytes at all — so there is nothing for the table to decode against at this point. I considered re-simulating the same call once the failure is detected to recover `retdata` for cosmetic purposes, but rejected it: the forwarder consumes the request's nonce inside `execute()` regardless of the inner call's outcome (that's the entire premise of this bug), so by the time we're inspecting the mined receipt, that nonce is already spent on-chain. Re-running `execute()` with the identical `forwardReq` would now fail at the forwarder's own nonce/signature check, producing a *different*, misleading revert reason — not the original one. The response is explicit about this instead: `"Transaction mined but the inner call failed (state changed after simulation) — no revert reason available"`. This exact same limitation applies to `relayer/app.js`'s Fix 1 mined-check, which uses an equivalently generic message for the same reason (see the Fix 1 code path above — it never attempted reason decoding for the post-mine case either, for the same underlying cause).
+4. **Push suppression**: confirmed via a full read of the route that the only "push notification on success" call is the `fetch(`${relayerInternal}/relay/notify`, ...)` block further down the same function. Because the new failure check `return`s before that block is ever reached (it sits between obtaining the receipt and the event-log-parsing/push section), the push is structurally unreachable on a mined-but-failed inner call — no separate suppression flag was needed.
+
+### How the two paths now agree
+
+Both `relayer/app.js`'s `/relay` and `frontend/src/app/api/relay/route.ts`'s `POST` now: (a) simulate `execute()` before broadcasting and reject with a decoded reason on a predicted failure; (b) after `tx.wait()`/`waitForTransactionReceipt()`, parse the forwarder's own `Executed` log filtered by the forwarder address actually used for that call, and treat `success === false` there as a failure — a 400 with no `success: true` in the body, and no push notification — even though the outer receipt itself reads as mined/non-reverted. Same condition, same verdict, on both paths; the code differs only because one is ethers (`Interface.parseLog`) and the other is viem (`decodeEventLog`).
+
+### Caller impact — checked, no double-handling
+
+Read `frontend/src/lib/relay.ts` in full for every call site of `fetch('/api/relay', ...)`. Every one of them does exactly:
+```ts
+if (!res.ok) throw new Error(json.error || `Relay error ${res.status}`);
+```
+and nothing else branches on the response shape beyond that. The only thing that changes caller-visible behavior for an *existing* failure category is `isRelayDown(err)`:
+```ts
+function isRelayDown(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  return msg.toLowerCase().includes('failed to fetch') || /relay error 5\d\d/i.test(msg);
+}
+```
+It only fires on a network-level "failed to fetch" or a `5xx` status. The new failure returns **400** with a specific `error` message — it does not match either `isRelayDown()` condition, so it is thrown and surfaces as a normal error exactly like the pre-existing pre-send-simulation-failure 400 already does. Concretely: it does **not** trigger the direct-wallet-tx fallback path (`walletClient.writeContract` after `isRelayDown()` returns true), so there's no risk of the fallback re-submitting an already-failed, already-nonce-consumed action and charging the user gas for a second doomed attempt. No caller independently re-fetches or re-parses the receipt on the success path either (the only other `waitForTransactionReceipt` calls in `relay.ts` are inside the *fallback* path and in the unrelated `approveUSDC()` direct-tx helper), so nothing double-handles this new failure mode — callers get one clear thrown `Error`, same as before, just now correctly thrown in a case that used to silently report success.
+
+### Build verification
+
+`cd frontend && npm run build` (project's build script) after this change, with `frontend/.env.local` unmodified:
+```
+ ✓ Compiled successfully in 35.4s
+   Skipping linting
+   Checking validity of types ...
+   Collecting page data ...
+ ✓ Generating static pages (28/28)
+   Finalizing page optimization ...
+   Collecting build traces ...
+Route (app) ... [28 routes listed, /api/relay present at 166 B / 105 kB First Load JS]
+```
+Exit code 0 — type-checks cleanly, including `decodeEventLog`'s discriminated-union narrowing (`decoded.eventName === 'Executed'` before reading `decoded.args.success`).
+
+No automated tests exist for this route or anywhere in `frontend/` (`grep` for `*.test.ts(x)`/`*.spec.ts` under `frontend/` — excluding `node_modules` — returns nothing, and `frontend/package.json` has no `test` script), so the build itself is the only available verification, per the task's own instruction to run "whatever tests cover that route if any exist."
+
+### What could not be verified (fix 3)
+
+- Same constraint as fixes 1-2: no real transaction was sent, so the real `MinimalForwarder`'s `Executed` log shape at the live forwarder address (`0x268dCfa7ab0DC134d01C5cBcAa7d2834d6dD0f0f`) was not observed directly — the ABI fragment is taken from the task's own description and matches `relayer/app.js`'s identical addition byte-for-byte.
+- No test exercises the new branch directly (none exist for this route at all); confidence here rests on the build's type-check passing and the logic being structurally identical to the already-tested `relayer/app.js` path, not on a runtime assertion against this specific file.
