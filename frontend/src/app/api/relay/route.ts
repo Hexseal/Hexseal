@@ -7,6 +7,7 @@ import {
   parseAbi,
   keccak256,
   toBytes,
+  decodeEventLog,
   type Hex,
   type Address,
   isAddress,
@@ -39,6 +40,12 @@ const FORWARDER_ABI = parseAbi([
   'function getNonce(address from) view returns (uint256)',
   'function verify((address from, address to, uint256 value, uint256 gas, uint256 nonce, bytes data) req, bytes signature) view returns (bool)',
   'function execute((address from, address to, uint256 value, uint256 gas, uint256 nonce, bytes data) req, bytes signature) payable returns (bool success, bytes retdata)',
+  // Without this there was no way to read execute()'s own success flag back off a
+  // mined receipt — MinimalForwarder.execute() never reverts on an inner-call
+  // failure, it just emits this and returns (false, revertData), so `receipt.status
+  // === 'success'` alone tells you nothing. Mirrors the same addition in
+  // relayer/app.js's FORWARDER_ABI (the other path forwarding through this contract).
+  'event Executed(address indexed from, address indexed to, bool success)',
 ]);
 
 // AgreementDeployed(address indexed agreement, address indexed client, address indexed executor, uint256 amount, uint8 region, uint256 fee)
@@ -508,6 +515,41 @@ export async function POST(req: NextRequest) {
 
     if (relayResult instanceof NextResponse) return relayResult;
     const { receipt, txHash } = relayResult;
+
+    // ── Re-verify after mining ─────────────────────────────────────────────────
+    // The simulateContract() call above is a gas-saving pre-filter, not proof —
+    // state can change between simulating and broadcasting (another tx consumes
+    // the same nonce, spends an allowance, accepts the same job first, ...), so
+    // the inner call can still fail even though execute() itself doesn't revert
+    // and receipt.status reads 'success'. The forwarder's own Executed(from, to,
+    // success) log on the mined receipt is the actual source of truth. Mirrors
+    // the same re-check added to relayer/app.js's /relay route — both paths must
+    // reach the same verdict for the same on-chain outcome.
+    let minedSuccess = true; // no matching log found is unexpected, not a signal — fail open, not closed
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() !== effectiveForwarder.toLowerCase()) continue;
+      try {
+        const decoded = decodeEventLog({ abi: FORWARDER_ABI, data: log.data, topics: log.topics });
+        if (decoded.eventName === 'Executed') {
+          minedSuccess = decoded.args.success;
+          break;
+        }
+      } catch { /* not a log this ABI recognizes */ }
+    }
+
+    if (!minedSuccess) {
+      // Unlike the pre-send simulateContract() failure above, Executed's event only
+      // carries the bool — no revertdata — so the CUSTOM_ERRORS table can't decode
+      // a specific reason here. Re-simulating now wouldn't recover it either: the
+      // nonce this request signed is already consumed on-chain by the tx that just
+      // mined, so a second execute() call with the same forwardReq would fail on the
+      // nonce/signature check itself, not reproduce the original inner revert.
+      console.error('[relay] inner call failed on the mined tx despite a passing simulation (state changed in between)');
+      return NextResponse.json(
+        { error: 'Transaction mined but the inner call failed (state changed after simulation) — no revert reason available' },
+        { status: 400 }
+      );
+    }
 
     // ── Parse event logs ─────────────────────────────────────────────────────
     let agreementAddr: string | undefined;
