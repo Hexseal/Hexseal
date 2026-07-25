@@ -43,7 +43,9 @@ interface IUSDCFull {
 // ---------- STORAGE ----------
 
 library ArbiterRegistryStorage {
-    bytes32 constant POSITION = keccak256("hexseal.arbiterregistry.storage");
+    /// @custom:storage-location erc7201:hexseal.arbiterregistry.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.arbiterregistry.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant POSITION = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
 
     struct PendingVerdict {
         address arbiter;        // кто подал вердикт

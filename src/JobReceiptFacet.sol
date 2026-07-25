@@ -19,7 +19,9 @@ import "./SVGRenderer.sol";
 // ─── Storage (same slot as OfferNFTFacet — data preserved) ───────────────────
 
 library ReceiptStorage {
-    bytes32 constant POSITION = keccak256("hexseal.offernft.storage");
+    /// @custom:storage-location erc7201:hexseal.offernft.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.offernft.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant POSITION = 0xcda203cf548fb5f65947761da4867a0c96d965f3755581c496cf785aac114900;
 
     struct JobReceiptData {
         address client;

@@ -55,7 +55,9 @@ interface IJobBoardUSDC {
 // ---------- STORAGE ----------
 
 library JobBoardStorage {
-    bytes32 constant POSITION = keccak256("hexseal.jobboard.storage");
+    /// @custom:storage-location erc7201:hexseal.jobboard.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.jobboard.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant POSITION = 0x2dfb8cbdd723e055b4c668e1f7986e659e6340635543242a2d9ff47b878af000;
 
     enum JobStatus { OPEN, ACCEPTED, CANCELLED }
 
