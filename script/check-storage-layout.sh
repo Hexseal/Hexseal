@@ -67,7 +67,7 @@ fi
 VIOLATIONS=$(printf '%s\n' "$OUT" | awk '
     /^[A-Za-z_][A-Za-z0-9_]*:$/ { contract = substr($0, 1, length($0)-1); next }
     /^\| *[A-Za-z_]/ {
-        if (contract ~ /Facet$/ && $0 !~ /Name/) print contract ": " $2
+        if (contract ~ /Facet$/ && $2 != "Name") print contract ": " $2
     }
 ')
 
@@ -82,7 +82,7 @@ VIOLATIONS=$(printf '%s\n' "$OUT" | awk '
 AGREEMENT_ROWS=$(printf '%s\n' "$OUT" | awk '
     /^[A-Za-z_][A-Za-z0-9_]*:$/ { contract = substr($0, 1, length($0)-1); next }
     /^\| *[A-Za-z_]/ {
-        if (contract == "Agreement" && $0 !~ /Name/) print contract ": " $2
+        if (contract == "Agreement" && $2 != "Name") print contract ": " $2
     }
 ')
 
