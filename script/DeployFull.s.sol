@@ -12,9 +12,19 @@ pragma solidity ^0.8.20;
 // селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова.
 //
-// Требует TRUSTED_FORWARDER уже задеплоенным (script/DeployForwarder.s.sol) —
-// initFactory ревертит на нулевом форвардере, а этот скрипт проверяет его
-// заранее, до единого деплоя.
+// Требует ДО запуска:
+//   TRUSTED_FORWARDER — уже задеплоенный MinimalForwarder (script/DeployForwarder.s.sol),
+//                        должен реально существовать на цепи (код проверяется).
+//   USDC_ADDRESS       — должен реально существовать на цепи (код проверяется);
+//                        по умолчанию — тестовый USDC Base Sepolia.
+//   FEE_RECIPIENT      — ненулевой; без него платформенные комиссии молча ушли
+//                        бы на deployer-ключ.
+//   INITIAL_ARBITER    — ненулевой; без единого арбитра ни один спор нельзя
+//                        закрыть иначе как таймаутом-рефандом клиенту на 100%
+//                        (applyAsArbiter требует DAO-режим, которого на свежем
+//                        деплое ещё нет, а addArbiter — onlyOwnerOrChief).
+// Все четыре проверяются до единого вызова vm.startBroadcast — дешевле споткнуться
+// сразу, чем после того как скрипт уже задеплоил одиннадцать имплементаций и Diamond.
 
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
@@ -37,16 +47,55 @@ contract DeployFull is Script {
         address usdc             = vm.envOr("USDC_ADDRESS",      address(0x036CbD53842c5426634e7929541eC2318f3dCF7e));
         address feeRecipient     = vm.envOr("FEE_RECIPIENT",     address(0));
         address trustedForwarder = vm.envOr("TRUSTED_FORWARDER", address(0));
+        address initialArbiter   = vm.envOr("INITIAL_ARBITER",   address(0));
         uint256 deployerKey      = vm.envUint("PRIVATE_KEY");
         address owner            = vm.addr(deployerKey);
-        if (feeRecipient == address(0)) feeRecipient = owner;
 
-        // initFactory() ревертит ZeroAddress() на нулевом forwarder-е, но только
-        // ПОСЛЕ того как этот скрипт задеплоит одиннадцать имплементаций и сам Diamond.
-        // Проверяем здесь, до единого деплоя — дешевле споткнуться сразу.
+        // ── Pre-flight checks — все ДО единого деплоя ────────────────────────
+        // Дешевле споткнуться здесь, чем после того как скрипт уже сжёг газ на
+        // одиннадцать имплементаций и сам Diamond.
+
+        // initFactory() ревертит ZeroAddress() на нулевом forwarder-е — та же
+        // проверка здесь просто дешевле по месту.
         require(
             trustedForwarder != address(0),
             "DeployFull: TRUSTED_FORWARDER is zero - deploy MinimalForwarder first (script/DeployForwarder.s.sol) and export TRUSTED_FORWARDER"
+        );
+        // Не только ненулевой, но и реально существующий на этой цепи. Устаревший
+        // или опечатанный адрес молча проходит проверку на ноль и задеплоил бы
+        // диамонд с mis-wired gasless-путём, который сломается только при первом
+        // реальном relay — не при деплое.
+        require(
+            trustedForwarder.code.length > 0,
+            "DeployFull: TRUSTED_FORWARDER has no code on this chain"
+        );
+
+        // Тот же класс риска, что и forwarder: USDC_ADDRESS по умолчанию —
+        // захардкоженный адрес Base Sepolia. Деплой не на ту цепь тихо привяжет
+        // несуществующий токен, и каждая сделка будет ревертить на первом же
+        // transferFrom — а не на деплое, где это дёшево поймать.
+        require(usdc.code.length > 0, "DeployFull: USDC_ADDRESS has no code on this chain");
+
+        // Раньше при отсутствующем FEE_RECIPIENT комиссии молча утекали на
+        // deployer-ключ (owner). На живом диаманде это два РАЗНЫХ адреса —
+        // такой фолбэк здесь был бы неверной конфигурацией, которая выглядит
+        // как успешный деплой.
+        require(
+            feeRecipient != address(0),
+            "DeployFull: FEE_RECIPIENT is zero - platform fees would silently route to the deployer key"
+        );
+
+        // Без этого диамонд стартует с ПУСТЫМ реестром арбитров: applyAsArbiter()
+        // требует isDaoActive() (uniqueActiveUsers >= 100k ИЛИ owner.activateDAO()) —
+        // ни то ни другое не истинно на свежем деплое, а addArbiter — onlyOwnerOrChief,
+        // chiefArbiter тоже нулевой. Без единого арбитра commitDisputeClaim/
+        // claimDispute ревертят NotArbiter() для всех, и triggerArbiterTimeout()
+        // после 4-дневного окна становится единственным терминальным исходом спора —
+        // 100% рефанд клиенту. В сочетании с raiseDispute() это безусловный "undo"
+        // на любую уже поставленную работу.
+        require(
+            initialArbiter != address(0),
+            "DeployFull: INITIAL_ARBITER is zero - a diamond with no arbiter resolves every dispute as a client refund"
         );
 
         vm.startBroadcast(deployerKey);
@@ -129,17 +178,24 @@ contract DeployFull is Script {
         // UpgradeRegions7.s.sol, UpgradeRegionAU.s.sol). Без этих вызовов свежий
         // деплой смонтирует все 145 селекторов чисто, но тихо оставит трём регионам
         // нулевую комиссию платформы.
-        FactoryFacet(address(diamond)).setRegionFee(4, 4_000_000);   // LATAM $4
-        FactoryFacet(address(diamond)).setRegionFee(5, 10_000_000);  // CA    $10
-        FactoryFacet(address(diamond)).setRegionFee(6, 7_000_000);   // AU    $7
+        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_LATAM, 4_000_000);   // LATAM $4
+        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_CA,    10_000_000);  // CA    $10
+        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_AU,    7_000_000);   // AU    $7
+
+        // ── 8. Первый арбитр ──────────────────────────────────────────────────
+        // Без этого раунд споров невозможно закрыть иначе как таймаутом-рефандом
+        // клиенту (см. пояснение у require(initialArbiter != address(0)) выше).
+        // chiefArbiter НЕ выставляется — на живом диаманде он остаётся нулевым.
+        ArbiterRegistryFacet(address(diamond)).addArbiter(initialArbiter);
 
         vm.stopBroadcast();
 
-        // ── 8. Итог ───────────────────────────────────────────────────────────
+        // ── 9. Итог ───────────────────────────────────────────────────────────
         (
             uint256 cis, uint256 asia, uint256 eu, uint256 us,
             uint256 latam, uint256 ca, uint256 au
         ) = FactoryFacet(address(diamond)).getAllFees();
+        address[] memory arbiters = ArbiterRegistryFacet(address(diamond)).getArbiters();
 
         console.log("\n======== HEXSEAL DEPLOYMENT COMPLETE ========");
         console.log("DiamondProxy:  ", address(diamond));
@@ -156,6 +212,11 @@ contract DeployFull is Script {
         console.log("  4 LATAM: ", latam);
         console.log("  5 CA:    ", ca);
         console.log("  6 AU:    ", au);
+        console.log("--- Arbiters ---");
+        console.log("Count:         ", arbiters.length);
+        for (uint256 i = 0; i < arbiters.length; i++) {
+            console.log("  Arbiter:     ", arbiters[i]);
+        }
         console.log("=============================================");
         console.log("Update your .env:");
         console.log("DIAMOND_ADDRESS=", address(diamond));
