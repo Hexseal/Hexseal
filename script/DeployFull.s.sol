@@ -3,7 +3,28 @@ pragma solidity ^0.8.20;
 
 // HEXSEAL — DeployFull.s.sol
 // Полный деплой с нуля: Diamond + все фасеты + SVGRenderer + init.
-// Использует новые storage slots (keccak256("hexseal.X.storage")).
+// Хранилище — ERC-7201 (namespaced slots): каждый фасет держит свой слот через
+// keccak256(abi.encode(uint256(keccak256("hexseal.<name>.storage")) - 1)) & ~bytes32(uint256(0xff)),
+// см. test/StorageLayout.t.sol.
+//
+// Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 145
+// селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// падает, если этот файл и живые ABI разойдутся снова.
+//
+// Требует ДО запуска:
+//   TRUSTED_FORWARDER — уже задеплоенный MinimalForwarder (script/DeployForwarder.s.sol),
+//                        должен реально существовать на цепи (код проверяется).
+//   USDC_ADDRESS       — должен реально существовать на цепи (код проверяется);
+//                        по умолчанию — тестовый USDC Base Sepolia.
+//   FEE_RECIPIENT      — ненулевой; без него платформенные комиссии молча ушли
+//                        бы на deployer-ключ.
+//   INITIAL_ARBITER    — ненулевой; без единого арбитра ни один спор нельзя
+//                        закрыть иначе как таймаутом-рефандом клиенту на 100%
+//                        (applyAsArbiter требует DAO-режим, которого на свежем
+//                        деплое ещё нет, а addArbiter — onlyOwnerOrChief).
+// Все четыре проверяются до единого вызова vm.startBroadcast — дешевле споткнуться
+// сразу, чем после того как скрипт уже задеплоил одиннадцать имплементаций и Diamond.
 
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
@@ -16,6 +37,7 @@ import "../src/facets/JobBoardFacet.sol";
 import "../src/facets/ServiceBoardFacet.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
 import "../src/facets/DealMetadataFacet.sol";
+import "../src/facets/ReputationFacet.sol";
 import "../src/JobReceiptFacet.sol";
 import "../src/SVGRenderer.sol";
 
@@ -25,9 +47,56 @@ contract DeployFull is Script {
         address usdc             = vm.envOr("USDC_ADDRESS",      address(0x036CbD53842c5426634e7929541eC2318f3dCF7e));
         address feeRecipient     = vm.envOr("FEE_RECIPIENT",     address(0));
         address trustedForwarder = vm.envOr("TRUSTED_FORWARDER", address(0));
+        address initialArbiter   = vm.envOr("INITIAL_ARBITER",   address(0));
         uint256 deployerKey      = vm.envUint("PRIVATE_KEY");
         address owner            = vm.addr(deployerKey);
-        if (feeRecipient == address(0)) feeRecipient = owner;
+
+        // ── Pre-flight checks — все ДО единого деплоя ────────────────────────
+        // Дешевле споткнуться здесь, чем после того как скрипт уже сжёг газ на
+        // одиннадцать имплементаций и сам Diamond.
+
+        // initFactory() ревертит ZeroAddress() на нулевом forwarder-е — та же
+        // проверка здесь просто дешевле по месту.
+        require(
+            trustedForwarder != address(0),
+            "DeployFull: TRUSTED_FORWARDER is zero - deploy MinimalForwarder first (script/DeployForwarder.s.sol) and export TRUSTED_FORWARDER"
+        );
+        // Не только ненулевой, но и реально существующий на этой цепи. Устаревший
+        // или опечатанный адрес молча проходит проверку на ноль и задеплоил бы
+        // диамонд с mis-wired gasless-путём, который сломается только при первом
+        // реальном relay — не при деплое.
+        require(
+            trustedForwarder.code.length > 0,
+            "DeployFull: TRUSTED_FORWARDER has no code on this chain"
+        );
+
+        // Тот же класс риска, что и forwarder: USDC_ADDRESS по умолчанию —
+        // захардкоженный адрес Base Sepolia. Деплой не на ту цепь тихо привяжет
+        // несуществующий токен, и каждая сделка будет ревертить на первом же
+        // transferFrom — а не на деплое, где это дёшево поймать.
+        require(usdc.code.length > 0, "DeployFull: USDC_ADDRESS has no code on this chain");
+
+        // Раньше при отсутствующем FEE_RECIPIENT комиссии молча утекали на
+        // deployer-ключ (owner). На живом диаманде это два РАЗНЫХ адреса —
+        // такой фолбэк здесь был бы неверной конфигурацией, которая выглядит
+        // как успешный деплой.
+        require(
+            feeRecipient != address(0),
+            "DeployFull: FEE_RECIPIENT is zero - platform fees would silently route to the deployer key"
+        );
+
+        // Без этого диамонд стартует с ПУСТЫМ реестром арбитров: applyAsArbiter()
+        // требует isDaoActive() (uniqueActiveUsers >= 100k ИЛИ owner.activateDAO()) —
+        // ни то ни другое не истинно на свежем деплое, а addArbiter — onlyOwnerOrChief,
+        // chiefArbiter тоже нулевой. Без единого арбитра commitDisputeClaim/
+        // claimDispute ревертят NotArbiter() для всех, и triggerArbiterTimeout()
+        // после 4-дневного окна становится единственным терминальным исходом спора —
+        // 100% рефанд клиенту. В сочетании с raiseDispute() это безусловный "undo"
+        // на любую уже поставленную работу.
+        require(
+            initialArbiter != address(0),
+            "DeployFull: INITIAL_ARBITER is zero - a diamond with no arbiter resolves every dispute as a client refund"
+        );
 
         vm.startBroadcast(deployerKey);
 
@@ -42,6 +111,7 @@ contract DeployFull is Script {
         ArbiterRegistryFacet   arbiterFacet = new ArbiterRegistryFacet();
         DealMetadataFacet      metaFacet    = new DealMetadataFacet();
         JobReceiptFacet        receiptFacet = new JobReceiptFacet();
+        ReputationFacet        repFacet     = new ReputationFacet();
         SVGRenderer            svgRenderer  = new SVGRenderer();
 
         console.log("--- Implementations ---");
@@ -55,74 +125,16 @@ contract DeployFull is Script {
         console.log("ArbiterRegistryFacet: ", address(arbiterFacet));
         console.log("DealMetadataFacet:    ", address(metaFacet));
         console.log("JobReceiptFacet:      ", address(receiptFacet));
+        console.log("ReputationFacet:      ", address(repFacet));
         console.log("SVGRenderer:          ", address(svgRenderer));
 
         // ── 2. Базовые фасеты для конструктора Diamond ────────────────────────
         // (DiamondCut, DiamondLoupe, Ownership, Registry, Factory)
         // supportsInterface здесь от DiamondLoupeFacet — так и остаётся, ERC-721
         // интерфейсы для receipt-NFT регистрируются в маппинге конструктором Diamond
-        IDiamondCut.FacetCut[] memory initCuts = new IDiamondCut.FacetCut[](5);
-
-        // DiamondCutFacet — 1 селектор
-        bytes4[] memory cutSels = new bytes4[](1);
-        cutSels[0] = IDiamondCut.diamondCut.selector;
-        initCuts[0] = _cut(address(cutFacet), IDiamondCut.FacetCutAction.Add, cutSels);
-
-        // DiamondLoupeFacet — 5 селекторов
-        bytes4[] memory loupeSels = new bytes4[](5);
-        loupeSels[0] = IDiamondLoupe.facets.selector;
-        loupeSels[1] = IDiamondLoupe.facetFunctionSelectors.selector;
-        loupeSels[2] = IDiamondLoupe.facetAddresses.selector;
-        loupeSels[3] = IDiamondLoupe.facetAddress.selector;
-        loupeSels[4] = IERC165.supportsInterface.selector;
-        initCuts[1] = _cut(address(loupeFacet), IDiamondCut.FacetCutAction.Add, loupeSels);
-
-        // OwnershipFacet — 4 селектора
-        bytes4[] memory ownSels = new bytes4[](4);
-        ownSels[0] = OwnershipFacet.transferOwnership.selector;
-        ownSels[1] = OwnershipFacet.owner.selector;
-        ownSels[2] = OwnershipFacet.acceptOwnership.selector;
-        ownSels[3] = OwnershipFacet.pendingOwner.selector;
-        initCuts[2] = _cut(address(ownFacet), IDiamondCut.FacetCutAction.Add, ownSels);
-
-        // RegistryFacet — 13 селекторов
-        bytes4[] memory regSels = new bytes4[](13);
-        regSels[0]  = RegistryFacet.initRegistry.selector;
-        regSels[1]  = RegistryFacet.register.selector;
-        regSels[2]  = RegistryFacet.updateStatus.selector;
-        regSels[3]  = RegistryFacet.setAuthorizedFactory.selector;
-        regSels[4]  = RegistryFacet.hasActivePair.selector;
-        regSels[5]  = RegistryFacet.getActivePair.selector;
-        regSels[6]  = RegistryFacet.getRecord.selector;
-        regSels[7]  = RegistryFacet.getByClient.selector;
-        regSels[8]  = RegistryFacet.getByExecutor.selector;
-        regSels[9]  = RegistryFacet.getActive.selector;
-        regSels[10] = RegistryFacet.getDisputed.selector;
-        regSels[11] = RegistryFacet.totalAgreements.selector;
-        regSels[12] = RegistryFacet.authorizedFactory.selector;
-        initCuts[3] = _cut(address(regFacet), IDiamondCut.FacetCutAction.Add, regSels);
-
-        // FactoryFacet — 18 селекторов
-        bytes4[] memory facSels = new bytes4[](18);
-        facSels[0]  = FactoryFacet.initFactory.selector;
-        facSels[1]  = FactoryFacet.deployAgreement.selector;
-        facSels[2]  = FactoryFacet.setRegionFee.selector;
-        facSels[3]  = FactoryFacet.setFeeRecipient.selector;
-        facSels[4]  = FactoryFacet.setTrustedForwarder.selector;
-        facSels[5]  = bytes4(0x16c38b3c);
-        facSels[6]  = bytes4(0x220f72fc);
-        facSels[7]  = bytes4(0x9403d404);
-        facSels[8]  = FactoryFacet.setAgreementDeployer.selector;
-        facSels[9]  = FactoryFacet.getRegionFee.selector;
-        facSels[10] = FactoryFacet.getAllFees.selector;
-        facSels[11] = FactoryFacet.getFeeRecipient.selector;
-        facSels[12] = FactoryFacet.getTrustedForwarder.selector;
-        facSels[13] = bytes4(0xb187bd26);
-        facSels[14] = FactoryFacet.getUsdc.selector;
-        facSels[15] = bytes4(0xeea6f749);
-        facSels[16] = bytes4(0x189b468b);
-        facSels[17] = FactoryFacet.getAgreementDeployer.selector;
-        initCuts[4] = _cut(address(facFacet), IDiamondCut.FacetCutAction.Add, facSels);
+        IDiamondCut.FacetCut[] memory initCuts = buildInitCuts(
+            address(cutFacet), address(loupeFacet), address(ownFacet), address(regFacet), address(facFacet)
+        );
 
         // ── 3. Деплой Diamond ─────────────────────────────────────────────────
         DiamondProxy diamond = new DiamondProxy(owner, initCuts, address(0), "");
@@ -145,100 +157,46 @@ contract DeployFull is Script {
 
         // ── 5. Добавляем остальные фасеты одним diamondCut ───────────────────
         // Порядок: JobBoard, ServiceBoard, ArbiterRegistry, DealMetadata,
-        //          JobReceiptFacet
-        IDiamondCut.FacetCut[] memory cuts2 = new IDiamondCut.FacetCut[](5);
-
-        // JobBoardFacet — 10 селекторов
-        bytes4[] memory jobSels = new bytes4[](10);
-        jobSels[0] = JobBoardFacet.mintJobWithPermit.selector;
-        jobSels[1] = JobBoardFacet.mintJob.selector;
-        jobSels[2] = JobBoardFacet.applyForJob.selector;
-        jobSels[3] = JobBoardFacet.acceptApplicant.selector;
-        jobSels[4] = JobBoardFacet.cancelJob.selector;
-        jobSels[5] = JobBoardFacet.getJob.selector;
-        jobSels[6] = JobBoardFacet.getClientJobs.selector;
-        jobSels[7] = JobBoardFacet.getApplicants.selector;
-        jobSels[8] = JobBoardFacet.totalJobs.selector;
-        jobSels[9] = JobBoardFacet.getOpenJobs.selector;
-        cuts2[0] = _cut(address(jobBoard), IDiamondCut.FacetCutAction.Add, jobSels);
-
-        // ServiceBoardFacet — 21 селектор
-        bytes4[] memory svcSels = new bytes4[](21);
-        svcSels[0]  = ServiceBoardFacet.mintService.selector;
-        svcSels[1]  = ServiceBoardFacet.mintServiceWithPermit.selector;
-        svcSels[2]  = ServiceBoardFacet.removeService.selector;
-        svcSels[3]  = ServiceBoardFacet.pauseService.selector;
-        svcSels[4]  = ServiceBoardFacet.unpauseService.selector;
-        svcSels[5]  = ServiceBoardFacet.requestService.selector;
-        svcSels[6]  = ServiceBoardFacet.requestServiceWithPermit.selector;
-        svcSels[7]  = ServiceBoardFacet.acceptRequest.selector;
-        svcSels[8]  = ServiceBoardFacet.rejectRequest.selector;
-        svcSels[9]  = ServiceBoardFacet.cancelRequest.selector;
-        svcSels[10] = ServiceBoardFacet.getService.selector;
-        svcSels[11] = ServiceBoardFacet.getExecutorServices.selector;
-        svcSels[12] = ServiceBoardFacet.getServiceClients.selector;
-        svcSels[13] = ServiceBoardFacet.totalServices.selector;
-        svcSels[14] = ServiceBoardFacet.getRequest.selector;
-        svcSels[15] = ServiceBoardFacet.getServiceRequests.selector;
-        svcSels[16] = ServiceBoardFacet.getClientRequests.selector;
-        svcSels[17] = ServiceBoardFacet.totalRequests.selector;
-        svcSels[18] = ServiceBoardFacet.getRequestFunds.selector;
-        svcSels[19] = ServiceBoardFacet.getActiveServices.selector;
-        svcSels[20] = ServiceBoardFacet.getPendingRequests.selector;
-        cuts2[1] = _cut(address(serviceBoard), IDiamondCut.FacetCutAction.Add, svcSels);
-
-        // ArbiterRegistryFacet — 13 селекторов
-        bytes4[] memory arbSels = new bytes4[](13);
-        arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
-        arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
-        arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
-        arbSels[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        arbSels[4]  = ArbiterRegistryFacet.claimDispute.selector;
-        arbSels[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
-        arbSels[6]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
-        arbSels[7]  = ArbiterRegistryFacet.getChiefArbiter.selector;
-        arbSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
-        arbSels[9]  = ArbiterRegistryFacet.getArbiters.selector;
-        arbSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        arbSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
-        arbSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
-        cuts2[2] = _cut(address(arbiterFacet), IDiamondCut.FacetCutAction.Add, arbSels);
-
-        // DealMetadataFacet — 1 селектор
-        bytes4[] memory metaSels = new bytes4[](1);
-        metaSels[0] = DealMetadataFacet.getDealTokenURI.selector;
-        cuts2[3] = _cut(address(metaFacet), IDiamondCut.FacetCutAction.Add, metaSels);
-
-        // JobReceiptFacet — ADD 18 селекторов ERC-721 + receipt
-        bytes4[] memory receiptAddSels = new bytes4[](18);
-        receiptAddSels[0]  = JobReceiptFacet.name.selector;
-        receiptAddSels[1]  = JobReceiptFacet.symbol.selector;
-        receiptAddSels[2]  = JobReceiptFacet.balanceOf.selector;
-        receiptAddSels[3]  = JobReceiptFacet.ownerOf.selector;
-        receiptAddSels[4]  = JobReceiptFacet.tokenURI.selector;
-        receiptAddSels[5]  = bytes4(0x23b872dd); // transferFrom(address,address,uint256)
-        receiptAddSels[6]  = bytes4(0x42842e0e); // safeTransferFrom(address,address,uint256)
-        receiptAddSels[7]  = bytes4(0xb88d4fde); // safeTransferFrom(address,address,uint256,bytes)
-        receiptAddSels[8]  = JobReceiptFacet.approve.selector;
-        receiptAddSels[9]  = JobReceiptFacet.setApprovalForAll.selector;
-        receiptAddSels[10] = JobReceiptFacet.getApproved.selector;
-        receiptAddSels[11] = JobReceiptFacet.isApprovedForAll.selector;
-        receiptAddSels[12] = JobReceiptFacet.mintJobReceipt.selector;
-        receiptAddSels[13] = JobReceiptFacet.setSvgRenderer.selector;
-        receiptAddSels[14] = JobReceiptFacet.getSvgRenderer.selector;
-        receiptAddSels[15] = JobReceiptFacet.getJobReceiptData.selector;
-        receiptAddSels[16] = JobReceiptFacet.isJobReceiptToken.selector;
-        receiptAddSels[17] = JobReceiptFacet.getReceiptTotalSupply.selector;
-        cuts2[4] = _cut(address(receiptFacet), IDiamondCut.FacetCutAction.Add, receiptAddSels);
+        //          JobReceiptFacet, ReputationFacet
+        IDiamondCut.FacetCut[] memory cuts2 = buildRemainingCuts(
+            address(jobBoard),
+            address(serviceBoard),
+            address(arbiterFacet),
+            address(metaFacet),
+            address(receiptFacet),
+            address(repFacet)
+        );
 
         IDiamondCut(address(diamond)).diamondCut(cuts2, address(0), "");
 
         // ── 6. Линкуем SVGRenderer ────────────────────────────────────────────
         JobReceiptFacet(address(diamond)).setSvgRenderer(address(svgRenderer));
 
+        // ── 7. Региональные комиссии 4 (LATAM), 5 (CA), 6 (AU) ───────────────
+        // initFactory() сидит только регионы 0-3 (CIS/Asia/EU/US) — так исторически
+        // сложилось (регионы 4-6 добавлены позже отдельными апгрейдами:
+        // UpgradeRegions7.s.sol, UpgradeRegionAU.s.sol). Без этих вызовов свежий
+        // деплой смонтирует все 145 селекторов чисто, но тихо оставит трём регионам
+        // нулевую комиссию платформы.
+        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_LATAM, 4_000_000);   // LATAM $4
+        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_CA,    10_000_000);  // CA    $10
+        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_AU,    7_000_000);   // AU    $7
+
+        // ── 8. Первый арбитр ──────────────────────────────────────────────────
+        // Без этого раунд споров невозможно закрыть иначе как таймаутом-рефандом
+        // клиенту (см. пояснение у require(initialArbiter != address(0)) выше).
+        // chiefArbiter НЕ выставляется — на живом диаманде он остаётся нулевым.
+        ArbiterRegistryFacet(address(diamond)).addArbiter(initialArbiter);
+
         vm.stopBroadcast();
 
-        // ── 7. Итог ───────────────────────────────────────────────────────────
+        // ── 9. Итог ───────────────────────────────────────────────────────────
+        (
+            uint256 cis, uint256 asia, uint256 eu, uint256 us,
+            uint256 latam, uint256 ca, uint256 au
+        ) = FactoryFacet(address(diamond)).getAllFees();
+        address[] memory arbiters = ArbiterRegistryFacet(address(diamond)).getArbiters();
+
         console.log("\n======== HEXSEAL DEPLOYMENT COMPLETE ========");
         console.log("DiamondProxy:  ", address(diamond));
         console.log("SVGRenderer:   ", address(svgRenderer));
@@ -246,9 +204,278 @@ contract DeployFull is Script {
         console.log("FeeRecipient:  ", feeRecipient);
         console.log("Forwarder:     ", trustedForwarder);
         console.log("Owner:         ", owner);
+        console.log("--- Region fees (USDC, 6 decimals) ---");
+        console.log("  0 CIS:   ", cis);
+        console.log("  1 Asia:  ", asia);
+        console.log("  2 EU:    ", eu);
+        console.log("  3 US:    ", us);
+        console.log("  4 LATAM: ", latam);
+        console.log("  5 CA:    ", ca);
+        console.log("  6 AU:    ", au);
+        console.log("--- Arbiters ---");
+        console.log("Count:         ", arbiters.length);
+        for (uint256 i = 0; i < arbiters.length; i++) {
+            console.log("  Arbiter:     ", arbiters[i]);
+        }
         console.log("=============================================");
         console.log("Update your .env:");
         console.log("DIAMOND_ADDRESS=", address(diamond));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Построение FacetCut[] — вынесено в public pure функции, чтобы
+    // test/DeployFullSelectors.t.sol мог сверить их с живыми ABI без
+    // повторного запуска деплоя. Единственный источник правды: run() выше
+    // строит куты ровно через эти же функции, ничего не дублирует руками.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function buildInitCuts(
+        address cutFacetAddr,
+        address loupeFacetAddr,
+        address ownFacetAddr,
+        address regFacetAddr,
+        address facFacetAddr
+    ) public pure returns (IDiamondCut.FacetCut[] memory cuts) {
+        cuts = new IDiamondCut.FacetCut[](5);
+        cuts[0] = _cut(cutFacetAddr,   IDiamondCut.FacetCutAction.Add, cutFacetSelectors());
+        cuts[1] = _cut(loupeFacetAddr, IDiamondCut.FacetCutAction.Add, loupeFacetSelectors());
+        cuts[2] = _cut(ownFacetAddr,   IDiamondCut.FacetCutAction.Add, ownershipFacetSelectors());
+        cuts[3] = _cut(regFacetAddr,   IDiamondCut.FacetCutAction.Add, registryFacetSelectors());
+        cuts[4] = _cut(facFacetAddr,   IDiamondCut.FacetCutAction.Add, factoryFacetSelectors());
+    }
+
+    function buildRemainingCuts(
+        address jobBoardAddr,
+        address serviceBoardAddr,
+        address arbiterFacetAddr,
+        address metaFacetAddr,
+        address receiptFacetAddr,
+        address reputationFacetAddr
+    ) public pure returns (IDiamondCut.FacetCut[] memory cuts) {
+        cuts = new IDiamondCut.FacetCut[](6);
+        cuts[0] = _cut(jobBoardAddr,         IDiamondCut.FacetCutAction.Add, jobBoardFacetSelectors());
+        cuts[1] = _cut(serviceBoardAddr,     IDiamondCut.FacetCutAction.Add, serviceBoardFacetSelectors());
+        cuts[2] = _cut(arbiterFacetAddr,     IDiamondCut.FacetCutAction.Add, arbiterRegistryFacetSelectors());
+        cuts[3] = _cut(metaFacetAddr,        IDiamondCut.FacetCutAction.Add, dealMetadataFacetSelectors());
+        cuts[4] = _cut(receiptFacetAddr,     IDiamondCut.FacetCutAction.Add, jobReceiptFacetSelectors());
+        cuts[5] = _cut(reputationFacetAddr,  IDiamondCut.FacetCutAction.Add, reputationFacetSelectors());
+    }
+
+    // ── Per-facet selector arrays (ground truth: `forge inspect <Facet> methodIdentifiers`) ──
+
+    // DiamondCutFacet — 1 селектор
+    function cutFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](1);
+        sels[0] = IDiamondCut.diamondCut.selector;
+    }
+
+    // DiamondLoupeFacet — 5 селекторов
+    function loupeFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](5);
+        sels[0] = IDiamondLoupe.facets.selector;
+        sels[1] = IDiamondLoupe.facetFunctionSelectors.selector;
+        sels[2] = IDiamondLoupe.facetAddresses.selector;
+        sels[3] = IDiamondLoupe.facetAddress.selector;
+        sels[4] = IERC165.supportsInterface.selector;
+    }
+
+    // OwnershipFacet — 4 селектора
+    function ownershipFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](4);
+        sels[0] = OwnershipFacet.transferOwnership.selector;
+        sels[1] = OwnershipFacet.owner.selector;
+        sels[2] = OwnershipFacet.acceptOwnership.selector;
+        sels[3] = OwnershipFacet.pendingOwner.selector;
+    }
+
+    // RegistryFacet — 13 селекторов
+    function registryFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](13);
+        sels[0]  = RegistryFacet.initRegistry.selector;
+        sels[1]  = RegistryFacet.register.selector;
+        sels[2]  = RegistryFacet.updateStatus.selector;
+        sels[3]  = RegistryFacet.setAuthorizedFactory.selector;
+        sels[4]  = RegistryFacet.hasActivePair.selector;
+        sels[5]  = RegistryFacet.getActivePair.selector;
+        sels[6]  = RegistryFacet.getRecord.selector;
+        sels[7]  = RegistryFacet.getByClient.selector;
+        sels[8]  = RegistryFacet.getByExecutor.selector;
+        sels[9]  = RegistryFacet.getActive.selector;
+        sels[10] = RegistryFacet.getDisputed.selector;
+        sels[11] = RegistryFacet.totalAgreements.selector;
+        sels[12] = RegistryFacet.authorizedFactory.selector;
+    }
+
+    // FactoryFacet — 13 селекторов (setPaused/isPaused/getProtocolArbiter/setProtocolArbiter/
+    // getArbitrationThreshold/setArbitrationThreshold удалены в a95865d — их больше нет в ABI)
+    function factoryFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](13);
+        sels[0]  = FactoryFacet.initFactory.selector;
+        sels[1]  = FactoryFacet.deployAgreement.selector;
+        sels[2]  = FactoryFacet.deployAndFund.selector;
+        sels[3]  = FactoryFacet.setRegionFee.selector;
+        sels[4]  = FactoryFacet.setFeeRecipient.selector;
+        sels[5]  = FactoryFacet.setTrustedForwarder.selector;
+        sels[6]  = FactoryFacet.setAgreementDeployer.selector;
+        sels[7]  = FactoryFacet.getRegionFee.selector;
+        sels[8]  = FactoryFacet.getAllFees.selector;
+        sels[9]  = FactoryFacet.getFeeRecipient.selector;
+        sels[10] = FactoryFacet.getTrustedForwarder.selector;
+        sels[11] = FactoryFacet.getUsdc.selector;
+        sels[12] = FactoryFacet.getAgreementDeployer.selector;
+    }
+
+    // JobBoardFacet — 12 селекторов
+    function jobBoardFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](12);
+        sels[0]  = JobBoardFacet.mintJobWithPermit.selector;
+        sels[1]  = JobBoardFacet.mintJob.selector;
+        sels[2]  = JobBoardFacet.applyForJob.selector;
+        sels[3]  = JobBoardFacet.withdrawApplication.selector;
+        sels[4]  = JobBoardFacet.acceptApplicant.selector;
+        sels[5]  = JobBoardFacet.cancelJob.selector;
+        sels[6]  = JobBoardFacet.editJob.selector;
+        sels[7]  = JobBoardFacet.getJob.selector;
+        sels[8]  = JobBoardFacet.getClientJobs.selector;
+        sels[9]  = JobBoardFacet.getApplicants.selector;
+        sels[10] = JobBoardFacet.totalJobs.selector;
+        sels[11] = JobBoardFacet.getOpenJobs.selector;
+    }
+
+    // ServiceBoardFacet — 23 селектора
+    function serviceBoardFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](23);
+        sels[0]  = ServiceBoardFacet.mintService.selector;
+        sels[1]  = ServiceBoardFacet.mintServiceWithPermit.selector;
+        sels[2]  = ServiceBoardFacet.removeService.selector;
+        sels[3]  = ServiceBoardFacet.pauseService.selector;
+        sels[4]  = ServiceBoardFacet.unpauseService.selector;
+        sels[5]  = ServiceBoardFacet.editService.selector;
+        sels[6]  = ServiceBoardFacet.requestService.selector;
+        sels[7]  = ServiceBoardFacet.requestServiceWithPermit.selector;
+        sels[8]  = ServiceBoardFacet.acceptRequest.selector;
+        sels[9]  = ServiceBoardFacet.rejectRequest.selector;
+        sels[10] = ServiceBoardFacet.cancelRequest.selector;
+        sels[11] = ServiceBoardFacet.getService.selector;
+        sels[12] = ServiceBoardFacet.getExecutorServices.selector;
+        sels[13] = ServiceBoardFacet.getServiceClients.selector;
+        sels[14] = ServiceBoardFacet.totalServices.selector;
+        sels[15] = ServiceBoardFacet.getRequest.selector;
+        sels[16] = ServiceBoardFacet.getServiceRequests.selector;
+        sels[17] = ServiceBoardFacet.getClientRequests.selector;
+        sels[18] = ServiceBoardFacet.totalRequests.selector;
+        sels[19] = ServiceBoardFacet.getRequestFunds.selector;
+        sels[20] = ServiceBoardFacet.getActiveServices.selector;
+        sels[21] = ServiceBoardFacet.getPendingRequests.selector;
+        sels[22] = ServiceBoardFacet.getPendingRequestIdsByClientAndExecutor.selector;
+    }
+
+    // ArbiterRegistryFacet — 44 селектора
+    function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](44);
+
+        // DAO-режим
+        sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
+        sels[1]  = ArbiterRegistryFacet.applyAsArbiter.selector;
+        sels[2]  = ArbiterRegistryFacet.resignAsArbiter.selector;
+
+        // Admin: управление арбитрами
+        sels[3]  = ArbiterRegistryFacet.setChiefArbiter.selector;
+        sels[4]  = ArbiterRegistryFacet.addArbiter.selector;
+        sels[5]  = ArbiterRegistryFacet.removeArbiter.selector;
+
+        // Клейм спора (commit-reveal)
+        sels[6]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        sels[7]  = ArbiterRegistryFacet.claimDispute.selector;
+        sels[8]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        sels[9]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
+
+        // Вердикт
+        sels[10] = ArbiterRegistryFacet.submitVerdict.selector;
+        sels[11] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        sels[12] = ArbiterRegistryFacet.overturnVerdict.selector;
+        sels[13] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
+        sels[14] = ArbiterRegistryFacet.freezeVerdict.selector;
+        sels[15] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        sels[16] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+
+        // Апелляция
+        sels[17] = ArbiterRegistryFacet.raiseAppeal.selector;
+        sels[18] = ArbiterRegistryFacet.voteOnAppeal.selector;
+        sels[19] = ArbiterRegistryFacet.resolveAppeal.selector;
+
+        // Вознаграждения
+        sels[20] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        sels[21] = ArbiterRegistryFacet.fundVault.selector;
+        sels[22] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        sels[23] = ArbiterRegistryFacet.setDAOAddress.selector;
+
+        // Views
+        sels[24] = ArbiterRegistryFacet.isDaoActive.selector;
+        sels[25] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        sels[26] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        sels[27] = ArbiterRegistryFacet.getChiefArbiter.selector;
+        sels[28] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        sels[29] = ArbiterRegistryFacet.getArbiters.selector;
+        sels[30] = ArbiterRegistryFacet.getDisputeClaimer.selector;
+        sels[31] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        sels[32] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        sels[33] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        sels[34] = ArbiterRegistryFacet.getArbiterReward.selector;
+        sels[35] = ArbiterRegistryFacet.getVaultBalance.selector;
+        sels[36] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        sels[37] = ArbiterRegistryFacet.getDAOAddress.selector;
+        sels[38] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        sels[39] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        sels[40] = ArbiterRegistryFacet.getAppealVotes.selector;
+        sels[41] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
+        sels[42] = ArbiterRegistryFacet.getArbiterBond.selector;
+        sels[43] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+    }
+
+    // DealMetadataFacet — 1 селектор
+    function dealMetadataFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](1);
+        sels[0] = DealMetadataFacet.getDealTokenURI.selector;
+    }
+
+    // JobReceiptFacet — 21 селектор (ERC-721 + receipt)
+    function jobReceiptFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](21);
+        sels[0]  = JobReceiptFacet.name.selector;
+        sels[1]  = JobReceiptFacet.symbol.selector;
+        sels[2]  = JobReceiptFacet.balanceOf.selector;
+        sels[3]  = JobReceiptFacet.ownerOf.selector;
+        sels[4]  = JobReceiptFacet.tokenURI.selector;
+        sels[5]  = JobReceiptFacet.transferFrom.selector;
+        sels[6]  = bytes4(0x42842e0e); // safeTransferFrom(address,address,uint256) — overload, .selector ambiguous
+        sels[7]  = bytes4(0xb88d4fde); // safeTransferFrom(address,address,uint256,bytes) — overload, .selector ambiguous
+        sels[8]  = JobReceiptFacet.approve.selector;
+        sels[9]  = JobReceiptFacet.setApprovalForAll.selector;
+        sels[10] = JobReceiptFacet.getApproved.selector;
+        sels[11] = JobReceiptFacet.isApprovedForAll.selector;
+        sels[12] = JobReceiptFacet.mintJobReceipt.selector;
+        sels[13] = JobReceiptFacet.burnJobReceipt.selector;
+        sels[14] = JobReceiptFacet.setSvgRenderer.selector;
+        sels[15] = JobReceiptFacet.getSvgRenderer.selector;
+        sels[16] = JobReceiptFacet.getJobReceiptData.selector;
+        sels[17] = JobReceiptFacet.isJobReceiptToken.selector;
+        sels[18] = JobReceiptFacet.isJobReceiptBurned.selector;
+        sels[19] = JobReceiptFacet.getTokenIdByJobId.selector;
+        sels[20] = JobReceiptFacet.getReceiptTotalSupply.selector;
+    }
+
+    // ReputationFacet — 8 селекторов (не было в диаманде вообще до этого регена)
+    function reputationFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](8);
+        sels[0] = ReputationFacet.autoAwardXP.selector;
+        sels[1] = ReputationFacet.claimXP.selector;
+        sels[2] = ReputationFacet.notifyExecutorFault.selector;
+        sels[3] = ReputationFacet.getXP.selector;
+        sels[4] = ReputationFacet.getUniqueActiveUsers.selector;
+        sels[5] = ReputationFacet.hasClaimed.selector;
+        sels[6] = ReputationFacet.isDealWin.selector;
+        sels[7] = ReputationFacet.getCleanStreak.selector;
     }
 
     function _cut(address facet, IDiamondCut.FacetCutAction action, bytes4[] memory sels)

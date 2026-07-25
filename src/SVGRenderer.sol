@@ -291,18 +291,31 @@ contract SVGRenderer is ISVGRenderer {
         return string(abi.encodePacked(whole.toString(), ".", fracStr));
     }
 
+    // Регионы 4 (LATAM) и 5 (CA) отделены от 1 (Asia) и 3 (US) отдельными
+    // апгрейдами (UpgradeRegions7.s.sol), 6 (AU) — от 5 (CA) отдельным
+    // апгрейдом (UpgradeRegionAU.s.sol). До той пары фиксов "ASIA/LATAM" и
+    // "US/CA" были верными ярлыками для факта совместного региона — сейчас
+    // это разные регионы с разными комиссиями (см. FactoryFacet.getAllFees()),
+    // так что ярлык обязан различать их тоже.
     function _regionLabel(uint8 r) internal pure returns (string memory) {
         if (r == 0) return "CIS";
-        if (r == 1) return "ASIA/LATAM";
+        if (r == 1) return "ASIA";
         if (r == 2) return "EUROPE";
-        return "US/CA";
+        if (r == 3) return "US";
+        if (r == 4) return "LATAM";
+        if (r == 5) return "CA";
+        return "AU";
     }
 
+    // Держать в шаге с FactoryFacet.getAllFees() — 2e6/4e6/7e6/1e7/4e6/1e7/7e6.
     function _regionFeeRaw(uint8 r) internal pure returns (uint256) {
         if (r == 0) return 2_000_000;
         if (r == 1) return 4_000_000;
         if (r == 2) return 7_000_000;
-        return 10_000_000;
+        if (r == 3) return 10_000_000;
+        if (r == 4) return 4_000_000;
+        if (r == 5) return 10_000_000;
+        return 7_000_000;
     }
 
     function _padId(uint256 id) internal pure returns (string memory) {
