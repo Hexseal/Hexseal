@@ -20,6 +20,12 @@ contract MinimalForwarder is EIP712 {
         "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
     );
 
+    /// Максимум байт, копируемых из ответа вызываемого контракта.
+    /// Недоверенный `req.to` может вернуть сколь угодно большой буфер и сжечь
+    /// газ релеера на расширении памяти. Легитимные ответы (адрес нового
+    /// Agreement, uint256) укладываются в 32-64 байта.
+    uint256 private constant MAX_RETURNDATA = 4096;
+
     mapping(address => uint256) private _nonces;
 
     event Executed(address indexed from, address indexed to, bool success);
@@ -50,14 +56,26 @@ contract MinimalForwarder is EIP712 {
     {
         require(verify(req, signature), "MinimalForwarder: signature does not match request");
         require(_nonces[req.from] == req.nonce, "MinimalForwarder: nonce mismatch");
+        // Без этой проверки вызов с req.value > msg.value оплачивается балансом
+        // самого форвардера — любой осевший на нём ETH выводится самоподписанным
+        // запросом.
+        require(msg.value == req.value, "MinimalForwarder: value mismatch");
 
         _nonces[req.from]++;
 
         // EIP-2771: append original sender (req.from) to calldata so receiving
         // contracts can recover it via _msgSender() when msg.sender == trustedForwarder
-        (success, retdata) = req.to.call{value: req.value, gas: req.gas}(
+        // Второй возврат намеренно отброшен: так компилятор не копирует returndata
+        // в память целиком, и мы забираем его сами, с капом.
+        (success, ) = req.to.call{value: req.value, gas: req.gas}(
             abi.encodePacked(req.data, req.from)
         );
+
+        uint256 size;
+        assembly { size := returndatasize() }
+        if (size > MAX_RETURNDATA) size = MAX_RETURNDATA;
+        retdata = new bytes(size);
+        assembly { returndatacopy(add(retdata, 0x20), 0, size) }
 
         emit Executed(req.from, req.to, success);
     }
