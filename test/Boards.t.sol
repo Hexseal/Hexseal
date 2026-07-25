@@ -896,6 +896,24 @@ contract BoardsTest is Test {
         assertFalse(exists);
     }
 
+    function testJobReceiptFacetSupportsInterface() public view {
+        // В этом харнессе JobReceiptFacet реально подключён (в отличие от
+        // test/Diamond.t.sol) — поэтому здесь ERC-721/ERC721Metadata
+        // проверяются не только по маппингу, но и по факту рабочего фасета.
+        assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IERC165).interfaceId));
+        assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondCut).interfaceId));
+        assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondLoupe).interfaceId));
+        assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(0x80ac58cd), "ERC721");
+        assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(0x5b5e139f), "ERC721Metadata");
+        // Неизвестный интерфейс — false
+        assertFalse(DiamondLoupeFacet(address(diamond)).supportsInterface(0xdeadbeef));
+
+        // Не просто заявляет ERC-721 — реально отвечает на его вызовы
+        assertEq(JobReceiptFacet(address(diamond)).balanceOf(client), 0);
+        assertEq(JobReceiptFacet(address(diamond)).name(), "Hexseal Receipt");
+        assertEq(JobReceiptFacet(address(diamond)).symbol(), "HSEALR");
+    }
+
     // ============================================================
     //  JOB BOARD EDIT + WITHDRAW TESTS
     // ============================================================

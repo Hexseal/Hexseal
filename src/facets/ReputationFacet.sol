@@ -27,7 +27,9 @@ interface IAgreementView {
 // ---------- STORAGE ----------
 
 library ReputationStorage {
-    bytes32 constant POSITION = keccak256("hexseal.reputation.storage");
+    /// @custom:storage-location erc7201:hexseal.reputation.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.reputation.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant POSITION = 0xa32193c5e38bd2de27c8550f156d709eafdc63aaa4290e5e27473f2ffc097400;
 
     struct Data {
         mapping(address => uint256) xp;

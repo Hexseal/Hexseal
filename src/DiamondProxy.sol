@@ -44,7 +44,9 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 // ---------- STORAGE ----------
 
 library DiamondStorage {
-    bytes32 constant DIAMOND_STORAGE_POSITION = keccak256("hexseal.diamond.storage");
+    /// @custom:storage-location erc7201:hexseal.diamond.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.diamond.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant DIAMOND_STORAGE_POSITION = 0x178642b411f9f4783b21ef338f3e96db6c1272d763f0b7500ec93464dafb8600;
 
     struct FacetAddressAndPosition {
         address facetAddress;
@@ -84,7 +86,9 @@ library DiamondStorage {
 // Каждый фасет использует DiamondGuard вместо своего per-facet guard.
 
 library DiamondGuard {
-    bytes32 constant GUARD_POSITION = keccak256("hexseal.diamond.reentrancy");
+    /// @custom:storage-location erc7201:hexseal.diamond.reentrancy
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.diamond.reentrancy")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant GUARD_POSITION = 0xb7972581c5756b955ddfcaf36802d7a349c326f2d1a13edfdb5743b59d909700;
     uint256 constant NOT_ENTERED = 1;
     uint256 constant ENTERED = 2;
 
@@ -278,6 +282,12 @@ contract DiamondProxy {
         ds.supportedInterfaces[type(IERC165).interfaceId] = true;
         ds.supportedInterfaces[type(IDiamondCut).interfaceId] = true;
         ds.supportedInterfaces[type(IDiamondLoupe).interfaceId] = true;
+        // Диамонд минтит soulbound receipt-NFT через JobReceiptFacet, поэтому
+        // объявляет ERC-721 и ERC721Metadata здесь, а не отдельной реализацией
+        // supportsInterface в самом фасете — иначе селектор 0x01ffc9a7 достаётся
+        // двум фасетам сразу и loupe-интерфейсы перестают опознаваться.
+        ds.supportedInterfaces[0x80ac58cd] = true; // ERC-721
+        ds.supportedInterfaces[0x5b5e139f] = true; // ERC-721 Metadata
     }
 
     fallback() external payable {

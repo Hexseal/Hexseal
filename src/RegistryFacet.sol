@@ -12,7 +12,9 @@ import "./DiamondProxy.sol";
 // ---------- STORAGE ----------
 
 library RegistryStorage {
-    bytes32 constant REGISTRY_STORAGE_POSITION = keccak256("hexseal.registry.storage");
+    /// @custom:storage-location erc7201:hexseal.registry.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.registry.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant REGISTRY_STORAGE_POSITION = 0xc2046377b613f781ce75bf5776eb70f650372f5239ada8a3238d951cdca15e00;
 
     enum AgreementStatus {
         ACTIVE,

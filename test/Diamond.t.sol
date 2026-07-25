@@ -386,6 +386,12 @@ contract DiamondTest is Test {
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IERC165).interfaceId));
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondCut).interfaceId));
         assertTrue(DiamondLoupeFacet(address(diamond)).supportsInterface(type(IDiamondLoupe).interfaceId));
+        // Неизвестный интерфейс — false
+        assertFalse(DiamondLoupeFacet(address(diamond)).supportsInterface(0xdeadbeef));
+        // ERC-721 / ERC721Metadata здесь не проверяем — этот харнесс не монтирует
+        // JobReceiptFacet, поэтому true был бы верным только для маппинга,
+        // а не для реально работающего ERC-721. См. testJobReceiptFacetSupportsInterface
+        // в test/Boards.t.sol, где фасет реально подключён.
     }
     
     // ============ REGISTRY FACET TESTS ============

@@ -43,7 +43,9 @@ interface IUSDCFull {
 // ---------- STORAGE ----------
 
 library ArbiterRegistryStorage {
-    bytes32 constant POSITION = keccak256("hexseal.arbiterregistry.storage");
+    /// @custom:storage-location erc7201:hexseal.arbiterregistry.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.arbiterregistry.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant POSITION = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
 
     struct PendingVerdict {
         address arbiter;        // кто подал вердикт
@@ -442,6 +444,7 @@ contract ArbiterRegistryFacet {
     /// @notice Исполнить вердикт. Любой может вызвать. Diamond вызывает resolveDispute на Agreement.
     /// Если вердикт заморожен (frozen) — ждём пока owner/DAO разморозит или отменит.
     function finalizeVerdict(address agreement) external {
+        if (agreement == address(0)) revert ZeroAddress();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
 
@@ -598,6 +601,7 @@ contract ArbiterRegistryFacet {
     /// Требует APPEAL_DEPOSIT — флэт, не % от суммы сделки (сумма выбрана сторонами, ей нельзя
     /// доверять как входу для чего-либо, что можно проиграть/выиграть).
     function raiseAppeal(address agreement) external {
+        if (agreement == address(0)) revert ZeroAddress();
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
@@ -765,6 +769,7 @@ contract ArbiterRegistryFacet {
     /// Agreement уходит в REFUNDED, а pendingVerdicts остаётся висеть навечно.
     function clearStuckVerdict(address agreement) external {
         if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
+        if (agreement == address(0)) revert ZeroAddress();
         // Убеждаемся что Agreement уже в терминальном состоянии (не DISPUTED = 4)
         (bool ok, bytes memory st) = agreement.staticcall(abi.encodeWithSignature("status()"));
         require(ok, "ArbiterRegistry: status read failed");

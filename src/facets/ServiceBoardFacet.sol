@@ -22,7 +22,9 @@ import "./IFactory.sol";
 // ---------- STORAGE ----------
 
 library ServiceBoardStorage {
-    bytes32 constant POSITION = keccak256("hexseal.serviceboard.storage");
+    /// @custom:storage-location erc7201:hexseal.serviceboard.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.serviceboard.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant POSITION = 0x46cd88da19a0b25b4baeccf5bdf5b6735146dba41575547a28d877fa2b430000;
 
     enum ServiceStatus { ACTIVE, PAUSED, REMOVED }
     enum RequestStatus { PENDING, ACCEPTED, REJECTED, CANCELLED, SUPERSEDED }

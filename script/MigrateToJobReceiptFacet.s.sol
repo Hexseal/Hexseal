@@ -6,11 +6,12 @@ pragma solidity ^0.8.20;
 //
 // Выпиливает OfferNFTFacet из Diamond, заменяет на JobReceiptFacet.
 //
-// [Replace] 16 селекторов → новый JobReceiptFacet:
-//   ERC-721 base: name, symbol, supportsInterface, balanceOf, ownerOf, tokenURI
+// [Replace] 15 селекторов → новый JobReceiptFacet:
+//   ERC-721 base: name, symbol, balanceOf, ownerOf, tokenURI
 //   Soulbound stubs: transferFrom (x3), approve, setApprovalForAll, getApproved, isApprovedForAll
 //   Core: mintJobReceipt
 //   Admin: setSvgRenderer, getSvgRenderer
+//   (supportsInterface сюда не входит — он принадлежит DiamondLoupeFacet)
 //
 // [Remove] 8 мёртвых Offer-селекторов:
 //   mintOffer, hireAndCreateDeal, deactivateOffer,
@@ -43,24 +44,28 @@ contract MigrateToJobReceiptFacet is Script {
         // 2. Build cuts
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
 
-        // [0] REPLACE: 16 selectors that exist in Diamond (from OfferNFTFacet)
-        bytes4[] memory replaceSelectors = new bytes4[](16);
+        // [0] REPLACE: 15 selectors that exist in Diamond (from OfferNFTFacet)
+        bytes4[] memory replaceSelectors = new bytes4[](15);
         replaceSelectors[0]  = JobReceiptFacet.name.selector;
         replaceSelectors[1]  = JobReceiptFacet.symbol.selector;
-        replaceSelectors[2]  = JobReceiptFacet.supportsInterface.selector;
-        replaceSelectors[3]  = JobReceiptFacet.balanceOf.selector;
-        replaceSelectors[4]  = JobReceiptFacet.ownerOf.selector;
-        replaceSelectors[5]  = JobReceiptFacet.tokenURI.selector;
-        replaceSelectors[6]  = bytes4(0x23b872dd); // transferFrom(address,address,uint256)
-        replaceSelectors[7]  = bytes4(0x42842e0e); // safeTransferFrom(address,address,uint256)
-        replaceSelectors[8]  = bytes4(0xb88d4fde); // safeTransferFrom(address,address,uint256,bytes)
-        replaceSelectors[9]  = JobReceiptFacet.approve.selector;
-        replaceSelectors[10] = JobReceiptFacet.setApprovalForAll.selector;
-        replaceSelectors[11] = JobReceiptFacet.getApproved.selector;
-        replaceSelectors[12] = JobReceiptFacet.isApprovedForAll.selector;
-        replaceSelectors[13] = JobReceiptFacet.mintJobReceipt.selector;
-        replaceSelectors[14] = JobReceiptFacet.setSvgRenderer.selector;
-        replaceSelectors[15] = JobReceiptFacet.getSvgRenderer.selector;
+        replaceSelectors[2]  = JobReceiptFacet.balanceOf.selector;
+        replaceSelectors[3]  = JobReceiptFacet.ownerOf.selector;
+        replaceSelectors[4]  = JobReceiptFacet.tokenURI.selector;
+        replaceSelectors[5]  = bytes4(0x23b872dd); // transferFrom(address,address,uint256)
+        replaceSelectors[6]  = bytes4(0x42842e0e); // safeTransferFrom(address,address,uint256)
+        replaceSelectors[7]  = bytes4(0xb88d4fde); // safeTransferFrom(address,address,uint256,bytes)
+        replaceSelectors[8]  = JobReceiptFacet.approve.selector;
+        replaceSelectors[9]  = JobReceiptFacet.setApprovalForAll.selector;
+        replaceSelectors[10] = JobReceiptFacet.getApproved.selector;
+        replaceSelectors[11] = JobReceiptFacet.isApprovedForAll.selector;
+        replaceSelectors[12] = JobReceiptFacet.mintJobReceipt.selector;
+        replaceSelectors[13] = JobReceiptFacet.setSvgRenderer.selector;
+        replaceSelectors[14] = JobReceiptFacet.getSvgRenderer.selector;
+        // supportsInterface(bytes4) — 0x01ffc9a7 — НЕ включён: с этого момента
+        // на диаманде он принадлежит DiamondLoupeFacet, а не JobReceiptFacet
+        // (коллизия селекторов была устранена удалением supportsInterface
+        // из JobReceiptFacet). Replace на этот селектор здесь сломал бы
+        // IDiamondCut/IDiamondLoupe ERC-165-ответы диаманда.
 
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(receiptFacet),
@@ -98,7 +103,7 @@ contract MigrateToJobReceiptFacet is Script {
         });
 
         // 3. Apply
-        console.log("Applying diamond cut (Replace 16 + Remove 8 + Add 3)...");
+        console.log("Applying diamond cut (Replace 15 + Remove 8 + Add 3)...");
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         console.log("");

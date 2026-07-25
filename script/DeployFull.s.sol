@@ -59,7 +59,8 @@ contract DeployFull is Script {
 
         // ── 2. Базовые фасеты для конструктора Diamond ────────────────────────
         // (DiamondCut, DiamondLoupe, Ownership, Registry, Factory)
-        // supportsInterface здесь от DiamondLoupeFacet — позже заменим на JobReceiptFacet
+        // supportsInterface здесь от DiamondLoupeFacet — так и остаётся, ERC-721
+        // интерфейсы для receipt-NFT регистрируются в маппинге конструктором Diamond
         IDiamondCut.FacetCut[] memory initCuts = new IDiamondCut.FacetCut[](5);
 
         // DiamondCutFacet — 1 селектор
@@ -144,8 +145,8 @@ contract DeployFull is Script {
 
         // ── 5. Добавляем остальные фасеты одним diamondCut ───────────────────
         // Порядок: JobBoard, ServiceBoard, ArbiterRegistry, DealMetadata,
-        //          JobReceiptFacet×2 (Replace supportsInterface + Add остальное)
-        IDiamondCut.FacetCut[] memory cuts2 = new IDiamondCut.FacetCut[](6);
+        //          JobReceiptFacet
+        IDiamondCut.FacetCut[] memory cuts2 = new IDiamondCut.FacetCut[](5);
 
         // JobBoardFacet — 10 селекторов
         bytes4[] memory jobSels = new bytes4[](10);
@@ -208,12 +209,7 @@ contract DeployFull is Script {
         metaSels[0] = DealMetadataFacet.getDealTokenURI.selector;
         cuts2[3] = _cut(address(metaFacet), IDiamondCut.FacetCutAction.Add, metaSels);
 
-        // JobReceiptFacet ч.1 — REPLACE supportsInterface (заменяем DiamondLoupe's)
-        bytes4[] memory receiptReplaceSels = new bytes4[](1);
-        receiptReplaceSels[0] = IERC165.supportsInterface.selector;
-        cuts2[4] = _cut(address(receiptFacet), IDiamondCut.FacetCutAction.Replace, receiptReplaceSels);
-
-        // JobReceiptFacet ч.2 — ADD 18 новых селекторов ERC-721 + receipt
+        // JobReceiptFacet — ADD 18 селекторов ERC-721 + receipt
         bytes4[] memory receiptAddSels = new bytes4[](18);
         receiptAddSels[0]  = JobReceiptFacet.name.selector;
         receiptAddSels[1]  = JobReceiptFacet.symbol.selector;
@@ -233,7 +229,7 @@ contract DeployFull is Script {
         receiptAddSels[15] = JobReceiptFacet.getJobReceiptData.selector;
         receiptAddSels[16] = JobReceiptFacet.isJobReceiptToken.selector;
         receiptAddSels[17] = JobReceiptFacet.getReceiptTotalSupply.selector;
-        cuts2[5] = _cut(address(receiptFacet), IDiamondCut.FacetCutAction.Add, receiptAddSels);
+        cuts2[4] = _cut(address(receiptFacet), IDiamondCut.FacetCutAction.Add, receiptAddSels);
 
         IDiamondCut(address(diamond)).diamondCut(cuts2, address(0), "");
 

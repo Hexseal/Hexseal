@@ -20,6 +20,12 @@ contract MinimalForwarder is EIP712 {
         "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
     );
 
+    /// Максимум байт, копируемых из ответа вызываемого контракта.
+    /// Недоверенный `req.to` может вернуть сколь угодно большой буфер и сжечь
+    /// газ релеера на расширении памяти. Легитимные ответы (адрес нового
+    /// Agreement, uint256) укладываются в 32-64 байта.
+    uint256 private constant MAX_RETURNDATA = 4096;
+
     mapping(address => uint256) private _nonces;
 
     event Executed(address indexed from, address indexed to, bool success);
@@ -50,14 +56,38 @@ contract MinimalForwarder is EIP712 {
     {
         require(verify(req, signature), "MinimalForwarder: signature does not match request");
         require(_nonces[req.from] == req.nonce, "MinimalForwarder: nonce mismatch");
+        // Без этой проверки вызов с req.value > msg.value оплачивается балансом
+        // самого форвардера — любой осевший на нём ETH выводится самоподписанным
+        // запросом.
+        require(msg.value == req.value, "MinimalForwarder: value mismatch");
 
         _nonces[req.from]++;
 
         // EIP-2771: append original sender (req.from) to calldata so receiving
         // contracts can recover it via _msgSender() when msg.sender == trustedForwarder
-        (success, retdata) = req.to.call{value: req.value, gas: req.gas}(
-            abi.encodePacked(req.data, req.from)
-        );
+        bytes memory payload = abi.encodePacked(req.data, req.from);
+
+        // Вызов сделан вручную в assembly с нулевым выходным буфером (последние
+        // 0, 0 у call) — это, а не отбрасывание переменной на уровне Solidity,
+        // и есть фикс: `.call(...)` на уровне языка всегда тянет за собой
+        // стандартный хелпер компилятора, который копирует ответ в память
+        // целиком ещё до того, как мы успеваем его ограничить (проверено
+        // дизассемблингом — там был безусловный returndatacopy на весь размер).
+        // Здесь CALL не копирует ничего сам, а returndata мы забираем ниже
+        // вручную, с капом.
+        address to = req.to;
+        uint256 value = req.value;
+        uint256 gasLimit = req.gas;
+        uint256 size;
+        assembly ("memory-safe") {
+            success := call(gasLimit, to, value, add(payload, 0x20), mload(payload), 0, 0)
+            size := returndatasize()
+        }
+        if (size > MAX_RETURNDATA) size = MAX_RETURNDATA;
+        retdata = new bytes(size);
+        assembly ("memory-safe") {
+            returndatacopy(add(retdata, 0x20), 0, size)
+        }
 
         emit Executed(req.from, req.to, success);
     }

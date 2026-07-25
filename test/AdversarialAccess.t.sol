@@ -52,6 +52,22 @@ contract MockUSDCAdv {
     }
 }
 
+// ---------- MOCK ZERO-RETURNING AGREEMENT DEPLOYER ----------
+// Имитирует будущий (гипотетический) деплойер, который не проверяет свой
+// собственный CREATE-результат — в отличие от src/AgreementDeployer.sol,
+// у которого есть require(addr != address(0), ...). Нужен, чтобы доказать,
+// что zero-check в FactoryFacet/JobBoardFacet реально страхует от такого деплойера,
+// а не просто дублирует чужую защиту.
+contract MockZeroAgreementDeployer is IAgreementDeployer {
+    function deploy(
+        address, address, address,
+        uint256, uint256, string calldata,
+        address, address, address, address
+    ) external pure returns (address) {
+        return address(0);
+    }
+}
+
 // ---------- TEST ----------
 
 contract AdversarialAccessTest is Test {
@@ -115,7 +131,7 @@ contract AdversarialAccessTest is Test {
         regSels[10] = RegistryFacet.totalAgreements.selector;
         regSels[11] = RegistryFacet.authorizedFactory.selector;
 
-        bytes4[] memory facSels = new bytes4[](13);
+        bytes4[] memory facSels = new bytes4[](15);
         facSels[0]  = FactoryFacet.initFactory.selector;
         facSels[1]  = FactoryFacet.deployAgreement.selector;
         facSels[2]  = FactoryFacet.setRegionFee.selector;
@@ -129,6 +145,8 @@ contract AdversarialAccessTest is Test {
         facSels[10] = bytes4(0xb187bd26);
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
+        facSels[13] = FactoryFacet.setAgreementDeployer.selector;
+        facSels[14] = FactoryFacet.deployAndFund.selector;
 
         bytes4[] memory jobSels = new bytes4[](11);
         jobSels[0]  = JobBoardFacet.mintJob.selector;
@@ -165,7 +183,7 @@ contract AdversarialAccessTest is Test {
         svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
 
-        bytes4[] memory arbSels = new bytes4[](33);
+        bytes4[] memory arbSels = new bytes4[](34);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -199,6 +217,7 @@ contract AdversarialAccessTest is Test {
         arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
         arbSels[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+        arbSels[33] = ArbiterRegistryFacet.raiseAppeal.selector;
 
         bytes4[] memory cutSels = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -514,4 +533,75 @@ contract AdversarialAccessTest is Test {
         vm.expectRevert(ArbiterRegistryFacet.CommitmentTooEarly.selector);
         ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
     }
+
+    function testFinalizeVerdictRejectsZeroAgreement() public {
+        vm.expectRevert(ArbiterRegistryFacet.ZeroAddress.selector);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(address(0));
+    }
+
+    function testRaiseAppealRejectsZeroAgreement() public {
+        vm.expectRevert(ArbiterRegistryFacet.ZeroAddress.selector);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(address(0));
+    }
+
+    function testClearStuckVerdictRejectsZeroAgreement() public {
+        vm.prank(owner);
+        vm.expectRevert(ArbiterRegistryFacet.ZeroAddress.selector);
+        ArbiterRegistryFacet(address(diamond)).clearStuckVerdict(address(0));
+    }
+
+    // Доказывает, что zero-check в deployAndFund реально страхует протокол,
+    // если владелец когда-нибудь подключит деплойер без собственной проверки
+    // на ноль (в отличие от текущего AgreementDeployer с его require(addr != address(0))).
+    function testDeployAndFundRejectsZeroAgreementFromDeployer() public {
+        MockZeroAgreementDeployer zeroDeployer = new MockZeroAgreementDeployer();
+        vm.prank(owner);
+        FactoryFacet(address(diamond)).setAgreementDeployer(address(zeroDeployer));
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), BOARD_FEE);
+        // RegistryFacet.register() has its own (unrelated, pre-existing) zero-check
+        // on `agreement`, and `error ZeroAddress()` hashes to the same 4-byte selector
+        // in every contract that declares it — so a bare expectRevert(selector) here
+        // cannot tell "FactoryFacet's own guard fired" apart from "register() caught it
+        // one call-frame later". Assert register() is never even called, to prove this
+        // guard — not register()'s — is what stops the zero address here.
+        vm.expectCall(address(diamond), abi.encodeWithSelector(RegistryFacet.register.selector), 0);
+        vm.expectRevert(FactoryFacet.ZeroAddress.selector);
+        FactoryFacet(address(diamond)).deployAndFund(client, executor, JOB_AMOUNT, DEADLINE, TERMS, REGION);
+        vm.stopPrank();
+    }
+
+    // Симметрично testDeployAndFundRejectsZeroAgreementFromDeployer выше:
+    // deployAgreement() получил тот же zero-check на возврат деплойера, сразу
+    // после deploy() и до register(). Тот же селектор ZeroAddress() объявлен
+    // и в RegistryFacet, поэтому одного expectRevert(selector) недостаточно —
+    // доказываем, что register() вообще не был вызван, а не просто поймал
+    // ноль одним кадром позже.
+    function testDeployAgreementRejectsZeroAgreementFromDeployer() public {
+        MockZeroAgreementDeployer zeroDeployer = new MockZeroAgreementDeployer();
+        vm.prank(owner);
+        FactoryFacet(address(diamond)).setAgreementDeployer(address(zeroDeployer));
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), BOARD_FEE);
+        vm.expectCall(address(diamond), abi.encodeWithSelector(RegistryFacet.register.selector), 0);
+        vm.expectRevert(FactoryFacet.ZeroAddress.selector);
+        FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, address(0), JOB_AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+    }
+
+    // Намеренно нет аналогичного теста на JobBoardFacet.ZeroAddress.selector через
+    // acceptApplicant() с нолевым деплойером — этот путь недостижим на практике:
+    // вложенный вызов FactoryFacet.deployAgreement() всегда сначала натыкается
+    // на собственную (не связанную с этой задачей, уже существовавшую) проверку
+    // на ноль в RegistryFacet.register() (src/RegistryFacet.sol), и deployAgreement()
+    // ревертится с RegistryFacet.ZeroAddress() — а `require(ok, "JobBoard: deploy failed")`
+    // в acceptApplicant() схлопывает это в свою строку ещё до того, как выполнение
+    // доходит до abi.decode и до этого гарда. См. task-4-report.md, Fix Round 1,
+    // там полная трасса. Гард в JobBoardFacet оставлен как есть (defense-in-depth,
+    // симметрично гарду в deployAndFund), но через этот путь его тестом не пощупать
+    // при нынешней связке RegistryFacet/FactoryFacet.
 }

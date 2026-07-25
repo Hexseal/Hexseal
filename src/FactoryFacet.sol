@@ -21,7 +21,9 @@ interface IRegistry {
 // ---------- STORAGE ----------
 
 library FactoryStorage {
-    bytes32 constant FACTORY_STORAGE_POSITION = keccak256("hexseal.factory.storage");
+    /// @custom:storage-location erc7201:hexseal.factory.storage
+    /// keccak256(abi.encode(uint256(keccak256("hexseal.factory.storage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 constant FACTORY_STORAGE_POSITION = 0x6e1a7c9e564b098cf0d979de1ae0cacf8bfb22a7e8f2c8f4c244a2031b744700;
 
     uint8 constant REGION_CIS   = 0;
     uint8 constant REGION_ASIA  = 1;
@@ -163,6 +165,11 @@ contract FactoryFacet {
             amount, deadlineDays, terms,
             fs.diamond, fs.usdc, fs.trustedForwarder, address(this)
         );
+        // Симметрично deployAndFund: agreementDeployer подключается через
+        // onlyOwner setAgreementDeployer и уже менялся несколько раз
+        // (UpgradeAgreementDeployerV2/V3/V4) — будущий деплойер без
+        // собственной проверки на ноль не должен молча пройти дальше в register().
+        if (agreementAddress == address(0)) revert ZeroAddress();
 
         IRegistry(fs.diamond).register(agreementAddress, client, executor, amount);
 
@@ -210,6 +217,7 @@ contract FactoryFacet {
             amount, deadlineDays, terms,
             fs.diamond, fs.usdc, fs.trustedForwarder, address(this)
         );
+        if (agreementAddress == address(0)) revert ZeroAddress();
 
         IRegistry(fs.diamond).register(agreementAddress, client, executor, amount);
 
