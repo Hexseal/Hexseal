@@ -529,9 +529,97 @@ const FORWARDER_ABI = [
   'function getNonce(address from) view returns (uint256)',
   'function verify((address from, address to, uint256 value, uint256 gas, uint256 nonce, bytes data) req, bytes signature) view returns (bool)',
   'function execute((address from, address to, uint256 value, uint256 gas, uint256 nonce, bytes data) req, bytes signature) payable returns (bool success, bytes retdata)',
+  // Without this the relayer had no way to see execute()'s own success flag at all —
+  // MinimalForwarder.execute() never reverts on an inner-call failure, it just emits
+  // this and returns (false, revertData), so a receipt.status === 1 tells you nothing.
+  'event Executed(address indexed from, address indexed to, bool success)',
 ];
 
+// Standalone Interface (not the mocked `forwarder` Contract instance below) so log
+// parsing works the same whether `forwarder` is real or, in tests, replaced by the
+// ethers.Contract mock in test/mocks — that mock never fakes `.interface`.
+const FORWARDER_INTERFACE = new ethers.Interface(FORWARDER_ABI);
+
 const forwarder = new ethers.Contract(FORWARDER_ADDR, FORWARDER_ABI, provider);
+
+// ─── Forwarder inner-call revert decoding ────────────────────────────────────
+// Mirrors the CUSTOM_ERRORS table in frontend/src/app/api/relay/route.ts, the other
+// path that forwards through this same MinimalForwarder and already had to solve
+// this. Duplicated rather than shared: relayer/ is plain Node ESM with no build
+// step and route.ts is compiled by Next.js, so importing one from the other would
+// mean standing up a small internal package neither app currently has for the sake
+// of one lookup table. Keep the two tables in sync if either changes.
+const FORWARDER_CUSTOM_ERRORS = {
+  '0xf12ce677': 'ActivationWindowPassed',
+  '0x646cf558': 'AlreadyClaimed',
+  '0xb6682ad2': 'CommitmentNotFound',
+  '0x8e128786': 'CommitmentTooEarly',
+  '0x53adc965': 'CommitmentExpired',
+  '0xb737f1d8': 'NotTheClaimer',
+  '0xb78c9549': 'DisputeWindowPassed',
+  '0x422a8e97': 'VerdictAlreadySubmitted',
+  '0x7fcc22c9': 'HasOpenDisputeClaims',
+  '0xf1898254': 'AppealInProgress',
+  '0xdf726563': 'NoVerdict',
+  '0x7c9a1cf9': 'AlreadyVoted',
+  '0x4dcfa42d': 'AlreadyAppealed',
+  '0x7401943d': 'AppealWindowClosed',
+  '0x2b6484d8': 'NoAppeal',
+  '0xb4021411': 'CannotVoteOnOwnVerdict',
+  '0xe3c5eb52': 'AppealAlreadyResolved',
+  '0x1285c993': 'AppealWindowNotClosed',
+  '0x0cdc2cad': 'VerdictFrozenError',
+  '0x5216eba1': 'InsufficientArbitersForAppeal',
+  '0x630ed4c8': 'NotLosingParty',
+  '0x30b29a76': 'ActiveDealExists',
+  '0xf9be60a2': 'AlreadyActive',
+  '0x09dd1236': 'AlreadyDisputed',
+  '0x5adf6387': 'AlreadyFunded',
+  '0xc851267c': 'AlreadyMarkedDone',
+  '0x6d5703c2': 'AlreadyResolved',
+  '0xb7ae9877': 'ArbiterWindowNotPassed',
+  '0x2eb35430': 'DeadlineNotPassed',
+  '0x70f65caa': 'DeadlinePassed',
+  '0x80cb55e2': 'NotActive',
+  '0xccb665a6': 'NotArbiter',
+  '0x20dbc874': 'NotClient',
+  '0x433b0e14': 'NotDisputed',
+  '0xc32d1d76': 'NotExecutor',
+  '0xd5ef09ba': 'NotFunded',
+  '0x38cbd109': 'NotMarkedDone',
+  '0xc8ee2d1d': 'NotParty',
+  '0xb5365156': 'NoArbiterSet',
+  '0x49986e73': 'WrongAmount',
+  '0x607311ec': 'WindowAlreadyPassed',
+  '0x4dc5a7d2': 'WindowNotPassed',
+  '0x1f2a2005': 'ZeroAmount',
+  '0x2e020977': 'ExtraNotPending',
+  '0x475a2535': 'AlreadyFinalized',
+  '0xd92e233d': 'ZeroAddress',
+  '0xd45bbaf9': 'ClientEqualsExecutor',
+  '0xd04b63aa': 'NotDiamond',
+  '0xad32732c': 'ArbiterIsParty',
+  '0xa22d819e': 'ArbiterNotRegistered',
+  '0xf4d678b8': 'InsufficientBalance',
+  '0x32cc7236': 'NotFactory',
+  '0x90b8ec18': 'TransferFailed',
+};
+
+// Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)
+// into a human-readable reason, same shape as route.ts's inline decode.
+function decodeForwarderRevert(retdata) {
+  const selector = retdata && retdata !== '0x' ? retdata.slice(0, 10).toLowerCase() : '';
+  let reason = 'Inner call reverted';
+  if (FORWARDER_CUSTOM_ERRORS[selector]) {
+    reason = FORWARDER_CUSTOM_ERRORS[selector];
+  } else if (selector === '0x08c379a0') {
+    // Standard Error(string)
+    try {
+      reason = ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + retdata.slice(10))[0];
+    } catch { /* ignore decode errors, fall back to generic reason */ }
+  }
+  return { reason, selector };
+}
 
 // ─── Express ──────────────────────────────────────────────────────────────────
 
@@ -687,9 +775,48 @@ app.post('/relay', async (req, res) => {
     const valid = await forwarder.verify(forwardReq, signature);
     if (!valid) return res.status(400).json({ error: 'Invalid signature' });
 
-    const tx = await forwarder.connect(relayer).execute(forwardReq, signature, { gasLimit: BigInt(gas) + 60_000n });
+    const forwarderAsRelayer = forwarder.connect(relayer);
+    const gasOverride = { gasLimit: BigInt(gas) + 60_000n };
+
+    // ── Simulate execute() to catch silent inner-call failures ────────────────
+    // MinimalForwarder.execute() deliberately does NOT revert when the forwarded
+    // call fails — it consumes the nonce, emits Executed(from, to, false), and
+    // returns (false, revertData); the outer tx still succeeds. staticCall runs
+    // execute() without spending gas or broadcasting, so a doomed call is caught
+    // — and paid for nothing — before we ever send it.
+    let simSuccess, simRetdata;
+    try {
+      [simSuccess, simRetdata] = await forwarderAsRelayer.execute.staticCall(forwardReq, signature, gasOverride);
+    } catch (err) {
+      console.error('[relay] simulation failed:', err.message);
+      return res.status(400).json({ error: `Simulation failed: ${err.message}` });
+    }
+    if (!simSuccess) {
+      const { reason, selector } = decodeForwarderRevert(simRetdata);
+      console.error('[relay] inner call failed (caught by simulation):', reason, 'retdata:', simRetdata);
+      return res.status(400).json({ error: `Call failed: ${reason}`, errorCode: selector });
+    }
+
+    const tx = await forwarderAsRelayer.execute(forwardReq, signature, gasOverride);
     const receipt = await tx.wait();
     if (receipt.status === 0) return res.status(400).json({ error: 'Transaction reverted on-chain' });
+
+    // ── Re-verify after mining ─────────────────────────────────────────────────
+    // A passing simulation does not guarantee the real tx still succeeds — state
+    // can change between the two (another tx lands in the interim), so the mined
+    // receipt's own Executed(from, to, success) log is the actual source of truth.
+    let minedSuccess = true; // no matching log found is unexpected, not a signal — fail open, not closed
+    for (const log of receipt.logs ?? []) {
+      if (log.address?.toLowerCase() !== FORWARDER_ADDR.toLowerCase()) continue;
+      try {
+        const parsed = FORWARDER_INTERFACE.parseLog(log);
+        if (parsed?.name === 'Executed') { minedSuccess = parsed.args.success; break; }
+      } catch { /* not a log this ABI recognizes */ }
+    }
+    if (!minedSuccess) {
+      console.error('[relay] inner call failed on the mined tx despite a passing simulation (state changed in between)');
+      return res.status(400).json({ error: 'Transaction mined but the inner call failed (state changed after simulation)' });
+    }
 
     res.json({ success: true, txHash: receipt.hash, blockNumber: receipt.blockNumber });
     pushAfterRelay(receipt, forwardReq.to, data);
