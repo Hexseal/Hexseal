@@ -1,0 +1,182 @@
+# Diamond storage struct snapshot — коммитится в git, руками не редактировать.
+#
+# Перегенерировать: python3 script/check_storage_structs.py --update
+# Проверить:        ./script/check-storage-structs.sh
+#
+# Это снапшот ПОЛЕЙ (не только базовых слотов, см. test/StorageLayout.t.sol) —
+# главных структур хранилища (struct Layout / struct Data) каждой namespaced
+# storage-библиотеки в src/, плюс вложенных структур, которые они используют
+# как тип поля. Единственная легальная эволюция — дописывание новых полей
+# СТРОГО в конец списка существующей структуры. Смена типа, реордер, вставка
+# в середину, удаление, переименование структуры или поля — всё это ломает
+# инвариант "текущий код = префикс-расширение снапшота" и валит гейт.
+#
+# См. docs/CONTRACT_GUIDE.md, раздел "Правило раскладки Diamond-хранилища".
+
+=== src/DiamondProxy.sol :: DiamondStorage.FacetAddressAndPosition ===
+address facetAddress
+uint96 functionSelectorPosition
+
+=== src/DiamondProxy.sol :: DiamondStorage.FacetFunctionSelectors ===
+bytes4[] functionSelectors
+uint256 facetAddressPosition
+
+=== src/DiamondProxy.sol :: DiamondStorage.Layout ===
+mapping(bytes4=>FacetAddressAndPosition) selectorToFacetAndPosition
+mapping(address=>FacetFunctionSelectors) facetFunctionSelectors
+address[] facetAddresses
+mapping(bytes4=>bool) supportedInterfaces
+address contractOwner
+address pendingOwner
+
+=== src/FactoryFacet.sol :: FactoryStorage.Layout ===
+address usdc
+address feeRecipient
+mapping(uint8=>uint256) regionFee
+address trustedForwarder
+address diamond
+bool paused
+address protocolArbiter
+uint256 arbitrationThreshold
+address agreementDeployer
+
+=== src/JobReceiptFacet.sol :: ReceiptStorage.JobReceiptData ===
+address client
+string title
+uint256 amount
+uint256 deadlineDays
+uint8 region
+uint256 createdAt
+
+=== src/JobReceiptFacet.sol :: ReceiptStorage.Layout ===
+uint256 reentrancyStatus
+uint256 nextTokenId
+mapping(uint256=>address) _offers_executor
+mapping(address=>uint256[]) _executorOffers
+mapping(uint256=>address[]) _offerHires
+mapping(address=>uint256) balances
+mapping(uint256=>address) owners
+address _deprecated_receiptNFT
+mapping(uint256=>bool) isJobReceipt
+mapping(uint256=>JobReceiptData) jobReceiptData
+mapping(uint256=>bool) jobReceiptMinted
+address svgRenderer
+mapping(uint256=>uint256) jobIdToTokenId
+mapping(uint256=>bool) jobIdToTokenIdSet
+
+=== src/RegistryFacet.sol :: RegistryStorage.AgreementRecord ===
+address agreement
+address client
+address executor
+uint256 amount
+AgreementStatus status
+uint256 createdAt
+uint256 resolvedAt
+
+=== src/RegistryFacet.sol :: RegistryStorage.Layout ===
+mapping(address=>AgreementRecord) agreements
+address[] allAgreements
+mapping(bytes32=>address) activePartyPairs
+address authorizedFactory
+
+=== src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.Data ===
+mapping(address=>bool) isArbiter
+address[] arbiterList
+mapping(address=>address) disputeClaims
+mapping(address=>address[]) arbiterDeals
+mapping(bytes32=>uint256) claimCommitments
+address chiefArbiter
+bool daoActiveManual
+mapping(address=>PendingVerdict) pendingVerdicts
+mapping(address=>uint256) arbiterRewards
+uint256 rewardPerDispute
+uint256 vaultBalance
+address daoAddress
+mapping(address=>uint256) arbiterMistakeStreak
+mapping(address=>uint256) arbiterBond
+mapping(address=>uint256) openClaimCount
+mapping(address=>mapping(address=>bool)) hasVotedAppeal
+
+=== src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.PendingVerdict ===
+address arbiter
+bool clientWins
+uint256 submittedAt
+bool frozen
+bool finalized
+bool overturned
+bool executing
+bool appealed
+bool appealResolved
+address appellant
+uint256 appealDeadline
+uint256 votesUphold
+uint256 votesOverturn
+
+=== src/facets/JobBoardFacet.sol :: JobBoardStorage.Job ===
+address client
+string title
+string description
+uint256 amount
+uint256 deadlineDays
+string terms
+uint8 region
+JobStatus status
+uint256 createdAt
+address chosenExecutor
+address agreement
+
+=== src/facets/JobBoardFacet.sol :: JobBoardStorage.Layout ===
+uint256 nextJobId
+mapping(uint256=>Job) jobs
+mapping(address=>uint256[]) clientJobs
+mapping(uint256=>address[]) applicants
+mapping(uint256=>mapping(address=>bool)) hasApplied
+address _deprecated_receiptNFT
+mapping(uint256=>uint256) jobFunds
+
+=== src/facets/ReputationFacet.sol :: ReputationStorage.Data ===
+mapping(address=>uint256) xp
+mapping(address=>uint256) volumeXPAccrued
+mapping(address=>bool) clientClaimed
+mapping(address=>bool) executorClaimed
+mapping(address=>bool) pairCounted
+mapping(address=>bool) dealIsWin
+mapping(bytes32=>uint256) pairWins
+mapping(address=>bool) hasEarnedXP
+uint256 uniqueActiveUsers
+mapping(address=>uint256) cleanStreak
+mapping(address=>bool) streakEvaluated
+
+=== src/facets/ServiceBoardFacet.sol :: ServiceBoardStorage.HireRequest ===
+address client
+uint256 serviceId
+uint256 amount
+uint256 deadlineDays
+string terms
+uint8 region
+RequestStatus status
+uint256 createdAt
+address agreement
+
+=== src/facets/ServiceBoardFacet.sol :: ServiceBoardStorage.Layout ===
+uint256 nextServiceId
+mapping(uint256=>Service) services
+mapping(address=>uint256[]) executorServices
+mapping(uint256=>address[]) serviceClients
+uint256 nextRequestId
+mapping(uint256=>HireRequest) requests
+mapping(uint256=>uint256[]) serviceRequests
+mapping(address=>uint256[]) clientRequests
+mapping(uint256=>uint256) requestFunds
+mapping(address=>mapping(address=>uint256[])) pendingRequestIdsByClientAndExecutor
+
+=== src/facets/ServiceBoardFacet.sol :: ServiceBoardStorage.Service ===
+address executor
+string title
+string description
+uint256 price
+uint256 deadlineDays
+uint8 region
+ServiceStatus status
+uint256 createdAt
+uint256 hiresCount

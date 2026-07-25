@@ -31,6 +31,9 @@ jobs:
       - name: Check Diamond storage layout
         run: ./script/check-storage-layout.sh
 
+      - name: Check Diamond storage struct fields
+        run: ./script/check-storage-structs.sh
+
   build:
     needs: contracts
     runs-on: ubuntu-latest
