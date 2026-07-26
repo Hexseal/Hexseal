@@ -512,6 +512,75 @@ contract ReentrantWithdrawReserveUSDCT {
     }
 }
 
+/// Диамонд, у которого можно сломать ПО ОТДЕЛЬНОСТИ каждое из двух чтений,
+/// от которых зависит раздача: getVaultBalance() и isDaoActive(). Ровно эти
+/// два чтения владелец диамонда может снести или подменить одним diamondCut
+/// (ArbiterRegistryFacet апгрейдился ~7 раз за три месяца, восемь скриптов в
+/// script/ делают FacetCutAction.Remove) — и до газ-капнутого staticcall в
+/// _readDiamondWord это ревертило бы distribute() и topUpVault() НАВСЕГДА.
+///
+/// Режимы (по одному на каждое чтение):
+///   0 — честный ответ;
+///   1 — реверт (снесённый селектор диамонд ловит фоллбэком и ревертит так же);
+///   2 — «успешный» возврат на 8 МБ. Бьёт не по объёму returndata, а по ГАЗУ:
+///       расширение памяти на стороне вызываемого стоит около 135 млн газа, и
+///       платит его НАША транзакция. Без капа distribute() перестал бы влезать
+///       в блок, формально ничего не ревертя;
+///   3 — усечённый ответ: 16 байт вместо 32. Пиннит отдельную строку
+///       `if lt(returndatasize(), 0x20) { ok := 0 }`: без неё в слово попала бы
+///       половина ответа поверх остатков нашей же памяти, и казна приняла бы
+///       этот мусор за прочитанное значение.
+contract BrokenViewDiamondT {
+    address public usdc;
+    uint256 public vaultBalance;
+    bool    public daoActive;
+    uint8   public vaultViewMode;
+    uint8   public daoViewMode;
+
+    error ViewBroken();
+
+    constructor(address usdc_) { usdc = usdc_; }
+
+    function setVaultBalance(uint256 v)  external { vaultBalance = v; }
+    function setDaoActive(bool v)        external { daoActive = v; }
+    function setVaultViewMode(uint8 m)   external { vaultViewMode = m; }
+    function setDaoViewMode(uint8 m)     external { daoViewMode = m; }
+
+    function fundVault(uint256 amount) external {
+        MockUSDCT(usdc).transferFrom(msg.sender, address(this), amount);
+        vaultBalance += amount;
+    }
+
+    function getVaultBalance() external view returns (uint256) {
+        _break(vaultViewMode);
+        return vaultBalance;
+    }
+
+    function isDaoActive() external view returns (bool) {
+        _break(daoViewMode);
+        return daoActive;
+    }
+
+    function getUniqueActiveUsers() external pure returns (uint256) { return 0; }
+    function getDAOAddress()        external pure returns (address) { return address(0); }
+
+    function _break(uint8 mode) private pure {
+        if (mode == 1) revert ViewBroken();
+        if (mode == 2) {
+            // 8 МБ «успешного» ответа: одна только оплата расширения памяти
+            // здесь стоит ~135 млн газа, и списывается она с вызывающего.
+            assembly { return(0, 0x800000) }
+        }
+        if (mode == 3) {
+            // Ровно 16 нулевых байт — половина слова.
+            assembly {
+                mstore(0, 0)
+                return(0, 0x10)
+            }
+        }
+    }
+}
+
 contract TreasuryTest is Test {
     MockUSDCT   usdc;
     MockDiamond diamond;
@@ -1563,5 +1632,217 @@ contract TreasuryTest is Test {
             }
         }
         assertTrue(found, "ReserveWithdrawn must have been emitted");
+    }
+
+    // ============================================================
+    // Финальное ревью ветки. Три находки на стыках задач, которых не видел
+    // ни один пер-тасковый ревьюер:
+    //   C1 — два чтения диамонда шли обычными типизированными вызовами и
+    //        при снесённом селекторе замуровывали раздачу навсегда;
+    //   I2 — порядок вызова distribute()/topUpVault() двигал деньги между
+    //        резервом и фаундейшном (замерено 210 USDC за раунд);
+    //   I3 — у distribute() нет постусловия «банк учёл прирост» (принято
+    //        осознанно, закрыто документацией, а не кодом — см. шапку).
+    // ============================================================
+
+    /// C1-a. Селектор getVaultBalance() мёртв. Раздача обязана ПРОЙТИ, просто
+    /// пропустив ступень банка: реверт здесь заморозил бы 100% и
+    /// нераспределённого, и всего будущего дохода — навсегда и без
+    /// возможности что-либо починить (казна неизменяема).
+    function testDistributeSurvivesADeadVaultBalanceRead() public {
+        BrokenViewDiamondT d = new BrokenViewDiamondT(address(usdc));
+        Treasury t = new Treasury(address(usdc), address(d), FOUNDATION);
+
+        d.setVaultBalance(0);   // честно шортфолл был бы весь VAULT_TARGET...
+        d.setVaultViewMode(1);  // ...но прочитать его больше нельзя
+        usdc.mint(address(t), 1_000_000_000);
+
+        assertEq(t.vaultShortfall(), 0, "dead read must degrade to a zero shortfall, not revert");
+
+        t.distribute();
+
+        assertEq(t.foundationOwed(),      700_000_000, "foundation must still be served");
+        assertEq(t.reserveBalance(),      300_000_000, "reserve must still be served");
+        assertEq(d.vaultBalance(),        0,           "vault stage must be skipped entirely");
+        assertEq(t.pendingDistribution(), 0,           "nothing may stay frozen");
+    }
+
+    /// C1-b. Селектор isDaoActive() мёртв. Раздача обязана пройти, а доля
+    /// фаундейшна — упасть до FOUNDATION_BPS_POST_DAO (20%), а НЕ остаться
+    /// на 70%. Направление деградации здесь и есть защита: при 70% у
+    /// владельца диамонда был бы рычаг «сломай чтение и навсегда зафиксируй
+    /// себе бóльшую долю», причём одним diamondCut.
+    function testDeadDaoReadDegradesToTheSmallerFoundationShare() public {
+        BrokenViewDiamondT d = new BrokenViewDiamondT(address(usdc));
+        Treasury t = new Treasury(address(usdc), address(d), FOUNDATION);
+
+        d.setVaultBalance(t.VAULT_TARGET()); // банк полон — ступень 1 не мешает счёту
+        d.setDaoActive(false);               // честно было бы 70% (PRE_DAO)
+        d.setDaoViewMode(1);
+        usdc.mint(address(t), 1_000_000_000);
+
+        assertEq(
+            t.foundationBps(), t.FOUNDATION_BPS_POST_DAO(),
+            "dead read must degrade DOWN to 20%, never up to the 70% the owner would profit from"
+        );
+
+        t.distribute();
+
+        assertEq(t.foundationOwed(), 200_000_000, "foundation must get the post-DAO share");
+        assertEq(t.reserveBalance(), 800_000_000, "reserve must get the rest");
+    }
+
+    /// C1-c. Возврат-бомба на ОБОИХ чтениях сразу. Без газ-капа каждое из них
+    /// стоило бы около 135 млн газа (8 МБ расширения памяти на стороне
+    /// вызываемого оплачивает НАША транзакция) — distribute() перестал бы
+    /// влезать в блок, формально не ревертя ни разу. Проверяем и деградацию,
+    /// и сам счёт газа: без капа этот тест сжёг бы сотни миллионов.
+    function testReturndataBombOnBothDiamondReadsStaysWithinGas() public {
+        BrokenViewDiamondT d = new BrokenViewDiamondT(address(usdc));
+        Treasury t = new Treasury(address(usdc), address(d), FOUNDATION);
+
+        d.setVaultBalance(0);
+        d.setVaultViewMode(2);
+        d.setDaoViewMode(2);
+        usdc.mint(address(t), 1_000_000_000);
+
+        uint256 gasBefore = gasleft();
+        t.distribute();
+        uint256 gasUsed = gasBefore - gasleft();
+
+        assertLt(gasUsed, 1_000_000, "two gas-capped reads must cost ~200k on top, not ~270M");
+        assertEq(t.foundationOwed(),      200_000_000, "dead dao read -> post-DAO share");
+        assertEq(t.reserveBalance(),      800_000_000, "dead dao read -> the rest to the reserve");
+        assertEq(d.vaultBalance(),        0,           "dead vault read -> stage skipped");
+        assertEq(t.pendingDistribution(), 0,           "nothing may stay frozen");
+    }
+
+    /// C1-d. Усечённый ответ (16 байт вместо 32) — это НЕ прочитанное слово.
+    /// Пиннит строку `if lt(returndatasize(), 0x20) { ok := 0 }` отдельно от
+    /// флага самого staticcall: без неё половина ответа легла бы поверх
+    /// остатков нашей памяти и была бы принята за баланс банка (здесь — за
+    /// нулевой, то есть за полную просадку на VAULT_TARGET).
+    function testTruncatedDiamondAnswerCountsAsAFailedRead() public {
+        BrokenViewDiamondT d = new BrokenViewDiamondT(address(usdc));
+        Treasury t = new Treasury(address(usdc), address(d), FOUNDATION);
+
+        d.setVaultBalance(0);
+        d.setVaultViewMode(3);
+
+        assertEq(t.vaultShortfall(), 0, "a half-word answer must not be read as a balance of zero");
+    }
+
+    /// I2-a. Гейт DistributeFirst: резерв платит за банк только после того,
+    /// как разобран доход.
+    function testTopUpVaultDemandsTheIncomeBeDistributedFirst() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();                                           // резерв 300
+        diamond.setVaultBalance(treasury.VAULT_TARGET() - 500_000_000);  // банк просел на 500
+        usdc.mint(address(treasury), 1_000_000_000);                     // и пришёл новый доход
+
+        vm.expectRevert(Treasury.DistributeFirst.selector);
+        treasury.topUpVault();
+
+        assertEq(treasury.reserveBalance(), 300_000_000, "reserve must not have paid for the vault");
+    }
+
+    /// I2-b. Проверка стоит ДО вычисления просадки — порядок отказов
+    /// предсказуем: «сначала разбери доход» звучит раньше, чем «банк и так
+    /// полон». Перестановка двух строк в topUpVault() роняет именно этот тест.
+    function testDistributeFirstIsCheckedBeforeTheShortfall() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET()); // шортфолл 0 -> VaultAtTarget
+        usdc.mint(address(treasury), 1_000_000_000);      // но доход не разобран
+
+        vm.expectRevert(Treasury.DistributeFirst.selector);
+        treasury.topUpVault();
+    }
+
+    /// I2-c. Тупика гейт не создаёт: distribute() всегда обнуляет
+    /// нераспределённое, значит topUpVault() всегда достижим сразу после него.
+    function testTopUpVaultIsAlwaysReachableRightAfterDistribute() public {
+        diamond.setVaultBalance(0);                  // просадка на весь VAULT_TARGET
+        usdc.mint(address(treasury), 1_000_000_000);
+
+        treasury.distribute();
+        assertEq(treasury.pendingDistribution(), 0, "distribute must always leave nothing pending");
+
+        // Банк просел снова — вызов обязан пройти, а не упереться в свой же гейт.
+        diamond.setVaultBalance(treasury.VAULT_TARGET() - 100_000_000);
+        treasury.topUpVault();
+
+        assertEq(diamond.getVaultBalance(), treasury.VAULT_TARGET(), "top-up must go through right after distribute");
+        assertEq(treasury.reserveBalance(), 150_000_000 - 100_000_000, "reserve pays exactly the second shortfall");
+    }
+
+    /// I2-d. Главное: порядок вызова двух открытых функций больше НЕ двигает
+    /// деньги. Замер ревью на идентичном старте (резерв 300, банк просел на
+    /// 500, пришло 1000 USDC) давал две разные раскладки — 450/1050 при
+    /// distribute() первым и 240/1260 при topUpVault() первым, то есть
+    /// 210 USDC переезжало из резерва в фаундейшн от одной перестановки, а
+    /// стимул выбирать второй порядок есть у самого фаундейшна. Теперь второй
+    /// порядок физически недостижим, и обе попытки сходятся в одну раскладку.
+    function testCallOrderNoLongerMovesMoneyBetweenReserveAndFoundation() public {
+        // Порядок 1: distribute() -> topUpVault(). Банк добирается из ДОХОДА.
+        (MockDiamond dA, Treasury tA) = _sameStartFixture();
+        tA.distribute();
+        vm.expectRevert(Treasury.VaultAtTarget.selector); // доход уже добил банк
+        tA.topUpVault();
+
+        // Порядок 2: topUpVault() -> distribute(). Банк добирался бы из РЕЗЕРВА.
+        (MockDiamond dB, Treasury tB) = _sameStartFixture();
+        vm.expectRevert(Treasury.DistributeFirst.selector);
+        tB.topUpVault();
+        tB.distribute();
+
+        assertEq(tA.reserveBalance(), tB.reserveBalance(), "call order must not move a single cent of the reserve");
+        assertEq(tA.foundationOwed(), tB.foundationOwed(), "call order must not move a single cent to the foundation");
+
+        // И сходятся они именно в строку «distribute() первым» из замера:
+        // 450/1050. Строка «topUpVault() первым» (240/1260) недостижима.
+        assertEq(tA.reserveBalance(),    450_000_000,   "reserve must match the distribute-first row");
+        assertEq(tA.foundationOwed(),  1_050_000_000,   "foundation must match the distribute-first row");
+        assertEq(dA.getVaultBalance(), tA.VAULT_TARGET(), "vault refilled either way");
+        assertEq(dB.getVaultBalance(), tB.VAULT_TARGET(), "vault refilled either way");
+    }
+
+    /// Идентичный старт для обоих порядков: долг фаундейшну 700 USDC, резерв
+    /// 300 USDC, банк просел на все 500, и пришло ещё 1000 USDC дохода.
+    /// Каждый порядок гоняется на СВОЁМ комплекте контрактов — иначе первый
+    /// порядок оставил бы состояние второму.
+    function _sameStartFixture() private returns (MockDiamond, Treasury) {
+        MockUSDCT   u = new MockUSDCT();
+        MockDiamond d = new MockDiamond(address(u));
+        Treasury    t = new Treasury(address(u), address(d), FOUNDATION);
+
+        d.setVaultBalance(t.VAULT_TARGET());
+        u.mint(address(t), 1_000_000_000);
+        t.distribute();
+        d.setVaultBalance(0);
+        u.mint(address(t), 1_000_000_000);
+        return (d, t);
+    }
+
+    /// I3. Постусловия «банк учёл прирост» у distribute() НЕТ, и это принятое
+    /// решение, а не забытая проверка: реверт замуровал бы всю раздачу — ту
+    /// самую поломку, от которой отвязывали ступени 2 и 3. Тест пиннит
+    /// ИМЕННО ЭТО поведение вместе с его ценой, чтобы «симметрию с
+    /// topUpVault()» не восстановили однажды не глядя: замерено ревью —
+    /// десять партий по 200 USDC, диамонд поглотил все 2000, начислено ноль,
+    /// и каждый вызов выглядел успешным.
+    function testDistributeHasNoVaultPostconditionAndSaysSoOutLoud() public {
+        SilentFundDiamondT silent = new SilentFundDiamondT(address(usdc));
+        Treasury t = new Treasury(address(usdc), address(silent), FOUNDATION);
+
+        for (uint256 i = 0; i < 10; i++) {
+            usdc.mint(address(t), 200_000_000); // 200 USDC
+            t.distribute();                     // НЕ ревертит — это и проверяем
+        }
+
+        assertEq(usdc.balanceOf(address(silent)), 2_000_000_000, "the diamond really swallowed all ten batches");
+        assertEq(silent.getVaultBalance(),        0,             "...and never recorded a cent of it");
+        assertEq(t.foundationOwed(),              0,             "measured residual risk: nothing accrued");
+        assertEq(t.reserveBalance(),              0,             "measured residual risk: nothing accrued");
+        assertEq(usdc.balanceOf(address(t)),      0,             "treasury is empty, and it never reverted once");
     }
 }
