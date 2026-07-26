@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+// Исторический скрипт: отработал один раз при своём апгрейде.
+// Адрес диамонда внутри мёртв, живой сегодня — 0x760F07367888C62f7c2Dfb619A5e534132855ce5.
+// Запускать не нужно: полный деплой с нуля — script/DeployFull.s.sol,
+// инкрементальные апгрейды оформляются новыми скриптами.
+
 import "forge-std/Script.sol";
 import "../src/DiamondProxy.sol";
 import "../src/facets/JobBoardFacet.sol";

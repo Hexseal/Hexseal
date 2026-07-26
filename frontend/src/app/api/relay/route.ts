@@ -435,7 +435,12 @@ export async function POST(req: NextRequest) {
           '0x1f2a2005': 'ZeroAmount',
           '0x2e020977': 'ExtraNotPending',
           '0x475a2535': 'AlreadyFinalized',
+          // Kept: Agreement.sol still declares ZeroAddress(), and the deployed diamond runs pre-F-5 facets until the next diamondCut
           '0xd92e233d': 'ZeroAddress',
+          '0x57876cd6': 'FactoryZeroAddress',
+          '0x6ca1fdd7': 'RegistryZeroAddress',
+          '0xdac33008': 'JobBoardZeroAddress',
+          '0x317820eb': 'ArbiterZeroAddress',
           '0xd45bbaf9': 'ClientEqualsExecutor',
           '0xd04b63aa': 'NotDiamond',
           '0xad32732c': 'ArbiterIsParty',

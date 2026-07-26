@@ -218,6 +218,15 @@ contract MinimalForwarderTest is Test {
         uint256 smallSize = 32;
         uint256 largeSize = 200_000;
 
+        // Холостой прогон перед замерами: греет слот _nonces[user] (тот же
+        // отправитель, что и в обоих замерах) и аккаунт bomb. Иначе первый
+        // замер платил бы за холодную запись nonce (~21.6k) и холодный доступ
+        // к bomb (~2.5k), а второй — нет, и эта разница садилась бы в дельту
+        // как систематическая ошибка, не имеющая отношения к размеру ответа.
+        MinimalForwarder.ForwardRequest memory reqWarm =
+            _req(address(bomb), 0, abi.encodeWithSelector(Bomb.boom.selector, smallSize));
+        forwarder.execute(reqWarm, _sign(USER_PK, reqWarm));
+
         MinimalForwarder.ForwardRequest memory reqSmall =
             _req(address(bomb), 0, abi.encodeWithSelector(Bomb.boom.selector, smallSize));
         bytes memory sigSmall = _sign(USER_PK, reqSmall);

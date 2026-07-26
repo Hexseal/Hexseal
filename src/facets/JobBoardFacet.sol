@@ -122,7 +122,7 @@ contract JobBoardFacet {
     error FactoryPaused();
     error SelfApply();
     error JobHasApplicants();
-    error ZeroAddress();
+    error JobBoardZeroAddress();
 
     // -------- REENTRANCY --------
 
@@ -345,7 +345,7 @@ contract JobBoardFacet {
         );
         require(ok, "JobBoard: deploy failed");
         agreementAddr = abi.decode(ret, (address));
-        if (agreementAddr == address(0)) revert ZeroAddress();
+        if (agreementAddr == address(0)) revert JobBoardZeroAddress();
 
         job.agreement = agreementAddr;
 
