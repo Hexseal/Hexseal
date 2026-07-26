@@ -31,11 +31,19 @@ contract DeployTreasury is Script {
         // у которой ревертит любой distribute() (казна не может ни исправить
         // адрес, ни мигрировать: в ней нет ни одной onlyOwner-функции), а весь
         // отправленный на неё доход потерян навсегда. Поэтому проверяем не
-        // «контракт», а «ТОТ САМЫЙ контракт»: пробуем ровно те три чтения,
+        // «контракт», а «ТОТ САМЫЙ контракт»: пробуем ровно те ЧЕТЫРЕ чтения,
         // которыми казна пользуется в работе.
+        //
+        // Четвёртое — getUniqueActiveUsers() — живёт в ДРУГОМ фасете
+        // (ReputationFacet), чем первые три (ArbiterRegistryFacet), и без него
+        // пре-флайт был неполон по-настоящему, а не формально: диамонд с
+        // ArbiterRegistryFacet, но без ReputationFacet проходил три пробы и
+        // давал неизменяемую казну с мёртвым withdrawReserve() — то есть
+        // резерв не вышел бы к ДАО НИКОГДА.
         _requireDiamondAnswers(diamond, "getVaultBalance()");
         _requireDiamondAnswers(diamond, "isDaoActive()");
         _requireDiamondAnswers(diamond, "getDAOAddress()");
+        _requireDiamondAnswers(diamond, "getUniqueActiveUsers()");
 
         vm.startBroadcast();
         Treasury treasury = new Treasury(usdc, diamond, foundation);
