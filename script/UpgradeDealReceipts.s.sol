@@ -40,7 +40,8 @@ contract UpgradeDealReceipts is Script {
         vm.startBroadcast(deployerKey);
 
         // --- 1. Новый AgreementDeployer (новый Agreement.sol bytecode) ---
-        AgreementDeployer newDeployer = new AgreementDeployer(diamond);
+        Agreement agreementImpl = new Agreement();
+        AgreementDeployer newDeployer = new AgreementDeployer(diamond, address(agreementImpl));
         console.log("New AgreementDeployer deployed at:", address(newDeployer));
 
         FactoryFacet(diamond).setAgreementDeployer(address(newDeployer));

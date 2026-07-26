@@ -142,7 +142,10 @@ contract DeployFull is Script {
         console.log("DiamondProxy:         ", address(diamond));
 
         // AgreementDeployer needs Diamond as authorizedCaller — deploy after Diamond is known
-        AgreementDeployer      agDeployer   = new AgreementDeployer(address(diamond));
+        // Минимальный compile-фикс под новую сигнатуру конструктора (Task 1: агримент —
+        // EIP-1167 клон). Полноценный перевод DeployFull на клоны — отдельная задача плана.
+        Agreement               agreementImpl = new Agreement();
+        AgreementDeployer      agDeployer   = new AgreementDeployer(address(diamond), address(agreementImpl));
         console.log("AgreementDeployer:    ", address(agDeployer));
 
         // ── 4. Инициализация Registry + Factory ──────────────────────────────

@@ -50,7 +50,8 @@ contract UpgradeArbiterRegistryFacetAppeal is Script {
         vm.startBroadcast(deployerKey);
 
         // ── 1. New AgreementDeployer (new Agreement.sol bytecode) ─────────────
-        AgreementDeployer newAgreementDeployer = new AgreementDeployer(DIAMOND);
+        Agreement agreementImpl = new Agreement();
+        AgreementDeployer newAgreementDeployer = new AgreementDeployer(DIAMOND, address(agreementImpl));
         console.log("New AgreementDeployer:", address(newAgreementDeployer));
 
         FactoryFacet(DIAMOND).setAgreementDeployer(address(newAgreementDeployer));

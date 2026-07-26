@@ -36,7 +36,8 @@ contract UpgradeAgreementExtras is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerKey);
 
-        AgreementDeployer newDeployer = new AgreementDeployer(DIAMOND);
+        Agreement agreementImpl = new Agreement();
+        AgreementDeployer newDeployer = new AgreementDeployer(DIAMOND, address(agreementImpl));
         console.log("New AgreementDeployer:", address(newDeployer));
 
         FactoryFacet(DIAMOND).setAgreementDeployer(address(newDeployer));
