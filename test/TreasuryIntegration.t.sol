@@ -15,9 +15,10 @@ pragma solidity ^0.8.20;
 //
 // setUp скопирован из test/Extras.t.sol (тот же набор смонтированных
 // фасетов и тот же MockUSDCE) и дополнен ReputationFacet — она отсутствовала
-// в Extras.t.sol, но нужна: getUniqueActiveUsers() читает Treasury
-// (withdrawReserve/foundationBps опираются на диамонд), а autoAwardXP()
-// вызывается изнутри Agreement._complete() через try/catch.
+// в Extras.t.sol. Для продакшн-параллели (DeployFull.s.sol её монтирует) и
+// на вырост будущим тестам этого файла — НЕ потому что без неё падает
+// нынешняя тройка тестов (проверено: не падает; подробности — у монтирования
+// repSels ниже).
 import "forge-std/Test.sol";
 import "../src/DiamondProxy.sol";
 import "../src/RegistryFacet.sol";
@@ -187,9 +188,19 @@ contract TreasuryIntegrationTest is Test {
         ownSels[2] = OwnershipFacet.acceptOwnership.selector;
         ownSels[3] = OwnershipFacet.pendingOwner.selector;
 
-        // ReputationFacet selectors — добавлено сверх Extras.t.sol: там этот
-        // фасет вообще не монтировался, а Treasury.getUniqueActiveUsers()
-        // (и Agreement._complete → autoAwardXP) без него не работают.
+        // ReputationFacet selectors — добавлено сверх Extras.t.sol, где этот
+        // фасет вообще не монтировался. ЧЕСТНО: тройке тестов ниже он не
+        // нужен — проверено удалением: без него все три по-прежнему проходят,
+        // потому что ни один не завершает сделку (autoAwardXP из
+        // Agreement._complete вызывается через try/catch и не вызывается
+        // здесь вовсе) и ни один не дергает withdrawReserve() (единственное
+        // место, где Treasury делает ВНЕШНИЙ вызов getUniqueActiveUsers() —
+        // а foundationBps()/isDaoActive() читают ReputationStorage напрямую
+        // из хранилища диамонда, это работает независимо от того, смонтирован
+        // ли сам фасет). Мостируем для параллели с продакшн-конфигурацией
+        // (DeployFull.s.sol монтирует ReputationFacet) и на вырост будущим
+        // тестам этого файла, которые могут завершать сделку или проверять
+        // withdrawReserve() — не потому что без него падает уже написанное.
         bytes4[] memory repSels = new bytes4[](8);
         repSels[0] = ReputationFacet.claimXP.selector;
         repSels[1] = ReputationFacet.getXP.selector;
@@ -242,10 +253,15 @@ contract TreasuryIntegrationTest is Test {
         );
         vm.stopPrank();
 
-        assertGt(
+        // Точная сумма, не просто "больше нуля": комиссия REGION_CIS зашита
+        // константой в FactoryFacet.sol:131 (fs.regionFee[REGION_CIS] =
+        // 2_000_000) и передаётся ровно этой суммой — deployAgreement выше
+        // вызван с region = 0 (CIS). Слабая проверка ">0" не отличила бы это
+        // от списания чужого региона или задвоенной комиссии.
+        assertEq(
             usdc.balanceOf(address(treasury)) - before,
-            0,
-            "deal fee never arrived at the treasury"
+            2_000_000,
+            "deal fee arriving at the treasury does not match the REGION_CIS fee"
         );
     }
 
