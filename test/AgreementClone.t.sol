@@ -109,4 +109,16 @@ contract AgreementCloneTest is Test {
             "reentrancy guard left uninitialized"
         );
     }
+
+    /// Печатает фактическую стоимость создания сделки (число идёт в отчёт и
+    /// в пересчёт модели казны) и одновременно сторожит регресс: порог взят
+    /// с большим запасом над ожидаемыми ~220 000, но на порядок ниже
+    /// прежних ~4 400 000. Если кто-то вернёт полноценный CREATE — упадёт.
+    function testCloneDeployStaysCheap() public {
+        uint256 before = gasleft();
+        _deploy();
+        uint256 used = before - gasleft();
+        emit log_named_uint("gas: clone + initialize", used);
+        assertLt(used, 400_000, "deal creation is no longer clone-cheap");
+    }
 }
