@@ -193,8 +193,17 @@ contract ReentrantDiamondT {
 }
 
 /// Диамонд, который забирает МЕНЬШЕ запрошенного из fundVault (не ревертит,
-/// просто тянет actuallyTake вместо amount). Проверяет, что казна учитывает
-/// реально ушедшее, а не запрошенное.
+/// просто тянет actuallyTake вместо amount), но начисляет себе ЗАПРОШЕННОЕ —
+/// зеркалит арифметику настоящего ArbiterRegistryFacet.fundVault
+/// (src/facets/ArbiterRegistryFacet.sol:751: `d.vaultBalance += amount;`, где
+/// amount — параметр вызова, а не то, что реально пришло по transferFrom).
+/// Раньше мок начислял `+= take` (то, что реально утянул) — это делало
+/// getVaultBalance() зеркалом spent, и мутация, убирающая проверку
+/// `spent != amount` в topUpVault(), всё равно ловилась постусловием
+/// VaultDidNotGrow (банк не дорастал до vaultBefore+amount), а не самой
+/// целевой проверкой. С начислением ЗАПРОШЕННОГО банк дорастает до полного
+/// amount независимо от того, что реально утянуто, — постусловие проходит,
+/// и утечку резерва при снятой проверке `spent != amount` ловит только она.
 contract PartialFundDiamondT {
     address public usdc;
     uint256 public vaultBalance;
@@ -212,7 +221,7 @@ contract PartialFundDiamondT {
         if (take > 0) {
             MockUSDCT(usdc).transferFrom(msg.sender, address(this), take);
         }
-        vaultBalance += take;
+        vaultBalance += amount;
     }
 
     function getVaultBalance()      external view returns (uint256) { return vaultBalance; }
@@ -715,8 +724,14 @@ contract TreasuryTest is Test {
     }
 
     /// fundVault может забрать МЕНЬШЕ запрошенного (не ревертит, просто тянет
-    /// меньше). Недобранное остаётся на казне и всплывает в pendingDistribution(),
-    /// событие рапортует фактически ушедшее, разрешение всё равно обнуляется.
+    /// меньше). distribute() при этом не проверяет, сколько реально дошло до
+    /// банка (в отличие от topUpVault() — см. testTopUpVaultRevertsWhenVaultFundingIsPartial):
+    /// недобранное остаётся на казне и всплывает в pendingDistribution(),
+    /// событие рапортует фактически ушедшее (spent), разрешение всё равно
+    /// обнуляется. getVaultBalance() мока растёт на ЗАПРОШЕННОЕ (как у
+    /// настоящего фасета) — тем самым уже здесь виден расходящийся факт,
+    /// который distribute() сознательно не проверяет: банк отчитывается о
+    /// большем приросте (500), чем реально утянуто с казны (200).
     function testFundVaultTakingLessThanRequestedLeavesRemainderPending() public {
         PartialFundDiamondT partialDiamond = new PartialFundDiamondT(address(usdc));
         partialDiamond.setVaultBalance(0); // шортфолл = полный VAULT_TARGET = 500 USDC
@@ -729,7 +744,7 @@ contract TreasuryTest is Test {
         emit Treasury.Distributed(200_000_000, 350_000_000, 150_000_000);
         t.distribute();
 
-        assertEq(partialDiamond.getVaultBalance(), 200_000_000, "vault only got what it actually pulled");
+        assertEq(partialDiamond.getVaultBalance(), 500_000_000, "vault self-reports the requested amount, not what it actually pulled");
         assertEq(usdc.allowance(address(t), address(partialDiamond)), 0, "allowance must be zeroed regardless of partial pull");
 
         // Недобранные 300 остаются на казне и попадают в pendingDistribution(),
@@ -1115,9 +1130,13 @@ contract TreasuryTest is Test {
     /// Important-1: `spent != amount` в topUpVault() пиннится ПЕРЕИСПОЛЬЗОВАННЫМ
     /// PartialFundDiamondT, направленным на topUpVault (а не на distribute, как
     /// в исходном тесте на тот же мок). Диамонд запрошен на 300 USDC, тянет
-    /// только 100 — без проверки резерв списался бы целиком (300), банк
-    /// получил бы только треть (100), а 200 утекли бы в нераспределённый
-    /// остаток с событием об успехе.
+    /// только 100, но начисляет себе ЗАПРОШЕННОЕ (300, как настоящий фасет —
+    /// см. комментарий у PartialFundDiamondT) — поэтому getVaultBalance()
+    /// дорастает ровно до vaultBefore+amount, и постусловие VaultDidNotGrow
+    /// эту атаку НЕ ловит: без проверки `spent != amount` резерв списался бы
+    /// целиком (300), банк реально получил бы только треть (100), а 200
+    /// утекли бы в нераспределённый остаток с событием об успехе — и это
+    /// ловит только `spent != amount`, никакая другая проверка.
     function testTopUpVaultRevertsWhenVaultFundingIsPartial() public {
         PartialFundDiamondT partialDiamond = new PartialFundDiamondT(address(usdc));
         Treasury t = new Treasury(address(usdc), address(partialDiamond), FOUNDATION);
