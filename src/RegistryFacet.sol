@@ -85,7 +85,7 @@ contract RegistryFacet {
     error OnlyAgreementItself();
     error AgreementNotRegistered();
     error ActiveDealAlreadyExists();
-    error ZeroAddress();
+    error RegistryZeroAddress();
     error AlreadyInitialized();
     error NotOwner();
 
@@ -111,7 +111,7 @@ contract RegistryFacet {
     function initRegistry(address factory_) external {
         RegistryStorage.Layout storage rs = RegistryStorage.store();
         if (rs.authorizedFactory != address(0)) revert AlreadyInitialized();
-        if (factory_ == address(0)) revert ZeroAddress();
+        if (factory_ == address(0)) revert RegistryZeroAddress();
         // Защита от frontrun: проверяем что вызывающий — owner Diamond
         if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
         rs.authorizedFactory = factory_;
@@ -127,9 +127,9 @@ contract RegistryFacet {
         address executor,
         uint256 amount
     ) external onlyFactory {
-        if (agreement == address(0)) revert ZeroAddress();
-        if (client == address(0)) revert ZeroAddress();
-        if (executor == address(0)) revert ZeroAddress();
+        if (agreement == address(0)) revert RegistryZeroAddress();
+        if (client == address(0)) revert RegistryZeroAddress();
+        if (executor == address(0)) revert RegistryZeroAddress();
 
         RegistryStorage.Layout storage rs = RegistryStorage.store();
 
@@ -181,7 +181,7 @@ contract RegistryFacet {
     /// Нужно если деплоишь новую версию FactoryFacet
     function setAuthorizedFactory(address newFactory) external {
         if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
-        if (newFactory == address(0)) revert ZeroAddress();
+        if (newFactory == address(0)) revert RegistryZeroAddress();
         RegistryStorage.store().authorizedFactory = newFactory;
         emit AuthorizedFactorySet(newFactory);
     }

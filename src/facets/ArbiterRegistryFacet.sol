@@ -12,8 +12,13 @@ pragma solidity ^0.8.20;
 //   3. Любой вызывает finalizeVerdict(agreement) → Diamond исполняет resolveDispute
 //   4. Owner/DAO может overturnVerdict до финализации → slash XP арбитра, выплата не идёт
 //
-// FeeVault: owner пополняет вручную, при каждой финализации арбитру начисляется
-//   rewardPerDispute USDC, арбитр забирает через withdrawArbiterReward().
+// FeeVault: owner пополняет вручную (fundVault) и вручную же выставляет ставку
+//   (setRewardPerDispute); при финализации арбитру начисляется rewardPerDispute
+//   USDC, арбитр забирает через withdrawArbiterReward(). Сегодня банк не наполнен
+//   и ставка не выставлена — DeployFull не вызывает ни fundVault, ни
+//   setRewardPerDispute, поэтому rewardPerDispute == 0 и арбитраж де-факто
+//   неоплачиваемый. Постоянную модель оплаты (3% от спорной суммы) закрывает
+//   docs/superpowers/specs/2026-07-22-arbiter-economics-design.md.
 //
 // DAO-режим: когда uniqueActiveUsers >= 100,000 ИЛИ owner.activateDAO() —
 //   пользователи с XP >= 3000 могут сами вступить через applyAsArbiter().
@@ -103,6 +108,9 @@ contract ArbiterRegistryFacet {
     uint256 private constant DAO_THRESHOLD      = 100_000;   // uniqueActiveUsers для авто-DAO
     uint256 private constant MIN_XP_TO_REGISTER = 3_000;     // ~30 сделок с разными людьми
     uint256 private constant OVERTURN_XP_SLASH  = 200;       // XP штраф при overturn
+    // Нигде не используется: награда сегодня берётся из d.rewardPerDispute (storage),
+    // а не отсюда. Оставлено как floor будущей формулы «3% от спорной суммы» —
+    // docs/superpowers/specs/2026-07-22-arbiter-economics-design.md §3.
     uint256 private constant DEFAULT_REWARD      = 5_000_000; // 5 USDC (6 decimals)
     uint256 private constant FINALIZE_DELAY      = 24 hours;  // окно для owner/DAO/апелляции до финализации (было 1 час — недостаточно для обычного пользователя)
 
@@ -176,7 +184,7 @@ contract ArbiterRegistryFacet {
     error NotTheClaimer();
     error VaultInsufficient();
     error NoRewardToClaim();
-    error ZeroAddress();
+    error ArbiterZeroAddress();
     error InsufficientCleanStreak(uint256 have, uint256 need);
     error HasOpenDisputeClaims();
     error AppealInProgress();
@@ -444,7 +452,7 @@ contract ArbiterRegistryFacet {
     /// @notice Исполнить вердикт. Любой может вызвать. Diamond вызывает resolveDispute на Agreement.
     /// Если вердикт заморожен (frozen) — ждём пока owner/DAO разморозит или отменит.
     function finalizeVerdict(address agreement) external {
-        if (agreement == address(0)) revert ZeroAddress();
+        if (agreement == address(0)) revert ArbiterZeroAddress();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
 
@@ -601,7 +609,7 @@ contract ArbiterRegistryFacet {
     /// Требует APPEAL_DEPOSIT — флэт, не % от суммы сделки (сумма выбрана сторонами, ей нельзя
     /// доверять как входу для чего-либо, что можно проиграть/выиграть).
     function raiseAppeal(address agreement) external {
-        if (agreement == address(0)) revert ZeroAddress();
+        if (agreement == address(0)) revert ArbiterZeroAddress();
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
@@ -740,7 +748,7 @@ contract ArbiterRegistryFacet {
     }
 
     function setDAOAddress(address dao) external onlyOwner {
-        if (dao == address(0)) revert ZeroAddress();
+        if (dao == address(0)) revert ArbiterZeroAddress();
         ArbiterRegistryStorage.data().daoAddress = dao;
         emit DAOAddressSet(dao);
     }
@@ -769,7 +777,7 @@ contract ArbiterRegistryFacet {
     /// Agreement уходит в REFUNDED, а pendingVerdicts остаётся висеть навечно.
     function clearStuckVerdict(address agreement) external {
         if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
-        if (agreement == address(0)) revert ZeroAddress();
+        if (agreement == address(0)) revert ArbiterZeroAddress();
         // Убеждаемся что Agreement уже в терминальном состоянии (не DISPUTED = 4)
         (bool ok, bytes memory st) = agreement.staticcall(abi.encodeWithSignature("status()"));
         require(ok, "ArbiterRegistry: status read failed");

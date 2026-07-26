@@ -77,7 +77,7 @@ contract FactoryFacet {
 
     // -------- ERRORS --------
 
-    error ZeroAddress();
+    error FactoryZeroAddress();
     error ZeroAmount();
     error ZeroDeadline();
     error InvalidRegion();
@@ -112,11 +112,11 @@ contract FactoryFacet {
         if (fs.usdc != address(0)) revert AlreadyInitialized();
         if (msg.sender != _owner()) revert NotOwner();
 
-        if (usdc_ == address(0)) revert ZeroAddress();
-        if (feeRecipient_ == address(0)) revert ZeroAddress();
-        if (trustedForwarder_ == address(0)) revert ZeroAddress();
-        if (diamond_ == address(0)) revert ZeroAddress();
-        if (agreementDeployer_ == address(0)) revert ZeroAddress();
+        if (usdc_ == address(0)) revert FactoryZeroAddress();
+        if (feeRecipient_ == address(0)) revert FactoryZeroAddress();
+        if (trustedForwarder_ == address(0)) revert FactoryZeroAddress();
+        if (diamond_ == address(0)) revert FactoryZeroAddress();
+        if (agreementDeployer_ == address(0)) revert FactoryZeroAddress();
 
         fs.usdc              = usdc_;
         fs.feeRecipient      = feeRecipient_;
@@ -143,8 +143,8 @@ contract FactoryFacet {
         string calldata terms,
         uint8 region
     ) external returns (address agreementAddress) {
-        if (client == address(0)) revert ZeroAddress();
-        if (executor == address(0)) revert ZeroAddress();
+        if (client == address(0)) revert FactoryZeroAddress();
+        if (executor == address(0)) revert FactoryZeroAddress();
         if (client == executor) revert ClientEqualsExecutor();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0) revert ZeroDeadline();
@@ -170,7 +170,7 @@ contract FactoryFacet {
         // onlyOwner setAgreementDeployer и уже менялся несколько раз
         // (UpgradeAgreementDeployerV2/V3/V4) — будущий деплойер без
         // собственной проверки на ноль не должен молча пройти дальше в register().
-        if (agreementAddress == address(0)) revert ZeroAddress();
+        if (agreementAddress == address(0)) revert FactoryZeroAddress();
 
         IRegistry(fs.diamond).register(agreementAddress, client, executor, amount);
 
@@ -196,8 +196,8 @@ contract FactoryFacet {
         string calldata terms,
         uint8 region
     ) external returns (address agreementAddress) {
-        if (client == address(0)) revert ZeroAddress();
-        if (executor == address(0)) revert ZeroAddress();
+        if (client == address(0)) revert FactoryZeroAddress();
+        if (executor == address(0)) revert FactoryZeroAddress();
         if (client == executor) revert ClientEqualsExecutor();
         if (amount == 0) revert ZeroAmount();
         if (deadlineDays == 0) revert ZeroDeadline();
@@ -218,7 +218,7 @@ contract FactoryFacet {
             amount, deadlineDays, terms,
             fs.diamond, fs.usdc, fs.trustedForwarder, address(this)
         );
-        if (agreementAddress == address(0)) revert ZeroAddress();
+        if (agreementAddress == address(0)) revert FactoryZeroAddress();
 
         IRegistry(fs.diamond).register(agreementAddress, client, executor, amount);
 
@@ -249,7 +249,7 @@ contract FactoryFacet {
     }
 
     function setFeeRecipient(address newRecipient) external onlyOwner {
-        if (newRecipient == address(0)) revert ZeroAddress();
+        if (newRecipient == address(0)) revert FactoryZeroAddress();
         FactoryStorage.store().feeRecipient = newRecipient;
         emit FeeRecipientUpdated(newRecipient);
     }
@@ -260,7 +260,7 @@ contract FactoryFacet {
     }
 
     function setAgreementDeployer(address deployer) external onlyOwner {
-        if (deployer == address(0)) revert ZeroAddress();
+        if (deployer == address(0)) revert FactoryZeroAddress();
         FactoryStorage.store().agreementDeployer = deployer;
         emit AgreementDeployerUpdated(deployer);
     }

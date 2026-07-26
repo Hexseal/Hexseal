@@ -55,7 +55,7 @@ contract DeployFull is Script {
         // Дешевле споткнуться здесь, чем после того как скрипт уже сжёг газ на
         // одиннадцать имплементаций и сам Diamond.
 
-        // initFactory() ревертит ZeroAddress() на нулевом forwarder-е — та же
+        // initFactory() ревертит FactoryZeroAddress() на нулевом forwarder-е — та же
         // проверка здесь просто дешевле по месту.
         require(
             trustedForwarder != address(0),

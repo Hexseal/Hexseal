@@ -506,7 +506,7 @@ contract DiamondTest is Test {
         vm.prank(client);
         usdc.approve(address(diamond), 10 * 10**6);
         vm.prank(client);
-        vm.expectRevert(FactoryFacet.ZeroAddress.selector);
+        vm.expectRevert(FactoryFacet.FactoryZeroAddress.selector);
         FactoryFacet(address(diamond)).deployAgreement(
             address(0), executor, arbiter, AMOUNT, DEADLINE, TERMS_HASH, 0
         );
