@@ -35,13 +35,23 @@ contract MockUSDCT {
 /// USDC, у которого approve() можно переключаемо заставить возвращать false —
 /// нужен, чтобы поймать мутанта, убирающего проверку возврата approve()
 /// (MockUSDCT всегда возвращает true, эта проверка ничем не убивалась).
+///
+/// Провал также можно запиннить по НОМЕРУ вызова (setFailOnApproveCall):
+/// _fundVault зовёт approve() дважды подряд — сначала выдаёт разрешение,
+/// потом сбрасывает его в 0. approveShouldFail роняет ОБЕ проверки разом
+/// (снятие любой одной выживает — срабатывает вторая), а failOnApproveCall
+/// бьёт точно по одной из двух, чтобы убедиться, что запиннена именно она,
+/// а не другая.
 contract MockUSDCApproveFailT {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
     bool public approveShouldFail;
+    uint256 public failOnApproveCall; // 0 = выключено; N = провалить именно N-й вызов approve()
+    uint256 public approveCallCount;
 
     function mint(address to, uint256 amount) external { balanceOf[to] += amount; }
     function setApproveShouldFail(bool v) external { approveShouldFail = v; }
+    function setFailOnApproveCall(uint256 n) external { failOnApproveCall = n; }
 
     function transfer(address to, uint256 amount) external returns (bool) {
         require(balanceOf[msg.sender] >= amount, "insufficient");
@@ -50,8 +60,10 @@ contract MockUSDCApproveFailT {
         return true;
     }
 
-    function approve(address, uint256) external view returns (bool) {
+    function approve(address, uint256) external returns (bool) {
+        approveCallCount += 1;
         if (approveShouldFail) return false;
+        if (failOnApproveCall != 0 && approveCallCount == failOnApproveCall) return false;
         return true;
     }
 
@@ -105,6 +117,9 @@ contract MockDiamond {
     bool    public daoActive;
     uint256 public uniqueActiveUsers;
     address public dao;
+    bool    public fundVaultReverts;
+
+    error FundVaultDisabled();
 
     constructor(address usdc_) { usdc = usdc_; }
 
@@ -112,8 +127,12 @@ contract MockDiamond {
     function setDaoActive(bool v)            external { daoActive = v; }
     function setUniqueActiveUsers(uint256 v) external { uniqueActiveUsers = v; }
     function setDao(address v)               external { dao = v; }
+    /// Имитирует момент, когда казну заменили через setFeeRecipient и
+    /// диамонд больше не пускает эту казну в fundVault.
+    function setFundVaultReverts(bool v)     external { fundVaultReverts = v; }
 
     function fundVault(uint256 amount) external {
+        if (fundVaultReverts) revert FundVaultDisabled();
         MockUSDCT(usdc).transferFrom(msg.sender, address(this), amount);
         vaultBalance += amount;
     }
@@ -251,6 +270,98 @@ contract ReturndataBombDiamondT {
     function isDaoActive()          external view returns (bool)    { return daoActive; }
     function getUniqueActiveUsers() external pure returns (uint256) { return 0; }
     function getDAOAddress()        external pure returns (address) { return address(0); }
+}
+
+/// Диамонд, чей fundVault ничего не забирает через transferFrom, а вместо
+/// этого сам присылает казне немного лишнего USDC — баланс казны неожиданно
+/// РАСТЁТ во время вызова. Проверяет ветку spent=0 в _fundVault: без неё
+/// вычитание balanceBefore - balanceAfter ушло бы в подполье (balanceAfter
+/// оказался бы больше balanceBefore) и схлопнулось бы в Panic(0x11),
+/// обрушив всю раздачу. Требует предварительного минта самому диамонду —
+/// он не может прислать то, чего у него нет.
+contract BalanceGrowingFundDiamondT {
+    address public usdc;
+    uint256 public vaultBalance;
+    bool    public daoActive;
+    uint256 public constant GIFT = 1_000_000; // 1 USDC — сумма, которую диамонд сам шлёт казне
+
+    constructor(address usdc_) { usdc = usdc_; }
+
+    function setVaultBalance(uint256 v) external { vaultBalance = v; }
+    function setDaoActive(bool v)       external { daoActive = v; }
+
+    function fundVault(uint256) external {
+        // Игнорируем запрошенный amount и НЕ забираем ничего через
+        // transferFrom — вместо этого сами отправляем казне GIFT.
+        MockUSDCT(usdc).transfer(msg.sender, GIFT);
+        vaultBalance += GIFT;
+    }
+
+    function getVaultBalance()      external view returns (uint256) { return vaultBalance; }
+    function isDaoActive()          external view returns (bool)    { return daoActive; }
+    function getUniqueActiveUsers() external pure returns (uint256) { return 0; }
+    function getDAOAddress()        external pure returns (address) { return address(0); }
+}
+
+/// USDC, который во время transfer() (1) записывает, каким было
+/// foundationOwed казны В МОМЕНТ вызова — пиннит порядок «effects-before-
+/// interaction» в withdrawFoundation() без реентранси, и (2) при attack=true
+/// пытается реентерить withdrawFoundation() изнутри собственного transfer(),
+/// как это уже делает ReentrantDiamondT для distribute()/fundVault().
+contract ReentrantWithdrawUSDCT {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    address public treasury;
+    bool    public attack;
+
+    bool    public reentryAttempted;
+    bool    public reentrySucceeded;
+    bytes4  public reentryRevertSelector;
+    uint256 public foundationOwedDuringTransfer;
+
+    function mint(address to, uint256 amount) external { balanceOf[to] += amount; }
+    function setTreasury(address t) external { treasury = t; }
+    function setAttack(bool v)      external { attack = v; }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        // Снимок ДО собственного перевода — если withdrawFoundation()
+        // обнулит foundationOwed ПОСЛЕ transfer(), а не до, здесь будет
+        // видно старое ненулевое значение.
+        foundationOwedDuringTransfer = Treasury(treasury).foundationOwed();
+
+        require(balanceOf[msg.sender] >= amount, "insufficient");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+
+        if (attack) {
+            reentryAttempted = true;
+            try Treasury(treasury).withdrawFoundation() {
+                reentrySucceeded = true;
+            } catch (bytes memory reason) {
+                reentrySucceeded = false;
+                if (reason.length >= 4) {
+                    bytes4 sel;
+                    assembly { sel := mload(add(reason, 32)) }
+                    reentryRevertSelector = sel;
+                }
+            }
+        }
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "allowance");
+        require(balanceOf[from] >= amount, "insufficient");
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
 }
 
 contract TreasuryTest is Test {
@@ -702,5 +813,216 @@ contract TreasuryTest is Test {
     function testWithdrawFoundationRevertsWhenNothingOwed() public {
         vm.expectRevert(Treasury.NothingOwed.selector);
         treasury.withdrawFoundation();
+    }
+
+    // ============================================================
+    // Задача 3: topUpVault() — резерв добивает банк.
+    // ============================================================
+
+    /// Банк просел — резерв добивает его до цели, и ровно на недостающее.
+    function testTopUpVaultMovesOnlyTheShortfall() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        assertEq(treasury.reserveBalance(), 300_000_000, "setup: reserve");
+
+        // Банк потратился на дотации арбитрам.
+        diamond.setVaultBalance(treasury.VAULT_TARGET() - 120_000_000);
+
+        treasury.topUpVault();
+
+        assertEq(diamond.getVaultBalance(), treasury.VAULT_TARGET(), "vault not restored to target");
+        assertEq(treasury.reserveBalance(), 300_000_000 - 120_000_000, "reserve must lose exactly the shortfall");
+    }
+
+    /// Банк полон — вызов ревертит, а не переводит ноль и не льёт сверх цели.
+    function testTopUpVaultRevertsWhenVaultIsAtTarget() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        vm.expectRevert(Treasury.VaultAtTarget.selector);
+        treasury.topUpVault();
+    }
+
+    /// Резерв пуст — ревертит, а не делает вид, что сработал.
+    function testTopUpVaultRevertsWhenReserveIsEmpty() public {
+        diamond.setVaultBalance(0);
+        vm.expectRevert(Treasury.ReserveEmpty.selector);
+        treasury.topUpVault();
+    }
+
+    /// Резерва меньше, чем просадка — отдаёт сколько есть, а не ревертит.
+    function testTopUpVaultGivesWhatItHasWhenReserveIsShort() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 100_000_000);
+        treasury.distribute();
+        uint256 reserve = treasury.reserveBalance();
+        assertGt(reserve, 0, "setup: reserve must be non-empty");
+
+        diamond.setVaultBalance(0); // просадка много больше резерва
+
+        treasury.topUpVault();
+
+        assertEq(treasury.reserveBalance(), 0, "reserve must be drained");
+        assertEq(diamond.getVaultBalance(), reserve, "vault must receive exactly what the reserve had");
+    }
+
+    /// Провал наполнения банка обязан откатить списание резерва. Без проверки
+    /// флага резерв обнулялся бы, банк не получал бы ничего, а деньги уезжали
+    /// бы в нераспределённый остаток — с событием об успехе. Замерено ревью:
+    /// 300 USDC уходят из резерва безвозвратно, вызов открытый и повторяемый.
+    function testTopUpVaultRevertsWhenVaultFundingFails() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        uint256 reserveBefore = treasury.reserveBalance();
+        assertGt(reserveBefore, 0, "setup: reserve must be non-empty");
+
+        diamond.setVaultBalance(0);
+        diamond.setFundVaultReverts(true);
+
+        vm.expectRevert(Treasury.VaultFundingFailed.selector);
+        treasury.topUpVault();
+
+        assertEq(treasury.reserveBalance(), reserveBefore, "reserve must be untouched after a failed top-up");
+    }
+
+    /// Как и у distribute: сторожит отсутствие гейта. Упадёт, если кто-то
+    /// решит, что тратить резерв должен только владелец — а это ровно то
+    /// усмотрение, которого в конструкции быть не должно.
+    function testAnyoneCanTopUpVault() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        diamond.setVaultBalance(treasury.VAULT_TARGET() - 50_000_000);
+
+        vm.prank(address(0xBEEF));
+        treasury.topUpVault();
+
+        assertEq(diamond.getVaultBalance(), treasury.VAULT_TARGET(), "stranger's call must work identically");
+    }
+
+    // ============================================================
+    // Хвосты из ревью Задачи 3.
+    // ============================================================
+
+    /// _fundVault зовёт approve() дважды: сначала выдаёт разрешение, потом
+    /// сбрасывает его в 0. MockUSDCApproveFailT.approveShouldFail роняет ОБЕ
+    /// проверки разом, поэтому снятие любой ОДНОЙ из двух в коде им не
+    /// ловится — срабатывает вторая. failOnApproveCall бьёт точно по первому
+    /// вызову (выдача), проверяя, что именно эта проверка реальна.
+    function testFundVaultRevertsWhenGrantApproveFails() public {
+        MockUSDCApproveFailT flakyUsdc = new MockUSDCApproveFailT();
+        MockDiamond flakyDiamond = new MockDiamond(address(flakyUsdc));
+        Treasury flakyTreasury = new Treasury(address(flakyUsdc), address(flakyDiamond), FOUNDATION);
+
+        flakyDiamond.setVaultBalance(0); // шортфолл > 0 → _fundVault точно вызовет approve() дважды
+        flakyUsdc.mint(address(flakyTreasury), 1_000_000_000);
+        flakyUsdc.setFailOnApproveCall(1); // роняем ИМЕННО первый вызов — выдачу разрешения
+
+        vm.expectRevert(Treasury.ApproveFailed.selector);
+        flakyTreasury.distribute();
+    }
+
+    /// Симметричный тест: первый approve() (выдача) проходит успешно, а
+    /// проваливается именно ВТОРОЙ (сброс в 0). Без этого теста мутант,
+    /// убирающий проверку возврата у ВТОРОГО approve(), не ловился бы никем —
+    /// testApproveFailureRevertsTheWholeDistribution роняет первый вызов и
+    /// до второго код никогда не доходит.
+    function testFundVaultRevertsWhenResetApproveFails() public {
+        MockUSDCApproveFailT flakyUsdc = new MockUSDCApproveFailT();
+        MockDiamond flakyDiamond = new MockDiamond(address(flakyUsdc));
+        Treasury flakyTreasury = new Treasury(address(flakyUsdc), address(flakyDiamond), FOUNDATION);
+
+        flakyDiamond.setVaultBalance(0);
+        flakyUsdc.mint(address(flakyTreasury), 1_000_000_000);
+        flakyUsdc.setFailOnApproveCall(2); // выдача проходит, сброс в 0 — нет
+
+        vm.expectRevert(Treasury.ApproveFailed.selector);
+        flakyTreasury.distribute();
+    }
+
+    /// Пиннит порядок «effects-before-interaction» в withdrawFoundation()
+    /// БЕЗ реентранси: USDC-мок записывает foundationOwed казны в момент
+    /// собственного transfer(). Если долг обнуляется ПОСЛЕ перевода, а не
+    /// до, здесь будет видно старое ненулевое значение — мутант "перенести
+    /// foundationOwed = 0 после transfer()" пойман именно этим тестом.
+    function testWithdrawFoundationZeroesDebtBeforeTransfer() public {
+        ReentrantWithdrawUSDCT rUsdc = new ReentrantWithdrawUSDCT();
+        MockDiamond rDiamond = new MockDiamond(address(rUsdc));
+        Treasury rTreasury = new Treasury(address(rUsdc), address(rDiamond), FOUNDATION);
+        rUsdc.setTreasury(address(rTreasury));
+
+        rDiamond.setVaultBalance(rTreasury.VAULT_TARGET()); // банк полон — fundVault в distribute() не зовётся
+        rUsdc.mint(address(rTreasury), 1_000_000_000);
+        rTreasury.distribute();
+        assertEq(rTreasury.foundationOwed(), 700_000_000, "setup: foundation debt accrued");
+
+        rTreasury.withdrawFoundation();
+
+        assertEq(
+            rUsdc.foundationOwedDuringTransfer(), 0,
+            "foundationOwed must already be zero at the moment of transfer() -- effects before interaction"
+        );
+        assertEq(rTreasury.foundationOwed(), 0, "debt cleared after withdrawal");
+        assertEq(rUsdc.balanceOf(FOUNDATION), 700_000_000, "foundation actually received the funds");
+    }
+
+    /// Пиннит страж nonReentrant на withdrawFoundation() отдельно от порядка:
+    /// реентрант, пытающийся вернуться в withdrawFoundation() изнутри
+    /// собственного transfer(), обязан упасть именно с Treasury.Reentrancy —
+    /// а не молча пройти и не упасть с чем-то другим (например, NothingOwed
+    /// от уже обнулённого при верном порядке долга). Мутант "снять
+    /// nonReentrant" (при сохранённом порядке) ловится именно тем, что
+    /// селектор ошибки меняется с Reentrancy на NothingOwed.
+    function testWithdrawFoundationBlocksReentrancy() public {
+        ReentrantWithdrawUSDCT rUsdc = new ReentrantWithdrawUSDCT();
+        MockDiamond rDiamond = new MockDiamond(address(rUsdc));
+        Treasury rTreasury = new Treasury(address(rUsdc), address(rDiamond), FOUNDATION);
+        rUsdc.setTreasury(address(rTreasury));
+        rUsdc.setAttack(true);
+
+        rDiamond.setVaultBalance(rTreasury.VAULT_TARGET());
+        rUsdc.mint(address(rTreasury), 1_000_000_000);
+        rTreasury.distribute();
+
+        rTreasury.withdrawFoundation();
+
+        assertTrue(rUsdc.reentryAttempted(),  "reentrancy must have been attempted");
+        assertFalse(rUsdc.reentrySucceeded(), "reentrant withdrawFoundation() must not succeed");
+        assertEq(
+            rUsdc.reentryRevertSelector(), Treasury.Reentrancy.selector,
+            "must fail specifically with Reentrancy, not e.g. NothingOwed from an already-zeroed debt"
+        );
+
+        assertEq(rTreasury.foundationOwed(), 0, "debt cleared exactly once");
+        assertEq(rUsdc.balanceOf(FOUNDATION), 700_000_000, "foundation received the owed amount exactly once, not twice");
+    }
+
+    /// Ветка spent=0 при НЕОЖИДАННО выросшем балансе казны во время вызова
+    /// банка. Достижимо только враждебным диамондом (шлёт казне USDC внутри
+    /// собственного fundVault вместо того, чтобы его забирать) — ровно та
+    /// модель угроз, ради которой сделан весь _fundVault. Без этой ветки
+    /// вычитание balanceBefore - balanceAfter ушло бы в подполье и
+    /// схлопнулось бы в Panic(0x11), обрушив всю раздачу целиком.
+    function testFundVaultTreatsUnexpectedBalanceGrowthAsZeroSpent() public {
+        BalanceGrowingFundDiamondT giftDiamond = new BalanceGrowingFundDiamondT(address(usdc));
+        giftDiamond.setVaultBalance(0); // шортфолл = полный VAULT_TARGET
+        usdc.mint(address(giftDiamond), giftDiamond.GIFT()); // диамонду есть что прислать казне
+
+        Treasury t = new Treasury(address(usdc), address(giftDiamond), FOUNDATION);
+        usdc.mint(address(t), 1_000_000_000);
+
+        // Не должно ревертить Panic(0x11).
+        t.distribute();
+
+        uint256 target = t.VAULT_TARGET();
+        uint256 rest = 1_000_000_000 - target;
+        assertEq(t.foundationOwed(), rest * 70 / 100,      "foundation debt still accrues normally");
+        assertEq(t.reserveBalance(), rest - rest * 70/100, "reserve still fills normally");
+
+        assertEq(
+            usdc.balanceOf(address(t)),
+            t.reserveBalance() + t.foundationOwed() + t.pendingDistribution(),
+            "invariant holds even when the diamond unexpectedly grows the treasury's balance mid-call"
+        );
     }
 }
