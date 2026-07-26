@@ -90,49 +90,59 @@ const PERMIT_TYPES = {
 // ─── Gas defaults ─────────────────────────────────────────────────────────────
 //
 // These are FALLBACKS, used only when the live estimateGas() below fails; the
-// estimate path applies its own 130% buffer and never reads this table.
+// estimate path applies its own 130% buffer and never reads this table. Since
+// they get no such buffer themselves, each needs its own margin over the
+// worst case it might actually see.
 //
-// Deal creation no longer deploys a fresh Agreement. Since the EIP-1167 clone
-// switch it costs 278_355 gas for clone + initialize (test/AgreementClone.t.sol,
-// testCloneDeployStaysCheap) instead of the ~4_400_000 a full CREATE used to
-// cost, so every constant that was sized off "~4.6M" was sized off a number
-// that is gone. Measured end-to-end on the current code, mock USDC, foundry
-// (excludes the 21k intrinsic cost and calldata):
+// The dominant cost driver here is NOT the Agreement deploy — clones cost
+// 278_355 gas (test/AgreementClone.t.sol, testCloneDeployStaysCheap), a
+// rounding error next to what follows. It's the `terms`/`title`/`description`
+// strings these calls write on-chain: the contracts place NO length limit on
+// them at all (docs/CONTRACT_GUIDE.md) — the only ceiling is the frontend
+// form's maxLength (title 100, description 500, terms 2000, 2600 combined for
+// a job posting), and at roughly 825 gas per stored character that swamps
+// everything else. An earlier version of this table was sized off
+// measurements taken with a ~19-character terms string and came in far too
+// low once a form gets used anywhere near its actual limit.
 //
-//   deployAndFund    674_963
-//   acceptApplicant  705_931
-//   acceptRequest    692_177 with no siblings, 1_185_044 at the 19-sibling
-//                    worst case (see the note on acceptRequest below)
+// Measured at the form's actual maximum (mock USDC, foundry):
+//
+//   mintJob          (title 100 / description 500 / terms 2000)  2_791_334
+//   acceptRequest    (19 siblings, terms 2000)                   2_593_454
+//   acceptApplicant  (terms 2000)                                2_116_407
+//   deployAndFund    (terms 2000)                                2_074_240
 //
 // Real USDC is a proxied FiatTokenV2_2, not the mock: each transfer costs
 // roughly 10-15k more than measured here, which matters most for the
-// sibling-refund loop with its ~21 transfers. The constants below therefore
-// keep a wide margin over the measured figures rather than tracking them
-// closely — a fallback that is too LOW breaks a live deal (the relayer's
-// pre-flight staticCall fails and the action 400s), while one that is too high
-// costs nothing: the chain charges gas used, not gas offered.
+// sibling-refund loop with its ~21 transfers. The constants below keep real
+// margin over the measured figures rather than tracking them tightly — a
+// fallback that is too LOW breaks a live deal (the relayer's pre-flight
+// staticCall fails and the action 400s), while one that is too high costs
+// nothing: the chain charges gas used, not gas offered.
 const GAS_DEFAULTS: Record<string, bigint> = {
-  deployAndFund:      2_000_000n, // measured 674_963 (clone + fund), ~3x margin
-  deployAgreement:    2_000_000n, // measured ~525_000 (clone, no fund)
-  mintJob:            1_500_000n,
-  mintJobWithPermit:  1_500_000n,
+  deployAndFund:      2_800_000n, // measured 2_074_240 at max terms length
+  deployAgreement:    2_800_000n, // same call minus the fund step; kept at the same margin
+  // mintJob/mintJobWithPermit were underestimated before the clone work too —
+  // this is not a regression from this branch, just fixed alongside it. Measured
+  // 2_791_334 at max title/description/terms; permit adds only ~30k on top.
+  mintJob:            3_600_000n,
+  mintJobWithPermit:  3_600_000n,
   editJob:              150_000n,
   editService:          150_000n,
-  acceptApplicant:    2_000_000n, // clones Agreement via FactoryFacet; measured 705_931
+  acceptApplicant:    2_800_000n, // clones Agreement via FactoryFacet; measured 2_116_407 at max terms length
   cancelJob:            150_000n,
   applyForJob:          150_000n,
   withdrawApplication:  150_000n,
   mintService:              800_000n,
   mintServiceWithPermit:    800_000n,
-  requestService:       800_000n,
+  // Also underestimated before the clone work (was 800_000n) — not a regression
+  // from this branch. Measured 1_868_986 at max title/description/terms.
+  requestService:       2_400_000n,
   // also clones an Agreement PLUS a loop refunding every OTHER still-pending
   // request from the same client to this executor (up to MAX_PENDING_PER_PAIR-1=19
-  // siblings), unlike acceptApplicant/deployAndFund which have no such loop. Since
-  // the clone switch the loop, not the deploy, dominates: measured 692_177 with no
-  // siblings and 1_185_044 at the 19-sibling worst case, i.e. ~26k per refunded
-  // sibling. This fallback gets no automatic buffer (unlike the live-estimate
-  // path's 130%), so it keeps real margin over that measured worst case.
-  acceptRequest:      2_500_000n,
+  // siblings), unlike acceptApplicant/deployAndFund which have no such loop.
+  // Measured at max terms length with the full 19-sibling refund loop: 2_593_454.
+  acceptRequest:      3_500_000n,
   rejectRequest:        120_000n,
   cancelRequest:        120_000n,
   pauseService:          80_000n,
