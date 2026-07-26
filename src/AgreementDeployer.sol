@@ -3,13 +3,20 @@ pragma solidity ^0.8.20;
 
 // ============================================================
 // HEXSEAL — AgreementDeployer.sol
-// Отдельный контракт (не фасет Diamond) который держит
-// bytecode Agreement и деплоит новые инстансы через CREATE.
+// Отдельный контракт (не фасет Diamond), который создаёт новые
+// инстансы Agreement как минимальные прокси EIP-1167.
 //
-// Зачем: type(Agreement).creationCode раздувает FactoryFacet
-// на ~20KB. Вынос в отдельный контракт решает проблему.
+// Раньше он носил в себе type(Agreement).creationCode и делал
+// CREATE — это стоило ~4.4M газа на сделку и раздувало сам
+// деплойер до 23 849 байт. Теперь Agreement развёрнут один раз
+// как реализация, а на сделку создаётся 45-байтовый клон.
+//
+// import Agreement.sol сохранён намеренно: тестам и скриптам он
+// нужен транзитивно, а creationCode в байткод не попадает, пока
+// не написано type(Agreement).creationCode или new Agreement().
 // ============================================================
 
+import "@openzeppelin/contracts/proxy/Clones.sol";
 import "./Agreement.sol";
 
 interface IAgreementDeployer {
@@ -29,10 +36,19 @@ interface IAgreementDeployer {
 
 contract AgreementDeployer is IAgreementDeployer {
     address public immutable authorizedCaller;
+    address public immutable implementation;
 
-    constructor(address authorizedCaller_) {
+    constructor(address authorizedCaller_, address implementation_) {
         require(authorizedCaller_ != address(0), "AgreementDeployer: zero caller");
+        require(implementation_   != address(0), "AgreementDeployer: zero implementation");
+        // Обязательно, а не для красоты. Clones.clone() не проверяет наличие
+        // кода у реализации, а вызов к адресу без кода в EVM возвращает УСПЕХ:
+        // initialize() «отработал бы», deploy() вернул бы адрес, клиент
+        // профинансировал бы пустую скорлупу, которую любой посторонний потом
+        // проинициализировал бы на себя.
+        require(implementation_.code.length > 0, "AgreementDeployer: implementation has no code");
         authorizedCaller = authorizedCaller_;
+        implementation   = implementation_;
     }
 
     function deploy(
@@ -48,17 +64,13 @@ contract AgreementDeployer is IAgreementDeployer {
         address factory
     ) external returns (address addr) {
         require(msg.sender == authorizedCaller, "AgreementDeployer: unauthorized");
-        bytes memory bytecode = abi.encodePacked(
-            type(Agreement).creationCode,
-            abi.encode(
-                client, executor, arbiter,
-                amount, deadlineDays, terms,
-                diamond, usdc, trustedForwarder, factory
-            )
+        // clone() и initialize() в одной транзакции — между ними никто не
+        // вклинится, поэтому перехватить неинициализированный клон нельзя.
+        addr = Clones.clone(implementation);
+        Agreement(addr).initialize(
+            client, executor, arbiter,
+            amount, deadlineDays, terms,
+            diamond, usdc, trustedForwarder, factory
         );
-        assembly {
-            addr := create(0, add(bytecode, 0x20), mload(bytecode))
-        }
-        require(addr != address(0), "AgreementDeployer: deploy failed");
     }
 }

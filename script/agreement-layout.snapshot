@@ -1,0 +1,28 @@
+_owners|mapping(uint256 => address)|0|0
+_balances|mapping(address => uint256)|1|0
+_tokenApprovals|mapping(uint256 => address)|2|0
+_operatorApprovals|mapping(address => mapping(address => bool))|3|0
+_status|uint256|4|0
+_trustedForwarder|address|5|0
+client|address|6|0
+_initialized|bool|6|20
+executor|address|7|0
+arbiter|address|8|0
+amount|uint256|9|0
+deadlineDays|uint256|10|0
+terms|string|11|0
+usdc|address|12|0
+diamond|address|13|0
+factory|address|14|0
+fundedAt|uint256|15|0
+activatedAt|uint256|16|0
+markedDoneAt|uint256|17|0
+disputedAt|uint256|18|0
+resolvedAt|uint256|19|0
+clientWonDispute|bool|20|0
+_finalized|bool|20|1
+_finalStatus|enum Agreement.Status[CREATED,FUNDED,ACTIVE,COMPLETED,DISPUTED,RESOLVED,REFUNDED]|20|2
+extras|mapping(uint256 => struct Agreement.Extra{amount:uint256@0+0,terms:string@1+0,status:enum Agreement.ExtraStatus[PENDING,ACCEPTED,REJECTED]@2+0})|21|0
+nextExtraId|uint256|22|0
+extrasTotal|uint256|23|0
+pendingExtrasTotal|uint256|24|0

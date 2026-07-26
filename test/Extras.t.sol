@@ -186,7 +186,8 @@ contract ExtrasTest is Test {
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
 
-        AgreementDeployer agDeployer = new AgreementDeployer(address(diamond));
+        Agreement agreementImpl = new Agreement();
+        AgreementDeployer agDeployer = new AgreementDeployer(address(diamond), address(agreementImpl));
         RegistryFacet(address(diamond)).initRegistry(address(diamond));
         FactoryFacet(address(diamond)).initFactory(
             address(usdc), feeRecipient, address(0xDEAD), address(diamond), address(agDeployer)

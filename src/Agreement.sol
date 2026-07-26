@@ -25,8 +25,11 @@ abstract contract MinimalERC721 {
     mapping(uint256 => address) private _tokenApprovals;
     mapping(address => mapping(address => bool)) private _operatorApprovals;
 
-    string private _name;
-    string private _symbol;
+    // Одинаковы у каждой сделки — держим константами, а не в хранилище
+    // каждого клона: две строки в storage стоили бы по холодному SSTORE
+    // на инициализацию и ничего не давали бы взамен.
+    string private constant _NAME   = "Hexseal Deal";
+    string private constant _SYMBOL = "HSEAL";
 
     // ---- Events (ERC721 стандарт) ----
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
@@ -42,13 +45,8 @@ abstract contract MinimalERC721 {
     error ERC721AlreadyMinted();
     error TokenSoulbound(); // soulbound — нельзя передать пока ACTIVE
 
-    constructor(string memory name_, string memory symbol_) {
-        _name = name_;
-        _symbol = symbol_;
-    }
-
-    function name() external view returns (string memory) { return _name; }
-    function symbol() external view returns (string memory) { return _symbol; }
+    function name() external pure returns (string memory) { return _NAME; }
+    function symbol() external pure returns (string memory) { return _SYMBOL; }
 
     function ownerOf(uint256 tokenId) public view returns (address) {
         address owner = _owners[tokenId];
@@ -148,7 +146,15 @@ abstract contract ReentrancyGuard {
 
     error Reentrancy();
 
-    constructor() { _status = NOT_ENTERED; }
+    // Вызывается из Agreement.initialize(). Корректности ради это не нужно:
+    // модификатор сравнивает только с ENTERED, поэтому свежий клон со
+    // _status == 0 ведёт себя правильно, а инициализация даже добавляет
+    // ~2 900 газа. Ставим ради устойчивости: без неё корректность зависит
+    // от точной формы сравнения, и переписывание модификатора в стиль
+    // `if (_status != NOT_ENTERED) revert` тихо сломало бы каждый клон.
+    function _initReentrancyGuard() internal {
+        _status = NOT_ENTERED;
+    }
 
     modifier nonReentrant() {
         if (_status == ENTERED) revert Reentrancy();
@@ -162,9 +168,11 @@ abstract contract ReentrancyGuard {
 // Trusted forwarder передаёт реальный msg.sender в конце calldata
 
 abstract contract ERC2771Context {
-    address private immutable _trustedForwarder;
+    // Не immutable: у каждого клона свой форвардер приходит из initialize(),
+    // а immutable живёт в коде реализации, общем для всех клонов.
+    address private _trustedForwarder;
 
-    constructor(address trustedForwarder_) {
+    function _initTrustedForwarder(address trustedForwarder_) internal {
         _trustedForwarder = trustedForwarder_;
     }
 
@@ -254,20 +262,26 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 public constant DEADLINE_GRACE      = 1 days; // grace-период после дедлайна перед рефандом
     // Если арбитр не резолвит за 4 дня — авторефанд клиенту (защита от неактивного арбитра)
 
-    // -------- IMMUTABLES (задаются при деплое, никогда не меняются) --------
+    // -------- DEAL PARAMS (пишутся один раз в initialize) --------
+    //
+    // Не immutable: значения различны у каждого клона, а immutable живёт
+    // в коде реализации, одном на всех. Порядок объявления — это раскладка
+    // хранилища прокси, и после первого живого клона она заморожена:
+    // менять можно только дописыванием в конец (см. script/check-agreement-layout.sh).
 
-    address public immutable client;        // заказчик
-    address public immutable executor;      // исполнитель
+    address public client;          // заказчик
+    bool    private _initialized;   // делит слот с client — отдельного SSTORE не стоит
+    address public executor;        // исполнитель
     /// address(0) — штатное значение: арбитр не назначен, пока нет спора.
-    /// Поэтому конструктор намеренно не проверяет arbiter_ на ноль,
+    /// Поэтому initialize намеренно не проверяет arbiter_ на ноль,
     /// хотя Slither и помечает это как missing-zero-check.
-    address public arbiter;                 // арбитр (address(0) до клейма; setArbiter вызывает Diamond)
-    uint256 public immutable amount;        // сумма сделки USDC (6 decimals)
-    uint256 public immutable deadlineDays;  // дней до авторефанда
-    string  public terms;                   // условия сделки — задаются при деплое
-    address public immutable usdc;          // USDC на Base
-    address public immutable diamond;       // Diamond proxy = Registry
-    address public immutable factory;       // FactoryFacet address (for fundFromFactory)
+    address public arbiter;         // арбитр (address(0) до клейма; setArbiter вызывает Diamond)
+    uint256 public amount;          // сумма сделки USDC (6 decimals)
+    uint256 public deadlineDays;    // дней до авторефанда
+    string  public terms;           // условия сделки
+    address public usdc;            // USDC на Base
+    address public diamond;         // Diamond proxy = Registry
+    address public factory;         // FactoryFacet address (for fundFromFactory)
 
     // -------- STATE --------
 
@@ -362,24 +376,40 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     error WrongAmount();
     error ExtraNotPending();
     error ZeroAmount();
+    error AlreadyInitialized();
 
-    // -------- CONSTRUCTOR --------
+    // -------- CONSTRUCTOR (только для контракта-реализации) --------
 
-    constructor(
+    /// Запирает саму реализацию: у неё собственное хранилище, и без этого
+    /// посторонний вызвал бы на ней initialize() и стал бы её «клиентом».
+    /// Клонов это не касается — у каждого хранилище своё и пустое.
+    constructor() {
+        _initialized = true;
+    }
+
+    // -------- INITIALIZER (вызывается на клоне) --------
+
+    /// @notice Инициализация клона. Вызывается ровно один раз.
+    ///
+    /// Отдельной проверки вызывающего нет намеренно: AgreementDeployer
+    /// делает Clones.clone() и initialize() в ОДНОЙ транзакции, поэтому
+    /// неинициализированный клон не существует ни в одном блоке и
+    /// перехватывать нечего. Страж ниже закрывает повторный вызов.
+    function initialize(
         address client_,
         address executor_,
         address arbiter_,
         uint256 amount_,
         uint256 deadlineDays_,
-        string  memory terms_,
+        string  calldata terms_,
         address diamond_,
         address usdc_,
         address trustedForwarder_,
         address factory_
-    )
-        MinimalERC721("Hexseal Deal", "HSEAL")
-        ERC2771Context(trustedForwarder_)
-    {
+    ) external {
+        if (_initialized) revert AlreadyInitialized();
+        _initialized = true;
+
         if (client_   == address(0)) revert ZeroAddress();
         if (executor_ == address(0)) revert ZeroAddress();
         if (diamond_  == address(0)) revert ZeroAddress();
@@ -398,6 +428,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         diamond      = diamond_;
         usdc         = usdc_;
         factory      = factory_;
+
+        _initTrustedForwarder(trustedForwarder_);
+        _initReentrancyGuard();
     }
 
     // -------- ARBITER REGISTRY --------

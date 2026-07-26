@@ -45,7 +45,8 @@ contract UpgradeTermsToString is Script {
         vm.startBroadcast(pk);
 
         // 1. New AgreementDeployer (holds new Agreement bytecode with string terms)
-        AgreementDeployer newDeployer = new AgreementDeployer(diamond);
+        Agreement agreementImpl = new Agreement();
+        AgreementDeployer newDeployer = new AgreementDeployer(diamond, address(agreementImpl));
         console.log("New AgreementDeployer:", address(newDeployer));
 
         // 2. New facets

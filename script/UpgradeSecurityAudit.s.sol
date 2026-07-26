@@ -40,7 +40,8 @@ contract UpgradeSecurityAudit is Script {
         vm.startBroadcast(deployerKey);
 
         // ── 1. New AgreementDeployer (H1: authorizedCaller = diamond) ─────────
-        AgreementDeployer newDeployer = new AgreementDeployer(DIAMOND);
+        Agreement agreementImpl = new Agreement();
+        AgreementDeployer newDeployer = new AgreementDeployer(DIAMOND, address(agreementImpl));
         console.log("AgreementDeployer:", address(newDeployer));
 
         // ── 2. New FactoryFacet (M5: deployAndFund без permit params) ─────────

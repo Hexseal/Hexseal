@@ -769,7 +769,39 @@ app.post('/relay', async (req, res) => {
       return res.status(400).json({ error: 'Invalid address in from/to' });
     }
 
-    const MAX_GAS = 8_000_000n; // Agreement deployment (~4.6M) × 1.3 buffer + forwarder overhead
+    // Ceiling on how much gas one ForwardRequest may ask the relayer to pay for.
+    //
+    // The previous 3M cap was itself a fix, but it was sized off measurements
+    // taken with a ~19-character `terms` string. That was the wrong axis:
+    // `terms`, `title`, and `description` are stored on-chain and the
+    // contracts place NO length limit on them at all — the only ceiling is
+    // the frontend form's maxLength (title 100, description 500, terms 2000,
+    // 2600 combined for a job posting), and at roughly 825 gas per stored
+    // character that dwarfs the ~278k an Agreement clone deploy now costs.
+    // Measured at the form's actual maximum (mock USDC, foundry):
+    //
+    //   mintJob          (title 100 / description 500 / terms 2000)  2_791_334
+    //   acceptRequest    (19 siblings, terms 2000)                   2_593_454
+    //   acceptApplicant  (terms 2000)                                2_116_407
+    //   deployAndFund    (terms 2000)                                2_074_240
+    //
+    // mintJobWithPermit is the heaviest operation reachable from the UI: the
+    // measured mintJob cost above plus ~30k for the permit call itself,
+    // buffered 1.3x by the frontend's live gas estimate to 3_712_800. 5M
+    // keeps ~1.35x margin over that while still cutting the per-request
+    // ETH-drain ceiling 1.6x versus the old 8M.
+    //
+    // The asymmetry here is worth spelling out: a cap that's too low kills a
+    // legitimate user action outright — worse, the direct-tx fallback doesn't
+    // save it, since isRelayDown() (frontend/src/lib/relay.ts) only catches
+    // network failures and 5xx, not this 400 — while a cap that's too high
+    // costs nothing, because the chain charges gas actually used, not gas
+    // requested. Rate limiting (10 req/min) is the other half of the drain
+    // defence.
+    //
+    // Keep in sync with MAX_FORWARD_GAS in frontend/src/app/api/relay/route.ts
+    // — the other path through the same forwarder.
+    const MAX_GAS = 5_000_000n;
     if (BigInt(gas) > MAX_GAS) {
       return res.status(400).json({ error: `gas exceeds maximum (${MAX_GAS})` });
     }

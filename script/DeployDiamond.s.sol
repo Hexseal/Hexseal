@@ -67,7 +67,8 @@ contract DeployDiamond is Script {
         DiamondProxy diamond = new DiamondProxy(deployer, cut, address(0), "");
         
         // AgreementDeployer needs Diamond as authorizedCaller — deploy after Diamond is known
-        AgreementDeployer agreementDeployer = new AgreementDeployer(address(diamond));
+        Agreement agreementImpl = new Agreement();
+        AgreementDeployer agreementDeployer = new AgreementDeployer(address(diamond), address(agreementImpl));
 
         // 4. Инициализируем фасеты
         RegistryFacet(address(diamond)).initRegistry(address(diamond)); // FactoryFacet = Diamond address

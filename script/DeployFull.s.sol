@@ -141,8 +141,14 @@ contract DeployFull is Script {
         console.log("--- Diamond ---");
         console.log("DiamondProxy:         ", address(diamond));
 
+        // Agreement разворачивается ОДИН раз как контракт-реализация; на сделку
+        // создаётся 45-байтовый клон EIP-1167. Конструктор запирает реализацию,
+        // поэтому проинициализировать её саму нельзя.
+        Agreement          agreementImpl = new Agreement();
+        console.log("Agreement impl:       ", address(agreementImpl));
+
         // AgreementDeployer needs Diamond as authorizedCaller — deploy after Diamond is known
-        AgreementDeployer      agDeployer   = new AgreementDeployer(address(diamond));
+        AgreementDeployer  agDeployer     = new AgreementDeployer(address(diamond), address(agreementImpl));
         console.log("AgreementDeployer:    ", address(agDeployer));
 
         // ── 4. Инициализация Registry + Factory ──────────────────────────────

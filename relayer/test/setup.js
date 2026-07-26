@@ -20,6 +20,11 @@ process.env.STORAGE_DIR         = TEST_STORAGE_DIR;
 process.env.PUSH_SECRET         = 'test-push-secret';
 process.env.RPC_URL             = 'http://127.0.0.1:9999'; // never dialed — Contract is mocked below
 process.env.ALLOWED_ORIGINS     = 'http://localhost:3000';
+// Lets individual tests give a request its own X-Forwarded-For to dodge the
+// shared rate-limit bucket every supertest request otherwise falls into (they
+// all share one real socket address) — same idea as the unique-per-test fake
+// IPs helpers.test.js already uses directly against checkRateLimit().
+process.env.TRUST_PROXY          = 'true';
 
 // Every ethers.Contract instance the app constructs looks itself up in the
 // shared registry by address; tests populate that registry via mockContract()

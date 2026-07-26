@@ -56,11 +56,39 @@ const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,ui
 
 /**
  * Maximum gas units allowed in a single ForwardRequest.
- * Agreement deployment (acceptApplicant / acceptRequest / deployAndFund) costs ≈4.6–5 M gas.
- * With 1.3× estimation buffer that's ≈6–6.5 M, so cap at 8 M to give headroom.
- * Rate limiting (10 req/min) prevents relay ETH drain.
+ *
+ * The previous 3M cap was itself a fix, but it was sized off measurements
+ * taken with a ~19-character `terms` string. That was the wrong axis: `terms`,
+ * `title`, and `description` are stored on-chain and the contracts place NO
+ * length limit on them at all — the only ceiling is the frontend form's
+ * maxLength (title 100, description 500, terms 2000, 2600 combined for a job
+ * posting), and at roughly 825 gas per stored character that dwarfs the
+ * ~278k an Agreement clone deploy now costs. Measured at the form's actual
+ * maximum (mock USDC, foundry):
+ *
+ *   mintJob          (title 100 / description 500 / terms 2000)  2_791_334
+ *   acceptRequest    (19 siblings, terms 2000)                   2_593_454
+ *   acceptApplicant  (terms 2000)                                2_116_407
+ *   deployAndFund    (terms 2000)                                2_074_240
+ *
+ * mintJobWithPermit is the heaviest operation reachable from the UI: the
+ * measured mintJob cost above plus ~30k for the permit call itself, buffered
+ * 1.3× by the frontend's live gas estimate (frontend/src/lib/relay.ts)
+ * before the signed request ever reaches this route, to 3_712_800. 5M keeps
+ * ~1.35× margin over that while still cutting the per-request ETH-drain
+ * ceiling 1.6× versus the old 8M.
+ *
+ * The asymmetry is worth spelling out: a cap that's too low kills a
+ * legitimate user action outright — worse, the direct-tx fallback doesn't
+ * save it, since isRelayDown() (frontend/src/lib/relay.ts) only catches
+ * network failures and 5xx, not this 400 — while a cap that's too high costs
+ * nothing, because the chain charges gas actually used, not gas requested.
+ * Rate limiting (10 req/min) is the other half of the drain defence.
+ *
+ * Keep in sync with MAX_GAS in relayer/app.js — the other path through the
+ * same forwarder.
  */
-const MAX_FORWARD_GAS = 8_000_000n;
+const MAX_FORWARD_GAS = 5_000_000n;
 
 // ─── Relayer hot-wallet nonce serialization ──────────────────────────────────
 //

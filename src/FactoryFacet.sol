@@ -42,7 +42,11 @@ library FactoryStorage {
         bool paused;
         address protocolArbiter;
         uint256 arbitrationThreshold;
-        // Деплойер Agreement (держит его creationCode, не раздувая этот фасет)
+        // Деплойер Agreement: держит адрес развёрнутой реализации и клонирует
+        // её через EIP-1167. Creationcode он больше не носит (945 байт против
+        // прежних 23 849) — но остаётся отдельным контрактом, чтобы фабрика
+        // не зависела от кода Agreement и её можно было переключить на новую
+        // реализацию через setAgreementDeployer, не трогая фасет.
         address agreementDeployer;
     }
 
