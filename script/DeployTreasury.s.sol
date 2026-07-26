@@ -25,6 +25,18 @@ contract DeployTreasury is Script {
         require(usdc.code.length    > 0,  "DeployTreasury: USDC_ADDRESS has no code");
         require(diamond.code.length > 0,  "DeployTreasury: DIAMOND_ADDRESS has no code");
 
+        // Наличия кода МАЛО. Рядом в .env лежат ещё два адреса контрактов —
+        // TRUSTED_FORWARDER и USDC_ADDRESS, — и у обоих код есть. Опечатка в
+        // DIAMOND_ADDRESS прошла бы проверку выше и дала бы НЕИЗМЕНЯЕМУЮ казну,
+        // у которой ревертит любой distribute() (казна не может ни исправить
+        // адрес, ни мигрировать: в ней нет ни одной onlyOwner-функции), а весь
+        // отправленный на неё доход потерян навсегда. Поэтому проверяем не
+        // «контракт», а «ТОТ САМЫЙ контракт»: пробуем ровно те три чтения,
+        // которыми казна пользуется в работе.
+        _requireDiamondAnswers(diamond, "getVaultBalance()");
+        _requireDiamondAnswers(diamond, "isDaoActive()");
+        _requireDiamondAnswers(diamond, "getDAOAddress()");
+
         vm.startBroadcast();
         Treasury treasury = new Treasury(usdc, diamond, foundation);
         vm.stopBroadcast();
@@ -36,5 +48,21 @@ contract DeployTreasury is Script {
         console.log("");
         console.log("NOT wired in yet. To route protocol fees here, run:");
         console.log("  cast send <diamond> \"setFeeRecipient(address)\" <treasury>");
+    }
+
+    /// Пробует прочитать селектор с указанного адреса. Требует и успеха, и
+    /// ответа длиной в целое слово: диамонд без нужного фасета ревертит
+    /// фоллбэком, а посторонний контракт (форвардер, USDC) на чужой селектор
+    /// либо ревертит, либо отвечает пустотой — оба случая ловятся здесь.
+    function _requireDiamondAnswers(address diamond, string memory signature) internal view {
+        (bool ok, bytes memory data) = diamond.staticcall(abi.encodeWithSignature(signature));
+        require(
+            ok && data.length >= 32,
+            string.concat(
+                "DeployTreasury: DIAMOND_ADDRESS does not answer ", signature,
+                " -- wrong address? (TRUSTED_FORWARDER and USDC_ADDRESS live in the same .env and also have code). ",
+                "A treasury deployed against a wrong diamond is IMMUTABLE and reverts on every distribute()."
+            )
+        );
     }
 }
