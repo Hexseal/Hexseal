@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../src/Treasury.sol";
+import "../src/facets/ArbiterRegistryFacet.sol";
 
 contract MockUSDCT {
     mapping(address => uint256) public balanceOf;
@@ -1495,5 +1496,72 @@ contract TreasuryTest is Test {
         );
 
         assertEq(rTreasury.reserveBalance(), 200_000_000, "reserve reduced exactly once, not twice");
+    }
+
+    // ============================================================
+    // Ревью Задачи 4 — мина 3 брифа не была закрыта: DAO_THRESHOLD
+    // сверялся только динамически (treasury.DAO_THRESHOLD()), поэтому
+    // мутация самого числа (50_000, 200_000, 1_000_000_000, 6) выживала
+    // 48/48. Плюс `indexed` у dao в ReserveWithdrawn не был запиннен вовсе.
+    // ============================================================
+
+    /// Значение константы закреплено явно. Мутации DAO_THRESHOLD на
+    /// 50_000 / 200_000 / 1_000_000_000 / 6 раньше выживали (48/48 зелёных),
+    /// потому что все остальные тесты читают treasury.DAO_THRESHOLD()
+    /// динамически и проверяют только тождество с собой же, а не значение.
+    function testDaoThresholdIsOneHundredThousand() public {
+        assertEq(treasury.DAO_THRESHOLD(), 100_000, "DAO_THRESHOLD must be exactly 100_000 uniqueActiveUsers");
+    }
+
+    /// Сверка с реальным ArbiterRegistryFacet.getDaoThreshold(): у казны и у
+    /// диамонда — независимые копии одного и того же порога (Treasury.sol
+    /// хранит свою constant, ArbiterRegistryFacet -- свою private constant,
+    /// отдающую значение наружу только через геттер). getDaoThreshold()
+    /// помечен pure, поэтому фасет можно проверить напрямую, без монтирования
+    /// в диамонд. Совпадение сегодня ничем не гарантировано: диамонд
+    /// апгрейдится регулярно, казна неизменяема -- расхождение уедет молча,
+    /// если это когда-нибудь тронут по одну сторону и забудут по другую.
+    function testDaoThresholdMatchesArbiterRegistryFacet() public {
+        ArbiterRegistryFacet facet = new ArbiterRegistryFacet();
+        assertEq(
+            treasury.DAO_THRESHOLD(),
+            facet.getDaoThreshold(),
+            "Treasury's copy of the DAO threshold has drifted from the diamond's ArbiterRegistryFacet"
+        );
+    }
+
+    /// `indexed` у dao в ReserveWithdrawn не был запиннен: сравнение через
+    /// vm.expectEmit + повторный emit того же события в тесте компилируется
+    /// из ОДНОГО и того же объявления события, поэтому снятие `indexed`
+    /// меняет ожидаемый и фактический лог ОДИНАКОВО и остаётся незамеченным.
+    /// Здесь вместо этого сырые логи разбираются напрямую: индексированный
+    /// параметр обязан быть ВТОРЫМ топиком (topics[1]), после topics[0] =
+    /// селектор события -- без indexed адрес ушёл бы в data, и topics.length
+    /// сократился бы до 1. Важно для сабграфа и фронта: без indexed
+    /// фильтрация ReserveWithdrawn по адресу ДАО перестала бы работать.
+    function testReserveWithdrawnIndexesDaoAddress() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        vm.recordLogs();
+        vm.prank(DAO);
+        treasury.withdrawReserve(100_000_000);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool found = false;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == Treasury.ReserveWithdrawn.selector) {
+                found = true;
+                assertEq(logs[i].topics.length, 2, "dao must be indexed -- exactly topic0 (selector) + topic1 (dao)");
+                assertEq(
+                    logs[i].topics[1], bytes32(uint256(uint160(DAO))),
+                    "indexed dao topic must match the actual recipient"
+                );
+            }
+        }
+        assertTrue(found, "ReserveWithdrawn must have been emitted");
     }
 }
