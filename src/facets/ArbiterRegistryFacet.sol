@@ -153,6 +153,7 @@ contract ArbiterRegistryFacet {
     // -------- ERRORS --------
 
     error NotOwner();
+    error NotOwnerOrFeeRecipient();
     error NotOwnerOrChief();
     error NotOwnerOrDAO();
     error NotArbiter();
@@ -732,8 +733,17 @@ contract ArbiterRegistryFacet {
         emit ArbiterRewardWithdrawn(caller, amount);
     }
 
-    /// @notice Owner пополняет vault (переводит USDC на Diamond).
-    function fundVault(uint256 amount) external onlyOwner {
+    /// @notice Пополнить банк арбитров. Кроме владельца это может сделать
+    /// текущий получатель комиссий (`FactoryStorage.feeRecipient`) — им
+    /// становится казна, когда её подставляют вызовом `setFeeRecipient`.
+    ///
+    /// Отдельного поля под адрес казны намеренно нет: источник правды один,
+    /// и замена казны переносит это право автоматически, забыть нечего.
+    /// Если получатель комиссий — обычный кошелёк (как было до казны), он
+    /// получает право положить в банк свои деньги. Это пожертвование, не риск.
+    function fundVault(uint256 amount) external {
+        if (msg.sender != OwnershipLib.contractOwner()
+            && msg.sender != FactoryStorage.store().feeRecipient) revert NotOwnerOrFeeRecipient();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         address usdc = FactoryStorage.store().usdc;
         bool ok = IUSDCFull(usdc).transferFrom(msg.sender, address(this), amount);
