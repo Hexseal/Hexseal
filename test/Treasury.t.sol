@@ -364,6 +364,87 @@ contract ReentrantWithdrawUSDCT {
     }
 }
 
+/// Диамонд, чей fundVault на ПЕРВОМ уровне вложенности ничего не тянет, а
+/// сразу реентерит treasury.topUpVault(); реально забирает деньги (через
+/// transferFrom) только на ВТОРОМ уровне. Так внешний spent совпадёт с
+/// внешним amount, и проверка «всё или ничего» в topUpVault() пропустит
+/// вызов, даже если резерв на самом деле списан дважды на один и тот же
+/// неизменившийся недостаток. Перехватывает исход реентранси через
+/// try/catch, как и ReentrantDiamondT/ReentrantWithdrawUSDCT.
+contract ReentrantTopUpDiamondT {
+    address public usdc;
+    uint256 public vaultBalance;
+    bool    public daoActive;
+    address public treasury;
+    bool    public attack;
+    bool    public reentered;
+
+    bool    public reentryAttempted;
+    bool    public reentrySucceeded;
+    bytes4  public reentryRevertSelector;
+
+    constructor(address usdc_) { usdc = usdc_; }
+
+    function setTreasury(address t)     external { treasury = t; }
+    function setVaultBalance(uint256 v) external { vaultBalance = v; }
+    function setDaoActive(bool v)       external { daoActive = v; }
+    function setAttack(bool v)          external { attack = v; }
+
+    function fundVault(uint256 amount) external {
+        if (attack && !reentered) {
+            reentered = true;
+            reentryAttempted = true;
+            try Treasury(treasury).topUpVault() {
+                reentrySucceeded = true;
+            } catch (bytes memory reason) {
+                reentrySucceeded = false;
+                if (reason.length >= 4) {
+                    bytes4 sel;
+                    assembly { sel := mload(add(reason, 32)) }
+                    reentryRevertSelector = sel;
+                }
+            }
+            // Первый уровень сам ничего не тянет — только реентерит.
+            return;
+        }
+        // Второй уровень (или атака выключена) — реально тянем деньги.
+        MockUSDCT(usdc).transferFrom(msg.sender, address(this), amount);
+        vaultBalance += amount;
+    }
+
+    function getVaultBalance()      external view returns (uint256) { return vaultBalance; }
+    function isDaoActive()          external view returns (bool)    { return daoActive; }
+    function getUniqueActiveUsers() external pure returns (uint256) { return 0; }
+    function getDAOAddress()        external pure returns (address) { return address(0); }
+}
+
+/// Диамонд, который честно принимает transferFrom (деньги реально покидают
+/// казну), но НЕ учитывает пополнение в собственном балансе банка —
+/// имитирует не обязательно враждебный, а просто СЛОМАННЫЙ (например, при
+/// будущем апгрейде фасета банка) fundVault: перевод состоялся, счётчик не
+/// увеличился. Проверяет постусловие topUpVault(): spent == amount доказывает
+/// только то, что USDC покинули казну, а не то, что банк их учёл.
+contract SilentFundDiamondT {
+    address public usdc;
+    uint256 public vaultBalance;
+    bool    public daoActive;
+
+    constructor(address usdc_) { usdc = usdc_; }
+
+    function setVaultBalance(uint256 v) external { vaultBalance = v; }
+    function setDaoActive(bool v)       external { daoActive = v; }
+
+    function fundVault(uint256 amount) external {
+        MockUSDCT(usdc).transferFrom(msg.sender, address(this), amount);
+        // Намеренно НЕ увеличиваем vaultBalance — деньги пришли, свой учёт не обновился.
+    }
+
+    function getVaultBalance()      external view returns (uint256) { return vaultBalance; }
+    function isDaoActive()          external view returns (bool)    { return daoActive; }
+    function getUniqueActiveUsers() external pure returns (uint256) { return 0; }
+    function getDAOAddress()        external pure returns (address) { return address(0); }
+}
+
 contract TreasuryTest is Test {
     MockUSDCT   usdc;
     MockDiamond diamond;
@@ -1024,5 +1105,96 @@ contract TreasuryTest is Test {
             t.reserveBalance() + t.foundationOwed() + t.pendingDistribution(),
             "invariant holds even when the diamond unexpectedly grows the treasury's balance mid-call"
         );
+    }
+
+    // ============================================================
+    // Ревью Задачи 3 (второй раунд): три недержащихся мутанта +
+    // постусловие "банк реально учёл прирост", которого раньше не было.
+    // ============================================================
+
+    /// Important-1: `spent != amount` в topUpVault() пиннится ПЕРЕИСПОЛЬЗОВАННЫМ
+    /// PartialFundDiamondT, направленным на topUpVault (а не на distribute, как
+    /// в исходном тесте на тот же мок). Диамонд запрошен на 300 USDC, тянет
+    /// только 100 — без проверки резерв списался бы целиком (300), банк
+    /// получил бы только треть (100), а 200 утекли бы в нераспределённый
+    /// остаток с событием об успехе.
+    function testTopUpVaultRevertsWhenVaultFundingIsPartial() public {
+        PartialFundDiamondT partialDiamond = new PartialFundDiamondT(address(usdc));
+        Treasury t = new Treasury(address(usdc), address(partialDiamond), FOUNDATION);
+
+        partialDiamond.setVaultBalance(t.VAULT_TARGET()); // временно полон — distribute() банк не трогает
+        usdc.mint(address(t), 1_000_000_000);
+        t.distribute();
+        assertEq(t.reserveBalance(), 300_000_000, "setup: reserve");
+
+        partialDiamond.setVaultBalance(200_000_000); // шортфолл = 300 USDC
+        partialDiamond.setActuallyTake(100_000_000); // банк берёт только треть запрошенного
+
+        vm.expectRevert(Treasury.VaultFundingFailed.selector);
+        t.topUpVault();
+
+        assertEq(t.reserveBalance(), 300_000_000, "reserve must be untouched after a failed (partial) top-up");
+        assertEq(partialDiamond.getVaultBalance(), 200_000_000, "vault must be untouched after a failed top-up");
+    }
+
+    /// Important-2: страж nonReentrant на topUpVault() пиннится отдельно от
+    /// суммовой проверки. ReentrantTopUpDiamondT на первом уровне ничего не
+    /// тянет, сразу реентерит topUpVault(), и тянет по-настоящему только на
+    /// втором уровне — так внешний spent совпадает с внешним amount, и
+    /// `spent != amount` эту атаку НЕ ловит (см. Important-1 выше — другая
+    /// проверка, другой мутант). Со стражем реентрантный вызов внутри
+    /// fundVault() падает с Reentrancy СРАЗУ, поэтому первый уровень
+    /// возвращается, ничего не забрав (spent=0 на внешнем уровне), и внешняя
+    /// проверка `spent != amount` заваливает всю транзакцию целиком. Без
+    /// стража реентрантный вызов проходит и реально тянет деньги — внешний
+    /// уровень видит spent == amount (пул случился, просто на вложенном
+    /// уровне) и тихо пропускает двойное списание резерва.
+    function testTopUpVaultBlocksReentrancy() public {
+        ReentrantTopUpDiamondT evilDiamond = new ReentrantTopUpDiamondT(address(usdc));
+        Treasury evilTreasury = new Treasury(address(usdc), address(evilDiamond), FOUNDATION);
+        evilDiamond.setTreasury(address(evilTreasury));
+
+        evilDiamond.setVaultBalance(evilTreasury.VAULT_TARGET()); // временно полон
+        usdc.mint(address(evilTreasury), 4_000_000_000);
+        evilTreasury.distribute();
+        assertEq(evilTreasury.reserveBalance(), 1_200_000_000, "setup: reserve");
+
+        evilDiamond.setVaultBalance(0); // шортфолл = VAULT_TARGET = 500 USDC
+        evilDiamond.setAttack(true);
+
+        // Со стражем реентрантный вызов внутри fundVault() обязан упасть, а
+        // внешний уровень — не найти своего pull и провалить транзакцию
+        // целиком: без стража этот же сценарий тихо списывает резерв дважды
+        // (1200 → 200, ушло 1000) на один и тот же неизменившийся недостаток
+        // банка (0 → 500, а не 0 → 1000), и эмитит два события VaultToppedUp.
+        vm.expectRevert(Treasury.VaultFundingFailed.selector);
+        evilTreasury.topUpVault();
+
+        assertEq(evilTreasury.reserveBalance(), 1_200_000_000, "reserve must be untouched -- whole call reverted");
+        assertEq(evilDiamond.getVaultBalance(), 0, "vault must be untouched -- whole call reverted");
+    }
+
+    /// Постусловие "банк реально учёл прирост": SilentFundDiamondT честно
+    /// принимает transferFrom (деньги покидают казну, spent == amount), но
+    /// не увеличивает собственный getVaultBalance() — имитирует сломанный
+    /// (не обязательно враждебный) фасет банка. Без отдельной проверки
+    /// vaultAfter >= vaultBefore + amount казна списала бы резерв, диамонд
+    /// реально забрал бы деньги, а банк по своему же отчёту остался бы сухим
+    /// навсегда — с событием VaultToppedUp об успехе.
+    function testTopUpVaultRevertsWhenVaultBalanceDoesNotGrow() public {
+        SilentFundDiamondT silentDiamond = new SilentFundDiamondT(address(usdc));
+        Treasury t = new Treasury(address(usdc), address(silentDiamond), FOUNDATION);
+
+        silentDiamond.setVaultBalance(t.VAULT_TARGET()); // временно полон — distribute() банк не трогает
+        usdc.mint(address(t), 1_000_000_000);
+        t.distribute();
+        assertEq(t.reserveBalance(), 300_000_000, "setup: reserve");
+
+        silentDiamond.setVaultBalance(0); // диамонд ОТЧИТЫВАЕТСЯ о полной просадке
+
+        vm.expectRevert(Treasury.VaultDidNotGrow.selector);
+        t.topUpVault();
+
+        assertEq(t.reserveBalance(), 300_000_000, "reserve must be untouched when the vault silently fails to record the top-up");
     }
 }
