@@ -454,12 +454,70 @@ contract SilentFundDiamondT {
     function getDAOAddress()        external pure returns (address) { return address(0); }
 }
 
+/// USDC, который сам выступает адресом ДАО и при собственном transfer()
+/// пытается реентерить withdrawReserve() — зеркалит приём
+/// ReentrantWithdrawUSDCT (реентрант withdrawFoundation() изнутри transfer()),
+/// но withdrawReserve() дополнительно требует msg.sender == dao, поэтому
+/// сам мок и назначается адресом ДАО: вложенный вызов инициирует ИМЕННО
+/// этот контракт, и msg.sender реентранта совпадает с dao без дополнительных
+/// ухищрений. Так тест бьёт строго по nonReentrant, не задевая NotDao.
+contract ReentrantWithdrawReserveUSDCT {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    address public treasury;
+    bool    public attack;
+
+    bool    public reentryAttempted;
+    bool    public reentrySucceeded;
+    bytes4  public reentryRevertSelector;
+
+    function mint(address to, uint256 amount) external { balanceOf[to] += amount; }
+    function setTreasury(address t) external { treasury = t; }
+    function setAttack(bool v)      external { attack = v; }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "insufficient");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+
+        if (attack) {
+            reentryAttempted = true;
+            try Treasury(treasury).withdrawReserve(1) {
+                reentrySucceeded = true;
+            } catch (bytes memory reason) {
+                reentrySucceeded = false;
+                if (reason.length >= 4) {
+                    bytes4 sel;
+                    assembly { sel := mload(add(reason, 32)) }
+                    reentryRevertSelector = sel;
+                }
+            }
+        }
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "allowance");
+        require(balanceOf[from] >= amount, "insufficient");
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
 contract TreasuryTest is Test {
     MockUSDCT   usdc;
     MockDiamond diamond;
     Treasury    treasury;
 
     address constant FOUNDATION = address(0xF00D);
+    address constant DAO        = address(0xDA0);
 
     function setUp() public {
         usdc     = new MockUSDCT();
@@ -1215,5 +1273,227 @@ contract TreasuryTest is Test {
         t.topUpVault();
 
         assertEq(t.reserveBalance(), 300_000_000, "reserve must be untouched when the vault silently fails to record the top-up");
+    }
+
+    // ============================================================
+    // Задача 4: withdrawReserve() — выход резерва к ДАО.
+    // ============================================================
+
+    /// Заработанный порог достигнут, адрес ДАО выставлен — резерв выводится им.
+    function testDaoWithdrawsReserveOnceThresholdIsEarned() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        assertEq(treasury.reserveBalance(), 300_000_000, "setup");
+
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        vm.prank(DAO);
+        treasury.withdrawReserve(100_000_000);
+
+        assertEq(usdc.balanceOf(DAO),       100_000_000, "dao did not receive the funds");
+        assertEq(treasury.reserveBalance(), 200_000_000, "reserve not reduced");
+    }
+
+    /// ГЛАВНЫЙ ТЕСТ. Ручной флаг ДАО резерв НЕ открывает.
+    ///
+    /// isDaoActive() истинна при daoActiveManual ИЛИ при заработанном пороге.
+    /// Владелец диамонда может включить ручной флаг и выставить daoAddress на
+    /// свой кошелёк. Если бы вывод резерва гейтился по isDaoActive(), резерв
+    /// выводился бы по решению владельца — то есть обещание «без администраторов»
+    /// не стоило бы ничего именно там, где лежат деньги.
+    function testManualDaoFlagDoesNotUnlockTheReserve() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+
+        diamond.setDaoActive(true);            // ручной флаг включён
+        diamond.setUniqueActiveUsers(5);       // но порог НЕ заработан
+        diamond.setDao(DAO);
+
+        vm.prank(DAO);
+        vm.expectRevert(Treasury.DaoNotEarned.selector);
+        treasury.withdrawReserve(1);
+    }
+
+    /// Порог заработан, но адрес ДАО ещё не выставлен — выводить некому.
+    function testWithdrawRevertsWhenDaoAddressUnset() public {
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        vm.expectRevert(Treasury.DaoAddressUnset.selector);
+        treasury.withdrawReserve(1);
+    }
+
+    /// Порог заработан, адрес выставлен — но зовёт не ДАО.
+    function testStrangerCannotWithdrawReserve() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        vm.prank(address(0xBAD));
+        vm.expectRevert(Treasury.NotDao.selector);
+        treasury.withdrawReserve(1);
+    }
+
+    /// Запрос больше резерва обрезается до наличного, а не ревертит — иначе
+    /// открытый topUpVault() был бы инструментом срыва вывода ДАО. И обрезка
+    /// не даёт зацепить нераспределённые деньги, которые резерву не принадлежат.
+    function testWithdrawIsClampedToTheReserveAndSpillsNothingElse() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        assertEq(treasury.reserveBalance(), 300_000_000, "setup: reserve");
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        usdc.mint(address(treasury), 500_000_000); // нераспределённый приход
+        uint256 pendingBefore = treasury.pendingDistribution();
+
+        vm.prank(DAO);
+        treasury.withdrawReserve(300_000_001);
+
+        assertEq(usdc.balanceOf(DAO),            300_000_000, "dao must receive exactly the reserve");
+        assertEq(treasury.reserveBalance(),      0,           "reserve must be drained, not overdrawn");
+        assertEq(treasury.pendingDistribution(), pendingBefore, "undistributed money must be untouched");
+    }
+
+    /// Сценарий срыва: посторонний опережает ДАО открытым topUpVault(), резерв
+    /// законно уменьшается — вывод обязан пройти на остаток, а не упасть.
+    function testTopUpVaultCannotGriefTheDaoWithdrawal() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        // Посторонний просаживает банк и добивает его из резерва.
+        diamond.setVaultBalance(treasury.VAULT_TARGET() - 100_000_000);
+        vm.prank(address(0xBEEF));
+        treasury.topUpVault();
+        assertEq(treasury.reserveBalance(), 200_000_000, "setup: reserve after the front-run");
+
+        vm.prank(DAO);
+        treasury.withdrawReserve(300_000_000); // ДАО просит по устаревшим данным
+
+        assertEq(usdc.balanceOf(DAO),       200_000_000, "dao must get what is left, not revert");
+        assertEq(treasury.reserveBalance(), 0,           "reserve drained");
+    }
+
+    /// Резерв пуст — вывод ревертит, а не отправляет ноль.
+    function testWithdrawRevertsWhenReserveIsEmpty() public {
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        vm.prank(DAO);
+        vm.expectRevert(Treasury.ReserveEmpty.selector);
+        treasury.withdrawReserve(1);
+    }
+
+    /// Ноль — не вывод.
+    function testCannotWithdrawZero() public {
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        vm.prank(DAO);
+        vm.expectRevert(Treasury.InvalidAmount.selector);
+        treasury.withdrawReserve(0);
+    }
+
+    // ---- Хвосты сверх брифа: заготовки Задачи 2, которые бриф просил
+    // ---- закрепить (событие), и две защиты, которые ни один из восьми
+    // ---- тестов выше не бьёт. ----
+
+    /// Оба условия провала выполнены ОДНОВРЕМЕННО (uniqueActiveUsers по
+    /// умолчанию 0, daoAddress по умолчанию address(0)) — ни один тест выше
+    /// их не совмещает, поэтому порядок между DaoNotEarned и DaoAddressUnset
+    /// ничем не запиннен. Ожидаем именно DaoNotEarned: порог — гейт, который
+    /// нельзя подделать, он проверяется первым и всегда виден отдельно от
+    /// того, выставлен ли вообще адрес.
+    function testDaoNotEarnedTakesPriorityOverDaoAddressUnset() public {
+        vm.expectRevert(Treasury.DaoNotEarned.selector);
+        treasury.withdrawReserve(1);
+    }
+
+    /// Событие обязано репортить ФАКТИЧЕСКИ отправленное, а не запрошенное —
+    /// иначе обрезка молчала бы: снаружи выглядело бы, что ДАО получило
+    /// запрошенную сумму, хотя реально ушло меньше. Запрос заведомо больше
+    /// резерва (300_000_000), чтобы отличить amount от toSend в самом событии,
+    /// а не только по балансам (testWithdrawIsClampedToTheReserveAndSpillsNothingElse
+    /// проверяет то же самое поведение через балансы, но мутант "emit amount
+    /// вместо toSend" ими не ловится — событие никто не читает).
+    function testWithdrawReserveEmitsClampedAmountNotRequested() public {
+        diamond.setVaultBalance(treasury.VAULT_TARGET());
+        usdc.mint(address(treasury), 1_000_000_000);
+        treasury.distribute();
+        assertEq(treasury.reserveBalance(), 300_000_000, "setup: reserve");
+        diamond.setUniqueActiveUsers(treasury.DAO_THRESHOLD());
+        diamond.setDao(DAO);
+
+        vm.expectEmit(true, false, false, true, address(treasury));
+        emit Treasury.ReserveWithdrawn(DAO, 300_000_000); // обрезано, не 999_999_999
+        vm.prank(DAO);
+        treasury.withdrawReserve(999_999_999);
+    }
+
+    /// Чёрный список Circle на адресе ДАО: перевод проваливается — вывод
+    /// обязан честно ревертить TransferFailed, а не тихо "списать" резерв без
+    /// факта перевода. reserveBalance -= toSend происходит ДО transfer();
+    /// без проверки возврата откат не наступил бы, реверта тоже — резерв
+    /// уменьшился бы, а деньги остались бы на казне. Ни один из тестов выше
+    /// не проваливает transfer(), поэтому эта проверка была бы неубиваемой
+    /// без отдельного мока.
+    function testWithdrawRevertsWhenDaoTransferFails() public {
+        BlacklistableUSDCT blUsdc = new BlacklistableUSDCT();
+        MockDiamond blDiamond = new MockDiamond(address(blUsdc));
+        Treasury blTreasury = new Treasury(address(blUsdc), address(blDiamond), FOUNDATION);
+
+        blDiamond.setVaultBalance(blTreasury.VAULT_TARGET());
+        blUsdc.mint(address(blTreasury), 1_000_000_000);
+        blTreasury.distribute();
+        assertEq(blTreasury.reserveBalance(), 300_000_000, "setup: reserve");
+
+        blDiamond.setUniqueActiveUsers(blTreasury.DAO_THRESHOLD());
+        blDiamond.setDao(DAO);
+        blUsdc.setBlacklisted(DAO, true);
+
+        vm.prank(DAO);
+        vm.expectRevert(Treasury.TransferFailed.selector);
+        blTreasury.withdrawReserve(100_000_000);
+
+        assertEq(blTreasury.reserveBalance(), 300_000_000, "reserve must be untouched -- whole call reverted");
+    }
+
+    /// Страж nonReentrant на withdrawReserve() пиннится отдельно от всех
+    /// суммовых/адресных проверок. ДАО здесь — сам USDC-мок: msg.sender
+    /// реентрантного вызова совпадает с dao без дополнительных ухищрений,
+    /// поэтому падение может доказывать только страж, а не NotDao.
+    function testWithdrawReserveBlocksReentrancy() public {
+        ReentrantWithdrawReserveUSDCT rUsdc = new ReentrantWithdrawReserveUSDCT();
+        MockDiamond rDiamond = new MockDiamond(address(rUsdc));
+        Treasury rTreasury = new Treasury(address(rUsdc), address(rDiamond), FOUNDATION);
+        rUsdc.setTreasury(address(rTreasury));
+        rUsdc.setAttack(true);
+
+        rDiamond.setVaultBalance(rTreasury.VAULT_TARGET()); // банк полон — fundVault не понадобится
+        rUsdc.mint(address(rTreasury), 1_000_000_000);
+        rTreasury.distribute();
+        assertEq(rTreasury.reserveBalance(), 300_000_000, "setup: reserve");
+
+        rDiamond.setUniqueActiveUsers(rTreasury.DAO_THRESHOLD());
+        rDiamond.setDao(address(rUsdc)); // ДАО -- сам мок USDC
+
+        vm.prank(address(rUsdc));
+        rTreasury.withdrawReserve(100_000_000);
+
+        assertTrue(rUsdc.reentryAttempted(),  "reentrancy must have been attempted");
+        assertFalse(rUsdc.reentrySucceeded(), "reentrant withdrawReserve() must not succeed");
+        assertEq(
+            rUsdc.reentryRevertSelector(), Treasury.Reentrancy.selector,
+            "must fail specifically with Reentrancy, not e.g. NotDao from a mismatched sender"
+        );
+
+        assertEq(rTreasury.reserveBalance(), 200_000_000, "reserve reduced exactly once, not twice");
     }
 }

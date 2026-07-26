@@ -19,8 +19,10 @@ pragma solidity ^0.8.20;
 // Накопленный reserveBalance остаётся в этом контракте. Тратится он отсюда
 // двумя путями: topUpVault() — permissionless, без гейта ДАО, и только
 // ровно на просадку банка (единственный расход резерва до появления ДАО,
-// см. ниже); и (появится в задаче 4) withdrawReserve() — по заработанному
-// порогу ДАО. Накопленный foundationOwed остаётся здесь же, но достаётся в
+// см. ниже); и withdrawReserve() — по заработанному порогу uniqueActiveUsers,
+// а не по isDaoActive() (см. докстринг withdrawReserve — гейт здесь
+// намеренно строже, чем у переключения долей). Накопленный foundationOwed
+// остаётся здесь же, но достаётся в
 // любой момент через withdrawFoundation() — это не спорные деньги, а просто
 // причитающееся, порог ДАО тут ни при чём.
 // Миграционная функция потребовала бы того, кто имеет право её вызвать,
@@ -150,6 +152,10 @@ contract Treasury {
     error ReserveEmpty();
     error VaultFundingFailed();
     error VaultDidNotGrow();
+    error DaoNotEarned();
+    error DaoAddressUnset();
+    error NotDao();
+    error InvalidAmount();
 
     constructor(address usdc_, address diamond_, address foundation_) {
         if (usdc_ == address(0) || diamond_ == address(0) || foundation_ == address(0)) revert ZeroAddress();
@@ -295,6 +301,57 @@ contract Treasury {
         emit VaultToppedUp(amount);
     }
 
+    // -------- ВЫХОД РЕЗЕРВА К ДАО --------
+
+    /// @notice Вывести резерв в адрес ДАО. Только ДАО, только по ЗАРАБОТАННОМУ
+    /// порогу.
+    ///
+    /// Гейт здесь намеренно строже, чем у переключения долей, и вот почему.
+    /// isDaoActive() истинна при ЛЮБОМ из двух условий: ручной флаг владельца
+    /// (daoActiveManual) ИЛИ заработанный порог уникальных пользователей.
+    /// Владелец диамонда может выставить daoAddress на свой кошелёк и включить
+    /// ручной флаг — то есть по isDaoActive() резерв выводился бы по его
+    /// решению. Поэтому здесь спрашивается только uniqueActiveUsers: он
+    /// набирается сделками и рукой не выставляется.
+    ///
+    /// Асимметрия не случайна: раннее переключение долей УМЕНЬШАЕТ долю
+    /// фаундейшна, злоупотреблять им себе дороже, и мягкого гейта достаточно.
+    /// Вывод резерва приносит выгоду тому, кто его делает, — здесь гейт обязан
+    /// быть тем, который нельзя подделать.
+    function withdrawReserve(uint256 amount) external nonReentrant {
+        // Проверка порога — до проверки адреса намеренно: даже если адрес ещё
+        // не выставлен, ответ обязан быть "ДАО не заработано", а не "адреса
+        // нет" — иначе снаружи может показаться, что вывод сразу открылся бы
+        // одним только setDAOAddress, без реального порога.
+        if (IHexsealDiamond(diamond).getUniqueActiveUsers() < DAO_THRESHOLD) revert DaoNotEarned();
+
+        // Адрес ДАО по умолчанию address(0) (см. ArbiterRegistryStorage),
+        // пока владелец диамонда не вызовет setDAOAddress. Настоящий USDC
+        // ревертит на переводе в ноль — без явной проверки здесь отказ
+        // выглядел бы как голый реверт токена без собственной ошибки.
+        address dao = IHexsealDiamond(diamond).getDAOAddress();
+        if (dao == address(0)) revert DaoAddressUnset();
+        if (msg.sender != dao) revert NotDao();
+        if (amount == 0) revert InvalidAmount();
+
+        // Берём меньшее из запрошенного и наличного, а НЕ ревертим при нехватке.
+        // Причина не в удобстве: резерв тратят двое, и один из них —
+        // topUpVault() — открыт для кого угодно. При реверте любой посторонний
+        // мог бы срывать вывод ДАО, вызывая topUpVault() первым: тот законно
+        // уменьшил бы резерв, и транзакция ДАО падала бы на вычитании. Обрезка
+        // делает вывод устойчивым к такому опережению. Она же не даёт зацепить
+        // нераспределённые деньги: toSend ограничен reserveBalance, а не
+        // фактическим balanceOf(казна).
+        uint256 toSend = amount > reserveBalance ? reserveBalance : amount;
+        if (toSend == 0) revert ReserveEmpty();
+
+        reserveBalance -= toSend;
+        if (!IUSDC(usdc).transfer(dao, toSend)) revert TransferFailed();
+
+        // В событии — фактически отправленное, а не запрошенное.
+        emit ReserveWithdrawn(dao, toSend);
+    }
+
     // -------- ВЫВОД ФАУНДЕЙШНА --------
 
     /// @notice Забрать начисленное фаундейшну.
@@ -331,9 +388,11 @@ contract Treasury {
     ///
     /// Гейт мягкий (isDaoActive учитывает и ручной флаг владельца) намеренно:
     /// раннее переключение УМЕНЬШАЕТ долю фаундейшна, то есть злоупотреблять
-    /// им себе дороже. Для вывода резерва стимул обратный (ранняя активация
-    /// ДАО там будет ОТКРЫВАТЬ вывод раньше, а не позже) — но withdrawReserve()
-    /// в этом файле ещё нет, её гейт появится вместе с ней в задаче 4.
+    /// им себе дороже. У withdrawReserve() стимул обратный (ранняя ручная
+    /// активация ДАО там, наоборот, ОТКРЫВАЛА бы вывод по решению владельца) —
+    /// поэтому её гейт нарочно другой: не isDaoActive(), а напрямую
+    /// getUniqueActiveUsers() >= DAO_THRESHOLD, который рукой не выставляется.
+    /// См. докстринг withdrawReserve — там же объяснена вся асимметрия.
     function foundationBps() public view returns (uint256) {
         return IHexsealDiamond(diamond).isDaoActive()
             ? FOUNDATION_BPS_POST_DAO
