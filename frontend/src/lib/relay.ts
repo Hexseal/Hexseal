@@ -88,28 +88,51 @@ const PERMIT_TYPES = {
 } as const;
 
 // ─── Gas defaults ─────────────────────────────────────────────────────────────
-
+//
+// These are FALLBACKS, used only when the live estimateGas() below fails; the
+// estimate path applies its own 130% buffer and never reads this table.
+//
+// Deal creation no longer deploys a fresh Agreement. Since the EIP-1167 clone
+// switch it costs 278_355 gas for clone + initialize (test/AgreementClone.t.sol,
+// testCloneDeployStaysCheap) instead of the ~4_400_000 a full CREATE used to
+// cost, so every constant that was sized off "~4.6M" was sized off a number
+// that is gone. Measured end-to-end on the current code, mock USDC, foundry
+// (excludes the 21k intrinsic cost and calldata):
+//
+//   deployAndFund    674_963
+//   acceptApplicant  705_931
+//   acceptRequest    692_177 with no siblings, 1_185_044 at the 19-sibling
+//                    worst case (see the note on acceptRequest below)
+//
+// Real USDC is a proxied FiatTokenV2_2, not the mock: each transfer costs
+// roughly 10-15k more than measured here, which matters most for the
+// sibling-refund loop with its ~21 transfers. The constants below therefore
+// keep a wide margin over the measured figures rather than tracking them
+// closely — a fallback that is too LOW breaks a live deal (the relayer's
+// pre-flight staticCall fails and the action 400s), while one that is too high
+// costs nothing: the chain charges gas used, not gas offered.
 const GAS_DEFAULTS: Record<string, bigint> = {
-  deployAndFund:      5_500_000n, // deployAgreement alone ~4.6M
-  deployAgreement:    5_500_000n,
+  deployAndFund:      2_000_000n, // measured 674_963 (clone + fund), ~3x margin
+  deployAgreement:    2_000_000n, // measured ~525_000 (clone, no fund)
   mintJob:            1_500_000n,
   mintJobWithPermit:  1_500_000n,
   editJob:              150_000n,
   editService:          150_000n,
-  acceptApplicant:    5_500_000n, // deploys Agreement via FactoryFacet (~4.6M) + overhead
+  acceptApplicant:    2_000_000n, // clones Agreement via FactoryFacet; measured 705_931
   cancelJob:            150_000n,
   applyForJob:          150_000n,
   withdrawApplication:  150_000n,
   mintService:              800_000n,
   mintServiceWithPermit:    800_000n,
   requestService:       800_000n,
-  // also deploys Agreement (~4.6M) PLUS a loop refunding every OTHER still-pending
+  // also clones an Agreement PLUS a loop refunding every OTHER still-pending
   // request from the same client to this executor (up to MAX_PENDING_PER_PAIR-1=19
-  // siblings) — measured ~5.17M gas at the 19-sibling worst case, unlike
-  // acceptApplicant/deployAndFund which share this same flat constant but have no
-  // such loop. This fallback value gets no automatic buffer (unlike the live-estimate
-  // path's 130%), so size it with real margin over the measured worst case.
-  acceptRequest:      6_500_000n,
+  // siblings), unlike acceptApplicant/deployAndFund which have no such loop. Since
+  // the clone switch the loop, not the deploy, dominates: measured 692_177 with no
+  // siblings and 1_185_044 at the 19-sibling worst case, i.e. ~26k per refunded
+  // sibling. This fallback gets no automatic buffer (unlike the live-estimate
+  // path's 130%), so it keeps real margin over that measured worst case.
+  acceptRequest:      2_500_000n,
   rejectRequest:        120_000n,
   cancelRequest:        120_000n,
   pauseService:          80_000n,

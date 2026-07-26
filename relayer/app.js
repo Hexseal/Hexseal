@@ -769,7 +769,19 @@ app.post('/relay', async (req, res) => {
       return res.status(400).json({ error: 'Invalid address in from/to' });
     }
 
-    const MAX_GAS = 8_000_000n; // Agreement deployment (~4.6M) × 1.3 buffer + forwarder overhead
+    // Ceiling on how much gas one ForwardRequest may ask the relayer to pay for.
+    // Was 8M, sized off an Agreement deployment costing ~4.6M — a number that
+    // disappeared when deals became EIP-1167 clones. The heaviest relayable
+    // operation is now acceptRequest at its 19-sibling worst case, measured at
+    // 1_185_044 gas (mock USDC, foundry); acceptApplicant and deployAndFund sit
+    // near 700k. 3M leaves ~2.5x over that worst case — still comfortably above
+    // anything the frontend's 130%-buffered estimate can produce — while cutting
+    // the per-request ETH-drain ceiling by 2.7x. Not lowered further on purpose:
+    // real USDC costs more per transfer than the mock these numbers came from,
+    // and a cap that rejects a legitimate action is worse than a loose one.
+    // Note this bounds only what a request may ASK for; the chain still charges
+    // gas actually used.
+    const MAX_GAS = 3_000_000n;
     if (BigInt(gas) > MAX_GAS) {
       return res.status(400).json({ error: `gas exceeds maximum (${MAX_GAS})` });
     }

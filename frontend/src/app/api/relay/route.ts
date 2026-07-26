@@ -56,11 +56,23 @@ const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,ui
 
 /**
  * Maximum gas units allowed in a single ForwardRequest.
- * Agreement deployment (acceptApplicant / acceptRequest / deployAndFund) costs ≈4.6–5 M gas.
- * With 1.3× estimation buffer that's ≈6–6.5 M, so cap at 8 M to give headroom.
- * Rate limiting (10 req/min) prevents relay ETH drain.
+ *
+ * Deal creation stopped deploying a fresh Agreement when it became an EIP-1167
+ * clone, so the ≈4.6–5 M figure this cap used to be derived from no longer
+ * exists. Measured on current code (mock USDC, foundry): deployAndFund 674_963,
+ * acceptApplicant 705_931, acceptRequest 692_177 with no siblings and 1_185_044
+ * at the 19-sibling refund worst case — the heaviest relayable operation there
+ * is. With the frontend's 1.3× estimation buffer that worst case asks for
+ * ≈1.6 M, so 3 M keeps ~2.5× headroom over the measurement while cutting the
+ * ETH-drain ceiling 2.7× from the old 8 M. Deliberately not lowered further:
+ * real USDC costs more per transfer than the mock behind these numbers, and a
+ * cap that rejects a legitimate action is worse than a loose one. Rate limiting
+ * (10 req/min) is the other half of the drain defence.
+ *
+ * Keep in sync with MAX_GAS in relayer/app.js — the other path through the
+ * same forwarder.
  */
-const MAX_FORWARD_GAS = 8_000_000n;
+const MAX_FORWARD_GAS = 3_000_000n;
 
 // ─── Relayer hot-wallet nonce serialization ──────────────────────────────────
 //
