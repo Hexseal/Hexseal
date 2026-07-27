@@ -200,6 +200,7 @@ contract ArbiterRegistryFacet {
     error NotRegisteredAgreement();
     error NothingToPush();
     error ZeroAmount();
+    error NoDisputeClaimer();
 
     // -------- MODIFIERS --------
 
@@ -755,18 +756,56 @@ contract ArbiterRegistryFacet {
     /// Доверие здесь ровно то же, что у updateStatus и notifyArbiterTimeout:
     /// вызывающий обязан быть зарегистрированным агриментом, а зарегистрировать
     /// может только фабрика.
-    function creditDisputeFee(address arbiter_, uint256 total) external {
+    ///
+    /// Аргумента-адреса арбитра НЕТ (и не было бы правильно его принимать):
+    /// claimDispute() всегда ставит арбитром В АГРИМЕНТЕ сам диамонд
+    /// (setArbiter(address(this)), Diamond-as-arbiter), поэтому Agreement.arbiter
+    /// — это всегда 0 либо адрес диамонда, никогда не человек. Принять его
+    /// параметром означало бы сжигать 80% каждого сбора на арбитра, у которого
+    /// нет способа вызвать withdrawArbiterReward() от своего имени (тот читает
+    /// _msgSender(), а заставить диамонд вызвать самого себя нечем).
+    ///
+    /// Источник настоящего арбитра — pendingVerdicts[msg.sender].arbiter, а НЕ
+    /// disputeClaims[msg.sender]. Оба поля пишутся синхронно (submitVerdict
+    /// требует caller == disputeClaims[agreement]) и до финализации не могут
+    /// разойтись — но на момент, когда Agreement (Задача 3) реально вызовет эту
+    /// функцию (изнутри finalizeVerdict → agreement.call(resolveDispute)),
+    /// гарантия у pendingVerdicts сильнее: finalizeVerdict уже требует
+    /// v.submittedAt != 0 (иначе revert NoVerdict до вызова) и держит
+    /// v.executing = true всё время внешнего вызова — именно executing==true
+    /// не даёт clearDisputeClaim() удалить pendingVerdicts в этом окне.
+    /// disputeClaims такой защиты не имеет: clearDisputeClaim() чистит его
+    /// безусловно, так что его целостность здесь зависела бы от того, что
+    /// Agreement переведёт сбор и позовёт нас строго до _clearDisputeClaim() —
+    /// то есть от порядка кода в чужой функции, а не от инварианта здесь.
+    /// pendingVerdicts.arbiter не зависит от этого порядка ни при каком раскладе.
+    function creditDisputeFee(uint256 total) external {
         if (RegistryStorage.store().agreements[msg.sender].client == address(0))
             revert NotRegisteredAgreement();
-        if (arbiter_ == address(0)) revert ArbiterZeroAddress();
         if (total == 0) revert ZeroAmount();
 
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[msg.sender];
 
-        uint256 toArbiter = (total * ARBITER_SHARE_BPS) / 10_000;
-        // Вычитанием, а не второй долей: так ни один юнит не теряется на
-        // округлении и части всегда складываются в целое.
-        uint256 toTreasury = total - toArbiter;
+        address arbiter_ = v.arbiter;
+        // Спор никто не довёл до вердикта (submitVerdict не звали) — зачислять
+        // некому, молчать нельзя: деньги без адресата зависли бы в контракте
+        // без единого счётчика, который на них указывает.
+        if (arbiter_ == address(0)) revert NoDisputeClaimer();
+
+        uint256 toArbiter;
+        uint256 toTreasury;
+        if (v.overturned) {
+            // Вердикт отменён (overturnVerdict/resolveAppeal) — арбитр ошибся,
+            // награды не будет, весь сбор идёт в казну. Симметрично тому, что
+            // finalizeVerdict уже пропускает награду из банка при overturned (:489).
+            toTreasury = total;
+        } else {
+            toArbiter = (total * ARBITER_SHARE_BPS) / 10_000;
+            // Вычитанием, а не второй долей: так ни один юнит не теряется на
+            // округлении и части всегда складываются в целое.
+            toTreasury = total - toArbiter;
+        }
 
         d.arbiterRewards[arbiter_] += toArbiter;
         d.treasurySlice            += toTreasury;
@@ -787,9 +826,9 @@ contract ArbiterRegistryFacet {
 
         d.treasurySlice = 0;
 
-        address recipient = FactoryStorage.store().feeRecipient;
-        address usdc      = FactoryStorage.store().usdc;
-        bool ok = IUSDCFull(usdc).transfer(recipient, slice);
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
+        address recipient = fs.feeRecipient;
+        bool ok = IUSDCFull(fs.usdc).transfer(recipient, slice);
         require(ok, "ArbiterRegistry: treasury slice transfer failed");
 
         emit TreasurySlicePushed(recipient, slice);

@@ -8,7 +8,7 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 145
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 148
 // селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова.
 //
@@ -182,7 +182,7 @@ contract DeployFull is Script {
         // initFactory() сидит только регионы 0-3 (CIS/Asia/EU/US) — так исторически
         // сложилось (регионы 4-6 добавлены позже отдельными апгрейдами:
         // UpgradeRegions7.s.sol, UpgradeRegionAU.s.sol). Без этих вызовов свежий
-        // деплой смонтирует все 145 селекторов чисто, но тихо оставит трём регионам
+        // деплой смонтирует все 148 селекторов чисто, но тихо оставит трём регионам
         // нулевую комиссию платформы.
         FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_LATAM, 4_000_000);   // LATAM $4
         FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_CA,    10_000_000);  // CA    $10
@@ -376,7 +376,7 @@ contract DeployFull is Script {
         sels[22] = ServiceBoardFacet.getPendingRequestIdsByClientAndExecutor.selector;
     }
 
-    // ArbiterRegistryFacet — 44 селектора
+    // ArbiterRegistryFacet — 47 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
         sels = new bytes4[](47);
 
