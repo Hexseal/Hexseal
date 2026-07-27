@@ -6,8 +6,8 @@ pragma solidity ^0.8.20;
 // нулевой комиссии региона. У прямых путей фабрики (deployAgreement,
 // deployAndFund) такого гейта не было — асимметрия, которая при добавлении
 // нового региона или обнулении комиссии владельцем по ошибке позволила бы
-// создавать сделки бесплатно в обход досок. Этот файл проверяет, что
-// deployAgreement теперь симметричен доскам.
+// создавать сделки бесплатно в обход досок. Этот файл проверяет, что оба
+// прямых пути фабрики (deployAgreement, deployAndFund) теперь симметричны доскам.
 
 import "forge-std/Test.sol";
 import "../src/DiamondProxy.sol";
@@ -65,7 +65,7 @@ contract DisputeFeeTest is Test {
     //  SETUP
     // ============================================================
     // Скопировано из test/Extras.t.sol и вычищено: для этих тестов нужны
-    // только RegistryFacet и FactoryFacet (deployAgreement/setRegionFee) —
+    // только RegistryFacet и FactoryFacet (deployAgreement/deployAndFund/setRegionFee) —
     // ArbiterRegistryFacet, DiamondCut/Loupe и OwnershipFacet сюда не смонтированы,
     // потому что ни один тест их не вызывает.
 
@@ -86,10 +86,11 @@ contract DisputeFeeTest is Test {
         regSels[1] = RegistryFacet.register.selector;
         regSels[2] = RegistryFacet.hasActivePair.selector;
 
-        bytes4[] memory facSels = new bytes4[](3);
+        bytes4[] memory facSels = new bytes4[](4);
         facSels[0] = FactoryFacet.initFactory.selector;
         facSels[1] = FactoryFacet.deployAgreement.selector;
         facSels[2] = FactoryFacet.setRegionFee.selector;
+        facSels[3] = FactoryFacet.deployAndFund.selector;
 
         IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](2);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet), IDiamondCut.FacetCutAction.Add, regSels);
@@ -134,5 +135,18 @@ contract DisputeFeeTest is Test {
         );
         vm.stopPrank();
         assertTrue(agreement != address(0), "deal creation broke");
+    }
+
+    /// Второй прямой путь фабрики. Гейт там стоял, но его никто не держал:
+    /// ревью вырезало проверку, и все 372 теста прошли молча.
+    function testDeployAndFundRejectsZeroRegionFee() public {
+        vm.prank(owner);
+        FactoryFacet(address(diamond)).setRegionFee(0, 0);
+
+        vm.prank(client);
+        vm.expectRevert(FactoryFacet.ZeroFee.selector);
+        FactoryFacet(address(diamond)).deployAndFund(
+            client, executor, 100_000_000, 7, "terms", 0
+        );
     }
 }
