@@ -91,6 +91,7 @@ contract FactoryFacet {
     error AlreadyInitialized();
     error NotClient();
     error DeployerNotSet();
+    error ZeroFee();
 
     // -------- OWNER CHECK --------
 
@@ -161,6 +162,10 @@ contract FactoryFacet {
         if (IRegistry(fs.diamond).hasActivePair(client, executor)) revert ActiveDealExists();
 
         uint256 fee = fs.regionFee[region];
+        // Симметрично доскам (JobBoardFacet:184, ServiceBoardFacet:182). Нулевая
+        // комиссия означает, что регион не настроен, а не что сделка бесплатная:
+        // без гейта прямой путь создавал бы сделки даром, пока доски отказывают.
+        if (fee == 0) revert ZeroFee();
         if (msg.sender == client) {
             _safeTransferFrom(fs.usdc, msg.sender, fs.feeRecipient, fee);
         }
@@ -214,6 +219,10 @@ contract FactoryFacet {
         if (IRegistry(fs.diamond).hasActivePair(client, executor)) revert ActiveDealExists();
 
         uint256 fee = fs.regionFee[region];
+        // Симметрично доскам (JobBoardFacet:184, ServiceBoardFacet:182). Нулевая
+        // комиссия означает, что регион не настроен, а не что сделка бесплатная:
+        // без гейта прямой путь создавал бы сделки даром, пока доски отказывают.
+        if (fee == 0) revert ZeroFee();
 
         _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
 
