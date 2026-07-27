@@ -1,9 +1,17 @@
 import cron from 'node-cron';
 import { Client } from '@xmtp/node-sdk';
 import path from 'path';
-import { app, botSigner, relayerInfo, runFileCleanup, PAIR_ID_RE, appendLogEntry } from './app.js';
+import { app, botSigner, relayerInfo, runFileCleanup, runTreasuryKeeper, PAIR_ID_RE, appendLogEntry } from './app.js';
 
 cron.schedule('0 3 * * *', runFileCleanup);
+
+// Hourly, at :07 rather than on the hour — nothing here is time-critical, and
+// off-peak minutes keep it clear of whatever else fires at :00.
+//
+// The treasury cannot distribute itself: ERC-20 has no callback, so it never
+// learns a fee arrived. Without this, fees accumulate on the contract and the
+// arbiter vault is never funded. No-op until TREASURY_ADDRESS is set.
+cron.schedule('7 * * * *', runTreasuryKeeper);
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 

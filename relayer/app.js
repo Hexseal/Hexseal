@@ -1448,3 +1448,143 @@ export const relayerInfo = {
 };
 
 export { app, botSigner, botWallet };
+
+// ─── Treasury keeper ──────────────────────────────────────────────────────────
+//
+// The treasury is pull-based by necessity: ERC-20 has no callback, so it cannot
+// learn that a fee arrived. Nothing distributes itself — without something
+// calling distribute(), fees just pile up on the contract and the arbiter vault
+// is never funded. This is that something.
+//
+// Exported as a plain function, like runFileCleanup above: importing this module
+// from a test must never schedule a real recurring job. index.js is the only
+// place that wraps it in cron.schedule().
+//
+// Gas is paid by the relayer wallet. A full pass is three transactions at worst,
+// a few hundred thousand gas each — on Base that is a rounding error against the
+// fees it moves.
+
+const TREASURY_ABI = [
+  'function pendingDistribution() view returns (uint256)',
+  'function vaultShortfall() view returns (uint256)',
+  'function reserveBalance() view returns (uint256)',
+  'function foundationOwed() view returns (uint256)',
+  'function distribute()',
+  'function topUpVault()',
+  'function withdrawFoundation()',
+  'event Distributed(uint256 toVault, uint256 toFoundation, uint256 toReserve)',
+];
+
+const DIAMOND_VAULT_ABI = ['function getVaultBalance() view returns (uint256)'];
+
+// Built from the ABI rather than taken off the contract instance: parsing a
+// receipt is a pure decode and has no business depending on which object the
+// call happened to come back through.
+const treasuryIface = new ethers.Interface(TREASURY_ABI);
+
+// USDC has 6 decimals. These floors exist so the keeper never spends a
+// transaction to move dust — fees trickle in continuously, and distributing
+// three cents every hour costs more than it accomplishes.
+const KEEPER_MIN_DISTRIBUTE = 1_000_000n;   // 1 USDC of undistributed income
+const KEEPER_MIN_TOP_UP     = 1_000_000n;   // 1 USDC of vault shortfall
+const KEEPER_MIN_WITHDRAW   = 10_000_000n;  // 10 USDC owed to the foundation
+
+const usdc6 = (v) => `${(Number(v) / 1e6).toFixed(6)} USDC`;
+
+export async function runTreasuryKeeper() {
+  // Not deployed, or deployed but not yet wired in via setFeeRecipient. Staying
+  // silent is correct: this is the normal state until someone decides to route
+  // protocol income here, and a warning every hour would train people to ignore
+  // the log.
+  // Read at call time, not at import: the treasury does not exist yet, and an
+  // operator who sets TREASURY_ADDRESS should not have to reason about whether
+  // this module had already been imported when they did it.
+  const treasuryAddr = process.env.TREASURY_ADDRESS;
+  if (!treasuryAddr) return;
+
+  const treasury = new ethers.Contract(treasuryAddr, TREASURY_ABI, relayer);
+  const diamond  = new ethers.Contract(DIAMOND_ADDR, DIAMOND_VAULT_ABI, provider);
+
+  // ── 1. Distribute income ────────────────────────────────────────────────────
+  try {
+    const pending = await treasury.pendingDistribution();
+    if (pending >= KEEPER_MIN_DISTRIBUTE) {
+      const vaultBefore = await diamond.getVaultBalance();
+
+      const tx = await treasury.distribute();
+      const receipt = await tx.wait();
+
+      // The treasury deliberately has NO postcondition that the vault actually
+      // credited what it received — one there would revert the whole waterfall
+      // and let a broken facet freeze all income, which is the failure mode the
+      // contract spends most of its design avoiding. The check lives here
+      // instead: money left the treasury, so the vault must have grown by at
+      // least as much. If it did not, a facet upgrade took the transfer without
+      // recording it, and every subsequent pass will quietly feed the same hole.
+      let toVault = 0n;
+      for (const log of receipt.logs) {
+        try {
+          const parsed = treasuryIface.parseLog(log);
+          if (parsed?.name === 'Distributed') toVault = parsed.args.toVault;
+        } catch { /* not ours */ }
+      }
+
+      if (toVault > 0n) {
+        const vaultAfter = await diamond.getVaultBalance();
+        if (vaultAfter - vaultBefore < toVault) {
+          console.error(
+            `[keeper] ALARM: treasury sent ${usdc6(toVault)} to the vault but the vault ` +
+            `only grew by ${usdc6(vaultAfter - vaultBefore)}. Money is leaving the treasury ` +
+            `without being credited — stop the keeper and check fundVault on the diamond.`
+          );
+        }
+      }
+
+      console.log(`[keeper] distributed ${usdc6(pending)} (tx ${receipt.hash})`);
+    }
+  } catch (err) {
+    console.warn('[keeper] distribute failed:', err.shortMessage || err.message);
+  }
+
+  // ── 2. Top the arbiter vault up from the reserve ────────────────────────────
+  // Strictly after step 1, and not merely for tidiness: topUpVault() reverts
+  // with DistributeFirst() while anything is undistributed. That gate exists
+  // because otherwise the call ORDER decided who paid for the vault — calling
+  // top-up first made the reserve pay, and up to 70% of that ended up as
+  // foundation share instead. Distribute first, then let the reserve cover
+  // whatever income could not.
+  try {
+    const [shortfall, reserve, pending] = await Promise.all([
+      treasury.vaultShortfall(),
+      treasury.reserveBalance(),
+      treasury.pendingDistribution(),
+    ]);
+
+    if (shortfall >= KEEPER_MIN_TOP_UP && reserve > 0n && pending === 0n) {
+      const tx = await treasury.topUpVault();
+      const receipt = await tx.wait();
+      console.log(
+        `[keeper] topped the vault up by ${usdc6(shortfall < reserve ? shortfall : reserve)} ` +
+        `from the reserve (tx ${receipt.hash})`
+      );
+    }
+  } catch (err) {
+    console.warn('[keeper] topUpVault failed:', err.shortMessage || err.message);
+  }
+
+  // ── 3. Push the foundation's accrued share out ──────────────────────────────
+  // distribute() only accrues foundationOwed; the transfer is a separate call
+  // so that a blacklisted or reverting foundation address cannot brick the
+  // whole waterfall. Anyone may trigger it and the money can only ever go to
+  // the immutable foundation address, so the keeper doing it is safe.
+  try {
+    const owed = await treasury.foundationOwed();
+    if (owed >= KEEPER_MIN_WITHDRAW) {
+      const tx = await treasury.withdrawFoundation();
+      const receipt = await tx.wait();
+      console.log(`[keeper] paid the foundation ${usdc6(owed)} (tx ${receipt.hash})`);
+    }
+  } catch (err) {
+    console.warn('[keeper] withdrawFoundation failed:', err.shortMessage || err.message);
+  }
+}
