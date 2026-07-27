@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   safeKey, pairIdFromAddresses, safeLogPath, deriveLogKey,
-  encryptEntry, decryptEntry, isKnownPushServiceEndpoint, checkRateLimit,
+  encryptEntry, decryptEntry, isKnownPushServiceEndpoint, checkRateLimit, clientIp,
 } from '../app.js';
 
 describe('safeKey', () => {
@@ -101,5 +101,61 @@ describe('checkRateLimit', () => {
     for (let i = 0; i < 10; i++) checkRateLimit(ipA);
     expect(checkRateLimit(ipA)).toBe(false);
     expect(checkRateLimit(ipB)).toBe(true);
+  });
+});
+
+describe('clientIp behind a Cloudflare Tunnel', () => {
+  // TRUST_PROXY=true in test/setup.js, i.e. these exercise the behind-a-proxy path.
+  const socket = { remoteAddress: '172.18.0.5' }; // the cloudflared container
+
+  it('prefers CF-Connecting-IP, which Cloudflare sets itself and clients cannot forge', () => {
+    const req = {
+      headers: {
+        'cf-connecting-ip': '203.0.113.7',
+        'x-forwarded-for': '1.2.3.4, 203.0.113.7',
+      },
+      socket,
+    };
+    expect(clientIp(req)).toBe('203.0.113.7');
+  });
+
+  it('ignores a forged X-Forwarded-For head when CF-Connecting-IP is present', () => {
+    // Cloudflare APPENDS to a client-supplied X-Forwarded-For rather than
+    // replacing it, so the head is attacker-controlled. Reading the head would
+    // let one caller rotate fake addresses and never hit RATE_MAX.
+    const forged = {
+      headers: {
+        'cf-connecting-ip': '203.0.113.7',
+        'x-forwarded-for': `${Math.random()}, 203.0.113.7`,
+      },
+      socket,
+    };
+    const honest = {
+      headers: { 'cf-connecting-ip': '203.0.113.7' },
+      socket,
+    };
+    expect(clientIp(forged)).toBe(clientIp(honest));
+  });
+
+  it('falls back to the LAST X-Forwarded-For hop, not the first', () => {
+    const req = {
+      headers: { 'x-forwarded-for': '1.2.3.4, 5.6.7.8, 203.0.113.7' },
+      socket,
+    };
+    expect(clientIp(req)).toBe('203.0.113.7');
+  });
+
+  it('falls back to the socket address when no proxy header is present', () => {
+    expect(clientIp({ headers: {}, socket })).toBe('172.18.0.5');
+  });
+
+  it('puts two different real clients into different rate-limit buckets', () => {
+    // The whole point: without this, every user behind the tunnel shares one
+    // bucket of RATE_MAX (10) requests per minute.
+    const a = clientIp({ headers: { 'cf-connecting-ip': `a-${Math.random()}` }, socket });
+    const b = clientIp({ headers: { 'cf-connecting-ip': `b-${Math.random()}` }, socket });
+    for (let i = 0; i < 10; i++) checkRateLimit(a);
+    expect(checkRateLimit(a)).toBe(false);
+    expect(checkRateLimit(b)).toBe(true);
   });
 });

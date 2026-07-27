@@ -663,14 +663,35 @@ app.use('/files', (req, res, next) => {
   next();
 }, express.static(DIR_FILES, { maxAge: '1h' }));
 
-// TRUST_PROXY=true only if running behind a reverse proxy (nginx/caddy) that sets
-// X-Forwarded-For correctly. Without it, the header is spoofable by any client.
+// TRUST_PROXY=true only when the relayer sits behind a proxy we control that
+// rewrites the client-identifying headers — here a Cloudflare Tunnel. Leave it
+// unset if the port is reachable directly: then these headers are whatever the
+// caller typed, and honouring them hands anyone a rate-limit bypass.
+//
+// Note that leaving it unset is not "safe by default" either. Behind a tunnel
+// every request arrives from the cloudflared container, so req.socket sees one
+// address for the whole world and RATE_MAX becomes a global cap of 10 req/min
+// shared by all users. Behind a proxy this must be true; without one, false.
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 
-function clientIp(req) {
+export function clientIp(req) {
   if (TRUST_PROXY) {
+    // Cloudflare sets CF-Connecting-IP itself and strips whatever the caller
+    // sent under that name, so it cannot be forged from outside the tunnel.
+    const cf = req.headers['cf-connecting-ip'];
+    if (cf) return cf.trim();
+
+    // Fallback for a non-Cloudflare proxy. Take the LAST hop, not the first:
+    // each proxy APPENDS the address it observed, so the tail is what our own
+    // nearest proxy actually saw. The head is whatever the caller chose to
+    // claim — Cloudflare appends to a client-supplied X-Forwarded-For instead
+    // of replacing it, so trusting the head would let anyone rotate fake
+    // addresses and never hit the rate limit at all.
     const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) return forwarded.split(',')[0].trim();
+    if (forwarded) {
+      const hops = forwarded.split(',');
+      return hops[hops.length - 1].trim();
+    }
   }
   return req.socket.remoteAddress || 'unknown';
 }
