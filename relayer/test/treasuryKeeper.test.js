@@ -171,4 +171,25 @@ describe('runTreasuryKeeper', () => {
     await expect(runTreasuryKeeper()).resolves.toBeUndefined();
     expect(calls.withdrawFoundation).toHaveBeenCalledTimes(1);
   });
+
+  it('does not claim topUpVault failed when it never got to attempt it', async () => {
+    // An RPC hiccup on the state reads used to log "topUpVault failed", which
+    // reads as "the chain refused the call" when nothing was ever sent. Seen on
+    // the first live run and mistaken for a contract problem.
+    process.env.TREASURY_ADDRESS = TREASURY;
+    mockContract(TREASURY, {
+      ...treasuryMock({ pending: 0n, calls }),
+      vaultShortfall: vi.fn(async () => { throw new Error('server response 500 Internal Server Error'); }),
+    });
+    mockContract(DIAMOND, { getVaultBalance: vi.fn(async () => 0n) });
+
+    const warnings = [];
+    vi.spyOn(console, 'warn').mockImplementation((m) => warnings.push(String(m)));
+
+    await runTreasuryKeeper();
+
+    expect(calls.topUpVault).not.toHaveBeenCalled();
+    expect(warnings.some(w => w.includes('nothing was attempted'))).toBe(true);
+    expect(warnings.some(w => w.includes('topUpVault failed'))).toBe(false);
+  });
 });

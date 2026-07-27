@@ -1553,23 +1553,37 @@ export async function runTreasuryKeeper() {
   // top-up first made the reserve pay, and up to 70% of that ended up as
   // foundation share instead. Distribute first, then let the reserve cover
   // whatever income could not.
+  // Reading the state and acting on it are reported separately on purpose. Both
+  // used to share one catch, so an RPC hiccup on the reads logged "topUpVault
+  // failed" — which reads as "the chain refused the call" when in fact nothing
+  // was ever attempted. Seen in the wild on the first live run.
+  let topUpAmount = null;
   try {
     const [shortfall, reserve, pending] = await Promise.all([
       treasury.vaultShortfall(),
       treasury.reserveBalance(),
       treasury.pendingDistribution(),
     ]);
-
     if (shortfall >= KEEPER_MIN_TOP_UP && reserve > 0n && pending === 0n) {
+      topUpAmount = shortfall < reserve ? shortfall : reserve;
+    }
+  } catch (err) {
+    console.warn(
+      '[keeper] could not read the treasury to decide on a vault top-up (nothing was attempted):',
+      err.shortMessage || err.message
+    );
+  }
+
+  if (topUpAmount !== null) {
+    try {
       const tx = await treasury.topUpVault();
       const receipt = await tx.wait();
       console.log(
-        `[keeper] topped the vault up by ${usdc6(shortfall < reserve ? shortfall : reserve)} ` +
-        `from the reserve (tx ${receipt.hash})`
+        `[keeper] topped the vault up by ${usdc6(topUpAmount)} from the reserve (tx ${receipt.hash})`
       );
+    } catch (err) {
+      console.warn('[keeper] topUpVault failed:', err.shortMessage || err.message);
     }
-  } catch (err) {
-    console.warn('[keeper] topUpVault failed:', err.shortMessage || err.message);
   }
 
   // ── 3. Push the foundation's accrued share out ──────────────────────────────
