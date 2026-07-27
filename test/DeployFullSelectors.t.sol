@@ -49,7 +49,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 11 facets, exactly 145 routed selectors, and consistent
+///     exactly 11 facets, exactly 148 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
@@ -280,13 +280,13 @@ contract DeployFullSelectorsTest is Test {
     // exactly why the 40-upgrade drift this whole file exists to prevent was
     // possible in the first place: CriticalInvariant.t.sol / Extras.t.sol /
     // AdversarialAccess.t.sol each hand-build their own PARTIAL cuts for
-    // feature testing (e.g. 33 of 44 ArbiterRegistry selectors, 20 of 23
+    // feature testing (e.g. 33 of 47 ArbiterRegistry selectors, 20 of 23
     // ServiceBoard selectors) and none of them exercises DeployFull's actual
     // buildInitCuts/buildRemainingCuts output end to end.
     //
     // This deploys all eleven real facets, builds the diamond exactly the way
     // run() does, and asserts the diamond that comes out the other end has
-    // exactly 11 facets, exactly 145 routed selectors, and that
+    // exactly 11 facets, exactly 148 routed selectors, and that
     // facetAddress(sel) and facets() agree with each other in both directions.
     // This is the only check in the suite that would catch a selector set
     // wired to the wrong facet address — diamondCut() itself does not validate
@@ -330,7 +330,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 145, "diamond should route exactly 145 selectors total");
+        assertEq(totalRouted, 148, "diamond should route exactly 148 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.

@@ -96,6 +96,7 @@ mapping(address=>uint256) arbiterMistakeStreak
 mapping(address=>uint256) arbiterBond
 mapping(address=>uint256) openClaimCount
 mapping(address=>mapping(address=>bool)) hasVotedAppeal
+uint256 treasurySlice
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.PendingVerdict ===
 address arbiter

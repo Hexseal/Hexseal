@@ -90,6 +90,10 @@ library ArbiterRegistryStorage {
         mapping(address => uint256)        openClaimCount;        // arbiter → сколько споров сейчас забрано и не закрыто
         // ── Appeal voting ──
         mapping(address => mapping(address => bool)) hasVotedAppeal; // agreement → arbiter → уже проголосовал
+        // ── Dispute settlement fee (3% от спорной суммы, считает Agreement) ──
+        // Доля казны со споров (20% сбора). Начисляется, а не переводится в
+        // момент расчёта: заблокированный feeRecipient иначе ронял бы каждый спор.
+        uint256                            treasurySlice;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -123,6 +127,8 @@ contract ArbiterRegistryFacet {
     uint256 private constant APPEAL_MIN_VOTES     = 3;          // кворум других арбитров
     uint256 private constant APPEAL_DEPOSIT       = 20_000_000; // 20 USDC (6 decimals) — flat, НЕ % от суммы сделки
 
+    uint256 private constant ARBITER_SHARE_BPS = 8_000; // 80% сбора арбитру, остаток казне
+
     // -------- EVENTS --------
 
     event ArbiterAdded(address indexed arbiter);
@@ -149,6 +155,8 @@ contract ArbiterRegistryFacet {
     event AppealResolved(address indexed agreement, address indexed appellant, bool overturned);
     event ArbiterDemoted(address indexed arbiter);
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
+    event DisputeFeeCredited(address indexed arbiter, uint256 toArbiter, uint256 toTreasury);
+    event TreasurySlicePushed(address indexed to, uint256 amount);
 
     // -------- ERRORS --------
 
@@ -189,6 +197,9 @@ contract ArbiterRegistryFacet {
     error InsufficientCleanStreak(uint256 have, uint256 need);
     error HasOpenDisputeClaims();
     error AppealInProgress();
+    error NotRegisteredAgreement();
+    error NothingToPush();
+    error ZeroAmount();
 
     // -------- MODIFIERS --------
 
@@ -731,6 +742,61 @@ contract ArbiterRegistryFacet {
         require(ok, "ArbiterRegistry: USDC transfer failed");
 
         emit ArbiterRewardWithdrawn(caller, amount);
+    }
+
+    /// @notice Зачислить сбор со спора. Зовёт агримент ПОСЛЕ того, как перевёл
+    /// `total` на диамонд.
+    ///
+    /// Почему не тянем сами через transferFrom: тогда агриментy пришлось бы
+    /// выдавать разрешение, а при провале вызова оно осталось бы висеть — ровно
+    /// тот дефект, который пришлось чинить в казне. Перевод-затем-вызов не
+    /// оставляет разрешения вообще.
+    ///
+    /// Доверие здесь ровно то же, что у updateStatus и notifyArbiterTimeout:
+    /// вызывающий обязан быть зарегистрированным агриментом, а зарегистрировать
+    /// может только фабрика.
+    function creditDisputeFee(address arbiter_, uint256 total) external {
+        if (RegistryStorage.store().agreements[msg.sender].client == address(0))
+            revert NotRegisteredAgreement();
+        if (arbiter_ == address(0)) revert ArbiterZeroAddress();
+        if (total == 0) revert ZeroAmount();
+
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+
+        uint256 toArbiter = (total * ARBITER_SHARE_BPS) / 10_000;
+        // Вычитанием, а не второй долей: так ни один юнит не теряется на
+        // округлении и части всегда складываются в целое.
+        uint256 toTreasury = total - toArbiter;
+
+        d.arbiterRewards[arbiter_] += toArbiter;
+        d.treasurySlice            += toTreasury;
+
+        emit DisputeFeeCredited(arbiter_, toArbiter, toTreasury);
+    }
+
+    /// @notice Отправить накопленную долю казны текущему получателю комиссий.
+    ///
+    /// Открытая намеренно: деньги уходят только на адрес из
+    /// FactoryStorage.feeRecipient, поэтому право вызова ничего не решает, а
+    /// открытость означает, что выплата не зависит от того, помнит ли о ней
+    /// владелец, и её может протолкнуть кипер.
+    function withdrawTreasurySlice() external {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        uint256 slice = d.treasurySlice;
+        if (slice == 0) revert NothingToPush();
+
+        d.treasurySlice = 0;
+
+        address recipient = FactoryStorage.store().feeRecipient;
+        address usdc      = FactoryStorage.store().usdc;
+        bool ok = IUSDCFull(usdc).transfer(recipient, slice);
+        require(ok, "ArbiterRegistry: treasury slice transfer failed");
+
+        emit TreasurySlicePushed(recipient, slice);
+    }
+
+    function getTreasurySlice() external view returns (uint256) {
+        return ArbiterRegistryStorage.data().treasurySlice;
     }
 
     /// @notice Пополнить банк арбитров. Кроме владельца это может сделать

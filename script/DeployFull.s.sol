@@ -378,7 +378,7 @@ contract DeployFull is Script {
 
     // ArbiterRegistryFacet — 44 селектора
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](44);
+        sels = new bytes4[](47);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -437,6 +437,11 @@ contract DeployFull is Script {
         sels[41] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
         sels[42] = ArbiterRegistryFacet.getArbiterBond.selector;
         sels[43] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+
+        // Сбор со спора (3% от спорной суммы, считает Agreement) — 80/20 арбитр/казна
+        sels[44] = ArbiterRegistryFacet.creditDisputeFee.selector;
+        sels[45] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
+        sels[46] = ArbiterRegistryFacet.getTreasurySlice.selector;
     }
 
     // DealMetadataFacet — 1 селектор
