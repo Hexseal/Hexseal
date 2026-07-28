@@ -178,8 +178,10 @@ contract ServiceBoardFacet {
         if (region > 6) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
-        uint256 fee = fs.regionFee[region];
-        if (fee == 0) revert ZeroFee();
+        // Публикация услуги: суммы сделки ещё нет, считать процент не от чего.
+        // Платится ровно антиспам-пол, и он не возвращается.
+        uint256 fee = fs.feeFloor;
+        if (fee == 0) revert FeeNotConfigured();
 
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
         serviceId = s.nextServiceId++;
@@ -224,8 +226,10 @@ contract ServiceBoardFacet {
         if (region > 6) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
-        uint256 fee = fs.regionFee[region];
-        if (fee == 0) revert ZeroFee();
+        // Публикация услуги: суммы сделки ещё нет, считать процент не от чего.
+        // Платится ровно антиспам-пол, и он не возвращается.
+        uint256 fee = fs.feeFloor;
+        if (fee == 0) revert FeeNotConfigured();
 
         IServiceBoardUSDC(fs.usdc).permit(executor, address(this), fee, permitDeadline, v, r, s);
 

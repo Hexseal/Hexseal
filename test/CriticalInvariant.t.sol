@@ -66,7 +66,9 @@ contract CriticalInvariantTest is Test {
     uint256 constant INITIAL_TOTAL = CLIENT_USDC + EXECUTOR_USDC + CLIENT2_USDC;
 
     uint8   constant REGION     = 0;
-    uint256 constant BOARD_FEE  = 2_000_000; // ServiceBoard: still region-priced (Task 4)
+    // ServiceBoard mintService now charges the flat anti-spam floor (fs.feeFloor) —
+    // no deal amount exists yet at posting time, so there's nothing to take a % of.
+    uint256 constant BOARD_FEE  = 1_000_000;
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =   80_000_000;
     uint256 constant SVC2_AMOUNT =  50_000_000;

@@ -556,6 +556,9 @@ contract BoardsTest is Test {
     }
 
     function testMintService() public {
+        // Публикация услуги теперь стоит плоский антиспам-пол (fs.feeFloor),
+        // а не региональную комиссию — суммы сделки при постинге ещё нет.
+        uint256 floor_ = 1_000_000; // $1
         uint256 executorBefore = usdc.balanceOf(executor);
         uint256 feeBefore = usdc.balanceOf(feeRecipient);
 
@@ -570,9 +573,24 @@ contract BoardsTest is Test {
         assertEq(svc.hiresCount, 0);
 
         // Fee сгорела, amount НЕ заблокирован
-        assertEq(usdc.balanceOf(executor), executorBefore - FEE);
-        assertEq(usdc.balanceOf(feeRecipient), feeBefore + FEE);
+        assertEq(usdc.balanceOf(executor), executorBefore - floor_);
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore + floor_);
         assertEq(usdc.balanceOf(address(diamond)), 0); // Diamond ничего не держит
+    }
+
+    function testMintService_ChargesFlatFloor() public {
+        uint256 floor_ = 1_000_000; // $1
+        uint256 before = usdc.balanceOf(executor);
+
+        vm.startPrank(executor);
+        usdc.approve(address(diamond), floor_);
+        ServiceBoardFacet(address(diamond)).mintService(
+            "Solidity audit", "I audit contracts", 500_000_000, DEADLINE, REGION
+        );
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(executor), before - floor_);
+        assertEq(usdc.balanceOf(feeRecipient), floor_);
     }
 
     function _requestService(uint256 serviceId) internal returns (uint256 requestId) {
