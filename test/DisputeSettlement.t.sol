@@ -294,6 +294,21 @@ contract DisputeSettlementTest is Test {
         assertTrue(found, "DisputeFeeSkipped must fire when the credit call fails");
     }
 
+    /// Ни FeePaid, ни FeeSkipped не должны сработать — для случая fee == 0,
+    /// где блок `if (fee > 0)` пропускается целиком: не пытались зачислить,
+    /// значит нечего и пропускать. FeeSkipped здесь была бы ЛОЖНОЙ: она
+    /// означает «зачисление провалилось», а не «зачисления не было вовсе».
+    function _assertNoDisputeFeeEventEmitted() internal {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 paidSig    = Agreement.DisputeFeePaid.selector;
+        bytes32 skippedSig = Agreement.DisputeFeeSkipped.selector;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length == 0) continue;
+            assertTrue(logs[i].topics[0] != paidSig, "DisputeFeePaid must not fire when there is nothing to take");
+            assertTrue(logs[i].topics[0] != skippedSig, "DisputeFeeSkipped must not fire when nothing was ever attempted");
+        }
+    }
+
     // ============================================================
     //  disputeFee() — 3%, без границы, с потолком
     // ============================================================
@@ -314,6 +329,39 @@ contract DisputeSettlementTest is Test {
     function testDisputeFeeIsCapped() public {
         Agreement a = Agreement(_createFundedAgreement(50_000_000_000));
         assertEq(a.disputeFee(), 500_000_000, "capped at 500 USDC");
+    }
+
+    /// Инвариант, на который опирается снятая рантайм-ветка `fee < pot`
+    /// (Agreement.sol, комментарий над `if (fee > 0)` в resolveDispute):
+    /// при BPS < 10_000 (100%) floor(pot * BPS / 10_000) < pot для любого
+    /// pot >= 1, а DISPUTE_FEE_CAP только уменьшает fee. Закреплено здесь
+    /// статически вместо недостижимой рантайм-проверки, которую нельзя
+    /// протестировать никаким входом.
+    function testDisputeFeeBpsIsBelowOneHundredPercent() public {
+        Agreement impl = new Agreement();
+        assertLt(impl.DISPUTE_FEE_BPS(), 10_000, "BPS must stay under 100% or the removed fee<pot branch becomes reachable");
+    }
+
+    /// Котёл настолько мал (33 юнита), что 3% округляются в ноль по floor —
+    /// не минимум, а честный ноль: floor(33 * 300 / 10_000) = 0. Без гейта
+    /// `fee > 0` это позвало бы creditDisputeFee(0), поймало бы ZeroAmount()
+    /// в try/catch и эмитило бы ЛОЖНОЕ DisputeFeeSkipped(0) там, где на самом
+    /// деле ничего не пропускалось — попытки зачислить не было вовсе.
+    function testDisputeFeeFloorsToZeroSkipsBothEvents() public {
+        Agreement a = Agreement(_createFundedAgreement(33));
+        assertEq(a.disputeFee(), 0, "3% of 33 units floors to zero");
+        _activateAndDispute(a);
+
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        vm.recordLogs();
+        _submitAndFinalize(a, true);
+        _assertNoDisputeFeeEventEmitted();
+
+        assertEq(uint8(a.status()), uint8(Agreement.Status.RESOLVED), "the dispute must still close");
+        assertEq(usdc.balanceOf(client) - clientBefore, 33, "no fee taken, winner gets the whole (tiny) pot");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "nothing credited");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(), 0, "nothing credited");
     }
 
     // ============================================================
