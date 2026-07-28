@@ -336,10 +336,18 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
     const split = findDisputeSplit(receipt.logs, agreementAddress);
 
     // Check for AgreementStatusUpdated event first (terminal state changes).
+    // Scoped to THIS agreement: the recipients, the deal URL and the copy below all
+    // come from the target we already resolved, so a status event about a different
+    // agreement would describe someone else's deal to our two parties. Today one
+    // receipt can only carry one (MinimalForwarder.execute() makes a single inner
+    // call), which is why this was never a live bug — but that is a property of the
+    // caller, not of this loop, and findDisputeSplit() right above already scopes.
+    const target = agreementAddress?.toLowerCase();
     for (const log of receipt.logs) {
       try {
         const parsed = agrEventInterface.parseLog(log);
         if (parsed?.name === 'AgreementStatusUpdated') {
+          if (target && parsed.args.agreement?.toLowerCase() !== target) continue;
           const status = Number(parsed.args.newStatus);
           const cfg = status === AGR_STATUS_REFUNDED && split
             ? disputeSplitPushMsg(split)

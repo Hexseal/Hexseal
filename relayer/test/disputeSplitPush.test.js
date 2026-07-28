@@ -199,3 +199,60 @@ describe('POST /relay/notify — REFUNDED(2) is two different outcomes', () => {
     }
   });
 });
+
+// ─── The same scoping, one line up ────────────────────────────────────────────
+//
+// findDisputeSplit() is address-scoped; the AgreementStatusUpdated loop it feeds
+// was not. Everything that loop produces — the two recipients, the /deal/ URL, the
+// copy — is derived from the agreement the relayed call targeted, so a status
+// event about a DIFFERENT agreement would describe a stranger's deal to our two
+// parties, and (as here) suppress the push they should have got.
+//
+// Not reachable today: MinimalForwarder.execute() makes a single inner call, so
+// one receipt carries at most one agreement's status event. That is a property of
+// the caller, though, not of this loop.
+describe('POST /relay/notify — the status loop is scoped to the relayed agreement', () => {
+  beforeEach(() => {
+    webpush.sendNotification.mockClear();
+  });
+
+  it("ignores another agreement's status event and still reads our own calldata", async () => {
+    const clientWallet = ethers.Wallet.createRandom();
+    const executorWallet = ethers.Wallet.createRandom();
+    const agreement = ethers.Wallet.createRandom().address;
+    const stranger = ethers.Wallet.createRandom().address;
+
+    const client = await subscribePush(
+      clientWallet,
+      `https://fcm.googleapis.com/fcm/send/${clientWallet.address}`,
+    );
+    const executor = await subscribePush(
+      executorWallet,
+      `https://fcm.googleapis.com/fcm/send/${executorWallet.address}`,
+    );
+
+    mockContract(agreement, {
+      getDetails: async () => ({ client_: client, executor_: executor, arbiter_: ZERO }),
+    });
+
+    // Our deal was just funded (no status event of its own — fund() doesn't emit
+    // one, which is why FUNC_PUSH_MSG exists). The stranger's REFUNDED(2) rides
+    // along in the same receipt.
+    mockProviderReceipt({ logs: [statusLog(stranger, 2)] });
+
+    webpush.sendNotification.mockClear();
+
+    const res = await request(app)
+      .post('/relay/notify')
+      .set('X-Push-Secret', 'test-push-secret')
+      .send({ txHash: '0x' + '22'.repeat(32), agreement, calldata: '0xb60d4288' }); // fund()
+    expect(res.status).toBe(200);
+
+    // fund() notifies the executor only — one push, not the two a REFUNDED status
+    // would have sent, and not the refund copy.
+    await vi.waitFor(() => expect(webpush.sendNotification).toHaveBeenCalledTimes(1));
+    const [subscription, payload] = webpush.sendNotification.mock.calls[0];
+    expect(subscription.endpoint).toContain(executorWallet.address);
+    expect(JSON.parse(payload).title).toBe('Deal Funded');
+  });
+});
