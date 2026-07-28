@@ -29,13 +29,15 @@ import { usdcExact } from './splitPot';
  *  2. Состояние агримента, когда хэша транзакции нет (холодный старт: лента
  *     достраивается из снимка реестра, где хэшей не было никогда). Тогда исход
  *     выводится тем же `decideArbiterTimeout`, что и на странице сделки —
- *     третьей копии этой логики в проекте нет. Но здесь исход ТОЛЬКО признак:
- *     «дележ был» — да, «кому сколько» — нет. Отсюда отдельный вид
+ *     третьей копии этой логики в проекте нет. Но здесь исход — признак и
+ *     размер котла, не более: «дележ был» — да, «сколько разделили всего» — да,
+ *     «кому из двоих сколько» — нет. Отсюда отдельный вид
  *     `split-amounts-unknown`.
  *
- * ПОЧЕМУ НА ВТОРОМ ПУТИ СУММ НЕТ.
+ * ПОЧЕМУ НА ВТОРОМ ПУТИ НЕТ ДОЛЕЙ ПО СТОРОНАМ — И ПОЧЕМУ ОБЩАЯ СУММА ВСЁ-ТАКИ
+ * ЕСТЬ.
  *
- * Посчитать нечем. `splitPot(totalPayout())` даёт половины ПО ПРАВИЛУ, а в
+ * Доли посчитать нечем. `splitPot(totalPayout())` даёт половины ПО ПРАВИЛУ, а в
  * ветке заблокированного исполнителя контракт платит иначе: мягкий перевод не
  * прошёл, недоставленная половина ушла клиенту, событие несёт `toExecutor = 0`
  * (`src/Agreement.sol`, `triggerArbiterTimeout`). Расчёт об этом знать не может
@@ -45,7 +47,16 @@ import { usdcExact } from './splitPot';
  * здесь записано как принятое; больше не принято. Правило одно: не называть
  * сумму, которой не знаешь.
  *
- * Дочитать фактические суммы с цепи тоже нечем, и это проверялось:
+ * А вот ОБЩАЯ сумма котла знаема, и она одна и та же в обеих ветках. Из эскроу
+ * уходит весь котёл целиком: `toClient + toExecutor == amount + extrasTotal ==
+ * totalPayout()`. Блокировка исполнителя ничего не отменяет — недоставленная
+ * половина не исчезает, а переезжает клиенту, и сумма остаётся прежней
+ * (`src/Agreement.sol`, `triggerArbiterTimeout`). Читать ради неё нечего:
+ * `totalPayout()` на этом пути и так запрашивается, он нужен
+ * `decideArbiterTimeout`. Молчать про неё было перестраховкой, а не честностью:
+ * человек не узнавал даже размера собственной сделки.
+ *
+ * Дочитать фактические ДОЛИ с цепи тоже нечем, и это проверялось:
  *
  *  • `getLogs` требует диапазона блоков, а у ленты его нет — снимок реестра
  *    (`getClientDeals`/`getExecutorDeals`) отдаёт агримент, сумму и статус,
@@ -64,8 +75,8 @@ import { usdcExact } from './splitPot';
  * `handleDisputeSplitNoVerdict`), и из браузера он доступен через уже
  * существующий прокси `/api/subgraph`. Цена — новая зависимость ленты
  * уведомлений от стороннего индексатора с его лагом, кэшем и версией деплоя,
- * ради сумм в одной редкой ветке. Это отдельное решение, а не побочный эффект
- * этой правки; молчание про сумму честно и без него.
+ * ради долей в одной редкой ветке. Это отдельное решение, а не побочный эффект
+ * этой правки; молчание про долю честно и без него.
  *
  * Если не удалось ни то, ни другое — 'unknown'. Молча выбрать «возврат» здесь
  * было бы тем же враньём, только по умолчанию.
@@ -73,8 +84,12 @@ import { usdcExact } from './splitPot';
 export type SettledRefund =
   /** Дележ, суммы ФАКТИЧЕСКИЕ — взяты из события, а не посчитаны. */
   | { kind: 'split'; toClient: bigint; toExecutor: bigint }
-  /** Дележ был, кому сколько — неизвестно. Сумм в этом виде нет намеренно. */
-  | { kind: 'split-amounts-unknown' }
+  /**
+   * Дележ был, кому сколько — неизвестно. Доли в этом виде отсутствуют
+   * намеренно; `pot` — не доля, а весь котёл, который эскроу отдал целиком, и
+   * он верен в обеих ветках.
+   */
+  | { kind: 'split-amounts-unknown'; pot: bigint }
   | { kind: 'refund' }
   | { kind: 'unknown' };
 
@@ -214,13 +229,25 @@ export async function classifySettledRefund(
       disputeWindow: disputeWindow.data,
     });
 
-    // Суммы у `decideArbiterTimeout` есть, и они РАСЧЁТНЫЕ — `splitPot(pot)`.
+    // Доли у `decideArbiterTimeout` есть, и они РАСЧЁТНЫЕ — `splitPot(pot)`.
     // На странице сделки это верно: там они предсказывают, что случится, и
     // ветку заблокированного исполнителя никто предсказать не может. Здесь же
     // выплата уже прошла, и назвать расчётное числом «сколько тебе пришло»
     // значило бы соврать всякий раз, когда мягкий перевод не прошёл. Признак
-    // берём, суммы — намеренно роняем.
-    if (settlement.kind === 'split') return { kind: 'split-amounts-unknown' };
+    // берём, доли — намеренно роняем.
+    //
+    // А их СУММУ оставляем, и она не расчётная в том же смысле: сколько бы ни
+    // ушло каждой стороне, вместе это ровно котёл. `splitPot` делит вычитанием
+    // и ничего не теряет даже на нечётном, поэтому `toClient + toExecutor`
+    // тождественно равно прочитанному `totalPayout()` — берём его отсюда, а не
+    // из `pot.data`, только чтобы не разворачивать `bigint | undefined`,
+    // которое на этой ветке уже гарантированно определено.
+    if (settlement.kind === 'split') {
+      return {
+        kind: 'split-amounts-unknown',
+        pot: settlement.toClient + settlement.toExecutor,
+      };
+    }
     return { kind: settlement.kind };
   } catch (err) {
     reportIfBug(err, 'the state path', agreement);
@@ -233,9 +260,10 @@ export async function classifySettledRefund(
  * остальные в `hooks/useNotifications` — локализации у ленты нет, и заводить её
  * ради одной записи значило бы оставить рядом четырнадцать английских соседей.
  *
- * Суммы — обе, а не «пополам» словом: на нечётном котле они разные. И только
- * там, где они фактические: `split-amounts-unknown` не называет ни одной, ровно
- * как 'unknown'.
+ * Доли — обе, а не «пополам» словом: на нечётном котле они разные. И только
+ * там, где они фактические. `split-amounts-unknown` не называет ни одной доли,
+ * но называет общую сумму: её мы знаем, и она верна в обеих ветках — в отличие
+ * от 'unknown', где неизвестен сам исход и называть нечего.
  */
 export function refundNotifCopy(
   outcome: SettledRefund,
@@ -253,15 +281,15 @@ export function refundNotifCopy(
     };
   }
 
-  // Дележ без сумм. Обеим сторонам одно и то же — назвать «твою половину» здесь
-  // нельзя ни одной из них.
+  // Дележ без долей. Обеим сторонам одно и то же — назвать «твою половину»
+  // здесь нельзя ни одной из них; общий котёл, наоборот, обеим одинаково верен.
   if (outcome.kind === 'split-amounts-unknown') {
     return {
       title: 'Escrow Split',
       body:
         'Nobody took the dispute, so there was nobody to judge it, and the escrow was split '
-        + "between the two of you. We couldn't read the exact amounts — check your wallet for "
-        + 'the amount you received.',
+        + `between the two of you. The deal held ${usdcExact(outcome.pot)} USDC in total — `
+        + 'check your wallet for the amount you received.',
     };
   }
 
@@ -274,9 +302,33 @@ export function refundNotifCopy(
     };
   }
 
-  return {
-    title: 'Deal Closed',
-    body: "This deal closed as refunded, but we couldn't read how the escrow was settled. "
-        + 'Check your wallet for the amount you received.',
-  };
+  if (outcome.kind === 'unknown') {
+    return {
+      title: 'Deal Closed',
+      body: "This deal closed as refunded, but we couldn't read how the escrow was settled. "
+          + 'Check your wallet for the amount you received.',
+    };
+  }
+
+  return unhandledOutcome(outcome);
+}
+
+/**
+ * Ловушка на пятый вид `SettledRefund`.
+ *
+ * Пока ветки заканчивались общим `return`, новый вид объединения молча получал
+ * бы чужой текст: «Deal Closed, прочитать не смогли» — тому самому человеку,
+ * чью сделку мы как раз научились читать. Ошибка при этом не видна ниоткуда,
+ * потому что кода, который упал бы, нет.
+ *
+ * Тип `never` переносит это на сборку: пока в объединении ровно четыре вида,
+ * сюда доезжает `never` и всё компилируется; как только вид добавят и не
+ * обработают выше, аргумент перестанет быть `never` и `tsc --noEmit` (он же
+ * гейт `npm run build`) упадёт этой строкой. Бросок — на случай, если такое
+ * значение всё-таки доехало до рантайма мимо типов: молча соврать про деньги
+ * хуже, чем упасть.
+ */
+function unhandledOutcome(outcome: never): never {
+  const kind = (outcome as { kind?: unknown }).kind;
+  throw new Error(`refundNotifCopy: unhandled SettledRefund kind ${String(kind)}`);
 }

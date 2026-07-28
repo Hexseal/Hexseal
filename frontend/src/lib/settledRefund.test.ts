@@ -9,6 +9,7 @@ import {
   type PublicClient,
 } from 'viem';
 import { DISPUTE_SPLIT_EVENT } from '@/config/contracts';
+import { splitPot, usdcExact } from './splitPot';
 import {
   classifySettledRefund,
   findSplitInLogs,
@@ -261,9 +262,11 @@ describe('classifySettledRefund — путь через чек (точный)', 
         DISPUTE_WINDOW: () => 345_600n,
       },
     });
-    // Дележ — да; кому сколько — нет: суммы бывают только из события.
+    // Дележ — да; кому сколько — нет: доли бывают только из события. Котёл при
+    // этом известен, он тот же `totalPayout()`.
     await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({
       kind: 'split-amounts-unknown',
+      pot: 33n,
     });
     expect(readContract).toHaveBeenCalled();
   });
@@ -312,7 +315,7 @@ describe('classifySettledRefund — путь по состоянию (холод
     expect(readContract).toHaveBeenCalledTimes(1);
   });
 
-  it('никто не взялся, все три чтения дошли: дележ — но без сумм', async () => {
+  it('никто не взялся, все три чтения дошли: дележ — котёл есть, долей нет', async () => {
     const { client } = fakeClient({
       reads: {
         getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
@@ -321,8 +324,11 @@ describe('classifySettledRefund — путь по состоянию (холод
         DISPUTE_WINDOW: () => 345_600n,
       },
     });
+    // Нечётный котёл намеренно: 33 = 17 + 16, и `pot` обязан остаться 33, а не
+    // потерять юнит на двух делениях пополам.
     await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
       kind: 'split-amounts-unknown',
+      pot: 33n,
     });
   });
 
@@ -358,16 +364,25 @@ describe('classifySettledRefund — путь по состоянию (холод
 
 // ─── Клетка, которая держит правило ──────────────────────────────────────────
 //
-// НИ ПРИ КАКОМ котле путь по состоянию не называет сумму по стороне. Суммы там
+// НИ ПРИ КАКОМ котле путь по состоянию не называет сумму ПО СТОРОНЕ. Доли там
 // могут быть только расчётными (`splitPot(totalPayout())`), а расчёт не знает
 // про ветку заблокированного исполнителя: мягкий перевод не прошёл, его
 // половина ушла клиенту, и контракт заплатил не по правилу. Обещать в этот
 // момент «16.00 USDC тебе» тому, кто не получил ничего, — ровно то враньё,
 // которое эта задача убирает.
 //
-// Тест намеренно смотрит НА ФОРМУ РЕЗУЛЬТАТА, а не на конкретный `kind`:
-// вернуть расчётные суммы — это дописать в объект поля, и любое такое
-// возвращение здесь и провалится, как бы ни назвали вид.
+// ОБЩИЙ котёл под запрет не попадает и называться обязан: `toClient +
+// toExecutor` тождественно равно `totalPayout()` в обеих ветках — блокировка
+// исполнителя не сжигает его половину, а переводит клиенту. Поэтому «ни одной
+// цифры в тексте» было бы правилом строже настоящего, и держал бы этот тест не
+// то, ради чего написан.
+//
+// Отсюда форма проверки. Ответ обязан быть РОВНО `{ kind, pot }` — дописать в
+// него расчётные доли (как бы их ни назвали и каким бы ни объявили `kind`)
+// здесь и провалится. А в тексте число обязано быть ровно одно, и это котёл:
+// любая доля — либо ДРУГОЕ число (второй токен), либо на вырожденном котле то
+// же самое число ВТОРОЙ раз. Оба случая ломают `toEqual([total])`, поэтому
+// «напечатать половину, не называя её долей» проверку не проходит тоже.
 describe('путь по состоянию НИКОГДА не называет сумму по стороне', () => {
   const POTS = [
     0n,                       // пустой котёл
@@ -377,8 +392,15 @@ describe('путь по состоянию НИКОГДА не называет 
     123_456_789_012_345_678n, // крупный
   ];
 
+  /**
+   * Все числа текста, каждое целиком. Подстрокой такое проверять нельзя:
+   * половина пустого котла печатается как «0.00», а это подстрока честной
+   * общей суммы «0.000001» — проверка на `toContain` соврала бы в обе стороны.
+   */
+  const numbersIn = (body: string): string[] => body.match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
+
   for (const pot of POTS) {
-    it(`котёл ${pot}: ни toClient, ни toExecutor в ответе, ни одной суммы в тексте`, async () => {
+    it(`котёл ${pot}: в ответе только он, в тексте — только он`, async () => {
       const { client } = fakeClient({
         reads: {
           getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
@@ -391,15 +413,31 @@ describe('путь по состоянию НИКОГДА не называет 
 
       // Дележ распознан — иначе тест проверял бы не ту ветку.
       expect(outcome.kind).toBe('split-amounts-unknown');
-      // Ни одного поля с суммой, как бы оно ни называлось.
-      expect(Object.keys(outcome)).toEqual(['kind']);
-      expect(Object.values(outcome).some((v) => typeof v === 'bigint')).toBe(false);
+      // Котёл — единственная сумма, которую этот вид вправе нести. Поля с долей
+      // нет ни под каким именем: лишний ключ ломает `toEqual`.
+      expect(outcome).toEqual({ kind: 'split-amounts-unknown', pot });
 
-      // И до пользователя ни одна сумма не доезжает.
+      const total = usdcExact(pot);
+      const halves = splitPot(pot);
       for (const role of ['client', 'executor'] as const) {
         const { body } = refundNotifCopy(outcome, role);
-        expect(body).not.toMatch(/USDC/);
-        expect(body).not.toMatch(/\d/);
+
+        // Общую сумму назвать можно — и нужно.
+        expect(body).toContain(`${total} USDC`);
+        // Другой суммы в тексте нет, и той же самой дважды — тоже нет.
+        expect(numbersIn(body)).toEqual([total]);
+        // То же самое, названное по имени: расчётных половин в тексте нет.
+        for (const half of [halves.toClient, halves.toExecutor]) {
+          const rendered = usdcExact(half);
+          // Там, где половина печатается так же, как весь котёл (пустой котёл;
+          // остаток от неделимого юнита), проверять нечего — этот случай ловит
+          // счёт токенов выше, а здесь проверка падала бы на честном тексте.
+          if (rendered === total) continue;
+          expect(numbersIn(body)).not.toContain(rendered);
+        }
+        // И ни одна сумма не приписана стороне — даже если число при ней верное.
+        expect(body).not.toMatch(/USDC to (you|the client|the executor)\b/i);
+        expect(body).not.toMatch(/\byour (share|half|cut|part|portion)\b/i);
       }
     });
   }
@@ -579,8 +617,9 @@ describe('refundNotifCopy — дележ', () => {
   });
 });
 
-describe('refundNotifCopy — дележ без сумм', () => {
-  const BLIND: SettledRefund = { kind: 'split-amounts-unknown' };
+describe('refundNotifCopy — дележ без долей по сторонам', () => {
+  /** Котёл 200 USDC: сам он известен и верен, а доли по сторонам — нет. */
+  const BLIND: SettledRefund = { kind: 'split-amounts-unknown', pot: 200_000_000n };
 
   it('говорит, что дележ был и судить было некому', () => {
     const { title, body } = refundNotifCopy(BLIND, 'client');
@@ -589,12 +628,22 @@ describe('refundNotifCopy — дележ без сумм', () => {
     expect(body).toContain('the escrow was split');
   });
 
-  it('отправляет за суммой в кошелёк и не называет ни одной сам', () => {
+  // Размер сделки человек узнать вправе: он одинаков в обеих ветках, включая ту,
+  // где половина исполнителя не доехала и ушла клиенту.
+  it('называет общую сумму котла', () => {
+    for (const role of ['client', 'executor'] as const) {
+      expect(refundNotifCopy(BLIND, role).body).toContain('200.00 USDC in total');
+    }
+  });
+
+  it('за своей долей отправляет в кошелёк и сам её не называет', () => {
     for (const role of ['client', 'executor'] as const) {
       const { body } = refundNotifCopy(BLIND, role);
       expect(body).toContain('check your wallet');
-      expect(body).not.toMatch(/USDC/);
-      expect(body).not.toMatch(/\d/);
+      // Половина от 200 — «100.00», и её здесь быть не может ни при какой роли.
+      expect(body).not.toContain('100.00');
+      // Ни одна сумма не приписана стороне — даже правильная.
+      expect(body).not.toMatch(/USDC to (you|the client|the executor)\b/i);
     }
   });
 
