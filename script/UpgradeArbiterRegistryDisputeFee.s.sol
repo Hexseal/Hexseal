@@ -15,18 +15,27 @@ pragma solidity ^0.8.20;
 //   getTreasurySlice()         — чтение накопленной доли.
 // Прежние 44 селектора остаются, их реализация переезжает на новый фасет.
 //
-// Почему это нельзя отложить. Пока фасет не выкачен, creditDisputeFee на
-// диамонде НЕ СУЩЕСТВУЕТ: агримент переведёт сбор, получит провал зачисления,
-// и деньги осядут на диамонде неучтёнными — ни один счётчик на них не
-// указывает. Это не гипотеза. Ровно так 27 июля сломалась казна: правку
-// fundVault выкатили только в исходники, фасет на диамонд не ушёл, distribute()
-// возвращался успехом и ничего не перемещал. Поймали по расхождению между
-// рапортом и балансом.
+// Почему это нельзя отложить — и почему НЕ по той причине, о которой думаешь.
+// Пока фасет не выкачен, creditDisputeFee на диамонде НЕ СУЩЕСТВУЕТ. Деньги
+// при этом никуда не деваются: в Agreement.resolveDispute перевод стоит ВНУТРИ
+// try, и при провале зачисления на диамонд не уходит ни цента — весь котёл
+// достаётся победителю спора, а агримент эмитит DisputeFeeSkipped. Это
+// закреплено тестом testResolveDisputeSurvivesAFailingCredit с ассертом
+// "not a cent may be stranded on the diamond".
+//
+// Настоящая цена отсрочки: протокол просто НЕ БЕРЁТ свои 3% со всех споров,
+// закрытых в этом окне, и арбитры за них не получают награды. Задним числом
+// сбор не начислить — для этих сделок потеря окончательная.
+//
+// Не путать с июльским инцидентом. Там правку fundVault выкатили только в
+// исходники, distribute() возвращался успехом и МОЛЧА ничего не перемещал —
+// заметили лишь по расхождению рапорта с балансом. Здесь провал не молчит:
+// каждый пропущенный сбор виден как DisputeFeeSkipped в логах сделки.
 //
 // ПОРЯДОК ВЫКАТКИ. Этот скрипт обязан пройти ДО
 // script/UpgradeAgreementDisputeFee.s.sol, который переключает диамонд на
-// реализацию Agreement, эти сборы отправляющую. Наоборот — это ровно
-// повторение июльской ошибки, только уже деньгами спорящих сторон.
+// реализацию Agreement, эти сборы отправляющую. Обратный порядок ничего не
+// ломает и не запирает — он стоит выручки за окно и наград арбитрам за него.
 //
 // Почему не чистый Replace, как было в UpgradeArbiterRegistryFundVault.s.sol.
 // Там наборы селекторов совпадали побайтово. Здесь на диамонде 44 селектора,
@@ -160,36 +169,57 @@ contract UpgradeArbiterRegistryDisputeFee is Script {
         console.log("fundVault ->         ", ILoupe(diamond).facetAddress(fundVaultSel));
         console.log("");
         console.log("Now, and only now, ship script/UpgradeAgreementDisputeFee.s.sol.");
+        console.log("Also due with that one: the subgraph handler for DisputeSplitNoVerdict");
+        console.log("(docs/OPEN-ITEMS.md item 8). Without it a pot settled by split stays");
+        console.log("'disputed' forever in every interface, while the chain says otherwise.");
         console.log("");
-        console.log("Rollback - TWO steps, and the second one is easy to forget:");
+        console.log("Rollback - THREE steps, and the ORDER is the whole point.");
+        console.log("Read all three before starting: step 3 makes step 2 impossible.");
         console.log("");
-        console.log("  1) route the 44 old selectors back to the previous facet");
-        console.log("     (Replace, action 1; build the list from the live diamond:");
-        console.log("      cast call <diamond> \"facetFunctionSelectors(address)(bytes4[])\" <new>)");
+        console.log("  1) roll back script/UpgradeAgreementDisputeFee.s.sol FIRST, so new");
+        console.log("     deals stop landing on an implementation that sends the fee.");
+        console.log("     This is not a full undo: EIP-1167 clones minted in the meantime");
+        console.log("     delegate to that implementation forever and keep calling");
+        console.log("     creditDisputeFee. Harmless - the call sits in a try and the");
+        console.log("     transfer is inside it, so a missing selector costs the protocol");
+        console.log("     its fee, never the parties their pot.");
+        console.log("");
+        console.log("  2) while the NEW facet is STILL MOUNTED, drain the treasury slice:");
+        console.log("       cast call <diamond> \"getTreasurySlice()(uint256)\"");
+        console.log("       cast send <diamond> \"withdrawTreasurySlice()\"    # if non-zero");
+        console.log("     After step 3 neither function is reachable. treasurySlice is a");
+        console.log("     storage field appended by this release and the old facet has");
+        console.log("     neither a getter nor a pusher for it, so whatever is left becomes");
+        console.log("     USDC on the diamond with no mounted function pointing at it.");
+        console.log("     There is no rescue function anywhere in src/ - only another");
+        console.log("     diamondCut would ever get it back.");
+        console.log("");
+        console.log("  3) ONE diamondCut carrying BOTH elements:");
+        console.log("       Replace (action 1) -> <old>, the 44 original selectors");
+        console.log("       Remove  (action 2) -> address(0), the 3 selectors below");
+        console.log("");
+        console.log("     Build the 44 like this - the live call returns 47, not 44:");
+        console.log("       cast call <diamond> \"facetFunctionSelectors(address)(bytes4[])\" <new>");
+        console.log("     then SUBTRACT exactly these three:");
+        console.logBytes4(added[0]); // creditDisputeFee(uint256)
+        console.logBytes4(added[1]); // withdrawTreasurySlice()
+        console.logBytes4(added[2]); // getTreasurySlice()
+        console.log("");
+        console.log("     Do NOT Replace those three onto the old facet, and do NOT leave");
+        console.log("     them in the list of 44. replaceFunctions never checks that the");
+        console.log("     target implements the selector (DiamondProxy:173) - only that the");
+        console.log("     facet differs - so such a cut SUCCEEDS. The selectors then point");
+        console.log("     at a facet with no such code: the diamond's fallback lets the call");
+        console.log("     through and the old facet reverts with empty returndata, while the");
+        console.log("     loupe cheerfully reports them as mounted. That is the bad part -");
+        console.log("     unmounted also reverts, but at least it is visible to monitoring");
+        console.log("     and repairable with Add. This state is invisible and needs Replace.");
+        console.log("");
+        console.log("     One cut, not two: splitting it leaves a gap in which step 2 has");
+        console.log("     already become impossible.");
+        console.log("");
         console.log("     <old> =", oldFacet);
         console.log("     <new> =", address(newFacet));
-        console.log("");
-        console.log("  2) unmount the three added selectors with Remove");
-        console.log("     (action 2, facetAddress = address(0)):");
-        console.log("       creditDisputeFee(uint256)");
-        console.log("       withdrawTreasurySlice()");
-        console.log("       getTreasurySlice()");
-        console.log("     NOT a Replace onto the old facet. replaceFunctions never checks");
-        console.log("     that the target actually implements the selector (DiamondProxy");
-        console.log("     :173), so that cut would SUCCEED and leave three selectors");
-        console.log("     pointing at a facet with no such function - every call then");
-        console.log("     reverts in the fallback. Remove is the only correct action.");
-        console.log("");
-        console.log("  Two things step 2 must wait for:");
-        console.log("    - roll back UpgradeAgreementDisputeFee.s.sol FIRST. Unmounting");
-        console.log("      creditDisputeFee while the live implementation still sends the");
-        console.log("      fee reproduces exactly the silent-credit failure this script");
-        console.log("      exists to prevent.");
-        console.log("    - drain getTreasurySlice() to zero via withdrawTreasurySlice()");
-        console.log("      BEFORE removing them. treasurySlice is a field appended by this");
-        console.log("      release; the old facet has neither a getter nor a pusher for it,");
-        console.log("      so whatever is accrued becomes USDC sitting on the diamond with");
-        console.log("      no mounted function pointing at it.");
         console.log("");
         console.log("  <diamond> =", diamond);
     }
