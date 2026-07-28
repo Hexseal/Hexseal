@@ -7,12 +7,14 @@ pragma solidity ^0.8.20;
 //                   исполнитель принимает/отклоняет → Agreement
 //
 // Симметричный двусторонний флоу:
-//   mintService():    executor платит fee → feeRecipient (антиспам)
-//   requestService(): client НЕ платит fee (уже уплачен исполнителем при mintService)
-//                     client amount → хранится в Diamond
-//   acceptRequest():  executor принимает → amount Diamond → Agreement
-//   rejectRequest():  executor отклоняет → amount рефанд client
-//   cancelRequest():  client отменяет (пока PENDING) → amount рефанд
+//   mintService():    executor платит плоский антиспам-пол → feeRecipient
+//   requestService(): client платит amount + процент (quote()); процент
+//                     удерживается в Diamond — сделки ещё нет, пересылать некуда
+//   acceptRequest():  executor принимает → amount в Agreement, удержанный
+//                     процент → feeRecipient (комиссия заработана)
+//   rejectRequest():  executor отклоняет → amount + процент сверх пола рефанд
+//                     client, пол сгорает в feeRecipient
+//   cancelRequest():  client отменяет (пока PENDING) → тот же рефанд, что и reject
 // ============================================================
 
 import "../FactoryFacet.sol";
@@ -72,6 +74,10 @@ library ServiceBoardStorage {
         // and auto-refund sibling requests that can never be accepted once one from
         // this pair is accepted (hasActivePair blocks them forever after).
         mapping(address => mapping(address => uint256[])) pendingRequestIdsByClientAndExecutor;
+
+        // Удержанная комиссия под каждую заявку. Пересылается в казну при
+        // acceptRequest, возвращается (кроме пола) при reject/cancel/supersede.
+        mapping(uint256 => uint256) requestFeeHeld;
     }
 
     function store() internal pure returns (Layout storage s) {
@@ -332,8 +338,10 @@ contract ServiceBoardFacet {
 
     /// @notice Клиент запрашивает найм — gasless-совместим (ERC-2771).
     /// @dev Для gasless-пути relay вызывает USDC.permit() отдельно перед ForwardRequest.
-    ///      Для прямого пути требует approve(diamond, amount) до вызова.
-    ///      PPP fee уже уплачен исполнителем при mintService — здесь только amount.
+    ///      Для прямого пути требует approve(diamond, amount + fee) до вызова.
+    ///      Комиссия (quote(amount)) удерживается в Diamond, а не пересылается —
+    ///      сделки ещё нет. Уйдёт в feeRecipient при acceptRequest, вернётся
+    ///      (кроме пола) при reject/cancel/supersede.
     function requestService(
         uint256 serviceId,
         uint256 amount,
@@ -357,6 +365,8 @@ contract ServiceBoardFacet {
         if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
         if (s.pendingRequestIdsByClientAndExecutor[client][svc.executor].length >= MAX_PENDING_PER_PAIR) revert TooManyPendingRequests();
 
+        uint256 fee = FactoryStorage.quote(fs, amount);
+
         requestId = s.nextRequestId++;
 
         s.requests[requestId] = ServiceBoardStorage.HireRequest({
@@ -374,9 +384,11 @@ contract ServiceBoardFacet {
         s.clientRequests[client].push(requestId);
         s.pendingRequestIdsByClientAndExecutor[client][svc.executor].push(requestId);
 
-        // Amount → Diamond (вернётся при reject/cancel или уйдёт в Agreement при accept)
-        _safeTransferFrom(fs.usdc, client, address(this), amount);
-        s.requestFunds[requestId] = amount;
+        // Amount + комиссия → Diamond. Комиссия удержана: уйдёт в казну при
+        // acceptRequest, вернётся (кроме пола) при reject/cancel.
+        _safeTransferFrom(fs.usdc, client, address(this), amount + fee);
+        s.requestFunds[requestId]   = amount;
+        s.requestFeeHeld[requestId] = fee;
 
         emit ServiceRequested(requestId, serviceId, client, amount);
     }
@@ -409,7 +421,9 @@ contract ServiceBoardFacet {
         if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
         if (st.pendingRequestIdsByClientAndExecutor[client][svc.executor].length >= MAX_PENDING_PER_PAIR) revert TooManyPendingRequests();
 
-        IServiceBoardUSDC(fs.usdc).permit(client, address(this), amount, permitDeadline, v, r, s);
+        uint256 fee = FactoryStorage.quote(fs, amount);
+
+        IServiceBoardUSDC(fs.usdc).permit(client, address(this), amount + fee, permitDeadline, v, r, s);
 
         requestId = st.nextRequestId++;
 
@@ -428,8 +442,9 @@ contract ServiceBoardFacet {
         st.clientRequests[client].push(requestId);
         st.pendingRequestIdsByClientAndExecutor[client][svc.executor].push(requestId);
 
-        _safeTransferFrom(fs.usdc, client, address(this), amount);
-        st.requestFunds[requestId] = amount;
+        _safeTransferFrom(fs.usdc, client, address(this), amount + fee);
+        st.requestFunds[requestId]   = amount;
+        st.requestFeeHeld[requestId] = fee;
 
         emit ServiceRequested(requestId, serviceId, client, amount);
     }
@@ -483,6 +498,11 @@ contract ServiceBoardFacet {
         FactoryStorage.Layout storage fs = FactoryStorage.store();
         _safeTransfer(fs.usdc, agreementAddr, held);
 
+        // Сделка создана — комиссия заработана
+        uint256 feeHeld = s.requestFeeHeld[requestId];
+        s.requestFeeHeld[requestId] = 0;
+        if (feeHeld > 0) _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
+
         // Активируем Agreement
         (bool funded, ) = agreementAddr.call(abi.encodeWithSignature("fundFromFactory()"));
         require(funded, "ServiceBoard: fund failed");
@@ -501,13 +521,24 @@ contract ServiceBoardFacet {
             siblingReq.status = ServiceBoardStorage.RequestStatus.SUPERSEDED;
             uint256 siblingRefund = s.requestFunds[siblingId];
             s.requestFunds[siblingId] = 0;
-            _safeTransfer(fs.usdc, client, siblingRefund);
-            emit RequestSuperseded(siblingId, client, sender, siblingRefund);
+
+            uint256 siblingFee = s.requestFeeHeld[siblingId];
+            s.requestFeeHeld[siblingId] = 0;
+            uint256 siblingFloor = fs.feeFloor;
+            uint256 siblingBurned = siblingFee < siblingFloor ? siblingFee : siblingFloor;
+
+            uint256 siblingTotal = siblingRefund + (siblingFee - siblingBurned);
+            if (siblingTotal > 0) _safeTransfer(fs.usdc, client, siblingTotal);
+            if (siblingBurned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, siblingBurned);
+            // RequestSuperseded обязано нести реально переведённую сумму
+            // (refund + комиссия сверх пола), а не только тело сделки.
+            emit RequestSuperseded(siblingId, client, sender, siblingTotal);
         }
         delete s.pendingRequestIdsByClientAndExecutor[client][sender];
     }
 
-    /// @notice Исполнитель отклоняет запрос → amount рефандится клиенту.
+    /// @notice Исполнитель отклоняет запрос → amount + комиссия сверх пола
+    ///         рефандится клиенту, пол сгорает в feeRecipient.
     function rejectRequest(uint256 requestId) external nonReentrant {
         address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
@@ -523,14 +554,21 @@ contract ServiceBoardFacet {
         s.requestFunds[requestId] = 0;
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
-        _safeTransfer(fs.usdc, req.client, refund);
+        uint256 feeHeld = s.requestFeeHeld[requestId];
+        s.requestFeeHeld[requestId] = 0;
+        uint256 floor_ = fs.feeFloor;
+        uint256 burned = feeHeld < floor_ ? feeHeld : floor_;
+
+        _safeTransfer(fs.usdc, req.client, refund + (feeHeld - burned));
+        if (burned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, burned);
 
         emit RequestRejected(requestId, sender, req.client);
     }
 
     // -------- CLIENT: CANCEL --------
 
-    /// @notice Клиент отменяет запрос пока он PENDING → amount рефандится.
+    /// @notice Клиент отменяет запрос пока он PENDING → amount + комиссия
+    ///         сверх пола рефандится, пол сгорает в feeRecipient.
     function cancelRequest(uint256 requestId) external nonReentrant {
         address sender = _msgSender();
         ServiceBoardStorage.Layout storage s = ServiceBoardStorage.store();
@@ -546,7 +584,13 @@ contract ServiceBoardFacet {
         s.requestFunds[requestId] = 0;
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
-        _safeTransfer(fs.usdc, sender, refund);
+        uint256 feeHeld = s.requestFeeHeld[requestId];
+        s.requestFeeHeld[requestId] = 0;
+        uint256 floor_ = fs.feeFloor;
+        uint256 burned = feeHeld < floor_ ? feeHeld : floor_;
+
+        _safeTransfer(fs.usdc, sender, refund + (feeHeld - burned));
+        if (burned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, burned);
 
         emit RequestCancelled(requestId, sender);
     }

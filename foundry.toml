@@ -11,4 +11,17 @@ via_ir = true
 # scoped to the build output directory only.
 fs_permissions = [{ access = "read", path = "./out" }]
 
+# test/Boards.t.sol grew past a solc via-ir legacy-assembly limit (Task 5 added
+# five more ServiceBoard fee tests to an already-large contract): the default
+# optimizer_runs=200 makes solc crash with an internal "Tag too large for
+# reserved space" error. This is a test-only bytecode-size issue — src/ and
+# every other test file keep optimizer_runs=200 — so it's scoped to just this
+# file rather than lowering the project-wide default.
+additional_compiler_profiles = [
+  { name = "boards-test-lowopt", via_ir = true, optimizer = true, optimizer_runs = 1 },
+]
+compilation_restrictions = [
+  { paths = "test/Boards.t.sol", optimizer_runs = 1 },
+]
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

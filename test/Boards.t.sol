@@ -595,7 +595,9 @@ contract BoardsTest is Test {
 
     function _requestService(uint256 serviceId) internal returns (uint256 requestId) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), AMOUNT);
+        // requestService теперь берёт процент через quote() — численно совпадает
+        // с JOB_FEE для того же AMOUNT (5% от $100 = $5, выше пола).
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
         requestId = ServiceBoardFacet(address(diamond)).requestService(
             serviceId, AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -611,10 +613,10 @@ contract BoardsTest is Test {
         uint256 requestId = _requestService(serviceId);
         assertEq(requestId, 0);
 
-        // requestService не берёт fee — только amount блокируется в Diamond
+        // Комиссия удержана в Diamond вместе с amount — сделки ещё нет
         assertEq(usdc.balanceOf(feeRecipient), feeBefore);
-        assertEq(usdc.balanceOf(address(diamond)), AMOUNT);
-        assertEq(usdc.balanceOf(client), clientBefore - AMOUNT);
+        assertEq(usdc.balanceOf(address(diamond)), AMOUNT + JOB_FEE);
+        assertEq(usdc.balanceOf(client), clientBefore - AMOUNT - JOB_FEE);
 
         ServiceBoardStorage.HireRequest memory req = ServiceBoardFacet(address(diamond)).getRequest(requestId);
         assertEq(req.client, client);
@@ -628,14 +630,16 @@ contract BoardsTest is Test {
         uint256 requestId = _requestService(serviceId);
 
         uint256 diamondBefore = usdc.balanceOf(address(diamond));
+        uint256 feeBefore     = usdc.balanceOf(feeRecipient);
 
         vm.prank(executor);
         address agreementAddr = ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
 
         assertTrue(agreementAddr != address(0));
 
-        // Amount ушёл из Diamond в Agreement
-        assertEq(usdc.balanceOf(address(diamond)), diamondBefore - AMOUNT);
+        // Amount ушёл из Diamond в Agreement, комиссия — в feeRecipient
+        assertEq(usdc.balanceOf(address(diamond)), diamondBefore - AMOUNT - JOB_FEE);
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore + JOB_FEE);
 
         // Pair зарегистрирована
         assertTrue(RegistryFacet(address(diamond)).hasActivePair(client, executor));
@@ -660,9 +664,9 @@ contract BoardsTest is Test {
         vm.prank(executor);
         ServiceBoardFacet(address(diamond)).rejectRequest(requestId);
 
-        // Amount рефанднут клиенту
-        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT);
-        assertEq(usdc.balanceOf(address(diamond)), diamondBefore - AMOUNT);
+        // Amount + комиссия сверх пола рефанднуты клиенту, пол сгорает
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT + (JOB_FEE - JOB_FLOOR));
+        assertEq(usdc.balanceOf(address(diamond)), diamondBefore - AMOUNT - JOB_FEE);
 
         ServiceBoardStorage.HireRequest memory req = ServiceBoardFacet(address(diamond)).getRequest(requestId);
         assertEq(uint256(req.status), uint256(ServiceBoardStorage.RequestStatus.REJECTED));
@@ -677,7 +681,8 @@ contract BoardsTest is Test {
         vm.prank(client);
         ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
 
-        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT);
+        // Amount + комиссия сверх пола рефанднуты клиенту, пол сгорает
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT + (JOB_FEE - JOB_FLOOR));
 
         ServiceBoardStorage.HireRequest memory req = ServiceBoardFacet(address(diamond)).getRequest(requestId);
         assertEq(uint256(req.status), uint256(ServiceBoardStorage.RequestStatus.CANCELLED));
@@ -734,7 +739,7 @@ contract BoardsTest is Test {
         // service) before either is accepted — hasActivePair doesn't block this since
         // neither is active yet.
         vm.startPrank(client);
-        usdc.approve(address(diamond), AMOUNT);
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
         uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
             serviceId2, AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -749,10 +754,11 @@ contract BoardsTest is Test {
         ServiceBoardStorage.HireRequest memory req1 = ServiceBoardFacet(address(diamond)).getRequest(requestId1);
         assertEq(uint256(req1.status), uint256(ServiceBoardStorage.RequestStatus.ACCEPTED));
 
-        // requestId2: auto-superseded and refunded, even though nobody called cancel/reject
+        // requestId2: auto-superseded and refunded, even though nobody called cancel/reject —
+        // amount + fee above the floor comes back, the floor is forfeited.
         ServiceBoardStorage.HireRequest memory req2 = ServiceBoardFacet(address(diamond)).getRequest(requestId2);
         assertEq(uint256(req2.status), uint256(ServiceBoardStorage.RequestStatus.SUPERSEDED));
-        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT);
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT + (JOB_FEE - JOB_FLOOR));
     }
 
     function testAcceptRequestDoesNotReprocessAlreadyResolvedSibling() public {
@@ -762,7 +768,7 @@ contract BoardsTest is Test {
         uint256 requestId1 = _requestService(serviceId1);
 
         vm.startPrank(client);
-        usdc.approve(address(diamond), AMOUNT);
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
         uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
             serviceId2, AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -811,7 +817,7 @@ contract BoardsTest is Test {
         uint256 requestId1 = _requestService(serviceId);
 
         vm.startPrank(client2);
-        usdc.approve(address(diamond), AMOUNT);
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
         uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
             serviceId, AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -829,18 +835,20 @@ contract BoardsTest is Test {
     function testRequestServiceRevertsWhenPendingCapReached() public {
         uint256 serviceId = _mintService();
 
-        // Ensure client has enough balance for 20 requests
-        usdc.mint(client, 1_100_000_000);
+        // Ensure client has enough balance for 20 requests at (AMOUNT + fee) each,
+        // plus slack for the 21st after cancelling frees a slot (refund is amount +
+        // fee above the floor — one floor's worth less than a fresh request costs).
+        usdc.mint(client, 1_200_000_000);
 
         // Fill the cap with PENDING requests to the same executor (different
         // client so hasActivePair never trips — this is purely exercising the
         // count cap, not the active-pair guard).
         vm.startPrank(client);
         for (uint256 i = 0; i < 20; i++) {
-            usdc.approve(address(diamond), AMOUNT);
+            usdc.approve(address(diamond), AMOUNT + JOB_FEE);
             ServiceBoardFacet(address(diamond)).requestService(serviceId, AMOUNT, DEADLINE, TERMS, REGION);
         }
-        usdc.approve(address(diamond), AMOUNT);
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
         vm.expectRevert(ServiceBoardFacet.TooManyPendingRequests.selector);
         ServiceBoardFacet(address(diamond)).requestService(serviceId, AMOUNT, DEADLINE, TERMS, REGION);
         vm.stopPrank();
@@ -852,7 +860,7 @@ contract BoardsTest is Test {
         ServiceBoardFacet(address(diamond)).cancelRequest(pending[0]);
 
         vm.startPrank(client);
-        usdc.approve(address(diamond), AMOUNT);
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
         ServiceBoardFacet(address(diamond)).requestService(serviceId, AMOUNT, DEADLINE, TERMS, REGION);
         vm.stopPrank();
     }
@@ -915,8 +923,9 @@ contract BoardsTest is Test {
 
         // Второй запрос от другого клиента
         uint256 amount2 = 50_000_000;
+        uint256 fee2 = 2_500_000; // 5% от $50
         vm.startPrank(client2);
-        usdc.approve(address(diamond), FEE + amount2);
+        usdc.approve(address(diamond), amount2 + fee2);
         uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
             serviceId, amount2, DEADLINE, TERMS, REGION
         );
@@ -1263,6 +1272,127 @@ contract BoardsTest is Test {
         uint256[] memory reqs = ServiceBoardFacet(address(diamond)).getClientRequests(client);
         assertEq(reqs.length, 1);
         assertEq(reqs[0], 0);
+    }
+
+    // ============================================================
+    //  SERVICE BOARD REQUEST FEE
+    // ============================================================
+
+    function _postService() internal returns (uint256 serviceId) {
+        vm.startPrank(executor);
+        usdc.approve(address(diamond), 1_000_000);
+        serviceId = ServiceBoardFacet(address(diamond)).mintService(
+            "Solidity audit", "I audit contracts", 500_000_000, DEADLINE, REGION
+        );
+        vm.stopPrank();
+    }
+
+    function testRequestService_ChargesPercentageAndHolds() public {
+        uint256 serviceId = _postService();
+        uint256 amount = 200_000_000;  // $200
+        uint256 fee = 10_000_000;      // 5%
+        uint256 recipientBefore = usdc.balanceOf(feeRecipient);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        ServiceBoardFacet(address(diamond)).requestService(
+            serviceId, amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        // Комиссия удержана, а не переслана — сделки ещё нет
+        assertEq(usdc.balanceOf(feeRecipient), recipientBefore);
+        assertEq(usdc.balanceOf(address(diamond)), amount + fee);
+    }
+
+    function testAcceptRequest_ForwardsHeldFee() public {
+        uint256 serviceId = _postService();
+        uint256 amount = 200_000_000;
+        uint256 fee = 10_000_000;
+        uint256 recipientBefore = usdc.balanceOf(feeRecipient);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        uint256 requestId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId, amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+
+        assertEq(usdc.balanceOf(feeRecipient), recipientBefore + fee);
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+    }
+
+    function testRejectRequest_RefundsFeeAboveFloor() public {
+        uint256 serviceId = _postService();
+        uint256 amount = 200_000_000;
+        uint256 fee = 10_000_000;
+        uint256 floor_ = 1_000_000;
+        uint256 clientBefore = usdc.balanceOf(client);
+        uint256 recipientBefore = usdc.balanceOf(feeRecipient);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        uint256 requestId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId, amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).rejectRequest(requestId);
+
+        assertEq(usdc.balanceOf(client), clientBefore - floor_);
+        assertEq(usdc.balanceOf(feeRecipient), recipientBefore + floor_);
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+    }
+
+    function testCancelRequest_RefundsFeeAboveFloor() public {
+        uint256 serviceId = _postService();
+        uint256 amount = 200_000_000;
+        uint256 fee = 10_000_000;
+        uint256 floor_ = 1_000_000;
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        uint256 requestId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId, amount, DEADLINE, TERMS, REGION
+        );
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(client), clientBefore - floor_);
+    }
+
+    function testTenHires_EachPaysPercentage() public {
+        uint256 serviceId = _postService();
+        uint256 amount = 200_000_000;
+        uint256 fee = 10_000_000;
+        uint256 floor_ = 1_000_000;
+
+        // Пол за публикацию уже уплачен исполнителем
+        assertEq(usdc.balanceOf(feeRecipient), floor_);
+
+        // Каждый найм — свой клиент (hasActivePair не пускает второй найм той же пары)
+        for (uint256 i = 0; i < 10; i++) {
+            address hirer = address(uint160(0x1000 + i));
+            usdc.mint(hirer, amount + fee);
+
+            vm.startPrank(hirer);
+            usdc.approve(address(diamond), amount + fee);
+            uint256 requestId = ServiceBoardFacet(address(diamond)).requestService(
+                serviceId, amount, DEADLINE, TERMS, REGION
+            );
+            vm.stopPrank();
+
+            vm.prank(executor);
+            ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+        }
+
+        // Пол за объявление + десять процентов, а не один пол
+        assertEq(usdc.balanceOf(feeRecipient), floor_ + 10 * fee);
     }
 
     // ============================================================

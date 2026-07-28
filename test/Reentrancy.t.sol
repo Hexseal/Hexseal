@@ -103,6 +103,9 @@ contract ReentrancyTest is Test {
     uint256 constant BOARD_FEE  = 2_000_000; // ServiceBoard: still region-priced (Task 4)
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =  80_000_000;
+    // ServiceBoard requestService now prices by quote(): max(SVC_AMOUNT * 500 /
+    // 10_000, 1_000_000) = 5% of SVC_AMOUNT.
+    uint256 constant SVC_FEE    =   4_000_000;
     // FactoryFacet direct path (deployAgreement) prices by quote():
     // max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
     uint256 constant DIRECT_FEE = 5_000_000;
@@ -352,7 +355,7 @@ contract ReentrancyTest is Test {
         );
         vm.stopPrank();
         vm.startPrank(client);
-        malUSDC.approve(address(diamond), SVC_AMOUNT);
+        malUSDC.approve(address(diamond), SVC_AMOUNT + SVC_FEE);
         requestId = ServiceBoardFacet(address(diamond)).requestService(
             serviceId, SVC_AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -521,7 +524,8 @@ contract ReentrancyTest is Test {
         assertTrue(malUSDC.reentrantReverted(),  "DiamondGuard must block reentrant cancelRequest");
         assertFalse(malUSDC.reentrantSucceeded(), "double-refund must not happen");
 
-        assertEq(malUSDC.balanceOf(client), clientBefore + SVC_AMOUNT, "single refund only");
+        // Refund = amount + fee above the floor; the floor itself is forfeited.
+        assertEq(malUSDC.balanceOf(client), clientBefore + SVC_AMOUNT + (SVC_FEE - JOB_FLOOR), "single refund only");
         assertEq(malUSDC.balanceOf(address(diamond)), 0, "diamond drained exactly once");
     }
 
@@ -540,7 +544,8 @@ contract ReentrancyTest is Test {
         assertTrue(malUSDC.reentrantReverted(),  "DiamondGuard must block reentrant rejectRequest");
         assertFalse(malUSDC.reentrantSucceeded(), "double-refund must not happen");
 
-        assertEq(malUSDC.balanceOf(client), clientBefore + SVC_AMOUNT, "single refund only");
+        // Refund = amount + fee above the floor; the floor itself is forfeited.
+        assertEq(malUSDC.balanceOf(client), clientBefore + SVC_AMOUNT + (SVC_FEE - JOB_FLOOR), "single refund only");
         assertEq(malUSDC.balanceOf(address(diamond)), 0, "diamond drained exactly once");
     }
 }

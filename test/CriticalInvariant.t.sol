@@ -72,6 +72,10 @@ contract CriticalInvariantTest is Test {
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =   80_000_000;
     uint256 constant SVC2_AMOUNT =  50_000_000;
+    // ServiceBoard requestService now prices by quote(): max(amount * 500 /
+    // 10_000, 1_000_000) — same formula, own fee per amount.
+    uint256 constant SVC_FEE    =   4_000_000; // 5% of SVC_AMOUNT
+    uint256 constant SVC2_FEE   =   2_500_000; // 5% of SVC2_AMOUNT
     // FactoryFacet direct paths (deployAgreement/deployAndFund) price by
     // quote(): max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
     uint256 constant DIRECT_FEE = 5_000_000;
@@ -306,11 +310,11 @@ contract CriticalInvariantTest is Test {
         vm.stopPrank();
     }
 
-    function _requestService(address buyer, uint256 serviceId, uint256 amount)
+    function _requestService(address buyer, uint256 serviceId, uint256 amount, uint256 fee)
         internal returns (uint256 requestId)
     {
         vm.startPrank(buyer);
-        usdc.approve(address(diamond), amount);
+        usdc.approve(address(diamond), amount + fee);
         requestId = ServiceBoardFacet(address(diamond)).requestService(
             serviceId,
             amount,
@@ -519,15 +523,16 @@ contract CriticalInvariantTest is Test {
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after mintService");
         assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee to recipient");
 
-        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT);
+        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT, SVC_FEE);
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after request");
-        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT, "amount locked in diamond");
+        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT + SVC_FEE, "amount + fee locked in diamond");
 
         vm.prank(executor);
         address agr = ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
         assertEq(_systemBalance(agr), INITIAL_TOTAL, "after accept");
         assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty after accept");
         assertEq(usdc.balanceOf(agr), SVC_AMOUNT, "amount in agreement");
+        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE + SVC_FEE, "request fee forwarded on accept");
 
         vm.prank(executor);
         Agreement(agr).activate();
@@ -538,7 +543,7 @@ contract CriticalInvariantTest is Test {
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after release");
 
         assertEq(usdc.balanceOf(executor), EXECUTOR_USDC - BOARD_FEE + SVC_AMOUNT, "executor net");
-        assertEq(usdc.balanceOf(client), CLIENT_USDC - SVC_AMOUNT, "client paid for service");
+        assertEq(usdc.balanceOf(client), CLIENT_USDC - SVC_AMOUNT - SVC_FEE, "client paid for service + fee");
         assertEq(usdc.balanceOf(agr), 0, "agreement empty");
     }
 
@@ -546,15 +551,16 @@ contract CriticalInvariantTest is Test {
         uint256 clientBefore = usdc.balanceOf(client);
 
         uint256 serviceId = _mintService();
-        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT);
+        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT, SVC_FEE);
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after request");
-        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT, "amount locked");
+        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT + SVC_FEE, "amount + fee locked");
 
         vm.prank(executor);
         ServiceBoardFacet(address(diamond)).rejectRequest(requestId);
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after reject");
 
-        assertEq(usdc.balanceOf(client), clientBefore, "client fully refunded");
+        // No deal was created — only the floor is forfeited, the rest of the fee refunds
+        assertEq(usdc.balanceOf(client), clientBefore - JOB_FLOOR, "client net: floor only");
         assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty");
     }
 
@@ -562,14 +568,15 @@ contract CriticalInvariantTest is Test {
         uint256 clientBefore = usdc.balanceOf(client);
 
         uint256 serviceId = _mintService();
-        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT);
+        uint256 requestId = _requestService(client, serviceId, SVC_AMOUNT, SVC_FEE);
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after request");
 
         vm.prank(client);
         ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after cancel");
 
-        assertEq(usdc.balanceOf(client), clientBefore, "client fully refunded");
+        // No deal was created — only the floor is forfeited, the rest of the fee refunds
+        assertEq(usdc.balanceOf(client), clientBefore - JOB_FLOOR, "client net: floor only");
         assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty");
     }
 
@@ -578,20 +585,29 @@ contract CriticalInvariantTest is Test {
     function testServiceCycle_MultiRequestFundIsolation() public {
         uint256 serviceId = _mintService();
 
-        uint256 requestId1 = _requestService(client,  serviceId, SVC_AMOUNT);
-        uint256 requestId2 = _requestService(client2, serviceId, SVC2_AMOUNT);
+        uint256 requestId1 = _requestService(client,  serviceId, SVC_AMOUNT, SVC_FEE);
+        uint256 requestId2 = _requestService(client2, serviceId, SVC2_AMOUNT, SVC2_FEE);
 
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after both requests");
-        assertEq(usdc.balanceOf(address(diamond)), SVC_AMOUNT + SVC2_AMOUNT, "both amounts locked");
+        assertEq(
+            usdc.balanceOf(address(diamond)),
+            SVC_AMOUNT + SVC_FEE + SVC2_AMOUNT + SVC2_FEE,
+            "both amounts + fees locked"
+        );
 
-        // Client cancels its own request
+        // Client cancels its own request — amount + fee above the floor comes back,
+        // the floor is forfeited.
         uint256 clientBalanceBeforeCancel = usdc.balanceOf(client);
         vm.prank(client);
         ServiceBoardFacet(address(diamond)).cancelRequest(requestId1);
 
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after client cancel");
-        assertEq(usdc.balanceOf(client), clientBalanceBeforeCancel + SVC_AMOUNT, "client got own funds back");
-        assertEq(usdc.balanceOf(address(diamond)), SVC2_AMOUNT, "only client2 funds remain");
+        assertEq(
+            usdc.balanceOf(client),
+            clientBalanceBeforeCancel + SVC_AMOUNT + (SVC_FEE - JOB_FLOOR),
+            "client got own funds back minus the floor"
+        );
+        assertEq(usdc.balanceOf(address(diamond)), SVC2_AMOUNT + SVC2_FEE, "only client2 funds remain");
 
         // Executor accepts client2's request — must not touch client's returned funds
         vm.prank(executor);
@@ -602,6 +618,10 @@ contract CriticalInvariantTest is Test {
         assertEq(usdc.balanceOf(agr), SVC2_AMOUNT, "only client2 amount in agreement");
 
         // Client's refund is untouched by executor accepting client2's request
-        assertEq(usdc.balanceOf(client), clientBalanceBeforeCancel + SVC_AMOUNT, "client balance unchanged");
+        assertEq(
+            usdc.balanceOf(client),
+            clientBalanceBeforeCancel + SVC_AMOUNT + (SVC_FEE - JOB_FLOOR),
+            "client balance unchanged"
+        );
     }
 }

@@ -86,6 +86,9 @@ contract AdversarialAccessTest is Test {
     uint256 constant BOARD_FEE  = 2_000_000; // JobBoard/ServiceBoard: still region-priced (Task 3/4)
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =  80_000_000;
+    // ServiceBoard requestService now prices by quote(): max(SVC_AMOUNT * 500 /
+    // 10_000, 1_000_000) = 5% of SVC_AMOUNT.
+    uint256 constant SVC_FEE    =  4_000_000;
     // FactoryFacet direct paths (deployAgreement/deployAndFund) price by
     // quote(): max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
     uint256 constant DIRECT_FEE = 5_000_000;
@@ -286,7 +289,7 @@ contract AdversarialAccessTest is Test {
 
     function _requestService(uint256 serviceId) internal returns (uint256 requestId) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), SVC_AMOUNT);
+        usdc.approve(address(diamond), SVC_AMOUNT + SVC_FEE);
         requestId = ServiceBoardFacet(address(diamond)).requestService(
             serviceId, SVC_AMOUNT, DEADLINE, TERMS, REGION
         );
