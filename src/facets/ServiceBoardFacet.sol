@@ -78,6 +78,11 @@ library ServiceBoardStorage {
         // Удержанная комиссия под каждую заявку. Пересылается в казну при
         // acceptRequest, возвращается (кроме пола) при reject/cancel/supersede.
         mapping(uint256 => uint256) requestFeeHeld;
+
+        // Сколько заявок клиента висит в статусе PENDING — поверх ВСЕХ
+        // исполнителей. MAX_PENDING_PER_PAIR ограничивает только пару, что
+        // веером обходится; этот счётчик закрывает именно веер.
+        mapping(address => uint256) pendingRequestCount;
     }
 
     function store() internal pure returns (Layout storage s) {
@@ -365,6 +370,9 @@ contract ServiceBoardFacet {
         if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
         if (s.pendingRequestIdsByClientAndExecutor[client][svc.executor].length >= MAX_PENDING_PER_PAIR) revert TooManyPendingRequests();
 
+        uint256 cap = fs.maxPendingRequests;
+        if (cap != 0 && s.pendingRequestCount[client] >= cap) revert TooManyPendingRequests();
+
         uint256 fee = FactoryStorage.quote(fs, amount);
 
         requestId = s.nextRequestId++;
@@ -389,6 +397,7 @@ contract ServiceBoardFacet {
         _safeTransferFrom(fs.usdc, client, address(this), amount + fee);
         s.requestFunds[requestId]   = amount;
         s.requestFeeHeld[requestId] = fee;
+        s.pendingRequestCount[client]++;
 
         emit ServiceRequested(requestId, serviceId, client, amount);
     }
@@ -421,6 +430,9 @@ contract ServiceBoardFacet {
         if (IRegistry(fs.diamond).hasActivePair(client, svc.executor)) revert ActiveDealExists();
         if (st.pendingRequestIdsByClientAndExecutor[client][svc.executor].length >= MAX_PENDING_PER_PAIR) revert TooManyPendingRequests();
 
+        uint256 cap = fs.maxPendingRequests;
+        if (cap != 0 && st.pendingRequestCount[client] >= cap) revert TooManyPendingRequests();
+
         uint256 fee = FactoryStorage.quote(fs, amount);
 
         IServiceBoardUSDC(fs.usdc).permit(client, address(this), amount + fee, permitDeadline, v, r, s);
@@ -445,6 +457,7 @@ contract ServiceBoardFacet {
         _safeTransferFrom(fs.usdc, client, address(this), amount + fee);
         st.requestFunds[requestId]   = amount;
         st.requestFeeHeld[requestId] = fee;
+        st.pendingRequestCount[client]++;
 
         emit ServiceRequested(requestId, serviceId, client, amount);
     }
@@ -465,6 +478,7 @@ contract ServiceBoardFacet {
 
         // Effects first
         req.status = ServiceBoardStorage.RequestStatus.ACCEPTED;
+        s.pendingRequestCount[req.client]--;
         svc.hiresCount++;
 
         uint256 held = s.requestFunds[requestId];
@@ -519,6 +533,7 @@ contract ServiceBoardFacet {
             ServiceBoardStorage.HireRequest storage siblingReq = s.requests[siblingId];
             if (siblingReq.status != ServiceBoardStorage.RequestStatus.PENDING) continue;
             siblingReq.status = ServiceBoardStorage.RequestStatus.SUPERSEDED;
+            s.pendingRequestCount[client]--;
             uint256 siblingRefund = s.requestFunds[siblingId];
             s.requestFunds[siblingId] = 0;
 
@@ -549,6 +564,7 @@ contract ServiceBoardFacet {
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.REJECTED;
+        s.pendingRequestCount[req.client]--;
         _removePendingPair(req.client, svc.executor, requestId);
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;
@@ -579,6 +595,7 @@ contract ServiceBoardFacet {
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.CANCELLED;
+        s.pendingRequestCount[req.client]--;
         _removePendingPair(req.client, svc.executor, requestId);
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;

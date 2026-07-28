@@ -303,6 +303,12 @@ contract ServiceBoardTest is BoardsFixture {
     function testRequestServiceRevertsWhenPendingCapReached() public {
         uint256 serviceId = _mintService();
 
+        // This test isolates the per-PAIR cap (MAX_PENDING_PER_PAIR = 20). The
+        // per-CLIENT cap (Task 6, seeded to 5 by initFactory) is a separate,
+        // stricter gate that would otherwise trip first — disable it here
+        // (0 = unlimited) so this test still exercises the pair cap alone.
+        FactoryFacet(address(diamond)).setMaxPendingRequests(0);
+
         // Ensure client has enough balance for 20 requests at (AMOUNT + fee) each,
         // plus slack for the 21st after cancelling frees a slot (refund is amount +
         // fee above the floor — one floor's worth less than a fresh request costs).
@@ -330,6 +336,78 @@ contract ServiceBoardTest is BoardsFixture {
         vm.startPrank(client);
         usdc.approve(address(diamond), AMOUNT + JOB_FEE);
         ServiceBoardFacet(address(diamond)).requestService(serviceId, AMOUNT, DEADLINE, TERMS, REGION);
+        vm.stopPrank();
+    }
+
+    function testPendingRequestCap_BlocksSixth() public {
+        uint256 amount = 20_000_000;
+        uint256 fee = 1_000_000;
+
+        // Пять разных исполнителей, у каждого своя услуга
+        uint256[] memory serviceIds = new uint256[](6);
+        for (uint256 i = 0; i < 6; i++) {
+            address exec = address(uint160(0x2000 + i));
+            usdc.mint(exec, fee);
+            vm.startPrank(exec);
+            usdc.approve(address(diamond), fee);
+            serviceIds[i] = ServiceBoardFacet(address(diamond)).mintService(
+                "Service", "Desc", 100_000_000, DEADLINE, REGION
+            );
+            vm.stopPrank();
+        }
+
+        usdc.mint(client, 6 * (amount + fee));
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 6 * (amount + fee));
+
+        for (uint256 i = 0; i < 5; i++) {
+            ServiceBoardFacet(address(diamond)).requestService(
+                serviceIds[i], amount, DEADLINE, TERMS, REGION
+            );
+        }
+
+        // Шестая — сверх потолка
+        vm.expectRevert(ServiceBoardFacet.TooManyPendingRequests.selector);
+        ServiceBoardFacet(address(diamond)).requestService(
+            serviceIds[5], amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+    }
+
+    function testPendingRequestCap_FreesSlotOnCancel() public {
+        uint256 amount = 20_000_000;
+        uint256 fee = 1_000_000;
+
+        uint256[] memory serviceIds = new uint256[](6);
+        for (uint256 i = 0; i < 6; i++) {
+            address exec = address(uint160(0x3000 + i));
+            usdc.mint(exec, fee);
+            vm.startPrank(exec);
+            usdc.approve(address(diamond), fee);
+            serviceIds[i] = ServiceBoardFacet(address(diamond)).mintService(
+                "Service", "Desc", 100_000_000, DEADLINE, REGION
+            );
+            vm.stopPrank();
+        }
+
+        usdc.mint(client, 6 * (amount + fee));
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 6 * (amount + fee));
+
+        uint256 firstId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceIds[0], amount, DEADLINE, TERMS, REGION
+        );
+        for (uint256 i = 1; i < 5; i++) {
+            ServiceBoardFacet(address(diamond)).requestService(
+                serviceIds[i], amount, DEADLINE, TERMS, REGION
+            );
+        }
+
+        // Освобождаем слот — шестая проходит
+        ServiceBoardFacet(address(diamond)).cancelRequest(firstId);
+        ServiceBoardFacet(address(diamond)).requestService(
+            serviceIds[5], amount, DEADLINE, TERMS, REGION
+        );
         vm.stopPrank();
     }
 
