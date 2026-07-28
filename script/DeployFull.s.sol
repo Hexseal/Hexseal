@@ -312,10 +312,10 @@ contract DeployFull is Script {
         sels[12] = RegistryFacet.authorizedFactory.selector;
     }
 
-    // FactoryFacet — 13 селекторов (setPaused/isPaused/getProtocolArbiter/setProtocolArbiter/
+    // FactoryFacet — 20 селекторов (setPaused/isPaused/getProtocolArbiter/setProtocolArbiter/
     // getArbitrationThreshold/setArbitrationThreshold удалены в a95865d — их больше нет в ABI)
     function factoryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](13);
+        sels = new bytes4[](20);
         sels[0]  = FactoryFacet.initFactory.selector;
         sels[1]  = FactoryFacet.deployAgreement.selector;
         sels[2]  = FactoryFacet.deployAndFund.selector;
@@ -329,6 +329,13 @@ contract DeployFull is Script {
         sels[10] = FactoryFacet.getTrustedForwarder.selector;
         sels[11] = FactoryFacet.getUsdc.selector;
         sels[12] = FactoryFacet.getAgreementDeployer.selector;
+        sels[13] = FactoryFacet.setFeeBps.selector;
+        sels[14] = FactoryFacet.setFeeFloor.selector;
+        sels[15] = FactoryFacet.setMaxPendingRequests.selector;
+        sels[16] = FactoryFacet.quoteFee.selector;
+        sels[17] = FactoryFacet.getFeeBps.selector;
+        sels[18] = FactoryFacet.getFeeFloor.selector;
+        sels[19] = FactoryFacet.getMaxPendingRequests.selector;
     }
 
     // JobBoardFacet — 12 селекторов

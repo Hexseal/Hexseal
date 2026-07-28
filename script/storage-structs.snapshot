@@ -39,6 +39,9 @@ bool paused
 address protocolArbiter
 uint256 arbitrationThreshold
 address agreementDeployer
+uint256 feeBps
+uint256 feeFloor
+uint256 maxPendingRequests
 
 === src/JobReceiptFacet.sol :: ReceiptStorage.JobReceiptData ===
 address client

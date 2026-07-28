@@ -18,6 +18,14 @@ interface IRegistry {
 }
 
 
+/// Пол комиссии не настроен — брать нечего. Отдельная ошибка, а не ZeroFee:
+/// ZeroFee означал «регион не настроен», а регионов в цене больше нет.
+error FeeNotConfigured();
+
+/// Комиссия больше не зависит от региона. Геттеры оставлены в ABI, но ревертят:
+/// тихо вернуть стухшее число хуже, чем упасть.
+error FeeNotRegional();
+
 // ---------- STORAGE ----------
 
 library FactoryStorage {
@@ -48,6 +56,17 @@ library FactoryStorage {
         // не зависела от кода Agreement и её можно было переключить на новую
         // реализацию через setAgreementDeployer, не трогая фасет.
         address agreementDeployer;
+        // --- Модель комиссии (28.07.2026) ---
+        // Комиссия = max(amount * feeBps / 10_000, feeFloor). Региональной
+        // больше не является: regionFee выше остаётся мёртвым полем, потому
+        // что раскладка append-only. Подробности — docs/superpowers/specs/
+        // 2026-07-28-fee-economics-design.md
+        uint256 feeBps;
+        uint256 feeFloor;
+        // Потолок одновременно висящих заявок на КЛИЕНТА (поверх всех
+        // исполнителей). 0 = без ограничения — так апгрейд живого диамонда
+        // с ещё нулевым полем не блокирует заявки.
+        uint256 maxPendingRequests;
     }
 
     function store() internal pure returns (Layout storage fs) {
@@ -55,6 +74,16 @@ library FactoryStorage {
         assembly {
             fs.slot := position
         }
+    }
+
+    /// @notice Единственная реализация формулы комиссии. Зовут FactoryFacet,
+    ///         JobBoardFacet и ServiceBoardFacet — второй копии быть не должно.
+    /// @dev Пол применяется ПОСЛЕ процента: берётся что больше, не сумма.
+    function quote(Layout storage fs, uint256 amount) internal view returns (uint256 fee) {
+        uint256 floor_ = fs.feeFloor;
+        if (floor_ == 0) revert FeeNotConfigured();
+        fee = (amount * fs.feeBps) / 10_000;
+        if (fee < floor_) fee = floor_;
     }
 }
 
@@ -78,6 +107,9 @@ contract FactoryFacet {
     event TrustedForwarderUpdated(address indexed newForwarder);
     event DealFunded(address indexed agreement, address indexed client, uint256 amount);
     event AgreementDeployerUpdated(address indexed deployer);
+    event FeeBpsUpdated(uint256 newBps);
+    event FeeFloorUpdated(uint256 newFloor);
+    event MaxPendingRequestsUpdated(uint256 newMax);
 
     // -------- ERRORS --------
 
@@ -92,6 +124,7 @@ contract FactoryFacet {
     error NotClient();
     error DeployerNotSet();
     error ZeroFee();
+    error FeeBpsTooHigh();
 
     // -------- OWNER CHECK --------
 
@@ -134,7 +167,9 @@ contract FactoryFacet {
         fs.regionFee[FactoryStorage.REGION_EU]   = 7_000_000;
         fs.regionFee[FactoryStorage.REGION_US]   = 10_000_000;
 
-        fs.arbitrationThreshold = 10_000_000;
+        fs.feeBps             = 500;        // 5%
+        fs.feeFloor           = 1_000_000;  // $1
+        fs.maxPendingRequests = 5;
     }
 
     // -------- DEPLOY AGREEMENT --------
@@ -278,24 +313,58 @@ contract FactoryFacet {
         emit AgreementDeployerUpdated(deployer);
     }
 
-    // -------- READ --------
-
-    function getRegionFee(uint8 region) external view returns (uint256) {
-        if (region > 6) revert InvalidRegion();
-        return FactoryStorage.store().regionFee[region];
+    /// @notice Ставка в базисных пунктах. 500 = 5%.
+    function setFeeBps(uint256 newBps) external onlyOwner {
+        if (newBps > 2_000) revert FeeBpsTooHigh(); // потолок 20% — защита от опечатки в нуле
+        FactoryStorage.store().feeBps = newBps;
+        emit FeeBpsUpdated(newBps);
     }
 
-    function getAllFees() external view returns (
-        uint256 cis, uint256 asia, uint256 eu, uint256 us, uint256 latam, uint256 ca, uint256 au
+    /// @notice Пол комиссии в USDC (6 decimals). Ноль запрещён — это выключило бы антиспам.
+    function setFeeFloor(uint256 newFloor) external onlyOwner {
+        if (newFloor == 0) revert FeeNotConfigured();
+        FactoryStorage.store().feeFloor = newFloor;
+        emit FeeFloorUpdated(newFloor);
+    }
+
+    /// @notice Потолок висящих заявок на клиента. 0 = без ограничения.
+    function setMaxPendingRequests(uint256 newMax) external onlyOwner {
+        FactoryStorage.store().maxPendingRequests = newMax;
+        emit MaxPendingRequestsUpdated(newMax);
+    }
+
+    // -------- READ --------
+
+    /// @dev DEPRECATED 28.07.2026 — комиссия больше не региональная. Селектор оставлен
+    ///      в ABI, чтобы не требовать Remove в diamondCut, но чтение ревертит:
+    ///      regionFee в хранилище содержит стухшие значения.
+    function getRegionFee(uint8) external pure returns (uint256) {
+        revert FeeNotRegional();
+    }
+
+    /// @dev DEPRECATED 28.07.2026 — см. getRegionFee.
+    function getAllFees() external pure returns (
+        uint256, uint256, uint256, uint256, uint256, uint256, uint256
     ) {
-        FactoryStorage.Layout storage fs = FactoryStorage.store();
-        cis   = fs.regionFee[0];
-        asia  = fs.regionFee[1];
-        eu    = fs.regionFee[2];
-        us    = fs.regionFee[3];
-        latam = fs.regionFee[4];
-        ca    = fs.regionFee[5];
-        au    = fs.regionFee[6];
+        revert FeeNotRegional();
+    }
+
+    /// @notice Сколько будет стоить сделка на такую сумму. Источник правды для фронта —
+    ///         считать формулу на клиенте нельзя, разойдётся с permit.
+    function quoteFee(uint256 amount) external view returns (uint256) {
+        return FactoryStorage.quote(FactoryStorage.store(), amount);
+    }
+
+    function getFeeBps() external view returns (uint256) {
+        return FactoryStorage.store().feeBps;
+    }
+
+    function getFeeFloor() external view returns (uint256) {
+        return FactoryStorage.store().feeFloor;
+    }
+
+    function getMaxPendingRequests() external view returns (uint256) {
+        return FactoryStorage.store().maxPendingRequests;
     }
 
     function getFeeRecipient() external view returns (address) {

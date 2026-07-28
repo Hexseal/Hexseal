@@ -95,7 +95,7 @@ contract BoardsTest is Test {
         regSels[11] = RegistryFacet.authorizedFactory.selector;
 
         // --- Factory selectors ---
-        bytes4[] memory facSels = new bytes4[](13);
+        bytes4[] memory facSels = new bytes4[](17);
         facSels[0] = FactoryFacet.initFactory.selector;
         facSels[1] = FactoryFacet.deployAgreement.selector;
         facSels[2] = FactoryFacet.setRegionFee.selector;
@@ -109,6 +109,10 @@ contract BoardsTest is Test {
         facSels[10] = bytes4(0xb187bd26);
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
+        facSels[13] = FactoryFacet.setFeeBps.selector;
+        facSels[14] = FactoryFacet.setFeeFloor.selector;
+        facSels[15] = FactoryFacet.setMaxPendingRequests.selector;
+        facSels[16] = FactoryFacet.quoteFee.selector;
 
         // --- JobBoardFacet selectors ---
         bytes4[] memory jobSels = new bytes4[](11);
@@ -1108,5 +1112,50 @@ contract BoardsTest is Test {
         uint256[] memory reqs = ServiceBoardFacet(address(diamond)).getClientRequests(client);
         assertEq(reqs.length, 1);
         assertEq(reqs[0], 0);
+    }
+
+    // ============================================================
+    //  FEE FORMULA
+    // ============================================================
+
+    function testQuoteFee_PercentageAboveFloor() public {
+        // 5% от $200 = $10, пол не срабатывает
+        assertEq(FactoryFacet(address(diamond)).quoteFee(200_000_000), 10_000_000);
+    }
+
+    function testQuoteFee_FloorBelowCrossover() public {
+        // 5% от $5 = $0.25, пол $1 срабатывает
+        assertEq(FactoryFacet(address(diamond)).quoteFee(5_000_000), 1_000_000);
+    }
+
+    function testQuoteFee_ExactCrossover() public {
+        // $20 — ровно стык: 5% = $1 = пол
+        assertEq(FactoryFacet(address(diamond)).quoteFee(20_000_000), 1_000_000);
+    }
+
+    function testQuoteFee_LargeDeal() public {
+        // 5% от $1000 = $50
+        assertEq(FactoryFacet(address(diamond)).quoteFee(1_000_000_000), 50_000_000);
+    }
+
+    function testSetFeeBps_OnlyOwner() public {
+        vm.prank(client);
+        vm.expectRevert(FactoryFacet.NotOwner.selector);
+        FactoryFacet(address(diamond)).setFeeBps(300);
+    }
+
+    function testSetFeeBps_ChangesQuote() public {
+        FactoryFacet(address(diamond)).setFeeBps(300); // 3%
+        assertEq(FactoryFacet(address(diamond)).quoteFee(1_000_000_000), 30_000_000);
+    }
+
+    function testGetRegionFee_NowReverts() public {
+        vm.expectRevert(FeeNotRegional.selector);
+        FactoryFacet(address(diamond)).getRegionFee(0);
+    }
+
+    function testGetAllFees_NowReverts() public {
+        vm.expectRevert(FeeNotRegional.selector);
+        FactoryFacet(address(diamond)).getAllFees();
     }
 }

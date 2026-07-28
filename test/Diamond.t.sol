@@ -571,19 +571,13 @@ contract DiamondTest is Test {
     }
     
     function testFactoryAdminFunctions() public {
-        FactoryFacet(address(diamond)).setRegionFee(0, 5 * 10**6);
-        assertEq(FactoryFacet(address(diamond)).getRegionFee(0), 5 * 10**6);
-        
         FactoryFacet(address(diamond)).setFeeRecipient(address(0x5));
         assertEq(FactoryFacet(address(diamond)).getFeeRecipient(), address(0x5));
-        
+
         FactoryFacet(address(diamond)).setTrustedForwarder(address(0x6));
         assertEq(FactoryFacet(address(diamond)).getTrustedForwarder(), address(0x6));
-        
-        (uint256 cis,,,,,,) = FactoryFacet(address(diamond)).getAllFees();
-        assertGt(cis, 0);
     }
-    
+
     function testFactoryAdminRevertIfNotOwner() public {
         vm.prank(client);
         vm.expectRevert(FactoryFacet.NotOwner.selector);
@@ -1829,14 +1823,6 @@ contract DiamondTest is Test {
         assertTrue(agreementAddr != address(0));
         assertEq(Agreement(agreementAddr).amount(), amount);
         assertEq(Agreement(agreementAddr).deadlineDays(), deadline);
-    }
-    
-    function testFuzzRegionFee(uint8 region, uint256 fee) public {
-        region = uint8(bound(region, 0, 3));
-        fee = bound(fee, 0, 100 * 10**6);
-        
-        FactoryFacet(address(diamond)).setRegionFee(region, fee);
-        assertEq(FactoryFacet(address(diamond)).getRegionFee(region), fee);
     }
     
     function testFuzzAgreementStatus(uint64 timeJump) public {
