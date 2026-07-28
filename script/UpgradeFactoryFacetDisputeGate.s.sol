@@ -6,11 +6,28 @@ pragma solidity ^0.8.20;
 //
 // Ставит на ЖИВОЙ диамонд FactoryFacet с гейтом ZeroFee.
 //
-// Что меняется. Ровно три строки исходника: error ZeroFee() и по одному
-// `if (fee == 0) revert ZeroFee();` в deployAgreement и deployAndFund, сразу
-// после чтения fs.regionFee[region]. Ни одной подписи правка не меняет,
-// кастомные ошибки селекторов в даймонд не приносят — значит нужен ЧИСТЫЙ
-// Replace 13 селекторов. Ни одного Add, ни одного Remove.
+// Что меняется — И ОТСЧЁТ ВЕДЁТСЯ ОТ ЦЕПИ, НЕ ОТ main. Живой фасет
+// 0x1600CABA развёрнут на коммите 827bea2 (25.07.2026), поэтому этот кат везёт
+// БОЛЬШЕ, чем правку одной задачи. Оператору важна именно эта база: другой у
+// него нет.
+//
+//   1) Гейт ZeroFee — три строки: error ZeroFee() и по одному
+//      `if (fee == 0) revert ZeroFee();` в deployAgreement и deployAndFund,
+//      сразу после чтения fs.regionFee[region].
+//
+//   2) Переименование error ZeroAddress() -> FactoryZeroAddress() из коммита
+//      1172618 («wave 2 — distinguishable errors»). Это 13 revert-сайтов и
+//      СМЕНА СЕЛЕКТОРА ОШИБКИ: 0xd92e233d -> 0x57876cd6. Ошибки — тоже
+//      ABI-поверхность, так что «правка подписей не меняет» было бы неверно.
+//
+// Опасности во втором пункте нет, скорее наоборот: оффчейн уже знает оба
+// селектора и ждёт именно этого ката — см. комментарий в relayer/app.js про
+// «pre-F-5 facets until the next diamondCut».
+//
+// Функций правка не добавляет и не убирает, поэтому нужен ЧИСТЫЙ Replace 13
+// селекторов. Ни одного Add, ни одного Remove. Кастомные ошибки маршрутизируемых
+// селекторов в даймонд не приносят — меняется только то, чем ревертят уже
+// существующие функции.
 //
 // Зачем. Нулевая комиссия региона означает «регион не настроен», а не «сделка
 // бесплатная». Доски это уже понимают: JobBoardFacet:184 и
@@ -35,12 +52,17 @@ pragma solidity ^0.8.20;
 // ни хранилищем, ни селекторами, ни вызовами. Не ищи зависимости, её нет.
 //
 // НЕ ЗАПУСКАЙ ВМЕСТО ЭТОГО НИ ОДИН ИЗ ПЯТИ СТАРЫХ СКРИПТОВ ФАБРИКИ.
-// UpgradeFactoryFacet / V2 / V3 / V4 ревертят: они несут рукописные массивы
+// Ревертят ВСЕ ПЯТЬ, включая V5, и по одной причине: рукописные массивы
 // селекторов, где часть на цепи не смонтирована (Remove и Replace
 // несмонтированного ревертят), а часть смонтирована (Add смонтированного
-// ревертит). Опаснее всех V5: он попутно разворачивает новый AgreementDeployer
-// и зовёт setAgreementDeployer(address) — запуск после Задачи 6 МОЛЧА затрёт
-// новый деплойер и откатит сбор за спор.
+// ревертит).
+//
+// V5 при этом попутно разворачивает новый AgreementDeployer и зовёт
+// setAgreementDeployer(address). Затереть новый деплойер он НЕ успевает:
+// diamondCut у него шагом 4, setAgreementDeployer шагом 5, и run() ревертит на
+// diamondCut ещё в симуляции — forge не броадкастит вообще ничего. Но полагаться
+// на этот порядок не надо: одна правка его массива селекторов превращает V5 в
+// скрипт, который доходит до пятого шага и молча откатывает сбор за спор.
 //
 // Этот скрипт деплойер не трогает вообще: не разворачивает, не подставляет,
 // не читает. Его единственное дело — заменить реализацию 13 селекторов.
@@ -195,10 +217,24 @@ contract UpgradeFactoryFacetDisputeGate is Script {
         console.log("deployAgreement ->    ", ILoupe(diamond).facetAddress(deploySel));
         console.log("deployAndFund ->      ", ILoupe(diamond).facetAddress(FactoryFacet.deployAndFund.selector));
         console.log("");
-        console.log("Smoke check - a zero-fee region must now be refused, not served free:");
-        console.log("  cast call <diamond> \"getAllFees()(uint256,uint256,uint256,uint256,uint256,uint256,uint256)\"");
-        console.log("  all seven were non-zero at the time this script was written, so the gate");
-        console.log("  is expected to stay silent; it only bites after setRegionFee(r, 0).");
+        // Читаем комиссии, а не утверждаем про них. Прежняя редакция печатала
+        // «все семь были ненулевыми, когда писался скрипт» — утверждение о
+        // прошлом вместо факта о цепи, то есть ровно тот дефект, который в этой
+        // ветке уже дважды ловили в шапках. Staticcall, газа не стоит, работает
+        // и в сухом прогоне.
+        console.log("Region fees on chain right now (0 would mean that region is refused):");
+        (uint256 cis, uint256 asia, uint256 eu, uint256 us, uint256 latam, uint256 ca, uint256 au)
+            = FactoryFacet(diamond).getAllFees();
+        console.log("  CIS  ", cis);
+        console.log("  ASIA ", asia);
+        console.log("  EU   ", eu);
+        console.log("  US   ", us);
+        console.log("  LATAM", latam);
+        console.log("  CA   ", ca);
+        console.log("  AU   ", au);
+        console.log("  A zero above means that region stops creating deals through the factory");
+        console.log("  after this cut, instead of creating them free. Fix it with setRegionFee,");
+        console.log("  not by skipping the upgrade.");
         console.log("");
         console.log("Rollback - ONE step, and here is WHY it is only one.");
         console.log("");
