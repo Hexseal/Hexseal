@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./BoardsFixture.sol";
+import "../src/SVGRenderer.sol";
 
 // ---------- TEST ----------
 
@@ -661,5 +662,32 @@ contract BoardsTest is BoardsFixture {
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(feeRecipient), expectedFee);
+    }
+
+    // ============================================================
+    //  RECEIPT SVG RENDER
+    // ============================================================
+
+    function testRenderReceipt_StillRenders() public {
+        SVGRenderer renderer = new SVGRenderer();
+
+        string memory uri = renderer.renderReceipt(ISVGRenderer.ReceiptParams({
+            tokenId:      1,
+            client:       client,
+            title:        "Build a dApp",
+            amount:       200_000_000,
+            deadlineDays: DEADLINE,
+            region:       REGION,
+            createdAt:    block.timestamp
+        }));
+
+        assertGt(bytes(uri).length, 100);
+
+        // Префикс data-URI на месте — рендер не выродился в пустую строку
+        bytes memory prefix = bytes("data:application/json;base64,");
+        bytes memory uriBytes = bytes(uri);
+        for (uint256 i = 0; i < prefix.length; i++) {
+            assertEq(uriBytes[i], prefix[i]);
+        }
     }
 }

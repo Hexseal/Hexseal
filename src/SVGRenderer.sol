@@ -241,14 +241,15 @@ contract SVGRenderer is ISVGRenderer {
     }
 
     function _receiptItemsBottom(ReceiptParams calldata p) internal pure returns (string memory) {
-        uint256 fee   = _regionFeeRaw(p.region);
-        uint256 total = p.amount + fee;
+        // Комиссия из чека убрана 28.07.2026: она больше не выводится из региона,
+        // а считается от суммы (max(amount * feeBps, feeFloor)) и в квитанцию не
+        // передаётся. Печатать её здесь можно было бы только пересчётом по
+        // текущему конфигу — то есть показывая не то, что человек заплатил.
+        // docs/superpowers/specs/2026-07-28-fee-economics-design.md
         return string(abi.encodePacked(
-            _rowDark(214, "PPP FEE",  string(abi.encodePacked(_formatPrice(fee), " USDC"))),
-            '<text x="20" y="228" font-family="monospace,Courier New" font-size="8" fill="#444444">(NON-REFUNDABLE)</text>',
             '<line x1="20" y1="242" x2="360" y2="242" stroke="#2e2e2e" stroke-width="1"/>',
-            '<text x="20" y="266" font-family="monospace,Courier New" font-size="9" fill="#555555" letter-spacing="1">TOTAL</text>',
-            '<text x="20" y="300" font-family="monospace,Courier New" font-size="32" fill="#ffffff" font-weight="bold">', _formatPrice(total), '</text>',
+            '<text x="20" y="266" font-family="monospace,Courier New" font-size="9" fill="#555555" letter-spacing="1">ESCROW</text>',
+            '<text x="20" y="300" font-family="monospace,Courier New" font-size="32" fill="#ffffff" font-weight="bold">', _formatPrice(p.amount), '</text>',
             '<text x="20" y="318" font-family="monospace,Courier New" font-size="13" fill="#555555">USDC</text>',
             '<line x1="20" y1="334" x2="360" y2="334" stroke="#2e2e2e" stroke-width="1"/>'
         ));
@@ -305,17 +306,6 @@ contract SVGRenderer is ISVGRenderer {
         if (r == 4) return "LATAM";
         if (r == 5) return "CA";
         return "AU";
-    }
-
-    // Держать в шаге с FactoryFacet.getAllFees() — 2e6/4e6/7e6/1e7/4e6/1e7/7e6.
-    function _regionFeeRaw(uint8 r) internal pure returns (uint256) {
-        if (r == 0) return 2_000_000;
-        if (r == 1) return 4_000_000;
-        if (r == 2) return 7_000_000;
-        if (r == 3) return 10_000_000;
-        if (r == 4) return 4_000_000;
-        if (r == 5) return 10_000_000;
-        return 7_000_000;
     }
 
     function _padId(uint256 id) internal pure returns (string memory) {
