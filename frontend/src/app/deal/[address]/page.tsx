@@ -32,6 +32,7 @@ import { explorerUrl } from "@/config/chain";
 import { getXmtpClientIfCached, notifyArbiters } from "@/lib/xmtp";
 import { useTranslations } from "next-intl";
 import { ContextHint } from "@/components/ContextHint";
+import { DisputeCostNotice } from "@/components/DisputeCostNotice";
 import { shortAddr } from "@/lib/utils";
 import { PageCenter } from "@/components/PageCenter";
 
@@ -1125,7 +1126,12 @@ export default function DealDetailPage() {
                 <AlertTriangle className="w-4 h-4 text-red-400" />
                 <h2 className="text-sm font-semibold text-white">{t("deal.dispute_btn")}</h2>
               </div>
-              <p className="text-xs text-white/40 mb-4">{t("deal.dispute_reason_hint")}</p>
+              <p className="text-xs text-white/40 mb-3">{t("deal.dispute_reason_hint")}</p>
+              {/* Сколько возьмёт разбирательство и что будет, если за спор никто
+                  не возьмётся — до нажатия кнопки, а не после. */}
+              <div className="mb-3">
+                <DisputeCostNotice agreementAddr={dealAddress as string} />
+              </div>
               <textarea
                 autoFocus
                 value={disputeReason}

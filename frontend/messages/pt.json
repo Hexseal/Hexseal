@@ -430,6 +430,8 @@
     "delivered_label": "Entregue",
     "timeline_title": "Linha do tempo",
     "dispute_reason_hint": "Descreva o problema claramente — o árbitro lerá isso antes de decidir.",
+    "dispute_fee_notice": "A arbitragem custa {fee} USDC dos {pot} USDC em custódia — a taxa é cobrada de qualquer forma, seja quem tiver razão.",
+    "dispute_no_arbiter_notice": "Se nenhum árbitro assumir o caso em {days, plural, one {# dia} other {# dias}}, a custódia é dividida — {toExecutor} USDC para o executor e {toClient} USDC para o cliente. Ninguém julgou, então ninguém ganha.",
     "dispute_reason_placeholder": "ex. O executor parou de responder após receber o briefing. O prazo passou sem entrega.",
     "confirm_dispute_btn": "Confirmar Disputa",
     "fund_sign_permit": "Assinatura 1/2: Permissão USDC na carteira…",

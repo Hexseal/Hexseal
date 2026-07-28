@@ -430,6 +430,8 @@
     "delivered_label": "Entregado",
     "timeline_title": "Línea de tiempo",
     "dispute_reason_hint": "Describe el problema claramente — el árbitro lo leerá antes de tomar una decisión.",
+    "dispute_fee_notice": "El arbitraje cuesta {fee} USDC de los {pot} USDC en custodia — se cobra en cualquier caso, sea quien sea el que tenga razón.",
+    "dispute_no_arbiter_notice": "Si ningún árbitro toma el caso en {days, plural, one {# día} other {# días}}, la custodia se divide — {toExecutor} USDC para el ejecutor y {toClient} USDC para el cliente. Nadie juzgó, así que nadie gana.",
     "dispute_reason_placeholder": "ej. El ejecutor dejó de responder después de recibir el brief. El plazo venció sin entregable enviado.",
     "confirm_dispute_btn": "Confirmar Disputa",
     "fund_sign_permit": "Firma 1/2: permiso USDC en billetera…",

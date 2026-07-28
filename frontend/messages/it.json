@@ -430,6 +430,8 @@
     "delivered_label": "Consegnato",
     "timeline_title": "Cronologia",
     "dispute_reason_hint": "Descrivi il problema chiaramente — l'arbitro leggerà questo prima di decidere.",
+    "dispute_fee_notice": "L'arbitrato costa {fee} USDC sui {pot} USDC in deposito — la commissione viene addebitata in ogni caso, chiunque abbia ragione.",
+    "dispute_no_arbiter_notice": "Se nessun arbitro prende il caso entro {days, plural, one {# giorno} other {# giorni}}, il deposito viene diviso — {toExecutor} USDC all'esecutore, {toClient} USDC al cliente. Nessuno ha giudicato, quindi nessuno vince.",
     "dispute_reason_placeholder": "es. L'esecutore ha smesso di rispondere dopo aver ricevuto il brief. La scadenza è passata senza consegna.",
     "confirm_dispute_btn": "Conferma Controversia",
     "fund_sign_permit": "Firma 1/2: Permesso USDC nel portafoglio…",

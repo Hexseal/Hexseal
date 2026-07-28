@@ -430,6 +430,8 @@
     "delivered_label": "納品済",
     "timeline_title": "タイムライン",
     "dispute_reason_hint": "問題を明確に説明してください — 仲裁人は判断前にこれを読みます。",
+    "dispute_fee_notice": "仲裁はエスクローの {pot} USDC のうち {fee} USDC を消費します — どちらが正しかったかに関係なく、この手数料は必ず引かれます。",
+    "dispute_no_arbiter_notice": "{days, plural, other {# 日}}以内に誰もこの争議を引き受けなかった場合、エスクローは均等に分割されます — {toExecutor} USDC が受注者へ、{toClient} USDC がクライアントへ。誰も裁定しなかったので、誰も勝ちません。",
     "dispute_reason_placeholder": "例：受注者はブリーフィング後に返答しなくなりました。期限が過ぎても成果物が提出されませんでした。",
     "confirm_dispute_btn": "紛争を確認",
     "fund_sign_permit": "署名 1/2：ウォレットでUSDC許可…",

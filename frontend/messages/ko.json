@@ -430,6 +430,8 @@
     "delivered_label": "납품됨",
     "timeline_title": "타임라인",
     "dispute_reason_hint": "문제를 명확하게 설명하세요 — 중재자는 결정 전에 이것을 읽습니다.",
+    "dispute_fee_notice": "중재는 에스크로에 있는 {pot} USDC 중 {fee} USDC를 차감합니다 — 누가 옳았는지와 무관하게 이 수수료는 반드시 청구됩니다.",
+    "dispute_no_arbiter_notice": "{days, plural, other {#일}} 안에 아무도 이 분쟁을 맡지 않으면 에스크로는 절반으로 나뉩니다 — {toExecutor} USDC는 실행자에게, {toClient} USDC는 클라이언트에게. 아무도 판단하지 않았으므로 아무도 이기지 않습니다.",
     "dispute_reason_placeholder": "예: 실행자가 브리핑을 받은 후 응답을 중단했습니다. 기한이 지났지만 결과물이 제출되지 않았습니다.",
     "confirm_dispute_btn": "분쟁 확인",
     "fund_sign_permit": "서명 1/2: 지갑에서 USDC 허가…",

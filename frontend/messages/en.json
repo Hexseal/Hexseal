@@ -445,6 +445,8 @@
     "delivered_label": "Delivered",
     "timeline_title": "Timeline",
     "dispute_reason_hint": "Describe the issue clearly — the arbiter will read this before making a decision.",
+    "dispute_fee_notice": "Arbitration costs {fee} USDC out of the {pot} USDC in escrow — charged either way, whoever turns out to be right.",
+    "dispute_no_arbiter_notice": "If no arbiter takes the case within {days, plural, one {# day} other {# days}}, the escrow is split — {toExecutor} USDC to the executor, {toClient} USDC to the client. Nobody judged, so nobody wins.",
     "dispute_reason_placeholder": "e.g. Executor stopped responding after receiving the brief. Deadline passed with no deliverable submitted.",
     "confirm_dispute_btn": "Confirm Dispute",
     "fund_sign_permit": "Sign 1/2: USDC permit in wallet…",

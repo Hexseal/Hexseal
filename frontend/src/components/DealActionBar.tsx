@@ -14,6 +14,7 @@ import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from '@/config/constants';
 import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from '@/lib/relay';
 import { getXmtpClientIfCached, notifyArbiters } from '@/lib/xmtp';
+import { DisputeCostNotice } from '@/components/DisputeCostNotice';
 
 interface Props {
   agreementAddr: string;
@@ -518,9 +519,16 @@ export function DealActionBar({ agreementAddr }: Props) {
               <AlertTriangle className="w-4 h-4 text-red-400" />
               <h2 className="text-sm font-semibold text-white">Raise Dispute</h2>
             </div>
-            <p className="text-xs text-white/40 mb-4">
+            <p className="text-xs text-white/40 mb-3">
               Describe the issue — the arbiter will read this before deciding.
             </p>
+            {/* Тот же диалог, что и на странице сделки, поэтому то же
+                предупреждение: спор стоит денег и может закончиться дележом
+                пополам. Открыть спор можно из трёх мест — все три обязаны это
+                показывать, иначе гарантия зависит от того, откуда нажали. */}
+            <div className="mb-3">
+              <DisputeCostNotice agreementAddr={agreementAddr} />
+            </div>
             <textarea
               autoFocus
               value={disputeReason}

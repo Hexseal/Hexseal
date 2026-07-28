@@ -430,6 +430,8 @@
     "delivered_label": "Geliefert",
     "timeline_title": "Zeitlinie",
     "dispute_reason_hint": "Beschreibe das Problem klar — der Schlichter liest dies, bevor er entscheidet.",
+    "dispute_fee_notice": "Das Schlichtungsverfahren kostet {fee} USDC von den {pot} USDC im Escrow — die Gebühr fällt in jedem Fall an, ganz gleich, wer am Ende recht hat.",
+    "dispute_no_arbiter_notice": "Übernimmt niemand den Fall innerhalb von {days, plural, one {# Tag} other {# Tagen}}, wird das Escrow geteilt — {toExecutor} USDC an den Ausführenden, {toClient} USDC an den Kunden. Niemand hat entschieden, also gewinnt niemand.",
     "dispute_reason_placeholder": "z. B. Ausführender reagierte nicht mehr nach Erhalt des Briefings. Frist verstrichen ohne Lieferung.",
     "confirm_dispute_btn": "Streit bestätigen",
     "fund_sign_permit": "Signatur 1/2: USDC-Genehmigung in Wallet…",

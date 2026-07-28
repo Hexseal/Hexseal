@@ -430,6 +430,8 @@
     "delivered_label": "تم التسليم",
     "timeline_title": "الجدول الزمني",
     "dispute_reason_hint": "صف المشكلة بوضوح — سيقرأ المحكّم هذا قبل اتخاذ القرار.",
+    "dispute_fee_notice": "يكلّف التحكيم {fee} USDC من أصل {pot} USDC المحتجزة — تُخصم هذه الرسوم في كل الأحوال، أيًّا كان الطرف المُحِق.",
+    "dispute_no_arbiter_notice": "إذا لم يتولَّ أي محكّم القضية خلال {days, plural, zero {# يوم} one {يوم واحد} two {يومين} few {# أيام} many {# يومًا} other {# يوم}}، يُقسَم المبلغ المحتجز — {toExecutor} USDC للمنفّذ و{toClient} USDC للعميل. لم يحكم أحد، فلا فائز.",
     "dispute_reason_placeholder": "مثال: توقف المنفّذ عن الرد بعد استلام التعليمات. مرّ الموعد النهائي دون تسليم.",
     "confirm_dispute_btn": "تأكيد النزاع",
     "fund_sign_permit": "التوقيع 1/2: إذن USDC في المحفظة…",

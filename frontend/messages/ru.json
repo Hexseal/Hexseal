@@ -435,6 +435,8 @@
     "delivered_label": "Сдано",
     "timeline_title": "Хронология",
     "dispute_reason_hint": "Опишите проблему чётко — арбитр прочитает это перед решением.",
+    "dispute_fee_notice": "Разбирательство возьмёт {fee} USDC из {pot} USDC в эскроу — сбор списывается независимо от исхода, кто бы ни оказался прав.",
+    "dispute_no_arbiter_notice": "Если за спор никто не возьмётся за {days, plural, one {# день} few {# дня} many {# дней} other {# дня}}, эскроу делится — {toExecutor} USDC исполнителю, {toClient} USDC клиенту. Никто не рассудил — значит, никто не выиграл.",
     "dispute_reason_placeholder": "Например: исполнитель перестал отвечать после получения брифа.",
     "confirm_dispute_btn": "Подтвердить спор",
     "fund_sign_permit": "Подпись 1/2: USDC разрешение в кошельке…",

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { shortAddr } from '@/lib/utils';
 import { useMountedRef } from '@/hooks/useMountedRef';
+import { DisputeCostNotice } from '@/components/DisputeCostNotice';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem { id: number; amount: bigint; terms: string; status: number; }
@@ -444,6 +445,10 @@ function DealCardImpl({ agreement, address, refetch }: {
                 <X className="w-3 h-3 text-white/25 hover:text-white/60" />
               </button>
             </div>
+            {/* Спор можно открыть и отсюда, с карточки дашборда — значит и здесь
+                видно, что сбор берётся независимо от исхода и что без арбитра
+                котёл делится пополам. */}
+            <DisputeCostNotice agreementAddr={agreement.agreement} />
             <Textarea
               placeholder={tc('dispute_placeholder')}
               value={disputeReason}

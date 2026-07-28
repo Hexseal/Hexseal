@@ -430,6 +430,8 @@
     "delivered_label": "Livré",
     "timeline_title": "Chronologie",
     "dispute_reason_hint": "Décrivez le problème clairement — l'arbitre lira ceci avant de prendre une décision.",
+    "dispute_fee_notice": "L'arbitrage coûte {fee} USDC sur les {pot} USDC sous séquestre — ces frais sont prélevés dans tous les cas, quel que soit celui qui a raison.",
+    "dispute_no_arbiter_notice": "Si aucun arbitre ne prend l'affaire sous {days, plural, one {# jour} other {# jours}}, le séquestre est partagé — {toExecutor} USDC pour l'exécutant, {toClient} USDC pour le client. Personne n'a jugé, donc personne ne gagne.",
     "dispute_reason_placeholder": "ex. L'exécutant a arrêté de répondre après avoir reçu le brief. Le délai a expiré sans livrable soumis.",
     "confirm_dispute_btn": "Confirmer le Litige",
     "fund_sign_permit": "Signature 1/2 : Permis USDC dans le portefeuille…",

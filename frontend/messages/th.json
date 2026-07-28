@@ -430,6 +430,8 @@
     "delivered_label": "ส่งมอบแล้ว",
     "timeline_title": "ไทม์ไลน์",
     "dispute_reason_hint": "อธิบายปัญหาอย่างชัดเจน — อนุญาโตตุลาการจะอ่านสิ่งนี้ก่อนตัดสิน",
+    "dispute_fee_notice": "การอนุญาโตตุลาการมีค่าใช้จ่าย {fee} USDC จาก {pot} USDC ที่ถืออยู่ใน escrow — ค่าธรรมเนียมนี้ถูกหักทุกกรณี ไม่ว่าฝ่ายใดจะถูก",
+    "dispute_no_arbiter_notice": "หากไม่มีอนุญาโตตุลาการรับเรื่องภายใน {days, plural, other {# วัน}} เงินใน escrow จะถูกแบ่งครึ่ง — {toExecutor} USDC ให้ผู้รับงาน และ {toClient} USDC ให้ลูกค้า ไม่มีใครตัดสิน จึงไม่มีใครชนะ",
     "dispute_reason_placeholder": "เช่น ผู้รับงานหยุดตอบหลังได้รับบรีฟ ครบกำหนดแล้วแต่ยังไม่มีการส่งงาน",
     "confirm_dispute_btn": "ยืนยันข้อพิพาท",
     "fund_sign_permit": "ลายเซ็น 1/2: อนุญาต USDC ในกระเป๋า…",
