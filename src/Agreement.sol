@@ -230,6 +230,7 @@ interface IReputationFacet {
 interface IArbiterRegistryFacet {
     function notifyArbiterTimeout(address agreement) external;
     function hasSubmittedVerdict(address agreement) external view returns (bool);
+    function creditDisputeFee(uint256 total) external;
 }
 
 // ---------- REGISTRY INTERFACE ----------
@@ -261,6 +262,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 public constant DISPUTE_WINDOW      = 4 days; // арбитр должен резолвить спор
     uint256 public constant DEADLINE_GRACE      = 1 days; // grace-период после дедлайна перед рефандом
     // Если арбитр не резолвит за 4 дня — авторефанд клиенту (защита от неактивного арбитра)
+
+    // Сбор арбитра со спора. Границы НЕТ намеренно: граница в $5 кусалась бы до
+    // сделки в $167, то есть на всей мелкой и средней работе, а на $10 съедала
+    // бы половину котла. Обоснование — спека расчёта по спору §2.
+    uint256 public constant DISPUTE_FEE_BPS = 300;          // 3% от котла
+    uint256 public constant DISPUTE_FEE_CAP = 500_000_000;  // $500 (6 decimals)
 
     // -------- DEAL PARAMS (пишутся один раз в initialize) --------
     //
@@ -333,6 +340,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     event AutoApproved(address indexed executor, uint256 amount);
     event DisputeRaised(address indexed by);
     event DisputeResolved(address indexed arbiter, bool clientWins, uint256 amount);
+    event DisputeFeePaid(uint256 amount);
+    /// Зачисление сбора провалилось — спор всё равно закрыт, сбор не взят.
+    event DisputeFeeSkipped(uint256 amount);
     event TimedOut(address indexed client, uint256 amount);
     event ArbiterTimedOut(address indexed client, uint256 amount);
     event ExtraProposed(uint256 indexed extraId, address indexed client, uint256 amount, string terms);
@@ -479,6 +489,15 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         }
 
         return Status.ACTIVE;
+    }
+
+    /// @notice Сколько возьмёт разбирательство спора. Публичная, потому что фронт
+    /// показывает эту сумму ДО открытия спора: сегодня пользователь узнаёт про
+    /// сбор только когда деньги пришли меньше ожидаемого.
+    function disputeFee() public view returns (uint256) {
+        uint256 pot = amount + extrasTotal;
+        uint256 fee = (pot * DISPUTE_FEE_BPS) / 10_000;
+        return fee > DISPUTE_FEE_CAP ? DISPUTE_FEE_CAP : fee;
     }
 
     // -------- SOULBOUND --------
@@ -647,15 +666,50 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         clientWonDispute = clientWins;
 
         _settlePending();
-        uint256 payout = amount + extrasTotal;
+        uint256 pot = amount + extrasTotal;
 
-        if (clientWins) {
-            _complete(Status.RESOLVED);
-            usdc.safeTransfer(client, payout);
-        } else {
-            _complete(Status.RESOLVED);
-            usdc.safeTransfer(executor, payout);
+        // Провал зачисления ТЕРПИМ: иначе сломанный или снятый на диамонде
+        // селектор сделал бы спор незакрываемым, а деньги встали бы в эскроу
+        // навсегда. Ровно этот отказ уже наблюдался на живом диамонде, когда
+        // казна не могла позвать fundVault. Если зачислить не удалось, сбор
+        // остаётся на диамонде неучтённым и достаётся оттуда отдельно; спор
+        // при этом закрыт и стороны получили своё.
+        //
+        // Разрешения (approve) в этой схеме не выдаётся вообще, поэтому
+        // висящего разрешения при провале не остаётся — в казне такой дефект
+        // приходилось чинить отдельно.
+        uint256 fee = disputeFee();
+        uint256 taken = 0;
+        if (fee > 0 && fee < pot) {
+            // Зачисляем ПЕРВЫМ, переводим только при успехе.
+            //
+            // Обратный порядок выглядит естественнее и был в первой редакции
+            // плана: «зачисление требует, чтобы деньги уже пришли». Это
+            // неправда — creditDisputeFee не проверяет баланс ни одной
+            // строкой, а в пределах одной транзакции порядок и не важен.
+            //
+            // Зато цена ошибки была бы вечной: при провале зачисления деньги
+            // остались бы на диамонде, откуда выхода НЕТ. Функции спасения
+            // там не существует, withdrawTreasurySlice двигает только свой
+            // счётчик, withdrawArbiterReward — только начисленное. Так сбор
+            // сгорал бы при каждом провале.
+            //
+            // Провал по-прежнему терпим: спор закрывается всегда, иначе
+            // сломанный или снятый селектор сделал бы его незакрываемым.
+            // Просто теперь провал означает «сбор не взят», а не «сбор сожжён».
+            try IArbiterRegistryFacet(diamond).creditDisputeFee(fee) {
+                usdc.safeTransfer(diamond, fee);
+                taken = fee;
+                emit DisputeFeePaid(fee);
+            } catch {
+                emit DisputeFeeSkipped(fee);
+            }
         }
+
+        uint256 payout = pot - taken;
+
+        _complete(Status.RESOLVED);
+        usdc.safeTransfer(clientWins ? client : executor, payout);
 
         _clearDisputeClaim();
         emit DisputeResolved(arbiter, clientWins, payout);

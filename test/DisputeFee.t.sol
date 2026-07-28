@@ -259,7 +259,7 @@ contract DisputeFeeTest is Test {
         usdc.mint(agreement, 6_000_000);
         vm.startPrank(agreement);
         usdc.transfer(address(diamond), 6_000_000);
-        vm.expectRevert(ArbiterRegistryFacet.NoDisputeClaimer.selector);
+        vm.expectRevert(ArbiterRegistryFacet.NoVerdictSubmitted.selector);
         ArbiterRegistryFacet(address(diamond)).creditDisputeFee(6_000_000);
         vm.stopPrank();
     }

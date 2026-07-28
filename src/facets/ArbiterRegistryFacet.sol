@@ -200,7 +200,11 @@ contract ArbiterRegistryFacet {
     error NotRegisteredAgreement();
     error NothingToPush();
     error ZeroAmount();
-    error NoDisputeClaimer();
+    // Название отражает актуальную охраняемую проверку: источник арбитра —
+    // pendingVerdicts, значит гейт бьёт по отсутствию вердикта, а не клеймера
+    // (клейм и вердикт разошлись после того, как аргумент арбитра убрали
+    // из creditDisputeFee — см. комментарий над функцией).
+    error NoVerdictSubmitted();
 
     // -------- MODIFIERS --------
 
@@ -745,8 +749,10 @@ contract ArbiterRegistryFacet {
         emit ArbiterRewardWithdrawn(caller, amount);
     }
 
-    /// @notice Зачислить сбор со спора. Зовёт агримент ПОСЛЕ того, как перевёл
-    /// `total` на диамонд.
+    /// @notice Зачислить сбор со спора. Агримент (Agreement.resolveDispute) зовёт
+    /// эту функцию ДО перевода `total` на диамонд и переводит только если вызов
+    /// не ревертнул — так провал зачисления не оставляет деньги на диамонде без
+    /// единого счётчика, который на них указывает (см. Agreement.sol:resolveDispute).
     ///
     /// Почему не тянем сами через transferFrom: тогда агриментy пришлось бы
     /// выдавать разрешение, а при провале вызова оно осталось бы висеть — ровно
@@ -773,7 +779,11 @@ contract ArbiterRegistryFacet {
     /// гарантия у pendingVerdicts сильнее: finalizeVerdict уже требует
     /// v.submittedAt != 0 (иначе revert NoVerdict до вызова) и держит
     /// v.executing = true всё время внешнего вызова — именно executing==true
-    /// не даёт clearDisputeClaim() удалить pendingVerdicts в этом окне.
+    /// не даёт clearDisputeClaim() удалить pendingVerdicts в этом окне (это не
+    /// единственное место, которое умеет удалить запись — clearStuckVerdict,
+    /// :893-901, делает то же самое БЕЗ проверки !v.executing, но он owner-only
+    /// и требует терминальный статус агримента, т.е. не DISPUTED, так что
+    /// вклиниться в это же окно исполнения он не может).
     /// disputeClaims такой защиты не имеет: clearDisputeClaim() чистит его
     /// безусловно, так что его целостность здесь зависела бы от того, что
     /// Agreement переведёт сбор и позовёт нас строго до _clearDisputeClaim() —
@@ -791,7 +801,7 @@ contract ArbiterRegistryFacet {
         // Спор никто не довёл до вердикта (submitVerdict не звали) — зачислять
         // некому, молчать нельзя: деньги без адресата зависли бы в контракте
         // без единого счётчика, который на них указывает.
-        if (arbiter_ == address(0)) revert NoDisputeClaimer();
+        if (arbiter_ == address(0)) revert NoVerdictSubmitted();
 
         uint256 toArbiter;
         uint256 toTreasury;
