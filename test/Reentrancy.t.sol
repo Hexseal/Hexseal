@@ -100,9 +100,12 @@ contract ReentrancyTest is Test {
     address feeRecipient;
 
     uint8   constant REGION     = 0;
-    uint256 constant BOARD_FEE  = 2_000_000;
+    uint256 constant BOARD_FEE  = 2_000_000; // JobBoard/ServiceBoard: still region-priced (Task 3/4)
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =  80_000_000;
+    // FactoryFacet direct path (deployAgreement) prices by quote():
+    // max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
+    uint256 constant DIRECT_FEE = 5_000_000;
     uint256 constant DEADLINE   = 7;
     string constant TERMS = "Standard work terms";
     bytes32 constant SALT       = bytes32("hexseal-reentrant-salt");
@@ -274,7 +277,7 @@ contract ReentrancyTest is Test {
 
     function _deployFunded() internal returns (address agr) {
         vm.startPrank(client);
-        malUSDC.approve(address(diamond), BOARD_FEE);
+        malUSDC.approve(address(diamond), DIRECT_FEE);
         agr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, address(0), JOB_AMOUNT, DEADLINE, TERMS, REGION
         );

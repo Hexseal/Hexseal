@@ -65,8 +65,10 @@ contract ExtrasTest is Test {
     uint256 constant INITIAL_TOTAL = CLIENT_USDC + EXECUTOR_USDC;
 
     uint8   constant REGION     = 0;
-    uint256 constant BOARD_FEE  = 2_000_000;
     uint256 constant JOB_AMOUNT = 100_000_000;
+    // FactoryFacet direct path (deployAgreement) prices by quote():
+    // max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
+    uint256 constant DIRECT_FEE = 5_000_000;
     uint256 constant EXTRA_A    =  20_000_000; // first extra
     uint256 constant EXTRA_B    =  10_000_000; // second extra
     uint256 constant DEADLINE   = 7;
@@ -210,7 +212,7 @@ contract ExtrasTest is Test {
     // Deploy agreement directly (client pays fee + funds it).
     function _deployActive() internal returns (address agr) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), BOARD_FEE);
+        usdc.approve(address(diamond), DIRECT_FEE);
         agr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, address(0), JOB_AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -412,9 +414,9 @@ contract ExtrasTest is Test {
         // _complete(REFUNDED) → JOB_AMOUNT + EXTRA_A (extrasTotal) back to client
         // total refund = JOB_AMOUNT + EXTRA_A + EXTRA_B
         uint256 clientNet = usdc.balanceOf(client);
-        // client started with CLIENT_USDC, paid BOARD_FEE + JOB_AMOUNT + EXTRA_A + EXTRA_B
-        // gets back JOB_AMOUNT + EXTRA_A + EXTRA_B → net loss = BOARD_FEE only
-        assertEq(clientNet, CLIENT_USDC - BOARD_FEE, "client net: fee only");
+        // client started with CLIENT_USDC, paid DIRECT_FEE + JOB_AMOUNT + EXTRA_A + EXTRA_B
+        // gets back JOB_AMOUNT + EXTRA_A + EXTRA_B → net loss = DIRECT_FEE only
+        assertEq(clientNet, CLIENT_USDC - DIRECT_FEE, "client net: fee only");
         assertEq(usdc.balanceOf(agr), 0, "agreement empty");
     }
 

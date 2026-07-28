@@ -2,12 +2,11 @@
 pragma solidity ^0.8.20;
 
 // DisputeFee test suite.
-// Доски (JobBoardFacet, ServiceBoardFacet) отказывают в создании сделки при
-// нулевой комиссии региона. У прямых путей фабрики (deployAgreement,
-// deployAndFund) такого гейта не было — асимметрия, которая при добавлении
-// нового региона или обнулении комиссии владельцем по ошибке позволила бы
-// создавать сделки бесплатно в обход досок. Этот файл проверяет, что оба
-// прямых пути фабрики (deployAgreement, deployAndFund) теперь симметричны доскам.
+// Комиссию больше нельзя обнулить через регион (regionFee — мёртвое поле),
+// цену теперь задают feeBps и feeFloor. feeFloor не принимает ноль сеттером,
+// поэтому единственный оставшийся способ попытаться сделать сделку бесплатной —
+// setFeeBps(0), и даже тогда quote() возвращает пол. Этот файл пинит именно
+// этот инвариант (testDeployAgreementNeverFree), а не старый region-гейт.
 
 import "forge-std/Test.sol";
 import "../src/DiamondProxy.sol";
@@ -96,12 +95,13 @@ contract DisputeFeeTest is Test {
         regSels[2] = RegistryFacet.hasActivePair.selector;
         regSels[3] = RegistryFacet.updateStatus.selector;
 
-        bytes4[] memory facSels = new bytes4[](5);
+        bytes4[] memory facSels = new bytes4[](6);
         facSels[0] = FactoryFacet.initFactory.selector;
         facSels[1] = FactoryFacet.deployAgreement.selector;
         facSels[2] = FactoryFacet.setRegionFee.selector;
         facSels[3] = FactoryFacet.deployAndFund.selector;
         facSels[4] = FactoryFacet.getFeeRecipient.selector;
+        facSels[5] = FactoryFacet.setFeeBps.selector;
 
         // ArbiterRegistryFacet: сверх приёма/выдачи сбора (creditDisputeFee/
         // getArbiterReward/getTreasurySlice/withdrawTreasurySlice) домонтированы
@@ -139,23 +139,27 @@ contract DisputeFeeTest is Test {
     }
 
     // ============================================================
-    //  ZERO REGION FEE GATE
+    //  FEE CAN NEVER BE ZERO
     // ============================================================
 
-    /// Комиссия региона обнулена владельцем по ошибке — прямой путь фабрики
-    /// обязан отказать, а не создавать сделку бесплатно. В досках такой гейт
-    /// уже есть (JobBoardFacet:184, ServiceBoardFacet:182), у фабрики не было.
-    function testDeployAgreementRejectsZeroRegionFee() public {
+    /// Инвариант пережил смену модели: обнулить комиссию нельзя. Раньше её
+    /// обнуляли через setRegionFee(region, 0) и ловили гейтом ZeroFee; теперь
+    /// цену задают feeBps и feeFloor, ноль в полу сеттер не принимает, а
+    /// нулевая ставка просто отдаёт пол.
+    function testDeployAgreementNeverFree() public {
         vm.prank(owner);
-        FactoryFacet(address(diamond)).setRegionFee(0, 0);
+        FactoryFacet(address(diamond)).setFeeBps(0);
+
+        uint256 before = usdc.balanceOf(feeRecipient);
 
         vm.startPrank(client);
         usdc.approve(address(diamond), type(uint256).max);
-        vm.expectRevert(FactoryFacet.ZeroFee.selector);
         FactoryFacet(address(diamond)).deployAgreement(
             client, executor, address(0), 100_000_000, 7, "terms", 0
         );
         vm.stopPrank();
+
+        assertEq(usdc.balanceOf(feeRecipient), before + 1_000_000, "floor charged even at zero bps");
     }
 
     /// Ненулевая комиссия проходит — гейт не сломал штатный путь.
@@ -167,27 +171,6 @@ contract DisputeFeeTest is Test {
         );
         vm.stopPrank();
         assertTrue(agreement != address(0), "deal creation broke");
-    }
-
-    /// Второй прямой путь фабрики. Гейт там стоял, но его никто не держал:
-    /// ревью вырезало проверку, и все 372 теста прошли молча.
-    function testDeployAndFundRejectsZeroRegionFee() public {
-        vm.prank(owner);
-        FactoryFacet(address(diamond)).setRegionFee(0, 0);
-
-        // Без approve тест падал бы с "Factory: fee transfer failed" даже при
-        // сломанном гейте — диагностика указывала бы на перевод комиссии, хотя
-        // ломался бы несвязанный перевод суммы сделки. approve здесь для
-        // симметрии с соседними тестами, а не потому что до ZeroFee revert
-        // дело вообще доходит до какого-либо transferFrom.
-        vm.prank(client);
-        usdc.approve(address(diamond), type(uint256).max);
-
-        vm.prank(client);
-        vm.expectRevert(FactoryFacet.ZeroFee.selector);
-        FactoryFacet(address(diamond)).deployAndFund(
-            client, executor, 100_000_000, 7, "terms", 0
-        );
     }
 
     // ============================================================

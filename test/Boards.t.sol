@@ -1210,4 +1210,18 @@ contract BoardsTest is Test {
         vm.expectRevert(FeeNotRegional.selector);
         FactoryFacet(address(diamond)).getAllFees();
     }
+
+    function testDeployAgreement_ChargesPercentage() public {
+        uint256 amount = 200_000_000;      // $200
+        uint256 expectedFee = 10_000_000;  // 5%
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), expectedFee);
+        FactoryFacet(address(diamond)).deployAgreement(
+            client, executor, address(0), amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(feeRecipient), expectedFee);
+    }
 }

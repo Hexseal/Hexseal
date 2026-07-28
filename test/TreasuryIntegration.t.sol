@@ -245,7 +245,7 @@ contract TreasuryIntegrationTest is Test {
 
         uint256 before = usdc.balanceOf(address(treasury));
 
-        // Создание сделки клиентом — комиссия платится региональная.
+        // Создание сделки клиентом — комиссия платится по формуле quote().
         vm.startPrank(client);
         usdc.approve(address(diamond), type(uint256).max);
         FactoryFacet(address(diamond)).deployAgreement(
@@ -253,15 +253,15 @@ contract TreasuryIntegrationTest is Test {
         );
         vm.stopPrank();
 
-        // Точная сумма, не просто "больше нуля": комиссия REGION_CIS зашита
-        // константой в FactoryFacet.sol:131 (fs.regionFee[REGION_CIS] =
-        // 2_000_000) и передаётся ровно этой суммой — deployAgreement выше
-        // вызван с region = 0 (CIS). Слабая проверка ">0" не отличила бы это
-        // от списания чужого региона или задвоенной комиссии.
+        // Точная сумма, не просто "больше нуля": комиссия — max(amount * feeBps
+        // / 10_000, feeFloor) из FactoryStorage.quote(), region больше не при
+        // чём (regionFee — мёртвое поле). Для 100_000_000 (deployAgreement
+        // выше) это 5% = 5_000_000, выше пола $1. Слабая проверка ">0" не
+        // отличила бы это от неверной ставки или задвоенной комиссии.
         assertEq(
             usdc.balanceOf(address(treasury)) - before,
-            2_000_000,
-            "deal fee arriving at the treasury does not match the REGION_CIS fee"
+            5_000_000,
+            "deal fee arriving at the treasury does not match quote()'s 5%"
         );
     }
 

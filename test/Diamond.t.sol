@@ -1812,9 +1812,14 @@ contract DiamondTest is Test {
     function testFuzzDeployAgreement(uint64 amount, uint64 deadline) public {
         amount = uint64(bound(amount, 1 * 10**6, 100000 * 10**6));
         deadline = uint64(bound(deadline, 1, 365));
-        
+
+        // Fee is a percentage of the fuzzed amount now, not a flat regional
+        // cap — a fixed 10 USDC approval no longer covers every fuzzed value.
+        uint256 fee = (uint256(amount) * 500) / 10_000;
+        if (fee < 1_000_000) fee = 1_000_000;
+
         vm.prank(client);
-        usdc.approve(address(diamond), 10 * 10**6);
+        usdc.approve(address(diamond), fee);
         vm.prank(client);
         address agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, arbiter, amount, deadline, TERMS_HASH, 0

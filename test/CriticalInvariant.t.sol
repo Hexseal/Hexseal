@@ -66,10 +66,13 @@ contract CriticalInvariantTest is Test {
     uint256 constant INITIAL_TOTAL = CLIENT_USDC + EXECUTOR_USDC + CLIENT2_USDC;
 
     uint8   constant REGION     = 0;
-    uint256 constant BOARD_FEE  = 2_000_000;
+    uint256 constant BOARD_FEE  = 2_000_000; // JobBoard/ServiceBoard: still region-priced (Task 3/4)
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =   80_000_000;
     uint256 constant SVC2_AMOUNT =  50_000_000;
+    // FactoryFacet direct paths (deployAgreement/deployAndFund) price by
+    // quote(): max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
+    uint256 constant DIRECT_FEE = 5_000_000;
     uint256 constant DEADLINE   = 7;
     string constant TERMS = "Standard work terms";
     bytes32 constant SALT       = bytes32("hexseal-invariant-salt");
@@ -330,7 +333,7 @@ contract CriticalInvariantTest is Test {
 
     function _deployAndFundDirectly() internal returns (address agr) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), BOARD_FEE);
+        usdc.approve(address(diamond), DIRECT_FEE);
         agr = FactoryFacet(address(diamond)).deployAgreement(
             client, executor, address(0), JOB_AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -471,8 +474,8 @@ contract CriticalInvariantTest is Test {
         _resolveDispute(agr, true);
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after resolve client wins");
 
-        // Client only lost the board fee; amount returned
-        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
+        // Client only lost the direct-deploy fee; amount returned
+        assertEq(usdc.balanceOf(client), clientBefore - DIRECT_FEE, "client net: fee only");
         assertEq(usdc.balanceOf(agr), 0, "agreement empty");
     }
 
