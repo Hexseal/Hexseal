@@ -1778,12 +1778,21 @@ contract DiamondTest is Test {
         Agreement(agreementAddr).raiseDispute();
         
         vm.warp(block.timestamp + 8 days);
-        
-        uint256 clientBalanceBefore = usdc.balanceOf(client);
+
+        uint256 clientBalanceBefore   = usdc.balanceOf(client);
+        uint256 executorBalanceBefore = usdc.balanceOf(executor);
         vm.prank(client);
         Agreement(agreementAddr).triggerArbiterTimeout();
-        
-        assertEq(usdc.balanceOf(client), clientBalanceBefore + AMOUNT);
+
+        // За этот спор никто не брался (claimDispute здесь не зовётся, поле
+        // arbiter агримента осталось нулём), поэтому котёл делится пополам, а
+        // не возвращается клиенту целиком: полный возврат сделал бы пустой спор
+        // бесплатным способом забрать и деньги, и работу. Ветку «арбитр взялся
+        // и не довёл» — там клиенту по-прежнему всё — держит
+        // test/DisputeSettlement.t.sol:testTimeoutAfterClaimStillRefundsTheClient.
+        assertEq(usdc.balanceOf(client),   clientBalanceBefore   + AMOUNT / 2, "half back to the client");
+        assertEq(usdc.balanceOf(executor), executorBalanceBefore + AMOUNT / 2, "half to the executor");
+        assertEq(usdc.balanceOf(agreementAddr), 0, "the agreement must be emptied");
     }
     
     function testAgreementSoulbound() public {

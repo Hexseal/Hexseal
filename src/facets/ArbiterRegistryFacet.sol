@@ -375,6 +375,19 @@ contract ArbiterRegistryFacet {
         uint8 agreementStatus = abi.decode(statusData, (uint8));
         if (agreementStatus != 4) revert NotDisputed();
 
+        // Клеймить после окна вердикта нельзя. submitVerdict всё равно откажет
+        // (DisputeWindowPassed), так что поздний клейм не может привести к
+        // вердикту — зато он выставляет arbiter в Agreement и тем самым
+        // отменяет дележ котла пополам на таймауте. Без этой проверки сторона
+        // с дружественным арбитром забирала бы весь котёл, ничего не доказав.
+        (bool dOk, bytes memory dData) = agreement.staticcall(abi.encodeWithSignature("disputedAt()"));
+        require(dOk, "ArbiterRegistry: disputedAt read failed");
+        (bool wOk, bytes memory wData) = agreement.staticcall(abi.encodeWithSignature("DISPUTE_WINDOW()"));
+        require(wOk, "ArbiterRegistry: DISPUTE_WINDOW read failed");
+        if (block.timestamp > abi.decode(dData, (uint256)) + abi.decode(wData, (uint256))) {
+            revert DisputeWindowPassed();
+        }
+
         // Арбитр не может быть стороной спора
         (bool clientOk, bytes memory clientData) = agreement.staticcall(abi.encodeWithSignature("client()"));
         (bool execOk,   bytes memory execData)   = agreement.staticcall(abi.encodeWithSignature("executor()"));
@@ -816,7 +829,7 @@ contract ArbiterRegistryFacet {
         if (v.overturned) {
             // Вердикт отменён (overturnVerdict/resolveAppeal) — арбитр ошибся,
             // награды не будет, весь сбор идёт в казну. Симметрично тому, что
-            // finalizeVerdict уже пропускает награду из банка при overturned (:489).
+            // finalizeVerdict уже пропускает награду из банка при overturned (:518).
             toTreasury = total;
         } else {
             toArbiter = (total * ARBITER_SHARE_BPS) / 10_000;

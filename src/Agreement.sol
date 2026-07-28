@@ -9,7 +9,8 @@ pragma solidity ^0.8.20;
 // ERC-2771 gasless для всех действий сторон
 // Soulbound NFT пока сделка активна
 // Арбитр = мультисиг протокола (не рандомный человек)
-// Если арбитр не резолвит за 7 дней — авторефанд клиенту
+// Если вердикта нет за DISPUTE_WINDOW: спор, за который никто не брался,
+// делится пополам; спор, который забрали и не довели, возвращается клиенту
 // ============================================================
 
 // ---------- MINIMAL ERC721 (без OZ, без зависимостей) ----------
@@ -208,6 +209,21 @@ library SafeUSDC {
         if (!(success && (data.length == 0 || abi.decode(data, (bool))))) revert TransferFailed();
     }
 
+    /// То же, что safeTransfer, но возвращает признак вместо реверта. Нужен
+    /// там, где провал одного перевода не должен ронять всю выплату.
+    ///
+    /// Длину ответа проверяем явно: abi.decode на 1..31 байте сам ревертит, и
+    /// тогда «мягкий» перевод оказался бы таким же жёстким, как обычный.
+    function trySafeTransfer(address token, address to, uint256 amount) internal returns (bool) {
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSelector(0xa9059cbb, to, amount) // transfer(address,uint256)
+        );
+        if (!success) return false;
+        if (data.length == 0) return true;
+        if (data.length < 32) return false;
+        return abi.decode(data, (bool));
+    }
+
     function safeTransferFrom(address token, address from, address to, uint256 amount) internal {
         (bool success, bytes memory data) = token.call(
             abi.encodeWithSelector(0x23b872dd, from, to, amount) // transferFrom
@@ -345,6 +361,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     event DisputeFeeSkipped(uint256 amount);
     event TimedOut(address indexed client, uint256 amount);
     event ArbiterTimedOut(address indexed client, uint256 amount);
+    /// Спор закрыт без вердикта, потому что за него никто не брался.
+    /// toExecutor равен нулю, если его половину доставить не удалось.
+    event DisputeSplitNoVerdict(uint256 toClient, uint256 toExecutor);
     event ExtraProposed(uint256 indexed extraId, address indexed client, uint256 amount, string terms);
     event ExtraAccepted(uint256 indexed extraId, uint256 newTotal);
     event ExtraRejected(uint256 indexed extraId);
@@ -765,8 +784,16 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         emit TimedOut(client, payout);
     }
 
-    /// @notice Таймаут арбитра — арбитр не резолвил за DISPUTE_WINDOW
-    /// Авторефанд клиенту — защита от неактивного/злонамеренного арбитра
+    /// @notice Таймаут спора — вердикта нет за DISPUTE_WINDOW.
+    /// Исход зависит от того, брался ли кто-нибудь за спор:
+    ///  • никто не брался (arbiter == 0) — котёл пополам, DisputeSplitNoVerdict.
+    ///    Никто ничего не установил, и полный возврат клиенту сделал бы пустой
+    ///    спор бесплатным способом забрать и деньги, и работу;
+    ///  • брался и не довёл — всё клиенту, арбитра наказать, ArbiterTimedOut.
+    ///    Пополам здесь нельзя: затягивание стало бы стратегией исполнителя.
+    /// Статус в обоих случаях REFUNDED — enum расширять нельзя (раскладка
+    /// заморожена, фронт и сабграф разбирают существующие значения), случаи
+    /// различает событие.
     function triggerArbiterTimeout() external nonReentrant {
         address sender = _msgSender();
         if (sender != client && sender != executor) revert NotParty();
@@ -779,15 +806,55 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         if (IArbiterRegistryFacet(diamond).hasSubmittedVerdict(address(this))) revert VerdictInFlight();
 
         _settlePending();
-        uint256 payout = amount + extrasTotal;
+        uint256 pot = amount + extrasTotal;
+
+        // Различаем два разных события, и признак бесплатный: поле arbiter
+        // равно нулю, пока спор не взяли. Оно принимает ровно два значения —
+        // ноль и адрес диамонда: claimDispute ставит арбитром сам диамонд, а
+        // не человека, поэтому как получателя денег его использовать нельзя.
+        //
+        // Никто не взялся — никто ничего не установил, поэтому пополам. Это
+        // буквальный перевод «мы не смогли решить» в деньги, и он убирает
+        // стимул затевать пустой спор с обеих сторон.
+        //
+        // Взялся и не довёл — вина арбитра, а не сторон. Здесь пополам нельзя:
+        // затягивание стало бы стратегией, и жулику-исполнителю на крупной
+        // сделке хватило бы ничего не делать, чтобы забрать половину. При
+        // возврате клиенту затягивание приносит ему ноль.
+        if (arbiter == address(0)) {
+            uint256 toExecutor = pot / 2;
+            uint256 toClient   = pot - toExecutor; // вычитанием: остаток тому, чьи деньги
+
+            _complete(Status.REFUNDED);
+
+            // Мягкий перевод исполнителю. Это последний путь у сделки: после
+            // таймаута не остаётся ни рескью-функции, ни второй попытки. Если
+            // исполнитель в чёрном списке USDC, жёсткий перевод заморозил бы
+            // весь котёл вместе с долей клиента — поэтому недоставленная
+            // половина уходит клиенту, а транзакция доводится до конца.
+            //
+            // Клиентскую половину намеренно НЕ страхуем тем же приёмом: этот
+            // риск одинаков на всех путях выплат и был здесь до дележа. Латать
+            // его надо разом и отдельно, а не одной веткой.
+            if (toExecutor > 0 && !usdc.trySafeTransfer(executor, toExecutor)) {
+                toClient  += toExecutor;
+                toExecutor = 0;
+            }
+            usdc.safeTransfer(client, toClient);
+
+            // notifyArbiterTimeout не зовём намеренно: наказывать некого.
+            _clearDisputeClaim();
+            emit DisputeSplitNoVerdict(toClient, toExecutor);
+            return;
+        }
 
         _complete(Status.REFUNDED);
-        usdc.safeTransfer(client, payout);
+        usdc.safeTransfer(client, pot);
 
         try IArbiterRegistryFacet(diamond).notifyArbiterTimeout(address(this)) {} catch {}
 
         _clearDisputeClaim();
-        emit ArbiterTimedOut(client, payout);
+        emit ArbiterTimedOut(client, pot);
     }
 
     // -------- EXTRAS --------

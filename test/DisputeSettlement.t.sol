@@ -132,7 +132,7 @@ contract DisputeSettlementTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
 
-        bytes4[] memory arbSels = new bytes4[](36);
+        bytes4[] memory arbSels = new bytes4[](38);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -169,6 +169,14 @@ contract DisputeSettlementTest is Test {
         arbSels[33] = ArbiterRegistryFacet.creditDisputeFee.selector;
         arbSels[34] = ArbiterRegistryFacet.getTreasurySlice.selector;
         arbSels[35] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
+        // Оба нужны пути таймаута (Задача 4): hasSubmittedVerdict вызывается
+        // ЖЁСТКО (не в try/catch), без него triggerArbiterTimeout ревертит
+        // «Diamond: function not found» ещё до расчёта котла;
+        // notifyArbiterTimeout под try/catch, но без него ветка «арбитр взялся
+        // и не довёл» молча не наказывала бы арбитра, и тест шёл бы по пути,
+        // которого в проде нет.
+        arbSels[36] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        arbSels[37] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
 
         bytes4[] memory cutSels   = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -485,5 +493,191 @@ contract DisputeSettlementTest is Test {
         vm.prank(arbiterAddr);
         vm.expectRevert();
         ArbiterRegistryFacet(address(diamond)).withdrawArbiterReward();
+    }
+
+    // ============================================================
+    //  triggerArbiterTimeout() — котёл пополам, если за спор никто не брался
+    // ============================================================
+
+    /// Никто не взялся за спор — котёл пополам. Иначе мелкая сделка была бы
+    /// бесплатной лотереей для клиента: арбитр за $1.20 не возьмётся, таймаут
+    /// вернул бы клиенту всё, и работа доставалась бы даром.
+    function testTimeoutWithoutClaimSplitsThePot() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+        assertEq(a.arbiter(), address(0), "setup: nobody claimed");
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore,   100_000_000, "half to client");
+        assertEq(usdc.balanceOf(executor) - eBefore, 100_000_000, "half to executor");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Арбитр взялся и не довёл — прежнее поведение: клиенту целиком, арбитра
+    /// наказать. Пополам здесь нельзя: затягивание стало бы стратегией, и
+    /// жулику на крупной сделке хватило бы просто ничего не делать.
+    function testTimeoutAfterClaimStillRefundsTheClient() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+        assertTrue(a.arbiter() != address(0), "setup: somebody claimed");
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore,   200_000_000, "whole pot to client");
+        assertEq(usdc.balanceOf(executor) - eBefore, 0,           "executor gets nothing");
+    }
+
+    /// Сбор на путях таймаута не берётся ни в одном случае: вердикта нет,
+    /// работа не сделана, платить некому.
+    function testTimeoutTakesNoFee() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(), 0, "no treasury slice");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Нечётный котёл: ни один юнит не должен осесть в контракте. 33 юнита →
+    /// 16 исполнителю, 17 клиенту (остаток тому, чьи это были деньги).
+    function testTimeoutSplitLosesNoUnitOnAnOddPot() public {
+        Agreement a = Agreement(_createFundedAgreement(33));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(executor) - eBefore, 16, "floor half to executor");
+        assertEq(usdc.balanceOf(client)   - cBefore, 17, "remainder to the client");
+        assertEq(usdc.balanceOf(address(a)), 0, "not one unit may be stranded");
+    }
+
+    /// Непринятые extras — не часть спорной суммы: исполнитель на них не
+    /// соглашался. Они возвращаются клиенту ЦЕЛИКОМ и делению не подлежат.
+    function testPendingExtrasReturnWholeAndAreNotSplit() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+
+        usdc.mint(client, 50_000_000);
+        vm.startPrank(client);
+        usdc.approve(address(a), 50_000_000);
+        a.proposeExtra(50_000_000, "extra work");
+        a.raiseDispute();
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        // 50 назад целиком + половина от 200.
+        assertEq(usdc.balanceOf(client) - cBefore,   150_000_000, "pending back whole plus half the pot");
+        assertEq(usdc.balanceOf(executor) - eBefore, 100_000_000, "half of the pot only");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Л6. Исполнитель в чёрном списке USDC не должен замораживать сделку:
+    /// таймаут — последний путь, после него у агримента нет ни рескью, ни
+    /// второй попытки. Недоставленная половина уходит клиенту.
+    function testBlockedExecutorCannotFreezeTheTimeout() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        usdc.setBlocked(executor, true);
+
+        uint256 cBefore = usdc.balanceOf(client);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore, 200_000_000, "the undeliverable half falls back to the client");
+        assertEq(usdc.balanceOf(address(a)), 0, "nothing may stay locked");
+    }
+
+    /// Л2. Поздний клейм запрещён. Вердикт после окна всё равно невозможен
+    /// (submitVerdict откажет), значит такой клейм не несёт законной функции —
+    /// он нужен только чтобы отменить дележ котла пополам.
+    function testCannotClaimAfterTheVerdictWindow() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        bytes32 salt       = keccak256(abi.encodePacked("late-claim", address(a), block.number));
+        bytes32 commitment = keccak256(abi.encodePacked(address(a), arbiterAddr, salt));
+        vm.prank(arbiterAddr);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+        vm.roll(block.number + 1);
+
+        vm.prank(arbiterAddr);
+        vm.expectRevert(ArbiterRegistryFacet.DisputeWindowPassed.selector);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(address(a), salt);
+    }
+
+    /// Тот же гейт, но проверяем деньги: попытка позднего клейма не должна
+    /// превращать дележ в полный возврат клиенту.
+    function testLateClaimCannotCancelTheSplit() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        bytes32 salt       = keccak256(abi.encodePacked("late-claim-money", address(a), block.number));
+        bytes32 commitment = keccak256(abi.encodePacked(address(a), arbiterAddr, salt));
+        vm.prank(arbiterAddr);
+        ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
+        vm.roll(block.number + 1);
+        vm.prank(arbiterAddr);
+        try ArbiterRegistryFacet(address(diamond)).claimDispute(address(a), salt) {} catch {}
+
+        assertEq(a.arbiter(), address(0), "a late claim must not stick");
+
+        uint256 eBefore = usdc.balanceOf(executor);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+        assertEq(usdc.balanceOf(executor) - eBefore, 100_000_000, "the split must survive");
     }
 }
