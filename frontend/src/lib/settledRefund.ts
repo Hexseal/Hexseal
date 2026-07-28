@@ -302,16 +302,17 @@ export function refundNotifCopy(
     };
   }
 
-  if (outcome.kind === 'unknown') {
-    return {
-      title: 'Deal Closed',
-      body: "This deal closed as refunded, but we couldn't read how the escrow was settled. "
-          + 'Check your wallet for the amount you received.',
-    };
-  }
+  if (outcome.kind === 'unknown') return CANNOT_READ_COPY;
 
   return unhandledOutcome(outcome);
 }
+
+/** Честный ответ, когда исход прочитать не удалось. Ничего не утверждает про деньги. */
+const CANNOT_READ_COPY = {
+  title: 'Deal Closed',
+  body: "This deal closed as refunded, but we couldn't read how the escrow was settled. "
+      + 'Check your wallet for the amount you received.',
+};
 
 /**
  * Ловушка на пятый вид `SettledRefund`.
@@ -324,11 +325,21 @@ export function refundNotifCopy(
  * Тип `never` переносит это на сборку: пока в объединении ровно четыре вида,
  * сюда доезжает `never` и всё компилируется; как только вид добавят и не
  * обработают выше, аргумент перестанет быть `never` и `tsc --noEmit` (он же
- * гейт `npm run build`) упадёт этой строкой. Бросок — на случай, если такое
- * значение всё-таки доехало до рантайма мимо типов: молча соврать про деньги
- * хуже, чем упасть.
+ * гейт `npm run build`) упадёт этой строкой.
+ *
+ * А вот бросать в рантайме нельзя, и первая редакция это делала зря. Развилка
+ * там не «упасть или соврать про деньги»: третий вариант уже написан рядом —
+ * сказать, что прочитать не смогли. Он ничего не утверждает про суммы, то есть
+ * ложью не является.
+ *
+ * Цена броска при этом высокая и несоразмерная: единственный вызывающий —
+ * цикл достройки ленты в `hooks/useNotifications`, и он не обёрнут в try/catch.
+ * Одна сделка со странным видом убила бы уведомления по ВСЕМ сделкам сразу,
+ * включая те, что читаются прекрасно. Гейт на сборке остаётся, рантайм остаётся
+ * живым, а сам факт виден в консоли.
  */
-function unhandledOutcome(outcome: never): never {
+function unhandledOutcome(outcome: never): { title: string; body: string } {
   const kind = (outcome as { kind?: unknown }).kind;
-  throw new Error(`refundNotifCopy: unhandled SettledRefund kind ${String(kind)}`);
+  console.error(`refundNotifCopy: unhandled SettledRefund kind ${String(kind)}`);
+  return CANNOT_READ_COPY;
 }
