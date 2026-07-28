@@ -162,11 +162,6 @@ contract FactoryFacet {
         fs.diamond           = diamond_;
         fs.agreementDeployer = agreementDeployer_;
 
-        fs.regionFee[FactoryStorage.REGION_CIS]  = 2_000_000;
-        fs.regionFee[FactoryStorage.REGION_ASIA] = 4_000_000;
-        fs.regionFee[FactoryStorage.REGION_EU]   = 7_000_000;
-        fs.regionFee[FactoryStorage.REGION_US]   = 10_000_000;
-
         fs.feeBps             = 500;        // 5%
         fs.feeFloor           = 1_000_000;  // $1
         fs.maxPendingRequests = 5;

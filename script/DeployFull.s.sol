@@ -178,17 +178,7 @@ contract DeployFull is Script {
         // ── 6. Линкуем SVGRenderer ────────────────────────────────────────────
         JobReceiptFacet(address(diamond)).setSvgRenderer(address(svgRenderer));
 
-        // ── 7. Региональные комиссии 4 (LATAM), 5 (CA), 6 (AU) ───────────────
-        // initFactory() сидит только регионы 0-3 (CIS/Asia/EU/US) — так исторически
-        // сложилось (регионы 4-6 добавлены позже отдельными апгрейдами:
-        // UpgradeRegions7.s.sol, UpgradeRegionAU.s.sol). Без этих вызовов свежий
-        // деплой смонтирует все 148 селекторов чисто, но тихо оставит трём регионам
-        // нулевую комиссию платформы.
-        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_LATAM, 4_000_000);   // LATAM $4
-        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_CA,    10_000_000);  // CA    $10
-        FactoryFacet(address(diamond)).setRegionFee(FactoryStorage.REGION_AU,    7_000_000);   // AU    $7
-
-        // ── 8. Первый арбитр ──────────────────────────────────────────────────
+        // ── 7. Первый арбитр ──────────────────────────────────────────────────
         // Без этого раунд споров невозможно закрыть иначе как таймаутом-рефандом
         // клиенту (см. пояснение у require(initialArbiter != address(0)) выше).
         // chiefArbiter НЕ выставляется — на живом диаманде он остаётся нулевым.
@@ -196,11 +186,9 @@ contract DeployFull is Script {
 
         vm.stopBroadcast();
 
-        // ── 9. Итог ───────────────────────────────────────────────────────────
-        (
-            uint256 cis, uint256 asia, uint256 eu, uint256 us,
-            uint256 latam, uint256 ca, uint256 au
-        ) = FactoryFacet(address(diamond)).getAllFees();
+        // ── 8. Итог ───────────────────────────────────────────────────────────
+        uint256 feeBps = FactoryFacet(address(diamond)).getFeeBps();
+        uint256 feeFloor = FactoryFacet(address(diamond)).getFeeFloor();
         address[] memory arbiters = ArbiterRegistryFacet(address(diamond)).getArbiters();
 
         console.log("\n======== HEXSEAL DEPLOYMENT COMPLETE ========");
@@ -210,14 +198,8 @@ contract DeployFull is Script {
         console.log("FeeRecipient:  ", feeRecipient);
         console.log("Forwarder:     ", trustedForwarder);
         console.log("Owner:         ", owner);
-        console.log("--- Region fees (USDC, 6 decimals) ---");
-        console.log("  0 CIS:   ", cis);
-        console.log("  1 Asia:  ", asia);
-        console.log("  2 EU:    ", eu);
-        console.log("  3 US:    ", us);
-        console.log("  4 LATAM: ", latam);
-        console.log("  5 CA:    ", ca);
-        console.log("  6 AU:    ", au);
+        console.log("Fee bps:       ", feeBps);
+        console.log("Fee floor:     ", feeFloor);
         console.log("--- Arbiters ---");
         console.log("Count:         ", arbiters.length);
         for (uint256 i = 0; i < arbiters.length; i++) {
