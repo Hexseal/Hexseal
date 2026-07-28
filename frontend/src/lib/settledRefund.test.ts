@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AbiFunctionNotFoundError,
   ContractFunctionZeroDataError,
   HttpRequestError,
   encodeAbiParameters,
@@ -260,10 +261,9 @@ describe('classifySettledRefund — путь через чек (точный)', 
         DISPUTE_WINDOW: () => 345_600n,
       },
     });
+    // Дележ — да; кому сколько — нет: суммы бывают только из события.
     await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({
-      kind: 'split',
-      toClient: 17n,
-      toExecutor: 16n,
+      kind: 'split-amounts-unknown',
     });
     expect(readContract).toHaveBeenCalled();
   });
@@ -312,19 +312,17 @@ describe('classifySettledRefund — путь по состоянию (холод
     expect(readContract).toHaveBeenCalledTimes(1);
   });
 
-  it('никто не взялся, все три чтения дошли: дележ, остаток клиенту', async () => {
+  it('никто не взялся, все три чтения дошли: дележ — но без сумм', async () => {
     const { client } = fakeClient({
       reads: {
         getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
         disputeFee: () => 990_000n,
-        totalPayout: () => 33n, // нечётный котёл: 16 исполнителю, 17 клиенту
+        totalPayout: () => 33n,
         DISPUTE_WINDOW: () => 345_600n,
       },
     });
     await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
-      kind: 'split',
-      toClient: 17n,
-      toExecutor: 16n,
+      kind: 'split-amounts-unknown',
     });
   });
 
@@ -355,6 +353,191 @@ describe('classifySettledRefund — путь по состоянию (холод
   it('getDetails не прочитался — «не знаем»', async () => {
     const { client } = fakeClient({ reads: { getDetails: transportDown } });
     await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({ kind: 'unknown' });
+  });
+});
+
+// ─── Клетка, которая держит правило ──────────────────────────────────────────
+//
+// НИ ПРИ КАКОМ котле путь по состоянию не называет сумму по стороне. Суммы там
+// могут быть только расчётными (`splitPot(totalPayout())`), а расчёт не знает
+// про ветку заблокированного исполнителя: мягкий перевод не прошёл, его
+// половина ушла клиенту, и контракт заплатил не по правилу. Обещать в этот
+// момент «16.00 USDC тебе» тому, кто не получил ничего, — ровно то враньё,
+// которое эта задача убирает.
+//
+// Тест намеренно смотрит НА ФОРМУ РЕЗУЛЬТАТА, а не на конкретный `kind`:
+// вернуть расчётные суммы — это дописать в объект поля, и любое такое
+// возвращение здесь и провалится, как бы ни назвали вид.
+describe('путь по состоянию НИКОГДА не называет сумму по стороне', () => {
+  const POTS = [
+    0n,                       // пустой котёл
+    1n,                       // неделимый юнит: floor(1/2) = 0
+    33n,                      // нечётный: расчёт дал бы 16 / 17
+    200_000_000n,             // ровно 200 USDC — та самая ветка из чека
+    123_456_789_012_345_678n, // крупный
+  ];
+
+  for (const pot of POTS) {
+    it(`котёл ${pot}: ни toClient, ни toExecutor в ответе, ни одной суммы в тексте`, async () => {
+      const { client } = fakeClient({
+        reads: {
+          getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
+          disputeFee: () => 990_000n,
+          totalPayout: () => pot,
+          DISPUTE_WINDOW: () => 345_600n,
+        },
+      });
+      const outcome = await classifySettledRefund(client, AGREEMENT);
+
+      // Дележ распознан — иначе тест проверял бы не ту ветку.
+      expect(outcome.kind).toBe('split-amounts-unknown');
+      // Ни одного поля с суммой, как бы оно ни называлось.
+      expect(Object.keys(outcome)).toEqual(['kind']);
+      expect(Object.values(outcome).some((v) => typeof v === 'bigint')).toBe(false);
+
+      // И до пользователя ни одна сумма не доезжает.
+      for (const role of ['client', 'executor'] as const) {
+        const { body } = refundNotifCopy(outcome, role);
+        expect(body).not.toMatch(/USDC/);
+        expect(body).not.toMatch(/\d/);
+      }
+    });
+  }
+});
+
+// ─── Баг в коде не должен выглядеть как отвалившаяся сеть ────────────────────
+//
+// Все три `catch` здесь возвращают «не знаем», и для настоящего сбоя RPC это
+// правильно: сеть падает буднично, лента из-за этого падать не должна. Но тот
+// же `catch` глотает и опечатку — и обе стороны прочитают её как «RPC
+// недоступен», а разработчик не прочитает вовсе. Возвращаемое значение остаётся
+// прежним; отличает случаи запись в консоль.
+describe('classifySettledRefund — ошибка программиста видна, сетевая молчит', () => {
+  function spyOnConsoleError() {
+    return vi.spyOn(console, 'error').mockImplementation(() => {});
+  }
+
+  it('сетевой сбой не шумит: «не знаем» и ни строчки в консоль', async () => {
+    const spy = spyOnConsoleError();
+    try {
+      const { client } = fakeClient({ reads: { getDetails: transportDown } });
+      await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
+        kind: 'unknown',
+      });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('старый клон (реверт селектора) тоже не шумит — это нормальный ответ цепи', async () => {
+    const spy = spyOnConsoleError();
+    try {
+      const { client } = fakeClient({
+        reads: {
+          getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
+          disputeFee: noSuchSelector,
+          totalPayout: () => 200_000_000n,
+          DISPUTE_WINDOW: () => 345_600n,
+        },
+      });
+      await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({ kind: 'refund' });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Самый частый вид опечатки: позвали метод, которого у объекта нет. Раньше
+  // это было неотличимо от «RPC недоступен» — тот же 'unknown', та же тишина.
+  it('опечатка в имени метода клиента: «не знаем», но в консоли — про баг', async () => {
+    const spy = spyOnConsoleError();
+    try {
+      const broken = {} as unknown as PublicClient; // нет ни readContract, ни чего-либо ещё
+      await expect(classifySettledRefund(broken, AGREEMENT)).resolves.toEqual({
+        kind: 'unknown',
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [message, error] = spy.mock.calls[0];
+      expect(String(message)).toContain('[settledRefund]');
+      expect(String(message)).toMatch(/programmer error/i);
+      // Адрес сделки в сообщении обязателен: без него в ленте, которая обходит
+      // все сделки разом, непонятно, о какой из них речь.
+      expect(String(message)).toContain(AGREEMENT);
+      expect(error).toBeInstanceOf(TypeError);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Опечатка в имени КОНТРАКТНОЙ функции. Её viem бросает как
+  // AbiFunctionNotFoundError — наследника BaseError, то есть по классу-предку
+  // неотличимого от сетевой ошибки; отсюда отдельная проверка.
+  it('имя функции, которого нет в ABI: тоже баг, а не сеть', async () => {
+    const spy = spyOnConsoleError();
+    try {
+      const { client } = fakeClient({
+        reads: {
+          getDetails: () => {
+            throw new AbiFunctionNotFoundError('getDetailz');
+          },
+        },
+      });
+      await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
+        kind: 'unknown',
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0][0])).toMatch(/programmer error/i);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Путь через чек глотал ошибки своим собственным catch — и падал в состояние,
+  // где всё выглядело штатно. Опечатка там оставалась невидимой вдвойне.
+  it('баг на пути через чек виден, хотя исход дочитался по состоянию', async () => {
+    const spy = spyOnConsoleError();
+    try {
+      const { client } = fakeClient({
+        receipt: () => {
+          throw new TypeError('receipt.logz is not iterable');
+        },
+        reads: { getDetails: () => details({ arbiter: ARBITER, disputedAt: 1_700_000_000n }) },
+      });
+      // Внешнее поведение прежнее: исход всё равно дочитан по состоянию.
+      await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({
+        kind: 'refund',
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0][0])).toContain('receipt path');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Три чтения после getDetails свои ошибки не бросают, а возвращают — их
+  // классифицирует decideArbiterTimeout, и опечатка снова читается как 'transport'.
+  it('баг в одном из трёх чтений тоже виден', async () => {
+    const spy = spyOnConsoleError();
+    try {
+      const { client } = fakeClient({
+        reads: {
+          getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
+          disputeFee: () => {
+            throw new TypeError('abi.filtr is not a function');
+          },
+          totalPayout: () => 200_000_000n,
+          DISPUTE_WINDOW: () => 345_600n,
+        },
+      });
+      await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
+        kind: 'unknown',
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0][0])).toContain('disputeFee()');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -393,6 +576,58 @@ describe('refundNotifCopy — дележ', () => {
     expect(refundNotifCopy(blocked, 'executor').body).toContain('0.00 USDC to you');
     expect(refundNotifCopy(blocked, 'client').body).toContain('200.00 USDC to you');
     expect(refundNotifCopy(blocked, 'client').body).toContain('0.00 USDC to the executor');
+  });
+});
+
+describe('refundNotifCopy — дележ без сумм', () => {
+  const BLIND: SettledRefund = { kind: 'split-amounts-unknown' };
+
+  it('говорит, что дележ был и судить было некому', () => {
+    const { title, body } = refundNotifCopy(BLIND, 'client');
+    expect(title).toBe('Escrow Split');
+    expect(body).toContain('Nobody took the dispute');
+    expect(body).toContain('the escrow was split');
+  });
+
+  it('отправляет за суммой в кошелёк и не называет ни одной сам', () => {
+    for (const role of ['client', 'executor'] as const) {
+      const { body } = refundNotifCopy(BLIND, role);
+      expect(body).toContain('check your wallet');
+      expect(body).not.toMatch(/USDC/);
+      expect(body).not.toMatch(/\d/);
+    }
+  });
+
+  // «Половина» здесь была бы догадкой того же сорта, что и число: в ветке
+  // заблокированного исполнителя половин не было — весь котёл ушёл клиенту.
+  it('не обещает половину ни словом, ни числом, и не зовёт это возвратом', () => {
+    for (const role of ['client', 'executor'] as const) {
+      const { body } = refundNotifCopy(BLIND, role);
+      expect(body).not.toMatch(/\bhalf\b/i);
+      expect(body).not.toMatch(/refund/i);
+      expect(body).not.toMatch(/cancel/i);
+    }
+  });
+
+  // Роль не участвует намеренно: сказать «твоя доля» нельзя ни одной стороне.
+  it('обеим сторонам одно и то же', () => {
+    expect(refundNotifCopy(BLIND, 'client')).toEqual(refundNotifCopy(BLIND, 'executor'));
+  });
+
+  // Заголовок общий с точным дележом намеренно: событие одно и то же, разная
+  // только полнота сведений о нём.
+  it('заголовок тот же, что у дележа с суммами', () => {
+    expect(refundNotifCopy(BLIND, 'client').title)
+      .toBe(refundNotifCopy(ODD_SPLIT, 'client').title);
+    // ...но текст — другой: точный называет суммы, этот нет.
+    expect(refundNotifCopy(BLIND, 'client').body)
+      .not.toBe(refundNotifCopy(ODD_SPLIT, 'client').body);
+  });
+
+  // Это не «не знаем»: там неизвестен САМ исход, здесь — только суммы.
+  it('не тот же текст, что у полностью непрочитанного исхода', () => {
+    expect(refundNotifCopy(BLIND, 'client').title)
+      .not.toBe(refundNotifCopy({ kind: 'unknown' }, 'client').title);
   });
 });
 

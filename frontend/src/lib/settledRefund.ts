@@ -1,4 +1,9 @@
-import { parseEventLogs, type Log, type PublicClient } from 'viem';
+import {
+  AbiFunctionNotFoundError,
+  parseEventLogs,
+  type Log,
+  type PublicClient,
+} from 'viem';
 import { AGREEMENT_ABI, DISPUTE_SPLIT_EVENT } from '@/config/contracts';
 import { decideArbiterTimeout } from './arbiterTimeoutSettlement';
 import { usdcExact } from './splitPot';
@@ -19,25 +24,99 @@ import { usdcExact } from './splitPot';
  *
  *  1. `DisputeSplitNoVerdict` в логах ТОЙ ЖЕ транзакции. Суммы там фактически
  *     переведённые: если USDC заблокировал исполнителя, контракт отдаёт его
- *     половину клиенту, и событие покажет ноль. Это точный ответ.
+ *     половину клиенту, и событие покажет ноль. Это точный ответ — и
+ *     единственный путь, на котором мы вправе называть суммы.
  *  2. Состояние агримента, когда хэша транзакции нет (холодный старт: лента
  *     достраивается из снимка реестра, где хэшей не было никогда). Тогда исход
  *     выводится тем же `decideArbiterTimeout`, что и на странице сделки —
- *     третьей копии этой логики в проекте нет, — а суммы получаются расчётом
- *     `splitPot`, то есть без поправки на заблокированного исполнителя. Это
- *     единственное расхождение между двумя путями, и оно в редкой ветке.
- *     Читать котёл после выплаты можно: `totalPayout()` — это
- *     `amount + extrasTotal`, и завершение сделки ни то, ни другое не обнуляет.
+ *     третьей копии этой логики в проекте нет. Но здесь исход ТОЛЬКО признак:
+ *     «дележ был» — да, «кому сколько» — нет. Отсюда отдельный вид
+ *     `split-amounts-unknown`.
+ *
+ * ПОЧЕМУ НА ВТОРОМ ПУТИ СУММ НЕТ.
+ *
+ * Посчитать нечем. `splitPot(totalPayout())` даёт половины ПО ПРАВИЛУ, а в
+ * ветке заблокированного исполнителя контракт платит иначе: мягкий перевод не
+ * прошёл, недоставленная половина ушла клиенту, событие несёт `toExecutor = 0`
+ * (`src/Agreement.sol`, `triggerArbiterTimeout`). Расчёт об этом знать не может
+ * и назвал бы заблокированному исполнителю половину, которой тот не получил, а
+ * клиенту — половину вместо всего котла: ровно тот класс вранья про деньги, ради
+ * которого всё это писалось, только в редкой ветке. Раньше это расхождение было
+ * здесь записано как принятое; больше не принято. Правило одно: не называть
+ * сумму, которой не знаешь.
+ *
+ * Дочитать фактические суммы с цепи тоже нечем, и это проверялось:
+ *
+ *  • `getLogs` требует диапазона блоков, а у ленты его нет — снимок реестра
+ *    (`getClientDeals`/`getExecutorDeals`) отдаёт агримент, сумму и статус,
+ *    номера блока в нём нет никогда, и сам агримент хранит только время
+ *    (`resolvedAt`), а не блок. Перевод времени в блок — это бинарный поиск по
+ *    цепи, десятки запросов на каждую сделку в цикле бэкфилла;
+ *  • скан от начала цепи на публичном RPC неприемлем по той же причине, только
+ *    хуже;
+ *  • «спросить у USDC `isBlacklisted`» — эвристика, а не факт: она соврёт, если
+ *    исполнителя заблокировали ПОСЛЕ выплаты, и по её ответу мы всё равно
+ *    угадывали бы, а не читали.
+ *
+ * Один настоящий источник существует и здесь намеренно НЕ используется:
+ * сабграф с версии 2.1.0 индексирует это самое событие в поля
+ * `splitToClient`/`splitToExecutor` сущности Agreement (`subgraph/schema.graphql`,
+ * `handleDisputeSplitNoVerdict`), и из браузера он доступен через уже
+ * существующий прокси `/api/subgraph`. Цена — новая зависимость ленты
+ * уведомлений от стороннего индексатора с его лагом, кэшем и версией деплоя,
+ * ради сумм в одной редкой ветке. Это отдельное решение, а не побочный эффект
+ * этой правки; молчание про сумму честно и без него.
  *
  * Если не удалось ни то, ни другое — 'unknown'. Молча выбрать «возврат» здесь
  * было бы тем же враньём, только по умолчанию.
  */
 export type SettledRefund =
+  /** Дележ, суммы ФАКТИЧЕСКИЕ — взяты из события, а не посчитаны. */
   | { kind: 'split'; toClient: bigint; toExecutor: bigint }
+  /** Дележ был, кому сколько — неизвестно. Сумм в этом виде нет намеренно. */
+  | { kind: 'split-amounts-unknown' }
   | { kind: 'refund' }
   | { kind: 'unknown' };
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/**
+ * Ошибка НАШЕГО кода, а не отказ цепи.
+ *
+ * Ниже три `catch`, и каждый по построению возвращает «не знаем»: сеть падает
+ * буднично, и уведомление из-за этого падать не должно. Но тот же `catch`
+ * ловит и опечатку — `client.readContrct(...)`, обращение к полю `undefined`,
+ * имя функции, которого нет в ABI, — и обе стороны прочитают её как «RPC
+ * недоступен». Такой баг живёт до первого разбора вручную; поэтому его отделяем
+ * и печатаем, оставляя возвращаемое значение прежним.
+ *
+ * Классы движка (`TypeError` и родня) сюда попадают целиком: цепь их не бросает.
+ * `AbiFunctionNotFoundError` добавлен отдельно, потому что он наследует
+ * viem'овский `BaseError`, то есть по предку неотличим от сетевого, а означает
+ * ровно опечатку в имени функции — и летит мимо обёртки `getContractError`
+ * (`encodeFunctionData` в `readContract` вызывается ДО try).
+ */
+function isOwnBug(err: unknown): boolean {
+  if (
+    err instanceof TypeError ||
+    err instanceof ReferenceError ||
+    err instanceof SyntaxError ||
+    err instanceof RangeError
+  ) {
+    return true;
+  }
+  return err instanceof AbiFunctionNotFoundError;
+}
+
+function reportIfBug(err: unknown, where: string, agreement: string): void {
+  if (!isOwnBug(err)) return;
+  console.error(
+    `[settledRefund] ${where} threw a programmer error, not a chain or network failure. `
+      + `The outcome of ${agreement} is being reported as "unknown" because of a bug here, `
+      + 'not because the chain was unreachable:',
+    err,
+  );
+}
 
 /**
  * `DisputeSplitNoVerdict` этого агримента среди логов чека, или null.
@@ -74,6 +153,7 @@ async function readOrError(
     })) as bigint;
     return { data, error: undefined };
   } catch (error) {
+    reportIfBug(error, `${functionName}()`, agreement);
     return { data: undefined, error };
   }
 }
@@ -95,8 +175,10 @@ export async function classifySettledRefund(
       // завершении (RegistrySyncFailed), статус в реестр приносит уже отдельная
       // транзакция `syncRegistry()`, в чьих логах дележа не будет. Поэтому
       // падаем в состояние, а не отвечаем сразу.
-    } catch {
-      // До цепи не доехали — ниже вторая попытка, по состоянию.
+    } catch (err) {
+      // До цепи не доехали — ниже вторая попытка, по состоянию. Если же это не
+      // цепь, а мы сами, пусть об этом хотя бы останется след.
+      reportIfBug(err, 'the receipt path', agreement);
     }
   }
 
@@ -132,11 +214,16 @@ export async function classifySettledRefund(
       disputeWindow: disputeWindow.data,
     });
 
-    if (settlement.kind === 'split') {
-      return { kind: 'split', toClient: settlement.toClient, toExecutor: settlement.toExecutor };
-    }
+    // Суммы у `decideArbiterTimeout` есть, и они РАСЧЁТНЫЕ — `splitPot(pot)`.
+    // На странице сделки это верно: там они предсказывают, что случится, и
+    // ветку заблокированного исполнителя никто предсказать не может. Здесь же
+    // выплата уже прошла, и назвать расчётное числом «сколько тебе пришло»
+    // значило бы соврать всякий раз, когда мягкий перевод не прошёл. Признак
+    // берём, суммы — намеренно роняем.
+    if (settlement.kind === 'split') return { kind: 'split-amounts-unknown' };
     return { kind: settlement.kind };
-  } catch {
+  } catch (err) {
+    reportIfBug(err, 'the state path', agreement);
     return { kind: 'unknown' };
   }
 }
@@ -146,7 +233,9 @@ export async function classifySettledRefund(
  * остальные в `hooks/useNotifications` — локализации у ленты нет, и заводить её
  * ради одной записи значило бы оставить рядом четырнадцать английских соседей.
  *
- * Суммы — обе, а не «пополам» словом: на нечётном котле они разные.
+ * Суммы — обе, а не «пополам» словом: на нечётном котле они разные. И только
+ * там, где они фактические: `split-amounts-unknown` не называет ни одной, ровно
+ * как 'unknown'.
  */
 export function refundNotifCopy(
   outcome: SettledRefund,
@@ -161,6 +250,18 @@ export function refundNotifCopy(
       body:
         'Nobody took the dispute, so there was nobody to judge it. The escrow was split — '
         + `${mine} USDC to you, ${other} USDC to ${otherParty}.`,
+    };
+  }
+
+  // Дележ без сумм. Обеим сторонам одно и то же — назвать «твою половину» здесь
+  // нельзя ни одной из них.
+  if (outcome.kind === 'split-amounts-unknown') {
+    return {
+      title: 'Escrow Split',
+      body:
+        'Nobody took the dispute, so there was nobody to judge it, and the escrow was split '
+        + "between the two of you. We couldn't read the exact amounts — check your wallet for "
+        + 'the amount you received.',
     };
   }
 
