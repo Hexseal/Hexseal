@@ -95,7 +95,7 @@ contract BoardsTest is Test {
         regSels[11] = RegistryFacet.authorizedFactory.selector;
 
         // --- Factory selectors ---
-        bytes4[] memory facSels = new bytes4[](17);
+        bytes4[] memory facSels = new bytes4[](18);
         facSels[0] = FactoryFacet.initFactory.selector;
         facSels[1] = FactoryFacet.deployAgreement.selector;
         facSels[2] = FactoryFacet.setRegionFee.selector;
@@ -113,6 +113,7 @@ contract BoardsTest is Test {
         facSels[14] = FactoryFacet.setFeeFloor.selector;
         facSels[15] = FactoryFacet.setMaxPendingRequests.selector;
         facSels[16] = FactoryFacet.quoteFee.selector;
+        facSels[17] = FactoryFacet.getMaxPendingRequests.selector;
 
         // --- JobBoardFacet selectors ---
         bytes4[] memory jobSels = new bytes4[](11);
@@ -1118,24 +1119,32 @@ contract BoardsTest is Test {
     //  FEE FORMULA
     // ============================================================
 
-    function testQuoteFee_PercentageAboveFloor() public {
+    function testQuoteFee_PercentageAboveFloor() public view {
         // 5% от $200 = $10, пол не срабатывает
         assertEq(FactoryFacet(address(diamond)).quoteFee(200_000_000), 10_000_000);
     }
 
-    function testQuoteFee_FloorBelowCrossover() public {
+    function testQuoteFee_FloorBelowCrossover() public view {
         // 5% от $5 = $0.25, пол $1 срабатывает
         assertEq(FactoryFacet(address(diamond)).quoteFee(5_000_000), 1_000_000);
     }
 
-    function testQuoteFee_ExactCrossover() public {
+    function testQuoteFee_ExactCrossover() public view {
         // $20 — ровно стык: 5% = $1 = пол
         assertEq(FactoryFacet(address(diamond)).quoteFee(20_000_000), 1_000_000);
     }
 
-    function testQuoteFee_LargeDeal() public {
+    function testQuoteFee_LargeDeal() public view {
         // 5% от $1000 = $50
         assertEq(FactoryFacet(address(diamond)).quoteFee(1_000_000_000), 50_000_000);
+    }
+
+    function testQuoteFee_ZeroAmountReturnsFloor() public view {
+        // amount=0 -> 5% от 0 = 0, пол $1 срабатывает. На практике недостижимо
+        // (выше по стеку ZeroAmount гейтит нулевую сумму раньше), но поведение
+        // формулы закреплено явно — чтобы будущий рефакторинг не перевернул
+        // его молча.
+        assertEq(FactoryFacet(address(diamond)).quoteFee(0), 1_000_000);
     }
 
     function testSetFeeBps_OnlyOwner() public {
@@ -1147,6 +1156,49 @@ contract BoardsTest is Test {
     function testSetFeeBps_ChangesQuote() public {
         FactoryFacet(address(diamond)).setFeeBps(300); // 3%
         assertEq(FactoryFacet(address(diamond)).quoteFee(1_000_000_000), 30_000_000);
+    }
+
+    function testSetFeeBps_RevertsAboveCap() public {
+        vm.expectRevert(FactoryFacet.FeeBpsTooHigh.selector);
+        FactoryFacet(address(diamond)).setFeeBps(2_001);
+    }
+
+    function testSetFeeBps_AllowsExactCap() public {
+        FactoryFacet(address(diamond)).setFeeBps(2_000); // ровно 20% — потолок, не должен ревертить
+        assertEq(FactoryFacet(address(diamond)).quoteFee(100_000_000), 20_000_000);
+    }
+
+    function testSetFeeFloor_OnlyOwner() public {
+        vm.prank(client);
+        vm.expectRevert(FactoryFacet.NotOwner.selector);
+        FactoryFacet(address(diamond)).setFeeFloor(2_000_000);
+    }
+
+    function testSetFeeFloor_RevertsOnZero() public {
+        vm.expectRevert(FeeNotConfigured.selector);
+        FactoryFacet(address(diamond)).setFeeFloor(0);
+    }
+
+    function testSetFeeFloor_ChangesQuote() public {
+        FactoryFacet(address(diamond)).setFeeFloor(2_000_000); // пол $2
+        // 5% от $5 = $0.25, ниже нового пола $2 — пол побеждает
+        assertEq(FactoryFacet(address(diamond)).quoteFee(5_000_000), 2_000_000);
+    }
+
+    function testGetMaxPendingRequests_DefaultIsFive() public view {
+        assertEq(FactoryFacet(address(diamond)).getMaxPendingRequests(), 5);
+    }
+
+    function testSetMaxPendingRequests_OnlyOwner() public {
+        vm.prank(client);
+        vm.expectRevert(FactoryFacet.NotOwner.selector);
+        FactoryFacet(address(diamond)).setMaxPendingRequests(3);
+    }
+
+    function testSetMaxPendingRequests_ZeroAllowed() public {
+        // 0 = без ограничения — сеттер обязан пропускать ноль, не ревертить
+        FactoryFacet(address(diamond)).setMaxPendingRequests(0);
+        assertEq(FactoryFacet(address(diamond)).getMaxPendingRequests(), 0);
     }
 
     function testGetRegionFee_NowReverts() public {
