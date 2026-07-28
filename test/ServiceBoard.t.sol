@@ -405,10 +405,269 @@ contract ServiceBoardTest is BoardsFixture {
 
         // Освобождаем слот — шестая проходит
         ServiceBoardFacet(address(diamond)).cancelRequest(firstId);
-        ServiceBoardFacet(address(diamond)).requestService(
+        uint256 sixthId = ServiceBoardFacet(address(diamond)).requestService(
             serviceIds[5], amount, DEADLINE, TERMS, REGION
         );
         vm.stopPrank();
+
+        // Не просто "не ревертнуло" — заявка реально создана и висит PENDING
+        // (без гейта вообще этот тест был бы зелёным точно так же).
+        ServiceBoardStorage.HireRequest memory sixth = ServiceBoardFacet(address(diamond)).getRequest(sixthId);
+        assertEq(uint256(sixth.status), uint256(ServiceBoardStorage.RequestStatus.PENDING));
+    }
+
+    function testPendingRequestCap_FreesSlotOnAccept() public {
+        uint256 amount = 20_000_000;
+        uint256 fee = 1_000_000;
+
+        uint256[] memory serviceIds = new uint256[](6);
+        address[] memory execs = new address[](6);
+        for (uint256 i = 0; i < 6; i++) {
+            execs[i] = address(uint160(0x6000 + i));
+            usdc.mint(execs[i], fee);
+            vm.startPrank(execs[i]);
+            usdc.approve(address(diamond), fee);
+            serviceIds[i] = ServiceBoardFacet(address(diamond)).mintService(
+                "Service", "Desc", 100_000_000, DEADLINE, REGION
+            );
+            vm.stopPrank();
+        }
+
+        usdc.mint(client, 6 * (amount + fee));
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 6 * (amount + fee));
+
+        uint256 firstId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceIds[0], amount, DEADLINE, TERMS, REGION
+        );
+        for (uint256 i = 1; i < 5; i++) {
+            ServiceBoardFacet(address(diamond)).requestService(
+                serviceIds[i], amount, DEADLINE, TERMS, REGION
+            );
+        }
+        vm.stopPrank();
+
+        // Resolve one via acceptRequest (path 1's decrement), not cancel —
+        // that decrement site is the one testPendingRequestCap_FreesSlotOnCancel
+        // does not exercise.
+        vm.prank(execs[0]);
+        ServiceBoardFacet(address(diamond)).acceptRequest(firstId);
+
+        vm.startPrank(client);
+        uint256 sixthId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceIds[5], amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        ServiceBoardStorage.HireRequest memory sixth = ServiceBoardFacet(address(diamond)).getRequest(sixthId);
+        assertEq(uint256(sixth.status), uint256(ServiceBoardStorage.RequestStatus.PENDING));
+    }
+
+    function testPendingRequestCap_FreesSlotOnReject() public {
+        uint256 amount = 20_000_000;
+        uint256 fee = 1_000_000;
+
+        uint256[] memory serviceIds = new uint256[](6);
+        address[] memory execs = new address[](6);
+        for (uint256 i = 0; i < 6; i++) {
+            execs[i] = address(uint160(0x7000 + i));
+            usdc.mint(execs[i], fee);
+            vm.startPrank(execs[i]);
+            usdc.approve(address(diamond), fee);
+            serviceIds[i] = ServiceBoardFacet(address(diamond)).mintService(
+                "Service", "Desc", 100_000_000, DEADLINE, REGION
+            );
+            vm.stopPrank();
+        }
+
+        usdc.mint(client, 6 * (amount + fee));
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 6 * (amount + fee));
+
+        uint256 firstId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceIds[0], amount, DEADLINE, TERMS, REGION
+        );
+        for (uint256 i = 1; i < 5; i++) {
+            ServiceBoardFacet(address(diamond)).requestService(
+                serviceIds[i], amount, DEADLINE, TERMS, REGION
+            );
+        }
+        vm.stopPrank();
+
+        // Resolve one via rejectRequest (path 3's decrement).
+        vm.prank(execs[0]);
+        ServiceBoardFacet(address(diamond)).rejectRequest(firstId);
+
+        vm.startPrank(client);
+        uint256 sixthId = ServiceBoardFacet(address(diamond)).requestService(
+            serviceIds[5], amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        ServiceBoardStorage.HireRequest memory sixth = ServiceBoardFacet(address(diamond)).getRequest(sixthId);
+        assertEq(uint256(sixth.status), uint256(ServiceBoardStorage.RequestStatus.PENDING));
+    }
+
+    function testPendingRequestCap_FreesTwoSlotsOnSupersede() public {
+        uint256 amount = 20_000_000;
+        uint256 fee = 1_000_000;
+
+        // exec0 hosts TWO services -- the client requests both, so accepting
+        // one auto-supersedes the sibling request to the same executor via
+        // the loop inside acceptRequest. Three more distinct executors fill
+        // the cap to 5 pending total; two more distinct executors serve as
+        // post-resolution probes.
+        //
+        // This isolates the sibling-loop decrement from acceptRequest's own
+        // (path 1) decrement: accepting always frees exactly one slot via
+        // path 1 alone, so a single post-resolution probe can't tell the two
+        // decrements apart. Two probes can -- if the sibling-loop decrement
+        // were missing, only one slot would actually be free (path 1's),
+        // and the second probe would revert TooManyPendingRequests.
+        address exec0 = address(uint160(0x8000));
+        usdc.mint(exec0, 2 * fee);
+        vm.startPrank(exec0);
+        usdc.approve(address(diamond), 2 * fee);
+        uint256 serviceA = ServiceBoardFacet(address(diamond)).mintService(
+            "Service", "Desc", 100_000_000, DEADLINE, REGION
+        );
+        uint256 serviceB = ServiceBoardFacet(address(diamond)).mintService(
+            "Service", "Desc", 100_000_000, DEADLINE, REGION
+        );
+        vm.stopPrank();
+
+        uint256[] memory fillerServiceIds = new uint256[](3);
+        for (uint256 i = 0; i < 3; i++) {
+            address exec = address(uint160(0x8100 + i));
+            usdc.mint(exec, fee);
+            vm.startPrank(exec);
+            usdc.approve(address(diamond), fee);
+            fillerServiceIds[i] = ServiceBoardFacet(address(diamond)).mintService(
+                "Service", "Desc", 100_000_000, DEADLINE, REGION
+            );
+            vm.stopPrank();
+        }
+
+        uint256[] memory probeServiceIds = new uint256[](2);
+        for (uint256 i = 0; i < 2; i++) {
+            address exec = address(uint160(0x8200 + i));
+            usdc.mint(exec, fee);
+            vm.startPrank(exec);
+            usdc.approve(address(diamond), fee);
+            probeServiceIds[i] = ServiceBoardFacet(address(diamond)).mintService(
+                "Service", "Desc", 100_000_000, DEADLINE, REGION
+            );
+            vm.stopPrank();
+        }
+
+        usdc.mint(client, 7 * (amount + fee));
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 7 * (amount + fee));
+
+        uint256 requestA = ServiceBoardFacet(address(diamond)).requestService(
+            serviceA, amount, DEADLINE, TERMS, REGION
+        );
+        uint256 requestB = ServiceBoardFacet(address(diamond)).requestService(
+            serviceB, amount, DEADLINE, TERMS, REGION
+        );
+        for (uint256 i = 0; i < 3; i++) {
+            ServiceBoardFacet(address(diamond)).requestService(
+                fillerServiceIds[i], amount, DEADLINE, TERMS, REGION
+            );
+        }
+        vm.stopPrank();
+
+        // exec0 accepts requestA -- requestB (same client, same executor,
+        // still PENDING) is auto-superseded by the sibling loop.
+        vm.prank(exec0);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestA);
+
+        ServiceBoardStorage.HireRequest memory reqB = ServiceBoardFacet(address(diamond)).getRequest(requestB);
+        assertEq(uint256(reqB.status), uint256(ServiceBoardStorage.RequestStatus.SUPERSEDED));
+
+        vm.startPrank(client);
+        uint256 probe1 = ServiceBoardFacet(address(diamond)).requestService(
+            probeServiceIds[0], amount, DEADLINE, TERMS, REGION
+        );
+        uint256 probe2 = ServiceBoardFacet(address(diamond)).requestService(
+            probeServiceIds[1], amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        ServiceBoardStorage.HireRequest memory p1 = ServiceBoardFacet(address(diamond)).getRequest(probe1);
+        ServiceBoardStorage.HireRequest memory p2 = ServiceBoardFacet(address(diamond)).getRequest(probe2);
+        assertEq(uint256(p1.status), uint256(ServiceBoardStorage.RequestStatus.PENDING));
+        assertEq(uint256(p2.status), uint256(ServiceBoardStorage.RequestStatus.PENDING));
+    }
+
+    function testMaxPendingRequestsZeroMeansUnlimited() public {
+        // Standalone assertion of the zero-means-unlimited semantics, so it
+        // doesn't depend on testRequestServiceRevertsWhenPendingCapReached's
+        // unrelated setMaxPendingRequests(0) call for coverage -- if that
+        // test's cap value is ever changed away from 0, this one still pins
+        // the behavior.
+        FactoryFacet(address(diamond)).setMaxPendingRequests(0);
+
+        uint256 amount = 20_000_000;
+        uint256 fee = 1_000_000;
+
+        uint256[] memory serviceIds = new uint256[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            address exec = address(uint160(0x9000 + i));
+            usdc.mint(exec, fee);
+            vm.startPrank(exec);
+            usdc.approve(address(diamond), fee);
+            serviceIds[i] = ServiceBoardFacet(address(diamond)).mintService(
+                "Service", "Desc", 100_000_000, DEADLINE, REGION
+            );
+            vm.stopPrank();
+        }
+
+        usdc.mint(client, 7 * (amount + fee));
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 7 * (amount + fee));
+        for (uint256 i = 0; i < 7; i++) {
+            ServiceBoardFacet(address(diamond)).requestService(
+                serviceIds[i], amount, DEADLINE, TERMS, REGION
+            );
+        }
+        vm.stopPrank();
+
+        assertEq(ServiceBoardFacet(address(diamond)).getClientRequests(client).length, 7);
+    }
+
+    function testLegacyPendingRequestDoesNotUnderflowOnResolve() public {
+        // Simulates a request created by the PRE-Task-6 facet: PENDING in
+        // storage, but pendingRequestCount was never incremented for this
+        // client, because the field (and the increment) didn't exist yet at
+        // the time it was created. A plain `--` on any of the four
+        // PENDING-exit paths would underflow (Panic 0x11) on the very first
+        // resolve, permanently stranding requestFunds in the Diamond.
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        // pendingRequestCount is field index 11 (the 12th field) of
+        // ServiceBoardStorage.Layout -- every field before it (mappings,
+        // dynamic arrays, uint256) occupies exactly one slot in the struct's
+        // own layout, so the mapping's base slot is POSITION + 11.
+        bytes32 mappingSlot = bytes32(uint256(ServiceBoardStorage.POSITION) + 11);
+        bytes32 countSlot = keccak256(abi.encode(client, mappingSlot));
+
+        // Sanity check: _requestService() just incremented it to 1.
+        assertEq(uint256(vm.load(address(diamond), countSlot)), 1);
+
+        // Force it back to 0 -- the actual legacy state this request would
+        // have had if the facet had never known about this counter.
+        vm.store(address(diamond), countSlot, bytes32(uint256(0)));
+
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
+
+        ServiceBoardStorage.HireRequest memory req = ServiceBoardFacet(address(diamond)).getRequest(requestId);
+        assertEq(uint256(req.status), uint256(ServiceBoardStorage.RequestStatus.CANCELLED));
+
+        // Clamped at 0, not wrapped to type(uint256).max.
+        assertEq(uint256(vm.load(address(diamond), countSlot)), 0);
     }
 
     function testRemoveService() public {

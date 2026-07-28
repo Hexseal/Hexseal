@@ -478,7 +478,7 @@ contract ServiceBoardFacet {
 
         // Effects first
         req.status = ServiceBoardStorage.RequestStatus.ACCEPTED;
-        s.pendingRequestCount[req.client]--;
+        _decrementPendingCount(s, req.client);
         svc.hiresCount++;
 
         uint256 held = s.requestFunds[requestId];
@@ -533,7 +533,7 @@ contract ServiceBoardFacet {
             ServiceBoardStorage.HireRequest storage siblingReq = s.requests[siblingId];
             if (siblingReq.status != ServiceBoardStorage.RequestStatus.PENDING) continue;
             siblingReq.status = ServiceBoardStorage.RequestStatus.SUPERSEDED;
-            s.pendingRequestCount[client]--;
+            _decrementPendingCount(s, client);
             uint256 siblingRefund = s.requestFunds[siblingId];
             s.requestFunds[siblingId] = 0;
 
@@ -564,7 +564,7 @@ contract ServiceBoardFacet {
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.REJECTED;
-        s.pendingRequestCount[req.client]--;
+        _decrementPendingCount(s, req.client);
         _removePendingPair(req.client, svc.executor, requestId);
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;
@@ -595,7 +595,7 @@ contract ServiceBoardFacet {
         if (req.status != ServiceBoardStorage.RequestStatus.PENDING) revert RequestNotPending();
 
         req.status = ServiceBoardStorage.RequestStatus.CANCELLED;
-        s.pendingRequestCount[req.client]--;
+        _decrementPendingCount(s, req.client);
         _removePendingPair(req.client, svc.executor, requestId);
         uint256 refund = s.requestFunds[requestId];
         s.requestFunds[requestId] = 0;
@@ -703,6 +703,22 @@ contract ServiceBoardFacet {
     }
 
     // -------- INTERNAL --------
+
+    /// @dev Saturating decrement. Requests created by the pre-Task-6 facet
+    ///      never incremented this counter (it didn't exist yet), so the
+    ///      first PENDING→resolved transition on one of those legacy
+    ///      requests would read 0 for a client who has never made a request
+    ///      under the new code. A plain `--` there is a permanent Panic(0x11)
+    ///      on every future accept/reject/cancel/supersede for that client —
+    ///      requestFunds stuck in the Diamond with no way out, and even a
+    ///      brand-new request from that client can be blocked if a stale
+    ///      PENDING sibling is still sitting in the same pair's list. Clamping
+    ///      at 0 costs nothing for the steady-state (post-cutover) case, where
+    ///      the count is always accurate and never needs clamping.
+    function _decrementPendingCount(ServiceBoardStorage.Layout storage s, address clientAddr) internal {
+        uint256 c = s.pendingRequestCount[clientAddr];
+        if (c != 0) s.pendingRequestCount[clientAddr] = c - 1;
+    }
 
     function _removePendingPair(address clientAddr, address executorAddr, uint256 requestId) internal {
         uint256[] storage list = ServiceBoardStorage.store().pendingRequestIdsByClientAndExecutor[clientAddr][executorAddr];
