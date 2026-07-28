@@ -16,8 +16,11 @@ pragma solidity ^0.8.20;
 //
 //   1) Спор перестаёт быть бесплатным. Agreement.resolveDispute удерживает
 //      DISPUTE_FEE_BPS = 300 (3%) от котла (amount + extras) с потолком
-//      DISPUTE_FEE_CAP = $500 и без нижней границы, переводит их диамонду и
-//      зовёт creditDisputeFee, где сбор расходится 80% арбитру / остаток казне.
+//      DISPUTE_FEE_CAP = $500 и без нижней границы, зовёт creditDisputeFee
+//      (где сбор расписывается 80% арбитру / остаток казне) и переводит деньги
+//      диамонду ТОЛЬКО если зачисление прошло. Порядок именно такой и он
+//      намеренный: при обратном сбор сгорал бы на каждом провале — у диамонда
+//      нет функции спасения. См. Agreement.sol, комментарий над этим блоком.
 //      Раньше сбор был нулевым: победитель забирал котёл целиком, а арбитр
 //      работал за награду из банка. Сбор берётся при любом исходе — и когда
 //      прав клиент, и когда прав исполнитель.
@@ -48,14 +51,19 @@ pragma solidity ^0.8.20;
 // В отличие от июльского инцидента с fundVault, провал здесь НЕ молчаливый:
 // там distribute() возвращался успехом и ничего не перемещал, а расхождение
 // заметили только по балансу. Здесь каждый пропущенный сбор виден как
-// DisputeFeeSkipped в логах сделки. Скрипт к тому же читает диамонд и печатает
-// ниже, смонтирован ли creditDisputeFee, — но не блокирует запуск: до
-// броадкаста Задачи 5 селектора там нет по определению, и сухой прогон должен
-// проходить.
+// DisputeFeeSkipped в логах сделки.
 //
-// ВЫКАТЫВАТЬ ВМЕСТЕ С ЭТИМ: хендлер DisputeSplitNoVerdict в сабграфе
-// (docs/OPEN-ITEMS.md пункт 8). Без него сделка, закрытая дележом, на цепи
-// финализирована и пуста, а во всех интерфейсах висит в статусе «спор» вечно.
+// Но полагаться на то, что оператор заметит строку в логе, незачем: скрипт
+// читает диамонд и при БРОАДКАСТЕ отказывается стартовать, если creditDisputeFee
+// там не смонтирован. Сухой прогон при этом проходит — гейт различает контексты
+// через vm.isContext(ForgeContext.ScriptBroadcast), а не по состоянию цепи.
+// Иначе обязательный сухой прогон был бы невозможен до выкатки Задачи 5.
+//
+// ВЫКАТЫВАТЬ ВМЕСТЕ С ЭТИМ — И ЭТО БЛОКЕР РЕЛИЗА, а не пожелание: хендлер
+// DisputeSplitNoVerdict в сабграфе (docs/OPEN-ITEMS.md пункт 8, помечен там как
+// блокирующий выкатку). Без него сделка, закрытая дележом, на цепи финализирована
+// и пуста, а во всех интерфейсах висит в статусе «спор» вечно — состояние
+// интерфейса расходится с состоянием цепи, и расходится необратимо.
 //
 // Usage (сухой прогон — сначала всегда он):
 //   forge script script/UpgradeAgreementDisputeFee.s.sol \
@@ -128,16 +136,23 @@ contract UpgradeAgreementDisputeFee is Script {
             console.log("  clones impl:         n/a (pre-clones deployer, deploys full contracts)");
         }
 
-        // Не гейт, а громкая справка: до броадкаста Задачи 5 селектора здесь
-        // нет, и сухой прогон обязан проходить. См. «ПОРЯДОК ВЫКАТКИ» в шапке.
+        // Гейт на порядок выкатки. Ключ — не состояние цепи, а КОНТЕКСТ запуска:
+        // до броадкаста Задачи 5 селектора здесь нет по определению, и сухой
+        // прогон обязан проходить, а вот боевой запуск в неверном порядке должен
+        // быть невозможен. Полагаться на то, что оператор заметит строку с "!!"
+        // в прокручивающемся логе, — не защита.
         address creditRouter = ILoupe(diamond).facetAddress(ArbiterRegistryFacet.creditDisputeFee.selector);
         if (creditRouter == address(0)) {
             console.log("");
             console.log("!! creditDisputeFee is NOT mounted on this diamond.");
             console.log("!! Expected in a dry run before UpgradeArbiterRegistryDisputeFee.s.sol");
-            console.log("!! is broadcast. If you see this with --broadcast, you are shipping in");
-            console.log("!! the wrong order: every dispute closed until the facet lands emits");
-            console.log("!! DisputeFeeSkipped, and those 3% are lost for good.");
+            console.log("!! is broadcast. Shipping in this order would cost the protocol its 3%");
+            console.log("!! on every dispute resolved by verdict until the facet lands, and the");
+            console.log("!! arbiters their rewards for those. Not recoverable after the fact.");
+            require(
+                !vm.isContext(VmSafe.ForgeContext.ScriptBroadcast),
+                "upgrade: creditDisputeFee is not mounted - ship UpgradeArbiterRegistryDisputeFee.s.sol first"
+            );
         } else {
             console.log("  creditDisputeFee -> ", creditRouter);
         }
@@ -184,12 +199,22 @@ contract UpgradeAgreementDisputeFee is Script {
         console.log("  dispute fee bps:    ", agreementImpl.DISPUTE_FEE_BPS());
         console.log("  dispute fee cap:    ", agreementImpl.DISPUTE_FEE_CAP());
         console.log("");
-        console.log("New deals pay the dispute fee and split an unclaimed pot in half.");
+        if (creditRouter != address(0)) {
+            console.log("New deals pay the dispute fee and split an unclaimed pot in half.");
+        } else {
+            console.log("New deals split an unclaimed pot in half. They will NOT pay the dispute");
+            console.log("fee until creditDisputeFee is mounted - see the !! block above.");
+        }
         console.log("Deals that already exist keep the old logic - this is not a migration.");
         console.log("");
-        console.log("Still owed with this release: the DisputeSplitNoVerdict handler in the");
-        console.log("subgraph (docs/OPEN-ITEMS.md item 8). Without it a pot settled by split");
-        console.log("shows as 'disputed' forever in every interface.");
+        console.log("STILL A RELEASE BLOCKER: the DisputeSplitNoVerdict handler in the subgraph");
+        console.log("(docs/OPEN-ITEMS.md item 8, filed there as blocking). Without it a pot");
+        console.log("settled by split is finalized and empty on chain while every interface");
+        console.log("shows it as 'disputed' - forever, and the divergence does not heal.");
+        console.log("");
+        console.log("Confirm on chain after the broadcast, not from this simulation log:");
+        console.log("  cast call <diamond> \"getAgreementDeployer()(address)\" \\");
+        console.log("    --rpc-url https://sepolia.base.org");
         console.log("");
         console.log("Rollback - one transaction, but read what it does NOT undo:");
         console.log("");
@@ -204,15 +229,27 @@ contract UpgradeAgreementDisputeFee is Script {
         console.log("  Swapping the deployer restores the old behaviour for NEW deals only;");
         console.log("  there is no way to move an existing clone to another implementation.");
         console.log("");
-        console.log("  Those clones keep charging the 3% and keep splitting an unclaimed pot");
-        console.log("  in half for as long as the arbiter facet stays mounted. Nothing breaks");
-        console.log("  and nothing is stuck - they simply behave the way they were minted.");
+        console.log("  Those clones keep charging the 3% for as long as the arbiter facet stays");
+        console.log("  mounted. Separately, and regardless of any facet, they keep splitting an");
+        console.log("  unclaimed pot in half: that branch is local arithmetic inside the");
+        console.log("  agreement. Nothing breaks and nothing is stuck - they simply behave the");
+        console.log("  way they were minted.");
         console.log("");
         console.log("  If the facet is rolled back too, creditDisputeFee stops existing and");
         console.log("  those same clones close their disputes fine: the call sits in a try");
         console.log("  with the transfer inside it, so the whole pot goes to the winner and");
-        console.log("  the agreement emits DisputeFeeSkipped. The half-split on an unclaimed");
-        console.log("  timeout stays either way - it is local to the agreement and no facet");
-        console.log("  rollback touches it.");
+        console.log("  the agreement emits DisputeFeeSkipped.");
+        console.log("");
+        console.log("  BUT ROLLING THE FACET BACK IS NOT ONE COMMAND. Follow the three-step");
+        console.log("  order printed by script/UpgradeArbiterRegistryDisputeFee.s.sol: its");
+        console.log("  step 2 drains getTreasurySlice() while the new facet is still mounted,");
+        console.log("  and step 3 makes step 2 impossible. Skip the order and the accrued");
+        console.log("  slice becomes USDC on the diamond with no mounted function reaching it.");
+        console.log("");
+        console.log("  One caveat on the half-split surviving: triggerArbiterTimeout calls");
+        console.log("  hasSubmittedVerdict OUTSIDE any try. That selector predates this branch");
+        console.log("  and is among the 44 a facet rollback restores, so the split does survive");
+        console.log("  the documented rollback - but unmount that one selector by hand and the");
+        console.log("  whole timeout path reverts, split included.");
     }
 }
