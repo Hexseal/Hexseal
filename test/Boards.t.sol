@@ -53,9 +53,12 @@ contract BoardsTest is Test {
     address executor;
     address feeRecipient;
 
-    uint8 constant REGION = 0; // CIS — $2 fee
-    uint256 constant FEE = 2_000_000; // $2 USDC
+    uint8 constant REGION = 0; // CIS — $2 fee (ServiceBoard: ещё region-priced)
+    uint256 constant FEE = 2_000_000; // $2 USDC — ServiceBoard fee (fs.regionFee)
     uint256 constant AMOUNT = 100_000_000; // $100 USDC
+    // JobBoard теперь prices через quote(): max(AMOUNT * 500 / 10_000, 1_000_000).
+    uint256 constant JOB_FEE = 5_000_000;   // 5% от AMOUNT
+    uint256 constant JOB_FLOOR = 1_000_000; // fs.feeFloor — несгораемый пол при cancelJob
     uint256 constant DEADLINE = 7;
     string constant TERMS = "Standard work terms";
 
@@ -227,7 +230,9 @@ contract BoardsTest is Test {
 
     function _approveAndMintJob() internal returns (uint256 jobId) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), FEE + AMOUNT);
+        // JobBoard теперь prices через quote() (percentage), не по региону —
+        // approve на весь баланс вместо точной старой суммы FEE + AMOUNT.
+        usdc.approve(address(diamond), type(uint256).max);
         jobId = JobBoardFacet(address(diamond)).mintJob(
             "Build a dApp",
             "Need a Solidity dev",
@@ -256,10 +261,10 @@ contract BoardsTest is Test {
         assertEq(job.amount, AMOUNT);
         assertEq(uint256(job.status), uint256(JobBoardStorage.JobStatus.OPEN));
 
-        // Fee sгорела, amount в Diamond
-        assertEq(usdc.balanceOf(client), clientBefore - FEE - AMOUNT);
-        assertEq(usdc.balanceOf(feeRecipient), feeBefore + FEE);
-        assertEq(usdc.balanceOf(address(diamond)), AMOUNT);
+        // Комиссия удержана в Diamond — сделки ещё нет, получателю ничего не ушло
+        assertEq(usdc.balanceOf(client), clientBefore - JOB_FEE - AMOUNT);
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore);
+        assertEq(usdc.balanceOf(address(diamond)), AMOUNT + JOB_FEE);
     }
 
     function testMintJobInvalidTitle() public {
@@ -316,7 +321,7 @@ contract BoardsTest is Test {
         vm.prank(executor);
         JobBoardFacet(address(diamond)).applyForJob(jobId);
 
-        uint256 diamondBefore = usdc.balanceOf(address(diamond));
+        uint256 feeBefore = usdc.balanceOf(feeRecipient);
 
         vm.prank(client);
         address agreementAddr = JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
@@ -327,8 +332,9 @@ contract BoardsTest is Test {
         assertEq(job.chosenExecutor, executor);
         assertEq(job.agreement, agreementAddr);
 
-        // Diamond отдал amount в Agreement
-        assertEq(usdc.balanceOf(address(diamond)), diamondBefore - AMOUNT);
+        // Diamond отдал amount в Agreement, а удержанную комиссию — в feeRecipient
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore + JOB_FEE);
 
         // Agreement зарегистрирован в Registry
         assertTrue(RegistryFacet(address(diamond)).hasActivePair(client, executor));
@@ -364,8 +370,9 @@ contract BoardsTest is Test {
         vm.prank(client);
         JobBoardFacet(address(diamond)).cancelJob(jobId);
 
-        // Refund
-        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT);
+        // Refund: amount + комиссия сверх пола, пол остаётся протоколу
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT + (JOB_FEE - JOB_FLOOR));
+        assertEq(usdc.balanceOf(feeRecipient), JOB_FLOOR);
         assertEq(usdc.balanceOf(address(diamond)), 0);
 
         // Статус
@@ -404,6 +411,83 @@ contract BoardsTest is Test {
         vm.prank(client);
         vm.expectRevert(JobBoardFacet.JobNotOpen.selector);
         JobBoardFacet(address(diamond)).cancelJob(jobId);
+    }
+
+    // ============================================================
+    //  JOB BOARD FEE HOLDING
+    // ============================================================
+
+    function testMintJob_FeeHeldNotForwarded() public {
+        uint256 amount = 200_000_000;      // $200
+        uint256 fee = 10_000_000;          // 5%
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        JobBoardFacet(address(diamond)).mintJob(
+            "Build a dApp", "Need a Solidity dev", amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        // Комиссия ещё НЕ у получателя — сделки нет
+        assertEq(usdc.balanceOf(feeRecipient), 0);
+        assertEq(usdc.balanceOf(address(diamond)), amount + fee);
+    }
+
+    function testAcceptApplicant_ForwardsHeldFee() public {
+        uint256 amount = 200_000_000;
+        uint256 fee = 10_000_000;
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        uint256 jobId = JobBoardFacet(address(diamond)).mintJob(
+            "Build a dApp", "Need a Solidity dev", amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+
+        assertEq(usdc.balanceOf(feeRecipient), fee);
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+    }
+
+    function testCancelJob_RefundsFeeAboveFloor() public {
+        uint256 amount = 200_000_000;      // $200
+        uint256 fee = 10_000_000;          // 5%
+        uint256 floor_ = 1_000_000;        // $1
+        uint256 before = usdc.balanceOf(client);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        uint256 jobId = JobBoardFacet(address(diamond)).mintJob(
+            "Build a dApp", "Need a Solidity dev", amount, DEADLINE, TERMS, REGION
+        );
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+        vm.stopPrank();
+
+        // Клиент потерял ровно пол, всё остальное вернулось
+        assertEq(usdc.balanceOf(client), before - floor_);
+        assertEq(usdc.balanceOf(feeRecipient), floor_);
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+    }
+
+    function testCancelJob_SmallDealBurnsWholeFee() public {
+        uint256 amount = 20_000_000;       // $20 — комиссия равна полу
+        uint256 fee = 1_000_000;
+        uint256 before = usdc.balanceOf(client);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        uint256 jobId = JobBoardFacet(address(diamond)).mintJob(
+            "Small task", "Tiny", amount, DEADLINE, TERMS, REGION
+        );
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(client), before - fee);
+        assertEq(usdc.balanceOf(feeRecipient), fee);
     }
 
     // ============================================================
@@ -828,7 +912,7 @@ contract BoardsTest is Test {
         _approveAndMintJob();
 
         vm.startPrank(client);
-        usdc.approve(address(diamond), FEE + AMOUNT);
+        usdc.approve(address(diamond), type(uint256).max);
         JobBoardFacet(address(diamond)).mintJob(
             "Second Job",
             "Another task",

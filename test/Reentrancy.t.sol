@@ -100,12 +100,16 @@ contract ReentrancyTest is Test {
     address feeRecipient;
 
     uint8   constant REGION     = 0;
-    uint256 constant BOARD_FEE  = 2_000_000; // JobBoard/ServiceBoard: still region-priced (Task 3/4)
+    uint256 constant BOARD_FEE  = 2_000_000; // ServiceBoard: still region-priced (Task 4)
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =  80_000_000;
     // FactoryFacet direct path (deployAgreement) prices by quote():
     // max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
     uint256 constant DIRECT_FEE = 5_000_000;
+    // JobBoardFacet now prices the same way — quote(JOB_AMOUNT) numerically
+    // equals DIRECT_FEE. cancelJob only burns the floor, refunding the rest.
+    uint256 constant JOB_FEE    = 5_000_000;
+    uint256 constant JOB_FLOOR  = 1_000_000;
     uint256 constant DEADLINE   = 7;
     string constant TERMS = "Standard work terms";
     bytes32 constant SALT       = bytes32("hexseal-reentrant-salt");
@@ -320,7 +324,7 @@ contract ReentrancyTest is Test {
 
     function _mintJobAndAccept() internal returns (uint256 jobId, address agr) {
         vm.startPrank(client);
-        malUSDC.approve(address(diamond), BOARD_FEE + JOB_AMOUNT);
+        malUSDC.approve(address(diamond), JOB_FEE + JOB_AMOUNT);
         jobId = JobBoardFacet(address(diamond)).mintJob(
             "Build a dApp", "Need a Solidity dev", JOB_AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -333,7 +337,7 @@ contract ReentrancyTest is Test {
 
     function _mintJobOpen() internal returns (uint256 jobId) {
         vm.startPrank(client);
-        malUSDC.approve(address(diamond), BOARD_FEE + JOB_AMOUNT);
+        malUSDC.approve(address(diamond), JOB_FEE + JOB_AMOUNT);
         jobId = JobBoardFacet(address(diamond)).mintJob(
             "Build a dApp", "Need a Solidity dev", JOB_AMOUNT, DEADLINE, TERMS, REGION
         );
@@ -497,7 +501,8 @@ contract ReentrancyTest is Test {
         assertTrue(malUSDC.reentrantReverted(),  "DiamondGuard must block reentrant cancelJob");
         assertFalse(malUSDC.reentrantSucceeded(), "double-refund must not happen");
 
-        assertEq(malUSDC.balanceOf(client), clientBefore + JOB_AMOUNT, "single refund only");
+        // Refund = amount + fee above the floor; the floor itself is forfeited.
+        assertEq(malUSDC.balanceOf(client), clientBefore + JOB_AMOUNT + (JOB_FEE - JOB_FLOOR), "single refund only");
         assertEq(malUSDC.balanceOf(address(diamond)), 0, "diamond drained exactly once");
     }
 

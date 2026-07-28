@@ -6,12 +6,16 @@ pragma solidity ^0.8.20;
 // Маркетплейс заказов: клиент создаёт заказ, исполнитель откликается
 // ============================================================
 //
-// Поток денег:
-//   mintJob():         fee → feeRecipient (сгорает)
-//                      amount → хранится в Diamond (JobBoardStorage)
-//   acceptApplicant(): вызывает FactoryFacet.deployAgreement() через Diamond
-//                      amount переводится из Diamond → Agreement
-//   cancelJob():       amount → обратно клиенту, fee не возвращается
+// Поток денег (комиссия = max(amount * feeBps / 10_000, feeFloor), см.
+// FactoryStorage.quote()):
+//   mintJob():         amount + fee → хранятся в Diamond (JobBoardStorage).
+//                      Комиссия ещё НЕ доход протокола — сделки нет.
+//   acceptApplicant(): вызывает FactoryFacet.deployAgreement() через Diamond;
+//                      amount переводится из Diamond → Agreement, а
+//                      удержанная комиссия — из Diamond → feeRecipient
+//                      (сделка создана, комиссия заработана).
+//   cancelJob():       amount и комиссия сверх пола — обратно клиенту; пол
+//                      ($1) остаётся протоколу как плата за место в ленте.
 // ============================================================
 
 import "../FactoryFacet.sol"; // для FactoryStorage
@@ -85,6 +89,10 @@ library JobBoardStorage {
         // Явный учёт USDC, хранящихся в Diamond под каждую работу.
         // Обнуляется при acceptApplicant / cancelJob.
         mapping(uint256 => uint256) jobFunds;
+        // Удержанная комиссия под каждый заказ. Лежит здесь, пока сделки нет:
+        // пересылается в казну при acceptApplicant, возвращается (кроме пола)
+        // при cancelJob. Обнуляется на обоих путях.
+        mapping(uint256 => uint256) jobFeeHeld;
     }
 
     function store() internal pure returns (Layout storage s) {
@@ -180,8 +188,7 @@ contract JobBoardFacet {
         if (region > 6) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
-        uint256 fee = fs.regionFee[region];
-        if (fee == 0) revert ZeroFee();
+        uint256 fee = FactoryStorage.quote(fs, amount);
 
         uint256 total = amount + fee;
 
@@ -207,9 +214,9 @@ contract JobBoardFacet {
         jbs.clientJobs[client].push(jobId);
 
         // --- Transfers ---
-        _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
-        _safeTransferFrom(fs.usdc, client, address(this), amount);
-        jbs.jobFunds[jobId] = amount;
+        _safeTransferFrom(fs.usdc, client, address(this), total);
+        jbs.jobFunds[jobId]   = amount;
+        jbs.jobFeeHeld[jobId] = fee;
 
         // --- Auto-mint job receipt NFT (non-blocking) ---
         try IJobReceiptMint(address(this)).mintJobReceipt(client, jobId, amount, deadlineDays, region, title) {} catch {}
@@ -239,8 +246,7 @@ contract JobBoardFacet {
         if (region > 6) revert InvalidRegion();
 
         FactoryStorage.Layout storage fs = FactoryStorage.store();
-        uint256 fee = fs.regionFee[region];
-        if (fee == 0) revert ZeroFee();
+        uint256 fee = FactoryStorage.quote(fs, amount);
 
         // --- Effects ---
         JobBoardStorage.Layout storage s = JobBoardStorage.store();
@@ -262,9 +268,9 @@ contract JobBoardFacet {
         s.clientJobs[client].push(jobId);
 
         // --- Transfers ---
-        _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
-        _safeTransferFrom(fs.usdc, client, address(this), amount);
-        s.jobFunds[jobId] = amount;
+        _safeTransferFrom(fs.usdc, client, address(this), amount + fee);
+        s.jobFunds[jobId]   = amount;
+        s.jobFeeHeld[jobId] = fee;
 
         // --- Auto-mint job receipt NFT (non-blocking) ---
         try IJobReceiptMint(address(this)).mintJobReceipt(client, jobId, amount, deadlineDays, region, title) {} catch {}
@@ -356,6 +362,11 @@ contract JobBoardFacet {
         s.jobFunds[jobId] = 0;
         _safeTransfer(fs.usdc, agreementAddr, held);
 
+        // Сделка создана — комиссия заработана, уходит в казну
+        uint256 feeHeld = s.jobFeeHeld[jobId];
+        s.jobFeeHeld[jobId] = 0;
+        if (feeHeld > 0) _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
+
         // --- Активируем Agreement ---
         (bool funded, ) = agreementAddr.call(abi.encodeWithSignature("fundFromFactory()"));
         require(funded, "JobBoard: fund failed");
@@ -367,7 +378,9 @@ contract JobBoardFacet {
         emit JobAccepted(jobId, job.client, executor, agreementAddr);
     }
 
-    /// @notice Клиент отменяет заказ (amount рефандится, fee нет) — gasless-совместим
+    /// @notice Клиент отменяет заказ — gasless-совместим.
+    /// @dev amount и комиссия сверх пола ($1) возвращаются клиенту; пол
+    ///      остаётся протоколу как плата за место в ленте.
     function cancelJob(uint256 jobId) external nonReentrant {
         address sender = _msgSender();
         JobBoardStorage.Layout storage s = JobBoardStorage.store();
@@ -384,7 +397,15 @@ contract JobBoardFacet {
 
         // --- Interaction ---
         FactoryStorage.Layout storage fs = FactoryStorage.store();
-        _safeTransfer(fs.usdc, job.client, refund);
+
+        // Сделки не было — процент возвращается, пол остаётся протоколу.
+        uint256 feeHeld = s.jobFeeHeld[jobId];
+        s.jobFeeHeld[jobId] = 0;
+        uint256 floor_ = fs.feeFloor;
+        uint256 burned = feeHeld < floor_ ? feeHeld : floor_;
+
+        _safeTransfer(fs.usdc, job.client, refund + (feeHeld - burned));
+        if (burned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, burned);
 
         // Burn receipt NFT — non-blocking so a failure doesn't block the refund
         try IJobReceiptBurn(address(this)).burnJobReceipt(jobId) {} catch {}

@@ -137,6 +137,7 @@ mapping(uint256=>address[]) applicants
 mapping(uint256=>mapping(address=>bool)) hasApplied
 address _deprecated_receiptNFT
 mapping(uint256=>uint256) jobFunds
+mapping(uint256=>uint256) jobFeeHeld
 
 === src/facets/ReputationFacet.sol :: ReputationStorage.Data ===
 mapping(address=>uint256) xp

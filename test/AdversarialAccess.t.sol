@@ -266,7 +266,9 @@ contract AdversarialAccessTest is Test {
 
     function _mintJob() internal returns (uint256 jobId) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), BOARD_FEE + JOB_AMOUNT);
+        // JobBoard prices через quote(): max(JOB_AMOUNT * 500 / 10_000, 1_000_000),
+        // численно совпадает с DIRECT_FEE для того же JOB_AMOUNT.
+        usdc.approve(address(diamond), JOB_AMOUNT + DIRECT_FEE);
         jobId = JobBoardFacet(address(diamond)).mintJob(
             "Build a dApp", "Need a Solidity dev", JOB_AMOUNT, DEADLINE, TERMS, REGION
         );

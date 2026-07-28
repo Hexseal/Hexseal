@@ -66,13 +66,17 @@ contract CriticalInvariantTest is Test {
     uint256 constant INITIAL_TOTAL = CLIENT_USDC + EXECUTOR_USDC + CLIENT2_USDC;
 
     uint8   constant REGION     = 0;
-    uint256 constant BOARD_FEE  = 2_000_000; // JobBoard/ServiceBoard: still region-priced (Task 3/4)
+    uint256 constant BOARD_FEE  = 2_000_000; // ServiceBoard: still region-priced (Task 4)
     uint256 constant JOB_AMOUNT = 100_000_000;
     uint256 constant SVC_AMOUNT =   80_000_000;
     uint256 constant SVC2_AMOUNT =  50_000_000;
     // FactoryFacet direct paths (deployAgreement/deployAndFund) price by
     // quote(): max(JOB_AMOUNT * 500 / 10_000, 1_000_000) = 5% of JOB_AMOUNT.
     uint256 constant DIRECT_FEE = 5_000_000;
+    // JobBoardFacet now prices the same way — quote(JOB_AMOUNT) numerically
+    // equals DIRECT_FEE. cancelJob only burns the floor, refunding the rest.
+    uint256 constant JOB_FEE    = 5_000_000;
+    uint256 constant JOB_FLOOR  = 1_000_000;
     uint256 constant DEADLINE   = 7;
     string constant TERMS = "Standard work terms";
     bytes32 constant SALT       = bytes32("hexseal-invariant-salt");
@@ -268,7 +272,7 @@ contract CriticalInvariantTest is Test {
 
     function _mintJob() internal returns (uint256 jobId) {
         vm.startPrank(client);
-        usdc.approve(address(diamond), BOARD_FEE + JOB_AMOUNT);
+        usdc.approve(address(diamond), JOB_FEE + JOB_AMOUNT);
         jobId = JobBoardFacet(address(diamond)).mintJob(
             "Build a dApp",
             "Need a Solidity dev",
@@ -351,8 +355,8 @@ contract CriticalInvariantTest is Test {
 
         uint256 jobId = _mintJob();
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after mintJob");
-        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee to recipient");
-        assertEq(usdc.balanceOf(address(diamond)), JOB_AMOUNT, "amount locked in diamond");
+        assertEq(usdc.balanceOf(feeRecipient), 0, "fee held, not forwarded yet");
+        assertEq(usdc.balanceOf(address(diamond)), JOB_AMOUNT + JOB_FEE, "amount + fee locked in diamond");
 
         address agr = _acceptJob(jobId);
         assertEq(_systemBalance(agr), INITIAL_TOTAL, "after accept");
@@ -371,9 +375,9 @@ contract CriticalInvariantTest is Test {
         Agreement(agr).release();
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after release");
 
-        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee final");
+        assertEq(usdc.balanceOf(feeRecipient), JOB_FEE, "fee final");
         assertEq(usdc.balanceOf(executor), EXECUTOR_USDC + JOB_AMOUNT, "executor paid");
-        assertEq(usdc.balanceOf(client), CLIENT_USDC - BOARD_FEE - JOB_AMOUNT, "client paid for job + fee");
+        assertEq(usdc.balanceOf(client), CLIENT_USDC - JOB_FEE - JOB_AMOUNT, "client paid for job + fee");
         assertEq(usdc.balanceOf(agr), 0, "agreement empty");
     }
 
@@ -387,8 +391,9 @@ contract CriticalInvariantTest is Test {
         JobBoardFacet(address(diamond)).cancelJob(jobId);
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after cancel");
 
-        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
-        assertEq(usdc.balanceOf(feeRecipient), BOARD_FEE, "fee recipient got fee");
+        // No deal was created — only the floor is forfeited, the rest of the fee refunds
+        assertEq(usdc.balanceOf(client), clientBefore - JOB_FLOOR, "client net: floor only");
+        assertEq(usdc.balanceOf(feeRecipient), JOB_FLOOR, "fee recipient got the floor");
         assertEq(usdc.balanceOf(address(diamond)), 0, "diamond empty");
     }
 
@@ -406,7 +411,7 @@ contract CriticalInvariantTest is Test {
         Agreement(agr).triggerActivationTimeout();
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after activation timeout");
 
-        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
+        assertEq(usdc.balanceOf(client), clientBefore - JOB_FEE, "client net: fee only");
         assertEq(usdc.balanceOf(agr), 0, "agreement empty");
     }
 
@@ -427,7 +432,7 @@ contract CriticalInvariantTest is Test {
         Agreement(agr).triggerDeadlineTimeout();
         assertEq(_systemBalance(address(0)), INITIAL_TOTAL, "after deadline timeout");
 
-        assertEq(usdc.balanceOf(client), clientBefore - BOARD_FEE, "client net: fee only");
+        assertEq(usdc.balanceOf(client), clientBefore - JOB_FEE, "client net: fee only");
         assertEq(usdc.balanceOf(agr), 0, "agreement empty");
     }
 
