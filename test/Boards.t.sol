@@ -650,6 +650,20 @@ contract BoardsTest is BoardsFixture {
         FactoryFacet(address(diamond)).getAllFees();
     }
 
+    function testSetRegionFee_NowReverts() public {
+        // Симметрично геттерам: рабочая запись рядом с ревертящим чтением
+        // означала бы, что админка «выставляет» комиссии, которые ничего не
+        // делают. Ревертит для владельца — то есть для всех.
+        vm.expectRevert(FeeNotRegional.selector);
+        FactoryFacet(address(diamond)).setRegionFee(0, 5_000_000);
+    }
+
+    function testSetRegionFee_RevertsForNonOwnerToo() public {
+        vm.prank(client);
+        vm.expectRevert(FeeNotRegional.selector);
+        FactoryFacet(address(diamond)).setRegionFee(0, 5_000_000);
+    }
+
     function testDeployAgreement_ChargesPercentage() public {
         uint256 amount = 200_000_000;      // $200
         uint256 expectedFee = 10_000_000;  // 5%
@@ -662,6 +676,334 @@ contract BoardsTest is BoardsFixture {
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(feeRecipient), expectedFee);
+    }
+
+    // ============================================================
+    //  FEE LEDGER READ PATH
+    // ============================================================
+
+    function testGetJobFeeHeld_ReportsWhatIsHeld() public {
+        uint256 jobId = _approveAndMintJob();
+        assertEq(JobBoardFacet(address(diamond)).getJobFeeHeld(jobId), JOB_FEE);
+    }
+
+    function testGetJobFeeHeld_ZeroBeforeAndAfterAccept() public {
+        assertEq(JobBoardFacet(address(diamond)).getJobFeeHeld(0), 0);
+
+        uint256 jobId = _approveAndMintJob();
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+
+        assertEq(JobBoardFacet(address(diamond)).getJobFeeHeld(jobId), 0);
+    }
+
+    function testGetJobFeeHeld_ClearedOnCancel() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+
+        assertEq(JobBoardFacet(address(diamond)).getJobFeeHeld(jobId), 0);
+    }
+
+    // ============================================================
+    //  FEE COLLECTED EVENT
+    // ============================================================
+
+    function testAcceptApplicant_EmitsFeeCollected() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+
+        // Событие эмитится из того места, где реально идёт перевод, поэтому
+        // несёт удержанную сумму — единственное число, совпадающее с движением
+        // денег на всех ставках.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit JobBoardFacet.FeeCollected(jobId, client, JOB_FEE);
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+    }
+
+    /// AgreementDeployed.fee считается заново на момент найма, а переводится
+    /// удержанное при постинге. Сигнатура события заморожена ради сабграфа, так
+    /// что расхождение никуда не денется — этот тест ФИКСИРУЕТ его исполняемо
+    /// (и потому проходит), чтобы индексатор не читался как источник правды о
+    /// заработанной комиссии.
+    function testAcceptApplicant_AgreementDeployedFeeDivergesFromWhatWasCollected() public {
+        uint256 jobId = _approveAndMintJob();   // удержано 5% от $100 = $5
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+
+        // Ставка меняется между постингом и наймом.
+        FactoryFacet(address(diamond)).setFeeBps(1_000); // 10%
+
+        vm.recordLogs();
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        uint256 announced;  // AgreementDeployed.fee — пересчитан на момент найма
+        uint256 collected;  // FeeCollected.amount   — реально переведено
+        bool sawAnnounced;
+        bool sawCollected;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == FactoryFacet.AgreementDeployed.selector) {
+                (, , announced) = abi.decode(logs[i].data, (uint256, uint8, uint256));
+                sawAnnounced = true;
+            } else if (logs[i].topics[0] == JobBoardFacet.FeeCollected.selector) {
+                collected = abi.decode(logs[i].data, (uint256));
+                sawCollected = true;
+            }
+        }
+        assertTrue(sawAnnounced, "AgreementDeployed not emitted");
+        assertTrue(sawCollected, "FeeCollected not emitted");
+
+        assertEq(collected, JOB_FEE);         // $5 — удержано при постинге
+        assertEq(announced, 10_000_000);      // $10 — 10% на момент найма
+        assertTrue(announced != collected, "AgreementDeployed.fee must be read as a quote, not a receipt");
+
+        // Проверка не на слово: в казну ушло ровно collected, не announced.
+        assertEq(usdc.balanceOf(feeRecipient), JOB_FEE);
+    }
+
+    // ============================================================
+    //  LEGACY JOBS (posted before the fee-holding upgrade)
+    // ============================================================
+
+    /// На живом диамонде лежит OPEN-заказ, созданный старым кодом: jobFunds
+    /// заполнен, jobFeeHeld — нулевой (поля тогда не существовало), а комиссия
+    /// ушла в казну ещё при постинге. Симметрично
+    /// testLegacyPendingRequestDoesNotUnderflowOnResolve в ServiceBoard.t.sol.
+    /// Приём и отмена такого заказа обязаны отрабатывать без реверта.
+    function _makeLegacyJob() internal returns (uint256 jobId) {
+        jobId = _approveAndMintJob();
+
+        // jobFeeHeld — поле с индексом 7 в JobBoardStorage.Layout: nextJobId(0),
+        // jobs(1), clientJobs(2), applicants(3), hasApplied(4),
+        // _deprecated_receiptNFT(5), jobFunds(6), jobFeeHeld(7).
+        bytes32 mappingSlot = bytes32(uint256(JobBoardStorage.POSITION) + 7);
+        bytes32 feeSlot = keccak256(abi.encode(jobId, mappingSlot));
+
+        // Sanity: mintJob только что записал сюда удержанную комиссию.
+        assertEq(uint256(vm.load(address(diamond), feeSlot)), JOB_FEE);
+
+        vm.store(address(diamond), feeSlot, bytes32(uint256(0)));
+
+        // Старый код пересылал комиссию в казну прямо при постинге, поэтому в
+        // диамонде этих денег нет. Двигаем и токены, а не только леджер — иначе
+        // «легаси»-состояние было бы наполовину выдуманным.
+        vm.prank(address(diamond));
+        usdc.transfer(feeRecipient, JOB_FEE);
+    }
+
+    function testLegacyJobWithNoHeldFeeCanBeAccepted() public {
+        uint256 jobId = _makeLegacyJob();
+
+        vm.prank(executor);
+        JobBoardFacet(address(diamond)).applyForJob(jobId);
+
+        vm.prank(client);
+        address agreementAddr = JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+
+        assertTrue(agreementAddr != address(0));
+        assertEq(usdc.balanceOf(agreementAddr), AMOUNT);
+        // Комиссия уже была уплачена при постинге — второй раз не берётся.
+        assertEq(usdc.balanceOf(feeRecipient), JOB_FEE);
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+    }
+
+    function testLegacyJobWithNoHeldFeeCanBeCancelled() public {
+        uint256 jobId = _makeLegacyJob();
+        uint256 clientBefore = usdc.balanceOf(client);
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+
+        // Сгорать нечему — удержано было ноль, вычитание пола не underflow'ит.
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT);
+        assertEq(usdc.balanceOf(feeRecipient), JOB_FEE);
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+
+        JobBoardStorage.Job memory job = JobBoardFacet(address(diamond)).getJob(jobId);
+        assertEq(uint256(job.status), uint256(JobBoardStorage.JobStatus.CANCELLED));
+    }
+
+    // ============================================================
+    //  UPGRADE WINDOW: diamondCut landed, config transaction has not
+    // ============================================================
+
+    /// Спека требует засевать feeBps/feeFloor ТОЙ ЖЕ транзакцией, что и
+    /// diamondCut. Единственный доступный механизм — `_init`/`_calldata`:
+    /// DiamondCutLib.initializeDiamondCut() делает `_init.delegatecall(_calldata)`
+    /// уже находясь в контексте диамонда, поэтому
+    ///   _init      = адрес ИМПЛЕМЕНТАЦИИ фасета (не диамонда),
+    ///   хранилище  = диамондовское (delegatecall),
+    ///   msg.sender = владелец, вызвавший diamondCut (delegatecall его сохраняет),
+    /// а значит onlyOwner внутри initFeeModel — настоящий гейт.
+    ///
+    /// Адрес самого диамонда в `_init` тоже сработал бы (лишний хоп через его
+    /// fallback), но адрес имплементации не зависит от того, смонтирован ли уже
+    /// селектор — поэтому в апгрейд-скрипт пойдёт именно он.
+    function testInitFeeModel_SeedsConfigInTheSameTransactionAsTheCut() public {
+        (DiamondProxy fresh, address factoryImpl) = _deployUnconfiguredDiamond();
+
+        // Окно до засева: брать комиссию не с чего.
+        vm.expectRevert(FeeNotConfigured.selector);
+        FactoryFacet(address(fresh)).quoteFee(AMOUNT);
+
+        bytes4[] memory added = new bytes4[](1);
+        added[0] = FactoryFacet.initFeeModel.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut(factoryImpl, IDiamondCut.FacetCutAction.Add, added);
+
+        IDiamondCut(address(fresh)).diamondCut(
+            cuts,
+            factoryImpl,
+            abi.encodeCall(FactoryFacet.initFeeModel, (500, 1_000_000, 5))
+        );
+
+        // Одна транзакция — и конфиг на месте.
+        assertEq(FactoryFacet(address(fresh)).getFeeBps(), 500);
+        assertEq(FactoryFacet(address(fresh)).getFeeFloor(), 1_000_000);
+        assertEq(FactoryFacet(address(fresh)).getMaxPendingRequests(), 5);
+        assertEq(FactoryFacet(address(fresh)).quoteFee(AMOUNT), JOB_FEE);
+
+        // И сделка создаётся — второй транзакции не потребовалось.
+        vm.startPrank(client);
+        usdc.approve(address(fresh), type(uint256).max);
+        uint256 jobId = JobBoardFacet(address(fresh)).mintJob(
+            "Build a dApp", "Need a Solidity dev", AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+        assertEq(JobBoardFacet(address(fresh)).getJobFeeHeld(jobId), JOB_FEE);
+    }
+
+    function testInitFeeModel_RevertsOnAnAlreadyConfiguredDiamond() public {
+        (DiamondProxy fresh, address factoryImpl) = _deployUnconfiguredDiamond();
+
+        bytes4[] memory added = new bytes4[](1);
+        added[0] = FactoryFacet.initFeeModel.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut(factoryImpl, IDiamondCut.FacetCutAction.Add, added);
+
+        IDiamondCut(address(fresh)).diamondCut(
+            cuts,
+            factoryImpl,
+            abi.encodeCall(FactoryFacet.initFeeModel, (500, 1_000_000, 5))
+        );
+
+        // Второй прогон по тому же диамонду — уже настроен.
+        vm.expectRevert(FactoryFacet.AlreadyInitialized.selector);
+        FactoryFacet(address(fresh)).initFeeModel(300, 2_000_000, 3);
+    }
+
+    function testInitFeeModel_RejectsZeroFloorAndTooHighBps() public {
+        (DiamondProxy fresh, address factoryImpl) = _deployUnconfiguredDiamond();
+
+        bytes4[] memory added = new bytes4[](1);
+        added[0] = FactoryFacet.initFeeModel.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut(factoryImpl, IDiamondCut.FacetCutAction.Add, added);
+        IDiamondCut(address(fresh)).diamondCut(cuts, address(0), "");
+
+        // Одноразовый путь не слабее обычных сеттеров.
+        vm.expectRevert(FeeNotConfigured.selector);
+        FactoryFacet(address(fresh)).initFeeModel(500, 0, 5);
+
+        vm.expectRevert(FactoryFacet.FeeBpsTooHigh.selector);
+        FactoryFacet(address(fresh)).initFeeModel(2_001, 1_000_000, 5);
+
+        vm.prank(client);
+        vm.expectRevert(FactoryFacet.NotOwner.selector);
+        FactoryFacet(address(fresh)).initFeeModel(500, 1_000_000, 5);
+    }
+
+    // ── Все денежные входы неконфигурированного диамонда ревертят ──────────
+
+    function testUnconfigured_MintJobReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        vm.startPrank(client);
+        usdc.approve(address(fresh), type(uint256).max);
+        vm.expectRevert(FeeNotConfigured.selector);
+        JobBoardFacet(address(fresh)).mintJob(
+            "Build a dApp", "Need a Solidity dev", AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+    }
+
+    function testUnconfigured_MintJobWithPermitReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        // quote() стоит ДО permit(), поэтому путь падает на комиссии, а не на
+        // подписи — что и требуется проверить.
+        vm.expectRevert(FeeNotConfigured.selector);
+        JobBoardFacet(address(fresh)).mintJobWithPermit(
+            client, "Build a dApp", "Need a Solidity dev", AMOUNT, DEADLINE, TERMS, REGION,
+            block.timestamp + 1 days, 0, bytes32(0), bytes32(0)
+        );
+    }
+
+    function testUnconfigured_DeployAgreementReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        vm.startPrank(client);
+        usdc.approve(address(fresh), type(uint256).max);
+        vm.expectRevert(FeeNotConfigured.selector);
+        FactoryFacet(address(fresh)).deployAgreement(
+            client, executor, address(0), AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+    }
+
+    function testUnconfigured_DeployAndFundReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        vm.startPrank(client);
+        usdc.approve(address(fresh), type(uint256).max);
+        vm.expectRevert(FeeNotConfigured.selector);
+        FactoryFacet(address(fresh)).deployAndFund(
+            client, executor, AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+    }
+
+    function testUnconfigured_QuoteFeeReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        vm.expectRevert(FeeNotConfigured.selector);
+        FactoryFacet(address(fresh)).quoteFee(AMOUNT);
+    }
+
+    /// Деньги обязаны выходить даже из неконфигурированного протокола: заказ
+    /// опубликован ДО cut'а, окно засева ещё не закрыто, клиент отменяет.
+    function testUnconfigured_CancelJobStillReturnsEverything() public {
+        (DiamondProxy fresh, ) = _deployBoardsDiamond();
+
+        vm.startPrank(client);
+        usdc.approve(address(fresh), type(uint256).max);
+        uint256 jobId = JobBoardFacet(address(fresh)).mintJob(
+            "Build a dApp", "Need a Solidity dev", AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        uint256 clientBefore = usdc.balanceOf(client);
+        uint256 feeBefore = usdc.balanceOf(feeRecipient);
+
+        _unconfigureFeeModel(address(fresh));
+
+        vm.prank(client);
+        JobBoardFacet(address(fresh)).cancelJob(jobId);
+
+        // Пола нет — сгорать нечему, возвращается всё: и сумма, и комиссия.
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT + JOB_FEE);
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore);
+        assertEq(usdc.balanceOf(address(fresh)), 0);
     }
 
     // ============================================================

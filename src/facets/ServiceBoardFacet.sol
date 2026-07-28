@@ -120,6 +120,11 @@ contract ServiceBoardFacet {
     event RequestRejected(uint256 indexed requestId, address indexed executor, address indexed client);
     event RequestCancelled(uint256 indexed requestId, address indexed client);
     event RequestSuperseded(uint256 indexed requestId, address indexed client, address indexed executor, uint256 refundAmount);
+    /// @notice Комиссия, реально ушедшая в казну. AgreementDeployed.fee считается
+    ///         заново на момент найма и расходится с этим числом, если ставка
+    ///         менялась между заявкой и наймом — переведено всегда то, что
+    ///         удержано при заявке, то есть вот это.
+    event FeeCollected(uint256 indexed id, address indexed payer, uint256 amount);
 
     // -------- ERRORS --------
 
@@ -128,7 +133,6 @@ contract ServiceBoardFacet {
     error ZeroAmount();
     error DeadlineInvalid();
     error InvalidRegion();
-    error ZeroFee();
     error NotExecutor();
     error NotClient();
     error ServiceNotActive();
@@ -515,7 +519,10 @@ contract ServiceBoardFacet {
         // Сделка создана — комиссия заработана
         uint256 feeHeld = s.requestFeeHeld[requestId];
         s.requestFeeHeld[requestId] = 0;
-        if (feeHeld > 0) _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
+        if (feeHeld > 0) {
+            _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
+            emit FeeCollected(requestId, client, feeHeld);
+        }
 
         // Активируем Agreement
         (bool funded, ) = agreementAddr.call(abi.encodeWithSignature("fundFromFactory()"));
@@ -648,6 +655,22 @@ contract ServiceBoardFacet {
 
     function getRequestFunds(uint256 requestId) external view returns (uint256) {
         return ServiceBoardStorage.store().requestFunds[requestId];
+    }
+
+    /// @notice Комиссия, удержанная в Diamond под эту заявку. Обнуляется на всех
+    ///         четырёх выходах из PENDING. Нужна фронту, чтобы честно показать
+    ///         «отмена вернёт $X, $1 останется», не пересчитывая формулу у себя —
+    ///         на живом хранилище лежат заявки, удержанные по старой ставке.
+    function getRequestFeeHeld(uint256 requestId) external view returns (uint256) {
+        return ServiceBoardStorage.store().requestFeeHeld[requestId];
+    }
+
+    /// @notice Сколько заявок клиента сейчас висит в PENDING — поверх всех
+    ///         исполнителей. Против этого числа гейтит requestService
+    ///         (getMaxPendingRequests), значит фронт обязан уметь его прочесть,
+    ///         а не узнавать о лимите из реверта.
+    function getPendingRequestCount(address clientAddr) external view returns (uint256) {
+        return ServiceBoardStorage.store().pendingRequestCount[clientAddr];
     }
 
     function getPendingRequestIdsByClientAndExecutor(address clientAddr, address executorAddr) external view returns (uint256[] memory) {

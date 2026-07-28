@@ -579,9 +579,12 @@ contract DiamondTest is Test {
     }
 
     function testFactoryAdminRevertIfNotOwner() public {
+        // Гейт onlyOwner проверяется через setFeeRecipient: setRegionFee, на
+        // котором эта проверка стояла раньше, теперь безусловно ревертит
+        // FeeNotRegional и про владельца больше ничего не доказывает.
         vm.prank(client);
         vm.expectRevert(FactoryFacet.NotOwner.selector);
-        FactoryFacet(address(diamond)).setRegionFee(0, 5 * 10**6);
+        FactoryFacet(address(diamond)).setFeeRecipient(address(0x5));
     }
     
     // ============ AGREEMENT TESTS ============

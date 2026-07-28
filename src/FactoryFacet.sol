@@ -123,7 +123,6 @@ contract FactoryFacet {
     error AlreadyInitialized();
     error NotClient();
     error DeployerNotSet();
-    error ZeroFee();
     error FeeBpsTooHigh();
 
     // -------- OWNER CHECK --------
@@ -165,6 +164,36 @@ contract FactoryFacet {
         fs.feeBps             = 500;        // 5%
         fs.feeFloor           = 1_000_000;  // $1
         fs.maxPendingRequests = 5;
+    }
+
+    /// @notice Одноразовый засев модели комиссии для УЖЕ проинициализированного
+    ///         диамонда. Существует только ради апгрейда живого 0x760F…: там
+    ///         initFactory отработал давно и ревертит AlreadyInitialized, а
+    ///         feeBps/feeFloor/maxPendingRequests — новые поля, которых в
+    ///         хранилище ещё нет.
+    /// @dev Зовётся через `_init`/`_calldata` того же diamondCut, что монтирует
+    ///      фасет: DiamondCutLib.initializeDiamondCut() делает
+    ///      `_init.delegatecall(_calldata)` уже внутри контекста диамонда, так
+    ///      что `_init` — адрес ИМПЛЕМЕНТАЦИИ фасета (не диамонда), хранилище
+    ///      резолвится диамондовское, а msg.sender сквозь delegatecall остаётся
+    ///      владельцем, вызвавшим diamondCut — onlyOwner здесь настоящий гейт,
+    ///      а не декорация. Без этого между cut'ом и конфигурирующей
+    ///      транзакцией существует окно, в котором quote() ревертит
+    ///      FeeNotConfigured, то есть ревертят ВСЕ денежные пути, включая
+    ///      acceptApplicant/acceptRequest по уже опубликованным заказам.
+    ///      Проверки — те же, что в setFeeBps/setFeeFloor: одноразовый путь не
+    ///      должен быть слабее обычного.
+    function initFeeModel(uint256 bps, uint256 floor, uint256 maxPending) external onlyOwner {
+        FactoryStorage.Layout storage fs = FactoryStorage.store();
+        if (fs.feeFloor != 0) revert AlreadyInitialized();
+        if (floor == 0) revert FeeNotConfigured();
+        if (bps > 2_000) revert FeeBpsTooHigh();
+        fs.feeBps = bps;
+        fs.feeFloor = floor;
+        fs.maxPendingRequests = maxPending;
+        emit FeeBpsUpdated(bps);
+        emit FeeFloorUpdated(floor);
+        emit MaxPendingRequestsUpdated(maxPending);
     }
 
     // -------- DEPLOY AGREEMENT --------
@@ -277,10 +306,15 @@ contract FactoryFacet {
 
     // -------- ADMIN --------
 
-    function setRegionFee(uint8 region, uint256 newFee) external onlyOwner {
-        if (region > 6) revert InvalidRegion();
-        FactoryStorage.store().regionFee[region] = newFee;
-        emit RegionFeeUpdated(region, newFee);
+    /// @dev DEPRECATED 28.07.2026 — симметрично getRegionFee/getAllFees. Селектор
+    ///      остаётся смонтированным (Remove — это отдельный diamondCut, а он не
+    ///      нужен: тело заменяется тем же Replace, что и остальной фасет), но
+    ///      запись ревертит. Рабочий сеттер рядом с ревертящим геттером означал
+    ///      бы, что админка «выставляет» комиссии, которые ничего не делают —
+    ///      правило «тихо принять стухшее число хуже, чем упасть» одинаково для
+    ///      чтений и записей.
+    function setRegionFee(uint8, uint256) external pure {
+        revert FeeNotRegional();
     }
 
     function setFeeRecipient(address newRecipient) external onlyOwner {

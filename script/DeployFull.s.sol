@@ -8,9 +8,11 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 148
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 159
 // селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
-// падает, если этот файл и живые ABI разойдутся снова.
+// падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже один раз протухло (стояло
+// 148, когда фабрика выросла с 13 до 20), поэтому сверяется тем же тестом.
 //
 // Требует ДО запуска:
 //   TRUSTED_FORWARDER — уже задеплоенный MinimalForwarder (script/DeployForwarder.s.sol),
@@ -294,10 +296,10 @@ contract DeployFull is Script {
         sels[12] = RegistryFacet.authorizedFactory.selector;
     }
 
-    // FactoryFacet — 20 селекторов (setPaused/isPaused/getProtocolArbiter/setProtocolArbiter/
+    // FactoryFacet — 21 селектор (setPaused/isPaused/getProtocolArbiter/setProtocolArbiter/
     // getArbitrationThreshold/setArbitrationThreshold удалены в a95865d — их больше нет в ABI)
     function factoryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](20);
+        sels = new bytes4[](21);
         sels[0]  = FactoryFacet.initFactory.selector;
         sels[1]  = FactoryFacet.deployAgreement.selector;
         sels[2]  = FactoryFacet.deployAndFund.selector;
@@ -318,11 +320,16 @@ contract DeployFull is Script {
         sels[17] = FactoryFacet.getFeeBps.selector;
         sels[18] = FactoryFacet.getFeeFloor.selector;
         sels[19] = FactoryFacet.getMaxPendingRequests.selector;
+        // Одноразовый засев модели комиссии через `_init`/`_calldata` diamondCut'а.
+        // На свежем деплое не зовётся (initFactory уже всё выставил), но должен
+        // быть смонтирован: апгрейд живого диамонда без него не имеет способа
+        // выставить feeFloor той же транзакцией, что и cut.
+        sels[20] = FactoryFacet.initFeeModel.selector;
     }
 
-    // JobBoardFacet — 12 селекторов
+    // JobBoardFacet — 13 селекторов
     function jobBoardFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](12);
+        sels = new bytes4[](13);
         sels[0]  = JobBoardFacet.mintJobWithPermit.selector;
         sels[1]  = JobBoardFacet.mintJob.selector;
         sels[2]  = JobBoardFacet.applyForJob.selector;
@@ -335,11 +342,12 @@ contract DeployFull is Script {
         sels[9]  = JobBoardFacet.getApplicants.selector;
         sels[10] = JobBoardFacet.totalJobs.selector;
         sels[11] = JobBoardFacet.getOpenJobs.selector;
+        sels[12] = JobBoardFacet.getJobFeeHeld.selector;
     }
 
-    // ServiceBoardFacet — 23 селектора
+    // ServiceBoardFacet — 25 селекторов
     function serviceBoardFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](23);
+        sels = new bytes4[](25);
         sels[0]  = ServiceBoardFacet.mintService.selector;
         sels[1]  = ServiceBoardFacet.mintServiceWithPermit.selector;
         sels[2]  = ServiceBoardFacet.removeService.selector;
@@ -363,6 +371,8 @@ contract DeployFull is Script {
         sels[20] = ServiceBoardFacet.getActiveServices.selector;
         sels[21] = ServiceBoardFacet.getPendingRequests.selector;
         sels[22] = ServiceBoardFacet.getPendingRequestIdsByClientAndExecutor.selector;
+        sels[23] = ServiceBoardFacet.getRequestFeeHeld.selector;
+        sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
     // ArbiterRegistryFacet — 47 селекторов

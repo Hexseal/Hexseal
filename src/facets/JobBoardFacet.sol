@@ -113,6 +113,11 @@ contract JobBoardFacet {
     event JobAccepted(uint256 indexed jobId, address indexed client, address indexed executor, address agreement);
     event JobCancelled(uint256 indexed jobId, address indexed client, uint256 refundAmount);
     event JobEdited(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadlineDays, string terms, uint8 region);
+    /// @notice Комиссия, реально ушедшая в казну. AgreementDeployed.fee считается
+    ///         заново на момент найма и расходится с этим числом, если ставка
+    ///         менялась между постингом и наймом — переведено всегда то, что
+    ///         удержано при постинге, то есть вот это.
+    event FeeCollected(uint256 indexed id, address indexed payer, uint256 amount);
 
     // -------- ERRORS --------
 
@@ -121,7 +126,6 @@ contract JobBoardFacet {
     error ZeroAmount();
     error DeadlineInvalid();
     error InvalidRegion();
-    error ZeroFee();
     error NotClient();
     error JobNotOpen();
     error NotApplicant();
@@ -365,7 +369,10 @@ contract JobBoardFacet {
         // Сделка создана — комиссия заработана, уходит в казну
         uint256 feeHeld = s.jobFeeHeld[jobId];
         s.jobFeeHeld[jobId] = 0;
-        if (feeHeld > 0) _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
+        if (feeHeld > 0) {
+            _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
+            emit FeeCollected(jobId, job.client, feeHeld);
+        }
 
         // --- Активируем Agreement ---
         (bool funded, ) = agreementAddr.call(abi.encodeWithSignature("fundFromFactory()"));
@@ -470,6 +477,15 @@ contract JobBoardFacet {
 
     function totalJobs() external view returns (uint256) {
         return JobBoardStorage.store().nextJobId;
+    }
+
+    /// @notice Комиссия, удержанная в Diamond под этот заказ. Обнуляется и при
+    ///         acceptApplicant, и при cancelJob. Нужна фронту, чтобы честно
+    ///         показать «отмена вернёт $X, $1 останется», не пересчитывая
+    ///         формулу у себя — на живом хранилище лежат заказы, удержанные по
+    ///         старой ставке, и клиентский пересчёт с ними разойдётся.
+    function getJobFeeHeld(uint256 jobId) external view returns (uint256) {
+        return JobBoardStorage.store().jobFeeHeld[jobId];
     }
 
     /// @notice Возвращает все OPEN-заказы с их ID

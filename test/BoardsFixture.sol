@@ -62,6 +62,17 @@ abstract contract BoardsFixture is Test {
     uint256 constant DEADLINE = 7;
     string constant TERMS = "Standard work terms";
 
+    /// Базовые слоты полей модели комиссии внутри FactoryStorage.Layout.
+    /// Считаны по правилам упаковки: usdc(0), feeRecipient(1), regionFee(2),
+    /// trustedForwarder(3), diamond+paused(4 — bool упаковался в хвост слота),
+    /// protocolArbiter(5), arbitrationThreshold(6), agreementDeployer(7),
+    /// feeBps(8), feeFloor(9), maxPendingRequests(10). Смещения не берутся на
+    /// веру — _unconfigureFeeModel() сначала утверждает, что по ним лежат
+    /// именно засеянные initFactory значения, и только потом обнуляет.
+    uint256 constant SLOT_FEE_BPS              = 8;
+    uint256 constant SLOT_FEE_FLOOR            = 9;
+    uint256 constant SLOT_MAX_PENDING_REQUESTS = 10;
+
     function setUp() public {
         owner = address(this);
         client = address(0x1);
@@ -72,6 +83,19 @@ abstract contract BoardsFixture is Test {
         usdc.mint(client, 1_000_000_000);   // $1000
         usdc.mint(executor, 100_000_000);   // $100
 
+        (diamond, ) = _deployBoardsDiamond();
+    }
+
+    /// Разворачивает диамонд ровно в той конфигурации, в которой его ждут тесты
+    /// досок. Вынесено из setUp, потому что тестам окна апгрейда нужен ВТОРОЙ,
+    /// независимый диамонд — с тем же набором фасетов, но без засеянной модели
+    /// комиссии (см. _deployUnconfiguredDiamond).
+    ///
+    /// FactoryFacet монтируется БЕЗ initFeeModel: на живом диамонде этого
+    /// селектора ещё нет, его добавляет тот самый Add-батч, который тесты здесь
+    /// и воспроизводят. Мы не можем смонтировать его заранее — diamondCut
+    /// ревертит "Diamond: selector exists" на повторном Add.
+    function _deployBoardsDiamond() internal returns (DiamondProxy d, address factoryImpl) {
         // --- Deploy facets ---
         RegistryFacet registryFacet = new RegistryFacet();
         FactoryFacet factoryFacet = new FactoryFacet();
@@ -98,7 +122,7 @@ abstract contract BoardsFixture is Test {
         regSels[11] = RegistryFacet.authorizedFactory.selector;
 
         // --- Factory selectors ---
-        bytes4[] memory facSels = new bytes4[](18);
+        bytes4[] memory facSels = new bytes4[](21);
         facSels[0] = FactoryFacet.initFactory.selector;
         facSels[1] = FactoryFacet.deployAgreement.selector;
         facSels[2] = FactoryFacet.setRegionFee.selector;
@@ -117,9 +141,14 @@ abstract contract BoardsFixture is Test {
         facSels[15] = FactoryFacet.setMaxPendingRequests.selector;
         facSels[16] = FactoryFacet.quoteFee.selector;
         facSels[17] = FactoryFacet.getMaxPendingRequests.selector;
+        facSels[18] = FactoryFacet.getFeeBps.selector;
+        facSels[19] = FactoryFacet.getFeeFloor.selector;
+        facSels[20] = FactoryFacet.deployAndFund.selector;
+        // initFeeModel НЕ монтируется намеренно — тест атомарного засева
+        // добавляет его собственным diamondCut'ом, а повторный Add ревертит.
 
         // --- JobBoardFacet selectors ---
-        bytes4[] memory jobSels = new bytes4[](11);
+        bytes4[] memory jobSels = new bytes4[](13);
         jobSels[0]  = JobBoardFacet.mintJob.selector;
         jobSels[1]  = JobBoardFacet.applyForJob.selector;
         jobSels[2]  = JobBoardFacet.acceptApplicant.selector;
@@ -131,9 +160,11 @@ abstract contract BoardsFixture is Test {
         jobSels[8]  = JobBoardFacet.editJob.selector;
         jobSels[9]  = JobBoardFacet.totalJobs.selector;
         jobSels[10] = JobBoardFacet.getOpenJobs.selector;
+        jobSels[11] = JobBoardFacet.getJobFeeHeld.selector;
+        jobSels[12] = JobBoardFacet.mintJobWithPermit.selector;
 
         // --- ServiceBoardFacet selectors ---
-        bytes4[] memory svcSels = new bytes4[](21);
+        bytes4[] memory svcSels = new bytes4[](25);
         svcSels[0]  = ServiceBoardFacet.mintService.selector;
         svcSels[1]  = ServiceBoardFacet.requestService.selector;
         svcSels[2]  = ServiceBoardFacet.acceptRequest.selector;
@@ -155,6 +186,10 @@ abstract contract BoardsFixture is Test {
         svcSels[18] = ServiceBoardFacet.getActiveServices.selector;
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
         svcSels[20] = ServiceBoardFacet.getPendingRequestIdsByClientAndExecutor.selector;
+        svcSels[21] = ServiceBoardFacet.getRequestFeeHeld.selector;
+        svcSels[22] = ServiceBoardFacet.getPendingRequestCount.selector;
+        svcSels[23] = ServiceBoardFacet.mintServiceWithPermit.selector;
+        svcSels[24] = ServiceBoardFacet.requestServiceWithPermit.selector;
 
         // --- Infrastructure selectors ---
         bytes4[] memory cutSels = new bytes4[](1);
@@ -207,20 +242,53 @@ abstract contract BoardsFixture is Test {
         cut[6] = IDiamondCut.FacetCut(address(serviceBoardFacet),IDiamondCut.FacetCutAction.Add, svcSels);
         cut[7] = IDiamondCut.FacetCut(address(jobReceiptFacet),  IDiamondCut.FacetCutAction.Add, receiptSels);
 
-        diamond = new DiamondProxy(owner, cut, address(0), "");
+        d = new DiamondProxy(owner, cut, address(0), "");
+        factoryImpl = address(factoryFacet);
 
         // Init Registry (authorizedFactory = Diamond itself)
-        RegistryFacet(address(diamond)).initRegistry(address(diamond));
+        RegistryFacet(address(d)).initRegistry(address(d));
 
         // Init Factory
         Agreement agreementImpl = new Agreement();
-        AgreementDeployer agDeployer = new AgreementDeployer(address(diamond), address(agreementImpl));
-        FactoryFacet(address(diamond)).initFactory(
+        AgreementDeployer agDeployer = new AgreementDeployer(address(d), address(agreementImpl));
+        FactoryFacet(address(d)).initFactory(
             address(usdc),
             feeRecipient,
             address(0xDEAD),
-            address(diamond),
+            address(d),
             address(agDeployer)
         );
+    }
+
+    /// Диамонд в состоянии живого 0x760F… СРАЗУ ПОСЛЕ diamondCut'а и ДО
+    /// конфигурирующей транзакции: фасеты новые, usdc/feeRecipient/деплойер на
+    /// месте, а feeBps/feeFloor/maxPendingRequests — нули, потому что на живом
+    /// хранилище этих полей никогда не существовало.
+    ///
+    /// initFactory() свежего фасета засевает их сам (ради деплоя с нуля),
+    /// поэтому здесь они обнуляются обратно через vm.store — ровно тот же приём,
+    /// которым testLegacyPendingRequestDoesNotUnderflowOnResolve воспроизводит
+    /// лежащее на цепи состояние.
+    function _deployUnconfiguredDiamond() internal returns (DiamondProxy d, address factoryImpl) {
+        (d, factoryImpl) = _deployBoardsDiamond();
+        _unconfigureFeeModel(address(d));
+    }
+
+    function _unconfigureFeeModel(address d) internal {
+        bytes32 base = FactoryStorage.FACTORY_STORAGE_POSITION;
+        bytes32 bpsSlot        = bytes32(uint256(base) + SLOT_FEE_BPS);
+        bytes32 floorSlot      = bytes32(uint256(base) + SLOT_FEE_FLOOR);
+        bytes32 maxPendingSlot = bytes32(uint256(base) + SLOT_MAX_PENDING_REQUESTS);
+
+        // Смещения не на веру: initFactory только что записал сюда 500 / $1 / 5.
+        // Если раскладка Layout поедет, тест упадёт здесь, а не молча обнулит
+        // чужое поле и продолжит «проверять» что-то другое.
+        assertEq(uint256(vm.load(d, bpsSlot)), 500, "feeBps slot offset drifted");
+        assertEq(uint256(vm.load(d, floorSlot)), 1_000_000, "feeFloor slot offset drifted");
+        assertEq(uint256(vm.load(d, maxPendingSlot)), 5, "maxPendingRequests slot offset drifted");
+
+        vm.store(d, bpsSlot, bytes32(uint256(0)));
+        vm.store(d, floorSlot, bytes32(uint256(0)));
+        vm.store(d, maxPendingSlot, bytes32(uint256(0)));
     }
 }

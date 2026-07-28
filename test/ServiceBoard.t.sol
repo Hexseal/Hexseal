@@ -966,4 +966,148 @@ contract ServiceBoardTest is BoardsFixture {
         // Пол за объявление + десять процентов, а не один пол
         assertEq(usdc.balanceOf(feeRecipient), floor_ + 10 * fee);
     }
+
+    // ============================================================
+    //  FEE LEDGER READ PATH
+    // ============================================================
+
+    function testGetRequestFeeHeld_ReportsWhatIsHeld() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        assertEq(ServiceBoardFacet(address(diamond)).getRequestFeeHeld(requestId), JOB_FEE);
+    }
+
+    function testGetRequestFeeHeld_ClearedOnAccept() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+
+        assertEq(ServiceBoardFacet(address(diamond)).getRequestFeeHeld(requestId), 0);
+    }
+
+    function testGetRequestFeeHeld_ClearedOnCancelAndReject() public {
+        uint256 serviceId = _mintService();
+
+        uint256 cancelled = _requestService(serviceId);
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(cancelled);
+        assertEq(ServiceBoardFacet(address(diamond)).getRequestFeeHeld(cancelled), 0);
+
+        uint256 rejected = _requestService(serviceId);
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).rejectRequest(rejected);
+        assertEq(ServiceBoardFacet(address(diamond)).getRequestFeeHeld(rejected), 0);
+    }
+
+    function testGetPendingRequestCount_TracksPendingAndFreesOnExit() public {
+        uint256 serviceId = _mintService();
+        assertEq(ServiceBoardFacet(address(diamond)).getPendingRequestCount(client), 0);
+
+        uint256 requestId = _requestService(serviceId);
+        assertEq(ServiceBoardFacet(address(diamond)).getPendingRequestCount(client), 1);
+
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
+        assertEq(ServiceBoardFacet(address(diamond)).getPendingRequestCount(client), 0);
+    }
+
+    // ============================================================
+    //  FEE COLLECTED EVENT
+    // ============================================================
+
+    function testAcceptRequest_EmitsFeeCollected() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        // Событие эмитится из того места, где реально идёт перевод, поэтому
+        // несёт удержанную при заявке сумму, а не пересчитанную на момент найма.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ServiceBoardFacet.FeeCollected(requestId, client, JOB_FEE);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+    }
+
+    // ============================================================
+    //  UPGRADE WINDOW: diamondCut landed, config transaction has not
+    // ============================================================
+
+    function testUnconfigured_MintServiceReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        vm.startPrank(executor);
+        usdc.approve(address(fresh), type(uint256).max);
+        vm.expectRevert(FeeNotConfigured.selector);
+        ServiceBoardFacet(address(fresh)).mintService(
+            "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION
+        );
+        vm.stopPrank();
+    }
+
+    function testUnconfigured_MintServiceWithPermitReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        // Пол читается ДО permit(), поэтому путь падает на комиссии, а не на подписи.
+        vm.expectRevert(FeeNotConfigured.selector);
+        ServiceBoardFacet(address(fresh)).mintServiceWithPermit(
+            executor, "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION,
+            block.timestamp + 1 days, 0, bytes32(0), bytes32(0)
+        );
+    }
+
+    function testUnconfigured_RequestServiceReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        vm.startPrank(client);
+        usdc.approve(address(fresh), type(uint256).max);
+        vm.expectRevert(FeeNotConfigured.selector);
+        ServiceBoardFacet(address(fresh)).requestService(0, AMOUNT, DEADLINE, TERMS, REGION);
+        vm.stopPrank();
+    }
+
+    function testUnconfigured_RequestServiceWithPermitReverts() public {
+        (DiamondProxy fresh, ) = _deployUnconfiguredDiamond();
+
+        vm.expectRevert(FeeNotConfigured.selector);
+        ServiceBoardFacet(address(fresh)).requestServiceWithPermit(
+            client, 0, AMOUNT, DEADLINE, TERMS, REGION,
+            block.timestamp + 1 days, 0, bytes32(0), bytes32(0)
+        );
+    }
+
+    /// Деньги обязаны выходить даже из неконфигурированного протокола: заявка
+    /// подана ДО cut'а, окно засева ещё не закрыто, клиент отменяет.
+    function testUnconfigured_CancelRequestStillReturnsEverything() public {
+        (DiamondProxy fresh, ) = _deployBoardsDiamond();
+
+        vm.startPrank(executor);
+        usdc.approve(address(fresh), type(uint256).max);
+        uint256 serviceId = ServiceBoardFacet(address(fresh)).mintService(
+            "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION
+        );
+        vm.stopPrank();
+
+        vm.startPrank(client);
+        usdc.approve(address(fresh), type(uint256).max);
+        uint256 requestId = ServiceBoardFacet(address(fresh)).requestService(
+            serviceId, AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        uint256 clientBefore = usdc.balanceOf(client);
+        uint256 feeBefore = usdc.balanceOf(feeRecipient);
+
+        _unconfigureFeeModel(address(fresh));
+
+        vm.prank(client);
+        ServiceBoardFacet(address(fresh)).cancelRequest(requestId);
+
+        // Пола нет — сгорать нечему, возвращается всё: и сумма, и комиссия.
+        assertEq(usdc.balanceOf(client), clientBefore + AMOUNT + JOB_FEE);
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore);
+        assertEq(usdc.balanceOf(address(fresh)), 0);
+    }
 }
