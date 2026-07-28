@@ -132,7 +132,7 @@ contract DisputeSettlementTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
 
-        bytes4[] memory arbSels = new bytes4[](38);
+        bytes4[] memory arbSels = new bytes4[](39);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -177,6 +177,10 @@ contract DisputeSettlementTest is Test {
         // которого в проде нет.
         arbSels[36] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
         arbSels[37] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
+        // Задача 4b: наказание за неявку читается только отсюда — без этого
+        // селектора testLateReleaseCannotDodgeTheArbiterPenalty не смог бы
+        // отличить «ошибка записана» от «функции нет на диамонде».
+        arbSels[38] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
 
         bytes4[] memory cutSels   = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -679,5 +683,127 @@ contract DisputeSettlementTest is Test {
         vm.prank(client);
         a.triggerArbiterTimeout();
         assertEq(usdc.balanceOf(executor) - eBefore, 100_000_000, "the split must survive");
+    }
+
+    // ============================================================
+    //  releaseDisputeClaim() — после закрытия окна отпускать нельзя
+    // ============================================================
+
+    /// После закрытия окна отпустить спор нельзя. Вердикт там уже невозможен и
+    /// перезаклеймить спор тоже нельзя — значит поздний отпуск не возвращает
+    /// спор в оборот, он только решает, кому достанутся деньги.
+    function testCannotReleaseAfterTheVerdictWindow() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.prank(arbiterAddr);
+        vm.expectRevert(ArbiterRegistryFacet.DisputeWindowPassed.selector);
+        ArbiterRegistryFacet(address(diamond)).releaseDisputeClaim(address(a));
+    }
+
+    /// Тот же гейт, но проверяем деньги: поздний отпуск не должен превращать
+    /// полный возврат клиенту в дележ пополам.
+    function testLateReleaseCannotFlipTheTimeoutToASplit() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.prank(arbiterAddr);
+        try ArbiterRegistryFacet(address(diamond)).releaseDisputeClaim(address(a)) {} catch {}
+        assertTrue(a.arbiter() != address(0), "a late release must not stick");
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore,   200_000_000, "whole pot still to the client");
+        assertEq(usdc.balanceOf(executor) - eBefore, 0,           "the executor must gain nothing");
+    }
+
+    /// Вторая половина дыры: отпуск обнулял disputeClaims, а
+    /// notifyArbiterTimeout по пустому ключу выходит молча — неявившийся арбитр
+    /// уходил вообще без судейской ошибки.
+    function testLateReleaseCannotDodgeTheArbiterPenalty() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+
+        uint256 before = ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiterAddr);
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+        vm.prank(arbiterAddr);
+        try ArbiterRegistryFacet(address(diamond)).releaseDisputeClaim(address(a)) {} catch {}
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(
+            ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiterAddr),
+            before + 1,
+            "the no-show must be recorded"
+        );
+    }
+
+    /// Отпуск ВНУТРИ окна законен и должен работать: арбитр понял, что не
+    /// потянет, и вернул спор другим. Гейт не должен этого ломать.
+    function testReleaseInsideTheWindowStillWorks() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+
+        vm.prank(arbiterAddr);
+        ArbiterRegistryFacet(address(diamond)).releaseDisputeClaim(address(a));
+
+        assertEq(a.arbiter(), address(0), "the dispute goes back on the market");
+    }
+
+    /// Ровно последняя секунда окна — отпуск ещё законен. Граница здесь та же,
+    /// что у submitVerdict и claimDispute: окно закрывается СТРОГО после
+    /// disputedAt + DISPUTE_WINDOW, не в эту секунду. Без этого теста гейт из
+    /// Задачи 4b можно было бы сузить на секунду (`>` → `>=`) и не заметить:
+    /// мутация проходила незамеченной, пока тест не появился.
+    function testReleaseOnTheLastSecondOfTheWindowStillWorks() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+
+        vm.warp(a.disputedAt() + a.DISPUTE_WINDOW());
+
+        vm.prank(arbiterAddr);
+        ArbiterRegistryFacet(address(diamond)).releaseDisputeClaim(address(a));
+
+        assertEq(a.arbiter(), address(0), "the window is open through its last second");
+    }
+
+    /// Ревью Задачи 4: проверку длины ответа в trySafeTransfer не держал ни один
+    /// тест — её можно было выбросить, и весь набор всё равно проходил. Токен,
+    /// вернувший меньше 32 байт, без неё уронил бы abi.decode и заморозил бы
+    /// весь котёл на последнем пути сделки.
+    function testShortTokenReplyDoesNotFreezeTheTimeout() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        // 1 байт вместо 32 — abi.decode на таком ревертит.
+        vm.mockCall(
+            address(usdc),
+            abi.encodeWithSelector(bytes4(0xa9059cbb), executor, uint256(100_000_000)),
+            hex"01"
+        );
+
+        uint256 cBefore = usdc.balanceOf(client);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        vm.clearMockedCalls();
+
+        assertEq(usdc.balanceOf(client) - cBefore, 200_000_000, "the undeliverable half falls back to the client");
+        assertEq(usdc.balanceOf(address(a)), 0, "nothing may stay locked");
     }
 }

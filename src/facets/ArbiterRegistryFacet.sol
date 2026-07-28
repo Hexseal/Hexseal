@@ -420,6 +420,30 @@ contract ArbiterRegistryFacet {
         // Нельзя освободить клейм если вердикт уже подан (ждёт финализации)
         require(d.pendingVerdicts[agreement].submittedAt == 0, "ArbiterRegistry: verdict pending");
 
+        // Отпускать спор после закрытия окна нельзя, и по той же причине, по
+        // которой нельзя его после окна клеймить: вердикт там уже невозможен
+        // (submitVerdict откажет), перезаклеймить спор тоже нельзя, — значит
+        // поздний отпуск не возвращает спор в оборот, а только решает, кому
+        // достанутся деньги.
+        //
+        // Вредит он дважды. Уводит от наказания: notifyArbiterTimeout читает
+        // disputeClaims и по пустому ключу молча выходит, так что неявившийся
+        // арбитр уходил без судейской ошибки. И переключает ветку таймаута —
+        // setArbiter(0) ниже превращает полный возврат клиенту в дележ
+        // пополам, чем мог бесплатно пользоваться арбитр, дружественный
+        // исполнителю.
+        //
+        // Владелец диамонда (второй допустимый вызывающий выше) под гейт
+        // попадает так же: у него нет причины освобождать мёртвый клейм, а
+        // исключение для него вернуло бы ровно эту дыру.
+        (bool dOk, bytes memory dData) = agreement.staticcall(abi.encodeWithSignature("disputedAt()"));
+        require(dOk, "ArbiterRegistry: disputedAt read failed");
+        (bool wOk, bytes memory wData) = agreement.staticcall(abi.encodeWithSignature("DISPUTE_WINDOW()"));
+        require(wOk, "ArbiterRegistry: DISPUTE_WINDOW read failed");
+        if (block.timestamp > abi.decode(dData, (uint256)) + abi.decode(wData, (uint256))) {
+            revert DisputeWindowPassed();
+        }
+
         delete d.disputeClaims[agreement];
         if (d.openClaimCount[current] > 0) d.openClaimCount[current]--;
 
