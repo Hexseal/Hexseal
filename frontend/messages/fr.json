@@ -724,7 +724,7 @@
     "q_who_controls": "Qui contrôle les fonds ?",
     "a_who_controls": "Personne. Les fonds sont détenus par un contrat intelligent autonome. La plateforme ne peut pas geler, rediriger ou toucher votre USDC.",
     "q_is_free": "Est-ce gratuit ?",
-    "a_is_free": "Les transactions sont sans gas — le relayeur de la plateforme paie les frais ETH. Vous ne dépensez que de l'USDC pour le montant de l'accord.",
+    "a_is_free": "Les transactions sont sans gas : le relayeur de la plateforme paie les frais de gas en ETH à votre place, vous n'avez donc jamais besoin d'ETH. Les frais de plateforme, eux, sont prélevés en USDC en plus du montant de l'accord, et non déduits de celui-ci ; ils sont prélevés d'avance, à la publication d'une annonce — un client qui publie une mission paie le montant mis en séquestre plus les frais, un exécutant qui publie un service ne paie que les frais — et non à la fin. Ils ne sont pas remboursés : ni en cas d'annulation, ni si personne ne répond jamais. Leur montant dépend de votre région, et le formulaire de publication affiche le chiffre exact ainsi que le total que vous allez signer avant que vous ne confirmiez. Le montant d'une mission publiée n'est plus modifiable : changer d'avis sur le prix suppose d'annuler et de republier, en payant les frais une seconde fois.",
     "q_wallets": "Quels portefeuilles sont supportés ?",
     "a_wallets": "MetaMask, Coinbase Wallet, Rainbow, Trust Wallet, Brave Wallet, OKX, Phantom, Ledger, et tout portefeuille injecté. WalletConnect permet de connecter n'importe quel portefeuille mobile.",
     "q_network": "Sur quel réseau cela fonctionne-t-il ?",

@@ -724,7 +724,7 @@
     "q_who_controls": "Chi controlla i fondi?",
     "a_who_controls": "Nessuno. I fondi sono detenuti da uno smart contract autonomo. La piattaforma non può congelare, reindirizzare o toccare il tuo USDC.",
     "q_is_free": "È gratuito?",
-    "a_is_free": "Le transazioni sono senza gas — il relayer della piattaforma paga le commissioni ETH. Spendi solo USDC per l'importo dell'accordo.",
+    "a_is_free": "Le transazioni sono senza gas: il relayer della piattaforma paga il gas in ETH per te, quindi non ti serve mai ETH. Con la commissione della piattaforma è diverso: viene addebitata in USDC in aggiunta all'importo dell'accordo, non sottratta da esso, e viene addebitata in anticipo, al momento della pubblicazione di un annuncio — un cliente che pubblica un incarico paga l'importo in deposito più la commissione, un esecutore che pubblica un servizio paga solo la commissione — e non al completamento. Non viene rimborsata: né se annulli, né se non risponde mai nessuno. Il suo importo dipende dalla tua regione, e il modulo di pubblicazione ti mostra la cifra esatta e il totale che stai per firmare prima che tu confermi. L'importo di un incarico già pubblicato non è più modificabile: cambiare idea sul prezzo significa annullare e ripubblicare, pagando la commissione una seconda volta.",
     "q_wallets": "Quali portafogli sono supportati?",
     "a_wallets": "MetaMask, Coinbase Wallet, Rainbow, Trust Wallet, Brave Wallet, OKX, Phantom, Ledger e qualsiasi portafoglio iniettato.",
     "q_network": "Su quale rete funziona?",

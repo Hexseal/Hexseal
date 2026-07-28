@@ -724,7 +724,7 @@
     "q_who_controls": "Quem controla os fundos?",
     "a_who_controls": "Ninguém. Os fundos são mantidos por um contrato inteligente autônomo. A plataforma não pode congelar, redirecionar ou tocar seu USDC.",
     "q_is_free": "É gratuito?",
-    "a_is_free": "As transações são sem gas — o relayer da plataforma paga as taxas de ETH. Você gasta apenas USDC para o valor do acordo.",
+    "a_is_free": "As transações são sem gas: o relayer da plataforma paga o gas em ETH por você, então você nunca precisa de ETH. Com a taxa da plataforma é diferente: ela é cobrada em USDC por cima do valor do acordo, não descontada dele, e é cobrada antecipadamente, na publicação de um anúncio — o cliente que publica um trabalho paga o valor em garantia mais a taxa; o executor que publica um serviço paga apenas a taxa — e não na conclusão. Ela não é devolvida: nem se você cancelar, nem se ninguém chegar a responder. O valor dela depende da sua região, e o formulário de publicação mostra a cifra exata e o total que você vai assinar antes de você confirmar. O valor de um trabalho já publicado não pode mais ser editado, então mudar de ideia sobre o preço significa cancelar e publicar de novo, pagando a taxa uma segunda vez.",
     "q_wallets": "Quais carteiras são suportadas?",
     "a_wallets": "MetaMask, Coinbase Wallet, Rainbow, Trust Wallet, Brave Wallet, OKX, Phantom, Ledger e qualquer carteira injetada.",
     "q_network": "Em qual rede isso funciona?",

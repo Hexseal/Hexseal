@@ -724,7 +724,7 @@
     "q_who_controls": "¿Quién controla los fondos?",
     "a_who_controls": "Nadie. Los fondos son mantenidos por un contrato inteligente autónomo. La plataforma no puede congelar, redirigir o tocar tu USDC. Solo el cliente, ejecutor o árbitro pueden desencadenar transiciones de estado — bajo condiciones definidas en el contrato.",
     "q_is_free": "¿Es gratis de usar?",
-    "a_is_free": "Las transacciones son gasless — el relayer de la plataforma paga las comisiones de gas ETH en tu nombre. Solo gastas USDC por el monto del trato. Se deduce una pequeña comisión de plataforma al completarse con éxito.",
+    "a_is_free": "Las transacciones son gasless: el relayer de la plataforma paga el gas en ETH por ti, así que nunca necesitas ETH. Con la comisión de la plataforma es distinto: se cobra en USDC por encima del importe del trato, no se descuenta de él, y se cobra por adelantado, al publicar un anuncio —el cliente que publica un encargo paga el importe en garantía más la comisión; el ejecutor que publica un servicio paga solo la comisión—, no al completarlo. No se devuelve: ni si cancelas, ni si nadie llega a responder. Su importe depende de tu región, y el formulario de publicación te muestra la cifra exacta y el total que vas a firmar antes de que confirmes. El importe de un encargo ya publicado no se puede editar, así que cambiar de idea sobre el precio significa cancelarlo y publicarlo de nuevo, pagando la comisión por segunda vez.",
     "q_wallets": "¿Qué billeteras son compatibles?",
     "a_wallets": "MetaMask, Coinbase Wallet, Rainbow, Trust Wallet, Brave Wallet, OKX, Phantom, Ledger y cualquier billetera inyectada. WalletConnect te permite conectar cualquier billetera móvil.",
     "q_network": "¿En qué red funciona esto?",
