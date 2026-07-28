@@ -65,11 +65,15 @@ contract DisputeFeeTest is Test {
     //  SETUP
     // ============================================================
     // Скопировано из test/Extras.t.sol и вычищено: RegistryFacet и FactoryFacet
-    // (deployAgreement/deployAndFund/setRegionFee/getFeeRecipient) нужны для
-    // зеро-фи-гейта, ArbiterRegistryFacet (creditDisputeFee/getArbiterReward/
-    // getTreasurySlice/withdrawTreasurySlice) — для приёма и разноса сбора со
-    // спора. DiamondCut/Loupe и OwnershipFacet сюда не смонтированы, потому что
-    // ни один тест их не вызывает.
+    // (deployAgreement — создаёт агримент для тестов ниже; deployAndFund — его
+    // прямой конкурент, с безусловным переводом комиссии и суммы сделки;
+    // getFeeRecipient — сверить, куда ушла доля казны) нужны этому файлу.
+    // setRegionFee смонтирован, но с переходом на процентную формулу (Task 2)
+    // его больше никто не зовёт — оставлен как есть, выпиливание селектора не
+    // входит в эту задачу. ArbiterRegistryFacet (creditDisputeFee/
+    // getArbiterReward/getTreasurySlice/withdrawTreasurySlice) — для приёма и
+    // разноса сбора со спора. DiamondCut/Loupe и OwnershipFacet сюда не
+    // смонтированы, потому что ни один тест их не вызывает.
 
     function setUp() public {
         owner        = address(this);
@@ -162,7 +166,8 @@ contract DisputeFeeTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), before + 1_000_000, "floor charged even at zero bps");
     }
 
-    /// Ненулевая комиссия проходит — гейт не сломал штатный путь.
+    /// Штатный путь deployAgreement с обычной (не нулевой) комиссией — создание
+    /// сделки не ломается.
     function testDeployAgreementWorksWithNonZeroFee() public {
         vm.startPrank(client);
         usdc.approve(address(diamond), type(uint256).max);
@@ -171,6 +176,33 @@ contract DisputeFeeTest is Test {
         );
         vm.stopPrank();
         assertTrue(agreement != address(0), "deal creation broke");
+    }
+
+    // ============================================================
+    //  DEPLOY AND FUND: HAPPY PATH
+    // ============================================================
+
+    /// Единственный тест на штатный путь deployAndFund. Он отличается от
+    /// deployAgreement именно вокруг комиссии: deployAgreement прячет перевод
+    /// за if (msg.sender == client) (FactoryFacet.sol:200), а deployAndFund
+    /// переводит её безусловно (FactoryFacet.sol:254) и следом ещё двигает
+    /// сумму сделки — до этого теста ни один тест не утверждал, сколько
+    /// deployAndFund списывает, и ни один не проходил по его счастливому пути.
+    function testDeployAndFundChargesPercentageAndFundsTheDeal() public {
+        uint256 amount = 100_000_000;      // $100
+        uint256 expectedFee = 5_000_000;   // 5%
+
+        uint256 before = usdc.balanceOf(feeRecipient);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + expectedFee);
+        address agreement = FactoryFacet(address(diamond)).deployAndFund(
+            client, executor, amount, 7, "terms", 0
+        );
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(feeRecipient) - before, expectedFee, "fee charged at 5%");
+        assertEq(usdc.balanceOf(agreement), amount, "deal amount funded into the agreement");
     }
 
     // ============================================================
