@@ -1,10 +1,11 @@
 'use client';
 
 import { useReadContract } from 'wagmi';
-import { formatUnits } from 'viem';
 import { AlertTriangle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { AGREEMENT_ABI } from '@/config/contracts';
+import { classifyReadFailure } from '@/lib/contractReadError';
+import { splitPot, usdcExact } from '@/lib/splitPot';
 
 /**
  * Два факта, которые сторона обязана увидеть ДО нажатия «открыть спор»:
@@ -19,49 +20,50 @@ import { AGREEMENT_ABI } from '@/config/contracts';
  *
  * Суммы и срок читаются с контракта, а не хардкодятся: DISPUTE_WINDOW уже
  * менялась однажды с 7 дней на 4, и захардкоженный фронт после следующей
- * правки начал бы врать молча. Половины считаются ровно как в
- * `Agreement.triggerArbiterTimeout` — `pot / 2` исполнителю, ОСТАТОК клиенту
- * (вычитанием), чтобы показанное совпало с выплаченным до последнего юнита.
+ * правки начал бы врать молча. Половины считаются в `lib/splitPot` — ровно как
+ * в `Agreement.triggerArbiterTimeout`, вычитанием, чтобы показанное совпало с
+ * выплаченным до последнего юнита.
  *
- * Если чтение не удалось (старый клон Agreement без селектора `disputeFee` —
- * у Agreement нет fallback, вызов реверта), не рисуется ничего. Это намеренно:
- * такая сделка живёт по старым правилам — сбора нет, таймаут без клейма
- * возвращает всё клиенту, — и новое предупреждение было бы про неё ложью.
+ * Если чтение провалилось, важно ПОЧЕМУ (`lib/contractReadError`):
+ *
+ *  • контракт ответил отказом (старый клон Agreement без селектора
+ *    `disputeFee` — у Agreement нет fallback, вызов реверта) — не рисуется
+ *    ничего. Это намеренно: такая сделка живёт по старым правилам — сбора нет,
+ *    таймаут без клейма возвращает всё клиенту, — и новое предупреждение было
+ *    бы про неё ложью;
+ *  • не доехали до цепи (RPC, таймаут) — рисуется нейтральная строка. Иначе
+ *    сбой сети выглядел бы точно так же, как старый клон, и предупреждение,
+ *    которое мы обязались показывать, тихо исчезало бы вместе с ним, оставляя
+ *    диалог с активной кнопкой и без единого слова про сбор.
  */
-
-/** Точное значение USDC, но не короче двух знаков после запятой: 200 → "200.00",
- *  25.000001 → "25.000001". Округление здесь недопустимо — числа обязаны
- *  совпасть с тем, что заплатит контракт. */
-function usdc(value: bigint): string {
-  const [whole, frac = ''] = formatUnits(value, 6).split('.');
-  return `${whole}.${frac.padEnd(2, '0')}`;
-}
 
 export function DisputeCostNotice({ agreementAddr }: { agreementAddr: string }) {
   const t = useTranslations();
   const address = agreementAddr as `0x${string}`;
   const enabled = !!agreementAddr;
 
-  const { data: fee, isLoading: feeLoading } = useReadContract({
+  type Read = { data: bigint | undefined; isLoading: boolean; error: unknown };
+
+  const { data: fee, isLoading: feeLoading, error: feeError } = useReadContract({
     address,
     abi: AGREEMENT_ABI,
     functionName: 'disputeFee',
     query: { enabled },
-  }) as { data: bigint | undefined; isLoading: boolean };
+  }) as Read;
 
-  const { data: pot, isLoading: potLoading } = useReadContract({
+  const { data: pot, isLoading: potLoading, error: potError } = useReadContract({
     address,
     abi: AGREEMENT_ABI,
     functionName: 'totalPayout',
     query: { enabled },
-  }) as { data: bigint | undefined; isLoading: boolean };
+  }) as Read;
 
-  const { data: disputeWindow, isLoading: windowLoading } = useReadContract({
+  const { data: disputeWindow, isLoading: windowLoading, error: windowError } = useReadContract({
     address,
     abi: AGREEMENT_ABI,
     functionName: 'DISPUTE_WINDOW',
     query: { enabled },
-  }) as { data: bigint | undefined; isLoading: boolean };
+  }) as Read;
 
   const loading = feeLoading || potLoading || windowLoading;
 
@@ -69,16 +71,31 @@ export function DisputeCostNotice({ agreementAddr }: { agreementAddr: string }) 
     // Пока читаем — держим место занятым, а не показываем диалог без
     // предупреждения: иначе оно всплывёт под курсором уже после того, как
     // человек прочитал модалку.
-    return loading ? (
-      <div className="rounded-[14px] border border-amber-400/20 bg-amber-400/[0.04] px-3 py-2.5">
-        <p className="text-[11px] text-white/30">{t('common.loading')}</p>
+    if (loading) {
+      return (
+        <div className="rounded-[14px] border border-amber-400/20 bg-amber-400/[0.04] px-3 py-2.5">
+          <p className="text-[11px] text-white/30">{t('common.loading')}</p>
+        </div>
+      );
+    }
+
+    // Хотя бы одно чтение не доехало до цепи — сказать нечего, но и молчать
+    // нельзя: молчание здесь неотличимо от старого клона, у которого новых
+    // правил действительно нет.
+    const transportFailed = [feeError, potError, windowError].some(
+      (e) => e && classifyReadFailure(e) === 'transport',
+    );
+    return transportFailed ? (
+      <div className="rounded-[14px] border border-white/10 bg-white/[0.03] px-3 py-2.5">
+        <p className="text-[11px] leading-relaxed text-white/40">
+          {t('deal.dispute_terms_unreadable')}
+        </p>
       </div>
     ) : null;
   }
 
   // Ровно как в контракте: половина исполнителю, ОСТАТОК клиенту.
-  const toExecutor = pot / 2n;
-  const toClient = pot - toExecutor;
+  const { toExecutor, toClient } = splitPot(pot);
 
   // Дробное значение допустимо намеренно: окно в 36 часов даст 1.5, и ICU-plural
   // отрендерит "1.5 days" вместо вранья про "1 day".
@@ -89,14 +106,14 @@ export function DisputeCostNotice({ agreementAddr }: { agreementAddr: string }) 
       <div className="flex items-start gap-2">
         <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-px" />
         <p className="text-[11px] leading-relaxed text-amber-200/80">
-          {t('deal.dispute_fee_notice', { fee: usdc(fee), pot: usdc(pot) })}
+          {t('deal.dispute_fee_notice', { fee: usdcExact(fee), pot: usdcExact(pot) })}
         </p>
       </div>
       <p className="text-[11px] leading-relaxed text-white/45 pl-[22px]">
         {t('deal.dispute_no_arbiter_notice', {
           days,
-          toExecutor: usdc(toExecutor),
-          toClient: usdc(toClient),
+          toExecutor: usdcExact(toExecutor),
+          toClient: usdcExact(toClient),
         })}
       </p>
     </div>

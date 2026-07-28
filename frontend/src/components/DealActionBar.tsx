@@ -15,6 +15,8 @@ import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from '@/config/constants';
 import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from '@/lib/relay';
 import { getXmtpClientIfCached, notifyArbiters } from '@/lib/xmtp';
 import { DisputeCostNotice } from '@/components/DisputeCostNotice';
+import { useArbiterTimeoutOutcome } from '@/hooks/useArbiterTimeoutOutcome';
+import { useTranslations } from 'next-intl';
 
 interface Props {
   agreementAddr: string;
@@ -34,6 +36,11 @@ export function DealActionBar({ agreementAddr }: Props) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
+  // Остальные подписи в этом компоненте — захардкоженный английский (он не
+  // локализован целиком, это отдельный долг). Но подпись и тост таймаута
+  // арбитра обязаны быть переводимыми: они называют суммы и исход, и врали
+  // «Refunded!» там, где котёл делится пополам.
+  const t = useTranslations();
 
   const [busy, setBusy]                   = useState(false);
   const [disputeModal, setDisputeModal]   = useState(false);
@@ -140,6 +147,14 @@ export function DealActionBar({ agreementAddr }: Props) {
   const autoApproveExpired = parsed ? parsed.markedDoneAt > 0n && nowSec >= parsed.markedDoneAt + AUTO_APPROVE_WINDOW : false;
   const deadlineExpired    = timeLeft !== undefined && timeLeft === 0n;
   const arbiterExpired     = arbiterTimeLeft !== undefined && arbiterTimeLeft === 0n;
+
+  // Дележ (за спор никто не взялся) или возврат клиенту (взялись и не довели) —
+  // решает поле `arbiter`, которое здесь уже прочитано выше.
+  const arbiterTimeout = useArbiterTimeoutOutcome(
+    agreementAddr,
+    parsed?.arbiter,
+    statusNum === 4 && arbiterExpired && isParty,
+  );
 
   const pendingExtras  = extrasList.filter(e => e.status === EXTRA_STATUS.PENDING);
   const acceptedExtras = extrasList.filter(e => e.status === EXTRA_STATUS.ACCEPTED);
@@ -350,8 +365,8 @@ export function DealActionBar({ agreementAddr }: Props) {
             </Button>
           )}
           {s === 4 && isParty && arbiterExpired && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerArbiterTimeout', 'Refunded!')} disabled={busy}>
-              Arbiter idle → Refund
+            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerArbiterTimeout', arbiterTimeout.successToast)} disabled={busy}>
+              {arbiterTimeout.buttonLabel}
             </Button>
           )}
           {s === 2 && parsed.markedDoneAt > 0n && autoApproveExpired && (
@@ -519,9 +534,11 @@ export function DealActionBar({ agreementAddr }: Props) {
               <AlertTriangle className="w-4 h-4 text-red-400" />
               <h2 className="text-sm font-semibold text-white">Raise Dispute</h2>
             </div>
-            <p className="text-xs text-white/40 mb-3">
-              Describe the issue — the arbiter will read this before deciding.
-            </p>
+            {/* Не «арбитр прочитает это перед решением»: строкой ниже
+                DisputeCostNotice честно говорит, что за спор могут и не
+                взяться. Обещать арбитра как данность в том же окне, где мы это
+                обещание снимаем, — противоречие внутри одного экрана. */}
+            <p className="text-xs text-white/40 mb-3">{t('deal.dispute_reason_hint')}</p>
             {/* Тот же диалог, что и на странице сделки, поэтому то же
                 предупреждение: спор стоит денег и может закончиться дележом
                 пополам. Открыть спор можно из трёх мест — все три обязаны это

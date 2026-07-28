@@ -21,6 +21,7 @@ import {
 import { shortAddr } from '@/lib/utils';
 import { useMountedRef } from '@/hooks/useMountedRef';
 import { DisputeCostNotice } from '@/components/DisputeCostNotice';
+import { useArbiterTimeoutOutcome } from '@/hooks/useArbiterTimeoutOutcome';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem { id: number; amount: bigint; terms: string; status: number; }
@@ -169,6 +170,12 @@ function DealCardImpl({ agreement, address, refetch }: {
 
   const markedDoneAt:  bigint = details ? (details as any)[8] : BigInt(0);
   const fundedAt:      bigint = details ? (details as any)[6] : BigInt(0);
+  // Поле `arbiter` из того же getDetails — ноль означает, что за спор никто не
+  // взялся, и тогда таймаут делит котёл, а не возвращает его клиенту. Читается
+  // из уже полученного результата, без ещё одного запроса.
+  const arbiterAddr: string | undefined = details
+    ? (((details as any).arbiter_ ?? (details as any)[2]) as string | undefined)
+    : undefined;
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const activationExpired  = fundedAt > 0n && nowSec > fundedAt + ACTIVATION_WINDOW;
   const autoApproveExpired = markedDoneAt > 0n && nowSec >= markedDoneAt + AUTO_APPROVE_WINDOW;
@@ -184,6 +191,14 @@ function DealCardImpl({ agreement, address, refetch }: {
   const s          = DEAL_STATUS[liveStatus] ?? DEAL_STATUS[0];
   const counterparty = isClient ? agreement.executor : agreement.client;
 
+  // Дележ или возврат — решает поле `arbiter`, не статус. Один источник и для
+  // подписи кнопки, и для тоста: иначе кнопка и её же результат разошлись бы.
+  const arbiterTimeout = useArbiterTimeoutOutcome(
+    agreement.agreement,
+    arbiterAddr,
+    liveStatus === 4 && arbiterExpired && (isClient || isExecutor),
+  );
+
   const run = async (fn: string) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
     setBusy(true);
@@ -194,7 +209,7 @@ function DealCardImpl({ agreement, address, refetch }: {
       raiseDispute: tc('dispute_success'),
       triggerActivationTimeout: t('deal.timeout_activation_success'),
       triggerDeadlineTimeout:   t('deal.timeout_deadline_success'),
-      triggerArbiterTimeout:    t('deal.timeout_arbiter_success'),
+      triggerArbiterTimeout:    arbiterTimeout.successToast,
       triggerAutoApprove:       t('deal.timeout_auto_approve_success'),
     };
     try {
@@ -347,7 +362,7 @@ function DealCardImpl({ agreement, address, refetch }: {
   );
   if (liveStatus === 4 && (isClient || isExecutor) && arbiterExpired) timeoutActions.push(
     <Button key="arbTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerArbiterTimeout')}>
-      <Timer className="w-3 h-3 mr-1" />{t('deal.timeout_arbiter')}
+      <Timer className="w-3 h-3 mr-1" />{arbiterTimeout.buttonLabel}
     </Button>
   );
   if (liveStatus === 2 && markedDoneAt > BigInt(0) && autoApproveExpired) timeoutActions.push(

@@ -33,6 +33,7 @@ import { getXmtpClientIfCached, notifyArbiters } from "@/lib/xmtp";
 import { useTranslations } from "next-intl";
 import { ContextHint } from "@/components/ContextHint";
 import { DisputeCostNotice } from "@/components/DisputeCostNotice";
+import { useArbiterTimeoutOutcome } from "@/hooks/useArbiterTimeoutOutcome";
 import { shortAddr } from "@/lib/utils";
 import { PageCenter } from "@/components/PageCenter";
 
@@ -327,6 +328,16 @@ export default function DealDetailPage() {
     : false;
 
   const isParty = isClient || isExecutor;
+
+  // Что таймаут арбитра на самом деле сделает с деньгами — дележ (за спор никто
+  // не взялся) или возврат клиенту (взялись и не довели). Решает поле `arbiter`,
+  // а не только статус со сроком, как было раньше: подпись кнопки, тост и
+  // баннер ниже берут текст отсюда, чтобы все три не расходились между собой.
+  const arbiterTimeout = useArbiterTimeoutOutcome(
+    dealAddress as string | undefined,
+    parsed?.arbiter,
+    parsed?.status === 4 && arbiterTimeLeft === BigInt(0),
+  );
 
   // Terminal states — deal is fully closed, no further actions possible
   const isTerminal = parsed ? [3, 5, 6].includes(parsed.status) : false;
@@ -773,7 +784,10 @@ export default function DealDetailPage() {
         {parsed.status === 4 && arbiterTimeLeft === 0n && (
           <div className="rounded-[16px] border border-purple-400/20 bg-purple-400/5 px-4 py-3">
             <p className="text-xs font-semibold text-purple-300/90 mb-1">{t("deal.stale_arbiter_title")}</p>
-            <p className="text-xs text-white/35 leading-relaxed">{t("deal.stale_arbiter_body")}</p>
+            {/* «Автоматический возврат клиенту» — правда только когда за спор
+                брались. Если не брался никто, контракт делит котёл, и обе
+                половины показываются числами: на нечётном котле они разные. */}
+            <p className="text-xs text-white/35 leading-relaxed">{arbiterTimeout.bannerBody}</p>
           </div>
         )}
 
@@ -900,9 +914,9 @@ export default function DealDetailPage() {
               )}
               {parsed.status === 4 && isParty && arbiterTimeLeft === BigInt(0) && (
                 <Button size="sm" variant="ghost" className="text-orange-400/60 hover:text-orange-400"
-                  onClick={() => handleAction('triggerArbiterTimeout', t("deal.timeout_arbiter_success"))}
+                  onClick={() => handleAction('triggerArbiterTimeout', arbiterTimeout.successToast)}
                   disabled={busy}>
-                  {t("deal.timeout_arbiter")}
+                  {arbiterTimeout.buttonLabel}
                 </Button>
               )}
               {parsed.status === 2 && isParty && autoApproveWindowPassed && (
