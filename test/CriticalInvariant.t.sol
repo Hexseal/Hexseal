@@ -624,4 +624,28 @@ contract CriticalInvariantTest is Test {
             "client balance unchanged"
         );
     }
+
+    // The auto-refund-of-siblings path inside acceptRequest (Task 5) must emit
+    // what actually left the diamond for the superseded sibling — amount + fee
+    // above the floor — not just the sibling's bare deal amount. A test that
+    // only asserted the balance change (as testAcceptRequestSupersedesSiblingPendingFromSameClient
+    // in test/Boards.t.sol already does) would pass even if the event still
+    // reported the stale pre-fee value, since nothing reads the event's
+    // payload back into a balance check.
+    function testServiceCycle_AcceptSupersedesSiblingAndEmitsActualRefund() public {
+        uint256 serviceId1 = _mintService();
+        uint256 serviceId2 = _mintService();
+
+        uint256 requestId1 = _requestService(client, serviceId1, SVC_AMOUNT, SVC_FEE);
+        uint256 requestId2 = _requestService(client, serviceId2, SVC2_AMOUNT, SVC2_FEE);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ServiceBoardFacet.RequestSuperseded(requestId2, client, executor, SVC2_AMOUNT + (SVC2_FEE - JOB_FLOOR));
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId1);
+
+        ServiceBoardStorage.HireRequest memory req2 = ServiceBoardFacet(address(diamond)).getRequest(requestId2);
+        assertEq(uint256(req2.status), uint256(ServiceBoardStorage.RequestStatus.SUPERSEDED), "sibling superseded");
+    }
 }
