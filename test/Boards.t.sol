@@ -490,6 +490,54 @@ contract BoardsTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), fee);
     }
 
+    function testCancelJob_EmitsActualReturnedAmount() public {
+        uint256 amount = 200_000_000;      // $200
+        uint256 fee = 10_000_000;          // 5%
+        uint256 floor_ = 1_000_000;        // $1
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + fee);
+        uint256 jobId = JobBoardFacet(address(diamond)).mintJob(
+            "Build a dApp", "Need a Solidity dev", amount, DEADLINE, TERMS, REGION
+        );
+
+        // JobCancelled обязано нести реально вернувшуюся клиенту сумму
+        // (amount + комиссия сверх пола), а не только сумму заказа — фронт
+        // печатает это поле дословно в уведомлении.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit JobBoardFacet.JobCancelled(jobId, client, amount + (fee - floor_));
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+        vm.stopPrank();
+    }
+
+    function testCancelJob_FloorRaisedAfterMint_BurnsOnlyWhatWasHeld() public {
+        uint256 amount = 20_000_000;       // $20 — held fee = $1 (floor at mint time)
+        uint256 heldFee = 1_000_000;
+        uint256 before = usdc.balanceOf(client);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), amount + heldFee);
+        uint256 jobId = JobBoardFacet(address(diamond)).mintJob(
+            "Small task", "Tiny", amount, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        // Владелец поднимает пол ПОСЛЕ минта — выше уже удержанной комиссии.
+        // Тот же случай на живом хранилище: заказы, созданные до апгрейда,
+        // у которых feeFloor на момент минта был другим (или нулевым).
+        FactoryFacet(address(diamond)).setFeeFloor(2_000_000);
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
+
+        // Пол (2_000_000) теперь больше удержанной комиссии (1_000_000) —
+        // сгорает ровно то, что было удержано, клиенту сверх суммы заказа
+        // ничего не возвращается, и вычитание не underflow'ит.
+        assertEq(usdc.balanceOf(client), before - heldFee);
+        assertEq(usdc.balanceOf(feeRecipient), heldFee);
+        assertEq(usdc.balanceOf(address(diamond)), 0);
+    }
+
     // ============================================================
     //  SERVICE BOARD TESTS
     // ============================================================

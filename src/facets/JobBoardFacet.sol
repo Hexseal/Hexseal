@@ -404,13 +404,16 @@ contract JobBoardFacet {
         uint256 floor_ = fs.feeFloor;
         uint256 burned = feeHeld < floor_ ? feeHeld : floor_;
 
-        _safeTransfer(fs.usdc, job.client, refund + (feeHeld - burned));
+        uint256 returned = refund + (feeHeld - burned);
+        _safeTransfer(fs.usdc, job.client, returned);
         if (burned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, burned);
 
         // Burn receipt NFT — non-blocking so a failure doesn't block the refund
         try IJobReceiptBurn(address(this)).burnJobReceipt(jobId) {} catch {}
 
-        emit JobCancelled(jobId, job.client, refund);
+        // refundAmount = сколько реально вернулось клиенту (amount + сверх-пола
+        // часть комиссии), а не только сумма заказа — так его читает фронт.
+        emit JobCancelled(jobId, job.client, returned);
     }
 
     /// @notice Клиент редактирует заказ, пока он OPEN и НЕТ откликов (gasless-совместим).
