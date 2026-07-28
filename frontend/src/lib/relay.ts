@@ -161,7 +161,18 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   triggerAutoApprove: 120_000n,
   triggerActivationTimeout: 100_000n,
   triggerDeadlineTimeout:   100_000n,
-  triggerArbiterTimeout:    100_000n,
+  // Both branches of the dispute timeout blow straight through the old 100_000n —
+  // measured with `forge test --gas-report` on test/DisputeSettlement.t.sol:
+  // 145_825 worst case for the split (two USDC transfers, registry write, claim
+  // reset) and 147_014 for the refund after a claim (one transfer, plus
+  // notifyArbiterTimeout on the Diamond, which costs more than the second
+  // transfer saved). The fallback was under both, so whenever estimateGas() failed
+  // the meta-transaction reverted out of gas. Those figures come off the local
+  // harness with a mock USDC; real Base Sepolia USDC is a proxy and its transfers
+  // cost more, so the margin is taken from the closest neighbour instead of the
+  // measurement: `release` is budgeted 500_000 for _complete + a registry write +
+  // ONE transfer, and this call does strictly more than that in both branches.
+  triggerArbiterTimeout:    500_000n,
 };
 
 const DEFAULT_GAS = 500_000n;

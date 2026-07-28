@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useAccount, useReadContract, useWatchContractEvent } from "wagmi";
+import { useAccount, usePublicClient, useReadContract, useWatchContractEvent } from "wagmi";
 import { toast } from "react-hot-toast";
 import {
   type AppNotification,
@@ -19,6 +19,7 @@ import {
   ARBITER_REGISTRY_ABI,
   SERVICE_BOARD_ABI,
 } from "@/config/contracts";
+import { classifySettledRefund, refundNotifCopy } from "@/lib/settledRefund";
 import type { Abi } from "viem";
 
 const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
@@ -34,6 +35,7 @@ function a(log: unknown): any {
 
 export function useNotifications() {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const myDeals = useRef<Map<string, DealRole>>(new Map());
   const myJobIds = useRef<Set<string>>(new Set());
@@ -141,68 +143,85 @@ export function useNotifications() {
       ),
     ];
 
-    // Registry AgreementStatus: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
-    let hasNew = false;
-    for (const deal of allDeals) {
-      const st = Number(deal.status);
-      const lnk = `/deal/${deal.agreement}`;
+    // REFUNDED(2) has to be read from the agreement, not just the registry, so this
+    // pass is async now. Async also means it can outlive the mounted hook — the
+    // notification store itself is idempotent (localStorage, `alreadyHas` above),
+    // so the only thing worth cancelling is the setState at the end.
+    let cancelled = false;
+    (async () => {
+      // Registry AgreementStatus: 0=ACTIVE, 1=COMPLETED, 2=REFUNDED, 3=DISPUTED, 4=RESOLVED
+      let hasNew = false;
+      for (const deal of allDeals) {
+        const st = Number(deal.status);
+        const lnk = `/deal/${deal.agreement}`;
 
-      let notif: Omit<AppNotification, "id" | "timestamp" | "read"> | null = null;
+        let notif: Omit<AppNotification, "id" | "timestamp" | "read"> | null = null;
 
-      if (st === 3 && !alreadyHas(lnk, "deal_disputed")) {
-        // DISPUTED
-        notif = {
-          type: "deal_disputed",
-          title: "Dispute Raised",
-          body: deal.myRole === "client"
-            ? "A dispute was opened on your deal."
-            : "Client raised a dispute — arbiter will review.",
-          link: lnk,
-        };
-      } else if (st === 4 && !alreadyHas(lnk, "deal_resolved")) {
-        // RESOLVED
-        notif = {
-          type: "deal_resolved",
-          title: "Dispute Resolved",
-          body: "The arbiter has resolved the dispute.",
-          link: lnk,
-        };
-      } else if (st === 2 && !alreadyHas(lnk, "deal_refunded")) {
-        // REFUNDED
-        notif = {
-          type: "deal_refunded",
-          title: "Deal Refunded",
-          body: deal.myRole === "client" ? "Funds returned to your wallet." : "The deal was refunded to the client.",
-          link: lnk,
-        };
-      } else if (st === 1 && !alreadyHas(lnk, "deal_completed")) {
-        // COMPLETED
-        notif = {
-          type: "deal_completed",
-          title: "Deal Complete",
-          body: deal.myRole === "client"
-            ? "Payment successfully released to executor."
-            : "Payment has been released to your wallet!",
-          link: lnk,
-        };
-      } else if (st === 0 && deal.myRole === "executor" && !alreadyHas(lnk, "deal_active")) {
-        // ACTIVE — напоминаем только исполнителю (клиент и так знает)
-        notif = {
-          type: "deal_active",
-          title: "Deal In Progress",
-          body: "You have an active deal — time to deliver.",
-          link: lnk,
-        };
+        if (st === 3 && !alreadyHas(lnk, "deal_disputed")) {
+          // DISPUTED
+          notif = {
+            type: "deal_disputed",
+            title: "Dispute Raised",
+            body: deal.myRole === "client"
+              ? "A dispute was opened on your deal."
+              : "Client raised a dispute — arbiter will review.",
+            link: lnk,
+          };
+        } else if (st === 4 && !alreadyHas(lnk, "deal_resolved")) {
+          // RESOLVED
+          notif = {
+            type: "deal_resolved",
+            title: "Dispute Resolved",
+            body: "The arbiter has resolved the dispute.",
+            link: lnk,
+          };
+        } else if (st === 2 && !alreadyHas(lnk, "deal_refunded")) {
+          // REFUNDED — or a dispute nobody took, which pays out half the escrow to the
+          // executor and lands in the registry under this very same status. There is no
+          // tx hash in a registry snapshot, so the outcome is read from the agreement's
+          // own state; see lib/settledRefund. The type stays `deal_refunded` in both
+          // cases: it is the idempotency key `alreadyHas` uses, so a split notification
+          // must occupy the same slot, or this probe would re-run on every cold start.
+          const outcome = await classifySettledRefund(
+            publicClient,
+            deal.agreement as `0x${string}`,
+          );
+          notif = {
+            type: "deal_refunded",
+            ...refundNotifCopy(outcome, deal.myRole),
+            link: lnk,
+          };
+        } else if (st === 1 && !alreadyHas(lnk, "deal_completed")) {
+          // COMPLETED
+          notif = {
+            type: "deal_completed",
+            title: "Deal Complete",
+            body: deal.myRole === "client"
+              ? "Payment successfully released to executor."
+              : "Payment has been released to your wallet!",
+            link: lnk,
+          };
+        } else if (st === 0 && deal.myRole === "executor" && !alreadyHas(lnk, "deal_active")) {
+          // ACTIVE — напоминаем только исполнителю (клиент и так знает)
+          notif = {
+            type: "deal_active",
+            title: "Deal In Progress",
+            body: "You have an active deal — time to deliver.",
+            link: lnk,
+          };
+        }
+
+        if (notif) {
+          pushNotif(address, notif);
+          hasNew = true;
+        }
       }
 
-      if (notif) {
-        pushNotif(address, notif);
-        hasNew = true;
-      }
-    }
+      if (hasNew && !cancelled) setNotifications(loadNotifs(address));
+    })();
 
-    if (hasNew) setNotifications(loadNotifs(address));
-  }, [clientDeals, executorDeals, address]);
+    return () => { cancelled = true; };
+  }, [clientDeals, executorDeals, address, publicClient]);
 
   // Persist + show toast
   const push = useCallback(
@@ -275,7 +294,7 @@ export function useNotifications() {
     }
   }, [push]);
 
-  const onAgreementStatusUpdated = useCallback((logs: unknown[]) => {
+  const onAgreementStatusUpdated = useCallback(async (logs: unknown[]) => {
     for (const log of logs) {
       const { agreement, newStatus } = a(log);
       if (!agreement) continue;
@@ -309,15 +328,32 @@ export function useNotifications() {
 
       const entry = msgMap[status];
       if (!entry) continue;
+      const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
+
+      let [, title, body] = entry;
+      // REFUNDED(2) is two outcomes wearing one status: a real refund, and a dispute
+      // nobody claimed, which splits the escrow and pays the executor half of it.
+      // The registry cannot tell them apart (the enum mirrors the agreement's frozen
+      // `enum Status`), so the agreement's own DisputeSplitNoVerdict in this very
+      // transaction does — see lib/settledRefund.
+      if (status === 2) {
+        const outcome = await classifySettledRefund(
+          publicClient,
+          agreement as `0x${string}`,
+          txHash as `0x${string}` | undefined,
+        );
+        ({ title, body } = refundNotifCopy(outcome, role));
+      }
+
       push({
         type: entry[0],
-        title: entry[1],
-        body: entry[2],
+        title,
+        body,
         link: `/deal/${agreement}`,
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
+        txHash,
       });
     }
-  }, [isArbiter, push]);
+  }, [isArbiter, push, publicClient]);
 
   const onJobAcceptedAsExecutor = useCallback((logs: unknown[]) => {
     for (const log of logs) {

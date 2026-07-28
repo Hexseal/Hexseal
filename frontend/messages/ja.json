@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "誰も引き受けず → 分割",
     "timeout_arbiter_split_success": "誰も争議を引き受けませんでした · {toExecutor} USDC が受注者へ、{toClient} USDC がクライアントへ。",
     "timeout_arbiter_unknown": "停止した争議を終了",
-    "timeout_arbiter_unknown_success": "争議を終了しました · エスクローがどう精算されたかは取引ページで確認できます。",
+    "timeout_arbiter_unknown_success": "争議を終了しました · 実際に届いた金額はウォレットで確認してください。",
     "timeout_auto_approve": "クライアント無応答 → 受注者に解放",
     "timeout_auto_approve_success": "自動承認 · 受注者に資金解放済。",
     "status": {

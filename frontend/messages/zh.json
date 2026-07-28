@@ -419,7 +419,7 @@
     "timeout_arbiter_split": "无人接手 → 平分",
     "timeout_arbiter_split_success": "无人接手该争议 · {toExecutor} USDC 给执行者，{toClient} USDC 给客户。",
     "timeout_arbiter_unknown": "关闭停滞的争议",
-    "timeout_arbiter_unknown_success": "争议已关闭 · 交易页面会显示托管资金如何结算。",
+    "timeout_arbiter_unknown_success": "争议已关闭 · 请在钱包中查看实际到账的金额。",
     "timeout_auto_approve": "客户沉默 → 释放给执行者",
     "timeout_auto_approve_success": "自动批准 · 资金已释放给执行者。",
     "status": {

@@ -58,7 +58,31 @@ export function decideArbiterTimeout(reads: ArbiterTimeoutReads): ArbiterTimeout
   if (arbiter.toLowerCase() !== ZERO_ADDRESS) return { kind: 'refund' };
 
   // Старый клон: селектора сбора нет, значит и дележа у него нет.
-  if (feeError && classifyReadFailure(feeError) === 'contract') return { kind: 'refund' };
+  //
+  // Но верить этому выводу можно только если ДРУГОЕ чтение того же контракта
+  // доехало. `classifyReadFailure` разбирает уже завёрнутую viem'ом ошибку, а
+  // viem заворачивает JSON-RPC `-32603 Internal error` в
+  // `ContractFunctionRevertedError`, если при нём пришли хоть какие-то данные:
+  // в `utils/errors/getContractError.ts` код `InternalRpcError` стоит в том же
+  // списке, что и код 3 «execution reverted», а исходную ошибку затирает
+  // созданной. То есть серверный сбой RPC на уровне типов НЕОТЛИЧИМ от «у этого
+  // клона нет `disputeFee()`» — и без этой проверки интерфейс уверенно обещал бы
+  // новому клону полный возврат, хотя котёл разделят пополам. Ровно тот класс
+  // вранья, который весь этот файл убирает, только в другую сторону.
+  //
+  // Различает их то, что признак старого клона локальный (реверта одного
+  // селектора), а `-32603` — серверный: он валит все три чтения разом. На
+  // настоящем старом клоне `DISPUTE_WINDOW()` работает (на живой реализации
+  // `0xf7cBecE7…` измерено: `disputeFee()` ревертит, `DISPUTE_WINDOW()` отдаёт
+  // 345600), поэтому «дочиталось окно» и есть подтверждение, что цепь на связи и
+  // отказ пришёл от контракта. При `-32603`-шторме не доезжает ничего, и
+  // результатом честно становится 'unknown'.
+  //
+  // Проверено `arbiterTimeoutSettlement.test.ts` — там собрана настоящая
+  // viem-ошибка `-32603`, чтобы правка в viem не прошла незамеченной.
+  if (feeError && classifyReadFailure(feeError) === 'contract' && disputeWindow !== undefined) {
+    return { kind: 'refund' };
+  }
 
   if (fee === undefined || pot === undefined || disputeWindow === undefined) {
     return { kind: 'unknown' };

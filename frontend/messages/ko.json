@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "아무도 맡지 않음 → 분할",
     "timeout_arbiter_split_success": "아무도 분쟁을 맡지 않았습니다 · {toExecutor} USDC는 실행자에게, {toClient} USDC는 클라이언트에게.",
     "timeout_arbiter_unknown": "정체된 분쟁 종료",
-    "timeout_arbiter_unknown_success": "분쟁이 종료되었습니다 · 에스크로가 어떻게 정산되었는지는 거래 페이지에서 확인할 수 있습니다.",
+    "timeout_arbiter_unknown_success": "분쟁이 종료되었습니다 · 실제로 입금된 금액은 지갑에서 확인하세요.",
     "timeout_auto_approve": "클라이언트 무응답 → 실행자에게 해제",
     "timeout_auto_approve_success": "자동 승인 · 실행자에게 자금이 해제되었습니다.",
     "status": {

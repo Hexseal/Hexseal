@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "Personne n'a pris → Partage",
     "timeout_arbiter_split_success": "Personne n'a pris le litige · {toExecutor} USDC pour l'exécutant, {toClient} USDC pour le client.",
     "timeout_arbiter_unknown": "Clore le litige bloqué",
-    "timeout_arbiter_unknown_success": "Litige clos · la page du contrat montre comment le séquestre a été réparti.",
+    "timeout_arbiter_unknown_success": "Litige clos · vérifiez votre wallet pour voir ce qui est réellement arrivé.",
     "timeout_auto_approve": "Client silencieux → Libération à l'exécutant",
     "timeout_auto_approve_success": "Auto-approuvé · Fonds libérés à l'exécutant.",
     "status": {

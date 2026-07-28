@@ -942,6 +942,23 @@ export const FORWARDER_ABI = [
   },
 ];
 
+// Единственный признак, отличающий дележ котла от настоящего возврата: реестр в
+// обоих случаях получает REFUNDED, потому что перечисление статусов расширять
+// нельзя — оно повторяет `enum Status` агримента, чья раскладка заморожена.
+// Суммы здесь ФАКТИЧЕСКИ переведённые, а не расчётные: если USDC заблокировал
+// исполнителя, контракт отдаёт его половину клиенту, и событие покажет ноль.
+// Вынесено отдельным `as const`, потому что `AGREEMENT_ABI` целиком не const, а
+// `parseEventLogs` без него не выведет типы аргументов (см. `lib/settledRefund`).
+export const DISPUTE_SPLIT_EVENT = {
+  anonymous: false,
+  inputs: [
+    { indexed: false, internalType: 'uint256', name: 'toClient',   type: 'uint256' },
+    { indexed: false, internalType: 'uint256', name: 'toExecutor', type: 'uint256' },
+  ],
+  name: 'DisputeSplitNoVerdict',
+  type: 'event',
+} as const;
+
 // Agreement ABI (для взаимодействия с отдельными Agreement контрактами)
 export const AGREEMENT_ABI = [
   {
@@ -1223,6 +1240,7 @@ export const AGREEMENT_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  DISPUTE_SPLIT_EVENT,
 ];
 
 // Раньше diamond/forwarder/usdc падали обратно на захардкоженный литерал, если

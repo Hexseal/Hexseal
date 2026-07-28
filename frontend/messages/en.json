@@ -464,7 +464,7 @@
     "timeout_arbiter_split": "Nobody took it → Split",
     "timeout_arbiter_split_success": "Nobody took the dispute · {toExecutor} USDC to the executor, {toClient} USDC to the client.",
     "timeout_arbiter_unknown": "Close stalled dispute",
-    "timeout_arbiter_unknown_success": "Dispute closed · open the deal to see how the escrow was settled.",
+    "timeout_arbiter_unknown_success": "Dispute closed · check your wallet to see what actually arrived.",
     "auto_approve_in": "Auto-approves in {time} if not released",
     "timeout_auto_approve": "Client silent → Release to executor",
     "timeout_auto_approve_success": "Auto-approved · Funds released to executor.",

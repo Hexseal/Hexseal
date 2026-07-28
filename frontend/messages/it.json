@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "Nessuno l'ha preso → Divisione",
     "timeout_arbiter_split_success": "Nessuno ha preso la controversia · {toExecutor} USDC all'esecutore, {toClient} USDC al cliente.",
     "timeout_arbiter_unknown": "Chiudi la controversia bloccata",
-    "timeout_arbiter_unknown_success": "Controversia chiusa · la pagina dell'accordo mostra come è stato diviso il deposito.",
+    "timeout_arbiter_unknown_success": "Controversia chiusa · controlla il tuo wallet per vedere quanto è arrivato davvero.",
     "timeout_auto_approve": "Cliente silenzioso → Rilascio all'esecutore",
     "timeout_auto_approve_success": "Auto-approvato · Fondi rilasciati all'esecutore.",
     "status": {

@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "لم يتولّها أحد → تقسيم",
     "timeout_arbiter_split_success": "لم يتولَّ أحد النزاع · {toExecutor} USDC للمنفّذ و{toClient} USDC للعميل.",
     "timeout_arbiter_unknown": "إغلاق النزاع المتوقّف",
-    "timeout_arbiter_unknown_success": "تم إغلاق النزاع · صفحة الصفقة تُظهر كيف تمت تسوية المبلغ المحتجز.",
+    "timeout_arbiter_unknown_success": "تم إغلاق النزاع · تحقّق من محفظتك لمعرفة المبلغ الذي وصلك.",
     "timeout_auto_approve": "العميل صامت → إصدار للمنفّذ",
     "timeout_auto_approve_success": "موافقة تلقائية · تم إصدار الأموال للمنفّذ.",
     "status": {

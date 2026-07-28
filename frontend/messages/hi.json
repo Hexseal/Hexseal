@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "कोई नहीं आया → बँटवारा",
     "timeout_arbiter_split_success": "विवाद कोई नहीं लिया · {toExecutor} USDC एक्जीक्यूटर को, {toClient} USDC क्लाइंट को।",
     "timeout_arbiter_unknown": "अटका विवाद बंद करें",
-    "timeout_arbiter_unknown_success": "विवाद बंद · एस्क्रो कैसे बँटा, यह डील पेज पर दिखता है।",
+    "timeout_arbiter_unknown_success": "विवाद बंद · आपको वास्तव में कितना मिला, यह अपने वॉलेट में देखें।",
     "timeout_auto_approve": "क्लाइंट चुप → एक्जीक्यूटर को जारी",
     "timeout_auto_approve_success": "स्वतः स्वीकृत · फंड एक्जीक्यूटर को जारी।",
     "status": {

@@ -10,6 +10,7 @@
     "lint": "node node_modules/next/dist/bin/next lint",
     "lint:fix": "node node_modules/next/dist/bin/next lint --fix",
     "type-check": "node node_modules/typescript/bin/tsc --noEmit",
+    "test": "node ../relayer/node_modules/vitest/vitest.mjs run",
     "format": "node node_modules/prettier/bin/prettier.cjs --write .",
     "prepare": "echo 'skipping husky on exFAT'"
   },

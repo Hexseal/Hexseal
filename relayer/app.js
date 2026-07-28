@@ -147,6 +147,76 @@ const AGR_PUSH_MSG = {
   4: { title: 'Dispute Resolved', body: 'The arbiter has resolved the dispute.',              notify: 'both'         },
 };
 
+// ─── REFUNDED(2) is two different outcomes ────────────────────────────────────
+//
+// Agreement.triggerArbiterTimeout() ends the deal one of two ways, and the
+// Registry gets the same REFUNDED(2) for both — the enum mirrors the agreement's
+// frozen `enum Status` and cannot grow, so what distinguishes the cases is an
+// event, not a status:
+//
+//   • nobody ever claimed the dispute → the escrow is SPLIT (floor(pot/2) to the
+//     executor, the remainder to the client) and DisputeSplitNoVerdict is emitted;
+//   • an arbiter claimed it and never delivered → the whole pot goes back to the
+//     client and ArbiterTimedOut is emitted.
+//
+// Without this distinction AGR_PUSH_MSG[2] told an executor who had just received
+// half the escrow that "the deal was cancelled and refunded" — the lie lands in
+// the OS notification tray and stays there, unlike an on-screen toast.
+//
+// The signal is free: DisputeSplitNoVerdict is in the SAME receipt as the
+// AgreementStatusUpdated we already decode (Agreement emits it after
+// _complete()), so no extra chain read is needed.
+const AGR_SPLIT_EVENT_ABI = [
+  'event DisputeSplitNoVerdict(uint256 toClient, uint256 toExecutor)',
+];
+const agrSplitInterface = new ethers.Interface(AGR_SPLIT_EVENT_ABI);
+
+/** REFUNDED(2), the status the split shares with a genuine refund. */
+const AGR_STATUS_REFUNDED = 2;
+
+/**
+ * Exact USDC amount, never shorter than two decimals: 200000000 → "200.00",
+ * 33 → "0.000033". Rounding is not allowed here — these numbers have to match
+ * what the contract actually paid, and the pot splits unevenly when it is odd.
+ */
+export function usdcExact(value) {
+  const [whole, frac = ''] = ethers.formatUnits(value ?? 0n, 6).split('.');
+  return `${whole}.${frac.padEnd(2, '0')}`;
+}
+
+/**
+ * DisputeSplitNoVerdict from THIS agreement in a mined receipt, or null.
+ * Address-scoped on purpose: only the agreement the relayed call targeted may
+ * decide how that deal's push reads.
+ */
+export function findDisputeSplit(logs, agreementAddress) {
+  const target = agreementAddress?.toLowerCase();
+  for (const log of logs ?? []) {
+    if (target && log.address?.toLowerCase() !== target) continue;
+    let ev;
+    try { ev = agrSplitInterface.parseLog(log); } catch { continue; }
+    if (ev?.name === 'DisputeSplitNoVerdict') {
+      return { toClient: ev.args.toClient, toExecutor: ev.args.toExecutor };
+    }
+  }
+  return null;
+}
+
+/**
+ * Both amounts, as numbers rather than the word "half": on an odd pot they
+ * differ by a unit, and if USDC has blacklisted the executor the contract sends
+ * his half to the client instead — in which case the event carries a zero and
+ * this message says so, which is the truth.
+ */
+export function disputeSplitPushMsg({ toClient, toExecutor }) {
+  return {
+    title: 'Escrow Split',
+    body:  `Nobody took the dispute, so there was nobody to judge it. The escrow was split: `
+         + `${usdcExact(toExecutor)} USDC to the executor, ${usdcExact(toClient)} USDC to the client.`,
+    notify: 'both',
+  };
+}
+
 // activate(), markDone(), and fund() don't emit AgreementStatusUpdated,
 // so we detect them by function selector and send push directly.
 const FUNC_PUSH_MSG = {
@@ -259,12 +329,21 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
       return Promise.allSettled(sends);
     };
 
+    // A split pot reaches the Registry as REFUNDED(2), exactly like a real refund —
+    // only the agreement's own event in THIS receipt tells them apart. Resolved up
+    // front because the Diamond's AgreementStatusUpdated is emitted first (from
+    // inside _complete()) and the loop below returns on the first match.
+    const split = findDisputeSplit(receipt.logs, agreementAddress);
+
     // Check for AgreementStatusUpdated event first (terminal state changes).
     for (const log of receipt.logs) {
       try {
         const parsed = agrEventInterface.parseLog(log);
         if (parsed?.name === 'AgreementStatusUpdated') {
-          const cfg = AGR_PUSH_MSG[Number(parsed.args.newStatus)];
+          const status = Number(parsed.args.newStatus);
+          const cfg = status === AGR_STATUS_REFUNDED && split
+            ? disputeSplitPushMsg(split)
+            : AGR_PUSH_MSG[status];
           if (cfg) await sendCfg(cfg);
           return;
         }

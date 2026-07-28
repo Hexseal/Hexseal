@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "Nadie lo tomó → Reparto",
     "timeout_arbiter_split_success": "Nadie tomó la disputa · {toExecutor} USDC para el ejecutor, {toClient} USDC para el cliente.",
     "timeout_arbiter_unknown": "Cerrar disputa estancada",
-    "timeout_arbiter_unknown_success": "Disputa cerrada · en la página del trato se ve cómo se repartió la custodia.",
+    "timeout_arbiter_unknown_success": "Disputa cerrada · revisa tu wallet para ver cuánto llegó realmente.",
     "timeout_auto_approve": "Cliente silencioso → Liberar al ejecutor",
     "timeout_auto_approve_success": "Auto-aprobado · Fondos liberados al ejecutor.",
     "status": {

@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "Ніхто не взявся → Поділ",
     "timeout_arbiter_split_success": "За спір ніхто не взявся · {toExecutor} USDC виконавцю, {toClient} USDC клієнту.",
     "timeout_arbiter_unknown": "Закрити завислий спір",
-    "timeout_arbiter_unknown_success": "Спір закрито · як розійшлися кошти, видно на сторінці угоди.",
+    "timeout_arbiter_unknown_success": "Спір закрито · перевірте гаманець — скільки надійшло, видно лише там.",
     "timeout_auto_approve": "Клієнт мовчить → Звільнення виконавцю",
     "timeout_auto_approve_success": "Автоматично схвалено · Кошти звільнено виконавцю.",
     "status": {

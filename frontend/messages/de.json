@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "Niemand übernahm → Teilung",
     "timeout_arbiter_split_success": "Niemand hat den Streitfall übernommen · {toExecutor} USDC an den Ausführenden, {toClient} USDC an den Kunden.",
     "timeout_arbiter_unknown": "Festgefahrenen Streitfall schließen",
-    "timeout_arbiter_unknown_success": "Streitfall geschlossen · auf der Deal-Seite steht, wie das Escrow abgerechnet wurde.",
+    "timeout_arbiter_unknown_success": "Streitfall geschlossen · prüfe deine Wallet, um zu sehen, was bei dir angekommen ist.",
     "timeout_auto_approve": "Kunde schweigt → An Ausführenden freigeben",
     "timeout_auto_approve_success": "Automatisch genehmigt · Mittel an Ausführenden freigegeben.",
     "status": {

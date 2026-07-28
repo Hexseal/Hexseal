@@ -454,7 +454,7 @@
     "timeout_arbiter_split": "Никто не взялся → Дележ",
     "timeout_arbiter_split_success": "За спор никто не взялся · {toExecutor} USDC исполнителю, {toClient} USDC клиенту.",
     "timeout_arbiter_unknown": "Закрыть зависший спор",
-    "timeout_arbiter_unknown_success": "Спор закрыт · как разошлись деньги, видно на странице сделки.",
+    "timeout_arbiter_unknown_success": "Спор закрыт · проверьте кошелёк — сколько пришло, видно только там.",
     "auto_approve_in": "Авто-одобрение через {time}, если не выплатить",
     "timeout_auto_approve": "Клиент молчит → Выплата исполнителю",
     "timeout_auto_approve_success": "Авто-одобрение · Средства переведены исполнителю.",

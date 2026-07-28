@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "Ninguém assumiu → Divisão",
     "timeout_arbiter_split_success": "Ninguém assumiu a disputa · {toExecutor} USDC para o executor, {toClient} USDC para o cliente.",
     "timeout_arbiter_unknown": "Encerrar disputa travada",
-    "timeout_arbiter_unknown_success": "Disputa encerrada · a página do contrato mostra como a custódia foi dividida.",
+    "timeout_arbiter_unknown_success": "Disputa encerrada · confira sua carteira para ver quanto realmente chegou.",
     "timeout_auto_approve": "Cliente silencioso → Liberar ao executor",
     "timeout_auto_approve_success": "Auto-aprovado · Fundos liberados ao executor.",
     "status": {

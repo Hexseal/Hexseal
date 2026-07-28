@@ -449,7 +449,7 @@
     "timeout_arbiter_split": "ไม่มีใครรับ → แบ่งครึ่ง",
     "timeout_arbiter_split_success": "ไม่มีใครรับข้อพิพาท · {toExecutor} USDC ให้ผู้รับงาน และ {toClient} USDC ให้ลูกค้า",
     "timeout_arbiter_unknown": "ปิดข้อพิพาทที่ค้างอยู่",
-    "timeout_arbiter_unknown_success": "ปิดข้อพิพาทแล้ว · หน้าดีลแสดงว่าเงินใน escrow ถูกแบ่งอย่างไร",
+    "timeout_arbiter_unknown_success": "ปิดข้อพิพาทแล้ว · ตรวจกระเป๋าเงินของคุณเพื่อดูว่าได้รับเท่าไรจริง",
     "timeout_auto_approve": "ลูกค้าเงียบ → ปล่อยให้ผู้รับงาน",
     "timeout_auto_approve_success": "อนุมัติอัตโนมัติ · ปล่อยเงินให้ผู้รับงานแล้ว",
     "status": {
