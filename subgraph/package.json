@@ -1,11 +1,12 @@
 {
   "name": "hexseal-subgraph",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "scripts": {
     "graph": "node node_modules/@graphprotocol/graph-cli/bin/run",
     "codegen": "node node_modules/@graphprotocol/graph-cli/bin/run codegen",
     "build": "node node_modules/@graphprotocol/graph-cli/bin/run build",
-    "deploy:studio": "node node_modules/@graphprotocol/graph-cli/bin/run deploy hexseal --node https://api.studio.thegraph.com/deploy/ -l v2.0.0"
+    "deploy:studio": "node node_modules/@graphprotocol/graph-cli/bin/run deploy hexseal --node https://api.studio.thegraph.com/deploy/ -l v2.1.0",
+    "_note_deploy": "Метку -l поднимать при каждом деплое. v2.1.0 добавила хендлер DisputeSplitNoVerdict и поля splitToClient/splitToExecutor. Деплоить ОБЯЗАТЕЛЬНО вместе с UpgradeAgreementDisputeFee.s.sol, а не после: до этого сделка, закрытая дележом, висит в статусе спора во всех интерфейсах, хотя на цепи финализирована и пуста."
   },
   "dependencies": {
     "@graphprotocol/graph-cli": "^0.91.0",

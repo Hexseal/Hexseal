@@ -87,4 +87,10 @@ templates:
           handler: handleTimedOut
         - event: ArbiterTimedOut(indexed address,uint256)
           handler: handleArbiterTimedOut
+        # Дележ котла пополам, когда за спор никто не взялся. ArbiterTimedOut в
+        # этом случае намеренно НЕ эмитится — наказывать некого, — поэтому без
+        # своего хендлера сделка оставалась бы в статусе «спор» навсегда, хотя
+        # на цепи она финализирована и пуста.
+        - event: DisputeSplitNoVerdict(uint256,uint256)
+          handler: handleDisputeSplitNoVerdict
       file: ./src/agreement.ts
