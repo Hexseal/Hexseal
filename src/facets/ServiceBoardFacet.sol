@@ -120,11 +120,23 @@ contract ServiceBoardFacet {
     event RequestRejected(uint256 indexed requestId, address indexed executor, address indexed client);
     event RequestCancelled(uint256 indexed requestId, address indexed client);
     event RequestSuperseded(uint256 indexed requestId, address indexed client, address indexed executor, uint256 refundAmount);
-    /// @notice Комиссия, реально ушедшая в казну. AgreementDeployed.fee считается
-    ///         заново на момент найма и расходится с этим числом, если ставка
-    ///         менялась между заявкой и наймом — переведено всегда то, что
-    ///         удержано при заявке, то есть вот это.
-    event FeeCollected(uint256 indexed id, address indexed payer, uint256 amount);
+    /// Комиссия, реально ушедшая в казну. Единственный полный источник дохода
+    /// протокола: AgreementDeployed.fee несёт пересчёт на момент найма и может
+    /// разойтись с переведённым.
+    ///
+    /// kind различает и доску, и природу поступления — без него id означал бы
+    /// три разных пространства идентификаторов (jobId / serviceId / requestId),
+    /// а плата за сделку была бы неотличима от невозвратного пола при отмене:
+    ///   0 JOB_DEAL         — id = jobId,     комиссия с состоявшейся работы
+    ///   1 JOB_FORFEIT      — id = jobId,     пол, оставшийся при отмене заказа
+    ///   2 SERVICE_LISTING  — id = serviceId, плоский пол за публикацию услуги
+    ///   3 REQUEST_DEAL     — id = requestId, комиссия с состоявшегося найма
+    ///   4 REQUEST_FORFEIT  — id = requestId, пол при отклонении/отзыве/вытеснении
+    event FeeCollected(uint256 indexed id, address indexed payer, uint8 indexed kind, uint256 amount);
+
+    uint8 constant FEE_KIND_SERVICE_LISTING = 2;
+    uint8 constant FEE_KIND_REQUEST_DEAL = 3;
+    uint8 constant FEE_KIND_REQUEST_FORFEIT = 4;
 
     // -------- ERRORS --------
 
@@ -216,6 +228,7 @@ contract ServiceBoardFacet {
 
         // Антиспам fee → feeRecipient (не возвращается)
         _safeTransferFrom(fs.usdc, executor, fs.feeRecipient, fee);
+        emit FeeCollected(serviceId, executor, FEE_KIND_SERVICE_LISTING, fee);
 
         emit ServicePosted(serviceId, executor, price, region, title, description, deadlineDays);
     }
@@ -265,6 +278,7 @@ contract ServiceBoardFacet {
         sbl.executorServices[executor].push(serviceId);
 
         _safeTransferFrom(fs.usdc, executor, fs.feeRecipient, fee);
+        emit FeeCollected(serviceId, executor, FEE_KIND_SERVICE_LISTING, fee);
 
         emit ServicePosted(serviceId, executor, price, region, title, description, deadlineDays);
     }
@@ -521,7 +535,7 @@ contract ServiceBoardFacet {
         s.requestFeeHeld[requestId] = 0;
         if (feeHeld > 0) {
             _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
-            emit FeeCollected(requestId, client, feeHeld);
+            emit FeeCollected(requestId, client, FEE_KIND_REQUEST_DEAL, feeHeld);
         }
 
         // Активируем Agreement
@@ -551,7 +565,10 @@ contract ServiceBoardFacet {
 
             uint256 siblingTotal = siblingRefund + (siblingFee - siblingBurned);
             if (siblingTotal > 0) _safeTransfer(fs.usdc, client, siblingTotal);
-            if (siblingBurned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, siblingBurned);
+            if (siblingBurned > 0) {
+                _safeTransfer(fs.usdc, fs.feeRecipient, siblingBurned);
+                emit FeeCollected(siblingId, client, FEE_KIND_REQUEST_FORFEIT, siblingBurned);
+            }
             // RequestSuperseded обязано нести реально переведённую сумму
             // (refund + комиссия сверх пола), а не только тело сделки.
             emit RequestSuperseded(siblingId, client, sender, siblingTotal);
@@ -583,7 +600,10 @@ contract ServiceBoardFacet {
         uint256 burned = feeHeld < floor_ ? feeHeld : floor_;
 
         _safeTransfer(fs.usdc, req.client, refund + (feeHeld - burned));
-        if (burned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, burned);
+        if (burned > 0) {
+            _safeTransfer(fs.usdc, fs.feeRecipient, burned);
+            emit FeeCollected(requestId, req.client, FEE_KIND_REQUEST_FORFEIT, burned);
+        }
 
         emit RequestRejected(requestId, sender, req.client);
     }
@@ -614,7 +634,10 @@ contract ServiceBoardFacet {
         uint256 burned = feeHeld < floor_ ? feeHeld : floor_;
 
         _safeTransfer(fs.usdc, sender, refund + (feeHeld - burned));
-        if (burned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, burned);
+        if (burned > 0) {
+            _safeTransfer(fs.usdc, fs.feeRecipient, burned);
+            emit FeeCollected(requestId, sender, FEE_KIND_REQUEST_FORFEIT, burned);
+        }
 
         emit RequestCancelled(requestId, sender);
     }

@@ -721,11 +721,25 @@ contract BoardsTest is BoardsFixture {
         // Событие эмитится из того места, где реально идёт перевод, поэтому
         // несёт удержанную сумму — единственное число, совпадающее с движением
         // денег на всех ставках.
-        vm.expectEmit(true, true, false, true, address(diamond));
-        emit JobBoardFacet.FeeCollected(jobId, client, JOB_FEE);
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit JobBoardFacet.FeeCollected(jobId, client, FEE_KIND_JOB_DEAL, JOB_FEE);
 
         vm.prank(client);
         JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+    }
+
+    /// Пол, оставшийся протоколу при отмене, — экономически другое событие,
+    /// чем комиссия с состоявшейся сделки (тест выше): forfeit, не deal.
+    /// kind обязан их различать, иначе индексатор не сможет отделить одно от
+    /// другого по логу.
+    function testCancelJob_EmitsFeeCollected() public {
+        uint256 jobId = _approveAndMintJob();
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit JobBoardFacet.FeeCollected(jobId, client, FEE_KIND_JOB_FORFEIT, JOB_FLOOR);
+
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(jobId);
     }
 
     /// AgreementDeployed.fee считается заново на момент найма, а переводится

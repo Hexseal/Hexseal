@@ -40,6 +40,23 @@ contract MockUSDCB {
         allowance[msg.sender][spender] = amount;
         return true;
     }
+
+    // Test-only stub: a real EIP-2612 permit() verifies (v, r, s) against a
+    // signed digest and checks `deadline`. No test in this suite exercises
+    // signature validity itself (that's real USDC's job on testnet, not this
+    // facet's) — only the gasless call path that relies on the allowance
+    // being set afterward. This mock skips verification and sets it directly.
+    function permit(
+        address tokenOwner,
+        address spender,
+        uint256 value,
+        uint256 /*deadline*/,
+        uint8 /*v*/,
+        bytes32 /*r*/,
+        bytes32 /*s*/
+    ) external {
+        allowance[tokenOwner][spender] = value;
+    }
 }
 
 // ---------- FIXTURE ----------
@@ -72,6 +89,18 @@ abstract contract BoardsFixture is Test {
     uint256 constant SLOT_FEE_BPS              = 8;
     uint256 constant SLOT_FEE_FLOOR            = 9;
     uint256 constant SLOT_MAX_PENDING_REQUESTS = 10;
+
+    /// Mirror of the FEE_KIND_* constants declared inside JobBoardFacet /
+    /// ServiceBoardFacet. Those are plain (non-public) constants — matching the
+    /// facets' own style (see MAX_PENDING_PER_PAIR) and keeping the diamond's
+    /// mounted selector set untouched — so they aren't reachable as
+    /// `JobBoardFacet.FEE_KIND_JOB_DEAL` from outside the contract. Mirrored
+    /// here once so tests reference a name, not a bare number.
+    uint8 constant FEE_KIND_JOB_DEAL        = 0;
+    uint8 constant FEE_KIND_JOB_FORFEIT     = 1;
+    uint8 constant FEE_KIND_SERVICE_LISTING = 2;
+    uint8 constant FEE_KIND_REQUEST_DEAL    = 3;
+    uint8 constant FEE_KIND_REQUEST_FORFEIT = 4;
 
     function setUp() public {
         owner = address(this);

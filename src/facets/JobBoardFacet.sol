@@ -113,11 +113,22 @@ contract JobBoardFacet {
     event JobAccepted(uint256 indexed jobId, address indexed client, address indexed executor, address agreement);
     event JobCancelled(uint256 indexed jobId, address indexed client, uint256 refundAmount);
     event JobEdited(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadlineDays, string terms, uint8 region);
-    /// @notice Комиссия, реально ушедшая в казну. AgreementDeployed.fee считается
-    ///         заново на момент найма и расходится с этим числом, если ставка
-    ///         менялась между постингом и наймом — переведено всегда то, что
-    ///         удержано при постинге, то есть вот это.
-    event FeeCollected(uint256 indexed id, address indexed payer, uint256 amount);
+    /// Комиссия, реально ушедшая в казну. Единственный полный источник дохода
+    /// протокола: AgreementDeployed.fee несёт пересчёт на момент найма и может
+    /// разойтись с переведённым.
+    ///
+    /// kind различает и доску, и природу поступления — без него id означал бы
+    /// три разных пространства идентификаторов (jobId / serviceId / requestId),
+    /// а плата за сделку была бы неотличима от невозвратного пола при отмене:
+    ///   0 JOB_DEAL         — id = jobId,     комиссия с состоявшейся работы
+    ///   1 JOB_FORFEIT      — id = jobId,     пол, оставшийся при отмене заказа
+    ///   2 SERVICE_LISTING  — id = serviceId, плоский пол за публикацию услуги
+    ///   3 REQUEST_DEAL     — id = requestId, комиссия с состоявшегося найма
+    ///   4 REQUEST_FORFEIT  — id = requestId, пол при отклонении/отзыве/вытеснении
+    event FeeCollected(uint256 indexed id, address indexed payer, uint8 indexed kind, uint256 amount);
+
+    uint8 constant FEE_KIND_JOB_DEAL = 0;
+    uint8 constant FEE_KIND_JOB_FORFEIT = 1;
 
     // -------- ERRORS --------
 
@@ -371,7 +382,7 @@ contract JobBoardFacet {
         s.jobFeeHeld[jobId] = 0;
         if (feeHeld > 0) {
             _safeTransfer(fs.usdc, fs.feeRecipient, feeHeld);
-            emit FeeCollected(jobId, job.client, feeHeld);
+            emit FeeCollected(jobId, job.client, FEE_KIND_JOB_DEAL, feeHeld);
         }
 
         // --- Активируем Agreement ---
@@ -413,7 +424,10 @@ contract JobBoardFacet {
 
         uint256 returned = refund + (feeHeld - burned);
         _safeTransfer(fs.usdc, job.client, returned);
-        if (burned > 0) _safeTransfer(fs.usdc, fs.feeRecipient, burned);
+        if (burned > 0) {
+            _safeTransfer(fs.usdc, fs.feeRecipient, burned);
+            emit FeeCollected(jobId, job.client, FEE_KIND_JOB_FORFEIT, burned);
+        }
 
         // Burn receipt NFT — non-blocking so a failure doesn't block the refund
         try IJobReceiptBurn(address(this)).burnJobReceipt(jobId) {} catch {}

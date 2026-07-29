@@ -1024,11 +1024,183 @@ contract ServiceBoardTest is BoardsFixture {
 
         // Событие эмитится из того места, где реально идёт перевод, поэтому
         // несёт удержанную при заявке сумму, а не пересчитанную на момент найма.
-        vm.expectEmit(true, true, false, true, address(diamond));
-        emit ServiceBoardFacet.FeeCollected(requestId, client, JOB_FEE);
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ServiceBoardFacet.FeeCollected(requestId, client, FEE_KIND_REQUEST_DEAL, JOB_FEE);
 
         vm.prank(executor);
         ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+    }
+
+    /// Публикация услуги — плоский антиспам-пол, не связанный ни с какой
+    /// сделкой (id = serviceId, не requestId), и платит executor, не client.
+    function testMintService_EmitsFeeCollected() public {
+        uint256 floor_ = 1_000_000; // $1 — fs.feeFloor
+
+        vm.startPrank(executor);
+        usdc.approve(address(diamond), FEE);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ServiceBoardFacet.FeeCollected(0, executor, FEE_KIND_SERVICE_LISTING, floor_);
+
+        ServiceBoardFacet(address(diamond)).mintService(
+            "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION
+        );
+        vm.stopPrank();
+    }
+
+    /// Тот же пол, тот же kind, тот же payer (executor) — только через
+    /// gasless-путь permit(), а не approve() заранее.
+    function testMintServiceWithPermit_EmitsFeeCollected() public {
+        uint256 floor_ = 1_000_000; // $1 — fs.feeFloor
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ServiceBoardFacet.FeeCollected(0, executor, FEE_KIND_SERVICE_LISTING, floor_);
+
+        ServiceBoardFacet(address(diamond)).mintServiceWithPermit(
+            executor, "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION,
+            block.timestamp + 1 days, 0, bytes32(0), bytes32(0)
+        );
+    }
+
+    /// Отклонение — amount + комиссия сверх пола возвращаются, пол сгорает.
+    /// payer = req.client, kind = REQUEST_FORFEIT (не REQUEST_DEAL — сделки не было).
+    function testRejectRequest_EmitsFeeCollected() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ServiceBoardFacet.FeeCollected(requestId, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).rejectRequest(requestId);
+    }
+
+    /// Отзыв клиентом — тот же рефанд и тот же kind, что у reject, но по
+    /// инициативе client, а не executor.
+    function testCancelRequest_EmitsFeeCollected() public {
+        uint256 serviceId = _mintService();
+        uint256 requestId = _requestService(serviceId);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ServiceBoardFacet.FeeCollected(requestId, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
+
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
+    }
+
+    /// Вытеснение сиблинга внутри acceptRequest — третий путь к тому же
+    /// REQUEST_FORFEIT: никто явно не отменял и не отклонял requestId2, но он
+    /// авто-рефанднут и его пол сгорел, потому что requestId1 из той же пары
+    /// (client, executor) был принят первым. Без kind это было бы неотличимо
+    /// от REQUEST_DEAL, который acceptRequest эмитит в той же транзакции для
+    /// requestId1.
+    function testAcceptRequestSupersedesSibling_EmitsFeeCollected() public {
+        uint256 serviceId1 = _mintService();
+        uint256 serviceId2 = _mintService();
+
+        uint256 requestId1 = _requestService(serviceId1);
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
+        uint256 requestId2 = ServiceBoardFacet(address(diamond)).requestService(
+            serviceId2, AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ServiceBoardFacet.FeeCollected(requestId2, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
+
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(requestId1);
+    }
+
+    // ============================================================
+    //  FEE LEDGER COMPLETENESS
+    // ============================================================
+
+    /// Главный тест задачи: FeeCollected обязан быть ПОЛНЫМ леджером выручки,
+    /// не частичным. Сценарий проводит протокол через все пять kind'ов —
+    /// JOB_DEAL, JOB_FORFEIT, SERVICE_LISTING (дважды), REQUEST_DEAL,
+    /// REQUEST_FORFEIT — разными парами client/executor, чтобы не задеть
+    /// hasActivePair() ни на одном шаге. Определение "леджер полон": сумма
+    /// amount по всем FeeCollected за сценарий равна фактическому приросту
+    /// баланса feeRecipient за тот же сценарий — не больше (нет двойного
+    /// счёта) и не меньше (нет пропущенного перевода).
+    function testFeeLedger_SumOfCollectedEqualsBalanceIncrease() public {
+        address executorJob = address(0x9);       // JobBoard-сделка — новая пара
+        address executorForfeit = address(0xA);    // ServiceBoard-forfeit — новая пара
+        usdc.mint(executorForfeit, 10_000_000);    // хватит на пол публикации
+
+        uint256 feeRecipientBefore = usdc.balanceOf(feeRecipient);
+
+        vm.recordLogs();
+
+        // --- ServiceBoard: SERVICE_LISTING ($1) + REQUEST_DEAL ($5) ---
+        uint256 s1 = _mintService();
+        uint256 r1 = _requestService(s1);
+        vm.prank(executor);
+        ServiceBoardFacet(address(diamond)).acceptRequest(r1);
+
+        // --- JobBoard: JOB_DEAL ($5) — новая пара (client, executorJob) ---
+        vm.startPrank(client);
+        usdc.approve(address(diamond), type(uint256).max);
+        uint256 j1 = JobBoardFacet(address(diamond)).mintJob(
+            "Build a dApp", "Need a Solidity dev", AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+        vm.prank(executorJob);
+        JobBoardFacet(address(diamond)).applyForJob(j1);
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).acceptApplicant(j1, executorJob);
+
+        // --- JobBoard: JOB_FORFEIT ($1) ---
+        vm.startPrank(client);
+        usdc.approve(address(diamond), type(uint256).max);
+        uint256 j2 = JobBoardFacet(address(diamond)).mintJob(
+            "Another job", "Different work", AMOUNT, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+        vm.prank(client);
+        JobBoardFacet(address(diamond)).cancelJob(j2);
+
+        // --- ServiceBoard: SERVICE_LISTING ($1) + REQUEST_FORFEIT ($1) — новая пара ---
+        vm.startPrank(executorForfeit);
+        usdc.approve(address(diamond), JOB_FLOOR);
+        uint256 s2 = ServiceBoardFacet(address(diamond)).mintService(
+            "Another service", "Different description", AMOUNT, DEADLINE, REGION
+        );
+        vm.stopPrank();
+
+        vm.startPrank(client);
+        usdc.approve(address(diamond), AMOUNT + JOB_FEE);
+        uint256 r2 = ServiceBoardFacet(address(diamond)).requestService(s2, AMOUNT, DEADLINE, TERMS, REGION);
+        vm.stopPrank();
+        vm.prank(client);
+        ServiceBoardFacet(address(diamond)).cancelRequest(r2);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // JobBoardFacet.FeeCollected и ServiceBoardFacet.FeeCollected — одна и та
+        // же сигнатура в двух фасетах, поэтому один и тот же selector.
+        bytes32 feeCollectedTopic = ServiceBoardFacet.FeeCollected.selector;
+        assertEq(feeCollectedTopic, JobBoardFacet.FeeCollected.selector);
+
+        uint256 totalCollected;
+        uint256 eventCount;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == feeCollectedTopic) {
+                totalCollected += abi.decode(logs[i].data, (uint256));
+                eventCount++;
+            }
+        }
+
+        // Шесть переводов в сценарии — ровно шесть эмиссий, ни больше (двойной
+        // счёт), ни меньше (пропущенный перевод).
+        assertEq(eventCount, 6);
+        assertEq(totalCollected, 14_000_000); // $1 + $5 + $5 + $1 + $1 + $1
+
+        uint256 feeRecipientAfter = usdc.balanceOf(feeRecipient);
+        assertEq(totalCollected, feeRecipientAfter - feeRecipientBefore);
     }
 
     // ============================================================
