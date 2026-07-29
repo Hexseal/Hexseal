@@ -310,8 +310,20 @@ function ArbitersTab() {
 interface PlatformStats {
   totalDeals: number; totalJobs: number; totalServices: number;
   totalDisputes: number; resolvedDisputes: number; completedDeals: number;
-  refundedDeals: number; totalRevenue: bigint;
+  refundedDeals: number; totalRevenue: bigint; revenueByKind: Record<number, bigint>;
 }
+
+// FeeCollected.kind — every fee-transfer site in the protocol (10 total: 2 job board,
+// 6 service board, 2 direct-factory). 0+1 = job board revenue, 2+3+4 = service board
+// revenue; 5 sits outside both (direct hire, no board involved).
+const FEE_KIND_LABELS: Record<number, string> = {
+  0: 'Job deals (commission)',
+  1: 'Job forfeits (cancelled deposits)',
+  2: 'Service listings (posting floor)',
+  3: 'Hire commissions (requests)',
+  4: 'Request forfeits (declined / withdrawn / superseded)',
+  5: 'Direct factory hires (no board)',
+};
 
 interface FlatDeal {
   addr: string; arbiter: string; client: string; executor: string;
@@ -382,18 +394,30 @@ function ActivityTab() {
           fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'jobId', type: 'uint256' }, { indexed: true, name: 'client', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }, { indexed: false, name: 'title', type: 'string' }, { indexed: false, name: 'description', type: 'string' }, { indexed: false, name: 'deadlineDays', type: 'uint256' }, { indexed: false, name: 'terms', type: 'string' }], name: 'JobPosted', type: 'event' }),
           fetchAll(SERVICE_BOARD_ABI[0]),
           fetchAll(statusUpdatedEvent),
-          fetchAll({ anonymous: false, inputs: [{ indexed: true, name: 'agreement', type: 'address' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'executor', type: 'address' }, { indexed: false, name: 'amount', type: 'uint256' }, { indexed: false, name: 'region', type: 'uint8' }, { indexed: false, name: 'fee', type: 'uint256' }], name: 'AgreementDeployed', type: 'event' }),
+          // Actual transfer, not the AgreementDeployed re-quote at hire time — those two
+          // can disagree if the rate changed between posting and hiring.
+          fetchAll({ anonymous: false, inputs: [
+            { indexed: true, name: 'id', type: 'uint256' },
+            { indexed: true, name: 'payer', type: 'address' },
+            { indexed: true, name: 'kind', type: 'uint8' },
+            { indexed: false, name: 'amount', type: 'uint256' },
+          ], name: 'FeeCollected', type: 'event' }),
         ]);
 
         if (cancelled) return;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const byStatus = (s: number) => (statusLogs as any[]).filter(l => Number(l.args?.newStatus) === s).length;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const totalRevenue = (revenueLogs as any[]).reduce((sum: bigint, l) => sum + (l.args?.fee ?? 0n), 0n);
+        const revenueByKind = (revenueLogs as any[]).reduce((acc: Record<number, bigint>, l) => {
+          const k = Number(l.args?.kind ?? 0);
+          acc[k] = (acc[k] ?? 0n) + (l.args?.amount ?? 0n);
+          return acc;
+        }, {} as Record<number, bigint>);
+        const totalRevenue = Object.values(revenueByKind).reduce((sum: bigint, v) => sum + v, 0n);
         setStats({
           totalDeals: dealLogs.length, totalJobs: jobLogs.length, totalServices: serviceLogs.length,
           totalDisputes: byStatus(4), resolvedDisputes: byStatus(5),
-          completedDeals: byStatus(3), refundedDeals: byStatus(6), totalRevenue,
+          completedDeals: byStatus(3), refundedDeals: byStatus(6), totalRevenue, revenueByKind,
         });
       } catch (e) { console.error('Failed to fetch platform stats:', e); }
       finally { if (!cancelled) setLoading(false); }
@@ -480,6 +504,38 @@ function ActivityTab() {
           </div>
         )}
       </Section>
+
+      {/* Revenue by source — job board vs. service board */}
+      {stats && (
+        <Section
+          title="Revenue by Source"
+          hint="From FeeCollected, at the point of actual transfer — covers all 10 fee-collection sites (not the AgreementDeployed re-quote, which can be stale)."
+          icon={DollarSign}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-[14px] border border-emerald-500/20 bg-emerald-500/[0.05] p-3">
+              <p className="text-xs text-white/35 mb-1">Job board (deals + forfeits)</p>
+              <p className="font-mono text-lg font-bold text-emerald-400">
+                ${(Number((stats.revenueByKind[0] ?? 0n) + (stats.revenueByKind[1] ?? 0n)) / 1e6).toFixed(2)}
+              </p>
+            </div>
+            <div className="rounded-[14px] border border-violet-500/20 bg-violet-500/[0.05] p-3">
+              <p className="text-xs text-white/35 mb-1">Service board (listings + hires + forfeits)</p>
+              <p className="font-mono text-lg font-bold text-violet-400">
+                ${(Number((stats.revenueByKind[2] ?? 0n) + (stats.revenueByKind[3] ?? 0n) + (stats.revenueByKind[4] ?? 0n)) / 1e6).toFixed(2)}
+              </p>
+            </div>
+          </div>
+          <Divider />
+          <div className="space-y-1.5">
+            {[0, 1, 2, 3, 4, 5].map(k => (
+              <Row key={k} label={FEE_KIND_LABELS[k]}>
+                ${(Number(stats.revenueByKind[k] ?? 0n) / 1e6).toFixed(2)}
+              </Row>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {/* Dispute Lookup */}
       <Section title="Deal Lookup" hint="Enter any agreement address to inspect its parties and current status." icon={AlertTriangle}>
@@ -614,28 +670,26 @@ function SettingsTab() {
     functionName: 'getTrustedForwarder',
   }) as { data: string | undefined; refetch: () => void };
 
-  const { data: fees, refetch: refetchFees } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
-    functionName: 'getAllFees',
-  }) as { data: [bigint, bigint, bigint, bigint, bigint, bigint, bigint] | undefined; refetch: () => void };
+  const { data: feeBps, refetch: refetchBps } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'getFeeBps',
+  }) as { data: bigint | undefined; refetch: () => void };
+
+  const { data: feeFloor, refetch: refetchFloor } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'getFeeFloor',
+  }) as { data: bigint | undefined; refetch: () => void };
+
+  const { data: maxPending, refetch: refetchMaxPending } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'getMaxPendingRequests',
+  }) as { data: bigint | undefined; refetch: () => void };
 
   const [feeRecipient,    setFeeRecipient]    = useState('');
   const [forwarder,       setForwarder]       = useState('');
-  const [newFee,          setNewFee]          = useState('');
-  const [selectedRegion,  setSelectedRegion]  = useState(0);
+  const [newBps,        setNewBps]        = useState('');
+  const [newFloor,      setNewFloor]      = useState('');
+  const [newMaxPending, setNewMaxPending] = useState('');
   const [settingFeeRecipient, setSettingFeeRecipient] = useState(false);
   const [settingForwarder,    setSettingForwarder]    = useState(false);
-  const [settingRegionFee,    setSettingRegionFee]    = useState(false);
-
-  const regions = [
-    { idx: 0, name: 'CIS',    fee: fees?.[0] },
-    { idx: 1, name: 'Asia',   fee: fees?.[1] },
-    { idx: 2, name: 'Europe', fee: fees?.[2] },
-    { idx: 3, name: 'US',     fee: fees?.[3] },
-    { idx: 4, name: 'LATAM',  fee: fees?.[4] },
-    { idx: 5, name: 'CA',     fee: fees?.[5] },
-    { idx: 6, name: 'AU',     fee: fees?.[6] },
-  ];
+  const [settingFee,    setSettingFee]    = useState(false);
 
   const handleSetFeeRecipient = async () => {
     if (!isAddress(feeRecipient)) { toast.error('Invalid address'); return; }
@@ -667,54 +721,133 @@ function SettingsTab() {
     } finally { setSettingForwarder(false); }
   };
 
-  const handleSetFee = async () => {
-    if (!newFee || parseFloat(newFee) <= 0) { toast.error('Invalid fee'); return; }
+  /**
+   * Гейты ввода повторяют контрактные (FactoryFacet.setFeeBps / setFeeFloor):
+   * ставка > 0 и <= 20%, пол > 0. Без них транзакция упадёт уже после подписи.
+   */
+  const handleSetFeeParam = async (
+    fn: 'setFeeBps' | 'setFeeFloor' | 'setMaxPendingRequests',
+    raw: string,
+    after: () => void,
+  ) => {
+    const n = parseFloat(raw);
+    if (isNaN(n)) { toast.error('Invalid value'); return; }
+    if (fn === 'setFeeBps'   && (n <= 0 || n > 20))  { toast.error('Rate must be above 0 and at most 20%'); return; }
+    if (fn === 'setFeeFloor' && n <= 0)              { toast.error('Floor must be above 0'); return; }
+    if (fn === 'setMaxPendingRequests' && n < 0)     { toast.error('Cap cannot be negative'); return; }
     if (!publicClient) { toast.error('Failed'); return; }
-    setSettingRegionFee(true);
+
+    const arg =
+      fn === 'setFeeBps'   ? BigInt(Math.round(n * 100)) :   // проценты → bps
+      fn === 'setFeeFloor' ? BigInt(Math.round(n * 1e6)) :   // USDC → 6 decimals
+                             BigInt(Math.floor(n));
+
+    setSettingFee(true);
     try {
-      const hash = await writeContractAsync({ address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI, functionName: 'setRegionFee', args: [selectedRegion, BigInt(Math.floor(parseFloat(newFee) * 1e6))], gas: BigInt(100_000) });
+      const hash = await writeContractAsync({
+        address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
+        functionName: fn, args: [arg], gas: BigInt(100_000),
+      });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
-      toast.success('Fee updated'); setNewFee(''); refetchFees();
+      toast.success('Updated'); after();
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
-    } finally { setSettingRegionFee(false); }
+    } finally { setSettingFee(false); }
   };
 
   return (
     <div className="space-y-4">
 
-      {/* PPP Fees */}
-      <Section title="PPP Region Fees" hint="Platform fee charged per deal, based on the posting user's region." icon={DollarSign}>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {regions.map(r => (
-            <div key={r.idx} className="rounded-[14px] border border-white/[0.06] bg-white/[0.02] p-3 text-center">
-              <p className="text-xs text-white/35 mb-1">{r.name}</p>
-              <p className="font-mono text-sm font-bold text-white/80">
-                {r.fee !== undefined ? `$${(Number(r.fee) / 1e6).toFixed(2)}` : '…'}
-              </p>
-            </div>
-          ))}
-        </div>
-        <Divider />
-        <FieldGroup label="Update a fee">
-          <div className="flex gap-2 flex-wrap">
-            <select
-              aria-label="Region"
-              value={selectedRegion}
-              onChange={e => setSelectedRegion(Number(e.target.value))}
-              className="px-3 py-2 rounded-[10px] border border-white/[0.08] bg-[#0d0d0f] text-sm text-white/70"
-            >
-              {regions.map(r => <option key={r.idx} value={r.idx}>{r.name}</option>)}
-            </select>
-            <Input type="number" placeholder="USDC amount" value={newFee} onChange={e => setNewFee(e.target.value)}
-              className="flex-1 min-w-[120px] bg-transparent border-white/[0.08] rounded-[14px]" />
-            <Button onClick={handleSetFee} disabled={settingRegionFee || !newFee} size="sm">
-              {settingRegionFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Update'}
-            </Button>
+      {/* Fee Configuration */}
+      <Section
+        title="Fee Configuration"
+        hint="Platform fee is amount-proportional: max(amount × rate, floor). It no longer depends on the posting user's region."
+        icon={DollarSign}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="rounded-[14px] border border-white/[0.06] bg-white/[0.02] p-3 text-center">
+            <p className="text-xs text-white/35 mb-1">Rate</p>
+            <p className="font-mono text-sm font-bold text-white/80">
+              {feeBps !== undefined ? `${(Number(feeBps) / 100).toFixed(2)}%` : '…'}
+            </p>
           </div>
-        </FieldGroup>
+          <div className="rounded-[14px] border border-white/[0.06] bg-white/[0.02] p-3 text-center">
+            <p className="text-xs text-white/35 mb-1">Floor</p>
+            <p className="font-mono text-sm font-bold text-white/80">
+              {feeFloor !== undefined ? `$${(Number(feeFloor) / 1e6).toFixed(2)}` : '…'}
+            </p>
+          </div>
+          <div className="rounded-[14px] border border-white/[0.06] bg-white/[0.02] p-3 text-center">
+            <p className="text-xs text-white/35 mb-1">Pending request cap</p>
+            <p className="font-mono text-sm font-bold text-white/80">
+              {maxPending !== undefined ? (maxPending === 0n ? 'Unlimited' : maxPending.toString()) : '…'}
+            </p>
+          </div>
+        </div>
+
+        <Divider />
+
+        <div className="grid sm:grid-cols-3 gap-4">
+          <FieldGroup label="Update rate" hint="Percent of deal amount. Above 0, at most 20%.">
+            <div className="flex gap-2">
+              <Input
+                type="number" placeholder="e.g. 5" value={newBps}
+                onChange={e => setNewBps(e.target.value)}
+                className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]"
+              />
+              <Button
+                onClick={() => handleSetFeeParam('setFeeBps', newBps, () => { setNewBps(''); refetchBps(); })}
+                disabled={settingFee || !newBps} size="sm" className="shrink-0"
+              >
+                {settingFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+              </Button>
+            </div>
+          </FieldGroup>
+
+          <FieldGroup label="Update floor" hint="Minimum fee in USDC. Must be above 0.">
+            <div className="flex gap-2">
+              <Input
+                type="number" placeholder="e.g. 1" value={newFloor}
+                onChange={e => setNewFloor(e.target.value)}
+                className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]"
+              />
+              <Button
+                onClick={() => handleSetFeeParam('setFeeFloor', newFloor, () => { setNewFloor(''); refetchFloor(); })}
+                disabled={settingFee || !newFloor} size="sm" className="shrink-0"
+              >
+                {settingFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+              </Button>
+            </div>
+          </FieldGroup>
+
+          <FieldGroup label="Update pending cap" hint="Max open requests per client. 0 = unlimited (intentional, not a typo).">
+            <div className="flex gap-2">
+              <Input
+                type="number" placeholder="0 = unlimited" value={newMaxPending}
+                onChange={e => setNewMaxPending(e.target.value)}
+                className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]"
+              />
+              <Button
+                onClick={() => handleSetFeeParam('setMaxPendingRequests', newMaxPending, () => { setNewMaxPending(''); refetchMaxPending(); })}
+                disabled={settingFee || !newMaxPending} size="sm" className="shrink-0"
+              >
+                {settingFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+              </Button>
+            </div>
+          </FieldGroup>
+        </div>
+
+        <Divider />
+
+        <p className="text-[11px] text-white/25 leading-relaxed">
+          Regional (PPP) pricing was retired on 28.07.2026 — fee no longer depends on the poster&apos;s region,
+          only on the deal amount. The old region getters (<code className="text-white/35">getRegionFee</code>,{' '}
+          <code className="text-white/35">getAllFees</code>) and <code className="text-white/35">setRegionFee</code>{' '}
+          now revert on every call by design (<code className="text-white/35">FeeNotRegional</code>) — that&apos;s
+          expected, not a sign this panel failed to load.
+        </p>
       </Section>
 
       {/* Advanced */}
