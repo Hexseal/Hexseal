@@ -156,22 +156,58 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   mintJobWithPermit:  3_600_000n,
   editJob:              150_000n,
   editService:          150_000n,
-  acceptApplicant:    2_800_000n, // clones Agreement via FactoryFacet; measured 2_116_407 at max terms length
-  cancelJob:            150_000n,
+  // Fee economics (feat/fee-economics-frontend) added a FeeCollected LOG4
+  // (~1_756 gas) on this path, on top of the clone deploy — still ONE fee
+  // transfer, no new second transfer here. Freshly measured 2_332_247 at max
+  // terms length (mock USDC), leaving only ~17% margin over the old
+  // 2_800_000n. Raised with the real-USDC correction (+19%, real USDC being
+  // a proxied FiatTokenV2_2 that costs more per transfer than the mock) then
+  // +20% margin on top: 2_332_247 * 1.19 * 1.2 ≈ 3_330_449, rounded up.
+  acceptApplicant:    3_400_000n,
+  // Cancelling now makes TWO transfers instead of one — the refund to the
+  // client AND the non-refundable feeFloor to the treasury — plus a
+  // FeeCollected LOG4 (~1_756 gas). Freshly measured 116_211 (max of the
+  // JobBoardFacet and DiamondProxy gas-report tables, mock USDC; this path
+  // has no title/terms dependency so the routine suite's worst call already
+  // is the worst case), only ~22% margin over the old 150_000n. Raised with
+  // the same real-USDC + 20%-margin formula: 116_211 * 1.19 * 1.2 ≈ 165_949,
+  // rounded up.
+  cancelJob:            170_000n,
   applyForJob:          150_000n,
   withdrawApplication:  150_000n,
-  mintService:              800_000n,
-  mintServiceWithPermit:    800_000n,
+  // Listing a service now also emits FeeCollected (~1_756 gas) alongside the
+  // pre-existing anti-spam-floor transfer — one transfer as before, just a
+  // new log. Freshly measured 712_340 (mintService) / 728_667
+  // (mintServiceWithPermit) at max title/description length (mock USDC),
+  // leaving only ~11%/~9% margin over the old 800_000n. Raised by the same
+  // formula off the worse (permit) figure: 728_667 * 1.19 * 1.2 ≈ 1_040_536,
+  // rounded up; mintService rounds to the same bucket.
+  mintService:              1_100_000n,
+  mintServiceWithPermit:    1_100_000n,
   // Also underestimated before the clone work (was 800_000n) — not a regression
   // from this branch. Measured 1_868_986 at max title/description/terms.
   requestService:       2_400_000n,
-  // also clones an Agreement PLUS a loop refunding every OTHER still-pending
+  // Clones an Agreement PLUS a loop refunding every OTHER still-pending
   // request from the same client to this executor (up to MAX_PENDING_PER_PAIR-1=19
   // siblings), unlike acceptApplicant/deployAndFund which have no such loop.
-  // Measured at max terms length with the full 19-sibling refund loop: 2_593_454.
-  acceptRequest:      3_500_000n,
-  rejectRequest:        120_000n,
-  cancelRequest:        120_000n,
+  // That loop used to make ONE transfer per superseded sibling; fee economics
+  // split it into TWO (refund to client + forfeited floor to the treasury)
+  // and added a FeeCollected LOG4 per sibling — up to 19x the per-sibling
+  // overhead. Freshly measured with the FULL 19-sibling loop AND max terms
+  // length on the accepted request (mock USDC): 3_219_461, only ~8% margin
+  // over the old 3_500_000n. Raised with the same formula:
+  // 3_219_461 * 1.19 * 1.2 ≈ 4_597_390, rounded up.
+  acceptRequest:      4_600_000n,
+  // Same second-transfer-plus-LOG4 change as cancelJob (refund + forfeited
+  // floor to the treasury). Freshly measured 108_829 (max of both gas-report
+  // tables, mock USDC), only ~9% margin over the old 120_000n. Raised:
+  // 108_829 * 1.19 * 1.2 ≈ 155_408, rounded up.
+  rejectRequest:        160_000n,
+  // Same change as rejectRequest, and the one that already broke: measured
+  // 126_383 against the old 120_000n ceiling — already over budget on mock
+  // USDC alone, before any real-USDC correction. This is why Task 10 exists.
+  // Raised: 126_383 * 1.19 * 1.2 ≈ 180_475, rounded up.
+  cancelRequest:        190_000n,
   pauseService:          80_000n,
   unpauseService:        80_000n,
   removeService:         80_000n,
