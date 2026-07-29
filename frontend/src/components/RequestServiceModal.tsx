@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2, ArrowRight, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { UserName } from "@/components/UserName";
+import { useFeeConfig } from "@/hooks/useFeeConfig";
+import { quoteFeeLocal } from "@/lib/fee";
 
 function fmtUSDC(v: bigint) { return (Number(v) / 1e6).toFixed(2); }
 
@@ -36,9 +38,23 @@ export function RequestServiceModal({
   const [terms, setTerms]   = useState("");
   const t = useTranslations();
 
+  const { feeBps, feeFloor, isLoading: feeConfigLoading } = useFeeConfig();
+  // Same rule as board/client/post/page.tsx: false while still loading AND
+  // after a failed read (isLoading goes false but the values stay undefined).
+  // Either way the fee is an unknown, not a zero — treating it as zero would
+  // make hasEnough pass for a wallet that can't actually cover amount + fee.
+  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined;
+
   const parsedAmount = parseFloat(amount || "0");
   const requiredRaw  = parsedAmount > 0 ? BigInt(Math.round(parsedAmount * 1e6)) : 0n;
-  const hasEnough    = userUsdcBalance === undefined || userUsdcBalance >= requiredRaw;
+  const feeRaw       = feeBps !== undefined && feeFloor !== undefined
+    ? quoteFeeLocal(requiredRaw, feeBps, feeFloor)
+    : 0n;
+  const totalRaw     = requiredRaw + feeRaw;
+  // Gated on feeConfigReady, not just on the balance comparison — otherwise an
+  // unready read defaults feeRaw to 0 and totalRaw silently degrades back to
+  // requiredRaw, passing a wallet that has enough for the trade but not the fee.
+  const hasEnough    = feeConfigReady && (userUsdcBalance === undefined || userUsdcBalance >= totalRaw);
 
   return (
     <AnimatePresence>
@@ -116,6 +132,26 @@ export function RequestServiceModal({
             </div>
           </div>
 
+          <div className="border-t border-white/8 pt-2.5 mt-3 space-y-1 text-sm">
+            <div className="flex justify-between text-white/50">
+              <span>{t("board.services.amount_row")}</span>
+              <span className="font-mono">{parsedAmount.toFixed(2)} USDC</span>
+            </div>
+            <div className="flex justify-between text-white/50">
+              <span>{t("board.services.fee_row")}</span>
+              <span className="font-mono">{feeConfigReady ? `${fmtUSDC(feeRaw)} USDC` : "—"}</span>
+            </div>
+            <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
+              <span>{t("board.post_common.total_label")}</span>
+              <span className="font-mono">{feeConfigReady ? `${fmtUSDC(totalRaw)} USDC` : "—"}</span>
+            </div>
+            {feeConfigReady && (
+              <p className="text-xs text-white/35">
+                {t("board.services.request_refund_note", { floor: fmtUSDC(feeFloor ?? 0n) })}
+              </p>
+            )}
+          </div>
+
           <div className="mt-6 flex gap-2">
             <Button
               variant="ghost"
@@ -135,11 +171,11 @@ export function RequestServiceModal({
             </Button>
           </div>
 
-          {!hasEnough && userUsdcBalance !== undefined && (
+          {!hasEnough && feeConfigReady && userUsdcBalance !== undefined && (
             <p className="text-xs text-red-400 text-center mt-2">
               {t("board.services.insufficient_usdc", {
                 have: fmtUSDC(userUsdcBalance),
-                need: parsedAmount.toFixed(2),
+                need: fmtUSDC(totalRaw),
               })}
             </p>
           )}

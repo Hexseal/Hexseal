@@ -13,6 +13,8 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { usePairChat } from '@/hooks/usePairChat';
 import { useXmtp } from '@/contexts/XmtpContext';
+import { useFeeConfig } from '@/hooks/useFeeConfig';
+import { quoteFeeLocal } from '@/lib/fee';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, CheckCheck, Paperclip, FileText, ExternalLink, Lock,
@@ -390,6 +392,15 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const preDealCtx = usePreDealBar(address, recipientAddress, !!dealContext || !!dealsLoading);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Fee preview for the 'request_service' pre-deal confirm dialog only — the
+  // actual amount+fee that gets signed is read fresh in relay.ts, this is
+  // display-only so the confirm text doesn't quote a stale trade-only number.
+  const { feeBps, feeFloor, isLoading: feeConfigLoading } = useFeeConfig();
+  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined;
+  const preDealFeeRaw = preDealCtx && feeBps !== undefined && feeFloor !== undefined
+    ? quoteFeeLocal(preDealCtx.amount, feeBps, feeFloor)
+    : 0n;
+
   const fileRef       = useRef<HTMLInputElement>(null);
   const textareaRef   = useRef<HTMLTextAreaElement>(null);
   const bottomRef     = useRef<HTMLDivElement>(null);
@@ -609,6 +620,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           amount:       preDealCtx.amount,
           deadlineDays: preDealCtx.deadlineDays,
           terms:        '',
+          // Not a rate pick: region no longer affects the fee at all (flat
+          // bps/floor from FactoryStorage, same for every region) — this used
+          // to matter because CIS was the cheapest fixed-fee region, that
+          // path is gone. 0 is just a placeholder value; requestService still
+          // takes a region argument but nothing downstream keys pricing off it.
           region:       0,
         });
         txHash = res.txHash as `0x${string}`;
@@ -1166,7 +1182,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 : preDealConfirm === 'accept_deploy'
                 ? t("chat_modal.accept_deploy_desc")
                 : preDealConfirm === 'request_service'
-                ? `A service request for ${formatUnits(preDealCtx.amount, 6)} USDC will be sent. The executor must accept to start.`
+                ? (feeConfigReady
+                    ? `A service request for ${formatUnits(preDealCtx.amount + preDealFeeRaw, 6)} USDC (${formatUnits(preDealCtx.amount, 6)} + ${formatUnits(preDealFeeRaw, 6)} USDC platform fee) will be sent. The executor must accept to start.`
+                    : `A service request for ${formatUnits(preDealCtx.amount, 6)} USDC will be sent. The executor must accept to start.`)
                 : preDealConfirm === 'withdraw'
                 ? t("chat_modal.withdraw_desc")
                 : t("chat_modal.reject_app_desc")}
