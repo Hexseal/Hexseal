@@ -88,7 +88,15 @@ export default function PostJobPage() {
       .catch(() => setRegionData({ region: 1, label: "Asia" }));
   }, []);
 
-  const { feeBps, feeFloor } = useFeeConfig();
+  const { feeBps, feeFloor, isLoading: feeConfigLoading } = useFeeConfig();
+  // True once both the bps and the floor are actually in hand — not just once
+  // wagmi stops fetching. A failed read also leaves isLoading false with the
+  // values still undefined, and that must gate exactly like "still loading":
+  // showing 0.00/— and letting the balance check pass on amount alone (no fee
+  // added in) is the same "signed one thing, chain wants another" failure the
+  // rest of this plan removes, just reached from an empty read instead of a
+  // stale argument.
+  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined;
 
   const { data: usdcBalanceData } = useBalance({
     address,
@@ -114,7 +122,15 @@ export default function PostJobPage() {
   // Comes from useFeeConfig() above — declared here (after the `amount` state
   // it reads) rather than alongside that hook, since the fee now depends on
   // the entered amount and can't be computed before the input exists.
-  const parsedAmountRaw = parseUnits(amount || "0", 6);
+  // parseUnits throws on a not-yet-valid intermediate value — "1e5" (valid
+  // per <input type="number">, invalid per viem), a bare "-" or "." mid-edit —
+  // and this runs on every render, not inside a submit handler, so an
+  // uncaught throw here replaces the whole page with the client-error screen
+  // (no error.tsx in this app) and wipes whatever the user had typed. Fall
+  // back to 0n for display purposes only; submission re-validates amount
+  // separately in handleSubmit before ever calling parseUnits again there.
+  let parsedAmountRaw = 0n;
+  try { parsedAmountRaw = parseUnits(amount || "0", 6); } catch { /* intermediate input, e.g. "1e5", "-", "." */ }
   const feeRaw = feeBps !== undefined && feeFloor !== undefined
     ? quoteFeeLocal(parsedAmountRaw, feeBps, feeFloor)
     : 0n;
@@ -122,7 +138,13 @@ export default function PostJobPage() {
 
   const parsedAmount = parseFloat(amount || "0");
   const totalNeeded  = parsedAmount + feeAmount;
-  const hasBalance   = usdcBalance >= totalNeeded;
+  // Gated on feeConfigReady, not just the balance math: with the fee config
+  // still unloaded (or its read having failed) feeAmount is 0, so comparing
+  // balance to totalNeeded alone would pass a wallet that can't actually
+  // cover the fee. That's the same "signed one amount, chain wants another"
+  // failure this whole plan removes — just entered through an unready read
+  // instead of a stale local computation.
+  const hasBalance   = feeConfigReady && usdcBalance >= totalNeeded;
   const isWrongChain = chainId !== EXPECTED_CHAIN_ID;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -356,14 +378,16 @@ export default function PostJobPage() {
                   <span>{t("board.post_common.budget_label")}</span><span className="font-mono">{amount || "0"} USDC</span>
                 </div>
                 <div className="flex justify-between text-white/50">
-                  <span>{t("board.post_job.fee_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
+                  <span>{t("board.post_job.fee_label")}</span><span className="font-mono">{feeConfigReady ? `${feeAmount.toFixed(2)} USDC` : "—"}</span>
                 </div>
                 <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
-                  <span>{t("board.post_common.total_label")}</span><span className="font-mono">{totalNeeded.toFixed(2)} USDC</span>
+                  <span>{t("board.post_common.total_label")}</span><span className="font-mono">{feeConfigReady ? `${totalNeeded.toFixed(2)} USDC` : "—"}</span>
                 </div>
-                <p className="text-xs text-white/35">
-                  {t("board.post_common.refund_note", { floor: fmtUsdc(feeFloor ?? 0n) })}
-                </p>
+                {feeConfigReady && (
+                  <p className="text-xs text-white/35">
+                    {t("board.post_common.refund_note", { floor: fmtUsdc(feeFloor ?? 0n) })}
+                  </p>
+                )}
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>
                   {t("board.post_common.balance_label")}: {usdcBalance.toFixed(2)} USDC
                 </p>

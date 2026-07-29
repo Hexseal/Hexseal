@@ -179,7 +179,7 @@
       "receipt_row": "发布时铸造收据 NFT",
       "budget_label": "预算",
       "total_label": "总计",
-      "refund_note": "只有 {floor} USDC 的底价不可退还——如果交易未成,其余部分将退还。",
+      "refund_note": "只有 {floor} USDC 的底价不可退还——如果交易未成，其余部分将退还。",
       "balance_label": "余额",
       "pending_title": "正在发送免 Gas 交易…",
       "pending_hint": "需 2 次钱包签名 — 无需 ETH",

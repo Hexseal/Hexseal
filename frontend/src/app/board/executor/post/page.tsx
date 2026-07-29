@@ -88,8 +88,12 @@ export default function PostServicePage() {
 
   // Publishing a service has no deal amount yet — price is a non-binding
   // suggestion, so the fee is always exactly the flat floor, never a percentage.
-  const { feeFloor } = useFeeConfig();
-  const feeAmount = Number(feeFloor ?? 0n) / 1e6;
+  const { feeFloor, isLoading: feeConfigLoading } = useFeeConfig();
+  // A failed read leaves isLoading false with feeFloor still undefined — must
+  // gate the same as "still loading", or feeAmount silently falls back to 0
+  // and every wallet, including an empty one, reads as having enough balance.
+  const feeConfigReady = !feeConfigLoading && feeFloor !== undefined;
+  const feeAmount = feeFloor !== undefined ? Number(feeFloor) / 1e6 : 0;
 
   const { data: usdcBalanceData } = useBalance({
     address,
@@ -110,7 +114,11 @@ export default function PostServicePage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const parsedPrice = parseFloat(price || "0");
-  const hasBalance  = usdcBalance >= feeAmount;
+  // Gated on feeConfigReady: with the floor unloaded (or its read having
+  // failed), feeAmount falls back to 0 and `usdcBalance >= 0` is true for
+  // every wallet, including an empty one — the button would let a listing
+  // through that then fails the fee permit it can't actually cover.
+  const hasBalance  = feeConfigReady && usdcBalance >= feeAmount;
   const isWrongChain = chainId !== EXPECTED_CHAIN_ID;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -303,10 +311,10 @@ export default function PostServicePage() {
                   <span>{t("board.post_service.price_row")}</span><span className="font-mono">{price || "0"} USDC</span>
                 </div>
                 <div className="flex justify-between text-white/50">
-                  <span>{t("board.post_service.fee_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
+                  <span>{t("board.post_service.fee_label")}</span><span className="font-mono">{feeConfigReady ? `${feeAmount.toFixed(2)} USDC` : "—"}</span>
                 </div>
                 <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
-                  <span>{t("board.post_service.sign_label")}</span><span className="font-mono">{feeAmount.toFixed(2)} USDC</span>
+                  <span>{t("board.post_service.sign_label")}</span><span className="font-mono">{feeConfigReady ? `${feeAmount.toFixed(2)} USDC` : "—"}</span>
                 </div>
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>
                   {t("board.post_common.balance_label")}: {usdcBalance.toFixed(2)} USDC
