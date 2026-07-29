@@ -54,11 +54,14 @@ describe('POST /relay', () => {
     expect(res.body.error).toMatch(/gas exceeds maximum/);
   });
 
-  // The test above (9_000_000) is rejected whether MAX_GAS is 8M, 3M, or 5M —
+  // The test above (9_000_000) is rejected whether MAX_GAS is 8M, 5M, or 7M —
   // it can't tell a correctly-sized cap from a wrong one. These two pin the
-  // actual boundary (app.js's MAX_GAS = 5_000_000n) so that if a future change
-  // moves the cap without updating these numbers, one of the two fails loudly
-  // instead of both silently passing regardless of where the line actually is.
+  // actual boundary (app.js's MAX_GAS = 7_000_000n, raised from 5_000_000n by
+  // the fee-economics-frontend branch once acceptRequest's re-measured
+  // real-USDC cost left the old cap ~0.4% from tripping) so that if a future
+  // change moves the cap without updating these numbers, one of the two fails
+  // loudly instead of both silently passing regardless of where the line
+  // actually is.
   //
   // Each uses its own X-Forwarded-For (TRUST_PROXY is on in tests, see
   // test/setup.js) so it lands in its own rate-limit bucket instead of sharing
@@ -66,7 +69,7 @@ describe('POST /relay', () => {
   // address — otherwise these two extra requests would push this suite past
   // RATE_MAX (10) and start failing on an unrelated 429, not the thing being
   // tested here.
-  it('accepts a gas value exactly at the cap (5_000_000)', async () => {
+  it('accepts a gas value exactly at the cap (7_000_000)', async () => {
     mockContract(FORWARDER, {
       getNonce: 0n,
       verify: true,
@@ -85,16 +88,16 @@ describe('POST /relay', () => {
     const res = await request(app)
       .post('/relay')
       .set('X-Forwarded-For', 'gas-cap-boundary-test-1')
-      .send({ ...VALID_BODY, gas: '5000000' });
+      .send({ ...VALID_BODY, gas: '7000000' });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
 
-  it('rejects a gas value one unit above the cap (5_000_001)', async () => {
+  it('rejects a gas value one unit above the cap (7_000_001)', async () => {
     const res = await request(app)
       .post('/relay')
       .set('X-Forwarded-For', 'gas-cap-boundary-test-2')
-      .send({ ...VALID_BODY, gas: '5000001' });
+      .send({ ...VALID_BODY, gas: '7000001' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/gas exceeds maximum/);
   });

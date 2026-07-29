@@ -149,9 +149,13 @@ export function RequestServiceModal({
               <span>{t("board.post_common.total_label")}</span>
               <span className="font-mono">{feeConfigReady ? `${fmtUSDC(totalRaw)} USDC` : "—"}</span>
             </div>
-            {feeConfigReady && (
+            {/* feeFloor !== undefined repeated here (redundant with
+                feeConfigReady at runtime) purely so TS narrows it to bigint
+                for fmtUSDC — feeConfigReady is a plain boolean, its own
+                feeFloor > 0n check doesn't carry through. */}
+            {feeConfigReady && feeFloor !== undefined && (
               <p className="text-xs text-white/35">
-                {t("board.services.request_refund_note", { floor: fmtUSDC(feeFloor ?? 0n) })}
+                {t("board.services.request_refund_note", { floor: fmtUSDC(feeFloor) })}
               </p>
             )}
           </div>

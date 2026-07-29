@@ -388,9 +388,13 @@ export default function PostJobPage() {
                 <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
                   <span>{t("board.post_common.total_label")}</span><span className="font-mono">{feeConfigReady ? `${totalNeeded.toFixed(2)} USDC` : "—"}</span>
                 </div>
-                {feeConfigReady && (
+                {/* feeFloor !== undefined repeated here (redundant with
+                    feeConfigReady at runtime) purely so TS narrows it to
+                    bigint for fmtUsdc — feeConfigReady is a plain boolean,
+                    its own feeFloor > 0n check doesn't carry through. */}
+                {feeConfigReady && feeFloor !== undefined && (
                   <p className="text-xs text-white/35">
-                    {t("board.post_common.refund_note", { floor: fmtUsdc(feeFloor ?? 0n) })}
+                    {t("board.post_common.refund_note", { floor: fmtUsdc(feeFloor) })}
                   </p>
                 )}
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>

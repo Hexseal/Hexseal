@@ -168,9 +168,13 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
       // feeFloor undefined here (still loading, or the read failed) is an
       // absent value, not a zero fee — printing "$0.00 withheld" would be its
       // own false statement about money. Fall back to the no-amount variant
-      // instead of coercing with `?? 0n`.
+      // instead of coercing with `?? 0n`. Also excludes feeFloor === 0n: that's
+      // getFeeFloor()'s (src/FactoryFacet.sol) genuine, defined return during
+      // the diamondCut-without-atomic-_init window docs/OPEN-ITEMS.md #20
+      // describes, where old requests stay cancellable with no fee configured —
+      // "undefined" alone would let a real zero print as if it were a number.
       toast.success(
-        feeFloor !== undefined
+        feeFloor !== undefined && feeFloor > 0n
           ? t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor) })
           : t("board.services.request_cancelled_amount_unavailable")
       );

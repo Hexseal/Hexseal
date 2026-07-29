@@ -174,9 +174,13 @@ function IncomingRequestsPanel({
       // feeFloor undefined here (still loading, or the read failed) is an
       // absent value, not a zero fee — printing "$0.00 withheld" would be its
       // own false statement about money. Fall back to the no-amount variant
-      // instead of coercing with `?? 0n`.
+      // instead of coercing with `?? 0n`. Also excludes feeFloor === 0n: that's
+      // getFeeFloor()'s (src/FactoryFacet.sol) genuine, defined return during
+      // the diamondCut-without-atomic-_init window docs/OPEN-ITEMS.md #20
+      // describes, where old requests stay cancellable with no fee configured —
+      // "undefined" alone would let a real zero print as if it were a number.
       toast.success(
-        feeFloor !== undefined
+        feeFloor !== undefined && feeFloor > 0n
           ? t("board.services.rejected_msg", { floor: fmtUSDC(feeFloor) })
           : t("board.services.rejected_msg_amount_unavailable")
       );
@@ -689,8 +693,10 @@ export default function ExecutorBoardPage() {
       await sendGasless(walletClient, publicClient, "cancelRequest", [BigInt(requestId)], DIAMOND_ABI as Abi);
       // Same rule as handleReject above: an unresolved feeFloor is an unknown,
       // not a zero — fall back to the no-amount variant rather than `?? 0n`.
+      // Also excludes feeFloor === 0n (getFeeFloor()'s genuine unconfigured-
+      // config reading, see the comment in handleReject above).
       toast.success(
-        feeFloor !== undefined
+        feeFloor !== undefined && feeFloor > 0n
           ? t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor) })
           : t("board.services.request_cancelled_amount_unavailable")
       );
