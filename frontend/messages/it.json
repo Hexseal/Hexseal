@@ -102,8 +102,10 @@
       "reject_btn": "Rifiuta",
       "cancel_request_btn": "Annulla",
       "request_cancelled": "Richiesta annullata — solo il minimo di {floor} USDC non è rimborsabile, il resto è stato rimborsato.",
+      "request_cancelled_amount_unavailable": "Richiesta annullata — il minimo non è rimborsabile, il resto è stato rimborsato.",
       "accepted_msg": "Accettato! Accordo creato.",
       "rejected_msg": "Richiesta rifiutata — solo il minimo di {floor} USDC non è rimborsabile, il resto è stato rimborsato al cliente.",
+      "rejected_msg_amount_unavailable": "Richiesta rifiutata — il minimo non è rimborsabile, il resto è stato rimborsato al cliente.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

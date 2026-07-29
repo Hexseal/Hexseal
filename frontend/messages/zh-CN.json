@@ -102,8 +102,10 @@
       "reject_btn": "拒绝",
       "cancel_request_btn": "取消",
       "request_cancelled": "请求已取消 — 只有 {floor} USDC 的底价不可退还，其余部分已退还。",
+      "request_cancelled_amount_unavailable": "请求已取消 — 底价不可退还，其余部分已退还。",
       "accepted_msg": "已接受！交易已创建。",
       "rejected_msg": "请求已拒绝 — 只有 {floor} USDC 的底价不可退还，其余部分已退还给客户。",
+      "rejected_msg_amount_unavailable": "请求已拒绝 — 底价不可退还，其余部分已退还给客户。",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

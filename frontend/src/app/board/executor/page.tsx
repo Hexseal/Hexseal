@@ -171,7 +171,15 @@ function IncomingRequestsPanel({
     setActing(key);
     try {
       await sendGasless(walletClient, publicClient, "rejectRequest", [requestId], DIAMOND_ABI as Abi);
-      toast.success(t("board.services.rejected_msg", { floor: fmtUSDC(feeFloor ?? 0n) }));
+      // feeFloor undefined here (still loading, or the read failed) is an
+      // absent value, not a zero fee — printing "$0.00 withheld" would be its
+      // own false statement about money. Fall back to the no-amount variant
+      // instead of coercing with `?? 0n`.
+      toast.success(
+        feeFloor !== undefined
+          ? t("board.services.rejected_msg", { floor: fmtUSDC(feeFloor) })
+          : t("board.services.rejected_msg_amount_unavailable")
+      );
       setTimeout(() => { refetch(); setActing(null); }, 1500);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Failed");
@@ -679,7 +687,13 @@ export default function ExecutorBoardPage() {
     setIsCancelling(true);
     try {
       await sendGasless(walletClient, publicClient, "cancelRequest", [BigInt(requestId)], DIAMOND_ABI as Abi);
-      toast.success(t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor ?? 0n) }));
+      // Same rule as handleReject above: an unresolved feeFloor is an unknown,
+      // not a zero — fall back to the no-amount variant rather than `?? 0n`.
+      toast.success(
+        feeFloor !== undefined
+          ? t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor) })
+          : t("board.services.request_cancelled_amount_unavailable")
+      );
       setTimeout(() => { refetchMyRequests(); setIsCancelling(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");

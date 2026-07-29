@@ -113,8 +113,10 @@
       "reject_btn": "Reject",
       "cancel_request_btn": "Cancel",
       "request_cancelled": "Request cancelled — only the {floor} USDC floor stays with the protocol, the rest was refunded.",
+      "request_cancelled_amount_unavailable": "Request cancelled — the platform-fee floor is non-refundable, the rest was refunded.",
       "accepted_msg": "Accepted! Deal created.",
       "rejected_msg": "Request rejected — only the {floor} USDC floor stays with the protocol, the rest was refunded to the client.",
+      "rejected_msg_amount_unavailable": "Request rejected — the platform-fee floor is non-refundable, the rest was refunded to the client.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

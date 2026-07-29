@@ -102,8 +102,10 @@
       "reject_btn": "رفض",
       "cancel_request_btn": "إلغاء",
       "request_cancelled": "تم إلغاء الطلب — الحد الأدنى البالغ {floor} USDC فقط هو غير القابل للاسترداد، وقد رُدّ الباقي.",
+      "request_cancelled_amount_unavailable": "تم إلغاء الطلب — الحد الأدنى غير قابل للاسترداد، وقد رُدّ الباقي.",
       "accepted_msg": "تم القبول! تم إنشاء الصفقة.",
       "rejected_msg": "تم رفض الطلب — الحد الأدنى البالغ {floor} USDC فقط هو غير القابل للاسترداد، وقد رُدّ الباقي للعميل.",
+      "rejected_msg_amount_unavailable": "تم رفض الطلب — الحد الأدنى غير قابل للاسترداد، وقد رُدّ الباقي للعميل.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

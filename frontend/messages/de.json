@@ -102,8 +102,10 @@
       "reject_btn": "Ablehnen",
       "cancel_request_btn": "Abbrechen",
       "request_cancelled": "Anfrage storniert — nur der Mindestbetrag von {floor} USDC bleibt einbehalten, der Rest wurde erstattet.",
+      "request_cancelled_amount_unavailable": "Anfrage storniert — der Mindestbetrag ist nicht erstattungsfähig, der Rest wurde erstattet.",
       "accepted_msg": "Angenommen! Deal erstellt.",
       "rejected_msg": "Anfrage abgelehnt — nur der Mindestbetrag von {floor} USDC bleibt einbehalten, der Rest wurde dem Kunden erstattet.",
+      "rejected_msg_amount_unavailable": "Anfrage abgelehnt — der Mindestbetrag ist nicht erstattungsfähig, der Rest wurde dem Kunden erstattet.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

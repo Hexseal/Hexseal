@@ -165,7 +165,15 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
     setIsCancelling(true);
     try {
       await sendGasless(walletClient, publicClient, "cancelRequest", [myRequest.id], DIAMOND_ABI as Abi);
-      toast.success(t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor ?? 0n) }));
+      // feeFloor undefined here (still loading, or the read failed) is an
+      // absent value, not a zero fee — printing "$0.00 withheld" would be its
+      // own false statement about money. Fall back to the no-amount variant
+      // instead of coercing with `?? 0n`.
+      toast.success(
+        feeFloor !== undefined
+          ? t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor) })
+          : t("board.services.request_cancelled_amount_unavailable")
+      );
       setTimeout(() => { refetchRequests(); setIsCancelling(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");

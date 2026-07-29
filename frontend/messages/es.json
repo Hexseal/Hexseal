@@ -102,8 +102,10 @@
       "reject_btn": "Rechazar",
       "cancel_request_btn": "Cancelar",
       "request_cancelled": "Solicitud cancelada — solo el mínimo de {floor} USDC no es reembolsable, el resto fue reembolsado.",
+      "request_cancelled_amount_unavailable": "Solicitud cancelada — el mínimo no es reembolsable, el resto fue reembolsado.",
       "accepted_msg": "¡Aceptado! Trato creado.",
       "rejected_msg": "Solicitud rechazada — solo el mínimo de {floor} USDC no es reembolsable, el resto fue reembolsado al cliente.",
+      "rejected_msg_amount_unavailable": "Solicitud rechazada — el mínimo no es reembolsable, el resto fue reembolsado al cliente.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

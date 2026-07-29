@@ -102,8 +102,10 @@
       "reject_btn": "拒否",
       "cancel_request_btn": "キャンセル",
       "request_cancelled": "リクエストをキャンセルしました — 返金不可なのは下限の {floor} USDC のみで、残りは返金済みです。",
+      "request_cancelled_amount_unavailable": "リクエストをキャンセルしました — 返金不可なのは下限のみで、残りは返金済みです。",
       "accepted_msg": "承認しました！取引が作成されました。",
       "rejected_msg": "リクエストを拒否しました — 返金不可なのは下限の {floor} USDC のみで、残りはクライアントに返金済みです。",
+      "rejected_msg_amount_unavailable": "リクエストを拒否しました — 返金不可なのは下限のみで、残りはクライアントに返金済みです。",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },
