@@ -27,7 +27,7 @@ import { useTranslations } from "next-intl";
 import { CATEGORIES, DEFAULT_CATEGORY, type CategoryKey, withCategory } from "@/config/categories";
 import { PageCenter } from "@/components/PageCenter";
 
-interface RegionData { region: number; fee?: bigint; label: string; }
+interface RegionData { region: number; label: string; }
 
 const EXPECTED_CHAIN_ID = CHAIN_ID;
 const MAX_PRICE   = MAX_DEAL_AMOUNT;
@@ -82,7 +82,7 @@ export default function PostServicePage() {
   useEffect(() => {
     fetch("/api/region")
       .then(r => r.json())
-      .then(data => setRegionData({ region: data.region, fee: BigInt(data.fee), label: data.label }))
+      .then(data => setRegionData({ region: data.region, label: data.label }))
       .catch(() => setRegionData({ region: 1, label: "Asia" }));
   }, []);
 

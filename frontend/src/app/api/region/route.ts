@@ -19,16 +19,18 @@ const REGION_MAP: Record<string, number> = {
   AU: 6, NZ: 6,
 };
 
-// Internal cache code 10 = VPN/proxy (contractRegion=3, same $10 price)
-const FEE_MAP: Record<number, { usdc: number; label: string; contractRegion: number }> = {
-  0:  { usdc: 2_000_000,  label: 'CIS · $2',    contractRegion: 0 },
-  1:  { usdc: 4_000_000,  label: 'Asia · $4',   contractRegion: 1 },
-  2:  { usdc: 7_000_000,  label: 'Europe · $7', contractRegion: 2 },
-  3:  { usdc: 10_000_000, label: 'US · $10',    contractRegion: 3 },
-  4:  { usdc: 4_000_000,  label: 'LATAM · $4',  contractRegion: 4 },
-  5:  { usdc: 10_000_000, label: 'CA · $10',    contractRegion: 5 },
-  6:  { usdc: 7_000_000,  label: 'AU · $7',     contractRegion: 6 },
-  10: { usdc: 10_000_000, label: 'VPN · $10',   contractRegion: 3 },
+// Ярлык региона для интерфейса. Цены здесь больше нет: комиссия считается от
+// суммы сделки контрактом (quoteFee), а не выводится из региона.
+// Код 10 — VPN/прокси, на цепи подставляется как US.
+const REGION_LABEL: Record<number, { label: string; contractRegion: number }> = {
+  0:  { label: 'CIS',    contractRegion: 0 },
+  1:  { label: 'Asia',   contractRegion: 1 },
+  2:  { label: 'Europe', contractRegion: 2 },
+  3:  { label: 'US',     contractRegion: 3 },
+  4:  { label: 'LATAM',  contractRegion: 4 },
+  5:  { label: 'CA',     contractRegion: 5 },
+  6:  { label: 'AU',     contractRegion: 6 },
+  10: { label: 'VPN',    contractRegion: 3 },
 };
 
 const CACHE_TTL_SECONDS = 3600;
@@ -100,13 +102,13 @@ export async function GET(req: NextRequest) {
 
   const cached = getCached(ip);
   if (cached !== null) {
-    const fee = FEE_MAP[cached] ?? FEE_MAP[1];
-    return NextResponse.json({ region: fee.contractRegion, fee: fee.usdc, label: fee.label });
+    const r = REGION_LABEL[cached] ?? REGION_LABEL[1];
+    return NextResponse.json({ region: r.contractRegion, label: r.label });
   }
 
   const { cacheCode, contractRegion } = await resolveRegion(ip);
   setCached(ip, cacheCode);
 
-  const fee = FEE_MAP[cacheCode] ?? FEE_MAP[1];
-  return NextResponse.json({ region: contractRegion, fee: fee.usdc, label: fee.label });
+  const r = REGION_LABEL[cacheCode] ?? REGION_LABEL[1];
+  return NextResponse.json({ region: contractRegion, label: r.label });
 }

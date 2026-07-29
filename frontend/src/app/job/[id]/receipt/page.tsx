@@ -10,7 +10,7 @@ import { DIAMOND_ABI, JOB_RECEIPT_FACET_ABI, CONTRACTS } from "@/config/contract
 import { explorerUrl } from "@/config/chain";
 import { shortAddr } from "@/lib/utils";
 
-// ── Region helpers (mirrors SVGRenderer._regionLabel / _regionFeeRaw) ─────────
+// ── Region helpers (mirrors SVGRenderer._regionLabel) ─────────────────────────
 
 const REGION_LABEL: Record<number, string> = {
   0: "CIS",
@@ -20,16 +20,6 @@ const REGION_LABEL: Record<number, string> = {
   4: "LATAM",
   5: "CA",
   6: "AU",
-};
-
-const REGION_FEE: Record<number, number> = {
-  0: 2_000_000,
-  1: 4_000_000,
-  2: 7_000_000,
-  3: 10_000_000,
-  4: 4_000_000,
-  5: 10_000_000,
-  6: 7_000_000,
 };
 
 function fmt(raw: bigint | number): string {
@@ -87,8 +77,6 @@ function Dashes() {
 }
 
 function Receipt({ data }: { data: ReceiptData }) {
-  const fee      = REGION_FEE[data.region] ?? 2_000_000;
-  const total    = Number(data.amount) + fee;
   const st       = STATUS_MAP[data.jobStatus] ?? STATUS_MAP[0];
   const isCancelled = data.jobStatus === 2;
 
@@ -140,19 +128,13 @@ function Receipt({ data }: { data: ReceiptData }) {
 
       <Dashes />
 
-      {/* Fee breakdown */}
-      <div className="px-6">
-        <ReceiptRow label="PPP FEE" value={`${fmt(fee)} USDC`} />
-        <div className="text-[8px] text-white/15 text-right mb-1">(NON-REFUNDABLE)</div>
-      </div>
-
-      {/* Total */}
+      {/* Escrow total */}
       <div className="px-6 pb-2">
         <div className="border-t border-white/[0.12] mt-1 mb-3" />
         <div className="flex justify-between items-end">
-          <span className="text-[9px] tracking-widest text-white/30">TOTAL</span>
+          <span className="text-[9px] tracking-widest text-white/30">ESCROW</span>
           <div className="text-right">
-            <div className="text-[28px] font-bold text-white leading-none">{fmt(total)}</div>
+            <div className="text-[28px] font-bold text-white leading-none">{fmt(data.amount)}</div>
             <div className="text-[11px] text-white/25 mt-0.5">USDC</div>
           </div>
         </div>
