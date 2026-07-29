@@ -70,8 +70,13 @@ abstract contract BoardsFixture is Test {
     address executor;
     address feeRecipient;
 
-    uint8 constant REGION = 0; // CIS — $2 fee (ServiceBoard: ещё region-priced)
-    uint256 constant FEE = 2_000_000; // $2 USDC — ServiceBoard fee (fs.regionFee)
+    uint8 constant REGION = 0; // CIS — региональный enum остался на Job/Service, но комиссию больше не определяет
+    // Пережиток снятой региональной модели. mintService/mintServiceWithPermit
+    // сейчас берут ровно fs.feeFloor ($1) — этого approve-потолка ($2) для
+    // этого хватает с запасом, поэтому саму константу трогать незачем, но
+    // называть её "ServiceBoard fee (fs.regionFee)" — неверно: regionFee
+    // мёртвое поле (см. FactoryStorage.Layout), а платёж отличается от $2.
+    uint256 constant FEE = 2_000_000; // $2 USDC — approve-потолок, реальный сбор ниже (fs.feeFloor)
     uint256 constant AMOUNT = 100_000_000; // $100 USDC
     // JobBoard теперь prices через quote(): max(AMOUNT * 500 / 10_000, 1_000_000).
     uint256 constant JOB_FEE = 5_000_000;   // 5% от AMOUNT
@@ -96,11 +101,13 @@ abstract contract BoardsFixture is Test {
     /// mounted selector set untouched — so they aren't reachable as
     /// `JobBoardFacet.FEE_KIND_JOB_DEAL` from outside the contract. Mirrored
     /// here once so tests reference a name, not a bare number.
+    /// Same story for FactoryFacet.FEE_KIND_DIRECT_DEAL — mirrored here too.
     uint8 constant FEE_KIND_JOB_DEAL        = 0;
     uint8 constant FEE_KIND_JOB_FORFEIT     = 1;
     uint8 constant FEE_KIND_SERVICE_LISTING = 2;
     uint8 constant FEE_KIND_REQUEST_DEAL    = 3;
     uint8 constant FEE_KIND_REQUEST_FORFEIT = 4;
+    uint8 constant FEE_KIND_DIRECT_DEAL     = 5;
 
     function setUp() public {
         owner = address(this);
@@ -319,5 +326,91 @@ abstract contract BoardsFixture is Test {
         vm.store(d, bpsSlot, bytes32(uint256(0)));
         vm.store(d, floorSlot, bytes32(uint256(0)));
         vm.store(d, maxPendingSlot, bytes32(uint256(0)));
+    }
+
+    // ============================================================
+    //  FEE LEDGER — structural completeness helpers
+    // ============================================================
+    //
+    // `vm.expectEmit` only proves "at least one matching event was emitted" —
+    // it stays green even if a SECOND, undeclared transfer to feeRecipient
+    // rides along in the same call. The ledger-completeness property this
+    // task is actually about ("every USDC that reaches feeRecipient is
+    // announced by a FeeCollected") is a different, stronger claim, and has
+    // to be checked as a balance identity, not as a log match. Wrapping every
+    // mutating call that can pay feeRecipient through `_assertLedgerBalanced`
+    // makes that check structural — it fires on every call site, including
+    // ones added after this comment was written, instead of living inside one
+    // hand-maintained scenario test that stops growing the day someone forgets
+    // to extend it.
+
+    /// Executes `callData` against the diamond as `actor` and asserts that the
+    /// sum of every FeeCollected.amount emitted during THIS call equals the
+    /// exact increase in feeRecipient's balance over the same call — no more
+    /// (double-counted), no less (silent transfer). Returns the call's return
+    /// data and raw logs so the caller can additionally assert on the specific
+    /// event(s) it expected (id / payer / kind) via `_assertFeeCollected`.
+    function _assertLedgerBalanced(address actor, bytes memory callData)
+        internal returns (bytes memory returnData, Vm.Log[] memory logs)
+    {
+        uint256 before = usdc.balanceOf(feeRecipient);
+
+        vm.recordLogs();
+        vm.prank(actor);
+        bool ok;
+        (ok, returnData) = address(diamond).call(callData);
+        if (!ok) {
+            // Bubble the real revert reason instead of a generic message —
+            // this helper is only used on happy paths, so a failure here
+            // means the call itself broke, not the ledger invariant. Memory-safe:
+            // only reads the existing `returnData` buffer, never writes past it.
+            assembly ("memory-safe") { revert(add(returnData, 0x20), mload(returnData)) }
+        }
+
+        logs = vm.getRecordedLogs();
+
+        // JobBoardFacet / ServiceBoardFacet / FactoryFacet each declare their
+        // own FeeCollected — same signature text, so the selector (topic0) is
+        // identical across all three; summing by topic0 alone therefore
+        // covers all ten fee-collection call sites, not just one facet's.
+        bytes32 feeCollectedTopic = ServiceBoardFacet.FeeCollected.selector;
+        uint256 totalCollected;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == address(diamond)
+                && logs[i].topics.length > 0
+                && logs[i].topics[0] == feeCollectedTopic) {
+                totalCollected += abi.decode(logs[i].data, (uint256));
+            }
+        }
+
+        assertEq(totalCollected, usdc.balanceOf(feeRecipient) - before);
+    }
+
+    /// Finds the FeeCollected log (among logs returned by `_assertLedgerBalanced`)
+    /// whose `id` topic equals `expectedId` and asserts its payer/kind/amount.
+    /// Matching by id (rather than requiring exactly one FeeCollected in the
+    /// whole call) is what lets this same helper cover acceptRequest's
+    /// sibling-supersede path, where one call legitimately emits two
+    /// FeeCollected events with two different ids.
+    function _assertFeeCollected(
+        Vm.Log[] memory logs,
+        uint256 expectedId,
+        address expectedPayer,
+        uint8 expectedKind,
+        uint256 expectedAmount
+    ) internal pure {
+        bytes32 feeCollectedTopic = ServiceBoardFacet.FeeCollected.selector;
+        uint256 matches;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0
+                && logs[i].topics[0] == feeCollectedTopic
+                && uint256(logs[i].topics[1]) == expectedId) {
+                matches++;
+                assertEq(address(uint160(uint256(logs[i].topics[2]))), expectedPayer);
+                assertEq(uint256(logs[i].topics[3]), expectedKind);
+                assertEq(abi.decode(logs[i].data, (uint256)), expectedAmount);
+            }
+        }
+        assertEq(matches, 1);
     }
 }

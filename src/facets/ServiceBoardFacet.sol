@@ -11,7 +11,10 @@ pragma solidity ^0.8.20;
 //   requestService(): client платит amount + процент (quote()); процент
 //                     удерживается в Diamond — сделки ещё нет, пересылать некуда
 //   acceptRequest():  executor принимает → amount в Agreement, удержанный
-//                     процент → feeRecipient (комиссия заработана)
+//                     процент → feeRecipient (комиссия заработана). Заодно
+//                     вытесняет (SUPERSEDED) все другие PENDING-заявки этого
+//                     client к этому executor — тот же рефанд, что у
+//                     reject/cancel, пол так же сгорает в feeRecipient
 //   rejectRequest():  executor отклоняет → amount + процент сверх пола рефанд
 //                     client, пол сгорает в feeRecipient
 //   cancelRequest():  client отменяет (пока PENDING) → тот же рефанд, что и reject
@@ -120,18 +123,29 @@ contract ServiceBoardFacet {
     event RequestRejected(uint256 indexed requestId, address indexed executor, address indexed client);
     event RequestCancelled(uint256 indexed requestId, address indexed client);
     event RequestSuperseded(uint256 indexed requestId, address indexed client, address indexed executor, uint256 refundAmount);
-    /// Комиссия, реально ушедшая в казну. Единственный полный источник дохода
-    /// протокола: AgreementDeployed.fee несёт пересчёт на момент найма и может
-    /// разойтись с переведённым.
+    /// Комиссия, реально ушедшая в казну — единственный полный источник
+    /// ДОХОДА протокола. Не путать с `ArbiterRegistryFacet.withdrawTreasurySlice`:
+    /// та функция ВЫПЛАЧИВАЕТ уже заработанное из банка арбитров и тоже шлёт
+    /// USDC на `feeRecipient`, но не собирает новую комиссию — это отток уже
+    /// посчитанного здесь дохода, а не второй источник. AgreementDeployed.fee
+    /// несёт пересчёт на момент найма и может разойтись с переведённым.
     ///
     /// kind различает и доску, и природу поступления — без него id означал бы
-    /// три разных пространства идентификаторов (jobId / serviceId / requestId),
-    /// а плата за сделку была бы неотличима от невозвратного пола при отмене:
+    /// четыре разных пространства идентификаторов (jobId / serviceId /
+    /// requestId / отсутствие идентификатора у прямого найма), а плата за
+    /// сделку была бы неотличима от невозвратного пола при отмене:
     ///   0 JOB_DEAL         — id = jobId,     комиссия с состоявшейся работы
     ///   1 JOB_FORFEIT      — id = jobId,     пол, оставшийся при отмене заказа
     ///   2 SERVICE_LISTING  — id = serviceId, плоский пол за публикацию услуги
     ///   3 REQUEST_DEAL     — id = requestId, комиссия с состоявшегося найма
     ///   4 REQUEST_FORFEIT  — id = requestId, пол при отклонении/отзыве/вытеснении
+    ///   5 DIRECT_DEAL      — id = 0 (естественного id нет — Agreement на
+    ///                        момент перевода ещё не задеплоен), прямой найм
+    ///                        через FactoryFacet.deployAgreement/deployAndFund,
+    ///                        минуя обе доски; сделка опознаётся по
+    ///                        AgreementDeployed той же транзакции — так же,
+    ///                        как сабграф уже связывает RequestAccepted с
+    ///                        AgreementDeployed по транзакции.
     event FeeCollected(uint256 indexed id, address indexed payer, uint8 indexed kind, uint256 amount);
 
     uint8 constant FEE_KIND_SERVICE_LISTING = 2;

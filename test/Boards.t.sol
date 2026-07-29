@@ -718,14 +718,14 @@ contract BoardsTest is BoardsFixture {
         vm.prank(executor);
         JobBoardFacet(address(diamond)).applyForJob(jobId);
 
-        // Событие эмитится из того места, где реально идёт перевод, поэтому
-        // несёт удержанную сумму — единственное число, совпадающее с движением
-        // денег на всех ставках.
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit JobBoardFacet.FeeCollected(jobId, client, FEE_KIND_JOB_DEAL, JOB_FEE);
-
-        vm.prank(client);
-        JobBoardFacet(address(diamond)).acceptApplicant(jobId, executor);
+        // _assertLedgerBalanced proves both that the right event fired AND
+        // that nothing else moved into feeRecipient unannounced during this
+        // call — vm.expectEmit alone only proves the former.
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            client,
+            abi.encodeWithSelector(JobBoardFacet.acceptApplicant.selector, jobId, executor)
+        );
+        _assertFeeCollected(logs, jobId, client, FEE_KIND_JOB_DEAL, JOB_FEE);
     }
 
     /// Пол, оставшийся протоколу при отмене, — экономически другое событие,
@@ -735,11 +735,51 @@ contract BoardsTest is BoardsFixture {
     function testCancelJob_EmitsFeeCollected() public {
         uint256 jobId = _approveAndMintJob();
 
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit JobBoardFacet.FeeCollected(jobId, client, FEE_KIND_JOB_FORFEIT, JOB_FLOOR);
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            client,
+            abi.encodeWithSelector(JobBoardFacet.cancelJob.selector, jobId)
+        );
+        _assertFeeCollected(logs, jobId, client, FEE_KIND_JOB_FORFEIT, JOB_FLOOR);
+    }
+
+    /// Прямой найм в обход обеих досок: FactoryFacet.deployAgreement() сама
+    /// списывает комиссию, когда msg.sender == client. Естественного id нет —
+    /// Agreement на момент перевода ещё не задеплоен — поэтому id = 0, а
+    /// сделка опознаётся по AgreementDeployed той же транзакции.
+    function testDeployAgreement_EmitsFeeCollected() public {
+        uint256 amount = 200_000_000;      // $200
+        uint256 expectedFee = 10_000_000;  // 5%
 
         vm.prank(client);
-        JobBoardFacet(address(diamond)).cancelJob(jobId);
+        usdc.approve(address(diamond), expectedFee);
+
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            client,
+            abi.encodeWithSelector(
+                FactoryFacet.deployAgreement.selector,
+                client, executor, address(0), amount, DEADLINE, TERMS, REGION
+            )
+        );
+        _assertFeeCollected(logs, 0, client, FEE_KIND_DIRECT_DEAL, expectedFee);
+    }
+
+    /// Тот же прямой путь, но deployAndFund() ещё и переводит amount в
+    /// Agreement в той же транзакции — комиссия и здесь DIRECT_DEAL, id = 0.
+    function testDeployAndFund_EmitsFeeCollected() public {
+        uint256 amount = 200_000_000;      // $200
+        uint256 expectedFee = 10_000_000;  // 5%
+
+        vm.prank(client);
+        usdc.approve(address(diamond), amount + expectedFee);
+
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            client,
+            abi.encodeWithSelector(
+                FactoryFacet.deployAndFund.selector,
+                client, executor, amount, DEADLINE, TERMS, REGION
+            )
+        );
+        _assertFeeCollected(logs, 0, client, FEE_KIND_DIRECT_DEAL, expectedFee);
     }
 
     /// AgreementDeployed.fee считается заново на момент найма, а переводится

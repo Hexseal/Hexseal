@@ -1024,11 +1024,13 @@ contract ServiceBoardTest is BoardsFixture {
 
         // Событие эмитится из того места, где реально идёт перевод, поэтому
         // несёт удержанную при заявке сумму, а не пересчитанную на момент найма.
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit ServiceBoardFacet.FeeCollected(requestId, client, FEE_KIND_REQUEST_DEAL, JOB_FEE);
-
-        vm.prank(executor);
-        ServiceBoardFacet(address(diamond)).acceptRequest(requestId);
+        // _assertLedgerBalanced заодно доказывает, что за этот вызов в казну не
+        // ушло ничего сверх того, что объявлено этим событием.
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            executor,
+            abi.encodeWithSelector(ServiceBoardFacet.acceptRequest.selector, requestId)
+        );
+        _assertFeeCollected(logs, requestId, client, FEE_KIND_REQUEST_DEAL, JOB_FEE);
     }
 
     /// Публикация услуги — плоский антиспам-пол, не связанный ни с какой
@@ -1036,16 +1038,17 @@ contract ServiceBoardTest is BoardsFixture {
     function testMintService_EmitsFeeCollected() public {
         uint256 floor_ = 1_000_000; // $1 — fs.feeFloor
 
-        vm.startPrank(executor);
+        vm.prank(executor);
         usdc.approve(address(diamond), FEE);
 
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit ServiceBoardFacet.FeeCollected(0, executor, FEE_KIND_SERVICE_LISTING, floor_);
-
-        ServiceBoardFacet(address(diamond)).mintService(
-            "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            executor,
+            abi.encodeWithSelector(
+                ServiceBoardFacet.mintService.selector,
+                "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION
+            )
         );
-        vm.stopPrank();
+        _assertFeeCollected(logs, 0, executor, FEE_KIND_SERVICE_LISTING, floor_);
     }
 
     /// Тот же пол, тот же kind, тот же payer (executor) — только через
@@ -1053,13 +1056,15 @@ contract ServiceBoardTest is BoardsFixture {
     function testMintServiceWithPermit_EmitsFeeCollected() public {
         uint256 floor_ = 1_000_000; // $1 — fs.feeFloor
 
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit ServiceBoardFacet.FeeCollected(0, executor, FEE_KIND_SERVICE_LISTING, floor_);
-
-        ServiceBoardFacet(address(diamond)).mintServiceWithPermit(
-            executor, "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION,
-            block.timestamp + 1 days, 0, bytes32(0), bytes32(0)
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            address(this),
+            abi.encodeWithSelector(
+                ServiceBoardFacet.mintServiceWithPermit.selector,
+                executor, "Smart Contract Dev", "I write secure Solidity", AMOUNT, DEADLINE, REGION,
+                block.timestamp + 1 days, uint8(0), bytes32(0), bytes32(0)
+            )
         );
+        _assertFeeCollected(logs, 0, executor, FEE_KIND_SERVICE_LISTING, floor_);
     }
 
     /// Отклонение — amount + комиссия сверх пола возвращаются, пол сгорает.
@@ -1068,11 +1073,11 @@ contract ServiceBoardTest is BoardsFixture {
         uint256 serviceId = _mintService();
         uint256 requestId = _requestService(serviceId);
 
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit ServiceBoardFacet.FeeCollected(requestId, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
-
-        vm.prank(executor);
-        ServiceBoardFacet(address(diamond)).rejectRequest(requestId);
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            executor,
+            abi.encodeWithSelector(ServiceBoardFacet.rejectRequest.selector, requestId)
+        );
+        _assertFeeCollected(logs, requestId, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
     }
 
     /// Отзыв клиентом — тот же рефанд и тот же kind, что у reject, но по
@@ -1081,11 +1086,11 @@ contract ServiceBoardTest is BoardsFixture {
         uint256 serviceId = _mintService();
         uint256 requestId = _requestService(serviceId);
 
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit ServiceBoardFacet.FeeCollected(requestId, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
-
-        vm.prank(client);
-        ServiceBoardFacet(address(diamond)).cancelRequest(requestId);
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            client,
+            abi.encodeWithSelector(ServiceBoardFacet.cancelRequest.selector, requestId)
+        );
+        _assertFeeCollected(logs, requestId, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
     }
 
     /// Вытеснение сиблинга внутри acceptRequest — третий путь к тому же
@@ -1093,7 +1098,9 @@ contract ServiceBoardTest is BoardsFixture {
     /// авто-рефанднут и его пол сгорел, потому что requestId1 из той же пары
     /// (client, executor) был принят первым. Без kind это было бы неотличимо
     /// от REQUEST_DEAL, который acceptRequest эмитит в той же транзакции для
-    /// requestId1.
+    /// requestId1. Один вызов эмитит ДВА FeeCollected с разными id —
+    /// _assertLedgerBalanced уже доказал, что их сумма закрывает весь прирост
+    /// баланса; здесь проверяется, что это именно эти два события.
     function testAcceptRequestSupersedesSibling_EmitsFeeCollected() public {
         uint256 serviceId1 = _mintService();
         uint256 serviceId2 = _mintService();
@@ -1107,11 +1114,12 @@ contract ServiceBoardTest is BoardsFixture {
         );
         vm.stopPrank();
 
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit ServiceBoardFacet.FeeCollected(requestId2, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
-
-        vm.prank(executor);
-        ServiceBoardFacet(address(diamond)).acceptRequest(requestId1);
+        (, Vm.Log[] memory logs) = _assertLedgerBalanced(
+            executor,
+            abi.encodeWithSelector(ServiceBoardFacet.acceptRequest.selector, requestId1)
+        );
+        _assertFeeCollected(logs, requestId1, client, FEE_KIND_REQUEST_DEAL, JOB_FEE);
+        _assertFeeCollected(logs, requestId2, client, FEE_KIND_REQUEST_FORFEIT, JOB_FLOOR);
     }
 
     // ============================================================
@@ -1119,16 +1127,24 @@ contract ServiceBoardTest is BoardsFixture {
     // ============================================================
 
     /// Главный тест задачи: FeeCollected обязан быть ПОЛНЫМ леджером выручки,
-    /// не частичным. Сценарий проводит протокол через все пять kind'ов —
+    /// не частичным. Сценарий проводит протокол через все шесть kind'ов —
     /// JOB_DEAL, JOB_FORFEIT, SERVICE_LISTING (дважды), REQUEST_DEAL,
-    /// REQUEST_FORFEIT — разными парами client/executor, чтобы не задеть
-    /// hasActivePair() ни на одном шаге. Определение "леджер полон": сумма
-    /// amount по всем FeeCollected за сценарий равна фактическому приросту
-    /// баланса feeRecipient за тот же сценарий — не больше (нет двойного
-    /// счёта) и не меньше (нет пропущенного перевода).
+    /// REQUEST_FORFEIT, DIRECT_DEAL (дважды: deployAgreement и deployAndFund)
+    /// — разными парами client/executor, чтобы не задеть hasActivePair() ни на
+    /// одном шаге. Определение "леджер полон": сумма amount по всем
+    /// FeeCollected за сценарий равна фактическому приросту баланса
+    /// feeRecipient за тот же сценарий — не больше (нет двойного счёта) и не
+    /// меньше (нет пропущенного перевода).
+    ///
+    /// Per-call структурная проверка (_assertLedgerBalanced) уже покрывает
+    /// каждый из этих сайтов индивидуально — этот тест остаётся как отдельное,
+    /// более широкое доказательство: инвариант держится и через ПОСЛЕДОВАТЕЛЬНОСТЬ
+    /// разнородных вызовов, а не только вокруг одного изолированного вызова.
     function testFeeLedger_SumOfCollectedEqualsBalanceIncrease() public {
         address executorJob = address(0x9);       // JobBoard-сделка — новая пара
         address executorForfeit = address(0xA);    // ServiceBoard-forfeit — новая пара
+        address executorDirectA = address(0xB);    // deployAgreement напрямую — новая пара
+        address executorDirectB = address(0xC);    // deployAndFund напрямую — новая пара
         usdc.mint(executorForfeit, 10_000_000);    // хватит на пол публикации
 
         uint256 feeRecipientBefore = usdc.balanceOf(feeRecipient);
@@ -1178,12 +1194,35 @@ contract ServiceBoardTest is BoardsFixture {
         vm.prank(client);
         ServiceBoardFacet(address(diamond)).cancelRequest(r2);
 
+        // --- FactoryFacet: DIRECT_DEAL ($10) — прямой найм через deployAgreement,
+        //     минуя обе доски, новая пара (client, executorDirectA) ---
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 10_000_000);
+        FactoryFacet(address(diamond)).deployAgreement(
+            client, executorDirectA, address(0), 200_000_000, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
+        // --- FactoryFacet: DIRECT_DEAL ($10) — прямой найм через deployAndFund,
+        //     тоже переводит amount в Agreement той же транзакцией, новая пара
+        //     (client, executorDirectB) ---
+        vm.startPrank(client);
+        usdc.approve(address(diamond), 210_000_000);
+        FactoryFacet(address(diamond)).deployAndFund(
+            client, executorDirectB, 200_000_000, DEADLINE, TERMS, REGION
+        );
+        vm.stopPrank();
+
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
-        // JobBoardFacet.FeeCollected и ServiceBoardFacet.FeeCollected — одна и та
-        // же сигнатура в двух фасетах, поэтому один и тот же selector.
+        // JobBoardFacet.FeeCollected, ServiceBoardFacet.FeeCollected и
+        // FactoryFacet.FeeCollected — одна и та же сигнатура в трёх фасетах,
+        // поэтому один и тот же selector. Это сцепляет их объявления: разъедься
+        // сигнатура одного фасета на следующем апгрейде — эта строка упадёт
+        // первой, раньше, чем кто-то заметит расхождение в продакшене.
         bytes32 feeCollectedTopic = ServiceBoardFacet.FeeCollected.selector;
         assertEq(feeCollectedTopic, JobBoardFacet.FeeCollected.selector);
+        assertEq(feeCollectedTopic, FactoryFacet.FeeCollected.selector);
 
         uint256 totalCollected;
         uint256 eventCount;
@@ -1194,10 +1233,10 @@ contract ServiceBoardTest is BoardsFixture {
             }
         }
 
-        // Шесть переводов в сценарии — ровно шесть эмиссий, ни больше (двойной
-        // счёт), ни меньше (пропущенный перевод).
-        assertEq(eventCount, 6);
-        assertEq(totalCollected, 14_000_000); // $1 + $5 + $5 + $1 + $1 + $1
+        // Восемь переводов в сценарии — ровно восемь эмиссий, ни больше
+        // (двойной счёт), ни меньше (пропущенный перевод).
+        assertEq(eventCount, 8);
+        assertEq(totalCollected, 34_000_000); // $1+$5+$5+$1+$1+$1 + $10+$10
 
         uint256 feeRecipientAfter = usdc.balanceOf(feeRecipient);
         assertEq(totalCollected, feeRecipientAfter - feeRecipientBefore);

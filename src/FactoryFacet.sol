@@ -102,6 +102,33 @@ contract FactoryFacet {
         uint256 fee
     );
 
+    /// Комиссия, реально ушедшая в казну — единственный полный источник
+    /// ДОХОДА протокола. Не путать с `ArbiterRegistryFacet.withdrawTreasurySlice`:
+    /// та функция ВЫПЛАЧИВАЕТ уже заработанное из банка арбитров и тоже шлёт
+    /// USDC на `feeRecipient`, но не собирает новую комиссию — это отток уже
+    /// посчитанного здесь дохода, а не второй источник. AgreementDeployed.fee
+    /// несёт пересчёт на момент найма и может разойтись с переведённым.
+    ///
+    /// kind различает и доску, и природу поступления — без него id означал бы
+    /// четыре разных пространства идентификаторов (jobId / serviceId /
+    /// requestId / отсутствие идентификатора у прямого найма), а плата за
+    /// сделку была бы неотличима от невозвратного пола при отмене:
+    ///   0 JOB_DEAL         — id = jobId,     комиссия с состоявшейся работы
+    ///   1 JOB_FORFEIT      — id = jobId,     пол, оставшийся при отмене заказа
+    ///   2 SERVICE_LISTING  — id = serviceId, плоский пол за публикацию услуги
+    ///   3 REQUEST_DEAL     — id = requestId, комиссия с состоявшегося найма
+    ///   4 REQUEST_FORFEIT  — id = requestId, пол при отклонении/отзыве/вытеснении
+    ///   5 DIRECT_DEAL      — id = 0 (естественного id нет — Agreement на
+    ///                        момент перевода ещё не задеплоен), прямой найм
+    ///                        через deployAgreement/deployAndFund, минуя обе
+    ///                        доски; сделка опознаётся по AgreementDeployed
+    ///                        той же транзакции — так же, как сабграф уже
+    ///                        связывает RequestAccepted с AgreementDeployed по
+    ///                        транзакции.
+    event FeeCollected(uint256 indexed id, address indexed payer, uint8 indexed kind, uint256 amount);
+
+    uint8 constant FEE_KIND_DIRECT_DEAL = 5;
+
     event RegionFeeUpdated(uint8 indexed region, uint256 newFee);
     event FeeRecipientUpdated(address indexed newRecipient);
     event TrustedForwarderUpdated(address indexed newForwarder);
@@ -227,6 +254,7 @@ contract FactoryFacet {
         uint256 fee = FactoryStorage.quote(fs, amount);
         if (msg.sender == client) {
             _safeTransferFrom(fs.usdc, msg.sender, fs.feeRecipient, fee);
+            emit FeeCollected(0, client, FEE_KIND_DIRECT_DEAL, fee);
         }
 
         agreementAddress = IAgreementDeployer(fs.agreementDeployer).deploy(
@@ -280,6 +308,7 @@ contract FactoryFacet {
         uint256 fee = FactoryStorage.quote(fs, amount);
 
         _safeTransferFrom(fs.usdc, client, fs.feeRecipient, fee);
+        emit FeeCollected(0, client, FEE_KIND_DIRECT_DEAL, fee);
 
         agreementAddress = IAgreementDeployer(fs.agreementDeployer).deploy(
             client, executor, address(0),
