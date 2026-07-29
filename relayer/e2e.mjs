@@ -13,6 +13,9 @@
  *   9. requestService — клиент напрямую запрашивает услугу исполнителя; permit
  *                        подписывается на amount + quoteFee(amount), а не на amount —
  *                        единственное место, где значение permit меняется по формуле
+ *  10. cancelRequest  — клиент отменяет заявку; проверяется рефанд (amount + fee
+ *                        сверх пола) и сгорание пола в feeRecipient — единственный
+ *                        путь возврата, который живая цепь до сих пор не видела
  *
  * Запуск:
  *   cd relayer && node e2e.mjs
@@ -69,6 +72,7 @@ const DIAMOND_ABI = [
   'function applyForJob(uint256 jobId)',
   'function acceptApplicant(uint256 jobId, address executor)',
   'function requestService(uint256 serviceId, uint256 amount, uint256 deadlineDays, string terms, uint8 region) returns (uint256 requestId)',
+  'function cancelRequest(uint256 requestId)',
   // getRegionFee() is DEPRECATED on-chain — it now always reverts FeeNotRegional().
   // quoteFee/getFeeFloor are the real source of truth (src/FactoryFacet.sol).
   'function quoteFee(uint256 amount) view returns (uint256)',
@@ -77,9 +81,11 @@ const DIAMOND_ABI = [
   'function getRequestFeeHeld(uint256 requestId) view returns (uint256)',
   'function getActivePair(address client, address executor) view returns (address)',
   // Events — parsed from tx receipts below, since the relay only surfaces
-  // agreementAddr/jobId, not serviceId/requestId.
+  // agreementAddr/jobId, not serviceId/requestId/forfeit amounts.
   'event ServicePosted(uint256 indexed serviceId, address indexed executor, uint256 price, uint8 region, string title, string description, uint256 deadlineDays)',
   'event ServiceRequested(uint256 indexed requestId, uint256 indexed serviceId, address indexed client, uint256 amount)',
+  'event RequestCancelled(uint256 indexed requestId, address indexed client)',
+  'event FeeCollected(uint256 indexed id, address indexed payer, uint8 indexed kind, uint256 amount)',
 ];
 
 const AGREEMENT_ABI = [
@@ -135,6 +141,7 @@ const GAS = {
   markDone:                200_000n,
   release:                 500_000n, // _complete: NFT burn + Diamond registry call + USDC transfer
   requestService:          600_000n, // struct storage (9 fields incl. terms) + 3 array pushes + transferFrom
+  cancelRequest:           200_000n, // 2 USDC transfers + array removal + storage zeroing
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -431,6 +438,14 @@ async function main() {
   // not by size: it used to be `amount`, now it's `amount + quoteFee(amount)`.
   // Everything else above kept signing the same numbers, just sourced from a
   // different getter — this is the path that actually needs live-chain coverage.
+  //
+  // If this reverts with ActiveDealExists(): that's likely NOT a fee-formula bug.
+  // Agreement._complete() → _updateRegistry() (src/Agreement.sol:1149-1157) wraps
+  // Registry.updateStatus() in a try/catch and only emits RegistrySyncFailed on
+  // failure — money moves either way, but activePartyPairs can be left stuck
+  // pointing at the (already-released) Agreement from Steps 1-8. requestService's
+  // ActiveDealExists() gate (src/facets/ServiceBoardFacet.sol:402) checks exactly
+  // that mapping. Check registry state before assuming the fee change broke this.
   step(9, 'requestService — client requests service, permit covers amount + quoteFee(amount)');
 
   const requestAmount = TEST_AMOUNT;
@@ -486,6 +501,67 @@ async function main() {
   }
   ok('locked amount == signed amount', `${lockedAmount} ✓`);
   ok('locked fee == quoteFee', `${lockedFee} ✓`);
+
+  // ── Step 10: cancelRequest — client cancels the pending request ────────────────
+  // Not just cleanup: without this, every manual run of this script leaves one
+  // more PENDING request on this client/executor pair, and enough re-runs
+  // eventually revert with TooManyPendingRequests() — again, not a fee bug.
+  //
+  // This also covers the one refund path this whole plan is built around and the
+  // live chain has never exercised: per cancelRequest() (src/facets/ServiceBoardFacet.sol:629-657),
+  // the client gets back amount + (fee above the floor); the floor itself is
+  // forfeited to feeRecipient as FeeCollected(kind=FEE_KIND_REQUEST_FORFEIT), and
+  // requestFunds/requestFeeHeld are zeroed. Assert the actual numbers, not just
+  // that the call didn't revert — floor read live via getFeeFloor(), never hardcoded.
+  step(10, 'cancelRequest — client cancels, verify the forfeit-floor refund numbers');
+
+  const FEE_KIND_REQUEST_FORFEIT = 4; // src/facets/ServiceBoardFacet.sol:153
+
+  const floorAtCancel  = await diamond.getFeeFloor();
+  const burnedExpected = requestFee < floorAtCancel ? requestFee : floorAtCancel;
+  const refundExpected = requestAmount + (requestFee - burnedExpected);
+  ok('expected refund to client (amount + fee-above-floor)', `${Number(refundExpected) / 1e6} USDC`);
+  ok('expected burned to feeRecipient (floor)', `${Number(burnedExpected) / 1e6} USDC`);
+
+  const cBalBeforeCancel = await usdcC.balanceOf(client.address);
+
+  const cancelCalldata = iface.encodeFunctionData('cancelRequest', [requestId]);
+  const cancelResult   = await sendForward(client, provider, DIAMOND, cancelCalldata, 'cancelRequest');
+  ok('txHash', cancelResult.txHash);
+
+  const cBalAfterCancel = await usdcC.balanceOf(client.address);
+  const actualRefund    = cBalAfterCancel - cBalBeforeCancel;
+  if (actualRefund !== refundExpected) {
+    throw new Error(`cancelRequest refund mismatch: expected ${refundExpected}, client balance moved by ${actualRefund}`);
+  }
+  ok('client balance delta == expected refund', `${actualRefund} ✓`);
+
+  const [fundsAfterCancel, feeHeldAfterCancel] = await Promise.all([
+    diamond.getRequestFunds(requestId),
+    diamond.getRequestFeeHeld(requestId),
+  ]);
+  if (fundsAfterCancel !== 0n || feeHeldAfterCancel !== 0n) {
+    throw new Error(`cancelRequest did not zero the ledger: funds=${fundsAfterCancel}, feeHeld=${feeHeldAfterCancel}`);
+  }
+  ok('requestFunds/requestFeeHeld zeroed', 'YES ✓');
+
+  if (burnedExpected > 0n) {
+    const cancelReceipt = await provider.getTransactionReceipt(cancelResult.txHash);
+    let forfeitEvent;
+    for (const log of cancelReceipt.logs) {
+      if (log.address.toLowerCase() !== DIAMOND.toLowerCase()) continue;
+      const parsed = iface.parseLog(log);
+      if (parsed?.name === 'FeeCollected' && Number(parsed.args.kind) === FEE_KIND_REQUEST_FORFEIT) {
+        forfeitEvent = parsed;
+        break;
+      }
+    }
+    if (!forfeitEvent) throw new Error('Expected FeeCollected(kind=FEE_KIND_REQUEST_FORFEIT) log not found');
+    if (forfeitEvent.args.amount !== burnedExpected) {
+      throw new Error(`FeeCollected forfeit amount mismatch: expected ${burnedExpected}, got ${forfeitEvent.args.amount}`);
+    }
+    ok('FeeCollected(kind=REQUEST_FORFEIT) amount == floor burned', `${forfeitEvent.args.amount} ✓`);
+  }
 
   // ── Final balances ────────────────────────────────────────────────────────────
   console.log('\n══════════════════════════════════════════════════════════');
