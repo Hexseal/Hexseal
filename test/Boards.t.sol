@@ -918,9 +918,32 @@ contract BoardsTest is BoardsFixture {
         vm.expectRevert(FactoryFacet.FeeBpsTooHigh.selector);
         FactoryFacet(address(fresh)).initFeeModel(2_001, 1_000_000, 5);
 
+        // Ноль отвергается тоже: иначе одна опечатка атомарно возвращает
+        // протокол к плоской комиссии, и правится это только новым cut'ом.
+        vm.expectRevert(FactoryFacet.FeeBpsTooHigh.selector);
+        FactoryFacet(address(fresh)).initFeeModel(0, 1_000_000, 5);
+
         vm.prank(client);
         vm.expectRevert(FactoryFacet.NotOwner.selector);
         FactoryFacet(address(fresh)).initFeeModel(500, 1_000_000, 5);
+    }
+
+    function testInitFeeModel_ZeroBpsCannotSlipThroughAndFlattenTheFee() public {
+        (DiamondProxy fresh, address factoryImpl) = _deployUnconfiguredDiamond();
+
+        bytes4[] memory added = new bytes4[](1);
+        added[0] = FactoryFacet.initFeeModel.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut(factoryImpl, IDiamondCut.FacetCutAction.Add, added);
+
+        // Нулевая ставка не проходит даже атомарным путём — cut целиком ревертит,
+        // а не оставляет диамонд с тихой плоской комиссией.
+        vm.expectRevert(FactoryFacet.FeeBpsTooHigh.selector);
+        IDiamondCut(address(fresh)).diamondCut(
+            cuts,
+            factoryImpl,
+            abi.encodeCall(FactoryFacet.initFeeModel, (0, 1_000_000, 5))
+        );
     }
 
     // ── Все денежные входы неконфигурированного диамонда ревертят ──────────

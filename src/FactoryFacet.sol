@@ -187,7 +187,11 @@ contract FactoryFacet {
         FactoryStorage.Layout storage fs = FactoryStorage.store();
         if (fs.feeFloor != 0) revert AlreadyInitialized();
         if (floor == 0) revert FeeNotConfigured();
-        if (bps > 2_000) revert FeeBpsTooHigh();
+        // Ноль здесь строже, чем в setFeeBps: путь одноразовый и необратимый,
+        // а нулевая ставка тихо возвращает протокол к плоской комиссии —
+        // quote() отдаёт пол на любой сумме, без реверта и без события.
+        // Опечатку в одном аргументе после этого правит только новый diamondCut.
+        if (bps == 0 || bps > 2_000) revert FeeBpsTooHigh();
         fs.feeBps = bps;
         fs.feeFloor = floor;
         fs.maxPendingRequests = maxPending;
