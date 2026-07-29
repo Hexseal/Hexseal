@@ -63,14 +63,17 @@ type Agreement @entity {
   splitToExecutor: BigInt
 }
 
-# Одно поступление в казну — полный леджер дохода протокола. Событие приходит
-# из обоих board-фасетов; kind задаёт и доску, и природу поступления, и заодно
-# то, в каком пространстве живёт sourceId:
+# Одно поступление в казну — полный леджер дохода протокола. Событие эмитят три
+# фасета — FactoryFacet, JobBoardFacet, ServiceBoardFacet; kind задаёт и
+# источник, и природу поступления, и заодно то, в каком пространстве живёт
+# sourceId:
 #   0 JOB_DEAL        — sourceId = jobId,     комиссия с состоявшейся работы
 #   1 JOB_FORFEIT     — sourceId = jobId,     пол при отмене заказа
 #   2 SERVICE_LISTING — sourceId = serviceId, пол за публикацию услуги
 #   3 REQUEST_DEAL    — sourceId = requestId, комиссия с состоявшегося найма
 #   4 REQUEST_FORFEIT — sourceId = requestId, пол при отклонении/отзыве/вытеснении
+#   5 DIRECT_DEAL     — sourceId = 0, прямой найм через фабрику, минуя доски;
+#                       сделка опознаётся по AgreementDeployed той же транзакции
 type FeeCollection @entity {
   id: ID!            # txHash-logIndex
   kind: Int!
