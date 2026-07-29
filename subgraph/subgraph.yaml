@@ -18,6 +18,7 @@ dataSources:
         - Service
         - ServiceRequest
         - Agreement
+        - FeeCollection
       abis:
         - name: Diamond
           file: ./abis/Diamond.json
@@ -54,6 +55,8 @@ dataSources:
           handler: handleRequestCancelled
         - event: AgreementDeployed(indexed address,indexed address,indexed address,uint256,uint8,uint256)
           handler: handleAgreementDeployed
+        - event: FeeCollected(indexed uint256,indexed address,indexed uint8,uint256)
+          handler: handleFeeCollected
       file: ./src/diamond.ts
 templates:
   - kind: ethereum

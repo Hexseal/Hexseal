@@ -16,8 +16,9 @@ import {
   RequestRejected,
   RequestCancelled,
   AgreementDeployed,
+  FeeCollected,
 } from '../generated/Diamond/Diamond'
-import { Job, Service, ServiceRequest, Agreement } from '../generated/schema'
+import { Job, Service, ServiceRequest, Agreement, FeeCollection } from '../generated/schema'
 import { AgreementContract } from '../generated/templates'
 
 export function handleJobPosted(event: JobPosted): void {
@@ -206,4 +207,20 @@ export function handleAgreementDeployed(event: AgreementDeployed): void {
   agreement.save()
 
   AgreementContract.create(event.params.agreement)
+}
+
+// FeeCollected fires once per transfer into the treasury — a single
+// transaction can carry several (e.g. one per orphaned applicant during a
+// supersede cycle), so each log is its own entity keyed by txHash-logIndex,
+// never overwriting a sibling from the same tx.
+export function handleFeeCollected(event: FeeCollected): void {
+  let id = event.transaction.hash.toHexString() + '-' + event.logIndex.toString()
+  let fc = new FeeCollection(id)
+  fc.kind = event.params.kind
+  fc.sourceId = event.params.id
+  fc.payer = event.params.payer
+  fc.amount = event.params.amount
+  fc.blockNumber = event.block.number
+  fc.timestamp = event.block.timestamp
+  fc.save()
 }

@@ -425,5 +425,32 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FeeCollected",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": true
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
   }
 ]
