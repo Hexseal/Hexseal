@@ -95,8 +95,13 @@ export default function PostJobPage() {
   // showing 0.00/— and letting the balance check pass on amount alone (no fee
   // added in) is the same "signed one thing, chain wants another" failure the
   // rest of this plan removes, just reached from an empty read instead of a
-  // stale argument.
-  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined;
+  // stale argument. Also require feeFloor > 0n: FactoryStorage.quote()
+  // (src/FactoryFacet.sol) reverts FeeNotConfigured() on a zero floor, so a
+  // freshly-mounted diamond that hasn't had initFeeModel() called yet reads
+  // back feeFloor === 0n — a defined value, not undefined — and would
+  // otherwise sail through this gate showing "Fee 0.00" right up until the
+  // real submit dies inside readQuotedFee's revert.
+  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined && feeFloor > 0n;
 
   const { data: usdcBalanceData } = useBalance({
     address,

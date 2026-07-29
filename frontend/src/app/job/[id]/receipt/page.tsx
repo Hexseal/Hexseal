@@ -14,7 +14,7 @@ import { shortAddr } from "@/lib/utils";
 
 const REGION_LABEL: Record<number, string> = {
   0: "CIS",
-  1: "ASIA / LATAM",
+  1: "ASIA",
   2: "EUROPE",
   3: "US",
   4: "LATAM",

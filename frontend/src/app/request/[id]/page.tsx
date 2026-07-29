@@ -22,6 +22,7 @@ import { useTranslations } from "next-intl";
 import { CATEGORY_BADGE, extractCategory, stripCategory } from "@/config/categories";
 import { PageCenter } from "@/components/PageCenter";
 import { shortAddr } from "@/lib/utils";
+import { useFeeConfig } from "@/hooks/useFeeConfig";
 
 interface HireRequestRecord {
   client: string;
@@ -88,6 +89,10 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
 
   const requestId = BigInt(id);
   const [isBusy, setIsBusy] = useState<"accept" | "reject" | "cancel" | null>(null);
+  // Live floor, for the honest "only the floor is non-refundable" copy below —
+  // cancelRequest/rejectRequest (src/facets/ServiceBoardFacet.sol) now burn it,
+  // so unqualified "cancelled"/"refunded" text overstates what comes back.
+  const { feeFloor } = useFeeConfig();
 
   const { data: req, isLoading: reqLoading, isError: reqError, refetch } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -118,7 +123,18 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
     }
     setIsBusy(action);
     const labels = { accept: "Accepting…", reject: "Rejecting…", cancel: "Cancelling…" };
-    const ok     = { accept: "Request accepted — deal created!", reject: "Request rejected.", cancel: "Request cancelled." };
+    // Only the floor is non-refundable on cancel/reject (ServiceBoardFacet
+    // burns it, refunds the rest) — falls back to the unqualified text while
+    // the live floor read hasn't resolved yet, rather than guessing a number.
+    const ok = {
+      accept: "Request accepted — deal created!",
+      reject: feeFloor !== undefined
+        ? `Request rejected — the client was refunded, minus the ${fmt(feeFloor)} USDC non-refundable floor.`
+        : "Request rejected.",
+      cancel: feeFloor !== undefined
+        ? `Request cancelled — refunded, minus the ${fmt(feeFloor)} USDC non-refundable floor.`
+        : "Request cancelled.",
+    };
     toast(labels[action]);
     try {
       const fnName = action === "accept" ? "acceptRequest" : action === "reject" ? "rejectRequest" : "cancelRequest";
@@ -276,7 +292,10 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
             <div>
               <p className="text-sm font-medium text-sky-300/90">Waiting for executor to respond</p>
               <p className="text-xs text-white/35 mt-0.5">
-                The executor will review your request and either accept or reject it. You can cancel while it's pending.
+                The executor will review your request and either accept or reject it. You can cancel while it's pending
+                {feeFloor !== undefined
+                  ? ` — only the ${fmt(feeFloor)} USDC floor is non-refundable, the rest returns.`
+                  : "."}
               </p>
             </div>
           </div>

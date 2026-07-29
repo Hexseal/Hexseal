@@ -21,6 +21,7 @@ import { useTranslations } from "next-intl";
 import { UserName, UserAvatar } from "@/components/UserName";
 import { extractCategory, stripCategory, CATEGORY_BADGE } from "@/config/categories";
 import { PageCenter } from "@/components/PageCenter";
+import { useFeeConfig } from "@/hooks/useFeeConfig";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,10 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
+  // Live floor, for the honest "only the floor is non-refundable" cancel toast —
+  // cancelRequest (src/facets/ServiceBoardFacet.sol) now burns it, so the old
+  // unqualified "funds refunded" text overstated what actually comes back.
+  const { feeFloor } = useFeeConfig();
 
   // ── Service data ────────────────────────────────────────────────────────────
 
@@ -160,7 +165,7 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
     setIsCancelling(true);
     try {
       await sendGasless(walletClient, publicClient, "cancelRequest", [myRequest.id], DIAMOND_ABI as Abi);
-      toast.success(t("board.services.request_cancelled"));
+      toast.success(t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor ?? 0n) }));
       setTimeout(() => { refetchRequests(); setIsCancelling(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");

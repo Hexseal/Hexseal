@@ -43,7 +43,11 @@ export function RequestServiceModal({
   // after a failed read (isLoading goes false but the values stay undefined).
   // Either way the fee is an unknown, not a zero — treating it as zero would
   // make hasEnough pass for a wallet that can't actually cover amount + fee.
-  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined;
+  // Also excludes feeFloor === 0n: that's FactoryStorage.quote()'s
+  // "not configured yet" state (it reverts FeeNotConfigured() there), not a
+  // real zero fee — quoteFeeLocal has no such branch, so treating 0n as ready
+  // would preview a fee of 0 for a request that will revert on submit.
+  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined && feeFloor > 0n;
 
   const parsedAmount = parseFloat(amount || "0");
   const requiredRaw  = parsedAmount > 0 ? BigInt(Math.round(parsedAmount * 1e6)) : 0n;

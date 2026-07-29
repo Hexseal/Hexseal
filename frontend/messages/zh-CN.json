@@ -101,9 +101,9 @@
       "incoming_empty": "没有待处理的请求",
       "reject_btn": "拒绝",
       "cancel_request_btn": "取消",
-      "request_cancelled": "请求已取消 — 款项已退回。",
+      "request_cancelled": "请求已取消 — 只有 {floor} USDC 的底价不可退还，其余部分已退还。",
       "accepted_msg": "已接受！交易已创建。",
-      "rejected_msg": "请求已拒绝。",
+      "rejected_msg": "请求已拒绝 — 只有 {floor} USDC 的底价不可退还，其余部分已退还给客户。",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

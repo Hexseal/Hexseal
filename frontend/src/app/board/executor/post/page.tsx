@@ -92,7 +92,11 @@ export default function PostServicePage() {
   // A failed read leaves isLoading false with feeFloor still undefined — must
   // gate the same as "still loading", or feeAmount silently falls back to 0
   // and every wallet, including an empty one, reads as having enough balance.
-  const feeConfigReady = !feeConfigLoading && feeFloor !== undefined;
+  // Also require feeFloor > 0n: FactoryStorage.quote() reverts
+  // FeeNotConfigured() on a zero floor (initFeeModel() not yet called), so a
+  // zero read is a defined-but-unconfigured state, not "no fee" — treating it
+  // as ready would show "Fee 0.00" and let the real submit die in the revert.
+  const feeConfigReady = !feeConfigLoading && feeFloor !== undefined && feeFloor > 0n;
   const feeAmount = feeFloor !== undefined ? Number(feeFloor) / 1e6 : 0;
 
   const { data: usdcBalanceData } = useBalance({

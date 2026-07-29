@@ -7,6 +7,14 @@
  * показанное число.
  *
  * Держать в шаге с src/FactoryFacet.sol: fee = max(amount * bps / 10_000, floor).
+ *
+ * Расходится с контрактом при floor === 0n: `FactoryStorage.quote()` в этом
+ * случае ревертит `FeeNotConfigured()` (диамонд смонтирован, но
+ * `initFeeModel` ещё не вызван) — эта функция такой ветки не имеет и просто
+ * вернёт 0n. Не звать с floor === 0n без отдельной проверки "конфиг ещё не
+ * готов" на вызывающей стороне (см. `feeConfigReady` во всех местах, где
+ * читается `useFeeConfig()`) — иначе предпросмотр покажет комиссию 0 для
+ * заявки, которая на сабмите обязательно упадёт в нераскодированном реверте.
  */
 export function quoteFeeLocal(amount: bigint, bps: bigint, floor: bigint): bigint {
   const pct = (amount * bps) / 10_000n;

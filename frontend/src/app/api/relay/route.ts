@@ -57,26 +57,31 @@ const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,ui
 /**
  * Maximum gas units allowed in a single ForwardRequest.
  *
- * The previous 3M cap was itself a fix, but it was sized off measurements
- * taken with a ~19-character `terms` string. That was the wrong axis: `terms`,
- * `title`, and `description` are stored on-chain and the contracts place NO
- * length limit on them at all — the only ceiling is the frontend form's
- * maxLength (title 100, description 500, terms 2000, 2600 combined for a job
- * posting), and at roughly 825 gas per stored character that dwarfs the
- * ~278k an Agreement clone deploy now costs. Measured at the form's actual
- * maximum (mock USDC, foundry):
+ * The previous 5M cap (itself a fix, raised from an earlier 3M) was sized off
+ * pre-fee-economics measurements. Task 10 of the fee-economics-frontend branch
+ * re-measured every gasless path at the form's actual maxLength (mock USDC,
+ * foundry) and found several functions grew once cancel/reject started doing
+ * a second transfer plus a `FeeCollected` log — most sharply `acceptRequest`,
+ * which also stacks the worst-case 19-sibling refund loop:
  *
+ *   acceptRequest    (19 siblings, terms 2000)                   3_219_461
  *   mintJob          (title 100 / description 500 / terms 2000)  2_791_334
- *   acceptRequest    (19 siblings, terms 2000)                   2_593_454
- *   acceptApplicant  (terms 2000)                                2_116_407
+ *   acceptApplicant  (terms 2000)                                2_332_247
  *   deployAndFund    (terms 2000)                                2_074_240
  *
- * mintJobWithPermit is the heaviest operation reachable from the UI: the
- * measured mintJob cost above plus ~30k for the permit call itself, buffered
- * 1.3× by the frontend's live gas estimate (frontend/src/lib/relay.ts)
- * before the signed request ever reaches this route, to 3_712_800. 5M keeps
- * ~1.35× margin over that while still cutting the per-request ETH-drain
- * ceiling 1.6× versus the old 8M.
+ * `acceptRequest` is the operation that squeezed the old 5M cap: the
+ * frontend's live gas estimate (frontend/src/lib/relay.ts) buffers the
+ * measured value 1.3× before the signed request ever reaches this route —
+ * 3_219_461 × 1.3 = 4_185_299 against mock USDC, only 16% margin under 5M.
+ * Real USDC (proxied FiatTokenV2_2) costs ~19% more than the mock per the
+ * same adjustment Task 10 applied elsewhere: 3_219_461 × 1.19 × 1.3 ≈
+ * 4_980_505 — 0.4% margin, i.e. functionally no headroom left. mintJob is the
+ * next heaviest at 2_791_334, with mintJobWithPermit adding ~30k for the
+ * permit call on top; neither comes close to acceptRequest's real-USDC number.
+ *
+ * Raised to 7M: keeps ~40% margin over acceptRequest's real-USDC estimate
+ * (4_980_505) while still cutting the per-request ETH-drain ceiling versus
+ * the original 8M this cap descended from.
  *
  * The asymmetry is worth spelling out: a cap that's too low kills a
  * legitimate user action outright — worse, the direct-tx fallback doesn't
@@ -88,7 +93,7 @@ const JOB_POSTED_TOPIC = keccak256(toBytes('JobPosted(uint256,address,uint256,ui
  * Keep in sync with MAX_GAS in relayer/app.js — the other path through the
  * same forwarder.
  */
-const MAX_FORWARD_GAS = 5_000_000n;
+const MAX_FORWARD_GAS = 7_000_000n;
 
 // ─── Relayer hot-wallet nonce serialization ──────────────────────────────────
 //

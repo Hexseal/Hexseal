@@ -101,9 +101,9 @@
       "incoming_empty": "Aucune demande en attente",
       "reject_btn": "Refuser",
       "cancel_request_btn": "Annuler",
-      "request_cancelled": "Demande annulée — montant remboursé.",
+      "request_cancelled": "Demande annulée — seul le plancher de {floor} USDC n'est pas remboursable, le reste a été remboursé.",
       "accepted_msg": "Accepté ! Deal créé.",
-      "rejected_msg": "Demande refusée.",
+      "rejected_msg": "Demande refusée — seul le plancher de {floor} USDC n'est pas remboursable, le reste a été remboursé au client.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

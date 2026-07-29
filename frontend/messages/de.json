@@ -101,9 +101,9 @@
       "incoming_empty": "Keine offenen Anfragen",
       "reject_btn": "Ablehnen",
       "cancel_request_btn": "Abbrechen",
-      "request_cancelled": "Anfrage storniert — Betrag erstattet.",
+      "request_cancelled": "Anfrage storniert — nur der Mindestbetrag von {floor} USDC bleibt einbehalten, der Rest wurde erstattet.",
       "accepted_msg": "Angenommen! Deal erstellt.",
-      "rejected_msg": "Anfrage abgelehnt.",
+      "rejected_msg": "Anfrage abgelehnt — nur der Mindestbetrag von {floor} USDC bleibt einbehalten, der Rest wurde dem Kunden erstattet.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

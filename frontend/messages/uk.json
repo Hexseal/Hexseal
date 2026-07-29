@@ -101,9 +101,9 @@
       "incoming_empty": "Немає очікуючих запитів",
       "reject_btn": "Відхилити",
       "cancel_request_btn": "Скасувати",
-      "request_cancelled": "Запит скасовано — кошти повернено.",
+      "request_cancelled": "Запит скасовано — не повертається лише мінімум {floor} USDC, решту повернено.",
       "accepted_msg": "Прийнято! Угоду створено.",
-      "rejected_msg": "Запит відхилено.",
+      "rejected_msg": "Запит відхилено — не повертається лише мінімум {floor} USDC, решту повернено клієнту.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

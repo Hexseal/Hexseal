@@ -101,9 +101,9 @@
       "incoming_empty": "Sem pedidos pendentes",
       "reject_btn": "Rejeitar",
       "cancel_request_btn": "Cancelar",
-      "request_cancelled": "Pedido cancelado — valor reembolsado.",
+      "request_cancelled": "Pedido cancelado — apenas o piso de {floor} USDC não é reembolsável, o restante foi reembolsado.",
       "accepted_msg": "Aceito! Acordo criado.",
-      "rejected_msg": "Pedido rejeitado.",
+      "rejected_msg": "Pedido rejeitado — apenas o piso de {floor} USDC não é reembolsável, o restante foi reembolsado ao cliente.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

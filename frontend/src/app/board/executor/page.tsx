@@ -26,6 +26,7 @@ import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegio
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory, extractCustomTag, stripCustomTag } from "@/config/categories";
 import { shortAddr } from "@/lib/utils";
 import { RequestServiceModal } from "@/components/RequestServiceModal";
+import { useFeeConfig } from "@/hooks/useFeeConfig";
 
 function useTimeAgo() {
   const t = useTranslations();
@@ -87,6 +88,10 @@ function IncomingRequestsPanel({
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const [acting, setActing] = useState<string | null>(null);
+  // Live floor, for the honest "only the floor is non-refundable" toast text —
+  // rejectRequest (src/facets/ServiceBoardFacet.sol) now burns it, so the old
+  // unqualified "Request rejected." reads as a full refund when it isn't one.
+  const { feeFloor } = useFeeConfig();
 
   const { data: myServiceIds } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -166,7 +171,7 @@ function IncomingRequestsPanel({
     setActing(key);
     try {
       await sendGasless(walletClient, publicClient, "rejectRequest", [requestId], DIAMOND_ABI as Abi);
-      toast.success(t("board.services.rejected_msg"));
+      toast.success(t("board.services.rejected_msg", { floor: fmtUSDC(feeFloor ?? 0n) }));
       setTimeout(() => { refetch(); setActing(null); }, 1500);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Failed");
@@ -423,6 +428,10 @@ export default function ExecutorBoardPage() {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const t = useTranslations();
+  // Live floor, for the honest "only the floor is non-refundable" cancel toast —
+  // cancelRequest (src/facets/ServiceBoardFacet.sol) now burns it, so the old
+  // unqualified "funds refunded" text overstated what actually comes back.
+  const { feeFloor } = useFeeConfig();
 
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryKey | null>(null);
@@ -670,7 +679,7 @@ export default function ExecutorBoardPage() {
     setIsCancelling(true);
     try {
       await sendGasless(walletClient, publicClient, "cancelRequest", [BigInt(requestId)], DIAMOND_ABI as Abi);
-      toast.success(t("board.services.request_cancelled"));
+      toast.success(t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor ?? 0n) }));
       setTimeout(() => { refetchMyRequests(); setIsCancelling(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");

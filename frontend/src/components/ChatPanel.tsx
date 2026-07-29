@@ -396,7 +396,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   // actual amount+fee that gets signed is read fresh in relay.ts, this is
   // display-only so the confirm text doesn't quote a stale trade-only number.
   const { feeBps, feeFloor, isLoading: feeConfigLoading } = useFeeConfig();
-  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined;
+  // feeFloor === 0n means "not configured yet" (FactoryStorage.quote() reverts
+  // FeeNotConfigured() in that case), not "no fee" — excluded here for the
+  // same reason as the other three feeConfigReady sites in this branch.
+  const feeConfigReady = !feeConfigLoading && feeBps !== undefined && feeFloor !== undefined && feeFloor > 0n;
   const preDealFeeRaw = preDealCtx && feeBps !== undefined && feeFloor !== undefined
     ? quoteFeeLocal(preDealCtx.amount, feeBps, feeFloor)
     : 0n;

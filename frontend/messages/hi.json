@@ -101,9 +101,9 @@
       "incoming_empty": "कोई लंबित अनुरोध नहीं",
       "reject_btn": "अस्वीकार",
       "cancel_request_btn": "रद्द करें",
-      "request_cancelled": "अनुरोध रद्द किया गया — राशि वापस कर दी गई।",
+      "request_cancelled": "अनुरोध रद्द किया गया — केवल {floor} USDC की न्यूनतम राशि वापस नहीं होती, बाकी राशि वापस कर दी गई।",
       "accepted_msg": "स्वीकृत! डील बनाई गई।",
-      "rejected_msg": "अनुरोध अस्वीकृत।",
+      "rejected_msg": "अनुरोध अस्वीकृत — केवल {floor} USDC की न्यूनतम राशि वापस नहीं होती, बाकी राशि ग्राहक को वापस कर दी गई।",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },

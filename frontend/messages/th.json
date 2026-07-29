@@ -101,9 +101,9 @@
       "incoming_empty": "ไม่มีคำขอที่รอดำเนินการ",
       "reject_btn": "ปฏิเสธ",
       "cancel_request_btn": "ยกเลิก",
-      "request_cancelled": "ยกเลิกคำขอแล้ว — คืนเงินแล้ว",
+      "request_cancelled": "ยกเลิกคำขอแล้ว — คืนเงินไม่ได้เฉพาะค่าธรรมเนียมขั้นต่ำ {floor} USDC เท่านั้น ส่วนที่เหลือคืนแล้ว",
       "accepted_msg": "ยอมรับแล้ว! สร้างข้อตกลงแล้ว",
-      "rejected_msg": "คำขอถูกปฏิเสธ",
+      "rejected_msg": "คำขอถูกปฏิเสธ — คืนเงินไม่ได้เฉพาะค่าธรรมเนียมขั้นต่ำ {floor} USDC เท่านั้น ส่วนที่เหลือคืนให้ลูกค้าแล้ว",
       "service_paused_notice": "This service is temporarily paused by the executor.",
       "service_removed_notice": "This service has been removed and is no longer available."
     },
