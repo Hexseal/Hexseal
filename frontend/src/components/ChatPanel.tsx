@@ -590,6 +590,14 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
 
   const handlePreDealAction = async (action: typeof preDealConfirm) => {
     if (!action || !preDealCtx || preDealBusy) return;
+    // Same gate as RequestServiceModal's hasEnough: while the fee config is
+    // still loading, or has permanently failed to load (isLoading false,
+    // values still undefined — no retry after that), the dialog above still
+    // quotes the amount-only fallback text. Letting the confirm through here
+    // would sign a permit for amount + fee while the user was only shown
+    // amount, the same "signed one thing, chain wants another" gap fixed
+    // everywhere else in this plan.
+    if (action === 'request_service' && !feeConfigReady) return;
     setPreDealBusy(true);
     try {
       if (action === 'withdraw') {
@@ -1194,7 +1202,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 className="px-3.5 py-1.5 rounded-[10px] text-xs text-white/45 hover:text-white/70 border border-white/[0.08] hover:bg-white/[0.05] transition-colors disabled:opacity-40">
                 {t("chat_modal.cancel_btn")}
               </button>
-              <button onClick={() => handlePreDealAction(preDealConfirm)} disabled={preDealBusy}
+              <button
+                onClick={() => handlePreDealAction(preDealConfirm)}
+                disabled={preDealBusy || (preDealConfirm === 'request_service' && !feeConfigReady)}
                 className={`px-3.5 py-1.5 rounded-[10px] text-xs font-medium text-white transition-colors disabled:opacity-40 flex items-center gap-1.5 ${
                   preDealConfirm === 'withdraw' || preDealConfirm === 'reject_app'
                     ? 'bg-red-600 hover:bg-red-500'
