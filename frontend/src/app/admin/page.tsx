@@ -722,8 +722,13 @@ function SettingsTab() {
   };
 
   /**
-   * Гейты ввода повторяют контрактные (FactoryFacet.setFeeBps / setFeeFloor):
-   * ставка > 0 и <= 20%, пол > 0. Без них транзакция упадёт уже после подписи.
+   * Гейты ввода повторяют контрактные (FactoryFacet.setFeeBps / setFeeFloor), а не
+   * бриф: setFeeBps сам по себе отвергает только `> 2000` (:371-375) — нижнюю границу
+   * `bps == 0` контракт проверяет только в одноразовом initFeeModel (:213-221), не
+   * здесь. setFeeBps(0) — поддерживаемая и покрытая тестом конфигурация
+   * (test/DisputeFee.t.sol:155): quote() продолжает отдавать пол, протокол не
+   * становится бесплатным. Запрещать ноль тут означало бы врать администратору о
+   * возможностях системы. setFeeFloor ноль отвергает всегда (:377-381).
    */
   const handleSetFeeParam = async (
     fn: 'setFeeBps' | 'setFeeFloor' | 'setMaxPendingRequests',
@@ -732,7 +737,7 @@ function SettingsTab() {
   ) => {
     const n = parseFloat(raw);
     if (isNaN(n)) { toast.error('Invalid value'); return; }
-    if (fn === 'setFeeBps'   && (n <= 0 || n > 20))  { toast.error('Rate must be above 0 and at most 20%'); return; }
+    if (fn === 'setFeeBps'   && (n < 0 || n > 20))   { toast.error('Rate must be between 0 and 20%'); return; }
     if (fn === 'setFeeFloor' && n <= 0)              { toast.error('Floor must be above 0'); return; }
     if (fn === 'setMaxPendingRequests' && n < 0)     { toast.error('Cap cannot be negative'); return; }
     if (!publicClient) { toast.error('Failed'); return; }
@@ -790,7 +795,7 @@ function SettingsTab() {
         <Divider />
 
         <div className="grid sm:grid-cols-3 gap-4">
-          <FieldGroup label="Update rate" hint="Percent of deal amount. Above 0, at most 20%.">
+          <FieldGroup label="Update rate" hint="Percent of deal amount, 0–20%. Zero switches to a flat fee — every deal pays exactly the floor below, nothing scales with amount.">
             <div className="flex gap-2">
               <Input
                 type="number" placeholder="e.g. 5" value={newBps}
