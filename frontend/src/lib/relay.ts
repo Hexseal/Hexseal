@@ -148,7 +148,12 @@ async function readFeeFloor(publicClient: PublicClient): Promise<bigint> {
 // nothing: the chain charges gas used, not gas offered.
 const GAS_DEFAULTS: Record<string, bigint> = {
   deployAndFund:      2_800_000n, // measured 2_074_240 at max terms length
-  deployAgreement:    2_800_000n, // same call minus the fund step; kept at the same margin
+  // Confirmed by direct measurement (not just "cheaper than deployAndFund"
+  // reasoning): 1_927_995 at max terms length — strictly less than
+  // deployAndFund's 2_074_240 as expected (no fundFromFactory + second
+  // transfer here), so the shared 2_800_000n ceiling carries even more
+  // margin (31%) than deployAndFund's own 26%.
+  deployAgreement:    2_800_000n,
   // mintJob/mintJobWithPermit were underestimated before the clone work too —
   // this is not a regression from this branch, just fixed alongside it. Measured
   // 2_791_334 at max title/description/terms; permit adds only ~30k on top.
@@ -166,12 +171,20 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   acceptApplicant:    3_400_000n,
   // Cancelling now makes TWO transfers instead of one — the refund to the
   // client AND the non-refundable feeFloor to the treasury — plus a
-  // FeeCollected LOG4 (~1_756 gas). Freshly measured 116_211 (max of the
-  // JobBoardFacet and DiamondProxy gas-report tables, mock USDC; this path
-  // has no title/terms dependency so the routine suite's worst call already
-  // is the worst case), only ~22% margin over the old 150_000n. Raised with
-  // the same real-USDC + 20%-margin formula: 116_211 * 1.19 * 1.2 ≈ 165_949,
-  // rounded up.
+  // FeeCollected LOG4 (~1_756 gas). Freshly measured 116_211 on the
+  // JobBoardFacet table (stable — identical across 3 repeated full-suite
+  // `--gas-report` runs) and 118_414 on the DiamondProxy table (this second
+  // table is NOT stable between runs on this same commit — it swung between
+  // 115_533 and 118_414 across those same 3 runs, most likely Foundry's gas
+  // attribution getting confused by the low-level `.call()` sites in
+  // `_assertLedgerBalanced` (test/BoardsFixture.sol:361) and the reentrancy
+  // callback (test/Reentrancy.t.sol:82) — the facet table has no such call
+  // sites feeding it and stayed put. Take max(stable table, worst seen on
+  // the unstable one) = 118_414, not whatever a single run happens to print
+  // for DiamondProxy: only ~22% margin over the old 150_000n either way.
+  // Raised with the real-USDC + 20%-margin formula: 118_414 * 1.19 * 1.2 ≈
+  // 169_095, rounded up (same bucket as 116_211's own 165_949 — the ceiling
+  // doesn't move, only this comment's numbers do).
   cancelJob:            170_000n,
   applyForJob:          150_000n,
   withdrawApplication:  150_000n,
@@ -199,14 +212,22 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   // 3_219_461 * 1.19 * 1.2 ≈ 4_597_390, rounded up.
   acceptRequest:      4_600_000n,
   // Same second-transfer-plus-LOG4 change as cancelJob (refund + forfeited
-  // floor to the treasury). Freshly measured 108_829 (max of both gas-report
-  // tables, mock USDC), only ~9% margin over the old 120_000n. Raised:
-  // 108_829 * 1.19 * 1.2 ≈ 155_408, rounded up.
+  // floor to the treasury). Freshly measured 108_829 on the JobBoardFacet-
+  // equivalent (ServiceBoardFacet) table — the facet table's own stable
+  // max, re-confirmed identical across 3 repeated full-suite runs. The
+  // DiamondProxy table has the same cross-run instability noted on cancelJob
+  // above but stayed below this figure in every run sampled (95_662 /
+  // 108_151 / 102_377), so 108_829 stands as the max. Only ~9% margin over
+  // the old 120_000n. Raised: 108_829 * 1.19 * 1.2 ≈ 155_408, rounded up.
   rejectRequest:        160_000n,
   // Same change as rejectRequest, and the one that already broke: measured
   // 126_383 against the old 120_000n ceiling — already over budget on mock
   // USDC alone, before any real-USDC correction. This is why Task 10 exists.
-  // Raised: 126_383 * 1.19 * 1.2 ≈ 180_475, rounded up.
+  // (Also cross-checked against the DiamondProxy-table instability noted on
+  // cancelJob above: 126_383 was the max seen on that table in 2 of 3
+  // repeated runs — the facet table's own stable max is lower, 117_461 — so
+  // this figure already accounts for it.) Raised: 126_383 * 1.19 * 1.2 ≈
+  // 180_475, rounded up.
   cancelRequest:        190_000n,
   pauseService:          80_000n,
   unpauseService:        80_000n,
@@ -216,14 +237,61 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   commitDisputeClaim:   100_000n,
   resolveDispute:       200_000n,
   // Agreement lifecycle
-  fund:               150_000n,
+  //
+  // The five ceilings below (fund, raiseDispute, triggerActivationTimeout,
+  // triggerDeadlineTimeout, triggerAutoApprove) were found and raised while
+  // measuring the commission/refund paths above — they are NOT part of the
+  // fee-economics work: `src/Agreement.sol` was read in full and confirmed
+  // to have no `FeeCollected` emission and no second transfer anywhere.
+  // They were already broken (or, for triggerAutoApprove, dramatically
+  // under-budgeted) on this branch before this task touched anything, and
+  // leaving them known-broken while fixing their neighbours in the same
+  // file would be worse than raising them alongside. All five (plus
+  // `release`, added for the same reason — see its own comment below)
+  // re-measured with `forge test --gas-report`, confirmed IDENTICAL across
+  // 3 repeated full-suite runs (this table doesn't have the cross-run
+  // instability the DiamondProxy table has, see cancelJob above), then
+  // raised with the same real-USDC + 20%-margin formula.
+  //
+  // measured 172_786 (mock USDC) against the old 150_000n — already over
+  // budget before any real-USDC correction, on plain fund() (one
+  // transferFrom + two NFT mints, no extras/disputes involved).
+  // 172_786 * 1.19 * 1.2 ≈ 246_714, rounded up.
+  fund:               250_000n,
   activate:           200_000n,
   markDone:           200_000n,
-  release:            500_000n, // _complete: NFT burn + Diamond registry call + USDC transfer
-  raiseDispute:       100_000n,
-  triggerAutoApprove: 120_000n,
-  triggerActivationTimeout: 100_000n,
-  triggerDeadlineTimeout:   100_000n,
+  // measured 458_530 (mock USDC) against the old 500_000n — only ~8% margin,
+  // below the 20% floor. Worst case is a completed deal between a
+  // client/executor pair on their FIRST deal together, for an amount at or
+  // above ReputationFacet's MIN_WIN_AMOUNT (10 USDC): autoAwardXP() then
+  // writes fresh (cold) XP/streak storage for BOTH parties in the same call
+  // (confirmed via test/Diamond.t.sol:testFullLifecycle, which reuses the
+  // fixture's client/executor on their first-ever deal) — not an edge case,
+  // this is what every brand-new pair's first completed deal costs.
+  // 458_530 * 1.19 * 1.2 ≈ 654_781, rounded up.
+  release:            660_000n,
+  // measured 107_897 (mock USDC) against the old 100_000n — already over
+  // budget before any real-USDC correction.
+  // 107_897 * 1.19 * 1.2 ≈ 154_077, rounded up.
+  raiseDispute:       160_000n,
+  // Same first-deal / first-XP-award mechanism as `release` above (this
+  // function is release()'s twin — same _settlePending + _complete +
+  // transfer shape, just callable by anyone after the auto-approve window
+  // instead of by the client), confirmed via test/Diamond.t.sol:
+  // testAgreementAutoApprove / testAgreementAutoApproveByAnyone, both of
+  // which hit exactly this figure. Measured 456_158 (mock USDC) against the
+  // old 120_000n — underbudgeted by 3.8x, not an edge case but the cost of
+  // literally every new pair's first auto-approved deal.
+  // 456_158 * 1.19 * 1.2 ≈ 651_394, rounded up.
+  triggerAutoApprove: 660_000n,
+  // measured 140_386 (mock USDC) against the old 100_000n — already over
+  // budget before any real-USDC correction.
+  // 140_386 * 1.19 * 1.2 ≈ 200_471, rounded up.
+  triggerActivationTimeout: 210_000n,
+  // measured 149_205 (mock USDC) against the old 100_000n — already over
+  // budget before any real-USDC correction.
+  // 149_205 * 1.19 * 1.2 ≈ 213_065, rounded up.
+  triggerDeadlineTimeout:   220_000n,
   // Both branches of the dispute timeout blow straight through the old 100_000n —
   // measured with `forge test --gas-report` on test/DisputeSettlement.t.sol:
   // 145_825 worst case for the split (two USDC transfers, registry write, claim
@@ -233,8 +301,13 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   // the meta-transaction reverted out of gas. Those figures come off the local
   // harness with a mock USDC; real Base Sepolia USDC is a proxy and its transfers
   // cost more, so the margin is taken from the closest neighbour instead of the
-  // measurement: `release` is budgeted 500_000 for _complete + a registry write +
-  // ONE transfer, and this call does strictly more than that in both branches.
+  // measurement. That neighbour used to be `release` at its old 500_000n — now
+  // raised to 660_000n (see above) after its own first-deal/first-XP-award
+  // worst case was measured at 458_530 — so this 500_000n ceiling no longer
+  // matches that reasoning literally. It's still safe on its own numbers
+  // (145_825/147_014 measured, i.e. ~70% margin), just no longer justified by
+  // the "matches release's budget" argument; left as-is since it isn't a
+  // fee-economics path and its own margin was never in question.
   triggerArbiterTimeout:    500_000n,
 };
 
