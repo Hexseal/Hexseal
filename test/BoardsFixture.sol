@@ -398,11 +398,16 @@ abstract contract BoardsFixture is Test {
         address expectedPayer,
         uint8 expectedKind,
         uint256 expectedAmount
-    ) internal pure {
+    ) internal view {
         bytes32 feeCollectedTopic = ServiceBoardFacet.FeeCollected.selector;
         uint256 matches;
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length > 0
+            // Фильтр по emitter, как в _assertLedgerBalanced и как делал
+            // заменённый vm.expectEmit(..., address(diamond)): сегодня топик
+            // ни с чем не конфликтует, но без этой проверки чужое событие с
+            // такой же сигнатурой прошло бы за наше.
+            if (logs[i].emitter == address(diamond)
+                && logs[i].topics.length > 0
                 && logs[i].topics[0] == feeCollectedTopic
                 && uint256(logs[i].topics[1]) == expectedId) {
                 matches++;
