@@ -179,6 +179,7 @@
       "receipt_row": "NFT de recibo acuñado al publicar",
       "budget_label": "Presupuesto",
       "total_label": "Total",
+      "refund_note": "Solo el mínimo de {floor} USDC no es reembolsable — el resto se devuelve si el trato no se concreta.",
       "balance_label": "Saldo",
       "pending_title": "Enviando transacción sin gas…",
       "pending_hint": "2 firmas de la wallet — no se necesita ETH",

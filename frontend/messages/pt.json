@@ -179,6 +179,7 @@
       "receipt_row": "NFT de recibo mintado ao publicar",
       "budget_label": "Orçamento",
       "total_label": "Total",
+      "refund_note": "Apenas o piso de {floor} USDC não é reembolsável — o restante retorna se o negócio não se concretizar.",
       "balance_label": "Saldo",
       "pending_title": "Enviando transação sem gás…",
       "pending_hint": "2 assinaturas da carteira — não precisa de ETH",

@@ -179,6 +179,7 @@
       "receipt_row": "게시 시 영수증 NFT 발행",
       "budget_label": "예산",
       "total_label": "합계",
+      "refund_note": "{floor} USDC의 최소 수수료만 환불 불가합니다 — 거래가 성사되지 않으면 나머지는 반환됩니다.",
       "balance_label": "잔액",
       "pending_title": "가스리스 트랜잭션 전송 중…",
       "pending_hint": "지갑 서명 2회 — ETH 불필요",

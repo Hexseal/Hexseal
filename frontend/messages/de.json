@@ -179,6 +179,7 @@
       "receipt_row": "Beleg-NFT wird beim Veröffentlichen geminted",
       "budget_label": "Budget",
       "total_label": "Gesamt",
+      "refund_note": "Nur der Mindestbetrag von {floor} USDC ist nicht erstattungsfähig — der Rest wird zurückerstattet, falls der Deal nicht zustande kommt.",
       "balance_label": "Guthaben",
       "pending_title": "Gasless-Transaktion wird gesendet…",
       "pending_hint": "2 Wallet-Signaturen — kein ETH nötig",

@@ -3,11 +3,11 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
-  useAccount, useReadContract, useWalletClient, usePublicClient,
+  useAccount, useWalletClient, usePublicClient,
   useBalance, useSwitchChain,
 } from "wagmi";
-import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
-import { CHAIN_ID, MAX_DEAL_AMOUNT, MAX_DEADLINE_DAYS, DEFAULT_REGION_FEE } from "@/config/constants";
+import { CONTRACTS } from "@/config/contracts";
+import { CHAIN_ID, MAX_DEAL_AMOUNT, MAX_DEADLINE_DAYS } from "@/config/constants";
 import { explorerUrl } from "@/config/chain";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "react-hot-toast";
 import { parseUnits, parseEventLogs } from "viem";
 import { mintJobGasless } from "@/lib/relay";
+import { useFeeConfig } from "@/hooks/useFeeConfig";
+import { quoteFeeLocal, fmtUsdc } from "@/lib/fee";
 import {
   Loader2, CheckCircle, AlertCircle, Globe, Shield, Zap, Briefcase,
   ExternalLink, Sparkles, Receipt,
@@ -26,7 +28,7 @@ import { useTranslations } from "next-intl";
 import { CATEGORIES, DEFAULT_CATEGORY, type CategoryKey, withCategory } from "@/config/categories";
 import { PageCenter } from "@/components/PageCenter";
 
-interface RegionData { region: number; fee: bigint; label: string; }
+interface RegionData { region: number; fee?: bigint; label: string; }
 
 const EXPECTED_CHAIN_ID = CHAIN_ID;
 const MAX_AMOUNT  = MAX_DEAL_AMOUNT;
@@ -83,19 +85,10 @@ export default function PostJobPage() {
     fetch("/api/region")
       .then(r => r.json())
       .then(data => setRegionData({ region: data.region, fee: BigInt(data.fee), label: data.label }))
-      .catch(() => setRegionData({ region: 1, fee: DEFAULT_REGION_FEE, label: "Asia/LATAM · $4" }));
+      .catch(() => setRegionData({ region: 1, label: "Asia" }));
   }, []);
 
-  const { data: regionFee } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`,
-    abi: DIAMOND_ABI,
-    functionName: "getRegionFee",
-    args: [regionData?.region ?? 1],
-    query: { enabled: !!regionData },
-  }) as { data: bigint | undefined };
-
-  const effectiveFee = regionFee ?? regionData?.fee ?? DEFAULT_REGION_FEE;
-  const feeAmount    = Number(effectiveFee) / 1e6;
+  const { feeBps, feeFloor } = useFeeConfig();
 
   const { data: usdcBalanceData } = useBalance({
     address,
@@ -117,6 +110,15 @@ export default function PostJobPage() {
   const [jobId,      setJobId]      = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Comes from useFeeConfig() above — declared here (after the `amount` state
+  // it reads) rather than alongside that hook, since the fee now depends on
+  // the entered amount and can't be computed before the input exists.
+  const parsedAmountRaw = parseUnits(amount || "0", 6);
+  const feeRaw = feeBps !== undefined && feeFloor !== undefined
+    ? quoteFeeLocal(parsedAmountRaw, feeBps, feeFloor)
+    : 0n;
+  const feeAmount = Number(feeRaw) / 1e6;
 
   const parsedAmount = parseFloat(amount || "0");
   const totalNeeded  = parsedAmount + feeAmount;
@@ -165,7 +167,6 @@ export default function PostJobPage() {
         deadlineDays: BigInt(parsedDeadline),
         terms:        sanitizeHtml(jobTerms.trim()),
         region:       regionData?.region ?? 1,
-        fee:          effectiveFee,
       });
 
       // Parse jobId from transaction receipt
@@ -360,6 +361,9 @@ export default function PostJobPage() {
                 <div className="flex justify-between font-semibold text-white border-t border-white/8 pt-1.5 mt-1.5">
                   <span>{t("board.post_common.total_label")}</span><span className="font-mono">{totalNeeded.toFixed(2)} USDC</span>
                 </div>
+                <p className="text-xs text-white/35">
+                  {t("board.post_common.refund_note", { floor: fmtUsdc(feeFloor ?? 0n) })}
+                </p>
                 <p className={`text-xs font-mono ${hasBalance ? "text-emerald-400" : "text-red-400"}`}>
                   {t("board.post_common.balance_label")}: {usdcBalance.toFixed(2)} USDC
                 </p>
@@ -439,7 +443,7 @@ export default function PostJobPage() {
                   </div>
                   <div className="border-t border-dashed border-white/10 pt-2 mb-2">
                     <div className="flex justify-between text-white/30">
-                      <span>PPP FEE</span><span>{feeAmount.toFixed(2)} USDC</span>
+                      <span>FEE</span><span>{feeAmount.toFixed(2)} USDC</span>
                     </div>
                   </div>
                   <div className="border-t border-white/15 pt-2 flex justify-between items-baseline">

@@ -182,6 +182,7 @@
       "receipt_row": "Receipt NFT minted on posting",
       "budget_label": "Budget",
       "total_label": "Total",
+      "refund_note": "Only the {floor} USDC floor is non-refundable — the rest returns if the deal never happens.",
       "balance_label": "Balance",
       "pending_title": "Sending gasless transaction…",
       "pending_hint": "2 wallet signatures — no ETH needed",

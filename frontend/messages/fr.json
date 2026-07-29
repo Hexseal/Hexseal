@@ -179,6 +179,7 @@
       "receipt_row": "NFT de reçu minté à la publication",
       "budget_label": "Budget",
       "total_label": "Total",
+      "refund_note": "Seul le plancher de {floor} USDC n'est pas remboursable — le reste est remboursé si l'accord n'aboutit pas.",
       "balance_label": "Solde",
       "pending_title": "Envoi de la transaction sans gas…",
       "pending_hint": "2 signatures du wallet — pas d'ETH requis",

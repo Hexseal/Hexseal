@@ -179,6 +179,7 @@
       "receipt_row": "投稿時にレシートNFTをミント",
       "budget_label": "予算",
       "total_label": "合計",
+      "refund_note": "返金不可なのは下限の {floor} USDC のみ — 取引が成立しなかった場合、残りは返金されます。",
       "balance_label": "残高",
       "pending_title": "ガスレストランザクションを送信中…",
       "pending_hint": "ウォレット署名2回 — ETH不要",

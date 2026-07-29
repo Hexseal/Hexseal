@@ -3,19 +3,20 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
-  useAccount, useReadContract, useWalletClient, usePublicClient,
+  useAccount, useWalletClient, usePublicClient,
   useBalance, useSwitchChain,
 } from "wagmi";
-import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
-import { CHAIN_ID, MAX_DEAL_AMOUNT, MAX_DEADLINE_DAYS, DEFAULT_REGION_FEE } from "@/config/constants";
+import { CONTRACTS } from "@/config/contracts";
+import { CHAIN_ID, MAX_DEAL_AMOUNT, MAX_DEADLINE_DAYS } from "@/config/constants";
 import { explorerUrl } from "@/config/chain";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "react-hot-toast";
-import { parseUnits, type Abi, parseEventLogs } from "viem";
+import { parseUnits, parseEventLogs } from "viem";
 import { mintServiceGasless } from "@/lib/relay";
+import { useFeeConfig } from "@/hooks/useFeeConfig";
 import {
   Loader2, CheckCircle, AlertCircle, Globe, Shield, Zap,
   ExternalLink, User,
@@ -26,7 +27,7 @@ import { useTranslations } from "next-intl";
 import { CATEGORIES, DEFAULT_CATEGORY, type CategoryKey, withCategory } from "@/config/categories";
 import { PageCenter } from "@/components/PageCenter";
 
-interface RegionData { region: number; fee: bigint; label: string; }
+interface RegionData { region: number; fee?: bigint; label: string; }
 
 const EXPECTED_CHAIN_ID = CHAIN_ID;
 const MAX_PRICE   = MAX_DEAL_AMOUNT;
@@ -82,19 +83,13 @@ export default function PostServicePage() {
     fetch("/api/region")
       .then(r => r.json())
       .then(data => setRegionData({ region: data.region, fee: BigInt(data.fee), label: data.label }))
-      .catch(() => setRegionData({ region: 1, fee: DEFAULT_REGION_FEE, label: "Asia/LATAM · $4" }));
+      .catch(() => setRegionData({ region: 1, label: "Asia" }));
   }, []);
 
-  const { data: regionFee } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`,
-    abi: DIAMOND_ABI as Abi,
-    functionName: "getRegionFee",
-    args: [regionData?.region ?? 1],
-    query: { enabled: !!regionData },
-  }) as { data: bigint | undefined };
-
-  const effectiveFee = regionFee ?? regionData?.fee ?? DEFAULT_REGION_FEE;
-  const feeAmount    = Number(effectiveFee) / 1e6;
+  // Publishing a service has no deal amount yet — price is a non-binding
+  // suggestion, so the fee is always exactly the flat floor, never a percentage.
+  const { feeFloor } = useFeeConfig();
+  const feeAmount = Number(feeFloor ?? 0n) / 1e6;
 
   const { data: usdcBalanceData } = useBalance({
     address,
@@ -148,7 +143,6 @@ export default function PostServicePage() {
         price:        parseUnits(price, 6),
         deadlineDays: BigInt(parsedDeadline),
         region:       regionData?.region ?? 1,
-        fee:          effectiveFee,
       });
 
       let parsedServiceId: string | null = null;

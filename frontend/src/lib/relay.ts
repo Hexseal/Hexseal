@@ -1,9 +1,11 @@
 /**
  * relay.ts — клиентская сторона gasless relay
  *
- * deployAndFundGasless() — атомарный деплой+фанд+NFT mint за 2 подписи (0 газа от юзера)
- * sendGasless()          — универсальный gasless для любого вызова Diamond
- * approveUSDC()          — обычный ERC-20 approve (юзер платит газ)
+ * sendGasless() — универсальный gasless для любого вызова Diamond
+ *
+ * Комиссия для подписи (permit/value) везде читается с контракта
+ * непосредственно перед подписанием — см. readQuotedFee()/readFeeFloor()
+ * ниже. Никогда не берётся из аргумента функции и не считается локально.
  */
 
 import {
@@ -86,6 +88,31 @@ const PERMIT_TYPES = {
     { name: 'deadline', type: 'uint256' },
   ],
 } as const;
+
+// ─── Fee quoting (permit-critical) ────────────────────────────────────────────
+
+/**
+ * Комиссия ДЛЯ ПОДПИСИ — всегда с контракта, никогда не из аргумента и не из
+ * локальной формулы. Читается непосредственно перед signTypedData, чтобы
+ * подписанное значение не могло разойтись с тем, что спишет контракт.
+ */
+async function readQuotedFee(publicClient: PublicClient, amount: bigint): Promise<bigint> {
+  return await publicClient.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI as Abi,
+    functionName: 'quoteFee',
+    args: [amount],
+  }) as bigint;
+}
+
+/** Комиссия за публикацию услуги — плоский пол, суммы сделки в этот момент нет. */
+async function readFeeFloor(publicClient: PublicClient): Promise<bigint> {
+  return await publicClient.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI as Abi,
+    functionName: 'getFeeFloor',
+  }) as bigint;
+}
 
 // ─── Gas defaults ─────────────────────────────────────────────────────────────
 //
@@ -386,114 +413,6 @@ async function _sendForwardRequest(
   };
 }
 
-// ─── deployAndFundGasless ─────────────────────────────────────────────────────
-
-/**
- * Атомарный деплой + финансирование + mint NFT — всё в одной on-chain транзакции.
- *
- * Пользователь подписывает:
- *   1. USDC permit (EIP-2612) — Diamond как spender, amount + fee
- *   2. ForwardRequest (EIP-712) — deployAndFund calldata
- *
- * Газ платит relay hot wallet.
- */
-export async function deployAndFundGasless(
-  walletClient: WalletClient,
-  publicClient: PublicClient,
-  params: {
-    executor:     Address;
-    amount:       bigint;  // deal amount, 6 decimals
-    deadlineDays: bigint;
-    terms:        string;  // условия сделки (on-chain)
-    region:       number;  // 0-3
-    fee:          bigint;  // PPP fee, 6 decimals
-  },
-): Promise<{ txHash: string; agreementAddr?: string; fallbackUsed?: boolean }> {
-  const userAddress = walletClient.account?.address;
-  if (!userAddress) throw new Error('Wallet not connected');
-  const releaseLock = await acquireWalletLock(userAddress);
-  try {
-
-  const { executor, amount, deadlineDays, terms, region, fee } = params;
-  const total = amount + fee;
-
-  // Step 1 — get USDC permit nonce + реальный EIP-712 домен
-  const [usdcNonce, usdcDomain] = await Promise.all([
-    publicClient.readContract({
-      address: USDC,
-      abi: USDC_READ_ABI,
-      functionName: 'nonces',
-      args: [userAddress],
-    }),
-    getUsdcDomain(publicClient),
-  ]);
-
-  // Step 2 — permit deadline: now + 1 hour
-  const permitDeadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-
-  // Step 3 — sign USDC permit (wallet popup 1 of 2)
-  const permitSig = await walletClient.signTypedData({
-    account: walletClient.account!,
-    domain:  usdcDomain as Parameters<typeof walletClient.signTypedData>[0]['domain'],
-    types:   PERMIT_TYPES,
-    primaryType: 'Permit',
-    message: {
-      owner:    userAddress,
-      spender:  DIAMOND,
-      value:    total,
-      nonce:    usdcNonce,
-      deadline: permitDeadline,
-    },
-  });
-
-  // Step 4 — split permit signature into v, r, s
-  const { r, s, v } = parseSignature(permitSig);
-  // v может быть 0/1 (yParity) у некоторых кошельков — нормализуем до 27/28
-  const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
-
-  // Step 5 — encode deployAndFund calldata WITHOUT permit params
-  // Permit is sent separately in body; relay calls USDC.permit() before ForwardRequest
-  const calldata = encodeFunctionData({
-    abi: DIAMOND_ABI as Abi,
-    functionName: 'deployAndFund',
-    args: [
-      userAddress,  // client (_msgSender() check enforces this)
-      executor,
-      amount,
-      deadlineDays,
-      terms,
-      region,
-    ],
-  });
-
-  const permitParams: PermitParams = {
-    permitOwner:    userAddress,
-    permitSpender:  DIAMOND,
-    permitValue:    total.toString(),
-    permitDeadline: permitDeadline.toString(),
-    permitV:        vNum,
-    permitR:        r,
-    permitS:        s,
-  };
-
-  // Step 6 — sign ForwardRequest and send; fallback: require user to approve USDC first
-  try {
-    return await _sendForwardRequest(walletClient, publicClient, calldata, 'deployAndFund', DIAMOND, undefined, permitParams);
-  } catch (err) {
-    if (!isRelayDown(err)) throw err;
-    // Relay down — fallback: user must have approved USDC separately (or do it now)
-    console.warn('[relay] down → direct deployAndFund');
-    const account = walletClient.account;
-    if (!account) throw new Error('Wallet not connected');
-    const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
-    await assertFallbackMined(publicClient, txHash);
-    return { txHash, fallbackUsed: true };
-  }
-  } finally {
-    releaseLock();
-  }
-}
-
 // ─── mintJobGasless ───────────────────────────────────────────────────────────
 
 /**
@@ -512,7 +431,6 @@ export async function mintJobGasless(
     deadlineDays: bigint;
     terms:        string;  // условия работы (on-chain)
     region:       number;  // 0-3
-    fee:          bigint;  // PPP fee, 6 decimals
   },
 ): Promise<{ txHash: string; jobId?: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
@@ -520,7 +438,8 @@ export async function mintJobGasless(
   const releaseLock = await acquireWalletLock(userAddress);
   try {
 
-  const { title, description, amount, deadlineDays, terms, region, fee } = params;
+  const { title, description, amount, deadlineDays, terms, region } = params;
+  const fee = await readQuotedFee(publicClient, amount);
   const total = amount + fee;
 
   // Step 1 — get USDC permit nonce + реальный EIP-712 домен
@@ -598,7 +517,6 @@ export async function mintServiceGasless(
     price:        bigint;  // listing price (рекомендованная), 6 decimals
     deadlineDays: bigint;
     region:       number;  // 0-3
-    fee:          bigint;  // PPP fee, 6 decimals
   },
 ): Promise<{ txHash: string; serviceId?: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
@@ -606,7 +524,8 @@ export async function mintServiceGasless(
   const releaseLock = await acquireWalletLock(userAddress);
   try {
 
-  const { title, description, price, deadlineDays, region, fee } = params;
+  const { title, description, price, deadlineDays, region } = params;
+  const fee = await readFeeFloor(publicClient);
 
   const [usdcNonce, usdcDomain] = await Promise.all([
     publicClient.readContract({ address: USDC, abi: USDC_READ_ABI, functionName: 'nonces', args: [userAddress] }),
@@ -654,7 +573,8 @@ export async function mintServiceGasless(
 /**
  * Клиент запрашивает услугу — gasless.
  * Пользователь подписывает:
- *   1. USDC permit (EIP-2612) — Diamond как spender, amount only (fee платил executor)
+ *   1. USDC permit (EIP-2612) — Diamond как spender, amount + fee (комиссия теперь
+ *      платится клиентом при запросе, а не executor'ом)
  *   2. ForwardRequest (EIP-712) — requestServiceWithPermit calldata
  */
 export async function requestServiceGasless(
@@ -674,6 +594,8 @@ export async function requestServiceGasless(
   try {
 
   const { serviceId, amount, deadlineDays, terms, region } = params;
+  const fee = await readQuotedFee(publicClient, amount);
+  const total = amount + fee;
 
   const [usdcNonce, usdcDomain] = await Promise.all([
     publicClient.readContract({ address: USDC, abi: USDC_READ_ABI, functionName: 'nonces', args: [userAddress] }),
@@ -687,13 +609,15 @@ export async function requestServiceGasless(
     domain:  usdcDomain as Parameters<typeof walletClient.signTypedData>[0]['domain'],
     types:   PERMIT_TYPES,
     primaryType: 'Permit',
-    message: { owner: userAddress, spender: DIAMOND, value: amount, nonce: usdcNonce, deadline: permitDeadline },
+    message: { owner: userAddress, spender: DIAMOND, value: total, nonce: usdcNonce, deadline: permitDeadline },
   });
 
   const { r, s, v } = parseSignature(permitSig);
   const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
 
   // encode requestService calldata (no permit params — relay calls USDC.permit() separately)
+  // amount here is the deal amount in calldata, NOT the permit allowance — fee is
+  // carried only in the permit (value: total above), never in this argument list.
   const calldata = encodeFunctionData({
     abi: DIAMOND_ABI as Abi,
     functionName: 'requestService',
@@ -703,7 +627,7 @@ export async function requestServiceGasless(
   const permitParams: PermitParams = {
     permitOwner:    userAddress,
     permitSpender:  DIAMOND,
-    permitValue:    amount.toString(),
+    permitValue:    total.toString(),
     permitDeadline: permitDeadline.toString(),
     permitV:        vNum,
     permitR:        r,
@@ -726,7 +650,7 @@ export async function requestServiceGasless(
       address: USDC,
       abi: WRITE_USDC_ABI,
       functionName: 'permit',
-      args: [userAddress, DIAMOND, amount, permitDeadline, vNum, r, s],
+      args: [userAddress, DIAMOND, total, permitDeadline, vNum, r, s],
       account,
       chain: walletClient.chain,
     });
@@ -1272,48 +1196,4 @@ export async function commitDisputeClaimGasless(
   } finally {
     releaseLock();
   }
-}
-
-// ─── approveUSDC ──────────────────────────────────────────────────────────────
-
-/**
- * Обычный ERC-20 approve. Юзер платит газ.
- * Нужен как fallback или для первичного approve вне relay.
- */
-export async function approveUSDC(
-  walletClient: WalletClient,
-  publicClient: PublicClient,
-  amount: bigint,
-): Promise<string> {
-  const account = walletClient.account;
-  if (!account) throw new Error('Wallet not connected');
-
-  const calldata = encodeFunctionData({
-    abi: USDC_READ_ABI,
-    functionName: 'approve',
-    args: [DIAMOND, amount],
-  });
-
-  let gasLimit: bigint;
-  try {
-    const estimated = await publicClient.estimateGas({
-      account: account.address,
-      to: USDC,
-      data: calldata,
-    });
-    gasLimit = (estimated * 110n) / 100n;
-  } catch {
-    gasLimit = 80_000n;
-  }
-
-  const txHash = await walletClient.sendTransaction({
-    account,
-    to: USDC,
-    data: calldata,
-    gas: gasLimit,
-    chain: walletClient.chain,
-  });
-
-  await publicClient.waitForTransactionReceipt({ hash: txHash });
-  return txHash;
 }

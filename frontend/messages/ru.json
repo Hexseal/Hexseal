@@ -182,6 +182,7 @@
       "receipt_row": "При размещении минтится NFT-чек",
       "budget_label": "Бюджет",
       "total_label": "Итого",
+      "refund_note": "Не возвращается только минимум {floor} USDC — остальное вернётся, если сделка не состоится.",
       "balance_label": "Баланс",
       "pending_title": "Отправляем gasless-транзакцию…",
       "pending_hint": "2 подписи кошелька — ETH не нужен",
