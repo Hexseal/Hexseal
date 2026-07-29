@@ -10,6 +10,9 @@
  *   6. activate      — исполнитель активирует
  *   7. markDone      — исполнитель отмечает выполнение
  *   8. release       — клиент отпускает оплату
+ *   9. requestService — клиент напрямую запрашивает услугу исполнителя; permit
+ *                        подписывается на amount + quoteFee(amount), а не на amount —
+ *                        единственное место, где значение permit меняется по формуле
  *
  * Запуск:
  *   cd relayer && node e2e.mjs
@@ -43,7 +46,8 @@ const CLIENT_KEY   = process.env.TEST_CLIENT_KEY;
 const EXECUTOR_KEY = process.env.TEST_EXECUTOR_KEY;
 
 // Тестовые параметры — минимум чтобы не тратить лишний USDC
-const TEST_AMOUNT   = 100_000n;   // 0.1 USDC budget (fee всегда 4 USDC, не зависит от этого)
+const TEST_AMOUNT   = 100_000n;   // 0.1 USDC budget — комиссия теперь max(amount*bps/10_000, floor);
+                                   // при таком размере сделки она равна полу, а не фиксированным $4
 const TEST_DEADLINE = 7n;         // 7 дней
 
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
@@ -60,12 +64,22 @@ const FORWARDER_ABI = [
 ];
 
 const DIAMOND_ABI = [
-  'function mintJobWithPermit(address client, string title, string description, uint256 amount, uint256 deadlineDays, bytes32 termsHash, uint8 region, uint256 deadline, uint8 v, bytes32 r, bytes32 s) returns (uint256 jobId)',
+  'function mintJobWithPermit(address client, string title, string description, uint256 amount, uint256 deadlineDays, string terms, uint8 region, uint256 deadline, uint8 v, bytes32 r, bytes32 s) returns (uint256 jobId)',
   'function mintServiceWithPermit(address executor, string title, string description, uint256 price, uint256 deadlineDays, uint8 region, uint256 deadline, uint8 v, bytes32 r, bytes32 s) returns (uint256 serviceId)',
   'function applyForJob(uint256 jobId)',
   'function acceptApplicant(uint256 jobId, address executor)',
-  'function getRegionFee(uint8 region) view returns (uint256)',
+  'function requestService(uint256 serviceId, uint256 amount, uint256 deadlineDays, string terms, uint8 region) returns (uint256 requestId)',
+  // getRegionFee() is DEPRECATED on-chain — it now always reverts FeeNotRegional().
+  // quoteFee/getFeeFloor are the real source of truth (src/FactoryFacet.sol).
+  'function quoteFee(uint256 amount) view returns (uint256)',
+  'function getFeeFloor() view returns (uint256)',
+  'function getRequestFunds(uint256 requestId) view returns (uint256)',
+  'function getRequestFeeHeld(uint256 requestId) view returns (uint256)',
   'function getActivePair(address client, address executor) view returns (address)',
+  // Events — parsed from tx receipts below, since the relay only surfaces
+  // agreementAddr/jobId, not serviceId/requestId.
+  'event ServicePosted(uint256 indexed serviceId, address indexed executor, uint256 price, uint8 region, string title, string description, uint256 deadlineDays)',
+  'event ServiceRequested(uint256 indexed requestId, uint256 indexed serviceId, address indexed client, uint256 amount)',
 ];
 
 const AGREEMENT_ABI = [
@@ -73,7 +87,10 @@ const AGREEMENT_ABI = [
   'function activate()',
   'function markDone()',
   'function release()',
-  'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, bytes32 termsHash_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
+  // NOTE: terms_ is a `string` on-chain (src/Agreement.sol getDetails()), not
+  // bytes32 — it was declared wrong here, which would have silently corrupted
+  // every field decoded after it (dynamic-type ABI decoding shifts offsets).
+  'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, string terms_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
 ];
 
 // ─── EIP-712 types ────────────────────────────────────────────────────────────
@@ -117,6 +134,7 @@ const GAS = {
   activate:                200_000n,
   markDone:                200_000n,
   release:                 500_000n, // _complete: NFT burn + Diamond registry call + USDC transfer
+  requestService:          600_000n, // struct storage (9 fields incl. terms) + 3 array pushes + transferFrom
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -244,13 +262,18 @@ async function main() {
   ok('Client USDC', `${Number(cBal) / 1e6} USDC`);
   ok('Executor USDC', `${Number(eBal) / 1e6} USDC`);
 
-  // Region fee
-  const regionFee = await diamond.getRegionFee(1); // region 1 = Asia/LATAM
-  ok('Region fee (region 1)', `${Number(regionFee) / 1e6} USDC`);
+  // Fee quotes — source of truth is the contract (max(amount*bps/10_000, floor)).
+  // Never recompute the formula client-side: that's exactly how a permit would
+  // silently drift from what the contract actually charges.
+  const dealFee = await diamond.quoteFee(TEST_AMOUNT);
+  ok('Deal fee (quoteFee for TEST_AMOUNT)', `${Number(dealFee) / 1e6} USDC`);
+
+  const listingFee = await diamond.getFeeFloor();
+  ok('Service listing fee (flat floor — no deal amount exists yet at listing time)', `${Number(listingFee) / 1e6} USDC`);
 
   // ── Step 1: mintJob ──────────────────────────────────────────────────────────
   step(1, 'mintJob — client posts job');
-  const jobTotal = TEST_AMOUNT + regionFee;
+  const jobTotal = TEST_AMOUNT + dealFee;
   const iface    = new ethers.Interface(DIAMOND_ABI);
 
   const jobPermit = await signPermit(client, provider, DIAMOND, jobTotal);
@@ -260,8 +283,8 @@ async function main() {
     'Automated e2e test — ignore',
     TEST_AMOUNT,
     TEST_DEADLINE,
-    ethers.ZeroHash, // termsHash
-    1,               // region
+    'E2E test terms', // terms
+    1,                // region
     jobPermit.deadline,
     jobPermit.v,
     jobPermit.r,
@@ -275,12 +298,12 @@ async function main() {
 
   // ── Step 2: mintService ──────────────────────────────────────────────────────
   step(2, 'mintService — executor posts service');
-  const svcPermit = await signPermit(executor, provider, DIAMOND, regionFee);
+  const svcPermit = await signPermit(executor, provider, DIAMOND, listingFee);
   const svcCalldata = iface.encodeFunctionData('mintServiceWithPermit', [
     executor.address,
     'E2E Test Service',
     'Automated e2e test — ignore',
-    TEST_AMOUNT, // price
+    TEST_AMOUNT, // price — advisory only, no fee is computed from it at listing time
     TEST_DEADLINE,
     1,           // region
     svcPermit.deadline,
@@ -291,7 +314,18 @@ async function main() {
 
   const svcResult = await sendForward(executor, provider, DIAMOND, svcCalldata, 'mintServiceWithPermit');
   ok('txHash', svcResult.txHash);
-  ok('serviceId', svcResult.serviceId ?? 'parsed from log');
+
+  // The relay only parses agreementAddr/jobId out of logs, not serviceId — read
+  // it ourselves so Step 9 (requestService) has a real serviceId to call against.
+  const svcReceipt = await provider.getTransactionReceipt(svcResult.txHash);
+  let serviceId;
+  for (const log of svcReceipt.logs) {
+    if (log.address.toLowerCase() !== DIAMOND.toLowerCase()) continue;
+    const parsed = iface.parseLog(log);
+    if (parsed?.name === 'ServicePosted') { serviceId = parsed.args.serviceId; break; }
+  }
+  if (serviceId === undefined) throw new Error('Could not parse serviceId from ServicePosted log');
+  ok('serviceId', serviceId);
 
   // ── Step 3: applyForJob ──────────────────────────────────────────────────────
   step(3, `applyForJob — executor applies to job #${jobId}`);
@@ -391,6 +425,67 @@ async function main() {
   // After release: verify executor received USDC (Agreement balance should be 0)
   const agrmBalance = await usdcC.balanceOf(agreementAddr);
   ok('Agreement USDC after release', Number(agrmBalance) === 0 ? '0 (paid out) ✓' : `${Number(agrmBalance) / 1e6} USDC (unexpected)`);
+
+  // ── Step 9: requestService — client requests direct hire on executor's service ─
+  // The one call in this whole script where the permit VALUE changed by formula,
+  // not by size: it used to be `amount`, now it's `amount + quoteFee(amount)`.
+  // Everything else above kept signing the same numbers, just sourced from a
+  // different getter — this is the path that actually needs live-chain coverage.
+  step(9, 'requestService — client requests service, permit covers amount + quoteFee(amount)');
+
+  const requestAmount = TEST_AMOUNT;
+  const requestFee    = await diamond.quoteFee(requestAmount);
+  const requestTotal  = requestAmount + requestFee;
+  ok('requestService fee (quoteFee)', `${Number(requestFee) / 1e6} USDC`);
+  ok('requestService permit total (amount + fee)', `${Number(requestTotal) / 1e6} USDC`);
+
+  const requestPermit = await signPermit(client, provider, DIAMOND, requestTotal);
+  const requestCalldata = iface.encodeFunctionData('requestService', [
+    serviceId,
+    requestAmount,
+    TEST_DEADLINE,
+    'E2E test request terms', // terms
+    1,                        // region
+  ]);
+
+  // Same shape as the fund() step above: calldata carries no permit args, the
+  // permit is submitted by the relay separately via extraBody before the
+  // ForwardRequest itself is forwarded (see frontend/src/lib/relay.ts requestServiceGasless).
+  const requestResult = await sendForward(client, provider, DIAMOND, requestCalldata, 'requestService', {
+    permitOwner:    client.address,
+    permitSpender:  DIAMOND,
+    permitValue:    requestTotal.toString(),
+    permitDeadline: requestPermit.deadline.toString(),
+    permitV:        requestPermit.v,
+    permitR:        requestPermit.r,
+    permitS:        requestPermit.s,
+  });
+  ok('txHash', requestResult.txHash);
+
+  const requestReceipt = await provider.getTransactionReceipt(requestResult.txHash);
+  let requestId;
+  for (const log of requestReceipt.logs) {
+    if (log.address.toLowerCase() !== DIAMOND.toLowerCase()) continue;
+    const parsed = iface.parseLog(log);
+    if (parsed?.name === 'ServiceRequested') { requestId = parsed.args.requestId; break; }
+  }
+  if (requestId === undefined) throw new Error('Could not parse requestId from ServiceRequested log');
+  ok('requestId', requestId);
+
+  // The check that actually matters: confirm the contract locked amount+fee on
+  // chain, not merely that the call didn't revert (a revert would already have
+  // thrown above). This is what would catch a permit/contract fee-formula mismatch.
+  const [lockedAmount, lockedFee] = await Promise.all([
+    diamond.getRequestFunds(requestId),
+    diamond.getRequestFeeHeld(requestId),
+  ]);
+  if (lockedAmount !== requestAmount || lockedFee !== requestFee) {
+    throw new Error(
+      `requestService locked amount/fee mismatch: expected ${requestAmount}/${requestFee}, got ${lockedAmount}/${lockedFee}`
+    );
+  }
+  ok('locked amount == signed amount', `${lockedAmount} ✓`);
+  ok('locked fee == quoteFee', `${lockedFee} ✓`);
 
   // ── Final balances ────────────────────────────────────────────────────────────
   console.log('\n══════════════════════════════════════════════════════════');
