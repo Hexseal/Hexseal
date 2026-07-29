@@ -1381,7 +1381,7 @@ export const JOB_RECEIPT_NFT_ABI = [
   },
 ] as const;
 
-// PPP регионы
+// Регионы (больше не влияют на комиссию — только процент + пол от суммы сделки)
 export const REGIONS = {
   CIS: 0,
   ASIA: 1,

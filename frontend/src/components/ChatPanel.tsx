@@ -1191,8 +1191,14 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 ? t("chat_modal.accept_deploy_desc")
                 : preDealConfirm === 'request_service'
                 ? (feeConfigReady
-                    ? `A service request for ${formatUnits(preDealCtx.amount + preDealFeeRaw, 6)} USDC (${formatUnits(preDealCtx.amount, 6)} + ${formatUnits(preDealFeeRaw, 6)} USDC platform fee) will be sent. The executor must accept to start.`
-                    : `A service request for ${formatUnits(preDealCtx.amount, 6)} USDC will be sent. The executor must accept to start.`)
+                    ? t("chat_modal.request_service_desc", {
+                        total: formatUnits(preDealCtx.amount + preDealFeeRaw, 6),
+                        amount: formatUnits(preDealCtx.amount, 6),
+                        fee: formatUnits(preDealFeeRaw, 6),
+                      })
+                    : t("chat_modal.request_service_desc_no_fee", {
+                        amount: formatUnits(preDealCtx.amount, 6),
+                      }))
                 : preDealConfirm === 'withdraw'
                 ? t("chat_modal.withdraw_desc")
                 : t("chat_modal.reject_app_desc")}

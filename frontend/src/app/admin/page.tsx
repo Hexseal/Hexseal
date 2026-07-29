@@ -847,7 +847,7 @@ function SettingsTab() {
         <Divider />
 
         <p className="text-[11px] text-white/25 leading-relaxed">
-          Regional (PPP) pricing was retired on 28.07.2026 — fee no longer depends on the poster&apos;s region,
+          Regional pricing was retired on 28.07.2026 — fee no longer depends on the poster&apos;s region,
           only on the deal amount. The old region getters (<code className="text-white/35">getRegionFee</code>,{' '}
           <code className="text-white/35">getAllFees</code>) and <code className="text-white/35">setRegionFee</code>{' '}
           now revert on every call by design (<code className="text-white/35">FeeNotRegional</code>) — that&apos;s
