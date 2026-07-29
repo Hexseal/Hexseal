@@ -215,7 +215,7 @@ export const DIAMOND_ABI = [
     stateMutability: 'view', type: 'function',
   },
   {
-    inputs: [{ internalType: 'address', name: 'client', type: 'address' }],
+    inputs: [{ internalType: 'address', name: 'clientAddr', type: 'address' }],
     name: 'getPendingRequestCount',
     outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
     stateMutability: 'view', type: 'function',

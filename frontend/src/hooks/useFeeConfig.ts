@@ -12,13 +12,13 @@ import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
  */
 export function useFeeConfig() {
   const { data: feeBps, isLoading: bpsLoading } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`,
+    address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
     functionName: 'getFeeBps',
   }) as { data: bigint | undefined; isLoading: boolean };
 
   const { data: feeFloor, isLoading: floorLoading } = useReadContract({
-    address: CONTRACTS.diamond as `0x${string}`,
+    address: CONTRACTS.diamond,
     abi: DIAMOND_ABI,
     functionName: 'getFeeFloor',
   }) as { data: bigint | undefined; isLoading: boolean };
