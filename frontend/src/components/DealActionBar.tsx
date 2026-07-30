@@ -333,6 +333,19 @@ export function DealActionBar({ agreementAddr }: Props) {
     <>
       {/* ── Main action bar ────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 border-b border-white/8 bg-black/20 px-4 py-2">
+        {/* Цена молчания — видимая строка, не title: на тач-устройствах
+            (а в чат заходят чаще с телефона, чем с десктопа) наведения нет,
+            title там не показывается никогда. Стоит над рядом кнопок, вне
+            flex-wrap с ними — то же место, что и баннер на странице сделки,
+            просто без рамки, чтобы не раздувать плотный бар. Показывается
+            только вместе с самой кнопкой (myResponsePending &&
+            responseWindowOpen) — предупреждение нужно ровно тогда, когда
+            есть что предупреждать. */}
+        {myResponsePending && responseWindowOpen && responseDeadline && (
+          <p className="text-[11px] text-amber-400/70 leading-relaxed mb-1.5">
+            {t("deal.dispute_respond_prompt", { date: responseDeadline.toLocaleString() })}
+          </p>
+        )}
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* Status badge */}
           {[
@@ -415,11 +428,11 @@ export function DealActionBar({ agreementAddr }: Props) {
             </Button>
           )}
           {myResponsePending && responseWindowOpen && (
-            // Компактный бар — полного баннера со странице сделки здесь нет
-            // места, но цена молчания и срок не могут отсутствовать вовсе:
-            // это же правило, что откроет отдельный роут /chat, минуя
-            // страницу сделки целиком. `title` переиспользует существующий
-            // ключ dispute_respond_prompt — тот же текст, что и в баннере.
+            // Сама цена молчания и срок — видимой строкой над рядом кнопок
+            // (см. блок перед `flex items-center gap-1.5 flex-wrap` выше),
+            // не здесь: title не виден на тач-устройствах вовсе, а с телефона
+            // в чат заходят чаще, чем с десктопа. `title` оставлен только как
+            // бонус-подсказка для десктопной мыши, не единственный носитель.
             <Button size="sm" variant="secondary" className="h-7 text-xs px-2.5"
               title={responseDeadline ? t("deal.dispute_respond_prompt", { date: responseDeadline.toLocaleString() }) : undefined}
               onClick={() => run('respondToDispute', t("deal.dispute_respond_success"))}
