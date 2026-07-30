@@ -119,6 +119,7 @@ export function DealActionBar({ agreementAddr }: Props) {
       amount,
       fundedAt:     get('fundedAt_',     6) as bigint,
       markedDoneAt: get('markedDoneAt_', 8) as bigint,
+      disputedAt:   get('disputedAt_',   9) as bigint,
       status:       (statusNum ?? 0) as number,
     };
   }, [details, statusNum]);
@@ -142,6 +143,27 @@ export function DealActionBar({ agreementAddr }: Props) {
   const isArbiter  = !!realArbiter && realArbiter !== ZERO_ADDR && realArbiter.toLowerCase() === address?.toLowerCase();
   const isParty    = isClient || isExecutor;
 
+  // Явка в споре — тот же паттерн, что и getDisputeClaimer выше: читаем только
+  // в статусе спора, вне него флаги ничего не значат.
+  const { data: clientResponded, refetch: refetchClientResponded } = useReadContract({
+    address: agreementAddr as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: 'clientResponded',
+    query: { enabled: statusNum === 4 },
+  });
+  const { data: executorResponded, refetch: refetchExecutorResponded } = useReadContract({
+    address: agreementAddr as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: 'executorResponded',
+    query: { enabled: statusNum === 4 },
+  });
+  const { data: disputeWindowSec } = useReadContract({
+    address: agreementAddr as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: 'DISPUTE_WINDOW',
+    query: { enabled: statusNum === 4 },
+  }) as { data: bigint | undefined };
+
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const activationExpired  = parsed ? parsed.fundedAt > 0n && nowSec > parsed.fundedAt + ACTIVATION_WINDOW : false;
   const autoApproveExpired = parsed ? parsed.markedDoneAt > 0n && nowSec >= parsed.markedDoneAt + AUTO_APPROVE_WINDOW : false;
@@ -156,12 +178,26 @@ export function DealActionBar({ agreementAddr }: Props) {
     statusNum === 4 && arbiterExpired && isParty,
   );
 
+  // Та же явка, что и на странице сделки — моя сторона ещё не откликнулась, и
+  // окно (DISPUTE_WINDOW, читается с контракта) не закрыто.
+  const myResponsePending = !!parsed && parsed.status === 4 && (
+    (isClient   && clientResponded   === false) ||
+    (isExecutor && executorResponded === false)
+  );
+  const responseDeadline = parsed && parsed.disputedAt > 0n && disputeWindowSec
+    ? new Date(Number(parsed.disputedAt + disputeWindowSec) * 1000)
+    : undefined;
+  const responseWindowOpen = !!responseDeadline && responseDeadline.getTime() > Date.now();
+
   const pendingExtras  = extrasList.filter(e => e.status === EXTRA_STATUS.PENDING);
   const acceptedExtras = extrasList.filter(e => e.status === EXTRA_STATUS.ACCEPTED);
   const hasExtras      = extrasList.length > 0;
 
-  const run = async (fn: string, successMsg: string, args: unknown[] = []) => {
-    if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
+  // Возвращает true/false по успеху — тот же контракт, что и handleAction на
+  // странице сделки, нужен вызывающим, которые дожидаются подтверждения перед
+  // своим собственным refetch (кнопка отклика на спор ниже).
+  const run = async (fn: string, successMsg: string, args: unknown[] = []): Promise<boolean> => {
+    if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return false; }
     setBusy(true);
     try {
       toast('Signing transaction…');
@@ -194,10 +230,12 @@ export function DealActionBar({ agreementAddr }: Props) {
       } else {
         setTimeout(() => { refetch(); setBusy(false); }, 2000);
       }
+      return true;
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Transaction failed');
       setBusy(false);
+      return false;
     }
   };
 
@@ -367,6 +405,16 @@ export function DealActionBar({ agreementAddr }: Props) {
           {s === 4 && isParty && arbiterExpired && (
             <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerArbiterTimeout', arbiterTimeout.successToast)} disabled={busy}>
               {arbiterTimeout.buttonLabel}
+            </Button>
+          )}
+          {myResponsePending && responseWindowOpen && (
+            <Button size="sm" variant="secondary" className="h-7 text-xs px-2.5"
+              onClick={async () => {
+                const ok = await run('respondToDispute', t("deal.dispute_respond_success"));
+                if (ok) { refetchClientResponded(); refetchExecutorResponded(); }
+              }}
+              disabled={busy}>
+              {t("deal.dispute_respond_btn")}
             </Button>
           )}
           {s === 2 && parsed.markedDoneAt > 0n && autoApproveExpired && (

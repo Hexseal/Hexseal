@@ -274,6 +274,9 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   // budget before any real-USDC correction.
   // 107_897 * 1.19 * 1.2 ≈ 154_077, rounded up.
   raiseDispute:       160_000n,
+  // Записывает один бит в свежий слот (холодный SSTORE 0→1) плюс событие.
+  // По формуле файла: измеренное * 1.19 (real USDC) * 1.2 (margin), вверх.
+  respondToDispute:   120_000n,
   // Same first-deal / first-XP-award mechanism as `release` above (this
   // function is release()'s twin — same _settlePending + _complete +
   // transfer shape, just callable by anyone after the auto-approve window

@@ -1002,6 +1002,22 @@ export const DISPUTE_SPLIT_EVENT = {
   type: 'event',
 } as const;
 
+// Явка в споре: если за DISPUTE_WINDOW арбитр так и не взялся за дело, тот, кто
+// откликнулся (respondToDispute), получает 3/4 котла, а промолчавший — 1/4.
+// Вынесено отдельным `as const` по той же причине, что и DISPUTE_SPLIT_EVENT
+// выше: `AGREEMENT_ABI` целиком не const, и без этого `parseEventLogs` не
+// выведет типы аргументов.
+export const DISPUTE_UNANSWERED_EVENT = {
+  anonymous: false,
+  inputs: [
+    { indexed: true,  internalType: 'address', name: 'responder',   type: 'address' },
+    { indexed: false, internalType: 'uint256', name: 'toResponder', type: 'uint256' },
+    { indexed: false, internalType: 'uint256', name: 'toSilent',    type: 'uint256' },
+  ],
+  name: 'DisputeUnanswered',
+  type: 'event',
+} as const;
+
 // Agreement ABI (для взаимодействия с отдельными Agreement контрактами)
 export const AGREEMENT_ABI = [
   {
@@ -1121,6 +1137,27 @@ export const AGREEMENT_ABI = [
     name: 'raiseDispute',
     outputs: [],
     stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'respondToDispute',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'clientResponded',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'executorResponded',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
     type: 'function',
   },
   {
@@ -1284,6 +1321,7 @@ export const AGREEMENT_ABI = [
     type: 'function',
   },
   DISPUTE_SPLIT_EVENT,
+  DISPUTE_UNANSWERED_EVENT,
 ];
 
 // Раньше diamond/forwarder/usdc падали обратно на захардкоженный литерал, если

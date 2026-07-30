@@ -322,6 +322,29 @@ export default function DealDetailPage() {
     query: { enabled: !!isValidDeal && isDisputedStatus },
   }) as { data: `0x${string}` | undefined };
 
+  // Явка в споре. Читается только в состоянии спора: вне него флаги ничего не
+  // значат, а лишнее чтение на каждой сделке ни к чему.
+  const { data: clientResponded, refetch: refetchClientResponded } = useReadContract({
+    address: dealAddress as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: 'clientResponded',
+    query: { enabled: isDisputedStatus },
+  });
+  const { data: executorResponded, refetch: refetchExecutorResponded } = useReadContract({
+    address: dealAddress as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: 'executorResponded',
+    query: { enabled: isDisputedStatus },
+  });
+  // Срок отклика. DISPUTE_WINDOW уже менялась однажды с 7 дней на 4 — фронт
+  // читает её с контракта тем же способом, что и три других места в файле.
+  const { data: disputeWindowSec } = useReadContract({
+    address: dealAddress as `0x${string}`,
+    abi: AGREEMENT_ABI,
+    functionName: 'DISPUTE_WINDOW',
+    query: { enabled: isDisputedStatus },
+  }) as { data: bigint | undefined };
+
   const isArbiter = !!realArbiter &&
     realArbiter !== "0x0000000000000000000000000000000000000000"
     ? realArbiter.toLowerCase() === address?.toLowerCase()
@@ -338,6 +361,18 @@ export default function DealDetailPage() {
     parsed?.arbiter,
     parsed?.status === 4 && arbiterTimeLeft === BigInt(0),
   );
+
+  // Моя сторона ещё не откликнулась, и окно не закрыто — значит кнопка нужна.
+  // Дедлайн считаем локально из disputedAt: DISPUTE_WINDOW в constants.ts
+  // намеренно нет, она читается с контракта (уже менялась с 7 дней на 4).
+  const myResponsePending = !!parsed && parsed.status === 4 && (
+    (isClient   && clientResponded   === false) ||
+    (isExecutor && executorResponded === false)
+  );
+  const responseDeadline = parsed && parsed.disputedAt > 0n && disputeWindowSec
+    ? new Date(Number(parsed.disputedAt + disputeWindowSec) * 1000)
+    : undefined;
+  const responseWindowOpen = !!responseDeadline && responseDeadline.getTime() > Date.now();
 
   // Terminal states — deal is fully closed, no further actions possible
   const isTerminal = parsed ? [3, 5, 6].includes(parsed.status) : false;
@@ -790,6 +825,16 @@ export default function DealDetailPage() {
             <p className="text-xs text-white/35 leading-relaxed">{arbiterTimeout.bannerBody}</p>
           </div>
         )}
+        {myResponsePending && responseWindowOpen && responseDeadline && (
+          <div className="rounded-[16px] border border-amber-400/20 bg-amber-400/5 px-4 py-3">
+            <p className="text-xs text-white/35 leading-relaxed">
+              {t("deal.dispute_respond_prompt", { date: responseDeadline.toLocaleString() })}
+            </p>
+          </div>
+        )}
+        {parsed?.status === 4 && !myResponsePending && (isClient || isExecutor) && (
+          <p className="text-xs text-white/25 leading-relaxed">{t("deal.dispute_respond_done")}</p>
+        )}
 
         {/* ── Pending tx banner ───────────────────────────────────────────────── */}
         {pendingTxHash && (
@@ -917,6 +962,16 @@ export default function DealDetailPage() {
                   onClick={() => handleAction('triggerArbiterTimeout', arbiterTimeout.successToast)}
                   disabled={busy}>
                   {arbiterTimeout.buttonLabel}
+                </Button>
+              )}
+              {myResponsePending && responseWindowOpen && (
+                <Button size="sm" variant="secondary"
+                  onClick={async () => {
+                    const ok = await handleAction('respondToDispute', t("deal.dispute_respond_success"));
+                    if (ok) { refetchClientResponded(); refetchExecutorResponded(); }
+                  }}
+                  disabled={busy}>
+                  {t("deal.dispute_respond_btn")}
                 </Button>
               )}
               {parsed.status === 2 && isParty && autoApproveWindowPassed && (
