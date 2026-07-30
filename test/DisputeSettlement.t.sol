@@ -806,4 +806,172 @@ contract DisputeSettlementTest is Test {
         assertEq(usdc.balanceOf(client) - cBefore, 200_000_000, "the undeliverable half falls back to the client");
         assertEq(usdc.balanceOf(address(a)), 0, "nothing may stay locked");
     }
+
+    // -------- ЯВКА В СПОРЕ --------
+
+    /// Поднял спор — значит явился. Второй флаг остаётся пустым: именно он и
+    /// отличает «оба изложили позицию» от «один молчал».
+    function testRaiseDisputeMarksTheRaiserAsPresent() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        assertTrue(a.clientResponded(), "raiser must be marked present");
+        assertFalse(a.executorResponded(), "counterparty must start silent");
+    }
+
+    /// Симметрия: спор поднимает исполнитель — флаг у него.
+    function testRaiseDisputeByExecutorMarksExecutor() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(executor);
+        a.raiseDispute();
+
+        assertTrue(a.executorResponded(), "raiser must be marked present");
+        assertFalse(a.clientResponded(), "counterparty must start silent");
+    }
+
+    function testRespondToDisputeMarksTheCounterparty() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.prank(executor);
+        a.respondToDispute();
+
+        assertTrue(a.executorResponded(), "counterparty must be marked present");
+    }
+
+    /// Повторный отклик ревертит — иначе релеер платил бы за бесконечные вызовы.
+    function testRespondToDisputeTwiceReverts() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.prank(executor);
+        a.respondToDispute();
+
+        vm.prank(executor);
+        vm.expectRevert(Agreement.AlreadyResponded.selector);
+        a.respondToDispute();
+    }
+
+    /// Поднявший уже отмечен, поэтому его отклик тоже ревертит.
+    function testRaiserCannotRespondAgain() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.prank(client);
+        vm.expectRevert(Agreement.AlreadyResponded.selector);
+        a.respondToDispute();
+    }
+
+    function testRespondToDisputeFromStrangerReverts() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(Agreement.NotParty.selector);
+        a.respondToDispute();
+    }
+
+    function testRespondToDisputeWithoutDisputeReverts() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+
+        vm.prank(executor);
+        vm.expectRevert(Agreement.NotDisputed.selector);
+        a.respondToDispute();
+    }
+
+    /// Ключевой тест против фронт-раннинга. Без гейта по окну молчавшая сторона
+    /// видит транзакцию таймаута в мемпуле, успевает откликнуться перед ней и
+    /// превращает 25/75 обратно в 50/50 — то есть отменяет наказание уже после
+    /// того, как оно наступило.
+    function testRespondToDisputeAfterWindowReverts() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.prank(executor);
+        vm.expectRevert(Agreement.WindowAlreadyPassed.selector);
+        a.respondToDispute();
+    }
+
+    /// На последней секунде окна отклик ещё принимается — граница включающая,
+    /// как и у claimDispute.
+    function testRespondToDisputeOnTheLastSecondWorks() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW());
+
+        vm.prank(executor);
+        a.respondToDispute();
+        assertTrue(a.executorResponded(), "last second of the window must still count");
+    }
+
+    /// После таймаута сделка финализирована, но resolvedAt остаётся нулём —
+    /// его ставит только resolveDispute. Без проверки _finalized можно было бы
+    /// «явиться» в закрытую сделку.
+    function testRespondToDisputeAfterFinalizationReverts() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        vm.prank(executor);
+        vm.expectRevert(Agreement.AlreadyFinalized.selector);
+        a.respondToDispute();
+    }
+
+    /// Отклик разрешён и когда спор уже заклеймён: это полезный сигнал
+    /// вовлечённости, а вреда нет — та ветка таймаута флаги не читает.
+    function testRespondToDisputeWorksWhileClaimed() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+
+        vm.prank(executor);
+        a.respondToDispute();
+        assertTrue(a.executorResponded(), "responding must work on a claimed dispute");
+    }
+
+    function testRespondToDisputeEmitsEvent() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.expectEmit(true, false, false, false, address(a));
+        emit Agreement.DisputeResponded(executor);
+        vm.prank(executor);
+        a.respondToDispute();
+    }
 }

@@ -26,3 +26,5 @@ extras|mapping(uint256 => struct Agreement.Extra{amount:uint256@0+0,terms:string
 nextExtraId|uint256|22|0
 extrasTotal|uint256|23|0
 pendingExtrasTotal|uint256|24|0
+clientResponded|bool|25|0
+executorResponded|bool|25|1

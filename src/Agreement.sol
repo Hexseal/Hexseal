@@ -325,6 +325,21 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 public extrasTotal;         // сумма принятых extras → исполнителю при release
     uint256 public pendingExtrasTotal;  // сумма ожидающих extras → рефанд клиенту при закрытии
 
+    // -------- ЯВКА В СПОРЕ --------
+
+    /// Кто из сторон отметился в споре. Ставятся один раз и не снимаются.
+    /// `raiseDispute` ставит флаг поднявшему — поднял, значит явился;
+    /// `respondToDispute` ставит флаг второму.
+    ///
+    /// Читаются ровно в одном месте: ветка `triggerArbiterTimeout`, где спор
+    /// никто не заклеймил. Молчавший получает четверть котла вместо половины.
+    ///
+    /// Дописаны В КОНЕЦ раскладки (слот 25) осознанно: клоны EIP-1167
+    /// разделяют раскладку реализации, поэтому порядок и типы существующих
+    /// полей менять нельзя — см. script/check-agreement-layout.sh.
+    bool public clientResponded;
+    bool public executorResponded;
+
     // -------- STATUS ENUM --------
 
     enum Status {
@@ -364,6 +379,11 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     /// Спор закрыт без вердикта, потому что за него никто не брался.
     /// toExecutor равен нулю, если его половину доставить не удалось.
     event DisputeSplitNoVerdict(uint256 toClient, uint256 toExecutor);
+    event DisputeResponded(address indexed party);
+    /// Таймаут при незаклеймленном споре, когда одна сторона молчала.
+    /// Форма отличается от DisputeSplitNoVerdict осознанно: явившимся может
+    /// быть любая из сторон, поэтому получатель указан адресом, а не позицией.
+    event DisputeUnanswered(address indexed responder, uint256 toResponder, uint256 toSilent);
     event ExtraProposed(uint256 indexed extraId, address indexed client, uint256 amount, string terms);
     event ExtraAccepted(uint256 indexed extraId, uint256 newTotal);
     event ExtraRejected(uint256 indexed extraId);
@@ -404,6 +424,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     error NoArbiterSet();
     error WrongAmount();
     error ExtraNotPending();
+    error AlreadyResponded();
     error ZeroAmount();
     error AlreadyInitialized();
 
@@ -662,9 +683,55 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
         disputedAt = block.timestamp;
 
+        // Поднял — значит явился. Второй стороне остаётся respondToDispute;
+        // если она промолчит всё окно, таймаут отдаст ей четверть вместо
+        // половины.
+        if (sender == client) {
+            clientResponded = true;
+        } else {
+            executorResponded = true;
+        }
+
         _updateRegistry(ISignatureRegistry.AgreementStatus.DISPUTED);
 
         emit DisputeRaised(sender);
+    }
+
+    /// @notice Сторона отмечается, что явилась в спор.
+    ///
+    /// Явка ничего не утверждает по существу — доказательства живут в чате,
+    /// контракту нужен только факт присутствия. Читается ровно одной веткой
+    /// таймаута: если спор никто не заклеймил, молчавший получает четверть
+    /// котла вместо половины.
+    ///
+    /// Бесплатно и гейслесс намеренно. Плата за право защищаться перевернула бы
+    /// стимулы: грифер поднимает спор бесплатно, а тот, кого он грабит, должен
+    /// был бы доплатить за возможность возразить. Спам режется структурой —
+    /// звать может только сторона конкретного спорного агримента, флаг ставится
+    /// один раз, повторный вызов ревертит.
+    function respondToDispute() external {
+        address sender = _msgSender();
+        if (sender != client && sender != executor) revert NotParty();
+        if (disputedAt == 0) revert NotDisputed();
+        // _finalized проверяется отдельно от resolvedAt: после таймаута сделка
+        // финализирована, а resolvedAt остаётся нулём — его ставит только
+        // resolveDispute. Без этой проверки можно было бы «явиться» в закрытую.
+        if (_finalized) revert AlreadyFinalized();
+        if (resolvedAt != 0) revert AlreadyResolved();
+        // Гейт по окну — не формальность. Без него молчавшая сторона видит
+        // транзакцию таймаута в мемпуле, успевает откликнуться перед ней и
+        // отменяет наказание уже после того, как оно наступило.
+        if (block.timestamp > disputedAt + DISPUTE_WINDOW) revert WindowAlreadyPassed();
+
+        if (sender == client) {
+            if (clientResponded) revert AlreadyResponded();
+            clientResponded = true;
+        } else {
+            if (executorResponded) revert AlreadyResponded();
+            executorResponded = true;
+        }
+
+        emit DisputeResponded(sender);
     }
 
     /// @notice Арбитр резолвит спор
