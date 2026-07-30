@@ -512,6 +512,9 @@ contract DisputeSettlementTest is Test {
         a.activate();
         vm.prank(client);
         a.raiseDispute();
+        // Отклик второй стороны: пополам теперь означает «оба явились».
+        vm.prank(executor);
+        a.respondToDispute();
         assertEq(a.arbiter(), address(0), "setup: nobody claimed");
 
         vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
@@ -572,6 +575,9 @@ contract DisputeSettlementTest is Test {
         a.activate();
         vm.prank(client);
         a.raiseDispute();
+        // Отклик второй стороны: пополам теперь означает «оба явились».
+        vm.prank(executor);
+        a.respondToDispute();
         vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
 
         uint256 cBefore = usdc.balanceOf(client);
@@ -598,6 +604,9 @@ contract DisputeSettlementTest is Test {
         a.proposeExtra(50_000_000, "extra work");
         a.raiseDispute();
         vm.stopPrank();
+        // Отклик второй стороны: пополам теперь означает «оба явились».
+        vm.prank(executor);
+        a.respondToDispute();
 
         vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
 
@@ -666,6 +675,9 @@ contract DisputeSettlementTest is Test {
         a.activate();
         vm.prank(client);
         a.raiseDispute();
+        // Отклик второй стороны: пополам теперь означает «оба явились».
+        vm.prank(executor);
+        a.respondToDispute();
 
         vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
 
@@ -787,6 +799,9 @@ contract DisputeSettlementTest is Test {
         a.activate();
         vm.prank(client);
         a.raiseDispute();
+        // Отклик второй стороны: пополам теперь означает «оба явились».
+        vm.prank(executor);
+        a.respondToDispute();
         vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
 
         // 1 байт вместо 32 — abi.decode на таком ревертит.
@@ -973,5 +988,181 @@ contract DisputeSettlementTest is Test {
         emit Agreement.DisputeResponded(executor);
         vm.prank(executor);
         a.respondToDispute();
+    }
+
+    // -------- ТАЙМАУТ: 25/75 ПО ЯВКЕ --------
+
+    /// Оба явились — судить было некому, делим пополам. Это и есть настоящий
+    /// смысл дележа: не «никто не заметил», а «оба изложили позицию».
+    function testTimeoutSplitsInHalfWhenBothResponded() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+        vm.prank(executor);
+        a.respondToDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore,   100_000_000, "half to client");
+        assertEq(usdc.balanceOf(executor) - eBefore, 100_000_000, "half to executor");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Молчал исполнитель — четверть ему, три четверти клиенту.
+    function testTimeoutGivesQuarterToTheSilentExecutor() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(executor) - eBefore, 50_000_000,  "quarter to the silent executor");
+        assertEq(usdc.balanceOf(client)   - cBefore, 150_000_000, "three quarters to the client");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Симметрия: молчал клиент — четверть ему, три четверти исполнителю.
+    /// Без этого теста правило легко написать однобоким.
+    function testTimeoutGivesQuarterToTheSilentClient() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(executor);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(executor);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client)   - cBefore, 50_000_000,  "quarter to the silent client");
+        assertEq(usdc.balanceOf(executor) - eBefore, 150_000_000, "three quarters to the executor");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Остаток от деления не теряется: считаем вычитанием, и он уходит
+    /// явившемуся. На котле 7 это 1 молчавшему и 6 явившемуся, а не 1 и 5.
+    function testTimeoutUnansweredLosesNoUnitOnAnOddPot() public {
+        Agreement a = Agreement(_createFundedAgreement(7));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        uint256 toExecutor = usdc.balanceOf(executor) - eBefore;
+        uint256 toClient   = usdc.balanceOf(client)   - cBefore;
+
+        assertEq(toExecutor, 1, "floor(7/4) to the silent executor");
+        assertEq(toClient,   6, "remainder to the responder");
+        assertEq(toExecutor + toClient, 7, "not a single unit may vanish");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Исполнитель в чёрном списке USDC и он же молчал: его четверть не
+    /// доставлена, уходит клиенту, транзакция доводится до конца. Иначе таймаут
+    /// заморозил бы весь котёл — а после него у сделки нет ни второй попытки,
+    /// ни рескью-функции.
+    function testBlockedSilentExecutorDoesNotFreezeTheTimeout() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        usdc.setBlocked(executor, true);
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore, 200_000_000, "undelivered share falls to the client");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Тот же чёрный список, но исполнитель явился и ему причитались три
+    /// четверти: недоставленное всё равно уходит клиенту целиком.
+    function testBlockedRespondingExecutorDoesNotFreezeTheTimeout() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(executor);
+        a.raiseDispute();
+
+        usdc.setBlocked(executor, true);
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+
+        vm.prank(executor);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore, 200_000_000, "undelivered share falls to the client");
+        assertEq(usdc.balanceOf(address(a)), 0, "the agreement must be emptied");
+    }
+
+    /// Событие несёт переведённые суммы, а не задуманные — иначе интерфейс
+    /// напечатает цифру, которой на кошелёк не пришло.
+    function testTimeoutUnansweredEmitsTransferredAmounts() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.expectEmit(true, false, false, true, address(a));
+        emit Agreement.DisputeUnanswered(client, 150_000_000, 50_000_000);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+    }
+
+    /// Заклеймленный спор флаги явки не читает: там вина арбитра, и весь котёл
+    /// уходит клиенту независимо от того, кто отзывался.
+    function testTimeoutAfterClaimIgnoresResponseFlags() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+        vm.prank(executor);
+        a.respondToDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - cBefore, 200_000_000, "whole pot to the client");
+        assertEq(usdc.balanceOf(executor) - eBefore, 0, "executor gets nothing on arbiter fault");
     }
 }

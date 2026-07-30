@@ -889,29 +889,68 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // сделке хватило бы ничего не делать, чтобы забрать половину. При
         // возврате клиенту затягивание приносит ему ноль.
         if (arbiter == address(0)) {
-            uint256 toExecutor = pot / 2;
-            uint256 toClient   = pot - toExecutor; // вычитанием: остаток тому, чьи деньги
+            // Как делить — решает явка. Хотя бы один флаг выставлен всегда:
+            // raiseDispute ставит его поднявшему, а без raiseDispute сюда не
+            // попасть (disputedAt проверен выше).
+            //
+            // Оба явились — судить было некому, делим пополам. Это и есть
+            // настоящий смысл дележа, и единственное правило, не дающее рычага
+            // ни одной стороне: markDone и raiseDispute обе стороны дёргают
+            // одинаково свободно и бесплатно, поэтому ни одно из этих действий
+            // не может быть доказательством.
+            //
+            // Один молчал — четверть ему. Молчание перестаёт быть бесплатным,
+            // но четыре дня вне сети не разоряют: отсутствие дело обычное,
+            // наказывать его надо, разорять — нет. Заодно это снижает цену
+            // атаки «подними спор и надейся, что он спит» — приз падает со
+            // всего котла до трёх четвертей.
+            bool both = clientResponded && executorResponded;
+
+            uint256 toClient;
+            uint256 toExecutor;
+            if (both) {
+                toExecutor = pot / 2;
+                toClient   = pot - toExecutor;  // вычитанием: остаток тому, чьи деньги
+            } else if (clientResponded) {
+                toExecutor = pot / 4;           // молчал исполнитель
+                toClient   = pot - toExecutor;  // вычитанием: остаток явившемуся
+            } else {
+                toClient   = pot / 4;           // молчал клиент
+                toExecutor = pot - toClient;    // вычитанием: остаток явившемуся
+            }
 
             _complete(Status.REFUNDED);
 
             // Мягкий перевод исполнителю. Это последний путь у сделки: после
             // таймаута не остаётся ни рескью-функции, ни второй попытки. Если
             // исполнитель в чёрном списке USDC, жёсткий перевод заморозил бы
-            // весь котёл вместе с долей клиента — поэтому недоставленная
-            // половина уходит клиенту, а транзакция доводится до конца.
+            // весь котёл вместе с долей клиента — поэтому недоставленная доля
+            // уходит клиенту, а транзакция доводится до конца.
             //
-            // Клиентскую половину намеренно НЕ страхуем тем же приёмом: этот
-            // риск одинаков на всех путях выплат и был здесь до дележа. Латать
-            // его надо разом и отдельно, а не одной веткой.
+            // Клиентскую долю намеренно НЕ страхуем тем же приёмом: этот риск
+            // одинаков на всех путях выплат и был здесь до дележа. Латать его
+            // надо разом и отдельно, а не одной веткой.
+            //
+            // executorPaid отделён от toExecutor, чтобы события несли
+            // ПЕРЕВЕДЁННЫЕ суммы, а не задуманные: интерфейс печатает их
+            // дословно, и цифра, которой не пришло на кошелёк, — это ложь.
+            uint256 executorPaid = toExecutor;
             if (toExecutor > 0 && !usdc.trySafeTransfer(executor, toExecutor)) {
-                toClient  += toExecutor;
-                toExecutor = 0;
+                toClient    += toExecutor;
+                executorPaid = 0;
             }
             usdc.safeTransfer(client, toClient);
 
             // notifyArbiterTimeout не зовём намеренно: наказывать некого.
             _clearDisputeClaim();
-            emit DisputeSplitNoVerdict(toClient, toExecutor);
+
+            if (both) {
+                emit DisputeSplitNoVerdict(toClient, executorPaid);
+            } else if (clientResponded) {
+                emit DisputeUnanswered(client, toClient, executorPaid);
+            } else {
+                emit DisputeUnanswered(executor, executorPaid, toClient);
+            }
             return;
         }
 

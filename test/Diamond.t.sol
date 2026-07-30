@@ -1773,7 +1773,10 @@ contract DiamondTest is Test {
         
         vm.prank(client);
         Agreement(agreementAddr).raiseDispute();
-        
+        // Отклик второй стороны: пополам теперь означает «оба явились».
+        vm.prank(executor);
+        Agreement(agreementAddr).respondToDispute();
+
         vm.warp(block.timestamp + 8 days);
 
         uint256 clientBalanceBefore   = usdc.balanceOf(client);
