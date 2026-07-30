@@ -346,7 +346,14 @@ describe('classifySettledRefund — путь по состоянию (холод
   // вернёт 'unanswered', а не 'split' — доли там другие (25/75, не 50/50), но
   // это по-прежнему РАСЧЁТ, а не факт из события. Правило то же: сумму по
   // стороне не называть, котёл — можно.
-  it('никто не взялся, одна сторона не отвечала: тоже дележ без долей', async () => {
+  //
+  // `silent` ОБЯЗАН попасть в ответ — это `toEqual` с полным объектом, а не
+  // частичная проверка: если признак потеряется по дороге, `{pot: 33n}` без
+  // `silent` не совпадёт с ожидаемым `{pot: 33n, silent: 'executor'}`, и тест
+  // упадёт. Раньше здесь стояла проверка только по `pot` — она прошла бы и
+  // при реализации, которая `clientResponded`/`executorResponded` вообще не
+  // читает, и была слепа именно к этой находке.
+  it('никто не взялся, одна сторона не отвечала: дележ без долей, но с признаком, кто молчал', async () => {
     const { client } = fakeClient({
       reads: {
         getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
@@ -360,6 +367,7 @@ describe('classifySettledRefund — путь по состоянию (холод
     await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
       kind: 'split-amounts-unknown',
       pot: 33n,
+      silent: 'executor',
     });
   });
 
@@ -710,6 +718,72 @@ describe('refundNotifCopy — дележ без долей по сторонам
   it('не тот же текст, что у полностью непрочитанного исхода', () => {
     expect(refundNotifCopy(BLIND, 'client').title)
       .not.toBe(refundNotifCopy({ kind: 'unknown' }, 'client').title);
+  });
+});
+
+// ─── Находка код-ревью: признак «кто молчал» терялся при сворачивании ────────
+//
+// `classifySettledRefund` знает, кто не откликнулся на спор (это и есть
+// предмет всей задачи о явке), но до этой правки `refundNotifCopy` печатала
+// ОДИН нейтральный текст обеим сторонам — тому, кто получил штрафную четверть
+// за молчание, и тому, кто получил остаток за явку, одинаково. Сообщение
+// «молчание стоит четверти эскроу» на этой поверхности не долетало вовсе.
+//
+// Точную долю по-прежнему не называем — она расчётная и может разойтись с
+// реально переведённой (та же причина, что и у `split-amounts-unknown` без
+// признака). Разница только в словах: молчавшему сказано, что доля меньше
+// половины ИМЕННО ПОТОМУ, что он не ответил; откликнувшемуся — что доля
+// больше половины именно потому, что вторая сторона не ответила.
+describe('refundNotifCopy — дележ без долей, но с признаком, кто молчал', () => {
+  /** Исполнитель не откликнулся на спор: `silent: 'executor'`. */
+  const EXECUTOR_SILENT: SettledRefund = {
+    kind: 'split-amounts-unknown',
+    pot: 200_000_000n,
+    silent: 'executor',
+  };
+
+  it('молчавшему говорит, что доля меньше половины именно поэтому', () => {
+    const { title, body } = refundNotifCopy(EXECUTOR_SILENT, 'executor');
+    expect(title).toBe('Escrow Split');
+    expect(body).toMatch(/didn't answer/i);
+    expect(body).toMatch(/smaller than half/i);
+    expect(body).toContain('200.00 USDC in total');
+  });
+
+  it('откликнувшемуся говорит, что вторая сторона молчала и поэтому доля больше половины', () => {
+    const { title, body } = refundNotifCopy(EXECUTOR_SILENT, 'client');
+    expect(title).toBe('Escrow Split');
+    expect(body).toMatch(/other party never answered/i);
+    expect(body).toMatch(/bigger than half/i);
+    expect(body).toContain('200.00 USDC in total');
+  });
+
+  // Клетка, которую держит эта находка: раньше здесь стоял ОДИН и тот же
+  // текст для обеих ролей — если признак снова потеряется по дороге, тексты
+  // совпадут, и этот тест увидит регресс первым.
+  it('текст молчавшего и текст откликнувшегося — РАЗНЫЕ, а не один на двоих', () => {
+    const silentSideBody = refundNotifCopy(EXECUTOR_SILENT, 'executor').body;
+    const otherSideBody  = refundNotifCopy(EXECUTOR_SILENT, 'client').body;
+    expect(silentSideBody).not.toBe(otherSideBody);
+
+    // И ни один из двух не совпадает с прежним нейтральным текстом — тем,
+    // что печатается, когда `silent` не задан вовсе (оба ответили).
+    const neutralBody = refundNotifCopy(
+      { kind: 'split-amounts-unknown', pot: 200_000_000n },
+      'client',
+    ).body;
+    expect(silentSideBody).not.toBe(neutralBody);
+    expect(otherSideBody).not.toBe(neutralBody);
+  });
+
+  // Точную сумму по-прежнему не называет ни одной стороне — только словами
+  // «меньше/больше половины» и общим котлом. За цифрой — в кошелёк.
+  it('точную долю не называет ни одной стороне, только котёл и направление отклонения', () => {
+    for (const role of ['client', 'executor'] as const) {
+      const { body } = refundNotifCopy(EXECUTOR_SILENT, role);
+      expect(body).not.toMatch(/USDC to (you|the client|the executor)\b/i);
+      expect(body).toContain('check your wallet');
+    }
   });
 });
 

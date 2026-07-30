@@ -85,11 +85,20 @@ export type SettledRefund =
   /** Дележ, суммы ФАКТИЧЕСКИЕ — взяты из события, а не посчитаны. */
   | { kind: 'split'; toClient: bigint; toExecutor: bigint }
   /**
-   * Дележ был, кому сколько — неизвестно. Доли в этом виде отсутствуют
-   * намеренно; `pot` — не доля, а весь котёл, который эскроу отдал целиком, и
-   * он верен в обеих ветках.
+   * Дележ был, кому сколько — неизвестно. Доли (число) в этом виде
+   * отсутствуют намеренно; `pot` — не доля, а весь котёл, который эскроу
+   * отдал целиком, и он верен в обеих ветках.
+   *
+   * `silent`, если задан, — КАЧЕСТВЕННЫЙ признак, не число: сторона, которая
+   * на спор не откликнулась (`decideArbiterTimeout` вернул `'unanswered'`, а
+   * не `'split'`). Число (сколько именно ей причиталось) по-прежнему не
+   * называем — расчётные доли остаются под тем же запретом, что и раньше, —
+   * но ФАКТ «эта сторона молчала, и поэтому получила меньше половины» ничем
+   * не расчётный: он не про распределение внутри котла, а про причину
+   * дележа, и его теряет не жаль, а нечестно. Не задан — обе стороны
+   * ответили, дележ был честным «пополам», говорить нечего.
    */
-  | { kind: 'split-amounts-unknown'; pot: bigint }
+  | { kind: 'split-amounts-unknown'; pot: bigint; silent?: 'client' | 'executor' }
   | { kind: 'refund' }
   | { kind: 'unknown' };
 
@@ -249,10 +258,17 @@ export async function classifySettledRefund(
     // прочитанному `totalPayout()` в обеих ветках — берём его отсюда, а не из
     // `pot.data`, только чтобы не разворачивать `bigint | undefined`, которое
     // на этой ветке уже гарантированно определено.
+    //
+    // `silent`, наоборот, число не несёт — только признак того, какая
+    // сторона не откликнулась. Он не расчётный (не зависит от того, прошёл
+    // ли мягкий перевод), и его молчаливо ронять было бы отдельным враньём:
+    // именно этот факт — предмет всей задачи о явке. Есть только у
+    // 'unanswered'; у честного 'split' (оба ответили) называть некого.
     if (settlement.kind === 'split' || settlement.kind === 'unanswered') {
       return {
         kind: 'split-amounts-unknown',
         pot: settlement.toClient + settlement.toExecutor,
+        ...(settlement.kind === 'unanswered' ? { silent: settlement.silent } : {}),
       };
     }
     return { kind: settlement.kind };
@@ -288,14 +304,41 @@ export function refundNotifCopy(
     };
   }
 
-  // Дележ без долей. Обеим сторонам одно и то же — назвать «твою половину»
-  // здесь нельзя ни одной из них; общий котёл, наоборот, обеим одинаково верен.
+  // Дележ без долей (число). Но если известно, КТО молчал, это уже не число,
+  // а причина — и её можно сказать каждой стороне свою: молчавшему, что доля
+  // меньше половины именно потому, что он не откликнулся; откликнувшемуся —
+  // что вторая сторона не ответила, поэтому его доля больше половины. Точную
+  // сумму по-прежнему не называем ни тому, ни другому — за ней в кошелёк.
   if (outcome.kind === 'split-amounts-unknown') {
+    const total = usdcExact(outcome.pot);
+
+    if (outcome.silent) {
+      if (role === outcome.silent) {
+        return {
+          title: 'Escrow Split',
+          body:
+            "Nobody took the dispute, so there was nobody to judge it. You didn't answer the "
+            + `dispute in time, so your share was smaller than half. The deal held ${total} USDC `
+            + 'in total — check your wallet for the amount you received.',
+        };
+      }
+      return {
+        title: 'Escrow Split',
+        body:
+          'Nobody took the dispute, so there was nobody to judge it. The other party never '
+          + `answered the dispute, so your share was bigger than half. The deal held ${total} USDC `
+          + 'in total — check your wallet for the amount you received.',
+      };
+    }
+
+    // Обе стороны ответили — назвать «твою половину» здесь нельзя ни одной из
+    // них (число всё ещё расчётное); общий котёл, наоборот, обеим одинаково
+    // верен, и текст поэтому один на двоих.
     return {
       title: 'Escrow Split',
       body:
         'Nobody took the dispute, so there was nobody to judge it, and the escrow was split '
-        + `between the two of you. The deal held ${usdcExact(outcome.pot)} USDC in total — `
+        + `between the two of you. The deal held ${total} USDC in total — `
         + 'check your wallet for the amount you received.',
     };
   }
