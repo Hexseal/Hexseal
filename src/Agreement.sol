@@ -1049,7 +1049,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         return string(abi.encodePacked(
             '<line x1="32" y1="396" x2="368" y2="396"/>',
             '<text x="200" y="428" class="lb c" fill="#333">SOULBOUND</text>',
-            '<text x="200" y="448" class="lb c" fill="#333">hexseal.com</text>',
+            '<text x="200" y="448" class="lb c" fill="#333">hexseal.net</text>',
             '</svg>'
         ));
     }

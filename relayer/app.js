@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY;
 let VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-const VAPID_EMAIL     = process.env.VAPID_EMAIL || 'mailto:admin@hexseal.com';
+const VAPID_EMAIL     = process.env.VAPID_EMAIL || 'mailto:admin@hexseal.net';
 
 if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
   const keys = webpush.generateVAPIDKeys();

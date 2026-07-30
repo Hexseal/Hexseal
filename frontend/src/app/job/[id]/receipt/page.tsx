@@ -180,7 +180,7 @@ function Receipt({ data }: { data: ReceiptData }) {
         <div className="text-[8px] tracking-[2px] text-white/15">
           SOULBOUND NFT · NON-TRANSFERABLE
         </div>
-        <div className="text-[8px] tracking-[2px] text-white/10 mt-1">hexseal.com</div>
+        <div className="text-[8px] tracking-[2px] text-white/10 mt-1">hexseal.net</div>
       </div>
 
       {/* Bottom bar */}

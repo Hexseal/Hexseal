@@ -121,7 +121,7 @@ contract DealMetadataFacet {
             '<line x1="0" y1="460" x2="400" y2="460" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="2,6"/>',
             '<circle cx="0"   cy="460" r="10" fill="#0a0a0a"/>',
             '<circle cx="400" cy="460" r="10" fill="#0a0a0a"/>',
-            '<text x="200" y="486" font-family="monospace" font-size="9" fill="#2a2a2a" text-anchor="middle" letter-spacing="2">hexseal.com</text>',
+            '<text x="200" y="486" font-family="monospace" font-size="9" fill="#2a2a2a" text-anchor="middle" letter-spacing="2">hexseal.net</text>',
             '</svg>'
         ));
     }

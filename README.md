@@ -163,7 +163,7 @@ npm run docs
 ## Documentation
 
 - [Contract & Frontend Docs](docs/generated/README.md)
-- [FAQ](https://hexseal.com/docs/faq)
+- [FAQ](https://hexseal.net/docs/faq)
 
 ---
 

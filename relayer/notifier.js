@@ -143,7 +143,7 @@ async function watchAgreement(agreementAddr) {
     return; // not a valid agreement
   }
 
-  const dealLink = `https://hexseal.com/deal/${agreementAddr}`;
+  const dealLink = `https://hexseal.net/deal/${agreementAddr}`;
   const short = shortAddr(agreementAddr);
 
   contract.on('Funded', async () => {
