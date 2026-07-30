@@ -1,5 +1,5 @@
 import { classifyReadFailure } from './contractReadError';
-import { splitPot } from './splitPot';
+import { splitPot, splitPotUnanswered } from './splitPot';
 
 /**
  * Что `Agreement.triggerArbiterTimeout` СДЕЛАЕТ С ДЕНЬГАМИ — решение вынесено
@@ -29,7 +29,13 @@ import { splitPot } from './splitPot';
 export type ArbiterTimeoutSettlement =
   | { kind: 'refund' }
   | { kind: 'unknown' }
-  | { kind: 'split'; toExecutor: bigint; toClient: bigint; windowDays: number };
+  | { kind: 'split'; toExecutor: bigint; toClient: bigint; windowDays: number }
+  /**
+   * Одна сторона на спор не откликнулась: ей четверть, явившемуся остаток.
+   * Отдельный исход, а не флаг внутри 'split', потому что слова другие —
+   * «никто не рассудил, значит никто не выиграл» здесь было бы неправдой.
+   */
+  | { kind: 'unanswered'; silent: 'client' | 'executor'; toExecutor: bigint; toClient: bigint; windowDays: number };
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -46,10 +52,14 @@ export interface ArbiterTimeoutReads {
   pot: bigint | undefined;
   /** `DISPUTE_WINDOW()` — срок, за который спор никто не взял. */
   disputeWindow: bigint | undefined;
+  /** `clientResponded()`; `undefined` пока не прочитано. */
+  clientResponded: boolean | undefined;
+  /** `executorResponded()`; `undefined` пока не прочитано. */
+  executorResponded: boolean | undefined;
 }
 
 export function decideArbiterTimeout(reads: ArbiterTimeoutReads): ArbiterTimeoutSettlement {
-  const { arbiter, fee, feeError, pot, disputeWindow } = reads;
+  const { arbiter, fee, feeError, pot, disputeWindow, clientResponded, executorResponded } = reads;
 
   // Кто арбитр ещё неизвестно — называть исход рано.
   if (arbiter === undefined) return { kind: 'unknown' };
@@ -88,13 +98,28 @@ export function decideArbiterTimeout(reads: ArbiterTimeoutReads): ArbiterTimeout
     return { kind: 'unknown' };
   }
 
-  const { toExecutor, toClient } = splitPot(pot);
-  return {
-    kind: 'split',
-    toExecutor,
-    toClient,
-    // Дробное значение допустимо намеренно: окно в 36 часов даст 1.5, и
-    // ICU-plural отрендерит "1.5 days" вместо вранья про "1 day".
-    windowDays: Number(disputeWindow) / SECONDS_PER_DAY,
-  };
+  // Дробное значение допустимо намеренно: окно в 36 часов даст 1.5, и
+  // ICU-plural отрендерит "1.5 days" вместо вранья про "1 day".
+  const windowDays = Number(disputeWindow) / SECONDS_PER_DAY;
+
+  // Флаги явки ещё не доехали — исход назвать нельзя. Выбрать «пополам» молча
+  // означало бы напечатать сумму, которой не придёт: ровно тот класс вранья,
+  // который этот файл убирает.
+  if (clientResponded === undefined || executorResponded === undefined) {
+    return { kind: 'unknown' };
+  }
+
+  // Хотя бы один флаг стоит всегда — raiseDispute ставит его поднявшему.
+  // Случай «оба пусты» недостижим на цепи, но если он пришёл, значит чтение
+  // соврало, и честный ответ — 'unknown', а не выдуманный дележ.
+  if (!clientResponded && !executorResponded) return { kind: 'unknown' };
+
+  if (clientResponded && executorResponded) {
+    const { toExecutor, toClient } = splitPot(pot);
+    return { kind: 'split', toExecutor, toClient, windowDays };
+  }
+
+  const silent = clientResponded ? 'executor' : 'client';
+  const { toExecutor, toClient } = splitPotUnanswered(pot, silent);
+  return { kind: 'unanswered', silent, toExecutor, toClient, windowDays };
 }

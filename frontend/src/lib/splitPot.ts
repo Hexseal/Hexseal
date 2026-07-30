@@ -24,6 +24,28 @@ export function splitPot(pot: bigint): { toExecutor: bigint; toClient: bigint } 
 }
 
 /**
+ * Делит котёл так, как это делает `Agreement.triggerArbiterTimeout` в ветке
+ * `arbiter == address(0)`, когда одна сторона на спор не откликнулась:
+ * молчавшему — floor(pot/4), явившемуся — ОСТАТОК.
+ *
+ * Вычитание здесь обязательно по той же причине, что и в `splitPot`: два
+ * деления теряют юнит на котле, не делящемся на 4, и показанное разошлось бы с
+ * выплаченным.
+ *
+ * Контракт: `src/Agreement.sol`, `triggerArbiterTimeout`.
+ */
+export function splitPotUnanswered(
+  pot: bigint,
+  silent: 'client' | 'executor',
+): { toClient: bigint; toExecutor: bigint } {
+  const toSilent = pot / 4n;
+  const toResponder = pot - toSilent;
+  return silent === 'client'
+    ? { toClient: toSilent, toExecutor: toResponder }
+    : { toClient: toResponder, toExecutor: toSilent };
+}
+
+/**
  * Точное значение USDC, но не короче двух знаков после запятой:
  * 200 → "200.00", 25.000001 → "25.000001". Округление здесь недопустимо —
  * числа обязаны совпасть с тем, что заплатит контракт.

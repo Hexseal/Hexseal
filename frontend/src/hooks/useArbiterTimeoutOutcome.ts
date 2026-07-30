@@ -26,7 +26,7 @@ import { usdcExact } from '@/lib/splitPot';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-export type ArbiterTimeoutKind = 'split' | 'refund' | 'unknown';
+export type ArbiterTimeoutKind = 'split' | 'unanswered' | 'refund' | 'unknown';
 
 export interface ArbiterTimeoutOutcome {
   kind: ArbiterTimeoutKind;
@@ -80,13 +80,42 @@ export function useArbiterTimeoutOutcome(
     query: { enabled: probe },
   }) as Read;
 
+  const clientResponded = useReadContract({
+    address,
+    abi: AGREEMENT_ABI,
+    functionName: 'clientResponded',
+    query: { enabled: probe },
+  }) as { data: boolean | undefined; error: unknown };
+
+  const executorResponded = useReadContract({
+    address,
+    abi: AGREEMENT_ABI,
+    functionName: 'executorResponded',
+    query: { enabled: probe },
+  }) as { data: boolean | undefined; error: unknown };
+
   const settlement = decideArbiterTimeout({
     arbiter,
     fee: fee.data,
     feeError: fee.error,
     pot: pot.data,
     disputeWindow: disputeWindow.data,
+    clientResponded: clientResponded.data,
+    executorResponded: executorResponded.data,
   });
+
+  if (settlement.kind === 'unanswered') {
+    const sums = {
+      toExecutor: usdcExact(settlement.toExecutor),
+      toClient: usdcExact(settlement.toClient),
+    };
+    return {
+      kind: 'unanswered',
+      buttonLabel: t('deal.timeout_arbiter_unanswered'),
+      successToast: t('deal.timeout_arbiter_unanswered_success', sums),
+      bannerBody: t('deal.stale_arbiter_unanswered_body', { days: settlement.windowDays, ...sums }),
+    };
+  }
 
   if (settlement.kind === 'split') {
     const sums = {

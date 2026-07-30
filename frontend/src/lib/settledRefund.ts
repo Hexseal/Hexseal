@@ -155,17 +155,17 @@ export function findSplitInLogs(
   return null;
 }
 
-async function readOrError(
+async function readOrError<T>(
   client: PublicClient,
   agreement: `0x${string}`,
-  functionName: 'disputeFee' | 'totalPayout' | 'DISPUTE_WINDOW',
-): Promise<{ data: bigint | undefined; error: unknown }> {
+  functionName: 'disputeFee' | 'totalPayout' | 'DISPUTE_WINDOW' | 'clientResponded' | 'executorResponded',
+): Promise<{ data: T | undefined; error: unknown }> {
   try {
     const data = (await client.readContract({
       address: agreement,
       abi: AGREEMENT_ABI,
       functionName,
-    })) as bigint;
+    })) as T;
     return { data, error: undefined };
   } catch (error) {
     reportIfBug(error, `${functionName}()`, agreement);
@@ -215,10 +215,12 @@ export async function classifySettledRefund(
     // За спор брались — весь котёл клиенту в любой реализации.
     if (arbiter.toLowerCase() !== ZERO_ADDRESS) return { kind: 'refund' };
 
-    const [fee, pot, disputeWindow] = await Promise.all([
-      readOrError(client, agreement, 'disputeFee'),
-      readOrError(client, agreement, 'totalPayout'),
-      readOrError(client, agreement, 'DISPUTE_WINDOW'),
+    const [fee, pot, disputeWindow, clientResponded, executorResponded] = await Promise.all([
+      readOrError<bigint>(client, agreement, 'disputeFee'),
+      readOrError<bigint>(client, agreement, 'totalPayout'),
+      readOrError<bigint>(client, agreement, 'DISPUTE_WINDOW'),
+      readOrError<boolean>(client, agreement, 'clientResponded'),
+      readOrError<boolean>(client, agreement, 'executorResponded'),
     ]);
 
     const settlement = decideArbiterTimeout({
@@ -227,22 +229,27 @@ export async function classifySettledRefund(
       feeError: fee.error,
       pot: pot.data,
       disputeWindow: disputeWindow.data,
+      clientResponded: clientResponded.data,
+      executorResponded: executorResponded.data,
     });
 
-    // Доли у `decideArbiterTimeout` есть, и они РАСЧЁТНЫЕ — `splitPot(pot)`.
-    // На странице сделки это верно: там они предсказывают, что случится, и
-    // ветку заблокированного исполнителя никто предсказать не может. Здесь же
-    // выплата уже прошла, и назвать расчётное числом «сколько тебе пришло»
-    // значило бы соврать всякий раз, когда мягкий перевод не прошёл. Признак
-    // берём, доли — намеренно роняем.
+    // Доли у `decideArbiterTimeout` есть, и они РАСЧЁТНЫЕ — `splitPot(pot)` или
+    // `splitPotUnanswered(pot, silent)`. На странице сделки это верно: там они
+    // предсказывают, что случится, и ветку заблокированного исполнителя никто
+    // предсказать не может. Здесь же выплата уже прошла, и назвать расчётное
+    // числом «сколько тебе пришло» значило бы соврать всякий раз, когда мягкий
+    // перевод не прошёл. Признак берём, доли — намеренно роняем. То же верно
+    // для 'unanswered': это тот же класс расчётных долей, только по другой
+    // формуле, и то же самое обязательство не называть их не пропадает.
     //
     // А их СУММУ оставляем, и она не расчётная в том же смысле: сколько бы ни
-    // ушло каждой стороне, вместе это ровно котёл. `splitPot` делит вычитанием
-    // и ничего не теряет даже на нечётном, поэтому `toClient + toExecutor`
-    // тождественно равно прочитанному `totalPayout()` — берём его отсюда, а не
-    // из `pot.data`, только чтобы не разворачивать `bigint | undefined`,
-    // которое на этой ветке уже гарантированно определено.
-    if (settlement.kind === 'split') {
+    // ушло каждой стороне, вместе это ровно котёл — что `splitPot`, что
+    // `splitPotUnanswered` делят вычитанием и ничего не теряют даже на
+    // нечётном, поэтому `toClient + toExecutor` тождественно равно
+    // прочитанному `totalPayout()` в обеих ветках — берём его отсюда, а не из
+    // `pot.data`, только чтобы не разворачивать `bigint | undefined`, которое
+    // на этой ветке уже гарантированно определено.
+    if (settlement.kind === 'split' || settlement.kind === 'unanswered') {
       return {
         kind: 'split-amounts-unknown',
         pot: settlement.toClient + settlement.toExecutor,

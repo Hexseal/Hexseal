@@ -8,6 +8,7 @@ import {
 import { getContractError } from 'viem/utils';
 import { classifyReadFailure } from './contractReadError';
 import { decideArbiterTimeout } from './arbiterTimeoutSettlement';
+import { splitPotUnanswered } from './splitPot';
 
 /**
  * ПОЧЕМУ ЭТОТ ФАЙЛ СУЩЕСТВУЕТ
@@ -85,6 +86,8 @@ describe('decideArbiterTimeout', () => {
         feeError: undefined,
         pot: undefined,
         disputeWindow: undefined,
+        clientResponded: undefined,
+        executorResponded: undefined,
       }).kind,
     ).toBe('unknown');
   });
@@ -97,6 +100,8 @@ describe('decideArbiterTimeout', () => {
         feeError: internalRpcErrorFromRead(),
         pot: undefined,
         disputeWindow: undefined,
+        clientResponded: undefined,
+        executorResponded: undefined,
       }).kind,
     ).toBe('refund');
   });
@@ -111,6 +116,8 @@ describe('decideArbiterTimeout', () => {
         feeError: internalRpcErrorFromRead(),
         pot: 200_000_000n,
         disputeWindow: 345_600n,
+        clientResponded: undefined,
+        executorResponded: undefined,
       }).kind,
     ).toBe('refund');
   });
@@ -132,6 +139,8 @@ describe('decideArbiterTimeout', () => {
         feeError: err,
         pot: undefined,
         disputeWindow: undefined,
+        clientResponded: undefined,
+        executorResponded: undefined,
       }).kind,
     ).toBe('unknown');
   });
@@ -144,6 +153,8 @@ describe('decideArbiterTimeout', () => {
         feeError: internalRpcErrorFromRead(),
         pot: 200_000_000n,
         disputeWindow: undefined,
+        clientResponded: undefined,
+        executorResponded: undefined,
       }).kind,
     ).toBe('unknown');
   });
@@ -155,6 +166,8 @@ describe('decideArbiterTimeout', () => {
       feeError: undefined,
       pot: 33n,
       disputeWindow: 345_600n,
+      clientResponded: true,
+      executorResponded: true,
     });
     expect(settlement).toEqual({
       kind: 'split',
@@ -162,5 +175,62 @@ describe('decideArbiterTimeout', () => {
       toClient: 17n,
       windowDays: 4,
     });
+  });
+});
+
+describe('splitPotUnanswered', () => {
+  it('отдаёт молчавшему четверть, остаток явившемуся', () => {
+    expect(splitPotUnanswered(200_000_000n, 'executor')).toEqual({
+      toExecutor: 50_000_000n,
+      toClient: 150_000_000n,
+    });
+  });
+
+  it('симметрична: молчал клиент — четверть ему', () => {
+    expect(splitPotUnanswered(200_000_000n, 'client')).toEqual({
+      toClient: 50_000_000n,
+      toExecutor: 150_000_000n,
+    });
+  });
+
+  // Тот же тест, что защищает splitPot: два деления вместо вычитания потеряли
+  // бы юнит, и показанное разошлось бы с выплаченным.
+  it('не теряет юнит на котле, не делящемся на 4', () => {
+    const { toClient, toExecutor } = splitPotUnanswered(7n, 'executor');
+    expect(toExecutor).toBe(1n);
+    expect(toClient).toBe(6n);
+    expect(toClient + toExecutor).toBe(7n);
+  });
+});
+
+describe('decideArbiterTimeout — явка', () => {
+  const base = {
+    arbiter: '0x0000000000000000000000000000000000000000',
+    fee: 6_000_000n,
+    feeError: undefined,
+    pot: 200_000_000n,
+    disputeWindow: 345_600n,
+  };
+
+  it('оба явились — дележ пополам', () => {
+    const r = decideArbiterTimeout({ ...base, clientResponded: true, executorResponded: true });
+    expect(r.kind).toBe('split');
+  });
+
+  it('молчал исполнитель — unanswered, четверть ему', () => {
+    const r = decideArbiterTimeout({ ...base, clientResponded: true, executorResponded: false });
+    expect(r).toMatchObject({ kind: 'unanswered', silent: 'executor', toExecutor: 50_000_000n, toClient: 150_000_000n });
+  });
+
+  it('молчал клиент — unanswered, четверть ему', () => {
+    const r = decideArbiterTimeout({ ...base, clientResponded: false, executorResponded: true });
+    expect(r).toMatchObject({ kind: 'unanswered', silent: 'client', toClient: 50_000_000n, toExecutor: 150_000_000n });
+  });
+
+  // Флаги ещё не прочитаны — обещать исход нельзя. Молча выбрать «пополам»
+  // означало бы напечатать сумму, которой не придёт.
+  it('флаги не прочитаны — unknown', () => {
+    const r = decideArbiterTimeout({ ...base, clientResponded: undefined, executorResponded: undefined });
+    expect(r.kind).toBe('unknown');
   });
 });

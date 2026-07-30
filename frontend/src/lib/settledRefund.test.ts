@@ -158,7 +158,13 @@ describe('findSplitInLogs', () => {
 
 // ─── classifySettledRefund ───────────────────────────────────────────────────
 
-type ReadName = 'getDetails' | 'disputeFee' | 'totalPayout' | 'DISPUTE_WINDOW';
+type ReadName =
+  | 'getDetails'
+  | 'disputeFee'
+  | 'totalPayout'
+  | 'DISPUTE_WINDOW'
+  | 'clientResponded'
+  | 'executorResponded';
 
 /** `getDetails()` в том виде, в каком его отдаёт viem: позиционный кортеж. */
 function details({ arbiter, disputedAt }: { arbiter: string; disputedAt: bigint }) {
@@ -260,6 +266,8 @@ describe('classifySettledRefund — путь через чек (точный)', 
         disputeFee: () => 990_000n,
         totalPayout: () => 33n,
         DISPUTE_WINDOW: () => 345_600n,
+        clientResponded: () => true,
+        executorResponded: () => true,
       },
     });
     // Дележ — да; кому сколько — нет: доли бывают только из события. Котёл при
@@ -322,10 +330,33 @@ describe('classifySettledRefund — путь по состоянию (холод
         disputeFee: () => 990_000n,
         totalPayout: () => 33n,
         DISPUTE_WINDOW: () => 345_600n,
+        clientResponded: () => true,
+        executorResponded: () => true,
       },
     });
     // Нечётный котёл намеренно: 33 = 17 + 16, и `pot` обязан остаться 33, а не
     // потерять юнит на двух делениях пополам.
+    await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
+      kind: 'split-amounts-unknown',
+      pot: 33n,
+    });
+  });
+
+  // Та же ветка, но одна сторона на спор не откликнулась: `decideArbiterTimeout`
+  // вернёт 'unanswered', а не 'split' — доли там другие (25/75, не 50/50), но
+  // это по-прежнему РАСЧЁТ, а не факт из события. Правило то же: сумму по
+  // стороне не называть, котёл — можно.
+  it('никто не взялся, одна сторона не отвечала: тоже дележ без долей', async () => {
+    const { client } = fakeClient({
+      reads: {
+        getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
+        disputeFee: () => 990_000n,
+        totalPayout: () => 33n,
+        DISPUTE_WINDOW: () => 345_600n,
+        clientResponded: () => true,
+        executorResponded: () => false,
+      },
+    });
     await expect(classifySettledRefund(client, AGREEMENT)).resolves.toEqual({
       kind: 'split-amounts-unknown',
       pot: 33n,
@@ -407,6 +438,8 @@ describe('путь по состоянию НИКОГДА не называет 
           disputeFee: () => 990_000n,
           totalPayout: () => pot,
           DISPUTE_WINDOW: () => 345_600n,
+          clientResponded: () => true,
+          executorResponded: () => true,
         },
       });
       const outcome = await classifySettledRefund(client, AGREEMENT);
