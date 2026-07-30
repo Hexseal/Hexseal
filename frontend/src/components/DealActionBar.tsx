@@ -227,6 +227,13 @@ export function DealActionBar({ agreementAddr }: Props) {
       // (wasting a signature on a guaranteed on-chain revert).
       if (fn === 'acceptExtra' || fn === 'rejectExtra') {
         setTimeout(() => { refetchExtras(); setBusy(false); }, 2000);
+      } else if (fn === 'respondToDispute') {
+        // Same lag, same fix: an immediate refetch here would race the same
+        // load-balanced-RPC read-after-write gap as `refetch()` below — the
+        // flag would come back stale `false`, the button would stay visible
+        // past its own success, and a second click would burn a signature on
+        // a guaranteed AlreadyResponded revert.
+        setTimeout(() => { refetch(); refetchClientResponded(); refetchExecutorResponded(); setBusy(false); }, 2000);
       } else {
         setTimeout(() => { refetch(); setBusy(false); }, 2000);
       }
@@ -408,11 +415,14 @@ export function DealActionBar({ agreementAddr }: Props) {
             </Button>
           )}
           {myResponsePending && responseWindowOpen && (
+            // Компактный бар — полного баннера со странице сделки здесь нет
+            // места, но цена молчания и срок не могут отсутствовать вовсе:
+            // это же правило, что откроет отдельный роут /chat, минуя
+            // страницу сделки целиком. `title` переиспользует существующий
+            // ключ dispute_respond_prompt — тот же текст, что и в баннере.
             <Button size="sm" variant="secondary" className="h-7 text-xs px-2.5"
-              onClick={async () => {
-                const ok = await run('respondToDispute', t("deal.dispute_respond_success"));
-                if (ok) { refetchClientResponded(); refetchExecutorResponded(); }
-              }}
+              title={responseDeadline ? t("deal.dispute_respond_prompt", { date: responseDeadline.toLocaleString() }) : undefined}
+              onClick={() => run('respondToDispute', t("deal.dispute_respond_success"))}
               disabled={busy}>
               {t("deal.dispute_respond_btn")}
             </Button>

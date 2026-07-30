@@ -442,8 +442,16 @@ export default function DealDetailPage() {
       // parsed.status stays stale for that whole window. Clearing busy right
       // away re-enabled every action button gated on that stale status,
       // letting a same/related action re-fire against state that had already
-      // moved on (wasting a signature on a guaranteed on-chain revert).
-      setTimeout(() => { refetchDetails(); setIsFunding(false); }, 2000);
+      // moved on (wasting a signature on a guaranteed on-chain revert). The
+      // respondToDispute flags ride the same delayed call for the same
+      // reason — an immediate refetch here would race the same lag, come
+      // back stale `false`, and leave the button clickable past its own
+      // success.
+      setTimeout(() => {
+        refetchDetails();
+        if (fn === 'respondToDispute') { refetchClientResponded(); refetchExecutorResponded(); }
+        setIsFunding(false);
+      }, 2000);
       return true;
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
@@ -966,10 +974,7 @@ export default function DealDetailPage() {
               )}
               {myResponsePending && responseWindowOpen && (
                 <Button size="sm" variant="secondary"
-                  onClick={async () => {
-                    const ok = await handleAction('respondToDispute', t("deal.dispute_respond_success"));
-                    if (ok) { refetchClientResponded(); refetchExecutorResponded(); }
-                  }}
+                  onClick={() => handleAction('respondToDispute', t("deal.dispute_respond_success"))}
                   disabled={busy}>
                   {t("deal.dispute_respond_btn")}
                 </Button>
