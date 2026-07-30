@@ -253,6 +253,14 @@ cast call $DIAMOND_ADDRESS "getSvgRenderer()(address)" --rpc-url https://sepolia
 
 ## Шаг 5. Реализация `Agreement`
 
+> ⏸ **Задержан 30 июля 2026 сознательно.** Ждёт реализации правила явки —
+> `docs/superpowers/specs/2026-07-30-empty-dispute-response-rule-design.md`.
+> Причина: `totalAgreements()` = 0, и любая сделка, созданная между двумя
+> выкатками эталона, навсегда останется с тем правилом таймаута, которое
+> действовало при её создании — клон несёт свою реализацию намертво. Выкатить
+> сейчас значит завести в живом протоколе два разных правила вместо одного.
+> Шаги 1-4 от этого не зависят и едут по плану.
+
 ```bash
 forge script script/UpgradeAgreementDisputeFee.s.sol \
   --rpc-url https://sepolia.base.org --private-key $PRIVATE_KEY --broadcast -vvv
