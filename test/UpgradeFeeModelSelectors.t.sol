@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../script/UpgradeFeeModel.s.sol";
 import "../script/DeployFull.s.sol";
 import "../src/DiamondProxy.sol";
+import "./BoardsFixture.sol";
 
 /// Anti-drift gate for script/UpgradeFeeModel.s.sol — same design as
 /// test/DeployFullSelectors.t.sol, adapted for a Replace+Add upgrade instead
@@ -289,5 +290,102 @@ contract UpgradeFeeModelSelectorsTest is Test {
                 assertTrue(flat[i] != flat[j], "duplicate selector across facets post-upgrade");
             }
         }
+    }
+}
+
+/// Второй гейт того же скрипта, но про арифметику слота, а не про селекторы.
+///
+/// script/UpgradeFeeModel.s.sol читает feeFloor СЫРЫМ чтением хранилища
+/// (FACTORY_STORAGE_POSITION + FEE_FLOOR_SLOT_OFFSET), потому что getFeeFloor()
+/// — сам один из 14 добавляемых селекторов: до броадкаста на живом диамонде его
+/// физически нечем вызвать. От этого чтения зависит единственная проверка,
+/// которая стоит между оператором и потерей шести оплаченных деплоев фасетов:
+/// `require(currentFloor == 0)`. Ошибись смещением — и оно вернёт чужой слот.
+/// На нуле (например, на пустом хвосте раскладки) пре-флайт пройдёт, а
+/// initFeeModel уронит ВЕСЬ cut на AlreadyInitialized.
+///
+/// До этого теста корректность смещения держалась косвенно — на
+/// BoardsFixture.SLOT_FEE_FLOOR, который проверяется внутри
+/// _unconfigureFeeModel() и падал бы в тестах ДОСОК. Теперь смещение привязано
+/// к настоящей раскладке здесь: тест поднимает локальный диамонд, крутит
+/// feeFloor через реальные setFeeFloor()/getFeeFloor() (то есть через
+/// storage-резолвинг самого Solidity) и требует, чтобы сырое чтение скрипта
+/// отдавало то же самое значение.
+///
+/// Наследует BoardsFixture ради _deployBoardsDiamond/_unconfigureFeeModel и
+/// доступа к SLOT_FEE_FLOOR — той самой константе, с которой смещение и должно
+/// быть связано явно.
+contract UpgradeFeeModelFeeFloorSlotTest is BoardsFixture {
+    /// Инициализация на объявлении, а не в setUp: BoardsFixture.setUp() не
+    /// virtual (и ни один другой тест его не переопределяет), а переделывать
+    /// фикстуру ради одного поля незачем — конструктор всё равно отрабатывает
+    /// раньше setUp.
+    UpgradeFeeModel internal upgrade = new UpgradeFeeModel();
+
+    /// Смещение в скрипте и смещение в фикстуре — одно число, а не два похожих.
+    function testFeeFloorOffsetMatchesFixtureConstant() public view {
+        assertEq(
+            upgrade.FEE_FLOOR_SLOT_OFFSET(),
+            SLOT_FEE_FLOOR,
+            "UpgradeFeeModel.FEE_FLOOR_SLOT_OFFSET drifted from BoardsFixture.SLOT_FEE_FLOOR"
+        );
+    }
+
+    /// Сырое чтение скрипта == getFeeFloor() на свежесконфигурированном
+    /// диамонде. Значение ненулевое (initFactory засеял $1), поэтому совпадение
+    /// не может быть случайным «0 == 0» по пустому слоту.
+    function testRawFeeFloorReadMatchesGetterOnLiveLayout() public view {
+        uint256 viaGetter = FactoryFacet(address(diamond)).getFeeFloor();
+        assertEq(viaGetter, 1_000_000, "initFactory should have seeded feeFloor = $1");
+        assertEq(
+            upgrade.readFeeFloorRaw(address(diamond)),
+            viaGetter,
+            "raw slot read disagrees with getFeeFloor() - FEE_FLOOR_SLOT_OFFSET points at the wrong slot"
+        );
+    }
+
+    /// Сырое чтение ОТСЛЕЖИВАЕТ запись, а не просто совпало один раз. Проверка
+    /// сильнее предыдущей: любое другое смещение внутри Layout на смену
+    /// feeFloor не отреагирует (соседние поля не двигаются), и тест покраснеет.
+    /// Значение нарочно не круглое и не равно ничему другому в раскладке.
+    function testRawFeeFloorReadTracksSetFeeFloor() public {
+        uint256 probe = 7_777_777;
+        FactoryFacet(address(diamond)).setFeeFloor(probe);
+
+        assertEq(FactoryFacet(address(diamond)).getFeeFloor(), probe, "setFeeFloor did not take effect");
+        assertEq(
+            upgrade.readFeeFloorRaw(address(diamond)),
+            probe,
+            "raw slot read did not follow setFeeFloor - FEE_FLOOR_SLOT_OFFSET points at a different field"
+        );
+    }
+
+    /// Ноль тоже должен читаться нулём — это ровно то состояние живого
+    /// 0x760F…, на котором стоит пре-флайт скрипта: поля feeBps/feeFloor/
+    /// maxPendingRequests в хранилище никогда не существовало.
+    /// _unconfigureFeeModel() внутри себя утверждает, что обнуляет именно эти
+    /// три слота, так что фикстура и скрипт здесь сходятся на одном факте.
+    function testRawFeeFloorReadSeesTheUnconfiguredStateThePreflightGatesOn() public {
+        _unconfigureFeeModel(address(diamond));
+        assertEq(
+            upgrade.readFeeFloorRaw(address(diamond)),
+            0,
+            "raw slot read should report 0 on an unconfigured diamond - this is the pre-flight condition"
+        );
+    }
+
+    /// А на смещении, которое НЕ равно feeFloor, тот же сырой приём даёт другое
+    /// число — иначе три теста выше проходили бы при любом смещении, потому что
+    /// вся раскладка была бы забита одинаковым значением.
+    function testNeighbouringSlotsHoldSomethingElse() public {
+        uint256 probe = 7_777_777;
+        FactoryFacet(address(diamond)).setFeeFloor(probe);
+
+        bytes32 base = FactoryStorage.FACTORY_STORAGE_POSITION;
+        uint256 bps        = uint256(vm.load(address(diamond), bytes32(uint256(base) + SLOT_FEE_BPS)));
+        uint256 maxPending = uint256(vm.load(address(diamond), bytes32(uint256(base) + SLOT_MAX_PENDING_REQUESTS)));
+
+        assertTrue(bps != probe, "feeBps slot holds the feeFloor probe - offsets are indistinguishable");
+        assertTrue(maxPending != probe, "maxPendingRequests slot holds the feeFloor probe - offsets are indistinguishable");
     }
 }

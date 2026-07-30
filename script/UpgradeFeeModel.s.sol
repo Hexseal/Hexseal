@@ -120,11 +120,50 @@ pragma solidity ^0.8.20;
 // Значения — 500 bps (5%), floor 1_000_000 (1 USDC, 6 decimals), maxPending 5
 // — те же дефолты, что initFactory() выставляет на свежем деплое.
 //
+// ── САБГРАФ v2.2.0 — ЕДЕТ ВМЕСТЕ С ЭТИМ CUT'ОМ, А НЕ ПОСЛЕ ───────────────
+// Вторая зависимость этого cut'а, помимо сбора за спор ниже (и в отличие от
+// него — не «следующим шагом», а тем же окном выкатки). Своя заметка о
+// совместной выкатке лежит в subgraph/package.json (`_note_deploy`): v2.2.0
+// добавила сущность FeeCollection — индексацию события FeeCollected, которое
+// эмитят FactoryFacet, JobBoardFacet и ServiceBoardFacet этого же релиза.
+// Деплой — ручной, `npm run deploy:studio` из subgraph/ (публикация наружу).
+//
+// Что деградирует, пока сабграф старый: леджер дохода читается из
+// AgreementDeployed.fee, а это ПЕРЕСЧЁТ FactoryStorage.quote() на момент
+// НАЙМА (FactoryFacet.sol:254/273 и :308/327) — не то, что реально удержано:
+//   - на прямом найме (deployAgreement/deployAndFund) число совпадает с
+//     переведённым: quote() и перевод стоят в одной транзакции;
+//   - на досках расходится. acceptApplicant/acceptRequest зовут
+//     deployAgreement изнутри диамонда (msg.sender == address(this)), перевода
+//     комиссии там нет вовсе — реальные деньги это jobFeeHeld/requestFeeHeld,
+//     удержанные при ПОСТИНГЕ. Числа сходятся только если между постингом и
+//     наймом не менялись feeBps/feeFloor;
+//   - у заказов и заявок, опубликованных ДО этого cut'а, jobFeeHeld и
+//     requestFeeHeld равны нулю (живые фасеты этих полей не пишут вообще),
+//     поэтому AgreementDeployed.fee покажет процент, которого в той
+//     транзакции не списывали. FeeCollection на этом найме, наоборот,
+//     не появится: старая комиссия ушла при постинге фасетом, который
+//     FeeCollected не эмитит. Ни один из двух источников на таких сделках
+//     не полон — это цена перехода, а не баг сабграфа.
+//
+// Что НЕ деградирует: статусы сделок и деньги. FeeCollection не читает ни
+// один интерфейс (grep по frontend/src — ни одной ссылки), от него не
+// зависит ни один денежный или жизненный путь. Это аналитика — разбивка
+// дохода по kind (шесть видов, schema.graphql:66-85), и только она. Тем
+// этот пункт и отличается от docs/OPEN-ITEMS.md п.8, где без хендлера
+// пользователь видит открытым спор, которого на цепи уже нет.
+//
+// Задержка не теряет данные навсегда: subgraph.yaml держит
+// startBlock: 44613049, новая версия синхронизируется с него, поэтому
+// выкаченный позже v2.2.0 доиндексирует FeeCollection задним числом. Плата
+// за задержку — окно, в котором леджер дохода неверен, а не дырка в истории.
+//
 // ── СБОР ЗА СПОР 3% — ЧТО ЗАРАБОТАЕТ, А ЧТО НЕТ ──────────────────────────
 // ArbiterRegistryFacet.creditDisputeFee/getTreasurySlice/withdrawTreasurySlice
 // монтируются ЭТИМ cut'ом и готовы принимать сбор — но звать их пока некому.
-// Сбор считает и переводит Agreement.resolveDispute (DISPUTE_FEE_BPS = 300,
-// Agreement.sol:285,516,698), а Agreement — НЕ фасет: это реализация для
+// Сбор считает и переводит Agreement.resolveDispute (DISPUTE_FEE_BPS = 300 —
+// Agreement.sol:285 объявление, :518 вычисление, :728 try-вызов
+// creditDisputeFee), а Agreement — НЕ фасет: это реализация для
 // EIP-1167 клонов за AgreementDeployer.implementation (immutable, см. выше).
 // Живой клон-деплойер указывает на Agreement, развёрнутый
 // UpgradeAgreementDeployerV5 27.07 — ДО того, как в исходники попал сбор за
@@ -179,6 +218,14 @@ contract UpgradeFeeModel is Script {
     uint256 constant NEW_FEE_FLOOR   = 1_000_000;  // 1 USDC (6 decimals)
     uint256 constant NEW_MAX_PENDING = 5;
 
+    /// Смещение `feeFloor` внутри FactoryStorage.Layout, в слотах от
+    /// FACTORY_STORAGE_POSITION. public — чтобы
+    /// test/UpgradeFeeModelSelectors.t.sol сверял именно ЭТО число, а не
+    /// повторял его у себя: разъедется раскладка — красным станет тест про
+    /// апгрейд, а не только чужая фикстура. Обоснование числа — в
+    /// readFeeFloorRaw() ниже.
+    uint256 public constant FEE_FLOOR_SLOT_OFFSET = 9;
+
     function run() external {
         address diamond     = vm.envAddress("DIAMOND_ADDRESS");
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -203,8 +250,8 @@ contract UpgradeFeeModel is Script {
         // из 14 Add-селекторов этого же скрипта, вызвать его нечем (проверено
         // руками: живая цепь ревертит "Diamond: function not found" на
         // FactoryFacet(diamond).getFeeFloor() ДО этого апгрейда). Значение
-        // читается напрямую из хранилища через _readFeeFloorRaw ниже.
-        uint256 currentFloor = _readFeeFloorRaw(diamond);
+        // читается напрямую из хранилища через readFeeFloorRaw ниже.
+        uint256 currentFloor = readFeeFloorRaw(diamond);
         require(
             currentFloor == 0,
             "UpgradeFeeModel: feeFloor is already nonzero on chain - initFeeModel would revert AlreadyInitialized and take the whole cut down with it"
@@ -341,9 +388,15 @@ contract UpgradeFeeModel is Script {
 
         console.log("=== Rollback ===");
         console.log("One diamondCut: Replace each of the six groups above back onto <old*>, PLUS");
-        console.log("Remove (action 2) of the 14 Add selectors, in the SAME cut. Do not Replace");
-        console.log("the 14 Add selectors onto an old facet - none of the six old facets below");
-        console.log("implement them.");
+        console.log("Remove (action 2, facetAddress MUST be address(0) - see DiamondProxy.sol:194)");
+        console.log("of the 14 Add selectors, in the SAME cut.");
+        console.log("");
+        console.log("Never Replace the 14 Add selectors onto an old facet. That cut does NOT");
+        console.log("revert - replaceFunctions only checks the target facet is a DIFFERENT address");
+        console.log("that has SOME code, never that it implements the selector. It succeeds, loupe");
+        console.log("reports the selector mounted, and every call to it reverts with empty");
+        console.log("returndata. Silent and invisible to facet-level monitoring. Remove is the");
+        console.log("only correct action for them. Same warning: docs/RUNBOOK-dispute-settlement.md.");
         console.log("  <old FactoryFacet>         =", oldFactory);
         console.log("  <old ArbiterRegistryFacet> =", oldArbiter);
         console.log("  <old JobBoardFacet>        =", oldJobBoard);
@@ -409,7 +462,7 @@ contract UpgradeFeeModel is Script {
     /// его физически нечем вызвать, `Diamond: function not found`.
     ///
     /// Смещение внутри FactoryStorage.Layout (10 полей до feeFloor, с учётом
-    /// packing — подтверждено юнит-тестом на слот при написании этого файла):
+    /// packing):
     ///   +0 usdc, +1 feeRecipient, +2 regionFee (mapping — резервирует слот
     ///   целиком), +3 trustedForwarder, +4 diamond+paused (packed вместе, т.к.
     ///   20+1 <= 32 байт), +5 protocolArbiter, +6 arbitrationThreshold,
@@ -417,9 +470,16 @@ contract UpgradeFeeModel is Script {
     /// Раскладка append-only (script/check-storage-structs.sh это гейтит), то
     /// есть смещение +9 стабильно навсегда, а не только сегодня — новые поля
     /// дописываются СТРОГО в конец, существующие никогда не сдвигаются.
-    function _readFeeFloorRaw(address diamond) internal view returns (uint256) {
+    ///
+    /// public, а не internal, по той же причине, что buildFeeModelCuts выше:
+    /// test/UpgradeFeeModelSelectors.t.sol зовёт ИМЕННО ЭТУ функцию против
+    /// локального диамонда, где feeFloor выставлен через getFeeFloor()/
+    /// setFeeFloor(), то есть через настоящую раскладку. Если смещение
+    /// разъедется — красным станет тест про апгрейд, а не только
+    /// BoardsFixture._unconfigureFeeModel.
+    function readFeeFloorRaw(address diamond) public view returns (uint256) {
         bytes32 base = FactoryStorage.FACTORY_STORAGE_POSITION;
-        bytes32 slot = bytes32(uint256(base) + 9);
+        bytes32 slot = bytes32(uint256(base) + FEE_FLOOR_SLOT_OFFSET);
         return uint256(vm.load(diamond, slot));
     }
 
