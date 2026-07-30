@@ -171,6 +171,11 @@ const AGR_SPLIT_EVENT_ABI = [
 ];
 const agrSplitInterface = new ethers.Interface(AGR_SPLIT_EVENT_ABI);
 
+const AGR_RESPONDED_EVENT_ABI = [
+  'event DisputeResponded(address indexed party)',
+];
+const agrRespondedInterface = new ethers.Interface(AGR_RESPONDED_EVENT_ABI);
+
 /** REFUNDED(2), the status the split shares with a genuine refund. */
 const AGR_STATUS_REFUNDED = 2;
 
@@ -198,6 +203,22 @@ export function findDisputeSplit(logs, agreementAddress) {
     if (ev?.name === 'DisputeSplitNoVerdict') {
       return { toClient: ev.args.toClient, toExecutor: ev.args.toExecutor };
     }
+  }
+  return null;
+}
+
+/**
+ * Who responded to the dispute in this transaction. Scoped by agreement address
+ * for the same reason as findDisputeSplit: the agreement itself emits this event,
+ * not the Diamond, so it never lands in the shared boardEventInterface.
+ */
+export function findDisputeResponded(logs, agreementAddress) {
+  const target = agreementAddress?.toLowerCase();
+  for (const log of logs ?? []) {
+    if (target && log.address?.toLowerCase() !== target) continue;
+    let ev;
+    try { ev = agrRespondedInterface.parseLog(log); } catch { continue; }
+    if (ev?.name === 'DisputeResponded') return { party: ev.args.party };
   }
   return null;
 }
@@ -334,6 +355,23 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
     // front because the Diamond's AgreementStatusUpdated is emitted first (from
     // inside _complete()) and the loop below returns on the first match.
     const split = findDisputeSplit(receipt.logs, agreementAddress);
+
+    // Someone answered the dispute — tell the other side, since their silence costs
+    // them without a sound. Hardcoded roles (client/executor/both) don't fit here:
+    // the recipient is picked by comparison, same as the AppealRaised case above.
+    const responded = findDisputeResponded(receipt.logs, agreementAddress);
+    if (responded) {
+      const party = responded.party?.toLowerCase();
+      const other = party === client ? executor : party === executor ? client : null;
+      if (other) {
+        await sendPush(other, {
+          title: 'Dispute Answered',
+          body:  'The other side answered the dispute. Answer it too — staying silent costs a quarter of the escrow.',
+          url:   `/deal/${agreementAddress}`,
+        });
+      }
+      return;
+    }
 
     // Check for AgreementStatusUpdated event first (terminal state changes).
     // Scoped to THIS agreement: the recipients, the deal URL and the copy below all
