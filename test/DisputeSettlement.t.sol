@@ -1101,6 +1101,12 @@ contract DisputeSettlementTest is Test {
 
         uint256 cBefore = usdc.balanceOf(client);
 
+        // Событие несёт executorPaid, а не toExecutor: причитались 50 USDC,
+        // дошёл ноль. Без этой проверки подмена одной переменной на другую
+        // прошла бы мимо балансовых утверждений выше — они смотрят только на
+        // клиента, которому недоставленное и так упало.
+        vm.expectEmit(true, false, false, true, address(a));
+        emit Agreement.DisputeUnanswered(client, 200_000_000, 0);
         vm.prank(client);
         a.triggerArbiterTimeout();
 
@@ -1122,6 +1128,11 @@ contract DisputeSettlementTest is Test {
 
         uint256 cBefore = usdc.balanceOf(client);
 
+        // Та же проверка на второй ветке (молчал клиент, аргументы выписаны в
+        // ДРУГОМ порядке): явившийся исполнитель заблокирован, ему причитались
+        // 150 USDC, дошёл ноль — и в событии обязан стоять ноль.
+        vm.expectEmit(true, false, false, true, address(a));
+        emit Agreement.DisputeUnanswered(executor, 0, 200_000_000);
         vm.prank(executor);
         a.triggerArbiterTimeout();
 
@@ -1142,6 +1153,52 @@ contract DisputeSettlementTest is Test {
 
         vm.expectEmit(true, false, false, true, address(a));
         emit Agreement.DisputeUnanswered(client, 150_000_000, 50_000_000);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+    }
+
+    /// Та же полезная нагрузка на ЗЕРКАЛЬНОЙ ветке — молчал клиент. Аргументы
+    /// там выписаны руками во второй раз и в другом порядке: единственное место
+    /// в контракте, где одно событие собирается дважды. Балансовые тесты
+    /// перестановку `toResponder`/`toSilent` не заметят вовсе (деньги уходят
+    /// теми же переводами), а декодируется событие позиционно — в поля
+    /// сабграфа и в суммы уведомления. Перестановка напечатала бы четверть
+    /// молчавшего как долю явившегося.
+    function testTimeoutUnansweredEmitsResponderFirstWhenTheClientWasSilent() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(executor);
+        a.raiseDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        // responder = исполнитель, ему 150 (три четверти), молчавшему клиенту 50.
+        vm.expectEmit(true, false, false, true, address(a));
+        emit Agreement.DisputeUnanswered(executor, 150_000_000, 50_000_000);
+        vm.prank(executor);
+        a.triggerArbiterTimeout();
+    }
+
+    /// Дележ пополам: событие тоже несёт переведённые суммы, и до сих пор его не
+    /// проверял ни один тест — только балансы. Порядок аргументов здесь
+    /// обратный аргументам `DisputeUnanswered` (toClient первым), так что
+    /// перепутать их между двумя ветками ничто не мешало.
+    function testTimeoutSplitEmitsTransferredAmounts() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_001));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+        vm.prank(executor);
+        a.respondToDispute();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        // Нечётный котёл намеренно: floor(pot/2) исполнителю, остаток клиенту —
+        // на равных суммах перестановка аргументов была бы невидима.
+        vm.expectEmit(false, false, false, true, address(a));
+        emit Agreement.DisputeSplitNoVerdict(100_000_001, 100_000_000);
         vm.prank(client);
         a.triggerArbiterTimeout();
     }
