@@ -444,6 +444,7 @@
     "dispute_respond_success": "応答しました · あなたの立場が記録されました。",
     "dispute_respond_prompt": "{date}までにこの争議に応答してください。沈黙したまま誰も争議を引き受けなかった場合、エスクローの半分ではなく4分の1しか受け取れません。",
     "dispute_respond_done": "この争議に応答済みです。誰も引き受けなければ、エスクローは半分ずつに分割されます。",
+    "dispute_respond_done_waiting": "この争議に応答済みです。相手方はまだ応答していません — 相手が沈黙したまま誰も争議を引き受けなければ、エスクローの4分の3を受け取ります。",
     "confirm_dispute_btn": "紛争を確認",
     "fund_sign_permit": "署名 1/2：ウォレットでUSDC許可…",
     "fund_success": "契約に資金提供完了！",

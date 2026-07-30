@@ -840,8 +840,29 @@ export default function DealDetailPage() {
             </p>
           </div>
         )}
-        {parsed?.status === 4 && !myResponsePending && (isClient || isExecutor) && (
-          <p className="text-xs text-white/25 leading-relaxed">{t("deal.dispute_respond_done")}</p>
+        {/* «Вы откликнулись» — и что из этого следует. Два условия здесь
+            обязательны, и оба были пропущены.
+
+            Оба флага должны быть ПРОЧИТАНЫ. `!myResponsePending` истинно и
+            когда флаг равен undefined — старый клон (там clientResponded()
+            ревертит вовсе) или обычный лаг RPC. Тогда строка печаталась про
+            дележ на сделке, где таймаут отдаст весь котёл клиенту, а баннер
+            рядом это же и скажет: два взаимоисключающих утверждения на одном
+            экране. Вся конструкция `decideArbiterTimeout` существует ровно
+            чтобы не называть исход без признака новой реализации.
+
+            И флаг КОНТРАГЕНТА решает, что сказать. Пополам — только когда
+            откликнулись оба. Поднявший спор, пока вторая сторона молчит, —
+            основной случай правила явки, и ему причитаются три четверти, а не
+            половина; обещать половину значило бы спорить с
+            `stale_arbiter_unanswered_body` на том же экране. */}
+        {parsed?.status === 4 && !myResponsePending && (isClient || isExecutor)
+          && clientResponded !== undefined && executorResponded !== undefined && (
+          <p className="text-xs text-white/25 leading-relaxed">
+            {clientResponded && executorResponded
+              ? t("deal.dispute_respond_done")
+              : t("deal.dispute_respond_done_waiting")}
+          </p>
         )}
 
         {/* ── Pending tx banner ───────────────────────────────────────────────── */}

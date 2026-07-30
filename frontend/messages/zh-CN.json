@@ -444,6 +444,7 @@
     "dispute_respond_success": "已回应 · 你的立场已记录在案。",
     "dispute_respond_prompt": "请在 {date} 前回应本争议。如果你保持沉默且无人接手该争议，你将只拿到托管资金的四分之一，而不是一半。",
     "dispute_respond_done": "你已回应本争议。如果无人接手，托管资金将被平分。",
+    "dispute_respond_done_waiting": "你已回应本争议。对方尚未回应 — 如果对方保持沉默且无人接手该争议，你将拿到托管资金的四分之三。",
     "confirm_dispute_btn": "确认争议",
     "fund_sign_permit": "签名 1/2：在钱包中授权 USDC…",
     "fund_success": "交易已注资！",

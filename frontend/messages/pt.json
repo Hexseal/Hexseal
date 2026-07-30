@@ -444,6 +444,7 @@
     "dispute_respond_success": "Respondida · sua posição está registrada.",
     "dispute_respond_prompt": "Responda a esta disputa até {date}. Se você ficar em silêncio e nenhum árbitro assumir o caso, você recebe um quarto da custódia em vez da metade.",
     "dispute_respond_done": "Você respondeu a esta disputa. Se nenhum árbitro assumi-la, a custódia é dividida ao meio.",
+    "dispute_respond_done_waiting": "Você respondeu a esta disputa. A outra parte ainda não respondeu — se ela ficar em silêncio e nenhum árbitro assumir o caso, você recebe três quartos da custódia.",
     "confirm_dispute_btn": "Confirmar Disputa",
     "fund_sign_permit": "Assinatura 1/2: Permissão USDC na carteira…",
     "fund_success": "Acordo financiado!",

@@ -444,6 +444,7 @@
     "dispute_respond_success": "Répondu · votre position est enregistrée.",
     "dispute_respond_prompt": "Répondez à ce litige avant le {date}. Si vous restez silencieux et qu'aucun arbitre ne prend l'affaire, vous recevrez un quart du séquestre au lieu de la moitié.",
     "dispute_respond_done": "Vous avez répondu à ce litige. Si aucun arbitre ne le prend, le séquestre sera partagé en deux.",
+    "dispute_respond_done_waiting": "Vous avez répondu à ce litige. L'autre partie n'a pas encore répondu — si elle reste silencieuse et qu'aucun arbitre ne prend l'affaire, vous recevrez trois quarts du séquestre.",
     "confirm_dispute_btn": "Confirmer le Litige",
     "fund_sign_permit": "Signature 1/2 : Permis USDC dans le portefeuille…",
     "fund_success": "Accord financé !",

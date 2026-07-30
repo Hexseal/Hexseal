@@ -444,6 +444,7 @@
     "dispute_respond_success": "Risposto · la tua posizione è registrata.",
     "dispute_respond_prompt": "Rispondi a questa controversia entro il {date}. Se rimani in silenzio e nessun arbitro prende il caso, riceverai un quarto del deposito invece della metà.",
     "dispute_respond_done": "Hai risposto a questa controversia. Se nessun arbitro la prende, il deposito verrà diviso a metà.",
+    "dispute_respond_done_waiting": "Hai risposto a questa controversia. L'altra parte non ha ancora risposto — se rimane in silenzio e nessun arbitro prende il caso, riceverai tre quarti del deposito.",
     "confirm_dispute_btn": "Conferma Controversia",
     "fund_sign_permit": "Firma 1/2: Permesso USDC nel portafoglio…",
     "fund_success": "Accordo finanziato!",

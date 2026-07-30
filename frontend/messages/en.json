@@ -459,6 +459,7 @@
     "dispute_respond_success": "Answered · your side is on the record.",
     "dispute_respond_prompt": "Answer this dispute before {date}. If you stay silent and no arbiter takes the case, you get a quarter of the escrow instead of half.",
     "dispute_respond_done": "You answered this dispute. If no arbiter takes it, the escrow is split in half.",
+    "dispute_respond_done_waiting": "You answered this dispute. The other side hasn't answered yet — if it stays silent and no arbiter takes the case, you get three quarters of the escrow.",
     "confirm_dispute_btn": "Confirm Dispute",
     "fund_sign_permit": "Sign 1/2: USDC permit in wallet…",
     "fund_success": "Deal funded!",

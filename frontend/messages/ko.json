@@ -444,6 +444,7 @@
     "dispute_respond_success": "응답 완료 · 당신의 입장이 기록되었습니다.",
     "dispute_respond_prompt": "{date}까지 이 분쟁에 응답하세요. 침묵하고 아무도 이 분쟁을 맡지 않으면, 에스크로의 절반이 아니라 4분의 1만 받게 됩니다.",
     "dispute_respond_done": "이 분쟁에 응답했습니다. 아무도 맡지 않으면 에스크로는 절반씩 나뉩니다.",
+    "dispute_respond_done_waiting": "이 분쟁에 응답했습니다. 상대방은 아직 응답하지 않았습니다 — 상대가 침묵하고 아무도 이 분쟁을 맡지 않으면 에스크로의 4분의 3을 받습니다.",
     "confirm_dispute_btn": "분쟁 확인",
     "fund_sign_permit": "서명 1/2: 지갑에서 USDC 허가…",
     "fund_success": "계약에 자금이 제공되었습니다!",

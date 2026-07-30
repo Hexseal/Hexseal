@@ -444,6 +444,7 @@
     "dispute_respond_success": "Respondida · tu posición quedó registrada.",
     "dispute_respond_prompt": "Responde a esta disputa antes del {date}. Si guardas silencio y ningún árbitro toma el caso, recibirás un cuarto de la custodia en vez de la mitad.",
     "dispute_respond_done": "Respondiste a esta disputa. Si ningún árbitro la toma, la custodia se divide por la mitad.",
+    "dispute_respond_done_waiting": "Respondiste a esta disputa. La otra parte aún no ha respondido — si guarda silencio y ningún árbitro toma el caso, recibirás tres cuartos de la custodia.",
     "confirm_dispute_btn": "Confirmar Disputa",
     "fund_sign_permit": "Firma 1/2: permiso USDC en billetera…",
     "fund_success": "¡Trato fondeado!",

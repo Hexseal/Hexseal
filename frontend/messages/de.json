@@ -444,6 +444,7 @@
     "dispute_respond_success": "Beantwortet · deine Seite ist erfasst.",
     "dispute_respond_prompt": "Antworte auf diesen Streitfall bis {date}. Wenn du schweigst und kein Schlichter den Fall übernimmt, bekommst du ein Viertel des Escrows statt der Hälfte.",
     "dispute_respond_done": "Du hast auf diesen Streitfall geantwortet. Übernimmt kein Schlichter den Fall, wird das Escrow hälftig geteilt.",
+    "dispute_respond_done_waiting": "Du hast auf diesen Streitfall geantwortet. Die andere Seite hat noch nicht geantwortet — bleibt sie stumm und übernimmt kein Schlichter den Fall, bekommst du drei Viertel des Escrows.",
     "confirm_dispute_btn": "Streit bestätigen",
     "fund_sign_permit": "Signatur 1/2: USDC-Genehmigung in Wallet…",
     "fund_success": "Deal einbezahlt!",
