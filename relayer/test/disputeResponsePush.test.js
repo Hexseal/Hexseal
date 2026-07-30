@@ -8,13 +8,35 @@ import { signMessage } from './helpers/signing.js';
 
 /**
  * respondToDispute() does not move the agreement's status in the Registry, so the
- * status-driven AGR_PUSH_MSG table never sees it, and the party who did NOT
- * respond gets no signal that the clock on their own silence is running — it
- * currently costs them a quarter of the escrow with nobody telling them so.
+ * status-driven AGR_PUSH_MSG table never sees it. This file covers the push that
+ * fills that gap: the agreement's own DisputeResponded event is read out of the
+ * receipt (same trick as DisputeSplitNoVerdict — the Diamond never emits it) and
+ * the OTHER party is pushed, chosen by comparison the same way AppealRaised
+ * chooses its recipient.
  *
- * The fix reads the agreement's own DisputeResponded event out of the receipt
- * (same trick as DisputeSplitNoVerdict — the Diamond never emits it) and pushes
- * the OTHER party, chosen the same way AppealRaised chooses its recipient.
+ * WHO THAT OTHER PARTY IS, AND WHY IT IS NEVER THE ONE AT RISK.
+ *
+ * `raiseDispute` marks the raiser as present on the spot (`src/Agreement.sol`),
+ * so `respondToDispute()` reverts AlreadyResponded for him and only the second
+ * party can ever call it. Therefore whoever responded is always the NON-raiser,
+ * and the party opposite the responder — this push's recipient — is always the
+ * raiser: someone who already responded and risks nothing.
+ *
+ * So this message is purely INFORMATIONAL, and it must stay that way. An earlier
+ * version read "Answer it too — staying silent costs a quarter of the escrow",
+ * which demanded of its only possible recipient an action that reverts, costing
+ * him a signature and the relayer gas for nothing. What he does need to know is
+ * that the arithmetic moved: with both sides present a timeout now splits the
+ * escrow in half, where a moment ago three quarters of it were his.
+ *
+ * The side that actually has a clock running is warned when the dispute is
+ * RAISED, not here — see `disputeRaisedWarningPush.test.js`. By the time this
+ * event fires, the deadline is no longer news to anyone who can act on it.
+ *
+ * ⚠️ Asserting /quarter/ on this body is NOT enough and was actively misleading:
+ * it matches "three quarters" in the current text just as happily as it matched
+ * "a quarter" in the old one, so the whole reversal of meaning slipped through a
+ * green test. The assertions below pin the informational reading explicitly.
  */
 
 const AGREEMENT = '0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa';
@@ -103,12 +125,12 @@ async function makePair() {
   return { clientWallet, executorWallet, client, executor, agreement };
 }
 
-describe('POST /relay/notify — the silent side gets told the other side answered', () => {
+describe('POST /relay/notify — the raiser is told the other side answered too', () => {
   beforeEach(() => {
     webpush.sendNotification.mockClear();
   });
 
-  it('client responds — only the executor is pushed, not the client', async () => {
+  it('client responds — only the executor (the raiser) is pushed, not the client', async () => {
     const { client, executor, agreement } = await makePair();
 
     mockProviderReceipt({ logs: [respondedLog(agreement, client)] });
@@ -123,16 +145,32 @@ describe('POST /relay/notify — the silent side gets told the other side answer
     await vi.waitFor(() => expect(webpush.sendNotification).toHaveBeenCalledTimes(1));
     const [subscription, payload] = webpush.sendNotification.mock.calls[0];
     // Assert on the address the push actually reached, not just the call count —
-    // sending to the wrong party would be silent otherwise.
+    // sending to the wrong party would be silent otherwise. The client responded,
+    // so the executor is the raiser: the one who already answered.
     expect(subscription.endpoint.toLowerCase()).toContain(executor);
     expect(subscription.endpoint.toLowerCase()).not.toContain(client);
     const body = JSON.parse(payload);
     expect(body.title).toBe('Dispute Answered');
-    expect(body.body.toLowerCase()).toMatch(/quarter/);
     expect(body.url).toBe(`/deal/${agreement}`);
+
+    // ── The meaning, pinned so it cannot silently reverse again ──────────────
+    //
+    // Both halves of the arithmetic, and in this order: the outcome is now a
+    // half, and it used to be three quarters. /quarter/ alone would match either
+    // reading — the old "staying silent costs a quarter" scored exactly the same
+    // green as this text does, which is how the reversal got through untouched.
+    expect(body.body).toMatch(/split in half/i);
+    expect(body.body).toMatch(/three quarters/i);
+
+    // And nothing is demanded of him: respondToDispute() reverts
+    // AlreadyResponded for the raiser, so any imperative here is a request for a
+    // signature spent on a guaranteed revert. "answered" (past, about the other
+    // side) is fine; "answer it" (imperative, at the reader) is not.
+    expect(body.body).not.toMatch(/\banswer (it|this|the dispute)\b/i);
+    expect(body.body).not.toMatch(/staying silent|stay silent|costs you/i);
   });
 
-  it('executor responds — only the client is pushed, not the executor (symmetry)', async () => {
+  it('executor responds — only the client (the raiser) is pushed, not the executor (symmetry)', async () => {
     const { client, executor, agreement } = await makePair();
 
     mockProviderReceipt({ logs: [respondedLog(agreement, executor)] });
