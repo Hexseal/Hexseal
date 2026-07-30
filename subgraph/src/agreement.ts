@@ -47,10 +47,20 @@ export function handleAutoApproved(event: AutoApproved): void {
   a.save()
 }
 
+// Флаги явки ставят ДВА писателя, не один: raiseDispute отмечает поднявшего на
+// месте (src/Agreement.sol), а respondToDispute — второго участника. Индексировать
+// только второго значит оставить поднявшему null там, где на цепи стоит true, и
+// первый, кто подключит эти поля по комментарию схемы, получит ПЕРЕВЁРНУТОЕ
+// предупреждение: поднявшему покажут, что молчит он.
 export function handleDisputeRaised(event: DisputeRaised): void {
   let a = Agreement.load(event.address.toHexString())
   if (!a) return
   a.status = 4
+  if (event.params.by.equals(a.client)) {
+    a.clientResponded = true
+  } else if (event.params.by.equals(a.executor)) {
+    a.executorResponded = true
+  }
   a.updatedAt = event.block.timestamp
   a.save()
 }
@@ -104,9 +114,11 @@ export function handleDisputeSplitNoVerdict(event: DisputeSplitNoVerdict): void 
 export function handleDisputeResponded(event: DisputeResponded): void {
   let a = Agreement.load(event.address.toHexString())
   if (!a) return
-  if (event.params.party.toHexString() == a.client.toHexString()) {
+  // Bytes.equals, а не сравнение hex-строк: побайтово идиоматичнее и дешевле при
+  // индексации — toHexString() на каждое сравнение аллоцирует строку.
+  if (event.params.party.equals(a.client)) {
     a.clientResponded = true
-  } else if (event.params.party.toHexString() == a.executor.toHexString()) {
+  } else if (event.params.party.equals(a.executor)) {
     a.executorResponded = true
   }
   a.updatedAt = event.block.timestamp
