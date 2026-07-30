@@ -9,6 +9,8 @@ import {
   TimedOut,
   ArbiterTimedOut,
   DisputeSplitNoVerdict,
+  DisputeResponded,
+  DisputeUnanswered,
 } from '../generated/templates/AgreementContract/Agreement'
 
 export function handleFunded(event: Funded): void {
@@ -94,6 +96,34 @@ export function handleDisputeSplitNoVerdict(event: DisputeSplitNoVerdict): void 
   a.status = 6
   a.splitToClient = event.params.toClient
   a.splitToExecutor = event.params.toExecutor
+  a.resolvedAt = event.block.timestamp
+  a.updatedAt = event.block.timestamp
+  a.save()
+}
+
+export function handleDisputeResponded(event: DisputeResponded): void {
+  let a = Agreement.load(event.address.toHexString())
+  if (!a) return
+  if (event.params.party.toHexString() == a.client.toHexString()) {
+    a.clientResponded = true
+  } else if (event.params.party.toHexString() == a.executor.toHexString()) {
+    a.executorResponded = true
+  }
+  a.updatedAt = event.block.timestamp
+  a.save()
+}
+
+// Спор закрылся таймаутом, а одна сторона на него не откликнулась: ей четверть
+// котла, явившемуся остаток. Статус тот же терминальный, что у ArbiterTimedOut
+// и дележа пополам — перечисление совпадает с enum Status агримента, чья
+// раскладка заморожена, расширять нельзя. Исходы различают суммы.
+export function handleDisputeUnanswered(event: DisputeUnanswered): void {
+  let a = Agreement.load(event.address.toHexString())
+  if (!a) return
+  a.status = 6
+  a.unansweredResponder = event.params.responder
+  a.unansweredToResponder = event.params.toResponder
+  a.unansweredToSilent = event.params.toSilent
   a.resolvedAt = event.block.timestamp
   a.updatedAt = event.block.timestamp
   a.save()

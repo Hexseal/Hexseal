@@ -61,6 +61,19 @@ type Agreement @entity {
   # одну половину.
   splitToClient: BigInt
   splitToExecutor: BigInt
+
+  # Кто откликнулся на спор. Нужны интерфейсу, чтобы показать цену молчания до
+  # того, как она наступит, а не после.
+  clientResponded: Boolean
+  executorResponded: Boolean
+
+  # Заполняются только когда спор закрылся таймаутом, а одна сторона на него не
+  # откликнулась: ей четверть котла, явившемуся остаток. Отдельно от
+  # splitToClient/splitToExecutor, потому что это другой исход с другими
+  # словами — «никто не рассудил, значит никто не выиграл» здесь неправда.
+  unansweredResponder: Bytes
+  unansweredToResponder: BigInt
+  unansweredToSilent: BigInt
 }
 
 # Одно поступление в казну — полный леджер дохода протокола. Событие эмитят три

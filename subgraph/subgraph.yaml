@@ -96,4 +96,12 @@ templates:
         # на цепи она финализирована и пуста.
         - event: DisputeSplitNoVerdict(uint256,uint256)
           handler: handleDisputeSplitNoVerdict
+        - event: DisputeResponded(indexed address)
+          handler: handleDisputeResponded
+        # Таймаут при незаклеймленном споре, когда одна сторона молчала: ей
+        # четверть котла. ArbiterTimedOut здесь, как и при дележе пополам, не
+        # эмитится — наказывать некого, — поэтому без своего хендлера сделка
+        # осталась бы в статусе «спор» навсегда.
+        - event: DisputeUnanswered(indexed address,uint256,uint256)
+          handler: handleDisputeUnanswered
       file: ./src/agreement.ts
