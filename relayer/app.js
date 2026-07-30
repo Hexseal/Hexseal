@@ -91,6 +91,11 @@ async function sendPush(address, payload) {
 
 const AGREEMENT_MINI_ABI = [
   'function getDetails() view returns (address client_, address executor_, address arbiter_, uint256 amount_, string terms_, uint256 deadlineDays_, uint256 fundedAt_, uint256 activatedAt_, uint256 markedDoneAt_, uint256 disputedAt_, uint256 resolvedAt_, uint8 status_)',
+  // Срок отклика на спор. Читается с контракта, а не берётся из константы здесь:
+  // DISPUTE_WINDOW уже менялась однажды (7 дней → 4), и захардкоженное число
+  // начнёт врать в пуше молча — а пуш живёт в шторке уведомлений, его не
+  // отзовёшь. Тем же способом читает фронт (frontend/src/app/deal/[address]).
+  'function DISPUTE_WINDOW() view returns (uint256)',
 ];
 
 const REGISTRY_MINI_ABI = [
@@ -140,6 +145,15 @@ const agrEventInterface = new ethers.Interface(AGR_STATUS_EVENT_ABI);
 // Push config for RegistryFacet.AgreementStatus event (ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4).
 // ACTIVE(0) is omitted — fund() doesn't call updateStatus in the current contract.
 // notify: 'executor' | 'client' | 'both' | 'both+arbiter'
+//
+// DISPUTED(3) is a fallback here, not the normal path: the two parties are in
+// opposite positions the moment a dispute is raised (only the non-raiser can
+// still respond, and only she loses a quarter by not doing it), so one message
+// for both roles is wrong by construction. When the receipt carries the
+// agreement's own DisputeRaised — every real raiseDispute does —
+// sendDisputeRaised() splits it into two messages and this row goes to the
+// raiser alone. It is still reached by a later syncRegistry() that carries the
+// status without the raiser.
 const AGR_PUSH_MSG = {
   1: { title: 'Deal Complete',      body: 'Payment has been released. The deal is closed.',      notify: 'both'         },
   2: { title: 'Deal Refunded',       body: 'The deal was cancelled and refunded.',                notify: 'both'         },
@@ -176,8 +190,21 @@ const AGR_RESPONDED_EVENT_ABI = [
 ];
 const agrRespondedInterface = new ethers.Interface(AGR_RESPONDED_EVENT_ABI);
 
+// Who raised the dispute. The Diamond's AgreementStatusUpdated says only THAT a
+// dispute exists, never by whom — and the two parties are in opposite positions
+// from the moment it is raised (see sendDisputeRaised below), so the raiser's
+// address is what decides who gets which message. Agreement-emitted, hence its
+// own interface rather than boardEventInterface.
+const AGR_RAISED_EVENT_ABI = [
+  'event DisputeRaised(address indexed by)',
+];
+const agrRaisedInterface = new ethers.Interface(AGR_RAISED_EVENT_ABI);
+
 /** REFUNDED(2), the status the split shares with a genuine refund. */
 const AGR_STATUS_REFUNDED = 2;
+
+/** DISPUTED(3) — the status whose two recipients need two different messages. */
+const AGR_STATUS_DISPUTED = 3;
 
 /**
  * Exact USDC amount, never shorter than two decimals: 200000000 → "200.00",
@@ -235,6 +262,73 @@ export function disputeSplitPushMsg({ toClient, toExecutor }) {
     body:  `Nobody took the dispute, so there was nobody to judge it. The escrow was split: `
          + `${usdcExact(toExecutor)} USDC to the executor, ${usdcExact(toClient)} USDC to the client.`,
     notify: 'both',
+  };
+}
+
+/**
+ * Who raised the dispute, from this agreement's own log in a mined receipt, or
+ * null. Address-scoped for the same reason as findDisputeSplit.
+ */
+export function findDisputeRaised(logs, agreementAddress) {
+  const target = agreementAddress?.toLowerCase();
+  for (const log of logs ?? []) {
+    if (target && log.address?.toLowerCase() !== target) continue;
+    let ev;
+    try { ev = agrRaisedInterface.parseLog(log); } catch { continue; }
+    if (ev?.name === 'DisputeRaised') return { by: ev.args.by };
+  }
+  return null;
+}
+
+/**
+ * Unambiguous instant, in UTC to the minute: "2026-08-03 09:41 UTC". The relayer
+ * has no user locale to render into (every push string here is hardcoded
+ * English), and a bare date would hide up to a day of the window.
+ */
+export function utcMinuteLabel(date) {
+  return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+/**
+ * When the response window closes, as a Date — or null if it could not be read.
+ *
+ * NOT `now + 4 days`. `DISPUTE_WINDOW` already changed once (7 days → 4), a
+ * hardcoded number would start lying silently, and unlike an on-screen hint a
+ * push sits in the notification tray until it is dismissed. The frontend reads
+ * it from the contract for exactly this reason; so does this.
+ *
+ * `disputedAt` costs nothing extra — it already came back in the `getDetails()`
+ * the caller does anyway — so the only added read is the window itself. Using
+ * the contract's own `disputedAt` rather than the block time of the receipt also
+ * makes the printed instant the one `triggerArbiterTimeout` will actually
+ * compare against, with no room for the two to drift.
+ */
+async function disputeResponseDeadline(agreementAddress, disputedAt) {
+  if (!disputedAt) return null;
+  try {
+    const agr = new ethers.Contract(agreementAddress, AGREEMENT_MINI_ABI, provider);
+    const window = await agr.DISPUTE_WINDOW();
+    return new Date(Number(BigInt(disputedAt) + BigInt(window)) * 1000);
+  } catch (e) {
+    // Degrade, don't drop: the price of silence is still worth saying, and the
+    // deal page shows the exact deadline. Staying quiet would be the bug this
+    // whole message exists to fix.
+    console.warn('[push] DISPUTE_WINDOW read failed — warning goes out without a date:', e.message ?? e);
+    return null;
+  }
+}
+
+/**
+ * The message for the side that has NOT responded — the only one with anything
+ * at stake. Names the deadline and the price of silence, because a rule nobody
+ * is told about before it fires is a trap, not a rule.
+ */
+export function disputeRaisedWarningMsg(deadline) {
+  const by = deadline ? ` by ${utcMinuteLabel(deadline)}` : '';
+  return {
+    title: 'Answer the Dispute',
+    body:  `A dispute was opened on your deal. Answer it${by} — if you stay silent `
+         + 'and nobody takes the case, you get a quarter of the escrow instead of half.',
   };
 }
 
@@ -350,15 +444,59 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
       return Promise.allSettled(sends);
     };
 
+    /**
+     * A dispute was just raised, and the two parties are NOT in the same
+     * position — so one message for both is wrong no matter how it is worded.
+     *
+     * `raiseDispute` marks the raiser as present on the spot
+     * (`src/Agreement.sol`), which means `respondToDispute()` reverts
+     * `AlreadyResponded` for him: he risks nothing and can do nothing. The clock
+     * runs against the OTHER side, and until this existed she was warned by no
+     * channel at all — her only push was AGR_PUSH_MSG[3], one message for both
+     * roles, with neither the deadline nor the price of silence in it.
+     *
+     * `sendCfg` cannot express this: its `notify` field knows only the hardcoded
+     * roles, and "the other side, whichever that is" is a comparison, not a
+     * role — same as the AppealRaised case in pushBoardEvents().
+     */
+    const sendDisputeRaised = async (raiser) => {
+      const url = `/deal/${agreementAddress}`;
+      const by = raiser?.toLowerCase();
+      const other = by === client ? executor : by === executor ? client : null;
+      // The raiser isn't one of our two parties — the log and the target
+      // disagree about whose deal this is, so trust neither and fall back to the
+      // role-blind message rather than guess who is at risk.
+      if (!by || !other) return sendCfg(AGR_PUSH_MSG[AGR_STATUS_DISPUTED]);
+
+      const deadline = await disputeResponseDeadline(agreementAddress, details.disputedAt_);
+      const warning = disputeRaisedWarningMsg(deadline);
+      const raiserCfg = AGR_PUSH_MSG[AGR_STATUS_DISPUTED];
+      return Promise.allSettled([
+        // The raiser keeps the old copy: nothing is running against him.
+        sendPush(by,    { title: raiserCfg.title, body: raiserCfg.body, url }),
+        sendPush(other, { title: warning.title,   body: warning.body,   url }),
+      ]);
+    };
+
     // A split pot reaches the Registry as REFUNDED(2), exactly like a real refund —
     // only the agreement's own event in THIS receipt tells them apart. Resolved up
     // front because the Diamond's AgreementStatusUpdated is emitted first (from
     // inside _complete()) and the loop below returns on the first match.
     const split = findDisputeSplit(receipt.logs, agreementAddress);
 
-    // Someone answered the dispute — tell the other side, since their silence costs
-    // them without a sound. Hardcoded roles (client/executor/both) don't fit here:
-    // the recipient is picked by comparison, same as the AppealRaised case above.
+    // Someone answered the dispute. The recipient here is ALWAYS the raiser, and
+    // that is structural, not incidental: `raiseDispute` marks the raiser present,
+    // so `respondToDispute()` is only callable by the second party, and the party
+    // opposite whoever responded is therefore the one who already responded.
+    //
+    // Which makes this message purely informational, and it used to demand an
+    // action that reverts — "answer it too" cost the reader a signature and the
+    // relayer gas for a guaranteed AlreadyResponded. What he actually needs to
+    // know is that the arithmetic moved: with both sides present a timeout splits
+    // the escrow in half, where a minute ago three quarters of it were his.
+    //
+    // The side with something at stake is warned when the dispute is RAISED
+    // (sendDisputeRaised above), not here — by then it is too late to be news.
     const responded = findDisputeResponded(receipt.logs, agreementAddress);
     if (responded) {
       const party = responded.party?.toLowerCase();
@@ -366,7 +504,8 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
       if (other) {
         await sendPush(other, {
           title: 'Dispute Answered',
-          body:  'The other side answered the dispute. Answer it too — staying silent costs a quarter of the escrow.',
+          body:  'The other side answered the dispute. If nobody takes the case, the escrow is '
+               + 'now split in half instead of three quarters to you.',
           url:   `/deal/${agreementAddress}`,
         });
       }
@@ -380,6 +519,11 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
     // receipt can only carry one (MinimalForwarder.execute() makes a single inner
     // call), which is why this was never a live bug — but that is a property of the
     // caller, not of this loop, and findDisputeSplit() right above already scopes.
+    // Who raised it, resolved up front for the same reason as the split above: the
+    // Diamond's status event is decoded in the loop below, which returns on the
+    // first match, and DISPUTED(3) alone doesn't say by whom.
+    const raised = findDisputeRaised(receipt.logs, agreementAddress);
+
     const target = agreementAddress?.toLowerCase();
     for (const log of receipt.logs) {
       try {
@@ -387,6 +531,14 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
         if (parsed?.name === 'AgreementStatusUpdated') {
           if (target && parsed.args.agreement?.toLowerCase() !== target) continue;
           const status = Number(parsed.args.newStatus);
+          // DISPUTED(3) with the raiser known — two recipients, two messages.
+          // Without the raiser (a later syncRegistry() carrying the status alone)
+          // there is nobody to compare against, and the role-blind message below
+          // is all we can honestly send.
+          if (status === AGR_STATUS_DISPUTED && raised) {
+            await sendDisputeRaised(raised.by);
+            return;
+          }
           const cfg = status === AGR_STATUS_REFUNDED && split
             ? disputeSplitPushMsg(split)
             : AGR_PUSH_MSG[status];
