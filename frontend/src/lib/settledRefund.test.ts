@@ -8,11 +8,12 @@ import {
   type Log,
   type PublicClient,
 } from 'viem';
-import { DISPUTE_SPLIT_EVENT } from '@/config/contracts';
+import { DISPUTE_SPLIT_EVENT, DISPUTE_UNANSWERED_EVENT } from '@/config/contracts';
 import { splitPot, usdcExact } from './splitPot';
 import {
   classifySettledRefund,
   findSplitInLogs,
+  findUnansweredInLogs,
   refundNotifCopy,
   type SettledRefund,
 } from './settledRefund';
@@ -153,6 +154,85 @@ describe('findSplitInLogs', () => {
     expect(found).toEqual({ toClient: 200_000_000n, toExecutor: 0n });
     // Явно: котёл тот же 200 USDC, и половина от него — НЕ то, что здесь ждут.
     expect(found?.toExecutor).not.toBe(100_000_000n);
+  });
+});
+
+// ─── findUnansweredInLogs ────────────────────────────────────────────────────
+
+/** Топик indexed-адреса, собранный руками — как у `statusLog` выше. */
+function addressTopic(a: string): `0x${string}` {
+  return ('0x' + '00'.repeat(12) + a.slice(2).toLowerCase()) as `0x${string}`;
+}
+
+/**
+ * Лог ровно той формы, в какой `DisputeUnanswered` приходит из чека: `responder`
+ * indexed (значит второй топик), обе суммы в `data`.
+ */
+function unansweredLog(
+  address: string,
+  responder: string,
+  toResponder: bigint,
+  toSilent: bigint,
+): Log {
+  return {
+    address: address.toLowerCase() as `0x${string}`,
+    topics: [
+      encodeEventTopics({ abi: [DISPUTE_UNANSWERED_EVENT], eventName: 'DisputeUnanswered' })[0],
+      addressTopic(responder),
+    ],
+    data: encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [toResponder, toSilent]),
+    blockHash: ('0x' + '22'.repeat(32)) as `0x${string}`,
+    blockNumber: 44_613_049n,
+    logIndex: 0,
+    transactionHash: TX,
+    transactionIndex: 0,
+    removed: false,
+  } as Log;
+}
+
+describe('findUnansweredInLogs', () => {
+  it('находит исход «одна сторона молчала» и обе суммы', () => {
+    const found = findUnansweredInLogs(
+      [statusLog, unansweredLog(AGREEMENT, SOMEONE_ELSE, 150_000_000n, 50_000_000n)],
+      AGREEMENT,
+    );
+    expect(found?.responder.toLowerCase()).toBe(SOMEONE_ELSE.toLowerCase());
+    expect(found?.toResponder).toBe(150_000_000n);
+    expect(found?.toSilent).toBe(50_000_000n);
+  });
+
+  it('сверяет адрес агримента без учёта регистра', () => {
+    const found = findUnansweredInLogs(
+      [unansweredLog(AGREEMENT, AGREEMENT, 6n, 1n)],
+      AGREEMENT.toLowerCase(),
+    );
+    expect(found?.toResponder).toBe(6n);
+    expect(found?.toSilent).toBe(1n);
+  });
+
+  it('игнорирует событие, которое в том же чеке выпустил ДРУГОЙ агримент', () => {
+    expect(
+      findUnansweredInLogs([unansweredLog(SOMEONE_ELSE, AGREEMENT, 6n, 1n)], AGREEMENT),
+    ).toBeNull();
+  });
+
+  it('дележ пополам такого события не выпускает — null', () => {
+    expect(findUnansweredInLogs([splitLog(AGREEMENT, 17n, 16n)], AGREEMENT)).toBeNull();
+    expect(findUnansweredInLogs([statusLog], AGREEMENT)).toBeNull();
+    expect(findUnansweredInLogs([], AGREEMENT)).toBeNull();
+  });
+
+  // Та же клетка, что у findSplitInLogs: суммы обязаны приходить ИЗ СОБЫТИЯ.
+  // Контракт отделил `executorPaid` от `toExecutor` ровно для этого — если
+  // мягкий перевод явившемуся не прошёл, событие несёт ноль, а не задуманные
+  // три четверти.
+  it('явившийся в чёрном списке USDC: в событии ноль, а не три четверти', () => {
+    const found = findUnansweredInLogs(
+      [unansweredLog(AGREEMENT, SOMEONE_ELSE, 0n, 200_000_000n)],
+      AGREEMENT,
+    );
+    expect(found?.toResponder).toBe(0n);
+    expect(found?.toSilent).toBe(200_000_000n);
   });
 });
 
@@ -297,6 +377,158 @@ describe('classifySettledRefund — путь через чек (точный)', 
     });
     await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({ kind: 'refund' });
     expect(receipt).toHaveBeenCalled();
+  });
+});
+
+/**
+ * ИСХОД «ОДНА СТОРОНА МОЛЧАЛА» НА ТОЧНОМ ПУТИ.
+ *
+ * До этого `findSplitInLogs` разбирал только `DisputeSplitNoVerdict`, поэтому
+ * для нового исхода событие в чеке НЕ находилось никогда, и классификация всегда
+ * падала на путь по состоянию — включая горячий путь, где хэш транзакции есть.
+ * Точность там теряется вся: доли становятся расчётными, а в ветке чёрного
+ * списка USDC качественное утверждение становится прямо ложным.
+ *
+ * Разница с дележом пополам одна: `DisputeUnanswered` раскладывает суммы по
+ * РОЛЯМ в споре, а не по сторонам сделки, поэтому одно чтение `getDetails()`
+ * здесь нужно — то самое, которое путь по состоянию делает и так.
+ */
+describe('classifySettledRefund — «одна сторона молчала» из чека', () => {
+  it('откликнулся клиент: его сумма — клиенту, сумма молчавшего — исполнителю', async () => {
+    const { client, readContract } = fakeClient({
+      receipt: () => ({ logs: [statusLog, unansweredLog(AGREEMENT, AGREEMENT, 150_000_000n, 50_000_000n)] }),
+      reads: { getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }) },
+    });
+    await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({
+      kind: 'split',
+      toClient: 150_000_000n,
+      toExecutor: 50_000_000n,
+      silent: 'executor',
+    });
+    // Ровно одно чтение — только имена сторон. Ни котла, ни сбора, ни флагов
+    // явки: суммы уже фактические, считать нечего.
+    expect(readContract).toHaveBeenCalledTimes(1);
+  });
+
+  it('откликнулся исполнитель: зеркально, и молчал клиент', async () => {
+    const { client } = fakeClient({
+      receipt: () => ({ logs: [unansweredLog(AGREEMENT, SOMEONE_ELSE, 150_000_000n, 50_000_000n)] }),
+      reads: { getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }) },
+    });
+    await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({
+      kind: 'split',
+      toClient: 50_000_000n,
+      toExecutor: 150_000_000n,
+      silent: 'client',
+    });
+  });
+
+  it('нечётный котёл: обе суммы из события, ни один юнит не выдуман', async () => {
+    const { client } = fakeClient({
+      receipt: () => ({ logs: [unansweredLog(AGREEMENT, AGREEMENT, 6n, 1n)] }),
+      reads: { getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }) },
+    });
+    await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({
+      kind: 'split',
+      toClient: 6n,
+      toExecutor: 1n,
+      silent: 'executor',
+    });
+  });
+
+  // ── КЛЕТКА ЭТОЙ НАХОДКИ ──────────────────────────────────────────────────
+  //
+  // Молчал клиент, исполнитель откликнулся и заблокирован USDC: его три четверти
+  // не доставлены и уходят клиенту. Клиент получает ВЕСЬ котёл, исполнитель ноль
+  // (`src/Agreement.sol`, `triggerArbiterTimeout`).
+  //
+  // На пути по состоянию доли были бы расчётными (50/150), а качественные
+  // утверждения — оба ложными: исполнителю «доля больше половины» при нуле на
+  // кошельке, клиенту «меньше половины» при целом котле. Событие говорит правду,
+  // и теперь оно доезжает.
+  it('молчал клиент, явившийся исполнитель в чёрном списке: клиенту весь котёл, исполнителю ноль', async () => {
+    const { client } = fakeClient({
+      receipt: () => ({ logs: [unansweredLog(AGREEMENT, SOMEONE_ELSE, 0n, 200_000_000n)] }),
+      reads: { getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }) },
+    });
+    const outcome = await classifySettledRefund(client, AGREEMENT, TX);
+    expect(outcome).toEqual({
+      kind: 'split',
+      toClient: 200_000_000n,
+      toExecutor: 0n,
+      silent: 'client',
+    });
+
+    // И текст на обе роли не повторяет перевёрнутого сравнения.
+    const toExecutor = refundNotifCopy(outcome, 'executor');
+    expect(toExecutor.body).toContain('0.00 USDC to you');
+    expect(toExecutor.body).toContain('200.00 USDC to the client');
+    expect(toExecutor.body).not.toMatch(/bigger than half|more than half/i);
+
+    const toClient = refundNotifCopy(outcome, 'client');
+    expect(toClient.body).toContain('200.00 USDC to you');
+    expect(toClient.body).toContain('0.00 USDC to the executor');
+    expect(toClient.body).not.toMatch(/smaller than half|less than half/i);
+  });
+
+  // Причина неравенства долей — не число, и её видно каждой стороне со своей
+  // стороны. Без неё точный путь объяснял бы меньше, чем приблизительный.
+  it('называет причину неравенства, но не сравнивает доли между собой', async () => {
+    const { client } = fakeClient({
+      receipt: () => ({ logs: [unansweredLog(AGREEMENT, AGREEMENT, 150_000_000n, 50_000_000n)] }),
+      reads: { getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }) },
+    });
+    const outcome = await classifySettledRefund(client, AGREEMENT, TX);
+
+    // Молчал исполнитель — ему про его же молчание.
+    expect(refundNotifCopy(outcome, 'executor').body).toMatch(/you didn't answer the dispute/i);
+    // Клиенту — что молчала вторая сторона.
+    expect(refundNotifCopy(outcome, 'client').body).toMatch(/never answered the dispute/i);
+    // И ни одному — сравнения с половиной.
+    for (const role of ['client', 'executor'] as const) {
+      expect(refundNotifCopy(outcome, role).body).not.toMatch(/than half/i);
+    }
+  });
+
+  // Честный дележ пополам причины не имеет и приписывать её нечему.
+  it('дележ пополам не получает признака молчания', async () => {
+    const { client } = fakeClient({
+      receipt: () => ({ logs: [splitLog(AGREEMENT, 17n, 16n)] }),
+    });
+    const outcome = await classifySettledRefund(client, AGREEMENT, TX);
+    expect(outcome).toEqual({ kind: 'split', toClient: 17n, toExecutor: 16n });
+    expect(refundNotifCopy(outcome, 'client').body).not.toMatch(/answer/i);
+  });
+
+  // Откликнувшийся — не сторона этой сделки: одно из двух чтений соврало, и
+  // приписывать суммы некому. Падаем в состояние, а не гадаем.
+  it('откликнувшийся не является стороной сделки — исход берётся из состояния', async () => {
+    const { client } = fakeClient({
+      receipt: () => ({ logs: [unansweredLog(AGREEMENT, DIAMOND, 150_000_000n, 50_000_000n)] }),
+      reads: {
+        getDetails: () => details({ arbiter: ZERO, disputedAt: 1_700_000_000n }),
+        disputeFee: () => 990_000n,
+        totalPayout: () => 33n,
+        DISPUTE_WINDOW: () => 345_600n,
+        clientResponded: () => true,
+        executorResponded: () => false,
+      },
+    });
+    await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({
+      kind: 'split-amounts-unknown',
+      pot: 33n,
+      silent: 'executor',
+    });
+  });
+
+  // Событие о чужой сделке не вправе решать за нашу — тот же фильтр по адресу,
+  // что и у дележа пополам, только на второй ветке.
+  it('чужое DisputeUnanswered в том же чеке не подменяет исход нашей сделки', async () => {
+    const { client } = fakeClient({
+      receipt: () => ({ logs: [unansweredLog(SOMEONE_ELSE, SOMEONE_ELSE, 150_000_000n, 50_000_000n)] }),
+      reads: { getDetails: () => details({ arbiter: ZERO, disputedAt: 0n }) },
+    });
+    await expect(classifySettledRefund(client, AGREEMENT, TX)).resolves.toEqual({ kind: 'refund' });
   });
 });
 

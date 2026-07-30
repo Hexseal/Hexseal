@@ -4,7 +4,7 @@ import {
   type Log,
   type PublicClient,
 } from 'viem';
-import { AGREEMENT_ABI, DISPUTE_SPLIT_EVENT } from '@/config/contracts';
+import { AGREEMENT_ABI, DISPUTE_SPLIT_EVENT, DISPUTE_UNANSWERED_EVENT } from '@/config/contracts';
 import { decideArbiterTimeout } from './arbiterTimeoutSettlement';
 import { usdcExact } from './splitPot';
 
@@ -22,10 +22,20 @@ import { usdcExact } from './splitPot';
  *
  * Два источника признака, в порядке надёжности:
  *
- *  1. `DisputeSplitNoVerdict` в логах ТОЙ ЖЕ транзакции. Суммы там фактически
- *     переведённые: если USDC заблокировал исполнителя, контракт отдаёт его
- *     половину клиенту, и событие покажет ноль. Это точный ответ — и
- *     единственный путь, на котором мы вправе называть суммы.
+ *  1. Событие дележа в логах ТОЙ ЖЕ транзакции. Их два, по одному на каждую
+ *     ветку правила явки: `DisputeSplitNoVerdict` (откликнулись оба — пополам) и
+ *     `DisputeUnanswered` (одна сторона молчала — ей четверть, остаток
+ *     явившемуся). Суммы в обоих фактически переведённые: если USDC заблокировал
+ *     исполнителя, контракт отдаёт его долю клиенту, и событие покажет ноль —
+ *     ровно ради этого в контракте отделён `executorPaid` от `toExecutor`. Это
+ *     точный ответ — и единственный путь, на котором мы вправе называть суммы.
+ *
+ *     Разница между двумя событиями одна: `DisputeSplitNoVerdict` несёт суммы
+ *     сразу по сторонам сделки, а `DisputeUnanswered` — по РОЛЯМ в споре
+ *     (`responder`/`silent`), и перевести роли в стороны без адресов клиента и
+ *     исполнителя нельзя. Поэтому оно разбирается ниже, в пункте 2, где
+ *     `getDetails()` и так читается: отдельного чтения ради этого не заводим, а
+ *     точность события никуда не девается.
  *  2. Состояние агримента, когда хэша транзакции нет (холодный старт: лента
  *     достраивается из снимка реестра, где хэшей не было никогда). Тогда исход
  *     выводится тем же `decideArbiterTimeout`, что и на странице сделки —
@@ -82,8 +92,17 @@ import { usdcExact } from './splitPot';
  * было бы тем же враньём, только по умолчанию.
  */
 export type SettledRefund =
-  /** Дележ, суммы ФАКТИЧЕСКИЕ — взяты из события, а не посчитаны. */
-  | { kind: 'split'; toClient: bigint; toExecutor: bigint }
+  /**
+   * Дележ, суммы ФАКТИЧЕСКИЕ — взяты из события, а не посчитаны.
+   *
+   * `silent` задан, когда источником было `DisputeUnanswered`: тогда мы знаем
+   * не только суммы, но и ПРИЧИНУ их неравенства. Без него текст с точными
+   * суммами объяснял бы меньше, чем текст без сумм (`split-amounts-unknown`
+   * причину называет), — то есть точный путь оказался бы беднее
+   * приблизительного. Не задан — `DisputeSplitNoVerdict`, откликнулись оба,
+   * называть некого.
+   */
+  | { kind: 'split'; toClient: bigint; toExecutor: bigint; silent?: 'client' | 'executor' }
   /**
    * Дележ был, кому сколько — неизвестно. Доли (число) в этом виде
    * отсутствуют намеренно; `pot` — не доля, а весь котёл, который эскроу
@@ -164,6 +183,40 @@ export function findSplitInLogs(
   return null;
 }
 
+/**
+ * `DisputeUnanswered` этого агримента среди логов чека, или null. Фильтр по
+ * адресу — по той же причине, что и у `findSplitInLogs`.
+ *
+ * Суммы возвращаются В ТОМ ВИДЕ, в каком их несёт событие: по ролям в споре, а
+ * не по сторонам сделки. Перевести одно в другое здесь нечем — для этого нужны
+ * адреса клиента и исполнителя, а чек их не содержит; делает это
+ * `classifySettledRefund` там, где `getDetails()` уже прочитан.
+ *
+ * Событие само по себе тоже говорит больше, чем суммы: `responder` — это
+ * сторона, которая на спор откликнулась, то есть вторая молчала. Именно этот
+ * факт и есть причина, по которой доли не равны.
+ */
+export function findUnansweredInLogs(
+  logs: readonly Log[],
+  agreement: string,
+): { responder: `0x${string}`; toResponder: bigint; toSilent: bigint } | null {
+  const target = agreement.toLowerCase();
+  const parsed = parseEventLogs({
+    abi: [DISPUTE_UNANSWERED_EVENT],
+    eventName: 'DisputeUnanswered',
+    logs: logs as Log[],
+  });
+  for (const ev of parsed) {
+    if (ev.address.toLowerCase() !== target) continue;
+    return {
+      responder: ev.args.responder,
+      toResponder: ev.args.toResponder,
+      toSilent: ev.args.toSilent,
+    };
+  }
+  return null;
+}
+
 async function readOrError<T>(
   client: PublicClient,
   agreement: `0x${string}`,
@@ -190,12 +243,17 @@ export async function classifySettledRefund(
   if (!client) return { kind: 'unknown' };
 
   // (1) Признак и точные суммы лежат в чеке той же транзакции.
+  //
+  // `unanswered` дочитывается здесь, а применяется ниже: суммы в нём точные, но
+  // разложены по РОЛЯМ в споре, и без адресов сторон в стороны не переводятся.
+  let unanswered: ReturnType<typeof findUnansweredInLogs> = null;
   if (txHash) {
     try {
       const receipt = await client.getTransactionReceipt({ hash: txHash });
       const split = findSplitInLogs(receipt.logs, agreement);
       if (split) return { kind: 'split', ...split };
-      // События нет — это ещё не значит «возврат»: если `updateStatus` упал при
+      unanswered = findUnansweredInLogs(receipt.logs, agreement);
+      // Событий нет — это ещё не значит «возврат»: если `updateStatus` упал при
       // завершении (RegistrySyncFailed), статус в реестр приносит уже отдельная
       // транзакция `syncRegistry()`, в чьих логах дележа не будет. Поэтому
       // падаем в состояние, а не отвечаем сразу.
@@ -213,8 +271,42 @@ export async function classifySettledRefund(
       abi: AGREEMENT_ABI,
       functionName: 'getDetails',
     })) as readonly unknown[];
+    const dealClient = details[0] as string;
+    const executor   = details[1] as string;
     const arbiter    = details[2] as string;
     const disputedAt = details[9] as bigint;
+
+    // Событие из чека, доведённое до сторон сделки. Стоит ПЕРЕД любыми выводами
+    // по состоянию намеренно: событие — факт о том, что уже произошло с
+    // деньгами, а состояние — вывод о том, что произошло бы по правилам. Когда
+    // они расходятся (ветка чёрного списка USDC: молчал клиент, явившийся
+    // исполнитель заблокирован — его три четверти не доставлены, и клиент
+    // получает ВЕСЬ котёл), прав факт. Вывод по состоянию в этом случае
+    // утверждал бы качественно обратное: исполнителю «доля больше половины» при
+    // нуле на кошельке, клиенту «меньше половины» при целом котле.
+    if (unanswered) {
+      const responder = unanswered.responder.toLowerCase();
+      if (responder === dealClient.toLowerCase()) {
+        return {
+          kind: 'split',
+          toClient: unanswered.toResponder,
+          toExecutor: unanswered.toSilent,
+          silent: 'executor',
+        };
+      }
+      if (responder === executor.toLowerCase()) {
+        return {
+          kind: 'split',
+          toClient: unanswered.toSilent,
+          toExecutor: unanswered.toResponder,
+          silent: 'client',
+        };
+      }
+      // Откликнувшийся — не сторона этой сделки. На цепи недостижимо (фильтр по
+      // адресу агримента уже отсеял чужие события, а звать `respondToDispute`
+      // может только сторона), но если такое пришло, значит одно из двух чтений
+      // соврало — и тогда суммы приписывать некому. Дальше по состоянию.
+    }
 
     // Спора не было вовсе — REFUNDED означает ровно возврат (отмена до
     // активации, таймаут активации, таймаут дедлайна). Дележ без спора
@@ -296,11 +388,25 @@ export function refundNotifCopy(
     const mine  = usdcExact(role === 'client' ? outcome.toClient : outcome.toExecutor);
     const other = usdcExact(role === 'client' ? outcome.toExecutor : outcome.toClient);
     const otherParty = role === 'client' ? 'the executor' : 'the client';
+    // Причина неравенства долей, когда она известна (источник — событие
+    // `DisputeUnanswered`). Без этой фразы точный путь объяснял бы человеку
+    // меньше, чем приблизительный: `split-amounts-unknown` причину называет.
+    //
+    // Формулировка намеренно не сравнивает доли между собой — ни «больше», ни
+    // «меньше половины». В ветке чёрного списка USDC сравнение переворачивается:
+    // молчал клиент, явившийся исполнитель заблокирован, его три четверти не
+    // доставлены и уходят клиенту — молчавший получает ВЕСЬ котёл, а
+    // откликнувшийся ноль. Сказано поэтому только то, что верно всегда: почему
+    // дележ вышел неровным. Сами суммы уже названы выше, и они фактические.
+    const why = !outcome.silent ? ''
+      : role === outcome.silent
+        ? " You didn't answer the dispute in time, so the escrow was not split evenly."
+        : ' The other party never answered the dispute, so the escrow was not split evenly.';
     return {
       title: 'Escrow Split',
       body:
         'Nobody took the dispute, so there was nobody to judge it. The escrow was split — '
-        + `${mine} USDC to you, ${other} USDC to ${otherParty}.`,
+        + `${mine} USDC to you, ${other} USDC to ${otherParty}.${why}`,
     };
   }
 

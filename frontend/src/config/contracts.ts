@@ -1006,7 +1006,9 @@ export const DISPUTE_SPLIT_EVENT = {
 // откликнулся (respondToDispute), получает 3/4 котла, а промолчавший — 1/4.
 // Вынесено отдельным `as const` по той же причине, что и DISPUTE_SPLIT_EVENT
 // выше: `AGREEMENT_ABI` целиком не const, и без этого `parseEventLogs` не
-// выведет типы аргументов.
+// выведет типы аргументов. Разбирает его `findUnansweredInLogs`
+// (`lib/settledRefund`) — суммы там по РОЛЯМ в споре, а не по сторонам сделки,
+// поэтому в стороны их переводит уже вызывающий, у которого есть адреса.
 export const DISPUTE_UNANSWERED_EVENT = {
   anonymous: false,
   inputs: [
