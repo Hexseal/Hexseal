@@ -227,6 +227,11 @@ contract ArbiterRegistryFacet {
     error AppealInProgress();
     error NotRegisteredAgreement();
     error NothingToPush();
+    // Своя ошибка, а не NothingToPush: та живёт в withdrawTreasurySlice, и её
+    // имя долетает до пользователя через декодер релеера
+    // (relayer/app.js: FORWARDER_CUSTOM_ERRORS) — человек, забирающий свою
+    // доплату, увидел бы сообщение про push, которого не делал.
+    error NoRefundableBounty();
     error ZeroAmount();
     // Название отражает актуальную охраняемую проверку: источник арбитра —
     // pendingVerdicts, значит гейт бьёт по отсутствию вердикта, а не клеймера
@@ -1073,7 +1078,7 @@ contract ArbiterRegistryFacet {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         uint256 amount = d.refundableBounty[caller];
-        if (amount == 0) revert NothingToPush();
+        if (amount == 0) revert NoRefundableBounty();
         d.refundableBounty[caller] = 0;
         address usdc = FactoryStorage.store().usdc;
         bool ok = IUSDCFull(usdc).transfer(caller, amount);

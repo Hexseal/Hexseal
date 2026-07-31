@@ -1478,11 +1478,24 @@ contract DisputeSettlementTest is Test {
         assertEq(usdc.balanceOf(executor) - before_, need, "payer got it once unblocked");
     }
 
-    /// Нечего выводить — не молчаливый no-op, а явный откат.
+    /// Нечего выводить — не молчаливый no-op, а явный откат. Ошибка своя, не
+    /// NothingToPush из withdrawTreasurySlice: её имя долетает до пользователя
+    /// через декодер релеера, и «push» в сообщении говорил бы про действие,
+    /// которого человек не делал.
     function testWithdrawDisputeBountyRevertsIfNothingOwed() public {
         vm.prank(executor);
-        vm.expectRevert(ArbiterRegistryFacet.NothingToPush.selector);
+        vm.expectRevert(ArbiterRegistryFacet.NoRefundableBounty.selector);
         ArbiterRegistryFacet(address(diamond)).withdrawDisputeBounty();
+    }
+
+    /// Ошибка вывода доплаты и ошибка проталкивания доли казны — РАЗНЫЕ
+    /// селекторы. Тест на пустое имя, а не на поведение: спутанные ошибки
+    /// ведут себя одинаково и расходятся только тем, что читает человек.
+    function testBountyAndTreasuryErrorsAreNotTheSameSelector() public pure {
+        assertTrue(
+            ArbiterRegistryFacet.NoRefundableBounty.selector != ArbiterRegistryFacet.NothingToPush.selector,
+            "the payer must not be told about a push he never made"
+        );
     }
 
     /// Короткий (1..31 байт) ответ токена не должен превращать мягкий возврат
