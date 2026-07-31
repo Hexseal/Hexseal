@@ -1537,6 +1537,42 @@ contract DisputeSettlementTest is Test {
         assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty cleared after payout");
     }
 
+    /// Вердикт отменён owner'ом до финализации — доплата не должна достаться
+    /// арбитру: 80% сбора при overturn и так целиком уходят в казну
+    /// (creditDisputeFee), и доплата не может быть исключением. Деньги
+    /// возвращаются плательщику через claimable (refundableBounty), а не
+    /// прямым переводом — жёсткий transfer здесь мог бы уронить всю
+    /// финализацию.
+    function testOverturnedVerdictRefundsBountyToPayer() public {
+        Agreement a = Agreement(_createFundedAgreement(100_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(client, need);
+        vm.startPrank(client);
+        usdc.approve(address(diamond), need);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.stopPrank();
+
+        _claimByArbiter(a);
+
+        vm.prank(arbiterAddr);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(address(a), true);
+
+        // owner (== address(this) в этом сетапе) отменяет вердикт до финализации.
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(address(a), false);
+
+        vm.warp(block.timestamp + 24 hours + 1); // FINALIZE_DELAY
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(address(a));
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getRefundableBounty(client), need, "bounty went to the payer as claimable");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "overturned arbiter got nothing, including the bounty");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty left the dispute either way");
+    }
+
     /// Плоская выплата из банка больше не начисляется: банк после финализации
     /// не изменился. Раньше она складывалась с 80% сбора, а с доплатой было бы
     /// три источника разом.

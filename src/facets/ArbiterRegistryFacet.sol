@@ -561,18 +561,34 @@ contract ArbiterRegistryFacet {
         // Защита от авто-удаления в clearDisputeClaim во время этого вызова
         v.executing = true;
 
-        // Доплата уходит арбитру и обнуляется ЗДЕСЬ, до внешнего вызова.
+        // Доплата обнуляется ЗДЕСЬ, до внешнего вызова, независимо от исхода.
         // resolveDispute через агримент дойдёт до clearDisputeClaim, и если бы
         // доплата была ещё на месте, та вернула бы её плательщику — то есть
-        // арбитр и плательщик получили бы одни и те же деньги. Обнуление до
-        // вызова делает двойную выплату невозможной по конструкции, а не по
-        // проверке.
+        // при обычной выплате арбитр и плательщик получили бы одни и те же
+        // деньги. Обнуление до вызова делает двойную выплату невозможной по
+        // конструкции, а не по проверке.
         uint256 bounty = d.disputeBounty[agreement];
         if (bounty > 0) {
             d.disputeBounty[agreement] = 0;
+            address bountyPayer = d.disputeBountyPayer[agreement];
             delete d.disputeBountyPayer[agreement];
-            d.arbiterRewards[v.arbiter] += bounty;
-            emit ArbiterRewarded(v.arbiter, bounty);
+
+            if (v.overturned) {
+                // Отменённый вердикт не оплачивается: 80% сбора при отмене уже
+                // уходят в казну (creditDisputeFee), и доплата не должна быть
+                // исключением — за одну и ту же ошибку нельзя терять одну часть
+                // оплаты и сохранять другую. Деньги возвращаются плательщику:
+                // он покупал разрешение спора и не получил его. Через
+                // claimable (refundableBounty/withdrawDisputeBounty), а не
+                // прямым transfer — жёсткий перевод здесь уронил бы всю
+                // финализацию, если плательщик в чёрном списке USDC или иначе
+                // не может принять перевод.
+                d.refundableBounty[bountyPayer] += bounty;
+                emit DisputeBountyRefundable(agreement, bountyPayer, bounty);
+            } else {
+                d.arbiterRewards[v.arbiter] += bounty;
+                emit ArbiterRewarded(v.arbiter, bounty);
+            }
         }
 
         // Diamond (address(this)) вызывает resolveDispute — работает т.к. Diamond = arbiter
