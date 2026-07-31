@@ -77,7 +77,7 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
 export default function NotificationsPage() {
   const { isConnected, status } = useAccount();
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotificationsCtx();
-  const { supported, subscribed, permission, loading: pushLoading, error: pushError, enable: enablePush, disable: disablePush } = usePushNotifications();
+  const { supported, subscribed, stale: pushStale, permission, loading: pushLoading, error: pushError, enable: enablePush, disable: disablePush } = usePushNotifications();
   const t = useTranslations();
 
   if (status === 'reconnecting' || status === 'connecting') return null;
@@ -161,6 +161,29 @@ export default function NotificationsPage() {
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 : subscribed ? 'Turn off' : 'Enable'
               }
+            </button>
+          </div>
+        )}
+
+        {/* Протухшая регистрация. Раньше её молча чинила фоновая
+            перерегистрация — а она требует подписи кошелька, то есть раз в
+            сутки сама выбрасывала человека в кошелёк (на Android это прямой
+            путь в незакрываемый 'personal_sign already pending'). Автоматики
+            больше нет, поэтому состояние обязано быть видимым: молчаливый
+            отказ доставки — худшее из возможного. */}
+        {supported && subscribed && pushStale && permission !== 'denied' && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-[14px] border border-amber-500/20 bg-amber-500/5 mb-4">
+            <p className="text-xs text-amber-400/80 leading-relaxed">
+              {t("notifications.push_stale")}
+            </p>
+            <button
+              onClick={enablePush}
+              disabled={pushLoading}
+              className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition-colors disabled:opacity-40"
+            >
+              {pushLoading
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : t("notifications.push_renew")}
             </button>
           </div>
         )}

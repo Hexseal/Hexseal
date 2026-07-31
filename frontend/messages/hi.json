@@ -616,7 +616,9 @@
     "wallet_required": "सूचनाएं देखने के लिए वॉलेट कनेक्ट करें",
     "enable_messaging_hint": "Enable messaging to get notifications about new messages",
     "push_blocked": "Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.",
-    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later."
+    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later.",
+    "push_stale": "पुश सूचनाएँ आना बंद हो सकती हैं — इस डिवाइस का पंजीकरण एक दिन से पुराना है। इसे ताज़ा करने के लिए दोबारा चालू करें।",
+    "push_renew": "दोबारा चालू करें"
   },
   "arbiter": {
     "title": "मध्यस्थ हब",

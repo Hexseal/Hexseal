@@ -616,7 +616,9 @@
     "wallet_required": "알림을 보려면 지갑을 연결하세요",
     "enable_messaging_hint": "Enable messaging to get notifications about new messages",
     "push_blocked": "Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.",
-    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later."
+    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later.",
+    "push_stale": "푸시 알림이 도착하지 않고 있을 수 있습니다 — 이 기기의 등록이 하루 이상 지났습니다. 다시 켜서 갱신하세요.",
+    "push_renew": "다시 켜기"
   },
   "arbiter": {
     "title": "중재자 허브",

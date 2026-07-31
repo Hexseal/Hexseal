@@ -616,7 +616,9 @@
     "wallet_required": "Connectez votre portefeuille pour voir les notifications",
     "enable_messaging_hint": "Enable messaging to get notifications about new messages",
     "push_blocked": "Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.",
-    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later."
+    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later.",
+    "push_stale": "Les notifications push ont peut-être cessé d'arriver : l'enregistrement de cet appareil date de plus d'un jour. Réactive-les pour le renouveler.",
+    "push_renew": "Réactiver"
   },
   "arbiter": {
     "title": "Hub Arbitre",
