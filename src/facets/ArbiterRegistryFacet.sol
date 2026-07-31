@@ -1092,6 +1092,16 @@ contract ArbiterRegistryFacet {
         // Продавать то, чего нельзя гарантировать, хуже, чем не продавать:
         // заплатил и не получил ни судьи, ни денег — это уже не услуга.
         if (!v.executing) {
+            // Счётчик обоим: спор кончился, судить было некому или некогда.
+            // Пишем напрямую в namespaced-хранилище репутации — тот же приём,
+            // которым этот файл уже сбрасывает XP при демоушене (:685).
+            RegistryStorage.AgreementRecord storage rec = RegistryStorage.store().agreements[agreement];
+            if (rec.client != address(0)) {
+                ReputationStorage.Data storage rep = ReputationStorage.data();
+                rep.unresolvedDisputes[rec.client]   += 1;
+                rep.unresolvedDisputes[rec.executor] += 1;
+            }
+
             uint256 bounty = d.disputeBounty[agreement];
             if (bounty > 0) {
                 address payer = d.disputeBountyPayer[agreement];

@@ -20,6 +20,7 @@ import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
 import "../src/Agreement.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import "../src/facets/ReputationFacet.sol";
 
 // ---------- MOCK USDC ----------
 // Скопирован из test/Extras.t.sol, расширен переключателем блокировки адреса
@@ -104,6 +105,7 @@ contract DisputeSettlementTest is Test {
         DiamondLoupeFacet    diamondLoupeFacet    = new DiamondLoupeFacet();
         OwnershipFacet       ownershipFacet       = new OwnershipFacet();
         ArbiterRegistryFacet arbiterRegistryFacet = new ArbiterRegistryFacet();
+        ReputationFacet      reputationFacet      = new ReputationFacet();
 
         bytes4[] memory regSels = new bytes4[](12);
         regSels[0]  = RegistryFacet.initRegistry.selector;
@@ -193,6 +195,12 @@ contract DisputeSettlementTest is Test {
         arbSels[44] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
         arbSels[45] = ArbiterRegistryFacet.getRefundableBounty.selector;
 
+        // Задача 4: счётчик споров без вердикта. Только геттер — запись идёт
+        // напрямую из ArbiterRegistryFacet в общее namespaced-хранилище, этот
+        // селектор нужен лишь чтобы тест мог его прочитать через диамонд.
+        bytes4[] memory repSels  = new bytes4[](1);
+        repSels[0] = ReputationFacet.getUnresolvedDisputes.selector;
+
         bytes4[] memory cutSels   = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
 
@@ -209,13 +217,14 @@ contract DisputeSettlementTest is Test {
         ownSels[2] = OwnershipFacet.acceptOwnership.selector;
         ownSels[3] = OwnershipFacet.pendingOwner.selector;
 
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](6);
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](7);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet),        IDiamondCut.FacetCutAction.Add, regSels);
         cut[1] = IDiamondCut.FacetCut(address(factoryFacet),         IDiamondCut.FacetCutAction.Add, facSels);
         cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet),      IDiamondCut.FacetCutAction.Add, cutSels);
         cut[3] = IDiamondCut.FacetCut(address(diamondLoupeFacet),    IDiamondCut.FacetCutAction.Add, loupeSels);
         cut[4] = IDiamondCut.FacetCut(address(ownershipFacet),       IDiamondCut.FacetCutAction.Add, ownSels);
         cut[5] = IDiamondCut.FacetCut(address(arbiterRegistryFacet), IDiamondCut.FacetCutAction.Add, arbSels);
+        cut[6] = IDiamondCut.FacetCut(address(reputationFacet),      IDiamondCut.FacetCutAction.Add, repSels);
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
 
@@ -1619,5 +1628,41 @@ contract DisputeSettlementTest is Test {
         vm.prank(address(0xBEEF));
         vm.expectRevert(ArbiterRegistryFacet.RewardPathRetired.selector);
         ArbiterRegistryFacet(address(diamond)).setRewardPerDispute(1);
+    }
+
+    // -------- СЧЁТЧИК СПОРОВ БЕЗ ВЕРДИКТА --------
+
+    function testUnresolvedCounterIncrementsBothOnSplit() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        vm.prank(executor);
+        a.respondToDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(client), 1, "client counted");
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(executor), 1, "executor counted");
+    }
+
+    /// 75/25 тоже считается обоим: виноватый там очевиден, но счётчик ничего не
+    /// утверждает о вине — он про то, кто систематически оказывается в спорах.
+    function testUnresolvedCounterIncrementsBothOnUnanswered() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(client), 1, "client counted");
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(executor), 1, "executor counted");
+    }
+
+    /// Вердикт состоялся — счётчик не трогается ни у кого.
+    function testUnresolvedCounterNotIncrementedAfterVerdict() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+        _submitAndFinalize(a, true);
+
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(client), 0, "verdict is not an unresolved dispute");
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(executor), 0, "verdict is not an unresolved dispute");
     }
 }

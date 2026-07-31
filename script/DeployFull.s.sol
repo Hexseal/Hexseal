@@ -487,9 +487,10 @@ contract DeployFull is Script {
         sels[20] = JobReceiptFacet.getReceiptTotalSupply.selector;
     }
 
-    // ReputationFacet — 8 селекторов (не было в диаманде вообще до этого регена)
+    // ReputationFacet — 9 селекторов (Задача 4: getUnresolvedDisputes — счётчик
+    // споров, закончившихся без вердикта)
     function reputationFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](8);
+        sels = new bytes4[](9);
         sels[0] = ReputationFacet.autoAwardXP.selector;
         sels[1] = ReputationFacet.claimXP.selector;
         sels[2] = ReputationFacet.notifyExecutorFault.selector;
@@ -498,6 +499,7 @@ contract DeployFull is Script {
         sels[5] = ReputationFacet.hasClaimed.selector;
         sels[6] = ReputationFacet.isDealWin.selector;
         sels[7] = ReputationFacet.getCleanStreak.selector;
+        sels[8] = ReputationFacet.getUnresolvedDisputes.selector;
     }
 
     function _cut(address facet, IDiamondCut.FacetCutAction action, bytes4[] memory sels)

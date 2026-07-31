@@ -29,7 +29,8 @@ import "./BoardsFixture.sol";
 ///     facets (DiamondCut/Loupe/Ownership/JobReceipt/Reputation, via
 ///     DeployFull's own already-gated builders) already implement
 ///   - the grand total drifts from 145 Replace-eligible (pre-upgrade) / 14
-///     Add / 159 (post-upgrade) selectors across all eleven facets
+///     Add / 159 (post-upgrade) selectors across all eleven facets (frozen
+///     literals — this script is deployed, its numbers describe 30 July 2026)
 contract UpgradeFeeModelSelectorsTest is Test {
     UpgradeFeeModel internal upgrade;
     DeployFull internal deploy;
@@ -221,16 +222,17 @@ contract UpgradeFeeModelSelectorsTest is Test {
 
     // ── Cross-cutting invariants tying back to the numbers verified on chain ──
     //
-    // The live diamond has 145 routed selectors across 11 facets today. Six of
-    // those facets change here (Replace 106 of their selectors between them,
-    // Add 14 new ones); the other five (DiamondCut, DiamondLoupe, Ownership,
-    // JobReceipt, Reputation) are untouched by this release. DeployFull.s.sol
-    // already exposes `public pure` selector builders for those five (gated
-    // against their own artifacts by test/DeployFullSelectors.t.sol), so
-    // reusing them here proves the FULL post-upgrade diamond - not just the
-    // six facets this script touches - ends up at exactly 159 selectors with
-    // zero collisions, and that none of the 14 Add selectors collide with a
-    // facet this script does not even mount.
+    // The live diamond had 145 routed selectors across 11 facets on 30 July
+    // 2026, when this upgrade shipped. Six of those facets change here
+    // (Replace 106 of their selectors between them, Add 14 new ones); the
+    // other five (DiamondCut, DiamondLoupe, Ownership, JobReceipt,
+    // Reputation) were untouched by this release. DeployFull.s.sol already
+    // exposes `public pure` selector builders for those five (gated against
+    // their own artifacts by test/DeployFullSelectors.t.sol), so reusing them
+    // here proves the FULL post-upgrade diamond - not just the six facets
+    // this script touches - ends up with zero collisions, and that none of
+    // the 14 Add selectors collide with a facet this script does not even
+    // mount.
 
     function testReplaceCountMatchesCurrentLiveTotal() public view {
         uint256 replaceTotal =
@@ -242,12 +244,15 @@ contract UpgradeFeeModelSelectorsTest is Test {
             upgrade.dealMetadataFacetReplaceSelectors().length;
         assertEq(replaceTotal, 106, "sum of all six Replace groups should be 106");
 
-        uint256 untouchedTotal =
-            deploy.cutFacetSelectors().length +
-            deploy.loupeFacetSelectors().length +
-            deploy.ownershipFacetSelectors().length +
-            deploy.jobReceiptFacetSelectors().length +
-            deploy.reputationFacetSelectors().length;
+        // Пять фасетов, которых этот cut не касался, на 30 июля 2026 несли 39
+        // селекторов. Число заморожено литералом намеренно: раньше оно
+        // складывалось из живых билдеров DeployFull, и любое пополнение
+        // незатронутого фасета (например getUnresolvedDisputes в репутации,
+        // 31 июля) сдвигало сумму — тест начинал утверждать про диамонд,
+        // которого никогда не существовало. Этот скрипт выкачен, его числа
+        // описывают прошлое, поэтому обе стороны сравнения обязаны быть
+        // замороженными.
+        uint256 untouchedTotal = 39;
         assertEq(untouchedTotal, 39, "sum of the five untouched facets should be 39");
 
         assertEq(replaceTotal + untouchedTotal, 145, "pre-upgrade live diamond should route exactly 145 selectors");
@@ -267,7 +272,12 @@ contract UpgradeFeeModelSelectorsTest is Test {
     function testNoSelectorCollisionsAcrossAllElevenFacetsPostUpgrade() public view {
         bytes4[][11] memory groups = [
             // Untouched by this release (ground truth: DeployFull.s.sol, itself
-            // gated against the artifacts by test/DeployFullSelectors.t.sol)
+            // gated against the artifacts by test/DeployFullSelectors.t.sol).
+            // Deliberately LIVE, not frozen: a real diamond built from today's
+            // DeployFull.s.sol really would mount today's ReputationFacet,
+            // selectors and all, so the collision scan below must see the same
+            // set a live deploy would — freezing this group could hide a real
+            // collision introduced by a later, unrelated facet change.
             deploy.cutFacetSelectors(),
             deploy.loupeFacetSelectors(),
             deploy.ownershipFacetSelectors(),
@@ -282,9 +292,37 @@ contract UpgradeFeeModelSelectorsTest is Test {
             _concat(upgrade.dealMetadataFacetReplaceSelectors(), upgrade.dealMetadataFacetAddSelectors())
         ];
 
+        // `total` sizes `flat` below for the actual scan and must match what
+        // the live groups above really contain today — it is NOT the number
+        // asserted next. The 159 assertion is the frozen historical count
+        // (106 Replace + 14 Add + 39 untouched, all as of 30 July 2026);
+        // computing it independently, from the same frozen sources as
+        // testReplaceCountMatchesCurrentLiveTotal / testAddCountIsExactlyFourteen,
+        // keeps it from drifting every time an untouched facet (like
+        // Reputation, Task 4) legitimately grows.
         uint256 total;
         for (uint256 g = 0; g < groups.length; g++) total += groups[g].length;
-        assertEq(total, 159, "post-upgrade diamond should route exactly 159 selectors across all 11 facets");
+
+        uint256 frozenReplaceTotal =
+            upgrade.factoryFacetReplaceSelectors().length +
+            upgrade.arbiterRegistryFacetReplaceSelectors().length +
+            upgrade.jobBoardFacetReplaceSelectors().length +
+            upgrade.serviceBoardFacetReplaceSelectors().length +
+            upgrade.registryFacetReplaceSelectors().length +
+            upgrade.dealMetadataFacetReplaceSelectors().length;
+        uint256 frozenAddTotal =
+            upgrade.factoryFacetAddSelectors().length +
+            upgrade.arbiterRegistryFacetAddSelectors().length +
+            upgrade.jobBoardFacetAddSelectors().length +
+            upgrade.serviceBoardFacetAddSelectors().length +
+            upgrade.registryFacetAddSelectors().length +
+            upgrade.dealMetadataFacetAddSelectors().length;
+        uint256 frozenUntouchedTotal = 39; // see testReplaceCountMatchesCurrentLiveTotal
+        assertEq(
+            frozenReplaceTotal + frozenAddTotal + frozenUntouchedTotal,
+            159,
+            "post-upgrade diamond should route exactly 159 selectors across all 11 facets"
+        );
 
         bytes4[] memory flat = new bytes4[](total);
         uint256 k = 0;
