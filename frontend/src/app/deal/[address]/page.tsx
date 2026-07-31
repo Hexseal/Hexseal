@@ -33,6 +33,7 @@ import { getXmtpClientIfCached, notifyArbiters } from "@/lib/xmtp";
 import { useTranslations } from "next-intl";
 import { ContextHint } from "@/components/ContextHint";
 import { DisputeCostNotice } from "@/components/DisputeCostNotice";
+import { RefundableBounty } from "@/components/RefundableBounty";
 import { useArbiterTimeoutOutcome } from "@/hooks/useArbiterTimeoutOutcome";
 import { shortAddr } from "@/lib/utils";
 import { usdcExact } from "@/lib/splitPot";
@@ -1271,6 +1272,16 @@ export default function DealDetailPage() {
             </div>
           </div>
         )}
+
+        {/* ── Возврат доплаты за арбитра ───────────────────────────────────────
+            СНАРУЖИ баннера спора намеренно. Возврат появляется ровно тогда,
+            когда спор кончился — на таймауте (мягкий толчок не дошёл) и при
+            отменённом вердикте (там он claimable ВСЕГДА). К этому мигу сделка
+            уже вышла из статуса DISPUTED, и всё нарисованное внутри баннера
+            `status === 4` с экрана исчезло: кнопка, живущая там, была бы видна
+            только когда забирать нечего. Сам блок сам себя прячет при нулевом
+            остатке — условие здесь только про то, чьи это вообще деньги. */}
+        {isConnected && isParty && <RefundableBounty />}
 
         {/* ── Work delivered banner ───────────────────────────────────────────── */}
         {parsed.markedDoneAt > BigInt(0) && parsed.status === 2 && (

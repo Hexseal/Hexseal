@@ -239,6 +239,13 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   // transferFrom USDC (permit-authorized, Diamond as spender) + two storage
   // writes (disputeBounty, disputeBountyPayer) + one event.
   fundDispute:          220_000n,
+  // The way back out of the same storage. Cheaper than fundDispute: plain
+  // transfer() instead of transferFrom() (no permit, no allowance write), one
+  // storage slot zeroed instead of two written, one event. Budgeted at the
+  // same relative margin rather than measured — this ceiling is only ever
+  // reached when estimateGas itself failed, and the withdrawal is the last
+  // step of a refund we already promised.
+  withdrawDisputeBounty: 150_000n,
   // Agreement lifecycle
   //
   // The five ceilings below (fund, raiseDispute, triggerActivationTimeout,
@@ -1405,6 +1412,61 @@ export async function fundDisputeGasless(
       args: [agreementAddress],
       account,
       chain: walletClient.chain,
+    });
+    await assertFallbackMined(publicClient, txHash);
+    return { txHash, fallbackUsed: true };
+  }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── withdrawDisputeBountyGasless ─────────────────────────────────────────────
+
+/**
+ * Забрать доплату за арбитра, которая вернулась плательщику — gasless.
+ *
+ * Обратная сторона `fundDisputeGasless`, и намеренно проще неё: у контракта
+ * `withdrawDisputeBounty()` нет ни аргументов, ни `transferFrom` — он делает
+ * `transfer` со своего баланса тому, кто позвал. Значит permit не нужен, и
+ * прямой фолбэк здесь однотранзакционный, а не двух-, как у оплаты.
+ *
+ * Сумма нигде не передаётся: контракт отдаёт весь остаток `refundableBounty`
+ * вызывающего целиком и обнуляет его. Фронт эту сумму только показывает
+ * (`getRefundableBounty`), но не влияет на неё — второй копии арифметики
+ * возврата здесь нет по конструкции.
+ *
+ * Как и `fundDispute`, функция читает `_msgSender()`, а не `msg.sender`:
+ * через форвардер сырой `msg.sender` — это адрес форвардера, и человек забирал
+ * бы не свой остаток, а (всегда нулевой) остаток форвардера. Поэтому гейслесс
+ * путь тут не украшение, а единственный, который вообще работает без
+ * доработок контракта.
+ */
+const WITHDRAW_BOUNTY_ABI = parseAbi(['function withdrawDisputeBounty()']);
+
+export async function withdrawDisputeBountyGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+  const calldata = encodeFunctionData({
+    abi: WITHDRAW_BOUNTY_ABI,
+    functionName: 'withdrawDisputeBounty',
+  });
+  try {
+    const result = await _sendForwardRequest(walletClient, publicClient, calldata as Hex, 'withdrawDisputeBounty', DIAMOND);
+    return { txHash: result.txHash };
+  } catch (err) {
+    if (!isRelayDown(err)) throw err;
+    console.warn('[relay] down → direct withdrawDisputeBounty for', userAddress);
+    const account = walletClient.account;
+    if (!account) throw new Error('Wallet not connected');
+    const txHash = await walletClient.writeContract({
+      address: DIAMOND, abi: WITHDRAW_BOUNTY_ABI, functionName: 'withdrawDisputeBounty',
+      args: [], account, chain: walletClient.chain,
     });
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };

@@ -116,6 +116,15 @@ export function DisputeCostNotice({ agreementAddr }: { agreementAddr: string }) 
           toClient: usdcExact(toClient),
         })}
       </p>
+      {/* Средство от исхода, о котором предупреждает строка выше, теперь
+          существует — и молчать о нём, продолжая пугать дележом, значит
+          описывать безвыходной ситуацию, у которой выход есть. Суммы тут
+          намеренно нет: пока спор не открыт, котировки не существует
+          (quoteDisputeTopUp ревертит NotDisputed вне статуса DISPUTED), а
+          компонент показывается в том числе в модалке ПОДНЯТИЯ спора. */}
+      <p className="text-[11px] leading-relaxed text-white/45 pl-[22px]">
+        {t('deal.dispute_arbiter_topup_notice')}
+      </p>
     </div>
   );
 }
