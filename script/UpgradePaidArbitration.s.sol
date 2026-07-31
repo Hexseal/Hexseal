@@ -55,8 +55,8 @@ pragma solidity ^0.8.20;
 //
 //   - setRewardPerDispute(uint256) теперь `external pure` и безусловно
 //     ревертит кастомной ошибкой RewardPathRetired() —
-//     ArbiterRegistryFacet.sol:992. Причина не removeFunctions, а то, что
-//     шесть исторических скриптов в script/ ссылаются на её селектор в
+//     ArbiterRegistryFacet.sol:1003. Причина не removeFunctions, а то, что
+//     восемь исторических скриптов в script/ ссылаются на её селектор в
 //     списках монтирования при компиляции (grep: DeployFull.s.sol,
 //     PatchArbiterAutoCleanup.s.sol, PatchArbiterClearStuck.s.sol,
 //     UpgradeArbiterRegistryFacetAppeal.s.sol,
@@ -68,7 +68,7 @@ pragma solidity ^0.8.20;
 //     оставшаяся запись о произошедших апгрейдах.
 //   - getRewardPerDispute() осталась legacy-геттером: поле, которое она
 //     читает, больше никто не пишет, значение всегда 0
-//     (ArbiterRegistryFacet.sol:1178-1180).
+//     (ArbiterRegistryFacet.sol:1219).
 //
 // Селектор ни одной из двух функций не поменялся — значит для diamondCut
 // это ОБЫЧНЫЙ Replace, как и остальные 45 неизменившихся сигнатурой функций
@@ -95,7 +95,7 @@ pragma solidity ^0.8.20;
 // ── `_init` НЕ НУЖЕН ──────────────────────────────────────────────────────
 // `arbiterFloor` читается через getArbiterFloor(), которая подставляет
 // дефолт 10 USDC прямо в геттере на нулевом поле хранилища
-// (ArbiterRegistryFacet.sol:1185-1188: `f == 0 ? DEFAULT_ARBITER_FLOOR : f`).
+// (ArbiterRegistryFacet.sol:1224-1227: `f == 0 ? DEFAULT_ARBITER_FLOOR : f`).
 // Засевать нечего — в отличие от feeFloor в UpgradeFeeModel (там нулевой
 // floor означает "не настроено", и quote() ревертит), здесь ноль в
 // хранилище — это ВАЛИДНОЕ и ожидаемое стартовое состояние, интерпретируемое

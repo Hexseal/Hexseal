@@ -8,12 +8,16 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 162
-// селектора 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 167
+// селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже дважды протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже трижды протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
-// платного вызова арбитра — 31 июля 2026), поэтому сверяется тем же тестом.
+// платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
+// где код вырос до 167, 31 июля 2026), поэтому сверяется тем же тестом.
+// Пересчитать, не полагаясь на глаз:
+//   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
+//     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
 //
 // Требует ДО запуска:
 //   TRUSTED_FORWARDER — уже задеплоенный MinimalForwarder (script/DeployForwarder.s.sol),
@@ -376,7 +380,7 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 50 селекторов
+    // ArbiterRegistryFacet — 54 селектора
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
         sels = new bytes4[](54);
 
