@@ -67,6 +67,8 @@ contract MockUSDCDST {
 // ---------- TEST ----------
 
 contract DisputeSettlementTest is Test {
+    using stdStorage for StdStorage;
+
     DiamondProxy   diamond;
     MockUSDCDST    usdc;
 
@@ -256,6 +258,13 @@ contract DisputeSettlementTest is Test {
         vm.prank(client);
         a.raiseDispute();
 
+        _claimByArbiter(a);
+    }
+
+    /// Клейм спора арбитром через настоящий commit-reveal. Вынесен из
+    /// _activateAndDispute, потому что тестам платного вызова нужно поднять
+    /// спор, доплатить и только потом заклеймить.
+    function _claimByArbiter(Agreement a) internal {
         bytes32 salt       = keccak256(abi.encodePacked("settlement-salt", address(a), block.number));
         bytes32 commitment = keccak256(abi.encodePacked(address(a), arbiterAddr, salt));
         vm.prank(arbiterAddr);
@@ -1500,5 +1509,79 @@ contract DisputeSettlementTest is Test {
 
         assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty left the dispute");
         assertEq(ArbiterRegistryFacet(address(diamond)).getRefundableBounty(executor), need, "and became claimable instead");
+    }
+
+    // -------- ПЛАТНЫЙ ВЫЗОВ: ВЫПЛАТА --------
+
+    /// Вердикт состоялся — доплата достаётся арбитру, а не возвращается
+    /// плательщику. clearDisputeClaim (вызванный из resolveDispute внутри
+    /// той же finalizeVerdict) видит disputeBounty уже обнулённым и молчит.
+    function testBountyGoesToArbiterOnVerdict() public {
+        Agreement a = Agreement(_createFundedAgreement(100_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(client, need);
+        vm.startPrank(client);
+        usdc.approve(address(diamond), need);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.stopPrank();
+
+        _claimByArbiter(a);
+        _submitAndFinalize(a, true);
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr) >= need, true, "arbiter got at least the bounty");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty cleared after payout");
+    }
+
+    /// Плоская выплата из банка больше не начисляется: банк после финализации
+    /// не изменился. Раньше она складывалась с 80% сбора, а с доплатой было бы
+    /// три источника разом.
+    ///
+    /// rewardPerDispute — мёртвое поле (ArbiterRegistryFacet.sol), и
+    /// setRewardPerDispute теперь безусловно ревертит (RewardPathRetired) —
+    /// штатно поднять поле выше нуля больше нельзя. Без обхода этот тест
+    /// проходил бы и на старом, неисправленном коде: дефолт поля и так 0, а
+    /// снятый блок был заперт условием `rewardPerDispute > 0`. Пишем в поле
+    /// напрямую через stdstore (в обход ревертящего сеттера — имитируем
+    /// значение, которое могло остаться от деплоя до 31 июля, поле
+    /// append-only и никогда не обнулялось) и наполняем банк fundVault на ту
+    /// же сумму, чтобы у старого условия (`vaultBalance >= rewardPerDispute`)
+    /// была возможность сработать. Так тест ловит именно регрессию, а не
+    /// проходит по умолчанию.
+    function testVaultNoLongerPaysPerDispute() public {
+        Agreement a = Agreement(_createFundedAgreement(200_000_000));
+        _activateAndDispute(a);
+
+        stdstore
+            .target(address(diamond))
+            .sig(ArbiterRegistryFacet.getRewardPerDispute.selector)
+            .checked_write(5_000_000);
+
+        usdc.mint(owner, 5_000_000);
+        vm.startPrank(owner);
+        usdc.approve(address(diamond), 5_000_000);
+        ArbiterRegistryFacet(address(diamond)).fundVault(5_000_000);
+        vm.stopPrank();
+
+        uint256 vaultBefore = ArbiterRegistryFacet(address(diamond)).getVaultBalance();
+        _submitAndFinalize(a, true);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore, "vault untouched by a resolved dispute");
+    }
+
+    /// setRewardPerDispute больше не пишет ничего — она безусловно ревертит,
+    /// каким бы ни был вызывающий. onlyOwner больше не защищает вход, потому
+    /// что входа для защиты не осталось: заменён на error RewardPathRetired,
+    /// pure-функция.
+    function testSetRewardPerDisputeAlwaysReverts() public {
+        vm.expectRevert(ArbiterRegistryFacet.RewardPathRetired.selector);
+        ArbiterRegistryFacet(address(diamond)).setRewardPerDispute(5_000_000);
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(ArbiterRegistryFacet.RewardPathRetired.selector);
+        ArbiterRegistryFacet(address(diamond)).setRewardPerDispute(1);
     }
 }

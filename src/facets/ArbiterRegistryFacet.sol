@@ -12,13 +12,16 @@ pragma solidity ^0.8.20;
 //   3. Любой вызывает finalizeVerdict(agreement) → Diamond исполняет resolveDispute
 //   4. Owner/DAO может overturnVerdict до финализации → slash XP арбитра, выплата не идёт
 //
-// FeeVault: owner пополняет вручную (fundVault) и вручную же выставляет ставку
-//   (setRewardPerDispute); при финализации арбитру начисляется rewardPerDispute
-//   USDC, арбитр забирает через withdrawArbiterReward(). Сегодня банк не наполнен
-//   и ставка не выставлена — DeployFull не вызывает ни fundVault, ни
-//   setRewardPerDispute, поэтому rewardPerDispute == 0 и арбитраж де-факто
-//   неоплачиваемый. Постоянную модель оплаты (3% от спорной суммы) закрывает
-//   docs/superpowers/specs/2026-07-22-arbiter-economics-design.md.
+// FeeVault: пополняется вручную (fundVault) и держит буфер под будущие нужды
+//   банка арбитров (Treasury.distribute()), но больше не платит за конкретный
+//   спор — плоская выплата rewardPerDispute отвергнута дизайном 28 июля и
+//   снята 31 июля (setRewardPerDispute теперь ревертит RewardPathRetired,
+//   поле rewardPerDispute мёртвое). Оплата за вердикт сегодня из двух
+//   источников: creditDisputeFee (80% от 3% сбора со спорной суммы,
+//   docs/superpowers/specs/2026-07-22-arbiter-economics-design.md) и
+//   disputeBounty — доплата стороны спора до arbiterFloor на мелком котле
+//   (fundDispute), которая при финализации уходит арбитру в finalizeVerdict.
+//   Арбитр забирает накопленное через withdrawArbiterReward().
 //
 // DAO-режим: когда uniqueActiveUsers >= 100,000 ИЛИ owner.activateDAO() —
 //   пользователи с XP >= 3000 могут сами вступить через applyAsArbiter().
@@ -80,7 +83,9 @@ library ArbiterRegistryStorage {
         // ── Diamond-as-arbiter + rewards ──
         mapping(address => PendingVerdict) pendingVerdicts;  // agreement → verdict
         mapping(address => uint256)        arbiterRewards;   // arbiter → USDC claimable
-        uint256                            rewardPerDispute; // USDC per resolved dispute (default 5 USDC)
+        uint256                            rewardPerDispute; // МЁРТВОЕ. Плоская выплата из банка отвергнута
+                                                              // дизайном 28.07 (§7) и снята 31.07; поле оставлено,
+                                                              // потому что раскладка append-only. Не читать и не писать.
         uint256                            vaultBalance;     // USDC held by Diamond for rewards
         address                            daoAddress;       // future DAO governance contract
         // ── Provisional status ──
@@ -127,8 +132,9 @@ contract ArbiterRegistryFacet {
     uint256 private constant DAO_THRESHOLD      = 100_000;   // uniqueActiveUsers для авто-DAO
     uint256 private constant MIN_XP_TO_REGISTER = 3_000;     // ~30 сделок с разными людьми
     uint256 private constant OVERTURN_XP_SLASH  = 200;       // XP штраф при overturn
-    // Нигде не используется: награда сегодня берётся из d.rewardPerDispute (storage),
-    // а не отсюда. Оставлено как floor будущей формулы «3% от спорной суммы» —
+    // Нигде не используется: путь через d.rewardPerDispute (storage) снят
+    // 31 июля, а этот constant им никогда не читался. Оставлено как floor
+    // формулы «3% от спорной суммы», которая теперь и платит —
     // docs/superpowers/specs/2026-07-22-arbiter-economics-design.md §3.
     uint256 private constant DEFAULT_REWARD      = 5_000_000; // 5 USDC (6 decimals)
     uint256 private constant FINALIZE_DELAY      = 24 hours;  // окно для owner/DAO/апелляции до финализации (было 1 час — недостаточно для обычного пользователя)
@@ -231,6 +237,7 @@ contract ArbiterRegistryFacet {
     error BountyAlreadyFunded();
     error DisputeAlreadyClaimed();
     error NotParty();
+    error RewardPathRetired();
 
     // -------- MODIFIERS --------
 
@@ -554,6 +561,20 @@ contract ArbiterRegistryFacet {
         // Защита от авто-удаления в clearDisputeClaim во время этого вызова
         v.executing = true;
 
+        // Доплата уходит арбитру и обнуляется ЗДЕСЬ, до внешнего вызова.
+        // resolveDispute через агримент дойдёт до clearDisputeClaim, и если бы
+        // доплата была ещё на месте, та вернула бы её плательщику — то есть
+        // арбитр и плательщик получили бы одни и те же деньги. Обнуление до
+        // вызова делает двойную выплату невозможной по конструкции, а не по
+        // проверке.
+        uint256 bounty = d.disputeBounty[agreement];
+        if (bounty > 0) {
+            d.disputeBounty[agreement] = 0;
+            delete d.disputeBountyPayer[agreement];
+            d.arbiterRewards[v.arbiter] += bounty;
+            emit ArbiterRewarded(v.arbiter, bounty);
+        }
+
         // Diamond (address(this)) вызывает resolveDispute — работает т.к. Diamond = arbiter
         (bool ok, bytes memory ret) = agreement.call(
             abi.encodeWithSignature("resolveDispute(bool)", v.clientWins)
@@ -572,13 +593,6 @@ contract ArbiterRegistryFacet {
         // серия ошибок сбрасывается.
         if (!v.overturned) {
             d.arbiterMistakeStreak[v.arbiter] = 0;
-        }
-
-        // Начислить награду только если вердикт не отменён и в vault достаточно средств
-        if (!v.overturned && d.vaultBalance >= d.rewardPerDispute && d.rewardPerDispute > 0) {
-            d.arbiterRewards[v.arbiter] += d.rewardPerDispute;
-            d.vaultBalance -= d.rewardPerDispute;
-            emit ArbiterRewarded(v.arbiter, d.rewardPerDispute);
         }
 
         emit VerdictFinalized(agreement, v.arbiter, v.clientWins);
@@ -948,9 +962,19 @@ contract ArbiterRegistryFacet {
         emit VaultFunded(msg.sender, amount);
     }
 
-    function setRewardPerDispute(uint256 amount) external onlyOwner {
-        ArbiterRegistryStorage.data().rewardPerDispute = amount;
-        emit RewardPerDisputeUpdated(amount);
+    /// @notice Отключён 31 июля 2026. Плоская выплата из банка отвергнута
+    /// дизайном 28 июля (§7), но код за ним не пошёл: начисление жило
+    /// параллельно с 80% сбора и включалось одним вызовом владельца. С
+    /// появлением доплаты источников стало бы три.
+    ///
+    /// Функция не удалена, а ревертит: шесть исторических скриптов в script/
+    /// ссылаются на её селектор в списках монтирования, forge build собирает
+    /// всю папку, и удаление развалило бы сборку. Эти скрипты — записи о
+    /// произошедших апгрейдах, а broadcast/ в гитигноре, поэтому их исходники
+    /// единственная оставшаяся запись. Ревертящий сеттер честнее рабочего,
+    /// который пишет значение, которого никто не читает.
+    function setRewardPerDispute(uint256) external pure {
+        revert RewardPathRetired();
     }
 
     /// @notice Сколько арбитр должен получить за спор суммарно.
@@ -1125,6 +1149,8 @@ contract ArbiterRegistryFacet {
 
     function getArbiterReward(address arbiter) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterRewards[arbiter]; }
     function getVaultBalance()  external view returns (uint256) { return ArbiterRegistryStorage.data().vaultBalance; }
+    /// @notice Путь снят 31 июля 2026 (см. setRewardPerDispute) — поле, которое
+    /// эта функция читает, больше никто не пишет, значение всегда 0.
     function getRewardPerDispute() external view returns (uint256) { return ArbiterRegistryStorage.data().rewardPerDispute; }
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
 
