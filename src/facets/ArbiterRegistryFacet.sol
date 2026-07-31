@@ -132,11 +132,11 @@ contract ArbiterRegistryFacet {
     uint256 private constant DAO_THRESHOLD      = 100_000;   // uniqueActiveUsers для авто-DAO
     uint256 private constant MIN_XP_TO_REGISTER = 3_000;     // ~30 сделок с разными людьми
     uint256 private constant OVERTURN_XP_SLASH  = 200;       // XP штраф при overturn
-    // Нигде не используется: путь через d.rewardPerDispute (storage) снят
-    // 31 июля, а этот constant им никогда не читался. Оставлено как floor
-    // формулы «3% от спорной суммы», которая теперь и платит —
-    // docs/superpowers/specs/2026-07-22-arbiter-economics-design.md §3.
-    uint256 private constant DEFAULT_REWARD      = 5_000_000; // 5 USDC (6 decimals)
+    // DEFAULT_REWARD (5 USDC) удалена 31 июля: её не читал ни один вызов, а
+    // комментарий над ней называл её «floor формулы» — при том, что настоящий
+    // пол выплаты арбитру это DEFAULT_ARBITER_FLOOR ниже. Две константы с
+    // одним словом в описании и одна из них мёртвая — ложный след, а не
+    // документация.
     uint256 private constant FINALIZE_DELAY      = 24 hours;  // окно для owner/DAO/апелляции до финализации (было 1 час — недостаточно для обычного пользователя)
 
     uint256 private constant MIN_CLEAN_STREAK_TO_REGISTER = 10;   // та же серия, что держит XP исполнителя выше 1000
@@ -170,7 +170,10 @@ contract ArbiterRegistryFacet {
     event ArbiterRewarded(address indexed arbiter, uint256 amount);
     event ArbiterRewardWithdrawn(address indexed arbiter, uint256 amount);
     event VaultFunded(address indexed by, uint256 amount);
-    event RewardPerDisputeUpdated(uint256 newReward);
+    // RewardPerDisputeUpdated удалено 31 июля вместе с последним, кто его
+    // слал: setRewardPerDispute стал `pure revert`, писать значение больше
+    // некому. Объявление без единого emit — обещание события, которого не
+    // будет, для всякого, кто читает ABI.
     event DAOAddressSet(address indexed daoAddress);
     event StuckVerdictAutoCleared(address indexed agreement);
     event AppealRaised(address indexed agreement, address indexed appellant);
@@ -924,7 +927,10 @@ contract ArbiterRegistryFacet {
         if (v.overturned) {
             // Вердикт отменён (overturnVerdict/resolveAppeal) — арбитр ошибся,
             // награды не будет, весь сбор идёт в казну. Симметрично тому, что
-            // finalizeVerdict уже пропускает награду из банка при overturned (:518).
+            // finalizeVerdict при overturned не отдаёт арбитру и доплату, а
+            // возвращает её плательщику через refundableBounty (:584-595).
+            // Прежняя ссылка вела на выплату из банка за спор — того блока нет
+            // с коммита a9c9095, плоскую выплату сняли целиком.
             toTreasury = total;
         } else {
             toArbiter = (total * ARBITER_SHARE_BPS) / 10_000;
@@ -988,7 +994,7 @@ contract ArbiterRegistryFacet {
     /// параллельно с 80% сбора и включалось одним вызовом владельца. С
     /// появлением доплаты источников стало бы три.
     ///
-    /// Функция не удалена, а ревертит: шесть исторических скриптов в script/
+    /// Функция не удалена, а ревертит: восемь исторических скриптов в script/
     /// ссылаются на её селектор в списках монтирования, forge build собирает
     /// всю папку, и удаление развалило бы сборку. Эти скрипты — записи о
     /// произошедших апгрейдах, а broadcast/ в гитигноре, поэтому их исходники
@@ -1036,7 +1042,7 @@ contract ArbiterRegistryFacet {
 
         uint256 need = quoteDisputeTopUp(agreement); // ревертит NotDisputed, если спора нет
 
-        // Тот же гейт, что в claimDispute (:416-422), и то же сравнение:
+        // Тот же гейт, что в claimDispute (:424-430), и то же сравнение:
         // после disputedAt + DISPUTE_WINDOW спор нельзя ни заклеймить, ни
         // отсудить (submitVerdict тоже бьёт DisputeWindowPassed), и статус
         // остаётся DISPUTED, пока кто-нибудь не дёрнет таймаут. Принимать
