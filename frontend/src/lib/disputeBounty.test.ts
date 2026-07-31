@@ -167,10 +167,11 @@ const BASE_PARAMS = {
   disputeClaimed: false,
   disputeBounty: 0n,
   disputeTopUp: 7_600_000n,
+  disputeWindowOpen: true,
 };
 
-describe('canFundDispute — пять условий, каждое проверено отдельно', () => {
-  it('все пять условий выполнены → true', () => {
+describe('canFundDispute — шесть условий, каждое проверено отдельно', () => {
+  it('все шесть условий выполнены → true', () => {
     expect(canFundDispute(BASE_PARAMS)).toBe(true);
   });
 
@@ -192,6 +193,17 @@ describe('canFundDispute — пять условий, каждое провер�
 
   it('условие 5 — доплата не нужна (topUp === 0) → false (иначе contract revert TopUpNotNeeded)', () => {
     expect(canFundDispute({ ...BASE_PARAMS, disputeTopUp: 0n })).toBe(false);
+  });
+
+  it('условие 6 — окно спора истекло → false (иначе contract revert DisputeWindowPassed)', () => {
+    // Состояние, которое НЕ ловится статусом: после disputedAt + DISPUTE_WINDOW
+    // сделка остаётся DISPUTED, пока таймаут никто не дёрнул, — все пять
+    // прежних условий выполнены, а fundDispute уже отвергает деньги.
+    expect(canFundDispute({ ...BASE_PARAMS, disputeWindowOpen: false })).toBe(false);
+  });
+
+  it('окно спора ещё не прочитано (undefined) → false, fail-closed', () => {
+    expect(canFundDispute({ ...BASE_PARAMS, disputeWindowOpen: undefined })).toBe(false);
   });
 
   it('непрочитанный disputeBounty (undefined, чтение в процессе) → false, fail-closed', () => {

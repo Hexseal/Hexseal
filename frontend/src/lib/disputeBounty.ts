@@ -101,7 +101,7 @@ export function computeArbiterReward(
 }
 
 /**
- * Пять условий показа кнопки доплаты за арбитра, одной чистой функцией.
+ * Шесть условий показа кнопки доплаты за арбитра, одной чистой функцией.
  * Каждое закрыто своей ошибкой контракта — показать кнопку в обход любого
  * значит предложить транзакцию, которая гарантированно отревертит и потратит
  * газ релеера впустую:
@@ -116,10 +116,21 @@ export function computeArbiterReward(
  *                        успешного fundDispute() — без этой отдельной
  *                        проверки кнопка осталась бы видна и после оплаты)
  *   5. disputeTopUp > 0n — доплата не нужна           → TopUpNotNeeded
+ *   6. disputeWindowOpen — окно спора истекло         → DisputeWindowPassed
+ *                        (`fundDispute` бьёт этим, когда
+ *                        `block.timestamp > disputedAt + DISPUTE_WINDOW`:
+ *                        после этого мига спор нельзя ни заклеймить, ни
+ *                        отсудить, судьи физически не может быть, и брать
+ *                        деньги за него нельзя. Статус при этом остаётся
+ *                        DISPUTED, пока кто-нибудь не дёрнет таймаут, — то
+ *                        есть условие 1 это состояние НЕ ловит, и без
+ *                        шестого пункта страница предлагала заплатить за
+ *                        арбитра ровно там, где сама тремя строками выше
+ *                        уже написала «время вышло»)
  *
  * Непрочитанные данные (ещё `undefined`, чтение в процессе) — fail-closed:
  * кнопка скрыта, а не показана "оптимистично". Показать её на основе
- * неполных данных означает тот же риск отревертить, что и любое из пяти
+ * неполных данных означает тот же риск отревертить, что и любое из шести
  * условий выше.
  */
 export function canFundDispute(params: {
@@ -128,12 +139,14 @@ export function canFundDispute(params: {
   disputeClaimed: boolean;
   disputeBounty: bigint | undefined;
   disputeTopUp: bigint | undefined;
+  disputeWindowOpen: boolean | undefined;
 }): boolean {
-  const { isDisputedStatus, isParty, disputeClaimed, disputeBounty, disputeTopUp } = params;
+  const { isDisputedStatus, isParty, disputeClaimed, disputeBounty, disputeTopUp, disputeWindowOpen } = params;
   if (!isDisputedStatus) return false;
   if (!isParty) return false;
   if (disputeClaimed) return false;
   if (disputeBounty === undefined || disputeBounty > 0n) return false;
   if (disputeTopUp === undefined || disputeTopUp <= 0n) return false;
+  if (disputeWindowOpen !== true) return false;
   return true;
 }

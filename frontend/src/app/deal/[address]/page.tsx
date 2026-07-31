@@ -387,7 +387,33 @@ export default function DealDetailPage() {
   // BountyAlreadyFunded — ровно то, чего условия показа обязаны избегать.
   const disputeAlreadyFunded = !!disputeBountyAmount && disputeBountyAmount > 0n;
 
-  // Пять условий показа кнопки доплаты — одной чистой функцией из
+  // Единственный дедлайн спора: disputedAt + DISPUTE_WINDOW. Один и тот же миг
+  // закрывает и окно явки сторон, и приём доплаты за арбитра, и возможность
+  // клейма — поэтому он считается здесь один раз, а не дважды под двумя
+  // именами. DISPUTE_WINDOW читается с контракта (уже менялась с 7 дней на 4),
+  // в constants.ts её намеренно нет.
+  const disputeDeadline = parsed && parsed.disputedAt > 0n && disputeWindowSec
+    ? new Date(Number(parsed.disputedAt + disputeWindowSec) * 1000)
+    : undefined;
+
+  // Окно спора ещё открыто. Контракт: fundDispute ревертит DisputeWindowPassed
+  // при block.timestamp > disputedAt + DISPUTE_WINDOW, и статус при этом
+  // остаётся DISPUTED, пока таймаут никто не дёрнул, — то есть по статусу это
+  // состояние неотличимо от живого спора.
+  //
+  // Требуем согласия ДВУХ источников про один и тот же миг:
+  //   • arbiterTimeLeft() — счёт самого контракта, без перекоса часов, но это
+  //     снимок: страница, открытая до истечения окна, так и держала бы
+  //     положительное значение сколько угодно долго после;
+  //   • disputedAt + DISPUTE_WINDOW против локальных часов — свежо на каждом
+  //     рендере, но зависит от часов пользователя.
+  // Каждый закрывает слепое пятно другого, а требование согласия делает
+  // ошибку в любую сторону скрывающей кнопку, а не показывающей лишнюю.
+  const disputeWindowOpen = arbiterTimeLeft === undefined
+    ? undefined
+    : arbiterTimeLeft > 0n && (!disputeDeadline || disputeDeadline.getTime() > Date.now());
+
+  // Шесть условий показа кнопки доплаты — одной чистой функцией из
   // lib/disputeBounty.ts, покрытой тестами (по одному случаю на каждое
   // условие + fail-closed на непрочитанные данные). Разметка сама больше не
   // решает, показывать кнопку или нет.
@@ -397,6 +423,7 @@ export default function DealDetailPage() {
     disputeClaimed,
     disputeBounty: disputeBountyAmount,
     disputeTopUp,
+    disputeWindowOpen,
   });
 
   // Что таймаут арбитра на самом деле сделает с деньгами — дележ (за спор никто
@@ -410,16 +437,12 @@ export default function DealDetailPage() {
   );
 
   // Моя сторона ещё не откликнулась, и окно не закрыто — значит кнопка нужна.
-  // Дедлайн считаем локально из disputedAt: DISPUTE_WINDOW в constants.ts
-  // намеренно нет, она читается с контракта (уже менялась с 7 дней на 4).
+  // Дедлайн — тот же disputeDeadline, что гейтит доплату за арбитра выше.
   const myResponsePending = !!parsed && parsed.status === 4 && (
     (isClient   && clientResponded   === false) ||
     (isExecutor && executorResponded === false)
   );
-  const responseDeadline = parsed && parsed.disputedAt > 0n && disputeWindowSec
-    ? new Date(Number(parsed.disputedAt + disputeWindowSec) * 1000)
-    : undefined;
-  const responseWindowOpen = !!responseDeadline && responseDeadline.getTime() > Date.now();
+  const responseWindowOpen = !!disputeDeadline && disputeDeadline.getTime() > Date.now();
 
   // Terminal states — deal is fully closed, no further actions possible
   const isTerminal = parsed ? [3, 5, 6].includes(parsed.status) : false;
@@ -903,10 +926,10 @@ export default function DealDetailPage() {
             <p className="text-xs text-white/35 leading-relaxed">{arbiterTimeout.bannerBody}</p>
           </div>
         )}
-        {myResponsePending && responseWindowOpen && responseDeadline && (
+        {myResponsePending && responseWindowOpen && disputeDeadline && (
           <div className="rounded-[16px] border border-amber-400/20 bg-amber-400/5 px-4 py-3">
             <p className="text-xs text-white/35 leading-relaxed">
-              {t("deal.dispute_respond_prompt", { date: responseDeadline.toLocaleString() })}
+              {t("deal.dispute_respond_prompt", { date: disputeDeadline.toLocaleString() })}
             </p>
           </div>
         )}
@@ -1219,7 +1242,11 @@ export default function DealDetailPage() {
                 </Button>
               </div>
             )}
-            {disputeAlreadyFunded && (
+            {/* «Арбитр оплачен, и если никто не возьмётся — деньги вернутся»
+                перестаёт быть правдой ровно в тот миг, когда арбитр взялся:
+                после клейма фраза читается как ошибка интерфейса, а обещание
+                возврата в ней — как обещание, которого больше нет. */}
+            {disputeAlreadyFunded && !disputeClaimed && (
               <p className="text-xs text-white/35 mb-3">{t("deal.fund_dispute_funded")}</p>
             )}
 
