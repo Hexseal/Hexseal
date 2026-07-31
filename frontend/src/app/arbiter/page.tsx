@@ -546,9 +546,15 @@ function DisputeCard({
   // Суммарная награда за спор — собственные 80% сбора плюс доплата стороны.
   // Это и есть весь механизм «вызова»: арбитр видит, что дело оплачено, и
   // берёт его. Арифметика — в lib/disputeBounty.ts (computeArbiterReward),
-  // покрыта тестами: own share решается из уравнения самого контракта
-  // (floor - topUp), а не хардкодится через ARBITER_SHARE_BPS, у которой нет
-  // геттера на диамонде.
+  // покрыта тестами: own share по возможности решается из уравнения самого
+  // контракта (floor - topUp), а не из константы доли.
+  //
+  // Четвёртое чтение — сбор самой сделки. Нужно ровно в одном состоянии:
+  // когда котировка вернула 0, потому что котёл и так покрывает порог. Там
+  // уравнение выше не решается, и раньше награда в этом состоянии просто
+  // исчезала — то есть пропадала на всех спорах от ~$417 и выше, ровно там,
+  // где она максимальна. Сбор берётся У СДЕЛКИ (disputeFee()), а не
+  // пересчитывается из котла: формула 3% с потолком $500 живёт в Agreement.
   const { data: topUp } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "quoteDisputeTopUp", args: [rec.agreement as Address],
@@ -561,8 +567,12 @@ function DisputeCard({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "getDisputeBounty", args: [rec.agreement as Address],
   }) as { data: bigint | undefined };
+  const { data: disputeFee } = useReadContract({
+    address: rec.agreement as Address, abi: AGREEMENT_ABI as Abi,
+    functionName: "disputeFee",
+  }) as { data: bigint | undefined };
   const reward = (topUp !== undefined && arbiterFloor !== undefined && bounty !== undefined)
-    ? computeArbiterReward(arbiterFloor, topUp, bounty)
+    ? computeArbiterReward(arbiterFloor, topUp, bounty, disputeFee)
     : undefined;
 
   const [disputeReason, setDisputeReason] = useState<string | null>(null);
