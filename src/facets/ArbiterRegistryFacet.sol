@@ -230,10 +230,13 @@ contract ArbiterRegistryFacet {
     error AppealInProgress();
     error NotRegisteredAgreement();
     error NothingToPush();
-    // Своя ошибка, а не NothingToPush: та живёт в withdrawTreasurySlice, и её
-    // имя долетает до пользователя через декодер релеера
-    // (relayer/app.js: FORWARDER_CUSTOM_ERRORS) — человек, забирающий свою
-    // доплату, увидел бы сообщение про push, которого не делал.
+    // Своя ошибка, а не NothingToPush: та живёт в withdrawTreasurySlice.
+    // Обе разбираются декодером релеера (relayer/app.js:
+    // FORWARDER_CUSTOM_ERRORS, селекторы 0x2d4e8c7b и 0x68d369c9), то есть имя
+    // долетает до человека дословно — и человек, забирающий свою доплату,
+    // увидел бы сообщение про push, которого не делал. Разделение работает
+    // ровно постольку, поскольку обе ошибки в декодере есть: пропусти одну, и
+    // до человека доедет сырой хекс, в котором различать нечего.
     error NoRefundableBounty();
     error ZeroAmount();
     // Название отражает актуальную охраняемую проверку: источник арбитра —

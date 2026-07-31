@@ -849,12 +849,19 @@ const FORWARDER_CUSTOM_ERRORS = {
   '0x5216eba1': 'InsufficientArbitersForAppeal',
   '0x630ed4c8': 'NotLosingParty',
   // Платный вызов арбитра (ArbiterRegistryFacet). NoRefundableBounty — своя
-  // ошибка withdrawDisputeBounty; NothingToPush ниже осталась за
-  // withdrawTreasurySlice, у них разные адресаты и разные сообщения.
+  // ошибка withdrawDisputeBounty, NothingToPush — своя ошибка
+  // withdrawTreasurySlice: две функции, два адресата, два разных сообщения.
+  // Разными их сделали намеренно (ArbiterRegistryFacet.sol:233-237, тест
+  // testBountyAndTreasuryErrorsAreNotTheSameSelector) — и обе обязаны лежать
+  // ЗДЕСЬ, иначе разделение бессмысленно: неразобранный селектор долетает до
+  // человека сырым хексом, и различать в нём нечего.
+  // withdrawTreasurySlice открыта намеренно, её толкает кипер, а кипер ходит
+  // тем же путём через релеер.
   '0x277093f8': 'TopUpNotNeeded',
   '0x88d471c4': 'BountyAlreadyFunded',
   '0xd3fc8f8a': 'DisputeAlreadyClaimed',
   '0x2d4e8c7b': 'NoRefundableBounty',
+  '0x68d369c9': 'NothingToPush',
   '0x30b29a76': 'ActiveDealExists',
   '0xf9be60a2': 'AlreadyActive',
   '0x09dd1236': 'AlreadyDisputed',

@@ -1479,9 +1479,10 @@ contract DisputeSettlementTest is Test {
     }
 
     /// Нечего выводить — не молчаливый no-op, а явный откат. Ошибка своя, не
-    /// NothingToPush из withdrawTreasurySlice: её имя долетает до пользователя
-    /// через декодер релеера, и «push» в сообщении говорил бы про действие,
-    /// которого человек не делал.
+    /// NothingToPush из withdrawTreasurySlice: обе лежат в декодере релеера
+    /// (relayer/app.js, FORWARDER_CUSTOM_ERRORS), имя долетает до пользователя
+    /// дословно, и «push» в сообщении говорил бы про действие, которого человек
+    /// не делал.
     function testWithdrawDisputeBountyRevertsIfNothingOwed() public {
         vm.prank(executor);
         vm.expectRevert(ArbiterRegistryFacet.NoRefundableBounty.selector);
