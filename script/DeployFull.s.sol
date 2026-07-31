@@ -8,11 +8,12 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 159
-// селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 162
+// селектора 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже один раз протухло (стояло
-// 148, когда фабрика выросла с 13 до 20), поэтому сверяется тем же тестом.
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже дважды протухало (стояло
+// 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
+// платного вызова арбитра — 31 июля 2026), поэтому сверяется тем же тестом.
 //
 // Требует ДО запуска:
 //   TRUSTED_FORWARDER — уже задеплоенный MinimalForwarder (script/DeployForwarder.s.sol),
@@ -375,9 +376,9 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 47 селекторов
+    // ArbiterRegistryFacet — 50 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](47);
+        sels = new bytes4[](50);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -441,6 +442,11 @@ contract DeployFull is Script {
         sels[44] = ArbiterRegistryFacet.creditDisputeFee.selector;
         sels[45] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
         sels[46] = ArbiterRegistryFacet.getTreasurySlice.selector;
+
+        // Платный вызов арбитра: порог и котировка доплаты до него
+        sels[47] = ArbiterRegistryFacet.setArbiterFloor.selector;
+        sels[48] = ArbiterRegistryFacet.getArbiterFloor.selector;
+        sels[49] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
     }
 
     // DealMetadataFacet — 1 селектор

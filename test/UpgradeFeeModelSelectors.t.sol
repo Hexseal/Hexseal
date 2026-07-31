@@ -119,7 +119,14 @@ contract UpgradeFeeModelSelectorsTest is Test {
         assertEq(replace.length, 44, "ArbiterRegistryFacet: expected 44 Replace selectors");
         assertEq(add.length, 3, "ArbiterRegistryFacet: expected 3 Add selectors");
         _assertDisjoint(replace, add, "ArbiterRegistryFacet");
-        _assertSameSelectorSet(_concat(replace, add), _abiSelectors("ArbiterRegistryFacet"), "ArbiterRegistryFacet");
+        // Сверка с живым ABI снята 31 июля. Она защищала от расхождения скрипта
+        // с фасетом, пока cut не был выкачен; после броадкаста списки этого
+        // скрипта — запись того, что реально смонтировано на цепи 30 июля, а
+        // ABI фасета продолжает расти (первым добавлением стал порог и
+        // котировка платного вызова арбитра). Требовать их равенства значит
+        // требовать, чтобы прошлое совпадало с настоящим. Дрейф свежих
+        // деплоев ловит test/DeployFullSelectors.t.sol, а новые cut'ы — свои
+        // собственные гейты.
     }
 
     function testJobBoardFacetSelectors() public view {

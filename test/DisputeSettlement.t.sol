@@ -132,7 +132,7 @@ contract DisputeSettlementTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
 
-        bytes4[] memory arbSels = new bytes4[](39);
+        bytes4[] memory arbSels = new bytes4[](42);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -181,6 +181,10 @@ contract DisputeSettlementTest is Test {
         // селектора testLateReleaseCannotDodgeTheArbiterPenalty не смог бы
         // отличить «ошибка записана» от «функции нет на диамонде».
         arbSels[38] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        // Задача 1 (платный вызов арбитра): порог и котировка доплаты.
+        arbSels[39] = ArbiterRegistryFacet.setArbiterFloor.selector;
+        arbSels[40] = ArbiterRegistryFacet.getArbiterFloor.selector;
+        arbSels[41] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
 
         bytes4[] memory cutSels   = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -1221,5 +1225,81 @@ contract DisputeSettlementTest is Test {
 
         assertEq(usdc.balanceOf(client) - cBefore, 200_000_000, "whole pot to the client");
         assertEq(usdc.balanceOf(executor) - eBefore, 0, "executor gets nothing on arbiter fault");
+    }
+
+    // -------- ПЛАТНЫЙ ВЫЗОВ: ПОРОГ И КОТИРОВКА --------
+
+    /// Порог по умолчанию — 10 USDC. Он и определяет, с какой суммы сделки
+    /// услуга вообще имеет смысл.
+    function testArbiterFloorDefaultsToTen() public view {
+        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterFloor(), 10_000_000, "default floor is $10");
+    }
+
+    function testSetArbiterFloorOnlyOwner() public {
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(ArbiterRegistryFacet.NotOwner.selector);
+        ArbiterRegistryFacet(address(diamond)).setArbiterFloor(15_000_000);
+    }
+
+    function testSetArbiterFloorChangesQuote() public {
+        Agreement a = Agreement(_createFundedAgreement(100_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        uint256 before_ = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        ArbiterRegistryFacet(address(diamond)).setArbiterFloor(20_000_000);
+        uint256 after_ = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+
+        assertEq(after_ - before_, 10_000_000, "raising the floor by $10 raises the top-up by $10");
+    }
+
+    /// Котёл $100: сбор 3% = $3, арбитру 80% = $2.40, до $10 не хватает $7.60.
+    function testQuoteTopUpOnSmallPot() public {
+        Agreement a = Agreement(_createFundedAgreement(100_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a)), 7_600_000, "top-up to reach $10");
+    }
+
+    /// Котёл достаточно велик — арбитр получает $10 своими силами, доплата ноль.
+    /// $10 / 0.024 = $416.67, поэтому на $420 доплата уже не нужна.
+    function testQuoteTopUpIsZeroOnLargePot() public {
+        Agreement a = Agreement(_createFundedAgreement(420_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a)), 0, "big pot pays the arbiter by itself");
+    }
+
+    /// Котировка берёт сбор У СДЕЛКИ, а не пересчитывает его. Проверяем на
+    /// котле выше потолка сбора: 3% от $30 000 это $900, но потолок $500,
+    /// значит арбитру 80% от $500 = $400, и доплата ноль. Реализация, которая
+    /// считала бы 3% сама и забыла потолок, тоже дала бы ноль — поэтому
+    /// сверяемся с disputeFee() напрямую.
+    function testQuoteUsesAgreementFeeIncludingCap() public {
+        Agreement a = Agreement(_createFundedAgreement(30_000_000_000));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+
+        assertEq(a.disputeFee(), 500_000_000, "setup: fee is capped at $500");
+        assertEq(ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a)), 0, "capped fee still clears the floor");
+    }
+
+    function testQuoteRevertsIfNotDisputed() public {
+        Agreement a = Agreement(_createFundedAgreement(100_000_000));
+        vm.prank(executor);
+        a.activate();
+
+        vm.expectRevert(ArbiterRegistryFacet.NotDisputed.selector);
+        ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
     }
 }

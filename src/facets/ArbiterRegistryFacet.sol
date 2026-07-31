@@ -94,6 +94,14 @@ library ArbiterRegistryStorage {
         // Доля казны со споров (20% сбора). Начисляется, а не переводится в
         // момент расчёта: заблокированный feeRecipient иначе ронял бы каждый спор.
         uint256                            treasurySlice;
+        // ── Платный вызов арбитра ──
+        // Доплата до рабочего порога: на мелком котле 80% от 3% сбора не
+        // окупают даже пятнадцати минут чтения, и спор никто не берёт.
+        // Платит сторона, которой нужен судья, поэтому дотация из общего
+        // банка с её фармом не требуется.
+        mapping(address => uint256)        disputeBounty;      // сделка → внесённая доплата
+        mapping(address => address)        disputeBountyPayer; // сделка → кто внёс
+        uint256                            arbiterFloor;       // сколько арбитр должен получить суммарно
     }
 
     function data() internal pure returns (Data storage d) {
@@ -129,6 +137,8 @@ contract ArbiterRegistryFacet {
 
     uint256 private constant ARBITER_SHARE_BPS = 8_000; // 80% сбора арбитру, остаток казне
 
+    uint256 private constant DEFAULT_ARBITER_FLOOR = 10_000_000; // 10 USDC (6 decimals)
+
     // -------- EVENTS --------
 
     event ArbiterAdded(address indexed arbiter);
@@ -157,6 +167,9 @@ contract ArbiterRegistryFacet {
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
     event DisputeFeeCredited(address indexed arbiter, uint256 toArbiter, uint256 toTreasury);
     event TreasurySlicePushed(address indexed to, uint256 amount);
+    event ArbiterFloorUpdated(uint256 amount);
+    event DisputeBountyFunded(address indexed agreement, address indexed payer, uint256 amount);
+    event DisputeBountyRefunded(address indexed agreement, address indexed payer, uint256 amount);
 
     // -------- ERRORS --------
 
@@ -205,6 +218,9 @@ contract ArbiterRegistryFacet {
     // (клейм и вердикт разошлись после того, как аргумент арбитра убрали
     // из creditDisputeFee — см. комментарий над функцией).
     error NoVerdictSubmitted();
+    error TopUpNotNeeded();
+    error BountyAlreadyFunded();
+    error DisputeAlreadyClaimed();
 
     // -------- MODIFIERS --------
 
@@ -927,6 +943,15 @@ contract ArbiterRegistryFacet {
         emit RewardPerDisputeUpdated(amount);
     }
 
+    /// @notice Сколько арбитр должен получить за спор суммарно.
+    /// Хранимое поле, а не константа: правильную цену человеческого времени
+    /// нельзя угадать заранее, а менять её потом надо одной транзакцией, без
+    /// апгрейда. Старт — 10 USDC.
+    function setArbiterFloor(uint256 amount) external onlyOwner {
+        ArbiterRegistryStorage.data().arbiterFloor = amount;
+        emit ArbiterFloorUpdated(amount);
+    }
+
     function setDAOAddress(address dao) external onlyOwner {
         if (dao == address(0)) revert ArbiterZeroAddress();
         ArbiterRegistryStorage.data().daoAddress = dao;
@@ -990,6 +1015,11 @@ contract ArbiterRegistryFacet {
     function getVaultBalance()  external view returns (uint256) { return ArbiterRegistryStorage.data().vaultBalance; }
     function getRewardPerDispute() external view returns (uint256) { return ArbiterRegistryStorage.data().rewardPerDispute; }
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
+
+    function getArbiterFloor() external view returns (uint256) {
+        uint256 f = ArbiterRegistryStorage.data().arbiterFloor;
+        return f == 0 ? DEFAULT_ARBITER_FLOOR : f;
+    }
     function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
     function hasSubmittedVerdict(address agreement) external view returns (bool) {
         return ArbiterRegistryStorage.data().pendingVerdicts[agreement].submittedAt != 0;
@@ -1004,4 +1034,33 @@ contract ArbiterRegistryFacet {
     }
     function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
     function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
+
+    /// @notice Сколько надо доплатить, чтобы арбитр суммарно получил порог.
+    /// Возвращает 0, если котёл и так достаточно велик — тогда кнопку доплаты
+    /// показывать не надо вовсе.
+    ///
+    /// Сбор берётся У СДЕЛКИ вызовом disputeFee(), а не пересчитывается здесь.
+    /// Формула сбора (3% с потолком) живёт в Agreement, и вторая копия в
+    /// фасете разошлась бы с ней при первой же правке — молча, потому что
+    /// расхождение видно только тому, кто сравнит показанное число с пришедшим
+    /// на кошелёк.
+    function quoteDisputeTopUp(address agreement) public view returns (uint256) {
+        (bool statusOk, bytes memory statusData) = agreement.staticcall(
+            abi.encodeWithSignature("status()")
+        );
+        require(statusOk, "ArbiterRegistry: failed to read status");
+        if (abi.decode(statusData, (uint8)) != 4) revert NotDisputed();
+
+        (bool feeOk, bytes memory feeData) = agreement.staticcall(
+            abi.encodeWithSignature("disputeFee()")
+        );
+        require(feeOk, "ArbiterRegistry: failed to read dispute fee");
+        uint256 fee = abi.decode(feeData, (uint256));
+
+        uint256 arbiterGets = (fee * ARBITER_SHARE_BPS) / 10_000;
+        uint256 floor_ = ArbiterRegistryStorage.data().arbiterFloor;
+        if (floor_ == 0) floor_ = DEFAULT_ARBITER_FLOOR;
+
+        return arbiterGets >= floor_ ? 0 : floor_ - arbiterGets;
+    }
 }
