@@ -441,7 +441,7 @@
     "refund_bounty_hint": "Una controversia per cui hai pagato un arbitro è finita senza verdetto, o il verdetto è stato annullato. I soldi sono tuoi, semplicemente non tornano da soli.",
     "refund_bounty_btn": "Preleva {amount} USDC",
     "refund_bounty_success": "Prelevato · l'integrazione è tornata nel tuo portafoglio.",
-    "dispute_arbiter_topup_notice": "Questo finale si può evitare: finché la controversia è aperta, ciascuna parte può aumentare il compenso dell'arbitro dalla pagina dell'accordo — è ciò che rende un caso piccolo degno di essere preso. Se anche allora nessuno lo prende, l'integrazione torna indietro.",
+    "dispute_arbiter_topup_notice": "Questo finale si può evitare: finché la controversia è aperta, la pagina dell'accordo permette a ciascuna parte di aumentare il compenso dell'arbitro — è ciò che rende un caso piccolo degno di essere preso. L'opzione compare solo se la commissione da sola è troppo bassa; su un accordo grande non c'è nulla da aggiungere. Se anche dopo l'integrazione nessuno prende il caso, questa torna indietro — inviata automaticamente, o in attesa di prelievo sulla pagina dell'accordo.",
     "work_delivered": "Lavoro consegnato",
     "delivered_label": "Consegnato",
     "timeline_title": "Cronologia",

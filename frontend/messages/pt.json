@@ -441,7 +441,7 @@
     "refund_bounty_hint": "Uma disputa pela qual você pagou um árbitro terminou sem veredicto, ou o veredicto foi anulado. O dinheiro é seu, só não volta sozinho.",
     "refund_bounty_btn": "Sacar {amount} USDC",
     "refund_bounty_success": "Sacado · o complemento voltou para sua carteira.",
-    "dispute_arbiter_topup_notice": "Esse final pode ser evitado: enquanto a disputa está aberta, qualquer lado pode aumentar o pagamento do árbitro pela página do negócio — é isso que faz um caso pequeno valer a pena. Se mesmo então ninguém assumir, o complemento volta.",
+    "dispute_arbiter_topup_notice": "Esse final pode ser evitado: enquanto a disputa está aberta, a página do negócio permite que qualquer lado aumente o pagamento do árbitro — é isso que faz um caso pequeno valer a pena. A opção só aparece se a taxa sozinha for baixa demais; num negócio grande não há nada a acrescentar. Se mesmo depois do complemento ninguém assumir, ele volta — enviado automaticamente, ou aguardando saque na página do negócio.",
     "work_delivered": "Trabalho entregue",
     "delivered_label": "Entregue",
     "timeline_title": "Linha do tempo",

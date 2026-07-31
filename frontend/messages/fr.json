@@ -441,7 +441,7 @@
     "refund_bounty_hint": "Un litige pour lequel vous avez payé un arbitre s'est terminé sans verdict, ou le verdict a été annulé. Cet argent est à vous, il ne repart simplement pas tout seul.",
     "refund_bounty_btn": "Retirer {amount} USDC",
     "refund_bounty_success": "Retiré · le complément est revenu dans votre portefeuille.",
-    "dispute_arbiter_topup_notice": "Cette fin peut être évitée : tant que le litige est ouvert, chaque partie peut augmenter la rémunération de l'arbitre depuis la page de l'accord — c'est ce qui rend une petite affaire intéressante à prendre. Si personne ne la prend même alors, le complément revient.",
+    "dispute_arbiter_topup_notice": "Cette fin peut être évitée : tant que le litige est ouvert, la page de l'accord permet à chaque partie d'augmenter la rémunération de l'arbitre — c'est ce qui rend une petite affaire intéressante à prendre. L'option n'apparaît que si les frais seuls sont trop faibles ; sur un accord important, il n'y a rien à ajouter. Si personne ne prend l'affaire même après le complément, celui-ci revient — envoyé automatiquement, ou en attente de retrait sur la page de l'accord.",
     "work_delivered": "Travail livré",
     "delivered_label": "Livré",
     "timeline_title": "Chronologie",

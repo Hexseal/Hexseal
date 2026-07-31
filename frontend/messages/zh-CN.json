@@ -441,7 +441,7 @@
     "refund_bounty_hint": "你为其支付过仲裁者费用的争议没有等来裁决，或者裁决被推翻。这笔钱是你的，只是不会自己退回。",
     "refund_bounty_btn": "取回 {amount} USDC",
     "refund_bounty_success": "已取回 · 补足的费用回到了你的钱包。",
-    "dispute_arbiter_topup_notice": "这个结局可以避免：争议开启期间，任意一方都可以在交易页面为仲裁者加价——正是加价让小额案子值得受理。若加价后仍无人受理，这笔钱会退还。",
+    "dispute_arbiter_topup_notice": "这个结局可以避免：争议开启期间，交易页面允许任意一方为仲裁者加价——正是加价让小额案子值得受理。只有当手续费本身太低时才会出现这个选项；金额较大的交易无需加价。若加价后仍无人受理，这笔钱会退还——自动退回，或在交易页面等你取回。",
     "work_delivered": "工作已交付",
     "delivered_label": "已交付",
     "timeline_title": "时间线",

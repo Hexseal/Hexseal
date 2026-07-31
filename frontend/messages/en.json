@@ -456,7 +456,7 @@
     "refund_bounty_hint": "A dispute you paid an arbiter for ended without a verdict, or the verdict was overturned. The money is yours — it just isn't sent back on its own.",
     "refund_bounty_btn": "Withdraw {amount} USDC",
     "refund_bounty_success": "Withdrawn · the top-up is back in your wallet.",
-    "dispute_arbiter_topup_notice": "That ending can be avoided: while the dispute is open, either side can top up the arbiter's pay from the deal page — that is what makes a small case worth taking. If nobody takes it even then, the top-up comes back.",
+    "dispute_arbiter_topup_notice": "That ending can be avoided: while the dispute is open, the deal page lets either side top up the arbiter's pay — that is what makes a small case worth taking. The option only shows up when the fee alone is too small; on a larger deal there is nothing to add. If nobody takes the case even after a top-up, it comes back — sent automatically, or waiting on the deal page to withdraw.",
     "work_delivered": "Work delivered",
     "delivered_label": "Delivered",
     "timeline_title": "Timeline",

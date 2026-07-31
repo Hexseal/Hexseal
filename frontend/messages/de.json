@@ -441,7 +441,7 @@
     "refund_bounty_hint": "Ein Streitfall, für den du einen Schlichter bezahlt hast, endete ohne Urteil — oder das Urteil wurde aufgehoben. Das Geld gehört dir, es geht nur nicht von selbst zurück.",
     "refund_bounty_btn": "{amount} USDC abheben",
     "refund_bounty_success": "Abgehoben · der Zuschuss ist zurück in deiner Wallet.",
-    "dispute_arbiter_topup_notice": "Dieses Ende lässt sich vermeiden: Solange der Streitfall offen ist, kann jede Seite die Bezahlung des Schlichters auf der Deal-Seite aufstocken — genau das macht einen kleinen Fall lohnend. Übernimmt ihn danach trotzdem niemand, kommt der Zuschuss zurück.",
+    "dispute_arbiter_topup_notice": "Dieses Ende lässt sich vermeiden: Solange der Streitfall offen ist, kann jede Seite die Bezahlung des Schlichters auf der Deal-Seite aufstocken — genau das macht einen kleinen Fall lohnend. Die Möglichkeit erscheint nur, wenn die Gebühr allein zu niedrig ist; bei einem großen Deal gibt es nichts aufzustocken. Übernimmt den Fall auch nach dem Zuschuss niemand, kommt dieser zurück — automatisch überwiesen oder auf der Deal-Seite zum Abheben bereit.",
     "work_delivered": "Arbeit geliefert",
     "delivered_label": "Geliefert",
     "timeline_title": "Zeitlinie",

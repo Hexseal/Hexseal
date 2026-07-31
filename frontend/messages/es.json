@@ -441,7 +441,7 @@
     "refund_bounty_hint": "Una disputa por la que pagaste un árbitro terminó sin veredicto, o el veredicto fue anulado. El dinero es tuyo, solo que no vuelve por sí solo.",
     "refund_bounty_btn": "Retirar {amount} USDC",
     "refund_bounty_success": "Retirado · el pago adicional volvió a tu cartera.",
-    "dispute_arbiter_topup_notice": "Ese final se puede evitar: mientras la disputa está abierta, cualquiera de las partes puede aumentar la paga del árbitro desde la página del trato — eso es lo que hace que un caso pequeño valga la pena. Si aun así nadie lo toma, el pago adicional vuelve.",
+    "dispute_arbiter_topup_notice": "Ese final se puede evitar: mientras la disputa está abierta, la página del trato permite a cualquiera de las partes aumentar la paga del árbitro — eso es lo que hace que un caso pequeño valga la pena. La opción solo aparece si la comisión por sí sola es demasiado baja; en un trato grande no hay nada que añadir. Si nadie lo toma ni siquiera tras el pago adicional, este vuelve — enviado automáticamente, o esperando en la página del trato para que lo retires.",
     "work_delivered": "Trabajo entregado",
     "delivered_label": "Entregado",
     "timeline_title": "Línea de tiempo",
