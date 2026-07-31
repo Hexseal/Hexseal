@@ -1063,11 +1063,22 @@ contract ArbiterRegistryFacet {
                 // (Agreement.sol:1286), поэтому реверт перевода утащил бы за собой
                 // снятие клейма и уменьшение openClaimCount — молча, и арбитр
                 // остался бы навсегда с незакрытым спором.
+                //
+                // Длину ответа проверяем явно, тем же приёмом, что и
+                // SafeUSDC.trySafeTransfer (Agreement.sol:215-225): abi.decode
+                // на ответе от 1 до 31 байта сам паникует, и тогда «мягкий»
+                // возврат оказался бы таким же жёстким, как обычный, ровно в
+                // ветке, которую мы делаем мягкой намеренно.
                 address usdc = FactoryStorage.store().usdc;
                 (bool ok, bytes memory ret) = usdc.call(
                     abi.encodeWithSelector(IUSDCFull.transfer.selector, payer, bounty)
                 );
-                bool delivered = ok && (ret.length == 0 || abi.decode(ret, (bool)));
+                bool delivered;
+                if (ok) {
+                    if (ret.length == 0) delivered = true;
+                    else if (ret.length >= 32) delivered = abi.decode(ret, (bool));
+                    // ret.length в 1..31 — delivered остаётся false, decode не зовём.
+                }
                 if (delivered) {
                     emit DisputeBountyRefunded(agreement, payer, bounty);
                 } else {

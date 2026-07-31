@@ -1458,4 +1458,47 @@ contract DisputeSettlementTest is Test {
         ArbiterRegistryFacet(address(diamond)).withdrawDisputeBounty();
         assertEq(usdc.balanceOf(executor) - before_, need, "payer got it once unblocked");
     }
+
+    /// Нечего выводить — не молчаливый no-op, а явный откат.
+    function testWithdrawDisputeBountyRevertsIfNothingOwed() public {
+        vm.prank(executor);
+        vm.expectRevert(ArbiterRegistryFacet.NothingToPush.selector);
+        ArbiterRegistryFacet(address(diamond)).withdrawDisputeBounty();
+    }
+
+    /// Короткий (1..31 байт) ответ токена не должен превращать мягкий возврат
+    /// в жёсткий: abi.decode без проверки длины паникует сам на таком ответе,
+    /// и тогда откат утащил бы за собой снятие клейма — та же ловушка, что и
+    /// с чёрным списком выше, только с другим триггером на стороне токена.
+    ///
+    /// Мок вызова, а не адреса — тот же приём, что и
+    /// testShortTokenReplyDoesNotFreezeTheTimeout (mockCall на конкретный
+    /// вызов transfer, не смена всего контракта usdc).
+    function testShortTokenReplyDoesNotBreakClaimClearing() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(executor, need);
+        vm.startPrank(executor);
+        usdc.approve(address(diamond), need);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        a.respondToDispute();
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        // 1 байт вместо 32 — abi.decode на таком ревертит без проверки длины.
+        vm.mockCall(
+            address(usdc),
+            abi.encodeWithSelector(bytes4(0xa9059cbb), executor, need),
+            hex"01"
+        );
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        vm.clearMockedCalls();
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty left the dispute");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getRefundableBounty(executor), need, "and became claimable instead");
+    }
 }
