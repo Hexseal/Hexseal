@@ -6,6 +6,19 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 
+# AST кладётся в артефакты (out/<File>.sol/<Contract>.json, ключ "ast") ради
+# script/check-gasless-sender.sh — гейт правила ERC-2771 разбирает исходники не
+# регулярками, а деревом solc: так `msg.sender` в комментарии не путается с
+# настоящим обращением, а каждое найденное обращение точно привязывается к
+# функции, в которой лежит.
+#
+# Настройка тут, а не флагом `--ast` в самом гейте, намеренно: набор флагов
+# входит в хеш настроек компилятора, и `forge test` (без AST) с последующим
+# `forge build --ast` инвалидировали бы кеш друг друга — каждое переключение
+# стоило бы полной пересборки via-ir (~3 минуты). С `ast = true` AST появляется
+# у любой сборки, и гейт ничего не пересобирает. На байткод не влияет.
+ast = true
+
 # test/DeployFullSelectors.t.sol reads compiled ABI artifacts (out/<Facet>.sol/<Facet>.json)
 # to derive ground-truth selectors for the DeployFull.s.sol drift gate — read-only,
 # scoped to the build output directory only.
