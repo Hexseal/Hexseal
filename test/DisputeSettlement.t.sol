@@ -1680,6 +1680,46 @@ contract DisputeSettlementTest is Test {
         assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(executor), 0, "verdict is not an unresolved dispute");
     }
 
+    /// Третья ветка таймаута: арбитр спор ВЗЯЛ и не довёл. Здесь
+    /// Agreement.arbiter уже не ноль, поэтому дележа не происходит вовсе —
+    /// котёл целиком возвращается клиенту (Agreement.sol: ветка после
+    /// `if (arbiter == address(0))`), а сверху возвращается доплата. Ветка
+    /// проходит через тот же clearDisputeClaim, значит счётчик споров без
+    /// вердикта обязан вырасти обоим — судьи не случилось и здесь.
+    function testTimeoutAfterClaimRefundsTheBountyAndCountsBoth() public {
+        Agreement a = _disputedAgreement(100_000_000);
+
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        assertGt(need, 0, "setup: the pot must be small enough to need a top-up");
+        usdc.mint(client, need);
+        vm.startPrank(client);
+        usdc.approve(address(diamond), need);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.stopPrank();
+
+        // Арбитр берёт спор и молчит до конца окна: вердикта не будет.
+        _claimByArbiter(a);
+        assertEq(a.arbiter(), address(diamond), "setup: the claim must stick");
+
+        vm.prank(executor);
+        a.respondToDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 cBefore = usdc.balanceOf(client);
+        uint256 eBefore = usdc.balanceOf(executor);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        // Котёл целиком клиенту, доплата сверх него — тому, кто её внёс.
+        assertEq(usdc.balanceOf(client) - cBefore, 100_000_000 + need, "whole pot plus the refunded top-up");
+        assertEq(usdc.balanceOf(executor) - eBefore, 0, "the claimed branch does not split anything");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty cleared");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getRefundableBounty(client), 0, "the push refund succeeded, nothing left claimable");
+
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(client), 1, "client counted");
+        assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(executor), 1, "executor counted");
+    }
+
     // -------- ПЛАТНЫЙ ВЫЗОВ: ОКНО СПОРА --------
 
     /// Деньги нельзя брать за услугу, которую уже нельзя оказать. После
