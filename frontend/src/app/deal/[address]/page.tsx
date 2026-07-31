@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from "@/lib/relay";
+import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless, fundDisputeGasless } from "@/lib/relay";
 import { useProfile } from "@/hooks/useProfile";
 import { ARBITER_REGISTRY_ABI } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
@@ -35,6 +35,7 @@ import { ContextHint } from "@/components/ContextHint";
 import { DisputeCostNotice } from "@/components/DisputeCostNotice";
 import { useArbiterTimeoutOutcome } from "@/hooks/useArbiterTimeoutOutcome";
 import { shortAddr } from "@/lib/utils";
+import { usdcExact } from "@/lib/splitPot";
 import { PageCenter } from "@/components/PageCenter";
 
 // Agreement status enum matches Solidity:
@@ -322,6 +323,27 @@ export default function DealDetailPage() {
     query: { enabled: !!isValidDeal && isDisputedStatus },
   }) as { data: `0x${string}` | undefined };
 
+  // Платный вызов арбитра — сколько надо доплатить, чтобы дело стало стоящим
+  // внимания, и сколько уже внесено. Обе цифры ТОЛЬКО с контракта:
+  // quoteDisputeTopUp уже учитывает порог, потолок сбора disputeFee() и всё
+  // остальное — вторая копия этой арифметики во фронте разошлась бы с
+  // контрактом молча, это уже дважды ловили на этой ветке.
+  const { data: disputeTopUp, refetch: refetchDisputeTopUp } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: ARBITER_REGISTRY_ABI,
+    functionName: 'quoteDisputeTopUp',
+    args: [dealAddress as `0x${string}`],
+    query: { enabled: !!isValidDeal && isDisputedStatus },
+  }) as { data: bigint | undefined; refetch: () => void };
+
+  const { data: disputeBountyAmount, refetch: refetchDisputeBounty } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: ARBITER_REGISTRY_ABI,
+    functionName: 'getDisputeBounty',
+    args: [dealAddress as `0x${string}`],
+    query: { enabled: !!isValidDeal && isDisputedStatus },
+  }) as { data: bigint | undefined; refetch: () => void };
+
   // Явка в споре. Читается только в состоянии спора: вне него флаги ничего не
   // значат, а лишнее чтение на каждой сделке ни к чему.
   const { data: clientResponded, refetch: refetchClientResponded } = useReadContract({
@@ -351,6 +373,27 @@ export default function DealDetailPage() {
     : false;
 
   const isParty = isClient || isExecutor;
+
+  // Спор ещё не заклеймлен — то же значение realArbiter, что и isArbiter выше,
+  // просто без сравнения с конкретным кошельком.
+  const disputeClaimed = !!realArbiter && realArbiter !== "0x0000000000000000000000000000000000000000";
+
+  // Доплата уже внесена кем-то из сторон. quoteDisputeTopUp — чистая функция
+  // disputeFee() и порога, она НЕ вычитает уже внесённую доплату, поэтому
+  // после успешного fundDispute() она продолжает возвращать то же
+  // положительное число. Без этой отдельной проверки кнопка осталась бы
+  // видна и после оплаты, а повторный клик гарантированно отревертил бы
+  // BountyAlreadyFunded — ровно то, чего условия показа обязаны избегать.
+  const disputeAlreadyFunded = !!disputeBountyAmount && disputeBountyAmount > 0n;
+
+  // Кнопка доплаты видна ТОЛЬКО когда все условия разом: спор открыт (1),
+  // пользователь — сторона сделки (2), спор не заклеймлен (3), и
+  // quoteDisputeTopUp вернул больше нуля (4). Показать её в любом другом
+  // состоянии — предложить транзакцию, которая гарантированно отревертит и
+  // потратит газ релеера впустую; каждое из условий закрыто своей ошибкой
+  // контракта (NotDisputed / NotParty / DisputeAlreadyClaimed / TopUpNotNeeded).
+  const canFundDispute = isDisputedStatus && isParty && !disputeClaimed && !disputeAlreadyFunded
+    && disputeTopUp !== undefined && disputeTopUp > 0n;
 
   // Что таймаут арбитра на самом деле сделает с деньгами — дележ (за спор никто
   // не взялся) или возврат клиенту (взялись и не довели). Решает поле `arbiter`,
@@ -487,6 +530,29 @@ export default function DealDetailPage() {
         toast.error(msg);
         setIsFunding(false);
       }
+    }
+  };
+
+  const handleFundDispute = async () => {
+    if (!isValidDeal || !address || !publicClient || !walletClient) return;
+    if (disputeTopUp === undefined || disputeTopUp === 0n) return;
+    setIsFunding(true);
+    try {
+      const dealAddr = dealAddress as `0x${string}`;
+      toast(t("deal.fund_sign_permit"));
+      await fundDisputeGasless(walletClient, publicClient, dealAddr, disputeTopUp);
+      toast.success(t("deal.fund_dispute_success"));
+      // See handleAction's comment above — keep busy set until the delayed
+      // refetch lands, not cleared immediately.
+      setTimeout(() => {
+        refetchDisputeTopUp();
+        refetchDisputeBounty();
+        setIsFunding(false);
+      }, 2000);
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage || e?.message || t("common.transaction_failed"));
+      setIsFunding(false);
     }
   };
 
@@ -1128,6 +1194,32 @@ export default function DealDetailPage() {
               )}
             </div>
             <p className="text-xs text-white/40 mb-3">{t("deal.dispute_active_hint")}</p>
+
+            {/* ── Fund dispute (pay an arbiter to take a small case) ──────────
+                Показывается только когда все четыре условия разом: спор открыт
+                (мы уже внутри status===4 && isParty), не заклеймлен, и
+                quoteDisputeTopUp > 0 — см. canFundDispute выше. Рядом с ценой
+                обязано быть названо, что деньги вернутся, если арбитр так и не
+                возьмётся: без этого предложение читается как ставка, а не как
+                оплата услуги. */}
+            {canFundDispute && disputeTopUp !== undefined && (
+              <div className="mb-3 rounded-lg border border-violet-400/20 bg-violet-400/[0.06] px-3 py-2.5">
+                <p className="text-xs text-white/50 leading-relaxed mb-2">
+                  {t("deal.fund_dispute_hint", { amount: usdcExact(disputeTopUp) })}
+                </p>
+                <Button size="sm" onClick={handleFundDispute} disabled={busy}
+                  className="bg-violet-500/90 hover:bg-violet-500 text-white">
+                  {busy
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                    : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
+                  {t("deal.fund_dispute_btn", { amount: usdcExact(disputeTopUp) })}
+                </Button>
+              </div>
+            )}
+            {disputeAlreadyFunded && (
+              <p className="text-xs text-white/35 mb-3">{t("deal.fund_dispute_funded")}</p>
+            )}
+
             <div className="flex gap-2">
               {parsed.arbiter !== ZERO_ADDR && realArbiter && (
                 // realArbiter, not parsed.arbiter — see the PartyRow comment above.

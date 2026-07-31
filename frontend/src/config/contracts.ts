@@ -1891,6 +1891,49 @@ export const ARBITER_REGISTRY_ABI = [
     stateMutability: 'nonpayable',
     type: 'function',
   },
+  // V4 — платный вызов арбитра
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'quoteDisputeTopUp',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'fundDispute',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getDisputeBounty',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'who', type: 'address' }],
+    name: 'getRefundableBounty',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'withdrawDisputeBounty',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getArbiterFloor',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
   // V3 — events
   {
     anonymous: false,
@@ -1963,6 +2006,13 @@ export const REPUTATION_ABI = [
   {
     inputs: [{ internalType: 'address', name: 'addr', type: 'address' }],
     name: 'getCleanStreak',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'who', type: 'address' }],
+    name: 'getUnresolvedDisputes',
     outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
     stateMutability: 'view',
     type: 'function',

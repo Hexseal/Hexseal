@@ -542,6 +542,35 @@ function DisputeCard({
     functionName: "arbiterTimeLeft",
   }) as { data: bigint | undefined };
 
+  // Суммарная награда за спор — собственные 80% сбора плюс доплата стороны.
+  // Это и есть весь механизм «вызова»: арбитр видит, что дело оплачено, и
+  // берёт его. Own share НЕ пересчитывается напрямую из disputeFee() * 80%
+  // (константа доли не имеет геттера, и хардкодить её здесь значило бы
+  // завести вторую копию, которая молча разойдётся с фасетом при следующей
+  // правке доли). Вместо этого own share решается из уравнения самого
+  // контракта: quoteDisputeTopUp возвращает floor - ownShare, когда
+  // ownShare < floor (иначе 0) — значит floor - topUp это ownShare, ТОЧНО,
+  // без единой хардкоженной константы. На крупных котлах, где topUp уже 0,
+  // ownShare неизвестен точно (но заведомо ≥ floor и без доплаты — bounty
+  // там всегда 0, доплата возможна только пока topUp > 0), там значок не
+  // рисуется: это ровно те дела, что были самодостаточны и без всего этого
+  // механизма.
+  const { data: topUp } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "quoteDisputeTopUp", args: [rec.agreement as Address],
+  }) as { data: bigint | undefined };
+  const { data: arbiterFloor } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getArbiterFloor",
+  }) as { data: bigint | undefined };
+  const { data: bounty } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getDisputeBounty", args: [rec.agreement as Address],
+  }) as { data: bigint | undefined };
+  const reward = (topUp !== undefined && arbiterFloor !== undefined && bounty !== undefined && topUp > 0n)
+    ? (arbiterFloor - topUp) + bounty
+    : undefined;
+
   const [disputeReason, setDisputeReason] = useState<string | null>(null);
   useEffect(() => {
     fetch(`/api/dispute-reason?agreement=${rec.agreement.toLowerCase()}`)
@@ -583,6 +612,11 @@ function DisputeCard({
           <span>{t("arbiter.client_label")} <span className="font-mono text-white/55">{shortAddr(rec.client)}</span></span>
           <span>{t("arbiter.executor_label")} <span className="font-mono text-white/55">{shortAddr(rec.executor)}</span></span>
           <span className="font-mono text-emerald-400/70">${fmtUSDC(rec.amount)} USDC</span>
+          {reward !== undefined && (
+            <span className="flex items-center gap-1 font-mono text-amber-400/80">
+              <Coins className="w-3 h-3" />${fmtUSDC(reward)}
+            </span>
+          )}
         </div>
       </div>
 
