@@ -1667,6 +1667,53 @@ contract DisputeSettlementTest is Test {
         assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(executor), 0, "verdict is not an unresolved dispute");
     }
 
+    // -------- ПЛАТНЫЙ ВЫЗОВ: ОКНО СПОРА --------
+
+    /// Деньги нельзя брать за услугу, которую уже нельзя оказать. После
+    /// disputedAt + DISPUTE_WINDOW спор невозможно ни заклеймить
+    /// (claimDispute), ни отсудить (submitVerdict) — обе бьют
+    /// DisputeWindowPassed, а статус остаётся DISPUTED, пока кто-нибудь не
+    /// дёрнет таймаут. Доплата в этом окне не пропала бы, но замерла бы
+    /// до чужого действия.
+    function testFundDisputeAfterTheWindowReverts() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(client, need);
+        vm.prank(client);
+        usdc.approve(address(diamond), need);
+
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.prank(client);
+        vm.expectRevert(ArbiterRegistryFacet.DisputeWindowPassed.selector);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "nothing was taken");
+    }
+
+    /// Граница ровно та же, что у claimDispute: последняя секунда окна ещё
+    /// принимает обоих. Проверяем в одном тесте, чтобы гейты не разъехались
+    /// на единицу — доплатить можно ровно тогда, когда спор ещё можно взять.
+    function testFundDisputeOnTheLastSecondMatchesClaimDispute() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(client, need);
+        vm.prank(client);
+        usdc.approve(address(diamond), need);
+
+        // vm.warp на ровную границу: block.timestamp == disputedAt + DISPUTE_WINDOW.
+        vm.warp(a.disputedAt() + a.DISPUTE_WINDOW());
+
+        vm.prank(client);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), need, "top-up accepted on the last second");
+
+        // ...и клейм на той же секунде тоже проходит. Если бы гейты разошлись,
+        // одно из двух здесь упало бы.
+        _claimByArbiter(a);
+        assertEq(a.arbiter(), address(diamond), "claimDispute accepts the same second");
+    }
+
     // ============================================================
     //  ПЛАТНЫЙ ВЫЗОВ ЧЕРЕЗ НАСТОЯЩИЙ ФОРВАРДЕР (ERC-2771)
     // ============================================================

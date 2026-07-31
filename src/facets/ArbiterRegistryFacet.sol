@@ -1030,6 +1030,22 @@ contract ArbiterRegistryFacet {
         if (d.disputeBounty[agreement] != 0) revert BountyAlreadyFunded();
 
         uint256 need = quoteDisputeTopUp(agreement); // ревертит NotDisputed, если спора нет
+
+        // Тот же гейт, что в claimDispute (:416-422), и то же сравнение:
+        // после disputedAt + DISPUTE_WINDOW спор нельзя ни заклеймить, ни
+        // отсудить (submitVerdict тоже бьёт DisputeWindowPassed), и статус
+        // остаётся DISPUTED, пока кто-нибудь не дёрнет таймаут. Принимать
+        // деньги за судью, которого уже физически не может быть, нельзя:
+        // они не потеряются (вернутся на таймауте), но замрут до чужого
+        // действия, а услуга не будет оказана вовсе.
+        (bool dOk, bytes memory dData) = agreement.staticcall(abi.encodeWithSignature("disputedAt()"));
+        require(dOk, "ArbiterRegistry: disputedAt read failed");
+        (bool wOk, bytes memory wData) = agreement.staticcall(abi.encodeWithSignature("DISPUTE_WINDOW()"));
+        require(wOk, "ArbiterRegistry: DISPUTE_WINDOW read failed");
+        if (block.timestamp > abi.decode(dData, (uint256)) + abi.decode(wData, (uint256))) {
+            revert DisputeWindowPassed();
+        }
+
         if (need == 0) revert TopUpNotNeeded();
 
         d.disputeBounty[agreement]      = need;
