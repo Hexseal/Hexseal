@@ -21,6 +21,7 @@ import "../src/AgreementDeployer.sol";
 import "../src/Agreement.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
 import "../src/facets/ReputationFacet.sol";
+import "../src/MinimalForwarder.sol";
 
 // ---------- MOCK USDC ----------
 // Скопирован из test/Extras.t.sol, расширен переключателем блокировки адреса
@@ -1664,5 +1665,206 @@ contract DisputeSettlementTest is Test {
 
         assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(client), 0, "verdict is not an unresolved dispute");
         assertEq(ReputationFacet(address(diamond)).getUnresolvedDisputes(executor), 0, "verdict is not an unresolved dispute");
+    }
+
+    // ============================================================
+    //  ПЛАТНЫЙ ВЫЗОВ ЧЕРЕЗ НАСТОЯЩИЙ ФОРВАРДЕР (ERC-2771)
+    // ============================================================
+    //
+    // Единственный путь, которым фронт вообще зовёт fundDispute
+    // (frontend/src/lib/relay.ts → MinimalForwarder.execute → диамонд).
+    // На нём msg.sender — адрес форвардера, а не человек, поэтому все
+    // денежные тесты выше, гоняющие функцию прямыми вызовами под vm.prank,
+    // пропустили бы проверку стороны, читающую msg.sender напрямую.
+    // Образец сетапа — test/AgreementClone.t.sol:230-296.
+
+    uint256 constant PAYER_PK    = 0xA11CE;
+    uint256 constant PEER_PK     = 0xB0BB1E;
+    uint256 constant OUTSIDER_PK = 0xDECAFB;
+
+    MinimalForwarder relayForwarder;
+
+    bytes32 constant FWD_TYPEHASH = keccak256(
+        "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
+    );
+
+    /// Поднимает спор между двумя АДРЕСАМИ С КЛЮЧАМИ (глобальные client/executor
+    /// сетапа — литералы 0x1/0x2, ими нельзя подписать EIP-712) и подставляет
+    /// диамонду настоящий форвардер вместо заглушки 0xDEAD.
+    function _forwardedDispute(uint256 dealAmount)
+        internal returns (Agreement a, address payer, address peer)
+    {
+        payer = vm.addr(PAYER_PK);
+        peer  = vm.addr(PEER_PK);
+
+        relayForwarder = new MinimalForwarder();
+        FactoryFacet(address(diamond)).setTrustedForwarder(address(relayForwarder));
+
+        usdc.mint(payer, dealAmount * 4);
+        vm.startPrank(payer);
+        usdc.approve(address(diamond), type(uint256).max);
+        address addr = FactoryFacet(address(diamond)).deployAgreement(
+            payer, peer, address(0), dealAmount, 7, "terms", 0
+        );
+        usdc.approve(addr, dealAmount);
+        Agreement(addr).fund();
+        vm.stopPrank();
+
+        a = Agreement(addr);
+        vm.prank(peer);
+        a.activate();
+        vm.prank(payer);
+        a.raiseDispute();
+    }
+
+    function _signFwd(uint256 pk, MinimalForwarder.ForwardRequest memory req)
+        internal view returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(abi.encode(
+            FWD_TYPEHASH, req.from, req.to, req.value, req.gas, req.nonce, keccak256(req.data)
+        ));
+        bytes32 digest = keccak256(abi.encodePacked(
+            "\x19\x01",
+            keccak256(abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("MinimalForwarder")),
+                keccak256(bytes("0.0.1")),
+                block.chainid,
+                address(relayForwarder)
+            )),
+            structHash
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// execute() не ревертит на провале внутреннего вызова — она возвращает
+    /// (false, revertData), поэтому успех читается возвратом.
+    function _relayToDiamond(uint256 pk, bytes memory data)
+        internal returns (bool success, bytes memory retdata)
+    {
+        address from = vm.addr(pk);
+        MinimalForwarder.ForwardRequest memory req = MinimalForwarder.ForwardRequest({
+            from:  from,
+            to:    address(diamond),
+            value: 0,
+            gas:   3_000_000,
+            nonce: relayForwarder.getNonce(from),
+            data:  data
+        });
+        return relayForwarder.execute(req, _signFwd(pk, req));
+    }
+
+    /// Главный путь фичи целиком. Проверяет три вещи, которые ломались вместе:
+    /// вызов вообще проходит проверку стороны; USDC тянется с ЧЕЛОВЕКА, а не с
+    /// форвардера; плательщиком записан человек — и это видно по тому, что
+    /// возврат на таймауте приходит ему, а не форвардеру.
+    function testFundDisputeThroughForwarderIsPaidByTheHuman() public {
+        (Agreement a, address payer, address peer) = _forwardedDispute(100_000_000);
+
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        assertGt(need, 0, "setup: the pot must need a top-up");
+        usdc.mint(payer, need);
+        vm.prank(payer);
+        usdc.approve(address(diamond), need);
+
+        uint256 payerBefore = usdc.balanceOf(payer);
+
+        (bool ok, bytes memory retdata) = _relayToDiamond(
+            PAYER_PK,
+            abi.encodeWithSelector(ArbiterRegistryFacet.fundDispute.selector, address(a))
+        );
+        assertTrue(ok, string.concat("forwarded fundDispute() failed: ", vm.toString(retdata)));
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), need, "bounty recorded");
+        assertEq(payerBefore - usdc.balanceOf(payer), need, "USDC pulled from the human, not the forwarder");
+        assertEq(usdc.balanceOf(address(relayForwarder)), 0, "the forwarder must never hold the deal's money");
+
+        // Плательщик записан человеком: возврат на таймауте приходит ему.
+        // Если бы в хранилище лёг адрес форвардера, эти деньги ушли бы туда.
+        vm.prank(peer);
+        a.respondToDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 beforeTimeout = usdc.balanceOf(payer);
+        vm.prank(payer);
+        a.triggerArbiterTimeout();
+
+        assertEq(
+            usdc.balanceOf(payer) - beforeTimeout - 50_000_000,
+            need,
+            "the refund went to the human payer on top of his split half"
+        );
+        assertEq(usdc.balanceOf(address(relayForwarder)), 0, "the forwarder got nothing back either");
+    }
+
+    /// Негативный контроль: без него тест выше прошёл бы и в мире, где
+    /// _msgSender() возвращает что угодно, лишь бы совпало со стороной.
+    /// Посторонний подписант через тот же форвардер должен получить NotParty.
+    function testFundDisputeThroughForwarderFromStrangerIsRejected() public {
+        (Agreement a, , ) = _forwardedDispute(100_000_000);
+
+        address outsider = vm.addr(OUTSIDER_PK);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(outsider, need);
+        vm.prank(outsider);
+        usdc.approve(address(diamond), need);
+
+        (bool ok, bytes memory retdata) = _relayToDiamond(
+            OUTSIDER_PK,
+            abi.encodeWithSelector(ArbiterRegistryFacet.fundDispute.selector, address(a))
+        );
+
+        assertFalse(ok, "the diamond accepted a forwarded top-up from a non-party");
+        assertEq(bytes4(retdata), ArbiterRegistryFacet.NotParty.selector, "wrong revert reason");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "nothing was taken");
+    }
+
+    /// Вторая функция того же пути. Возврат через claimable случается, когда
+    /// толчок не прошёл (чёрный список USDC), и забирает его человек — тоже
+    /// через форвардер.
+    ///
+    /// Платит здесь ИСПОЛНИТЕЛЬ (peer), не клиент, и по той же причине, что и
+    /// в testBlacklistedPayerDoesNotBreakClaimClearing: доля клиента уходит
+    /// жёстким safeTransfer, и заблокированный клиент уронил бы саму
+    /// триггер-транзакцию раньше, чем дело дошло бы до возврата доплаты.
+    function testWithdrawDisputeBountyThroughForwarderPaysTheHuman() public {
+        (Agreement a, address payer, address peer) = _forwardedDispute(100_000_000);
+
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(peer, need);
+        vm.startPrank(peer);
+        usdc.approve(address(diamond), need);
+        a.respondToDispute();
+        vm.stopPrank();
+
+        (bool funded, bytes memory fundRet) = _relayToDiamond(
+            PEER_PK,
+            abi.encodeWithSelector(ArbiterRegistryFacet.fundDispute.selector, address(a))
+        );
+        assertTrue(funded, string.concat("setup: forwarded fundDispute failed: ", vm.toString(fundRet)));
+
+        // Блокируем плательщика в USDC — мягкий возврат внутри
+        // clearDisputeClaim не пройдёт и осядет в refundableBounty.
+        usdc.setBlocked(peer, true);
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.prank(payer);
+        a.triggerArbiterTimeout();
+        usdc.setBlocked(peer, false);
+
+        uint256 owed = ArbiterRegistryFacet(address(diamond)).getRefundableBounty(peer);
+        assertEq(owed, need, "the failed push must land on the human's claimable balance");
+
+        uint256 before_ = usdc.balanceOf(peer);
+        (bool ok, bytes memory retdata) = _relayToDiamond(
+            PEER_PK,
+            abi.encodeWithSelector(ArbiterRegistryFacet.withdrawDisputeBounty.selector)
+        );
+        assertTrue(ok, string.concat("forwarded withdrawDisputeBounty() failed: ", vm.toString(retdata)));
+
+        assertEq(usdc.balanceOf(peer) - before_, owed, "the human got his top-up back");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getRefundableBounty(peer), 0, "claimable cleared");
+        assertEq(usdc.balanceOf(address(relayForwarder)), 0, "the forwarder must never receive the refund");
     }
 }

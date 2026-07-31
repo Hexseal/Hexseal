@@ -1012,12 +1012,19 @@ contract ArbiterRegistryFacet {
     ///
     /// Платит сторона, которой нужен судья, а не общий банк. Это и есть защита
     /// от фарма: подставить своего арбитра означает заплатить самому себе.
+    ///
+    /// Отправителя берём через _msgSender(), а не msg.sender: фронт зовёт эту
+    /// функцию ТОЛЬКО через ERC-2771-форвардер (frontend/src/lib/relay.ts),
+    /// и на этом пути msg.sender — адрес форвардера. С прямым msg.sender
+    /// проверка стороны отвергала бы каждую оплату, а плательщиком в
+    /// хранилище и в событии оказывался бы форвардер, а не человек.
     function fundDispute(address agreement) external {
+        address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
         RegistryStorage.AgreementRecord storage rec = RegistryStorage.store().agreements[agreement];
         if (rec.client == address(0)) revert NotAuthorized();
-        if (msg.sender != rec.client && msg.sender != rec.executor) revert NotParty();
+        if (caller != rec.client && caller != rec.executor) revert NotParty();
 
         if (d.disputeClaims[agreement] != address(0)) revert DisputeAlreadyClaimed();
         if (d.disputeBounty[agreement] != 0) revert BountyAlreadyFunded();
@@ -1026,13 +1033,13 @@ contract ArbiterRegistryFacet {
         if (need == 0) revert TopUpNotNeeded();
 
         d.disputeBounty[agreement]      = need;
-        d.disputeBountyPayer[agreement] = msg.sender;
+        d.disputeBountyPayer[agreement] = caller;
 
         address usdc = FactoryStorage.store().usdc;
-        bool ok = IUSDCFull(usdc).transferFrom(msg.sender, address(this), need);
+        bool ok = IUSDCFull(usdc).transferFrom(caller, address(this), need);
         require(ok, "ArbiterRegistry: bounty transfer failed");
 
-        emit DisputeBountyFunded(agreement, msg.sender, need);
+        emit DisputeBountyFunded(agreement, caller, need);
     }
 
     function getDisputeBounty(address agreement) external view returns (uint256) {
@@ -1042,15 +1049,20 @@ contract ArbiterRegistryFacet {
     /// @notice Забрать доплату, которую не удалось вернуть толчком.
     /// Существует ради чёрных списков USDC: возврат внутри clearDisputeClaim
     /// намеренно мягкий, потому что тот путь обёрнут в проглатывающий catch.
+    ///
+    /// _msgSender(), а не msg.sender, по той же причине, что и в fundDispute:
+    /// вызов приходит через форвардер, и на прямом msg.sender человек забирал
+    /// бы не свой остаток, а (всегда нулевой) остаток форвардера.
     function withdrawDisputeBounty() external {
+        address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        uint256 amount = d.refundableBounty[msg.sender];
+        uint256 amount = d.refundableBounty[caller];
         if (amount == 0) revert NothingToPush();
-        d.refundableBounty[msg.sender] = 0;
+        d.refundableBounty[caller] = 0;
         address usdc = FactoryStorage.store().usdc;
-        bool ok = IUSDCFull(usdc).transfer(msg.sender, amount);
+        bool ok = IUSDCFull(usdc).transfer(caller, amount);
         require(ok, "ArbiterRegistry: bounty withdrawal failed");
-        emit DisputeBountyWithdrawn(msg.sender, amount);
+        emit DisputeBountyWithdrawn(caller, amount);
     }
 
     function getRefundableBounty(address who) external view returns (uint256) {
