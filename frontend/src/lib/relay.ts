@@ -20,6 +20,7 @@ import {
 } from 'viem';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { CHAIN_ID } from '@/config/constants';
+import { acquireWalletLock } from '@/lib/walletLock';
 
 // ─── Addresses ────────────────────────────────────────────────────────────────
 
@@ -328,86 +329,12 @@ const DEFAULT_GAS = 500_000n;
 
 // ─── Per-wallet serialization ─────────────────────────────────────────────────
 //
-// Every gasless call for a given wallet reads a nonce (the MinimalForwarder's
-// getNonce(from), and/or the USDC contract's EIP-2612 permit nonce for that
-// owner) and signs against it — but nothing coordinated two gasless calls for
-// the SAME wallet started close together (e.g. applying to two jobs, or acting
-// on two different deals shown on the same dashboard). Both would read the
-// same nonce, both get signed, and the second one to actually land on-chain
-// reverts with a nonce mismatch — the user pays the friction of a real wallet
-// signature for the losing one too, then sees a cryptic contract-error dump
-// with no indication that simply retrying (once the first has landed) would
-// work. Queue calls per wallet address so a second one waits for the first to
-// finish (success or failure) before it even reads a nonce.
-const _walletLocks = new Map<string, Promise<void>>();
-
-// A held lock is only ever released from the holder's own `finally` — and the
-// operations it guards (a wallet-signature popup with no code-level timeout,
-// a WalletConnect mobile round-trip) can hang indefinitely on ordinary,
-// non-adversarial wallet behavior (user backgrounds the tab mid-signature,
-// abandons an open popup, a dropped mobile session that never rejects).
-// Without a ceiling, one abandoned call would silently wedge every OTHER
-// gasless action for that wallet — anywhere in the app — for the rest of the
-// session, with no error and no way out short of a full page reload. Give up
-// waiting after this long and let the next queued call proceed anyway,
-// treating the holder as abandoned. This reopens a narrow window for the
-// original nonce race this lock exists to prevent (only if the abandoned call
-// is somehow later resurrected past this point), but a rare, low-cost repeat
-// of that already-handled failure mode is far better than an indefinite,
-// unrecoverable stall.
-const WALLET_LOCK_TIMEOUT_MS = 3 * 60_000; // 3 min — generous for a real signature wait
-
-/** Waits for any earlier-queued gasless call for this wallet to finish (success
- *  or failure — either way its nonce has already been consumed or never sent),
- *  then reserves the lock for the caller. Returns a release callback that MUST
- *  be called in a `finally` block so the next queued call can proceed.
- *
- *  The in-memory Map above only serializes calls within THIS ONE tab's JS
- *  runtime — the same wallet acting from two companion surfaces open in
- *  separate tabs/windows (the deal page + its own chat, or the board list +
- *  a job's own detail page — genuinely plausible pairings, not a contrived
- *  scenario) shares no state and can still race the same nonce. Where
- *  available, also take a Web Locks API lock keyed the same way: it's a real
- *  cross-tab/cross-window mutex, and the browser auto-releases it if the
- *  holding tab is closed/crashes — which the in-memory Map alone can't do for
- *  a DIFFERENT tab. Degrades gracefully (same-tab-only protection, as before)
- *  on browsers without navigator.locks. */
-async function acquireWalletLock(address: string): Promise<() => void> {
-  const key = address.toLowerCase();
-  const ahead = _walletLocks.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const ours = new Promise<void>(resolve => { release = resolve; });
-  // Install ourselves as the new tail of the queue before awaiting anything, so a
-  // third concurrent call queues behind us, not behind whoever was ahead of us.
-  _walletLocks.set(key, ours);
-  await Promise.race([
-    ahead.then(() => {}, () => {}),
-    new Promise<void>(resolve => setTimeout(resolve, WALLET_LOCK_TIMEOUT_MS)),
-  ]);
-
-  let releaseWebLock: (() => void) | undefined;
-  if (typeof navigator !== 'undefined' && 'locks' in navigator) {
-    try {
-      await Promise.race([
-        new Promise<void>(resolveAcquired => {
-          navigator.locks.request(`hexseal-wallet-${key}`, () => new Promise<void>(resolveRelease => {
-            releaseWebLock = resolveRelease;
-            resolveAcquired();
-          })).catch(() => { resolveAcquired(); }); // unsupported/errored — proceed without cross-tab protection
-        }),
-        new Promise<void>(resolve => setTimeout(resolve, WALLET_LOCK_TIMEOUT_MS)),
-      ]);
-    } catch { /* proceed without cross-tab protection */ }
-  }
-
-  return () => {
-    release();
-    // Only clear the map entry if nobody has queued behind us since — otherwise
-    // this would drop the reference the next-in-line's "ahead" still points to.
-    if (_walletLocks.get(key) === ours) _walletLocks.delete(key);
-    releaseWebLock?.();
-  };
-}
+// `acquireWalletLock` жил здесь и был приватным для этого файла — двенадцать
+// вызовов, все внутри relay.ts. Теперь он в `@/lib/walletLock` и берётся
+// каждым путём подписи в приложении, а не только гейслесс-путями: любой второй
+// одновременный запрос подписи прилетает в кошелёк как -32002
+// («already pending for origin»), а в мобильном MetaMask залипший запрос
+// нечем отменить. Поведение при переносе не менялось; см. шапку того файла.
 
 // ─── Relay availability detection ────────────────────────────────────────────
 

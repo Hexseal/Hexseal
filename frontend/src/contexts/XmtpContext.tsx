@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb, checkXmtpDbExists, isXmtpInitPending } from '@/lib/xmtp';
+import { initXmtpClient, buildXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb, isXmtpInitPending } from '@/lib/xmtp';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
 
@@ -51,11 +51,10 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   const triedRef     = useRef(new Set<string>());
   const disabledRef  = useRef(new Set<string>());
   // Addresses whose auto-init effect body is currently executing — covers the
-  // checkXmtpDbExists() preamble too, not just the initXmtpClient() phase that
-  // isXmtpInitPending() (lib/xmtp.ts) tracks. checkXmtpDbExists has no timeout of
-  // its own, so without this, a resume-rearm firing while it's still resolving
-  // (isXmtpInitPending would say "not pending" — initXmtpClient hasn't been
-  // called yet) could kick off a second, redundant concurrent OPFS scan.
+  // localStorage preamble too, not just the buildXmtpClient()/initXmtpClient()
+  // phase that isXmtpInitPending() (lib/xmtp.ts) tracks. Without it, a
+  // resume-rearm firing before the client call has been made (isXmtpInitPending
+  // would say "not pending") could kick off a second, redundant run.
   const inFlightRef  = useRef(new Set<string>());
   // Bumped on every connect attempt (auto-init or retry()) so a late-resolving
   // attempt can tell it's been superseded and skip applying its result — see
@@ -125,31 +124,42 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     inFlightRef.current.add(addr);
     (async () => {
       try {
-        // Never pop a wallet signature during the connect handshake. On mobile,
-        // connecting already deep-links out to the wallet app; if XMTP auto-fires
-        // Client.create()'s signature the instant walletClient is ready, that second
-        // request collides with the WalletConnect return and bounces the user back to
-        // the wallet picker (and piles WASM memory onto the fragile connect window).
-        // So auto-resume messaging only when the OPFS keys already exist (no signature
-        // needed); for a first-time setup wait for an explicit Enable-messaging tap.
+        // Автоматический путь СТРУКТУРНО не умеет просить подпись.
+        //
+        // Раньше здесь всё равно вызывался Client.create() — просто под
+        // охраной эвристики, гадавшей по содержимому OPFS, понадобится ли ему
+        // подпись. Промах эвристики означал молчаливое окно подписи, которого
+        // человек не просил. На Android/Chrome + MetaMask это ровно тот вход,
+        // где запрос залипает в кошельке насовсем: подключение уже увело в
+        // приложение кошелька, вкладка ушла в фон, второй запрос прилетает
+        // как 'already pending for origin' и отменить его нечем.
+        //
+        // Теперь автоматика строит клиента через Client.build() — штатный
+        // конструктор SDK, который сайнера не принимает вовсе. Получилось —
+        // мессенджер живой, подписи не было в принципе. Не получилось (первый
+        // вход, хранилище вычистили, WASM/OPFS не поднялись) — уходим в
+        // состояние ошибки, которое интерфейс уже рисует как предложение
+        // включить мессенджер вручную. Подпись — только оттуда, по нажатию.
         if (!manual) {
+          // Дешёвая отсечка до подъёма WASM: адрес, который здесь мессенджер
+          // ни разу не включал, заведомо не имеет локальной личности, и
+          // тратить на него воркер в хрупком окне подключения незачем.
           const enabledBefore = typeof window !== 'undefined'
             && localStorage.getItem(registeredKey(addr)) === '1';
-          const dbExists = await checkXmtpDbExists(addr);
-          if (isStale()) return;
-          // Auto-resume silently only when this address enabled messaging before on
-          // this device (flag) AND libxmtp's OPFS data is still present — then
-          // Client.create() re-opens the persisted identity: fast, no signature,
-          // full history. Otherwise (first time, or storage was wiped) defer to an
-          // explicit Enable tap so we never surprise-sign during the connect flow.
-          if (!enabledBefore || !dbExists) {
-            xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} skip flag=${enabledBefore ? 1 : 0} db=${dbExists ? 1 : 0}`);
+          if (!enabledBefore) {
+            xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} skip flag=0`);
             setStatus('error');   // WalletMenu renders this as "Enable messaging"
             setError(null);
             return;
           }
+          xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} auto-build`);
+          await buildXmtpClient(addr);
+          if (isStale()) return;
+          setStatus('ready');
+          setError(null);
+          return;
         }
-        xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} ${manual ? 'manual' : 'auto'}`);
+        xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} manual`);
         await initXmtpClient(walletClient);
         if (isStale()) return;
         if (typeof window !== 'undefined') {
@@ -160,6 +170,16 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
       } catch (err: unknown) {
         if (isStale()) return;
         const raw = err instanceof Error ? err.message : 'Failed to enable messaging';
+        if (!manual) {
+          // Провал авто-сборки — не ошибка, которую человеку надо читать: он
+          // ничего не запрашивал. Молча предлагаем включить вручную (error:
+          // null — WalletMenu рисует это как «Enable messaging»), а причину
+          // оставляем в отладочном следе.
+          xmtpCrumb(`ctx:autobuild-fail ${addr.slice(0, 6)} ${raw.slice(0, 30)}`);
+          setError(null);
+          setStatus('error');
+          return;
+        }
         setError(
           isBraveRef.current && raw === 'XMTP_TIMEOUT'
             ? 'Похоже, ты в Brave — его Shields блокируют мессенджер, поэтому он не подключается. Нажми на иконку льва в адресной строке, отключи Shields для этого сайта и попробуй снова. Либо открой сайт в Chrome.'
@@ -186,9 +206,9 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
   //
   // On return-to-foreground, if this address previously enabled messaging here
   // (a persisted identity exists) and we're not already ready/disabled, clear the
-  // tried-flag and re-fire auto-init. The auto path re-opens the persisted keys with
-  // NO wallet signature, so this is safe during the connect window — it never fires
-  // the surprise-signature the guards above exist to prevent. First-time setups are
+  // tried-flag and re-fire auto-init. Безопасно по построению: авто-путь идёт
+  // через Client.build(), у которого сайнера нет вовсе — сколько бы раз этот
+  // rearm ни сработал, окна подписи он показать не может. First-time setups are
   // untouched: their registered flag isn't set until init actually succeeds.
   //
   // Must NOT fire while an attempt for this address is already in flight — on

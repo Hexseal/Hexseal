@@ -4,12 +4,17 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, ty
 import { useAccount, useWalletClient } from 'wagmi';
 import {
   isPushSupported, getPushSubscription, getSwRegistration,
-  enablePush, disablePush, shouldAutoRegisterPush, isPushRegisteredForAddress,
+  enablePush, disablePush, isPushRegistrationStale, isPushRegisteredForAddress,
 } from '@/lib/webpush';
+import { withWalletLock } from '@/lib/walletLock';
 
 export interface PushContextValue {
   supported: boolean;
   subscribed: boolean;
+  /** Подписка числится включённой, но её регистрация на релеере старше суток —
+   *  пуши могли перестать доходить. Интерфейс ОБЯЗАН это показать и предложить
+   *  включить заново нажатием; сам по себе флаг ничего не переподписывает. */
+  stale: boolean;
   permission: NotificationPermission;
   loading: boolean;
   error: string | null;
@@ -20,6 +25,7 @@ export interface PushContextValue {
 const PushContext = createContext<PushContextValue>({
   supported: false,
   subscribed: false,
+  stale: false,
   permission: 'default',
   loading: false,
   error: null,
@@ -37,23 +43,20 @@ export function PushProvider({ children }: { children: ReactNode }) {
 
   const [supported, setSupported]   = useState(false);
   const [subscribed, setSubscribed] = useState(false);
+  const [stale, setStale]           = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState<string | null>(null);
 
-  // Bumped on every enable()/disable() call so a slow, superseded attempt (e.g. the
-  // background auto-registration below, still waiting on a wallet signature) can
-  // tell it lost the race and skip applying its result — same pattern as
-  // XmtpContext.tsx's attemptIdRef/isStale(), needed for the identical race:
-  // enablePush() can take a while (signature + network) and nothing previously
-  // stopped a stale success from silently overwriting a newer disable(), or a
-  // stale disable() from silently overwriting a newer enable() — both enable()
-  // and disable() capture their own attempt id and check it before applying
-  // their result.
+  // Bumped on every enable()/disable() call so a slow, superseded attempt (still
+  // waiting on a wallet signature) can tell it lost the race and skip applying
+  // its result — same pattern as XmtpContext.tsx's attemptIdRef/isStale(),
+  // needed for the identical race: enablePush() can take a while (signature +
+  // network) and nothing previously stopped a stale success from silently
+  // overwriting a newer disable(), or a stale disable() from silently
+  // overwriting a newer enable() — both enable() and disable() capture their own
+  // attempt id and check it before applying their result.
   const attemptIdRef = useRef(0);
-  // Addresses the background auto-registration has already tried THIS page load —
-  // ported as-is from providers.tsx's former PushAutoMount.
-  const attemptedRef = useRef<Set<string>>(new Set());
 
   // Register the service worker at app start, regardless of push permission state,
   // so useXmtpNotifications's navigator.serviceWorker.ready await always resolves.
@@ -61,7 +64,9 @@ export function PushProvider({ children }: { children: ReactNode }) {
 
   const refreshSubscribed = useCallback(async (addr: string | undefined) => {
     const sub = await getPushSubscription();
-    setSubscribed(!!sub && !!addr && isPushRegisteredForAddress(addr));
+    const on = !!sub && !!addr && isPushRegisteredForAddress(addr);
+    setSubscribed(on);
+    setStale(on && !!addr && isPushRegistrationStale(addr));
   }, []);
 
   useEffect(() => {
@@ -72,32 +77,32 @@ export function PushProvider({ children }: { children: ReactNode }) {
     void refreshSubscribed(address);
   }, [address, refreshSubscribed]);
 
-  // Re-registers push with the relayer at most once per 24h (shouldAutoRegisterPush)
-  // per address, so the relayer's subscription list stays fresh after restarts
-  // without prompting a wallet signature on every page load. Ported from
-  // providers.tsx's PushAutoMount so it shares attemptIdRef with enable()/disable()
-  // below and can no longer race them.
-  useEffect(() => {
-    if (!address || !isPushSupported() || !walletClient) return;
-    if (Notification.permission !== 'granted') return;
-    const addr = address.toLowerCase();
-    if (attemptedRef.current.has(addr)) return;
-    if (!shouldAutoRegisterPush(address)) return;
-    attemptedRef.current.add(addr);
-    const myAttempt = ++attemptIdRef.current;
-    const signMsg = (msg: string) =>
-      walletClient.signMessage({ account: address as `0x${string}`, message: msg });
-    enablePush(address, signMsg)
-      .then(result => {
-        if (attemptIdRef.current !== myAttempt) return; // superseded by a later enable()/disable()
-        if (result === 'ok') void refreshSubscribed(address);
-      })
-      .catch(() => { attemptedRef.current.delete(addr); }); // let a future mount/reload retry
-  }, [address, walletClient, refreshSubscribed]);
+  // ЗДЕСЬ БЫЛА ФОНОВАЯ ПЕРЕРЕГИСТРАЦИЯ — и её здесь больше нет.
+  //
+  // Эффект раз в 24 часа сам звал enablePush(), а тот подписывает сообщение
+  // `hexseal:push-subscribe:...` кошельком. На мобильном подпись — это уход в
+  // приложение кошелька: приложение САМО, без нажатия, выбрасывало человека
+  // туда раз в сутки, посреди любого экрана. На Android/Chrome + MetaMask
+  // такой автоматический уход и есть вход в незакрываемое
+  // 'personal_sign already pending' — снять его можно только полным закрытием
+  // кошелька.
+  //
+  // Взамен протухание больше не чинится молча, а ПОКАЗЫВАЕТСЯ: флаг `stale`
+  // выше поднимается, когда регистрация старше суток, и страница уведомлений
+  // предлагает включить заново — нажатием.
+  //
+  // Правильное долгое решение — продлять регистрацию на стороне релеера, без
+  // новой подписи (`relayer/app.js` требует доказательства владения адресом).
+  // Это отдельная работа и здесь намеренно не сделана.
 
   const buildSignMsg = useCallback((msg: string) => {
     if (!walletClient || !address) throw new Error('no wallet');
-    return walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+    // Под общим мьютексом кошелька — см. lib/walletLock.ts. Второй
+    // одновременный запрос подписи прилетает в кошелёк как -32002 и в мобильном
+    // MetaMask залипает намертво.
+    return withWalletLock(address, () =>
+      walletClient.signMessage({ account: address as `0x${string}`, message: msg }),
+    );
   }, [walletClient, address]);
 
   const enable = useCallback(async () => {
@@ -111,6 +116,7 @@ export function PushProvider({ children }: { children: ReactNode }) {
       setPermission(Notification.permission);
       if (result === 'ok') {
         setSubscribed(true);
+        setStale(false); // enablePush() только что переписал отметку регистрации
       } else if (result === 'denied') {
         setError('notifications_blocked');
       } else {
@@ -129,14 +135,15 @@ export function PushProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       await disablePush(address, buildSignMsg);
-      if (attemptIdRef.current === myAttempt) setSubscribed(false); // an enable() that started after us and already won must not be reverted
+      // an enable() that started after us and already won must not be reverted
+      if (attemptIdRef.current === myAttempt) { setSubscribed(false); setStale(false); }
     } finally {
       if (attemptIdRef.current === myAttempt) setLoading(false);
     }
   }, [address, buildSignMsg]);
 
   return (
-    <PushContext.Provider value={{ supported, subscribed, permission, loading, error, enable, disable }}>
+    <PushContext.Provider value={{ supported, subscribed, stale, permission, loading, error, enable, disable }}>
       {children}
     </PushContext.Provider>
   );

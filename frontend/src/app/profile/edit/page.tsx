@@ -19,6 +19,7 @@ import Link from "next/link";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { PageCenter } from "@/components/PageCenter";
+import { withWalletLock } from "@/lib/walletLock";
 
 const SPECIALIZATIONS = [
   "Smart Contracts", "Frontend Dev", "Backend Dev", "Full-Stack",
@@ -283,7 +284,11 @@ export default function EditProfilePage() {
       setStage('signing');
       const profileJson = JSON.stringify(profileData);
       const bodyHash    = keccak256(new TextEncoder().encode(profileJson));
-      const signature   = await signMessageAsync({
+      // Под общим мьютексом кошелька (lib/walletLock.ts). Именно на этом экране
+      // пользователь снял 'personal_sign already pending for origin …': пока
+      // где-то ещё висел незакрытый запрос подписи, этот прилетал вторым и
+      // залипал в кошельке насовсем.
+      const signature   = await withWalletLock(address, () => signMessageAsync({
         // Pin the account explicitly — without this, wagmi signs with whatever
         // account is CURRENTLY active in the wallet at signing time, not the one
         // this message/profileData was built for. The avatar upload above can take
@@ -294,7 +299,7 @@ export default function EditProfilePage() {
         // immediately instead.
         account: address as `0x${string}`,
         message: `hexseal:profile:update:${address.toLowerCase()}:${profileData.updatedAt}:${bodyHash}`,
-      });
+      }));
 
       setStage('saving');
       await publishProfile(profileData, signature);

@@ -23,6 +23,7 @@ import type { Abi, Address, Hex, TransactionReceipt } from "viem";
 import { shortAddr } from "@/lib/utils";
 import { FINALIZE_DELAY } from "@/config/constants";
 import { computeArbiterReward } from "@/lib/disputeBounty";
+import { withWalletLock } from "@/lib/walletLock";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -688,7 +689,11 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
     try {
       const ts = String(Math.floor(Date.now() / 1000));
       const message = `hexseal:dispute-log:${dealId.toLowerCase()}:${ts}`;
-      const sig = await walletClient.signMessage({ account: address, message });
+      // Под общим мьютексом кошелька (lib/walletLock.ts): страница арбитра —
+      // единственное место, где подпись «просто на чтение» (журнал спора)
+      // соседствует с гейслесс-действиями по тем же делам.
+      const sig = await withWalletLock(address, () =>
+        walletClient.signMessage({ account: address, message }));
       const res = await fetch(`${RELAYER_URL_ARB}/dispute-log/${dealId}`, {
         headers: { 'x-ts': ts, 'x-sig': sig },
       });

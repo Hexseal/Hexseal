@@ -5,34 +5,37 @@ const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:300
 
 // ─── Shared registration bookkeeping ────────────────────────────────────────────
 //
-// Both the explicit "Enable notifications" toggle (usePushNotifications.ts) and
-// providers.tsx's background PushAutoMount call enablePush()/disablePush(). They
-// used to keep no shared state at all: PushAutoMount alone wrote the "last
-// registered at" timestamp (only from ITS OWN success handler), and neither path
-// recorded an explicit opt-out. That caused two real bugs:
-//   1. A user who tapped the explicit "Enable" button never got the timestamp
-//      written, so on the next reload PushAutoMount saw "never registered" and
-//      silently re-subscribed (a second, unrequested wallet signature right
-//      after the user's own).
-//   2. "Disable notifications" unsubscribed but recorded no opt-out, and OS
-//      Notification permission can't be revoked by script — so once the (never
-//      reset) TTL aged past 24h, PushAutoMount silently re-enabled push the user
-//      had explicitly turned off, popping another unrequested signature.
-// Centralizing both the write (on any successful enable, from either path) and
-// an explicit opt-out flag here means every caller shares one source of truth.
+// Единственный источник правды о том, когда эта подписка последний раз
+// доехала до релеера, и о явном отказе от пушей. Пишется на КАЖДОМ успешном
+// enablePush(), читается всеми.
+//
+// Раньше рядом с явным тумблером жила фоновая перерегистрация: раз в 24 часа
+// приложение само звало enablePush(), а тот требует подписи кошелька
+// (`hexseal:push-subscribe:...`). На мобильном это значило, что раз в сутки
+// приложение САМО выбрасывает человека в кошелёк — без нажатия, без объяснения,
+// посреди чего угодно. На Android/Chrome + MetaMask такой уход стоит залипшего
+// 'personal_sign already pending', который снимается только полным закрытием
+// приложения кошелька. Автоматика убрана; TTL ниже остался, но теперь он
+// только ПОКАЗЫВАЕТ протухание (isPushRegistrationStale), а не действует сам.
 const PUSH_REG_KEY      = (addr: string) => `hexseal-push-reg-${addr.toLowerCase()}`;
 const PUSH_DISABLED_KEY = (addr: string) => `hexseal-push-disabled-${addr.toLowerCase()}`;
 const PUSH_REG_TTL      = 24 * 60 * 60 * 1000; // 24h
 
-/** Whether a background auto-registration attempt should even be tried for this
- *  address: not explicitly opted out, and not already (re-)registered recently. */
-export function shouldAutoRegisterPush(address: string): boolean {
+/** Подписка числится включённой, но её регистрация на релеере старше TTL.
+ *  Ничего не делает — это флаг ДЛЯ ИНТЕРФЕЙСА: он обязан показать, что пуши
+ *  могли перестать доходить, и предложить включить заново нажатием. Молчать
+ *  здесь нельзя: релеер перезапускается, и человек иначе просто перестанет
+ *  получать уведомления, ничего об этом не узнав.
+ *
+ *  Явный отказ (disable) протухшим не считается — там нечему протухать. */
+export function isPushRegistrationStale(address: string): boolean {
   try {
     if (localStorage.getItem(PUSH_DISABLED_KEY(address)) === '1') return false;
-    const last = Number(localStorage.getItem(PUSH_REG_KEY(address)) ?? 0);
-    return Date.now() - last >= PUSH_REG_TTL;
+    const raw = localStorage.getItem(PUSH_REG_KEY(address));
+    if (raw === null) return false; // ни разу не регистрировались — это не «протухло»
+    return Date.now() - Number(raw) >= PUSH_REG_TTL;
   } catch {
-    return true; // localStorage unavailable — let the caller's own guards decide
+    return false; // localStorage недоступен — не пугаем человека наугад
   }
 }
 
@@ -181,9 +184,10 @@ export async function disablePush(
   signMessage?: (msg: string) => Promise<string>,
 ): Promise<void> {
   // Record the opt-out FIRST and unconditionally — regardless of whether an
-  // active subscription is actually found below — so PushAutoMount respects it
-  // from this point on. Notification.permission can't be revoked by script, so
-  // this flag is the only durable record that the user explicitly said no.
+  // active subscription is actually found below. Notification.permission can't
+  // be revoked by script, so this flag is the only durable record that the user
+  // explicitly said no — и именно он держит интерфейс от того, чтобы рисовать
+  // выключённые пуши как «протухшие, включи заново».
   try { localStorage.setItem(PUSH_DISABLED_KEY(address), '1'); } catch { /* unavailable */ }
 
   const reg = await getSwRegistration();

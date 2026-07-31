@@ -20,6 +20,7 @@ import type { DecodedMessage, GroupMember, Identifier } from '@xmtp/browser-sdk'
 import type { Signer } from '@xmtp/browser-sdk';
 import { toBytes } from 'viem';
 import type { WalletClient } from 'viem';
+import { withWalletLock } from '@/lib/walletLock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -78,72 +79,13 @@ const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 const expiryKey     = (addr: string) => `xmtp-expiry-${addr.toLowerCase()}`; // kept for legacy cleanup only
 const installIdKey  = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
 
-/** Check whether the XMTP OPFS database file exists for this address.
- *  If it exists, Client.create() will NOT require a wallet signature.
- *  If it's gone (browser cleared storage), signing would be needed — we
- *  avoid that by clearing the session instead.
- *
- *  We enumerate the OPFS root directory instead of exact-name lookup because
- *  the XMTP WASM runtime may append a suffix (.db, .db3, etc.) to dbPath.
- */
-/** True if an OPFS root entry name looks like XMTP/libxmtp storage.
- *  Covers XMTP browser-sdk v7's layout (`.opfs-libxmtp-metadata` + the OPFS SAH
- *  pool, e.g. `.opfs-sahpool`) as well as the older per-address `xmtp-<addr>` db
- *  path used by earlier sessions. Broad on purpose — a false positive only means
- *  we auto-resume messaging (which then no-ops if there's genuinely nothing to
- *  open), whereas a false negative forces a needless manual Enable + re-create. */
-function isXmtpOpfsEntry(name: string, addressPrefix: string): boolean {
-  return (
-    name.startsWith(addressPrefix) ||
-    name.includes('libxmtp') ||
-    name.startsWith('.opfs-')
-  );
-}
-
-export async function checkXmtpDbExists(address: string): Promise<boolean> {
-  try {
-    const root   = await navigator.storage.getDirectory();
-    const prefix = `xmtp-${address.toLowerCase()}`;
-
-    // Primary: .entries() scan works in Chrome/Firefox.
-    // On some WebKit/iOS versions it silently yields nothing even when files exist,
-    // so we track whether it ever yielded an entry; if it did, the scan was complete.
-    const seen: string[] = [];
-    let hit = false;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const iter = (root as any).entries() as AsyncIterable<[string, FileSystemHandle]>;
-      for await (const [name] of iter) {
-        seen.push(name);
-        if (isXmtpOpfsEntry(name, prefix)) hit = true;
-      }
-    } catch { /* entries() not supported — fall through to direct probe */ }
-
-    // Diagnostic: log what OPFS actually holds. Distinguishes "db evicted / never
-    // persisted" (n=0) from "db present but our name check missed it" (n>0, hit=false).
-    xmtpCrumb(`dbcheck hit=${hit} n=${seen.length} [${seen.slice(0, 6).join('|')}]`);
-
-    if (hit) return true;
-    // If entries() yielded at least one file we trust it found everything.
-    if (seen.length > 0) return false;
-
-    // entries() yielded nothing — could be iOS WebKit bug rather than truly empty.
-    // Probe the names the XMTP WASM runtime may use (v7's libxmtp marker + the old
-    // per-address db path, for older sessions).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rootHandle = root as any;
-    for (const name of ['.opfs-libxmtp-metadata', `${prefix}.db3`, `${prefix}.db`, prefix]) {
-      try {
-        await rootHandle.getFileHandle(name);
-        xmtpCrumb(`dbcheck probe-hit ${name}`);
-        return true;
-      } catch { /* not found with this name */ }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
+// Здесь раньше жил `checkXmtpDbExists()` — эвристика, которая перечисляла
+// корень OPFS и по именам файлов ГАДАЛА, поднимется ли `Client.create()` без
+// подписи. Гадание убрано вместе с функцией: авто-путь теперь строит клиента
+// через `Client.build()` + `isRegistered()` (см. `buildXmtpClient` ниже), то
+// есть спрашивает у самого SDK, есть ли уже личность, вместо того чтобы
+// угадывать это по разметке хранилища. Промах эвристики стоил дорого: ложное
+// «база есть» вело прямиком в `Client.create()`, а тот молча просил подпись.
 
 /** Clear XMTP session state for this address (localStorage flag + in-memory cache).
  *  OPFS keys file is intentionally kept — re-enabling won't require a wallet signature.
@@ -177,10 +119,16 @@ export function createXmtpSigner(
     signMessage: async (message: string): Promise<Uint8Array> => {
       signCount++;
       onSignStep?.(signCount);
-      const sig = await walletClient.signMessage({
-        account: walletClient.account!,
-        message,
-      });
+      // Под общим мьютексом кошелька: пока идёт любой другой запрос подписи
+      // (гейслесс-действие, push, профиль), второй улетел бы в кошелёк как
+      // -32002 'already pending', а в мобильном MetaMask такой запрос не
+      // отменяется ничем, кроме полного закрытия приложения кошелька.
+      const sig = await withWalletLock(walletClient.account!.address, () =>
+        walletClient.signMessage({
+          account: walletClient.account!,
+          message,
+        }),
+      );
       return toBytes(sig);
     },
   } as unknown as Signer;
@@ -256,6 +204,124 @@ export function abandonXmtpInit(address: string): void {
   _generation.set(addr, (_generation.get(addr) ?? 0) + 1);
 }
 
+/** Открывает УЖЕ ЗАРЕГИСТРИРОВАННУЮ личность XMTP — БЕЗ сайнера и, как
+ *  следствие, без единого шанса запросить подпись кошелька.
+ *
+ *  Это штатный путь SDK, а не трюк: `Client.build(identifier, options)`
+ *  создаёт клиента с `disableAutoRegister: true` и вообще не принимает сайнера
+ *  (`@xmtp/browser-sdk` 7.0.0, `src/Client.ts`). Его докстрока говорит прямо:
+ *  клиент обязан быть уже зарегистрирован, любой метод, которому нужен сайнер,
+ *  бросит. Ровно это нам и нужно на автоматическом пути — он СТРУКТУРНО не
+ *  способен показать человеку окно подписи, а не «обычно её не просит».
+ *
+ *  `isRegistered()` после сборки — дешёвая проверка «личность здесь есть».
+ *  Без неё `build()` на пустом хранилище отдал бы вполне живой объект клиента,
+ *  который развалился бы позже и в другом месте — на первом же вызове,
+ *  которому нужен сайнер.
+ *
+ *  Подпись остаётся только за `initXmtpClient()` ниже — и он зовётся ТОЛЬКО из
+ *  явного нажатия «включить мессенджер».
+ *
+ *  Делит кэши (`_clientCache`, `_initPromises`, `_generation`) с
+ *  `initXmtpClient` намеренно: `isXmtpInitPending()` и `abandonXmtpInit()`
+ *  должны видеть обе попытки одинаково, иначе rearm по возврату во вкладку
+ *  начал бы наслаивать сборку поверх ещё не закончившейся сборки. */
+export function buildXmtpClient(address: string): Promise<Client> {
+  const addr = address.toLowerCase();
+
+  const cached = _clientCache.get(addr);
+  if (cached) return Promise.resolve(cached);
+
+  const inFlight = _initPromises.get(addr);
+  if (inFlight) return inFlight;
+
+  // Снято до любого await — метка этой конкретной попытки, чтобы понять
+  // потом, не вытеснил ли её abandonXmtpInit().
+  const myGeneration = _generation.get(addr) ?? 0;
+
+  // Ссылка на «сырое» обещание сборки. Как и у Client.create(), у Client.build()
+  // нет AbortSignal: если сработает наш таймаут, воркер продолжит жить. Держим
+  // ссылку, чтобы закрыть клиента, если он всё-таки доедет позже.
+  let rawBuild: Promise<Client> | null = null;
+
+  let promise!: Promise<Client>;
+  promise = (async () => {
+    try {
+      // XMTP WASM требует OPFS — он есть только в защищённом контексте.
+      try {
+        await navigator.storage.getDirectory();
+      } catch {
+        throw new Error('XMTP_NO_OPFS');
+      }
+      // Просим браузер не вытеснять OPFS, чтобы личность пережила сессию.
+      // Best-effort и молча — как в initXmtpClient.
+      try { await navigator.storage.persist?.(); } catch { /* не поддержано */ }
+
+      xmtpCrumb(`init:build-start ${addr.slice(0, 6)}`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rawBuild = Client.build(toIdentifier(addr), { env: 'production', dbPath: `xmtp-${addr}`, loggingLevel: LogLevel.Error } as any) as Promise<Client>;
+
+      // Потолок ниже, чем 90 с у initXmtpClient: там в бюджет входит живое
+      // ожидание подписи человеком, здесь подписи нет по построению — только
+      // подъём WASM/OPFS и сверка личности.
+      const client = await withTimeout(rawBuild, 45_000, 'XMTP_TIMEOUT');
+      xmtpCrumb('init:build-done');
+
+      let registered = false;
+      try {
+        registered = await client.isRegistered();
+      } catch {
+        registered = false;
+      }
+      if (!registered) {
+        // Личности здесь нет (первый вход, или хранилище вычистили). Это НЕ
+        // повод молча просить подпись — закрываем и отдаём наверх отказ,
+        // чтобы интерфейс предложил включить мессенджер явным нажатием.
+        xmtpCrumb('init:build-unregistered');
+        try { client.close(); } catch { /* уже закрыт */ }
+        throw new Error('XMTP_NOT_REGISTERED');
+      }
+
+      if ((_generation.get(addr) ?? 0) !== myGeneration) {
+        // abandonXmtpInit() отработал, пока мы собирались — более новая
+        // попытка уже взяла управление (или адрес выключили).
+        try { client.close(); } catch { /* уже закрыт */ }
+        throw new Error('XMTP_ABANDONED');
+      }
+
+      xmtpCrumb('init:build-ok');
+      _clientCache.set(addr, client);
+      return client;
+    } catch (err) {
+      xmtpCrumb(`init:build-error ${err instanceof Error ? err.message.slice(0, 40) : 'unknown'}`);
+      // Опоздавшая сборка не должна утечь воркером до конца жизни страницы.
+      // Вешается строго здесь, после того как мы уже сдались, — гонки с
+      // успешной веткой выше быть не может.
+      const msg = err instanceof Error ? err.message : '';
+      if (msg !== 'XMTP_ABANDONED' && msg !== 'XMTP_NOT_REGISTERED') {
+        rawBuild?.then(c => { try { c.close(); } catch { /* уже закрыт */ } })
+          .catch(() => { /* сама сборка упала — закрывать нечего */ });
+      }
+      throw err;
+    } finally {
+      // Удаляем только СВОЮ запись: опоздавшая попытка не должна выдернуть
+      // из-под более новой её собственное, ещё живое обещание.
+      if (_initPromises.get(addr) === promise) {
+        _initPromises.delete(addr);
+      }
+    }
+  })();
+
+  _initPromises.set(addr, promise);
+  return promise;
+}
+
+/** Создаёт клиента XMTP С САЙНЕРОМ — то есть путь, который МОЖЕТ запросить
+ *  подпись кошелька (её просит фаза register()).
+ *
+ *  Зовётся ровно из одного места: явного нажатия «включить мессенджер»
+ *  (`XmtpContext.retry()`). Автоматика сюда не ходит вообще — у неё есть
+ *  `buildXmtpClient()` выше, который подписывать не умеет по построению. */
 export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (step: number) => void): Promise<Client> {
   // XMTP WASM requires OPFS (Origin Private File System) which is only available
   // on secure contexts (localhost or https). Check BEFORE spawning the worker so

@@ -616,7 +616,9 @@
     "wallet_required": "Wallet verbinden, um Benachrichtigungen zu sehen",
     "enable_messaging_hint": "Enable messaging to get notifications about new messages",
     "push_blocked": "Push notifications are blocked by your browser. Go to browser settings → Site permissions to re-enable.",
-    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later."
+    "push_enable_failed": "Failed to enable push notifications. Check your browser settings or try again later.",
+    "push_stale": "Push-Benachrichtigungen kommen möglicherweise nicht mehr an — die Registrierung dieses Geräts ist über einen Tag alt. Schalte sie erneut ein, um sie zu erneuern.",
+    "push_renew": "Erneut einschalten"
   },
   "arbiter": {
     "title": "Schlichter-Zentrum",

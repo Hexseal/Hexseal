@@ -12,7 +12,6 @@ import {
   darkTheme,
   lightTheme,
   getDefaultConfig,
-  connectorsForWallets,
 } from "@rainbow-me/rainbowkit";
 import {
   metaMaskWallet,
@@ -40,6 +39,7 @@ import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
 import { PushProvider } from "@/contexts/PushContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
+import { buildWalletGroups, isMobileUserAgent } from "@/lib/walletList";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -90,6 +90,52 @@ const safeStorage = createStorage({
   storage: typeof window !== "undefined" ? window.localStorage : undefined,
 });
 
+// Мобильный ли это клиент. Считается один раз на eval модуля — ровно там же,
+// где собирается сам конфиг wagmi, менять его после создания всё равно нельзя.
+// На сервере (SSR) navigator'а нет и здесь честный false: серверный рендер
+// кошелёк не подключает, а разметку список коннекторов не задаёт — модал
+// RainbowKit рисуется только на клиенте и только по нажатию.
+const IS_MOBILE_CLIENT =
+  typeof navigator !== "undefined" && isMobileUserAgent(navigator.userAgent);
+
+// Полный набор — он же десктопный. Мобильный получается из него вычитанием
+// (см. MOBILE_EXCLUDED ниже и шапку lib/walletList.ts).
+const WALLET_GROUPS = [
+  {
+    groupName: "Popular",
+    wallets: [
+      metaMaskWallet,
+      rabbyWallet,
+      coinbaseWallet,
+      rainbowWallet,
+      trustWallet,
+      okxWallet,
+    ],
+  },
+  {
+    groupName: "More",
+    wallets: [
+      walletConnectWallet,
+      phantomWallet,
+      braveWallet,
+      zerionWallet,
+      bitgetWallet,
+      safepalWallet,
+      oneKeyWallet,
+      ledgerWallet,
+      injectedWallet,
+    ],
+  },
+];
+
+// На мобильном коннектор MetaMask идёт через MetaMask SDK (RainbowKit 2.2.8),
+// а тот на Android/Chrome залипает незакрываемым 'personal_sign already
+// pending' с UUID-origin'ом. Убираем именно его: WalletConnect (группа "More")
+// доводит до того же MetaMask другим транспортом, а injectedWallet покрывает
+// встроенный браузер кошелька, где диплинка нет вовсе. Десктоп не задет —
+// там MetaMask инжектированный и работает.
+const MOBILE_EXCLUDED = [metaMaskWallet];
+
 // Full wallet list when WalletConnect projectId is available.
 // Falls back to injected-only to avoid WC API errors when projectId is missing.
 const config = projectId
@@ -106,33 +152,7 @@ const config = projectId
       storage: safeStorage,
       ssr: true,
       pollingInterval: 6_000,
-      wallets: [
-        {
-          groupName: "Popular",
-          wallets: [
-            metaMaskWallet,
-            rabbyWallet,
-            coinbaseWallet,
-            rainbowWallet,
-            trustWallet,
-            okxWallet,
-          ],
-        },
-        {
-          groupName: "More",
-          wallets: [
-            walletConnectWallet,
-            phantomWallet,
-            braveWallet,
-            zerionWallet,
-            bitgetWallet,
-            safepalWallet,
-            oneKeyWallet,
-            ledgerWallet,
-            injectedWallet,
-          ],
-        },
-      ],
+      wallets: buildWalletGroups(WALLET_GROUPS, IS_MOBILE_CLIENT, MOBILE_EXCLUDED),
     })
   : createConfig({
       chains,
