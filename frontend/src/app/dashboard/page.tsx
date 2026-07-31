@@ -21,6 +21,7 @@ export default function DashboardPage() {
   const {
     rawAgreements, isLoading, error, refetch,
     xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
+    unresolvedDisputes, totalDeals,
   } = useAgreementsSummary(address);
   const { jobs: mySearchJobs }     = useMyJobs(address);
   const { services: mySearchSvcs } = useMyServices(address);
@@ -58,7 +59,7 @@ export default function DashboardPage() {
         {isLoading ? (
           <StatsCardSkeleton />
         ) : (
-          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
+          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} unresolvedDisputes={unresolvedDisputes} totalDeals={totalDeals} />
         )}
 
         {/* ── Unified search ── */}

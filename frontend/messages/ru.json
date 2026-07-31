@@ -249,6 +249,7 @@
     "stat_active": "Активных",
     "stat_completed": "Завершено",
     "stat_volume": "Объём",
+    "stat_unjudged": "Без вердикта",
     "stat_usdc_total": "USDC всего",
     "stat_deal": "сделка",
     "stat_deals": "сделок",

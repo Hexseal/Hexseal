@@ -238,6 +238,7 @@
     "stat_active": "进行中",
     "stat_completed": "已完成",
     "stat_volume": "总量",
+    "stat_unjudged": "无裁决",
     "stat_usdc_total": "USDC 总计",
     "stat_deal": "笔",
     "stat_deals": "笔",

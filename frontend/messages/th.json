@@ -238,6 +238,7 @@
     "stat_active": "กำลังดำเนินการ",
     "stat_completed": "เสร็จสิ้น",
     "stat_volume": "ปริมาณ",
+    "stat_unjudged": "ไม่มีคำตัดสิน",
     "stat_usdc_total": "USDC ทั้งหมด",
     "stat_deal": "ดีล",
     "stat_deals": "ดีล",

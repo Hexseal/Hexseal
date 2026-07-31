@@ -238,6 +238,7 @@
     "stat_active": "نشط",
     "stat_completed": "مكتمل",
     "stat_volume": "الحجم",
+    "stat_unjudged": "دون حكم",
     "stat_usdc_total": "إجمالي USDC",
     "stat_deal": "اتفاق",
     "stat_deals": "اتفاقيات",

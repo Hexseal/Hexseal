@@ -238,6 +238,7 @@
     "stat_active": "Activos",
     "stat_completed": "Completados",
     "stat_volume": "Volumen",
+    "stat_unjudged": "Sin veredicto",
     "stat_usdc_total": "USDC total",
     "stat_deal": "trato",
     "stat_deals": "tratos",

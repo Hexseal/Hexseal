@@ -249,6 +249,7 @@
     "stat_active": "Active",
     "stat_completed": "Completed",
     "stat_volume": "Volume",
+    "stat_unjudged": "Unjudged",
     "stat_usdc_total": "USDC total",
     "stat_deal": "deal",
     "stat_deals": "deals",

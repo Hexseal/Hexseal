@@ -238,6 +238,7 @@
     "stat_active": "アクティブ",
     "stat_completed": "完了",
     "stat_volume": "ボリューム",
+    "stat_unjudged": "裁定なし",
     "stat_usdc_total": "USDC合計",
     "stat_deal": "契約",
     "stat_deals": "契約",

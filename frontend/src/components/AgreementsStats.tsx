@@ -21,9 +21,14 @@ interface AgreementsStatsProps {
   activeCount: number;
   completedCount: number;
   totalVolume: number;
+  unresolvedDisputes: number;
+  totalDeals: number;
 }
 
-export function AgreementsStats({ level, xp, cleanStreak, activeCount, completedCount, totalVolume }: AgreementsStatsProps) {
+export function AgreementsStats({
+  level, xp, cleanStreak, activeCount, completedCount, totalVolume,
+  unresolvedDisputes, totalDeals,
+}: AgreementsStatsProps) {
   const t = useTranslations();
 
   // Below master tier: normal "until next tier" hint. At master (nextThreshold/nextLabelKey
@@ -35,11 +40,28 @@ export function AgreementsStats({ level, xp, cleanStreak, activeCount, completed
       ? `${xp} XP ${t('dashboard.stat_streak_building', { n: cleanStreak, need: CLEAN_STREAK_REQUIRED })}`
       : `${xp} XP ${t('dashboard.stat_streak_unlocked', { n: cleanStreak })}`;
 
-  const stats: { value: string | number; label: string }[] = [
+  // Споры, кончившиеся без вердикта — ДОЛЕЙ от числа сделок, а не голым числом:
+  // один спор из пятидесяти это шум, восемь из десяти — портрет, и голая
+  // восьмёрка не отличает одно от другого. Механика без показа бесполезна
+  // целиком — весь её смысл в том, что о ней ЗНАЕТ тот, кого она считает.
+  //
+  // При нулевом знаменателе колонки нет: доли от нуля сделок не существует,
+  // а «0/0» у свежего адреса — это обвинение, выданное авансом ни за что.
+  // При нулевом ЧИСЛИТЕЛЕ колонка остаётся: «0/12» ничего не портит, зато
+  // делает счётчик публично известным ещё до того, как он кому-то понадобится,
+  // — а сдерживает он именно тем, что о нём знают заранее.
+  const stats: { value: string | number; label: string; danger?: boolean }[] = [
     { value: activeCount, label: t('dashboard.stat_active') },
     { value: completedCount, label: t('dashboard.stat_completed') },
     { value: fmtVolume(totalVolume), label: t('dashboard.stat_volume') },
   ];
+  if (totalDeals > 0) {
+    stats.push({
+      value: `${unresolvedDisputes}/${totalDeals}`,
+      label: t('dashboard.stat_unjudged'),
+      danger: unresolvedDisputes > 0,
+    });
+  }
 
   return (
     <motion.div
@@ -75,7 +97,7 @@ export function AgreementsStats({ level, xp, cleanStreak, activeCount, completed
       <div className="flex items-center justify-between px-2 mt-3 pt-3 border-t border-white/[0.08]">
         {stats.map((s, i) => (
           <div key={i} className="flex flex-col items-center gap-0.5">
-            <span className="text-lg font-bold text-white leading-none">{s.value}</span>
+            <span className={`text-lg font-bold leading-none ${s.danger ? 'text-amber-400' : 'text-white'}`}>{s.value}</span>
             <span className="text-[11px] text-white/35 leading-none">{s.label}</span>
           </div>
         ))}

@@ -238,6 +238,7 @@
     "stat_active": "활성",
     "stat_completed": "완료",
     "stat_volume": "거래량",
+    "stat_unjudged": "판정 없음",
     "stat_usdc_total": "USDC 합계",
     "stat_deal": "계약",
     "stat_deals": "계약",
