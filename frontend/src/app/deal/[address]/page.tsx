@@ -36,6 +36,7 @@ import { DisputeCostNotice } from "@/components/DisputeCostNotice";
 import { useArbiterTimeoutOutcome } from "@/hooks/useArbiterTimeoutOutcome";
 import { shortAddr } from "@/lib/utils";
 import { usdcExact } from "@/lib/splitPot";
+import { canFundDispute } from "@/lib/disputeBounty";
 import { PageCenter } from "@/components/PageCenter";
 
 // Agreement status enum matches Solidity:
@@ -386,14 +387,17 @@ export default function DealDetailPage() {
   // BountyAlreadyFunded — ровно то, чего условия показа обязаны избегать.
   const disputeAlreadyFunded = !!disputeBountyAmount && disputeBountyAmount > 0n;
 
-  // Кнопка доплаты видна ТОЛЬКО когда все условия разом: спор открыт (1),
-  // пользователь — сторона сделки (2), спор не заклеймлен (3), и
-  // quoteDisputeTopUp вернул больше нуля (4). Показать её в любом другом
-  // состоянии — предложить транзакцию, которая гарантированно отревертит и
-  // потратит газ релеера впустую; каждое из условий закрыто своей ошибкой
-  // контракта (NotDisputed / NotParty / DisputeAlreadyClaimed / TopUpNotNeeded).
-  const canFundDispute = isDisputedStatus && isParty && !disputeClaimed && !disputeAlreadyFunded
-    && disputeTopUp !== undefined && disputeTopUp > 0n;
+  // Пять условий показа кнопки доплаты — одной чистой функцией из
+  // lib/disputeBounty.ts, покрытой тестами (по одному случаю на каждое
+  // условие + fail-closed на непрочитанные данные). Разметка сама больше не
+  // решает, показывать кнопку или нет.
+  const showFundDisputeButton = canFundDispute({
+    isDisputedStatus,
+    isParty,
+    disputeClaimed,
+    disputeBounty: disputeBountyAmount,
+    disputeTopUp,
+  });
 
   // Что таймаут арбитра на самом деле сделает с деньгами — дележ (за спор никто
   // не взялся) или возврат клиенту (взялись и не довели). Решает поле `arbiter`,
@@ -1196,13 +1200,12 @@ export default function DealDetailPage() {
             <p className="text-xs text-white/40 mb-3">{t("deal.dispute_active_hint")}</p>
 
             {/* ── Fund dispute (pay an arbiter to take a small case) ──────────
-                Показывается только когда все четыре условия разом: спор открыт
-                (мы уже внутри status===4 && isParty), не заклеймлен, и
-                quoteDisputeTopUp > 0 — см. canFundDispute выше. Рядом с ценой
-                обязано быть названо, что деньги вернутся, если арбитр так и не
-                возьмётся: без этого предложение читается как ставка, а не как
-                оплата услуги. */}
-            {canFundDispute && disputeTopUp !== undefined && (
+                Показывается только когда все пять условий разом (см.
+                showFundDisputeButton / lib/disputeBounty.ts::canFundDispute
+                выше). Рядом с ценой обязано быть названо, что деньги
+                вернутся, если арбитр так и не возьмётся: без этого
+                предложение читается как ставка, а не как оплата услуги. */}
+            {showFundDisputeButton && disputeTopUp !== undefined && (
               <div className="mb-3 rounded-lg border border-violet-400/20 bg-violet-400/[0.06] px-3 py-2.5">
                 <p className="text-xs text-white/50 leading-relaxed mb-2">
                   {t("deal.fund_dispute_hint", { amount: usdcExact(disputeTopUp) })}
