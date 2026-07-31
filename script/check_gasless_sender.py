@@ -57,6 +57,17 @@ script/gasless-sender.allow отдельной записью, и каждая �
 Файл, не попавший никуда, валит гейт. Добавить в src/ новый фасет и не заметить
 правило теперь нельзя: не отнеся его к категории, до зелёного CI не дойти.
 
+Записи «вне области» пиннят количество ТОЧНО ТАК ЖЕ — только по файлу целиком,
+а не по функции: ключ у них файл, функций внутри гейт не разбирает. Без этого
+счётчика вторая половина области держалась бы на одном обещании человека
+перечитывать причину при каждой правке файла: в ReputationFacet, RegistryFacet,
+Treasury, JobReceiptFacet и DiamondProxy можно было дописать новую
+пользовательскую функцию с сырым msg.sender, и гейт остался бы зелёным — тот же
+самый класс, ради которого он писался. Теперь любое изменение числа сырых
+обращений в исключённом файле красит гейт и заставляет перечитать причину.
+Ноль тоже пиннится (SVGRenderer, DealMetadataFacet, IFactory): «отправителя не
+читает нигде» — утверждение, которое проверяется.
+
 ---------------------------------------------------------------------------
 КАК РАЗБИРАЕТСЯ КОД
 
@@ -81,7 +92,8 @@ Identifier{name: "msg"}. Ассемблерный `caller()` — YulFunctionCall
 Коды возврата:
     0   — все сырые обращения к msg.sender объяснены в allow-файле
     1   — найдено необъяснённое обращение, ИЛИ у объяснённой функции изменилось
-          их количество, ИЛИ запись в allow-файле протухла (функции больше нет),
+          их количество, ИЛИ изменилось количество в файле «вне области»,
+          ИЛИ запись в allow-файле протухла (функции больше нет),
           ИЛИ файл в src/ не отнесён ни к одной из двух категорий
     2   — allow-файл отсутствует, пуст или повреждён (в том числе: запись без
           причины) — сравнивать не с чем, это НЕ «чисто»
@@ -317,9 +329,25 @@ def scan_file(relpath: str, ast: dict, source: bytes):
     return defines, occurrences
 
 
-def collect() -> tuple[dict[str, dict], set[str], set[str]]:
-    """Возвращает (сводка обращений по ключам, множество ERC-2771-файлов,
-    множество всех .sol в src/)."""
+def summarize(occurrences: list[Occurrence], key_of) -> dict[str, dict]:
+    """Сводка обращений: {ключ: {count, lines, forms}}. `key_of` решает, что
+    считать ключом — функцию (проверяемые файлы) или файл целиком (записи
+    «вне области»)."""
+    summary: dict[str, dict] = {}
+    for occ in occurrences:
+        entry = summary.setdefault(key_of(occ), {"count": 0, "lines": [], "forms": set()})
+        entry["count"] += 1
+        entry["lines"].append(occ.line)
+        entry["forms"].add(occ.form)
+    for entry in summary.values():
+        entry["lines"].sort()
+    return summary
+
+
+def collect() -> tuple[dict[str, dict], set[str], set[str], dict[str, dict]]:
+    """Возвращает (сводка обращений по функциям ERC-2771-файлов,
+    множество ERC-2771-файлов, множество всех .sol в src/,
+    сводка обращений по файлам ВНЕ области — по файлу целиком)."""
     asts = load_asts()
 
     per_file_defines: dict[str, bool] = {}
@@ -354,16 +382,22 @@ def collect() -> tuple[dict[str, dict], set[str], set[str]]:
             "каждом из пяти файлов. Сломан обход дерева или формат AST."
         )
 
-    summary: dict[str, dict] = {}
-    for occ in flat:
-        entry = summary.setdefault(occ.key, {"count": 0, "lines": [], "forms": set()})
-        entry["count"] += 1
-        entry["lines"].append(occ.line)
-        entry["forms"].add(occ.form)
-    for entry in summary.values():
-        entry["lines"].sort()
+    summary = summarize(flat, lambda occ: occ.key)
 
-    return summary, erc2771, set(asts)
+    # Файлы вне области считаются тем же механизмом, только ключ — сам файл.
+    # Пустая сводка тут не «нет данных», а факт: в файле нет ни одного сырого
+    # обращения. Такие файлы обязаны получить запись с `occurrences: 0`, иначе
+    # утверждение «отправителя не читает нигде» осталось бы непроверяемым, —
+    # поэтому ключи заводятся на ВСЕ файлы вне области, а не только на те, где
+    # что-то нашлось.
+    scope_flat: list[Occurrence] = []
+    for relpath in sorted(set(asts) - erc2771):
+        scope_flat.extend(per_file_occ[relpath])
+    scope_summary = summarize(scope_flat, lambda occ: occ.relpath)
+    for relpath in set(asts) - erc2771:
+        scope_summary.setdefault(relpath, {"count": 0, "lines": [], "forms": set()})
+
+    return summary, erc2771, set(asts), scope_summary
 
 
 # --------------------------------------------------------------------------
@@ -397,21 +431,32 @@ ALLOW_HEADER = """\
 # и стал бы для гейта невидимым. Каждый .sol в src/ обязан быть либо ERC-2771,
 # либо явно исключён; файл, не отнесённый никуда, валит гейт.
 #
+# У записей «вне области» `occurrences:` тоже обязателен и считается по файлу
+# целиком (функций внутри гейт не разбирает — ключ у записи файл). Без него
+# исключённый файл был бы дырой того же класса, что и разрешённая функция без
+# счёта: новую пользовательскую функцию с сырым msg.sender можно было бы
+# дописать в ReputationFacet или Treasury, и гейт остался бы зелёным.
+# Ноль — законное и осмысленное значение: он пиннит утверждение «отправителя
+# этот файл не читает нигде».
+#
 # Заготовку новой записи (без причины) печатает
 #     python3 script/check_gasless_sender.py --print
 """
 
 
-def format_allow(summary: dict[str, dict], erc2771: set[str], all_files: set[str]) -> str:
+def format_allow(summary: dict[str, dict], scope_summary: dict[str, dict]) -> str:
     parts = [ALLOW_HEADER]
     for key in sorted(summary):
         parts.append(f"=== {key} ===")
         parts.append(f"occurrences: {summary[key]['count']}")
         parts.append(f"{REASON_MARKER} ЗАПОЛНИТЬ (строки: {', '.join(str(n) for n in summary[key]['lines'])})")
         parts.append("")
-    for relpath in sorted(all_files - erc2771):
+    for relpath in sorted(scope_summary):
+        entry = scope_summary[relpath]
+        lines = ", ".join(str(n) for n in entry["lines"]) or "нет"
         parts.append(f"=== {OUT_OF_SCOPE_PREFIX}{relpath} ===")
-        parts.append(f"{REASON_MARKER} ЗАПОЛНИТЬ")
+        parts.append(f"occurrences: {entry['count']}")
+        parts.append(f"{REASON_MARKER} ЗАПОЛНИТЬ (строки: {lines})")
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
@@ -466,16 +511,14 @@ def parse_allow(text: str) -> tuple[dict[str, dict], dict[str, dict]]:
 
     for key, entry in entries.items():
         is_scope_entry = key.startswith(OUT_OF_SCOPE_PREFIX)
+        if entry["count"] is None:
+            # Счёт обязателен у обоих родов записей. У функции он пиннит тело,
+            # у файла вне области — весь файл; без него исключение превращается
+            # в бессрочное разрешение дописывать сырой msg.sender.
+            raise ParseError(f"у записи {key!r} (строка {entry['lineno']}) нет поля `occurrences:`")
         if is_scope_entry:
-            if entry["count"] is not None:
-                raise ParseError(
-                    f"у записи {key!r} (строка {entry['lineno']}) есть `occurrences:`,\n"
-                    f"  но это запись про файл вне области, а не про функцию."
-                )
             out_of_scope[key[len(OUT_OF_SCOPE_PREFIX):]] = entry
         else:
-            if entry["count"] is None:
-                raise ParseError(f"у записи {key!r} (строка {entry['lineno']}) нет поля `occurrences:`")
             functions[key] = entry
         reason = entry["reason"]
         if not reason:
@@ -509,7 +552,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     try:
-        summary, erc2771, all_files = collect()
+        summary, erc2771, all_files, scope_summary = collect()
     except ParseError as exc:
         print("check-gasless-sender: РАЗБОР НЕ СОСТОЯЛСЯ — правило НЕ проверено:", file=sys.stderr)
         print(f"  {exc}", file=sys.stderr)
@@ -521,7 +564,7 @@ def main(argv: list[str]) -> int:
         return 3
 
     if mode == "--print":
-        sys.stdout.write(format_allow(summary, erc2771, all_files))
+        sys.stdout.write(format_allow(summary, scope_summary))
         return 0
 
     if not ALLOW_PATH.exists() or not ALLOW_PATH.read_text(encoding="utf-8").strip():
@@ -552,8 +595,19 @@ def main(argv: list[str]) -> int:
     contradicted = sorted(set(out_of_scope) & erc2771)
     ghost_scope = sorted(set(out_of_scope) - all_files)
 
-    if not any((unexplained, stale, drifted, unclassified, contradicted, ghost_scope)):
+    # Счёт по файлам вне области — та же проверка на дрейф, что у функций,
+    # только ключ файл. Она и закрывает вторую половину области: без неё в
+    # исключённый файл можно дописать пользовательскую функцию с сырым
+    # msg.sender, ничего не тронув в allow-файле.
+    scope_drifted = sorted(
+        relpath
+        for relpath in set(scope_summary) & set(out_of_scope)
+        if scope_summary[relpath]["count"] != out_of_scope[relpath]["count"]
+    )
+
+    if not any((unexplained, stale, drifted, unclassified, contradicted, ghost_scope, scope_drifted)):
         total = sum(e["count"] for e in summary.values())
+        scope_total = sum(e["count"] for e in scope_summary.values())
         print(
             f"check-gasless-sender: ок — все {total} сырых обращений к msg.sender "
             f"в {len(summary)} функциях объяснены в script/gasless-sender.allow"
@@ -561,6 +615,10 @@ def main(argv: list[str]) -> int:
         print(
             f"  область закрыта: {len(erc2771)} ERC-2771-файлов проверено, "
             f"{len(out_of_scope)} явно исключено, всего {len(all_files)} в src/"
+        )
+        print(
+            f"  в исключённых файлах под счётчиком ещё {scope_total} обращений — "
+            f"дописать туда новое, не тронув allow-файл, нельзя"
         )
         return 0
 
@@ -654,6 +712,26 @@ def main(argv: list[str]) -> int:
         for relpath in ghost_scope:
             print(f"  - {relpath}", file=sys.stderr)
         print("\n  Файл удалён или переименован — запись протухла, убрать.", file=sys.stderr)
+
+    if scope_drifted:
+        print("", file=sys.stderr)
+        print("У файлов «вне области» изменилось число сырых обращений:", file=sys.stderr)
+        for relpath in scope_drifted:
+            was = out_of_scope[relpath]["count"]
+            now = scope_summary[relpath]["count"]
+            lines = ", ".join(str(n) for n in scope_summary[relpath]["lines"]) or "нет"
+            print(f"  - {relpath}: было {was}, стало {now} (строки: {lines})", file=sys.stderr)
+        print(
+            "\n  «Вне области» — утверждение про СЕГОДНЯШНЕЕ содержимое файла, а не\n"
+            "  бессрочная индульгенция. Причина в записи объясняет каждое из тогдашних\n"
+            "  обращений (колбэк от Agreement, onlyOwner, вызов контракт-контракт);\n"
+            "  новое обращение под неё не подпадает автоматически.\n"
+            "  Если дописана пользовательская функция — она обязана читать отправителя\n"
+            "  через _msgSender(), а файл тем самым переезжает в ERC-2771 и запись\n"
+            "  «вне области» снимается. Если обращение того же рода, что уже описаны, —\n"
+            "  поправить occurrences и дополнить причину.",
+            file=sys.stderr,
+        )
 
     return 1
 
