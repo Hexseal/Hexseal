@@ -132,7 +132,7 @@ contract DisputeSettlementTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
 
-        bytes4[] memory arbSels = new bytes4[](42);
+        bytes4[] memory arbSels = new bytes4[](46);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
@@ -185,6 +185,11 @@ contract DisputeSettlementTest is Test {
         arbSels[39] = ArbiterRegistryFacet.setArbiterFloor.selector;
         arbSels[40] = ArbiterRegistryFacet.getArbiterFloor.selector;
         arbSels[41] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
+        // Задача 2 (платный вызов арбитра): оплата и мягкий возврат доплаты.
+        arbSels[42] = ArbiterRegistryFacet.fundDispute.selector;
+        arbSels[43] = ArbiterRegistryFacet.getDisputeBounty.selector;
+        arbSels[44] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
+        arbSels[45] = ArbiterRegistryFacet.getRefundableBounty.selector;
 
         bytes4[] memory cutSels   = new bytes4[](1);
         cutSels[0] = DiamondCutFacet.diamondCut.selector;
@@ -1308,5 +1313,149 @@ contract DisputeSettlementTest is Test {
 
         vm.expectRevert(ArbiterRegistryFacet.NotDisputed.selector);
         ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+    }
+
+    // -------- ПЛАТНЫЙ ВЫЗОВ: ОПЛАТА И ВОЗВРАТ --------
+
+    function _disputedAgreement(uint256 dealAmount) internal returns (Agreement a) {
+        a = Agreement(_createFundedAgreement(dealAmount));
+        vm.prank(executor);
+        a.activate();
+        vm.prank(client);
+        a.raiseDispute();
+    }
+
+    function testFundDisputePullsExactQuote() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+
+        usdc.mint(client, need);
+        vm.startPrank(client);
+        usdc.approve(address(diamond), need);
+        uint256 before_ = usdc.balanceOf(client);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.stopPrank();
+
+        assertEq(before_ - usdc.balanceOf(client), need, "exactly the quoted amount is pulled");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), need, "bounty recorded");
+    }
+
+    function testFundDisputeFromStrangerReverts() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(ArbiterRegistryFacet.NotParty.selector);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+    }
+
+    function testFundDisputeTwiceReverts() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(client, need * 2);
+        vm.startPrank(client);
+        usdc.approve(address(diamond), need * 2);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.expectRevert(ArbiterRegistryFacet.BountyAlreadyFunded.selector);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.stopPrank();
+    }
+
+    /// На крупном котле доплата не нужна — платить нечего, и функция это говорит,
+    /// а не принимает деньги молча.
+    function testFundDisputeRevertsWhenTopUpIsZero() public {
+        Agreement a = _disputedAgreement(420_000_000);
+        vm.prank(client);
+        vm.expectRevert(ArbiterRegistryFacet.TopUpNotNeeded.selector);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+    }
+
+    /// После клейма приманка уже отработала: арбитр взялся, платить незачем.
+    function testFundDisputeAfterClaimReverts() public {
+        Agreement a = Agreement(_createFundedAgreement(100_000_000));
+        _activateAndDispute(a);
+
+        vm.prank(client);
+        vm.expectRevert(ArbiterRegistryFacet.DisputeAlreadyClaimed.selector);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+    }
+
+    /// Вердикта не случилось — деньги возвращаются целиком тому, кто внёс.
+    function testBountyRefundedOnTimeoutWithoutVerdict() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(client, need);
+        vm.startPrank(client);
+        usdc.approve(address(diamond), need);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.stopPrank();
+
+        vm.prank(executor);
+        a.respondToDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        uint256 before_ = usdc.balanceOf(client);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(usdc.balanceOf(client) - before_ - 50_000_000, need, "bounty came back on top of the split half");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty cleared");
+    }
+
+    /// Возврат ровно один раз: повторный clearDisputeClaim не платит второй раз.
+    function testBountyRefundHappensOnlyOnce() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(client, need);
+        vm.startPrank(client);
+        usdc.approve(address(diamond), need);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        vm.stopPrank();
+
+        vm.prank(executor);
+        a.respondToDispute();
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        uint256 after1 = usdc.balanceOf(client);
+        vm.prank(address(a));
+        ArbiterRegistryFacet(address(diamond)).clearDisputeClaim(address(a));
+        assertEq(usdc.balanceOf(client), after1, "second clear pays nothing");
+    }
+
+    /// Плательщик в чёрном списке USDC не должен ломать снятие клейма.
+    /// Agreement зовёт clearDisputeClaim внутри проглатывающего catch, поэтому
+    /// жёсткий возврат утащил бы за собой openClaimCount и запер бы арбитра.
+    ///
+    /// Блокируем ИСПОЛНИТЕЛЯ, не клиента, и он же вносит доплату. На каждой
+    /// ветке triggerArbiterTimeout доля клиента уходит жёстким
+    /// usdc.safeTransfer (Agreement.sol:917/920/923/946/962) — заблокированный
+    /// клиент ронял бы саму триггер-транзакцию раньше, чем дело дошло бы до
+    /// clearDisputeClaim, и тест проверял бы не то. Доля исполнителя, наоборот,
+    /// идёт мягким trySafeTransfer (Agreement.sol:942) — единственный путь
+    /// добраться до clearDisputeClaim с заблокированным адресом на кону.
+    function testBlacklistedPayerDoesNotBreakClaimClearing() public {
+        Agreement a = _disputedAgreement(100_000_000);
+        uint256 need = ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a));
+        usdc.mint(executor, need);
+        vm.startPrank(executor);
+        usdc.approve(address(diamond), need);
+        ArbiterRegistryFacet(address(diamond)).fundDispute(address(a));
+        a.respondToDispute();
+        vm.stopPrank();
+
+        usdc.setBlocked(executor, true);
+        vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
+
+        vm.prank(client);
+        a.triggerArbiterTimeout();
+
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty left the dispute");
+        assertEq(ArbiterRegistryFacet(address(diamond)).getRefundableBounty(executor), need, "and became claimable instead");
+
+        usdc.setBlocked(executor, false);
+        uint256 before_ = usdc.balanceOf(executor);
+        vm.prank(executor);
+        ArbiterRegistryFacet(address(diamond)).withdrawDisputeBounty();
+        assertEq(usdc.balanceOf(executor) - before_, need, "payer got it once unblocked");
     }
 }

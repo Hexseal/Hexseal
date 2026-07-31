@@ -49,7 +49,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 11 facets, exactly 162 routed selectors, and consistent
+///     exactly 11 facets, exactly 166 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
@@ -330,7 +330,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 162, "diamond should route exactly 162 selectors total");
+        assertEq(totalRouted, 166, "diamond should route exactly 166 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.

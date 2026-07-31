@@ -102,6 +102,13 @@ library ArbiterRegistryStorage {
         mapping(address => uint256)        disputeBounty;      // сделка → внесённая доплата
         mapping(address => address)        disputeBountyPayer; // сделка → кто внёс
         uint256                            arbiterFloor;       // сколько арбитр должен получить суммарно
+        // Мягкий возврат доплаты: clearDisputeClaim толкает transfer() и, если
+        // он не доставился (чёрный список USDC у плательщика), не ревертит —
+        // Agreement зовёт эту функцию внутри пустого try/catch (Agreement.sol,
+        // _clearDisputeClaim), и жёсткий реверт здесь утащил бы за собой снятие
+        // клейма и уменьшение openClaimCount молча. Недоставленное складывается
+        // сюда и вытягивается через withdrawDisputeBounty().
+        mapping(address => uint256)        refundableBounty;   // плательщик → не доставленный возврат, забирается сам
     }
 
     function data() internal pure returns (Data storage d) {
@@ -170,6 +177,8 @@ contract ArbiterRegistryFacet {
     event ArbiterFloorUpdated(uint256 amount);
     event DisputeBountyFunded(address indexed agreement, address indexed payer, uint256 amount);
     event DisputeBountyRefunded(address indexed agreement, address indexed payer, uint256 amount);
+    event DisputeBountyRefundable(address indexed agreement, address indexed payer, uint256 amount);
+    event DisputeBountyWithdrawn(address indexed payer, uint256 amount);
 
     // -------- ERRORS --------
 
@@ -221,6 +230,7 @@ contract ArbiterRegistryFacet {
     error TopUpNotNeeded();
     error BountyAlreadyFunded();
     error DisputeAlreadyClaimed();
+    error NotParty();
 
     // -------- MODIFIERS --------
 
@@ -952,6 +962,61 @@ contract ArbiterRegistryFacet {
         emit ArbiterFloorUpdated(amount);
     }
 
+    // -------- ПЛАТНЫЙ ВЫЗОВ АРБИТРА: ОПЛАТА И ВОЗВРАТ --------
+
+    /// @notice Доплатить до порога, чтобы арбитр взялся за спор.
+    ///
+    /// Строить отдельный «вызов арбитра» не требуется: добровольный клейм уже
+    /// работает, он просто не срабатывает на мелком котле. Деньги на кону —
+    /// единственное, чего ему не хватает.
+    ///
+    /// Платит сторона, которой нужен судья, а не общий банк. Это и есть защита
+    /// от фарма: подставить своего арбитра означает заплатить самому себе.
+    function fundDispute(address agreement) external {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+
+        RegistryStorage.AgreementRecord storage rec = RegistryStorage.store().agreements[agreement];
+        if (rec.client == address(0)) revert NotAuthorized();
+        if (msg.sender != rec.client && msg.sender != rec.executor) revert NotParty();
+
+        if (d.disputeClaims[agreement] != address(0)) revert DisputeAlreadyClaimed();
+        if (d.disputeBounty[agreement] != 0) revert BountyAlreadyFunded();
+
+        uint256 need = quoteDisputeTopUp(agreement); // ревертит NotDisputed, если спора нет
+        if (need == 0) revert TopUpNotNeeded();
+
+        d.disputeBounty[agreement]      = need;
+        d.disputeBountyPayer[agreement] = msg.sender;
+
+        address usdc = FactoryStorage.store().usdc;
+        bool ok = IUSDCFull(usdc).transferFrom(msg.sender, address(this), need);
+        require(ok, "ArbiterRegistry: bounty transfer failed");
+
+        emit DisputeBountyFunded(agreement, msg.sender, need);
+    }
+
+    function getDisputeBounty(address agreement) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().disputeBounty[agreement];
+    }
+
+    /// @notice Забрать доплату, которую не удалось вернуть толчком.
+    /// Существует ради чёрных списков USDC: возврат внутри clearDisputeClaim
+    /// намеренно мягкий, потому что тот путь обёрнут в проглатывающий catch.
+    function withdrawDisputeBounty() external {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        uint256 amount = d.refundableBounty[msg.sender];
+        if (amount == 0) revert NothingToPush();
+        d.refundableBounty[msg.sender] = 0;
+        address usdc = FactoryStorage.store().usdc;
+        bool ok = IUSDCFull(usdc).transfer(msg.sender, amount);
+        require(ok, "ArbiterRegistry: bounty withdrawal failed");
+        emit DisputeBountyWithdrawn(msg.sender, amount);
+    }
+
+    function getRefundableBounty(address who) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().refundableBounty[who];
+    }
+
     function setDAOAddress(address dao) external onlyOwner {
         if (dao == address(0)) revert ArbiterZeroAddress();
         ArbiterRegistryStorage.data().daoAddress = dao;
@@ -974,6 +1039,42 @@ contract ArbiterRegistryFacet {
         if (v.submittedAt > 0 && !v.finalized && !v.executing) {
             delete d.pendingVerdicts[agreement];
             emit StuckVerdictAutoCleared(agreement);
+        }
+
+        // Возврат доплаты, если вердикта не случилось.
+        //
+        // Различитель уже существует и второго заводить не надо: finalizeVerdict
+        // выставляет v.executing перед вызовом resolveDispute и снимает после, а
+        // v.finalized ставит ПОЗЖЕ внешнего вызова — то есть здесь он ещё false.
+        // Значит executing == true означает «мы внутри финализации вердикта», и
+        // выставлен он только на этом пути; на обеих ветках таймаута он false.
+        //
+        // Продавать то, чего нельзя гарантировать, хуже, чем не продавать:
+        // заплатил и не получил ни судьи, ни денег — это уже не услуга.
+        if (!v.executing) {
+            uint256 bounty = d.disputeBounty[agreement];
+            if (bounty > 0) {
+                address payer = d.disputeBountyPayer[agreement];
+                d.disputeBounty[agreement] = 0;
+                delete d.disputeBountyPayer[agreement];
+
+                // Мягкий возврат. Жёсткий здесь недопустим: Agreement зовёт эту
+                // функцию внутри `try {} catch {}` с пустым обработчиком
+                // (Agreement.sol:1286), поэтому реверт перевода утащил бы за собой
+                // снятие клейма и уменьшение openClaimCount — молча, и арбитр
+                // остался бы навсегда с незакрытым спором.
+                address usdc = FactoryStorage.store().usdc;
+                (bool ok, bytes memory ret) = usdc.call(
+                    abi.encodeWithSelector(IUSDCFull.transfer.selector, payer, bounty)
+                );
+                bool delivered = ok && (ret.length == 0 || abi.decode(ret, (bool)));
+                if (delivered) {
+                    emit DisputeBountyRefunded(agreement, payer, bounty);
+                } else {
+                    d.refundableBounty[payer] += bounty;
+                    emit DisputeBountyRefundable(agreement, payer, bounty);
+                }
+            }
         }
     }
 

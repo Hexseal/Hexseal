@@ -378,7 +378,7 @@ contract DeployFull is Script {
 
     // ArbiterRegistryFacet — 50 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](50);
+        sels = new bytes4[](54);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -447,6 +447,12 @@ contract DeployFull is Script {
         sels[47] = ArbiterRegistryFacet.setArbiterFloor.selector;
         sels[48] = ArbiterRegistryFacet.getArbiterFloor.selector;
         sels[49] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
+
+        // Платный вызов арбитра: оплата и мягкий возврат доплаты
+        sels[50] = ArbiterRegistryFacet.fundDispute.selector;
+        sels[51] = ArbiterRegistryFacet.getDisputeBounty.selector;
+        sels[52] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
+        sels[53] = ArbiterRegistryFacet.getRefundableBounty.selector;
     }
 
     // DealMetadataFacet — 1 селектор
