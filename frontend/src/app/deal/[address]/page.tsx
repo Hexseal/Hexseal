@@ -39,6 +39,7 @@ import { shortAddr } from "@/lib/utils";
 import { usdcExact } from "@/lib/splitPot";
 import { canFundDispute } from "@/lib/disputeBounty";
 import { PageCenter } from "@/components/PageCenter";
+import { withWalletLock } from "@/lib/walletLock";
 
 // Agreement status enum matches Solidity:
 // 0=CREATED, 1=FUNDED, 2=ACTIVE, 3=COMPLETED, 4=DISPUTED, 5=RESOLVED, 6=REFUNDED
@@ -614,7 +615,11 @@ export default function DealDetailPage() {
         const ts = Math.floor(Date.now() / 1000);
         const reasonHash = keccak256(new TextEncoder().encode(disputeReason.trim()));
         const msg = `hexseal:dispute-reason:${dealAddress!.toLowerCase()}:${ts}:${reasonHash}`;
-        const sig = await walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+        // Под общим мьютексом кошелька (lib/walletLock.ts): следом за этой
+        // подписью идёт raiseDispute со своей — два запроса подряд в мобильном
+        // кошельке дают незакрываемый -32002 'already pending'.
+        const sig = await withWalletLock(address, () =>
+          walletClient.signMessage({ account: address as `0x${string}`, message: msg }));
         fetch('/api/dispute-reason', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

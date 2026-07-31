@@ -22,6 +22,7 @@ import { shortAddr } from '@/lib/utils';
 import { useMountedRef } from '@/hooks/useMountedRef';
 import { DisputeCostNotice } from '@/components/DisputeCostNotice';
 import { useArbiterTimeoutOutcome } from '@/hooks/useArbiterTimeoutOutcome';
+import { withWalletLock } from '@/lib/walletLock';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem { id: number; amount: bigint; terms: string; status: number; }
@@ -270,7 +271,10 @@ function DealCardImpl({ agreement, address, refetch }: {
           const ts = Math.floor(Date.now() / 1000);
           const reasonHash = keccak256(new TextEncoder().encode(disputeReason.trim()));
           const msg = `hexseal:dispute-reason:${agreement.agreement.toLowerCase()}:${ts}:${reasonHash}`;
-          const sig = await walletClient.signMessage({ account: address as `0x${string}`, message: msg });
+          // Под общим мьютексом кошелька (lib/walletLock.ts) — следом идёт
+          // raiseDispute со своей подписью.
+          const sig = await withWalletLock(address, () =>
+            walletClient.signMessage({ account: address as `0x${string}`, message: msg }));
           fetch('/api/dispute-reason', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
