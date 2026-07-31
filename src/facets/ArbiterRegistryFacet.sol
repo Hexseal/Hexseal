@@ -1016,7 +1016,9 @@ contract ArbiterRegistryFacet {
     function getRewardPerDispute() external view returns (uint256) { return ArbiterRegistryStorage.data().rewardPerDispute; }
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
 
-    function getArbiterFloor() external view returns (uint256) {
+    /// @notice Публичная (не external), потому что quoteDisputeTopUp зовёт её
+    /// напрямую — дефолт при нуле подставляется в одном месте, а не в двух.
+    function getArbiterFloor() public view returns (uint256) {
         uint256 f = ArbiterRegistryStorage.data().arbiterFloor;
         return f == 0 ? DEFAULT_ARBITER_FLOOR : f;
     }
@@ -1058,8 +1060,7 @@ contract ArbiterRegistryFacet {
         uint256 fee = abi.decode(feeData, (uint256));
 
         uint256 arbiterGets = (fee * ARBITER_SHARE_BPS) / 10_000;
-        uint256 floor_ = ArbiterRegistryStorage.data().arbiterFloor;
-        if (floor_ == 0) floor_ = DEFAULT_ARBITER_FLOOR;
+        uint256 floor_ = getArbiterFloor();
 
         return arbiterGets >= floor_ ? 0 : floor_ - arbiterGets;
     }

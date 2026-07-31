@@ -1278,11 +1278,12 @@ contract DisputeSettlementTest is Test {
         assertEq(ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a)), 0, "big pot pays the arbiter by itself");
     }
 
-    /// Котировка берёт сбор У СДЕЛКИ, а не пересчитывает его. Проверяем на
-    /// котле выше потолка сбора: 3% от $30 000 это $900, но потолок $500,
-    /// значит арбитру 80% от $500 = $400, и доплата ноль. Реализация, которая
-    /// считала бы 3% сама и забыла потолок, тоже дала бы ноль — поэтому
-    /// сверяемся с disputeFee() напрямую.
+    /// Котировка берёт сбор У СДЕЛКИ, а не пересчитывает его. Числа подобраны
+    /// так, чтобы потолок сбора был решающим: на котле $30 000 верная
+    /// реализация видит capped fee $500 → арбитру $400 → до порога $450 не
+    /// хватает $50. Реализация, которая посчитала бы 3% сама и забыла потолок,
+    /// увидела бы $900 → арбитру $720 → порог перекрыт → доплата ноль.
+    /// Разница 50_000_000 против 0 и есть то, что этот тест стережёт.
     function testQuoteUsesAgreementFeeIncludingCap() public {
         Agreement a = Agreement(_createFundedAgreement(30_000_000_000));
         vm.prank(executor);
@@ -1290,8 +1291,14 @@ contract DisputeSettlementTest is Test {
         vm.prank(client);
         a.raiseDispute();
 
+        ArbiterRegistryFacet(address(diamond)).setArbiterFloor(450_000_000);
+
         assertEq(a.disputeFee(), 500_000_000, "setup: fee is capped at $500");
-        assertEq(ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a)), 0, "capped fee still clears the floor");
+        assertEq(
+            ArbiterRegistryFacet(address(diamond)).quoteDisputeTopUp(address(a)),
+            50_000_000,
+            "top-up must be computed from the CAPPED fee, not from raw 3%"
+        );
     }
 
     function testQuoteRevertsIfNotDisputed() public {
