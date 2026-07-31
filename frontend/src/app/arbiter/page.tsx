@@ -22,6 +22,7 @@ import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
 import { shortAddr } from "@/lib/utils";
 import { FINALIZE_DELAY } from "@/config/constants";
+import { computeArbiterReward } from "@/lib/disputeBounty";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -542,6 +543,38 @@ function DisputeCard({
     functionName: "arbiterTimeLeft",
   }) as { data: bigint | undefined };
 
+  // Суммарная награда за спор — собственные 80% сбора плюс доплата стороны.
+  // Это и есть весь механизм «вызова»: арбитр видит, что дело оплачено, и
+  // берёт его. Арифметика — в lib/disputeBounty.ts (computeArbiterReward),
+  // покрыта тестами: own share по возможности решается из уравнения самого
+  // контракта (floor - topUp), а не из константы доли.
+  //
+  // Четвёртое чтение — сбор самой сделки. Нужно ровно в одном состоянии:
+  // когда котировка вернула 0, потому что котёл и так покрывает порог. Там
+  // уравнение выше не решается, и раньше награда в этом состоянии просто
+  // исчезала — то есть пропадала на всех спорах от ~$417 и выше, ровно там,
+  // где она максимальна. Сбор берётся У СДЕЛКИ (disputeFee()), а не
+  // пересчитывается из котла: формула 3% с потолком $500 живёт в Agreement.
+  const { data: topUp } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "quoteDisputeTopUp", args: [rec.agreement as Address],
+  }) as { data: bigint | undefined };
+  const { data: arbiterFloor } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getArbiterFloor",
+  }) as { data: bigint | undefined };
+  const { data: bounty } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getDisputeBounty", args: [rec.agreement as Address],
+  }) as { data: bigint | undefined };
+  const { data: disputeFee } = useReadContract({
+    address: rec.agreement as Address, abi: AGREEMENT_ABI as Abi,
+    functionName: "disputeFee",
+  }) as { data: bigint | undefined };
+  const reward = (topUp !== undefined && arbiterFloor !== undefined && bounty !== undefined)
+    ? computeArbiterReward(arbiterFloor, topUp, bounty, disputeFee)
+    : undefined;
+
   const [disputeReason, setDisputeReason] = useState<string | null>(null);
   useEffect(() => {
     fetch(`/api/dispute-reason?agreement=${rec.agreement.toLowerCase()}`)
@@ -583,6 +616,11 @@ function DisputeCard({
           <span>{t("arbiter.client_label")} <span className="font-mono text-white/55">{shortAddr(rec.client)}</span></span>
           <span>{t("arbiter.executor_label")} <span className="font-mono text-white/55">{shortAddr(rec.executor)}</span></span>
           <span className="font-mono text-emerald-400/70">${fmtUSDC(rec.amount)} USDC</span>
+          {reward !== undefined && (
+            <span className="flex items-center gap-1 font-mono text-amber-400/80">
+              <Coins className="w-3 h-3" />${fmtUSDC(reward)}
+            </span>
+          )}
         </div>
       </div>
 

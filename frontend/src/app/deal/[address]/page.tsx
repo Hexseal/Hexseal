@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from "@/lib/relay";
+import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless, fundDisputeGasless } from "@/lib/relay";
 import { useProfile } from "@/hooks/useProfile";
 import { ARBITER_REGISTRY_ABI } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
@@ -33,8 +33,11 @@ import { getXmtpClientIfCached, notifyArbiters } from "@/lib/xmtp";
 import { useTranslations } from "next-intl";
 import { ContextHint } from "@/components/ContextHint";
 import { DisputeCostNotice } from "@/components/DisputeCostNotice";
+import { RefundableBounty } from "@/components/RefundableBounty";
 import { useArbiterTimeoutOutcome } from "@/hooks/useArbiterTimeoutOutcome";
 import { shortAddr } from "@/lib/utils";
+import { usdcExact } from "@/lib/splitPot";
+import { canFundDispute } from "@/lib/disputeBounty";
 import { PageCenter } from "@/components/PageCenter";
 
 // Agreement status enum matches Solidity:
@@ -322,6 +325,27 @@ export default function DealDetailPage() {
     query: { enabled: !!isValidDeal && isDisputedStatus },
   }) as { data: `0x${string}` | undefined };
 
+  // Платный вызов арбитра — сколько надо доплатить, чтобы дело стало стоящим
+  // внимания, и сколько уже внесено. Обе цифры ТОЛЬКО с контракта:
+  // quoteDisputeTopUp уже учитывает порог, потолок сбора disputeFee() и всё
+  // остальное — вторая копия этой арифметики во фронте разошлась бы с
+  // контрактом молча, это уже дважды ловили на этой ветке.
+  const { data: disputeTopUp, refetch: refetchDisputeTopUp } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: ARBITER_REGISTRY_ABI,
+    functionName: 'quoteDisputeTopUp',
+    args: [dealAddress as `0x${string}`],
+    query: { enabled: !!isValidDeal && isDisputedStatus },
+  }) as { data: bigint | undefined; refetch: () => void };
+
+  const { data: disputeBountyAmount, refetch: refetchDisputeBounty } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: ARBITER_REGISTRY_ABI,
+    functionName: 'getDisputeBounty',
+    args: [dealAddress as `0x${string}`],
+    query: { enabled: !!isValidDeal && isDisputedStatus },
+  }) as { data: bigint | undefined; refetch: () => void };
+
   // Явка в споре. Читается только в состоянии спора: вне него флаги ничего не
   // значат, а лишнее чтение на каждой сделке ни к чему.
   const { data: clientResponded, refetch: refetchClientResponded } = useReadContract({
@@ -352,6 +376,71 @@ export default function DealDetailPage() {
 
   const isParty = isClient || isExecutor;
 
+  // Спор ещё не заклеймлен — то же значение realArbiter, что и isArbiter выше,
+  // просто без сравнения с конкретным кошельком.
+  const disputeClaimed = !!realArbiter && realArbiter !== "0x0000000000000000000000000000000000000000";
+
+  // Доплата уже внесена кем-то из сторон. quoteDisputeTopUp — чистая функция
+  // disputeFee() и порога, она НЕ вычитает уже внесённую доплату, поэтому
+  // после успешного fundDispute() она продолжает возвращать то же
+  // положительное число. Без этой отдельной проверки кнопка осталась бы
+  // видна и после оплаты, а повторный клик гарантированно отревертил бы
+  // BountyAlreadyFunded — ровно то, чего условия показа обязаны избегать.
+  const disputeAlreadyFunded = !!disputeBountyAmount && disputeBountyAmount > 0n;
+
+  // Единственный дедлайн спора: disputedAt + DISPUTE_WINDOW. Один и тот же миг
+  // закрывает и окно явки сторон, и приём доплаты за арбитра, и возможность
+  // клейма — поэтому он считается здесь один раз, а не дважды под двумя
+  // именами. DISPUTE_WINDOW читается с контракта (уже менялась с 7 дней на 4),
+  // в constants.ts её намеренно нет.
+  const disputeDeadline = parsed && parsed.disputedAt > 0n && disputeWindowSec
+    ? new Date(Number(parsed.disputedAt + disputeWindowSec) * 1000)
+    : undefined;
+
+  // Окно спора ещё открыто. Контракт: fundDispute ревертит DisputeWindowPassed
+  // при block.timestamp > disputedAt + DISPUTE_WINDOW, и статус при этом
+  // остаётся DISPUTED, пока таймаут никто не дёрнул, — то есть по статусу это
+  // состояние неотличимо от живого спора.
+  //
+  // Требуем согласия ДВУХ источников про (почти) один и тот же миг:
+  //   • arbiterTimeLeft() — счёт самого контракта, без перекоса часов, но это
+  //     снимок: страница, открытая до истечения окна, так и держала бы
+  //     положительное значение сколько угодно долго после;
+  //   • disputedAt + DISPUTE_WINDOW против локальных часов — свежо на каждом
+  //     рендере, но зависит от часов пользователя.
+  // Каждый закрывает слепое пятно другого, а требование согласия делает
+  // ошибку в любую сторону скрывающей кнопку, а не показывающей лишнюю.
+  //
+  // «Почти» — про ровную границу, и это осознанное расхождение, а не описка.
+  // arbiterTimeLeft() отдаёт 0 уже при block.timestamp >= deadline
+  // (Agreement.sol:1076), а fundDispute отвергает только при строгом >
+  // (ArbiterRegistryFacet.sol:1059). То есть ровно на секунде deadline контракт
+  // деньги ещё примет, а кнопки здесь уже не будет.
+  // Выравнивать не стали намеренно: расхождение fail-closed (прячем то, что
+  // контракт бы принял, — не наоборот), длится одну секунду из четырёх суток,
+  // и оплата на ней бесполезна по существу. Купить на неё нечего: claimDispute
+  // и submitVerdict бьются о тот же строгий > (:432, :498), так что арбитру
+  // пришлось бы и заклеймить спор, и вынести вердикт в этом же блоке. Цена
+  // выравнивания — либо повторить `>=`/`>` контракта в двух местах фронта и
+  // держать их синхронными при каждой правке окна, либо ослабить предикат до
+  // «показывать, пока контракт принимает», что убрало бы fail-closed.
+  const disputeWindowOpen = arbiterTimeLeft === undefined
+    ? undefined
+    : arbiterTimeLeft > 0n && (!disputeDeadline || disputeDeadline.getTime() > Date.now());
+
+  // Шесть условий показа кнопки доплаты — одной чистой функцией из
+  // lib/disputeBounty.ts, покрытой тестами (по одному случаю на каждое
+  // условие + fail-closed на непрочитанные данные). Разметка сама больше не
+  // решает, показывать кнопку или нет.
+  const showFundDisputeButton = canFundDispute({
+    isDisputedStatus,
+    isParty,
+    disputeClaimed,
+    disputeBounty: disputeBountyAmount,
+    disputeTopUp,
+    disputeWindowOpen,
+  });
+
   // Что таймаут арбитра на самом деле сделает с деньгами — дележ (за спор никто
   // не взялся) или возврат клиенту (взялись и не довели). Решает поле `arbiter`,
   // а не только статус со сроком, как было раньше: подпись кнопки, тост и
@@ -363,16 +452,12 @@ export default function DealDetailPage() {
   );
 
   // Моя сторона ещё не откликнулась, и окно не закрыто — значит кнопка нужна.
-  // Дедлайн считаем локально из disputedAt: DISPUTE_WINDOW в constants.ts
-  // намеренно нет, она читается с контракта (уже менялась с 7 дней на 4).
+  // Дедлайн — тот же disputeDeadline, что гейтит доплату за арбитра выше.
   const myResponsePending = !!parsed && parsed.status === 4 && (
     (isClient   && clientResponded   === false) ||
     (isExecutor && executorResponded === false)
   );
-  const responseDeadline = parsed && parsed.disputedAt > 0n && disputeWindowSec
-    ? new Date(Number(parsed.disputedAt + disputeWindowSec) * 1000)
-    : undefined;
-  const responseWindowOpen = !!responseDeadline && responseDeadline.getTime() > Date.now();
+  const responseWindowOpen = !!disputeDeadline && disputeDeadline.getTime() > Date.now();
 
   // Terminal states — deal is fully closed, no further actions possible
   const isTerminal = parsed ? [3, 5, 6].includes(parsed.status) : false;
@@ -487,6 +572,29 @@ export default function DealDetailPage() {
         toast.error(msg);
         setIsFunding(false);
       }
+    }
+  };
+
+  const handleFundDispute = async () => {
+    if (!isValidDeal || !address || !publicClient || !walletClient) return;
+    if (disputeTopUp === undefined || disputeTopUp === 0n) return;
+    setIsFunding(true);
+    try {
+      const dealAddr = dealAddress as `0x${string}`;
+      toast(t("deal.fund_sign_permit"));
+      await fundDisputeGasless(walletClient, publicClient, dealAddr, disputeTopUp);
+      toast.success(t("deal.fund_dispute_success"));
+      // See handleAction's comment above — keep busy set until the delayed
+      // refetch lands, not cleared immediately.
+      setTimeout(() => {
+        refetchDisputeTopUp();
+        refetchDisputeBounty();
+        setIsFunding(false);
+      }, 2000);
+    } catch (err: unknown) {
+      const e = err as { shortMessage?: string; message?: string };
+      toast.error(e?.shortMessage || e?.message || t("common.transaction_failed"));
+      setIsFunding(false);
     }
   };
 
@@ -833,10 +941,10 @@ export default function DealDetailPage() {
             <p className="text-xs text-white/35 leading-relaxed">{arbiterTimeout.bannerBody}</p>
           </div>
         )}
-        {myResponsePending && responseWindowOpen && responseDeadline && (
+        {myResponsePending && responseWindowOpen && disputeDeadline && (
           <div className="rounded-[16px] border border-amber-400/20 bg-amber-400/5 px-4 py-3">
             <p className="text-xs text-white/35 leading-relaxed">
-              {t("deal.dispute_respond_prompt", { date: responseDeadline.toLocaleString() })}
+              {t("deal.dispute_respond_prompt", { date: disputeDeadline.toLocaleString() })}
             </p>
           </div>
         )}
@@ -1128,6 +1236,35 @@ export default function DealDetailPage() {
               )}
             </div>
             <p className="text-xs text-white/40 mb-3">{t("deal.dispute_active_hint")}</p>
+
+            {/* ── Fund dispute (pay an arbiter to take a small case) ──────────
+                Показывается только когда все пять условий разом (см.
+                showFundDisputeButton / lib/disputeBounty.ts::canFundDispute
+                выше). Рядом с ценой обязано быть названо, что деньги
+                вернутся, если арбитр так и не возьмётся: без этого
+                предложение читается как ставка, а не как оплата услуги. */}
+            {showFundDisputeButton && disputeTopUp !== undefined && (
+              <div className="mb-3 rounded-lg border border-violet-400/20 bg-violet-400/[0.06] px-3 py-2.5">
+                <p className="text-xs text-white/50 leading-relaxed mb-2">
+                  {t("deal.fund_dispute_hint", { amount: usdcExact(disputeTopUp) })}
+                </p>
+                <Button size="sm" onClick={handleFundDispute} disabled={busy}
+                  className="bg-violet-500/90 hover:bg-violet-500 text-white">
+                  {busy
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                    : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
+                  {t("deal.fund_dispute_btn", { amount: usdcExact(disputeTopUp) })}
+                </Button>
+              </div>
+            )}
+            {/* «Арбитр оплачен, и если никто не возьмётся — деньги вернутся»
+                перестаёт быть правдой ровно в тот миг, когда арбитр взялся:
+                после клейма фраза читается как ошибка интерфейса, а обещание
+                возврата в ней — как обещание, которого больше нет. */}
+            {disputeAlreadyFunded && !disputeClaimed && (
+              <p className="text-xs text-white/35 mb-3">{t("deal.fund_dispute_funded")}</p>
+            )}
+
             <div className="flex gap-2">
               {parsed.arbiter !== ZERO_ADDR && realArbiter && (
                 // realArbiter, not parsed.arbiter — see the PartyRow comment above.
@@ -1149,6 +1286,16 @@ export default function DealDetailPage() {
             </div>
           </div>
         )}
+
+        {/* ── Возврат доплаты за арбитра ───────────────────────────────────────
+            СНАРУЖИ баннера спора намеренно. Возврат появляется ровно тогда,
+            когда спор кончился — на таймауте (мягкий толчок не дошёл) и при
+            отменённом вердикте (там он claimable ВСЕГДА). К этому мигу сделка
+            уже вышла из статуса DISPUTED, и всё нарисованное внутри баннера
+            `status === 4` с экрана исчезло: кнопка, живущая там, была бы видна
+            только когда забирать нечего. Сам блок сам себя прячет при нулевом
+            остатке — условие здесь только про то, чьи это вообще деньги. */}
+        {isConnected && isParty && <RefundableBounty />}
 
         {/* ── Work delivered banner ───────────────────────────────────────────── */}
         {parsed.markedDoneAt > BigInt(0) && parsed.status === 2 && (

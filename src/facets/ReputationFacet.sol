@@ -43,6 +43,12 @@ library ReputationStorage {
         uint256                     uniqueActiveUsers;
         mapping(address => uint256) cleanStreak;        // executor → подряд идущие чистые (без спора) закрытия
         mapping(address => bool)    streakEvaluated;    // agreement → cleanStreak уже обновлён по этой сделке
+        // ── Споры, закончившиеся без вердикта ──
+        // Считается ОБОИМ участникам. Это статистика, а не вердикт: при дележе
+        // пополам виноватого не установил никто, а грифёр, который аккуратно
+        // откликается, выглядит ровно как честный. Показывать долей от числа
+        // сделок — один спор из пятидесяти шум, восемь из десяти портрет.
+        mapping(address => uint256) unresolvedDisputes;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -213,6 +219,13 @@ contract ReputationFacet {
 
     function getCleanStreak(address addr) external view returns (uint256) {
         return ReputationStorage.data().cleanStreak[addr];
+    }
+
+    /// @notice Сколько споров у адреса закончилось без вердикта (таймаут — дележ
+    /// пополам или 75/25 без ответа). Считается обоим участникам сделки; не
+    /// вердикт и не обвинение, см. комментарий у поля unresolvedDisputes.
+    function getUnresolvedDisputes(address who) external view returns (uint256) {
+        return ReputationStorage.data().unresolvedDisputes[who];
     }
 
     // -------- INTERNAL --------

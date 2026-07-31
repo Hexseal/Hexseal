@@ -8,6 +8,7 @@ import { DashboardSearch } from '@/components/DashboardSearch';
 import { StatsCardSkeleton, TabsRowSkeleton, ListSkeleton } from '@/components/AgreementsSkeleton';
 import { AgreementsStats } from '@/components/AgreementsStats';
 import { AgreementsTabs } from '@/components/AgreementsTabs';
+import { RefundableBounty } from '@/components/RefundableBounty';
 import { useTranslations } from 'next-intl';
 import { useMyJobs } from '@/hooks/useMyJobs';
 import { useMyServices } from '@/hooks/useMyServices';
@@ -21,6 +22,7 @@ export default function DashboardPage() {
   const {
     rawAgreements, isLoading, error, refetch,
     xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume,
+    unresolvedDisputes, totalDeals,
   } = useAgreementsSummary(address);
   const { jobs: mySearchJobs }     = useMyJobs(address);
   const { services: mySearchSvcs } = useMyServices(address);
@@ -58,8 +60,18 @@ export default function DashboardPage() {
         {isLoading ? (
           <StatsCardSkeleton />
         ) : (
-          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} />
+          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} unresolvedDisputes={unresolvedDisputes} totalDeals={totalDeals} />
         )}
+
+        {/* ── Возврат доплаты за арбитра ──────────────────────────────────
+             Второй дом этого блока рядом со страницей сделки, и не для
+             симметрии: остаток `refundableBounty` привязан к АДРЕСУ, а не к
+             сделке, а появляется он ровно тогда, когда спор закрылся — то есть
+             на странице, которую после закрытия можно не открыть больше
+             никогда. Дашборд — то место, куда человек идёт за деньгами.
+             Пустого состояния у блока нет: при нулевом остатке он не
+             рендерится вовсе. ── */}
+        <RefundableBounty />
 
         {/* ── Unified search ── */}
         <DashboardSearch

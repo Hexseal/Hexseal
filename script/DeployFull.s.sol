@@ -8,11 +8,16 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 159
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 167
 // селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже один раз протухло (стояло
-// 148, когда фабрика выросла с 13 до 20), поэтому сверяется тем же тестом.
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже трижды протухало (стояло
+// 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
+// платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
+// где код вырос до 167, 31 июля 2026), поэтому сверяется тем же тестом.
+// Пересчитать, не полагаясь на глаз:
+//   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
+//     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
 //
 // Требует ДО запуска:
 //   TRUSTED_FORWARDER — уже задеплоенный MinimalForwarder (script/DeployForwarder.s.sol),
@@ -375,9 +380,9 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 47 селекторов
+    // ArbiterRegistryFacet — 54 селектора
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](47);
+        sels = new bytes4[](54);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -441,6 +446,17 @@ contract DeployFull is Script {
         sels[44] = ArbiterRegistryFacet.creditDisputeFee.selector;
         sels[45] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
         sels[46] = ArbiterRegistryFacet.getTreasurySlice.selector;
+
+        // Платный вызов арбитра: порог и котировка доплаты до него
+        sels[47] = ArbiterRegistryFacet.setArbiterFloor.selector;
+        sels[48] = ArbiterRegistryFacet.getArbiterFloor.selector;
+        sels[49] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
+
+        // Платный вызов арбитра: оплата и мягкий возврат доплаты
+        sels[50] = ArbiterRegistryFacet.fundDispute.selector;
+        sels[51] = ArbiterRegistryFacet.getDisputeBounty.selector;
+        sels[52] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
+        sels[53] = ArbiterRegistryFacet.getRefundableBounty.selector;
     }
 
     // DealMetadataFacet — 1 селектор
@@ -475,9 +491,10 @@ contract DeployFull is Script {
         sels[20] = JobReceiptFacet.getReceiptTotalSupply.selector;
     }
 
-    // ReputationFacet — 8 селекторов (не было в диаманде вообще до этого регена)
+    // ReputationFacet — 9 селекторов (Задача 4: getUnresolvedDisputes — счётчик
+    // споров, закончившихся без вердикта)
     function reputationFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](8);
+        sels = new bytes4[](9);
         sels[0] = ReputationFacet.autoAwardXP.selector;
         sels[1] = ReputationFacet.claimXP.selector;
         sels[2] = ReputationFacet.notifyExecutorFault.selector;
@@ -486,6 +503,7 @@ contract DeployFull is Script {
         sels[5] = ReputationFacet.hasClaimed.selector;
         sels[6] = ReputationFacet.isDealWin.selector;
         sels[7] = ReputationFacet.getCleanStreak.selector;
+        sels[8] = ReputationFacet.getUnresolvedDisputes.selector;
     }
 
     function _cut(address facet, IDiamondCut.FacetCutAction action, bytes4[] memory sels)

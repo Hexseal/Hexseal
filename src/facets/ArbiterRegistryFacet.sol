@@ -12,13 +12,16 @@ pragma solidity ^0.8.20;
 //   3. Любой вызывает finalizeVerdict(agreement) → Diamond исполняет resolveDispute
 //   4. Owner/DAO может overturnVerdict до финализации → slash XP арбитра, выплата не идёт
 //
-// FeeVault: owner пополняет вручную (fundVault) и вручную же выставляет ставку
-//   (setRewardPerDispute); при финализации арбитру начисляется rewardPerDispute
-//   USDC, арбитр забирает через withdrawArbiterReward(). Сегодня банк не наполнен
-//   и ставка не выставлена — DeployFull не вызывает ни fundVault, ни
-//   setRewardPerDispute, поэтому rewardPerDispute == 0 и арбитраж де-факто
-//   неоплачиваемый. Постоянную модель оплаты (3% от спорной суммы) закрывает
-//   docs/superpowers/specs/2026-07-22-arbiter-economics-design.md.
+// FeeVault: пополняется вручную (fundVault) и держит буфер под будущие нужды
+//   банка арбитров (Treasury.distribute()), но больше не платит за конкретный
+//   спор — плоская выплата rewardPerDispute отвергнута дизайном 28 июля и
+//   снята 31 июля (setRewardPerDispute теперь ревертит RewardPathRetired,
+//   поле rewardPerDispute мёртвое). Оплата за вердикт сегодня из двух
+//   источников: creditDisputeFee (80% от 3% сбора со спорной суммы,
+//   docs/superpowers/specs/2026-07-22-arbiter-economics-design.md) и
+//   disputeBounty — доплата стороны спора до arbiterFloor на мелком котле
+//   (fundDispute), которая при финализации уходит арбитру в finalizeVerdict.
+//   Арбитр забирает накопленное через withdrawArbiterReward().
 //
 // DAO-режим: когда uniqueActiveUsers >= 100,000 ИЛИ owner.activateDAO() —
 //   пользователи с XP >= 3000 могут сами вступить через applyAsArbiter().
@@ -80,7 +83,9 @@ library ArbiterRegistryStorage {
         // ── Diamond-as-arbiter + rewards ──
         mapping(address => PendingVerdict) pendingVerdicts;  // agreement → verdict
         mapping(address => uint256)        arbiterRewards;   // arbiter → USDC claimable
-        uint256                            rewardPerDispute; // USDC per resolved dispute (default 5 USDC)
+        uint256                            rewardPerDispute; // МЁРТВОЕ. Плоская выплата из банка отвергнута
+                                                              // дизайном 28.07 (§7) и снята 31.07; поле оставлено,
+                                                              // потому что раскладка append-only. Не читать и не писать.
         uint256                            vaultBalance;     // USDC held by Diamond for rewards
         address                            daoAddress;       // future DAO governance contract
         // ── Provisional status ──
@@ -94,6 +99,21 @@ library ArbiterRegistryStorage {
         // Доля казны со споров (20% сбора). Начисляется, а не переводится в
         // момент расчёта: заблокированный feeRecipient иначе ронял бы каждый спор.
         uint256                            treasurySlice;
+        // ── Платный вызов арбитра ──
+        // Доплата до рабочего порога: на мелком котле 80% от 3% сбора не
+        // окупают даже пятнадцати минут чтения, и спор никто не берёт.
+        // Платит сторона, которой нужен судья, поэтому дотация из общего
+        // банка с её фармом не требуется.
+        mapping(address => uint256)        disputeBounty;      // сделка → внесённая доплата
+        mapping(address => address)        disputeBountyPayer; // сделка → кто внёс
+        uint256                            arbiterFloor;       // сколько арбитр должен получить суммарно
+        // Мягкий возврат доплаты: clearDisputeClaim толкает transfer() и, если
+        // он не доставился (чёрный список USDC у плательщика), не ревертит —
+        // Agreement зовёт эту функцию внутри пустого try/catch (Agreement.sol,
+        // _clearDisputeClaim), и жёсткий реверт здесь утащил бы за собой снятие
+        // клейма и уменьшение openClaimCount молча. Недоставленное складывается
+        // сюда и вытягивается через withdrawDisputeBounty().
+        mapping(address => uint256)        refundableBounty;   // плательщик → не доставленный возврат, забирается сам
     }
 
     function data() internal pure returns (Data storage d) {
@@ -112,10 +132,11 @@ contract ArbiterRegistryFacet {
     uint256 private constant DAO_THRESHOLD      = 100_000;   // uniqueActiveUsers для авто-DAO
     uint256 private constant MIN_XP_TO_REGISTER = 3_000;     // ~30 сделок с разными людьми
     uint256 private constant OVERTURN_XP_SLASH  = 200;       // XP штраф при overturn
-    // Нигде не используется: награда сегодня берётся из d.rewardPerDispute (storage),
-    // а не отсюда. Оставлено как floor будущей формулы «3% от спорной суммы» —
-    // docs/superpowers/specs/2026-07-22-arbiter-economics-design.md §3.
-    uint256 private constant DEFAULT_REWARD      = 5_000_000; // 5 USDC (6 decimals)
+    // DEFAULT_REWARD (5 USDC) удалена 31 июля: её не читал ни один вызов, а
+    // комментарий над ней называл её «floor формулы» — при том, что настоящий
+    // пол выплаты арбитру это DEFAULT_ARBITER_FLOOR ниже. Две константы с
+    // одним словом в описании и одна из них мёртвая — ложный след, а не
+    // документация.
     uint256 private constant FINALIZE_DELAY      = 24 hours;  // окно для owner/DAO/апелляции до финализации (было 1 час — недостаточно для обычного пользователя)
 
     uint256 private constant MIN_CLEAN_STREAK_TO_REGISTER = 10;   // та же серия, что держит XP исполнителя выше 1000
@@ -128,6 +149,8 @@ contract ArbiterRegistryFacet {
     uint256 private constant APPEAL_DEPOSIT       = 20_000_000; // 20 USDC (6 decimals) — flat, НЕ % от суммы сделки
 
     uint256 private constant ARBITER_SHARE_BPS = 8_000; // 80% сбора арбитру, остаток казне
+
+    uint256 private constant DEFAULT_ARBITER_FLOOR = 10_000_000; // 10 USDC (6 decimals)
 
     // -------- EVENTS --------
 
@@ -147,7 +170,10 @@ contract ArbiterRegistryFacet {
     event ArbiterRewarded(address indexed arbiter, uint256 amount);
     event ArbiterRewardWithdrawn(address indexed arbiter, uint256 amount);
     event VaultFunded(address indexed by, uint256 amount);
-    event RewardPerDisputeUpdated(uint256 newReward);
+    // RewardPerDisputeUpdated удалено 31 июля вместе с последним, кто его
+    // слал: setRewardPerDispute стал `pure revert`, писать значение больше
+    // некому. Объявление без единого emit — обещание события, которого не
+    // будет, для всякого, кто читает ABI.
     event DAOAddressSet(address indexed daoAddress);
     event StuckVerdictAutoCleared(address indexed agreement);
     event AppealRaised(address indexed agreement, address indexed appellant);
@@ -157,6 +183,11 @@ contract ArbiterRegistryFacet {
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
     event DisputeFeeCredited(address indexed arbiter, uint256 toArbiter, uint256 toTreasury);
     event TreasurySlicePushed(address indexed to, uint256 amount);
+    event ArbiterFloorUpdated(uint256 amount);
+    event DisputeBountyFunded(address indexed agreement, address indexed payer, uint256 amount);
+    event DisputeBountyRefunded(address indexed agreement, address indexed payer, uint256 amount);
+    event DisputeBountyRefundable(address indexed agreement, address indexed payer, uint256 amount);
+    event DisputeBountyWithdrawn(address indexed payer, uint256 amount);
 
     // -------- ERRORS --------
 
@@ -199,12 +230,25 @@ contract ArbiterRegistryFacet {
     error AppealInProgress();
     error NotRegisteredAgreement();
     error NothingToPush();
+    // Своя ошибка, а не NothingToPush: та живёт в withdrawTreasurySlice.
+    // Обе разбираются декодером релеера (relayer/app.js:
+    // FORWARDER_CUSTOM_ERRORS, селекторы 0x2d4e8c7b и 0x68d369c9), то есть имя
+    // долетает до человека дословно — и человек, забирающий свою доплату,
+    // увидел бы сообщение про push, которого не делал. Разделение работает
+    // ровно постольку, поскольку обе ошибки в декодере есть: пропусти одну, и
+    // до человека доедет сырой хекс, в котором различать нечего.
+    error NoRefundableBounty();
     error ZeroAmount();
     // Название отражает актуальную охраняемую проверку: источник арбитра —
     // pendingVerdicts, значит гейт бьёт по отсутствию вердикта, а не клеймера
     // (клейм и вердикт разошлись после того, как аргумент арбитра убрали
     // из creditDisputeFee — см. комментарий над функцией).
     error NoVerdictSubmitted();
+    error TopUpNotNeeded();
+    error BountyAlreadyFunded();
+    error DisputeAlreadyClaimed();
+    error NotParty();
+    error RewardPathRetired();
 
     // -------- MODIFIERS --------
 
@@ -528,6 +572,36 @@ contract ArbiterRegistryFacet {
         // Защита от авто-удаления в clearDisputeClaim во время этого вызова
         v.executing = true;
 
+        // Доплата обнуляется ЗДЕСЬ, до внешнего вызова, независимо от исхода.
+        // resolveDispute через агримент дойдёт до clearDisputeClaim, и если бы
+        // доплата была ещё на месте, та вернула бы её плательщику — то есть
+        // при обычной выплате арбитр и плательщик получили бы одни и те же
+        // деньги. Обнуление до вызова делает двойную выплату невозможной по
+        // конструкции, а не по проверке.
+        uint256 bounty = d.disputeBounty[agreement];
+        if (bounty > 0) {
+            d.disputeBounty[agreement] = 0;
+            address bountyPayer = d.disputeBountyPayer[agreement];
+            delete d.disputeBountyPayer[agreement];
+
+            if (v.overturned) {
+                // Отменённый вердикт не оплачивается: 80% сбора при отмене уже
+                // уходят в казну (creditDisputeFee), и доплата не должна быть
+                // исключением — за одну и ту же ошибку нельзя терять одну часть
+                // оплаты и сохранять другую. Деньги возвращаются плательщику:
+                // он покупал разрешение спора и не получил его. Через
+                // claimable (refundableBounty/withdrawDisputeBounty), а не
+                // прямым transfer — жёсткий перевод здесь уронил бы всю
+                // финализацию, если плательщик в чёрном списке USDC или иначе
+                // не может принять перевод.
+                d.refundableBounty[bountyPayer] += bounty;
+                emit DisputeBountyRefundable(agreement, bountyPayer, bounty);
+            } else {
+                d.arbiterRewards[v.arbiter] += bounty;
+                emit ArbiterRewarded(v.arbiter, bounty);
+            }
+        }
+
         // Diamond (address(this)) вызывает resolveDispute — работает т.к. Diamond = arbiter
         (bool ok, bytes memory ret) = agreement.call(
             abi.encodeWithSignature("resolveDispute(bool)", v.clientWins)
@@ -546,13 +620,6 @@ contract ArbiterRegistryFacet {
         // серия ошибок сбрасывается.
         if (!v.overturned) {
             d.arbiterMistakeStreak[v.arbiter] = 0;
-        }
-
-        // Начислить награду только если вердикт не отменён и в vault достаточно средств
-        if (!v.overturned && d.vaultBalance >= d.rewardPerDispute && d.rewardPerDispute > 0) {
-            d.arbiterRewards[v.arbiter] += d.rewardPerDispute;
-            d.vaultBalance -= d.rewardPerDispute;
-            emit ArbiterRewarded(v.arbiter, d.rewardPerDispute);
         }
 
         emit VerdictFinalized(agreement, v.arbiter, v.clientWins);
@@ -863,7 +930,10 @@ contract ArbiterRegistryFacet {
         if (v.overturned) {
             // Вердикт отменён (overturnVerdict/resolveAppeal) — арбитр ошибся,
             // награды не будет, весь сбор идёт в казну. Симметрично тому, что
-            // finalizeVerdict уже пропускает награду из банка при overturned (:518).
+            // finalizeVerdict при overturned не отдаёт арбитру и доплату, а
+            // возвращает её плательщику через refundableBounty (:584-595).
+            // Прежняя ссылка вела на выплату из банка за спор — того блока нет
+            // с коммита a9c9095, плоскую выплату сняли целиком.
             toTreasury = total;
         } else {
             toArbiter = (total * ARBITER_SHARE_BPS) / 10_000;
@@ -922,9 +992,111 @@ contract ArbiterRegistryFacet {
         emit VaultFunded(msg.sender, amount);
     }
 
-    function setRewardPerDispute(uint256 amount) external onlyOwner {
-        ArbiterRegistryStorage.data().rewardPerDispute = amount;
-        emit RewardPerDisputeUpdated(amount);
+    /// @notice Отключён 31 июля 2026. Плоская выплата из банка отвергнута
+    /// дизайном 28 июля (§7), но код за ним не пошёл: начисление жило
+    /// параллельно с 80% сбора и включалось одним вызовом владельца. С
+    /// появлением доплаты источников стало бы три.
+    ///
+    /// Функция не удалена, а ревертит: восемь исторических скриптов в script/
+    /// ссылаются на её селектор в списках монтирования, forge build собирает
+    /// всю папку, и удаление развалило бы сборку. Эти скрипты — записи о
+    /// произошедших апгрейдах, а broadcast/ в гитигноре, поэтому их исходники
+    /// единственная оставшаяся запись. Ревертящий сеттер честнее рабочего,
+    /// который пишет значение, которого никто не читает.
+    function setRewardPerDispute(uint256) external pure {
+        revert RewardPathRetired();
+    }
+
+    /// @notice Сколько арбитр должен получить за спор суммарно.
+    /// Хранимое поле, а не константа: правильную цену человеческого времени
+    /// нельзя угадать заранее, а менять её потом надо одной транзакцией, без
+    /// апгрейда. Старт — 10 USDC.
+    function setArbiterFloor(uint256 amount) external onlyOwner {
+        ArbiterRegistryStorage.data().arbiterFloor = amount;
+        emit ArbiterFloorUpdated(amount);
+    }
+
+    // -------- ПЛАТНЫЙ ВЫЗОВ АРБИТРА: ОПЛАТА И ВОЗВРАТ --------
+
+    /// @notice Доплатить до порога, чтобы арбитр взялся за спор.
+    ///
+    /// Строить отдельный «вызов арбитра» не требуется: добровольный клейм уже
+    /// работает, он просто не срабатывает на мелком котле. Деньги на кону —
+    /// единственное, чего ему не хватает.
+    ///
+    /// Платит сторона, которой нужен судья, а не общий банк. Это и есть защита
+    /// от фарма: подставить своего арбитра означает заплатить самому себе.
+    ///
+    /// Отправителя берём через _msgSender(), а не msg.sender: фронт зовёт эту
+    /// функцию ТОЛЬКО через ERC-2771-форвардер (frontend/src/lib/relay.ts),
+    /// и на этом пути msg.sender — адрес форвардера. С прямым msg.sender
+    /// проверка стороны отвергала бы каждую оплату, а плательщиком в
+    /// хранилище и в событии оказывался бы форвардер, а не человек.
+    function fundDispute(address agreement) external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+
+        RegistryStorage.AgreementRecord storage rec = RegistryStorage.store().agreements[agreement];
+        if (rec.client == address(0)) revert NotAuthorized();
+        if (caller != rec.client && caller != rec.executor) revert NotParty();
+
+        if (d.disputeClaims[agreement] != address(0)) revert DisputeAlreadyClaimed();
+        if (d.disputeBounty[agreement] != 0) revert BountyAlreadyFunded();
+
+        uint256 need = quoteDisputeTopUp(agreement); // ревертит NotDisputed, если спора нет
+
+        // Тот же гейт, что в claimDispute (:424-430), и то же сравнение:
+        // после disputedAt + DISPUTE_WINDOW спор нельзя ни заклеймить, ни
+        // отсудить (submitVerdict тоже бьёт DisputeWindowPassed), и статус
+        // остаётся DISPUTED, пока кто-нибудь не дёрнет таймаут. Принимать
+        // деньги за судью, которого уже физически не может быть, нельзя:
+        // они не потеряются (вернутся на таймауте), но замрут до чужого
+        // действия, а услуга не будет оказана вовсе.
+        (bool dOk, bytes memory dData) = agreement.staticcall(abi.encodeWithSignature("disputedAt()"));
+        require(dOk, "ArbiterRegistry: disputedAt read failed");
+        (bool wOk, bytes memory wData) = agreement.staticcall(abi.encodeWithSignature("DISPUTE_WINDOW()"));
+        require(wOk, "ArbiterRegistry: DISPUTE_WINDOW read failed");
+        if (block.timestamp > abi.decode(dData, (uint256)) + abi.decode(wData, (uint256))) {
+            revert DisputeWindowPassed();
+        }
+
+        if (need == 0) revert TopUpNotNeeded();
+
+        d.disputeBounty[agreement]      = need;
+        d.disputeBountyPayer[agreement] = caller;
+
+        address usdc = FactoryStorage.store().usdc;
+        bool ok = IUSDCFull(usdc).transferFrom(caller, address(this), need);
+        require(ok, "ArbiterRegistry: bounty transfer failed");
+
+        emit DisputeBountyFunded(agreement, caller, need);
+    }
+
+    function getDisputeBounty(address agreement) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().disputeBounty[agreement];
+    }
+
+    /// @notice Забрать доплату, которую не удалось вернуть толчком.
+    /// Существует ради чёрных списков USDC: возврат внутри clearDisputeClaim
+    /// намеренно мягкий, потому что тот путь обёрнут в проглатывающий catch.
+    ///
+    /// _msgSender(), а не msg.sender, по той же причине, что и в fundDispute:
+    /// вызов приходит через форвардер, и на прямом msg.sender человек забирал
+    /// бы не свой остаток, а (всегда нулевой) остаток форвардера.
+    function withdrawDisputeBounty() external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        uint256 amount = d.refundableBounty[caller];
+        if (amount == 0) revert NoRefundableBounty();
+        d.refundableBounty[caller] = 0;
+        address usdc = FactoryStorage.store().usdc;
+        bool ok = IUSDCFull(usdc).transfer(caller, amount);
+        require(ok, "ArbiterRegistry: bounty withdrawal failed");
+        emit DisputeBountyWithdrawn(caller, amount);
+    }
+
+    function getRefundableBounty(address who) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().refundableBounty[who];
     }
 
     function setDAOAddress(address dao) external onlyOwner {
@@ -949,6 +1121,63 @@ contract ArbiterRegistryFacet {
         if (v.submittedAt > 0 && !v.finalized && !v.executing) {
             delete d.pendingVerdicts[agreement];
             emit StuckVerdictAutoCleared(agreement);
+        }
+
+        // Возврат доплаты, если вердикта не случилось.
+        //
+        // Различитель уже существует и второго заводить не надо: finalizeVerdict
+        // выставляет v.executing перед вызовом resolveDispute и снимает после, а
+        // v.finalized ставит ПОЗЖЕ внешнего вызова — то есть здесь он ещё false.
+        // Значит executing == true означает «мы внутри финализации вердикта», и
+        // выставлен он только на этом пути; на обеих ветках таймаута он false.
+        //
+        // Продавать то, чего нельзя гарантировать, хуже, чем не продавать:
+        // заплатил и не получил ни судьи, ни денег — это уже не услуга.
+        if (!v.executing) {
+            // Счётчик обоим: спор кончился, судить было некому или некогда.
+            // Пишем напрямую в namespaced-хранилище репутации — тот же приём,
+            // которым этот файл уже сбрасывает XP при демоушене (:685).
+            RegistryStorage.AgreementRecord storage rec = RegistryStorage.store().agreements[agreement];
+            if (rec.client != address(0)) {
+                ReputationStorage.Data storage rep = ReputationStorage.data();
+                rep.unresolvedDisputes[rec.client]   += 1;
+                rep.unresolvedDisputes[rec.executor] += 1;
+            }
+
+            uint256 bounty = d.disputeBounty[agreement];
+            if (bounty > 0) {
+                address payer = d.disputeBountyPayer[agreement];
+                d.disputeBounty[agreement] = 0;
+                delete d.disputeBountyPayer[agreement];
+
+                // Мягкий возврат. Жёсткий здесь недопустим: Agreement зовёт эту
+                // функцию внутри `try {} catch {}` с пустым обработчиком
+                // (Agreement.sol:1286), поэтому реверт перевода утащил бы за собой
+                // снятие клейма и уменьшение openClaimCount — молча, и арбитр
+                // остался бы навсегда с незакрытым спором.
+                //
+                // Длину ответа проверяем явно, тем же приёмом, что и
+                // SafeUSDC.trySafeTransfer (Agreement.sol:215-225): abi.decode
+                // на ответе от 1 до 31 байта сам паникует, и тогда «мягкий»
+                // возврат оказался бы таким же жёстким, как обычный, ровно в
+                // ветке, которую мы делаем мягкой намеренно.
+                address usdc = FactoryStorage.store().usdc;
+                (bool ok, bytes memory ret) = usdc.call(
+                    abi.encodeWithSelector(IUSDCFull.transfer.selector, payer, bounty)
+                );
+                bool delivered;
+                if (ok) {
+                    if (ret.length == 0) delivered = true;
+                    else if (ret.length >= 32) delivered = abi.decode(ret, (bool));
+                    // ret.length в 1..31 — delivered остаётся false, decode не зовём.
+                }
+                if (delivered) {
+                    emit DisputeBountyRefunded(agreement, payer, bounty);
+                } else {
+                    d.refundableBounty[payer] += bounty;
+                    emit DisputeBountyRefundable(agreement, payer, bounty);
+                }
+            }
         }
     }
 
@@ -988,8 +1217,17 @@ contract ArbiterRegistryFacet {
 
     function getArbiterReward(address arbiter) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterRewards[arbiter]; }
     function getVaultBalance()  external view returns (uint256) { return ArbiterRegistryStorage.data().vaultBalance; }
+    /// @notice Путь снят 31 июля 2026 (см. setRewardPerDispute) — поле, которое
+    /// эта функция читает, больше никто не пишет, значение всегда 0.
     function getRewardPerDispute() external view returns (uint256) { return ArbiterRegistryStorage.data().rewardPerDispute; }
     function getDAOAddress()    external view returns (address) { return ArbiterRegistryStorage.data().daoAddress; }
+
+    /// @notice Публичная (не external), потому что quoteDisputeTopUp зовёт её
+    /// напрямую — дефолт при нуле подставляется в одном месте, а не в двух.
+    function getArbiterFloor() public view returns (uint256) {
+        uint256 f = ArbiterRegistryStorage.data().arbiterFloor;
+        return f == 0 ? DEFAULT_ARBITER_FLOOR : f;
+    }
     function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
     function hasSubmittedVerdict(address agreement) external view returns (bool) {
         return ArbiterRegistryStorage.data().pendingVerdicts[agreement].submittedAt != 0;
@@ -1004,4 +1242,32 @@ contract ArbiterRegistryFacet {
     }
     function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
     function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
+
+    /// @notice Сколько надо доплатить, чтобы арбитр суммарно получил порог.
+    /// Возвращает 0, если котёл и так достаточно велик — тогда кнопку доплаты
+    /// показывать не надо вовсе.
+    ///
+    /// Сбор берётся У СДЕЛКИ вызовом disputeFee(), а не пересчитывается здесь.
+    /// Формула сбора (3% с потолком) живёт в Agreement, и вторая копия в
+    /// фасете разошлась бы с ней при первой же правке — молча, потому что
+    /// расхождение видно только тому, кто сравнит показанное число с пришедшим
+    /// на кошелёк.
+    function quoteDisputeTopUp(address agreement) public view returns (uint256) {
+        (bool statusOk, bytes memory statusData) = agreement.staticcall(
+            abi.encodeWithSignature("status()")
+        );
+        require(statusOk, "ArbiterRegistry: failed to read status");
+        if (abi.decode(statusData, (uint8)) != 4) revert NotDisputed();
+
+        (bool feeOk, bytes memory feeData) = agreement.staticcall(
+            abi.encodeWithSignature("disputeFee()")
+        );
+        require(feeOk, "ArbiterRegistry: failed to read dispute fee");
+        uint256 fee = abi.decode(feeData, (uint256));
+
+        uint256 arbiterGets = (fee * ARBITER_SHARE_BPS) / 10_000;
+        uint256 floor_ = getArbiterFloor();
+
+        return arbiterGets >= floor_ ? 0 : floor_ - arbiterGets;
+    }
 }

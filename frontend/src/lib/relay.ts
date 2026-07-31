@@ -236,6 +236,16 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   releaseDisputeClaim:  100_000n,
   commitDisputeClaim:   100_000n,
   resolveDispute:       200_000n,
+  // transferFrom USDC (permit-authorized, Diamond as spender) + two storage
+  // writes (disputeBounty, disputeBountyPayer) + one event.
+  fundDispute:          220_000n,
+  // The way back out of the same storage. Cheaper than fundDispute: plain
+  // transfer() instead of transferFrom() (no permit, no allowance write), one
+  // storage slot zeroed instead of two written, one event. Budgeted at the
+  // same relative margin rather than measured — this ceiling is only ever
+  // reached when estimateGas itself failed, and the withdrawal is the last
+  // step of a refund we already promised.
+  withdrawDisputeBounty: 150_000n,
   // Agreement lifecycle
   //
   // The five ceilings below (fund, raiseDispute, triggerActivationTimeout,
@@ -1301,6 +1311,162 @@ export async function commitDisputeClaimGasless(
     const txHash = await walletClient.writeContract({
       address: DIAMOND, abi: COMMIT_ABI, functionName: 'commitDisputeClaim',
       args: [commitment], account, chain: walletClient.chain,
+    });
+    await assertFallbackMined(publicClient, txHash);
+    return { txHash, fallbackUsed: true };
+  }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── fundDisputeGasless ───────────────────────────────────────────────────────
+
+/**
+ * Доплатить до порога, чтобы арбитр взялся за мелкий спор — gasless.
+ *
+ * `amount` — ТОЧНАЯ котировка с `quoteDisputeTopUp(agreement)`, читается вызывающей
+ * стороной (страница сделки) и передаётся сюда, а не пересчитывается здесь: вторая
+ * копия арифметики порога разошлась бы с контрактом молча.
+ *
+ * fundDispute() на Diamond делает transferFrom(msg.sender, Diamond, amount) —
+ * спонсор (Diamond), а не Agreement, поэтому permit подписывается с этим
+ * spender'ом. Тот же приём, что requestServiceGasless уже использует для
+ * своей собственной doplata на Diamond (permitSpender: DIAMOND).
+ *
+ * Пользователь подписывает:
+ *   1. USDC permit (EIP-2612) — Diamond как spender, amount
+ *   2. ForwardRequest (EIP-712) — fundDispute(agreement) calldata → Diamond
+ */
+const FUND_DISPUTE_ABI = parseAbi(['function fundDispute(address agreement)']);
+
+export async function fundDisputeGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  agreementAddress: Address,
+  amount: bigint,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+
+  const [usdcNonce, usdcDomain] = await Promise.all([
+    publicClient.readContract({ address: USDC, abi: USDC_READ_ABI, functionName: 'nonces', args: [userAddress] }),
+    getUsdcDomain(publicClient),
+  ]);
+
+  const permitDeadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+  const permitSig = await walletClient.signTypedData({
+    account: walletClient.account!,
+    domain:  usdcDomain as Parameters<typeof walletClient.signTypedData>[0]['domain'],
+    types:   PERMIT_TYPES,
+    primaryType: 'Permit',
+    message: { owner: userAddress, spender: DIAMOND, value: amount, nonce: usdcNonce, deadline: permitDeadline },
+  });
+  const { r, s, v } = parseSignature(permitSig);
+  const vNum = Number(v) < 27 ? Number(v) + 27 : Number(v);
+
+  const calldata = encodeFunctionData({
+    abi: FUND_DISPUTE_ABI,
+    functionName: 'fundDispute',
+    args: [agreementAddress],
+  });
+
+  const permitParams: PermitParams = {
+    permitOwner:    userAddress,
+    permitSpender:  DIAMOND,
+    permitValue:    amount.toString(),
+    permitDeadline: permitDeadline.toString(),
+    permitV:        vNum,
+    permitR:        r,
+    permitS:        s,
+  };
+
+  try {
+    return await _sendForwardRequest(walletClient, publicClient, calldata, 'fundDispute', DIAMOND, undefined, permitParams);
+  } catch (err) {
+    if (!isRelayDown(err)) throw err;
+    // Direct fallback: the relay would have called USDC.permit() itself before
+    // fundDispute() — without an on-chain permit first, the caller has no
+    // standing USDC allowance to the Diamond, so a direct fundDispute() call
+    // is guaranteed to revert. Submit the already-signed permit ourselves
+    // first, same two-tx fallback fundAgreementGasless/requestServiceGasless use.
+    console.warn('[relay] down → direct permit+fundDispute for', agreementAddress);
+    const account = walletClient.account;
+    if (!account) throw new Error('Wallet not connected');
+    const permitTx = await walletClient.writeContract({
+      address: USDC,
+      abi: WRITE_USDC_ABI,
+      functionName: 'permit',
+      args: [userAddress, DIAMOND, amount, permitDeadline, vNum, r, s],
+      account,
+      chain: walletClient.chain,
+    });
+    await assertFallbackMined(publicClient, permitTx);
+    const txHash = await walletClient.writeContract({
+      address: DIAMOND,
+      abi: FUND_DISPUTE_ABI,
+      functionName: 'fundDispute',
+      args: [agreementAddress],
+      account,
+      chain: walletClient.chain,
+    });
+    await assertFallbackMined(publicClient, txHash);
+    return { txHash, fallbackUsed: true };
+  }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── withdrawDisputeBountyGasless ─────────────────────────────────────────────
+
+/**
+ * Забрать доплату за арбитра, которая вернулась плательщику — gasless.
+ *
+ * Обратная сторона `fundDisputeGasless`, и намеренно проще неё: у контракта
+ * `withdrawDisputeBounty()` нет ни аргументов, ни `transferFrom` — он делает
+ * `transfer` со своего баланса тому, кто позвал. Значит permit не нужен, и
+ * прямой фолбэк здесь однотранзакционный, а не двух-, как у оплаты.
+ *
+ * Сумма нигде не передаётся: контракт отдаёт весь остаток `refundableBounty`
+ * вызывающего целиком и обнуляет его. Фронт эту сумму только показывает
+ * (`getRefundableBounty`), но не влияет на неё — второй копии арифметики
+ * возврата здесь нет по конструкции.
+ *
+ * Как и `fundDispute`, функция читает `_msgSender()`, а не `msg.sender`:
+ * через форвардер сырой `msg.sender` — это адрес форвардера, и человек забирал
+ * бы не свой остаток, а (всегда нулевой) остаток форвардера. Поэтому гейслесс
+ * путь тут не украшение, а единственный, который вообще работает без
+ * доработок контракта.
+ */
+const WITHDRAW_BOUNTY_ABI = parseAbi(['function withdrawDisputeBounty()']);
+
+export async function withdrawDisputeBountyGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+  const calldata = encodeFunctionData({
+    abi: WITHDRAW_BOUNTY_ABI,
+    functionName: 'withdrawDisputeBounty',
+  });
+  try {
+    const result = await _sendForwardRequest(walletClient, publicClient, calldata as Hex, 'withdrawDisputeBounty', DIAMOND);
+    return { txHash: result.txHash };
+  } catch (err) {
+    if (!isRelayDown(err)) throw err;
+    console.warn('[relay] down → direct withdrawDisputeBounty for', userAddress);
+    const account = walletClient.account;
+    if (!account) throw new Error('Wallet not connected');
+    const txHash = await walletClient.writeContract({
+      address: DIAMOND, abi: WITHDRAW_BOUNTY_ABI, functionName: 'withdrawDisputeBounty',
+      args: [], account, chain: walletClient.chain,
     });
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };

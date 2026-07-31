@@ -70,6 +70,23 @@ export function useAgreementsSummary(address: string | undefined) {
   });
   const cleanStreak = Number(onchainCleanStreak ?? 0n);
 
+  // Споры, кончившиеся без вердикта. Пишутся ОБОИМ участникам такого спора —
+  // и при дележе пополам, и при 75/25: при дележе виноватого не видно, и
+  // считать одного значило бы утверждать о вине то, чего счётчик не знает.
+  //
+  // Само число здесь наполовину бессмысленно и наружу отдаётся вместе со
+  // знаменателем: один спор из пятидесяти — шум, восемь из десяти — портрет.
+  // Знаменатель — все сделки адреса, а не только закрытые: доля должна расти
+  // от того, что человек ведёт себя плохо, а не от того, что он ушёл с биржи.
+  const { data: onchainUnresolved } = useReadContract({
+    address: CONTRACTS.diamond as `0x${string}`,
+    abi: REPUTATION_ABI,
+    functionName: 'getUnresolvedDisputes',
+    args: address ? [address as `0x${string}`] : undefined,
+    query: { enabled: !!address },
+  });
+  const unresolvedDisputes = Number(onchainUnresolved ?? 0n);
+
   const addrLower = address?.toLowerCase();
 
   // status: 0=Created 1=Funded 2=Active 3=Completed 4=Disputed 5=Resolved 6=Refunded
@@ -91,5 +108,9 @@ export function useAgreementsSummary(address: string | undefined) {
     return { activeDeals, historyDeals, completed, totalVolume };
   }, [allAgreements, addrLower]);
 
-  return { rawAgreements, isLoading, error, refetch, xp, level, cleanStreak, activeDeals, historyDeals, completed, totalVolume };
+  return {
+    rawAgreements, isLoading, error, refetch, xp, level, cleanStreak,
+    activeDeals, historyDeals, completed, totalVolume,
+    unresolvedDisputes, totalDeals: allAgreements.length,
+  };
 }

@@ -37,6 +37,9 @@ jobs:
       - name: Check Agreement storage layout
         run: ./script/check-agreement-layout.sh
 
+      - name: Check ERC-2771 sender rule (no raw msg.sender in gasless contracts)
+        run: ./script/check-gasless-sender.sh
+
   build:
     needs: contracts
     runs-on: ubuntu-latest
