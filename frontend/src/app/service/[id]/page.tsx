@@ -134,7 +134,12 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
   const [requestModal, setRequestModal] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isBusy, setIsBusy]             = useState(false);
+  // Ключ действия, а не общий флаг: «Приостановить» (или «Возобновить») и
+  // «Удалить» стоят рядом, а крутилка висела только на «Удалить» — нажатие
+  // паузы анимировало удаление. Блокировка остаётся общей: обе меняют статус
+  // одной и той же услуги.
+  const [busyAction, setBusyAction]     = useState<string | null>(null);
+  const isBusy = busyAction !== null;
 
   const handleRequest = async (
     amountStr: string, daysStr: string, termsText: string,
@@ -152,10 +157,14 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
 
       toast.success(t("board.services.request_sent"));
       setRequestModal(false);
-      setTimeout(() => refetchRequests(), 2000);
+      // Снятие — внутри отложенного обновления: до него страница не знает о
+      // собственном запросе, и «Заказать услугу» стоит нажимаемой поверх уже
+      // отправленного (второй запрос — второе списание USDC). В июльском
+      // заходе по этому файлу правку получили cancel и pause/resume/remove, а
+      // handleRequest пропустили.
+      setTimeout(() => { refetchRequests(); setIsRequesting(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Transaction failed");
-    } finally {
       setIsRequesting(false);
     }
   };
@@ -189,7 +198,7 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
     fn: "pauseService" | "unpauseService" | "removeService",
   ) => {
     if (!walletClient || !publicClient) return;
-    setIsBusy(true);
+    setBusyAction(fn);
     try {
       const msgs: Record<string, string> = {
         pauseService:   "Service paused",
@@ -212,7 +221,7 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");
     } finally {
-      setIsBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -322,7 +331,9 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
                     onClick={() => handleServiceAction("pauseService")}
                     className="text-amber-400/60 hover:text-amber-400 hover:bg-amber-400/10 gap-1"
                   >
-                    <PauseCircle className="w-3.5 h-3.5" /> Pause
+                    {busyAction === "pauseService"
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <PauseCircle className="w-3.5 h-3.5" />} Pause
                   </Button>
                 )}
                 {service.status === 1 && (
@@ -331,7 +342,9 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
                     onClick={() => handleServiceAction("unpauseService")}
                     className="text-emerald-400/60 hover:text-emerald-400 hover:bg-emerald-400/10 gap-1"
                   >
-                    <PlayCircle className="w-3.5 h-3.5" /> Resume
+                    {busyAction === "unpauseService"
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <PlayCircle className="w-3.5 h-3.5" />} Resume
                   </Button>
                 )}
                 <Button
@@ -339,7 +352,9 @@ export default function ServicePage({ params }: { params: Promise<{ id: string }
                   onClick={() => handleServiceAction("removeService")}
                   className="text-red-400/60 hover:text-red-400 hover:bg-red-400/10 gap-1"
                 >
-                  {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  {busyAction === "removeService"
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <Trash2 className="w-3.5 h-3.5" />}
                   Remove
                 </Button>
               </div>
