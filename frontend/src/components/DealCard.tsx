@@ -76,7 +76,13 @@ function DealCardImpl({ agreement, address, refetch }: {
   const t  = useTranslations();
   const tc = useTranslations('dashboard.card');
   const mountedRef = useMountedRef();
-  const [busy, setBusy] = useState(false);
+  // Ключ действия, а не «занято хоть чем-то». В одной карточке одновременно
+  // видны «Оплатить»/«Завершить»/«Оспорить», строка таймаута и по паре кнопок
+  // на каждую доплату — общий булев флаг зажигал крутилку сразу на всех.
+  // Блокировка остаётся общей: все они ходят в один кошелёк по одной сделке.
+  const [busy, setBusy] = useState<string | null>(null);
+  const isBusy = busy !== null;
+  const clearBusy = () => { if (mountedRef.current) setBusy(null); };
   const [showTimeouts, setShowTimeouts] = useState(false);
   const [disputeOpen, setDisputeOpen]     = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
@@ -202,7 +208,7 @@ function DealCardImpl({ agreement, address, refetch }: {
 
   const run = async (fn: string) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-    setBusy(true);
+    setBusy(fn);
     const successMsg: Record<string, string> = {
       activate:    tc('activate_success'),
       markDone:    t('deal.mark_done_success'),
@@ -217,17 +223,23 @@ function DealCardImpl({ agreement, address, refetch }: {
       toast(tc('sign_wallet'));
       await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, fn, AGREEMENT_ABI as Abi);
       toast.success(successMsg[fn] ?? 'Done!');
-      setTimeout(refetch, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
+      // против отставания реплик RPC (24701de). Всё это окно `liveStatus`
+      // остаётся прежним, и раннее снятие возвращало кнопки в рабочий вид
+      // поверх устаревшего статуса.
+      setTimeout(() => { refetch(); clearBusy(); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || 'Transaction failed');
-    } finally { if (mountedRef.current) setBusy(false); }
+      clearBusy();
+    }
   };
 
   const handleProposeExtra = async () => {
     if (!walletClient || !publicClient) return;
     const parsed_ = parseFloat(proposeAmount);
     if (!proposeAmount || isNaN(parsed_) || parsed_ <= 0) { toast.error('Enter a valid amount'); return; }
-    setBusy(true);
+    setBusy('proposeExtra');
     try {
       toast(tc('sign_wallet'));
       const amountParsed = BigInt(Math.round(parsed_ * 1e6));
@@ -239,24 +251,26 @@ function DealCardImpl({ agreement, address, refetch }: {
         setProposeAmount('');
         setProposeDesc('');
       }
-      setTimeout(() => refetchExtras(), 3000);
+      setTimeout(() => { refetchExtras(); clearBusy(); }, 3000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { if (mountedRef.current) setBusy(false); }
+      clearBusy();
+    }
   };
 
   const handleExtraAction = async (fn: 'acceptExtra' | 'rejectExtra', extraId: number) => {
     if (!walletClient || !publicClient) return;
-    setBusy(true);
+    setBusy(`${fn}:${extraId}`);
     try {
       await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, fn, AGREEMENT_ABI as Abi, [BigInt(extraId)]);
       toast.success(fn === 'acceptExtra' ? 'Extra accepted' : 'Extra rejected');
-      setTimeout(() => refetchExtras(), 2000);
+      setTimeout(() => { refetchExtras(); clearBusy(); }, 2000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { if (mountedRef.current) setBusy(false); }
+      clearBusy();
+    }
   };
 
   const pendingExtras = extrasList.filter(e => e.status === EXTRA_STATUS.PENDING);
@@ -264,7 +278,7 @@ function DealCardImpl({ agreement, address, refetch }: {
   const handleRaiseDispute = async () => {
     if (!walletClient || !publicClient) return;
     setDisputeOpen(false);
-    setBusy(true);
+    setBusy('raiseDispute');
     try {
       if (disputeReason.trim()) {
         try {
@@ -288,32 +302,34 @@ function DealCardImpl({ agreement, address, refetch }: {
       await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, 'raiseDispute', AGREEMENT_ABI as Abi);
       toast.success(tc('dispute_success'));
       if (mountedRef.current) setDisputeReason('');
-      setTimeout(refetch, 2000);
+      setTimeout(() => { refetch(); clearBusy(); }, 2000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed');
-    } finally { if (mountedRef.current) setBusy(false); }
+      clearBusy();
+    }
   };
 
   const primaryActions: React.ReactNode[] = [];
   if (liveStatus === 0 && isClient) primaryActions.push(
     <div key="fund-group" className="flex items-center gap-2 flex-wrap">
-      <Button size="sm" disabled={busy || !hasEnoughUsdc} onClick={async () => {
+      <Button size="sm" disabled={isBusy || !hasEnoughUsdc} onClick={async () => {
         if (!publicClient || !walletClient) { toast.error('Wallet not connected'); return; }
-        setBusy(true);
+        setBusy('fund');
         try {
           toast(tc('sign_wallet'));
           await fundAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, agreement.amount);
           toast.success(t('deal.fund_success'));
-          setTimeout(refetch, 4000);
+          setTimeout(() => { refetch(); clearBusy(); }, 4000);
         } catch (err: unknown) {
           const e = err as { shortMessage?: string; message?: string };
           const msg = e?.shortMessage || e?.message || t('deal.fund_failed');
           if (msg.includes('AlreadyFunded')) { toast.error(t('deal.already_funded')); refetch(); }
           else toast.error(msg);
-        } finally { if (mountedRef.current) setBusy(false); }
+          clearBusy();
+        }
       }}>
-        {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}{tc('fund_btn')}
+        {busy === 'fund' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}{tc('fund_btn')}
       </Button>
       {!hasEnoughUsdc && userUsdcBalance !== undefined && (
         <span className="text-xs text-red-400">
@@ -325,14 +341,14 @@ function DealCardImpl({ agreement, address, refetch }: {
   if (liveStatus === 1 && isExecutor) primaryActions.push(
     <div key="activate-group" className="flex flex-col gap-1.5 w-full">
       <p className="text-xs text-amber-400/70">{tc('activate_hint')}</p>
-      <Button size="sm" disabled={busy} onClick={() => run('activate')} className="self-start gap-1">
-        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}{tc('activate_btn')}
+      <Button size="sm" disabled={isBusy} onClick={() => run('activate')} className="self-start gap-1">
+        {busy === 'activate' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}{tc('activate_btn')}
       </Button>
     </div>
   );
   if (liveStatus === 2 && isExecutor && markedDoneAt === BigInt(0)) primaryActions.push(
-    <Button key="markDone" size="sm" disabled={busy} onClick={() => run('markDone')}>
-      {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}{tc('mark_done_btn')}
+    <Button key="markDone" size="sm" disabled={isBusy} onClick={() => run('markDone')}>
+      {busy === 'markDone' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}{tc('mark_done_btn')}
     </Button>
   );
   if (liveStatus === 2 && isClient && markedDoneAt > BigInt(0)) primaryActions.push(
@@ -342,36 +358,36 @@ function DealCardImpl({ agreement, address, refetch }: {
           {tc('auto_approve_in', { time: formatTimeLeft(autoApproveRemaining) })}
         </span>
       )}
-      <Button size="sm" disabled={busy} onClick={() => run('release')}>
-        {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}{tc('release_btn')}
+      <Button size="sm" disabled={isBusy} onClick={() => run('release')}>
+        {busy === 'release' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}{tc('release_btn')}
       </Button>
     </div>
   );
   if (liveStatus === 2 && (isClient || isExecutor)) primaryActions.push(
-    <Button key="dispute" size="sm" variant="destructive" disabled={busy} onClick={() => setDisputeOpen(v => !v)}>
-      <Flag className="w-3 h-3 mr-1" />{tc('dispute_btn')}
+    <Button key="dispute" size="sm" variant="destructive" disabled={isBusy} onClick={() => setDisputeOpen(v => !v)}>
+      {busy === 'raiseDispute' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Flag className="w-3 h-3 mr-1" />}{tc('dispute_btn')}
     </Button>
   );
 
   const timeoutActions: React.ReactNode[] = [];
   if (liveStatus === 1 && (isClient || isExecutor) && activationExpired) timeoutActions.push(
-    <Button key="actTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerActivationTimeout')}>
-      <Timer className="w-3 h-3 mr-1" />{t('deal.timeout_activation')}
+    <Button key="actTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={isBusy} onClick={() => run('triggerActivationTimeout')}>
+      {busy === 'triggerActivationTimeout' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Timer className="w-3 h-3 mr-1" />}{t('deal.timeout_activation')}
     </Button>
   );
   if (liveStatus === 2 && (isClient || isExecutor) && markedDoneAt === BigInt(0) && deadlineExpired) timeoutActions.push(
-    <Button key="dlTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerDeadlineTimeout')}>
-      <Timer className="w-3 h-3 mr-1" />{t('deal.timeout_deadline')}
+    <Button key="dlTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={isBusy} onClick={() => run('triggerDeadlineTimeout')}>
+      {busy === 'triggerDeadlineTimeout' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Timer className="w-3 h-3 mr-1" />}{t('deal.timeout_deadline')}
     </Button>
   );
   if (liveStatus === 4 && (isClient || isExecutor) && arbiterExpired) timeoutActions.push(
-    <Button key="arbTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerArbiterTimeout')}>
-      <Timer className="w-3 h-3 mr-1" />{arbiterTimeout.buttonLabel}
+    <Button key="arbTimeout" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={isBusy} onClick={() => run('triggerArbiterTimeout')}>
+      {busy === 'triggerArbiterTimeout' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Timer className="w-3 h-3 mr-1" />}{arbiterTimeout.buttonLabel}
     </Button>
   );
   if (liveStatus === 2 && markedDoneAt > BigInt(0) && autoApproveExpired) timeoutActions.push(
-    <Button key="autoApprove" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={busy} onClick={() => run('triggerAutoApprove')}>
-      <Shield className="w-3 h-3 mr-1" />{t('deal.timeout_auto_approve')}
+    <Button key="autoApprove" size="sm" variant="outline" className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10" disabled={isBusy} onClick={() => run('triggerAutoApprove')}>
+      {busy === 'triggerAutoApprove' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Shield className="w-3 h-3 mr-1" />}{t('deal.timeout_auto_approve')}
     </Button>
   );
 
@@ -478,8 +494,8 @@ function DealCardImpl({ agreement, address, refetch }: {
             />
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-white/20">{disputeReason.length}/2000</span>
-              <Button size="sm" variant="destructive" className="h-6 text-[11px]" disabled={busy || !disputeReason.trim()} onClick={handleRaiseDispute}>
-                {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Flag className="w-3 h-3 mr-1" />}{tc('dispute_confirm')}
+              <Button size="sm" variant="destructive" className="h-6 text-[11px]" disabled={isBusy || !disputeReason.trim()} onClick={handleRaiseDispute}>
+                {busy === 'raiseDispute' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Flag className="w-3 h-3 mr-1" />}{tc('dispute_confirm')}
               </Button>
             </div>
           </div>
@@ -552,8 +568,8 @@ function DealCardImpl({ agreement, address, refetch }: {
                       className="h-7 text-xs bg-white/[0.04] border-white/10 flex-[2]"
                     />
                   </div>
-                  <Button size="sm" className="h-6 text-[11px]" disabled={busy || !proposeAmount} onClick={handleProposeExtra}>
-                    {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}{tc('extras_propose_btn')}
+                  <Button size="sm" className="h-6 text-[11px]" disabled={isBusy || !proposeAmount} onClick={handleProposeExtra}>
+                    {busy === 'proposeExtra' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}{tc('extras_propose_btn')}
                   </Button>
                 </div>
               )}
@@ -565,15 +581,21 @@ function DealCardImpl({ agreement, address, refetch }: {
                   <div className="flex gap-1.5">
                     <button
                       onClick={() => handleExtraAction('acceptExtra', extra.id)}
-                      disabled={busy}
-                      className="text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-40"
-                    >{tc('extras_accept')}</button>
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-40"
+                    >
+                      {busy === `acceptExtra:${extra.id}` && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {tc('extras_accept')}
+                    </button>
                     <span className="text-white/15">·</span>
                     <button
                       onClick={() => handleExtraAction('rejectExtra', extra.id)}
-                      disabled={busy}
-                      className="text-[11px] text-red-400/60 hover:text-red-400 transition-colors disabled:opacity-40"
-                    >{tc('extras_reject')}</button>
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-1 text-[11px] text-red-400/60 hover:text-red-400 transition-colors disabled:opacity-40"
+                    >
+                      {busy === `rejectExtra:${extra.id}` && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {tc('extras_reject')}
+                    </button>
                   </div>
                 </div>
               ))}
