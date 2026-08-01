@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import {
   CHAIN_REFRESH_EVENT,
-  readsForTopics,
+  matcherForTopics,
   queryKeyTouches,
   subscribeRefresh,
 } from '@/lib/dataRefresh';
@@ -30,10 +30,10 @@ import {
 export function QueryRefreshBridge({ queryClient }: { queryClient: QueryClient }) {
   useEffect(() => {
     return subscribeRefresh(CHAIN_REFRESH_EVENT, (topics) => {
-      const reads = readsForTopics(topics);
-      if (reads.size === 0) return;
+      const matcher = matcherForTopics(topics);
+      if (matcher.reads.size === 0 && matcher.roots.size === 0) return;
       queryClient.invalidateQueries({
-        predicate: (query) => queryKeyTouches(query.queryKey, reads),
+        predicate: (query) => queryKeyTouches(query.queryKey, matcher),
       });
     });
   }, [queryClient]);

@@ -91,15 +91,34 @@ export const TOPIC_READS: Record<RefreshTopic, readonly string[]> = {
   ],
 };
 
-/** Развернуть набор тем в множество имён функций. */
-export function readsForTopics(topics: Iterable<RefreshTopic>): Set<string> {
-  const out = new Set<string>();
+/**
+ * Тема → корни ключей react-query, у которых нет `functionName` вовсе.
+ *
+ * `useBalance` в wagmi кладёт ключ `['balance', {...}]` — имени функции там
+ * нет, и сопоставление по `functionName` его не видит. А это ровно шапка
+ * кошелька (`hooks/useWalletAccountData`) и обе формы публикации на досках,
+ * то есть самое заметное место, где число обязано меняться после списания.
+ */
+export const TOPIC_QUERY_ROOTS: Partial<Record<RefreshTopic, readonly string[]>> = {
+  wallet: ['balance'],
+};
+
+/** Во что тема разворачивается при сопоставлении ключей react-query. */
+export interface RefreshMatcher {
+  /** Значения `functionName`, которые тема делает несвежими. */
+  reads: Set<string>;
+  /** Корни ключей (`queryKey[0]`) — для запросов без `functionName`. */
+  roots: Set<string>;
+}
+
+export function matcherForTopics(topics: Iterable<RefreshTopic>): RefreshMatcher {
+  const reads = new Set<string>();
+  const roots = new Set<string>();
   for (const topic of topics) {
-    const names = TOPIC_READS[topic];
-    if (!names) continue;
-    for (const n of names) out.add(n);
+    for (const n of TOPIC_READS[topic] ?? []) reads.add(n);
+    for (const r of TOPIC_QUERY_ROOTS[topic] ?? []) roots.add(r);
   }
-  return out;
+  return { reads, roots };
 }
 
 // Ключ react-query — произвольная структура, и в ней лежат bigint'ы (args), из-за
@@ -131,8 +150,12 @@ export function collectFunctionNames(queryKey: unknown): Set<string> {
   return out;
 }
 
-/** Затрагивает ли этот ключ запроса хоть одно из перечисленных чтений. */
-export function queryKeyTouches(queryKey: unknown, reads: Set<string>): boolean {
+/** Затрагивает ли этот ключ запроса хоть что-то из перечисленного темами. */
+export function queryKeyTouches(queryKey: unknown, matcher: RefreshMatcher): boolean {
+  const { reads, roots } = matcher;
+  if (roots.size > 0 && Array.isArray(queryKey) && typeof queryKey[0] === 'string') {
+    if (roots.has(queryKey[0])) return true;
+  }
   if (reads.size === 0) return false;
   for (const name of collectFunctionNames(queryKey)) {
     if (reads.has(name)) return true;

@@ -6,8 +6,8 @@ import {
   collectFunctionNames,
   emitChainRefresh,
   emitGraphRefresh,
+  matcherForTopics,
   queryKeyTouches,
-  readsForTopics,
   subscribeRefresh,
   type RefreshTopic,
 } from './dataRefresh';
@@ -39,27 +39,38 @@ describe('TOPIC_READS', () => {
   });
 });
 
-describe('readsForTopics', () => {
+describe('matcherForTopics', () => {
   it('объединяет чтения нескольких тем', () => {
-    const reads = readsForTopics(['jobs', 'services']);
+    const { reads } = matcherForTopics(['jobs', 'services']);
     expect(reads.has('getJob')).toBe(true);
     expect(reads.has('getService')).toBe(true);
   });
 
-  it('на пустом наборе тем даёт пустое множество', () => {
-    expect(readsForTopics([]).size).toBe(0);
+  it('на пустом наборе тем даёт пустой матчер', () => {
+    const m = matcherForTopics([]);
+    expect(m.reads.size).toBe(0);
+    expect(m.roots.size).toBe(0);
   });
 
   it('игнорирует тему, которой нет в карте, а не падает', () => {
-    const reads = readsForTopics(['jobs', 'nonsense' as RefreshTopic]);
+    const { reads } = matcherForTopics(['jobs', 'nonsense' as RefreshTopic]);
     expect(reads.has('getJob')).toBe(true);
   });
 
   it('пересекающиеся темы не дублируют имя (arbiter и deals делят getDisputeClaimer)', () => {
     expect(TOPIC_READS.deals).toContain('getDisputeClaimer');
     expect(TOPIC_READS.arbiter).toContain('getDisputeClaimer');
-    const reads = readsForTopics(['deals', 'arbiter']);
+    const { reads } = matcherForTopics(['deals', 'arbiter']);
     expect([...reads].filter((n) => n === 'getDisputeClaimer')).toHaveLength(1);
+  });
+
+  it('тема кошелька даёт ещё и корень ключа — useBalance имени функции не кладёт', () => {
+    const { roots } = matcherForTopics(['wallet']);
+    expect(roots.has('balance')).toBe(true);
+  });
+
+  it('темы без корней их и не приносят', () => {
+    expect(matcherForTopics(['jobs', 'deals']).roots.size).toBe(0);
   });
 });
 
@@ -112,7 +123,7 @@ describe('collectFunctionNames', () => {
 });
 
 describe('queryKeyTouches', () => {
-  const jobs = readsForTopics(['jobs']);
+  const jobs = matcherForTopics(['jobs']);
 
   it('да — когда ключ упоминает чтение темы', () => {
     expect(queryKeyTouches(['readContract', { functionName: 'getJob' }], jobs)).toBe(true);
@@ -122,8 +133,22 @@ describe('queryKeyTouches', () => {
     expect(queryKeyTouches(['readContract', { functionName: 'getDetails' }], jobs)).toBe(false);
   });
 
-  it('нет — на пустом множестве чтений (иначе инвалидировали бы всё подряд)', () => {
-    expect(queryKeyTouches(['readContract', { functionName: 'getJob' }], new Set())).toBe(false);
+  it('нет — на пустом матчере (иначе инвалидировали бы всё подряд)', () => {
+    const empty = matcherForTopics([]);
+    expect(queryKeyTouches(['readContract', { functionName: 'getJob' }], empty)).toBe(false);
+    expect(queryKeyTouches(['balance', { address: '0xabc' }], empty)).toBe(false);
+  });
+
+  it('ключ useBalance ловится корнем, а не именем функции', () => {
+    const wallet = matcherForTopics(['wallet']);
+    expect(queryKeyTouches(['balance', { address: '0xabc', token: '0x5dc0' }], wallet)).toBe(true);
+    // Чужая тема этот же ключ не трогает.
+    expect(queryKeyTouches(['balance', { address: '0xabc' }], jobs)).toBe(false);
+  });
+
+  it('корень сравнивается только с первым элементом, не с любым вхождением', () => {
+    const wallet = matcherForTopics(['wallet']);
+    expect(queryKeyTouches(['readContract', { scopeKey: 'balance' }], wallet)).toBe(false);
   });
 
   it('нет — для чужих ключей react-query (например xmtp/profile)', () => {
