@@ -591,7 +591,17 @@ function DisputeCard({
     fetch(`/api/dispute-reason?agreement=${rec.agreement.toLowerCase()}`)
       .then(r => r.json())
       .then((d: { reason?: string | null }) => { if (d.reason) setDisputeReason(d.reason); })
-      .catch(() => {});
+      // Читающая половина того же денежного пути, что и отправка причины
+      // (см. lib/disputeReason). Молчать здесь нельзя по той же причине:
+      // отсутствие изложения в карточке спора читается арбитром как «сторона
+      // ничего не написала», хотя это могло быть просто неудавшееся чтение.
+      // Решение арбитра распоряжается эскроу — цена такой подмены высокая.
+      .catch((err: unknown) => {
+        console.warn(
+          `[dispute] изложение дела по ${rec.agreement} не прочитано — ` +
+          `карточка спора покажет его как отсутствующее:`, err,
+        );
+      });
   }, [rec.agreement]);
 
   const ZERO = "0x0000000000000000000000000000000000000000";
@@ -857,7 +867,13 @@ function MyCaseCard({
     fetch(`/api/dispute-reason?agreement=${agreement.toLowerCase()}`)
       .then(r => r.json())
       .then((d: { reason?: string | null }) => { if (d.reason) setDisputeReason(d.reason); })
-      .catch(() => {});
+      // См. комментарий у такого же чтения в карточке спора выше.
+      .catch((err: unknown) => {
+        console.warn(
+          `[dispute] изложение дела по ${agreement} не прочитано — ` +
+          `карточка спора покажет его как отсутствующее:`, err,
+        );
+      });
   }, [agreement]);
 
   const ZERO        = "0x0000000000000000000000000000000000000000";

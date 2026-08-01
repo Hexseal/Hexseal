@@ -23,8 +23,37 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  */
 export function useWalletAccountData() {
   const t = useTranslations();
-  const { address, isConnected, status, chain } = useAccount();
-  const isWrongChain = isConnected && !!chain && chain.id !== appChainId;
+  const { address, isConnected, status, chain, chainId } = useAccount();
+  // Считаем по СЫРОМУ `chainId`, а не по объекту `chain`.
+  //
+  // `chain` у wagmi — это `config.chains.find(c => c.id === connection.chainId)`
+  // (@wagmi/core/dist/esm/actions/getAccount.js:7), а в конфиге приложения ровно
+  // одна сеть (`providers.tsx`: `const chains = [appChain]`). Отсюда прежнее
+  // условие `isConnected && !!chain && chain.id !== appChainId` было тождественно
+  // ложным:
+  //   • кошелёк в нашей сети  → chain = appChain → chain.id === appChainId → false;
+  //   • кошелёк в чужой сети  → find() ничего не нашёл → chain === undefined
+  //                             → `!!chain` false → тоже false.
+  // То есть ровно в том случае, ради которого проверка написана, она молчала.
+  //
+  // Цена молчания высокая, и оно было идеально незаметным: баланс, XP и роль
+  // читаются через наш собственный RPC-прокси и потому отвечают правильно даже
+  // когда кошелёк стоит в чужой сети, — меню выглядело совершенно обычным.
+  // Ни оранжевой точки на аватаре, ни надписи «Wrong Network», ни кнопки
+  // «Switch to …» (всё это уже написано в WalletMenu и просто никогда не
+  // показывалось), а любая транзакция уходила в чужую сеть по адресу, где
+  // нашего кода нет.
+  //
+  // `chainId` в том же объекте — это `connection.chainId`, настоящий номер сети
+  // кошелька, который обновляется по событию chainChanged независимо от того,
+  // сконфигурирована сеть или нет. Так это уже сделано в двух других местах
+  // репозитория: `app/board/client/post/page.tsx` и
+  // `app/board/executor/post/page.tsx` (`chainId !== EXPECTED_CHAIN_ID`).
+  //
+  // Проверка на `undefined` обязательна: в статусе reconnecting адрес уже есть,
+  // а номер сети может ещё не подтянуться — без неё меню моргало бы ложным
+  // «Wrong Network» на каждом восстановлении сессии.
+  const isWrongChain = isConnected && chainId !== undefined && chainId !== appChainId;
 
   const { displayName, avatarUrl: profileAvatarUrl } = useProfile(address);
 
