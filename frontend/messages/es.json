@@ -430,6 +430,7 @@
     "pay_executor_btn": "Pagar Ejecutor",
     "pay_executor_success": "Disputa resuelta · Fondos pagados al ejecutor.",
     "chat_title": "Chat del Trato",
+    "chat_arbiter_btn": "Chat con el árbitro",
     "chat_desc": "Chat grupal cifrado entre cliente, ejecutor y árbitro",
     "dispute_active": "Disputa Activa",
     "dispute_active_hint": "El árbitro ha sido notificado. Chatea con él para resolver.",

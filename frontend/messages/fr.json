@@ -430,6 +430,7 @@
     "pay_executor_btn": "Payer l'Exécutant",
     "pay_executor_success": "Litige résolu · Fonds payés à l'exécutant.",
     "chat_title": "Chat de l'Accord",
+    "chat_arbiter_btn": "Discuter avec l'arbitre",
     "chat_desc": "Chat de groupe chiffré entre client, exécutant et arbitre",
     "dispute_active": "Litige Actif",
     "dispute_active_hint": "L'arbitre a été notifié. Chattez avec lui pour résoudre.",
