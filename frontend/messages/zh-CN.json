@@ -195,6 +195,8 @@
   },
   "wallet": {
     "connect": "连接",
+    "connecting": "连接中…",
+    "connect_failed": "钱包连接失败，请重试",
     "my_profile": "我的资料",
     "dashboard": "控制台",
     "messages": "消息",

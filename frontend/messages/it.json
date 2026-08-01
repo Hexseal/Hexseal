@@ -195,6 +195,8 @@
   },
   "wallet": {
     "connect": "Collega",
+    "connecting": "Connessione…",
+    "connect_failed": "Impossibile connettere il wallet: riprova",
     "my_profile": "Il Mio Profilo",
     "dashboard": "Dashboard",
     "messages": "Messaggi",

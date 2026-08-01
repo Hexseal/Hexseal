@@ -5,7 +5,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDisconnect, useSwitchChain } from "wagmi";
 import { appChainId, appChain } from "@/config/chain";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { useConnectWallet } from "@/hooks/useConnectWallet";
 import type { WalletAccountData } from "@/hooks/useWalletAccountData";
 import {
   DropdownMenu,
@@ -51,7 +51,9 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   } = data;
   const { disconnectAsync } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
-  const { openConnectModal } = useConnectModal();
+  // Единая точка запуска подключения: на мобильном она зовёт WalletConnect
+  // напрямую, на десктопе открывает модалку RainbowKit (см. хук).
+  const { connect: connectWallet, connecting } = useConnectWallet();
   const [mounted, setMounted] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -139,10 +141,12 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
       <div className="flex items-center gap-1">
         {!hideLocale && <LocaleToggle locale={locale} setLocale={setLocale} />}
         <button
-          onClick={openConnectModal}
-          className={`flex items-center gap-2 ${btnH} px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 whitespace-nowrap`}
+          onClick={connectWallet}
+          disabled={connecting}
+          className={`flex items-center gap-2 ${btnH} px-3 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 transition-colors text-sm text-white/60 hover:text-white/90 whitespace-nowrap disabled:opacity-60`}
         >
-          {t("wallet.connect")}
+          {connecting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          {connecting ? t("wallet.connecting") : t("wallet.connect")}
         </button>
       </div>
     );

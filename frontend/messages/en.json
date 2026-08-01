@@ -198,6 +198,8 @@
   },
   "wallet": {
     "connect": "Connect",
+    "connecting": "Connecting…",
+    "connect_failed": "Couldn't connect your wallet — try again",
     "my_profile": "My Profile",
     "dashboard": "Account",
     "messages": "Messages",
