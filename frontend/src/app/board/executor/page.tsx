@@ -25,6 +25,7 @@ import { useTranslations } from "next-intl";
 import { BoardRegionFilter, REGION_LABELS, getStoredBoardRegion, storeBoardRegion } from "@/components/BoardRegionFilter";
 import { CATEGORIES, CATEGORY_BADGE, type CategoryKey, extractCategory, stripCategory, extractCustomTag, stripCustomTag } from "@/config/categories";
 import { shortAddr } from "@/lib/utils";
+import { mergePages } from "@/lib/boardPaging";
 import { RequestServiceModal } from "@/components/RequestServiceModal";
 import { useFeeConfig } from "@/hooks/useFeeConfig";
 
@@ -580,12 +581,15 @@ export default function ExecutorBoardPage() {
     if (svcError) console.error('[Board/executor] subgraph error:', svcError);
   }, [svcError]);
 
+  // Склейка — чистой функцией из lib/boardPaging, той же, что на доске заказов.
+  // Зависимость эффекта это САМ массив, а urql отдаёт новую ссылку на каждое
+  // выполнение запроса, включая повторное по тем же переменным. Прежняя
+  // безусловная ветка append на этом дописывала ту же страницу второй раз при
+  // любом обновлении со страницы ≥ 1 (кнопка «Обновить», перефокус вкладки) —
+  // дубли строк и дубли React-ключей, на которых React перестаёт различать
+  // элементы списка. `mergePages` идемпотентна: уже виденные id отбрасываются.
   useEffect(() => {
-    if (page === 0) {
-      setAllServices(pageServices);
-    } else if (pageServices.length > 0) {
-      setAllServices(prev => [...prev, ...pageServices]);
-    }
+    setAllServices(prev => mergePages(prev, page, pageServices));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageServices]);
 
