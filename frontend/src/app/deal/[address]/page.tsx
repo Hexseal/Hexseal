@@ -41,6 +41,7 @@ import { usdcExact } from "@/lib/splitPot";
 import { canFundDispute } from "@/lib/disputeBounty";
 import { PageCenter } from "@/components/PageCenter";
 import { withWalletLock } from "@/lib/walletLock";
+import { postDisputeReason, warnDisputeReasonUnsigned } from "@/lib/disputeReason";
 
 // Agreement status enum matches Solidity:
 // 0=CREATED, 1=FUNDED, 2=ACTIVE, 3=COMPLETED, 4=DISPUTED, 5=RESOLVED, 6=REFUNDED
@@ -259,7 +260,18 @@ export default function DealDetailPage() {
         }).then(e => {
           const ex = e as { amount: bigint; terms: string; status: number };
           return { id: i, amount: ex.amount, terms: ex.terms, status: Number(ex.status) };
-        }).catch(() => null)
+        }).catch((err: unknown) => {
+          // Та же тихая усушка списка доплат, что и в components/DealActionBar.tsx:
+          // непрочитанная строка выпадает через .filter(Boolean) ниже, и отличить
+          // «доплаты не было» от «доплату не удалось прочитать» нельзя ничем.
+          // `extrasLoading` тут не спасает: он про весь пакет, а не про
+          // отдельную строку, и к моменту отрисовки уже снят.
+          console.warn(
+            `[deal] доплата #${i} по ${dealAddress} не прочитана — ` +
+            `строка выпала из списка:`, err,
+          );
+          return null;
+        })
       )
     ).then(results => {
       setExtrasList(results.filter(Boolean) as typeof extrasList);
@@ -636,19 +648,17 @@ export default function DealDetailPage() {
         // кошельке дают незакрываемый -32002 'already pending'.
         const sig = await withWalletLock(address, () =>
           walletClient.signMessage({ account: address as `0x${string}`, message: msg }));
-        fetch('/api/dispute-reason', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            agreement: dealAddress,
-            raiser: address,
-            reason: disputeReason.trim(),
-            ts,
-            sig,
-          }),
-        }).catch(() => {});
-      } catch {
-        // non-critical
+        void postDisputeReason({
+          agreement: dealAddress!,
+          raiser: address,
+          reason: disputeReason.trim(),
+          ts,
+          sig,
+        });
+      } catch (err) {
+        // Спор открывается и без сохранённой причины — поведение прежнее.
+        // Изменилось одно: отказ больше не проходит бесследно (см. lib/disputeReason).
+        warnDisputeReasonUnsigned(dealAddress!, err);
       }
     }
     const ok = await handleAction('raiseDispute', 'Dispute raised!');

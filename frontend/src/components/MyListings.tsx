@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { shortAddr } from "@/lib/utils";
 import { extractCategory, CATEGORY_BADGE } from "@/config/categories";
+import { useWarnFailedReads } from '@/hooks/useWarnFailedReads';
 
 const REGION_LABELS: Record<number, string> = {
   0: 'CIS', 1: 'Asia', 2: 'Europe', 3: 'US', 4: 'LATAM', 5: 'CA', 6: 'AU',
@@ -537,6 +538,9 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     contracts: svcContracts,
     query: { enabled: (serviceIds || []).length > 0 },
   });
+  // Отдельно провалившийся getService выпадает из списка ниже молча, а `svcsError`
+  // его не видит — он про провал запроса целиком. См. hooks/useWarnFailedReads.
+  useWarnFailedReads(svcResults, 'my-services');
 
   // Load pending requests only for ACTIVE services
   const activeIds = (serviceIds || []).filter((id, i) => {
@@ -1117,6 +1121,8 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
     contracts: jobContracts,
     query: { enabled: (jobIds || []).length > 0 },
   });
+  // См. комментарий у такого же чтения услуг выше.
+  useWarnFailedReads(jobResults, 'my-jobs');
 
   const openJobIds = (jobIds || []).filter((id, i) => {
     const job = jobResults?.[i]?.result as JobRecord | undefined;
@@ -1412,6 +1418,8 @@ export function MyClientRequests({ address }: { address: string }) {
     contracts: reqContracts,
     query: { enabled: (reqIds || []).length > 0 },
   });
+  // См. комментарий у такого же чтения услуг выше.
+  useWarnFailedReads(reqResults, 'my-requests');
 
   const refetch = () => { refetchIds(); refetchReqs(); };
   const isLoading = loadingIds || loadingReqs;

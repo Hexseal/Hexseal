@@ -74,6 +74,9 @@ export function usePairChat(peerAddress: string) {
   const peerRef           = useRef(peerAddress);
   const streamRef         = useRef<{ return: () => void } | null>(null);
   const autoReconnectRef  = useRef(false);
+  // Личность соединения, от которой отсчитывается «одна авто-попытка».
+  // retryKey в неё намеренно НЕ входит — см. сброс флага в теле эффекта ниже.
+  const connKeyRef        = useRef('');
   const pairKeyRef        = useRef(pairKey);
   useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
 
@@ -81,7 +84,25 @@ export function usePairChat(peerAddress: string) {
     if (!address || !peerAddress || status !== 'ready') { setIsLoading(false); return; }
 
     let cancelled = false;
-    autoReconnectRef.current = false;
+    // Бюджет авто-переподключения обнуляется только при смене САМОГО соединения
+    // (аккаунт, собеседник, готовность XMTP) — не на каждом прогоне эффекта.
+    //
+    // Эффект перезапускает сам себя: обрыв стрима ставит autoReconnectRef и
+    // через 3 с дёргает setRetryKey, а retryKey стоит в его зависимостях
+    // (см. массив в конце эффекта). Пока сброс здесь был безусловным, он
+    // затирал только что поставленный флаг, и ветка `else { setStreamDead(true) }`
+    // ниже не достигалась НИКОГДА. Вместо задуманного «одна попытка → баннер с
+    // кнопкой Reconnect» получался бесконечный цикл: каждые 3 секунды полная
+    // перезагрузка истории, повторный read-receipt и новый стрим — молча, без
+    // единого следа в журнале. Баннер `streamDead` в ChatPanel был при этом
+    // мёртвым кодом, а человек видел внешне обычный чат, который на самом деле
+    // безостановочно долбится в сеть. Ровно тот андроидный путь, где WASM-воркер
+    // и роняет вкладку по памяти.
+    const connKey = `${address}|${peerAddress}|${status}`;
+    if (connKeyRef.current !== connKey) {
+      connKeyRef.current = connKey;
+      autoReconnectRef.current = false;
+    }
     setStreamDead(false);
 
     // Reset synchronously (before any async work) whenever the (my address, peer)
@@ -332,6 +353,11 @@ export function usePairChat(peerAddress: string) {
 
   const reconnect = useCallback(() => {
     setStreamDead(false);
+    // Осознанное нажатие человека заново открывает бюджет одной авто-попытки:
+    // соединение то же, поэтому сброс в эффекте (по connKey) здесь не
+    // сработает, а без этой строки после первого же ручного переподключения
+    // любой следующий обрыв сразу показывал бы баннер, минуя авто-попытку.
+    autoReconnectRef.current = false;
     setIsInitialized(false);
     // Keep cached messages visible during reconnect — no jarring blank screen
     if (!_msgCache.has(pairKey)) {

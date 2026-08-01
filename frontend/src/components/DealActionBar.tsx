@@ -18,6 +18,7 @@ import { DisputeCostNotice } from '@/components/DisputeCostNotice';
 import { useArbiterTimeoutOutcome } from '@/hooks/useArbiterTimeoutOutcome';
 import { useTranslations } from 'next-intl';
 import { withWalletLock } from '@/lib/walletLock';
+import { postDisputeReason, warnDisputeReasonUnsigned } from '@/lib/disputeReason';
 
 interface Props {
   agreementAddr: string;
@@ -108,7 +109,21 @@ export function DealActionBar({ agreementAddr }: Props) {
         }).then(raw => {
           const e = raw as { amount: bigint; terms: string; status: number };
           return { id: i, amount: e.amount, terms: e.terms, status: Number(e.status) } satisfies ExtraItem;
-        }).catch(() => null)
+        }).catch((err: unknown) => {
+          // Непрочитанная доплата тихо ВЫПАДАЕТ из списка ниже (.filter), и это
+          // не косметика: по этому же списку считается «+N USDC» в шапке бара
+          // (acceptedExtras.reduce), то есть сумма сделки показывается
+          // заниженной — как точная. По нему же исполнитель узнаёт о доплате,
+          // ждущей его принятия: выпавшая строка означает, что согласованные
+          // деньги не будут приняты никогда, и никто об этом не узнает.
+          // Поведение оставлено прежним (частичный список лучше пустого бара),
+          // но теперь у отказа есть след.
+          console.warn(
+            `[deal] доплата #${i} по ${agreementAddr} не прочитана — ` +
+            `строка выпала из списка, сумма в шапке занижена:`, err,
+          );
+          return null;
+        })
       )
     ).then(results => setExtrasList(results.filter((r): r is ExtraItem => r !== null)));
   }, [nextExtraId, publicClient, agreementAddr]);
@@ -323,13 +338,12 @@ export function DealActionBar({ agreementAddr }: Props) {
         // том же месте в src/app/deal/[address]/page.tsx.
         const sig = await withWalletLock(address, () =>
           walletClient.signMessage({ account: address as `0x${string}`, message: msg }));
-        fetch('/api/dispute-reason', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agreement: agreementAddr, raiser: address, reason: disputeReason.trim(), ts, sig }),
-        }).catch(() => {});
-      } catch {
-        // non-critical — proceed with raiseDispute even if signing fails
+        void postDisputeReason({ agreement: agreementAddr, raiser: address, reason: disputeReason.trim(), ts, sig });
+      } catch (err) {
+        // non-critical — proceed with raiseDispute even if signing fails.
+        // Поведение прежнее; изменилось одно: отказ больше не проходит
+        // бесследно (см. lib/disputeReason).
+        warnDisputeReasonUnsigned(agreementAddr, err);
       }
     }
     await run('raiseDispute', 'Dispute raised!');

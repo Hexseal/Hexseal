@@ -23,6 +23,8 @@ import { useMountedRef } from '@/hooks/useMountedRef';
 import { DisputeCostNotice } from '@/components/DisputeCostNotice';
 import { useArbiterTimeoutOutcome } from '@/hooks/useArbiterTimeoutOutcome';
 import { withWalletLock } from '@/lib/walletLock';
+import { refreshAfterTx } from '@/lib/subgraphSync';
+import { postDisputeReason, warnDisputeReasonUnsigned } from '@/lib/disputeReason';
 
 const EXTRA_STATUS = { PENDING: 0, ACCEPTED: 1, REJECTED: 2 } as const;
 interface ExtraItem { id: number; amount: bigint; terms: string; status: number; }
@@ -221,8 +223,23 @@ function DealCardImpl({ agreement, address, refetch }: {
     };
     try {
       toast(tc('sign_wallet'));
-      await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, fn, AGREEMENT_ABI as Abi);
+      const { txHash } = await sendAgreementGasless(walletClient, publicClient, agreement.agreement as `0x${string}`, fn, AGREEMENT_ABI as Abi);
       toast.success(successMsg[fn] ?? 'Done!');
+      // Опрос до факта вместо фиксированной паузы — тот же помощник, которым
+      // уже пользуется соседний MyListings.tsx. Прежняя `setTimeout(2000)` не
+      // догоняла НИ ОДИН из двух источников этой карточки:
+      //   • `refetch` — это сабграф (useMyAgreements через AgreementsTabs), а он
+      //     отстаёт от головы цепи на 2-6 секунд (замер в lib/subgraphSync), то
+      //     есть чтение на 2-й секунде систематически попадает в старый снимок;
+      //   • собственные чтения карточки (`coreData`: status / getDetails /
+      //     timeLeft / balanceOf) не обновлялись вообще — `refetchCore` зовётся
+      //     только из `refetchExtras`, а у самого мультиколла staleTime 30 с.
+      // Итог: после зелёного тоста карточка ещё держала прежний статус, а
+      // блокировка снималась на той же 2-й секунде — кнопки возвращались в
+      // рабочий вид поверх устаревшего состояния, и второй клик тратил подпись
+      // на гарантированный реверт. Тема `deals` в lib/dataRefresh перечисляет
+      // ровно эти чтения, а QueryRefreshBridge сбрасывает их по имени функции.
+      void refreshAfterTx(publicClient, txHash, { chain: ['deals'], graph: ['deals'] });
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
       // против отставания реплик RPC (24701de). Всё это окно `liveStatus`
@@ -289,13 +306,11 @@ function DealCardImpl({ agreement, address, refetch }: {
           // raiseDispute со своей подписью.
           const sig = await withWalletLock(address, () =>
             walletClient.signMessage({ account: address as `0x${string}`, message: msg }));
-          fetch('/api/dispute-reason', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ agreement: agreement.agreement, raiser: address, reason: disputeReason.trim(), ts, sig }),
-          }).catch(() => {});
-        } catch {
-          // non-critical
+          void postDisputeReason({ agreement: agreement.agreement, raiser: address, reason: disputeReason.trim(), ts, sig });
+        } catch (err) {
+          // Спор открывается и без сохранённой причины — поведение прежнее.
+          // Изменилось одно: отказ больше не проходит бесследно (см. lib/disputeReason).
+          warnDisputeReasonUnsigned(agreement.agreement, err);
         }
       }
       toast(tc('sign_wallet'));
