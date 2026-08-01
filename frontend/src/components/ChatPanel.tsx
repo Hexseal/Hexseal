@@ -582,7 +582,17 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
       setPendingPreview(null);
     } catch (err: unknown) {
       const isAbort = err instanceof DOMException && err.name === 'AbortError';
-      if (!isAbort) setUploadErr(err instanceof Error ? err.message : 'Upload failed');
+      if (!isAbort) {
+        // Тот же разбор, что у текстовой отправки: «до этого адреса не дойдёт»
+        // — это не «загрузка не удалась», и человеку надо сказать именно это,
+        // на его языке, а не показать английскую строку из lib/xmtp.
+        const msg = err instanceof Error ? err.message : '';
+        setUploadErr(
+          msg.includes('not registered') || msg.includes('not set up')
+            ? t("chat.recipient_no_messaging")
+            : (msg || 'Upload failed'),
+        );
+      }
     } finally {
       uploadAbortRef.current = null;
       setUploading(false);

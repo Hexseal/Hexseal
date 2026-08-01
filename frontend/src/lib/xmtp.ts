@@ -21,6 +21,9 @@ import type { Signer } from '@xmtp/browser-sdk';
 import { toBytes } from 'viem';
 import type { WalletClient } from 'viem';
 import { withWalletLock } from '@/lib/walletLock';
+import {
+  ensurePeerInGroup, blocksDelivery, PEER_UNREACHABLE_MESSAGE,
+} from '@/lib/xmtpDelivery';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -525,7 +528,6 @@ export async function findOrCreatePairGroup(
   // peer second. Needed below to tell "the group is missing someone" apart from
   // "the group is missing *the peer specifically*".
   const [myAddress, peerAddress] = memberAddresses;
-  const peerLc = peerAddress.toLowerCase();
   const name = pairGroupName(memberAddresses[0], memberAddresses[1]);
 
   // Only these addresses are allowed in a legitimate pair group.
@@ -580,22 +582,13 @@ export async function findOrCreatePairGroup(
     // reachable now, add them so the conversation recovers instead of staying
     // one-sided forever. Best-effort: never block opening an existing
     // conversation over this.
-    try {
-      const members = await canonical.members();
-      const hasPeer = members.some(m =>
-        (m.accountIdentifiers[0]?.identifier?.toLowerCase() ?? '') === peerLc
-      );
-      if (!hasPeer) {
-        const peerId = toIdentifier(peerAddress);
-        const canMsg = await client.canMessage([peerId]);
-        if (canMsg.get(peerId.identifier) === true) {
-          await canonical.addMembersByIdentifiers([peerId]);
-          await canonical.sync();
-        }
-      }
-    } catch {
-      // Non-critical — worst case the peer stays missing until the next open.
-    }
+    //
+    // А вот отправку — блокирует: раньше эта же ветка при недостижимом
+    // собеседнике молча возвращала группу без него, и любое сообщение туда
+    // выглядело отправленным, не имея ни одного шанса дойти. Проверка теперь
+    // общая с путём создания (lib/xmtpDelivery.ts) и повторяется перед каждой
+    // отправкой в usePairChat — там же она и отказывает.
+    await ensurePeerInGroup(canonical, client, toIdentifier(peerAddress));
 
     return canonical;
   }
@@ -621,7 +614,9 @@ export async function findOrCreatePairGroup(
     // Message matched against in ChatPanel.tsx (error.includes('not registered')) to
     // trigger the "share an invite" UI instead of the generic connection-failed one —
     // covers both "never opened Hexseal chat" and "temporarily between XMTP installations".
-    throw new Error('This address is not registered on XMTP right now — they need to open Hexseal chat first.');
+    // Та же строка используется на пути отправки в уже существующую группу
+    // (assertPeerCanReceive ниже) — оба отказа обязаны выглядеть одинаково.
+    throw new Error(PEER_UNREACHABLE_MESSAGE);
   }
 
   const created = await client.conversations.createGroupWithIdentifiers(reachable, {
@@ -641,6 +636,26 @@ export async function findOrCreatePairGroup(
     return afterLegit.reduce((best, g) => g.id < best.id ? g : best);
   }
   return created;
+}
+
+/**
+ * Гейт перед отправкой: собеседник обязан состоять в группе.
+ *
+ * Зовётся из `usePairChat` перед каждым `sendText` в УЖЕ СУЩЕСТВУЮЩУЮ группу.
+ * Только что созданная группа этой проверки не требует — путь создания сам
+ * отказывается собирать группу без собеседника (см. выше).
+ *
+ * Бросает ту же ошибку, что и путь создания, поэтому ChatPanel показывает то
+ * же понятное объяснение со ссылкой-приглашением. Разбор, почему проверка
+ * стоит именно здесь, — в шапке `lib/xmtpDelivery.ts`.
+ */
+export async function assertPeerCanReceive(
+  client: XmtpClient,
+  group: XmtpGroup,
+  peerAddress: string,
+): Promise<void> {
+  const state = await ensurePeerInGroup(group, client, toIdentifier(peerAddress));
+  if (blocksDelivery(state)) throw new Error(PEER_UNREACHABLE_MESSAGE);
 }
 
 // ─── Deal-context marker ───────────────────────────────────────────────────────
