@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { useConnectWallet } from "@/hooks/useConnectWallet";
 import BackgroundFX from "@/components/BackgroundFX";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -11,7 +11,9 @@ const TECH_TAGS = ["Base Network", "EIP-2535", "Gasless", "Escrow"];
 
 export default function Hero() {
   const { isConnected } = useAccount();
-  const { openConnectModal } = useConnectModal();
+  // Та же точка запуска, что у кнопки в шапке: на мобильном — WalletConnect
+  // напрямую, на десктопе — модалка RainbowKit (см. hooks/useConnectWallet).
+  const { connect: connectWallet, connecting } = useConnectWallet();
   const t = useTranslations();
 
   const consoleRef   = useRef<HTMLDivElement | null>(null);
@@ -41,14 +43,17 @@ export default function Hero() {
     return () => clearTimeout(t0);
   }, []);
 
-  const onConnectClick = async () => {
+  const onConnectClick = () => {
+    // Повторное нажатие ничего не плодит: хук проглатывает его, пока попытка в
+    // полёте. Терминальную строчку при этом не повторяем — она бы мигала.
+    if (connecting) return;
     const c = consoleRef.current;
     if (c) {
       c.textContent = "// opening wallet picker…";
       c.classList.add("visible");
       setTimeout(() => c.classList.remove("visible"), 2400);
     }
-    await openConnectModal?.();
+    connectWallet();
   };
 
   return (
@@ -91,8 +96,8 @@ export default function Hero() {
           {!isConnected ? (
             <>
               <span className="cta-prompt">{">"}</span>
-              <span className="cta-command" onClick={onConnectClick}>
-                {t("hero.connect_wallet")}
+              <span className="cta-command" onClick={onConnectClick} aria-busy={connecting}>
+                {connecting ? t("wallet.connecting") : t("hero.connect_wallet")}
               </span>
               <span className="cta-cursor"></span>
               <div className="console-message" ref={consoleRef}>

@@ -195,6 +195,8 @@
   },
   "wallet": {
     "connect": "지갑 연결",
+    "connecting": "연결 중…",
+    "connect_failed": "지갑을 연결하지 못했습니다. 다시 시도해 주세요",
     "my_profile": "내 프로필",
     "dashboard": "대시보드",
     "messages": "메시지",

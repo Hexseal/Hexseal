@@ -195,6 +195,8 @@
   },
   "wallet": {
     "connect": "Verbinden",
+    "connecting": "Verbinde…",
+    "connect_failed": "Wallet konnte nicht verbunden werden — bitte erneut versuchen",
     "my_profile": "Mein Profil",
     "dashboard": "Dashboard",
     "messages": "Nachrichten",

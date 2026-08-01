@@ -44,6 +44,22 @@ export function isMobileUserAgent(ua: string | undefined | null): boolean {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
 }
 
+/** Тот же признак, применённый к текущему клиенту, — ОДИН на всё приложение.
+ *
+ *  Мобильность спрашивают уже двое: `app/providers.tsx` (вычесть MetaMask из
+ *  списка кошельков) и `hooks/useConnectWallet.ts` (звать коннектор
+ *  WalletConnect напрямую, минуя модалку RainbowKit — разбор в шапке
+ *  `lib/connectWallet.ts`). Второй способ отличить телефон от компьютера — например,
+ *  медиазапрос по ширине — рано или поздно разъедется с этим, и разъедется
+ *  молча: список кошельков соберётся по одному правилу, а маршрут подключения
+ *  пойдёт по другому.
+ *
+ *  На сервере (SSR) `navigator`'а нет, и здесь честный `false` — по той же
+ *  причине, что и в `isMobileUserAgent`. */
+export function isMobileClient(): boolean {
+  return typeof navigator !== "undefined" && isMobileUserAgent(navigator.userAgent);
+}
+
 /** Убирает из групп кошельки, которым нечего делать на мобильном, и выкидывает
  *  группы, опустевшие после этого. На десктопе возвращает исходные группы как
  *  есть — тем же объектом, без копирования.

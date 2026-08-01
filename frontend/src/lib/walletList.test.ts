@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { isMobileUserAgent, buildWalletGroups, type WalletGroup } from './walletList';
+import { describe, it, expect, afterEach } from 'vitest';
+import { isMobileUserAgent, isMobileClient, buildWalletGroups, type WalletGroup } from './walletList';
 
 // Настоящие строки User-Agent, а не выдуманные: смысл теста в том, что
 // конкретный Samsung Galaxy + Chrome, на котором баг снят, обязан попасть в
@@ -44,6 +44,50 @@ describe('isMobileUserAgent', () => {
     expect(isMobileUserAgent(UA.macChrome)).toBe(false);
     expect(isMobileUserAgent(UA.winChrome)).toBe(false);
     expect(isMobileUserAgent(UA.linuxFirefox)).toBe(false);
+  });
+});
+
+describe('isMobileClient', () => {
+  // Этот признак — ОДИН на всё приложение: по нему и вычитается MetaMask из
+  // мобильного списка (providers.tsx), и решается, звать ли на нажатии
+  // коннектор WalletConnect напрямую мимо модалки RainbowKit
+  // (hooks/useConnectWallet). Второй способ отличить телефон от компьютера
+  // разъехался бы с этим молча, поэтому проверяем именно общую точку.
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const setUA = (ua: string | undefined) => {
+    if (ua === undefined) {
+      Reflect.deleteProperty(globalThis, 'navigator');
+      return;
+    }
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: ua },
+      configurable: true,
+      writable: true,
+    });
+  };
+
+  afterEach(() => {
+    if (original) Object.defineProperty(globalThis, 'navigator', original);
+    else Reflect.deleteProperty(globalThis, 'navigator');
+  });
+
+  it('без navigator (SSR) отвечает «не мобильный»', () => {
+    setUA(undefined);
+    expect(isMobileClient()).toBe(false);
+  });
+
+  it('на телефоне отвечает «мобильный»', () => {
+    setUA(UA.androidChrome);
+    expect(isMobileClient()).toBe(true);
+    setUA(UA.iphoneSafari);
+    expect(isMobileClient()).toBe(true);
+  });
+
+  it('на десктопе отвечает «не мобильный»', () => {
+    setUA(UA.macChrome);
+    expect(isMobileClient()).toBe(false);
+    setUA(UA.winChrome);
+    expect(isMobileClient()).toBe(false);
   });
 });
 

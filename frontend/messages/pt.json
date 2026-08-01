@@ -195,6 +195,8 @@
   },
   "wallet": {
     "connect": "Conectar",
+    "connecting": "Conectando…",
+    "connect_failed": "Não foi possível conectar a carteira — tente novamente",
     "my_profile": "Meu Perfil",
     "dashboard": "Painel",
     "messages": "Mensagens",

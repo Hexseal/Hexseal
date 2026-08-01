@@ -195,6 +195,8 @@
   },
   "wallet": {
     "connect": "ウォレット接続",
+    "connecting": "接続中…",
+    "connect_failed": "ウォレットに接続できませんでした。もう一度お試しください",
     "my_profile": "マイプロフィール",
     "dashboard": "ダッシュボード",
     "messages": "メッセージ",

@@ -39,7 +39,7 @@ import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
 import { PushProvider } from "@/contexts/PushContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
-import { buildWalletGroups, isMobileUserAgent } from "@/lib/walletList";
+import { buildWalletGroups, isMobileClient } from "@/lib/walletList";
 import { QueryRefreshBridge } from "@/components/QueryRefreshBridge";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
@@ -96,8 +96,11 @@ const safeStorage = createStorage({
 // На сервере (SSR) navigator'а нет и здесь честный false: серверный рендер
 // кошелёк не подключает, а разметку список коннекторов не задаёт — модал
 // RainbowKit рисуется только на клиенте и только по нажатию.
-const IS_MOBILE_CLIENT =
-  typeof navigator !== "undefined" && isMobileUserAgent(navigator.userAgent);
+//
+// Сама проверка живёт в `lib/walletList.ts` и ОДНА на всё приложение: тот же
+// `isMobileClient()` решает, звать ли на нажатии коннектор WalletConnect
+// напрямую (`hooks/useConnectWallet.ts`) вместо модалки RainbowKit.
+const IS_MOBILE_CLIENT = isMobileClient();
 
 // Полный набор — он же десктопный. Мобильный получается из него вычитанием
 // (см. MOBILE_EXCLUDED ниже и шапку lib/walletList.ts).
