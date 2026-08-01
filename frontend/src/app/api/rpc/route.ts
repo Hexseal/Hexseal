@@ -8,10 +8,39 @@ import { appChain } from '@/config/chain';
 // an empty string (e.g. a docker-compose `environment:` entry interpolating an unset
 // ${DRPC_URL}) is not nullish, so it won the chain and silently disabled the private
 // RPC — pushing every call onto rate-limited public endpoints.
+//
+// ORDER MATTERS, and it is paid-first on purpose. BASE_SEPOLIA_RPC_URL used to sit
+// second, ahead of RPC_URL — but that variable is the generic chain RPC the whole
+// repo shares (forge scripts, cast, the relayer), and in the owner's environment it
+// points at the FREE public `base-sepolia.drpc.org`. A free public endpoint has no
+// business being a candidate for the *private* slot: if DRPC_URL is ever empty, the
+// "private" attempt below would just be a fourth public endpoint, sharing one rate
+// limit with the three fallbacks — every one of them gets throttled together and the
+// route 502s (the failure docker-compose's own comment warns about). Whatever
+// distinguishes the private slot (its own quota, an API key, a paid plan) is exactly
+// what public URLs don't have, so paid candidates go first and the shared/generic one
+// is a last resort. The fallback pool below is unchanged: it is *supposed* to be public.
 const PRIVATE_RPC =
-  [process.env.DRPC_URL, process.env.BASE_SEPOLIA_RPC_URL, process.env.RPC_URL]
+  [process.env.DRPC_URL, process.env.RPC_URL, process.env.BASE_SEPOLIA_RPC_URL]
     .map(v => v?.trim())
     .find((v): v is string => !!v) ?? null;
+
+// A public host winning the private slot is survivable but never intentional — and it
+// was invisible in the logs, which is how it stayed hidden. Say so once at startup.
+// Matched on hostname, not substring: drpc's FREE endpoint is `base-sepolia.drpc.org`
+// while the paid one is `…drpc.live/…?dkey=`, and a substring test for "drpc" would
+// flag the paid one too.
+const PUBLIC_RPC_HOSTS = ['base.org', 'drpc.org', 'publicnode.com', 'blockpi.network'];
+if (PRIVATE_RPC) {
+  let host = '';
+  try { host = new URL(PRIVATE_RPC).hostname; } catch { /* не URL — сказать нечего */ }
+  if (PUBLIC_RPC_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) {
+    console.warn(
+      `[/api/rpc] private RPC slot resolved to a public endpoint (${host}) — ` +
+      'set DRPC_URL (or RPC_URL) to a keyed endpoint, or every call shares one public rate limit',
+    );
+  }
+}
 
 // Public fallback RPC endpoints tried in order if private RPC fails.
 const PUBLIC_RPCS: string[] = appChain.id === 8453

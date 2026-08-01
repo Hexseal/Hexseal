@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { acquireWalletLock, withWalletLock } from './walletLock';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  acquireWalletLock,
+  withWalletLock,
+  awaitFreshForwarderNonce,
+  rememberSpentForwarderNonce,
+} from './walletLock';
 
 // Очередь лока живёт в модульной Map, общей на весь файл тестов. Каждому тесту
 // — свой адрес, иначе один упавший тест оставляет лок взятым и все следующие
@@ -137,5 +142,226 @@ describe('acquireWalletLock', () => {
 
     await Promise.all([sign(), sign(), sign()]);
     expect(maxConcurrent).toBe(1);
+  });
+});
+
+// ─── nonce форвардера ─────────────────────────────────────────────────────────
+
+const FWD = `0x${'f0'.repeat(20)}`;
+
+/** Хранилища в node-окружении нет вовсе, поэтому подкладываем своё. Без него
+ *  проверяется только резервная память вкладки — а весь смысл выбора
+ *  `localStorage` в том, что запись переживает выгрузку вкладки. */
+function fakeStorage() {
+  const map = new Map<string, string>();
+  return {
+    getItem:    (k: string) => map.get(k) ?? null,
+    setItem:    (k: string, v: string) => { map.set(k, v); },
+    removeItem: (k: string) => { map.delete(k); },
+    clear:      () => map.clear(),
+    key:        (i: number) => [...map.keys()][i] ?? null,
+    get length() { return map.size; },
+  } as unknown as Storage;
+}
+
+/** Чтение с цепи по сценарию: отдаёт значения по списку, последнее — навсегда.
+ *  `null` в списке означает сбой пробы. */
+function reader(values: (bigint | null)[]) {
+  let i = 0;
+  const calls: number[] = [];
+  const read = async () => {
+    const v = values[Math.min(i, values.length - 1)];
+    calls.push(i);
+    i++;
+    if (v === null) throw new Error('RPC hiccup');
+    return v;
+  };
+  return { read, get count() { return calls.length; } };
+}
+
+/** Опрос без настоящих таймеров: считаем сны, но не спим. */
+function fakeSleep() {
+  const slept: number[] = [];
+  return { sleep: async (ms: number) => { slept.push(ms); }, slept };
+}
+
+afterEach(() => {
+  delete (globalThis as { localStorage?: Storage }).localStorage;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe('память о nonce форвардера', () => {
+  it('первая транзакция кошелька не ждёт ничего', async () => {
+    // Ничего этим адресом ещё не отправляли — ноль законное значение, и
+    // выжидать шесть секунд на первом же действии человека это чистый вред.
+    const a = addr();
+    const r = reader([0n]);
+    const s = fakeSleep();
+
+    expect(await awaitFreshForwarderNonce(a, FWD, r.read, { sleep: s.sleep })).toBe(0n);
+    expect(r.count).toBe(1);
+    expect(s.slept).toEqual([]);
+  });
+
+  it('вторая транзакция ждёт, пока счётчик не сдвинется', async () => {
+    // Ровно живой случай арбитра: commit израсходовал 0, claim читает заново и
+    // получает всё ещё 0 с отставшей реплики. Подписать с 0 второй раз — это
+    // «MinimalForwarder: nonce mismatch» и неработающая кнопка.
+    const a = addr();
+    rememberSpentForwarderNonce(a, FWD, 0n);
+    const r = reader([0n, 0n, 0n, 1n]);
+    const s = fakeSleep();
+
+    expect(await awaitFreshForwarderNonce(a, FWD, r.read, { sleep: s.sleep, intervalMs: 750 })).toBe(1n);
+    expect(r.count).toBe(4);
+    expect(s.slept).toEqual([750, 750, 750]);
+  });
+
+  it('исчерпание попыток пишет в журнал и отдаёт прочитанное', async () => {
+    // Транзакция могла не долететь до цепи вовсе — тогда счётчик не сдвинется
+    // никогда. Молча висеть здесь нельзя: внятный отказ контракта человек
+    // увидит и повторит, а вечная «крутилка» выглядит как сломанный сайт.
+    const a = addr();
+    rememberSpentForwarderNonce(a, FWD, 3n);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = reader([3n]);
+    const s = fakeSleep();
+
+    expect(await awaitFreshForwarderNonce(a, FWD, r.read, { sleep: s.sleep, attempts: 4 })).toBe(3n);
+    expect(r.count).toBe(4);          // первое чтение + три повтора
+    expect(s.slept).toHaveLength(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('сбой одной пробы не роняет путь', async () => {
+    // Моргнувшая сеть на середине опроса не должна отменять действие человека:
+    // следующая проба может увидеть уже сдвинувшийся счётчик.
+    const a = addr();
+    rememberSpentForwarderNonce(a, FWD, 0n);
+    const r = reader([0n, null, 1n]);
+    const s = fakeSleep();
+
+    expect(await awaitFreshForwarderNonce(a, FWD, r.read, { sleep: s.sleep })).toBe(1n);
+  });
+
+  it('сбой первого чтения пробрасывается наружу', async () => {
+    // Без nonce подписывать нечего — это как было до починки, так и осталось.
+    const a = addr();
+    const r = reader([null]);
+    await expect(awaitFreshForwarderNonce(a, FWD, r.read, { sleep: fakeSleep().sleep }))
+      .rejects.toThrow('RPC hiccup');
+  });
+
+  it('счётчик помнится по паре кошелёк+форвардер', async () => {
+    // У legacy-агриментов свой форвардер со своим независимым счётчиком: общая
+    // запись на два форвардера сравнивала бы несравнимое.
+    const a = addr();
+    const other = `0x${'ab'.repeat(20)}`;
+    rememberSpentForwarderNonce(a, FWD, 7n);
+    const s = fakeSleep();
+
+    expect(await awaitFreshForwarderNonce(a, other, reader([0n]).read, { sleep: s.sleep })).toBe(0n);
+    expect(s.slept).toEqual([]);
+  });
+
+  it('протухшая запись не заставляет ждать', async () => {
+    // nonce запоминается в момент отправки, до того как известен исход. Если та
+    // отправка не долетела, без срока годности КАЖДОЕ будущее действие этого
+    // кошелька выжидало бы потолок впустую — во всех следующих сессиях.
+    const a = addr();
+    rememberSpentForwarderNonce(a, FWD, 4n);
+    const s = fakeSleep();
+
+    const nonce = await awaitFreshForwarderNonce(a, FWD, reader([4n]).read, {
+      sleep: s.sleep,
+      now: () => Date.now() + 6 * 60_000,   // запись шестиминутной давности
+    });
+    expect(nonce).toBe(4n);
+    expect(s.slept).toEqual([]);
+  });
+
+  it('запись двигается только вверх', async () => {
+    // Соседняя вкладка могла потратить больший nonce; затереть её запись
+    // меньшим значением — снова открыть ту же гонку.
+    const a = addr();
+    rememberSpentForwarderNonce(a, FWD, 5n);
+    rememberSpentForwarderNonce(a, FWD, 2n);
+    const s = fakeSleep();
+
+    // 3 > 2, но 5 уже потрачен — значит читаем протухшее и обязаны ждать.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await awaitFreshForwarderNonce(a, FWD, reader([3n]).read, { sleep: s.sleep, attempts: 2 });
+    expect(s.slept).toHaveLength(1);
+  });
+
+  it('повтор того же nonce не освежает срок годности', async () => {
+    // Застрявший nonce (подпись ушла, но до цепи не долетела) переподписывается
+    // на каждой повторной попытке. Если бы каждая такая отправка обновляла
+    // отметку времени, запись не протухала бы никогда — и кошелёк выжидал бы
+    // потолок вечно, ровно в том случае, ради которого срок годности заведён.
+    const a = addr();
+    const t0 = Date.now();
+    // Обе отправки обязаны попасть в РАЗНЫЕ моменты времени, иначе тест не
+    // отличает «не обновили отметку» от «обновили на ту же миллисекунду».
+    vi.useFakeTimers();
+    vi.setSystemTime(t0);
+    rememberSpentForwarderNonce(a, FWD, 1n);
+    vi.setSystemTime(t0 + 4 * 60_000);
+    rememberSpentForwarderNonce(a, FWD, 1n);   // «ещё одна попытка тем же nonce»
+    vi.useRealTimers();
+    const s = fakeSleep();
+
+    const nonce = await awaitFreshForwarderNonce(a, FWD, reader([1n]).read, {
+      sleep: s.sleep,
+      now: () => t0 + 6 * 60_000,   // шесть минут от ПЕРВОЙ отправки
+    });
+    expect(nonce).toBe(1n);
+    expect(s.slept).toEqual([]);
+  });
+
+  it('адрес нечувствителен к регистру', async () => {
+    // viem отдаёт checksum-адрес, наши собственные вызовы — lowercase. Без
+    // нормализации это две независимые записи, то есть защиты нет.
+    const a = `0x${'cD'.repeat(20)}`;
+    rememberSpentForwarderNonce(a.toUpperCase().replace('0X', '0x'), FWD.toUpperCase().replace('0X', '0x'), 1n);
+    const s = fakeSleep();
+
+    expect(await awaitFreshForwarderNonce(a.toLowerCase(), FWD.toLowerCase(), reader([1n, 2n]).read, { sleep: s.sleep }))
+      .toBe(2n);
+    expect(s.slept).toHaveLength(1);
+  });
+
+  it('память переживает выгрузку вкладки', async () => {
+    // Android выгружает вкладку посреди подписи — подтверждённый баг этого
+    // проекта. Память модуля при этом исчезает целиком, и защита пропадала бы
+    // ровно там, где нужнее всего: на втором шаге двухшагового действия,
+    // которое человек продолжает после возврата.
+    (globalThis as { localStorage?: Storage }).localStorage = fakeStorage();
+    const a = addr();
+
+    const before = await import('./walletLock');
+    before.rememberSpentForwarderNonce(a, FWD, 0n);
+
+    // Свежий экземпляр модуля = вкладка перезагрузилась: Map внутри пустая.
+    vi.resetModules();
+    const after = await import('./walletLock');
+
+    const s = fakeSleep();
+    const nonce = await after.awaitFreshForwarderNonce(a, FWD, reader([0n, 1n]).read, { sleep: s.sleep });
+    expect(nonce).toBe(1n);
+    expect(s.slept).toHaveLength(1);   // запись пережила перезагрузку — ждали
+  });
+
+  it('без localStorage защита остаётся в пределах вкладки', async () => {
+    // Приватный режим, iframe, отключённое хранилище — не повод потерять
+    // защиту совсем.
+    const a = addr();
+    rememberSpentForwarderNonce(a, FWD, 0n);
+    expect((globalThis as { localStorage?: Storage }).localStorage).toBeUndefined();
+
+    const s = fakeSleep();
+    expect(await awaitFreshForwarderNonce(a, FWD, reader([0n, 1n]).read, { sleep: s.sleep })).toBe(1n);
+    expect(s.slept).toHaveLength(1);
   });
 });
