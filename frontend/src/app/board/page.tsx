@@ -29,6 +29,12 @@ import {
   type AppliedOverrides,
 } from "@/lib/optimisticApplied";
 
+// Module scope on purpose: as a component-local `const` this was a fresh object
+// on every render, so the useMemo below listed it as a missing dependency and
+// adding it there would have made that memo recompute every render. The map is
+// a frozen constant — it belongs outside the component.
+const JOB_STATUS: Record<string, number> = { open: 0, accepted: 1, cancelled: 2 };
+
 interface JobRecord {
   client: string;
   title: string;
@@ -286,9 +292,11 @@ function JobCard({
                 Нижняя черта и отступ под ней — только если под ними что-то
                 есть. Блок со списком откликнувшихся виден одному заказчику, и
                 у всех остальных между этой чертой и такой же чертой футера не
-                оставалось ничего: пустая складка на пустом месте. */}
+                оставалось ничего: пустая складка на пустом месте.
+                Заказчику при нуле откликов — тоже: списка нет, значит и черта
+                под тегами не рисуется. */}
             <div className={`flex items-center gap-1.5 flex-wrap ${
-              isClient ? "mb-3 pb-3 border-b border-white/6" : "mb-1"
+              isClient && applicantCount > 0 ? "mb-3 pb-3 border-b border-white/6" : "mb-1"
             }`}>
               {catKey && (
                 <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
@@ -325,9 +333,12 @@ function JobCard({
               </div>
             )}
 
-            {isClient && applicantCount === 0 && (
-              <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
-            )}
+            {/* При нуле откликов не рисуется ничего: ни рамки, ни строки «пока
+                никто не откликнулся», ни отступа под неё. Пустое пространство
+                отклика само по себе и было тем, на что жаловались — строка
+                текста внутри двух черт сообщала ровно то же, что и её
+                отсутствие. Ключ board.jobs.no_applicants остался в локалях
+                неиспользованным, как и board.services.incoming_empty. */}
 
             {/* Footer: full-page link (left) + chat/apply/withdraw actions (right) */}
             <div className="pt-2.5 border-t border-white/6 flex items-center justify-between gap-1.5">
@@ -474,8 +485,6 @@ export default function BoardPage() {
   // page>0: use the accumulated array (Load More appends to allJobs via effect).
   const displayJobs = page === 0 ? pageJobs : allJobs;
 
-  const JOB_STATUS: Record<string, number> = { open: 0, accepted: 1, cancelled: 2 };
-
   const popularCustomTags = useMemo(() => {
     const counts = new Map<string, number>();
     displayJobs.forEach(gj => {
@@ -546,7 +555,13 @@ export default function BoardPage() {
         return keywords.some(kw => haystack.includes(kw));
       })
       .slice(0, 5);
-  }, [displayJobs, userProfile, searchQuery, categoryFilter]);
+  // `address` is read inside (own jobs are filtered out of one's own matches) and
+  // must be a dependency. Without it an account switch that happens to leave the
+  // other four unchanged — e.g. switching between two accounts that both have no
+  // stored profile, so `userProfile` stays undefined — kept the memo frozen: the
+  // new account got its OWN jobs recommended to it, and the old account's jobs
+  // stayed hidden. `address` is a plain string, so this cannot loop.
+  }, [displayJobs, userProfile, searchQuery, categoryFilter, address]);
 
   const { appliedSet, applicantsMap, knownJobIds } = useMemo(() => {
     const appliedSet = new Set<string>();
