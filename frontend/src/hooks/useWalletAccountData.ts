@@ -8,6 +8,7 @@ import { toast } from 'react-hot-toast';
 import { appChainId } from '@/config/chain';
 import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from '@/config/contracts';
 import { useProfile } from '@/hooks/useProfile';
+import { pollForFact } from '@/lib/pollForFact';
 import { shortAddr } from '@/lib/utils';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -102,7 +103,7 @@ export function useWalletAccountData() {
   const canApplyAsArbiter = !!daoActive && !isArbiter && !!onchainXP && onchainXP >= 3000n;
 
   const handleApplyAsArbiter = async () => {
-    if (!publicClient) { toast.error(t('common.error')); return; }
+    if (!publicClient || !address) { toast.error(t('common.error')); return; }
     setIsApplying(true);
     try {
       const hash = await applyAsArbiterWrite({
@@ -118,6 +119,33 @@ export function useWalletAccountData() {
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
       toast.success(t('wallet.arbiter_apply_success'));
+
+      // Квитанция доказывает, что транзакция замайнена, и НИЧЕГО не обещает про
+      // то, какой узел ответит на следующее чтение: RPC за одним URL — это пул
+      // реплик, и `isRegisteredArbiter` сразу после квитанции спокойно
+      // возвращает всё ещё false. Одно такое чтение и стояло здесь: тост
+      // «вы арбитр», а меню без пунктов арбитра — и починить это можно было
+      // только перезагрузкой страницы, потому что второго чтения не будет.
+      // Опрашиваем до факта тем же помощником, что и счётчик форвардера
+      // (lib/pollForFact). Блокировка кнопки держится всё это время — она
+      // снимается в finally, то есть по приезду данных, а не по квитанции.
+      const { satisfied } = await pollForFact(
+        () => publicClient.readContract({
+          address: CONTRACTS.diamond,
+          abi: ARBITER_REGISTRY_ABI as Abi,
+          functionName: 'isRegisteredArbiter',
+          args: [address],
+        }) as Promise<boolean>,
+        (registered) => registered === true,
+      );
+      if (!satisfied) {
+        // Молчать нельзя даже здесь: след в журнале — единственный способ
+        // отличить «узел отстал сильнее обычного» от «мы что-то читаем не то».
+        console.warn(
+          `[arbiter] узел не подтвердил регистрацию ${address} за отведённые пробы — ` +
+          `меню обновится следующим обычным перечитыванием`,
+        );
+      }
       refetchIsArbiter();
       refetchXP();
     } catch (err: unknown) {
