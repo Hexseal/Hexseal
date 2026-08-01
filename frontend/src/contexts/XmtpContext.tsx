@@ -2,21 +2,38 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
-import { initXmtpClient, buildXmtpClient, clearXmtpSession, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb, isXmtpInitPending } from '@/lib/xmtp';
+import { initXmtpClient, buildXmtpClient, clearXmtpSession, releaseXmtpClient, releaseXmtpTabLockIfIdle, getXmtpClientIfCached, abandonXmtpInit, xmtpCrumb, isXmtpInitPending } from '@/lib/xmtp';
+import { classifyXmtpError, trimXmtpError, type XmtpErrorCode } from '@/lib/xmtpErrors';
+import { waitForXmtpTabLock } from '@/lib/xmtpTabLock';
 
 export type XmtpStatus = 'loading' | 'ready' | 'error';
 
 export interface XmtpContextValue {
   status:  XmtpStatus;
+  /** Сырой текст отказа — ТОЛЬКО для случаев, которые не удалось разобрать в
+   *  код. Всё разобранное показывается через `errorCode` и i18n. */
   error:   string | null;
+  /** Класс отказа. Интерфейс переводит его как `t('xmtp_error.<код>')`.
+   *
+   *  Раньше формулировку выбирал сам контекст и отдавал готовую русскую строку:
+   *  в двенадцати нерусских локалях человек читал русский текст, а на таймаут
+   *  ему уверенно называли ОДНУ причину — «проверь интернет, включи VPN», —
+   *  хотя чаще всего причина была другая (незакрытый клиент держал хранилище). */
+  errorCode: XmtpErrorCode | null;
   retry:   () => void;
+  /** Настоящая отмена начатой попытки: бросает её и возвращает интерфейс к
+   *  «включить». В отличие от `disable()` не отменяет решение человека
+   *  пользоваться мессенджером и не трогает флаг «включён здесь». */
+  cancel:  () => void;
   disable: () => void;
 }
 
 const XmtpContext = createContext<XmtpContextValue>({
   status:  'loading',
   error:   null,
+  errorCode: null,
   retry:   () => {},
+  cancel:  () => {},
   disable: () => {},
 });
 
@@ -26,26 +43,18 @@ export function useXmtp(): XmtpContextValue {
 
 const registeredKey = (addr: string) => `xmtp-registered-${addr.toLowerCase()}`;
 
-function trimXmtpError(raw: string): string {
-  const msg = raw.split('=====')[0].split('\n')[0].trim();
-  if (raw === 'XMTP_TIMEOUT')
-    return 'Мессенджер не смог подключиться (90 сек). Проверь интернет и попробуй снова. Если ты в стране с блокировками — включи VPN.';
-  if (raw.toLowerCase().includes('already pending') || raw.toLowerCase().includes('pending for origin'))
-    return 'Есть незакрытый запрос в кошельке. Открой его, прими или отклони, затем повтори.';
-  if (raw.includes('10/10') || raw.includes('registered 10'))
-    return 'Слишком много сессий XMTP (10/10). Зайди xmtp.chat → Settings → Revoke installations.';
-  if (raw.toLowerCase().includes('wrong chain id'))
-    return 'Несоответствие сети — очисти хранилище браузера и попробуй снова.';
-  return msg;
-}
-
 export function XmtpProvider({ children }: { children: ReactNode }) {
   const { address, isConnected } = useAccount();
   const { data: walletClient }   = useWalletClient();
 
   const [status,     setStatus]     = useState<XmtpStatus>('loading');
   const [error,      setError]      = useState<string | null>(null);
+  const [errorCode,  setErrorCode]  = useState<XmtpErrorCode | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+
+  /** Сбрасывает оба поля отказа разом. Порознь их держать нельзя: оставшийся от
+   *  прошлой попытки код нарисовал бы поверх новой чужую формулировку. */
+  const clearFailure = useCallback(() => { setError(null); setErrorCode(null); }, []);
 
   const prevAddrRef  = useRef<string | undefined>(undefined);
   const triedRef     = useRef(new Set<string>());
@@ -77,19 +86,50 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     if (b?.isBrave) b.isBrave().then((v: boolean) => { isBraveRef.current = v; }).catch(() => {});
   }, []);
 
-  // Clear session when wallet address switches
+  // Смена аккаунта в кошельке: клиента прежнего адреса надо ЗАКРЫТЬ (иначе он
+  // навсегда останется держать OPFS, и мессенджер нового адреса не поднимется
+  // никогда), но решение человека «мессенджер здесь включён» отменять нельзя.
+  //
+  // Раньше здесь звался clearXmtpSession(), который заодно стирал флаг
+  // `xmtp-registered-<адрес>`. Из-за этого аккаунт, с которого ушли, при
+  // возврате показывал мессенджер выключенным — хотя его никто не выключал, — а
+  // вместе с флагом глохли и внутренние уведомления о сообщениях
+  // (hooks/useXmtpNotifications.ts гейтится тем же флагом).
   useEffect(() => {
     const prev = prevAddrRef.current;
     const curr = address?.toLowerCase();
     if (prev && curr && prev !== curr) {
-      clearXmtpSession(prev);
+      releaseXmtpClient(prev);
       triedRef.current.delete(prev);
       disabledRef.current.delete(prev);
       setStatus('loading');
-      setError(null);
+      clearFailure();
+    } else if (prev && !curr) {
+      // Кошелёк отключили. Живого клиента здесь НЕ закрываем намеренно: адрес
+      // умеет пропадать на секунду сам по себе (переподключение провайдера,
+      // смена сети), и закрытие означало бы полную пересборку WASM/OPFS на
+      // ровном месте. А вот лок вкладки, если он висит БЕЗ клиента (достался
+      // ожиданием и не пригодился), отпустить обязаны — иначе соседние вкладки
+      // заперты вкладкой, у которой даже кошелька нет.
+      releaseXmtpTabLockIfIdle(prev);
     }
     prevAddrRef.current = curr;
-  }, [address]);
+  }, [address, clearFailure]);
+
+  // Мессенджер занят соседней вкладкой: встаём в очередь Web Locks и, как
+  // только та вкладка закроется (браузер отпускает лок сам, когда её контекст
+  // исчезает), перезапускаем инициализацию.
+  //
+  // Без этого «занято» превратилось бы в новый тупик вместо старого: человек
+  // закрыл первую вкладку, а вторая продолжает уверять, что мессенджер занят, и
+  // ничего не делает. Кнопка «Повторить» остаётся вторым, ручным путём.
+  const armTabWait = useCallback((addr: string) => {
+    waitForXmtpTabLock(addr, () => {
+      xmtpCrumb(`ctx:tab-lock-free ${addr.slice(0, 6)}`);
+      triedRef.current.delete(addr);
+      setRetryToken(t => t + 1);
+    });
+  }, []);
 
   // Auto-init XMTP when wallet connects.
   //
@@ -148,15 +188,24 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
             && localStorage.getItem(registeredKey(addr)) === '1';
           if (!enabledBefore) {
             xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} skip flag=0`);
+            // Лок вкладки мог достаться нам ожиданием: человек нажал «включить»
+            // во второй вкладке, получил «занято», встал в очередь, первая
+            // вкладка закрылась — и очередь разбудила нас. Но разбуженный прогон
+            // всегда автоматический (флаг ручного нажатия израсходован
+            // предыдущей попыткой), а на этом адресе мессенджер здесь ни разу не
+            // включали, поэтому подниматься мы не будем. Не отпустив лок, вкладка
+            // держала бы хранилище без единого клиента и врала бы всем остальным
+            // вкладкам «мессенджер уже открыт в другой вкладке».
+            releaseXmtpTabLockIfIdle(addr);
             setStatus('error');   // WalletMenu renders this as "Enable messaging"
-            setError(null);
+            clearFailure();
             return;
           }
           xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} auto-build`);
           await buildXmtpClient(addr);
           if (isStale()) return;
           setStatus('ready');
-          setError(null);
+          clearFailure();
           return;
         }
         xmtpCrumb(`ctx:autoinit ${addr.slice(0, 6)} manual`);
@@ -166,25 +215,44 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
           localStorage.setItem(registeredKey(addr), '1');
         }
         setStatus('ready');
-        setError(null);
+        clearFailure();
       } catch (err: unknown) {
         if (isStale()) return;
         const raw = err instanceof Error ? err.message : 'Failed to enable messaging';
+        const code = classifyXmtpError(raw);
+
+        // Занятое соседней вкладкой хранилище — единственный отказ, о котором
+        // человеку говорят даже на автоматическом пути. Молчать здесь значит
+        // оставить его с пустым чатом и кнопкой «включить», которая не сработает
+        // ни разу, сколько ни жми.
+        if (code === 'tab_busy') {
+          xmtpCrumb(`ctx:tab-busy ${addr.slice(0, 6)}`);
+          setError(null);
+          setErrorCode('tab_busy');
+          setStatus('error');
+          armTabWait(addr);
+          return;
+        }
+
         if (!manual) {
           // Провал авто-сборки — не ошибка, которую человеку надо читать: он
           // ничего не запрашивал. Молча предлагаем включить вручную (error:
           // null — WalletMenu рисует это как «Enable messaging»), а причину
           // оставляем в отладочном следе.
           xmtpCrumb(`ctx:autobuild-fail ${addr.slice(0, 6)} ${raw.slice(0, 30)}`);
-          setError(null);
+          clearFailure();
           setStatus('error');
           return;
         }
-        setError(
-          isBraveRef.current && raw === 'XMTP_TIMEOUT'
-            ? 'Похоже, ты в Brave — его Shields блокируют мессенджер, поэтому он не подключается. Нажми на иконку льва в адресной строке, отключи Shields для этого сайта и попробуй снова. Либо открой сайт в Chrome.'
-            : trimXmtpError(raw),
-        );
+
+        // Brave режет XMTP своими Shields, и наружу это выходит обычным
+        // таймаутом — подменяем класс, чтобы человек прочитал про Shields, а не
+        // про «попробуй ещё раз».
+        const shown = isBraveRef.current && code === 'timeout' ? 'brave' : code;
+        setErrorCode(shown);
+        // Разобранный класс переводится интерфейсом; сырой текст остаётся
+        // только там, где класс неизвестен, — иначе показать было бы нечего.
+        setError(shown ? null : trimXmtpError(raw));
         setStatus('error');
       } finally {
         inFlightRef.current.delete(addr);
@@ -294,9 +362,33 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     disabledRef.current.delete(addr);
     triedRef.current.delete(addr);
     setStatus('loading');
-    setError(null);
+    clearFailure();
     setRetryToken(t => t + 1);
-  }, [address]);
+  }, [address, clearFailure]);
+
+  /** Бросить идущую попытку подключения — и только её.
+   *
+   *  Под надписью «Подключение мессенджера…» раньше стояла кнопка «Отмена»,
+   *  которая звала `disable()`. Это не отмена: `disable()` — отказ от
+   *  мессенджера на всю сессию плюс стирание флага `xmtp-registered-*`, а вместе
+   *  с флагом навсегда глохнут внутренние уведомления о сообщениях
+   *  (`hooks/useXmtpNotifications.ts` гейтится тем же флагом). Человек нажимал
+   *  «отменить ожидание», а получал «выключить мессенджер».
+   *
+   *  Здесь честно: попытка помечается устаревшей (её результат уже не будет
+   *  применён, а сама она закроет себя, когда доедет), интерфейс возвращается к
+   *  «включить», решение человека и флаг остаются нетронутыми. */
+  const cancel = useCallback(() => {
+    if (!address) return;
+    const addr = address.toLowerCase();
+    xmtpCrumb(`ctx:cancel ${addr.slice(0, 6)}`);
+    // Обе половины: abandonXmtpInit — для попытки внутри lib/xmtp,
+    // attemptIdRef — для эффекта здесь (его isStale() смотрит именно на него).
+    abandonXmtpInit(addr);
+    attemptIdRef.current++;
+    setStatus('error');
+    clearFailure();
+  }, [address, clearFailure]);
 
   const disable = useCallback(() => {
     if (!address) return;
@@ -305,11 +397,11 @@ export function XmtpProvider({ children }: { children: ReactNode }) {
     disabledRef.current.add(addr);
     clearXmtpSession(addr);
     setStatus('error');
-    setError(null);
-  }, [address]);
+    clearFailure();
+  }, [address, clearFailure]);
 
   return (
-    <XmtpContext.Provider value={{ status, error, retry, disable }}>
+    <XmtpContext.Provider value={{ status, error, errorCode, retry, cancel, disable }}>
       {children}
     </XmtpContext.Provider>
   );

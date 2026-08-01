@@ -8,6 +8,7 @@ import type { Abi } from 'viem';
 import { isAddress } from 'viem';
 import { usePairConversations } from '@/hooks/usePairConversations';
 import { useXmtp } from '@/contexts/XmtpContext';
+import { useXmtpFailureText } from '@/hooks/useXmtpFailureText';
 import { useProfile } from '@/hooks/useProfile';
 import { getXmtpClientIfCached, toIdentifier } from '@/lib/xmtp';
 import { ChatPanel } from '@/components/ChatPanel';
@@ -219,7 +220,8 @@ function ChatHubPageInner() {
   const searchParams = useSearchParams();
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
-  const { status: xmtpStatus } = useXmtp();
+  const { status: xmtpStatus, retry: retryXmtp } = useXmtp();
+  const xmtpFailureText = useXmtpFailureText();
   const { conversations, isLoading, error, reload } = usePairConversations(xmtpStatus === 'ready');
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
@@ -597,6 +599,27 @@ function ChatHubPageInner() {
               <div>
                 <Button size="sm" variant="outline" onClick={reload} className="border-white/15 text-white/50 text-xs">{t("chat.retry")}</Button>
               </div>
+            </div>
+          )}
+
+          {/* Мессенджер выключен или не поднялся.
+              Раньше на этом состоянии не рисовалось НИЧЕГО: скелетон требовал
+              'loading', пустое состояние — 'ready', а ветка ошибки — текста
+              ошибки, которого у молчаливого отказа нет. Человек видел пустую
+              колонку без единого объяснения и без единственного действия,
+              которое здесь имеет смысл, — включить мессенджер. */}
+          {!isLoading && xmtpStatus === 'error' && !error && allConversations.length === 0 && (
+            <div className="px-4 py-10 text-center flex flex-col items-center gap-3">
+              <MessageCircle className="w-8 h-8 text-white/[0.12]" />
+              <div>
+                <p className="text-sm text-white/40">{xmtpFailureText ?? t("chat.messaging_off")}</p>
+                {!xmtpFailureText && (
+                  <p className="text-xs text-white/20 leading-relaxed mt-1">{t("chat.messaging_off_hint")}</p>
+                )}
+              </div>
+              <Button size="sm" variant="outline" onClick={retryXmtp} className="border-white/15 text-white/50 text-xs">
+                {xmtpFailureText ? t("chat.retry") : t("chat.enable_messaging")}
+              </Button>
             </div>
           )}
 
