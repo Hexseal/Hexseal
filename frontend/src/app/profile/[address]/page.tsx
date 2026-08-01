@@ -222,7 +222,10 @@ export default function ProfilePage() {
         <ProfileBottomSkeleton />
       ) : (
         <>
-          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} unresolvedDisputes={unresolvedDisputes} totalDeals={totalDeals} />
+          {/* Тот же `error`, что уже отдан вкладкам ниже: на чужом профиле
+              нули читаются ещё хуже, чем на своём, — там это приговор
+              незнакомому адресу («ноль сделок»), а не своя пустая витрина. */}
+          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} unresolvedDisputes={unresolvedDisputes} totalDeals={totalDeals} dealsUnavailable={!!error} />
           <AgreementsTabs
             key={profileAddress}
             listingsAddress={profileAddress as `0x${string}`}

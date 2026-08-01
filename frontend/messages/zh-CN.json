@@ -241,6 +241,7 @@
     "stat_unjudged": "无裁决",
     "stat_usdc_total": "USDC 总计",
     "stat_deal": "笔",
+    "stats_unavailable": "交易统计加载失败——这是数据缺失，不是没有活动。",
     "stat_deals": "笔",
     "stat_xp_until_next": "· 距{tier}还需{n}",
     "stat_streak_building": "· 连续{n}/{need}",

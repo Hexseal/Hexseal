@@ -241,6 +241,7 @@
     "stat_unjudged": "دون حكم",
     "stat_usdc_total": "إجمالي USDC",
     "stat_deal": "اتفاق",
+    "stats_unavailable": "تعذّر تحميل إحصاءات الصفقات — هذه بيانات مفقودة، وليست نشاطًا صفريًا.",
     "stat_deals": "اتفاقيات",
     "stat_xp_until_next": "· {n} حتى {tier}",
     "stat_streak_building": "· تتابع {n}/{need}",

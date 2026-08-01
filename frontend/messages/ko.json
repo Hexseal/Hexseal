@@ -241,6 +241,7 @@
     "stat_unjudged": "판정 없음",
     "stat_usdc_total": "USDC 합계",
     "stat_deal": "계약",
+    "stats_unavailable": "거래 통계를 불러오지 못했습니다 — 활동이 0이 아니라 데이터가 없는 상태입니다.",
     "stat_deals": "계약",
     "stat_xp_until_next": "· {tier}까지 {n} 남음",
     "stat_streak_building": "· 연속 {n}/{need}",

@@ -241,6 +241,7 @@
     "stat_unjudged": "Senza verdetto",
     "stat_usdc_total": "USDC totale",
     "stat_deal": "accordo",
+    "stats_unavailable": "Impossibile caricare le statistiche degli accordi: dati mancanti, non attività a zero.",
     "stat_deals": "accordi",
     "stat_xp_until_next": "· altri {n} per {tier}",
     "stat_streak_building": "· serie {n}/{need}",

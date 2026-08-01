@@ -241,6 +241,7 @@
     "stat_unjudged": "Ohne Urteil",
     "stat_usdc_total": "USDC gesamt",
     "stat_deal": "Deal",
+    "stats_unavailable": "Deal-Statistiken konnten nicht geladen werden — fehlende Daten, keine Nullaktivität.",
     "stat_deals": "Deals",
     "stat_xp_until_next": "· noch {n} bis {tier}",
     "stat_streak_building": "· Serie {n}/{need}",

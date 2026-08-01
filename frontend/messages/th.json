@@ -241,6 +241,7 @@
     "stat_unjudged": "ไม่มีคำตัดสิน",
     "stat_usdc_total": "USDC ทั้งหมด",
     "stat_deal": "ดีล",
+    "stats_unavailable": "โหลดสถิติดีลไม่สำเร็จ — นี่คือข้อมูลที่ขาดหาย ไม่ใช่ไม่มีกิจกรรม",
     "stat_deals": "ดีล",
     "stat_xp_until_next": "· อีก {n} ถึง {tier}",
     "stat_streak_building": "· ต่อเนื่อง {n}/{need}",

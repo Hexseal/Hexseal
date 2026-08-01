@@ -241,6 +241,7 @@
     "stat_unjudged": "Без вердикту",
     "stat_usdc_total": "USDC всього",
     "stat_deal": "угода",
+    "stats_unavailable": "Угоди не прочиталися — це відсутні дані, а не порожній рахунок.",
     "stat_deals": "угоди",
     "stat_xp_until_next": "· ще {n} до «{tier}»",
     "stat_streak_building": "· серія {n}/{need}",

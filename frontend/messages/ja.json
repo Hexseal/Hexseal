@@ -241,6 +241,7 @@
     "stat_unjudged": "裁定なし",
     "stat_usdc_total": "USDC合計",
     "stat_deal": "契約",
+    "stats_unavailable": "取引の統計を読み込めませんでした。ゼロではなく、データが欠けています。",
     "stat_deals": "契約",
     "stat_xp_until_next": "· {tier}まであと{n}",
     "stat_streak_building": "· 連続{n}/{need}",

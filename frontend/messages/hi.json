@@ -241,6 +241,7 @@
     "stat_unjudged": "बिना फ़ैसले",
     "stat_usdc_total": "कुल USDC",
     "stat_deal": "डील",
+    "stats_unavailable": "डील आँकड़े लोड नहीं हो सके — यह डेटा की कमी है, शून्य गतिविधि नहीं।",
     "stat_deals": "डील",
     "stat_xp_until_next": "· {tier} तक {n} और",
     "stat_streak_building": "· स्ट्रीक {n}/{need}",

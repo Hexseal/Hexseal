@@ -241,6 +241,7 @@
     "stat_unjudged": "Sem veredicto",
     "stat_usdc_total": "USDC total",
     "stat_deal": "acordo",
+    "stats_unavailable": "Não foi possível carregar as estatísticas dos acordos — dados ausentes, não atividade zero.",
     "stat_deals": "acordos",
     "stat_xp_until_next": "· mais {n} até {tier}",
     "stat_streak_building": "· sequência {n}/{need}",

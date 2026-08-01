@@ -252,6 +252,7 @@
     "stat_unjudged": "Unjudged",
     "stat_usdc_total": "USDC total",
     "stat_deal": "deal",
+    "stats_unavailable": "Deal stats couldn't be loaded — that's missing data, not zero activity.",
     "stat_deals": "deals",
     "stat_xp_until_next": "· {n} to {tier}",
     "stat_streak_building": "· streak {n}/{need}",

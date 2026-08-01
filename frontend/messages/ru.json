@@ -252,6 +252,7 @@
     "stat_unjudged": "Без вердикта",
     "stat_usdc_total": "USDC всего",
     "stat_deal": "сделка",
+    "stats_unavailable": "Сделки не прочитались — это отсутствие данных, а не пустой счёт.",
     "stat_deals": "сделок",
     "stat_xp_until_next": "· ещё {n} до «{tier}»",
     "stat_streak_building": "· серия {n}/{need}",
