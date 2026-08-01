@@ -40,8 +40,100 @@ jobs:
       - name: Check ERC-2771 sender rule (no raw msg.sender in gasless contracts)
         run: ./script/check-gasless-sender.sh
 
+  # Симметрия к `contracts`: у фронта и релеера тесты были написаны и зелены,
+  # но не запускались нигде — то есть памяти о поломках у них не было вовсе.
+  # Всё, что здесь перечислено, уже существует в репозитории; job ничего не
+  # изобретает, только поднимает это на каждый пуш.
+  #
+  # `npm run lint` СЮДА НЕ ДОБАВЛЯТЬ: он сломан целиком (OPEN-ITEMS #18,
+  # eslint ^9 vs @typescript-eslint ^7 vs eslint-config-next 15.5.15) — это
+  # отдельная работа. Его частичную замену держит шаг «hooks rule gate» ниже.
+  #
+  # `relayer/e2e.mjs` СЮДА НЕ ДОБАВЛЯТЬ НИКОГДА: он ходит в живую Base Sepolia
+  # и тратит реальный тестовый USDC — в CI это трата денег на каждый пуш.
+  web:
+    name: frontend & relayer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Как в обоих Dockerfile (node:22-alpine) — CI проверяет ту же
+          # мажорную версию, на которой всё в итоге и крутится.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            relayer/package-lock.json
+            frontend/package-lock.json
+
+      # ПОРЯДОК ШАГОВ ЗНАЧИМ. Релеерные зависимости нужны не только релееру:
+      # у фронта нет своего тест-раннера, и `npm test` во frontend/ запускает
+      # `node ../relayer/node_modules/vitest/vitest.mjs run` (почему именно так
+      # — шапка frontend/vitest.config.mjs). Переставишь эти два шага местами
+      # или выкинешь установку релеера — фронтовые тесты упадут на
+      # «Cannot find module .../vitest.mjs», а не на настоящей ошибке.
+      - name: Install relayer deps
+        working-directory: relayer
+        run: npm ci
+
+      # --legacy-peer-deps — ровно как в frontend/Dockerfile. Без флага `npm ci`
+      # падает на ERESOLVE: eslint ^9 против peer eslint ^8.56 у
+      # @typescript-eslint/eslint-plugin ^7. Это тот же конфликт, из-за которого
+      # сломан `npm run lint` (OPEN-ITEMS #18).
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+
+      - name: Relayer tests
+        working-directory: relayer
+        run: npm test
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test
+
+      # Гейт правила хуков — единственная часть линта, которая в этом репозитории
+      # вообще работает. Конфиг грузит только eslint-plugin-react-hooks:
+      # rules-of-hooks = error, exhaustive-deps = warn. Значит шаг краснеет на
+      # настоящем нарушении порядка хуков (хук после раннего return, хук в
+      # условии), а не на накопленном шуме зависимостей.
+      - name: Hooks rule gate
+        working-directory: frontend
+        run: node node_modules/eslint/bin/eslint.js -c eslint.hooks.mjs "src/**/*.{ts,tsx,js,jsx}"
+
+      # `next build` — единственное, что ловит требование Suspense вокруг
+      # useSearchParams(): оно проверяется постранично, при пререндере, и не
+      # видно ни в `next dev`, ни в tsc. В этом проекте оно уже роняло ветку.
+      #
+      # Адреса — фиксированные заглушки, теми же значениями, что в
+      # frontend/vitest.config.mjs. Они обязаны быть: config/contracts.ts
+      # намеренно бросает НА ЗАГРУЗКЕ МОДУЛЯ, если их нет (без хардкод-фолбэка —
+      # однажды устаревший literal молча перебил исправленный адрес). Сборке
+      # при этом всё равно, какие именно; настоящие адреса приезжают из secrets
+      # в job `build` ниже, который и собирает образ для выкатки.
+      - name: Frontend build
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_DIAMOND_ADDRESS: '0x0000000000000000000000000000000000000d1a'
+          NEXT_PUBLIC_FORWARDER_ADDRESS: '0x000000000000000000000000000000000000f0Fd'
+          NEXT_PUBLIC_USDC_ADDRESS: '0x0000000000000000000000000000000000005dc0'
+        run: npm run build
+
+      # Полный проход tsc по программе tsconfig — шире, чем типы, до которых
+      # дотягивается сборка. После build намеренно: к этому моменту существует
+      # .next/types, который tsconfig включает в программу.
+      # Только `npm run type-check`; голый `npx tsc` в этом репозитории врёт
+      # (node_modules/.bin пуст на exFAT — там он возвращает 0, ничего не проверив).
+      - name: Frontend type-check
+        working-directory: frontend
+        run: npm run type-check
+
   build:
-    needs: contracts
+    needs: [contracts, web]
     runs-on: ubuntu-latest
     permissions:
       contents: read
