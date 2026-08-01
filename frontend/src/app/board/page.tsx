@@ -29,6 +29,12 @@ import {
   type AppliedOverrides,
 } from "@/lib/optimisticApplied";
 
+// Module scope on purpose: as a component-local `const` this was a fresh object
+// on every render, so the useMemo below listed it as a missing dependency and
+// adding it there would have made that memo recompute every render. The map is
+// a frozen constant — it belongs outside the component.
+const JOB_STATUS: Record<string, number> = { open: 0, accepted: 1, cancelled: 2 };
+
 interface JobRecord {
   client: string;
   title: string;
@@ -474,8 +480,6 @@ export default function BoardPage() {
   // page>0: use the accumulated array (Load More appends to allJobs via effect).
   const displayJobs = page === 0 ? pageJobs : allJobs;
 
-  const JOB_STATUS: Record<string, number> = { open: 0, accepted: 1, cancelled: 2 };
-
   const popularCustomTags = useMemo(() => {
     const counts = new Map<string, number>();
     displayJobs.forEach(gj => {
@@ -546,7 +550,13 @@ export default function BoardPage() {
         return keywords.some(kw => haystack.includes(kw));
       })
       .slice(0, 5);
-  }, [displayJobs, userProfile, searchQuery, categoryFilter]);
+  // `address` is read inside (own jobs are filtered out of one's own matches) and
+  // must be a dependency. Without it an account switch that happens to leave the
+  // other four unchanged — e.g. switching between two accounts that both have no
+  // stored profile, so `userProfile` stays undefined — kept the memo frozen: the
+  // new account got its OWN jobs recommended to it, and the old account's jobs
+  // stayed hidden. `address` is a plain string, so this cannot loop.
+  }, [displayJobs, userProfile, searchQuery, categoryFilter, address]);
 
   const { appliedSet, applicantsMap, knownJobIds } = useMemo(() => {
     const appliedSet = new Set<string>();
