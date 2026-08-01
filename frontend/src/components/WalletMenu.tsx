@@ -15,7 +15,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -43,7 +43,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
   const { status: xmtpStatus, disable: disableXmtp, retry: retryXmtp } = useXmtp();
-  const { subscribed: pushOn, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
+  const { subscribed: pushOn, stale: pushStale, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
     displayText, avatarUrl, usdcBalance,
@@ -367,13 +367,43 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               {t("wallet.enable_messaging")}
             </DropdownMenuItem>
           )}
+          {/* Протухшая подписка — это НЕ «уведомления включены».
+              Признак `stale` заведён специально для того, чтобы протухание было
+              видно (суточная фоновая перерегистрация убрана: она раз в сутки
+              сама уводила человека в кошелёк за подписью). Меню его не читало
+              и показывало «Отключить уведомления» тому, кому уже сутки ничего
+              не доходит: единственное доступное действие — выключить то, что и
+              так не работает. Включение живёт на странице уведомлений (правило
+              владельца, см. lib/pushPrompt.ts) — туда и ведём. */}
+          {pushOn && pushStale && (
+            <DropdownMenuItem asChild className="cursor-pointer">
+              <Link href="/notifications" className="flex items-center gap-2.5 text-amber-400/70 focus:text-amber-300">
+                <BellRing className="w-3.5 h-3.5" />
+                {t("wallet.notifications_stale")}
+              </Link>
+            </DropdownMenuItem>
+          )}
+          {/* Пункт «Отключить» остаётся и у протухшей подписки: выключать её
+              всё ещё есть чем (живая подписка устройства + запись отказа), и
+              отнимать единственный способ выключить ради честности было бы
+              обменом одной поломки на другую. */}
           {pushOn && (
             <DropdownMenuItem
               disabled={pushLoading}
-              onClick={() => { if (!pushLoading) void disablePushNotif(); }}
+              onSelect={(e) => {
+                // Отключение уходит в сеть и в кошелёк за подписью: пункт меню
+                // закрывается сам, а нам нужно дождаться исхода и сказать о
+                // провале. Раньше результат не смотрели вовсе — неудавшееся
+                // выключение выглядело точно так же, как удавшееся.
+                e.preventDefault();
+                if (pushLoading) return;
+                void disablePushNotif().then(ok => {
+                  if (!ok) toast.error(t("wallet.disable_notifications_failed"));
+                });
+              }}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
-              <BellOff className="w-3.5 h-3.5" />
+              {pushLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellOff className="w-3.5 h-3.5" />}
               {t("wallet.disable_notifications")}
             </DropdownMenuItem>
           )}

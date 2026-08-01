@@ -62,14 +62,46 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array([...raw].map(c => c.charCodeAt(0))) as Uint8Array<ArrayBuffer>;
 }
 
-/** True if `sub` was created with exactly this applicationServerKey. Used to detect a
- *  rotated VAPID key, which permanently breaks delivery to the old subscription. */
-function usesAppServerKey(sub: PushSubscription, key: Uint8Array): boolean {
+/** Минимум от `PushSubscription`, который нужен для сверки ключа. Отдельный тип
+ *  — чтобы правило можно было проверить тестами без браузера. */
+export interface KeyedSubscription {
+  options?: { applicationServerKey?: ArrayBuffer | ArrayBufferView | null } | null;
+}
+
+/**
+ * Создана ли подписка ИМЕННО этим ключом VAPID.
+ *
+ * Подписка криптографически привязана к ключу, которым создана, и браузер НЕ
+ * выбрасывает её при ротации серверного ключа: `getSubscription()` продолжает
+ * бодро отдавать мёртвую подписку, а каждая отправка отваливается с
+ * 403 VapidPkHashMismatch. Снаружи это выглядит как «уведомления включены».
+ *
+ * Пустой ключ (переменная окружения не задана) — это не «совпадает со всем», а
+ * «сверять не с чем»: false.
+ */
+export function subscriptionMatchesVapidKey(
+  sub: KeyedSubscription | null | undefined,
+  base64Key: string,
+): boolean {
+  if (!sub || !base64Key) return false;
   const existing = sub.options?.applicationServerKey;
   if (!existing) return false;
-  const a = new Uint8Array(existing as ArrayBuffer);
+  let key: Uint8Array;
+  try { key = urlBase64ToUint8Array(base64Key); }
+  catch { return false; }
+  const a = existing instanceof ArrayBuffer
+    ? new Uint8Array(existing)
+    : new Uint8Array(existing.buffer, existing.byteOffset, existing.byteLength);
   if (a.length !== key.length) return false;
   return a.every((byte, i) => byte === key[i]);
+}
+
+/** Живая подписка, которой ещё можно доставить: она есть И создана текущим
+ *  ключом VAPID. Ровно это `enablePush` проверяет у себя перед переподпиской —
+ *  а тот, кто ТОЛЬКО СПРАШИВАЕТ состояние, обязан спрашивать о том же самом,
+ *  иначе интерфейс показывает включённым то, что заведомо не доставляется. */
+export function isPushSubscriptionUsable(sub: KeyedSubscription | null | undefined): boolean {
+  return subscriptionMatchesVapidKey(sub, VAPID_PUBLIC_KEY);
 }
 
 export async function getSwRegistration(): Promise<ServiceWorkerRegistration | null> {
@@ -124,7 +156,7 @@ export async function enablePush(
     // kept handing back a stale subscription, we happily reused and re-registered it,
     // and every send failed with 403 VapidPkHashMismatch forever. So regenerating VAPID
     // keys appeared to change nothing. Detect the mismatch and re-subscribe.
-    if (subscription && !usesAppServerKey(subscription, appServerKey)) {
+    if (subscription && !subscriptionMatchesVapidKey(subscription, VAPID_PUBLIC_KEY)) {
       try { await subscription.unsubscribe(); } catch { /* best effort */ }
       subscription = null;
     }
@@ -182,18 +214,36 @@ export function notifyPush(to: string, body: string, url?: string, tag?: string)
 export async function disablePush(
   address: string,
   signMessage?: (msg: string) => Promise<string>,
-): Promise<void> {
-  // Record the opt-out FIRST and unconditionally — regardless of whether an
-  // active subscription is actually found below. Notification.permission can't
-  // be revoked by script, so this flag is the only durable record that the user
-  // explicitly said no — и именно он держит интерфейс от того, чтобы рисовать
-  // выключённые пуши как «протухшие, включи заново».
-  try { localStorage.setItem(PUSH_DISABLED_KEY(address), '1'); } catch { /* unavailable */ }
+): Promise<'ok' | 'error'> {
+  // Отметка «человек сказал нет» ставится ПОСЛЕ того, как отписка на устройстве
+  // реально произошла, а не до неё.
+  //
+  // Раньше она стояла первой строкой и безусловно. Замысел был правильный —
+  // `Notification.permission` скриптом не отзывается, и этот флаг единственный
+  // durable-след явного отказа, он же держит интерфейс от того, чтобы рисовать
+  // выключённые пуши как «протухшие, включи заново». Но цена оказалась
+  // несоразмерной: `sub.unsubscribe()` ниже умеет упасть, и тогда подписка
+  // остаётся живой, пуши продолжают приходить — а флаг уже записан, меню
+  // кошелька убирает пункт «Отключить», и выключение выглядит состоявшимся.
+  // Отключение, которое не отключило, но выглядит отключённым, — это ровно
+  // тот класс, ради которого вся эта правка.
+  //
+  // Отсутствие подписки отметку по-прежнему ставит: отключать нечего, отказ
+  // всё равно durable.
+  const markOptOut = () => {
+    try { localStorage.setItem(PUSH_DISABLED_KEY(address), '1'); } catch { /* unavailable */ }
+  };
 
   const reg = await getSwRegistration();
   const sub = await reg?.pushManager.getSubscription();
-  if (!sub) return;
-  await sub.unsubscribe();
+  if (!sub) { markOptOut(); return 'ok'; }
+  try {
+    await sub.unsubscribe();
+  } catch {
+    // Подписка жива, доставка продолжается — врать «выключено» нельзя.
+    return 'error';
+  }
+  markOptOut();
 
   // The relayer requires proof this address's own wallet actually requested
   // the unsubscribe — without it, anyone who knows a wallet address could
@@ -202,12 +252,14 @@ export async function disablePush(
   // unsubscribe above still took effect (no more pushes will arrive on this
   // device) — the relayer's own dead-subscription cleanup (a 404/410 on the
   // next send attempt) will drop the stale server-side record regardless.
-  if (!signMessage) return;
+  // Поэтому дальше исход уже 'ok' в любом случае: доставка на это устройство
+  // прекращена, а это и есть то, что обещает кнопка.
+  if (!signMessage) return 'ok';
   let sig: string;
   try {
     sig = await signMessage(`hexseal:push-unsubscribe:${address.toLowerCase()}:${sub.endpoint}`);
   } catch {
-    return;
+    return 'ok';
   }
 
   await fetch(`${RELAYER_URL}/push/unsubscribe`, {
@@ -215,4 +267,5 @@ export async function disablePush(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ address: address.toLowerCase(), endpoint: sub.endpoint, sig }),
   }).catch(() => {});
+  return 'ok';
 }
