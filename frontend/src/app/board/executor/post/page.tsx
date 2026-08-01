@@ -116,6 +116,7 @@ export default function PostServicePage() {
   const [txHash,      setTxHash]      = useState("");
   const [serviceId,   setServiceId]   = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const parsedPrice = parseFloat(price || "0");
   // Gated on feeConfigReady: with the floor unloaded (or its read having
@@ -127,10 +128,20 @@ export default function PostServicePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!isConnected || !walletClient || !publicClient) { toast.error(t("common.connect_wallet")); return; }
+    // Ставится ДО ожидания смены сети — ровно та же причина, что в парной
+    // форме заказа (board/client/post): до этой правки единственным
+    // «занято» здесь был `step === "pending"`, а он выставляется НИЖЕ, уже
+    // после `await switchChainAsync()`. Кнопка отправки (гейт только на
+    // `hasBalance`) оставалась нажимаемой всё время, пока кошелёк показывает
+    // запрос на смену сети, и второй клик запускал независимый прогон,
+    // доходивший до `mintServiceGasless` второй раз: две одинаковые услуги на
+    // цепи и дважды списанный сбор.
+    setIsSubmitting(true);
     if (isWrongChain) {
       try { await switchChainAsync({ chainId: EXPECTED_CHAIN_ID }); }
-      catch { toast.error(t("board.post_common.switch_network")); return; }
+      catch { toast.error(t("board.post_common.switch_network")); setIsSubmitting(false); return; }
     }
 
     const trimmedTitle = title.trim();
@@ -142,10 +153,10 @@ export default function PostServicePage() {
     if (!price || isNaN(parsedPrice) || parsedPrice < 1) errs.price = t("form.price_min", { min: 1 });
     else if (parsedPrice > MAX_PRICE) errs.price = t("form.amount_max", { max: MAX_PRICE });
     if (!deadline || isNaN(parsedDeadline) || parsedDeadline < 1 || parsedDeadline > MAX_DEADLINE) errs.deadline = t("form.deadline_range", { min: 1, max: MAX_DEADLINE });
-    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return; }
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); setIsSubmitting(false); return; }
     setFieldErrors({});
 
-    if (!hasBalance) { toast.error(t("board.post_common.insufficient_balance", { need: feeAmount.toFixed(2), have: usdcBalance.toFixed(2) })); return; }
+    if (!hasBalance) { toast.error(t("board.post_common.insufficient_balance", { need: feeAmount.toFixed(2), have: usdcBalance.toFixed(2) })); setIsSubmitting(false); return; }
 
     setStep("pending");
     try {
@@ -175,7 +186,7 @@ export default function PostServicePage() {
       if (address) {
         pushNotif(address, {
           type: "service_posted",
-          title: "Service Published! 🛎️",
+          title: "Service Published!",
           body: `Your service${parsedServiceId ? ` #${parsedServiceId}` : ""} is live — clients can now request you.`,
           link: "/dashboard",
           txHash: hash,
@@ -184,6 +195,8 @@ export default function PostServicePage() {
     } catch (err: any) {
       setErrorMsg(err?.message || "Transaction failed");
       setStep("error");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -326,8 +339,11 @@ export default function PostServicePage() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full" size="lg" disabled={!hasBalance}>
-              <User className="w-4 h-4 mr-2" />{t("board.post_service.submit_btn")}
+            <Button type="submit" className="w-full" size="lg" disabled={!hasBalance || isSubmitting}>
+              {isSubmitting
+                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                : <User className="w-4 h-4 mr-2" />}
+              {t("board.post_service.submit_btn")}
             </Button>
           </form>
         )}

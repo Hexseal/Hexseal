@@ -250,9 +250,9 @@ function ServiceCard({
   isConnected,
   myRequests,
   onRequest,
-  isRequesting,
+  requestingServiceId,
   onCancelRequest,
-  isCancelling,
+  cancellingRequestId,
   expanded,
   onToggle,
 }: {
@@ -261,9 +261,9 @@ function ServiceCard({
   isConnected: boolean;
   myRequests: HireRequest[];
   onRequest: (service: Service) => void;
-  isRequesting: boolean;
+  requestingServiceId: string | null;
   onCancelRequest: (requestId: string) => void;
-  isCancelling: boolean;
+  cancellingRequestId: string | null;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -289,6 +289,12 @@ function ServiceCard({
   const myPending   = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 0);
   const myAccepted  = myRequests.find(r => String(r.serviceId) === service.serviceId && r.status === 1);
   const myActive    = myPending ?? myAccepted;
+
+  // Занятость приходит идентификатором, а не булевым флагом на всю страницу:
+  // раньше заказ одной услуги гасил и крутил кнопку «Заказать» у всех
+  // остальных карточек списка разом.
+  const isRequesting = requestingServiceId === service.serviceId;
+  const isCancelling = !!myPending && cancellingRequestId === myPending.requestId;
 
   return (
     <div
@@ -466,7 +472,7 @@ export default function ExecutorBoardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
   const [requestModal, setRequestModal] = useState<Service | null>(null);
-  const [isRequesting, setIsRequesting] = useState(false);
+  const [requestingServiceId, setRequestingServiceId] = useState<string | null>(null);
 
   const { data: totalServicesData } = useReadContract({
     address: CONTRACTS.diamond as `0x${string}`,
@@ -651,7 +657,7 @@ export default function ExecutorBoardPage() {
       setRequestModal(null);
       return;
     }
-    setIsRequesting(true);
+    setRequestingServiceId(requestModal.serviceId);
     try {
       const amount = parseUnits(amountStr, 6);
       const days   = BigInt(daysStr);
@@ -676,19 +682,25 @@ export default function ExecutorBoardPage() {
         `/service/${requestModal.serviceId}`,
       );
       setRequestModal(null);
-      setTimeout(() => { refetchMyRequests(); }, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally. Это та же правка, что в июле получили соседние обработчики
+      // этого файла (accept/reject/cancel), — до `handleRequest` она тогда не
+      // доехала: релеер уже дождался квитанции, но чтение своих запросов
+      // отложено против отставания реплик RPC, и всё это окно карточка не
+      // знает о собственном запросе — «Заказать» стоит нажимаемой, второй клик
+      // шлёт второй запрос и второй раз списывает USDC.
+      setTimeout(() => { refetchMyRequests(); setRequestingServiceId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Transaction failed");
-    } finally {
-      setIsRequesting(false);
+      setRequestingServiceId(null);
     }
   };
 
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
 
   const handleCancelRequest = async (requestId: string) => {
     if (!walletClient || !publicClient) return;
-    setIsCancelling(true);
+    setCancellingRequestId(requestId);
     try {
       await sendGasless(walletClient, publicClient, "cancelRequest", [BigInt(requestId)], DIAMOND_ABI as Abi);
       // Same rule as handleReject above: an unresolved feeFloor is an unknown,
@@ -700,10 +712,10 @@ export default function ExecutorBoardPage() {
           ? t("board.services.request_cancelled", { floor: fmtUSDC(feeFloor) })
           : t("board.services.request_cancelled_amount_unavailable")
       );
-      setTimeout(() => { refetchMyRequests(); setIsCancelling(false); }, 2000);
+      setTimeout(() => { refetchMyRequests(); setCancellingRequestId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || "Failed");
-      setIsCancelling(false);
+      setCancellingRequestId(null);
     }
   };
 
@@ -755,7 +767,7 @@ export default function ExecutorBoardPage() {
           service={requestModal}
           onClose={() => setRequestModal(null)}
           onSubmit={handleRequest}
-          loading={isRequesting}
+          loading={requestingServiceId !== null}
           userUsdcBalance={userUsdcBalance}
         />
       )}
@@ -935,9 +947,9 @@ export default function ExecutorBoardPage() {
                     isConnected={isConnected}
                     myRequests={myRequests.filter(r => String(r.serviceId) === svc.serviceId)}
                     onRequest={() => setRequestModal(svc)}
-                    isRequesting={isRequesting}
+                    requestingServiceId={requestingServiceId}
                     onCancelRequest={handleCancelRequest}
-                    isCancelling={isCancelling}
+                    cancellingRequestId={cancellingRequestId}
                     expanded={expandedServiceId === svc.serviceId}
                     onToggle={() => setExpandedServiceId(prev => prev === svc.serviceId ? null : svc.serviceId)}
                   />
