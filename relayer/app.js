@@ -1628,6 +1628,48 @@ app.post('/push/send', async (req, res) => {
 // PUSH_SECRET only. Historically /api/relay never called this, so on-chain OS pushes
 // never fired — only in-app (event-watching) notifications did, and only while the app
 // was open. This closes that gap.
+// ─── Receipt polling for /relay/notify ────────────────────────────────────────
+//
+// The caller (frontend/src/app/api/relay/route.ts) has ALREADY waited for this
+// receipt on ITS connection before calling us. We then look the same tx up on
+// OURS — a different URL (RPC_URL || BASE_SEPOLIA_RPC_URL || the free public
+// node), and even when it is the same URL a load-balanced endpoint like
+// drpc.live fans out over several node providers with independent lag. So the
+// block the frontend has already seen may not have reached the replica that
+// answers us, and getTransactionReceipt() returns `null` — not an error, just
+// nothing. A single attempt therefore drops the push silently, which is how the
+// deal-lifecycle OS notifications went missing with no trace anywhere.
+//
+// Same disease and same cure as the read-after-write guard on the USDC
+// allowance in route.ts: poll until the fact is visible instead of assuming one
+// read is authoritative.
+//
+// Ceiling: a Base Sepolia block is 2 s and the replica lag we have actually
+// measured on this stack is 2–6 s, so 24 × 500 ms ≈ 11.5 s gives roughly 2× the
+// worst observed lag. The step is a quarter of a block — fine enough that we
+// notice the replica catching up almost immediately, coarse enough that a full
+// exhaustion is 24 RPC calls, not hundreds.
+//
+// Mutable on purpose: the tests shrink `stepMs` so exhausting the poll takes
+// milliseconds instead of eleven seconds, while still exercising the real
+// attempt count.
+export const RECEIPT_POLL = { attempts: 24, stepMs: 500 };
+
+/**
+ * Reads the receipt for `txHash`, retrying while the RPC replica has not caught
+ * up. Resolves to the receipt, or to `null` once the attempts are spent — the
+ * caller MUST say something about `null`, never swallow it.
+ */
+export async function waitForReceipt(txHash) {
+  const { attempts, stepMs } = RECEIPT_POLL;
+  for (let i = 0; i < attempts; i++) {
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (receipt) return receipt;
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, stepMs));
+  }
+  return null;
+}
+
 app.post('/relay/notify', (req, res) => {
   if (!PUSH_SECRET || req.headers['x-push-secret'] !== PUSH_SECRET) {
     return res.status(403).json({ error: 'forbidden' });
@@ -1639,10 +1681,23 @@ app.post('/relay/notify', (req, res) => {
   res.json({ ok: true });
   (async () => {
     try {
-      const receipt = await provider.getTransactionReceipt(txHash);
-      if (receipt) await pushAfterRelay(receipt, agreement, calldata);
+      const receipt = await waitForReceipt(txHash);
+      if (receipt) {
+        await pushAfterRelay(receipt, agreement, calldata);
+        return;
+      }
+      // Giving up is a REPORTABLE outcome, not a no-op. Without this line the
+      // only symptom of a dropped notification was a user who never heard about
+      // his own deal, and nothing on the server said so. The txHash is in the
+      // message so the tx can be looked up on the explorer and the pushes
+      // reconstructed by hand.
+      console.error(
+        `[push] relay/notify: no receipt for ${txHash} after ${RECEIPT_POLL.attempts} attempts ` +
+        `(~${Math.round((RECEIPT_POLL.attempts - 1) * RECEIPT_POLL.stepMs / 1000)}s) — ` +
+        `pushes dropped for agreement ${agreement}`,
+      );
     } catch (e) {
-      console.error('[push] relay/notify failed:', e.message);
+      console.error(`[push] relay/notify failed for ${txHash}:`, e.message);
     }
   })();
 });
