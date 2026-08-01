@@ -20,7 +20,11 @@ import {
 } from 'viem';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { CHAIN_ID } from '@/config/constants';
-import { acquireWalletLock } from '@/lib/walletLock';
+import {
+  acquireWalletLock,
+  awaitFreshForwarderNonce,
+  rememberSpentForwarderNonce,
+} from '@/lib/walletLock';
 
 // ─── Addresses ────────────────────────────────────────────────────────────────
 
@@ -336,6 +340,34 @@ const DEFAULT_GAS = 500_000n;
 // («already pending for origin»), а в мобильном MetaMask залипший запрос
 // нечем отменить. Поведение при переносе не менялось; см. шапку того файла.
 
+// ─── Forwarder nonce ─────────────────────────────────────────────────────────
+
+/**
+ * Единственная точка чтения nonce форвардера во всём файле — три места читали
+ * его по отдельности, и ровно поэтому починка одного не чинила остальные.
+ *
+ * Обычный `readContract` здесь недостаточен: RPC за одним URL — это пул реплик,
+ * и чтение СРАЗУ ПОСЛЕ своей же замайненной мета-транзакции спокойно попадает на
+ * узел, который её ещё не видел. Тогда подпись уходит со старым nonce, а релеер
+ * отвечает «MinimalForwarder: nonce mismatch» — то, что 1 августа 2026 полностью
+ * сломало арбитру кнопку «Принять дело» (commit → claim, два вызова подряд).
+ * Разбор приёма и потолков — в шапке соответствующего раздела `walletLock.ts`.
+ */
+async function readFreshNonce(
+  publicClient: PublicClient,
+  forwarder: Address,
+  userAddress: Address,
+): Promise<bigint> {
+  return awaitFreshForwarderNonce(userAddress, forwarder, async () =>
+    await publicClient.readContract({
+      address: forwarder,
+      abi: FORWARDER_READ_ABI,
+      functionName: 'getNonce',
+      args: [userAddress],
+    }),
+  );
+}
+
 // ─── Relay availability detection ────────────────────────────────────────────
 
 /** True if error is relay SERVER failure (5xx / network down) — not a contract revert. */
@@ -396,13 +428,8 @@ async function _sendForwardRequest(
       ? FORWARDER_DOMAIN
       : { ...FORWARDER_DOMAIN, verifyingContract: effectiveForwarder } as const;
 
-  // Get nonce from the effective MinimalForwarder
-  const nonce = await publicClient.readContract({
-    address: effectiveForwarder,
-    abi: FORWARDER_READ_ABI,
-    functionName: 'getNonce',
-    args: [userAddress],
-  });
+  // Get nonce from the effective MinimalForwarder (опрос до свежего — см. readFreshNonce)
+  const nonce = await readFreshNonce(publicClient, effectiveForwarder, userAddress);
 
   // Estimate gas; fallback to default
   let gasLimit: bigint;
@@ -434,6 +461,14 @@ async function _sendForwardRequest(
     primaryType: 'ForwardRequest',
     message,
   });
+
+  // Отмечаем nonce израсходованным ДО отправки, а не после ответа: с этого
+  // момента подпись существует и может долететь до цепи даже если ответ до нас
+  // не вернётся (оборванная сеть на мобильном — обычное дело). Следующий вызов
+  // этого кошелька обязан дождаться сдвига счётчика, а не подписать тот же nonce
+  // второй раз. Обратная сторона — если отправка в итоге не долетела, запись
+  // протухает сама (TTL в walletLock.ts), а не штрафует кошелёк навсегда.
+  rememberSpentForwarderNonce(userAddress, effectiveForwarder, nonce);
 
   // POST to relay
   const res = await fetch('/api/relay', {
@@ -792,12 +827,7 @@ export async function fundAgreementGasless(
   const permitV = Number(permitVRaw) < 27 ? Number(permitVRaw) + 27 : Number(permitVRaw);
 
   // Step 5 — get ForwardRequest nonce from effective forwarder
-  const nonce = await publicClient.readContract({
-    address: effectiveForwarder,
-    abi: FORWARDER_READ_ABI,
-    functionName: 'getNonce',
-    args: [userAddress],
-  });
+  const nonce = await readFreshNonce(publicClient, effectiveForwarder, userAddress);
 
   // Step 6 — encode fund() calldata
   const FUND_ABI = parseAbi(['function fund()']);
@@ -824,6 +854,9 @@ export async function fundAgreementGasless(
   });
 
   // Step 9 — POST to relay with permit params; fallback: permit + fund directly
+  // (тот же учёт израсходованного nonce, что в _sendForwardRequest — этот путь
+  // постит в /api/relay сам и через него не проходит)
+  rememberSpentForwarderNonce(userAddress, effectiveForwarder, nonce);
   try {
     const res = await fetch('/api/relay', {
       method: 'POST',
@@ -979,12 +1012,7 @@ export async function proposeExtraGasless(
   const { r: permitR, s: permitS, v: permitVRaw } = parseSignature(permitSig);
   const permitV = Number(permitVRaw) < 27 ? Number(permitVRaw) + 27 : Number(permitVRaw);
 
-  const nonce = await publicClient.readContract({
-    address: effectiveForwarder,
-    abi: FORWARDER_READ_ABI,
-    functionName: 'getNonce',
-    args: [userAddress],
-  });
+  const nonce = await readFreshNonce(publicClient, effectiveForwarder, userAddress);
 
   const calldata = encodeFunctionData({
     abi: PROPOSE_EXTRA_ABI,
@@ -1009,6 +1037,9 @@ export async function proposeExtraGasless(
     primaryType: 'ForwardRequest',
     message,
   });
+
+  // Тот же учёт израсходованного nonce, что в _sendForwardRequest.
+  rememberSpentForwarderNonce(userAddress, effectiveForwarder, nonce);
 
   try {
     const res = await fetch('/api/relay', {
