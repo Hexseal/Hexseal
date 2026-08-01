@@ -23,6 +23,11 @@ import { Sparkles } from "lucide-react";
 import { ContextHint } from "@/components/ContextHint";
 import { shortAddr } from "@/lib/utils";
 import { notifyPush } from "@/lib/webpush";
+import { mergePages } from "@/lib/boardPaging";
+import {
+  resolveApplied, withOverride, pruneSettledOverrides,
+  type AppliedOverrides,
+} from "@/lib/optimisticApplied";
 
 interface JobRecord {
   client: string;
@@ -92,7 +97,7 @@ function JobCard({
   address?: string;
   hasApplied?: boolean;
   applicants?: string[];
-  onApplied?: () => void;
+  onApplied?: (jobId: string, applied: boolean) => void;
   onJobFilled?: (id: string) => void;
   expanded: boolean;
   onToggle: () => void;
@@ -144,7 +149,13 @@ function JobCard({
         `/job/${jobId.toString()}`,
         `/job/${jobId.toString()}`,
       );
-      onApplied?.();
+      // Помечаем локально, что отклик подан. Одной блокировки кнопки мало:
+      // признак «уже откликнулся» приходит из сабграфа, а тот индексирует
+      // событие не мгновенно, и поверх лежит серверный кэш прокси. Всё это
+      // окно список считает, что мы не откликались, — кнопка «Откликнуться»
+      // оставалась доступной сразу после успешного отклика (жалоба владельца).
+      // Пометка снимется сама, когда сабграф догонит (lib/optimisticApplied).
+      onApplied?.(jobId.toString(), true);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Apply failed");
     } finally {
@@ -160,7 +171,9 @@ function JobCard({
       await sendGasless(walletClient, publicClient, "withdrawApplication", [jobId], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.withdrawn"));
       fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
-      onApplied?.();
+      // Отзыв отстаёт от сабграфа ровно так же, только в другую сторону: без
+      // пометки кнопка тут же прыгала обратно в «Отозвать».
+      onApplied?.(jobId.toString(), false);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Withdraw failed");
     } finally {
@@ -269,8 +282,14 @@ function JobCard({
               </p>
             </div>
 
-            {/* Meta recap: category · deadline · region · time · applicants */}
-            <div className="flex items-center gap-1.5 flex-wrap mb-3 pb-3 border-b border-white/6">
+            {/* Meta recap: category · deadline · region · time · applicants.
+                Нижняя черта и отступ под ней — только если под ними что-то
+                есть. Блок со списком откликнувшихся виден одному заказчику, и
+                у всех остальных между этой чертой и такой же чертой футера не
+                оставалось ничего: пустая складка на пустом месте. */}
+            <div className={`flex items-center gap-1.5 flex-wrap ${
+              isClient ? "mb-3 pb-3 border-b border-white/6" : "mb-1"
+            }`}>
               {catKey && (
                 <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
                   {customTagLabel ? `#${customTagLabel}` : t(`categories.${catKey}`)}
@@ -354,9 +373,17 @@ export default function BoardPage() {
   const [page, setPage] = useState(0);
   const [allJobs, setAllJobs] = useState<GraphJob[]>([]);
   const [filledJobIds, setFilledJobIds] = useState<Set<string>>(new Set());
+  // Исход собственного отклика/отзыва, пока сабграф о нём не знает.
+  const [appliedOverrides, setAppliedOverrides] = useState<AppliedOverrides>(() => new Map());
+  const [pendingRefresh, setPendingRefresh] = useState(false);
 
   const handleJobFilled = (id: string) => {
     setFilledJobIds(prev => new Set([...prev, id]));
+  };
+
+  const handleApplied = (jobId: string, applied: boolean) => {
+    setAppliedOverrides(prev => withOverride(prev, jobId, applied));
+    refetchJobs();
   };
   type SortKey = 'newest' | 'oldest' | 'highest' | 'lowest';
   const [sortBy, setSortBy] = useState<SortKey>('newest');
@@ -407,13 +434,15 @@ export default function BoardPage() {
     if (jobsError) console.error('[Board] subgraph error:', jobsError);
   }, [jobsError]);
 
-  // Accumulate pages; reset when region changes
+  // Accumulate pages; reset when region changes.
+  // Склейка — чистой функцией из lib/boardPaging: зависимость эффекта это САМ
+  // массив, а urql отдаёт новую ссылку на каждое выполнение запроса, включая
+  // повторное по тем же переменным. Прежняя безусловная ветка append на этом
+  // дописывала ту же страницу второй раз при любом обновлении со страницы ≥ 1
+  // (кнопка «Обновить», перефокус вкладки) — дубли строк и дубли React-ключей.
+  // `mergePages` идемпотентна: уже виденные id отбрасываются.
   useEffect(() => {
-    if (page === 0) {
-      setAllJobs(pageJobs);
-    } else if (pageJobs.length > 0) {
-      setAllJobs(prev => [...prev, ...pageJobs]);
-    }
+    setAllJobs(prev => mergePages(prev, page, pageJobs));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageJobs]);
 
@@ -421,6 +450,25 @@ export default function BoardPage() {
     setPage(0);
     setAllJobs([]);
   }, [regionFilter]);
+
+  // Обновление со страницы ≥ 1. `refetchJobs` привязан к переменным ТЕКУЩЕГО
+  // запроса (skip = page * 20), а `setPage(0)` применяется только к следующему
+  // рендеру: вызванный сразу refetch уходил с `x-fresh` на чужой skip, и кэш
+  // прокси для первой страницы — той, которую пользователь сейчас увидит, —
+  // так и оставался несброшенным. Поэтому сначала переводим на первую
+  // страницу, а обновляем здесь, когда переменные запроса уже сменились.
+  useEffect(() => {
+    if (!pendingRefresh || page !== 0) return;
+    setPendingRefresh(false);
+    refetchJobs();
+  }, [pendingRefresh, page, refetchJobs]);
+
+  const handleRefresh = () => {
+    setAllJobs([]);
+    if (page === 0) { refetchJobs(); return; }
+    setPage(0);
+    setPendingRefresh(true);
+  };
 
   // page=0: use pageJobs directly so urql cache renders immediately on mount/remount.
   // page>0: use the accumulated array (Load More appends to allJobs via effect).
@@ -500,17 +548,30 @@ export default function BoardPage() {
       .slice(0, 5);
   }, [displayJobs, userProfile, searchQuery, categoryFilter]);
 
-  const { appliedSet, applicantsMap } = useMemo(() => {
+  const { appliedSet, applicantsMap, knownJobIds } = useMemo(() => {
     const appliedSet = new Set<string>();
     const applicantsMap = new Map<string, string[]>();
+    const knownJobIds = new Set<string>();
     displayJobs.forEach(gj => {
       applicantsMap.set(gj.id, gj.applicants);
+      knownJobIds.add(gj.id);
       if (address && gj.applicants.some(a => a.toLowerCase() === address.toLowerCase())) {
         appliedSet.add(gj.id);
       }
     });
-    return { appliedSet, applicantsMap };
+    return { appliedSet, applicantsMap, knownJobIds };
   }, [displayJobs, address]);
+
+  // Как только сабграф подтвердил исход нашего действия, локальная пометка
+  // перестаёт что-либо менять — снимаем, чтобы она не пережила настоящее
+  // изменение на цепи (например, отклик, отозванный из другой вкладки).
+  // `pruneSettledOverrides` возвращает ту же ссылку, если снимать нечего, —
+  // на этом эффект и останавливается, не зацикливаясь.
+  useEffect(() => {
+    setAppliedOverrides(prev => pruneSettledOverrides(prev, appliedSet, knownJobIds));
+  }, [appliedSet, knownJobIds]);
+
+  const hasAppliedTo = (jobId: string) => resolveApplied(jobId, appliedSet, appliedOverrides);
 
   // Wallet reconnecting on page reload — show skeleton to avoid flash of "connect" screen
   if (status === 'reconnecting' || status === 'connecting') {
@@ -554,7 +615,7 @@ export default function BoardPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 self-start">
-              <Button variant="ghost" size="sm" onClick={() => { setAllJobs([]); setPage(0); refetchJobs(); }} disabled={isFetching} className="text-white/40 hover:text-white/70">
+              <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isFetching} className="text-white/40 hover:text-white/70">
                 <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
               </Button>
               <Button size="sm" onClick={() => router.push("/board/client/post")}>
@@ -665,9 +726,9 @@ export default function BoardPage() {
                     job={job}
                     isClient={address?.toLowerCase() === gj.client?.toLowerCase()}
                     address={address}
-                    hasApplied={appliedSet.has(gj.id)}
+                    hasApplied={hasAppliedTo(gj.id)}
                     applicants={applicantsMap.get(gj.id)}
-                    onApplied={refetchJobs}
+                    onApplied={handleApplied}
                     onJobFilled={handleJobFilled}
                     expanded={expandedJobId === gj.id}
                     onToggle={() => setExpandedJobId(prev => prev === gj.id ? null : gj.id)}
@@ -749,9 +810,9 @@ export default function BoardPage() {
                     job={job}
                     isClient={address?.toLowerCase() === job.client?.toLowerCase()}
                     address={address}
-                    hasApplied={appliedSet.has(id.toString())}
+                    hasApplied={hasAppliedTo(id.toString())}
                     applicants={applicantsMap.get(id.toString())}
-                    onApplied={refetchJobs}
+                    onApplied={handleApplied}
                     onJobFilled={handleJobFilled}
                     expanded={expandedJobId === id.toString()}
                     onToggle={() => setExpandedJobId(prev => prev === id.toString() ? null : id.toString())}
