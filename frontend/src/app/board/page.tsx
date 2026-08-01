@@ -5,6 +5,7 @@ import { useAccount, usePublicClient, useWalletClient, useReadContract } from "w
 import { useJobs, type GraphJob } from "@/hooks/useJobs";
 import { DIAMOND_ABI, CONTRACTS } from "@/config/contracts";
 import { sendGasless } from "@/lib/relay";
+import { refreshAfterTx } from "@/lib/subgraphSync";
 import type { Abi } from "viem";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -141,11 +142,13 @@ function JobCard({
     if (isFilled) { toast.error(t("board.jobs.no_longer_open")); return; }
     setIsApplying(true);
     try {
-      await sendGasless(walletClient, publicClient, "applyForJob", [jobId], DIAMOND_ABI as Abi);
+      const { txHash } = await sendGasless(walletClient, publicClient, "applyForJob", [jobId], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.applied_waiting"));
-      // Bust the server-side subgraph cache so the client sees this applicant
-      // without waiting out the up-to-2-minute proxy cache TTL.
-      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
+      // Сбросить кэш прокси, чтобы клиент увидел отклик, не выжидая до двух
+      // минут TTL. Сброс отложен до момента, когда сабграф проиндексирует блок:
+      // раньше он звался сразу после майнинга и цементировал ответ, в котором
+      // отклика ещё нет, ещё на полный TTL. См. lib/subgraphSync.
+      void refreshAfterTx(publicClient, txHash, { chain: ["jobs"], graph: ["jobs"] });
       // Live in-app notifications (useNotifications' JobApplied watcher) only fire
       // while the client happens to have the site open at that exact moment — a
       // push is the only way this reaches them if they're away.
@@ -174,9 +177,9 @@ function JobCard({
     if (isFilled) { toast.error(t("board.jobs.no_longer_open")); return; }
     setIsWithdrawing(true);
     try {
-      await sendGasless(walletClient, publicClient, "withdrawApplication", [jobId], DIAMOND_ABI as Abi);
+      const { txHash } = await sendGasless(walletClient, publicClient, "withdrawApplication", [jobId], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.withdrawn"));
-      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
+      void refreshAfterTx(publicClient, txHash, { chain: ["jobs"], graph: ["jobs"] });
       // Отзыв отстаёт от сабграфа ровно так же, только в другую сторону: без
       // пометки кнопка тут же прыгала обратно в «Отозвать».
       onApplied?.(jobId.toString(), false);
@@ -195,7 +198,12 @@ function JobCard({
       toast(t("board.jobs.accepting"));
       const result = await sendGasless(walletClient, publicClient, "acceptApplicant", [jobId, executorAddr], DIAMOND_ABI as Abi);
       toast.success(t("board.jobs.accepted_deal"));
-      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
+      // Живёт дольше этого экрана: ниже router.push на страницу сделки, а
+      // ожидание индексации — несколько секунд.
+      void refreshAfterTx(publicClient, result.txHash, {
+        chain: ["deals", "jobs"],
+        graph: ["deals", "jobs"],
+      });
       onJobFilled?.(jobId.toString());
       const ZERO = "0x0000000000000000000000000000000000000000";
       if (result.agreementAddr && result.agreementAddr !== ZERO) {

@@ -10,6 +10,7 @@ import type { Abi } from 'viem';
 import { parseAbiItem } from 'viem';
 import { DIAMOND_ABI, JOB_RECEIPT_FACET_ABI, CONTRACTS } from '@/config/contracts';
 import { sendGasless } from '@/lib/relay';
+import { refreshAfterTx } from '@/lib/subgraphSync';
 import { Button } from '@/components/ui/button';
 import { toast } from 'react-hot-toast';
 import {
@@ -590,8 +591,16 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
       removeService:  'Service removed',
     };
     try {
-      await sendGasless(walletClient, publicClient, action, [serviceId], DIAMOND_ABI as Abi);
+      const { txHash } = await sendGasless(walletClient, publicClient, action, [serviceId], DIAMOND_ABI as Abi);
       toast.success(done[action]);
+      // Доски давно сбрасывали кэш прокси после своих действий, дашборд — ни
+      // разу; отсюда «релоадить и релоадить». Сброс отложен до момента, когда
+      // сабграф проиндексирует блок, — иначе он цементирует непроиндексированный
+      // снимок ещё на 120 секунд (см. lib/subgraphSync).
+      void refreshAfterTx(publicClient, txHash, {
+        chain: ['services'],
+        graph: ['services'],
+      });
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
       // против отставания реплик RPC (24701de), и всё это окно список
@@ -610,9 +619,15 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     let success = false;
     try {
       toast('Accepting request…');
-      await sendGasless(walletClient, publicClient, 'acceptRequest', [requestId], DIAMOND_ABI as Abi);
+      const { txHash } = await sendGasless(walletClient, publicClient, 'acceptRequest', [requestId], DIAMOND_ABI as Abi);
       toast.success('Request accepted! Deal created.');
       success = true;
+      // Здесь рождается сделка: несвежими становятся и запросы, и услуга
+      // (hiresCount), и список сделок на дашборде.
+      void refreshAfterTx(publicClient, txHash, {
+        chain: ['deals', 'requests', 'services'],
+        graph: ['deals', 'services'],
+      });
       setTimeout(() => { refetch(); onDealCreated?.(); if (mountedRef.current) setBusyId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Accept failed');
@@ -626,8 +641,12 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     setBusyId(reqKey('reject', requestId));
     try {
       toast('Rejecting request…');
-      await sendGasless(walletClient, publicClient, 'rejectRequest', [requestId], DIAMOND_ABI as Abi);
+      const { txHash } = await sendGasless(walletClient, publicClient, 'rejectRequest', [requestId], DIAMOND_ABI as Abi);
       toast.success('Request rejected');
+      // Только цепь. Сущность ServiceRequest в сабграфе есть, но фронт её не
+      // запрашивает ни одним запросом (`lib/graph.ts`) — запросы на услугу
+      // читаются только из цепи, ждать индексации нечего.
+      void refreshAfterTx(publicClient, txHash, { chain: ['requests'] });
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
       // против отставания реплик RPC (24701de), и всё это окно список
@@ -646,12 +665,16 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     if (!walletClient || !publicClient || !editTarget) { toast.error('Wallet not connected'); return; }
     setEditBusy(true);
     try {
-      await sendGasless(
+      const { txHash } = await sendGasless(
         walletClient, publicClient, 'editService',
         [editTarget.id, fields.title, fields.description, fields.price, fields.deadlineDays, fields.region],
         DIAMOND_ABI as Abi,
       );
       toast.success(tl('service_updated'));
+      void refreshAfterTx(publicClient, txHash, {
+        chain: ['services'],
+        graph: ['services'],
+      });
       if (mountedRef.current) setEditTarget(null);
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
@@ -1136,8 +1159,13 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
     setBusyJobId(jobKey('cancel', jobId));
     try {
       toast('Cancelling job…');
-      await sendGasless(walletClient, publicClient, 'cancelJob', [jobId], DIAMOND_ABI as Abi);
+      const { txHash } = await sendGasless(walletClient, publicClient, 'cancelJob', [jobId], DIAMOND_ABI as Abi);
       toast.success('Job cancelled');
+      // Отмена возвращает эскроу за вычетом пола — баланс кошелька тоже несвеж.
+      void refreshAfterTx(publicClient, txHash, {
+        chain: ['jobs', 'wallet'],
+        graph: ['jobs'],
+      });
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
       // против отставания реплик RPC (24701de), и всё это окно список
@@ -1159,6 +1187,13 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
       const result = await sendGasless(walletClient, publicClient, 'acceptApplicant', [jobId, executorAddr], DIAMOND_ABI as Abi);
       toast.success('Executor accepted! Deal created.');
       success = true;
+      // Заказ закрывается и рождается сделка. Обновление живёт дольше этого
+      // компонента: ниже возможен router.push на страницу сделки, а ждать
+      // индексации всё равно несколько секунд.
+      void refreshAfterTx(publicClient, result.txHash, {
+        chain: ['deals', 'jobs'],
+        graph: ['deals', 'jobs'],
+      });
       const ZERO = '0x0000000000000000000000000000000000000000';
       if (result.agreementAddr && result.agreementAddr !== ZERO) {
         setTimeout(() => router.push(`/deal/${result.agreementAddr}`), 1500);
@@ -1178,12 +1213,16 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
     if (!walletClient || !publicClient || !editTarget) { toast.error('Wallet not connected'); return; }
     setEditBusy(true);
     try {
-      await sendGasless(
+      const { txHash } = await sendGasless(
         walletClient, publicClient, 'editJob',
         [editTarget.id, fields.title, fields.description, fields.deadlineDays, editTarget.terms ?? '', fields.region],
         DIAMOND_ABI as Abi,
       );
       toast.success(tj('job_updated'));
+      void refreshAfterTx(publicClient, txHash, {
+        chain: ['jobs'],
+        graph: ['jobs'],
+      });
       if (mountedRef.current) setEditTarget(null);
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
@@ -1390,8 +1429,11 @@ export function MyClientRequests({ address }: { address: string }) {
     setBusyId(reqId.toString());
     try {
       toast('Cancelling request…');
-      await sendGasless(walletClient, publicClient, 'cancelRequest', [reqId], DIAMOND_ABI as Abi);
+      const { txHash } = await sendGasless(walletClient, publicClient, 'cancelRequest', [reqId], DIAMOND_ABI as Abi);
       toast.success('Request cancelled');
+      // Отзыв возвращает эскроу за вычетом пола. Сабграф здесь ни при чём —
+      // запросы фронт читает только из цепи.
+      void refreshAfterTx(publicClient, txHash, { chain: ['requests', 'wallet'] });
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
       // против отставания реплик RPC (24701de), и всё это окно список

@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "react-hot-toast";
 import { parseUnits, parseEventLogs } from "viem";
 import { mintJobGasless } from "@/lib/relay";
+import { refreshAfterTx } from "@/lib/subgraphSync";
 import { useFeeConfig } from "@/hooks/useFeeConfig";
 import { quoteFeeLocal, fmtUsdc } from "@/lib/fee";
 import {
@@ -211,8 +212,14 @@ export default function PostJobPage() {
       setTxHash(hash);
       setStep("success");
       toast.success(t("board.post_job.success"));
-      // Bust the server-side subgraph cache so the board shows the new job
-      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
+      // Сбросить кэш прокси, чтобы доска показала новый заказ — но НЕ раньше,
+      // чем сабграф проиндексирует блок. Сброс в момент майнинга (как было
+      // здесь) цементировал непроиндексированный снимок ещё на 120 секунд.
+      // См. lib/subgraphSync.
+      void refreshAfterTx(publicClient, hash, {
+        chain: ["jobs", "wallet"],
+        graph: ["jobs"],
+      });
       if (address) {
         pushNotif(address, {
           type: "job_posted",
