@@ -363,8 +363,16 @@ function ServiceCard({
             <p className="text-sm text-white/60 leading-relaxed mb-4">{displayDesc}</p>
           )}
 
-          {/* Meta recap: category · deadline · region · hires */}
-          <div className="flex items-center gap-1.5 flex-wrap mb-3 pb-3 border-b border-white/6">
+          {/* Meta recap: category · deadline · region · hires.
+              Черта под тегами — только если под ней что-то есть. Единственный
+              блок между ней и футером — собственный запрос смотрящего, а его
+              нет почти всегда (в том числе у автора услуги на своей карточке),
+              и тогда оставались две линейки в 14 пикселях друг от друга с
+              пустотой между ними. Тот же дефект, что c2c40d7 убрал в карточке
+              заказа на /board; здесь он оставался неисправленным. */}
+          <div className={`flex items-center gap-1.5 flex-wrap ${
+            myActive ? "mb-3 pb-3 border-b border-white/6" : "mb-1"
+          }`}>
             {catKey && (
               <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
                 {t(`categories.${catKey}`)}

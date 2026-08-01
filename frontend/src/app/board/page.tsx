@@ -292,9 +292,11 @@ function JobCard({
                 Нижняя черта и отступ под ней — только если под ними что-то
                 есть. Блок со списком откликнувшихся виден одному заказчику, и
                 у всех остальных между этой чертой и такой же чертой футера не
-                оставалось ничего: пустая складка на пустом месте. */}
+                оставалось ничего: пустая складка на пустом месте.
+                Заказчику при нуле откликов — тоже: списка нет, значит и черта
+                под тегами не рисуется. */}
             <div className={`flex items-center gap-1.5 flex-wrap ${
-              isClient ? "mb-3 pb-3 border-b border-white/6" : "mb-1"
+              isClient && applicantCount > 0 ? "mb-3 pb-3 border-b border-white/6" : "mb-1"
             }`}>
               {catKey && (
                 <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium flex-shrink-0 ${CATEGORY_BADGE[catKey]}`}>
@@ -331,9 +333,12 @@ function JobCard({
               </div>
             )}
 
-            {isClient && applicantCount === 0 && (
-              <p className="text-xs text-white/20 mb-3">{t("board.jobs.no_applicants")}</p>
-            )}
+            {/* При нуле откликов не рисуется ничего: ни рамки, ни строки «пока
+                никто не откликнулся», ни отступа под неё. Пустое пространство
+                отклика само по себе и было тем, на что жаловались — строка
+                текста внутри двух черт сообщала ровно то же, что и её
+                отсутствие. Ключ board.jobs.no_applicants остался в локалях
+                неиспользованным, как и board.services.incoming_empty. */}
 
             {/* Footer: full-page link (left) + chat/apply/withdraw actions (right) */}
             <div className="pt-2.5 border-t border-white/6 flex items-center justify-between gap-1.5">
