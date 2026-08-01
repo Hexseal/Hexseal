@@ -131,7 +131,6 @@ function shortAddr(a) {
  */
 async function watchAgreement(agreementAddr) {
   if (watched.has(agreementAddr.toLowerCase())) return;
-  watched.add(agreementAddr.toLowerCase());
 
   const contract = new ethers.Contract(agreementAddr, AGREEMENT_ABI, provider);
 
@@ -139,9 +138,18 @@ async function watchAgreement(agreementAddr) {
   let client, executor;
   try {
     [client, executor] = await Promise.all([contract.client(), contract.executor()]);
-  } catch {
-    return; // not a valid agreement
+  } catch (e) {
+    // NOT marked as watched: this used to be added to `watched` BEFORE the read,
+    // so one transient RPC error poisoned that agreement permanently —
+    // pollNewAgreements() skips anything already in the set, so it was never
+    // retried and no XMTP notification for that deal was ever sent again for the
+    // life of the process. Silently. Marking only after a successful read lets the
+    // next poll pick it up.
+    console.warn('[notifier] cannot read parties of', agreementAddr, '— not watching it yet:', e.message);
+    return;
   }
+
+  watched.add(agreementAddr.toLowerCase());
 
   const dealLink = `https://hexseal.net/deal/${agreementAddr}`;
   const short = shortAddr(agreementAddr);
@@ -220,8 +228,13 @@ async function pollNewAgreements() {
       }
     }
     if (added > 0) console.log('[notifier] +', added, 'new agreements');
-  } catch {
-    // silent — getAll may not exist on this Diamond version
+  } catch (e) {
+    // This is the notifier's ONLY discovery mechanism. Swallowed, a real failure
+    // (RPC outage, wrong DIAMOND, a Diamond upgrade that moved getAll()) means no
+    // new agreement is ever watched again while the process keeps looking
+    // perfectly healthy. loadAgreements() above catches the identical call and
+    // does warn — the two disagreed for no reason.
+    console.warn('[notifier] getAll() failed during poll — no new agreements will be picked up this round:', e.message);
   }
 }
 
