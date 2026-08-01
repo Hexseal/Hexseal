@@ -115,6 +115,11 @@ export default function ArbiterPage() {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  // Ключ = действие + дело, а не один голый адрес дела. По одному делу на
+  // экране стоят «Вернуть клиенту», «Заплатить исполнителю» и «Отказаться от
+  // дела» разом, а на вкладке споров — «Взяться» и «Отказаться»: общий на всех
+  // ключ зажигал крутилку сразу на нескольких кнопках. Блокировка остаётся
+  // общей — вердикты и клеймы идут из одного кошелька по очереди.
   const [busy, setBusy]           = useState<string | null>(null);
   const [refresh, setRefresh]     = useState(0);
   const [tab, setTab]             = useState<TabKey>("disputes");
@@ -187,7 +192,7 @@ export default function ArbiterPage() {
 
   const handleClaim = async (agreement: string) => {
     if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
-    setBusy(agreement);
+    setBusy(`claim:${agreement}`);
     // The salt used to live only in this closure's local memory — if the tab
     // closed/reloaded (or the wallet/network hung and the user gave up) in the
     // ~100s window between the commit landing and the reveal completing, it
@@ -263,7 +268,7 @@ export default function ArbiterPage() {
 
   const handleRelease = async (agreement: string) => {
     if (!walletClient || !publicClient) { toast.error(t("common.error")); return; }
-    setBusy(agreement);
+    setBusy(`release:${agreement}`);
     try {
       toast(t("arbiter.releasing"));
       const { txHash } = await releaseDisputeGasless(walletClient, publicClient, agreement as Address);
@@ -287,7 +292,7 @@ export default function ArbiterPage() {
   // place finalizeVerdict is called from now.
   const handleSubmitVerdict = async (agreement: string, clientWins: boolean) => {
     if (!publicClient) { toast.error(t("common.error")); return; }
-    setBusy(agreement);
+    setBusy(`verdict:${clientWins ? 'client' : 'executor'}:${agreement}`);
     const id = toast.loading(clientWins ? t("arbiter.submitting_refund") : t("arbiter.submitting_pay"));
     try {
       const hash1 = await writeContractAsync({
@@ -306,7 +311,7 @@ export default function ArbiterPage() {
   // Finalize an already-submitted verdict, once FINALIZE_DELAY has passed.
   const handleFinalizeVerdict = async (agreement: string) => {
     if (!publicClient) { toast.error(t("common.error")); return; }
-    setBusy(agreement);
+    setBusy(`finalize:${agreement}`);
     const id = toast.loading(t("arbiter.finalizing"));
     try {
       const hash = await writeContractAsync({
@@ -366,10 +371,15 @@ export default function ArbiterPage() {
               <p className="text-lg font-bold font-mono text-emerald-300">${fmtUSDC(myReward)} USDC</p>
             </div>
           </div>
+          {/* `disabled` — общий `!!busy`, как у всех остальных кнопок страницы.
+              Раньше здесь стоял `busy === "reward"`: вывод награды оставался
+              нажимаемым поверх летящего клейма или вердикта, перетирал их ключ
+              своим, и его собственный finally оживлял кнопки спора, пока та
+              транзакция ещё не приземлилась. */}
           <Button
             size="sm"
             onClick={handleWithdraw}
-            disabled={busy === "reward"}
+            disabled={!!busy}
             className="bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25 shrink-0"
           >
             {busy === "reward" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
@@ -587,7 +597,8 @@ function DisputeCard({
   const ZERO = "0x0000000000000000000000000000000000000000";
   const isClaimed   = claimer && claimer !== ZERO;
   const isMineClaim = isClaimed && claimer?.toLowerCase() === myAddress?.toLowerCase();
-  const isBusy      = busy === rec.agreement;
+  const claimBusy   = busy === `claim:${rec.agreement}`;
+  const releaseBusy = busy === `release:${rec.agreement}`;
   const urgent      = timeLeft !== undefined && timeLeft > 0n && Number(timeLeft) < 86400;
 
   return (
@@ -643,14 +654,14 @@ function DisputeCard({
         <div className="flex gap-2 ml-auto">
           {!isClaimed && (
             <Button size="sm" onClick={() => onClaim(rec.agreement)} disabled={!!busy}>
-              {isBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
+              {claimBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
               {t("arbiter.claim_btn")}
             </Button>
           )}
           {isMineClaim && (
             <Button size="sm" variant="outline" onClick={() => onRelease(rec.agreement)} disabled={!!busy}
               className="border-white/15 text-white/60 hover:text-white hover:border-white/30">
-              {isBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
+              {releaseBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
               {t("arbiter.release_btn")}
             </Button>
           )}
@@ -853,7 +864,10 @@ function MyCaseCard({
   const isDisputed  = statusVal === AGREEMENT_STATUS_DISPUTED;
   const isTerminal  = statusVal !== undefined && TERMINAL.has(statusVal);
   const isMineClaim = claimer?.toLowerCase() === myAddress?.toLowerCase() && claimer !== ZERO;
-  const isBusy      = busy === agreement;
+  const finalizeBusy       = busy === `finalize:${agreement}`;
+  const verdictClientBusy  = busy === `verdict:client:${agreement}`;
+  const verdictExecBusy    = busy === `verdict:executor:${agreement}`;
+  const releaseBusy        = busy === `release:${agreement}`;
   const expired     = timeLeft !== undefined && timeLeft === 0n && disputedAt && disputedAt > 0n;
   const urgent      = timeLeft !== undefined && timeLeft > 0n && Number(timeLeft) < 86400;
 
@@ -983,7 +997,7 @@ function MyCaseCard({
                 disabled={!!busy || !finalizeEligible}
                 onClick={() => onFinalizeVerdict(agreement)}
               >
-                {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                {finalizeBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
                 {t("arbiter.finalize_btn")}
               </button>
             </div>
@@ -1015,7 +1029,7 @@ function MyCaseCard({
                   disabled={!!busy}
                   onClick={() => onSubmitVerdict(agreement, true)}
                 >
-                  {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserCheck className="w-3.5 h-3.5" />}
+                  {verdictClientBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserCheck className="w-3.5 h-3.5" />}
                   {t("arbiter.refund_client_btn")}
                 </button>
                 <button
@@ -1023,16 +1037,17 @@ function MyCaseCard({
                   disabled={!!busy}
                   onClick={() => onSubmitVerdict(agreement, false)}
                 >
-                  {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserX className="w-3.5 h-3.5" />}
+                  {verdictExecBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserX className="w-3.5 h-3.5" />}
                   {t("arbiter.pay_executor_btn")}
                 </button>
               </div>
 
               <button
-                className="w-full text-xs text-white/25 hover:text-white/50 transition-colors py-0.5"
+                className="w-full flex items-center justify-center gap-1.5 text-xs text-white/25 hover:text-white/50 transition-colors py-0.5 disabled:opacity-40"
                 disabled={!!busy}
                 onClick={() => onRelease(agreement)}
               >
+                {releaseBusy && <Loader2 className="w-3 h-3 animate-spin" />}
                 {t("arbiter.release_claim_btn")}
               </button>
             </>
@@ -1110,30 +1125,46 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
     functionName: "getArbiters",
   }) as { data: string[] | undefined; refetch: () => void };
 
-  const { writeContractAsync, isPending } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
   const [newArbiter,   setNewArbiter]   = useState("");
   const [removingAddr, setRemovingAddr] = useState<string | null>(null);
+  const [isAdding,     setIsAdding]     = useState(false);
 
+  // `useWriteContract().isPending` — единственное, чем эти две кнопки гейтились
+  // раньше, — гаснет на БРОДКАСТЕ, а не на включении в блок. Между этими двумя
+  // мигами кнопка «Добавить» снова нажимаема, `refetch()` уходит по ещё не
+  // изменившемуся состоянию, а тост об успехе печатается для транзакции,
+  // которая могла отревертить (viem резолвит квитанцию и на реверте, он не
+  // бросает). Тот же разбор и то же лечение — `hooks/useWalletAccountData.ts`
+  // в `handleApplyAsArbiter`. `isPending` вдобавок был общим на обе кнопки:
+  // удаление арбитра гасило кнопку добавления.
   const handleAdd = async () => {
     if (!isAddress(newArbiter)) { toast.error(t("profile.invalid_address")); return; }
+    if (!publicClient) { toast.error(t("common.error")); return; }
+    setIsAdding(true);
     try {
-      await writeContractAsync({
+      const hash = await writeContractAsync({
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: "addArbiter", args: [newArbiter as Address], gas: BigInt(120_000),
       });
+      assertMined(await publicClient.waitForTransactionReceipt({ hash }));
       toast.success(t("arbiter.added_success"));
       setNewArbiter("");
       refetch();
     } catch (err: any) { toast.error(err?.shortMessage || err?.message || t("common.error")); }
+    finally { setIsAdding(false); }
   };
 
   const handleRemove = async (addr: string) => {
+    if (!publicClient) { toast.error(t("common.error")); return; }
     setRemovingAddr(addr);
     try {
-      await writeContractAsync({
+      const hash = await writeContractAsync({
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
         functionName: "removeArbiter", args: [addr as Address], gas: BigInt(120_000),
       });
+      assertMined(await publicClient.waitForTransactionReceipt({ hash }));
       toast.success(t("arbiter.removed_success"));
       refetch();
     } catch (err: any) { toast.error(err?.shortMessage || err?.message || t("common.error")); }
@@ -1158,7 +1189,7 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
               {isOwner && (
                 <button
                   className="flex items-center gap-1 text-xs text-red-400/60 hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
-                  disabled={removingAddr === addr || isPending}
+                  disabled={!!removingAddr || isAdding}
                   onClick={() => handleRemove(addr)}
                 >
                   {removingAddr === addr
@@ -1184,8 +1215,8 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
                 onChange={e => setNewArbiter(e.target.value)}
                 className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]"
               />
-              <Button onClick={handleAdd} disabled={isPending || !newArbiter} className="gap-1 shrink-0">
-                {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+              <Button onClick={handleAdd} disabled={isAdding || !!removingAddr || !newArbiter} className="gap-1 shrink-0">
+                {isAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
                 {t("arbiter.add_btn")}
               </Button>
             </div>

@@ -444,6 +444,7 @@
     "pay_executor_btn": "Pay Executor",
     "pay_executor_success": "Dispute resolved · Funds paid to executor.",
     "chat_title": "Open Chat",
+    "chat_arbiter_btn": "Chat with Arbiter",
     "chat_desc": "Encrypted private messages with your counterparty",
     "closed_hint": "This deal is closed. No further actions required.",
     "dispute_active": "Dispute Active",

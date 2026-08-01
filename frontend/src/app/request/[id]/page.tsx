@@ -88,6 +88,14 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
   const { data: walletClient } = useWalletClient();
 
   const requestId = BigInt(id);
+  // Наверху вместе с остальными хуками, а не ниже по файлу: под ним стоят три
+  // ранних `return` (загрузка / ошибка / запрос не найден), и вызов после них
+  // менял КОЛИЧЕСТВО хуков между рендерами — React на таком бросает «Rendered
+  // more hooks than during the previous render» ровно в момент, когда данные
+  // приезжают и страница впервые доходит до разметки. Правило хуков этим
+  // репозиторием не проверяется: `npm run lint` сломан целиком
+  // (docs/OPEN-ITEMS.md п. 18).
+  const t = useTranslations();
   const [isBusy, setIsBusy] = useState<"accept" | "reject" | "cancel" | null>(null);
   // Live floor, for the honest "only the floor is non-refundable" copy below —
   // cancelRequest/rejectRequest (src/facets/ServiceBoardFacet.sol) now burn it,
@@ -163,19 +171,25 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
           } catch {
             toast.success("Request accepted — deal created. Open the deal to start work.");
           }
+          // Уходим со страницы — снимать блокировку не с чего и незачем: кнопки
+          // размонтируются вместе с ней.
           router.push(`/deal/${agreementAddr}`);
-        } else {
-          toast.success(ok[action]);
-          setTimeout(() => refetch(), 2000);
+          return;
         }
-      } else {
-        toast.success(ok[action]);
-        setTimeout(() => refetch(), 2000);
       }
+
+      toast.success(ok[action]);
+      // Блокировка держится до тех пор, пока отложенный refetch реально не
+      // приземлится, а не снимается сразу в общем finally. Релеер уже дождался
+      // квитанции, но чтение отложено намеренно — против отставания реплик RPC
+      // (24701de), и всё это окно `req.status` остаётся прежним. Раннее снятие
+      // возвращало кнопки в исходный вид поверх устаревшего статуса, и второй
+      // клик отправлял действие, которое на цепи уже гарантированно ревертит
+      // (RequestNotPending) — сразу после собственного тоста об успехе.
+      setTimeout(() => { refetch(); setIsBusy(null); }, 2000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(msg.slice(0, 120) || `${action} failed`);
-    } finally {
       setIsBusy(null);
     }
   };
@@ -208,7 +222,6 @@ export default function RequestPage({ params }: { params: Promise<{ id: string }
   }
 
   const statusInfo = REQUEST_STATUS[req.status] ?? REQUEST_STATUS[0];
-  const t = useTranslations();
   const catKey = service ? extractCategory(service.description) : null;
   const displayDesc = service ? stripCategory(service.description) : null;
 

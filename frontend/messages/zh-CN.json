@@ -430,6 +430,7 @@
     "pay_executor_btn": "支付执行者",
     "pay_executor_success": "争议已解决 · 资金已支付给执行者。",
     "chat_title": "交易聊天",
+    "chat_arbiter_btn": "与仲裁员聊天",
     "chat_desc": "客户、执行者和仲裁者之间的端对端加密群组聊天",
     "dispute_active": "争议进行中",
     "dispute_active_hint": "仲裁者已收到通知。与他们聊天以解决问题。",

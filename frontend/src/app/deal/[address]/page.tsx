@@ -3,7 +3,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
-import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI, USDC_ABI } from "@/config/contracts";
+import { AGREEMENT_ABI, CONTRACTS, USDC_ABI } from "@/config/contracts";
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from "@/config/constants";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
@@ -122,7 +122,14 @@ export default function DealDetailPage() {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
-  const [isFunding, setIsFunding] = useState(false);
+  // Какое ИМЕННО действие сейчас летит, а не «летит хоть какое-то». Раньше это
+  // был один булев флаг на всю страницу, и спиннер садился не на нажатую
+  // кнопку, а на первую попавшуюся: нажатие «Откликнуться на спор»
+  // (respondToDispute) зажигало крутилку на «Оплатить N USDC за арбитра»
+  // (fundDispute) — снято владельцем с живого экрана. Блокировка при этом
+  // остаётся общей: все кнопки здесь ходят в один кошелёк по одной и той же
+  // сделке, и параллельная подпись — это гарантированный реверт одной из двух.
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [pendingTxHash, setPendingTxHash] = useState<string | null>(null);
   const [disputeModal, setDisputeModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
@@ -143,13 +150,6 @@ export default function DealDetailPage() {
     5: { label: t("deal_status.resolved"),  dot: "bg-purple-400",  color: "bg-purple-400/10 text-purple-400 border border-purple-400/20",   icon: <Shield className="w-3.5 h-3.5" /> },
     6: { label: t("deal_status.refunded"),  dot: "bg-gray-400",    color: "bg-gray-400/10 text-gray-400 border border-gray-400/20",         icon: <ArrowRight className="w-3.5 h-3.5" /> },
   };
-
-  // Read Diamond owner as the platform admin / arbiter address
-  const { data: adminAddress } = useReadContract({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    functionName: 'owner',
-  }) as { data: string | undefined };
 
   const isValidDeal = useMemo(() => dealAddress && isAddress(dealAddress), [dealAddress]);
 
@@ -488,9 +488,14 @@ export default function DealDetailPage() {
     ? BigInt(Math.max(0, Math.round(Number(parsed.markedDoneAt) + Number(AUTO_APPROVE_WINDOW) - now)))
     : undefined;
 
-  const handleAction = async (fn: string, successMsg: string, args: unknown[] = []): Promise<boolean> => {
+  // `busyKey` отделён от `fn` только там, где одна и та же функция контракта
+  // стоит за двумя разными кнопками (resolveDispute: «вернуть клиенту» и
+  // «заплатить исполнителю») — иначе крутилка снова зажглась бы на обеих.
+  const handleAction = async (
+    fn: string, successMsg: string, args: unknown[] = [], busyKey: string = fn,
+  ): Promise<boolean> => {
     if (!isValidDeal || !walletClient || !publicClient) return false;
-    setIsFunding(true);
+    setBusyAction(busyKey);
     try {
       toast(t("common.confirm_in_wallet"));
       await sendAgreementGasless(walletClient, publicClient, dealAddress as `0x${string}`, fn, AGREEMENT_ABI as Abi, args);
@@ -536,12 +541,12 @@ export default function DealDetailPage() {
       setTimeout(() => {
         refetchDetails();
         if (fn === 'respondToDispute') { refetchClientResponded(); refetchExecutorResponded(); }
-        setIsFunding(false);
+        setBusyAction(null);
       }, 2000);
       return true;
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
-      setIsFunding(false);
+      setBusyAction(null);
       return false;
     }
   };
@@ -552,7 +557,7 @@ export default function DealDetailPage() {
       toast.error(t("deal.insufficient_usdc_need", { amount: formatUnits(usdcShortfall, 6) }));
       return;
     }
-    setIsFunding(true);
+    setBusyAction('fund');
     setPendingTxHash(null);
     try {
       const dealAddr = dealAddress as `0x${string}`;
@@ -562,16 +567,16 @@ export default function DealDetailPage() {
       toast.success(t("deal.fund_success"));
       // See handleAction's comment above — keep busy set until the delayed
       // refetch lands, not cleared immediately.
-      setTimeout(() => { refetchDetails(); setPendingTxHash(null); setIsFunding(false); }, 4000);
+      setTimeout(() => { refetchDetails(); setPendingTxHash(null); setBusyAction(null); }, 4000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       const msg = e?.shortMessage || e?.message || "Fund failed";
       if (msg.includes('AlreadyFunded')) {
         toast.error(t("deal.already_funded"));
-        setTimeout(() => { refetchDetails(); setIsFunding(false); }, 1000);
+        setTimeout(() => { refetchDetails(); setBusyAction(null); }, 1000);
       } else {
         toast.error(msg);
-        setIsFunding(false);
+        setBusyAction(null);
       }
     }
   };
@@ -579,7 +584,7 @@ export default function DealDetailPage() {
   const handleFundDispute = async () => {
     if (!isValidDeal || !address || !publicClient || !walletClient) return;
     if (disputeTopUp === undefined || disputeTopUp === 0n) return;
-    setIsFunding(true);
+    setBusyAction('fundDispute');
     try {
       const dealAddr = dealAddress as `0x${string}`;
       toast(t("deal.fund_sign_permit"));
@@ -590,12 +595,12 @@ export default function DealDetailPage() {
       setTimeout(() => {
         refetchDisputeTopUp();
         refetchDisputeBounty();
-        setIsFunding(false);
+        setBusyAction(null);
       }, 2000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || t("common.transaction_failed"));
-      setIsFunding(false);
+      setBusyAction(null);
     }
   };
 
@@ -609,7 +614,7 @@ export default function DealDetailPage() {
     // second, concurrent raiseDispute attempt (duplicate signatures, a
     // guaranteed on-chain revert for the loser, and a duplicate
     // /api/dispute-reason POST). handleAction's own finally still clears this.
-    setIsFunding(true);
+    setBusyAction('raiseDispute');
     if (disputeReason.trim()) {
       try {
         const ts = Math.floor(Date.now() / 1000);
@@ -645,7 +650,7 @@ export default function DealDetailPage() {
     if (amountParsed === 0n) { toast.error('Amount must be > 0'); return; }
     const extraTerms = proposeDesc.trim() || proposeAmount + ' USDC extra';
     setProposeModal(false);
-    setIsFunding(true);
+    setBusyAction('proposeExtra');
     try {
       toast(t("common.confirm_in_wallet"));
       await proposeExtraGasless(walletClient, publicClient, dealAddress as `0x${string}`, amountParsed, extraTerms);
@@ -654,24 +659,26 @@ export default function DealDetailPage() {
       setProposeDesc('');
       // See handleAction's comment above — keep busy set until the delayed
       // refetch lands, not cleared immediately.
-      setTimeout(() => { refetchNextExtraId(); setIsFunding(false); }, 3000);
+      setTimeout(() => { refetchNextExtraId(); setBusyAction(null); }, 3000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
-      setIsFunding(false);
+      setBusyAction(null);
     }
   };
 
   const handleExtraAction = async (fn: 'acceptExtra' | 'rejectExtra', extraId: number) => {
     if (!isValidDeal || !walletClient || !publicClient) return;
-    setIsFunding(true);
+    // Ключ включает id доплаты: строк с «Принять/Отклонить» на экране столько
+    // же, сколько доплат, и общий флаг зажигал бы крутилку на всех разом.
+    setBusyAction(`${fn}:${extraId}`);
     try {
       toast(t("common.confirm_in_wallet"));
       await sendAgreementGasless(walletClient, publicClient, dealAddress as `0x${string}`, fn, AGREEMENT_ABI as Abi, [BigInt(extraId)]);
       toast.success(fn === 'acceptExtra' ? 'Extra accepted' : 'Extra rejected');
-      setTimeout(() => { refetchNextExtraId(); setExtrasVersion(v => v + 1); setIsFunding(false); }, 3000);
+      setTimeout(() => { refetchNextExtraId(); setExtrasVersion(v => v + 1); setBusyAction(null); }, 3000);
     } catch (err: any) {
       toast.error(err?.shortMessage || err?.message || t("common.transaction_failed"));
-      setIsFunding(false);
+      setBusyAction(null);
     }
   };
 
@@ -713,8 +720,31 @@ export default function DealDetailPage() {
 
   const statusInfo = AGREEMENT_STATUS[parsed.status] || AGREEMENT_STATUS[0];
   const amountFormatted = formatUnits(parsed.amount, 6);
-  const busy = isFunding;
+  // Блокировка — общая (одна сделка, один кошелёк), крутилка — адресная.
+  const busy = busyAction !== null;
+  const spinning = (key: string) => busyAction === key;
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+
+  // Условия показа каждой кнопки — по одному разу, здесь, а не только в
+  // разметке. Карточка «Действия» раньше рисовалась по одному лишь признаку
+  // «я сторона и сделка не закрыта» и в половине состояний (спор с живым
+  // сроком, на который уже откликнулись, — снято владельцем) оставалась
+  // пустой рамкой с заголовком и ничем внутри.
+  const canFund            = parsed.status === 0 && isClient;
+  const canActivate        = parsed.status === 1 && isExecutor;
+  const canMarkDone        = parsed.status === 2 && isExecutor && parsed.markedDoneAt === BigInt(0);
+  const canRelease         = parsed.status === 2 && isClient && parsed.markedDoneAt > BigInt(0) && !autoApproveWindowPassed;
+  const canRaiseDispute    = parsed.status === 2 && (isClient || isExecutor);
+  const canResolveDispute  = parsed.status === 4 && isArbiter;
+  const canTimeoutActivate = parsed.status === 1 && isParty && activationWindowPassed;
+  const canTimeoutDeadline = parsed.status === 2 && isParty && parsed.markedDoneAt === BigInt(0) && timeLeft === BigInt(0);
+  const canTimeoutArbiter  = parsed.status === 4 && isParty && arbiterTimeLeft === BigInt(0);
+  const canRespond         = myResponsePending && responseWindowOpen;
+  const canTimeoutApprove  = parsed.status === 2 && isParty && autoApproveWindowPassed;
+  const hasAnyAction =
+    canFund || canActivate || canMarkDone || canRelease || canRaiseDispute ||
+    canResolveDispute || canTimeoutActivate || canTimeoutDeadline ||
+    canTimeoutArbiter || canRespond || canTimeoutApprove;
 
   return (
     <>
@@ -998,7 +1028,7 @@ export default function DealDetailPage() {
         )}
 
         {/* ── Primary actions ─────────────────────────────────────────────────── */}
-        {!isTerminal && isConnected && (isParty || isArbiter) && (
+        {!isTerminal && isConnected && (isParty || isArbiter) && hasAnyAction && (
           <div
             className="rounded-[22px] border border-white/[0.08] bg-[#0d0d0f] px-5 py-4"
             style={{ boxShadow: "0 2px 12px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)" }}
@@ -1028,10 +1058,10 @@ export default function DealDetailPage() {
             )}
 
             <div className="flex flex-wrap gap-2">
-              {parsed.status === 0 && isClient && (
+              {canFund && (
                 <div className="flex flex-col gap-1.5 w-full">
                   <Button size="sm" onClick={handleFund} disabled={busy || !!usdcShortfall}>
-                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
+                    {spinning('fund') ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
                     {t("deal.fund_btn")}
                   </Button>
                   {usdcShortfall !== undefined && (
@@ -1041,19 +1071,19 @@ export default function DealDetailPage() {
                   )}
                 </div>
               )}
-              {parsed.status === 1 && isExecutor && (
+              {canActivate && (
                 <Button size="sm" onClick={() => handleAction('activate', t("deal.activate_success"))} disabled={busy}>
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Shield className="w-3.5 h-3.5 mr-1.5" />}
+                  {spinning('activate') ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Shield className="w-3.5 h-3.5 mr-1.5" />}
                   {t("deal.activate_btn")}
                 </Button>
               )}
-              {parsed.status === 2 && isExecutor && parsed.markedDoneAt === BigInt(0) && (
+              {canMarkDone && (
                 <Button size="sm" onClick={() => handleAction('markDone', t("deal.mark_done_success"))} disabled={busy}>
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
+                  {spinning('markDone') ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
                   {t("deal.mark_done_btn")}
                 </Button>
               )}
-              {parsed.status === 2 && isClient && parsed.markedDoneAt > BigInt(0) && !autoApproveWindowPassed && (
+              {canRelease && (
                 <div className="flex flex-col gap-1.5">
                   {autoApproveSecondsLeft !== undefined && (
                     <p className="text-xs text-white/35">
@@ -1061,62 +1091,71 @@ export default function DealDetailPage() {
                     </p>
                   )}
                   <Button size="sm" onClick={() => handleAction('release', t("deal.release_success"))} disabled={busy}>
-                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
+                    {spinning('release') ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
                     {t("deal.release_funds_btn")}
                   </Button>
                 </div>
               )}
-              {parsed.status === 2 && (isClient || isExecutor) && (
+              {canRaiseDispute && (
                 <Button size="sm" variant="destructive" onClick={() => setDisputeModal(true)} disabled={busy}>
-                  <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />
+                  {spinning('raiseDispute')
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                    : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
                   {t("deal.dispute_btn")}
                 </Button>
               )}
-              {parsed.status === 4 && isArbiter && (
+              {canResolveDispute && (
                 <>
                   <Button size="sm" variant="destructive" disabled={busy}
-                    onClick={() => handleAction('resolveDispute', t("deal.refund_success"), [true])}>
+                    onClick={() => handleAction('resolveDispute', t("deal.refund_success"), [true], 'resolveDispute:client')}>
+                    {spinning('resolveDispute:client') && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                     {t("deal.refund_client_btn")}
                   </Button>
                   <Button size="sm" disabled={busy}
-                    onClick={() => handleAction('resolveDispute', t("deal.pay_executor_success"), [false])}>
+                    onClick={() => handleAction('resolveDispute', t("deal.pay_executor_success"), [false], 'resolveDispute:executor')}>
+                    {spinning('resolveDispute:executor') && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                     {t("deal.pay_executor_btn")}
                   </Button>
                 </>
               )}
               {/* Timeout actions — only shown when window has actually expired */}
-              {parsed.status === 1 && isParty && activationWindowPassed && (
+              {canTimeoutActivate && (
                 <Button size="sm" variant="ghost" className="text-orange-400/60 hover:text-orange-400"
                   onClick={() => handleAction('triggerActivationTimeout', t("deal.timeout_activation_success"))}
                   disabled={busy}>
+                  {spinning('triggerActivationTimeout') && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                   {t("deal.timeout_activation")}
                 </Button>
               )}
-              {parsed.status === 2 && isParty && parsed.markedDoneAt === BigInt(0) && timeLeft === BigInt(0) && (
+              {canTimeoutDeadline && (
                 <Button size="sm" variant="ghost" className="text-orange-400/60 hover:text-orange-400"
                   onClick={() => handleAction('triggerDeadlineTimeout', t("deal.timeout_deadline_success"))}
                   disabled={busy}>
+                  {spinning('triggerDeadlineTimeout') && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                   {t("deal.timeout_deadline")}
                 </Button>
               )}
-              {parsed.status === 4 && isParty && arbiterTimeLeft === BigInt(0) && (
+              {canTimeoutArbiter && (
                 <Button size="sm" variant="ghost" className="text-orange-400/60 hover:text-orange-400"
                   onClick={() => handleAction('triggerArbiterTimeout', arbiterTimeout.successToast)}
                   disabled={busy}>
+                  {spinning('triggerArbiterTimeout') && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                   {arbiterTimeout.buttonLabel}
                 </Button>
               )}
-              {myResponsePending && responseWindowOpen && (
+              {canRespond && (
                 <Button size="sm" variant="secondary"
                   onClick={() => handleAction('respondToDispute', t("deal.dispute_respond_success"))}
                   disabled={busy}>
+                  {spinning('respondToDispute') && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                   {t("deal.dispute_respond_btn")}
                 </Button>
               )}
-              {parsed.status === 2 && isParty && autoApproveWindowPassed && (
+              {canTimeoutApprove && (
                 <Button size="sm" variant="ghost" className="text-white/40"
                   onClick={() => handleAction('triggerAutoApprove', t("deal.timeout_auto_approve_success"))}
                   disabled={busy}>
+                  {spinning('triggerAutoApprove') && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                   {t("deal.timeout_auto_approve")}
                 </Button>
               )}
@@ -1162,7 +1201,7 @@ export default function DealDetailPage() {
                 />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={handleProposeExtra} disabled={!proposeAmount || busy}>
-                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                    {spinning('proposeExtra') ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
                     Confirm & Lock USDC
                   </Button>
                   <Button size="sm" variant="ghost" className="text-white/40" onClick={() => { setProposeModal(false); setProposeAmount(''); setProposeDesc(''); }}>
@@ -1193,9 +1232,11 @@ export default function DealDetailPage() {
                       {ex.status === 0 && isExecutor && (
                         <div className="flex gap-1.5 flex-shrink-0">
                           <Button size="sm" className="h-6 px-2 text-xs" onClick={() => handleExtraAction('acceptExtra', ex.id)} disabled={busy}>
+                            {spinning(`acceptExtra:${ex.id}`) && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
                             Accept
                           </Button>
                           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-white/40" onClick={() => handleExtraAction('rejectExtra', ex.id)} disabled={busy}>
+                            {spinning(`rejectExtra:${ex.id}`) && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
                             Reject
                           </Button>
                         </div>
@@ -1255,7 +1296,7 @@ export default function DealDetailPage() {
                 </p>
                 <Button size="sm" onClick={handleFundDispute} disabled={busy}
                   className="bg-violet-500/90 hover:bg-violet-500 text-white">
-                  {busy
+                  {spinning('fundDispute')
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
                     : <DollarSign className="w-3.5 h-3.5 mr-1.5" />}
                   {t("deal.fund_dispute_btn", { amount: usdcExact(disputeTopUp) })}
@@ -1270,25 +1311,27 @@ export default function DealDetailPage() {
               <p className="text-xs text-white/35 mb-3">{t("deal.fund_dispute_funded")}</p>
             )}
 
-            <div className="flex gap-2">
-              {parsed.arbiter !== ZERO_ADDR && realArbiter && (
-                // realArbiter, not parsed.arbiter — see the PartyRow comment above.
-                // Without this the link went straight to the Diamond contract's own
-                // address, never reaching the person actually deciding the case.
+            {/* Осталась одна кнопка чата, и она ведёт к арбитру — то есть к
+                собеседнику, которого больше нигде на странице нет. Вторая,
+                «Чат сделки», убрана: чат по самой сделке уже стоит отдельной
+                карточкой выше («Открыть чат», тот же контрагент), а вела она
+                не в чат сделки, а в личку владельцу диамонда — адресату,
+                которого в протоколе без администраторов не существует.
+                Подпись — своя (`deal.chat_arbiter_btn`): раньше здесь стоял
+                ключ со страницы арбитра, и стороне спора писало «Чат с
+                клиентом», даже когда она сама и была клиентом. */}
+            {parsed.arbiter !== ZERO_ADDR && realArbiter && (
+              // realArbiter, not parsed.arbiter — see the PartyRow comment above.
+              // Without this the link went straight to the Diamond contract's own
+              // address, never reaching the person actually deciding the case.
+              <div className="flex gap-2">
                 <Link href={`/chat?peer=${realArbiter}`}>
                   <Button size="sm" variant="outline" className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs">
-                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("arbiter.chat_client_btn")}
+                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("deal.chat_arbiter_btn")}
                   </Button>
                 </Link>
-              )}
-              {adminAddress && adminAddress !== ZERO_ADDR && (
-                <Link href={`/chat?peer=${adminAddress.toLowerCase()}`}>
-                  <Button size="sm" variant="ghost" className="text-white/40 text-xs">
-                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> {t("arbiter.deal_chat_btn")}
-                  </Button>
-                </Link>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1338,9 +1381,16 @@ export default function DealDetailPage() {
                   step.done ? 'bg-green-500 border-green-500' : 'bg-transparent border-white/20'
                 }`} />
                 {/* Content */}
+                {/* `step.ts && …` вместо явного сравнения печатало голый ноль:
+                    при `0n` выражение схлопывается в сам `0n`, а React с 18-й
+                    версии рисует BigInt текстом — на экране выходило «Сдано 0»
+                    и «Решена 0» вместо «событие не наступило». Ноль отдаётся
+                    formatTimestamp, который для него и написан («—»); у шага
+                    «Создана» метки нет вовсе (ts === null), там по-прежнему
+                    пусто. */}
                 <div className="flex items-baseline gap-2 flex-1">
                   <span className={`text-xs ${step.done ? 'text-white/70' : 'text-white/25'}`}>{step.label}</span>
-                  {step.ts && BigInt(step.ts) > 0n && (
+                  {step.ts !== null && (
                     <span className="text-[11px] text-white/25 ml-auto">{formatTimestamp(step.ts)}</span>
                   )}
                 </div>
@@ -1396,7 +1446,7 @@ export default function DealDetailPage() {
                   {t("common.cancel")}
                 </Button>
                 <Button size="sm" variant="destructive" onClick={handleRaiseDispute} disabled={busy || !disputeReason.trim()}>
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
+                  {spinning('raiseDispute') ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
                   {t("deal.confirm_dispute_btn")}
                 </Button>
               </div>

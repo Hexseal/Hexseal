@@ -430,6 +430,7 @@
     "pay_executor_btn": "Ausführenden bezahlen",
     "pay_executor_success": "Streit gelöst · Mittel an Ausführenden gezahlt.",
     "chat_title": "Deal-Chat",
+    "chat_arbiter_btn": "Chat mit dem Schiedsrichter",
     "chat_desc": "Ende-zu-Ende verschlüsselter Gruppenchat zwischen Kunde, Ausführendem und Schlichter",
     "dispute_active": "Streit aktiv",
     "dispute_active_hint": "Schlichter wurde benachrichtigt. Chatte mit ihm zur Lösung.",

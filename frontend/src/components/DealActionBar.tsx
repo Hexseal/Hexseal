@@ -43,7 +43,14 @@ export function DealActionBar({ agreementAddr }: Props) {
   // «Refunded!» там, где котёл делится пополам.
   const t = useTranslations();
 
-  const [busy, setBusy]                   = useState(false);
+  // Ключ действия, а не «занято хоть чем-то»: в баре одновременно стоят
+  // несколько кнопок (спор + таймаут, отклик на спор + доплаты, Accept/Reject
+  // на каждую доплату), и общий булев флаг зажигал крутилку сразу на всех — то
+  // же, что владелец снял на странице сделки. Блокировка остаётся общей: одна
+  // сделка, один кошелёк. `busyKey` в run() отделён от `fn`, потому что за
+  // resolveDispute и за парой Accept/Reject стоит по нескольку разных кнопок.
+  const [busy, setBusy]                   = useState<string | null>(null);
+  const isBusy = busy !== null;
   const [disputeModal, setDisputeModal]   = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
 
@@ -197,9 +204,11 @@ export function DealActionBar({ agreementAddr }: Props) {
   // Возвращает true/false по успеху — тот же контракт, что и handleAction на
   // странице сделки, нужен вызывающим, которые дожидаются подтверждения перед
   // своим собственным refetch (кнопка отклика на спор ниже).
-  const run = async (fn: string, successMsg: string, args: unknown[] = []): Promise<boolean> => {
+  const run = async (
+    fn: string, successMsg: string, args: unknown[] = [], busyKey: string = fn,
+  ): Promise<boolean> => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return false; }
-    setBusy(true);
+    setBusy(busyKey);
     try {
       toast('Signing transaction…');
       await sendAgreementGasless(walletClient, publicClient, agreementAddr as `0x${string}`, fn, AGREEMENT_ABI as Abi, args);
@@ -227,43 +236,43 @@ export function DealActionBar({ agreementAddr }: Props) {
       // same/related action re-fire against state that had already moved on
       // (wasting a signature on a guaranteed on-chain revert).
       if (fn === 'acceptExtra' || fn === 'rejectExtra') {
-        setTimeout(() => { refetchExtras(); setBusy(false); }, 2000);
+        setTimeout(() => { refetchExtras(); setBusy(null); }, 2000);
       } else if (fn === 'respondToDispute') {
         // Same lag, same fix: an immediate refetch here would race the same
         // load-balanced-RPC read-after-write gap as `refetch()` below — the
         // flag would come back stale `false`, the button would stay visible
         // past its own success, and a second click would burn a signature on
         // a guaranteed AlreadyResponded revert.
-        setTimeout(() => { refetch(); refetchClientResponded(); refetchExecutorResponded(); setBusy(false); }, 2000);
+        setTimeout(() => { refetch(); refetchClientResponded(); refetchExecutorResponded(); setBusy(null); }, 2000);
       } else {
-        setTimeout(() => { refetch(); setBusy(false); }, 2000);
+        setTimeout(() => { refetch(); setBusy(null); }, 2000);
       }
       return true;
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Transaction failed');
-      setBusy(false);
+      setBusy(null);
       return false;
     }
   };
 
   const handleFund = async () => {
     if (!walletClient || !publicClient || !parsed) { toast.error('Wallet not connected'); return; }
-    setBusy(true);
+    setBusy('fund');
     try {
       toast('Sign 1/2: USDC permit in wallet…');
       await fundAgreementGasless(walletClient, publicClient, agreementAddr as `0x${string}`, parsed.amount);
       toast.success('Deal funded!');
-      setTimeout(() => { refetch(); setBusy(false); }, 4000);
+      setTimeout(() => { refetch(); setBusy(null); }, 4000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       const msg = e?.shortMessage || e?.message || 'Fund failed';
       if (msg.includes('AlreadyFunded')) {
         toast.error('Already funded — refreshing…');
-        setTimeout(() => { refetch(); setBusy(false); }, 1000);
+        setTimeout(() => { refetch(); setBusy(null); }, 1000);
       } else {
         toast.error(msg);
-        setBusy(false);
+        setBusy(null);
       }
     }
   };
@@ -276,7 +285,7 @@ export function DealActionBar({ agreementAddr }: Props) {
       return;
     }
     const amountParsed = BigInt(Math.round(parsed_ * 1e6));
-    setBusy(true);
+    setBusy('proposeExtra');
     try {
       toast('Sign 1/2: USDC permit in wallet…');
       // Agreement.sol stores extraTerms verbatim (never hashed) as Extra.terms —
@@ -288,11 +297,11 @@ export function DealActionBar({ agreementAddr }: Props) {
       setExtraModal(false);
       setProposeAmount('');
       setProposeDesc('');
-      setTimeout(() => { refetchExtras(); setBusy(false); }, 3000);
+      setTimeout(() => { refetchExtras(); setBusy(null); }, 3000);
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Failed to propose extra');
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -304,7 +313,7 @@ export function DealActionBar({ agreementAddr }: Props) {
     // for the whole signMessage wait, letting it reopen the modal and fire a
     // second, concurrent raiseDispute attempt. run() still clears this — either
     // in its delayed success callback or in its catch block.
-    setBusy(true);
+    setBusy('raiseDispute');
     if (disputeReason.trim()) {
       try {
         const ts = Math.floor(Date.now() / 1000);
@@ -377,57 +386,62 @@ export function DealActionBar({ agreementAddr }: Props) {
           <span className="text-[11px] text-white/20">·</span>
 
           {s === 0 && isClient && (
-            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={handleFund} disabled={busy}>
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <DollarSign className="w-3 h-3" />}
+            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={handleFund} disabled={isBusy}>
+              {busy === 'fund' ? <Loader2 className="w-3 h-3 animate-spin" /> : <DollarSign className="w-3 h-3" />}
               Fund
             </Button>
           )}
           {s === 1 && isExecutor && (
-            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={() => run('activate', 'Activated!')} disabled={busy}>
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={() => run('activate', 'Activated!')} disabled={isBusy}>
+              {busy === 'activate' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
               Activate
             </Button>
           )}
           {s === 2 && isExecutor && parsed.markedDoneAt === 0n && (
-            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={() => run('markDone', 'Marked as done!')} disabled={busy}>
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={() => run('markDone', 'Marked as done!')} disabled={isBusy}>
+              {busy === 'markDone' ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
               Mark Done
             </Button>
           )}
           {s === 2 && isClient && parsed.markedDoneAt > 0n && (
-            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={() => run('release', 'Funds released!')} disabled={busy}>
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+            <Button size="sm" className="h-7 text-xs gap-1 px-2.5" onClick={() => run('release', 'Funds released!')} disabled={isBusy}>
+              {busy === 'release' ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
               Release
             </Button>
           )}
           {s === 2 && (isClient || isExecutor) && (
-            <Button size="sm" variant="destructive" className="h-7 text-xs gap-1 px-2.5" onClick={() => setDisputeModal(true)} disabled={busy}>
+            <Button size="sm" variant="destructive" className="h-7 text-xs gap-1 px-2.5" onClick={() => setDisputeModal(true)} disabled={isBusy}>
               <AlertTriangle className="w-3 h-3" />
               Dispute
             </Button>
           )}
           {s === 4 && isArbiter && (
             <>
-              <Button size="sm" variant="destructive" className="h-7 text-xs px-2.5" onClick={() => run('resolveDispute', 'Refunded!', [true])} disabled={busy}>
+              <Button size="sm" variant="destructive" className="h-7 text-xs px-2.5" onClick={() => run('resolveDispute', 'Refunded!', [true], 'resolveDispute:client')} disabled={isBusy}>
+                {busy === 'resolveDispute:client' && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
                 Refund Client
               </Button>
-              <Button size="sm" className="h-7 text-xs px-2.5" onClick={() => run('resolveDispute', 'Paid executor!', [false])} disabled={busy}>
+              <Button size="sm" className="h-7 text-xs px-2.5" onClick={() => run('resolveDispute', 'Paid executor!', [false], 'resolveDispute:executor')} disabled={isBusy}>
+                {busy === 'resolveDispute:executor' && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
                 Pay Executor
               </Button>
             </>
           )}
           {s === 1 && isParty && activationExpired && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerActivationTimeout', 'Refunded!')} disabled={busy}>
+            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerActivationTimeout', 'Refunded!')} disabled={isBusy}>
+              {busy === 'triggerActivationTimeout' && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
               Timeout → Refund
             </Button>
           )}
           {s === 2 && isParty && parsed.markedDoneAt === 0n && deadlineExpired && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerDeadlineTimeout', 'Refunded!')} disabled={busy}>
+            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerDeadlineTimeout', 'Refunded!')} disabled={isBusy}>
+              {busy === 'triggerDeadlineTimeout' && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
               Deadline → Refund
             </Button>
           )}
           {s === 4 && isParty && arbiterExpired && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerArbiterTimeout', arbiterTimeout.successToast)} disabled={busy}>
+            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-orange-400/60 hover:text-orange-400" onClick={() => run('triggerArbiterTimeout', arbiterTimeout.successToast)} disabled={isBusy}>
+              {busy === 'triggerArbiterTimeout' && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
               {arbiterTimeout.buttonLabel}
             </Button>
           )}
@@ -440,12 +454,14 @@ export function DealActionBar({ agreementAddr }: Props) {
             <Button size="sm" variant="secondary" className="h-7 text-xs px-2.5"
               title={responseDeadline ? t("deal.dispute_respond_prompt", { date: responseDeadline.toLocaleString() }) : undefined}
               onClick={() => run('respondToDispute', t("deal.dispute_respond_success"))}
-              disabled={busy}>
+              disabled={isBusy}>
+              {busy === 'respondToDispute' && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
               {t("deal.dispute_respond_btn")}
             </Button>
           )}
           {s === 2 && parsed.markedDoneAt > 0n && autoApproveExpired && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-white/40 hover:text-white/70" onClick={() => run('triggerAutoApprove', 'Auto-approved!')} disabled={busy}>
+            <Button size="sm" variant="ghost" className="h-7 text-xs px-2.5 text-white/40 hover:text-white/70" onClick={() => run('triggerAutoApprove', 'Auto-approved!')} disabled={isBusy}>
+              {busy === 'triggerAutoApprove' && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
               Auto-approve
             </Button>
           )}
@@ -457,7 +473,7 @@ export function DealActionBar({ agreementAddr }: Props) {
               variant="ghost"
               className="h-7 text-xs gap-1 px-2 text-emerald-400/60 hover:text-emerald-400 hover:bg-emerald-400/10"
               onClick={() => setExtraModal(true)}
-              disabled={busy}
+              disabled={isBusy}
             >
               <Plus className="w-3 h-3" />
               Extra
@@ -513,18 +529,20 @@ export function DealActionBar({ agreementAddr }: Props) {
                     <Button
                       size="sm"
                       className="h-5 px-2 text-[10px] ml-auto"
-                      onClick={() => run('acceptExtra', 'Extra accepted!', [BigInt(ex.id)])}
-                      disabled={busy}
+                      onClick={() => run('acceptExtra', 'Extra accepted!', [BigInt(ex.id)], `acceptExtra:${ex.id}`)}
+                      disabled={isBusy}
                     >
+                      {busy === `acceptExtra:${ex.id}` && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
                       Accept
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-5 px-2 text-[10px] text-white/35"
-                      onClick={() => run('rejectExtra', 'Extra rejected', [BigInt(ex.id)])}
-                      disabled={busy}
+                      onClick={() => run('rejectExtra', 'Extra rejected', [BigInt(ex.id)], `rejectExtra:${ex.id}`)}
+                      disabled={isBusy}
                     >
+                      {busy === `rejectExtra:${ex.id}` && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
                       Reject
                     </Button>
                   </>
@@ -588,9 +606,9 @@ export function DealActionBar({ agreementAddr }: Props) {
                 size="sm"
                 className="gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white"
                 onClick={handleProposeExtra}
-                disabled={busy || !proposeAmount}
+                disabled={isBusy || !proposeAmount}
               >
-                {busy
+                {busy === 'proposeExtra'
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   : <DollarSign className="w-3.5 h-3.5" />
                 }
@@ -637,8 +655,8 @@ export function DealActionBar({ agreementAddr }: Props) {
               <Button size="sm" variant="ghost" onClick={() => { setDisputeModal(false); setDisputeReason(''); }}>
                 Cancel
               </Button>
-              <Button size="sm" variant="destructive" onClick={handleRaiseDispute} disabled={busy || !disputeReason.trim()}>
-                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
+              <Button size="sm" variant="destructive" onClick={handleRaiseDispute} disabled={isBusy || !disputeReason.trim()}>
+                {busy === 'raiseDispute' ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
                 Confirm
               </Button>
             </div>

@@ -216,7 +216,7 @@ export default function PostJobPage() {
       if (address) {
         pushNotif(address, {
           type: "job_posted",
-          title: "Job Posted! 📋",
+          title: "Job Posted!",
           body: `Your job${parsedJobId ? ` #${parsedJobId}` : ""} is live — executors can now apply.`,
           link: "/dashboard",
           txHash: hash,

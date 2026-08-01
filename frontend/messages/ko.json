@@ -430,6 +430,7 @@
     "pay_executor_btn": "실행자 지급",
     "pay_executor_success": "분쟁 해결 · 실행자에게 자금이 지급되었습니다.",
     "chat_title": "계약 채팅",
+    "chat_arbiter_btn": "중재자와 채팅",
     "chat_desc": "클라이언트, 실행자, 중재자 간의 암호화된 그룹 채팅",
     "dispute_active": "분쟁 진행 중",
     "dispute_active_hint": "중재자에게 알림이 갔습니다. 해결을 위해 채팅하세요.",

@@ -430,6 +430,7 @@
     "pay_executor_btn": "受注者に支払い",
     "pay_executor_success": "紛争解決 · 受注者に支払い完了。",
     "chat_title": "契約チャット",
+    "chat_arbiter_btn": "仲裁人とチャット",
     "chat_desc": "クライアント、受注者、仲裁人の暗号化グループチャット",
     "dispute_active": "紛争進行中",
     "dispute_active_hint": "仲裁人に通知済み。解決のためにチャットしてください。",
