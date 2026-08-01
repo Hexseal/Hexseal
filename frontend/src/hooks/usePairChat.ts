@@ -82,7 +82,16 @@ export function usePairChat(peerAddress: string) {
   useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
 
   useEffect(() => {
-    if (!address || !peerAddress || status !== 'ready') { setIsLoading(false); return; }
+    // Ранний выход обязан ЧИСТИТЬ ошибку, а не только гасить спиннер. Иначе
+    // строка «Не удалось подключиться · Messaging not initialized», записанная
+    // прошлым прогоном, висела поверх чата до тех пор, пока XMTP снова не
+    // станет 'ready' — то есть после смены аккаунта в кошельке человек читал
+    // отказ о том, чего сейчас никто и не пробовал сделать.
+    if (!address || !peerAddress || status !== 'ready') {
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
 
     let cancelled = false;
     // Бюджет авто-переподключения обнуляется только при смене САМОГО соединения
@@ -344,13 +353,23 @@ export function usePairChat(peerAddress: string) {
       : undefined;
     const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex, chunkedOpts, fileKey);
 
+    const optId = `opt-${Date.now()}`;
     setMessages(prev => [...prev, {
-      id: `opt-${Date.now()}`, from: myAddress, text: file.name,
+      id: optId, from: myAddress, text: file.name,
       attachment: { name: file.name, url, fileKey, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex, ...chunkedOpts },
       timestamp: Date.now(), isFromMe: true,
     }]);
 
-    await group.sendText(encoded);
+    // Тот же снимающий catch, что и в sendMessage. Без него провал отправки
+    // (собеседник потерял установку, сеть отвалилась) оставлял оптимистичный
+    // пузырь висеть «отправленным»: человек видел файл в переписке, а
+    // собеседник не получал ничего и никогда.
+    try {
+      await group.sendText(encoded);
+    } catch (err) {
+      setMessages(prev => prev.filter(m => m.id !== optId));
+      throw err;
+    }
     notifyPush(peerRef.current, `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
     // Re-run the open effect so the brand-new group gets its message stream.
     if (created) setRetryKey(k => k + 1);

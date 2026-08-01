@@ -19,9 +19,11 @@ import { quoteFeeLocal } from '@/lib/fee';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, CheckCheck, Paperclip, FileText, ExternalLink, Lock,
-  ChevronDown, Download, Search, X, Clock,
+  ChevronDown, Download, Search, X, Clock, Archive, RotateCw,
 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/xmtp';
+import { useXmtpFailureText } from '@/hooks/useXmtpFailureText';
+import { classifyAttachmentFailure, type AttachmentFailure } from '@/lib/attachmentFailure';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE, isTrustedAttachmentUrl } from '@/lib/fileCrypto';
 import { MAX_FILE_SIZE, refreshDownloadUrl } from '@/lib/fileStorage';
 import { useProfile } from '@/hooks/useProfile';
@@ -50,10 +52,14 @@ function isImageMime(mime?: string) {
 
 // ─── Attachment components ────────────────────────────────────────────────────
 
-function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean }) {
+function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
   const [src, setSrc]               = useState<string | null>(null);
   const [decrypting, setDecrypting] = useState(false);
-  const [decryptErr, setDecryptErr] = useState(false);
+  // Не булево «не вышло», а ЧТО именно не вышло: истёкший срок хранения и
+  // сломанная расшифровка — разные события, и лечатся они по-разному (первое —
+  // «попроси прислать заново», второе — настоящая поломка). Разбор —
+  // `lib/attachmentFailure.ts`.
+  const [failure, setFailure]       = useState<AttachmentFailure | null>(null);
   const [lightbox, setLightbox]     = useState(false);
   const t = useTranslations();
 
@@ -62,7 +68,7 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
       // Unencrypted attachments have no decrypt step to gate the fetch — an
       // untrusted url must never even be handed to <img src>, since that loads
       // with zero user interaction the instant this renders.
-      if (!isTrustedAttachmentUrl(a.url)) { setDecryptErr(true); return; }
+      if (!isTrustedAttachmentUrl(a.url)) { setFailure('decrypt_failed'); return; }
       setSrc(a.url);
       return;
     }
@@ -71,20 +77,23 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
     const tryDecrypt = (url: string) => decryptToObjectUrl(url, a.key!, a.iv!, a.mime);
     tryDecrypt(a.url)
       .then((url) => { if (active) setSrc(url); })
-      .catch(async () => {
+      .catch(async (err: unknown) => {
         if (a.fileKey) {
           try {
             const fresh = await refreshDownloadUrl(a.fileKey);
             const url = await tryDecrypt(fresh);
             if (active) setSrc(url);
             return;
-          } catch {}
+          } catch (retryErr) {
+            if (active) setFailure(classifyAttachmentFailure(retryErr, { sentAt }));
+            return;
+          }
         }
-        if (active) setDecryptErr(true);
+        if (active) setFailure(classifyAttachmentFailure(err, { sentAt }));
       })
       .finally(() => { if (active) setDecrypting(false); });
     return () => { active = false; };
-  }, [a.url, a.key, a.iv, a.mime, a.fileKey]);
+  }, [a.url, a.key, a.iv, a.mime, a.fileKey, sentAt]);
 
   const rounded = isMe ? 'rounded-t-2xl rounded-bl-2xl rounded-br-sm' : 'rounded-t-2xl rounded-br-2xl rounded-bl-sm';
 
@@ -95,7 +104,13 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
     </div>
   );
 
-  if (decryptErr || !src) return (
+  if (failure === 'expired') return (
+    <div className={`w-full max-w-[220px] h-[80px] ${rounded} border border-white/[0.08] bg-white/[0.02] flex items-center justify-center px-3 text-center`}>
+      <span className="text-xs text-white/30">{t("chat.file_expired_image")}</span>
+    </div>
+  );
+
+  if (failure || !src) return (
     <div className={`w-full max-w-[220px] h-[80px] ${rounded} border border-red-500/20 bg-red-500/5 flex items-center justify-center`}>
       <span className="text-xs text-red-400/50">{t("chat.decrypt_failed_image")}</span>
     </div>
@@ -118,20 +133,22 @@ function ImageBubble({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; i
   );
 }
 
-function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean }) {
+function FileCard({ a, isMe, sentAt }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
   const [saving,     setSaving]     = useState(false);
-  const [err,        setErr]        = useState(false);
+  // См. тот же комментарий в ImageBubble: «истёк срок хранения» и «не удалось
+  // расшифровать» больше не выглядят одинаково.
+  const [failure,    setFailure]    = useState<AttachmentFailure | null>(null);
   const [dlProgress, setDlProgress] = useState<number | null>(null);
   const t = useTranslations();
 
   const handleDownload = async () => {
     if (saving) return;
     if (!a.key || !a.iv) {
-      if (!isTrustedAttachmentUrl(a.url)) { setErr(true); return; }
+      if (!isTrustedAttachmentUrl(a.url)) { setFailure('decrypt_failed'); return; }
       window.open(a.url, '_blank', 'noopener');
       return;
     }
-    setSaving(true); setErr(false); setDlProgress(0);
+    setSaving(true); setFailure(null); setDlProgress(0);
 
     const doDownload = async (url: string) => {
       if (a.chunked && a.chunkCount && a.size) {
@@ -143,15 +160,15 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
 
     try {
       await doDownload(a.url);
-    } catch {
+    } catch (err: unknown) {
       // URL might be stale — reconstruct from fileKey if available
       if (a.fileKey) {
         try {
           const fresh = await refreshDownloadUrl(a.fileKey);
           await doDownload(fresh);
-        } catch { setErr(true); }
+        } catch (retryErr) { setFailure(classifyAttachmentFailure(retryErr, { sentAt })); }
       } else {
-        setErr(true);
+        setFailure(classifyAttachmentFailure(err, { sentAt }));
       }
     } finally {
       setSaving(false); setDlProgress(null);
@@ -170,7 +187,8 @@ function FileCard({ a, isMe }: { a: NonNullable<ChatMessage['attachment']>; isMe
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-white/85 truncate leading-tight">{a.name}</p>
         <p className="text-[11px] text-white/35 mt-0.5">
-          {err ? <span className="text-red-400/70">{t("chat.decrypt_failed")}</span>
+          {failure === 'expired' ? <span className="text-white/40">{t("chat.file_expired")}</span>
+               : failure ? <span className="text-red-400/70">{t("chat.decrypt_failed")}</span>
                : dlProgress !== null ? <span className="text-primary/70">{t("chat.decrypting")} {dlProgress}%</span>
                : a.size != null ? formatBytes(a.size)
                : a.key ? t("chat.click_to_save") : t("chat.click_to_open")}
@@ -244,32 +262,54 @@ function DateDivider({ ts }: { ts: number }) {
   );
 }
 
-function XmtpStatusBar() {
-  const { status, error, retry, disable } = useXmtp();
+/** Полоса на месте поля ввода, пока мессенджер не готов.
+ *
+ *  `explained` = «то же самое уже написано крупно в центре панели». Тогда
+ *  полоса оставляет только ДЕЙСТВИЕ (отмена/включить) и молчит: иначе один и тот
+ *  же текст с одной и той же кнопкой стоял бы на экране дважды — в центре и
+ *  внизу. Текст полосы остаётся, когда центр занят историей переписки и
+ *  объяснить состояние больше негде. */
+function XmtpStatusBar({ explained = false }: { explained?: boolean }) {
+  const { status, retry, cancel } = useXmtp();
+  const failureText = useXmtpFailureText();
+  const t = useTranslations();
+
   if (status === 'loading') {
     return (
       <div className="flex items-center justify-center gap-2 px-4 py-3 border-t border-white/[0.06]">
-        <div className="w-4 h-4 border-2 border-white/20 border-t-white/50 rounded-full animate-spin flex-shrink-0" />
-        <span className="text-xs text-white/30">Подключение мессенджера…</span>
+        {!explained && (
+          <>
+            <div className="w-4 h-4 border-2 border-white/20 border-t-white/50 rounded-full animate-spin flex-shrink-0" />
+            <span className="text-xs text-white/30">{t("chat.connecting_messenger")}</span>
+          </>
+        )}
+        {/* Именно cancel(), а не disable(): кнопка обещает отменить ожидание, а
+            disable() отказывался от мессенджера на всю сессию и стирал флаг
+            `xmtp-registered-*`, вместе с которым навсегда глохли внутренние
+            уведомления о сообщениях. Разбор — в шапке cancel() в XmtpContext. */}
         <button
-          onClick={disable}
+          onClick={cancel}
           className="flex-shrink-0 text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors"
         >
-          Отмена
+          {t("common.cancel")}
         </button>
       </div>
     );
   }
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-white/[0.06] bg-white/[0.02]">
-      <p className="text-xs text-white/40 truncate min-w-0">
-        {error ?? 'Мессенджер отключён'}
-      </p>
+    <div className={`flex items-center gap-3 px-4 py-3 border-t border-white/[0.06] bg-white/[0.02] ${
+      explained ? 'justify-center' : 'justify-between'
+    }`}>
+      {!explained && (
+        <p className="text-xs text-white/40 min-w-0 line-clamp-2">
+          {failureText ?? t("chat.messaging_off")}
+        </p>
+      )}
       <button
         onClick={retry}
         className="flex-shrink-0 text-xs text-white/50 hover:text-white/80 underline underline-offset-2 transition-colors"
       >
-        {error ? 'Повторить' : 'Включить'}
+        {failureText ? t("chat.retry") : t("chat.enable_messaging")}
       </button>
     </div>
   );
@@ -347,6 +387,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext, peerLastReadAt } =
     usePairChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
+  // Состояние САМОГО мессенджера — отдельно от состояния этой переписки.
+  // Раньше панель их не различала и на выключенном мессенджере крутила спиннер
+  // «Инициализация мессенджера…» рядом с надписью «Сообщений пока нет», хотя
+  // ничего не инициализировалось и инициализироваться не собиралось.
+  const { status: xmtpStatus, retry: retryXmtp } = useXmtp();
+  const xmtpFailureText = useXmtpFailureText();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
 
@@ -792,8 +838,16 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 only ever meant "my own stream is attached". The signal that actually
                 matters (a dead stream) is already surfaced by the streamDead banner. */}
             {!isLoading && error && <AlertCircle className="w-3.5 h-3.5 text-red-400/60" />}
-            <span className="flex items-center gap-1 text-[11px] text-white/20">
-              <Lock className="w-2.5 h-2.5" />E2E
+            {/* Раньше здесь стоял замок с подписью «E2E». Транспорт и правда
+                зашифрован, но замок читается как «кроме нас двоих никто не
+                прочтёт», а это неправда: бот релеера состоит в каждой парной
+                группе и весь тред ложится на диск открытым текстом — намеренно,
+                это доказательная база для арбитража. Значок не должен обещать
+                больше, чем есть (docs/OPEN-ITEMS.md, п. 25). */}
+            <span className="flex items-center gap-1 text-[11px] text-white/20"
+              title={t("chat.dispute_log_hint")}>
+              <Archive className="w-2.5 h-2.5" />
+              <span className="hidden sm:inline">{t("chat.dispute_log_badge")}</span>
             </span>
             <button onClick={toggleSearch}
               className={`p-1.5 rounded-[10px] transition-colors ${
@@ -927,10 +981,40 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
         {!isLoading && !needsSetup && !error && messages.length > 0 && <div className="flex-1" />}
         <div className="py-4">
 
-          {!isLoading && needsSetup && (
+          {/* Оба блока ниже — состояния ПУСТОГО экрана: если история уже
+              подгружена из кэша, её и надо показывать, а про мессенджер скажет
+              полоса под полем ввода (XmtpStatusBar). Иначе большой центральный
+              блок висел бы поверх нормальной переписки. */}
+
+          {/* Мессенджер действительно поднимается — вот здесь спиннер уместен. */}
+          {!isLoading && needsSetup && messages.length === 0 && xmtpStatus === 'loading' && (
             <div className="flex flex-col items-center justify-center py-16 gap-3 px-4 text-center">
               <div className="w-8 h-8 border-2 border-white/10 border-t-white/30 rounded-full animate-spin" />
-              <p className="text-sm text-white/25">Инициализация мессенджера…</p>
+              <p className="text-sm text-white/25">{t("chat.connecting_messenger")}</p>
+            </div>
+          )}
+
+          {/* Мессенджер выключен или не поднялся. Крутить спиннер здесь значило
+              бы обещать работу, которой никто не делает; человеку нужно честное
+              состояние и кнопка. */}
+          {!isLoading && needsSetup && messages.length === 0 && xmtpStatus !== 'loading' && (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 px-4 text-center">
+              <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+                <MessageCircle className="w-5 h-5 text-white/[0.15]" />
+              </div>
+              <div>
+                <p className="text-sm text-white/45 mb-1">{xmtpFailureText ?? t("chat.messaging_off")}</p>
+                {!xmtpFailureText && (
+                  <p className="text-white/25 text-xs max-w-[240px] leading-relaxed">
+                    {t("chat.messaging_off_hint")}
+                  </p>
+                )}
+              </div>
+              <button onClick={retryXmtp}
+                className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
+                {xmtpFailureText ? <RotateCw className="w-3.5 h-3.5" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                {xmtpFailureText ? t("chat.retry") : t("chat.enable_messaging")}
+              </button>
             </div>
           )}
 
@@ -951,16 +1035,29 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                     : error}
                 </p>
               </div>
-              {(error.includes('not set up') || error.includes('not registered')) && chatUrl && (
-                <button onClick={copyInvite}
+              {(error.includes('not set up') || error.includes('not registered')) ? (
+                chatUrl && (
+                  <button onClick={copyInvite}
+                    className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
+                    {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" />{t("chat.copied")}</> : <><Copy className="w-3.5 h-3.5" />{t("chat.copy_invite")}</>}
+                  </button>
+                )
+              ) : (
+                // Кнопка была только у «собеседник не зарегистрирован». На любой
+                // другой ошибке единственным выходом оставалось уйти со страницы
+                // и вернуться — то есть перезагрузка вместо повтора.
+                <button onClick={reconnect}
                   className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                  {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" />{t("chat.copied")}</> : <><Copy className="w-3.5 h-3.5" />{t("chat.copy_invite")}</>}
+                  <RotateCw className="w-3.5 h-3.5" />{t("chat.retry")}
                 </button>
               )}
             </div>
           )}
 
-          {!isLoading && !error && messages.length === 0 && (
+          {/* «Сообщений пока нет» — только когда мессенджер РАБОТАЕТ и в
+              переписке действительно пусто. При выключенном мессенджере эта
+              надпись утверждала бы то, чего никто не проверял. */}
+          {!isLoading && !error && !needsSetup && messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
               <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-white/[0.15]" />
@@ -1045,8 +1142,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                   <div className={`group max-w-[72%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                     {msg.attachment
                       ? !msg.attachment.chunked && isImageMime(msg.attachment.mime)
-                        ? <ImageBubble a={msg.attachment} isMe={isMe} />
-                        : <FileCard a={msg.attachment} isMe={isMe} />
+                        ? <ImageBubble a={msg.attachment} isMe={isMe} sentAt={msg.timestamp} />
+                        : <FileCard a={msg.attachment} isMe={isMe} sentAt={msg.timestamp} />
                       : (
                         <div className={`px-4 py-2.5 text-[15px] break-words leading-relaxed ${
                           isMe
@@ -1109,7 +1206,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
       </div>
 
       {/* Input */}
-      {needsSetup ? <XmtpStatusBar /> : <div
+      {/* explained: центральные блоки выше рисуются ровно при пустой переписке
+          и уже всё объясняют — полосе остаётся только действие. */}
+      {needsSetup ? <XmtpStatusBar explained={messages.length === 0} /> : <div
         className="flex-shrink-0 px-2 pt-1 flex flex-col gap-1 bg-black"
         style={{
           paddingBottom: '4px',

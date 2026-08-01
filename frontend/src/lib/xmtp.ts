@@ -24,6 +24,15 @@ import { withWalletLock } from '@/lib/walletLock';
 import {
   ensurePeerInGroup, blocksDelivery, PEER_UNREACHABLE_MESSAGE,
 } from '@/lib/xmtpDelivery';
+import {
+  PAIR_PREFIX,
+  pairPeerFromName,
+  isLegitimatePairMembership,
+  pickCanonicalGroup,
+  findLastVisibleMessage,
+} from '@/lib/xmtpPairGroup';
+import { acquireXmtpTabLock, releaseXmtpTabLock, dropXmtpTabLock } from '@/lib/xmtpTabLock';
+import { XMTP_TAB_BUSY } from '@/lib/xmtpErrors';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,16 +99,63 @@ const installIdKey  = (addr: string) => `xmtp-install-id-${addr.toLowerCase()}`;
 // угадывать это по разметке хранилища. Промах эвристики стоил дорого: ложное
 // «база есть» вело прямиком в `Client.create()`, а тот молча просил подпись.
 
-/** Clear XMTP session state for this address (localStorage flag + in-memory cache).
- *  OPFS keys file is intentionally kept — re-enabling won't require a wallet signature.
- *  Dispatches a DOM event so XmtpContext can react immediately.
- */
+/** Закрывает живого клиента этого адреса и выбрасывает его из кэша, НЕ трогая
+ *  флаг «мессенджер здесь включён».
+ *
+ *  ЗАКРЫТИЕ — НЕ ФОРМАЛЬНОСТЬ. У `@xmtp/browser-sdk` 7.0.0 в собственном README
+ *  написано: хранилище OPFS не поддерживает несколько одновременных
+ *  подключений, и `Client.close()` — единственный способ отпустить хэндл.
+ *  Раньше выброс из кэша шёл БЕЗ закрытия, и живой клиент не закрывался
+ *  никогда. Достаточно было сменить аккаунт в кошельке или выключить и снова
+ *  включить мессенджер, чтобы следующая инициализация упёрлась в хранилище,
+ *  которое держит её собственный предшественник: 90 секунд ожидания и
+ *  уверенный неправильный диагноз «проверь интернет». Каждая следующая попытка
+ *  добавляла ещё один незакрытый воркер — лечилось только перезагрузкой
+ *  страницы.
+ *
+ *  Заодно снимаем меж-вкладочный лок (`lib/xmtpTabLock.ts`): держать хранилище,
+ *  которым больше не пользуешься, — это соседняя вкладка без чата на пустом
+ *  месте.
+ *
+ *  Ещё летящая попытка для этого адреса помечается устаревшей: доехав, она
+ *  закроет себя сама, а не сядет в кэш поверх нашего решения. */
+export function releaseXmtpClient(address: string): void {
+  const addr = address.toLowerCase();
+  const client = _clientCache.get(addr);
+  // Снимок ДО abandonXmtpInit: тот вычищает запись, и после него «летит ли
+  // сейчас попытка» спросить уже не у кого.
+  const attemptInFlight = _initPromises.has(addr);
+  _clientCache.delete(addr);
+  abandonXmtpInit(addr);
+  if (client) {
+    try { client.close(); } catch { /* уже закрыт или так и не открылся */ }
+  }
+  // Лок отпускаем, только если хранилище действительно освободилось. Брошенная
+  // попытка держит открытый OPFS ровно до того момента, когда доедет и закроет
+  // себя сама (`Client.create()` не умеет отменяться) — вот её `finally` лок и
+  // отпустит. Отпустить раньше значит впустить соседнюю вкладку в занятое
+  // хранилище, то есть вернуть ей ту самую поломку, от которой лок и заведён.
+  if (!attemptInFlight) releaseXmtpTabLock(addr);
+}
+
+/** Полное выключение мессенджера для адреса: закрывает клиента И снимает флаг
+ *  «включён здесь».
+ *
+ *  ЗВАТЬ ТОЛЬКО НА ЯВНОЕ ВЫКЛЮЧЕНИЕ ЧЕЛОВЕКОМ. Раньше это же зналось при смене
+ *  аккаунта в кошельке — и аккаунт, с которого ушли, при возврате показывал
+ *  мессенджер выключенным, хотя его никто не выключал. Смене аккаунта нужен
+ *  `releaseXmtpClient()` выше: закрыть клиента, но не отменять решение
+ *  человека. Флаг заодно гейтит внутренние уведомления о сообщениях
+ *  (`hooks/useXmtpNotifications.ts`), так что его потеря глушит и их.
+ *
+ *  Ключи в OPFS намеренно остаются — повторное включение не потребует подписи.
+ *  Событие в DOM — чтобы XmtpContext мог отреагировать немедленно. */
 export function clearXmtpSession(address: string): void {
   const addr = address.toLowerCase();
   localStorage.removeItem(registeredKey(addr));
   localStorage.removeItem(expiryKey(addr));
   localStorage.removeItem(installIdKey(addr));
-  _clientCache.delete(addr);
+  releaseXmtpClient(addr);
   window.dispatchEvent(new CustomEvent('hexseal:xmtp-session-cleared', { detail: addr }));
 }
 
@@ -207,6 +263,37 @@ export function abandonXmtpInit(address: string): void {
   _generation.set(addr, (_generation.get(addr) ?? 0) + 1);
 }
 
+/** Отпускает меж-вкладочный лок, если охранять уже нечего: клиента нет и новой
+ *  попытки тоже. Зовётся из `finally` обеих инициализаций — держать хранилище
+ *  после провалившейся попытки значит запереть соседнюю вкладку впустую.
+ *
+ *  `dropXmtpTabLock`, а не `releaseXmtpTabLock`: ожидание освобождения снимать
+ *  здесь нельзя. Отказ «занято» как раз и ставит вкладку в очередь, а его
+ *  собственный `finally` пробегает сразу следом — сняв очередь, вкладка
+ *  осталась бы с надписью «занято» и без единого шанса узнать, что уже нет. */
+export function releaseXmtpTabLockIfIdle(address: string): void {
+  const addr = address.toLowerCase();
+  if (_clientCache.has(addr)) return;
+  if (_initPromises.has(addr)) return;
+  dropXmtpTabLock(addr);
+}
+
+/** Внутреннее короткое имя для того же самого — им пользуются оба `finally`. */
+const releaseTabLockIfIdle = releaseXmtpTabLockIfIdle;
+
+/** Берёт лок «мессенджер работает в этой вкладке» ПЕРЕД тем, как трогать
+ *  OPFS/WASM. Занято другой вкладкой — бросаем сразу и не поднимаем ничего:
+ *  каждая брошенная попытка оставляет воркер, которого потом некому закрыть
+ *  (та самая утечка, ради которой появился `releaseXmtpClient`). Разбор
+ *  политики и мягкой деградации — в шапке `lib/xmtpTabLock.ts`. */
+async function claimTabOrThrow(addr: string): Promise<void> {
+  const lock = await acquireXmtpTabLock(addr);
+  if (lock === 'busy') {
+    xmtpCrumb(`init:tab-busy ${addr.slice(0, 6)}`);
+    throw new Error(XMTP_TAB_BUSY);
+  }
+}
+
 /** Открывает УЖЕ ЗАРЕГИСТРИРОВАННУЮ личность XMTP — БЕЗ сайнера и, как
  *  следствие, без единого шанса запросить подпись кошелька.
  *
@@ -246,10 +333,16 @@ export function buildXmtpClient(address: string): Promise<Client> {
   // нет AbortSignal: если сработает наш таймаут, воркер продолжит жить. Держим
   // ссылку, чтобы закрыть клиента, если он всё-таки доедет позже.
   let rawBuild: Promise<Client> | null = null;
+  // true, когда мы сдались, но воркер опоздавшей сборки ещё жив и держит ту же
+  // базу OPFS. Пока это так, лок вкладки отпускать нельзя — см. ниже.
+  let stragglerPending = false;
 
   let promise!: Promise<Client>;
   promise = (async () => {
     try {
+      // Первым делом — лок вкладки. Именно до OPFS: смысл в том, чтобы вторая
+      // вкладка НЕ ПЫТАЛАСЬ, а не «пыталась и красиво падала».
+      await claimTabOrThrow(addr);
       // XMTP WASM требует OPFS — он есть только в защищённом контексте.
       try {
         await navigator.storage.getDirectory();
@@ -301,9 +394,17 @@ export function buildXmtpClient(address: string): Promise<Client> {
       // Вешается строго здесь, после того как мы уже сдались, — гонки с
       // успешной веткой выше быть не может.
       const msg = err instanceof Error ? err.message : '';
-      if (msg !== 'XMTP_ABANDONED' && msg !== 'XMTP_NOT_REGISTERED') {
-        rawBuild?.then(c => { try { c.close(); } catch { /* уже закрыт */ } })
-          .catch(() => { /* сама сборка упала — закрывать нечего */ });
+      if (msg !== 'XMTP_ABANDONED' && msg !== 'XMTP_NOT_REGISTERED' && rawBuild) {
+        // Лок вкладки держим до тех пор, пока опоздавший клиент не закроется.
+        // Отпустить раньше — значит впустить соседнюю вкладку в базу, которую
+        // прямо сейчас держит наш собственный ещё живой WASM-воркер: ровно то
+        // состояние «два подключения к одному OPFS», ради которого лок и заведён,
+        // и ровно тот вход в 90-секундный таймаут с неверным диагнозом.
+        stragglerPending = true;
+        rawBuild
+          .then(c => { try { c.close(); } catch { /* уже закрыт */ } })
+          .catch(() => { /* сама сборка упала — закрывать нечего */ })
+          .finally(() => { releaseTabLockIfIdle(addr); });
       }
       throw err;
     } finally {
@@ -312,6 +413,9 @@ export function buildXmtpClient(address: string): Promise<Client> {
       if (_initPromises.get(addr) === promise) {
         _initPromises.delete(addr);
       }
+      // Строго ПОСЛЕ удаления записи — иначе проверка «новой попытки нет»
+      // увидела бы нашу собственную и лок остался бы висеть.
+      if (!stragglerPending) releaseTabLockIfIdle(addr);
     }
   })();
 
@@ -326,26 +430,6 @@ export function buildXmtpClient(address: string): Promise<Client> {
  *  (`XmtpContext.retry()`). Автоматика сюда не ходит вообще — у неё есть
  *  `buildXmtpClient()` выше, который подписывать не умеет по построению. */
 export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (step: number) => void): Promise<Client> {
-  // XMTP WASM requires OPFS (Origin Private File System) which is only available
-  // on secure contexts (localhost or https). Check BEFORE spawning the worker so
-  // the error surfaces on the main thread as a friendly message rather than
-  // an uncaught worker exception.
-  try {
-    await navigator.storage.getDirectory();
-  } catch {
-    throw new Error(
-      'Messaging requires a secure context. Open the app via http://localhost:3001 (not an IP address), or use HTTPS in production.',
-    );
-  }
-
-  // Ask the browser to keep OPFS durable so the MLS identity survives across
-  // sessions. Without this, storage-tight mobile browsers (Brave especially)
-  // evict the XMTP db between visits — forcing a brand-new installation, a fresh
-  // wallet signature, and lost history every time (and burning toward the 10/10
-  // installation cap). Best-effort and silent: never blocks init, granted by the
-  // browser's own engagement heuristics.
-  try { await navigator.storage.persist?.(); } catch { /* not supported */ }
-
   const address = walletClient.account!.address.toLowerCase();
 
   // Return already-built client
@@ -370,43 +454,16 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
     onSignStep?.(step);
   });
 
-  // Fire-and-forget preflight probes — run CONCURRENTLY with Client.create() below so
-  // they add zero latency to the happy path. XMTP's worker swallows WASM/OPFS failures
-  // (it logs to the worker console and never rejects create()), so those otherwise
-  // surface only as our opaque 90s XMTP_TIMEOUT — invisible on iOS where you can't open
-  // the worker console. These crumb the two cheapest independent failure modes so a
-  // device trail reads e.g. `probe:wasm=BLOCKED` (iOS Lockdown Mode disables WASM
-  // engine-wide) or `probe:net=BLOCKED`, instead of one blind timeout.
-  void (async () => {
-    try {
-      await WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
-      xmtpCrumb('probe:wasm=ok');
-    } catch {
-      xmtpCrumb('probe:wasm=BLOCKED');
-    }
-  })();
-  void (async () => {
-    try {
-      await withTimeout(
-        fetch('https://api.production.xmtp.network', { mode: 'no-cors' }).then(() => {}),
-        8_000,
-        'PROBE_NET',
-      );
-      xmtpCrumb('probe:net=ok');
-    } catch {
-      xmtpCrumb('probe:net=BLOCKED');
-    }
-  })();
-
-  // dbPath: per-address OPFS path so different wallets on the same browser
-  // don't share (and clobber) each other's MLS database.
-  xmtpCrumb(`init:create-start ${address.slice(0, 6)}`);
-  // loggingLevel Error: the WASM layer otherwise floods the console with INFO/WARN
-  // noise on every stream reconnect (`stream closed`, `msg … has been seen, skipping`)
-  // — benign, but it buries real errors and alarms users looking at the console.
-  // Error keeps genuine failures; our own xmtpCrumb trail is separate and unaffected.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawCreate = Client.create(signer, { env: 'production', dbPath: `xmtp-${address}`, loggingLevel: LogLevel.Error } as any) as Promise<Client>;
+  // Ссылка на «сырое» создание — как `rawBuild` в buildXmtpClient. Само
+  // создание переехало ВНУТРЬ обещания ниже: между проверкой «попытка уже
+  // летит» и записью своей в `_initPromises` не должно быть ни одного await,
+  // иначе два параллельных вызова (полоса под чатом и пункт меню кошелька —
+  // обычная пара) оба прошли бы проверку и запустили по своему Client.create()
+  // на одну базу OPFS. Раньше awaitов там не было; лок вкладки добавил первый.
+  let rawCreate: Promise<Client> | null = null;
+  // См. тот же флаг в buildXmtpClient: лок вкладки нельзя отпускать, пока жив
+  // воркер опоздавшего Client.create().
+  let stragglerPending = false;
 
   // Declared with a definite-assignment assertion (not `const promise =
   // (async () => {...})()`) so the finally block below can reference
@@ -416,6 +473,69 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
   let promise!: Promise<Client>;
   promise = (async () => {
     try {
+      // Лок вкладки — раньше всего остального, включая проверки хранилища: если
+      // мессенджер уже работает в соседней вкладке, здесь не должно подняться
+      // вообще ничего (см. шапку `lib/xmtpTabLock.ts`).
+      await claimTabOrThrow(address);
+
+      // XMTP WASM requires OPFS (Origin Private File System) which is only available
+      // on secure contexts (localhost or https). Check BEFORE spawning the worker so
+      // the error surfaces on the main thread as a friendly message rather than
+      // an uncaught worker exception.
+      try {
+        await navigator.storage.getDirectory();
+      } catch {
+        throw new Error(
+          'Messaging requires a secure context. Open the app via http://localhost:3001 (not an IP address), or use HTTPS in production.',
+        );
+      }
+
+      // Ask the browser to keep OPFS durable so the MLS identity survives across
+      // sessions. Without this, storage-tight mobile browsers (Brave especially)
+      // evict the XMTP db between visits — forcing a brand-new installation, a fresh
+      // wallet signature, and lost history every time (and burning toward the 10/10
+      // installation cap). Best-effort and silent: never blocks init, granted by the
+      // browser's own engagement heuristics.
+      try { await navigator.storage.persist?.(); } catch { /* not supported */ }
+
+      // Fire-and-forget preflight probes — run CONCURRENTLY with Client.create() below so
+      // they add zero latency to the happy path. XMTP's worker swallows WASM/OPFS failures
+      // (it logs to the worker console and never rejects create()), so those otherwise
+      // surface only as our opaque 90s XMTP_TIMEOUT — invisible on iOS where you can't open
+      // the worker console. These crumb the two cheapest independent failure modes so a
+      // device trail reads e.g. `probe:wasm=BLOCKED` (iOS Lockdown Mode disables WASM
+      // engine-wide) or `probe:net=BLOCKED`, instead of one blind timeout.
+      void (async () => {
+        try {
+          await WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+          xmtpCrumb('probe:wasm=ok');
+        } catch {
+          xmtpCrumb('probe:wasm=BLOCKED');
+        }
+      })();
+      void (async () => {
+        try {
+          await withTimeout(
+            fetch('https://api.production.xmtp.network', { mode: 'no-cors' }).then(() => {}),
+            8_000,
+            'PROBE_NET',
+          );
+          xmtpCrumb('probe:net=ok');
+        } catch {
+          xmtpCrumb('probe:net=BLOCKED');
+        }
+      })();
+
+      // dbPath: per-address OPFS path so different wallets on the same browser
+      // don't share (and clobber) each other's MLS database.
+      xmtpCrumb(`init:create-start ${address.slice(0, 6)}`);
+      // loggingLevel Error: the WASM layer otherwise floods the console with INFO/WARN
+      // noise on every stream reconnect (`stream closed`, `msg … has been seen, skipping`)
+      // — benign, but it buries real errors and alarms users looking at the console.
+      // Error keeps genuine failures; our own xmtpCrumb trail is separate and unaffected.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rawCreate = Client.create(signer, { env: 'production', dbPath: `xmtp-${address}`, loggingLevel: LogLevel.Error } as any) as Promise<Client>;
+
       // 90-second timeout: covers wallet signature + XMTP network identity publication.
       // If network is unreachable (e.g. blocked by ISP/firewall), surfaces an error
       // instead of spinning forever. The user can retry after checking connectivity.
@@ -456,9 +576,14 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
       // its worker for the rest of the page's lifetime. Attached only here,
       // strictly after we've already given up on this attempt, so it can
       // never race the success path above.
-      if (!(err instanceof Error && err.message === 'XMTP_ABANDONED')) {
-        rawCreate.then(client => { try { client.close(); } catch { /* already closed / never fully opened */ } })
-          .catch(() => { /* Client.create() itself failed — nothing to close */ });
+      if (!(err instanceof Error && err.message === 'XMTP_ABANDONED') && rawCreate) {
+        // Лок вкладки — до фактического закрытия опоздавшего клиента, а не до
+        // момента, когда мы перестали его ждать. Разбор — в buildXmtpClient.
+        stragglerPending = true;
+        rawCreate
+          .then(client => { try { client.close(); } catch { /* already closed / never fully opened */ } })
+          .catch(() => { /* Client.create() itself failed — nothing to close */ })
+          .finally(() => { releaseTabLockIfIdle(address); });
       }
       throw err;
     } finally {
@@ -469,6 +594,8 @@ export async function initXmtpClient(walletClient: WalletClient, onSignStep?: (s
       if (_initPromises.get(address) === promise) {
         _initPromises.delete(address);
       }
+      // Строго ПОСЛЕ удаления записи — см. тот же порядок в buildXmtpClient.
+      if (!stragglerPending) releaseTabLockIfIdle(address);
     }
   })();
 
@@ -506,8 +633,17 @@ export function sortAddressPair(a: string, b: string): [string, string] {
 /** Group name for the single persistent conversation between two addresses. */
 export function pairGroupName(addrA: string, addrB: string): string {
   const [a, b] = sortAddressPair(addrA, addrB);
-  return `HSEAL-PAIR-${a}-${b}`;
+  return `${PAIR_PREFIX}${a}-${b}`;
 }
+
+/** Идущие прямо сейчас создания парных групп, ключ — `<мой адрес>|<имя группы>`.
+ *
+ *  Отправка текста и отправка файла — два независимых пути, и оба создают
+ *  группу «если её ещё нет». Нажать «отправить» на подписи к файлу и тут же
+ *  отправить текст — не выдуманный сценарий, а обычная спешка; без этой карты
+ *  получились бы ДВЕ группы с одним именем, то есть ровно тот раздвоенный тред,
+ *  от которого чинится всё остальное в этом файле. */
+const _pairGroupCreation = new Map<string, Promise<XmtpGroup>>();
 
 /**
  * Finds the existing pair group for these two addresses or creates it.
@@ -530,27 +666,35 @@ export async function findOrCreatePairGroup(
   const [myAddress, peerAddress] = memberAddresses;
   const name = pairGroupName(memberAddresses[0], memberAddresses[1]);
 
-  // Only these addresses are allowed in a legitimate pair group.
-  // MLS invariant: the group creator is always a member.
-  // An attacker who creates a spoofed group with this name will always appear
-  // in its member list — so filtering by expectedAddrs detects and skips it.
-  const expectedAddrs = new Set<string>([
-    memberAddresses[0].toLowerCase(),
-    memberAddresses[1].toLowerCase(),
-    ...(botAddress ? [botAddress.toLowerCase()] : []),
-  ]);
+  // Ожидаемый состав парной группы. `bot: null` — это НЕ «бота нет», а «релеер
+  // не ответил, адрес бота неизвестен»; правило допуска на этот случай живёт в
+  // `isLegitimatePairMembership` и разобрано в шапке `lib/xmtpPairGroup.ts`.
+  // Прежний фильтр разницы не делал и при недоступном релеере отбраковывал ВСЕ
+  // настоящие группы разом — переписка открывалась пустой, а первая же отправка
+  // заводила вторую группу с тем же именем.
+  const expectation = {
+    me:   memberAddresses[0],
+    peer: memberAddresses[1],
+    bot:  botAddress,
+  };
 
-  /** Returns true only if every member of g is in expectedAddrs. */
-  async function isLegitimate(g: XmtpGroup): Promise<boolean> {
-    try {
-      const members = await g.members();
-      return members.every(m => {
-        const addr = m.accountIdentifiers[0]?.identifier?.toLowerCase() ?? '';
-        return expectedAddrs.has(addr);
-      });
-    } catch {
-      return false;
+  /** Все группы с этим именем, чей состав похож на настоящий. Выбор
+   *  канонической — отдельным шагом и ОДНИМ правилом на весь файл
+   *  (`pickCanonicalGroup`). */
+  async function legitGroupsWithName(): Promise<XmtpGroup[]> {
+    const found: XmtpGroup[] = [];
+    for (const g of await client.conversations.listGroups()) {
+      if (g.name !== name) continue;
+      try {
+        const members = await g.members();
+        const addrs = members.map(m => m.accountIdentifiers[0]?.identifier?.toLowerCase() ?? '');
+        if (isLegitimatePairMembership(addrs, expectation)) found.push(g);
+      } catch {
+        // Порченая churn'ом группа (openmls SecretReuseError) — пропускаем её,
+        // а не роняем весь поиск.
+      }
     }
+    return found;
   }
 
   // Best-effort: a churn-corrupted group can throw here (openmls SecretReuseError).
@@ -558,19 +702,8 @@ export async function findOrCreatePairGroup(
   // we proceed with whatever groups are already in the local cache.
   await client.conversations.sync().catch(() => {});
 
-  const groups = await client.conversations.listGroups();
-  const nameMatches = groups.filter(g => g.name === name);
-
-  // Filter out attacker-created groups (unexpected members), then pick the
-  // group with the smallest ID among legitimate ones so both clients converge
-  // deterministically in the race-condition case (both created simultaneously).
-  const legitGroups: XmtpGroup[] = [];
-  for (const g of nameMatches) {
-    if (await isLegitimate(g)) legitGroups.push(g);
-  }
-
-  if (legitGroups.length > 0) {
-    const canonical = legitGroups.reduce((best, g) => g.id < best.id ? g : best);
+  const canonical = pickCanonicalGroup(await legitGroupsWithName());
+  if (canonical) {
     // Best-effort: if this specific group is churn-corrupted, load its cached
     // history rather than throwing and blanking the chat to "unavailable".
     await canonical.sync().catch(() => {});
@@ -597,45 +730,66 @@ export async function findOrCreatePairGroup(
   // the UI render an empty (but usable) thread — the group is created on first send.
   if (!createIfMissing) return null;
 
-  const allMembers = botAddress ? [...memberAddresses, botAddress] : [...memberAddresses];
-  const identifiers = allMembers.map(toIdentifier);
-  const canMsg = await client.canMessage(identifiers);
-  const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
+  // Одно создание на пару за раз. Текст и файл — независимые пути отправки, и
+  // оба заходят сюда; без этой заглушки два почти одновременных нажатия
+  // сделали бы две группы с одним именем.
+  const creationKey = `${myAddress.toLowerCase()}|${name}`;
+  const already = _pairGroupCreation.get(creationKey);
+  if (already) return already;
 
-  // Refuse to create a conversation the peer can never see. Without this check,
-  // an unreachable peer (no currently-registered XMTP installation — e.g. mid
-  // session churn, or genuinely never opened Hexseal chat) is silently dropped
-  // from `reachable` and the group gets created without them: the sender's
-  // message goes into a group the recipient was never part of, with no error
-  // and no way to ever discover it by re-syncing. Fail loudly instead so the
-  // sender knows to retry rather than wonder why nothing arrived.
-  const peerIdentifier = toIdentifier(peerAddress);
-  if (canMsg.get(peerIdentifier.identifier) !== true) {
-    // Message matched against in ChatPanel.tsx (error.includes('not registered')) to
-    // trigger the "share an invite" UI instead of the generic connection-failed one —
-    // covers both "never opened Hexseal chat" and "temporarily between XMTP installations".
-    // Та же строка используется на пути отправки в уже существующую группу
-    // (assertPeerCanReceive ниже) — оба отказа обязаны выглядеть одинаково.
-    throw new Error(PEER_UNREACHABLE_MESSAGE);
-  }
+  const creating = (async (): Promise<XmtpGroup> => {
+    // Последний взгляд ПЕРЕД созданием, уже после свежей синхронизации. Между
+    // открытием чата и первой отправкой проходит сколько угодно времени, и за
+    // это время группу мог завести собеседник — создать свою поверх значило бы
+    // развести тред на две ветки, каждая из которых видна только одному.
+    await client.conversations.sync().catch(() => {});
+    const raced = pickCanonicalGroup(await legitGroupsWithName());
+    if (raced) {
+      await raced.sync().catch(() => {});
+      await ensurePeerInGroup(raced, client, toIdentifier(peerAddress));
+      return raced;
+    }
 
-  const created = await client.conversations.createGroupWithIdentifiers(reachable, {
-    groupName: name,
-    groupDescription: `Hexseal conversation: ${myAddress} <-> ${peerAddress}`,
-  });
+    const allMembers = botAddress ? [...memberAddresses, botAddress] : [...memberAddresses];
+    const identifiers = allMembers.map(toIdentifier);
+    const canMsg = await client.canMessage(identifiers);
+    const reachable = identifiers.filter((id) => canMsg.get(id.identifier) === true);
 
-  // Re-sync after creation: if the peer raced us, their group is now visible.
-  // Apply the same membership filter so a racing attacker is still rejected.
-  await client.conversations.sync();
-  const afterMatches = (await client.conversations.listGroups()).filter(g => g.name === name);
-  const afterLegit: XmtpGroup[] = [];
-  for (const g of afterMatches) {
-    if (await isLegitimate(g)) afterLegit.push(g);
+    // Refuse to create a conversation the peer can never see. Without this check,
+    // an unreachable peer (no currently-registered XMTP installation — e.g. mid
+    // session churn, or genuinely never opened Hexseal chat) is silently dropped
+    // from `reachable` and the group gets created without them: the sender's
+    // message goes into a group the recipient was never part of, with no error
+    // and no way to ever discover it by re-syncing. Fail loudly instead so the
+    // sender knows to retry rather than wonder why nothing arrived.
+    const peerIdentifier = toIdentifier(peerAddress);
+    if (canMsg.get(peerIdentifier.identifier) !== true) {
+      // Message matched against in ChatPanel.tsx (error.includes('not registered')) to
+      // trigger the "share an invite" UI instead of the generic connection-failed one —
+      // covers both "never opened Hexseal chat" and "temporarily between XMTP installations".
+      // Та же строка используется на пути отправки в уже существующую группу
+      // (assertPeerCanReceive ниже) — оба отказа обязаны выглядеть одинаково.
+      throw new Error(PEER_UNREACHABLE_MESSAGE);
+    }
+
+    const created = await client.conversations.createGroupWithIdentifiers(reachable, {
+      groupName: name,
+      groupDescription: `Hexseal conversation: ${myAddress} <-> ${peerAddress}`,
+    });
+
+    // Re-sync after creation: if the peer raced us anyway, their group is now
+    // visible. Сходимся тем же единственным правилом, что и везде — наименьший
+    // id, — и обе стороны приходят к одной группе, даже создав по своей.
+    await client.conversations.sync().catch(() => {});
+    return pickCanonicalGroup(await legitGroupsWithName()) ?? created;
+  })();
+
+  _pairGroupCreation.set(creationKey, creating);
+  try {
+    return await creating;
+  } finally {
+    if (_pairGroupCreation.get(creationKey) === creating) _pairGroupCreation.delete(creationKey);
   }
-  if (afterLegit.length > 1) {
-    return afterLegit.reduce((best, g) => g.id < best.id ? g : best);
-  }
-  return created;
 }
 
 /**
@@ -769,7 +923,13 @@ export async function loadGroupMessages(
   const raw         = await group.messages({
     direction: SortDirection.Descending, // newest first
     limit:     MSG_PAGE_SIZE,
-    ...(beforeNs ? { beforeNs } : {}),
+    // ИМЕННО `sentBeforeNs`. Поля `beforeNs` у `ListMessagesOptions` нет
+    // (`@xmtp/wasm-bindings`, `bindings_wasm.d.ts`), а неизвестное поле serde
+    // молча выбрасывает — TypeScript этого не ловит, потому что на spread
+    // проверки лишних свойств не делает. С опечаткой курсор не применялся
+    // вообще: «Загрузить старые» запрашивала ту же самую последнюю страницу и
+    // дописывала её копию в начало списка (дедупликации в loadMore нет).
+    ...(beforeNs ? { sentBeforeNs: beforeNs } : {}),
   });
 
   const oldestNs = raw.length > 0 ? (raw[raw.length - 1].sentAtNs ?? null) : null;
@@ -797,7 +957,13 @@ export type PairConversation = {
   lastFromMe: boolean;
 };
 
-const PAIR_PREFIX = 'HSEAL-PAIR-';
+/** Страница чтения превью. Пятьдесят вместо прежних десяти — и, главное, не
+ *  одна: `findLastVisibleMessage` берёт следующую, пока видимое сообщение не
+ *  найдётся. Квитанции о прочтении летят на каждое открытие чата, маркер
+ *  `deal_ctx` — на каждую смену сделки; в окно из десяти сырых сообщений живая
+ *  переписка переставала попадать за пару активных дней и подписывалась
+ *  «Сообщений пока нет». */
+const PREVIEW_PAGE_LIMIT = 50n;
 
 async function _buildPairConversations(
   client: XmtpClient,
@@ -809,62 +975,87 @@ async function _buildPairConversations(
   if (sync) {
     await withTimeout(client.conversations.sync(), 15_000, 'sync_timeout').catch(() => {});
   }
+  // Адрес бота нужен списку по той же причине, что и треду: без него настоящий
+  // состав группы неотличим от подделки.
+  //
+  // На локальном пути (`listPairConversationsLocal`) в сеть за ним НЕ ходим:
+  // этот путь обещает мгновенный ответ из кэша SQLite, и один повисший запрос к
+  // релееру задержал бы весь список чатов на скелетоне. Берём адрес, только
+  // если он уже известен; неизвестный бот фильтр переживает (см.
+  // `isLegitimatePairMembership`), а следующая же сетевая фаза всё уточнит.
+  const botAddress = sync ? await getBotAddress() : getCachedBotAddress();
   const groups = await client.conversations.listGroups();
   const myInboxId = client.inboxId ?? '';
   const myLc = myAddress.toLowerCase();
+
   // Keyed by peer address, NOT by group: the pre-persist-fix installation churn could
   // leave several HSEAL-PAIR groups for the same pair (each new install couldn't see
   // the old group, so it made a new one), which showed up as a separate one-message
   // "chat" per group. Collapse them into a single row per contact (Telegram-style).
-  const byPeer = new Map<string, PairConversation>();
+  const byPeer = new Map<string, XmtpGroup[]>();
 
   for (const g of groups) {
-    const name = g.name ?? '';
-    if (!name.startsWith(PAIR_PREFIX)) continue;
+    // Собеседник берётся ИЗ ИМЕНИ, а не из состава участников. Прежнее «первый
+    // участник, который не я» могло вернуть бота релеера — он в группе третий,
+    // и порядок участников нам никто не обещал.
+    const peerAddress = pairPeerFromName(g.name ?? '', myLc);
+    if (!peerAddress) continue;
     try {
-      if (sync) {
-        await withTimeout(g.sync(), 5_000, 'group_sync_timeout').catch(() => {});
-      }
       const members = await g.members();
-      const inboxToAddr = buildInboxAddressMap(members);
-      const peerAddress = [...inboxToAddr.values()].find(addr => addr !== myLc);
-      if (!peerAddress) continue;
-
-      // Read up to 10 to skip MembershipChange events and deal_ctx markers.
-      // lastText/lastAt/lastFromMe all come from the SAME message so they're consistent.
-      const msgs = await g.messages({ limit: BigInt(10), direction: SortDirection.Descending });
-      let lastText = '';
-      let lastAt = 0;
-      let lastFromMe = true;
-
-      for (const msg of msgs) {
-        const parsed = parseContent(msg);
-        if (parsed) {
-          const fromMe = msg.senderInboxId === myInboxId;
-          lastText = parsed.attachment
-            ? `📎 ${parsed.attachment.name}`
-            : (fromMe ? `You: ${parsed.text}` : parsed.text);
-          lastAt = msg.sentAtNs ? Number(msg.sentAtNs) / 1_000_000 : 0;
-          lastFromMe = fromMe;
-          break;
-        }
-      }
-
-      // Keep, per peer, the group whose latest message is newest — so the sidebar
-      // preview stays meaningful. Opening is by peer address (findOrCreatePairGroup
-      // converges on the canonical group), so which group object we keep here only
-      // affects the preview text, not which conversation opens.
-      const peerLc = peerAddress.toLowerCase();
-      const existing = byPeer.get(peerLc);
-      if (!existing || lastAt > existing.lastAt) {
-        byPeer.set(peerLc, { group: g, peerAddress, lastText, lastAt, lastFromMe });
-      }
+      const addrs = members.map(m => m.accountIdentifiers[0]?.identifier?.toLowerCase() ?? '');
+      // Тот же фильтр легитимности, что и у треда: иначе подделка попадала бы в
+      // список чатов, а открывалась бы настоящая переписка (или наоборот).
+      if (!isLegitimatePairMembership(addrs, { me: myLc, peer: peerAddress, bot: botAddress })) continue;
+      byPeer.set(peerAddress, [...(byPeer.get(peerAddress) ?? []), g]);
     } catch {
       // skip malformed conversations
     }
   }
 
-  return [...byPeer.values()].sort((a, b) => b.lastAt - a.lastAt);
+  const rows: PairConversation[] = [];
+  for (const [peerAddress, candidates] of byPeer) {
+    // ОДНО правило выбора на список и на тред. Раньше список брал группу с
+    // самым свежим сообщением, а тред — с наименьшим id: при двух группах на
+    // пару человек видел в списке последнее сообщение, открывал переписку — а
+    // там его не было.
+    const group = pickCanonicalGroup(candidates);
+    if (!group) continue;
+    try {
+      if (sync) {
+        await withTimeout(group.sync(), 5_000, 'group_sync_timeout').catch(() => {});
+      }
+      // lastText/lastAt/lastFromMe all come from the SAME message so they're consistent.
+      const found = await findLastVisibleMessage({
+        page: (beforeNs) => group.messages({
+          limit: PREVIEW_PAGE_LIMIT,
+          direction: SortDirection.Descending,
+          // `sentBeforeNs`, а не `beforeNs` — см. разбор у loadGroupMessages.
+          ...(beforeNs ? { sentBeforeNs: beforeNs } : {}),
+        }),
+        parse:    (msg) => parseContent(msg),
+        cursorOf: (msg) => msg.sentAtNs,
+        pageSize: Number(PREVIEW_PAGE_LIMIT),
+      });
+
+      let lastText = '';
+      let lastAt = 0;
+      let lastFromMe = true;
+      if (found) {
+        const fromMe = found.message.senderInboxId === myInboxId;
+        lastText = found.parsed.attachment
+          ? `📎 ${found.parsed.attachment.name}`
+          : (fromMe ? `You: ${found.parsed.text}` : found.parsed.text);
+        lastAt = found.message.sentAtNs ? Number(found.message.sentAtNs) / 1_000_000 : 0;
+        lastFromMe = fromMe;
+      }
+
+      rows.push({ group, peerAddress, lastText, lastAt, lastFromMe });
+    } catch {
+      // skip malformed conversations
+    }
+  }
+
+  return rows.sort((a, b) => b.lastAt - a.lastAt);
 }
 
 // Reads from local XMTP SQLite cache only — no network sync, returns instantly.
@@ -888,15 +1079,33 @@ export function listPairConversations(
 const RELAYER_URL_XMTP = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 let _botAddress: string | null = null;
 
+/** Потолок ожидания адреса бота. Релеер умеет не отказывать, а ЗАВИСАТЬ (упавший
+ *  Cloudflare-туннель отвечает не сразу и не отказом), а этот запрос стоит на
+ *  пути открытия чата и сборки списка переписок. Без потолка одна повисшая
+ *  выборка держала бы весь чат в состоянии загрузки. Три секунды: не получили —
+ *  считаем адрес неизвестным, фильтр групп это переживает (см.
+ *  `isLegitimatePairMembership`). */
+const BOT_ADDRESS_TIMEOUT_MS = 3_000;
+
+/** Адрес бота, если он УЖЕ известен. Без сети и без ожидания — для путей,
+ *  которые обещают мгновенный ответ из локального кэша. */
+export function getCachedBotAddress(): string | null {
+  return _botAddress;
+}
+
 export async function getBotAddress(): Promise<string | null> {
   if (_botAddress) return _botAddress;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), BOT_ADDRESS_TIMEOUT_MS);
   try {
-    const res = await fetch(`${RELAYER_URL_XMTP}/bot-address`);
+    const res = await fetch(`${RELAYER_URL_XMTP}/bot-address`, { signal: ctrl.signal });
     const { address } = await res.json() as { address: string };
     _botAddress = address.toLowerCase();
     return _botAddress;
   } catch {
     return null; // non-fatal — group works without bot, just no log
+  } finally {
+    clearTimeout(timer);
   }
 }
 
