@@ -40,6 +40,7 @@ import { LocaleProvider } from "@/components/LocaleProvider";
 import { PushProvider } from "@/contexts/PushContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import { buildWalletGroups, isMobileUserAgent } from "@/lib/walletList";
+import { QueryRefreshBridge } from "@/components/QueryRefreshBridge";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -320,6 +321,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <WagmiProvider config={config}>
         <QueryClientProvider client={queryClient}>
           <VisibilityRefresher queryClient={queryClient} />
+          {/* Событийное обновление — точечное, по темам. VisibilityRefresher выше
+              остаётся: он ловит истечение времени (таймауты сделки, окно спора),
+              которое событий не эмитит. */}
+          <QueryRefreshBridge queryClient={queryClient} />
           <WalletConnectTracer />
           <XmtpDebugOverlay />
           <NextThemesProvider attribute="class" forcedTheme="dark">

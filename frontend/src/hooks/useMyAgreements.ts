@@ -1,6 +1,8 @@
 import { useMemo, useCallback } from 'react'
 import { useQuery } from 'urql'
 import { MY_AGREEMENTS_QUERY, SUBGRAPH_URL } from '@/lib/graph'
+import { FRESH_HEADERS } from '@/lib/subgraphSync'
+import { useGraphRefresh } from '@/hooks/useRefreshSignal'
 
 export interface GraphAgreement {
   id: string
@@ -20,6 +22,8 @@ interface MyAgreementsData {
   asExecutor: GraphAgreement[]
 }
 
+const GRAPH_TOPICS = ['deals'] as const
+
 export function useMyAgreements(address: string | undefined) {
   const addr = address?.toLowerCase() ?? ''
   const variables = useMemo(() => ({ client: addr, executor: addr }), [addr])
@@ -38,7 +42,19 @@ export function useMyAgreements(address: string | undefined) {
     return Array.from(map.values())
   }, [data])
 
-  const refetch = useCallback(() => reexecute({ requestPolicy: 'network-only' }), [reexecute])
+  // `network-only` обходит только кэш urql в браузере. Дальше стоит прокси
+  // `/api/subgraph` со своей записью на 120 секунд, и без `x-fresh` явное
+  // обновление возвращало ровно тот же снимок, что и до нажатия, — доски это
+  // умели с самого начала (`useJobs`/`useServices`), дашборд не умел.
+  const refetch = useCallback(
+    () => reexecute({ requestPolicy: 'network-only', fetchOptions: { headers: { ...FRESH_HEADERS } } }),
+    [reexecute],
+  )
+
+  // Чужое действие: контрагент оплатил, активировал, сдал работу, открыл спор.
+  // Сигнал приходит из `useNotifications` уже ПОСЛЕ того, как сабграф догнал
+  // блок события (см. `lib/subgraphSync`), поэтому здесь ждать больше нечего.
+  useGraphRefresh(GRAPH_TOPICS, refetch)
 
   return {
     agreements: allAgreements,
