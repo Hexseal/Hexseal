@@ -5,6 +5,7 @@ import {
   readSubgraphHead,
   refreshAfterBlock,
   refreshAfterTx,
+  refreshFromLogs,
   waitForSubgraphBlock,
 } from './subgraphSync';
 import {
@@ -259,6 +260,55 @@ describe('refreshAfterBlock', () => {
     await refreshAfterBlock(200, {}, { fetchImpl: impl });
     expect(calls).toHaveLength(0);
   });
+
+  it('склеивает одинаковую работу: одна транзакция — один сброс кэша', async () => {
+    // acceptApplicant эмитит и JobAccepted, и AgreementRegistered; слушатели
+    // независимы и оба попросят обновление за один и тот же блок.
+    withWindow();
+    const graph = vi.fn();
+    const off = subscribeRefresh(GRAPH_REFRESH_EVENT, graph);
+    const { impl, calls } = makeFetch([200]);
+    await Promise.all([
+      refreshAfterBlock(200, { graph: ['deals', 'jobs'] }, { fetchImpl: impl, sleep: noSleep, now: () => 0 }),
+      refreshAfterBlock(200, { graph: ['jobs', 'deals'] }, { fetchImpl: impl, sleep: noSleep, now: () => 0 }),
+    ]);
+    off();
+    expect(calls.filter((c) => c.url.includes('invalidate=1'))).toHaveLength(1);
+    expect(graph).toHaveBeenCalledTimes(1);
+  });
+
+  it('разные блоки не склеиваются', async () => {
+    withWindow();
+    const { impl, calls } = makeFetch([200, 201]);
+    await Promise.all([
+      refreshAfterBlock(200, { graph: ['deals'] }, { fetchImpl: impl, sleep: noSleep, now: () => 0 }),
+      refreshAfterBlock(201, { graph: ['deals'] }, { fetchImpl: impl, sleep: noSleep, now: () => 0 }),
+    ]);
+    expect(calls.filter((c) => c.url.includes('invalidate=1'))).toHaveLength(2);
+  });
+
+  it('склейка снимается после завершения — следующее событие обновит снова', async () => {
+    withWindow();
+    const { impl, calls } = makeFetch([200]);
+    const opts = { fetchImpl: impl, sleep: noSleep, now: () => 0 };
+    await refreshAfterBlock(200, { graph: ['deals'] }, opts);
+    await refreshAfterBlock(200, { graph: ['deals'] }, opts);
+    expect(calls.filter((c) => c.url.includes('invalidate=1'))).toHaveLength(2);
+  });
+
+  it('цепной канал не склеивается — он дёшев и должен быть немедленным', async () => {
+    withWindow();
+    const chain = vi.fn();
+    const off = subscribeRefresh(CHAIN_REFRESH_EVENT, chain);
+    const { impl } = makeFetch([200]);
+    const opts = { fetchImpl: impl, sleep: noSleep, now: () => 0 };
+    await Promise.all([
+      refreshAfterBlock(200, { chain: ['deals'], graph: ['deals'] }, opts),
+      refreshAfterBlock(200, { chain: ['deals'], graph: ['deals'] }, opts),
+    ]);
+    off();
+    expect(chain).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('refreshAfterTx', () => {
@@ -302,5 +352,53 @@ describe('refreshAfterTx', () => {
     await expect(
       refreshAfterTx({ waitForTransactionReceipt: vi.fn() }, undefined, { chain: ['jobs'] }, { fetchImpl: impl }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('refreshFromLogs', () => {
+  it('пустая пачка — ни одного обновления', () => {
+    withWindow();
+    const chain = vi.fn();
+    const off = subscribeRefresh(CHAIN_REFRESH_EVENT, chain);
+    refreshFromLogs([], { chain: ['deals'] });
+    off();
+    expect(chain).not.toHaveBeenCalled();
+  });
+
+  it('одно обновление на пачку, а не на каждый лог', () => {
+    withWindow();
+    const chain = vi.fn();
+    const off = subscribeRefresh(CHAIN_REFRESH_EVENT, chain);
+    refreshFromLogs(
+      [{ blockNumber: 200n }, { blockNumber: 200n }, { blockNumber: 200n }],
+      { chain: ['deals'] },
+    );
+    off();
+    expect(chain).toHaveBeenCalledTimes(1);
+  });
+
+  it('ждёт самый поздний блок пачки, а не первый', async () => {
+    withWindow();
+    const graph = vi.fn();
+    const off = subscribeRefresh(GRAPH_REFRESH_EVENT, graph);
+    // Голова сначала 201 — этого хватило бы первому логу, но не последнему.
+    const { impl, calls } = makeFetch([201, 202]);
+    refreshFromLogs(
+      [{ blockNumber: 200n }, { blockNumber: 202n }, { blockNumber: 201n }],
+      { graph: ['deals'] },
+      { fetchImpl: impl, sleep: noSleep, now: () => 0 },
+    );
+    await vi.waitFor(() => expect(graph).toHaveBeenCalledTimes(1));
+    off();
+    expect(calls.filter((c) => c.url.includes('meta=1'))).toHaveLength(2);
+  });
+
+  it('логи без номера блока не ломают обновление — оно идёт вслепую', () => {
+    withWindow();
+    const chain = vi.fn();
+    const off = subscribeRefresh(CHAIN_REFRESH_EVENT, chain);
+    refreshFromLogs([{}, { blockNumber: 'not-a-bigint' }], { chain: ['jobs'] });
+    off();
+    expect(chain).toHaveBeenCalledTimes(1);
   });
 });

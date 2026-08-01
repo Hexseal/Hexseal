@@ -73,6 +73,9 @@ function resolve(opts: SyncOptions = {}): ResolvedOptions {
 // не даёт им превратиться в N запросов вместо одного.
 let _headInFlight: Promise<number | null> | null = null;
 
+// Незавершённые ожидания индексации, ключ — «блок × темы». См. refreshAfterBlock.
+const _pendingGraph = new Map<string, Promise<void>>();
+
 /** Номер блока, до которого сабграф доиндексировал. `null` — узнать не удалось. */
 export async function readSubgraphHead(opts: SyncOptions = {}): Promise<number | null> {
   if (_headInFlight) return _headInFlight;
@@ -169,11 +172,57 @@ export async function refreshAfterBlock(
   if (chain.length > 0) emitChainRefresh(chain);
   if (graph.length === 0) return;
 
-  if (blockNumber !== undefined) {
-    await waitForSubgraphBlock(blockNumber, opts);
+  // Одна транзакция часто эмитит несколько интересных событий сразу
+  // (acceptApplicant — это и JobAccepted, и AgreementRegistered), а слушатели
+  // в useNotifications независимы и каждый попросит своё обновление. Работа с
+  // одинаковым (блок × темы) склеивается: иначе на каждую такую транзакцию
+  // приходилось бы по два прохода опроса головы и по два сброса кэша, из
+  // которых второй прокси всё равно молча роняет по кулдауну.
+  const key = `${blockNumber ?? '-'}|${[...new Set(graph)].sort().join(',')}`;
+  const pending = _pendingGraph.get(key);
+  if (pending) return pending;
+
+  const run = (async () => {
+    if (blockNumber !== undefined) {
+      await waitForSubgraphBlock(blockNumber, opts);
+    }
+    await invalidateSubgraphCache(opts);
+    emitGraphRefresh(graph);
+  })();
+
+  _pendingGraph.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (_pendingGraph.get(key) === run) _pendingGraph.delete(key);
   }
-  await invalidateSubgraphCache(opts);
-  emitGraphRefresh(graph);
+}
+
+/**
+ * То же самое, но от пачки логов наблюдателя событий.
+ *
+ * Одно обновление на пачку, а не на каждый лог: `onLogs` часто приносит
+ * несколько логов одной транзакции, и это одна и та же несвежесть. Блок берётся
+ * самый поздний из пачки — дождавшись его, сабграф заведомо проиндексировал и
+ * остальные.
+ *
+ * ВАЖНО: звать строго ПОСЛЕ фильтра по адресу пользователя. Часть наблюдателей
+ * подписана на диамонд без `args` и получает логи всей биржи; обновляться на
+ * чужую активность значит держать постоянную нагрузку на RPC и сабграф ради
+ * данных, которые на этом экране никому не нужны.
+ */
+export function refreshFromLogs(
+  logs: readonly unknown[],
+  topics: RefreshTopics,
+  opts: SyncOptions = {},
+): void {
+  if (logs.length === 0) return;
+  let block: bigint | undefined;
+  for (const log of logs) {
+    const n = (log as { blockNumber?: bigint }).blockNumber;
+    if (typeof n === 'bigint' && (block === undefined || n > block)) block = n;
+  }
+  void refreshAfterBlock(block, topics, opts);
 }
 
 /** Минимум от `PublicClient`, который нужен здесь, — чтобы модуль оставался тестируемым. */
@@ -212,7 +261,8 @@ export async function refreshAfterTx(
   await refreshAfterBlock(blockNumber, topics, opts);
 }
 
-/** Только для тестов: сбросить разделяемый in-flight пробы головы. */
+/** Только для тестов: сбросить разделяемое состояние (in-flight пробы и ожидания). */
 export function __resetSubgraphSyncState(): void {
   _headInFlight = null;
+  _pendingGraph.clear();
 }

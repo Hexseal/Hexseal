@@ -35,6 +35,7 @@ import { ContextHint } from "@/components/ContextHint";
 import { DisputeCostNotice } from "@/components/DisputeCostNotice";
 import { RefundableBounty } from "@/components/RefundableBounty";
 import { useArbiterTimeoutOutcome } from "@/hooks/useArbiterTimeoutOutcome";
+import { useDealLiveRefresh } from "@/hooks/useDealLiveRefresh";
 import { shortAddr } from "@/lib/utils";
 import { usdcExact } from "@/lib/splitPot";
 import { canFundDispute } from "@/lib/disputeBounty";
@@ -152,6 +153,16 @@ export default function DealDetailPage() {
   };
 
   const isValidDeal = useMemo(() => dealAddress && isAddress(dealAddress), [dealAddress]);
+
+  // Событийное обновление по логам САМОГО клона: fund/activate/markDone эмитят
+  // Funded/Activated/MarkedDone на сделке, а не на диамонде, и тринадцать
+  // наблюдателей в useNotifications их не видят вовсе. Один опрос на весь
+  // список событий — см. hooks/useDealLiveRefresh.
+  //
+  // refetchInterval ниже при этом ОСТАЁТСЯ: слушатели ловят события, а не
+  // истечение времени, а половина кнопок на этой странице гейтится именно
+  // таймаутами (timeLeft/arbiterTimeLeft), которые не эмитят ничего.
+  useDealLiveRefresh(dealAddress);
 
   // Read agreement details
   const { data: details, isLoading: isLoadingDetails, isError: isErrorDetails, refetch: refetchDetails } = useReadContract({

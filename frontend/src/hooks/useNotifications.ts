@@ -20,6 +20,7 @@ import {
   SERVICE_BOARD_ABI,
 } from "@/config/contracts";
 import { classifySettledRefund, refundNotifCopy } from "@/lib/settledRefund";
+import { refreshFromLogs } from "@/lib/subgraphSync";
 import type { Abi } from "viem";
 
 const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
@@ -32,6 +33,18 @@ function a(log: unknown): any {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (log as any)?.args ?? {};
 }
+
+// Событие докатывается не только до колокольчика, но и до ДАННЫХ — через
+// `refreshFromLogs` (lib/subgraphSync). Это чинит то, чего не чинит ничто
+// другое: ЧУЖИЕ действия. Своё нажатие обновляет экран из обработчика кнопки;
+// когда же контрагент оплатил, активировал или сдал работу, до этой правки
+// приходило уведомление, а экран под ним оставался старым до возвращения во
+// вкладку.
+//
+// Три наблюдателя ниже (`AgreementStatusUpdated`, `JobApplied`,
+// `ServiceRequested`) подписаны на диамонд БЕЗ `args` и получают логи всей
+// биржи, поэтому у них обновление зовётся не от всей пачки, а от собранного
+// вручную подмножества, прошедшего фильтр по адресу.
 
 export function useNotifications() {
   const { address } = useAccount();
@@ -265,9 +278,11 @@ export function useNotifications() {
   const arbiterArgs  = useMemo(() => ({ arbiter:  address ?? ZERO }), [address]);
 
   const onAgreementRegisteredAsClient = useCallback((logs: unknown[]) => {
+    const mine: unknown[] = [];
     for (const log of logs) {
       const { agreement, amount } = a(log);
       if (!agreement) continue;
+      mine.push(log);
       myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: amount ?? BigInt(0) });
       push({
         type: "deal_new",
@@ -277,12 +292,18 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // Сделка, где я клиент, могла родиться и чужим нажатием: исполнитель принял
+    // мой запрос на услугу (acceptRequest). Значит несвежи и список сделок, и
+    // список моих запросов, и баланс — эскроу ушёл из кошелька.
+    refreshFromLogs(mine, { chain: ["deals", "requests", "wallet"], graph: ["deals"] });
   }, [push]);
 
   const onAgreementRegisteredAsExecutor = useCallback((logs: unknown[]) => {
+    const mine: unknown[] = [];
     for (const log of logs) {
       const { agreement, amount } = a(log);
       if (!agreement) continue;
+      mine.push(log);
       myDeals.current.set(agreement.toLowerCase(), { role: "executor", amount: amount ?? BigInt(0) });
       push({
         type: "deal_new",
@@ -292,9 +313,16 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // Всегда чужое нажатие: клиент принял мой отклик на заказ либо нанял по
+    // услуге. Заказ закрывается, у услуги растёт hiresCount.
+    refreshFromLogs(mine, { chain: ["deals", "jobs", "services"], graph: ["deals"] });
   }, [push]);
 
   const onAgreementStatusUpdated = useCallback(async (logs: unknown[]) => {
+    // Наблюдатель без `args` — сюда прилетают переходы ВСЕЙ биржи. Обновлять
+    // данные можно только по тем логам, что прошли фильтр ниже.
+    const mine: unknown[] = [];
+    const forArbiter: unknown[] = [];
     for (const log of logs) {
       const { agreement, newStatus } = a(log);
       if (!agreement) continue;
@@ -304,6 +332,7 @@ export function useNotifications() {
       if (!dealInfo) {
         const status = Number(newStatus);
         if (isArbiter && status === 3) { // 3 = DISPUTED
+          forArbiter.push(log);
           push({
             type: "dispute_new",
             title: "New Dispute Available",
@@ -317,6 +346,9 @@ export function useNotifications() {
 
       const status = Number(newStatus);
       const { role } = dealInfo;
+      // Отмечаем ДО msgMap: у статуса ACTIVE(0) сообщения нет, но данные он
+      // делает несвежими ровно так же.
+      mine.push(log);
 
       // Registry enum: ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4
       const msgMap: Partial<Record<number, [NotifType, string, string]>> = {
@@ -353,6 +385,13 @@ export function useNotifications() {
         txHash,
       });
     }
+
+    // Терминальные переходы двигают деньги и начисляют XP (autoAwardXP в
+    // _complete), поэтому кошелёк тоже несвеж.
+    refreshFromLogs(mine, { chain: ["deals", "wallet"], graph: ["deals"] });
+    // Арбитру интересна только очередь споров: сделка не его, в сабграфе для
+    // него ничего не меняется.
+    refreshFromLogs(forArbiter, { chain: ["arbiter"] });
   }, [isArbiter, push, publicClient]);
 
   const onJobAcceptedAsExecutor = useCallback((logs: unknown[]) => {
@@ -366,6 +405,8 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // Чужое нажатие: клиент принял мой отклик. Заказ закрылся, сделка родилась.
+    refreshFromLogs(logs, { chain: ["deals", "jobs"], graph: ["deals", "jobs"] });
   }, [push]);
 
   const onJobAcceptedAsClient = useCallback((logs: unknown[]) => {
@@ -379,6 +420,7 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    refreshFromLogs(logs, { chain: ["deals", "jobs"], graph: ["deals", "jobs"] });
   }, [push]);
 
   const onJobCancelledAsClient = useCallback((logs: unknown[]) => {
@@ -392,6 +434,7 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    refreshFromLogs(logs, { chain: ["jobs", "wallet"], graph: ["jobs"] });
   }, [push]);
 
   const onRequestAcceptedAsClient = useCallback((logs: unknown[]) => {
@@ -405,6 +448,9 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // Чужое нажатие: исполнитель принял мой запрос. Запрос уходит из PENDING,
+    // рождается сделка.
+    refreshFromLogs(logs, { chain: ["deals", "requests"], graph: ["deals"] });
   }, [push]);
 
   const onRequestAcceptedAsExecutor = useCallback((logs: unknown[]) => {
@@ -418,6 +464,11 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // У услуги растёт hiresCount — это уже сабграф.
+    refreshFromLogs(logs, {
+      chain: ["deals", "requests", "services"],
+      graph: ["deals", "services"],
+    });
   }, [push]);
 
   const onRequestRejectedAsClient = useCallback((logs: unknown[]) => {
@@ -431,6 +482,9 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // Отказ возвращает эскроу за вычетом пола. Запросы фронт из сабграфа не
+    // читает — только цепь.
+    refreshFromLogs(logs, { chain: ["requests", "wallet"] });
   }, [push]);
 
   const onDisputeClaimedAsArbiter = useCallback((logs: unknown[]) => {
@@ -447,9 +501,14 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // Очередь споров и мои дела как арбитра. Сабграф статус спора не меняет:
+    // DISPUTED пришёл раньше, вместе с AgreementStatusUpdated.
+    refreshFromLogs(logs, { chain: ["arbiter", "deals"] });
   }, [push]);
 
   const onDisputeClaimedNotifyParties = useCallback((logs: unknown[]) => {
+    // Наблюдатель без `args`: сюда прилетают заявки арбитров по всей бирже.
+    const mine: unknown[] = [];
     for (const log of logs) {
       const { agreement, arbiter } = a(log);
       if (!agreement) continue;
@@ -457,6 +516,7 @@ export function useNotifications() {
       if (arbiter?.toLowerCase() === address?.toLowerCase()) continue;
       const dealInfo = myDeals.current.get(agreement.toLowerCase());
       if (!dealInfo) continue;
+      mine.push(log);
       push({
         type: "dispute_arbiter_claimed",
         title: "Arbiter Assigned",
@@ -465,14 +525,21 @@ export function useNotifications() {
         txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
       });
     }
+    // Только цепь: у сделки сменился клеймер спора, статус в сабграфе прежний.
+    refreshFromLogs(mine, { chain: ["deals"] });
   }, [address, push]);
 
   const onJobApplied = useCallback((logs: unknown[]) => {
+    // Наблюдатель без `args`: отклики на ВСЕ заказы биржи. Обновляемся только по
+    // тем, что прошли фильтр — иначе каждое чужое нажатие на доске стоило бы
+    // всем открытым вкладкам похода в цепь и в сабграф.
+    const mine: unknown[] = [];
     for (const log of logs) {
       const { jobId, executor } = a(log);
       const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
       // Executor applied — confirm to them
       if (executor?.toLowerCase() === address?.toLowerCase()) {
+        mine.push(log);
         push({
           type: "job_applied",
           title: "Application Submitted",
@@ -484,6 +551,7 @@ export function useNotifications() {
       }
       // Notify client if this is their job
       if (jobId !== undefined && myJobIds.current.has(jobId.toString())) {
+        mine.push(log);
         push({
           type: "job_applied",
           title: "New Applicant",
@@ -493,15 +561,22 @@ export function useNotifications() {
         });
       }
     }
+    // Список откликов лежит и в цепи (getApplicants), и в сабграфе
+    // (Job.applicants) — доска читает его оттуда.
+    refreshFromLogs(mine, { chain: ["jobs"], graph: ["jobs"] });
   }, [address, push]);
 
   const onServiceRequested = useCallback((logs: unknown[]) => {
+    // Наблюдатель без `args`: запросы на ВСЕ услуги биржи — тот же фильтр, что
+    // и в onJobApplied выше.
+    const mine: unknown[] = [];
     for (const log of logs) {
       const { requestId, serviceId, client, amount } = a(log);
       const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
       const link = requestId !== undefined ? `/request/${requestId}` : "/dashboard";
       // Client sent the request — confirm to them
       if (client?.toLowerCase() === address?.toLowerCase()) {
+        mine.push(log);
         push({
           type: "service_requested",
           title: "Request Sent",
@@ -513,6 +588,7 @@ export function useNotifications() {
       }
       // Notify executor if this is their service
       if (serviceId !== undefined && myServiceIds.current.has(serviceId.toString())) {
+        mine.push(log);
         push({
           type: "service_requested",
           title: "New Service Request",
@@ -522,6 +598,10 @@ export function useNotifications() {
         });
       }
     }
+    // Только цепь: запросы на услугу фронт читает из цепи, не из сабграфа
+    // (`lib/graph.ts` их не запрашивает). У самой услуги здесь ещё ничего не
+    // меняется — hiresCount растёт на acceptRequest, не на requestService.
+    refreshFromLogs(mine, { chain: ["requests", "wallet"] });
   }, [address, push]);
 
   // ─── AgreementRegistered as client ──────────────────────────────────────
