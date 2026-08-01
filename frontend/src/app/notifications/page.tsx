@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, CheckCheck, Trash2, ExternalLink, BellRing, BellOff, Loader2 } from "lucide-react";
+import { Bell, CheckCheck, Trash2, ExternalLink, BellOff, Loader2 } from "lucide-react";
 import { useNotificationsCtx } from "@/contexts/NotificationsContext";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useAccount } from "wagmi";
 import { cn } from "@/lib/utils";
+import { pushPrompt } from "@/lib/pushPrompt";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
 
@@ -77,8 +78,11 @@ function NotifEntry({ notif, onRead }: { notif: AppNotification; onRead: (id: st
 export default function NotificationsPage() {
   const { isConnected, status } = useAccount();
   const { notifications, unreadCount, markRead, markAll, clearAll } = useNotificationsCtx();
-  const { supported, subscribed, stale: pushStale, permission, loading: pushLoading, error: pushError, enable: enablePush, disable: disablePush } = usePushNotifications();
+  // `disable` намеренно не берём: отключение живёт в меню кошелька (WalletMenu),
+  // где рядом отключается и чат.
+  const { supported, subscribed, stale: pushStale, permission, loading: pushLoading, error: pushError, enable: enablePush } = usePushNotifications();
   const t = useTranslations();
+  const prompt = pushPrompt({ supported, permission, subscribed, stale: pushStale });
 
   if (status === 'reconnecting' || status === 'connecting') return null;
 
@@ -130,37 +134,29 @@ export default function NotificationsPage() {
           </div>
         </div>
 
-        {/* Push notification toggle — always shown when supported, in both on/off states */}
-        {supported && permission !== 'denied' && (
+        {/* Предложение включить пуши. Живёт только пока включать есть что —
+            подключённые и живые пуши убирают элемент со страницы целиком, потому
+            что отключение живёт в меню кошелька (WalletMenu), рядом с
+            отключением чата. Что именно показать, решает pushPrompt() — правило
+            вынесено в lib, чтобы «подписки нет» и «подписка мертва» нельзя было
+            слить в одно условие незаметно (см. lib/pushPrompt.test.ts). */}
+        {prompt === 'enable' && (
           <div className="flex items-center justify-between px-4 py-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] mb-4">
             <div className="flex items-center gap-3">
-              {subscribed
-                ? <BellRing className="w-4 h-4 text-primary/70" />
-                : <BellOff className="w-4 h-4 text-white/30" />
-              }
+              <BellOff className="w-4 h-4 text-white/30" />
               <div>
-                <p className="text-sm font-medium text-white/80">
-                  {subscribed ? 'Push notifications on' : 'Push notifications off'}
-                </p>
-                <p className="text-xs text-white/35">
-                  {subscribed ? 'You\'ll be notified about deal updates even when the app is closed.' : 'Enable to get deal alerts when you\'re away.'}
-                </p>
+                <p className="text-sm font-medium text-white/80">Push notifications off</p>
+                <p className="text-xs text-white/35">Enable to get deal alerts when you&apos;re away.</p>
               </div>
             </div>
             <button
-              onClick={subscribed ? disablePush : enablePush}
+              onClick={enablePush}
               disabled={pushLoading}
-              className={cn(
-                'flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40',
-                subscribed
-                  ? 'border border-white/15 text-white/50 hover:border-white/25 hover:text-white/70'
-                  : 'bg-primary text-white hover:bg-primary/80'
-              )}
+              className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-white hover:bg-primary/80 transition-colors disabled:opacity-40"
             >
               {pushLoading
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                : subscribed ? 'Turn off' : 'Enable'
-              }
+                : 'Enable'}
             </button>
           </div>
         )}
@@ -170,8 +166,9 @@ export default function NotificationsPage() {
             сутки сама выбрасывала человека в кошелёк (на Android это прямой
             путь в незакрываемый 'personal_sign already pending'). Автоматики
             больше нет, поэтому состояние обязано быть видимым: молчаливый
-            отказ доставки — худшее из возможного. */}
-        {supported && subscribed && pushStale && permission !== 'denied' && (
+            отказ доставки — худшее из возможного. Прячется вместе с тумблером
+            ТОЛЬКО когда подписка жива. */}
+        {prompt === 'renew' && (
           <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-[14px] border border-amber-500/20 bg-amber-500/5 mb-4">
             <p className="text-xs text-amber-400/80 leading-relaxed">
               {t("notifications.push_stale")}
@@ -188,7 +185,7 @@ export default function NotificationsPage() {
           </div>
         )}
 
-        {supported && permission === 'denied' && (
+        {prompt === 'blocked' && (
           <div className="px-4 py-3 rounded-[14px] border border-amber-500/20 bg-amber-500/5 mb-4">
             <p className="text-xs text-amber-400/70">
               {t("notifications.push_blocked")}

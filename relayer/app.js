@@ -47,7 +47,14 @@ function loadPushSubs() {
       const raw = JSON.parse(readFileSync(PUSH_SUBS_FILE, 'utf8'));
       return new Map(Object.entries(raw));
     }
-  } catch {}
+  } catch (e) {
+    // The paragraph above describes this exact outcome happening in production —
+    // an empty map means every push for every user is dropped for the whole life
+    // of the process. The path bug got fixed; the SILENCE around it did not, so a
+    // truncated write or an EACCES still produced a perfectly healthy-looking
+    // relayer that delivered nothing. A corrupt store is a loud failure now.
+    console.error(`[push] FAILED TO LOAD ${PUSH_SUBS_FILE} — starting with ZERO subscriptions, no push will be delivered:`, e.message);
+  }
   return new Map();
 }
 function savePushSubs() {
@@ -57,7 +64,13 @@ function savePushSubs() {
     // created further down — make sure the directory exists or the write is lost.
     fs.mkdirSync(path.dirname(PUSH_SUBS_FILE), { recursive: true });
     writeFileSync(PUSH_SUBS_FILE, JSON.stringify(obj), 'utf8');
-  } catch {}
+  } catch (e) {
+    // /push/subscribe answers {ok:true} off the in-memory map regardless, so a
+    // read-only volume or a full disk used to mean: the user is told he is
+    // subscribed, the subscription dies at the next restart, and nobody ever finds
+    // out. At minimum the operator gets to see it.
+    console.error(`[push] FAILED TO PERSIST ${PUSH_SUBS_FILE} — subscriptions live in memory only and are lost on restart:`, e.message);
+  }
 }
 const _pushSubs = loadPushSubs();
 
@@ -508,8 +521,18 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
                + 'now split in half instead of three quarters to you.',
           url:   `/deal/${agreementAddress}`,
         });
+        return;
       }
-      return;
+      // The responder is neither of the two parties this agreement reports — the
+      // log and getDetails() disagree about whose deal this is. The `return` used
+      // to be unconditional, so this case ate the Dispute Answered push AND
+      // short-circuited the status loop and the selector fallback below it: two
+      // notifications gone, nothing written down. Say so and fall through, the
+      // same way sendDisputeRaised() falls back rather than dropping.
+      console.error(
+        `[push] DisputeResponded on ${agreementAddress} came from ${responded.party}, ` +
+        `who is neither client (${client}) nor executor (${executor}) — "Dispute Answered" not sent`,
+      );
     }
 
     // Check for AgreementStatusUpdated event first (terminal state changes).
@@ -549,13 +572,32 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
     }
 
     // No status event — check if the called function is fund()/activate()/markDone().
-    const selector = typeof calldata === 'string' ? calldata.slice(0, 10).toLowerCase() : null;
-    if (selector) {
-      const cfg = FUNC_PUSH_MSG[selector];
-      if (cfg) await sendCfg(cfg);
+    // Those three emit no AgreementStatusUpdated, so the selector IS their only
+    // notification path. /relay/notify does not require `calldata` (only txHash and
+    // agreement), so a caller that omits it silently loses Deal Funded / Deal
+    // Activated / Work Submitted entirely — worth a line, it can only mean the
+    // caller is malformed.
+    if (typeof calldata !== 'string') {
+      console.warn(`[push] no calldata for ${agreementAddress} — fund/activate/markDone pushes cannot be resolved`);
+      return;
     }
-  } catch {
-    // not an agreement target (e.g. a board action) — board pushes already handled
+    const cfg = FUNC_PUSH_MSG[calldata.slice(0, 10).toLowerCase()];
+    if (cfg) await sendCfg(cfg);
+  } catch (e) {
+    // This catch wraps EVERYTHING above — getDetails(), the dispute reads, every
+    // sendCfg(). Its comment claimed it only caught "not an agreement target", and
+    // for a board action that is true: getDetails() does not exist on the Diamond,
+    // so the call reverts and lands here by design. But a transient RPC failure on
+    // a REAL agreement was indistinguishable from that, and took Deal Complete /
+    // Refunded / Dispute Raised / Funded / Activated / Work Submitted down with it
+    // in complete silence — the same disease the receipt polling above was added to
+    // cure, one frame further in, and reachable right after that polling succeeds.
+    //
+    // We can tell the two apart: a board action targets the Diamond itself, an
+    // agreement action does not. So the expected case stays quiet and everything
+    // else is reported.
+    if (agreementAddress?.toLowerCase() === DIAMOND_ADDR?.toLowerCase()) return;
+    console.error(`[push] lifecycle pushes failed for agreement ${agreementAddress}:`, e.message);
   }
 }
 
@@ -1172,7 +1214,14 @@ app.post('/relay', async (req, res) => {
     }
 
     res.json({ success: true, txHash: receipt.hash, blockNumber: receipt.blockNumber });
-    pushAfterRelay(receipt, forwardReq.to, data);
+    // Floating on purpose — the response is already out and a push must never
+    // delay a tx. But it needs its own .catch(): pushAfterRelay() starts with
+    // `await pushBoardEvents(receipt)`, which is OUTSIDE its internal try, so a
+    // receipt without `logs` throws a TypeError that escapes as an unhandled
+    // rejection — and on Node >= 15 that takes the whole relayer down. The same
+    // call from /relay/notify has always been wrapped; this one was not.
+    pushAfterRelay(receipt, forwardReq.to, data)
+      .catch(e => console.error(`[push] post-relay pushes failed for ${receipt.hash}:`, e.message));
   } catch (err) {
     console.error('[relay] error:', err.message);
     res.status(500).json({ error: err.message });
@@ -1628,6 +1677,48 @@ app.post('/push/send', async (req, res) => {
 // PUSH_SECRET only. Historically /api/relay never called this, so on-chain OS pushes
 // never fired — only in-app (event-watching) notifications did, and only while the app
 // was open. This closes that gap.
+// ─── Receipt polling for /relay/notify ────────────────────────────────────────
+//
+// The caller (frontend/src/app/api/relay/route.ts) has ALREADY waited for this
+// receipt on ITS connection before calling us. We then look the same tx up on
+// OURS — a different URL (RPC_URL || BASE_SEPOLIA_RPC_URL || the free public
+// node), and even when it is the same URL a load-balanced endpoint like
+// drpc.live fans out over several node providers with independent lag. So the
+// block the frontend has already seen may not have reached the replica that
+// answers us, and getTransactionReceipt() returns `null` — not an error, just
+// nothing. A single attempt therefore drops the push silently, which is how the
+// deal-lifecycle OS notifications went missing with no trace anywhere.
+//
+// Same disease and same cure as the read-after-write guard on the USDC
+// allowance in route.ts: poll until the fact is visible instead of assuming one
+// read is authoritative.
+//
+// Ceiling: a Base Sepolia block is 2 s and the replica lag we have actually
+// measured on this stack is 2–6 s, so 24 × 500 ms ≈ 11.5 s gives roughly 2× the
+// worst observed lag. The step is a quarter of a block — fine enough that we
+// notice the replica catching up almost immediately, coarse enough that a full
+// exhaustion is 24 RPC calls, not hundreds.
+//
+// Mutable on purpose: the tests shrink `stepMs` so exhausting the poll takes
+// milliseconds instead of eleven seconds, while still exercising the real
+// attempt count.
+export const RECEIPT_POLL = { attempts: 24, stepMs: 500 };
+
+/**
+ * Reads the receipt for `txHash`, retrying while the RPC replica has not caught
+ * up. Resolves to the receipt, or to `null` once the attempts are spent — the
+ * caller MUST say something about `null`, never swallow it.
+ */
+export async function waitForReceipt(txHash) {
+  const { attempts, stepMs } = RECEIPT_POLL;
+  for (let i = 0; i < attempts; i++) {
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (receipt) return receipt;
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, stepMs));
+  }
+  return null;
+}
+
 app.post('/relay/notify', (req, res) => {
   if (!PUSH_SECRET || req.headers['x-push-secret'] !== PUSH_SECRET) {
     return res.status(403).json({ error: 'forbidden' });
@@ -1639,10 +1730,23 @@ app.post('/relay/notify', (req, res) => {
   res.json({ ok: true });
   (async () => {
     try {
-      const receipt = await provider.getTransactionReceipt(txHash);
-      if (receipt) await pushAfterRelay(receipt, agreement, calldata);
+      const receipt = await waitForReceipt(txHash);
+      if (receipt) {
+        await pushAfterRelay(receipt, agreement, calldata);
+        return;
+      }
+      // Giving up is a REPORTABLE outcome, not a no-op. Without this line the
+      // only symptom of a dropped notification was a user who never heard about
+      // his own deal, and nothing on the server said so. The txHash is in the
+      // message so the tx can be looked up on the explorer and the pushes
+      // reconstructed by hand.
+      console.error(
+        `[push] relay/notify: no receipt for ${txHash} after ${RECEIPT_POLL.attempts} attempts ` +
+        `(~${Math.round((RECEIPT_POLL.attempts - 1) * RECEIPT_POLL.stepMs / 1000)}s) — ` +
+        `pushes dropped for agreement ${agreement}`,
+      );
     } catch (e) {
-      console.error('[push] relay/notify failed:', e.message);
+      console.error(`[push] relay/notify failed for ${txHash}:`, e.message);
     }
   })();
 });
