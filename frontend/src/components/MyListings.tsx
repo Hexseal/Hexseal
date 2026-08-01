@@ -70,6 +70,20 @@ function fmt(amount: bigint) {
   return (Number(amount) / 1e6).toFixed(2);
 }
 
+/**
+ * Ключи занятости в списках.
+ *
+ * Раньше в `busyId` лежал голый числовой id, и пространства имён накладывались:
+ * услуга №3 и запрос №3 давали одну и ту же строку `"3"`, поэтому пауза услуги
+ * зажигала крутилку на кнопке «Принять» чужого запроса. Действие тоже входит в
+ * ключ — «Приостановить» и «Удалить» видны в карточке одновременно, и общий на
+ * два ключ снова свёл бы их крутилки в одну.
+ */
+const svcKey = (action: string, serviceId: bigint | string) => `svc:${action}:${serviceId}`;
+const reqKey = (action: 'accept' | 'reject', requestId: bigint | string) => `req:${action}:${requestId}`;
+const jobKey = (action: 'cancel' | 'accept', jobId: bigint | string, executor = '') =>
+  `job:${action}:${jobId}${executor ? `:${executor.toLowerCase()}` : ''}`;
+
 const SERVICE_STATUS: Record<number, { label: string; icon: React.ReactNode; cls: string; dot: string; textCls: string }> = {
   0: { label: 'Active',  icon: <Zap className="w-3 h-3" />,     cls: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20', dot: 'bg-emerald-400',   textCls: 'text-emerald-400/80' },
   1: { label: 'Paused',  icon: <Pause className="w-3 h-3" />,   cls: 'bg-amber-400/10 text-amber-400 border-amber-400/20',      dot: 'bg-amber-400',     textCls: 'text-amber-400/80' },
@@ -278,7 +292,16 @@ const ServiceCard = memo(function ServiceCard({
   const s = SERVICE_STATUS[service.status] ?? SERVICE_STATUS[0];
   const pendingCount = pendingIds.length;
   const sId = serviceId.toString();
-  const serviceBusy = busyId === sId;
+  const pauseBusy  = busyId === svcKey('pauseService',   sId);
+  const resumeBusy = busyId === svcKey('unpauseService', sId);
+  const removeBusy = busyId === svcKey('removeService',  sId);
+  const reqBusy = (rid: bigint | string, a: 'accept' | 'reject') => busyId === reqKey(a, rid);
+  // Блокировка — по карточке, а не по всему списку: раньше любое действие в
+  // любой строке гасило кнопки во всех остальных услугах разом. Гонку двух
+  // подписей это не открывает — очередь кошелька держит `acquireWalletLock`
+  // в lib/relay.ts.
+  const cardBusy = pauseBusy || resumeBusy || removeBusy ||
+    pendingIds.some(id => reqBusy(id, 'accept') || reqBusy(id, 'reject'));
 
   return (
     <div
@@ -317,27 +340,27 @@ const ServiceCard = memo(function ServiceCard({
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
           {!readOnly && service.status !== 2 && (
-            <Button size="sm" variant="ghost" onClick={onEdit} disabled={!!busyId}
+            <Button size="sm" variant="ghost" onClick={onEdit} disabled={cardBusy}
               className="h-7 w-7 p-0 text-white/25 hover:text-primary" title="Edit service">
               <Pencil className="w-3.5 h-3.5" />
             </Button>
           )}
           {!readOnly && service.status === 0 && (
-            <Button size="sm" variant="ghost" onClick={onPause} disabled={!!busyId}
+            <Button size="sm" variant="ghost" onClick={onPause} disabled={cardBusy}
               className="h-7 w-7 p-0 text-white/25 hover:text-amber-400/80" title="Pause service">
-              {serviceBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pause className="w-3.5 h-3.5" />}
+              {pauseBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pause className="w-3.5 h-3.5" />}
             </Button>
           )}
           {!readOnly && service.status === 1 && (
-            <Button size="sm" variant="ghost" onClick={onUnpause} disabled={!!busyId}
+            <Button size="sm" variant="ghost" onClick={onUnpause} disabled={cardBusy}
               className="h-7 w-7 p-0 text-white/25 hover:text-emerald-400/80" title="Resume service">
-              {serviceBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+              {resumeBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
             </Button>
           )}
           {!readOnly && service.status !== 2 && (
-            <Button size="sm" variant="ghost" onClick={onRemove} disabled={!!busyId}
+            <Button size="sm" variant="ghost" onClick={onRemove} disabled={cardBusy}
               className="h-7 w-7 p-0 text-white/25 hover:text-red-400/80" title="Remove service">
-              <Trash2 className="w-3.5 h-3.5" />
+              {removeBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
             </Button>
           )}
           <ChevronDown className={`w-3.5 h-3.5 text-white/25 transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`} />
@@ -396,15 +419,15 @@ const ServiceCard = memo(function ServiceCard({
                           </Link>
                         )}
                         {!readOnly && (
-                          <Button size="sm" variant="ghost" onClick={() => onReject(rid)} disabled={!!busyId}
+                          <Button size="sm" variant="ghost" onClick={() => onReject(rid)} disabled={cardBusy}
                             className="h-6 px-2 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10">
-                            {busyId === rId ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Reject'}
+                            {reqBusy(rid, 'reject') ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Reject'}
                           </Button>
                         )}
                         {!readOnly && (
-                          <Button size="sm" onClick={() => onAccept(rid, req)} disabled={!!busyId} className="h-6 px-2 text-xs gap-1">
-                            {busyId === rId ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
-                            {busyId === rId ? 'Accepting…' : 'Accept'}
+                          <Button size="sm" onClick={() => onAccept(rid, req)} disabled={cardBusy} className="h-6 px-2 text-xs gap-1">
+                            {reqBusy(rid, 'accept') ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
+                            {reqBusy(rid, 'accept') ? 'Accepting…' : 'Accept'}
                           </Button>
                         )}
                       </div>
@@ -455,22 +478,22 @@ const ServiceCard = memo(function ServiceCard({
           {!readOnly && service.status !== 2 && (
             <div className="flex items-center gap-2 pt-1 border-t border-white/8">
               {service.status === 0 && (
-                <Button size="sm" variant="ghost" onClick={onPause} disabled={!!busyId}
+                <Button size="sm" variant="ghost" onClick={onPause} disabled={cardBusy}
                   className="gap-1.5 text-amber-400/60 hover:text-amber-400 hover:bg-amber-400/10 text-xs">
-                  {serviceBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
+                  {pauseBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
                   Pause Service
                 </Button>
               )}
               {service.status === 1 && (
-                <Button size="sm" variant="ghost" onClick={onUnpause} disabled={!!busyId}
+                <Button size="sm" variant="ghost" onClick={onUnpause} disabled={cardBusy}
                   className="gap-1.5 text-emerald-400/60 hover:text-emerald-400 hover:bg-emerald-400/10 text-xs">
-                  {serviceBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                  {resumeBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                   Resume Service
                 </Button>
               )}
-              <Button size="sm" variant="ghost" onClick={onRemove} disabled={!!busyId}
+              <Button size="sm" variant="ghost" onClick={onRemove} disabled={cardBusy}
                 className="gap-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-400/10 text-xs">
-                <Trash2 className="w-3 h-3" />Remove Service
+                {removeBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}Remove Service
               </Button>
             </div>
           )}
@@ -560,7 +583,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     action: 'pauseService' | 'unpauseService' | 'removeService',
   ) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-    setBusyId(serviceId.toString());
+    setBusyId(svcKey(action, serviceId));
     const done: Record<string, string> = {
       pauseService:   'Service paused',
       unpauseService: 'Service resumed',
@@ -569,17 +592,21 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
     try {
       await sendGasless(walletClient, publicClient, action, [serviceId], DIAMOND_ABI as Abi);
       toast.success(done[action]);
-      setTimeout(refetch, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
+      // против отставания реплик RPC (24701de), и всё это окно список
+      // показывает прежний статус. Раннее снятие возвращало кнопку в рабочий
+      // вид поверх устаревших данных, и второй клик ревертил на цепи.
+      setTimeout(() => { refetch(); if (mountedRef.current) setBusyId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Action failed');
-    } finally {
       if (mountedRef.current) setBusyId(null);
     }
   };
 
   const doAccept = async (requestId: bigint) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-    setBusyId(requestId.toString());
+    setBusyId(reqKey('accept', requestId));
     let success = false;
     try {
       toast('Accepting request…');
@@ -596,15 +623,19 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
 
   const handleReject = async (requestId: bigint) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-    setBusyId(requestId.toString());
+    setBusyId(reqKey('reject', requestId));
     try {
       toast('Rejecting request…');
       await sendGasless(walletClient, publicClient, 'rejectRequest', [requestId], DIAMOND_ABI as Abi);
       toast.success('Request rejected');
-      setTimeout(refetch, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
+      // против отставания реплик RPC (24701de), и всё это окно список
+      // показывает прежний статус. Раннее снятие возвращало кнопку в рабочий
+      // вид поверх устаревших данных, и второй клик ревертил на цепи.
+      setTimeout(() => { refetch(); if (mountedRef.current) setBusyId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Reject failed');
-    } finally {
       if (mountedRef.current) setBusyId(null);
     }
   };
@@ -622,10 +653,14 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
       );
       toast.success(tl('service_updated'));
       if (mountedRef.current) setEditTarget(null);
-      setTimeout(refetch, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
+      // против отставания реплик RPC (24701de), и всё это окно список
+      // показывает прежний статус. Раннее снятие возвращало кнопку в рабочий
+      // вид поверх устаревших данных, и второй клик ревертил на цепи.
+      setTimeout(() => { refetch(); if (mountedRef.current) setEditBusy(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Edit failed');
-    } finally {
       if (mountedRef.current) setEditBusy(false);
     }
   };
@@ -811,7 +846,7 @@ export function MyServices({ address, onDealCreated, readOnly }: { address: stri
 // ── Job Card ──────────────────────────────────────────────────────────────────
 
 const JobCard = memo(function JobCard({
-  jobId, job, applicants, onCancel, onAccept, onEdit, busy, readOnly,
+  jobId, job, applicants, onCancel, onAccept, onEdit, busyKey, readOnly,
 }: {
   jobId: bigint;
   job: JobRecord;
@@ -819,12 +854,18 @@ const JobCard = memo(function JobCard({
   onCancel: () => void;
   onAccept: (executor: string) => void;
   onEdit: () => void;
-  busy: boolean;
+  busyKey: string | null;
   readOnly?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const s = JOB_STATUS[job.status] ?? JOB_STATUS[0];
   const count = applicants?.length ?? 0;
+  // «Отменить заказ» и «Принять» видны одновременно, а строк «Принять» столько
+  // же, сколько откликнувшихся: один булев `busy` на карточку зажигал крутилки
+  // и подпись «Accepting…» сразу на всех.
+  const cancelBusy = busyKey === jobKey('cancel', jobId);
+  const acceptBusy = (addr: string) => busyKey === jobKey('accept', jobId, addr);
+  const cardBusy = cancelBusy || (applicants ?? []).some(acceptBusy);
   // Editable only while OPEN and nobody has applied yet
   const canEdit = job.status === 0 && count === 0;
 
@@ -868,15 +909,15 @@ const JobCard = memo(function JobCard({
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
           {!readOnly && canEdit && (
-            <Button size="sm" variant="ghost" onClick={onEdit} disabled={busy}
+            <Button size="sm" variant="ghost" onClick={onEdit} disabled={cardBusy}
               className="h-7 w-7 p-0 text-white/25 hover:text-primary" title="Edit job">
               <Pencil className="w-3.5 h-3.5" />
             </Button>
           )}
           {!readOnly && job.status === 0 && (
-            <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}
+            <Button size="sm" variant="ghost" onClick={onCancel} disabled={cardBusy}
               className="h-7 w-7 p-0 text-white/25 hover:text-red-400/80" title="Cancel job">
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {cancelBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
             </Button>
           )}
           <ChevronDown className={`w-3.5 h-3.5 text-white/25 transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`} />
@@ -926,9 +967,9 @@ const JobCard = memo(function JobCard({
                         </Link>
                       )}
                       {!readOnly && (
-                        <Button size="sm" onClick={() => onAccept(addr)} disabled={busy} className="h-6 px-2 text-xs gap-1">
-                          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
-                          {busy ? 'Accepting…' : 'Accept'}
+                        <Button size="sm" onClick={() => onAccept(addr)} disabled={cardBusy} className="h-6 px-2 text-xs gap-1">
+                          {acceptBusy(addr) ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
+                          {acceptBusy(addr) ? 'Accepting…' : 'Accept'}
                         </Button>
                       )}
                     </div>
@@ -949,9 +990,9 @@ const JobCard = memo(function JobCard({
               </Button>
             </Link>
             {!readOnly && job.status === 0 && (
-              <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}
+              <Button size="sm" variant="ghost" onClick={onCancel} disabled={cardBusy}
                 className="gap-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-400/10 text-xs">
-                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                {cancelBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                 Cancel Job
               </Button>
             )}
@@ -1092,22 +1133,26 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
 
   const handleCancel = async (jobId: bigint) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-    setBusyJobId(jobId.toString());
+    setBusyJobId(jobKey('cancel', jobId));
     try {
       toast('Cancelling job…');
       await sendGasless(walletClient, publicClient, 'cancelJob', [jobId], DIAMOND_ABI as Abi);
       toast.success('Job cancelled');
-      setTimeout(refetch, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
+      // против отставания реплик RPC (24701de), и всё это окно список
+      // показывает прежний статус. Раннее снятие возвращало кнопку в рабочий
+      // вид поверх устаревших данных, и второй клик ревертил на цепи.
+      setTimeout(() => { refetch(); if (mountedRef.current) setBusyJobId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Cancel failed');
-    } finally {
       if (mountedRef.current) setBusyJobId(null);
     }
   };
 
   const doAccept = async (jobId: bigint, executorAddr: string) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-    setBusyJobId(jobId.toString());
+    setBusyJobId(jobKey('accept', jobId, executorAddr));
     let success = false;
     try {
       toast('Accepting applicant…');
@@ -1140,10 +1185,14 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
       );
       toast.success(tj('job_updated'));
       if (mountedRef.current) setEditTarget(null);
-      setTimeout(refetch, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
+      // против отставания реплик RPC (24701de), и всё это окно список
+      // показывает прежний статус. Раннее снятие возвращало кнопку в рабочий
+      // вид поверх устаревших данных, и второй клик ревертил на цепи.
+      setTimeout(() => { refetch(); if (mountedRef.current) setEditBusy(false); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Edit failed');
-    } finally {
       if (mountedRef.current) setEditBusy(false);
     }
   };
@@ -1201,7 +1250,7 @@ export function MyJobs({ address, onDealCreated, readOnly, hideClosed }: { addre
                 onCancel={() => handleCancel(id)}
                 onAccept={(exec) => setConfirmHire({ jobId: id, executor: exec, amount: job.amount, deadlineDays: job.deadlineDays })}
                 onEdit={() => setEditTarget({ kind: 'job', id, title: job.title, description: job.description, amount: job.amount, deadlineDays: job.deadlineDays, region: job.region, terms: job.terms })}
-                busy={busyJobId === id.toString()}
+                busyKey={busyJobId}
                 readOnly={readOnly}
               />
             </div>
@@ -1343,10 +1392,14 @@ export function MyClientRequests({ address }: { address: string }) {
       toast('Cancelling request…');
       await sendGasless(walletClient, publicClient, 'cancelRequest', [reqId], DIAMOND_ABI as Abi);
       toast.success('Request cancelled');
-      setTimeout(refetch, 2000);
+      // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
+      // finally: релеер уже дождался квитанции, но чтение отложено намеренно —
+      // против отставания реплик RPC (24701de), и всё это окно список
+      // показывает прежний статус. Раннее снятие возвращало кнопку в рабочий
+      // вид поверх устаревших данных, и второй клик ревертил на цепи.
+      setTimeout(() => { refetch(); if (mountedRef.current) setBusyId(null); }, 2000);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || 'Cancel failed');
-    } finally {
       if (mountedRef.current) setBusyId(null);
     }
   };
