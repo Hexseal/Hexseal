@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "react-hot-toast";
 import { parseUnits, parseEventLogs } from "viem";
 import { mintJobGasless } from "@/lib/relay";
-import { refreshAfterTx } from "@/lib/subgraphSync";
+import { refreshAfterBlock } from "@/lib/subgraphSync";
 import { useFeeConfig } from "@/hooks/useFeeConfig";
 import { quoteFeeLocal, fmtUsdc } from "@/lib/fee";
 import {
@@ -199,8 +199,12 @@ export default function PostJobPage() {
 
       // Parse jobId from transaction receipt
       let parsedJobId: string | null = null;
+      // Номер блока из той же квитанции — его же ждёт refreshAfterTx ниже.
+      // Держим снаружи try, чтобы не читать квитанцию второй раз.
+      let minedBlock: bigint | undefined;
       try {
         const txReceipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+        minedBlock = txReceipt.blockNumber;
         const logs = parseEventLogs({ abi: JOB_POSTED_ABI, eventName: "JobPosted", logs: txReceipt.logs });
         if (logs.length > 0) {
           parsedJobId = logs[0].args.jobId?.toString() ?? null;
@@ -216,7 +220,7 @@ export default function PostJobPage() {
       // чем сабграф проиндексирует блок. Сброс в момент майнинга (как было
       // здесь) цементировал непроиндексированный снимок ещё на 120 секунд.
       // См. lib/subgraphSync.
-      void refreshAfterTx(publicClient, hash, {
+      void refreshAfterBlock(minedBlock, {
         chain: ["jobs", "wallet"],
         graph: ["jobs"],
       });

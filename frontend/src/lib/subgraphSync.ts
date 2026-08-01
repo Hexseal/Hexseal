@@ -36,11 +36,24 @@ export const SUBGRAPH_PROXY = '/api/subgraph';
 /** Заголовок, которым подписчики канала `graph` обходят кэш прокси. */
 export const FRESH_HEADERS = { 'x-fresh': '1' } as const;
 
-// Опрос раз в 1200 мс: блок 2 секунды, ждать имеет смысл в этом же масштабе.
-const POLL_MS = 1_200;
+// Опрос головы. Держится СТРОГО МЕНЬШЕ микрокэша пробы на прокси (META_TTL,
+// `app/api/subgraph/route.ts`), иначе последовательные пробы одного клиента
+// всегда мимо кэша и весь цикл ожидания превращается в два десятка настоящих
+// запросов к сабграфу. С 900 мс против 1000 примерно половина попадает в кэш, а
+// потеря свежести головы ограничена секундой — при блоке в 2 секунды это
+// невидимо.
+const POLL_MS = 900;
 // Потолок ожидания. Замеренное отставание — 2-6 секунд; 25 секунд это
 // четырёхкратный запас, после которого сабграф считается отставшим всерьёз.
 const TIMEOUT_MS = 25_000;
+// Потолок на ОДИН запрос. Без него зависший fetch (мёртвый туннель, потерянная
+// мобильная сеть) не даёт циклу опроса дойти до проверки срока — тот стоит
+// МЕЖДУ пробами, а не внутри, — и разделяемый `_headInFlight` никогда не
+// снимается: одна зависшая проба выключала бы графовый канал на всю вкладку до
+// таймаута сокета браузера (в Chrome это порядка пяти минут). Внешний
+// AbortController обязателен: 12-секундный предохранитель в самом прокси
+// защищает ЕГО исходящий запрос, а не наш запрос к нему.
+const REQUEST_TIMEOUT_MS = 8_000;
 
 export interface SyncOptions {
   fetchImpl?: typeof fetch;
@@ -68,6 +81,16 @@ function resolve(opts: SyncOptions = {}): ResolvedOptions {
   };
 }
 
+async function postWithDeadline(fetchImpl: typeof fetch, url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetchImpl(url, { method: 'POST', signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Одновременных ожидающих может быть несколько (несколько событий в одном
 // блоке, несколько компонентов на странице). Общий in-flight на пробу головы
 // не даёт им превратиться в N запросов вместо одного.
@@ -83,7 +106,7 @@ export async function readSubgraphHead(opts: SyncOptions = {}): Promise<number |
 
   const probe = (async (): Promise<number | null> => {
     try {
-      const res = await fetchImpl(`${SUBGRAPH_PROXY}?meta=1`, { method: 'POST' });
+      const res = await postWithDeadline(fetchImpl, `${SUBGRAPH_PROXY}?meta=1`);
       if (!res.ok) return null;
       const json = (await res.json()) as { block?: unknown };
       const n = Number(json?.block);
@@ -135,7 +158,7 @@ export async function waitForSubgraphBlock(
 export async function invalidateSubgraphCache(opts: SyncOptions = {}): Promise<boolean> {
   const { fetchImpl } = resolve(opts);
   try {
-    const res = await fetchImpl(`${SUBGRAPH_PROXY}?invalidate=1`, { method: 'POST' });
+    const res = await postWithDeadline(fetchImpl, `${SUBGRAPH_PROXY}?invalidate=1`);
     return res.ok;
   } catch {
     return false;

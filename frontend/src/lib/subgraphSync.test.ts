@@ -102,6 +102,43 @@ describe('readSubgraphHead', () => {
     expect(calls.filter((c) => c.url.includes('meta=1'))).toHaveLength(1);
   });
 
+  it('на каждый запрос ставится предохранитель по времени', async () => {
+    const seen: (AbortSignal | undefined)[] = [];
+    const impl = (async (_url: unknown, init?: RequestInit) => {
+      seen.push(init?.signal ?? undefined);
+      return jsonResponse({ block: 100 });
+    }) as unknown as typeof fetch;
+    await readSubgraphHead({ fetchImpl: impl });
+    await invalidateSubgraphCache({ fetchImpl: impl });
+    expect(seen).toHaveLength(2);
+    for (const sig of seen) expect(sig).toBeInstanceOf(AbortSignal);
+  });
+
+  it('оборванная проба не заклинивает разделяемый флаг', async () => {
+    // Ровно тот отказ, который даёт AbortController: без снятия флага графовый
+    // канал вкладки замолчал бы до таймаута сокета браузера.
+    let calls = 0;
+    const impl = (async () => {
+      calls += 1;
+      if (calls === 1) throw new DOMException('aborted', 'AbortError');
+      return jsonResponse({ block: 100 });
+    }) as unknown as typeof fetch;
+    await expect(readSubgraphHead({ fetchImpl: impl })).resolves.toBeNull();
+    await expect(readSubgraphHead({ fetchImpl: impl })).resolves.toBe(100);
+  });
+
+  it('после оборванной пробы цикл ожидания доходит до срока, а не висит', async () => {
+    const impl = (async () => { throw new DOMException('aborted', 'AbortError'); }) as unknown as typeof fetch;
+    await expect(
+      waitForSubgraphBlock(200, {
+        fetchImpl: impl,
+        sleep: noSleep,
+        now: tickingClock(),
+        timeoutMs: 3_000,
+      }),
+    ).resolves.toBe(false);
+  });
+
   it('последовательные пробы запрашивают заново (флаг снимается до возврата)', async () => {
     const { impl, calls } = makeFetch([100, 101]);
     await expect(readSubgraphHead({ fetchImpl: impl })).resolves.toBe(100);

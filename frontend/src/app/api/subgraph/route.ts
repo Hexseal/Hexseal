@@ -24,6 +24,10 @@ const MAX_CACHE_ENTRIES   = 200;   // hard cap on distinct cached bodies
 // добавляет, зато десяток вкладок, опрашивающих одновременно, стоят одного
 // запроса к сабграфу вместо десяти.
 const META_QUERY  = '{ _meta { block { number } } }';
+// Клиент опрашивает голову чаще, чем живёт эта запись (POLL_MS = 900 мс в
+// `lib/subgraphSync.ts`), — иначе последовательные пробы одного клиента всегда
+// шли бы мимо кэша и один цикл ожидания стоил бы двух десятков запросов к
+// сабграфу. Инвариант: POLL_MS < META_TTL.
 const META_TTL    = 1_000;
 
 interface CacheEntry { data: unknown; storedAt: number }
