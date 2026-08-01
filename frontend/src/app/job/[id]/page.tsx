@@ -88,15 +88,17 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
 
-  const [acceptingExecutor, setAcceptingExecutor] = useState<string | null>(null);
-  const [isBusy, setIsBusy] = useState(false);
+  // Ключ действия, а не булев флаг на всю страницу: «Отменить заказ» и «Нанять»
+  // видны одновременно, и общий флаг зажигал крутилку на «Отменить», когда
+  // нажали «Нанять». Наём вдобавок разведён по исполнителям — строк с кнопкой
+  // столько же, сколько откликнувшихся.
+  const [busy, setBusy] = useState<string | null>(null);
   const [confirmExecutor, setConfirmExecutor] = useState<string | null>(null);
 
   const handleAccept = async (executor: string) => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
     if (job?.status !== 0) { toast.error('This job is no longer open.'); return; }
-    setAcceptingExecutor(executor);
-    setIsBusy(true);
+    setBusy(`accept:${executor}`);
 
     // Pre-check: if there's already an active deal, show a helpful error
     try {
@@ -118,8 +120,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
             ? `Active deal already exists: ${existingDeal.slice(0, 10)}… — complete or cancel it first`
             : "Already has an active deal with this executor. Complete or cancel it first."
         );
-        setAcceptingExecutor(null);
-        setIsBusy(false);
+        setBusy(null);
         return;
       }
     } catch {
@@ -138,32 +139,37 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       toast.success(t("job.accept_success"));
       // Relay returns agreementAddr from AgreementDeployed event
       if (result.agreementAddr && result.agreementAddr !== "0x0000000000000000000000000000000000000000") {
+        // Уходим со страницы — кнопки размонтируются, снимать блокировку не с
+        // чего; снятое здесь `busy` успело бы вернуть «Нанять» в рабочий вид
+        // поверх уже принятого отклика.
         router.push(`/deal/${result.agreementAddr}`);
-      } else {
-        // Fallback: refetch job and navigate to agreement address. Reads the
-        // refetch's OWN returned data, not the outer `job` — that variable is
-        // fixed at the value this closure captured when the click happened
-        // (still the pre-accept zero address), and a later re-render creates
-        // a brand-new closure that this already-running one has no way to see.
-        const fresh = await refetch();
-        const freshJob = fresh.data as JobRecord | undefined;
-        if (freshJob?.agreement && freshJob.agreement !== "0x0000000000000000000000000000000000000000") {
-          router.push(`/deal/${freshJob.agreement}`);
-        }
+        return;
       }
+      // Fallback: refetch job and navigate to agreement address. Reads the
+      // refetch's OWN returned data, not the outer `job` — that variable is
+      // fixed at the value this closure captured when the click happened
+      // (still the pre-accept zero address), and a later re-render creates
+      // a brand-new closure that this already-running one has no way to see.
+      const fresh = await refetch();
+      const freshJob = fresh.data as JobRecord | undefined;
+      if (freshJob?.agreement && freshJob.agreement !== "0x0000000000000000000000000000000000000000") {
+        router.push(`/deal/${freshJob.agreement}`);
+        return;
+      }
+      // Адрес сделки так и не нашёлся — остаёмся на странице, но уже с
+      // обновлённым (refetch выше) заказом, поэтому кнопку можно вернуть.
+      setBusy(null);
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       toast.error(msg.slice(0, 160) || "Accept failed — check console");
       console.error("[Hire] gasless failed:", err);
-    } finally {
-      setAcceptingExecutor(null);
-      setIsBusy(false);
+      setBusy(null);
     }
   };
 
   const handleCancel = async () => {
     if (!walletClient || !publicClient) { toast.error('Wallet not connected'); return; }
-    setIsBusy(true);
+    setBusy('cancel');
     try {
       await sendGasless(
         walletClient,
@@ -174,11 +180,13 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       );
       toast.success(t("job.cancel_success"));
       refetch();
+      // Блокировка держится до самого ухода на доску — иначе полторы секунды
+      // отсчёта кнопка «Отменить заказ» стоит нажимаемой поверх уже отменённого
+      // заказа, и второй клик ревертит на цепи.
       setTimeout(() => router.push("/board"), 1500);
     } catch (err: any) {
       toast.error(err?.message?.slice(0, 80) || "Cancel failed");
-    } finally {
-      setIsBusy(false);
+      setBusy(null);
     }
   };
 
@@ -432,9 +440,9 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               </Button>
             </Link>
             {isClient && job.status === 0 && (
-              <Button variant="ghost" size="sm" onClick={handleCancel} disabled={isBusy}
+              <Button variant="ghost" size="sm" onClick={handleCancel} disabled={!!busy}
                 className="gap-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-400/10">
-                {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
+                {busy === 'cancel' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
                 Cancel Job
               </Button>
             )}
@@ -519,10 +527,10 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                         <Button
                           size="sm"
                           onClick={() => setConfirmExecutor(executor)}
-                          disabled={isBusy}
+                          disabled={!!busy}
                           className="gap-1"
                         >
-                          {isBusy && acceptingExecutor === executor ? (
+                          {busy === `accept:${executor}` ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           ) : (
                             <CheckCircle className="w-3.5 h-3.5" />
@@ -543,7 +551,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       {confirmExecutor && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70 backdrop-blur-sm"
-          onClick={() => !isBusy && setConfirmExecutor(null)}
+          onClick={() => !busy && setConfirmExecutor(null)}
         >
           <div
             className="w-full max-w-md rounded-[22px] border border-white/[0.08] bg-[#111113] p-5"
@@ -590,7 +598,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 variant="ghost"
                 className="flex-1 border border-white/10 text-white/50 hover:text-white/80 hover:bg-white/5"
                 onClick={() => setConfirmExecutor(null)}
-                disabled={isBusy}
+                disabled={!!busy}
               >
                 {t("common.cancel")}
               </Button>
@@ -601,7 +609,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                   setConfirmExecutor(null);
                   handleAccept(exec);
                 }}
-                disabled={isBusy}
+                disabled={!!busy}
               >
                 <CheckCircle className="w-3.5 h-3.5" />
                 {t("job.confirm_hire_title")}
