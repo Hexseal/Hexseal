@@ -56,11 +56,15 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto px-4 py-5 max-w-6xl space-y-4 overflow-x-hidden w-full">
 
-        {/* ── Stats card — loading and loaded states are both one block ── */}
+        {/* ── Stats card — loading and loaded states are both one block ──
+             `error` тот же самый, что тридцатью строками ниже честно
+             обрабатывают вкладки: сделки не прочитались. Карточка про это
+             молчала и рисовала нули как факт — «0 активных, оборот $0» у
+             человека с десятью сделками. ── */}
         {isLoading ? (
           <StatsCardSkeleton />
         ) : (
-          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} unresolvedDisputes={unresolvedDisputes} totalDeals={totalDeals} />
+          <AgreementsStats level={level} xp={xp} cleanStreak={cleanStreak} activeCount={activeDeals.length} completedCount={completed} totalVolume={totalVolume} unresolvedDisputes={unresolvedDisputes} totalDeals={totalDeals} dealsUnavailable={!!error} />
         )}
 
         {/* ── Возврат доплаты за арбитра ──────────────────────────────────

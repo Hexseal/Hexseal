@@ -23,11 +23,17 @@ interface AgreementsStatsProps {
   totalVolume: number;
   unresolvedDisputes: number;
   totalDeals: number;
+  /** Сделки прочитать не удалось (сабграф не ответил). Числа, которые из них
+   *  считаются, показывать НЕЛЬЗЯ: они будут нулями, а ноль здесь — это
+   *  утверждение о человеке («сделок не было, оборот $0»), а не отсутствие
+   *  ответа. Ровно та же подмена, что «услуг вы не публиковали» вместо
+   *  «услугу не удалось прочитать». */
+  dealsUnavailable?: boolean;
 }
 
 export function AgreementsStats({
   level, xp, cleanStreak, activeCount, completedCount, totalVolume,
-  unresolvedDisputes, totalDeals,
+  unresolvedDisputes, totalDeals, dealsUnavailable = false,
 }: AgreementsStatsProps) {
   const t = useTranslations();
 
@@ -50,12 +56,19 @@ export function AgreementsStats({
   // При нулевом ЧИСЛИТЕЛЕ колонка остаётся: «0/12» ничего не портит, зато
   // делает счётчик публично известным ещё до того, как он кому-то понадобится,
   // — а сдерживает он именно тем, что о нём знают заранее.
-  const stats: { value: string | number; label: string; danger?: boolean }[] = [
-    { value: activeCount, label: t('dashboard.stat_active') },
-    { value: completedCount, label: t('dashboard.stat_completed') },
-    { value: fmtVolume(totalVolume), label: t('dashboard.stat_volume') },
+  // Прочерк, а не ноль. Уровень и XP рядом остаются числами — они читаются
+  // прямо с цепи и от сабграфа не зависят вовсе; гасить и их значило бы
+  // прятать данные, которые как раз есть.
+  const NO_DATA = '—';
+  const stats: { value: string | number; label: string; danger?: boolean; muted?: boolean }[] = [
+    { value: dealsUnavailable ? NO_DATA : activeCount,           label: t('dashboard.stat_active'),    muted: dealsUnavailable },
+    { value: dealsUnavailable ? NO_DATA : completedCount,        label: t('dashboard.stat_completed'), muted: dealsUnavailable },
+    { value: dealsUnavailable ? NO_DATA : fmtVolume(totalVolume), label: t('dashboard.stat_volume'),   muted: dealsUnavailable },
   ];
-  if (totalDeals > 0) {
+  // Доля споров без вердикта считается по знаменателю из сабграфа: без него
+  // колонки нет — «8/0» бессмысленно, а «8/—» выглядит как обвинение с
+  // потерянным контекстом.
+  if (!dealsUnavailable && totalDeals > 0) {
     stats.push({
       value: `${unresolvedDisputes}/${totalDeals}`,
       label: t('dashboard.stat_unjudged'),
@@ -97,11 +110,18 @@ export function AgreementsStats({
       <div className="flex items-center justify-between px-2 mt-3 pt-3 border-t border-white/[0.08]">
         {stats.map((s, i) => (
           <div key={i} className="flex flex-col items-center gap-0.5">
-            <span className={`text-lg font-bold leading-none ${s.danger ? 'text-amber-400' : 'text-white'}`}>{s.value}</span>
+            <span className={`text-lg font-bold leading-none ${
+              s.danger ? 'text-amber-400' : s.muted ? 'text-white/25' : 'text-white'
+            }`}>{s.value}</span>
             <span className="text-[11px] text-white/35 leading-none">{s.label}</span>
           </div>
         ))}
       </div>
+      {dealsUnavailable && (
+        <p className="mt-2 text-[11px] leading-snug text-amber-400/70">
+          {t('dashboard.stats_unavailable')}
+        </p>
+      )}
     </motion.div>
   );
 }

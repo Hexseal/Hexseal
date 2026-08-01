@@ -212,6 +212,8 @@
     "copy_failed": "Failed to copy",
     "disable_messaging": "Disable Messaging",
     "disable_notifications": "Disable Notifications",
+    "notifications_stale": "Notifications may have stopped — re-enable",
+    "disable_notifications_failed": "Couldn't turn notifications off — they are still on",
     "enable_messaging": "Enable Messaging",
     "connecting_messaging": "Connecting messaging…",
     "arbiter_apply_success": "Application submitted — waiting for review"
@@ -250,6 +252,7 @@
     "stat_completed": "Completed",
     "stat_volume": "Volume",
     "stat_unjudged": "Unjudged",
+    "stats_unavailable": "Deal stats couldn't be loaded — that's missing data, not zero activity.",
     "stat_usdc_total": "USDC total",
     "stat_deal": "deal",
     "stat_deals": "deals",

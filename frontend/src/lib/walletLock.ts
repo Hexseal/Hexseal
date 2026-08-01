@@ -27,6 +27,8 @@
  * очередь, тот же Web Locks поверх неё.
  */
 
+import { pollForFact } from '@/lib/pollForFact';
+
 // Каждый гейслесс-вызов для кошелька читает nonce (getNonce у форвардера
 // и/или permit-nonce у USDC) и подписывается против него — но два вызова для
 // ОДНОГО кошелька, стартовавшие рядом (заявка на две работы, действия по двум
@@ -253,32 +255,39 @@ export async function awaitFreshForwarderNonce(
 ): Promise<bigint> {
   const attempts   = opts.attempts   ?? NONCE_POLL_ATTEMPTS;
   const intervalMs = opts.intervalMs ?? NONCE_POLL_INTERVAL_MS;
-  const sleep      = opts.sleep      ?? (ms => new Promise<void>(r => setTimeout(r, ms)));
   const now        = opts.now        ?? Date.now;
 
-  let nonce = await read();
-
-  const remembered = loadSpent(nonceKey(address, forwarder));
-  // Правило 1 + срок годности записи.
-  if (!remembered || now() - remembered.at > NONCE_MEMORY_TTL_MS) return nonce;
-  const spent = remembered.nonce;
-  if (nonce > spent) return nonce;
-
-  for (let attempt = 1; attempt < attempts; attempt++) {
-    await sleep(intervalMs);
-    try {
-      nonce = await read();
-    } catch {
-      continue; // правило 3
+  // Сам цикл опроса — общий (`lib/pollForFact.ts`): те же три правила, что
+  // описаны выше, теперь живут в одном месте на все случаи «правда приедет, но
+  // не сразу». Здесь остаётся только то, что специфично для nonce: что считать
+  // фактом и когда ждать вообще не нужно.
+  //
+  // `spent` вычисляется ЛЕНИВО, на первой же проверке, а не заранее: порядок
+  // важен — запись читается ПОСЛЕ первого чтения с цепи, как и было.
+  // `null` означает «сравнивать не с чем» (правило 1: первая транзакция
+  // кошелька ничего не ждёт) — тогда любое прочитанное значение годится.
+  let spent: bigint | null | undefined;
+  const isFresh = (nonce: bigint): boolean => {
+    if (spent === undefined) {
+      const remembered = loadSpent(nonceKey(address, forwarder));
+      spent = (!remembered || now() - remembered.at > NONCE_MEMORY_TTL_MS)
+        ? null                 // записи нет или она протухла
+        : remembered.nonce;
     }
-    if (nonce > spent) return nonce;
-  }
+    return spent === null || nonce > spent;
+  };
+
+  const { value: nonce, satisfied } = await pollForFact(read, isFresh, {
+    attempts, intervalMs, sleep: opts.sleep,
+  });
 
   // Правило 2.
-  console.warn(
-    `[relay] счётчик форвардера ${forwarder} для ${address} не сдвинулся с ${spent} ` +
-    `за ${attempts} проб (${(attempts - 1) * intervalMs} мс) — узел отстал или та транзакция ` +
-    `не долетела до цепи; подписываем с ${nonce}`,
-  );
+  if (!satisfied) {
+    console.warn(
+      `[relay] счётчик форвардера ${forwarder} для ${address} не сдвинулся с ${spent} ` +
+      `за ${attempts} проб (${(attempts - 1) * intervalMs} мс) — узел отстал или та транзакция ` +
+      `не долетела до цепи; подписываем с ${nonce}`,
+    );
+  }
   return nonce;
 }

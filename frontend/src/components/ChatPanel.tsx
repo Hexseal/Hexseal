@@ -5,6 +5,7 @@ import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
 import { formatUnits, type Abi } from 'viem';
 import { DIAMOND_ABI } from '@/config/contracts';
 import { sendGasless, requestServiceGasless } from '@/lib/relay';
+import { refreshAfterTx } from '@/lib/subgraphSync';
 import { DealActionBar } from '@/components/DealActionBar';
 import { usePreDealBar } from '@/hooks/usePreDealBar';
 import { toast } from 'react-hot-toast';
@@ -385,6 +386,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const [searchQuery, setSearchQuery] = useState('');
   const [preDealConfirm, setPreDealConfirm] = useState<'apply' | 'accept_deploy' | 'request_service' | 'withdraw' | 'reject_app' | null>(null);
   const [preDealBusy, setPreDealBusy] = useState(false);
+  // Занятость по отзыву заявки снимается ОТЛОЖЕННО (см. handlePreDealAction), а
+  // чат легко закрыть раньше — панель размонтируется на любом переключении
+  // собеседника. Без этой отметки отложенное снятие било бы setState по
+  // размонтированному компоненту.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // Skip pre-deal reads while a deal is already resolved OR while the parent's deal
   // reads are still loading — otherwise, during the initial read waterfall, this
@@ -575,7 +582,17 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
       setPendingPreview(null);
     } catch (err: unknown) {
       const isAbort = err instanceof DOMException && err.name === 'AbortError';
-      if (!isAbort) setUploadErr(err instanceof Error ? err.message : 'Upload failed');
+      if (!isAbort) {
+        // Тот же разбор, что у текстовой отправки: «до этого адреса не дойдёт»
+        // — это не «загрузка не удалась», и человеку надо сказать именно это,
+        // на его языке, а не показать английскую строку из lib/xmtp.
+        const msg = err instanceof Error ? err.message : '';
+        setUploadErr(
+          msg.includes('not registered') || msg.includes('not set up')
+            ? t("chat.recipient_no_messaging")
+            : (msg || 'Upload failed'),
+        );
+      }
     } finally {
       uploadAbortRef.current = null;
       setUploading(false);
@@ -602,10 +619,42 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     // everywhere else in this plan.
     if (action === 'request_service' && !feeConfigReady) return;
     setPreDealBusy(true);
+    // Отзыв заявки держит блокировку ДОЛЬШЕ своего try — до отложенного
+    // перечитывания. Общий finally это учитывает.
+    let holdBusy = false;
     try {
       if (action === 'withdraw') {
-        await sendMessage('I have withdrawn my application.');
+        // Кнопка отзывала заявку ровно в одном месте — в тексте сообщения.
+        // Она слала в чат «I have withdrawn my application.», на цепи не
+        // происходило НИЧЕГО: заявка оставалась, адрес оставался в
+        // getApplicants, клиент мог принять отозвавшегося. При этом диалог
+        // обещает дословно «Your application will be withdrawn» — то есть
+        // единственным следом отзыва была фраза, которой человек сам себе
+        // соврал. On-chain путь существует и зовётся с доски
+        // (app/board/page.tsx, handleWithdraw) — здесь тот же вызов.
+        if (!walletClient || !publicClient) { toast.error(t("common.error")); return; }
+        if (preDealCtx.jobId === undefined) { toast.error(t("common.error")); return; }
+        toast('Confirm in wallet…');
+        const { txHash } = await sendGasless(
+          walletClient, publicClient, 'withdrawApplication', [preDealCtx.jobId], DIAMOND_ABI as Abi,
+        );
+        toast.success(t("board.jobs.withdrawn"));
         setPreDealConfirm(null);
+        // Сообщение в чат — ПОСЛЕ отзыва и лучшим усилием: раньше оно было
+        // вместо отзыва, а теперь не должно превращать удавшийся отзыв в
+        // красный тост (собеседник мог, например, вообще не иметь XMTP).
+        try { await sendMessage('I have withdrawn my application.'); }
+        catch (err) { console.error('[ChatPanel] withdraw notice failed:', err); }
+        // Полоса над чатом («Applied» + кнопка «Отозвать») читается прямо с
+        // цепи через getApplicants — её и обновляем.
+        void refreshAfterTx(publicClient, txHash, { chain: ['jobs'], graph: ['jobs'] });
+        // Блокировка снимается ВНУТРИ отложенного обновления, как в MyListings
+        // и на досках: релеер дождался квитанции, но следующее чтение может
+        // попасть на отставшую реплику, и всё это окно полоса показывает
+        // прежнее «вы откликнулись». Раннее снятие возвращало бы кнопку в
+        // рабочий вид поверх устаревших данных — второй отзыв ревертит.
+        holdBusy = true;
+        setTimeout(() => { if (mountedRef.current) setPreDealBusy(false); }, 2000);
         return;
       }
       if (action === 'reject_app') {
@@ -658,7 +707,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage || e?.message || 'Transaction failed');
     } finally {
-      setPreDealBusy(false);
+      if (!holdBusy && mountedRef.current) setPreDealBusy(false);
     }
   };
 
@@ -809,34 +858,38 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 </span>
               </div>
             </div>
+            {/* Кнопки гаснут на время действия: полоса пересчитывается из
+                getApplicants, а тот отстаёт от квитанции — без этого второе
+                нажатие уходило бы на цепь поверх уже отправленного первого. */}
             <div className="flex gap-1.5 flex-shrink-0">
               {preDealCtx.type === 'job_as_client' && (
                 <>
-                  <button onClick={() => setPreDealConfirm('reject_app')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors whitespace-nowrap">
+                  <button onClick={() => setPreDealConfirm('reject_app')} disabled={preDealBusy}
+                    className="px-3 py-2.5 rounded-[10px] text-xs border border-white/[0.10] text-white/40 hover:border-white/20 hover:text-white/65 transition-colors whitespace-nowrap disabled:opacity-40">
                     {t("deal_bar.reject_btn")}
                   </button>
-                  <button onClick={() => setPreDealConfirm('accept_deploy')}
-                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
+                  <button onClick={() => setPreDealConfirm('accept_deploy')} disabled={preDealBusy}
+                    className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap disabled:opacity-40">
                     {t("deal_bar.accept_btn")}
                   </button>
                 </>
               )}
               {preDealCtx.type === 'job_as_executor' && preDealCtx.hasApplied && (
-                <button onClick={() => setPreDealConfirm('withdraw')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors whitespace-nowrap">
+                <button onClick={() => setPreDealConfirm('withdraw')} disabled={preDealBusy}
+                  className="px-3 py-2.5 rounded-[10px] text-xs border border-red-500/25 text-red-400/60 hover:bg-red-500/10 transition-colors whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1.5">
+                  {preDealBusy && <Loader2 className="w-3 h-3 animate-spin" />}
                   {t("deal_bar.withdraw_btn")}
                 </button>
               )}
               {preDealCtx.type === 'job_as_executor' && !preDealCtx.hasApplied && (
-                <button onClick={() => setPreDealConfirm('apply')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
+                <button onClick={() => setPreDealConfirm('apply')} disabled={preDealBusy}
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap disabled:opacity-40">
                   {t("deal_bar.apply_btn")}
                 </button>
               )}
               {preDealCtx.type === 'service_as_client' && (
-                <button onClick={() => setPreDealConfirm('request_service')}
-                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap">
+                <button onClick={() => setPreDealConfirm('request_service')} disabled={preDealBusy}
+                  className="px-3 py-2.5 rounded-[10px] text-xs bg-primary text-white hover:bg-primary/80 transition-colors font-semibold whitespace-nowrap disabled:opacity-40">
                   {t("deal_bar.request_btn")}
                 </button>
               )}

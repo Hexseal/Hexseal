@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { isPushRegistrationStale, isPushRegisteredForAddress } from './webpush';
+import {
+  isPushRegistrationStale, isPushRegisteredForAddress, subscriptionMatchesVapidKey,
+} from './webpush';
 
 const ADDR = '0xAbCdEf0123456789AbCdEf0123456789AbCdEf01';
 const REG_KEY      = `hexseal-push-reg-${ADDR.toLowerCase()}`;
@@ -87,5 +89,55 @@ describe('isPushRegisteredForAddress', () => {
     store().setItem(REG_KEY, String(Date.now() - DAY * 3));
     expect(isPushRegisteredForAddress(ADDR)).toBe(true);
     expect(isPushRegistrationStale(ADDR)).toBe(true);
+  });
+});
+
+// ─── Ключ VAPID ───────────────────────────────────────────────────────────────
+
+/** Ключ в том виде, в каком его хранит браузер: сырые байты в options. */
+const subWithKey = (bytes: number[]) => ({
+  options: { applicationServerKey: new Uint8Array(bytes).buffer },
+});
+
+/** base64url тех же байтов — в таком виде ключ приходит из окружения. */
+const b64url = (bytes: number[]) =>
+  Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+describe('subscriptionMatchesVapidKey', () => {
+  const KEY = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+  it('подписка, созданная этим же ключом, годится', () => {
+    expect(subscriptionMatchesVapidKey(subWithKey(KEY), b64url(KEY))).toBe(true);
+  });
+
+  it('ключ сменили — подписка мертва, хотя браузер её отдаёт', () => {
+    // Подписка криптографически привязана к ключу, которым создана, и браузер
+    // НЕ выбрасывает её при ротации серверного ключа. Каждая отправка при этом
+    // отваливается 403 VapidPkHashMismatch, а интерфейс без этой проверки
+    // показывает «уведомления включены».
+    expect(subscriptionMatchesVapidKey(subWithKey(KEY), b64url([9, 9, 9]))).toBe(false);
+  });
+
+  it('совпадение по длине без совпадения по байтам не считается', () => {
+    const other = [...KEY.slice(0, -1), 99];
+    expect(subscriptionMatchesVapidKey(subWithKey(KEY), b64url(other))).toBe(false);
+  });
+
+  it('пустой ключ окружения — «сверять не с чем», а не «подходит всё»', () => {
+    expect(subscriptionMatchesVapidKey(subWithKey(KEY), '')).toBe(false);
+  });
+
+  it('подписки нет или у неё нет ключа — false', () => {
+    expect(subscriptionMatchesVapidKey(null, b64url(KEY))).toBe(false);
+    expect(subscriptionMatchesVapidKey(undefined, b64url(KEY))).toBe(false);
+    expect(subscriptionMatchesVapidKey({}, b64url(KEY))).toBe(false);
+    expect(subscriptionMatchesVapidKey({ options: {} }, b64url(KEY))).toBe(false);
+    expect(subscriptionMatchesVapidKey({ options: { applicationServerKey: null } }, b64url(KEY))).toBe(false);
+  });
+
+  it('битый base64 не роняет проверку', () => {
+    // Переменную окружения правит человек, и опечатка в ней не должна
+    // превращаться в исключение посреди чтения состояния подписки.
+    expect(subscriptionMatchesVapidKey(subWithKey(KEY), '!!!не-base64!!!')).toBe(false);
   });
 });

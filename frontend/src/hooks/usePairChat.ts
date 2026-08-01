@@ -6,6 +6,7 @@ import { useXmtp } from '@/contexts/XmtpContext';
 import {
   getXmtpClientIfCached,
   findOrCreatePairGroup,
+  assertPeerCanReceive,
   loadGroupMessages,
   normalizeGroupMessage,
   buildInboxAddressMap,
@@ -290,6 +291,13 @@ export function usePairChat(peerAddress: string) {
         groupRef.current = group;
         created = true;
       }
+      // Группа могла быть собрана когда-то БЕЗ собеседника (у него не было ни
+      // одной живой установки в тот момент) — тогда всё, что в неё отправлено,
+      // лежит в группе, членом которой он никогда не был. Раньше такая отправка
+      // выглядела успешной: пузырь, галочка, ноль сомнений. Проверяем перед
+      // каждой отправкой в уже существующую группу; только что созданная своё
+      // условие уже прошла внутри findOrCreatePairGroup. См. lib/xmtpDelivery.
+      if (!created && xmtp) await assertPeerCanReceive(xmtp, group, peerRef.current);
       await group.sendText(text.trim());
       notifyPush(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
       // Re-run the open effect so the brand-new group gets its message stream.
@@ -317,6 +325,9 @@ export function usePairChat(peerAddress: string) {
       groupRef.current = group;
       created = true;
     }
+    // До загрузки, а не после: см. соседний комментарий про fail fast — и тот же
+    // гейт «не дойдёт — не делаем вид, что дошло», что в sendMessage.
+    if (!created && xmtp) await assertPeerCanReceive(xmtp, group, peerRef.current);
 
     setUploadProgress(0);
     let result: Awaited<ReturnType<typeof uploadFileWithEncryption>>;

@@ -5,6 +5,7 @@ import { useAccount, useWalletClient } from 'wagmi';
 import {
   isPushSupported, getPushSubscription, getSwRegistration,
   enablePush, disablePush, isPushRegistrationStale, isPushRegisteredForAddress,
+  isPushSubscriptionUsable,
 } from '@/lib/webpush';
 import { withWalletLock } from '@/lib/walletLock';
 
@@ -19,7 +20,10 @@ export interface PushContextValue {
   loading: boolean;
   error: string | null;
   enable: () => Promise<void>;
-  disable: () => Promise<void>;
+  /** `true` — доставка на это устройство действительно прекращена. `false` —
+   *  выключить не вышло (подписка жива), и вызывающая сторона ОБЯЗАНА сказать
+   *  об этом человеку: молчаливый `false` неотличим от успеха. */
+  disable: () => Promise<boolean>;
 }
 
 const PushContext = createContext<PushContextValue>({
@@ -30,7 +34,7 @@ const PushContext = createContext<PushContextValue>({
   loading: false,
   error: null,
   enable: async () => {},
-  disable: async () => {},
+  disable: async () => false,
 });
 
 export function usePushCtx(): PushContextValue {
@@ -64,7 +68,14 @@ export function PushProvider({ children }: { children: ReactNode }) {
 
   const refreshSubscribed = useCallback(async (addr: string | undefined) => {
     const sub = await getPushSubscription();
-    const on = !!sub && !!addr && isPushRegisteredForAddress(addr);
+    // Проверка ключа VAPID — не лишняя строгость, а та же проверка, которую
+    // `enablePush` делает у себя перед переподпиской. Здесь её не было, и
+    // асимметрия стоила ровно того, ради чего проверку заводили: подписка,
+    // созданная СТАРЫМ ключом, живёт в браузере как ни в чём не бывало
+    // (`getSubscription()` её отдаёт), а каждая отправка отваливается с
+    // 403 VapidPkHashMismatch. Меню показывало «уведомления включены» тому,
+    // кому не доходит ни одно.
+    const on = isPushSubscriptionUsable(sub) && !!addr && isPushRegisteredForAddress(addr);
     setSubscribed(on);
     setStale(on && !!addr && isPushRegistrationStale(addr));
   }, []);
@@ -129,18 +140,35 @@ export function PushProvider({ children }: { children: ReactNode }) {
     }
   }, [address, supported, buildSignMsg]);
 
-  const disable = useCallback(async () => {
-    if (!address) return;
+  const disable = useCallback(async (): Promise<boolean> => {
+    if (!address) return false;
     const myAttempt = ++attemptIdRef.current; // supersede any enable() (explicit or background) still in flight
     setLoading(true);
+    setError(null);
     try {
-      await disablePush(address, buildSignMsg);
+      const result = await disablePush(address, buildSignMsg);
       // an enable() that started after us and already won must not be reverted
-      if (attemptIdRef.current === myAttempt) { setSubscribed(false); setStale(false); }
+      if (attemptIdRef.current !== myAttempt) return result === 'ok';
+      if (result === 'ok') { setSubscribed(false); setStale(false); return true; }
+      // Отписаться не удалось — подписка жива и пуши продолжают приходить.
+      // Показывать «выключено» здесь значит соврать; перечитываем настоящее
+      // состояние, чтобы пункт «Отключить» остался на месте.
+      setError('disable_failed');
+      await refreshSubscribed(address);
+      return false;
+    } catch {
+      // `disable()` жил вообще без catch: отказ от подписи в кошельке или
+      // недоступный service worker улетали необработанным промисом — на экране
+      // при этом не менялось ничего, и нажатие выглядело просто «сделанным».
+      if (attemptIdRef.current === myAttempt) {
+        setError('disable_failed');
+        await refreshSubscribed(address);
+      }
+      return false;
     } finally {
       if (attemptIdRef.current === myAttempt) setLoading(false);
     }
-  }, [address, buildSignMsg]);
+  }, [address, buildSignMsg, refreshSubscribed]);
 
   return (
     <PushContext.Provider value={{ supported, subscribed, stale, permission, loading, error, enable, disable }}>
