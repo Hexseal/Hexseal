@@ -17,10 +17,25 @@ const INVALIDATE_COOLDOWN = 5_000; // ignore repeat cache clears within 5s
 const FORCE_FRESH_MIN_AGE = 3_000; // x-fresh still serves cache younger than 3s
 const MAX_CACHE_ENTRIES   = 200;   // hard cap on distinct cached bodies
 
+// `?meta=1` — сколько блоков сабграф уже проиндексировал. Отвечает мимо
+// основного кэша: смысл пробы ровно в том, чтобы узнать текущее положение дел,
+// а запись возрастом до двух минут об этом не говорит ничего. Свой микрокэш на
+// секунду держится: время блока Base Sepolia — 2 с, так что секунда задержки не
+// добавляет, зато десяток вкладок, опрашивающих одновременно, стоят одного
+// запроса к сабграфу вместо десяти.
+const META_QUERY  = '{ _meta { block { number } } }';
+// Клиент опрашивает голову чаще, чем живёт эта запись (POLL_MS = 900 мс в
+// `lib/subgraphSync.ts`), — иначе последовательные пробы одного клиента всегда
+// шли бы мимо кэша и один цикл ожидания стоил бы двух десятков запросов к
+// сабграфу. Инвариант: POLL_MS < META_TTL.
+const META_TTL    = 1_000;
+
 interface CacheEntry { data: unknown; storedAt: number }
 const _cache      = new Map<string, CacheEntry>();
 const _inFlight   = new Set<string>();            // prevent duplicate background fetches
 let _lastInvalidate = 0;
+let _meta: { block: number; storedAt: number } | null = null;
+let _metaInFlight: Promise<number | null> | null = null;
 
 async function fetchSubgraph(body: string): Promise<unknown | null> {
   const controller = new AbortController();
@@ -49,6 +64,26 @@ function backgroundRefresh(body: string) {
     .then(data => { if (data) _cache.set(body, { data, storedAt: Date.now() }); })
     .catch(() => {})
     .finally(() => _inFlight.delete(body));
+}
+
+async function readMetaBlock(): Promise<number | null> {
+  if (_meta && Date.now() - _meta.storedAt < META_TTL) return _meta.block;
+  if (_metaInFlight) return _metaInFlight;
+
+  const probe = (async (): Promise<number | null> => {
+    const data = await fetchSubgraph(JSON.stringify({ query: META_QUERY })) as
+      { data?: { _meta?: { block?: { number?: number } } } } | null;
+    const n = data?.data?._meta?.block?.number;
+    if (typeof n !== 'number' || !Number.isFinite(n)) return null;
+    _meta = { block: n, storedAt: Date.now() };
+    return n;
+  })();
+
+  _metaInFlight = probe;
+  void probe.catch(() => null).finally(() => {
+    if (_metaInFlight === probe) _metaInFlight = null;
+  });
+  return probe;
 }
 
 function pruneCache() {
@@ -99,6 +134,14 @@ export async function POST(req: NextRequest) {
       { errors: [{ message: 'SUBGRAPH_URL env var is not configured' }] },
       { status: 503 },
     );
+  }
+
+  // Проба индексации — см. комментарий у META_QUERY. Клиент (lib/subgraphSync)
+  // дожидается по ней, что сабграф догнал блок его транзакции, и только потом
+  // сбрасывает кэш; сброс раньше цементировал непроиндексированный снимок ещё
+  // на полный FRESH_TTL.
+  if (req.nextUrl.searchParams.get('meta') === '1') {
+    return NextResponse.json({ block: await readMetaBlock() });
   }
 
   let body: string;

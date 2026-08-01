@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "react-hot-toast";
 import { parseUnits, parseEventLogs } from "viem";
 import { mintServiceGasless } from "@/lib/relay";
+import { refreshAfterBlock } from "@/lib/subgraphSync";
 import { useFeeConfig } from "@/hooks/useFeeConfig";
 import {
   Loader2, CheckCircle, AlertCircle, Globe, Shield, Zap,
@@ -169,8 +170,12 @@ export default function PostServicePage() {
       });
 
       let parsedServiceId: string | null = null;
+      // Номер блока из той же квитанции — его же ждёт refreshAfterBlock ниже.
+      // Держим снаружи try, чтобы не читать квитанцию второй раз.
+      let minedBlock: bigint | undefined;
       try {
         const txReceipt = await publicClient.getTransactionReceipt({ hash: hash as `0x${string}` });
+        minedBlock = txReceipt.blockNumber;
         const logs = parseEventLogs({ abi: SERVICE_POSTED_ABI, eventName: "ServicePosted", logs: txReceipt.logs });
         if (logs.length > 0) {
           parsedServiceId = logs[0].args.serviceId?.toString() ?? null;
@@ -181,8 +186,15 @@ export default function PostServicePage() {
       setTxHash(hash);
       setStep("success");
       toast.success(t("board.post_service.success"));
-      // Bust the server-side subgraph cache so the board shows the new service
-      fetch("/api/subgraph?invalidate=1", { method: "POST" }).catch(() => {});
+      // Сбросить кэш прокси, чтобы доска показала новую услугу — но НЕ раньше,
+      // чем сабграф проиндексирует блок. Сброс в момент майнинга (как было
+      // здесь) цементировал непроиндексированный снимок ещё на 120 секунд:
+      // следующий заход промахивался мимо кэша и клал в него ответ, в котором
+      // услуги ещё нет. См. lib/subgraphSync.
+      void refreshAfterBlock(minedBlock, {
+        chain: ["services"],
+        graph: ["services"],
+      });
       if (address) {
         pushNotif(address, {
           type: "service_posted",
