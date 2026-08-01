@@ -689,7 +689,11 @@ function SettingsTab() {
   const [newMaxPending, setNewMaxPending] = useState('');
   const [settingFeeRecipient, setSettingFeeRecipient] = useState(false);
   const [settingForwarder,    setSettingForwarder]    = useState(false);
-  const [settingFee,    setSettingFee]    = useState(false);
+  // Какой именно параметр комиссии сейчас пишется. Флаг был булев, а кнопок
+  // «Set» рядом три (ставка, пол, потолок открытых запросов) — нажатие любой
+  // зажигало крутилку на всех трёх сразу. Блокировка остаётся общей: все три
+  // пишут в один и тот же FactoryStorage одной подписью владельца.
+  const [settingFee,    setSettingFee]    = useState<string | null>(null);
 
   const handleSetFeeRecipient = async () => {
     if (!isAddress(feeRecipient)) { toast.error('Invalid address'); return; }
@@ -747,7 +751,7 @@ function SettingsTab() {
       fn === 'setFeeFloor' ? BigInt(Math.round(n * 1e6)) :   // USDC → 6 decimals
                              BigInt(Math.floor(n));
 
-    setSettingFee(true);
+    setSettingFee(fn);
     try {
       const hash = await writeContractAsync({
         address: CONTRACTS.diamond as `0x${string}`, abi: DIAMOND_ABI,
@@ -759,7 +763,7 @@ function SettingsTab() {
     } catch (err: unknown) {
       const e = err as { shortMessage?: string; message?: string };
       toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
-    } finally { setSettingFee(false); }
+    } finally { setSettingFee(null); }
   };
 
   return (
@@ -804,9 +808,9 @@ function SettingsTab() {
               />
               <Button
                 onClick={() => handleSetFeeParam('setFeeBps', newBps, () => { setNewBps(''); refetchBps(); })}
-                disabled={settingFee || !newBps} size="sm" className="shrink-0"
+                disabled={!!settingFee || !newBps} size="sm" className="shrink-0"
               >
-                {settingFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+                {settingFee === 'setFeeBps' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
               </Button>
             </div>
           </FieldGroup>
@@ -820,9 +824,9 @@ function SettingsTab() {
               />
               <Button
                 onClick={() => handleSetFeeParam('setFeeFloor', newFloor, () => { setNewFloor(''); refetchFloor(); })}
-                disabled={settingFee || !newFloor} size="sm" className="shrink-0"
+                disabled={!!settingFee || !newFloor} size="sm" className="shrink-0"
               >
-                {settingFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+                {settingFee === 'setFeeFloor' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
               </Button>
             </div>
           </FieldGroup>
@@ -836,9 +840,9 @@ function SettingsTab() {
               />
               <Button
                 onClick={() => handleSetFeeParam('setMaxPendingRequests', newMaxPending, () => { setNewMaxPending(''); refetchMaxPending(); })}
-                disabled={settingFee || !newMaxPending} size="sm" className="shrink-0"
+                disabled={!!settingFee || !newMaxPending} size="sm" className="shrink-0"
               >
-                {settingFee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+                {settingFee === 'setMaxPendingRequests' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
               </Button>
             </div>
           </FieldGroup>
