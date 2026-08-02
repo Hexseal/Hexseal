@@ -45,11 +45,14 @@ export function buildLink(
  *  на «что именно последнее». Поодиночке каждый неполон: expectedLastSeq не
  *  видит каскадную подделку (раннее звено тронуто, весь хвост пересчитан
  *  вперёд через buildLink — все смежные пары внутри самосогласованы,
- *  проверка связности из C2 ничего не находит), а expectedLastHash без
+ *  проверка связности из C2 ничего не находит), а expectedLastHash БЕЗ
  *  expectedLastSeq не отличает честную обрезку (хвост правда не показан) от
- *  подделки — это как раз и решается их совместным использованием. */
+ *  подделки — отпечаток последнего ПОКАЗАННОГО звена всегда не совпадёт с
+ *  истинным отпечатком дальнего звена, и без номера это неотличимо от
+ *  подмены. Поэтому expectedLastSeq — обязательная часть якоря, а
+ *  expectedLastHash — опциональное усиление поверх него. */
 export interface ChainAnchor {
-  expectedLastSeq?: number;
+  expectedLastSeq: number;
   expectedLastHash?: `0x${string}`;
 }
 
@@ -155,34 +158,40 @@ function reportedSeqFor(link: unknown, index: number): number {
  *  между минусом в репутацию и полным недоверием к предъявленному; она не
  *  означает, что скрытое автоматически освобождает остальное от проверки. */
 export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdict {
-  // Мусором может быть не только звено внутри массива, но и сам массив —
-  // JSON.parse чужого ответа с лёгкостью даёт {} или null вместо [].
-  if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1 };
-
-  // Якорь хвоста тоже приезжает снаружи (план 4 решает, откуда он берётся —
-  // verifyChain знает только число), но мусор в НЁМ — не вина того, чью
-  // цепочку разбирают. opts=5/"2"/null/[...] раньше молча игнорировался
-  // (fail-open в функции, вся суть которой в недоверии ко входу), а
-  // мусорный expectedLastSeq обвинял в подделке честную цепочку (`broken`
-  // с чужой ошибкой в atSeq). Оба случая — bad_anchor, отдельно от вины
-  // предъявителя.
+  // Форма ЯКОРЯ проверяется РАНЬШЕ формы links: мусор может прийти с обеих
+  // сторон одновременно (verifyChain(null, 5)), и если бы Array.isArray
+  // шла первой, мусорный якорь остался бы незамеченным, а обвинение в
+  // подделке ушло бы предъявителю за чужую ошибку. Якорь хвоста приезжает
+  // снаружи (план 4 решает, откуда он берётся — verifyChain знает только
+  // значения), но мусор в НЁМ — не вина того, чью цепочку разбирают.
+  // opts=5/"2"/null/[...] раньше молча игнорировался (fail-open в функции,
+  // вся суть которой в недоверии ко входу) — теперь bad_anchor.
   if (opts !== undefined && (typeof opts !== 'object' || opts === null || Array.isArray(opts))) {
     return { ok: false, reason: 'bad_anchor' };
   }
   let anchor: number | undefined;
-  if (opts && opts.expectedLastSeq !== undefined) {
+  let hashAnchor: `0x${string}` | undefined;
+  if (opts !== undefined) {
+    // expectedLastSeq обязателен, когда opts присутствует как объект — {}
+    // тоже сюда попадает. Отпечаток в одиночку не отличает честную обрезку
+    // от подделки (нужен номер, чтобы сказать «сколько») — молча трактовать
+    // пустой объект как «якоря нет» значило бы вернуть тот самый fail-open,
+    // который чинили находкой 3 прошлого раунда, просто на другом поле.
     if (!isSafeNonNegativeInt(opts.expectedLastSeq)) {
       return { ok: false, reason: 'bad_anchor' };
     }
     anchor = opts.expectedLastSeq;
-  }
-  let hashAnchor: `0x${string}` | undefined;
-  if (opts && opts.expectedLastHash !== undefined) {
-    if (!isBytes32Hex(opts.expectedLastHash)) {
-      return { ok: false, reason: 'bad_anchor' };
+    if (opts.expectedLastHash !== undefined) {
+      if (!isBytes32Hex(opts.expectedLastHash)) {
+        return { ok: false, reason: 'bad_anchor' };
+      }
+      hashAnchor = opts.expectedLastHash;
     }
-    hashAnchor = opts.expectedLastHash;
   }
+
+  // Мусором может быть не только звено внутри массива, но и сам массив —
+  // JSON.parse чужого ответа с лёгкостью даёт {} или null вместо [].
+  if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1 };
 
   if (links.length === 0) {
     // Пустой массив без якоря — предъявлять нечего, но врать не в чем
