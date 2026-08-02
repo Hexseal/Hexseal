@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { bytesToHex } from 'viem';
 import { deriveChatKeypair, CHAT_KEY_TYPED_DATA } from './chatCrypto';
 
 const SIG_A = ('0x' + 'ab'.repeat(65)) as `0x${string}`;
@@ -16,6 +17,33 @@ describe('deriveChatKeypair', () => {
     const a = await deriveChatKeypair(SIG_A);
     const b = await deriveChatKeypair(SIG_B);
     expect(a.publicKey).not.toEqual(b.publicKey);
+  });
+
+  it('золотой вектор: абсолютные байты для SIG_A, не сравнение двух вызовов', async () => {
+    // Все остальные тесты в этом файле ОТНОСИТЕЛЬНЫЕ — сравнивают два вызова
+    // между собой. Ревью Задачи 2 (раунд 2) доказало мутацией, что этого
+    // недостаточно: смена `CHAT_KEY_SEED_CONTEXT` (единственной константы,
+    // реально влияющей на ключ на тот момент) меняла публичный ключ у ВСЕХ
+    // пользователей, а все относительные тесты оставались зелёными — они не
+    // видят СМЕЩЕНИЕ, только несовпадение между двумя своими же вызовами.
+    //
+    // Значения посчитаны независимо от этого файла — отдельным скриптом на
+    // чистом node (не через chatCrypto.ts), реализующим ту же формулу
+    // (context ‖ подпись ‖ hashTypedData(CHAT_KEY_TYPED_DATA) → keccak256 →
+    // crypto_box_seed_keypair), и перепроверены в трёх отдельных процессах
+    // `node` — совпали побайтово во всех трёх. Тест ниже — четвёртая,
+    // независимая проверка: что САМА `chatCrypto.ts` даёт то же самое.
+    //
+    // Если этот тест когда-нибудь покраснеет — это ЛИБО осознанная миграция
+    // (тогда вектор пересчитывается и обновляется здесь тем же способом),
+    // ЛИБО молчаливый сдвиг константы, который иначе не поймал бы ничто.
+    const { publicKey, privateKey } = await deriveChatKeypair(SIG_A);
+    expect(bytesToHex(publicKey)).toBe(
+      '0x16cf8aa0cecfda7229d1f3e15b92732f96d0f9f695c697753d0a8cc22c6b9e0a',
+    );
+    expect(bytesToHex(privateKey)).toBe(
+      '0xb46f6d2e59217f698a3817f3667574ec52b7cb0de60f6217eaf718d2459ccfbc',
+    );
   });
 
   it('домен и содержимое подписи (EIP-712) зафиксированы целиком', () => {
