@@ -211,4 +211,53 @@ describe('verifyChain — ревью, раунд 1', () => {
     const relabelled = { ...full[1], prevHash: upperHex(full[1].prevHash) };
     expect(verifyChain([full[0], relabelled])).toEqual({ ok: true });
   });
+
+  // C2: при непустом missingAfterSeq функция возвращалась, не проверив ни
+  // одного отпечатка. Одно намеренно опущенное сообщение покупало иммунитет
+  // от broken для всей остальной цепочки. Пары, смежные по номерам,
+  // проверяемы и внутри дырявой цепочки — их нужно проверять, и при
+  // расхождении broken обязан побеждать gap.
+
+  it('broken побеждает gap: подделка в смежной паре внутри дырявой цепочки', () => {
+    const full = chainOf(5); // seq 0..4
+    const tampered3 = { ...full[3], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
+    // full1 -> tampered3: дыра (нет seq=2), не проверяема.
+    // tampered3 -> full4: смежная пара (3,4) — full4.prevHash указывает на
+    // отпечаток ПОДЛИННОГО full3, а не подделанного tampered3 — обязан
+    // разойтись.
+    const shown = [full[0], full[1], tampered3, full[4]];
+    expect(verifyChain(shown)).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
+  });
+
+  it('честно предъявленное подмножество (без подделки смежных пар) остаётся gap, не broken', () => {
+    // Собственный регресс-замок против перегиба в другую сторону: сама по
+    // себе непроверяемая дыра не обязана становиться broken — только
+    // расхождение в ПРОВЕРЯЕМОЙ смежной паре.
+    const full = chainOf(5);
+    const shown = [full[0], full[1], full[3], full[4]]; // full3/full4 подлинные, не тронуты
+    expect(verifyChain(shown)).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1] });
+  });
+
+  it('честный предел: самосогласованная выдуманная подцепочка внутри дыры остаётся gap', () => {
+    // Атакующий может построить свою МИНИ-цепочку (seq 2..4), внутренне
+    // согласованную (сам себе buildLink), но не выводимую из настоящей
+    // full1. Смежные пары (2,3) и (3,4) внутри неё сойдутся сами с собой —
+    // это не ловится проверкой смежных пар и не обязано ловиться: без
+    // внешнего якоря (Задача/пункт C3) отличить такую подмену от честного
+    // «эти сообщения правда были показаны, а другие — нет» невозможно.
+    const full = chainOf(2); // full0(seq0), full1(seq1) — настоящие
+    const fake2 = { seq: 2, prevHash: ('0x' + 'cc'.repeat(32)) as `0x${string}`, bodyHash: BODY, sender: ALICE, sentAt: 2002 };
+    const fake3 = buildLink(fake2, BODY, ALICE, 2003);
+    const fake4 = buildLink(fake3, BODY, ALICE, 2004);
+    const shown = [full[0], fake2, fake3, fake4];
+    expect(verifyChain(shown)).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [0] });
+  });
+
+  it('честный предел: полностью выдуманная цепочка с seq не с нуля остаётся gap', () => {
+    const fake1 = { seq: 1, prevHash: ('0x' + 'cc'.repeat(32)) as `0x${string}`, bodyHash: BODY, sender: ALICE, sentAt: 3001 };
+    const fake2 = buildLink(fake1, BODY, ALICE, 3002);
+    const fake3 = buildLink(fake2, BODY, ALICE, 3003);
+    const fake4 = buildLink(fake3, BODY, ALICE, 3004);
+    expect(verifyChain([fake1, fake2, fake3, fake4])).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1] });
+  });
 });

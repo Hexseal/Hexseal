@@ -109,12 +109,15 @@ function reportedSeqFor(link: unknown, index: number): number {
  *  и `seq !== prevSeq + 1`, которые не бросают на мусоре — просто дают
  *  случайный числовой результат. Это скрыло бы подделку под honest-омиссию
  *  (gap), а мусор — это фальсификация формы, ближе по духу к broken.
- *  Дальше порядок проверок как в спеке: порядок → пропуски → связность.
- *  Пропуск обязан быть найден ДО связности — у предъявленного подмножества
- *  отпечатки заведомо не сойдутся, и без этой очерёдности всякое умолчание
- *  выглядело бы подделкой. Разница между «скрыл» и «сфальсифицировал» —
- *  это разница между минусом в репутацию и полным недоверием к
- *  предъявленному. */
+ *  Дальше: порядок → связность того, что проверяемо, → пропуски.
+ *  Пропуск сам по себе не проверить (несмежные по seq звенья сравнивать не
+ *  с чем), но пара, смежная и по позиции, и по seq, проверяема ВНУТРИ
+ *  дырявой цепочки — и обязана быть проверена ДО возврата gap. Иначе одно
+ *  намеренно опущенное сообщение покупало бы иммунитет от broken для всей
+ *  остальной цепочки: подделку в паре (3,4) можно было бы прикрыть, вырезав
+ *  сообщение 2. Разница между «скрыл» и «сфальсифицировал» — это разница
+ *  между минусом в репутацию и полным недоверием к предъявленному; она не
+ *  означает, что скрытое автоматически освобождает остальное от проверки. */
 export function verifyChain(links: ChainLink[]): ChainVerdict {
   // Мусором может быть не только звено внутри массива, но и сам массив —
   // JSON.parse чужого ответа с лёгкостью даёт {} или null вместо [].
@@ -137,14 +140,23 @@ export function verifyChain(links: ChainLink[]): ChainVerdict {
   for (let i = 1; i < links.length; i++) {
     if (links[i].seq !== links[i - 1].seq + 1) missingAfterSeq.push(links[i - 1].seq);
   }
-  if (missingAfterSeq.length > 0) return { ok: false, reason: 'gap', missingAfterSeq };
 
-  if (!sameHash(links[0].prevHash, GENESIS_HASH)) return { ok: false, reason: 'broken', atSeq: links[0].seq };
+  // broken побеждает gap: через дыру связность не проверить (соседние по
+  // ПОЗИЦИИ, но не по seq звенья сравнивать не с чем), но пара, смежная и по
+  // seq тоже, проверяема ВНУТРИ дырявой цепочки — иначе одно намеренно
+  // опущенное сообщение покупало бы иммунитет от broken для всей остальной
+  // цепочки. Поэтому связность (что удалось проверить) идёт раньше выхода
+  // по gap, а не после него.
+  if (links[0].seq === 0 && !sameHash(links[0].prevHash, GENESIS_HASH)) {
+    return { ok: false, reason: 'broken', atSeq: links[0].seq };
+  }
   for (let i = 1; i < links.length; i++) {
-    if (!sameHash(links[i].prevHash, linkHash(links[i - 1]))) {
+    if (links[i].seq === links[i - 1].seq + 1 && !sameHash(links[i].prevHash, linkHash(links[i - 1]))) {
       return { ok: false, reason: 'broken', atSeq: links[i].seq };
     }
   }
+
+  if (missingAfterSeq.length > 0) return { ok: false, reason: 'gap', missingAfterSeq };
 
   return { ok: true };
 }
