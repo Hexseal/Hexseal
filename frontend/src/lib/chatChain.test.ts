@@ -428,3 +428,73 @@ describe('verifyChain — ревью, раунд 2, находка 3: bad_anchor
     expect(verifyChain(chainOf(2))).toEqual({ ok: true });
   });
 });
+
+describe('verifyChain — ревью, раунд 2, находка 1: якорь по отпечатку (expectedLastHash)', () => {
+  // expectedLastSeq отвечает на «сколько», expectedLastHash — на «что
+  // именно». По отдельности каждый неполон. Якорь по отпечатку последнего
+  // звена закрывает КАСКАДНУЮ подделку — атакующий трогает ранее звено и
+  // ПЕРЕСЧИТЫВАЕТ вперёд весь хвост через buildLink, отчего все смежные
+  // пары внутри становятся самосогласованы и C2 (broken побеждает gap)
+  // ничего не находит. Только итоговый отпечаток последнего звена отличается
+  // от истинного — вот что ловит expectedLastHash.
+  //
+  // В этом коммите expectedLastHash пока только даёт broken на несовпадении.
+  // Как совпадение отражается в положительном вердикте — предмет находки 2
+  // (замена tailAnchored на unverifiedContentAtSeq) следующим коммитом.
+
+  it('отпечаток совпадает с честной цепочкой — не broken', () => {
+    const full = chainOf(3);
+    expect(verifyChain(full, { expectedLastHash: linkHash(full[2]) })).toEqual({ ok: true });
+  });
+
+  it('отпечаток не совпадает — broken', () => {
+    const full = chainOf(3);
+    const fakeHash = ('0x' + 'dd'.repeat(32)) as `0x${string}`;
+    expect(verifyChain(full, { expectedLastHash: fakeHash })).toEqual({ ok: false, reason: 'broken', atSeq: 2 });
+  });
+
+  it('каскадная подделка (ранее звено тронуто, хвост пересчитан вперёд через buildLink) — ловится только якорем по отпечатку', () => {
+    const full = chainOf(5); // seq 0..4, настоящая цепочка
+    const trueLastHash = linkHash(full[4]); // истинный отпечаток ДО подделки
+    const tamperedLink2 = { ...full[2], bodyHash: ('0x' + 'ee'.repeat(32)) as `0x${string}` };
+    // Пересчитываем 3 и 4 ВПЕРЁД от подделанного 2 — внутри цепочка
+    // самосогласована, C2 (смежные пары + генезис) не находит ничего.
+    const rebuiltLink3 = buildLink(tamperedLink2, BODY, ALICE, 1103);
+    const rebuiltLink4 = buildLink(rebuiltLink3, BODY, ALICE, 1104);
+    const cascaded = [full[0], full[1], tamperedLink2, rebuiltLink3, rebuiltLink4];
+    // Контроль: без якоря по отпечатку это ok:true — подтверждает, что
+    // подделка действительно невидима для существующих проверок.
+    expect(verifyChain(cascaded)).toEqual({ ok: true });
+    expect(verifyChain(cascaded, { expectedLastHash: trueLastHash })).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
+  });
+
+  it('якорь по отпечатку не роняет честный внутренний пропуск в broken — «через дыру не пришивает»', () => {
+    // Дыра на seq=2, но full3/full4 — подлинные и связаны между собой.
+    // Хеш последнего показанного звена совпадает с якорем (оно и правда
+    // не тронуто) — но общий вердикт остаётся gap: якорь по отпечатку не
+    // лечит дыру, он проверяет только само последнее звено.
+    const full = chainOf(5);
+    const shown = [full[0], full[1], full[3], full[4]];
+    expect(verifyChain(shown, { expectedLastHash: linkHash(full[4]) })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1] });
+  });
+
+  it('якорь по количеству указывает на утаённый хвост — якорь по отпечатку не проверяется вообще (не broken)', () => {
+    // Показали только 0,1,2 из настоящих 0..4. Хеш последнего показанного
+    // звена (seq=2) заведомо не совпадёт с истинным хешем seq=4 — но это
+    // не подделка, а честная обрезка, которую УЖЕ обнаружил expectedLastSeq
+    // как gap. Сравнивать здесь нечего: неверно было бы обвинять в broken
+    // то, что честно классифицировано как gap другим якорем.
+    const full = chainOf(5);
+    const shown = full.slice(0, 3);
+    const result = verifyChain(shown, { expectedLastSeq: 4, expectedLastHash: linkHash(full[4]) });
+    expect(result).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [2] });
+  });
+
+  it('expectedLastHash неверной длины — bad_anchor, а не исключение', () => {
+    expect(verifyChain(chainOf(2), { expectedLastHash: ('0x' + 'aa'.repeat(31)) as `0x${string}` })).toEqual({ ok: false, reason: 'bad_anchor' });
+  });
+
+  it('expectedLastHash не строка (число) — bad_anchor, а не исключение', () => {
+    expect(verifyChain(chainOf(2), { expectedLastHash: 42 as unknown as `0x${string}` })).toEqual({ ok: false, reason: 'bad_anchor' });
+  });
+});

@@ -41,6 +41,18 @@ export function buildLink(
   };
 }
 
+/** expectedLastSeq отвечает на «сколько сообщений всего», expectedLastHash —
+ *  на «что именно последнее». Поодиночке каждый неполон: expectedLastSeq не
+ *  видит каскадную подделку (раннее звено тронуто, весь хвост пересчитан
+ *  вперёд через buildLink — все смежные пары внутри самосогласованы,
+ *  проверка связности из C2 ничего не находит), а expectedLastHash без
+ *  expectedLastSeq не отличает честную обрезку (хвост правда не показан) от
+ *  подделки — это как раз и решается их совместным использованием. */
+export interface ChainAnchor {
+  expectedLastSeq?: number;
+  expectedLastHash?: `0x${string}`;
+}
+
 /** tailAnchored — необязательное поле, не всегда-boolean-со-значением-false:
  *  toEqual в тестах строгий к лишним ключам (пропускает только undefined), а
  *  семь тестов из брифа проверяют ровно { ok: true } без опций и не должны
@@ -126,7 +138,7 @@ function reportedSeqFor(link: unknown, index: number): number {
  *  сообщение 2. Разница между «скрыл» и «сфальсифицировал» — это разница
  *  между минусом в репутацию и полным недоверием к предъявленному; она не
  *  означает, что скрытое автоматически освобождает остальное от проверки. */
-export function verifyChain(links: ChainLink[], opts?: { expectedLastSeq?: number }): ChainVerdict {
+export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdict {
   // Мусором может быть не только звено внутри массива, но и сам массив —
   // JSON.parse чужого ответа с лёгкостью даёт {} или null вместо [].
   if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1 };
@@ -147,6 +159,13 @@ export function verifyChain(links: ChainLink[], opts?: { expectedLastSeq?: numbe
       return { ok: false, reason: 'bad_anchor' };
     }
     anchor = opts.expectedLastSeq;
+  }
+  let hashAnchor: `0x${string}` | undefined;
+  if (opts && opts.expectedLastHash !== undefined) {
+    if (!isBytes32Hex(opts.expectedLastHash)) {
+      return { ok: false, reason: 'bad_anchor' };
+    }
+    hashAnchor = opts.expectedLastHash;
   }
 
   if (links.length === 0) {
@@ -197,6 +216,21 @@ export function verifyChain(links: ChainLink[], opts?: { expectedLastSeq?: numbe
   for (let i = 1; i < links.length; i++) {
     if (links[i].seq === links[i - 1].seq + 1 && !sameHash(links[i].prevHash, linkHash(links[i - 1]))) {
       return { ok: false, reason: 'broken', atSeq: links[i].seq };
+    }
+  }
+
+  // Якорь по отпечатку — последняя линия обороны против каскадной подделки:
+  // атакующий трогает раннее звено и пересчитывает весь хвост вперёд через
+  // buildLink, отчего смежные пары выше становятся самосогласованы и ничего
+  // не находят. Только итоговый отпечаток последнего звена расходится с
+  // истинным. Пропускаем сравнение, если якорь по количеству УЖЕ доказал,
+  // что показанное последнее звено — не настоящее последнее (хвост утаён,
+  // это честно определённый gap выше, а не повод сравнивать отпечаток
+  // заведомо другого звена с истинным и обвинять в broken).
+  const knownTailDeficit = anchor !== undefined && lastSeq < anchor;
+  if (hashAnchor !== undefined && !knownTailDeficit) {
+    if (!sameHash(linkHash(links[links.length - 1]), hashAnchor)) {
+      return { ok: false, reason: 'broken', atSeq: lastSeq };
     }
   }
 
