@@ -793,7 +793,11 @@ export function appendLogEntry(pairId, entry) {
   fs.appendFileSync(safeLogPath(pairId), line);
 }
 
-function readLog(pairId) {
+// Экспортирован: `botLog.js` читает журнал ПЕРЕД дочитыванием истории, чтобы
+// знать, какие сообщения уже записаны (дедупликация) и на какой глубине
+// остановиться. До этого журнал только дописывался и никогда не перечитывался
+// ботом — отсюда и брались дыры.
+export function readLog(pairId) {
   const logPath = safeLogPath(pairId);
   if (!fs.existsSync(logPath)) return [];
   const key = deriveLogKey(pairId);
