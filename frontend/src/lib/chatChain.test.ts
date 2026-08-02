@@ -260,4 +260,20 @@ describe('verifyChain — ревью, раунд 1', () => {
     const fake4 = buildLink(fake3, BODY, ALICE, 3004);
     expect(verifyChain([fake1, fake2, fake3, fake4])).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1] });
   });
+
+  // I1: якорь генезиса — отдельная, ничем прежде не запертая ветка. Цепочка
+  // из ОДНОГО звена нарочно исключает пары (нет links[1], петля связности
+  // не выполнится ни разу) — единственное, что может поймать подделку
+  // здесь, это именно проверка генезиса, а не пропавший запасной путь через
+  // цикл смежных пар.
+  it('генезис-отпечаток единственного звена не сходится с GENESIS_HASH — отдельно запертая ветка', () => {
+    const forgedGenesis: ChainLink = {
+      seq: 0,
+      prevHash: ('0x' + 'cc'.repeat(32)) as `0x${string}`,
+      bodyHash: BODY,
+      sender: ALICE,
+      sentAt: 1000,
+    };
+    expect(verifyChain([forgedGenesis])).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
+  });
 });
