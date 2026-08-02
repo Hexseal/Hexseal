@@ -112,3 +112,52 @@ export async function deriveChatKeypair(signature: `0x${string}`): Promise<ChatK
   const { publicKey, privateKey } = sodium.crypto_box_seed_keypair(seed);
   return { publicKey, privateKey };
 }
+
+/** Запечатать для получателя. Отправитель анонимен на уровне шифротекста —
+ *  библиотека сама заводит одноразовую пару, поэтому одинаковый текст даёт
+ *  разные мешки. Кто отправил, устанавливается подписью в цепочке
+ *  (lib/chatChain.ts), а не шифрованием.
+ *
+ *  Сигнатура строго `Uint8Array` (не `Uint8Array | string`, как принимает
+ *  сама библиотека): если бы сюда случайно приехала уже закодированная в
+ *  UTF-8 строка вместо байт, `crypto_box_seal` молча запечатала бы текст
+ *  кодировки, без единой ошибки — именно так и тихо.
+ *
+ *  @throws {TypeError} если `recipientPublicKey` не 32 байта — это наши
+ *    негодные данные на входе, не событие протокола, поэтому не гасится. */
+export async function sealForRecipient(
+  recipientPublicKey: Uint8Array,
+  plaintext: Uint8Array,
+): Promise<Uint8Array> {
+  const sodium = (await import('libsodium-wrappers')).default;
+  await sodium.ready;
+  return sodium.crypto_box_seal(plaintext, recipientPublicKey);
+}
+
+/** Вскрыть своей парой.
+ *
+ *  `null` вместо исключения намеренно: мешок не для нас или повреждён —
+ *  ожидаемая ситуация, а не сбой. Исключение заставило бы оборачивать каждый
+ *  вызов в try/catch, и однажды кто-нибудь напишет пустой.
+ *
+ *  НО ловим только `Error`. `TypeError` библиотека бросает, когда МЫ передали
+ *  негодные данные: обрезанный мешок, ключ не той длины. Схлопнуть оба класса
+ *  в `null` значило бы выдать наш собственный баг за «это письмо не для вас» —
+ *  сбой под видом штатного исхода. Разница установлена прогоном библиотеки
+ *  в Задаче 1 и застёгнута тестами в chatCrypto.test.ts. Порядок проверки
+ *  важен: `TypeError` наследует `Error`, поэтому `instanceof TypeError`
+ *  проверяется первым и пробрасывается — иначе он тоже схлопнулся бы в
+ *  `catch (err) { return null }` как обычный `Error`. */
+export async function openSealed(
+  myKeypair: ChatKeypair,
+  sealed: Uint8Array,
+): Promise<Uint8Array | null> {
+  const sodium = (await import('libsodium-wrappers')).default;
+  await sodium.ready;
+  try {
+    return sodium.crypto_box_seal_open(sealed, myKeypair.publicKey, myKeypair.privateKey);
+  } catch (err) {
+    if (err instanceof TypeError) throw err; // наш мусор на входе — наружу
+    return null;                              // не наш мешок — штатный путь
+  }
+}

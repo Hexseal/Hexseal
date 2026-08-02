@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { bytesToHex } from 'viem';
-import { deriveChatKeypair, CHAT_KEY_TYPED_DATA } from './chatCrypto';
+import { deriveChatKeypair, sealForRecipient, openSealed, CHAT_KEY_TYPED_DATA } from './chatCrypto';
 
 const SIG_A = ('0x' + 'ab'.repeat(65)) as `0x${string}`;
 const SIG_B = ('0x' + 'cd'.repeat(65)) as `0x${string}`;
+const text = (s: string) => new TextEncoder().encode(s);
+const str  = (b: Uint8Array) => new TextDecoder().decode(b);
 
 describe('deriveChatKeypair', () => {
   it('одна и та же подпись всегда даёт одну и ту же пару', async () => {
@@ -91,5 +93,71 @@ describe('deriveChatKeypair', () => {
         ).rejects.toThrow();
       });
     }
+  });
+});
+
+describe('sealForRecipient / openSealed', () => {
+  it('получатель вскрывает своим ключом', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    const sealed = await sealForRecipient(bob.publicKey, text('бриф: лендинг'));
+    const opened = await openSealed(bob, sealed);
+    expect(opened).not.toBeNull();
+    expect(str(opened!)).toBe('бриф: лендинг');
+  });
+
+  it('посторонний не вскрывает и получает null, а не исключение', async () => {
+    const bob  = await deriveChatKeypair(SIG_B);
+    const eve  = await deriveChatKeypair(SIG_A);
+    const sealed = await sealForRecipient(bob.publicKey, text('секрет'));
+    await expect(openSealed(eve, sealed)).resolves.toBeNull();
+  });
+
+  it('повреждённый мешок той же длины даёт null, а не исключение', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    const sealed = await sealForRecipient(bob.publicKey, text('секрет'));
+    sealed[sealed.length - 1] ^= 0xff;
+    await expect(openSealed(bob, sealed)).resolves.toBeNull();
+  });
+
+  // Три следующих теста держат границу между «мешок не наш» и «мы передали
+  // мусор». Без них сплошной catch схлопнул бы оба случая, и перепутанный
+  // формат ключа выглядел бы как чужое письмо — сбой под видом штатного
+  // исхода. Разница классов исключений установлена в Задаче 1 прогоном
+  // библиотеки; она принадлежит libsodium, а не нам, поэтому её надо
+  // стеречь тестом: при обновлении зависимости она может поехать молча.
+
+  it('обрезанный мешок — это наш баг, а не чужое письмо: пробрасывается', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    await expect(openSealed(bob, new Uint8Array(10))).rejects.toThrow(TypeError);
+  });
+
+  it('ключ неверной длины пробрасывается, а не выдаётся за чужой мешок', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    const sealed = await sealForRecipient(bob.publicKey, text('секрет'));
+    const broken = { publicKey: bob.publicKey.slice(0, 31), privateKey: bob.privateKey };
+    await expect(openSealed(broken, sealed)).rejects.toThrow(TypeError);
+  });
+
+  it('запечатывание на ключ неверной длины тоже пробрасывается', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    await expect(sealForRecipient(bob.publicKey.slice(0, 31), text('a'))).rejects.toThrow(TypeError);
+  });
+
+  it('два запечатывания одного текста дают РАЗНЫЕ мешки', async () => {
+    // Если мешки совпадут — значит схема детерминированная, и по одинаковым
+    // байтам на сервере видно, что человек написал одно и то же дважды.
+    // Метаданные мы и так не скрываем, но повторяемость шифротекста — это
+    // уже утечка содержимого, и она недопустима.
+    const bob = await deriveChatKeypair(SIG_B);
+    const one = await sealForRecipient(bob.publicKey, text('да'));
+    const two = await sealForRecipient(bob.publicKey, text('да'));
+    expect(one).not.toEqual(two);
+  });
+
+  it('пустое сообщение проходит круг', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    const sealed = await sealForRecipient(bob.publicKey, new Uint8Array(0));
+    const opened = await openSealed(bob, sealed);
+    expect(opened).toEqual(new Uint8Array(0));
   });
 });
