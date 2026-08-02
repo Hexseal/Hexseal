@@ -355,11 +355,14 @@ describe('verifyChain — C3: якорь хвоста (opts.expectedLastSeq)', (
   });
 
   it('мусорный expectedLastSeq (дробный) не роняет проверку', () => {
-    expect(verifyChain(chainOf(2), { expectedLastSeq: 1.5 })).toEqual({ ok: false, reason: 'broken', atSeq: 1.5 });
+    // РАУНД 2, находка 3: было {broken, atSeq:1.5} — вина уходила на
+    // предъявителя честной цепочки за чужую ошибку в якоре. Теперь
+    // отдельный вердикт bad_anchor, см. describe ниже.
+    expect(verifyChain(chainOf(2), { expectedLastSeq: 1.5 })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('мусорный expectedLastSeq (отрицательный) не роняет проверку', () => {
-    expect(verifyChain(chainOf(2), { expectedLastSeq: -1 })).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
+    expect(verifyChain(chainOf(2), { expectedLastSeq: -1 })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('внутренняя дыра и утаённый хвост — обе позиции в missingAfterSeq', () => {
@@ -392,5 +395,36 @@ describe('verifyChain — C3: якорь хвоста (opts.expectedLastSeq)', (
     const tampered = [...full];
     tampered[2] = { ...tampered[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
     expect(verifyChain(tampered, { expectedLastSeq: 2 })).toEqual({ ok: true, tailAnchored: true });
+  });
+});
+
+describe('verifyChain — ревью, раунд 2, находка 3: bad_anchor', () => {
+  // Мусор со стороны якоря — не вина того, чью цепочку разбирают. Раньше
+  // verifyChain(честнаяЦепочка, {expectedLastSeq: NaN}) отдавал
+  // {ok:false, reason:'broken', atSeq: NaN} — предъявителю честной цепочки
+  // приписывали подделку за чужую ошибку. Плюс opts не объект (число,
+  // строка, null, массив) молча игнорировался — fail-open в функции, вся
+  // суть которой в недоверии ко входу. Отдельный вердикт bad_anchor не
+  // обвиняет предъявителя и не позволяет мусору в опциях тихо выключить
+  // проверку целиком.
+
+  it('opts — число, не объект', () => {
+    expect(verifyChain(chainOf(2), 5 as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+  });
+
+  it('opts — строка, не объект', () => {
+    expect(verifyChain(chainOf(2), '2' as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+  });
+
+  it('opts — null, отличается от undefined (не передан вообще)', () => {
+    expect(verifyChain(chainOf(2), null as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+  });
+
+  it('opts — массив, не объект-якорь', () => {
+    expect(verifyChain(chainOf(2), [1, 2] as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+  });
+
+  it('opts не передан вообще (undefined) — это НЕ bad_anchor, это просто нет якоря', () => {
+    expect(verifyChain(chainOf(2))).toEqual({ ok: true });
   });
 });

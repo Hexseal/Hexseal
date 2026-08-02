@@ -52,7 +52,8 @@ export type ChainVerdict =
   | { ok: true; tailAnchored?: boolean }
   | { ok: false; reason: 'gap'; missingAfterSeq: number[] }
   | { ok: false; reason: 'broken'; atSeq: number }
-  | { ok: false; reason: 'unordered' };
+  | { ok: false; reason: 'unordered' }
+  | { ok: false; reason: 'bad_anchor' };
 
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
@@ -131,13 +132,19 @@ export function verifyChain(links: ChainLink[], opts?: { expectedLastSeq?: numbe
   if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1 };
 
   // Якорь хвоста тоже приезжает снаружи (план 4 решает, откуда он берётся —
-  // verifyChain знает только число) — тот же гейт формы, что и для полей
-  // звена: мусорный expectedLastSeq не должен ронять проверку.
+  // verifyChain знает только число), но мусор в НЁМ — не вина того, чью
+  // цепочку разбирают. opts=5/"2"/null/[...] раньше молча игнорировался
+  // (fail-open в функции, вся суть которой в недоверии ко входу), а
+  // мусорный expectedLastSeq обвинял в подделке честную цепочку (`broken`
+  // с чужой ошибкой в atSeq). Оба случая — bad_anchor, отдельно от вины
+  // предъявителя.
+  if (opts !== undefined && (typeof opts !== 'object' || opts === null || Array.isArray(opts))) {
+    return { ok: false, reason: 'bad_anchor' };
+  }
   let anchor: number | undefined;
   if (opts && opts.expectedLastSeq !== undefined) {
     if (!isSafeNonNegativeInt(opts.expectedLastSeq)) {
-      const raw = opts.expectedLastSeq;
-      return { ok: false, reason: 'broken', atSeq: typeof raw === 'number' ? raw : -1 };
+      return { ok: false, reason: 'bad_anchor' };
     }
     anchor = opts.expectedLastSeq;
   }
