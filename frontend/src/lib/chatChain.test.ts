@@ -171,4 +171,16 @@ describe('verifyChain — ревью, раунд 1', () => {
     garbled[1] = { ...garbled[1], sentAt: 1e100 };
     expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
   });
+
+  // I2: весь массив целиком тоже может быть мусором — не только звено внутри.
+  it('не-массив на входе не роняет проверку', () => {
+    expect(verifyChain({} as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
+    expect(verifyChain(null as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
+  });
+
+  it('мусор внутри валидного массива (null/undefined элементы) даёт broken, а не исключение', () => {
+    expect(verifyChain([null as unknown as ChainLink])).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
+    const full = chainOf(2);
+    expect(verifyChain([undefined as unknown as ChainLink, full[1]])).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
+  });
 });

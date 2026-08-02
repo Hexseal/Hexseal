@@ -109,6 +109,10 @@ function reportedSeqFor(link: unknown, index: number): number {
  *  это разница между минусом в репутацию и полным недоверием к
  *  предъявленному. */
 export function verifyChain(links: ChainLink[]): ChainVerdict {
+  // Мусором может быть не только звено внутри массива, но и сам массив —
+  // JSON.parse чужого ответа с лёгкостью даёт {} или null вместо [].
+  if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1 };
+
   if (links.length === 0) return { ok: true };
 
   for (let i = 0; i < links.length; i++) {
