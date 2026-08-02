@@ -192,4 +192,23 @@ describe('verifyChain — ревью, раунд 1', () => {
     const dup = { ...full[1], seq: full[0].seq };
     expect(verifyChain([full[0], dup])).toEqual({ ok: false, reason: 'unordered' });
   });
+
+  // isBytes32Hex гейта принимает A-F (регистронезависимый regexp), но сравнение
+  // отпечатков было строковым "!==" — та же по значению строка в другом
+  // регистре давала ложный broken на криптографически валидной цепочке.
+  function upperHex(hash: `0x${string}`): `0x${string}` {
+    return ('0x' + hash.slice(2).toUpperCase()) as `0x${string}`;
+  }
+
+  it('генезис-отпечаток в верхнем регистре — та же цепочка, не разрыв', () => {
+    const full = chainOf(1);
+    const relabelled = { ...full[0], prevHash: upperHex(GENESIS_HASH) };
+    expect(verifyChain([relabelled])).toEqual({ ok: true });
+  });
+
+  it('prevHash соседнего звена в верхнем регистре — та же цепочка, не разрыв', () => {
+    const full = chainOf(2);
+    const relabelled = { ...full[1], prevHash: upperHex(full[1].prevHash) };
+    expect(verifyChain([full[0], relabelled])).toEqual({ ok: true });
+  });
 });

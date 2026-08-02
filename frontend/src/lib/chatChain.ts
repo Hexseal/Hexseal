@@ -53,6 +53,13 @@ function isBytes32Hex(value: unknown): value is `0x${string}` {
   return typeof value === 'string' && BYTES32_RE.test(value);
 }
 
+/** Гейт формы принимает A-F (регистронезависимый regexp у 32-байтных
+ *  отпечатков) — сравнение обязано трактовать регистр так же, иначе та же
+ *  по значению строка в другом регистре ложно даёт broken. */
+function sameHash(a: `0x${string}`, b: `0x${string}`): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 /** Number.isSafeInteger, а не Number.isInteger: encodePacked(['uint256'])
  *  бросает IntegerOutOfRangeError далеко до границы uint256 — уже на числах,
  *  которые JS не может представить точно (Number.isInteger(1e100) === true,
@@ -132,9 +139,9 @@ export function verifyChain(links: ChainLink[]): ChainVerdict {
   }
   if (missingAfterSeq.length > 0) return { ok: false, reason: 'gap', missingAfterSeq };
 
-  if (links[0].prevHash !== GENESIS_HASH) return { ok: false, reason: 'broken', atSeq: links[0].seq };
+  if (!sameHash(links[0].prevHash, GENESIS_HASH)) return { ok: false, reason: 'broken', atSeq: links[0].seq };
   for (let i = 1; i < links.length; i++) {
-    if (links[i].prevHash !== linkHash(links[i - 1])) {
+    if (!sameHash(links[i].prevHash, linkHash(links[i - 1]))) {
       return { ok: false, reason: 'broken', atSeq: links[i].seq };
     }
   }
