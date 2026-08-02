@@ -15,6 +15,8 @@
     "jobs": "Trabajos",
     "services": "Servicios",
     "arbiter": "Árbitro",
+    "arbiter_unverified": "Rol sin verificar",
+    "arbiter_unverified_hint": "No se pudo comprobar si eres árbitro: es un fallo de conexión, no la pérdida del rol. Toca para reintentar.",
     "board": "Panel",
     "alerts": "Alertas",
     "dashboard": "Panel",
@@ -214,7 +216,8 @@
     "enable_messaging": "Activar mensajería",
     "connecting_messaging": "Conectando mensajería…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "No se pudieron comprobar tus roles: los paneles de árbitro y admin quedan ocultos hasta lograrlo. Es un fallo de lectura, no la pérdida del rol."
   },
   "dashboard": {
     "title": "Panel",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "No se pudo comprobar tu rol de árbitro: la red no respondió. No has perdido el acceso, solo falló la comprobación."
   },
   "onboarding": {
     "title": "Cómo funciona Hexseal",

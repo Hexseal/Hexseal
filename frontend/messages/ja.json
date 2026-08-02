@@ -15,6 +15,8 @@
     "jobs": "仕事",
     "services": "サービス",
     "arbiter": "仲裁人",
+    "arbiter_unverified": "役割は未確認",
+    "arbiter_unverified_hint": "仲裁人かどうか確認できませんでした。役割を失ったのではなく通信の問題です。押すと再試行します。",
     "board": "ボード",
     "alerts": "通知",
     "dashboard": "ダッシュボード",
@@ -214,7 +216,8 @@
     "enable_messaging": "メッセージを有効にする",
     "connecting_messaging": "メッセージ機能に接続中…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "役割を確認できませんでした。確認できるまで仲裁人と管理者のパネルは非表示です。読み取りの失敗であり、役割の喪失ではありません。"
   },
   "dashboard": {
     "title": "ダッシュボード",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "仲裁人の役割を確認できませんでした。ネットワークが応答していません。権限は失われておらず、確認が通らなかっただけです。"
   },
   "onboarding": {
     "title": "Hexsealの使い方",

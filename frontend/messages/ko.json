@@ -15,6 +15,8 @@
     "jobs": "일자리",
     "services": "서비스",
     "arbiter": "중재자",
+    "arbiter_unverified": "역할 미확인",
+    "arbiter_unverified_hint": "중재자인지 확인하지 못했습니다 — 역할을 잃은 것이 아니라 연결 문제입니다. 눌러서 다시 시도하세요.",
     "board": "게시판",
     "alerts": "알림",
     "dashboard": "대시보드",
@@ -214,7 +216,8 @@
     "enable_messaging": "메시징 활성화",
     "connecting_messaging": "메시징 연결 중…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "역할을 확인하지 못했습니다 — 확인될 때까지 중재자·관리자 패널은 숨겨집니다. 읽기 실패이지 역할 상실이 아닙니다."
   },
   "dashboard": {
     "title": "대시보드",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "중재자 역할을 확인하지 못했습니다 — 네트워크가 응답하지 않았습니다. 접근 권한은 그대로이며 확인만 실패했습니다."
   },
   "onboarding": {
     "title": "Hexseal 사용 방법",

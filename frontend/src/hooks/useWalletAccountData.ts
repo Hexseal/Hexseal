@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
 import type { Abi } from 'viem';
 import { useTranslations } from 'next-intl';
@@ -9,6 +9,7 @@ import { appChainId } from '@/config/chain';
 import { CONTRACTS, ARBITER_REGISTRY_ABI, REPUTATION_ABI, DIAMOND_ABI } from '@/config/contracts';
 import { useProfile } from '@/hooks/useProfile';
 import { pollForFact } from '@/lib/pollForFact';
+import { roleDenied, roleFailureKind, roleFromRead, roleGranted, roleUnreadable } from '@/lib/roleCheck';
 import { shortAddr } from '@/lib/utils';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -58,14 +59,36 @@ export function useWalletAccountData() {
 
   const { displayName, avatarUrl: profileAvatarUrl } = useProfile(address);
 
-  const { data: isArbiterRaw, refetch: refetchIsArbiter } = useReadContract({
+  // ─────────────────────────────────────────────────────────────────────
+  // РОЛИ. Три ответа, а не два — см. `lib/roleCheck.ts`.
+  //
+  // Здесь стояло `const isArbiter = !!isArbiterRaw` над `data: boolean |
+  // undefined`, и 2 августа 2026 это стоило владельцу роли: один перебойный
+  // 502 от нашего же `/api/rpc` — и `!!undefined` объявил его не арбитром.
+  // Вкладка «Арбитр» исчезла из шапки, пункты арбитра — из меню, намёка на
+  // то, что дело в связи, не было никакого, а вернуть всё могла только
+  // перезагрузка: `refetchInterval: false` + `refetchOnWindowFocus: false`
+  // (providers.tsx) означают, что упавший запрос сам не переспрашивается.
+  //
+  // Права по-прежнему выдаются ТОЛЬКО по подтверждённому 'yes' — осторожность
+  // тут верна. Изменилось второе: молчаливое «нет» больше не выдаётся за ответ,
+  // непрочитанность видна человеку и переспрашивается кнопкой.
+  const arbiterRead = useReadContract({
     address: CONTRACTS.diamond,
     abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: 'isRegisteredArbiter',
     args: [address ?? ZERO_ADDRESS],
     query: { enabled: !!address },
-  }) as { data: boolean | undefined; refetch: () => void };
-  const isArbiter = !!isArbiterRaw;
+  }) as {
+    data: boolean | undefined; isError: boolean; error: unknown;
+    isPending: boolean; isFetching: boolean; refetch: () => void;
+  };
+  const arbiterCheck = roleFromRead(
+    { ...arbiterRead, enabled: !!address },
+    Boolean,
+  );
+  const isArbiter = roleGranted(arbiterCheck);
+  const refetchIsArbiter = arbiterRead.refetch;
 
   const { data: daoActive } = useReadContract({
     address: CONTRACTS.diamond,
@@ -82,25 +105,85 @@ export function useWalletAccountData() {
     query: { enabled: !!address },
   }) as { data: bigint | undefined; refetch: () => void };
 
-  const { data: diamondOwner } = useReadContract({
+  // Та же болезнь ровно того же вида: `!!diamondOwner` прятал ссылку на
+  // «Панель админа» при любом сбое чтения `owner()`.
+  const ownerRead = useReadContract({
     address: CONTRACTS.diamond,
     abi: DIAMOND_ABI as Abi,
     functionName: 'owner',
     query: { enabled: !!address },
-  }) as { data: string | undefined };
-  const isOwner = !!address && !!diamondOwner && address.toLowerCase() === diamondOwner.toLowerCase();
+  }) as {
+    data: string | undefined; isError: boolean; error: unknown;
+    isPending: boolean; isFetching: boolean; refetch: () => void;
+  };
+  const ownerCheck = roleFromRead(
+    { ...ownerRead, enabled: !!address },
+    owner => !!address && !!owner && owner.toLowerCase() === address.toLowerCase(),
+  );
+  const isOwner = roleGranted(ownerCheck);
 
-  const { data: usdcBalanceData } = useBalance({
+  /** Хотя бы одну роль прочитать не удалось — это и есть третье состояние,
+   *  которое видит человек (амбер-строка в меню + значок в шапке). */
+  const rolesUnreadable = roleUnreadable(arbiterCheck, ownerCheck);
+  /** Идёт повторная проверка — чтобы кнопка «Повторить» показывала крутилку,
+   *  а не выглядела нажатой в пустоту. */
+  const rolesRechecking = rolesUnreadable && (arbiterRead.isFetching || ownerRead.isFetching);
+
+  // Зависимости — сами `refetch`, а не объекты чтений: объект wagmi новый на
+  // каждом рендере, и `useCallback` по нему не запоминал бы ничего.
+  const refetchOwner = ownerRead.refetch;
+  const recheckRoles = useCallback(() => {
+    refetchIsArbiter();
+    refetchOwner();
+  }, [refetchIsArbiter, refetchOwner]);
+
+  // След в журнале. Разницу 'transport' (RPC отвалился) / 'contract' (цепь
+  // ответила отказом — селектора нет, фасет снят) человеку показывать нечего:
+  // ему в обоих случаях одинаково нечего делать. А расследованию она стоит
+  // недели — именно её отсутствие 2 августа и увело диагностику в прокси.
+  // `lastLoggedRef` — против записи на каждом перерендере (их у шапки много).
+  const lastLoggedRef = useRef<string>('');
+  const arbiterFailure = roleFailureKind(arbiterRead);
+  const ownerFailure   = roleFailureKind(ownerRead);
+  useEffect(() => {
+    const key = [
+      arbiterFailure ? `isRegisteredArbiter:${arbiterFailure}` : '',
+      ownerFailure   ? `owner:${ownerFailure}`                 : '',
+    ].filter(Boolean).join('|');
+    if (key === lastLoggedRef.current) return;
+    lastLoggedRef.current = key;
+    if (!key) return;
+    console.warn(
+      `[roles] не прочитались: ${key}. Права не выданы, но и «нет роли» не ` +
+      `утверждается — в меню кошелька показана строка «не смогли проверить».`,
+    );
+  }, [arbiterFailure, ownerFailure]);
+
+  const usdcRead = useBalance({
     address,
     token: CONTRACTS.usdc as `0x${string}`,
     query: { enabled: !!address },
   });
-  const usdcBalance = usdcBalanceData?.value ?? BigInt(0);
+  const usdcBalance = usdcRead.data?.value ?? BigInt(0);
+  /** Тот же класс, что «оборот $0 при сбое сабграфа»: `?? 0n` превращает
+   *  непрочитанный баланс в уверенные «0.00 USDC». Прав это не меняет и
+   *  интерфейса не прячет, поэтому чинится мягко — прочерком вместо нуля
+   *  (как в `AgreementsStats`), а не отдельным предупреждением. */
+  const usdcBalanceUnavailable = !!address && usdcRead.data === undefined && usdcRead.isError;
 
   const [isApplying, setIsApplying] = useState(false);
   const publicClient = usePublicClient();
   const { writeContractAsync: applyAsArbiterWrite } = useWriteContract();
-  const canApplyAsArbiter = !!daoActive && !isArbiter && !!onchainXP && onchainXP >= 3000n;
+  // ⚠️ `roleDenied`, а НЕ `!isArbiter`. Разница ровно та, ради которой написан
+  // `lib/roleCheck.ts`: «Стать арбитром» имеет смысл только для того, про кого
+  // мы ТОЧНО знаем, что он ещё не арбитр. При непрочитанной роли прежнее
+  // условие `!isArbiter` было истинным (`!false`), и настоящему арбитру
+  // предлагалась кнопка, ведущая в гарантированный реверт `applyAsArbiter`.
+  // `onchainXP !== undefined` по той же причине заменил `!!onchainXP`: там ноль
+  // и «не прочиталось» были неразличимы (на пороге 3000 это ни на что не
+  // влияло, но правило одно на файл).
+  const canApplyAsArbiter =
+    daoActive === true && roleDenied(arbiterCheck) && onchainXP !== undefined && onchainXP >= 3000n;
 
   const handleApplyAsArbiter = async () => {
     if (!publicClient || !address) { toast.error(t('common.error')); return; }
@@ -170,8 +253,17 @@ export function useWalletAccountData() {
     displayText,
     avatarUrl,
     usdcBalance,
+    usdcBalanceUnavailable,
     isArbiter,
     isOwner,
+    /** Вердикты целиком — для мест, где важно отличить «нет» от «не знаем».
+     *  `isArbiter`/`isOwner` остаются булевыми и по-прежнему истинны ТОЛЬКО
+     *  на подтверждённом 'yes': ни одна проверка прав ниже по коду не меняется. */
+    arbiterCheck,
+    ownerCheck,
+    rolesUnreadable,
+    rolesRechecking,
+    recheckRoles,
     canApplyAsArbiter,
     applyPending: isApplying,
     handleApplyAsArbiter,

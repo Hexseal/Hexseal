@@ -15,6 +15,8 @@
     "jobs": "Роботи",
     "services": "Послуги",
     "arbiter": "Арбітр",
+    "arbiter_unverified": "Роль не перевірена",
+    "arbiter_unverified_hint": "Не вдалося перевірити, чи ви арбітр — це збій зв'язку, а не втрата ролі. Натисніть, щоб повторити.",
     "board": "Дошка",
     "alerts": "Сповіщення",
     "dashboard": "Панель",
@@ -214,7 +216,8 @@
     "enable_messaging": "Увімкнути месенджер",
     "connecting_messaging": "Підключення месенджера…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "Не вдалося перевірити ваші ролі — панелі арбітра й адміна приховані, доки не прочитаємо. Це збій читання, а не втрата ролі."
   },
   "dashboard": {
     "title": "Панель",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "Не вдалося перевірити вашу роль арбітра — мережа не відповіла. Доступ не втрачено, просто перевірка не пройшла."
   },
   "onboarding": {
     "title": "Як працює Hexseal",

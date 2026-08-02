@@ -15,6 +15,8 @@
     "jobs": "Jobs",
     "services": "Leistungen",
     "arbiter": "Schlichter",
+    "arbiter_unverified": "Rolle ungeprüft",
+    "arbiter_unverified_hint": "Konnte nicht prüfen, ob du Schlichter bist — ein Verbindungsfehler, kein Rollenverlust. Zum Wiederholen klicken.",
     "board": "Board",
     "alerts": "Benachrichtigungen",
     "dashboard": "Dashboard",
@@ -214,7 +216,8 @@
     "enable_messaging": "Messaging aktivieren",
     "connecting_messaging": "Messaging wird verbunden…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "Deine Rollen konnten nicht geprüft werden — Schlichter- und Admin-Bereich bleiben verborgen, bis es gelingt. Ein Lesefehler, kein Rollenverlust."
   },
   "dashboard": {
     "title": "Dashboard",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "Deine Schlichter-Rolle konnte nicht geprüft werden — das Netzwerk hat nicht geantwortet. Der Zugang ist nicht weg, nur die Prüfung schlug fehl."
   },
   "onboarding": {
     "title": "So funktioniert Hexseal",

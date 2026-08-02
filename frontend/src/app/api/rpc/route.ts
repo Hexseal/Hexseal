@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { appChain } from '@/config/chain';
+import {
+  classifyFetchFailure,
+  describeRpcCall,
+  formatAttempts,
+  rpcHostLabel,
+  shouldRetryPrivate,
+  type RpcAttempt,
+} from '@/lib/rpcProxy';
 
 // Private RPC with API key — server-only, never exposed to client.
 // Set DRPC_URL (no NEXT_PUBLIC_ prefix) in .env.vps so the key stays
@@ -47,7 +55,21 @@ const PUBLIC_RPCS: string[] = appChain.id === 8453
   ? ['https://mainnet.base.org', 'https://base-rpc.publicnode.com']
   : ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com', 'https://base-sepolia.blockpi.network/v1/rpc/public'];
 
-async function callRpc(url: string, body: unknown, timeoutMs = 6_000): Promise<Response> {
+/** Имя приватного узла для журнала. Считается один раз на процесс — и это
+ *  ЕДИНСТВЕННОЕ, что от `PRIVATE_RPC` попадает в вывод: в адресе лежит ключ
+ *  доступа (`?dkey=`), и полный URL в журнале равносилен его утечке.
+ *  Наружу, в тело ответа клиенту, не уходит и хост — там метка `private`. */
+const PRIVATE_HOST = PRIVATE_RPC ? rpcHostLabel(PRIVATE_RPC) : '—';
+
+const PRIVATE_TIMEOUT_MS       = 6_000;
+const PRIVATE_RETRY_TIMEOUT_MS = 3_000;
+const PUBLIC_TIMEOUT_MS        = 4_000;
+/** Пауза перед повтором приватного. Не «бэкофф» в полном смысле — один шаг;
+ *  нужна, чтобы повтор не улетел в ту же миллисекунду, что и сброшенное
+ *  соединение. 150 мс не влияют на бюджет и снимают самый глупый вид шторма. */
+const PRIVATE_RETRY_PAUSE_MS = 150;
+
+async function callRpc(url: string, body: unknown, timeoutMs = PRIVATE_TIMEOUT_MS): Promise<Response> {
   return fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -67,36 +89,125 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Try private RPC first (6 s); auto-fallback to public pool if it fails.
-  // Total budget: 6 s private + up to 3 × 4 s public = 18 s < Vercel 30 s limit.
+  // Чем был этот запрос — для журнала. Без него строка «узел отказал» не
+  // отвечает на главный вопрос расследования: КАКОЕ чтение упало. Ровно этот
+  // вопрос и стоял 2 августа, когда у арбитра пропала роль: баланс приехал,
+  // роль нет, а в журнале по `api/rpc` не было вообще ничего.
+  const call = describeRpcCall(body);
+
+  /** След всех попыток. Раньше выживало только последнее сообщение
+   *  (`lastErr`), и по нему нельзя было понять ни сколько кандидатов пробовали,
+   *  ни что ответил приватный. */
+  const attempts: RpcAttempt[] = [];
+
+  // Try private RPC first (6 s, плюс один короткий повтор на быстрый сбой);
+  // auto-fallback to public pool if it fails.
+  // Бюджет времени, худший случай — два разветвления, оба меньше прежних 18 с:
+  //   • приватный отвалился по таймауту:  6 + 3 × 4 = 18 с (повтора нет, правило 1);
+  //   • приватный отвалился быстро:     ≤2 + 0.15 + 3 + 3 × 4 ≈ 17.2 с.
+  // Оба меньше 30 с — потолка serverless-функции. Обоснование самого повтора —
+  // в `shouldRetryPrivate` (lib/rpcProxy.ts).
   if (PRIVATE_RPC) {
-    try {
-      const res = await callRpc(PRIVATE_RPC, body, 6_000);
-      if (res.ok) {
-        return NextResponse.json(await res.json());
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const timeoutMs = attempt === 1 ? PRIVATE_TIMEOUT_MS : PRIVATE_RETRY_TIMEOUT_MS;
+      const startedAt = Date.now();
+      const tag = attempt === 1 ? 'приватный' : 'приватный (повтор)';
+      let retryable = false;
+
+      try {
+        const res = await callRpc(PRIVATE_RPC, body, timeoutMs);
+        const ms = Date.now() - startedAt;
+        if (res.ok) {
+          if (attempt === 2) {
+            // Повтор спас чтение. Эту строку стоит видеть: она — единственное
+            // доказательство, что повтор здесь не мёртвый код, и одновременно
+            // счётчик того, как часто моргает платный узел.
+            console.warn(`[/api/rpc] ${call}: повтор приватного (${PRIVATE_HOST}) удался за ${ms} мс`);
+          }
+          return NextResponse.json(await res.json());
+        }
+        attempts.push({ target: 'private', outcome: 'status', status: res.status, ms });
+        console.warn(
+          `[/api/rpc] ${call}: ${tag} (${PRIVATE_HOST}) ответил HTTP ${res.status} за ${ms} мс`,
+        );
+        retryable = shouldRetryPrivate({ status: res.status }, ms);
+      } catch (err) {
+        const ms = Date.now() - startedAt;
+        // ⚠️ ЗДЕСЬ БЫЛ ПУСТОЙ `catch {}`. Приватный узел мог отваливаться по
+        // таймауту или по сети сколько угодно раз, и в журнале не оставалось
+        // ни строчки — поэтому в августе было неизвестно, почему приходит 502.
+        const failure = classifyFetchFailure(err);
+        attempts.push({
+          target:  'private',
+          outcome: failure.timeout ? 'timeout' : 'network',
+          error:   failure.message,
+          ms,
+        });
+        console.warn(
+          `[/api/rpc] ${call}: ${tag} (${PRIVATE_HOST}) не ответил за ${ms} мс — ` +
+          `${failure.timeout ? 'ТАЙМАУТ' : 'сетевой сбой'}: ${failure.message}`,
+        );
+        retryable = shouldRetryPrivate({ timeout: failure.timeout }, ms);
       }
-      console.warn(`[/api/rpc] Private RPC returned ${res.status}, falling back to public`);
-    } catch {
-      // Timeout / network error → fall through to public pool
+
+      if (attempt === 2 || !retryable) break;
+      await new Promise(r => setTimeout(r, PRIVATE_RETRY_PAUSE_MS));
     }
+    console.warn(`[/api/rpc] ${call}: уходим на публичный пул (${PUBLIC_RPCS.length} кандидата)`);
+  } else {
+    // Тоже ветка отказа, и самая обидная: приватного узла просто нет в
+    // окружении, каждый запрос идёт по публичным лимитам — а выглядит это
+    // снаружи точно так же, как «приватный отвалился».
+    console.warn(`[/api/rpc] ${call}: приватный узел не настроен, сразу публичный пул`);
   }
 
   // Try each public fallback in order (4 s each — short enough to stay in budget)
-  let lastErr = 'All RPC endpoints failed';
   for (const url of PUBLIC_RPCS) {
+    const startedAt = Date.now();
     try {
-      const res = await callRpc(url, body, 4_000);
+      const res = await callRpc(url, body, PUBLIC_TIMEOUT_MS);
+      const ms = Date.now() - startedAt;
       if (res.ok) {
         return NextResponse.json(await res.json());
       }
-      lastErr = `${url} returned ${res.status}`;
+      attempts.push({ target: url, outcome: 'status', status: res.status, ms });
+      console.warn(`[/api/rpc] ${call}: публичный ${url} ответил HTTP ${res.status} за ${ms} мс`);
     } catch (err) {
-      lastErr = err instanceof Error ? err.message : String(err);
+      const ms = Date.now() - startedAt;
+      const failure = classifyFetchFailure(err);
+      attempts.push({
+        target:  url,
+        outcome: failure.timeout ? 'timeout' : 'network',
+        error:   failure.message,
+        ms,
+      });
+      console.warn(
+        `[/api/rpc] ${call}: публичный ${url} не ответил за ${ms} мс — ` +
+        `${failure.timeout ? 'ТАЙМАУТ' : 'сетевой сбой'}: ${failure.message}`,
+      );
     }
   }
 
+  // Отдаём 502 — и вместе с ним весь след. Прежний ответ нёс только сообщение
+  // ПОСЛЕДНЕГО публичного запасного; человек в консоли браузера видел
+  // «RPC proxy error: fetch failed» и не мог узнать ни числа кандидатов, ни
+  // того, что случилось с приватным.
+  const trail = formatAttempts(attempts);
+  console.error(`[/api/rpc] ${call}: 502, все ${attempts.length} кандидата отказали — ${trail}`);
+
   return NextResponse.json(
-    { jsonrpc: '2.0', error: { code: -32603, message: `RPC proxy error: ${lastErr}` }, id: null },
+    {
+      jsonrpc: '2.0',
+      error: {
+        code: -32603,
+        message: `RPC proxy error: перепробованы все ${attempts.length} кандидата — ${trail}`,
+        // Структурированный тот же след: по нему можно отличить «все по
+        // таймауту» (узлы живы, но медленные) от «все по кодам» (нас режут по
+        // частоте) не разбирая строку глазами.
+        data: { call, tried: attempts.length, attempts },
+      },
+      id: null,
+    },
     { status: 502 },
   );
 }

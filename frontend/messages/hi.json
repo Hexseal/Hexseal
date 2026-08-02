@@ -15,6 +15,8 @@
     "jobs": "काम",
     "services": "सेवाएं",
     "arbiter": "मध्यस्थ",
+    "arbiter_unverified": "भूमिका अप्रमाणित",
+    "arbiter_unverified_hint": "यह जाँच नहीं हो सकी कि आप मध्यस्थ हैं या नहीं — यह कनेक्शन की गड़बड़ी है, भूमिका का जाना नहीं। दोबारा कोशिश के लिए दबाएँ।",
     "board": "बोर्ड",
     "alerts": "सूचनाएं",
     "dashboard": "डैशबोर्ड",
@@ -214,7 +216,8 @@
     "enable_messaging": "मैसेजिंग सक्षम करें",
     "connecting_messaging": "मैसेजिंग कनेक्ट हो रही है…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "आपकी भूमिकाएँ जाँची नहीं जा सकीं — जब तक पढ़ न लें, मध्यस्थ और एडमिन पैनल छिपे रहेंगे। यह पढ़ने की विफलता है, भूमिका का जाना नहीं।"
   },
   "dashboard": {
     "title": "डैशबोर्ड",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "आपकी मध्यस्थ भूमिका जाँची नहीं जा सकी — नेटवर्क ने जवाब नहीं दिया। आपकी पहुँच गई नहीं है, बस जाँच पूरी नहीं हुई।"
   },
   "onboarding": {
     "title": "Hexseal कैसे काम करता है",
