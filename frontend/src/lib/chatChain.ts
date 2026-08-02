@@ -53,16 +53,26 @@ export interface ChainAnchor {
   expectedLastHash?: `0x${string}`;
 }
 
-/** tailAnchored — необязательное поле, не всегда-boolean-со-значением-false:
- *  toEqual в тестах строгий к лишним ключам (пропускает только undefined), а
- *  семь тестов из брифа проверяют ровно { ok: true } без опций и не должны
- *  меняться. Поле появляется (и всегда true) только когда вызывающий явно
- *  передал expectedLastSeq и он совпал — это и есть «якорь задан и сошёлся»
- *  из спеки; в остальных случаях ключа нет вовсе, что для потребителя
- *  ведёт себя как false (`if (verdict.tailAnchored)`), не требуя гадать. */
+/** unverifiedContentAtSeq называет, что НЕ проверено — не то, что проверено.
+ *  tailAnchored (раунд 1) называл положительный факт («хвост заверен»), и
+ *  сфабрикованное последнее звено с совпавшим числом сообщений превращалось
+ *  в tailAnchored:true — интерфейс арбитра прочёл бы это как «цепочка цела,
+ *  хвост заверен». Поле, называющее непроверенное, соврать в эту сторону не
+ *  может: пустой массив значит «нечего добавить», непустой сам себя
+ *  показывает. Состав по возрастанию seq:
+ *  - последнее показанное звено — ЕГО отпечаток ничем не покрыт (prevHash
+ *    следующего звена мог бы это сделать, но следующего нет), кроме случая,
+ *    когда expectedLastHash задан и сошёлся — тогда именно оно проверено;
+ *  - каждое звено, стоящее НЕПОСРЕДСТВЕННО перед дырой в показанном — по
+ *    той же причине: связность проверяет prevHash СЛЕДУЮЩЕГО звена, а
+ *    следующее (за дырой) выводится не из него.
+ *  При k дырах среди показанных звеньев k+1 имеют непроверяемое содержимое.
+ *  Присутствует на ok и gap; на broken/unordered/bad_anchor не нужен — там
+ *  веры нет ничему из предъявленного (broken/unordered) или предъявление
+ *  вообще не разбиралось (bad_anchor). */
 export type ChainVerdict =
-  | { ok: true; tailAnchored?: boolean }
-  | { ok: false; reason: 'gap'; missingAfterSeq: number[] }
+  | { ok: true; unverifiedContentAtSeq: number[] }
+  | { ok: false; reason: 'gap'; missingAfterSeq: number[]; unverifiedContentAtSeq: number[] }
   | { ok: false; reason: 'broken'; atSeq: number }
   | { ok: false; reason: 'unordered' }
   | { ok: false; reason: 'bad_anchor' };
@@ -172,8 +182,10 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
     // Пустой массив без якоря — предъявлять нечего, но врать не в чем
     // (брифовый тест). С якорем — предъявлять нечего, а должно было быть:
     // вся переписка утаена, это пропуск, а не молчаливое "всё в порядке".
-    if (anchor !== undefined) return { ok: false, reason: 'gap', missingAfterSeq: [-1] };
-    return { ok: true };
+    // unverifiedContentAtSeq пуст в обоих случаях — предъявлять нечего,
+    // значит и называть нечего.
+    if (anchor !== undefined) return { ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] };
+    return { ok: true, unverifiedContentAtSeq: [] };
   }
 
   for (let i = 0; i < links.length; i++) {
@@ -196,12 +208,23 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
   }
 
   const missingAfterSeq: number[] = [];
+  // Звено, стоящее непосредственно перед дырой, — тоже с непроверяемым
+  // содержимым: связность проверяет prevHash СЛЕДУЮЩЕГО звена, а следующее
+  // (за дырой) построено не из него. Копится в том же порядке, что и
+  // missingAfterSeq (по возрастанию seq), сортировка не нужна.
+  const unverifiedContentAtSeq: number[] = [];
   if (links[0].seq !== 0) missingAfterSeq.push(-1);
   for (let i = 1; i < links.length; i++) {
-    if (links[i].seq !== links[i - 1].seq + 1) missingAfterSeq.push(links[i - 1].seq);
+    if (links[i].seq !== links[i - 1].seq + 1) {
+      missingAfterSeq.push(links[i - 1].seq);
+      unverifiedContentAtSeq.push(links[i - 1].seq);
+    }
   }
   // Хвост утаён (якорь говорит, что дальше ещё есть сообщения) — тот же
   // способ учёта, что и для дыр в середине: номер звена ПЕРЕД пропуском.
+  // Отдельного push в unverifiedContentAtSeq здесь не нужен: lastSeq и так
+  // попадёт туда ниже через "последнее звено не проверено", knownTailDeficit
+  // как раз гарантирует hashAnchor не в счёт.
   if (anchor !== undefined && lastSeq < anchor) missingAfterSeq.push(lastSeq);
 
   // broken побеждает gap: через дыру связность не проверить (соседние по
@@ -228,14 +251,22 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
   // это честно определённый gap выше, а не повод сравнивать отпечаток
   // заведомо другого звена с истинным и обвинять в broken).
   const knownTailDeficit = anchor !== undefined && lastSeq < anchor;
+  let lastLinkVerifiedByHash = false;
   if (hashAnchor !== undefined && !knownTailDeficit) {
     if (!sameHash(linkHash(links[links.length - 1]), hashAnchor)) {
       return { ok: false, reason: 'broken', atSeq: lastSeq };
     }
+    lastLinkVerifiedByHash = true;
   }
 
-  if (missingAfterSeq.length > 0) return { ok: false, reason: 'gap', missingAfterSeq };
+  // Последнее показанное звено — единственное, чей отпечаток никто не
+  // проверяет (некому: следующего звена, чей prevHash сверился бы, нет).
+  // Исключение — expectedLastHash задан И сошёлся (return выше уже отсеял
+  // несовпадение): тогда именно оно проверено, причём ИМЕННО оно, а не
+  // "количество совпало" — expectedLastSeq один такой гарантии не даёт.
+  if (!lastLinkVerifiedByHash) unverifiedContentAtSeq.push(lastSeq);
 
-  if (anchor !== undefined && lastSeq === anchor) return { ok: true, tailAnchored: true };
-  return { ok: true };
+  if (missingAfterSeq.length > 0) return { ok: false, reason: 'gap', missingAfterSeq, unverifiedContentAtSeq };
+
+  return { ok: true, unverifiedContentAtSeq };
 }
