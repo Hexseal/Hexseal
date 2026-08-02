@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildLink, linkHash, verifyChain, GENESIS_HASH, type ChainLink } from './chatChain';
+import { size } from 'viem';
+import { buildLink, linkHash, linkPreimage, verifyChain, GENESIS_HASH, type ChainLink } from './chatChain';
 
 const ALICE = '0x1111111111111111111111111111111111111111' as const;
 const BOB   = '0x2222222222222222222222222222222222222222' as const;
@@ -47,6 +48,22 @@ describe('linkHash', () => {
     expect(linkHash({ ...base, sender: BOB })).not.toBe(h);
     expect(linkHash({ ...base, sentAt: 1001 })).not.toBe(h);
     expect(linkHash({ ...base, prevHash: OTHER_BODY })).not.toBe(h);
+  });
+});
+
+describe('linkPreimage — раунд 4, находка I2 (задел под план 3: подпись отправителя)', () => {
+  // Вся индукция «доверия» из verifyChain (раунд 3, находка I1) держится
+  // на непроговорённой предпосылке: linkHash инъективна ДО хеширования.
+  // Это верно ТОЛЬКО потому, что все пять типов кодирования — фиксированной
+  // ширины (uint256×2, bytes32×2, address), и encodePacked поэтому даёт
+  // ровно 148 = 32+32+32+20+32 байт на любое звено. Поле переменной длины
+  // (например bytes подписи в плане 3) сделает упаковку неоднозначной —
+  // рушит доказательство «отпечаток сошёлся ⟹ то же самое звено» молча,
+  // при полностью зелёных тестах (второй-прообраз всё ещё держит хеш, но
+  // не держит УПАКОВКУ).
+  it('преимидж ровно 148 байт — инъективность упаковки держится только на фиксированной ширине всех пяти типов', () => {
+    const link = buildLink(null, BODY, ALICE, 1000);
+    expect(size(linkPreimage(link))).toBe(148);
   });
 });
 
