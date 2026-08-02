@@ -277,3 +277,80 @@ describe('verifyChain — ревью, раунд 1', () => {
     expect(verifyChain([forgedGenesis])).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
   });
 });
+
+describe('verifyChain — C3: якорь хвоста (opts.expectedLastSeq)', () => {
+  // Начало заякорено генезисом, конец — ничем: обрезка и подмена последнего
+  // предъявленного звена раньше давали ok:true. opts.expectedLastSeq —
+  // необязательный второй аргумент; источник значения решается в другом
+  // плане, verifyChain знает только само число.
+
+  it('якорь задан и совпадает — tailAnchored: true', () => {
+    const full = chainOf(3); // seq 0,1,2
+    expect(verifyChain(full, { expectedLastSeq: 2 })).toEqual({ ok: true, tailAnchored: true });
+  });
+
+  it('без якоря tailAnchored отсутствует в вердикте вообще (не false, а нет ключа)', () => {
+    const result = verifyChain(chainOf(3));
+    expect(result).toEqual({ ok: true });
+    expect('tailAnchored' in result).toBe(false);
+  });
+
+  it('хвост утаён (якорь больше последнего показанного) — gap, недостающий номер в missingAfterSeq', () => {
+    const full = chainOf(5); // seq 0..4, реальный последний — 4
+    const shown = full.slice(0, 3); // показали только 0,1,2
+    expect(verifyChain(shown, { expectedLastSeq: 4 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [2] });
+  });
+
+  it('предъявлено больше, чем существует, — broken, а не gap', () => {
+    const full = chainOf(5); // seq 0..4
+    expect(verifyChain(full, { expectedLastSeq: 2 })).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
+  });
+
+  it('пустой массив с заданным якорем — вся переписка утаена, это gap, а не ok:true', () => {
+    expect(verifyChain([], { expectedLastSeq: 0 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1] });
+  });
+
+  it('пустой массив без якоря остаётся ok:true — брифовый тест не переопределён', () => {
+    expect(verifyChain([])).toEqual({ ok: true });
+  });
+
+  it('мусорный expectedLastSeq (дробный) не роняет проверку', () => {
+    expect(verifyChain(chainOf(2), { expectedLastSeq: 1.5 })).toEqual({ ok: false, reason: 'broken', atSeq: 1.5 });
+  });
+
+  it('мусорный expectedLastSeq (отрицательный) не роняет проверку', () => {
+    expect(verifyChain(chainOf(2), { expectedLastSeq: -1 })).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
+  });
+
+  it('внутренняя дыра и утаённый хвост — обе позиции в missingAfterSeq', () => {
+    const full = chainOf(5); // seq 0..4
+    const shown = [full[0], full[1], full[3]]; // нет seq=2, и хвост (seq=4) тоже не показан
+    expect(verifyChain(shown, { expectedLastSeq: 4 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1, 3] });
+  });
+
+  it('якорь совпадает численно, но связность подделана В СЕРЕДИНЕ — broken побеждает', () => {
+    const full = chainOf(4); // seq 0,1,2,3
+    const tampered = [...full];
+    tampered[2] = { ...tampered[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
+    // seq=3 честный: его prevHash по-прежнему указывает на ПОДЛИННЫЙ хеш
+    // seq=2, а не на пересчитанный с подделкой — расхождение поймает пара (2,3).
+    expect(verifyChain(tampered, { expectedLastSeq: 3 })).toEqual({ ok: false, reason: 'broken', atSeq: 3 });
+  });
+
+  it('ГРАНИЦА ЗАЩИТЫ: якорь по количеству совпал, но контент ПОСЛЕДНЕГО звена подделан — это ok:true', () => {
+    // expectedLastSeq — якорь по НОМЕРУ (сколько сообщений всего), а не по
+    // контенту последнего звена. prevHash звена ссылается на ПРЕДЫДУЩЕЕ, не
+    // на себя: у последнего звена в массиве нет следующего, которое могло
+    // бы проверить его собственный отпечаток. Подмена bodyHash/sender
+    // именно у ПОСЛЕДНЕГО звена, при сохранении верного seq и prevHash,
+    // невидима даже при точно совпавшем якоре по количеству — это не баг
+    // этой правки, а её честно объявленная граница (полная защита
+    // содержимого последнего звена требует подписи отправителя из плана 3
+    // или якоря по хешу, а не только по номеру — ни то, ни другое не было
+    // частью контракта, заданного в этом раунде ревью).
+    const full = chainOf(3); // seq 0,1,2
+    const tampered = [...full];
+    tampered[2] = { ...tampered[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
+    expect(verifyChain(tampered, { expectedLastSeq: 2 })).toEqual({ ok: true, tailAnchored: true });
+  });
+});

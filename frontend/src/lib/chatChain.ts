@@ -41,8 +41,15 @@ export function buildLink(
   };
 }
 
+/** tailAnchored — необязательное поле, не всегда-boolean-со-значением-false:
+ *  toEqual в тестах строгий к лишним ключам (пропускает только undefined), а
+ *  семь тестов из брифа проверяют ровно { ok: true } без опций и не должны
+ *  меняться. Поле появляется (и всегда true) только когда вызывающий явно
+ *  передал expectedLastSeq и он совпал — это и есть «якорь задан и сошёлся»
+ *  из спеки; в остальных случаях ключа нет вовсе, что для потребителя
+ *  ведёт себя как false (`if (verdict.tailAnchored)`), не требуя гадать. */
 export type ChainVerdict =
-  | { ok: true }
+  | { ok: true; tailAnchored?: boolean }
   | { ok: false; reason: 'gap'; missingAfterSeq: number[] }
   | { ok: false; reason: 'broken'; atSeq: number }
   | { ok: false; reason: 'unordered' };
@@ -118,12 +125,30 @@ function reportedSeqFor(link: unknown, index: number): number {
  *  сообщение 2. Разница между «скрыл» и «сфальсифицировал» — это разница
  *  между минусом в репутацию и полным недоверием к предъявленному; она не
  *  означает, что скрытое автоматически освобождает остальное от проверки. */
-export function verifyChain(links: ChainLink[]): ChainVerdict {
+export function verifyChain(links: ChainLink[], opts?: { expectedLastSeq?: number }): ChainVerdict {
   // Мусором может быть не только звено внутри массива, но и сам массив —
   // JSON.parse чужого ответа с лёгкостью даёт {} или null вместо [].
   if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1 };
 
-  if (links.length === 0) return { ok: true };
+  // Якорь хвоста тоже приезжает снаружи (план 4 решает, откуда он берётся —
+  // verifyChain знает только число) — тот же гейт формы, что и для полей
+  // звена: мусорный expectedLastSeq не должен ронять проверку.
+  let anchor: number | undefined;
+  if (opts && opts.expectedLastSeq !== undefined) {
+    if (!isSafeNonNegativeInt(opts.expectedLastSeq)) {
+      const raw = opts.expectedLastSeq;
+      return { ok: false, reason: 'broken', atSeq: typeof raw === 'number' ? raw : -1 };
+    }
+    anchor = opts.expectedLastSeq;
+  }
+
+  if (links.length === 0) {
+    // Пустой массив без якоря — предъявлять нечего, но врать не в чем
+    // (брифовый тест). С якорем — предъявлять нечего, а должно было быть:
+    // вся переписка утаена, это пропуск, а не молчаливое "всё в порядке".
+    if (anchor !== undefined) return { ok: false, reason: 'gap', missingAfterSeq: [-1] };
+    return { ok: true };
+  }
 
   for (let i = 0; i < links.length; i++) {
     if (!isWellFormedLink(links[i])) {
@@ -135,11 +160,23 @@ export function verifyChain(links: ChainLink[]): ChainVerdict {
     if (links[i].seq <= links[i - 1].seq) return { ok: false, reason: 'unordered' };
   }
 
+  const lastSeq = links[links.length - 1].seq;
+
+  // Предъявлено больше, чем говорит якорь, — сфабрикованный хвост поверх
+  // настоящего конца переписки. Решается сразу, до связности: несоответствие
+  // якорю — не про отпечатки, а про факт существования этих сообщений вообще.
+  if (anchor !== undefined && lastSeq > anchor) {
+    return { ok: false, reason: 'broken', atSeq: lastSeq };
+  }
+
   const missingAfterSeq: number[] = [];
   if (links[0].seq !== 0) missingAfterSeq.push(-1);
   for (let i = 1; i < links.length; i++) {
     if (links[i].seq !== links[i - 1].seq + 1) missingAfterSeq.push(links[i - 1].seq);
   }
+  // Хвост утаён (якорь говорит, что дальше ещё есть сообщения) — тот же
+  // способ учёта, что и для дыр в середине: номер звена ПЕРЕД пропуском.
+  if (anchor !== undefined && lastSeq < anchor) missingAfterSeq.push(lastSeq);
 
   // broken побеждает gap: через дыру связность не проверить (соседние по
   // ПОЗИЦИИ, но не по seq звенья сравнивать не с чем), но пара, смежная и по
@@ -158,5 +195,6 @@ export function verifyChain(links: ChainLink[]): ChainVerdict {
 
   if (missingAfterSeq.length > 0) return { ok: false, reason: 'gap', missingAfterSeq };
 
+  if (anchor !== undefined && lastSeq === anchor) return { ok: true, tailAnchored: true };
   return { ok: true };
 }
