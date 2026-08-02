@@ -61,6 +61,7 @@
       "withdrawn": "Bewerbung zurückgezogen.",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "Alle Regionen anzeigen",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "Anfrage abgelehnt — nur der Mindestbetrag von {floor} USDC bleibt einbehalten, der Rest wurde dem Kunden erstattet.",
       "rejected_msg_amount_unavailable": "Anfrage abgelehnt — der Mindestbetrag ist nicht erstattungsfähig, der Rest wurde dem Kunden erstattet.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "Keine Leistungen in {region} — versuche Global",
+      "show_global": "Alle Regionen anzeigen"
     },
     "post_service": {
       "title": "Leistung veröffentlichen",
@@ -217,7 +220,8 @@
     "connecting_messaging": "Messaging wird verbunden…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "Deine Rollen konnten nicht geprüft werden — Schlichter- und Admin-Bereich bleiben verborgen, bis es gelingt. Ein Lesefehler, kein Rollenverlust."
+    "roles_unreadable": "Deine Rollen konnten nicht geprüft werden — Schlichter- und Admin-Bereich bleiben verborgen, bis es gelingt. Ein Lesefehler, kein Rollenverlust.",
+    "arbiter_apply_success": "Bewerbung eingereicht — wartet auf Prüfung"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "Profil gespeichert (Foto-Upload fehlgeschlagen)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "Website muss eine gültige http/https-URL sein",
+    "photo_will_upload": "wird beim Speichern komprimiert und hochgeladen"
   },
   "deal_status": {
     "created": "Erstellt",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "Das Streitprotokoll zeichnet dieses Gespräch nicht auf — ein Schlichter würde diese Nachrichten nicht sehen.",
     "deal_chats": "Deal-Chats",
+    "deal_selector_label": "Deal:",
     "connecting_messenger": "Messenger wird verbunden…",
     "messaging_off": "Nachrichten sind deaktiviert",
     "messaging_off_hint": "Aktiviere Nachrichten, um hier zu lesen und zu schreiben.",
@@ -714,7 +722,12 @@
     "release_claim_btn": "Anspruch freigeben",
     "client_label": "Kunde",
     "executor_label": "Ausführender",
+    "general_chat_label": "Allgemeiner Chat",
     "disputed_label": "Streitig seit",
+    "time_expired": "Abgelaufen",
+    "time_left_dhm": "noch {d}T {h}Std",
+    "time_left_hm": "noch {h}Std {m}Min",
+    "time_left_m": "noch {m}Min",
     "resolve_client_desc": "Kunden erstatten — Kunde erhält sein USDC zurück (Ausführender hat nicht geliefert).",
     "resolve_executor_desc": "Ausführenden bezahlen — Ausführender erhält seine Vergütung (Arbeit wurde erledigt).",
     "resolving_refund": "Auflösung — Erstattung an Kunden…",

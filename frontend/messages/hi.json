@@ -61,6 +61,7 @@
       "withdrawn": "आवेदन वापस लिया गया।",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "सभी क्षेत्र दिखाएँ",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "अनुरोध अस्वीकृत — केवल {floor} USDC की न्यूनतम राशि वापस नहीं होती, बाकी राशि ग्राहक को वापस कर दी गई।",
       "rejected_msg_amount_unavailable": "अनुरोध अस्वीकृत — न्यूनतम राशि वापस नहीं होती, बाकी राशि ग्राहक को वापस कर दी गई।",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "{region} में कोई सेवा नहीं — ग्लोबल आज़माएँ",
+      "show_global": "सभी क्षेत्र दिखाएँ"
     },
     "post_service": {
       "title": "सेवा पोस्ट करें",
@@ -217,7 +220,8 @@
     "connecting_messaging": "मैसेजिंग कनेक्ट हो रही है…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "आपकी भूमिकाएँ जाँची नहीं जा सकीं — जब तक पढ़ न लें, मध्यस्थ और एडमिन पैनल छिपे रहेंगे। यह पढ़ने की विफलता है, भूमिका का जाना नहीं।"
+    "roles_unreadable": "आपकी भूमिकाएँ जाँची नहीं जा सकीं — जब तक पढ़ न लें, मध्यस्थ और एडमिन पैनल छिपे रहेंगे। यह पढ़ने की विफलता है, भूमिका का जाना नहीं।",
+    "arbiter_apply_success": "आवेदन भेजा गया — समीक्षा की प्रतीक्षा"
   },
   "dashboard": {
     "title": "डैशबोर्ड",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "प्रोफाइल सेव हुई (फोटो अपलोड विफल)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "वेबसाइट एक मान्य http/https URL होनी चाहिए",
+    "photo_will_upload": "सहेजने पर संपीड़ित और अपलोड किया जाएगा"
   },
   "deal_status": {
     "created": "बनाई गई",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "विवाद लॉग इस बातचीत को रिकॉर्ड नहीं कर रहा — मध्यस्थ ये संदेश नहीं देख पाएगा।",
     "deal_chats": "डील चैट",
+    "deal_selector_label": "डील:",
     "connecting_messenger": "मैसेंजर कनेक्ट हो रहा है…",
     "messaging_off": "मैसेजिंग बंद है",
     "messaging_off_hint": "यहाँ संदेश पढ़ने और भेजने के लिए मैसेजिंग चालू करें।",
@@ -714,7 +722,12 @@
     "release_claim_btn": "क्लेम जारी करें",
     "client_label": "क्लाइंट",
     "executor_label": "एक्जीक्यूटर",
+    "general_chat_label": "सामान्य चैट",
     "disputed_label": "विवादित",
+    "time_expired": "समाप्त",
+    "time_left_dhm": "{d}द {h}घं शेष",
+    "time_left_hm": "{h}घं {m}मि शेष",
+    "time_left_m": "{m}मि शेष",
     "resolve_client_desc": "क्लाइंट को वापस करें — क्लाइंट को उनका USDC मिलता है (एक्जीक्यूटर ने डिलीवर नहीं किया)।",
     "resolve_executor_desc": "एक्जीक्यूटर को भुगतान — एक्जीक्यूटर को भुगतान मिलता है (काम हुआ)।",
     "resolving_refund": "सुलझाया जा रहा है — क्लाइंट को वापस कर रहे हैं…",
