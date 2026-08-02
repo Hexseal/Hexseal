@@ -183,4 +183,13 @@ describe('verifyChain — ревью, раунд 1', () => {
     const full = chainOf(2);
     expect(verifyChain([undefined as unknown as ChainLink, full[1]])).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
   });
+
+  // Граница проверки порядка: seq[i] <= seq[i-1], не только "<". Дубль номера
+  // (тот же seq у двух звеньев подряд) — тоже unordered, а не молчаливый
+  // проход дальше. Мутация "<=" → "<" не должна оставлять это зелёным.
+  it('повторяющийся номер звена — тоже unordered, не пропуск и не разрыв', () => {
+    const full = chainOf(2);
+    const dup = { ...full[1], seq: full[0].seq };
+    expect(verifyChain([full[0], dup])).toEqual({ ok: false, reason: 'unordered' });
+  });
 });
