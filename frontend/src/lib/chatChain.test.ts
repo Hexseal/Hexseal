@@ -1,9 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { buildLink, linkHash, GENESIS_HASH, type ChainLink } from './chatChain';
+import { buildLink, linkHash, verifyChain, GENESIS_HASH, type ChainLink } from './chatChain';
 
 const ALICE = '0x1111111111111111111111111111111111111111' as const;
 const BOB   = '0x2222222222222222222222222222222222222222' as const;
 const BODY  = ('0x' + 'aa'.repeat(32)) as `0x${string}`;
+
+function chainOf(n: number): ChainLink[] {
+  const out: ChainLink[] = [];
+  for (let i = 0; i < n; i++) out.push(buildLink(out[i - 1] ?? null, BODY, ALICE, 1000 + i));
+  return out;
+}
 
 describe('buildLink', () => {
   it('первое звено ссылается на генезис и имеет номер 0', () => {
@@ -41,5 +47,96 @@ describe('linkHash', () => {
     expect(linkHash({ ...base, sender: BOB })).not.toBe(h);
     expect(linkHash({ ...base, sentAt: 1001 })).not.toBe(h);
     expect(linkHash({ ...base, prevHash: OTHER_BODY })).not.toBe(h);
+  });
+});
+
+describe('verifyChain', () => {
+  it('целая цепочка проходит', () => {
+    expect(verifyChain(chainOf(5))).toEqual({ ok: true });
+  });
+
+  it('пустая цепочка проходит — предъявлять нечего, но и врать не в чем', () => {
+    expect(verifyChain([])).toEqual({ ok: true });
+  });
+
+  it('вырезанное сообщение видно как пропуск с номером', () => {
+    const full = chainOf(5);
+    const shown = [full[0], full[1], full[3], full[4]]; // убрали seq=2
+    expect(verifyChain(shown)).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1] });
+  });
+
+  it('несколько дыр перечисляются все', () => {
+    const full = chainOf(7);
+    const shown = [full[0], full[2], full[4], full[6]];
+    expect(verifyChain(shown)).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [0, 2, 4] });
+  });
+
+  it('подделанное звено видно как разрыв, а не как пропуск', () => {
+    const full = chainOf(4);
+    const forged = [...full];
+    forged[2] = { ...forged[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
+    expect(verifyChain(forged)).toEqual({ ok: false, reason: 'broken', atSeq: 3 });
+  });
+
+  it('перепутанный порядок отвергается отдельной причиной', () => {
+    const full = chainOf(3);
+    expect(verifyChain([full[1], full[0], full[2]])).toEqual({ ok: false, reason: 'unordered' });
+  });
+
+  it('цепочка, не начинающаяся с нуля, — это пропуск в начале', () => {
+    const full = chainOf(4);
+    expect(verifyChain([full[2], full[3]])).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1] });
+  });
+});
+
+describe('verifyChain — устойчивость к мусору из сети', () => {
+  // Массив приходит от противной стороны спора. linkHash() на негодном звене
+  // бросает исключение (так и задумано в Задаче 4 — там строит buildLink,
+  // и бросок означает баг у нас). Здесь наоборот: непойманное исключение
+  // означает, что предъявление вообще не проверилось — подарок тому, кому
+  // невыгоден вердикт «подделано». Каждый сценарий обязан дать вердикт.
+
+  it('испорченный адрес отправителя не роняет проверку', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], sender: '0xnotanaddress' as `0x${string}` };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+
+  it('отпечаток не той длины не роняет проверку', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], bodyHash: ('0x' + 'aa'.repeat(31)) as `0x${string}` };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+
+  it('дробный номер звена не роняет проверку', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], seq: 1.5 };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1.5 });
+  });
+
+  it('отрицательный номер в последнем звене — самое хитрое место — тоже ловится', () => {
+    // Наивная реализация «поймать исключение из linkHash» никогда не считает
+    // отпечаток последнего звена (сравнивать его не с чем — следующего
+    // звена нет): мусор именно в последнем звене мог бы молча пройти как
+    // ok:true. Проверка формы обязана идти ДО этой логики, а не полагаться
+    // на побочный эффект связности.
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[2] = { ...garbled[2], seq: -5 };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: -5 });
+  });
+
+  it('отпечаток нечётной длины не проскакивает мимо проверки размера', () => {
+    // 63 hex-символа — viem.size() округляет вверх до 32 и выглядит валидным,
+    // но encodePacked всё равно бросает BytesSizeMismatchError("bytes31.5").
+    // Проверка формы обязана быть точным regexp по длине строки, а не
+    // полагаться на size().
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], bodyHash: ('0x' + 'a'.repeat(63)) as `0x${string}` };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
   });
 });

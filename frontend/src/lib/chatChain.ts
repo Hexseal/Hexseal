@@ -1,4 +1,4 @@
-import { keccak256, encodePacked } from 'viem';
+import { keccak256, encodePacked, isAddress } from 'viem';
 
 export type ChainLink = {
   seq: number;
@@ -39,4 +39,96 @@ export function buildLink(
     sender: sender.toLowerCase() as `0x${string}`,
     sentAt,
   };
+}
+
+export type ChainVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'gap'; missingAfterSeq: number[] }
+  | { ok: false; reason: 'broken'; atSeq: number }
+  | { ok: false; reason: 'unordered' };
+
+const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
+
+function isBytes32Hex(value: unknown): value is `0x${string}` {
+  return typeof value === 'string' && BYTES32_RE.test(value);
+}
+
+function isNonNegativeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+/** Звено «в форме» — ровно то, что не даст linkHash бросить исключение
+ *  (encodePacked внутри него требует: адрес — проходящий isAddress, оба
+ *  хеша — ровно 32 байта строкой, seq/sentAt — целые неотрицательные, иначе
+ *  BigInt()/encodePacked бросают RangeError/IntegerOutOfRangeError). Не
+ *  переиспользуем viem.size() для длины хеша: на нечётном числе hex-символов
+ *  она округляет вверх и врёт, что 63 символа — это 32 байта, тогда как
+ *  encodePacked всё равно бросает («bytes31.5»). Точный regexp — надёжнее. */
+function isWellFormedLink(link: unknown): link is ChainLink {
+  if (typeof link !== 'object' || link === null) return false;
+  const l = link as Record<string, unknown>;
+  return (
+    isNonNegativeInt(l.seq) &&
+    isBytes32Hex(l.prevHash) &&
+    isBytes32Hex(l.bodyHash) &&
+    typeof l.sender === 'string' && isAddress(l.sender) &&
+    isNonNegativeInt(l.sentAt)
+  );
+}
+
+/** Номер для отчёта о негодном звене. Если seq хоть как-то похож на число —
+ *  сообщаем его как есть (дробный/отрицательный тоже валиден как значение
+ *  atSeq: number, это по-прежнему осмысленный указатель на место поломки).
+ *  Если seq вообще не число — сообщаем позицию в предъявленном массиве. */
+function reportedSeqFor(link: unknown, index: number): number {
+  if (typeof link === 'object' && link !== null) {
+    const seq = (link as Record<string, unknown>).seq;
+    if (typeof seq === 'number') return seq;
+  }
+  return index;
+}
+
+/** Проверяет предъявленную цепочку.
+ *
+ *  Звенья приходят от противной стороны спора — это не тот код, что строит
+ *  buildLink. Форма проверяется ПЕРВЫМ делом, до какой-либо арифметики над
+ *  seq и до вызова linkHash: искажённый seq (дробный, отрицательный,
+ *  вообще не число) иначе тихо просочился бы в сравнения `seq <= prevSeq`
+ *  и `seq !== prevSeq + 1`, которые не бросают на мусоре — просто дают
+ *  случайный числовой результат. Это скрыло бы подделку под honest-омиссию
+ *  (gap), а мусор — это фальсификация формы, ближе по духу к broken.
+ *  Дальше порядок проверок как в спеке: порядок → пропуски → связность.
+ *  Пропуск обязан быть найден ДО связности — у предъявленного подмножества
+ *  отпечатки заведомо не сойдутся, и без этой очерёдности всякое умолчание
+ *  выглядело бы подделкой. Разница между «скрыл» и «сфальсифицировал» —
+ *  это разница между минусом в репутацию и полным недоверием к
+ *  предъявленному. */
+export function verifyChain(links: ChainLink[]): ChainVerdict {
+  if (links.length === 0) return { ok: true };
+
+  for (let i = 0; i < links.length; i++) {
+    if (!isWellFormedLink(links[i])) {
+      return { ok: false, reason: 'broken', atSeq: reportedSeqFor(links[i], i) };
+    }
+  }
+
+  for (let i = 1; i < links.length; i++) {
+    if (links[i].seq <= links[i - 1].seq) return { ok: false, reason: 'unordered' };
+  }
+
+  const missingAfterSeq: number[] = [];
+  if (links[0].seq !== 0) missingAfterSeq.push(-1);
+  for (let i = 1; i < links.length; i++) {
+    if (links[i].seq !== links[i - 1].seq + 1) missingAfterSeq.push(links[i - 1].seq);
+  }
+  if (missingAfterSeq.length > 0) return { ok: false, reason: 'gap', missingAfterSeq };
+
+  if (links[0].prevHash !== GENESIS_HASH) return { ok: false, reason: 'broken', atSeq: links[0].seq };
+  for (let i = 1; i < links.length; i++) {
+    if (links[i].prevHash !== linkHash(links[i - 1])) {
+      return { ok: false, reason: 'broken', atSeq: links[i].seq };
+    }
+  }
+
+  return { ok: true };
 }
