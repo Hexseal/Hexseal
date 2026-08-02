@@ -823,3 +823,34 @@ describe('verifyChain — ревью, раунд 5, находка C1: верд�
     expect(verifyChain(cascaded)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3, 4] });
   });
 });
+
+describe('verifyChain — ревью, раунд 5, находка I2: atSeq на broken — номер, не позиция в массиве', () => {
+  // Мутация того же класса, что чинили раунды 1/2/4: atSeq: lastSeq ->
+  // atSeq: links.length - 1 в ОБОИХ местах возврата broken, связанных с
+  // якорем (переобъявление хвоста и несовпадение отпечатка), выживала бы
+  // на всех прежних фикстурах — все они цепочки без дыр от нуля, где
+  // lastSeq === links.length - 1 совпадает случайно. atSeq на broken —
+  // указатель, по которому арбитр пойдёт искать подлог, под самой тяжёлой
+  // санкцией: подать неверный номер здесь хуже, чем не подать никакого.
+
+  it('несовпадение отпечатка: показано 3 звена не с нуля (seq 2,3,4) — atSeq обязан быть 4, не 2 (длина-1)', () => {
+    const full = chainOf(5);
+    const shown = [full[2], full[3], full[4]];
+    const wrongHash = ('0x' + 'dd'.repeat(32)) as `0x${string}`;
+    expect(verifyChain(shown, { expectedLastSeq: 4, expectedLastHash: wrongHash })).toEqual({
+      ok: false,
+      reason: 'broken',
+      atSeq: 4,
+    });
+  });
+
+  it('переобъявление хвоста: показано 2 звена не с нуля (seq 3,4), якорь занижен — atSeq обязан быть 4, не 1 (длина-1)', () => {
+    const full = chainOf(5);
+    const shown = [full[3], full[4]];
+    expect(verifyChain(shown, { expectedLastSeq: 2 })).toEqual({
+      ok: false,
+      reason: 'broken',
+      atSeq: 4,
+    });
+  });
+});
