@@ -61,6 +61,7 @@
       "withdrawn": "応募を取り消しました。",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "すべての地域を表示",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "リクエストを拒否しました — 返金不可なのは下限の {floor} USDC のみで、残りはクライアントに返金済みです。",
       "rejected_msg_amount_unavailable": "リクエストを拒否しました — 返金不可なのは下限のみで、残りはクライアントに返金済みです。",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "{region} にサービスはありません — グローバルをお試しください",
+      "show_global": "すべての地域を表示"
     },
     "post_service": {
       "title": "サービスを掲載",
@@ -217,7 +220,8 @@
     "connecting_messaging": "メッセージ機能に接続中…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "役割を確認できませんでした。確認できるまで仲裁人と管理者のパネルは非表示です。読み取りの失敗であり、役割の喪失ではありません。"
+    "roles_unreadable": "役割を確認できませんでした。確認できるまで仲裁人と管理者のパネルは非表示です。読み取りの失敗であり、役割の喪失ではありません。",
+    "arbiter_apply_success": "申請を送信しました — 審査待ちです"
   },
   "dashboard": {
     "title": "ダッシュボード",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "プロフィール保存済み（写真アップロード失敗）",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "ウェブサイトは有効な http/https の URL である必要があります",
+    "photo_will_upload": "保存時に圧縮してアップロードされます"
   },
   "deal_status": {
     "created": "作成済",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "紛争ログはこの会話を記録していません — 仲裁者はこれらのメッセージを見られません。",
     "deal_chats": "ディールチャット",
+    "deal_selector_label": "ディール：",
     "connecting_messenger": "メッセンジャーに接続中…",
     "messaging_off": "メッセージ機能はオフです",
     "messaging_off_hint": "メッセージ機能をオンにすると、ここで送受信できます。",
@@ -714,7 +722,12 @@
     "release_claim_btn": "請求を解放",
     "client_label": "クライアント",
     "executor_label": "受注者",
+    "general_chat_label": "一般チャット",
     "disputed_label": "紛争中",
+    "time_expired": "期限切れ",
+    "time_left_dhm": "残り{d}日{h}時間",
+    "time_left_hm": "残り{h}時間{m}分",
+    "time_left_m": "残り{m}分",
     "resolve_client_desc": "クライアントに返金 — クライアントがUSDCを取り戻します（受注者が納品しなかった）。",
     "resolve_executor_desc": "受注者に支払い — 受注者が支払いを受けます（作業が完了した）。",
     "resolving_refund": "解決中 — クライアントに返金…",

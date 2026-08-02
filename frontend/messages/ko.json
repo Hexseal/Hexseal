@@ -61,6 +61,7 @@
       "withdrawn": "지원이 철회되었습니다.",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "모든 지역 표시",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "요청이 거절되었습니다 — {floor} USDC의 최소 수수료만 환불 불가하며, 나머지는 클라이언트에게 환불되었습니다.",
       "rejected_msg_amount_unavailable": "요청이 거절되었습니다 — 최소 수수료만 환불 불가하며, 나머지는 클라이언트에게 환불되었습니다.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "{region}에 서비스가 없습니다 — 글로벌을 확인하세요",
+      "show_global": "모든 지역 표시"
     },
     "post_service": {
       "title": "서비스 게시",
@@ -217,7 +220,8 @@
     "connecting_messaging": "메시징 연결 중…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "역할을 확인하지 못했습니다 — 확인될 때까지 중재자·관리자 패널은 숨겨집니다. 읽기 실패이지 역할 상실이 아닙니다."
+    "roles_unreadable": "역할을 확인하지 못했습니다 — 확인될 때까지 중재자·관리자 패널은 숨겨집니다. 읽기 실패이지 역할 상실이 아닙니다.",
+    "arbiter_apply_success": "신청서 제출됨 — 검토 대기 중"
   },
   "dashboard": {
     "title": "대시보드",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "프로필 저장됨 (사진 업로드 실패)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "웹사이트는 유효한 http/https URL이어야 합니다",
+    "photo_will_upload": "저장 시 압축되어 업로드됩니다"
   },
   "deal_status": {
     "created": "생성됨",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "분쟁 기록에 이 대화가 저장되지 않습니다 — 중재자는 이 메시지를 볼 수 없습니다.",
     "deal_chats": "딜 채팅",
+    "deal_selector_label": "딜:",
     "connecting_messenger": "메신저 연결 중…",
     "messaging_off": "메시지 기능이 꺼져 있습니다",
     "messaging_off_hint": "메시지 기능을 켜면 여기에서 주고받을 수 있습니다.",
@@ -714,7 +722,12 @@
     "release_claim_btn": "청구 해제",
     "client_label": "클라이언트",
     "executor_label": "실행자",
+    "general_chat_label": "일반 채팅",
     "disputed_label": "분쟁 중",
+    "time_expired": "만료됨",
+    "time_left_dhm": "{d}일 {h}시간 남음",
+    "time_left_hm": "{h}시간 {m}분 남음",
+    "time_left_m": "{m}분 남음",
     "resolve_client_desc": "클라이언트 환불 — 클라이언트가 USDC를 돌려받습니다 (실행자가 납품하지 않음).",
     "resolve_executor_desc": "실행자 지급 — 실행자가 지급받습니다 (작업이 완료됨).",
     "resolving_refund": "해결 중 — 클라이언트 환불…",

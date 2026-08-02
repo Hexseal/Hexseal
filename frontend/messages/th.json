@@ -61,6 +61,7 @@
       "withdrawn": "ถอนคำขอแล้ว",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "แสดงทุกภูมิภาค",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "คำขอถูกปฏิเสธ — คืนเงินไม่ได้เฉพาะค่าธรรมเนียมขั้นต่ำ {floor} USDC เท่านั้น ส่วนที่เหลือคืนให้ลูกค้าแล้ว",
       "rejected_msg_amount_unavailable": "คำขอถูกปฏิเสธ — คืนเงินไม่ได้เฉพาะค่าธรรมเนียมขั้นต่ำเท่านั้น ส่วนที่เหลือคืนให้ลูกค้าแล้ว",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "ไม่มีบริการใน {region} — ลองแบบทั่วโลก",
+      "show_global": "แสดงทุกภูมิภาค"
     },
     "post_service": {
       "title": "ประกาศบริการ",
@@ -217,7 +220,8 @@
     "connecting_messaging": "กำลังเชื่อมต่อการส่งข้อความ…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "ตรวจสอบบทบาทของคุณไม่สำเร็จ — แผงอนุญาโตตุลาการและผู้ดูแลจะถูกซ่อนไว้จนกว่าจะอ่านได้ นี่คือการอ่านล้มเหลว ไม่ใช่การเสียบทบาท"
+    "roles_unreadable": "ตรวจสอบบทบาทของคุณไม่สำเร็จ — แผงอนุญาโตตุลาการและผู้ดูแลจะถูกซ่อนไว้จนกว่าจะอ่านได้ นี่คือการอ่านล้มเหลว ไม่ใช่การเสียบทบาท",
+    "arbiter_apply_success": "ส่งใบสมัครแล้ว — รอการตรวจสอบ"
   },
   "dashboard": {
     "title": "แดชบอร์ด",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "บันทึกโปรไฟล์แล้ว (อัปโหลดรูปล้มเหลว)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "เว็บไซต์ต้องเป็น URL http/https ที่ถูกต้อง",
+    "photo_will_upload": "จะถูกบีบอัดและอัปโหลดเมื่อบันทึก"
   },
   "deal_status": {
     "created": "สร้างแล้ว",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "บันทึกข้อพิพาทไม่ได้บันทึกการสนทนานี้ — ผู้ตัดสินจะไม่เห็นข้อความเหล่านี้",
     "deal_chats": "แชทดีล",
+    "deal_selector_label": "ดีล:",
     "connecting_messenger": "กำลังเชื่อมต่อระบบข้อความ…",
     "messaging_off": "ระบบข้อความปิดอยู่",
     "messaging_off_hint": "เปิดระบบข้อความเพื่ออ่านและส่งข้อความที่นี่",
@@ -714,7 +722,12 @@
     "release_claim_btn": "ปล่อยการอ้างสิทธิ์",
     "client_label": "ลูกค้า",
     "executor_label": "ผู้รับงาน",
+    "general_chat_label": "แชททั่วไป",
     "disputed_label": "วันที่มีข้อพิพาท",
+    "time_expired": "หมดเวลา",
+    "time_left_dhm": "เหลือ {d} วัน {h} ชม.",
+    "time_left_hm": "เหลือ {h} ชม. {m} นาที",
+    "time_left_m": "เหลือ {m} นาที",
     "resolve_client_desc": "คืนเงินให้ลูกค้า — ลูกค้าได้รับ USDC คืน (ผู้รับงานไม่ส่งมอบงาน)",
     "resolve_executor_desc": "จ่ายให้ผู้รับงาน — ผู้รับงานได้รับเงิน (งานเสร็จสมบูรณ์)",
     "resolving_refund": "กำลังแก้ไข — คืนเงินให้ลูกค้า…",

@@ -61,6 +61,7 @@
       "withdrawn": "Заявку відкликано.",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "Показати всі регіони",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "Запит відхилено — не повертається лише мінімум {floor} USDC, решту повернено клієнту.",
       "rejected_msg_amount_unavailable": "Запит відхилено — мінімум утримано, решту повернено клієнту.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "Послуг у регіоні {region} немає — спробуй Глобальний",
+      "show_global": "Показати всі регіони"
     },
     "post_service": {
       "title": "Опублікувати Послугу",
@@ -217,7 +220,8 @@
     "connecting_messaging": "Підключення месенджера…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "Не вдалося перевірити ваші ролі — панелі арбітра й адміна приховані, доки не прочитаємо. Це збій читання, а не втрата ролі."
+    "roles_unreadable": "Не вдалося перевірити ваші ролі — панелі арбітра й адміна приховані, доки не прочитаємо. Це збій читання, а не втрата ролі.",
+    "arbiter_apply_success": "Заявку надіслано — очікуйте рішення"
   },
   "dashboard": {
     "title": "Панель",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "Профіль збережено (фото не завантажилось)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "Сайт має бути коректним http/https URL",
+    "photo_will_upload": "стиснеться та завантажиться при збереженні"
   },
   "deal_status": {
     "created": "Створена",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "Журнал спору цю розмову не записує — арбітр цих повідомлень не побачить.",
     "deal_chats": "Чати угод",
+    "deal_selector_label": "Угода:",
     "connecting_messenger": "Підключення месенджера…",
     "messaging_off": "Месенджер вимкнено",
     "messaging_off_hint": "Увімкніть месенджер, щоб читати й надсилати повідомлення.",
@@ -714,7 +722,12 @@
     "release_claim_btn": "Звільнити Справу",
     "client_label": "Клієнт",
     "executor_label": "Виконавець",
+    "general_chat_label": "Загальний чат",
     "disputed_label": "Спірна",
+    "time_expired": "Минув",
+    "time_left_dhm": "лишилось {d}д {h}год",
+    "time_left_hm": "лишилось {h}год {m}хв",
+    "time_left_m": "лишилось {m}хв",
     "resolve_client_desc": "Повернути Клієнту — клієнт отримує свій USDC назад (виконавець не виконав).",
     "resolve_executor_desc": "Оплатити Виконавцю — виконавець отримує оплату (роботу виконано).",
     "resolving_refund": "Вирішення — повернення клієнту…",

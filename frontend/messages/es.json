@@ -61,6 +61,7 @@
       "withdrawn": "Solicitud retirada.",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "Mostrar todas las regiones",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "Solicitud rechazada — solo el mínimo de {floor} USDC no es reembolsable, el resto fue reembolsado al cliente.",
       "rejected_msg_amount_unavailable": "Solicitud rechazada — el mínimo no es reembolsable, el resto fue reembolsado al cliente.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "No hay servicios en {region} — prueba Global",
+      "show_global": "Mostrar todas las regiones"
     },
     "post_service": {
       "title": "Publicar un Servicio",
@@ -217,7 +220,8 @@
     "connecting_messaging": "Conectando mensajería…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "No se pudieron comprobar tus roles: los paneles de árbitro y admin quedan ocultos hasta lograrlo. Es un fallo de lectura, no la pérdida del rol."
+    "roles_unreadable": "No se pudieron comprobar tus roles: los paneles de árbitro y admin quedan ocultos hasta lograrlo. Es un fallo de lectura, no la pérdida del rol.",
+    "arbiter_apply_success": "Solicitud enviada — esperando revisión"
   },
   "dashboard": {
     "title": "Panel",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "Perfil guardado (fallo al subir foto)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "El sitio web debe ser una URL http/https válida",
+    "photo_will_upload": "se comprimirá y subirá al guardar"
   },
   "deal_status": {
     "created": "Creado",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "El registro de disputas no está grabando esta conversación: un árbitro no vería estos mensajes.",
     "deal_chats": "Chats de trato",
+    "deal_selector_label": "Trato:",
     "connecting_messenger": "Conectando la mensajería…",
     "messaging_off": "La mensajería está desactivada",
     "messaging_off_hint": "Activa la mensajería para leer y enviar mensajes aquí.",
@@ -714,7 +722,12 @@
     "release_claim_btn": "Liberar Reclamación",
     "client_label": "Cliente",
     "executor_label": "Ejecutor",
+    "general_chat_label": "Chat general",
     "disputed_label": "En disputa",
+    "time_expired": "Expirado",
+    "time_left_dhm": "quedan {d}d {h}h",
+    "time_left_hm": "quedan {h}h {m}m",
+    "time_left_m": "quedan {m}m",
     "resolve_client_desc": "Reembolsar Cliente — el cliente recupera su USDC (el ejecutor no entregó).",
     "resolve_executor_desc": "Pagar Ejecutor — el ejecutor cobra (el trabajo fue realizado).",
     "resolving_refund": "Resolviendo — reembolsando al cliente…",

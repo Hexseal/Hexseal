@@ -61,6 +61,7 @@
       "withdrawn": "تم سحب الطلب.",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "إظهار كل المناطق",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "تم رفض الطلب — الحد الأدنى البالغ {floor} USDC فقط هو غير القابل للاسترداد، وقد رُدّ الباقي للعميل.",
       "rejected_msg_amount_unavailable": "تم رفض الطلب — الحد الأدنى غير قابل للاسترداد، وقد رُدّ الباقي للعميل.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "لا توجد خدمات في {region} — جرّب عالمي",
+      "show_global": "إظهار كل المناطق"
     },
     "post_service": {
       "title": "نشر خدمة",
@@ -217,7 +220,8 @@
     "connecting_messaging": "جارٍ تفعيل المراسلة…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "تعذّر التحقق من أدوارك — تبقى لوحتا المحكّم والمشرف مخفيتين حتى تنجح القراءة. هذا فشل في القراءة، وليس فقدانًا للدور."
+    "roles_unreadable": "تعذّر التحقق من أدوارك — تبقى لوحتا المحكّم والمشرف مخفيتين حتى تنجح القراءة. هذا فشل في القراءة، وليس فقدانًا للدور.",
+    "arbiter_apply_success": "تم إرسال الطلب — في انتظار المراجعة"
   },
   "dashboard": {
     "title": "لوحة التحكم",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "تم حفظ الملف الشخصي (فشل تحميل الصورة)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "يجب أن يكون الموقع رابط http/https صالحًا",
+    "photo_will_upload": "سيتم ضغطها ورفعها عند الحفظ"
   },
   "deal_status": {
     "created": "تم الإنشاء",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "سجل النزاع لا يسجّل هذه المحادثة — لن يرى المحكّم هذه الرسائل.",
     "deal_chats": "محادثات الصفقة",
+    "deal_selector_label": "الصفقة:",
     "connecting_messenger": "جارٍ الاتصال بالمراسلة…",
     "messaging_off": "المراسلة متوقفة",
     "messaging_off_hint": "فعّل المراسلة لقراءة الرسائل وإرسالها هنا.",
@@ -714,7 +722,12 @@
     "release_claim_btn": "إصدار التولّي",
     "client_label": "العميل",
     "executor_label": "المنفّذ",
+    "general_chat_label": "محادثة عامة",
     "disputed_label": "متنازع عليه",
+    "time_expired": "انتهت المدة",
+    "time_left_dhm": "متبقٍ {d}ي {h}س",
+    "time_left_hm": "متبقٍ {h}س {m}د",
+    "time_left_m": "متبقٍ {m}د",
     "resolve_client_desc": "استرداد للعميل — يسترد العميل USDC الخاص به (لم يسلّم المنفّذ).",
     "resolve_executor_desc": "الدفع للمنفّذ — يحصل المنفّذ على الدفع (تم إنجاز العمل).",
     "resolving_refund": "جارٍ الحل — استرداد للعميل…",

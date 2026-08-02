@@ -61,6 +61,7 @@
       "withdrawn": "Candidature retirée.",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "Afficher toutes les régions",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "Demande refusée — seul le plancher de {floor} USDC n'est pas remboursable, le reste a été remboursé au client.",
       "rejected_msg_amount_unavailable": "Demande refusée — le plancher n'est pas remboursable, le reste a été remboursé au client.",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "Aucun service dans {region} — essayez Global",
+      "show_global": "Afficher toutes les régions"
     },
     "post_service": {
       "title": "Publier un Service",
@@ -217,7 +220,8 @@
     "connecting_messaging": "Connexion de la messagerie…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "Impossible de vérifier vos rôles — les panneaux arbitre et admin restent masqués tant que la lecture échoue. C'est un échec de lecture, pas une perte de rôle."
+    "roles_unreadable": "Impossible de vérifier vos rôles — les panneaux arbitre et admin restent masqués tant que la lecture échoue. C'est un échec de lecture, pas une perte de rôle.",
+    "arbiter_apply_success": "Candidature envoyée — en attente d’examen"
   },
   "dashboard": {
     "title": "Tableau de bord",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "Profil sauvegardé (échec de la photo)",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "Le site doit être une URL http/https valide",
+    "photo_will_upload": "sera compressé et téléversé à l’enregistrement"
   },
   "deal_status": {
     "created": "Créé",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "Le journal de litige n'enregistre pas cette conversation — un arbitre ne verrait pas ces messages.",
     "deal_chats": "Chats de deal",
+    "deal_selector_label": "Deal :",
     "connecting_messenger": "Connexion de la messagerie…",
     "messaging_off": "La messagerie est désactivée",
     "messaging_off_hint": "Activez la messagerie pour lire et envoyer des messages ici.",
@@ -714,7 +722,12 @@
     "release_claim_btn": "Libérer la Revendication",
     "client_label": "Client",
     "executor_label": "Exécutant",
+    "general_chat_label": "Discussion générale",
     "disputed_label": "En litige",
+    "time_expired": "Expiré",
+    "time_left_dhm": "reste {d}j {h}h",
+    "time_left_hm": "reste {h}h {m}min",
+    "time_left_m": "reste {m}min",
     "resolve_client_desc": "Rembourser le Client — le client récupère son USDC (l'exécutant n'a pas livré).",
     "resolve_executor_desc": "Payer l'Exécutant — l'exécutant est payé (le travail a été fait).",
     "resolving_refund": "Résolution — remboursement du client…",

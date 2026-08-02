@@ -61,6 +61,7 @@
       "withdrawn": "申请已撤回。",
       "terms_unavailable": "Terms unavailable",
       "no_region_results": "No jobs in {region} — try Global",
+      "show_global": "显示所有地区",
       "no_longer_open": "This job is no longer open.",
       "job_filled_notice": "This job has been filled — a deal is already in progress."
     },
@@ -109,7 +110,9 @@
       "rejected_msg": "请求已拒绝 — 只有 {floor} USDC 的底价不可退还，其余部分已退还给客户。",
       "rejected_msg_amount_unavailable": "请求已拒绝 — 底价不可退还，其余部分已退还给客户。",
       "service_paused_notice": "This service is temporarily paused by the executor.",
-      "service_removed_notice": "This service has been removed and is no longer available."
+      "service_removed_notice": "This service has been removed and is no longer available.",
+      "no_region_results": "{region} 暂无服务 — 试试全球",
+      "show_global": "显示所有地区"
     },
     "post_service": {
       "title": "发布服务",
@@ -217,7 +220,8 @@
     "connecting_messaging": "正在连接消息…",
     "applying_arbiter": "Submitting...",
     "become_arbiter": "Become Arbiter",
-    "roles_unreadable": "无法确认你的角色——在读取成功前，仲裁与管理面板保持隐藏。这是读取失败，不是失去角色。"
+    "roles_unreadable": "无法确认你的角色——在读取成功前，仲裁与管理面板保持隐藏。这是读取失败，不是失去角色。",
+    "arbiter_apply_success": "申请已提交 — 等待审核"
   },
   "dashboard": {
     "title": "控制台",
@@ -395,7 +399,9 @@
     "save_success_no_photo": "个人资料已保存（照片上传失败）",
     "member_since": "Active since {date}",
     "refunded_label": "Refunded",
-    "refunded_sub": "deals returned to client"
+    "refunded_sub": "deals returned to client",
+    "website_invalid": "网站必须是有效的 http/https 链接",
+    "photo_will_upload": "保存时将压缩并上传"
   },
   "deal_status": {
     "created": "已创建",
@@ -606,7 +612,9 @@
     "reconnect": "Reconnect",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
+    "log_incomplete": "争议记录未记录此对话——仲裁者将看不到这些消息。",
     "deal_chats": "交易聊天",
+    "deal_selector_label": "交易：",
     "connecting_messenger": "正在连接消息服务…",
     "messaging_off": "消息功能已关闭",
     "messaging_off_hint": "开启消息功能后即可在此收发消息。",
@@ -714,7 +722,12 @@
     "release_claim_btn": "释放认领",
     "client_label": "客户",
     "executor_label": "执行者",
+    "general_chat_label": "普通聊天",
     "disputed_label": "争议时间",
+    "time_expired": "已过期",
+    "time_left_dhm": "剩余 {d}天 {h}小时",
+    "time_left_hm": "剩余 {h}小时 {m}分",
+    "time_left_m": "剩余 {m}分",
     "resolve_client_desc": "退款给客户 — 客户取回其USDC（执行者未交付）。",
     "resolve_executor_desc": "支付执行者 — 执行者获得报酬（工作已完成）。",
     "resolving_refund": "解决中 — 退款给客户…",

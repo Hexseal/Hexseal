@@ -384,7 +384,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const { address } = useAccount();
   const t = useTranslations();
   const queryClient = useQueryClient();
-  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext, peerLastReadAt } =
+  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext, peerLastReadAt, logIncomplete } =
     usePairChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   // Состояние САМОГО мессенджера — отдельно от состояния этой переписки.
@@ -1278,6 +1278,16 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 )}
               </div>
             </div>
+          </div>
+        )}
+        {/* Журнал спора для этой пары не ведётся: бота релеера в группе нет и
+            добавить его не вышло. Ничего не блокирует — невозможность вести
+            протокол не повод запрещать людям общаться, — но и не молчит:
+            узнать об этом при споре, когда эскроу уже делят, было бы поздно.
+            Разбор — в шапке `lib/xmtpBotMembership.ts`. */}
+        {logIncomplete && (
+          <div className="px-3 py-2 mx-1 mb-1 rounded-[12px] bg-amber-500/[0.07] border border-amber-500/15">
+            <p className="text-xs text-amber-400/70">{t("chat.log_incomplete")}</p>
           </div>
         )}
         {/* Stream dead banner */}
