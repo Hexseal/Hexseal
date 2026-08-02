@@ -24,6 +24,8 @@ import { withWalletLock } from '@/lib/walletLock';
 import {
   ensurePeerInGroup, blocksDelivery, PEER_UNREACHABLE_MESSAGE,
 } from '@/lib/xmtpDelivery';
+import { ensureBotInGroup, journalIsIncomplete } from '@/lib/xmtpBotMembership';
+import type { BotMembership } from '@/lib/xmtpBotMembership';
 import {
   PAIR_PREFIX,
   pairPeerFromName,
@@ -645,6 +647,41 @@ export function pairGroupName(addrA: string, addrB: string): string {
  *  от которого чинится всё остальное в этом файле. */
 const _pairGroupCreation = new Map<string, Promise<XmtpGroup>>();
 
+/** Последний известный исход проверки «бот релеера в группе?», по `id` группы.
+ *  Читается интерфейсом через `pairLogIsIncomplete()` — чтобы «журнал этой пары
+ *  не ведётся» перестало быть тем, о чём узнают только при споре. Разбор — в
+ *  шапке `lib/xmtpBotMembership.ts`. */
+const _botMembership = new Map<string, BotMembership>();
+
+/** Ведётся ли журнал переписки для этой группы. `true` — точно НЕТ (бот
+ *  известен, в группе его нет, добавить не вышло). Неизвестность (`unknown`)
+ *  сюда не попадает намеренно. */
+export function pairLogIsIncomplete(groupId: string | null | undefined): boolean {
+  if (!groupId) return false;
+  const state = _botMembership.get(groupId);
+  return state !== undefined && journalIsIncomplete(state);
+}
+
+/** Проверяет состав на предмет бота, чинит если может, и запоминает исход.
+ *  Лучшим усилием: ни открытие переписки, ни отправку это блокировать не
+ *  должно — журнал не ведут ценой самого разговора. */
+async function noteBotMembership(
+  group: XmtpGroup,
+  client: XmtpClient,
+  botAddress: string | null,
+): Promise<void> {
+  let state: BotMembership = 'unknown';
+  try {
+    state = await ensureBotInGroup(group, client, botAddress ? toIdentifier(botAddress) : null);
+  } catch {
+    state = 'unknown';
+  }
+  _botMembership.set(group.id, state);
+  if (state === 'missing') {
+    console.warn(`[xmtp] relayer bot is not in pair group ${group.id} — dispute log for this pair is incomplete`);
+  }
+}
+
 /**
  * Finds the existing pair group for these two addresses or creates it.
  * Includes the bot (if reachable) from the very first message, so deal
@@ -723,6 +760,13 @@ export async function findOrCreatePairGroup(
     // отправкой в usePairChat — там же она и отказывает.
     await ensurePeerInGroup(canonical, client, toIdentifier(peerAddress));
 
+    // Та же самопочинка, но для бота релеера. Группа могла быть собрана в
+    // момент, когда релеер моргнул и адрес бота не прочитался, — тогда журнал
+    // этой пары не ведётся вообще, и раньше это было навсегда и молча.
+    // Проверяем при КАЖДОМ открытии: единственный момент, когда такую группу
+    // ещё можно починить. См. `lib/xmtpBotMembership.ts`.
+    await noteBotMembership(canonical, client, botAddress);
+
     return canonical;
   }
 
@@ -747,6 +791,7 @@ export async function findOrCreatePairGroup(
     if (raced) {
       await raced.sync().catch(() => {});
       await ensurePeerInGroup(raced, client, toIdentifier(peerAddress));
+      await noteBotMembership(raced, client, botAddress);
       return raced;
     }
 
@@ -781,7 +826,17 @@ export async function findOrCreatePairGroup(
     // visible. Сходимся тем же единственным правилом, что и везде — наименьший
     // id, — и обе стороны приходят к одной группе, даже создав по своей.
     await client.conversations.sync().catch(() => {});
-    return pickCanonicalGroup(await legitGroupsWithName()) ?? created;
+    const group = pickCanonicalGroup(await legitGroupsWithName()) ?? created;
+
+    // Бот в `reachable` мог не попасть: адрес не прочитался (релеер моргнул)
+    // или `canMessage` вернул для него не `true`. Отказывать в создании из-за
+    // этого нельзя — невозможность вести журнал не повод запрещать людям
+    // общаться, — но и молчать нельзя: группа без бота не попадёт в журнал
+    // спора НИ ОДНИМ сообщением. Пробуем дособрать состав прямо сейчас и, если
+    // не вышло, запоминаем «журнал неполон» для интерфейса.
+    await noteBotMembership(group, client, botAddress);
+
+    return group;
   })();
 
   _pairGroupCreation.set(creationKey, creating);

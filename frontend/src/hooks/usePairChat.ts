@@ -13,6 +13,7 @@ import {
   encodeFileMessage,
   encodeDealContextMarker,
   getBotAddress,
+  pairLogIsIncomplete,
   readReceiptTimestampMs,
   xmtpCrumb,
   type ChatMessage,
@@ -46,6 +47,10 @@ export function usePairChat(peerAddress: string) {
   const [hasMore, setHasMore]               = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [streamDead, setStreamDead]         = useState(false);
+  /** Бота релеера в парной группе нет и добавить его не вышло — значит эта
+   *  переписка в журнал спора не попадает. Раньше это выпадение было молчаливым
+   *  и узнать о нём можно было только при споре, когда уже поздно. */
+  const [logIncomplete, setLogIncomplete]   = useState(false);
   const [retryKey, setRetryKey]             = useState(0);
   // Latest read-receipt timestamp (ms) the peer has sent us — any of our own
   // messages at or before this time are "read" (2 checks); after it, just "sent".
@@ -157,6 +162,7 @@ export function usePairChat(peerAddress: string) {
         const group = await findOrCreatePairGroup(xmtp, [myAddress, peerAddress], botAddr, false);
         if (cancelled) return;
         groupRef.current = group;
+        setLogIncomplete(pairLogIsIncomplete(group?.id));
 
         if (!group) {
           // No conversation exists yet. Render an empty but fully usable thread so
@@ -298,6 +304,7 @@ export function usePairChat(peerAddress: string) {
         group = await findOrCreatePairGroup(xmtp, [myAddress, peerRef.current], botAddr, true);
         if (!group) throw new Error('Could not start the conversation');
         groupRef.current = group;
+        setLogIncomplete(pairLogIsIncomplete(group.id));
         created = true;
       }
       // Группа могла быть собрана когда-то БЕЗ собеседника (у него не было ни
@@ -332,6 +339,7 @@ export function usePairChat(peerAddress: string) {
       group = await findOrCreatePairGroup(xmtp, [myAddress, peerRef.current], botAddr, true);
       if (!group) throw new Error('Could not start the conversation');
       groupRef.current = group;
+      setLogIncomplete(pairLogIsIncomplete(group.id));
       created = true;
     }
     // До загрузки, а не после: см. соседний комментарий про fail fast — и тот же
@@ -401,5 +409,6 @@ export function usePairChat(peerAddress: string) {
     messages, sendMessage, sendFile, loadMore, markDealContext,
     hasMore, isLoading, isInitialized, error, uploadProgress,
     streamDead, reconnect, needsSetup: status !== 'ready', peerLastReadAt,
+    logIncomplete,
   };
 }
