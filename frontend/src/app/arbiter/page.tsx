@@ -24,6 +24,7 @@ import { shortAddr } from "@/lib/utils";
 import { FINALIZE_DELAY } from "@/config/constants";
 import { computeArbiterReward } from "@/lib/disputeBounty";
 import { withWalletLock } from "@/lib/walletLock";
+import { loadPass, savePass, clearPass, type DisputeLogPass } from "@/lib/disputeLogPass";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -686,28 +687,79 @@ function DisputeCard({
 const RELAYER_URL_ARB = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 type LogEntry = { ts: number; from: string; text: string; dealId: string | null };
 
-// Module-level cache, keyed by dealId — survives DisputeLog remounting. The parent
-// page bakes a single page-wide `refresh` counter into every card's React key so
-// ANY action anywhere on the page (release, submit/finalize verdict, withdraw
-// reward — not just an action on this specific case) remounts every card,
+// Module-level cache, keyed by ADDRESS + dealId — survives DisputeLog remounting.
+// The parent page bakes a single page-wide `refresh` counter into every card's
+// React key so ANY action anywhere on the page (release, submit/finalize verdict,
+// withdraw reward — not just an action on this specific case) remounts every card,
 // including this one, collapsing an already-fetched log back to its "View
 // history" button. Without this cache, re-viewing it demands a brand-new
 // hexseal:dispute-log:... signature caused by unrelated page activity rather
 // than the arbiter's own intent to re-view.
+//
+// The address is part of the key, not just the deal: switching wallets inside the
+// same tab must not leave the previous arbiter's private chat log on screen for
+// whoever connected next. Same rule as the session pass (lib/disputeLogPass.ts).
 const _disputeLogCache = new Map<string, LogEntry[]>();
+const cacheKey = (address: string | undefined, dealId: string) =>
+  `${(address ?? '').toLowerCase()}:${dealId.toLowerCase()}`;
+
+type DisputeLogResponse = { entries: LogEntry[]; pass?: DisputeLogPass };
+type DisputeLogError    = { error?: string; code?: string };
 
 function DisputeLog({ dealId, client, executor }: { dealId: string; client?: string; executor?: string }) {
   const { data: walletClient } = useWalletClient();
   const { address } = useAccount();
-  const [entries, setEntries] = useState<LogEntry[] | null>(() => _disputeLogCache.get(dealId) ?? null);
+  const [entries, setEntries] = useState<LogEntry[] | null>(
+    () => _disputeLogCache.get(cacheKey(address, dealId)) ?? null,
+  );
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState<string | null>(null);
   const t = useTranslations();
+
+  // Switching wallets inside the tab does NOT remount this card (the page-wide
+  // `refresh` key only moves on actions), so without this the previous arbiter's
+  // private chat log would stay on screen for whoever connected next. Re-reads
+  // the cache under the new address instead of just blanking, so switching back
+  // and forth doesn't cost a signature either.
+  useEffect(() => {
+    setEntries(_disputeLogCache.get(cacheKey(address, dealId)) ?? null);
+    setErr(null);
+  }, [address, dealId]);
+
+  const requestLog = async (headers: Record<string, string>) => {
+    const res = await fetch(`${RELAYER_URL_ARB}/dispute-log/${dealId}`, { headers });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as DisputeLogError;
+      return { ok: false as const, status: res.status, code: body.code, error: body.error };
+    }
+    return { ok: true as const, data: await res.json() as DisputeLogResponse };
+  };
 
   const fetchLog = async () => {
     if (!walletClient || !address) return;
     setLoading(true); setErr(null);
     try {
+      // 1. Пропуск этого сеанса, если он есть. Подписи не требует вовсе —
+      //    релеер всё равно перепроверит в цепи, держим ли мы этот спор.
+      const pass = loadPass(address, dealId);
+      if (pass) {
+        const attempt = await requestLog({ 'x-dispute-pass': pass });
+        if (attempt.ok) {
+          _disputeLogCache.set(cacheKey(address, dealId), attempt.data.entries ?? []);
+          setEntries(attempt.data.entries ?? []);
+          return;
+        }
+        // 401 от пропуска — он протух или испорчен: выбрасываем и просим
+        // подпись ниже, в этом же нажатии. 403 — это уже не про пропуск, а про
+        // права (спор отпущен, дело у другого арбитра), и подпись тут не
+        // поможет: показываем причину как есть.
+        clearPass(address, dealId);
+        if (attempt.status !== 401) {
+          throw new Error(attempt.error ?? `HTTP ${attempt.status}`);
+        }
+      }
+
+      // 2. Подпись — первое чтение в сеансе либо истёкший пропуск.
       const ts = String(Math.floor(Date.now() / 1000));
       const message = `hexseal:dispute-log:${dealId.toLowerCase()}:${ts}`;
       // Под общим мьютексом кошелька (lib/walletLock.ts): страница арбитра —
@@ -715,16 +767,12 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
       // соседствует с гейслесс-действиями по тем же делам.
       const sig = await withWalletLock(address, () =>
         walletClient.signMessage({ account: address, message }));
-      const res = await fetch(`${RELAYER_URL_ARB}/dispute-log/${dealId}`, {
-        headers: { 'x-ts': ts, 'x-sig': sig },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      const data = await res.json() as { entries: LogEntry[] };
-      _disputeLogCache.set(dealId, data.entries ?? []);
-      setEntries(data.entries ?? []);
+      const signed = await requestLog({ 'x-ts': ts, 'x-sig': sig });
+      if (!signed.ok) throw new Error(signed.error ?? `HTTP ${signed.status}`);
+
+      if (signed.data.pass) savePass(address, dealId, signed.data.pass);
+      _disputeLogCache.set(cacheKey(address, dealId), signed.data.entries ?? []);
+      setEntries(signed.data.entries ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to load');
     } finally { setLoading(false); }
