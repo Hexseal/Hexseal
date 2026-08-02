@@ -790,3 +790,36 @@ describe('verifyChain — ревью, раунд 3, находка I2: expectedL
     expect(verifyChain(null as unknown as ChainLink[], 5 as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 });
+
+describe('verifyChain — ревью, раунд 5, находка C1: вердикт без якоря — нижняя граница, не замена', () => {
+  // Прошлый JSDoc (раунд 4) советовал при bad_anchor "перезвать без опций
+  // и разбирать уже тот вердикт" — плохой совет: это ровно тот fail-open,
+  // который закрывали находкой 3 раунда 2 и находкой I2 раунда 3.
+  // Вердикт без якоря — НИЖНЯЯ ГРАНИЦА: его ok:true значит «самопротиворечий
+  // не найдено», а не «цепочка цела». До арбитра как справка о здоровье
+  // доходить не должен НИКОГДА.
+
+  it('честная пара: подделка + {} даёт bad_anchor, та же цепочка без якоря — честный broken', () => {
+    // Здесь "перезвать без якоря" случайно совпадает с осмысленным
+    // вердиктом — но это НЕ гарантия, см. следующий тест.
+    const full = chainOf(4);
+    const forged = [...full];
+    forged[2] = { ...forged[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
+    expect(verifyChain(forged, {} as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(forged)).toEqual({ ok: false, reason: 'broken', atSeq: 3 });
+  });
+
+  it('КОНТРПРИМЕР (прибивает предел): каскадная подделка + негодный якорь тоже bad_anchor, но без якоря — ok:true', () => {
+    // Это и есть довод против старого совета: "перезвать без якоря" здесь
+    // дало бы ok:true на цепочке, где ПОДДЕЛАНО звено seq=2 — с честным
+    // якорем (expectedLastHash) было бы broken atSeq 4. bad_anchor не
+    // заменяется вердиктом без якоря — он остаётся строго слабее.
+    const full = chainOf(5);
+    const tamperedLink2 = { ...full[2], bodyHash: ('0x' + 'ee'.repeat(32)) as `0x${string}` };
+    const rebuiltLink3 = buildLink(tamperedLink2, BODY, ALICE, 1103);
+    const rebuiltLink4 = buildLink(rebuiltLink3, BODY, ALICE, 1104);
+    const cascaded = [full[0], full[1], tamperedLink2, rebuiltLink3, rebuiltLink4];
+    expect(verifyChain(cascaded, {} as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(cascaded)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3, 4] });
+  });
+});
