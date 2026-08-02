@@ -909,3 +909,38 @@ describe('verifyChain — ревью, раунд 5, находка I2: atSeq н�
     });
   });
 });
+
+describe('verifyChain — ревью, раунд 5, мелочь: собственные поля, не цепочка прототипов', () => {
+  // opts.expectedLastSeq раньше читался обычным доступом к свойству, а он
+  // проходит по цепочке прототипов — Object.create({expectedLastSeq: 3})
+  // не имеет ни одного СОБСТВЕННОГО поля, но opts.expectedLastSeq всё
+  // равно резолвится в 3 через прототип. Замок раунда 3 на {} обходился:
+  // мусор снаружи (JSON.parse не создаёт такого, но конструктор объекта в
+  // руках вызывающего может) выдавал себя за годный якорь.
+
+  it('Object.create({expectedLastSeq: N}) — унаследованное поле не считается заданным, bad_anchor', () => {
+    const full = chainOf(4);
+    const evil = Object.create({ expectedLastSeq: 3 }) as { expectedLastSeq: number };
+    expect(Object.keys(evil)).toEqual([]); // подтверждаем: собственных полей действительно нет
+    expect(verifyChain(full, evil)).toEqual({ ok: false, reason: 'bad_anchor' });
+  });
+
+  it('expectedLastSeq — собственное поле (валидно), expectedLastHash — только унаследованное: хеш игнорируется, не bad_anchor и не broken', () => {
+    // Изолирует ИМЕННО expectedLastHash-проверку от expectedLastSeq-
+    // проверки (та тоже даёт bad_anchor на {}, и без этой развязки любой
+    // мусор в expectedLastHash был бы замаскирован первой проверкой,
+    // сработавшей раньше). Здесь expectedLastSeq — настоящее собственное
+    // поле, совпадающее с длиной цепочки; expectedLastHash — заведомо
+    // НЕСОВПАДАЮЩИЙ хеш, доступный только через прототип.
+    const full = chainOf(4); // seq 0..3, честная цепочка
+    const wrongHash = ('0x' + '11'.repeat(32)) as `0x${string}`;
+    const evil = Object.create({ expectedLastHash: wrongHash }) as { expectedLastSeq: number; expectedLastHash?: `0x${string}` };
+    evil.expectedLastSeq = 3; // собственное поле, совпадает с реальным последним seq
+    expect(Object.prototype.hasOwnProperty.call(evil, 'expectedLastHash')).toBe(false);
+    // Если бы унаследованный expectedLastHash читался — несовпадение дало
+    // бы broken. Он должен быть проигнорирован как «не задан»: остаётся
+    // только валидный собственный expectedLastSeq, связность честная —
+    // ok:true.
+    expect(verifyChain(full, evil)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3] });
+  });
+});

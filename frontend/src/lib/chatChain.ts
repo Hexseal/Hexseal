@@ -241,15 +241,27 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
     // от подделки (нужен номер, чтобы сказать «сколько») — молча трактовать
     // пустой объект как «якоря нет» значило бы вернуть тот самый fail-open,
     // который чинили находкой 3 прошлого раунда, просто на другом поле.
-    if (!isSafeNonNegativeInt(opts.expectedLastSeq)) {
+    // Читаем только СОБСТВЕННЫЕ поля, не цепочку прототипов: обычный
+    // доступ opts.expectedLastSeq резолвится и через прототип —
+    // Object.create({expectedLastSeq: 3}) не имеет ни одного собственного
+    // поля, но opts.expectedLastSeq всё равно вернул бы 3, обходя замок
+    // на {} из находки 3 прошлого раунда. Поле, унаследованное через
+    // прототип, — то же самое «не задано», что и вообще отсутствующее.
+    const rawExpectedLastSeq = Object.prototype.hasOwnProperty.call(opts, 'expectedLastSeq')
+      ? (opts as unknown as Record<string, unknown>).expectedLastSeq
+      : undefined;
+    if (!isSafeNonNegativeInt(rawExpectedLastSeq)) {
       return { ok: false, reason: 'bad_anchor' };
     }
-    anchor = opts.expectedLastSeq;
-    if (opts.expectedLastHash !== undefined) {
-      if (!isBytes32Hex(opts.expectedLastHash)) {
+    anchor = rawExpectedLastSeq;
+    const rawExpectedLastHash = Object.prototype.hasOwnProperty.call(opts, 'expectedLastHash')
+      ? (opts as unknown as Record<string, unknown>).expectedLastHash
+      : undefined;
+    if (rawExpectedLastHash !== undefined) {
+      if (!isBytes32Hex(rawExpectedLastHash)) {
         return { ok: false, reason: 'bad_anchor' };
       }
-      hashAnchor = opts.expectedLastHash;
+      hashAnchor = rawExpectedLastHash;
     }
   }
 
