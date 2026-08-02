@@ -53,8 +53,13 @@ function isBytes32Hex(value: unknown): value is `0x${string}` {
   return typeof value === 'string' && BYTES32_RE.test(value);
 }
 
-function isNonNegativeInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+/** Number.isSafeInteger, а не Number.isInteger: encodePacked(['uint256'])
+ *  бросает IntegerOutOfRangeError далеко до границы uint256 — уже на числах,
+ *  которые JS не может представить точно (Number.isInteger(1e100) === true,
+ *  но это не то целое число, которым кажется). Заодно закрывает зону 2^53,
+ *  где x+1 === x. */
+function isSafeNonNegativeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 /** Звено «в форме» — ровно то, что не даст linkHash бросить исключение
@@ -68,11 +73,11 @@ function isWellFormedLink(link: unknown): link is ChainLink {
   if (typeof link !== 'object' || link === null) return false;
   const l = link as Record<string, unknown>;
   return (
-    isNonNegativeInt(l.seq) &&
+    isSafeNonNegativeInt(l.seq) &&
     isBytes32Hex(l.prevHash) &&
     isBytes32Hex(l.bodyHash) &&
     typeof l.sender === 'string' && isAddress(l.sender) &&
-    isNonNegativeInt(l.sentAt)
+    isSafeNonNegativeInt(l.sentAt)
   );
 }
 

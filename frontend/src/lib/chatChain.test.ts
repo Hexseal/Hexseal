@@ -140,3 +140,35 @@ describe('verifyChain — устойчивость к мусору из сети
     expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
   });
 });
+
+describe('verifyChain — ревью, раунд 1', () => {
+  // C1: isNonNegativeInt проверял только Number.isInteger && >= 0 — без
+  // верхней границы. encodePacked(['uint256']) бросает IntegerOutOfRangeError
+  // на значениях за пределами uint256, а BigInt() внутри linkHash — RangeError
+  // на нецелых. Мусор кладём на link[0] (не последний!), чтобы связность
+  // гарантированно вызвала linkHash именно на нём при проверке link[1].
+
+  it('sentAt = 1e100 не роняет проверку', () => {
+    const full = chainOf(2);
+    const garbled = [...full];
+    garbled[0] = { ...garbled[0], sentAt: 1e100 };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
+  });
+
+  it('sentAt = Number.MAX_VALUE не роняет проверку', () => {
+    const full = chainOf(2);
+    const garbled = [...full];
+    garbled[0] = { ...garbled[0], sentAt: Number.MAX_VALUE };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
+  });
+
+  it('переполнение в последнем звене тоже ловится гейтом формы, а не связностью', () => {
+    // Тот самый слепой пятак: у последнего звена в массиве linkHash никогда
+    // не вычисляется связностью (сравнивать не с чем) — гейт формы обязан
+    // поймать его сам, до всякой связности.
+    const full = chainOf(2);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], sentAt: 1e100 };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+});
