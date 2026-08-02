@@ -119,16 +119,30 @@ export async function deriveChatKeypair(signature: `0x${string}`): Promise<ChatK
  *  (lib/chatChain.ts), а не шифрованием.
  *
  *  Сигнатура строго `Uint8Array` (не `Uint8Array | string`, как принимает
- *  сама библиотека): если бы сюда случайно приехала уже закодированная в
- *  UTF-8 строка вместо байт, `crypto_box_seal` молча запечатала бы текст
- *  кодировки, без единой ошибки — именно так и тихо.
+ *  сама библиотека) — и это проверяется НА ИСПОЛНЕНИИ, не только типами.
+ *  Сама `libsodium-wrappers` принимает `string` и молча кодирует её в UTF-8:
+ *  типизированный вызов TS отловит, но строка, прошедшая через `any`
+ *  (например, `JSON.parse(...)` при разборе мешка из сети — самый вероятный
+ *  вид на проводе в Задачах 4-5), доедет до библиотеки живой и запечатается
+ *  без единой ошибки. `deriveChatKeypair` выше по этому же файлу уже
+ *  проверяет свой вход на исполнении по той же причине («молчаливый приём
+ *  мусора — молчаливая утечка/порча»); здесь та же норма.
  *
- *  @throws {TypeError} если `recipientPublicKey` не 32 байта — это наши
- *    негодные данные на входе, не событие протокола, поэтому не гасится. */
+ *  @throws {TypeError} если `recipientPublicKey` или `plaintext` не
+ *    `Uint8Array` (в т.ч. пришли из `any`/JSON) — или если `recipientPublicKey`
+ *    не 32 байта. Это наши негодные данные на входе, не событие протокола,
+ *    поэтому не гасится. */
 export async function sealForRecipient(
   recipientPublicKey: Uint8Array,
   plaintext: Uint8Array,
 ): Promise<Uint8Array> {
+  if (!(recipientPublicKey instanceof Uint8Array)) {
+    throw new TypeError('sealForRecipient: recipientPublicKey должен быть Uint8Array (не строка/иное)');
+  }
+  if (!(plaintext instanceof Uint8Array)) {
+    throw new TypeError('sealForRecipient: plaintext должен быть Uint8Array (не строка/иное)');
+  }
+
   const sodium = (await import('libsodium-wrappers')).default;
   await sodium.ready;
   return sodium.crypto_box_seal(plaintext, recipientPublicKey);
@@ -147,11 +161,27 @@ export async function sealForRecipient(
  *  в Задаче 1 и застёгнута тестами в chatCrypto.test.ts. Порядок проверки
  *  важен: `TypeError` наследует `Error`, поэтому `instanceof TypeError`
  *  проверяется первым и пробрасывается — иначе он тоже схлопнулся бы в
- *  `catch (err) { return null }` как обычный `Error`. */
+ *  `catch (err) { return null }` как обычный `Error`.
+ *
+ *  Проверка `sealed instanceof Uint8Array` — ДО `try`, по той же логике, по
+ *  которой `sodium.ready` вынесен из `try` выше: замеры на живом модуле
+ *  показали, что строка вместо байт (например, base64-мешок из JSON, не
+ *  декодированный перед вызовом) не всегда доходит до библиотеки как
+ *  ошибка — иногда это тихая пустота без единого исключения, что для
+ *  вызывающего неотличимо от «нам ничего не прислали». Если бы проверка
+ *  жила внутри `try`, наш собственный бросок TypeError тоже поймался бы
+ *  этим же `catch` — сработала бы верно (там уже есть `instanceof
+ *  TypeError` → rethrow), но раскладка расползлась бы: гарантия входа
+ *  была бы неотличима от гарантий самой криптографии. Вход валидируется
+ *  до какой-либо попытки его расшифровать. */
 export async function openSealed(
   myKeypair: ChatKeypair,
   sealed: Uint8Array,
 ): Promise<Uint8Array | null> {
+  if (!(sealed instanceof Uint8Array)) {
+    throw new TypeError('openSealed: sealed должен быть Uint8Array (не строка/иное)');
+  }
+
   const sodium = (await import('libsodium-wrappers')).default;
   await sodium.ready;
   try {

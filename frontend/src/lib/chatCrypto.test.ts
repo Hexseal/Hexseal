@@ -160,4 +160,38 @@ describe('sealForRecipient / openSealed', () => {
     const opened = await openSealed(bob, sealed);
     expect(opened).toEqual(new Uint8Array(0));
   });
+
+  // Ревью раунда 1: строгость `Uint8Array` в сигнатуре живёт только в
+  // компиляции. Мешок из сети почти всегда приезжает как строка внутри
+  // JSON (`JSON.parse` не восстанавливает `Uint8Array` — типизация TS тут
+  // молчит, это ровно путь `any`). На живом модуле замерено: строка вместо
+  // байт не всегда даёт ошибку — иногда тихая пустота без единого
+  // исключения, неотличимая от штатного «мешок не наш». Три теста ниже
+  // проверяют, что теперь это пробрасывается как TypeError на границе
+  // функций, а не доезжает до библиотеки живым.
+
+  it('строка вместо байт текста при запечатывании пробрасывается, а не кодируется молча как UTF-8', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    await expect(
+      sealForRecipient(bob.publicKey, 'привет' as unknown as Uint8Array),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it('строка вместо байт публичного ключа при запечатывании пробрасывается', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    await expect(
+      sealForRecipient('не байты' as unknown as Uint8Array, text('a')),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it('строка вместо байт мешка при вскрытии пробрасывается, а не даёт молчаливую пустоту', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    // Правдоподобный вид мешка, каким он приезжает по сети: base64 внутри
+    // JSON, забытый декодировать перед вызовом.
+    const sealed = await sealForRecipient(bob.publicKey, text('секрет'));
+    const asBase64String = Buffer.from(sealed).toString('base64');
+    await expect(
+      openSealed(bob, asBase64String as unknown as Uint8Array),
+    ).rejects.toThrow(TypeError);
+  });
 });
