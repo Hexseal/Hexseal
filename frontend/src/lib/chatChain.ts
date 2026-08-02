@@ -233,6 +233,16 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
     // несходящегося хеш-якоря, которое честно даёт broken).
     // unverifiedContentAtSeq пуст в обоих случаях — предъявлять нечего,
     // значит и называть нечего.
+    // ⚠️ На HEAD (после находки I2 раунда 3) `hashAnchor !== undefined`
+    // ВЛЕЧЁТ `anchor !== undefined` — hashAnchor присваивается только
+    // внутри `if (opts !== undefined)` ПОСЛЕ успешной проверки
+    // expectedLastSeq (теперь обязательного), так что вторая половина
+    // условия сейчас недостижима: её снятие красит 0 из 76 тестов
+    // (проверено эмпирически, раунд 4). Оставлена как защита на случай,
+    // если этот инвариант когда-нибудь разойдётся (например, если
+    // валидацию anchor/hashAnchor однажды разъединят) — тогда снятие
+    // якоря по количеству молча перестанет ловить якорь по отпечатку в
+    // этой ветке, и баг проявится не сразу.
     if (anchor !== undefined || hashAnchor !== undefined) {
       return { ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] };
     }
