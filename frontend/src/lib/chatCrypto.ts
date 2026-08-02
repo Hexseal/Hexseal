@@ -1,24 +1,87 @@
-import { keccak256 } from 'viem';
-
-/** Фраза, которую подписывает кошелёк. Версия в имени — чтобы будущая смена
- *  схемы была явной, а не молчаливой сменой ключа у всех сразу. */
-export const CHAT_KEY_MESSAGE = 'hexseal.chat.key.v1';
+import { keccak256, concat, stringToBytes, hexToBytes } from 'viem';
 
 export type ChatKeypair = { publicKey: Uint8Array; privateKey: Uint8Array };
 
 /**
+ * EIP-712 доменный сепаратор для входа в чат — НЕ голый `personal_sign`.
+ *
+ * Голая строка (`personal_sign` над `'hexseal.chat.key.v1'`) не привязана ни
+ * к какому домену: любой сайт может попросить подписать ровно эту строку и
+ * получить постоянный, неотзываемый ключ ко всей переписке человека. Одно
+ * подписанное окно на фишинговом сайте — и всё.
+ *
+ * EIP-712 не устраняет фишинг полностью (кошелёк не проверяет соответствие
+ * `domain` фактическому origin сайта), но кошелёк рендерит структурированный
+ * запрос — `domain`/`primaryType`/поля — вместо непрозрачной строки, и это
+ * тот минимум, который вообще возможен без смены модели подписи кошельков.
+ *
+ * Экспортируется ЦЕЛИКОМ (не только имя/строка), чтобы вызывающая сторона
+ * подписывала строго это: `walletClient.signTypedData(CHAT_KEY_TYPED_DATA)`.
+ * Раздельные константы для той же цели допускали бы подписать одно, а
+ * ключ вывести из другого — единственный источник истины должен быть один
+ * объект.
+ *
+ * Версия зашита и в `domain.version`, и в `message.purpose`: смена
+ * любого поля здесь — миграция, меняющая ключ у ВСЕХ существующих
+ * пользователей разом и делающая их прежнюю переписку нечитаемой.
+ * `chainId`/`verifyingContract` намеренно не включены: ключ чата не должен
+ * зависеть от того, к какой сети подключён кошелёк в момент подписи, а
+ * протокол сегодня существует только в одной, тестовой, сети.
+ */
+export const CHAT_KEY_TYPES = {
+  ChatKey: [{ name: 'purpose', type: 'string' }],
+} as const;
+
+export const CHAT_KEY_DOMAIN = {
+  name: 'Hexseal',
+  version: '1',
+} as const;
+
+export const CHAT_KEY_TYPED_DATA = {
+  domain: CHAT_KEY_DOMAIN,
+  types: CHAT_KEY_TYPES,
+  primaryType: 'ChatKey',
+  message: { purpose: 'hexseal.chat.key.v1' },
+} as const;
+
+/** Метка назначения внутри семени — не путать с EIP-712 доменом выше. Это
+ *  разводит ключ ЧАТА и любой будущий ключ на ту же подпись (например, для
+ *  шифрования вложений отдельным алгоритмом): без метки оба совпали бы,
+ *  потому что подпись кошелька для входа в чат одна и та же. */
+const CHAT_KEY_SEED_CONTEXT = 'hexseal.chat.key.seed.v1';
+
+/** Ровно 65-байтовая ECDSA-подпись (`r ‖ s ‖ v`), в hex с `0x` — 130 hex-цифр
+ *  после префикса. Любая другая строка (пустая, обрезанная, произвольный
+ *  текст) НЕ подпись и не должна тихо давать валидную пару: `keccak256` в
+ *  viem на невалидном hex не бросает, а молча хеширует как UTF-8-текст —
+ *  значит без этой проверки константа вроде `'undefined'` вывела бы ОДНУ И
+ *  ТУ ЖЕ пару у всех, кому она когда-либо прилетела по этому пути. */
+const SIGNATURE_HEX_RE = /^0x[0-9a-f]{130}$/;
+
+/**
  * Подпись — 65 байт и распределена неравномерно, поэтому ключом быть не
- * может. Хешируем в 32 байта и подаём как семя. Регистр приводим к нижнему:
- * кошельки отдают hex по-разному, а ключ обязан получаться один.
+ * может. Хешируем (с меткой назначения, см. `CHAT_KEY_SEED_CONTEXT`) в 32
+ * байта и подаём как семя. Регистр приводим к нижнему до проверки формата и
+ * до вывода: кошельки отдают hex-цифры по-разному (а `0x`/`0X` — тем более),
+ * а ключ обязан получаться один и тот же.
  *
  * `libsodium-wrappers` импортируется только динамически (`await import`) —
  * статический импорт кладёт ~147 КБ gzip в общий чанк сборки Next
  * (docs/superpowers/reports/2026-08-02-chat-crypto-library-choice.md, §6).
+ *
+ * @throws {Error} если `signature` не 65-байтовая hex-строка — намеренно
+ *   громко: молчаливый приём мусора здесь означает молчаливую утечку ключа
+ *   (все, кто подал один и тот же мусорный вход, получают одну пару).
  */
 export async function deriveChatKeypair(signature: `0x${string}`): Promise<ChatKeypair> {
-  const seedHex = keccak256(signature.toLowerCase() as `0x${string}`);
-  const seed = Uint8Array.from(
-    (seedHex.slice(2).match(/../g) ?? []).map((b) => parseInt(b, 16)),
+  const sig = signature.toLowerCase() as `0x${string}`;
+  if (!SIGNATURE_HEX_RE.test(sig)) {
+    throw new Error('deriveChatKeypair: ожидается 65-байтовая hex-подпись (0x + 130 hex-цифр)');
+  }
+
+  const seed = keccak256(
+    concat([stringToBytes(CHAT_KEY_SEED_CONTEXT), hexToBytes(sig)]),
+    'bytes',
   );
 
   const sodium = (await import('libsodium-wrappers')).default;
