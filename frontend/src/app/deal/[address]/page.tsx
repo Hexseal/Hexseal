@@ -4,7 +4,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
 import { AGREEMENT_ABI, CONTRACTS, USDC_ABI } from "@/config/contracts";
-import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from "@/config/constants";
+import { ACTIVATION_WINDOW, ACTIVATION_WINDOW_DAYS, AUTO_APPROVE_WINDOW } from "@/config/constants";
 import { Button } from "@/components/ui/button";
 import { toast } from "react-hot-toast";
 import { formatUnits, parseUnits, isAddress, keccak256, type Abi } from "viem";
@@ -904,7 +904,13 @@ export default function DealDetailPage() {
                     identical parsed.status===1 && isExecutor condition — this was a
                     second, independent copy of the same button wired to the same
                     handleAction call, rendered simultaneously. */}
-                <p className="text-xs text-white/40 leading-relaxed">{t("deal.funded_executor_hint")}</p>
+                {/* Число суток берётся из ACTIVATION_WINDOW, а не пишется в перевод
+                    руками: ровно так эта строка год обещала исполнителю 3 дня, пока
+                    кнопка возврата у клиента ниже на этой же странице считалась от
+                    настоящих двух (docs/OPEN-ITEMS.md п. 12). */}
+                <p className="text-xs text-white/40 leading-relaxed">
+                  {t("deal.funded_executor_hint", { days: ACTIVATION_WINDOW_DAYS })}
+                </p>
               </div>
             </div>
           </div>
@@ -917,7 +923,9 @@ export default function DealDetailPage() {
               <Clock className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-medium text-sky-300/80 mb-0.5">{t("deal.funded_client_title")}</p>
-                <p className="text-xs text-white/35 leading-relaxed">{t("deal.funded_client_hint")}</p>
+                <p className="text-xs text-white/35 leading-relaxed">
+                  {t("deal.funded_client_hint", { days: ACTIVATION_WINDOW_DAYS })}
+                </p>
               </div>
             </div>
           </div>
