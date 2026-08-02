@@ -21,7 +21,7 @@ import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless }
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
 import { shortAddr } from "@/lib/utils";
-import { FINALIZE_DELAY } from "@/config/constants";
+import { DISPUTE_WINDOW_DAYS, FINALIZE_DELAY } from "@/config/constants";
 import { computeArbiterReward } from "@/lib/disputeBounty";
 import { withWalletLock } from "@/lib/walletLock";
 import { loadPass, savePass, clearPass, type DisputeLogPass } from "@/lib/disputeLogPass";
@@ -467,6 +467,14 @@ export default function ArbiterPage() {
               />
             ) : (
               <div className="space-y-3">
+                {/* Срок явки арбитра. Строка существовала, но не рендерилась
+                    нигде — и врала про «7-дневное окно» через год после того,
+                    как DISPUTE_WINDOW стала четырёхдневной. Именно это и стоит
+                    арбитру судейской ошибки за неявку, поэтому окно теперь
+                    показывается, и число берётся из константы. */}
+                <p className="text-xs text-white/30 leading-relaxed">
+                  {t("arbiter.my_cases_desc", { days: DISPUTE_WINDOW_DAYS })}
+                </p>
                 {myHistory.map(addr => (
                   <MyCaseCard
                     key={`${addr}-${refresh}`}

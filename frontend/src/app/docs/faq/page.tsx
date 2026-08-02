@@ -4,6 +4,10 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ArrowLeft, ExternalLink } from "lucide-react";
 import { useTranslations } from "next-intl";
+import {
+  ACTIVATION_WINDOW_DAYS,
+  AUTO_APPROVE_WINDOW_DAYS,
+} from "@/config/constants";
 
 interface FAQItem {
   q: string;
@@ -57,10 +61,13 @@ export default function FAQPage() {
     {
       title: t("faq.s_deals"),
       items: [
-        { q: t("faq.q_how_deal"),    a: t("faq.a_how_deal") },
-        { q: t("faq.q_no_activate"), a: t("faq.a_no_activate") },
+        // Сроки подставляются из констант, а не пишутся числом в переводах:
+        // иначе следующая правка Agreement.sol снова молча разойдётся с FAQ
+        // (docs/OPEN-ITEMS.md п. 12 — три из четырёх строк оттуда живут здесь).
+        { q: t("faq.q_how_deal"),    a: t("faq.a_how_deal", { days: AUTO_APPROVE_WINDOW_DAYS }) },
+        { q: t("faq.q_no_activate"), a: t("faq.a_no_activate", { days: ACTIVATION_WINDOW_DAYS }) },
         { q: t("faq.q_deadline"),    a: t("faq.a_deadline") },
-        { q: t("faq.q_cancel"),      a: t("faq.a_cancel") },
+        { q: t("faq.q_cancel"),      a: t("faq.a_cancel", { days: ACTIVATION_WINDOW_DAYS }) },
         { q: t("faq.q_autoapprove"), a: t("faq.a_autoapprove") },
       ],
     },
@@ -77,6 +84,12 @@ export default function FAQPage() {
       items: [
         { q: t("faq.q_raise_dispute"),   a: t("faq.a_raise_dispute") },
         { q: t("faq.q_arbiters"),        a: t("faq.a_arbiters") },
+        // Вопрос заведён намеренно, а не «на всякий случай»: самозапись в
+        // арбитры на цепи выключена (applyAsArbiter() ревертит DAONotActive,
+        // isDaoActive() == false), состав на старте набирается вручную. Без
+        // прямого ответа человек читает «арбитры — нейтральные третьи стороны»
+        // и делает вывод, что вход открыт.
+        { q: t("faq.q_become_arbiter"),  a: t("faq.a_become_arbiter") },
         { q: t("faq.q_claim"),           a: t("faq.a_claim") },
         { q: t("faq.q_outcomes"),        a: t("faq.a_outcomes") },
         { q: t("faq.q_arbiter_timeout"), a: t("faq.a_arbiter_timeout") },
