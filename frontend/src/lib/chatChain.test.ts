@@ -139,6 +139,46 @@ describe('verifyChain — устойчивость к мусору из сети
     garbled[1] = { ...garbled[1], bodyHash: ('0x' + 'a'.repeat(63)) as `0x${string}` };
     expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
   });
+
+  // prevHash не был заперт ни одним тестом отдельно от bodyHash — ревью
+  // раунда 2 поймало живым прогоном: снятие isBytes32Hex(l.prevHash) даёт
+  // TypeError наружу из verifyChain на null/undefined/42, а не вердикт.
+  it('prevHash = null не роняет проверку', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], prevHash: null as unknown as `0x${string}` };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+
+  it('prevHash = undefined не роняет проверку', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], prevHash: undefined as unknown as `0x${string}` };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+
+  it('prevHash = число (42) не роняет проверку', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], prevHash: 42 as unknown as `0x${string}` };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+
+  it('prevHash не той длины не роняет проверку', () => {
+    // ЧЕСТНО: в отличие от null/undefined/42 выше, этот тест НЕ запирает
+    // именно гейт формы — проверено мутацией (снятие isBytes32Hex(l.prevHash)
+    // не красит этот тест). Структурная причина: prevHash каждого звена
+    // сравнивается (sameHash) с GENESIS_HASH или с linkHash(предыдущего)
+    // РАНЬШЕ, чем это же значение могло бы понадобиться как ВХОД в
+    // encodePacked при вычислении linkHash САМОГО этого звена для проверки
+    // следующего — и обычное неравенство строк разной длины не бросает.
+    // Оставлен как замок против крэша вообще (не бросает — и то хорошо),
+    // но не как доказательство именно этой строки гейта.
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], prevHash: ('0x' + 'aa'.repeat(31)) as `0x${string}` };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
 });
 
 describe('verifyChain — ревью, раунд 1', () => {
