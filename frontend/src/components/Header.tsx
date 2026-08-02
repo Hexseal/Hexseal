@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import WalletMenu from "@/components/WalletMenu";
 import NotificationCenter from "@/components/NotificationCenter";
-import { Briefcase, User, ShieldCheck, ArrowLeft } from "lucide-react";
+import { Briefcase, User, ShieldCheck, ShieldQuestion, ArrowLeft, Loader2 } from "lucide-react";
 import { useWalletAccountData } from "@/hooks/useWalletAccountData";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
@@ -43,7 +43,7 @@ function NavLink({
 
 export default function Header() {
   const accountData = useWalletAccountData();
-  const { isConnected, isArbiter } = accountData;
+  const { isConnected, isArbiter, rolesUnreadable, rolesRechecking, recheckRoles } = accountData;
   const [openPanelMobile, setOpenPanelMobile] = useState<"notifications" | "wallet" | null>(null);
   const [openPanelDesktop, setOpenPanelDesktop] = useState<"notifications" | "wallet" | null>(null);
   const pathname = usePathname();
@@ -160,6 +160,25 @@ export default function Header() {
                       <ShieldCheck className="w-3.5 h-3.5" />
                       {t("nav.arbiter")}
                     </NavLink>
+                  )}
+                  {/* Третье состояние роли: не «арбитр» и не «не арбитр», а
+                      «не смогли проверить». Ссылки тут намеренно нет — прав при
+                      неизвестной роли не выдаём, — но и молчаливого исчезновения
+                      тоже: 2 августа вкладка просто пропала, и понять, что дело
+                      в связи, было неоткуда. Нажатие переспрашивает цепь. */}
+                  {rolesUnreadable && !isArbiter && (
+                    <button
+                      type="button"
+                      onClick={recheckRoles}
+                      disabled={rolesRechecking}
+                      title={t("nav.arbiter_unverified_hint")}
+                      className="flex items-center gap-2 font-medium transition-colors rounded-lg px-3 py-1.5 text-sm text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
+                    >
+                      {rolesRechecking
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <ShieldQuestion className="w-3.5 h-3.5" />}
+                      {t("nav.arbiter_unverified")}
+                    </button>
                   )}
                 </>
               )}

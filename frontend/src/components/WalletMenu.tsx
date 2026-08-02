@@ -15,7 +15,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, ShieldQuestion, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -46,8 +46,9 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const { subscribed: pushOn, stale: pushStale, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
-    displayText, avatarUrl, usdcBalance,
+    displayText, avatarUrl, usdcBalance, usdcBalanceUnavailable,
     isArbiter, isOwner, canApplyAsArbiter, applyPending, handleApplyAsArbiter,
+    rolesUnreadable, rolesRechecking, recheckRoles,
   } = data;
   const { disconnectAsync } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
@@ -233,8 +234,11 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
                   {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 </button>
               </div>
-              <p className="text-xs font-mono text-white/45 mt-1.5">
-                {(Number(usdcBalance) / 1e6).toFixed(2)} USDC
+              {/* Прочерк, а не «0.00»: непрочитанный баланс — это отсутствие
+                  данных, а не пустой кошелёк. Тот же приём, что в
+                  `AgreementsStats` для оборота при сбое сабграфа. */}
+              <p className={`text-xs font-mono mt-1.5 ${usdcBalanceUnavailable ? 'text-white/25' : 'text-white/45'}`}>
+                {usdcBalanceUnavailable ? '— USDC' : `${(Number(usdcBalance) / 1e6).toFixed(2)} USDC`}
               </p>
             </div>
           </div>
@@ -300,10 +304,34 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
         )}
 
         {/* ── Role-specific ── */}
-        {(isArbiter || isOwner || canApplyAsArbiter) && (
+        {/* `rolesUnreadable` обязан быть в этом условии: иначе строка «не смогли
+            проверить» размонтируется вместе с секцией и разделителем — ровно то
+            молчаливое исчезновение, которое чинится. */}
+        {(isArbiter || isOwner || canApplyAsArbiter || rolesUnreadable) && (
           <>
             <div className="h-px bg-white/[0.06]" />
             <div className="p-1">
+              {/* ТРЕТЬЕ СОСТОЯНИЕ РОЛИ. Не «арбитр» и не «не арбитр»: роль не
+                  прочиталась. Панелей не открываем (прав при неизвестном
+                  состоянии не выдаём), но и обратного не утверждаем — говорим
+                  прямо и даём переспросить. */}
+              {rolesUnreadable && (
+                <DropdownMenuItem
+                  onSelect={(e) => { e.preventDefault(); recheckRoles(); }}
+                  disabled={rolesRechecking}
+                  className="flex items-start gap-2.5 cursor-pointer text-amber-400/80 focus:text-amber-300 disabled:opacity-50"
+                >
+                  {rolesRechecking
+                    ? <Loader2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 animate-spin" />
+                    : <ShieldQuestion className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />}
+                  <span className="text-xs leading-snug whitespace-normal">
+                    {t("wallet.roles_unreadable")}
+                    <span className="block mt-0.5 text-amber-400/60">
+                      {rolesRechecking ? t("common.loading") : t("common.retry")}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+              )}
               {isArbiter && (
                 <DropdownMenuItem asChild>
                   <Link href="/arbiter" className="flex items-center gap-2.5 cursor-pointer text-blue-400 hover:text-white focus:text-white">

@@ -15,6 +15,8 @@
     "jobs": "Jobs",
     "services": "Services",
     "arbiter": "Arbiter",
+    "arbiter_unverified": "Role unverified",
+    "arbiter_unverified_hint": "Couldn't check whether you're an arbiter — that's a connection failure, not a lost role. Click to retry.",
     "board": "Board",
     "alerts": "Notifications",
     "dashboard": "Dashboard",
@@ -218,7 +220,8 @@
     "disable_notifications_failed": "Couldn't turn notifications off — they are still on",
     "enable_messaging": "Enable Messaging",
     "connecting_messaging": "Connecting messaging…",
-    "arbiter_apply_success": "Application submitted — waiting for review"
+    "arbiter_apply_success": "Application submitted — waiting for review",
+    "roles_unreadable": "Couldn't check your roles — the arbiter and admin panels stay hidden until we can. That's a failed read, not a lost role."
   },
   "dashboard": {
     "title": "Dashboard",
@@ -779,7 +782,8 @@
     "reward_title": "Pending Reward",
     "withdraw_btn": "Withdraw",
     "withdrawing": "Withdrawing…",
-    "reward_withdrawn": "Reward withdrawn successfully"
+    "reward_withdrawn": "Reward withdrawn successfully",
+    "role_unreadable": "Couldn't check your arbiter role — the network didn't answer. You haven't lost access; the check simply didn't go through."
   },
   "onboarding": {
     "title": "How Hexseal works",

@@ -15,6 +15,8 @@
     "jobs": "الوظائف",
     "services": "الخدمات",
     "arbiter": "المحكّم",
+    "arbiter_unverified": "الدور غير مُتحقَّق",
+    "arbiter_unverified_hint": "تعذّر التحقق مما إذا كنت محكّمًا — هذا خلل في الاتصال، وليس فقدانًا للدور. اضغط لإعادة المحاولة.",
     "board": "اللوحة",
     "alerts": "التنبيهات",
     "dashboard": "لوحة التحكم",
@@ -214,7 +216,8 @@
     "enable_messaging": "تفعيل المراسلة",
     "connecting_messaging": "جارٍ تفعيل المراسلة…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "تعذّر التحقق من أدوارك — تبقى لوحتا المحكّم والمشرف مخفيتين حتى تنجح القراءة. هذا فشل في القراءة، وليس فقدانًا للدور."
   },
   "dashboard": {
     "title": "لوحة التحكم",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "تعذّر التحقق من دورك كمحكّم — لم تستجب الشبكة. لم تفقد الوصول، لكن التحقق لم يمرّ."
   },
   "onboarding": {
     "title": "كيف يعمل Hexseal",

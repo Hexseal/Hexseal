@@ -15,6 +15,8 @@
     "jobs": "งาน",
     "services": "บริการ",
     "arbiter": "อนุญาโตตุลาการ",
+    "arbiter_unverified": "ยังไม่ได้ตรวจสอบบทบาท",
+    "arbiter_unverified_hint": "ตรวจสอบไม่ได้ว่าคุณเป็นอนุญาโตตุลาการหรือไม่ — นี่คือปัญหาการเชื่อมต่อ ไม่ใช่การเสียบทบาท แตะเพื่อลองใหม่",
     "board": "กระดาน",
     "alerts": "แจ้งเตือน",
     "dashboard": "แดชบอร์ด",
@@ -214,7 +216,8 @@
     "enable_messaging": "เปิดใช้งานการส่งข้อความ",
     "connecting_messaging": "กำลังเชื่อมต่อการส่งข้อความ…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "ตรวจสอบบทบาทของคุณไม่สำเร็จ — แผงอนุญาโตตุลาการและผู้ดูแลจะถูกซ่อนไว้จนกว่าจะอ่านได้ นี่คือการอ่านล้มเหลว ไม่ใช่การเสียบทบาท"
   },
   "dashboard": {
     "title": "แดชบอร์ด",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "ตรวจสอบบทบาทอนุญาโตตุลาการของคุณไม่สำเร็จ — เครือข่ายไม่ตอบกลับ คุณไม่ได้เสียสิทธิ์ เพียงแต่การตรวจสอบไม่ผ่าน"
   },
   "onboarding": {
     "title": "วิธีการทำงานของ Hexseal",

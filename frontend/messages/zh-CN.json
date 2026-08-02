@@ -15,6 +15,8 @@
     "jobs": "工作",
     "services": "服务",
     "arbiter": "仲裁",
+    "arbiter_unverified": "角色未验证",
+    "arbiter_unverified_hint": "无法确认你是否为仲裁人——这是连接故障，不是失去角色。点击重试。",
     "board": "广场",
     "alerts": "通知",
     "dashboard": "控制台",
@@ -214,7 +216,8 @@
     "enable_messaging": "启用消息",
     "connecting_messaging": "正在连接消息…",
     "applying_arbiter": "Submitting...",
-    "become_arbiter": "Become Arbiter"
+    "become_arbiter": "Become Arbiter",
+    "roles_unreadable": "无法确认你的角色——在读取成功前，仲裁与管理面板保持隐藏。这是读取失败，不是失去角色。"
   },
   "dashboard": {
     "title": "控制台",
@@ -728,7 +731,8 @@
     "verdict_frozen": "Verdict frozen by owner",
     "verdict_pending": "Verdict submitted — awaiting finalization",
     "withdraw_btn": "Withdraw",
-    "withdrawing": "Withdrawing…"
+    "withdrawing": "Withdrawing…",
+    "role_unreadable": "无法确认你的仲裁人角色——网络没有响应。你并未失去权限，只是这次校验没通过。"
   },
   "onboarding": {
     "title": "Hexseal 的工作原理",
