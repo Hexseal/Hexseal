@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
-import { randomUUID, createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { randomUUID, createCipheriv, createDecipheriv, randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import webpush from 'web-push';
 import fs, { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
@@ -114,6 +114,65 @@ const AGREEMENT_MINI_ABI = [
 const REGISTRY_MINI_ABI = [
   'function getDisputed() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
 ];
+
+// ─── Who is the arbiter of a dispute (and why NOT Agreement.arbiter) ──────────
+//
+// Agreement.arbiter is never a human. claimDispute() sets it to the DIAMOND
+// itself (Diamond-as-arbiter, so the diamond controls verdict execution,
+// freezing and overturns) — see ArbiterRegistryFacet.sol, the comment block
+// above creditDisputeFee. So comparing a recovered signer against
+// getDetails().arbiter_ is "diamond vs human" and is false for everybody,
+// always: it locked every arbiter out of the dispute log on the live server.
+//
+// The real arbiter lives on the diamond, in two mappings that cover different
+// stages of one dispute:
+//
+//   disputeClaims[agreement]        — written by claimDispute(), the ONLY field
+//     populated between claiming a dispute and submitting a verdict. That is
+//     exactly the window in which an arbiter needs to read the log: he reads to
+//     decide. Deleted by releaseDisputeClaim() (he gave the case back) and by
+//     clearDisputeClaim() (the agreement left the dispute).
+//
+//   pendingVerdicts[agreement].arbiter — written by submitVerdict(), which also
+//     requires the caller to BE disputeClaims[agreement], so the two can never
+//     name different people. It outlives the claim: finalizeVerdict() holds
+//     v.executing = true across the call into the agreement, and that flag is
+//     precisely what stops clearDisputeClaim() from deleting the verdict while
+//     the claim itself is cleared.
+//
+// Hence the union below, in that order. Before a verdict only the first exists;
+// after a finalized verdict only the second does; in between both agree. On the
+// timeout path (nobody claimed, or the claimer never delivered) BOTH are wiped,
+// and access ends — which is right: nobody adjudicated that dispute.
+const ARBITER_REGISTRY_MINI_ABI = [
+  'function getDisputeClaimer(address agreement) view returns (address)',
+  'function getPendingVerdict(address agreement) view returns (tuple(address arbiter, bool clientWins, uint256 submittedAt, bool frozen, bool finalized, bool overturned, bool executing, bool appealed, bool appealResolved, address appellant, uint256 appealDeadline, uint256 votesUphold, uint256 votesOverturn))',
+];
+
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+
+/**
+ * The address currently entitled to read this deal's dispute log, or null.
+ * Reads the DIAMOND, never the agreement — see the block above.
+ */
+async function disputeArbiterOf(agreement) {
+  const registry = new ethers.Contract(DIAMOND_ADDR, ARBITER_REGISTRY_MINI_ABI, provider);
+
+  const claimer = (await registry.getDisputeClaimer(agreement))?.toLowerCase();
+  if (claimer && claimer !== ZERO_ADDR) return claimer;
+
+  // No live claim: either the dispute was never claimed, or it already ran to a
+  // finalized verdict (which clears the claim but keeps the verdict record).
+  const verdict = await registry.getPendingVerdict(agreement);
+  if (!verdict) return null;
+  // submittedAt == 0 is the facet's own "no verdict here" sentinel (finalizeVerdict
+  // reverts NoVerdict on it); a zeroed struct decodes to arbiter == address(0) too,
+  // so check both rather than trusting one of them.
+  if (BigInt(verdict.submittedAt ?? 0) === 0n) return null;
+  const arbiter = verdict.arbiter?.toLowerCase();
+  if (!arbiter || arbiter === ZERO_ADDR) return null;
+  return arbiter;
+}
 
 // Board / service / dispute-claim events. These are emitted by the Diamond (not an
 // Agreement), so they can't be resolved from the relayed tx target the way
@@ -453,6 +512,14 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
       const sends = [];
       if (cfg.notify !== 'executor' && client)   sends.push(sendPush(client,   payload));
       if (cfg.notify !== 'client'   && executor) sends.push(sendPush(executor, payload));
+      // 'both+arbiter' reaches nobody extra, and cannot be made to by fixing this
+      // line. `arbiter` here is Agreement.arbiter, which is never a human: it is
+      // address(0) until someone claims the dispute (which is exactly when
+      // DISPUTED fires) and the DIAMOND afterwards (Diamond-as-arbiter, see
+      // ARBITER_REGISTRY_MINI_ABI). Notifying the arbiter of a *fresh* dispute
+      // would mean notifying every registered arbiter — a product decision, not
+      // a lookup. The arbiter who does take the case learns it from his own
+      // claimDispute; the parties are told by the DisputeClaimed branch below.
       if (cfg.notify === 'both+arbiter' && arbiter && arbiter !== ZERO) sends.push(sendPush(arbiter, payload));
       return Promise.allSettled(sends);
     };
@@ -1058,46 +1125,155 @@ app.get('/bot-address', (_req, res) => {
   res.json({ address: botWallet.address.toLowerCase() });
 });
 
-// Dispute log — only accessible to the deal's on-chain arbiter.
-// Arbiter signs "hexseal:dispute-log:{dealId}:{unixSeconds}" with their wallet.
+// ─── Dispute-log session pass ────────────────────────────────────────────────
+//
+// The wallet signature proves WHO is asking. It used to be demanded on every
+// single GET, with a ±5 minute window, so an arbiter who opened the history,
+// closed it and opened it again paid a third wallet popup on top of the two the
+// commit-reveal claim already costs. The complaint that started this was exactly
+// that: "three signatures to take one dispute".
+//
+// The pass replaces the *identity proof* on repeat reads, and nothing else:
+//
+//   • it does NOT replace authorization. Every request — pass or signature —
+//     still asks the chain whether that address is the arbiter of this dispute
+//     right now (disputeArbiterOf). Release the claim, get overturned off the
+//     case, and the pass stops working on the very next read. So the pass is
+//     not a capability handed out for 12 hours; it is a cached "I am 0xabc…",
+//     and the real gate is re-evaluated on-chain every time.
+//   • it is bound to one deal AND one address, so it cannot be carried to
+//     another dispute, and another wallet gains nothing by holding it: the
+//     server authorizes the address inside the token, not the bearer.
+//   • it is a keyed MAC over (deal, address, expiry) using SERVER_SECRET, which
+//     the relayer already requires at boot. Nothing is stored server-side: no
+//     table to grow, no state to lose on restart, and a token cannot be forged
+//     without the secret that also protects the chat-log encryption keys.
+//
+// Twelve hours: an arbiter reads a thread, waits for the parties to answer in
+// the deal chat, comes back and re-reads — that is a working day, and a shorter
+// TTL just recreates the popup fatigue this removes. Longer would start to
+// outlive the browser session it is scoped to. DISPUTE_WINDOW is four days, so
+// a full case still costs a handful of signatures at most, not one per click.
+//
+// No revocation path, by design: expiry is the only exit, which is why the TTL
+// is a day and not a week.
+export const DISPUTE_PASS_TTL_SEC = 12 * 60 * 60;
+const DISPUTE_PASS_PREFIX  = 'v1';
+
+function disputePassMac(body) {
+  return createHmac('sha256', SERVER_SECRET)
+    .update(`hexseal:dispute-log-pass:${DISPUTE_PASS_PREFIX}:${body}`)
+    .digest('base64url');
+}
+
+export function issueDisputeLogPass(dealId, arbiter, nowSec = Math.floor(Date.now() / 1000)) {
+  const expiresAt = nowSec + DISPUTE_PASS_TTL_SEC;
+  const body = `${dealId.toLowerCase()}.${arbiter.toLowerCase()}.${expiresAt}`;
+  return {
+    token: `${DISPUTE_PASS_PREFIX}.${Buffer.from(body, 'utf8').toString('base64url')}.${disputePassMac(body)}`,
+    expiresAt,
+  };
+}
+
+/**
+ * → { address } on success, or { error, code } describing why not.
+ * `code` exists so the frontend can tell "sign again, your pass ran out" apart
+ * from "you are not the arbiter here" — an expired pass that answered a bare
+ * 403 would look identical to being thrown off the case.
+ */
+export function verifyDisputeLogPass(token, dealId, nowSec = Math.floor(Date.now() / 1000)) {
+  const bad = { error: 'Invalid dispute log pass', code: 'pass_invalid' };
+  if (typeof token !== 'string') return bad;
+
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== DISPUTE_PASS_PREFIX) return bad;
+
+  const [, encodedBody, mac] = parts;
+  let body;
+  try {
+    body = Buffer.from(encodedBody, 'base64url').toString('utf8');
+  } catch { return bad; }
+
+  // Constant-time compare, and only after a length check — timingSafeEqual
+  // throws on mismatched lengths instead of returning false.
+  const expected = Buffer.from(disputePassMac(body), 'utf8');
+  const given    = Buffer.from(mac, 'utf8');
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return bad;
+
+  const [tokenDeal, tokenAddr, expRaw] = body.split('.');
+  if (!tokenDeal || !tokenAddr || !expRaw) return bad;
+  if (!ETH_ADDR_RE.test(tokenDeal) || !ETH_ADDR_RE.test(tokenAddr)) return bad;
+  // A pass minted for one deal must not open another one's log, even though the
+  // MAC is genuine.
+  if (tokenDeal !== dealId.toLowerCase()) return bad;
+
+  const expiresAt = Number(expRaw);
+  if (!Number.isFinite(expiresAt)) return bad;
+  if (nowSec >= expiresAt) {
+    return { error: 'Dispute log pass expired', code: 'pass_expired' };
+  }
+
+  return { address: tokenAddr };
+}
+
+// Dispute log — only accessible to the arbiter who holds this deal's dispute.
+// First read: arbiter signs "hexseal:dispute-log:{dealId}:{unixSeconds}" and gets
+// a `pass` back. Later reads: send that pass in `x-dispute-pass`, no signature.
 app.get('/dispute-log/:dealId', async (req, res) => {
   const { dealId } = req.params;
   if (!ETH_ADDR_RE.test(dealId.toLowerCase())) return res.status(400).json({ error: 'Invalid dealId' });
 
-  const ts  = req.headers['x-ts'];
-  const sig = req.headers['x-sig'];
+  const ts   = req.headers['x-ts'];
+  const sig  = req.headers['x-sig'];
+  const pass = req.headers['x-dispute-pass'];
 
-  if (!ts || !sig) return res.status(401).json({ error: 'Missing x-ts or x-sig header' });
+  let callerAddr;
+  let issuePass = false;
 
-  // Replay protection: timestamp must be within ±5 minutes
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (Math.abs(nowSec - Number(ts)) > 300) {
-    return res.status(401).json({ error: 'Timestamp out of window' });
+  if (pass) {
+    const verified = verifyDisputeLogPass(pass, dealId);
+    if (verified.error) return res.status(401).json({ error: verified.error, code: verified.code });
+    callerAddr = verified.address;
+  } else {
+    if (!ts || !sig) return res.status(401).json({ error: 'Missing x-ts or x-sig header' });
+
+    // Replay protection for the signature path is unchanged: ±5 minutes. The
+    // pass carries its own, much longer, expiry inside the MAC instead.
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (Math.abs(nowSec - Number(ts)) > 300) {
+      return res.status(401).json({ error: 'Timestamp out of window' });
+    }
+
+    try {
+      const message = `hexseal:dispute-log:${dealId.toLowerCase()}:${ts}`;
+      callerAddr = ethers.verifyMessage(message, sig).toLowerCase();
+    } catch {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+    issuePass = true;
   }
 
   try {
-    // Recover signer address from signature
-    const message = `hexseal:dispute-log:${dealId.toLowerCase()}:${ts}`;
-    const signerAddr = ethers.verifyMessage(message, sig).toLowerCase();
+    // Authorization, re-checked on chain for BOTH paths. Reads the diamond, not
+    // the agreement — Agreement.arbiter is the diamond itself (see
+    // ARBITER_REGISTRY_MINI_ABI above).
+    const onChainArbiter = await disputeArbiterOf(dealId);
 
-    // Check on-chain: is this address the arbiter of this deal?
-    const agr = new ethers.Contract(dealId, AGREEMENT_MINI_ABI, provider);
-    const details = await agr.getDetails();
-    const onChainArbiter = details.arbiter_?.toLowerCase();
-
-    if (!onChainArbiter || onChainArbiter === ethers.ZeroAddress.toLowerCase()) {
-      return res.status(403).json({ error: 'No arbiter assigned for this deal' });
+    if (!onChainArbiter) {
+      return res.status(403).json({ error: 'No arbiter assigned for this deal', code: 'no_arbiter' });
     }
-    if (onChainArbiter !== signerAddr) {
-      return res.status(403).json({ error: 'Not the arbiter of this deal' });
+    if (onChainArbiter !== callerAddr) {
+      return res.status(403).json({ error: 'Not the arbiter of this deal', code: 'not_arbiter' });
     }
 
     // Log storage is keyed by pair (client+executor), not by this individual deal —
     // a pair's thread can span casual chat plus multiple deals over time, and the
     // arbiter is meant to see that full context, not just this deal's slice.
+    const agr = new ethers.Contract(dealId, AGREEMENT_MINI_ABI, provider);
+    const details = await agr.getDetails();
     const pairId = pairIdFromAddresses(details.client_, details.executor_);
     const entries = readLog(pairId);
-    res.json({ entries });
+    res.json(issuePass ? { entries, pass: issueDisputeLogPass(dealId, callerAddr) } : { entries });
   } catch (err) {
     console.error('[dispute-log] error:', err.message);
     res.status(500).json({ error: 'Internal error' });
