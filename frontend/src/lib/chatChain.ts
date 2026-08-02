@@ -180,11 +180,18 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
 
   if (links.length === 0) {
     // Пустой массив без якоря — предъявлять нечего, но врать не в чем
-    // (брифовый тест). С якорем — предъявлять нечего, а должно было быть:
-    // вся переписка утаена, это пропуск, а не молчаливое "всё в порядке".
+    // (брифовый тест). С ЛЮБЫМ якорем (по номеру ИЛИ по отпечатку) —
+    // предъявлять нечего, а должно было быть: вся переписка утаена, это
+    // пропуск, а не молчаливое "всё в порядке". Хеш-якорь обязан входить
+    // в этот возврат наравне с номером — якорь, называющий конкретное
+    // последнее звено, не должен давать справку о здоровье при полном
+    // сокрытии переписки (согласованность с одним звеном против
+    // несходящегося хеш-якоря, которое честно даёт broken).
     // unverifiedContentAtSeq пуст в обоих случаях — предъявлять нечего,
     // значит и называть нечего.
-    if (anchor !== undefined) return { ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] };
+    if (anchor !== undefined || hashAnchor !== undefined) {
+      return { ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] };
+    }
     return { ok: true, unverifiedContentAtSeq: [] };
   }
 

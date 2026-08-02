@@ -578,3 +578,21 @@ describe('verifyChain — ревью, раунд 2, находка 2: unverified
     expect('unverifiedContentAtSeq' in result).toBe(false);
   });
 });
+
+describe('verifyChain — ревью, раунд 3, находка C1: пустой массив против якоря по отпечатку', () => {
+  // Ранний возврат для пустого массива смотрел только на expectedLastSeq —
+  // полное сокрытие переписки при якоре, называющем конкретное последнее
+  // звено, получало вердикт «цело, непроверенного нет». Хеш-якорь обязан
+  // входить в этот возврат наравне с номером.
+  const H = ('0x' + '11'.repeat(32)) as `0x${string}`;
+
+  it('пустой массив с якорем ТОЛЬКО по отпечатку — gap, а не справка о здоровье', () => {
+    expect(verifyChain([], { expectedLastHash: H })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
+  });
+
+  it('согласованность: 1 звено против несходящегося хеш-якоря — broken, 0 звеньев против того же якоря — тоже отказ, не ok', () => {
+    const full = chainOf(1);
+    expect(verifyChain(full, { expectedLastHash: H })).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
+    expect(verifyChain([], { expectedLastHash: H })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
+  });
+});
