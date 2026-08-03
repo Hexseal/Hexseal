@@ -4,6 +4,7 @@ import request from 'supertest';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import { Writable } from 'node:stream';
 
 // Требование 5 (ревью, не заперто прежде): recordBag/markFetched/listBagsFor/
 // bagMetaOf/bagPathFor бросают по контракту bagStore.js — каждый вызов в
@@ -214,6 +215,40 @@ async function chunkedPut({ recipient, pass, body }) {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+}
+
+/**
+ * Находка ревью (четвёртая ветка сироты): ws.on('error') в
+ * streamWithSizeLimit — отказ самой ЗАПИСИ посреди приёма (буквально
+ * "кончилось место на диске"), не оборванное соединение (то — req.on
+ * ('error'), уже заперто И-2) и не превышение размера. Подделывает
+ * fs.createWriteStream() для любого файла ВНУТРИ каталога адресата под
+ * наблюдением (точное имя файла — Date.now()+uuid, генерируется внутри
+ * маршрута, заранее неизвестно) — настоящая запись нескольких байт на диск
+ * (чтобы было что искать как сироту), затем 'error' вместо 'finish', как
+ * настоящий ENOSPC. Реальная реализация — для всех остальных путей.
+ */
+function spyFailingWriteStream(recipientDir, bytesBeforeFail = 4) {
+  const realCreateWriteStream = fs.createWriteStream;
+  return vi.spyOn(fs, 'createWriteStream').mockImplementation((p, ...rest) => {
+    if (typeof p !== 'string' || !p.startsWith(recipientDir)) return realCreateWriteStream(p, ...rest);
+    let written = 0;
+    const chunks = [];
+    const ws = new Writable({
+      write(chunk, _enc, cb) {
+        written += chunk.length;
+        chunks.push(chunk);
+        if (written >= bytesBeforeFail) {
+          fs.mkdirSync(recipientDir, { recursive: true });
+          fs.writeFileSync(p, Buffer.concat(chunks));
+          cb(new Error('ENOSPC: no space left on device (simulated)'));
+        } else {
+          cb();
+        }
+      },
+    });
+    return ws;
+  });
 }
 
 function getBagsList({ pass, since, ip }) {
@@ -1241,6 +1276,30 @@ describe('устойчивость к сбоям склада', () => {
       expect(res.body).toHaveProperty('error');
 
       const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+      const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
+      expect(leftovers).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('находка ревью: четвёртая ветка сироты — отказ самой записи посреди приёма (ws.on(\'error\'), не только req.on(\'error\'))', async () => {
+    // И-2 запирала обрыв СОЕДИНЕНИЯ (req.on('error')) и превышение размера
+    // (received > maxBytes) — но не отказ самой ЗАПИСИ (ws.on('error'),
+    // буквально "кончилось место на диске"). Раньше эта ветка не выставляла
+    // aborted и не удаляла файл вообще — обрезок оставался сиротой, тем же
+    // классом, ради которого делалась И-2, просто по другой причине.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+    const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+
+    const spy = spyFailingWriteStream(recipientDir, 4);
+    try {
+      const res = await putBag({ pass, recipient: bobAddr, body: Buffer.from('this-body-is-longer-than-four-bytes') });
+      expect(res.status).toBe(500);
+      expect(res.body).toHaveProperty('error');
+
       const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
       expect(leftovers).toHaveLength(0);
     } finally {

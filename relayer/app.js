@@ -1556,7 +1556,19 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
     if (onFinish) { onFinish(filePath); return; }
     if (!res.headersSent) res.status(200).end();
   });
-  ws.on('error', (err) => { if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); } });
+  // Находка ревью: четвёртая ветка сироты, не три — ws.on('error') это
+  // отказ самой ЗАПИСИ посреди приёма (буквально "кончилось место на
+  // диске", ENOSPC, а не оборванное соединение или превышение размера).
+  // Раньше эта ветка не выставляла aborted и не удаляла файл вообще —
+  // обрезок оставался на диске точно так же, как в двух других ветках,
+  // ради которых делалась И-2, только про эту забыли. Общий помощник —
+  // значит то же самое относилось и к обычным файловым маршрутам
+  // (/files/*), не только к мешкам.
+  ws.on('error', (err) => {
+    aborted = true;
+    unlinkQuietSync(filePath);
+    if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); }
+  });
   // И-2 (ревью): a dropped connection mid-upload (client closes the socket,
   // network drop) used to only stop the write — whatever had already landed
   // on disk stayed there, orphaned, with no metaindex entry (recordBag()
