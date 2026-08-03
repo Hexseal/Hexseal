@@ -151,6 +151,61 @@ async function abortedPut({ recipient, pass, declaredLength, actualBytes }) {
   }
 }
 
+/**
+ * Находка ревью ("размер берётся из заявленного, а не из записанного"):
+ * подмена fs.statSync(filePath).size на Number(req.headers['content-length'])
+ * не красила ни один тест, потому что во ВСЕХ остальных тестах заявленная
+ * длина совпадает с настоящей (supertest сам считает Content-Length от
+ * Buffer-тела). Единственный способ по-настоящему различить "сервер мерит
+ * реальные байты на диске" от "сервер верит заявленной длине" — запрос,
+ * где заявленной длины нет ВООБЩЕ: chunked-кодирование без Content-Length.
+ * Настоящему TCP-парсеру Node всё равно нельзя солгать меньшим
+ * Content-Length и протащить больше байт (проверено отдельно — лишнее
+ * просто не попадёт в текущий запрос), так что chunked — единственный
+ * реалистичный способ добраться до этого различия, не полагаясь на
+ * заявленное число вообще.
+ */
+async function chunkedPut({ recipient, pass, body }) {
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  const port = server.address().port;
+  try {
+    return await new Promise((resolve, reject) => {
+      const socket = net.createConnection({ port, host: '127.0.0.1' }, () => {
+        const headers = [
+          `PUT /bags/${recipient} HTTP/1.1`,
+          `Host: 127.0.0.1:${port}`,
+          `Content-Type: application/octet-stream`,
+          `x-bag-pass: ${pass}`,
+          `cf-connecting-ip: ${freshIp()}`,
+          `Transfer-Encoding: chunked`,
+          `Connection: close`,
+          '', '',
+        ].join('\r\n');
+        socket.write(headers);
+        socket.write(`${body.length.toString(16)}\r\n`);
+        socket.write(body);
+        socket.write('\r\n0\r\n\r\n');
+      });
+      let raw = Buffer.alloc(0);
+      socket.on('data', (chunk) => { raw = Buffer.concat([raw, chunk]); });
+      socket.on('end', () => {
+        const text = raw.toString('utf8');
+        const splitAt = text.indexOf('\r\n\r\n');
+        const headerText = splitAt === -1 ? text : text.slice(0, splitAt);
+        const bodyText = splitAt === -1 ? '' : text.slice(splitAt + 4);
+        const statusMatch = headerText.match(/^HTTP\/1\.\d (\d+)/);
+        let json = null;
+        try { json = JSON.parse(bodyText); } catch { /* leave null */ }
+        resolve({ status: statusMatch ? Number(statusMatch[1]) : null, body: json });
+      });
+      socket.on('error', reject);
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 function getBagsList({ pass, since, ip }) {
   const req = request(app).get('/bags').set('CF-Connecting-IP', ip ?? freshIp());
   if (pass !== undefined) req.set('x-bag-pass', pass);
@@ -508,6 +563,20 @@ describe('PUT /bags/:recipient', () => {
     const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
     const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
     expect(leftovers).toHaveLength(0);
+  });
+
+  it('находка ревью (не заперто прежде): размер меряется по факту записанного на диск, не по заявленной длине', async () => {
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    const body = Buffer.from('chunked-transfer-no-content-length-header-at-all');
+    const res = await chunkedPut({ recipient: bobAddr, pass, body });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('key');
+
+    const meta = bagMetaOf(res.body.key);
+    expect(meta.size).toBe(body.length);
   });
 
   it('требование 9 (ревью, не заперто прежде): uploadedAt — только серверный Date.now(), ни один канал запроса не пробивает', async () => {
