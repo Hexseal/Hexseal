@@ -43,8 +43,15 @@ function bagPassMac(body) {
 }
 
 export function issueBagPass(address, nowSec = Math.floor(Date.now() / 1000)) {
+  // The body separator ('.') is unescaped, so an address that itself
+  // contains a dot smuggles an extra field into the body — and the
+  // expiresAt this function returns would then lie about what's actually
+  // baked into the token. Reject before that can happen, not just on verify.
+  const addr = String(address).toLowerCase();
+  if (!ETH_ADDR_RE.test(addr)) throw new Error('issueBagPass: invalid address');
+
   const expiresAt = nowSec + BAG_PASS_TTL_SEC;
-  const body = `${String(address).toLowerCase()}.${expiresAt}`;
+  const body = `${addr}.${expiresAt}`;
   return {
     token: `${BAG_PASS_PREFIX}.${Buffer.from(body, 'utf8').toString('base64url')}.${bagPassMac(body)}`,
     expiresAt,
