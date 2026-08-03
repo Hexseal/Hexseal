@@ -2298,12 +2298,6 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   // "read" countdown for a bag nobody actually received a single byte of.
   // A HEAD caller gets exactly the headers a GET would, no body, no side
   // effect on the bag's lifetime.
-  // Мелочь (ревью): Express auto-answers HEAD for any registered GET route
-  // by running this SAME handler and stripping the body at the wire level —
-  // without this branch, a HEAD probe/prefetch would start the 7-day
-  // "read" countdown for a bag nobody actually received a single byte of.
-  // A HEAD caller gets exactly the headers a GET would, no body, no side
-  // effect on the bag's lifetime.
   if (req.method === 'HEAD') {
     return res.end();
   }
@@ -2314,14 +2308,28 @@ app.get('/bags/:recipient/:filename', (req, res) => {
     if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag' });
   });
   // Мелочь (ревью): marking happens on res 'finish' — fired only once the
-  // response has actually been flushed to the client in full — not before
-  // streaming starts. Marking up front (the previous shape) meant a dropped
-  // connection mid-download (client closes the tab, network drop) still
-  // started the 7-day "read" clock for a bag the recipient never actually
-  // received. 'finish' does NOT fire for a connection that broke mid-write
-  // (the socket emits 'close'/'error' instead), so an aborted download
-  // correctly leaves firstFetchedAt untouched and the bag keeps living under
-  // rule 3 (unread) rather than rule 2 (read).
+  // response has finished being handed to the socket — not before streaming
+  // starts. Marking up front (the previous shape) meant a dropped connection
+  // mid-download (client closes the tab, network drop) still started the
+  // 7-day "read" clock for a bag the recipient never actually received.
+  // 'finish' at least removes the worst case (nothing streamed at all, or
+  // the response object itself errors) from counting as read.
+  //
+  // Found by review, corrected here after the code first shipped saying the
+  // opposite: 'finish' is NOT a reliable proxy for "the client actually
+  // received the bytes" at bag scale. Measured directly (see
+  // relayer/scripts/ history and task-3-report.md): for a payload at
+  // MAX_BAG_SIZE (256 KB), the kernel accepts the entire response into its
+  // own socket send buffer in one write() call before a client that never
+  // reads a single byte and then destroys the connection even gets a chance
+  // to do so — 'finish' fires regardless, well before any abort could
+  // interrupt it. So a dropped connection can still, in practice, mark a
+  // bag as fetched. Consequence, stated plainly: an undelivered message can
+  // move from the 30-day "unread" TTL to the 7-day "read" one early. This is
+  // a real limitation of marking on a completion event for small payloads,
+  // not a bug to fix here — the server has no other signal available to
+  // tell "handed to the kernel" apart from "received by the recipient" at
+  // this size, short of application-level acks this protocol doesn't have.
   //
   // Trade-off, stated plainly: markFetched() can still throw (bagStore.js's
   // contract), but by the time 'finish' fires the 200 + bytes have already
