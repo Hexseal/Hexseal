@@ -46,6 +46,16 @@ vi.mock('../bagStore.js', async (importOriginal) => {
 process.env.BAG_PASS_RATE_MAX  = '5';
 process.env.BAG_READ_RATE_MAX  = '5';
 process.env.BAG_WRITE_RATE_MAX = '5';
+// Свойство 1 (ревью, критическая): раньше все четыре маршрута шли через
+// глобальный checkRateLimit(ip) — RATE_MAX=10, без второго аргумента — так
+// что тесты IP-лимитера ниже (границы "10 успехов, 11-й — 429") проверяли
+// именно его, случайно совпав числом. После критической правки маршруты
+// используют собственный BAG_IP_RATE_MAX (боевое умолчание — 300, см.
+// комментарий в app.js и test/bagRoutesLiveDefaults.test.js — тот файл
+// нарочно НЕ трогает эту переменную, чтобы измерить настоящее боевое
+// поведение). Здесь переопределяем её тем же числом (10), что тесты уже
+// предполагали, — граница тестов не изменилась, изменился только источник.
+process.env.BAG_IP_RATE_MAX    = '10';
 
 const { app } = await import('../app.js');
 const { bagPassChallenge } = await import('../bagPass.js');
@@ -769,6 +779,32 @@ describe('GET /bags', () => {
     const readRes = await getBagsList({ pass, ip: freshIp() });
     expect(readRes.status).toBe(200);
   });
+
+  it('находка ревью: заголовок вида "bag-read:<адрес жертвы>" не коллизирует с её реальным адресным бюджетом', async () => {
+    // При TRUST_PROXY=true (боевая настройка) clientIp() отдаёт
+    // CF-Connecting-IP дословно, без проверки, что это вообще похоже на
+    // IP. До префикса ip: у bagIpRateKey() строка "bag-read:0x<жертва>",
+    // присланная в этом заголовке, стала бы ключом IP-бюджета БУКВАЛЬНО
+    // равным ключу настоящего адресного бюджета чтения жертвы в том же
+    // _rateMap — атакующий тратил бы бюджет жертвы, ни разу не владея её
+    // пропуском. Недостижимо из интернета за настоящим туннелем
+    // Cloudflare сегодня, но один неверный TRUST_PROXY — и это С1 снова.
+    const { wallet: victim } = await newWalletAndAddress();
+    const victimAddr = (await victim.getAddress()).toLowerCase();
+    const victimPass = await issuePassFor(victim, freshIp());
+
+    const forgedIp = `bag-read:${victimAddr}`;
+    // Пропуск не нужен вообще — проверка IP идёт ДО проверки пропуска на
+    // каждом из четырёх маршрутов, так что и негодный пропуск сгодится:
+    // если коллизия существует, она сработает ещё до того, как пропуск
+    // вообще будет прочитан.
+    for (let i = 0; i < 20; i++) {
+      await request(app).get('/bags').set('CF-Connecting-IP', forgedIp).set('x-bag-pass', 'v1.garbage.garbage');
+    }
+
+    const res = await getBagsList({ pass: victimPass, ip: freshIp() });
+    expect(res.status).toBe(200);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1048,6 +1084,44 @@ describe('устойчивость к сбоям склада', () => {
       expect(bagMetaOf(key).firstFetchedAt).toBeNull();
     } finally {
       bagStoreThrows.markFetched = false;
+    }
+  });
+
+  it('свойство 2 (ревью): бросок markFetched() внутри res.on(\'finish\') не улетает как uncaughtException', async () => {
+    // Находка ревью: тест выше проверяет ответ и bagMetaOf — оба этих
+    // пространства ОДИНАКОВЫ независимо от того, поймано ли исключение
+    // внутри колбэка res.on('finish') или нет (throw происходит уже ПОСЛЕ
+    // того, как supertest получил свой ответ). Значит тест выше в принципе
+    // не может отличить "поймано и залогировано" от "утекло наружу" — а
+    // именно второе в бою означает падение всего процесса: обработчика
+    // process.on('uncaughtException') нет нигде в релеере (index.js/app.js/
+    // notifier.js — проверено отдельно, docs/scripts/verify-disk-failure-*).
+    // Этот тест слушает событие НАПРЯМУЮ и проверяет факт: исключение не
+    // должно долетать до уровня процесса вообще, поймано оно должно быть
+    // ВНУТРИ маршрута.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice, freshIp());
+    const bobPass = await issuePassFor(bob, freshIp());
+    const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('real-bytes-2') });
+    const key = put.body.key;
+
+    const uncaught = [];
+    const onUncaughtException = (err) => uncaught.push(err);
+    process.on('uncaughtException', onUncaughtException);
+
+    bagStoreThrows.markFetched = true;
+    try {
+      const res = await getBag({ pass: bobPass, key, ip: freshIp() });
+      expect(res.status).toBe(200);
+      // res.on('finish') на клиентской и серверной стороне — разные
+      // колбэки; ждём явно, чтобы серверный успел (не) бросить прежде,
+      // чем мы проверим uncaught.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(uncaught).toHaveLength(0);
+    } finally {
+      bagStoreThrows.markFetched = false;
+      process.removeListener('uncaughtException', onUncaughtException);
     }
   });
 

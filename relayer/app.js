@@ -1888,6 +1888,40 @@ const BAG_PASS_RATE_MAX  = readPositiveInt('BAG_PASS_RATE_MAX',  30);
 const BAG_READ_RATE_MAX  = readPositiveInt('BAG_READ_RATE_MAX', 120);
 const BAG_WRITE_RATE_MAX = readPositiveInt('BAG_WRITE_RATE_MAX', 60);
 
+// Находка ревью (критическая, второй раунд): все четыре маршрута мешков
+// начинались с checkRateLimit(ip) БЕЗ второго аргумента — то есть с
+// глобальным RATE_MAX=10, тем же самым, что рассчитан на мета-транзакции
+// /relay. Это делало три бюджета выше ЛИТЕРАЛЬНО бесполезными: какими бы
+// щедрыми ни были BAG_PASS_RATE_MAX/BAG_READ_RATE_MAX/BAG_WRITE_RATE_MAX,
+// IP-лимитер срабатывал первым и жёстче любого из них. Измерено на боевых
+// умолчаниях, без единого тестового переопределения (см.
+// test/bagRoutesLiveDefaults.test.js): минута живого разговора одного
+// человека — выпуск пропуска, опрос списка раз в 1-2с, десяток отправок,
+// десяток скачиваний, 52 запроса всего — давала 42 ответа 429 из
+// 52 ДО этой правки. Собственный IP-бюджет мешков, отдельный от RATE_MAX,
+// с потолком, вмещающим сумму трёх адресных бюджетов (30+120+60=210) с
+// запасом на реальную нагрузку — после правки 0 из тех же 52.
+//
+// Оставлен ОДНИМ общим счётчиком на все четыре маршрута (не разбит по
+// назначению, как адресные) — IP-лимитер это грубая сетевая защита "не
+// заваливай нас отсюда", не "не мешай себе самому по видам деятельности";
+// последнее уже решено адресными бюджетами выше.
+const BAG_IP_RATE_MAX = readPositiveInt('BAG_IP_RATE_MAX', 300);
+
+// Находка ревью (Important): bag-read:<адрес> и сырая строка из clientIp()
+// жили в одном и том же _rateMap. При TRUST_PROXY=true clientIp() отдаёт
+// заголовок CF-Connecting-IP дословно, без проверки, что это вообще похоже
+// на IP (ни IPv4, ни IPv6 формат не проверяется нигде) — заголовок
+// `CF-Connecting-IP: bag-read:0x<жертва>` превращал бы IP-ключ буквально в
+// ключ чужого адресного бюджета чтения, списывая с него как со своего.
+// Сегодня недостижимо из интернета за реальным туннелем Cloudflare (он сам
+// выставляет этот заголовок и вычищает клиентский), но это ровно тот же
+// класс ошибки конфигурации, что и С1 — одна неверная настройка прокси, и
+// снова кто угодно с сети жжёт бюджет чужого адреса. Префикс `ip:` не
+// может встретиться ни в одном из bagPassRateKey/bagReadRateKey/
+// bagWriteRateKey (они начинаются на `bag-`) — коллизия исключена по
+// форме ключа, а не по вере в то, что заголовок всегда честный.
+function bagIpRateKey(ip)         { return `ip:${ip}`;             }
 function bagPassRateKey(address)  { return `bag-pass:${address}`;  }
 function bagReadRateKey(address)  { return `bag-read:${address}`;  }
 function bagWriteRateKey(address) { return `bag-write:${address}`; }
@@ -1941,7 +1975,11 @@ function requireBagPass(req, res) {
 // hits the limiter before paying for a single recovery.
 app.post('/bags/pass', (req, res) => {
   const ip = clientIp(req);
-  if (!checkRateLimit(ip)) return bagRateLimited(res);
+  // Not the app-wide checkRateLimit(ip) (RATE_MAX=10, sized for /relay's
+  // meta-transactions) — see the long comment at BAG_IP_RATE_MAX above for
+  // why the bag routes need their own IP budget, and the measured numbers
+  // that proved the old shared one made every per-purpose budget below moot.
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
 
   const { address } = req.body || {};
   if (typeof address !== 'string' || !ETH_ADDR_RE.test(address)) {
@@ -2025,7 +2063,7 @@ app.post('/bags/pass', (req, res) => {
 // pass; the body is never parsed (bytes only, no matter what they look like).
 app.put('/bags/:recipient', (req, res) => {
   const ip = clientIp(req);
-  if (!checkRateLimit(ip)) return bagRateLimited(res);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
 
   const sender = requireBagPass(req, res);
   if (!sender) return;
@@ -2115,7 +2153,7 @@ app.put('/bags/:recipient', (req, res) => {
 // names ship back — not pairId, not firstFetchedAt, not dealDeadline.
 app.get('/bags', (req, res) => {
   const ip = clientIp(req);
-  if (!checkRateLimit(ip)) return bagRateLimited(res);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
 
   const address = requireBagPass(req, res);
   if (!address) return;
@@ -2160,7 +2198,7 @@ app.get('/bags', (req, res) => {
 // `:key` param would stop at the first `/`.
 app.get('/bags/:recipient/:filename', (req, res) => {
   const ip = clientIp(req);
-  if (!checkRateLimit(ip)) return bagRateLimited(res);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
 
   const address = requireBagPass(req, res);
   if (!address) return;
