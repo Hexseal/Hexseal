@@ -33,6 +33,24 @@ beforeEach(() => {
 const ALICE = '0xA1ce00000000000000000000000000000000CAfe';
 const BOB   = '0xB0b1000000000000000000000000000000005EED';
 
+// Captured once via issueBagPass(ALICE, 1_700_000_000) with
+// SERVER_SECRET='test-server-secret' (the value test/setup.js sets
+// unconditionally) and frozen as a literal. Shared by every "golden
+// malformed token" test below as a precondition: if THIS stops verifying,
+// every golden token in this file was minted under a secret or MAC domain
+// that no longer matches the one bagPass.js uses today — and every
+// "malformed token rejected" assertion below would then pass for the wrong
+// reason (a MAC mismatch, not the specific guard it claims to exercise),
+// silently, because the expected verdict ('pass_invalid') is the same
+// either way. Assert this first so a broken precondition fails loudly
+// instead of hiding behind an assertion that still happens to be true.
+const VALID_GOLDEN_TOKEN =
+  'v1.MHhhMWNlMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjYWZlLjE3MDAwNDMyMDA.9AzPuOnO3ch-s7H4H_r2Xrs87KgTAOX1qPvOMdcDRig';
+
+function expectGoldenTokensStillValid() {
+  expect(verifyBagPass(VALID_GOLDEN_TOKEN, 1_700_000_010)).toEqual({ address: ALICE.toLowerCase() });
+}
+
 describe('bagPass', () => {
   it('секрет читается лениво: импорт без SERVER_SECRET не бросает, assertBagPassReady — бросает', async () => {
     const saved = process.env.SERVER_SECRET;
@@ -152,6 +170,14 @@ describe('bagPass', () => {
   });
 
   it('verifyBagPass отсекает негодный по форме адрес в теле даже с честным MAC-ом (защита в глубину)', () => {
+    // Предусловие: без него смена SERVER_SECRET/домена MAC-а ломает MAC
+    // этого золотого токена, verify отвечает 'pass_invalid' по СОВЕРШЕННО
+    // ДРУГОЙ причине (MAC не совпал, до ETH_ADDR_RE дело не доходит), а
+    // assertion ниже всё равно проходит — тест тихо перестаёт что-либо
+    // проверять, не покраснев. Проверено мутацией домена MAC-а: без этой
+    // строки падал только тест на домен, этот оставался зелёным.
+    expectGoldenTokensStillValid();
+
     // Золотой токен, захваченный ДО того, как issueBagPass стал проверять
     // форму адреса на выпуске (issueBagPass('не-адрес', 1_700_000_000) с
     // SERVER_SECRET='test-server-secret' — тем же, что ставит test/setup.js).
@@ -180,6 +206,10 @@ describe('bagPass', () => {
   });
 
   it('срок в теле, который не парсится в число, отклоняется — не живёт вечно', () => {
+    // Предусловие — см. комментарий у expectGoldenTokensStillValid(): без
+    // него та же тихая дыра, что и у защиты формы адреса (I2).
+    expectGoldenTokensStillValid();
+
     // Золотые токены, захваченные ДО того, как issueBagPass стал проверять
     // форму nowSec (issueBagPass(ALICE, NaN) / issueBagPass(ALICE, 'abc') с
     // SERVER_SECRET='test-server-secret'). После фикса I1 так больше не
@@ -194,15 +224,12 @@ describe('bagPass', () => {
   });
 
   it('золотой токен: смена домена MAC-а в реализации сломает эту заморозку', () => {
-    // Захвачен один раз через issueBagPass(ALICE, 1_700_000_000) с
-    // SERVER_SECRET='test-server-secret' (тем же, что ставит test/setup.js)
-    // и вбит литералом. Сегодня разделение с пропуском журнала спора
-    // (app.js) держится только на разной арности тела (два поля здесь,
-    // три там) — не на замке. Если домен MAC-а когда-нибудь поменяется, эта
-    // заморозка первой скажет об этом, ничего заново не пересчитывая.
-    const GOLDEN_TOKEN =
-      'v1.MHhhMWNlMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjYWZlLjE3MDAwNDMyMDA.9AzPuOnO3ch-s7H4H_r2Xrs87KgTAOX1qPvOMdcDRig';
-    expect(verifyBagPass(GOLDEN_TOKEN, 1_700_000_010)).toEqual({ address: ALICE.toLowerCase() });
+    // Если домен MAC-а когда-нибудь поменяется, эта заморозка первой
+    // скажет об этом, ничего заново не пересчитывая — issueBagPass и
+    // verifyBagPass всегда пересчитывают MAC заново под текущим доменом и
+    // остаются согласованными друг с другом при любом его значении; только
+    // внешняя заморозка, ничего не пересчитывающая, ловит расхождение.
+    expectGoldenTokensStillValid();
   });
 
   it('TTL пришпилен к 12 часам буквально, не через символ', () => {
