@@ -296,6 +296,7 @@ describe('POST /bags/pass', () => {
       .set('x-sig', '0xdeadbeef')
       .send({ address: 'not-an-address' });
     expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/address/i);
   });
 
   it('отсутствие x-ts или x-sig — 401 с кодом missing_credentials', async () => {
@@ -409,6 +410,29 @@ describe('POST /bags/pass', () => {
     }
   });
 
+  it('находка ревью: проверенный адрес ДЕЙСТВИТЕЛЬНО тратит собственный бюджет выпуска пропуска', async () => {
+    // Дополняет тест выше: тот доказывает, что НЕПРОВЕРЕННЫЕ попытки не
+    // трогают бюджет, но не проверяет обратное — что бюджет вообще
+    // расходуется при настоящих, успешных выпусках. Без этого теста мутация
+    // "вообще не звать checkRateLimit(bagPassRateKey(...))" не поймана бы
+    // ничем: 429 просто никогда не наступил бы, и ни один существующий тест
+    // этого не заметил бы — предыдущая версия этого теста в файле
+    // (переименованном "лимитер по адресу срабатывает ДО подписи") была
+    // удалена по С1 и заменена только тестом на НЕ-срабатывание.
+    // BAG_PASS_RATE_MAX (тестовое умолчание — 5): пять настоящих, успешных
+    // выпусков подряд, шестой обязан упереться.
+    const { wallet } = await newWalletAndAddress();
+    const address = (await wallet.getAddress()).toLowerCase();
+
+    for (let i = 0; i < 5; i++) {
+      const res = await postBagsPass({ wallet, address, ip: freshIp() });
+      expect(res.status).toBe(200);
+    }
+    const blocked = await postBagsPass({ wallet, address, ip: freshIp() });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('rate_limited_pass');
+  });
+
   it('лимитер по IP срабатывает на POST /bags/pass даже с разными заявленными адресами', async () => {
     const sameIp = freshIp();
     const ts = Math.floor(Date.now() / 1000);
@@ -431,6 +455,9 @@ describe('POST /bags/pass', () => {
       .set('x-sig', '0xnotasignature')
       .send({ address: eleventh });
     expect(last.status).toBe(429);
+    // Свойство 3 (ревью): не просто 429 — конкретно IP-бюджет, а не
+    // случайно совпавший с ним по числу адресный/pass-бюджет.
+    expect(last.body.code).toBe('rate_limited_ip');
   });
 });
 
@@ -493,6 +520,7 @@ describe('PUT /bags/:recipient', () => {
     const oversized = Buffer.alloc(300_000, 7);
     const res = await putBag({ pass, recipient: bobAddr, body: oversized });
     expect(res.status).toBe(413);
+    expect(res.body.error).toMatch(/too large/i);
 
     const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
     const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
@@ -511,6 +539,7 @@ describe('PUT /bags/:recipient', () => {
     const pass = await issuePassFor(alice, freshIp());
     const res = await putBag({ pass, recipient: 'not-an-address', body: Buffer.from('x') });
     expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/recipient/i);
   });
 
   it('И-1 (ревью): Content-Type: application/json отвергается явно, а не съедается express.json() молча', async () => {
@@ -532,6 +561,14 @@ describe('PUT /bags/:recipient', () => {
       body: JSON.stringify({ not: 'a real bag, but valid json' }),
     });
     expect(res.status).toBe(400);
+    // Свойство 3 (ревью): находка координатора буквально про ЭТОТ тест —
+    // после появления отдельной проверки на пустое тело (тоже 400) снятие
+    // ИМЕННО проверки Content-Type больше не даёт 200: тело съедено
+    // express.json() до нуля байт, и ВТОРАЯ, более поздняя проверка
+    // (пустое тело) перехватывает тот же случай своим собственным 400.
+    // Статус совпадает, причина — нет; текст ошибки обязан называть
+    // Content-Type, а не молчаливо совпасть с сообщением про пустое тело.
+    expect(res.body.error).toMatch(/content-type/i);
     expect(res.body).not.toHaveProperty('key');
 
     const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
@@ -569,6 +606,9 @@ describe('PUT /bags/:recipient', () => {
 
     const res = await putBag({ pass, recipient: bobAddr, body: Buffer.alloc(0) });
     expect(res.status).toBe(400);
+    // Свойство 3 (ревью): отличает эту ветку от соседней (Content-Type:
+    // application/json — тоже 400, тоже про пустое содержимое на диске).
+    expect(res.body.error).toMatch(/empty/i);
 
     const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
     const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
@@ -631,6 +671,10 @@ describe('PUT /bags/:recipient', () => {
     }
     const blocked = await putBag({ pass, recipient: bobAddr, ip: freshIp(), body: Buffer.from('w5') });
     expect(blocked.status).toBe(429);
+    // Свойство 3 (ревью): конкретно бюджет записи, не совпавший числом
+    // IP-бюджет (тестовое умолчание того и другого — не одно и то же
+    // умолчание, но подстраховка не помешает).
+    expect(blocked.body.code).toBe('rate_limited_write');
   });
 
   it('лимитер по IP срабатывает на PUT даже с разными адресами и годным пропуском', async () => {
@@ -648,6 +692,7 @@ describe('PUT /bags/:recipient', () => {
     const pass11 = await issuePassFor(eleventh, freshIp());
     last = await putBag({ pass: pass11, recipient: recipient11Addr, ip: sameIp, body: Buffer.from('x') });
     expect(last.status).toBe(429);
+    expect(last.body.code).toBe('rate_limited_ip');
   });
 });
 
@@ -708,6 +753,7 @@ describe('GET /bags', () => {
     const pass = await issuePassFor(alice, freshIp());
     const res = await getBagsList({ pass, since: 'abc', ip: freshIp() });
     expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/since/i);
   });
 
   it('И-3 (ревью): ?since нестрогое — мешок из ТОЙ ЖЕ миллисекунды, что запомненный максимум, не теряется навсегда', async () => {
@@ -761,6 +807,7 @@ describe('GET /bags', () => {
     const pass11 = await issuePassFor(eleventh, freshIp());
     last = await getBagsList({ pass: pass11, ip: sameIp });
     expect(last.status).toBe(429);
+    expect(last.body.code).toBe('rate_limited_ip');
   });
 
   it('И-4: чтение и запись — разные бюджеты, отправка не голодает своё же чтение', async () => {
@@ -940,6 +987,7 @@ describe('GET /bags/:key', () => {
       .set('CF-Connecting-IP', freshIp())
       .set('x-bag-pass', bobPass);
     expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Bag not found', code: 'bag_not_found' });
     const bodyText = Buffer.isBuffer(res.body) ? res.body.toString('utf8') : JSON.stringify(res.body);
     expect(bodyText).not.toMatch(/"name"\s*:\s*"hexseal-relayer"/); // содержимое package.json, если бы утекло
   });
@@ -974,6 +1022,7 @@ describe('GET /bags/:key', () => {
     }
     const blocked = await getBag({ pass: bobPass, key: keys[5], ip: freshIp() });
     expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('rate_limited_read');
   });
 
   it('лимитер по IP срабатывает на GET /bags/:key даже с разными адресами и годным пропуском', async () => {
@@ -995,6 +1044,7 @@ describe('GET /bags/:key', () => {
     const put11 = await putBag({ pass: senderPass11, recipient: recipient11Addr, body: Buffer.from('x') });
     last = await getBag({ pass: recipientPass11, key: put11.body.key, ip: sameIp });
     expect(last.status).toBe(429);
+    expect(last.body.code).toBe('rate_limited_ip');
   });
 
   it('протухший (но структурно годный) пропуск — 401 с кодом pass_expired, отдельным от pass_invalid', async () => {

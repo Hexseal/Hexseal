@@ -1926,8 +1926,17 @@ function bagPassRateKey(address)  { return `bag-pass:${address}`;  }
 function bagReadRateKey(address)  { return `bag-read:${address}`;  }
 function bagWriteRateKey(address) { return `bag-write:${address}`; }
 
-function bagRateLimited(res) {
-  return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
+// Свойство 3 (ревью, второй раунд): раньше все восемь мест лимитера отвечали
+// БУКВАЛЬНО одним и тем же телом — { error: 'Rate limit exceeded' }, без
+// кода. Тест на границу IP-бюджета и тест на границу адресного бюджета
+// одного и того же маршрута оба проверяли только res.status === 429 —
+// значит если бы IP-проверку СЛУЧАЙНО перепутали местами с адресной (или
+// адресный бюджет одного назначения — с бюджетом другого), тест бы этого
+// не заметил: 429 остаётся 429 независимо от того, ЧЕЙ именно бюджет
+// сработал. `code` называет источник явно — reason обязателен, не
+// опционален, чтобы новое место лимитера нельзя было забыть его назвать.
+function bagRateLimited(res, reason) {
+  return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded', code: reason });
 }
 
 // Shared by PUT/GET/GET-list: verify the pass, answer 401 with its code on
@@ -1979,7 +1988,7 @@ app.post('/bags/pass', (req, res) => {
   // meta-transactions) — see the long comment at BAG_IP_RATE_MAX above for
   // why the bag routes need their own IP budget, and the measured numbers
   // that proved the old shared one made every per-purpose budget below moot.
-  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
 
   const { address } = req.body || {};
   if (typeof address !== 'string' || !ETH_ADDR_RE.test(address)) {
@@ -2053,7 +2062,7 @@ app.post('/bags/pass', (req, res) => {
   // равны в этой точке (проверено строкой выше), но ключом идёт именно
   // `recovered` — не по привычке, а как утверждение: списывается бюджет
   // ТОЛЬКО доказанного адреса, никогда заявленного (С1).
-  if (!checkRateLimit(bagPassRateKey(recovered), BAG_PASS_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagPassRateKey(recovered), BAG_PASS_RATE_MAX)) return bagRateLimited(res, 'rate_limited_pass');
 
   const { token, expiresAt } = issueBagPass(recovered, nowSec);
   res.json({ pass: token, expiresAt });
@@ -2063,12 +2072,12 @@ app.post('/bags/pass', (req, res) => {
 // pass; the body is never parsed (bytes only, no matter what they look like).
 app.put('/bags/:recipient', (req, res) => {
   const ip = clientIp(req);
-  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
 
   const sender = requireBagPass(req, res);
   if (!sender) return;
 
-  if (!checkRateLimit(bagWriteRateKey(sender), BAG_WRITE_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagWriteRateKey(sender), BAG_WRITE_RATE_MAX)) return bagRateLimited(res, 'rate_limited_write');
 
   // И-1 (ревью): app.use(express.json({limit:'64kb'})) is mounted globally,
   // ahead of every route (app.js, near the top of the file) — for any
@@ -2153,7 +2162,7 @@ app.put('/bags/:recipient', (req, res) => {
 // names ship back — not pairId, not firstFetchedAt, not dealDeadline.
 app.get('/bags', (req, res) => {
   const ip = clientIp(req);
-  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
 
   const address = requireBagPass(req, res);
   if (!address) return;
@@ -2162,7 +2171,7 @@ app.get('/bags', (req, res) => {
   // "read something", and a client that lists then downloads several new
   // bags in one poll cycle is one coherent burst of reading, not two
   // independent activities that should each get their own ceiling.
-  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res, 'rate_limited_read');
 
   let since = null;
   if (req.query.since !== undefined) {
@@ -2198,12 +2207,12 @@ app.get('/bags', (req, res) => {
 // `:key` param would stop at the first `/`.
 app.get('/bags/:recipient/:filename', (req, res) => {
   const ip = clientIp(req);
-  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
 
   const address = requireBagPass(req, res);
   if (!address) return;
 
-  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res);
+  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res, 'rate_limited_read');
 
   const key = `${req.params.recipient}/${req.params.filename}`;
 
