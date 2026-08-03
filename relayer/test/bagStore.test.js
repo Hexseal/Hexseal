@@ -689,6 +689,38 @@ describe('C1 (четвёртый раунд) — ошибка программи
   });
 });
 
+// ─── И-2 (пятый раунд) — bag-meta.json = "null" роняет загрузку целиком ───
+//
+// Находка ревью: JSON.parse('null') УСПЕШНО возвращает null — try/catch
+// вокруг разбора этого не ловит (разбор не бросил). Дальше по коду —
+// Object.entries(null) — а это бросает TypeError, СНАРУЖИ try/catch
+// isValidBagMetaEntry (сам except этой функции тут вообще не участвует —
+// падение происходит до первого вызова isValidBagMetaEntry, в цикле
+// _loadBagMeta() над Object.entries(raw)). Воспроизведено вживую отдельным
+// скриптом: `await import('bagStore.js')` с bag-meta.json="null" на диске
+// бросает TypeError прямо на импорте — в Задаче 3 это падение импорта в
+// теле app.js, весь релеер не стартует целиком (ни мета-транзакции, ни
+// файловый сервер, ни бот). Асимметрия: модуль уже переживает '{not valid
+// json' (JSON.parse сам бросает, ловится) — но не переживает валидный
+// JSON, который парсится в null.
+describe('И-2 (пятый раунд) — bag-meta.json = "null" не роняет загрузку', () => {
+  it('bag-meta.json = "null" не бросает — считается пустым индексом, как нечитаемый JSON', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    expect(() => _loadBagMeta()).not.toThrow();
+    expect(listBagsFor(ALICE)).toEqual([]);
+  });
+
+  // Координатор проверил и эти формы отдельно — переживались и раньше
+  // (Object.entries на них не бросает), но не были заперты явным тестом.
+  it.each(['123', '"hello"', '[1,2,3]', 'true'])(
+    'bag-meta.json = %s тоже не бросает',
+    (jsonLiteral) => {
+      fs.writeFileSync(path.join(TMP, 'bag-meta.json'), jsonLiteral, 'utf8');
+      expect(() => _loadBagMeta()).not.toThrow();
+    },
+  );
+});
+
 // ─── I1 (четвёртый раунд) — markFetched/bagMetaOf травят Object.prototype ──
 //
 // Находка ревью: C2 поставил assertBagKey на recordBag(), но markFetched()

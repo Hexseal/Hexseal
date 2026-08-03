@@ -223,7 +223,14 @@ function isValidBagMetaEntry(key, meta) {
 export function _loadBagMeta() {
   let raw = {};
   try {
-    raw = fs.existsSync(BAG_META_PATH) ? JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8')) : {};
+    const parsed = fs.existsSync(BAG_META_PATH) ? JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8')) : {};
+    // И-2 (пятый раунд): JSON.parse('null') УСПЕШНО возвращает null — не
+    // ловится try/catch выше (разбор не бросил). Object.entries(null) чуть
+    // ниже бросает TypeError, ломая загрузку целиком (а на уровне модуля —
+    // и весь процесс). Годен только настоящий объект вида {key: meta};
+    // null/массив/примитив — тот же случай, что и совсем нечитаемый JSON:
+    // начинаем с пустого индекса, не роняя загрузку.
+    raw = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
   } catch {
     raw = {};
   }
