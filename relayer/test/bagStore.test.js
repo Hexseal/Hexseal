@@ -76,6 +76,30 @@ describe('bagExpiryAt — три правила в заданном порядк
     expect(bagExpiryAt(m)).toBe(1000 + BAG_UNREAD_TTL_MS);
   });
 
+  // Находка ревью (мелочь c): фактический потолок усыновлённого мешка — это
+  // BAG_MAX_AGE_MS + BAG_TTL_MS (90+7д), не просто BAG_MAX_AGE_MS (90д).
+  // Прямое следствие «усыновление не обрезает» (тест выше): если мешок
+  // усыновлён сделкой и прочитан за миг до 90-дневного потолка, правило 2
+  // (7д от прочтения) само по себе даёт срок ДОЛЬШЕ потолка — и потолок
+  // это не укорачивает, он ограничивает только вклад самой сделки, а не
+  // итоговый результат Math.max. Не баг, задокументировано в комментарии
+  // над bagExpiryAt(); этот тест — сам замок, а не описание сегодняшнего
+  // поведения.
+  it('потолок усыновления фактически 90+7 дней, если мешок прочитан у самой границы потолка', () => {
+    const uploadedAt = 1000;
+    const ceiling = uploadedAt + BAG_MAX_AGE_MS;      // номинальный потолок (90д)
+    const readAtCeiling = ceiling - 1;                // прочитан за миллисекунду до потолка
+    const m = {
+      uploadedAt,
+      firstFetchedAt: readAtCeiling,
+      dealDeadline: uploadedAt + 900 * DAY,           // далеко за потолком — сама сделка тут не ограничитель
+    };
+    const expiry = bagExpiryAt(m);
+    expect(expiry).toBe(readAtCeiling + BAG_TTL_MS);   // правило 2 берёт верх над потолком сделки
+    expect(expiry).toBeGreaterThan(ceiling);            // и это ЗА пределами номинальных 90 дней
+    expect(expiry - uploadedAt).toBeLessThanOrEqual(BAG_MAX_AGE_MS + BAG_TTL_MS); // но не больше 90+7
+  });
+
   // Находка ревью (мелочь a): firstFetchedAt проверялся на истинность
   // (`meta.firstFetchedAt ? … : …`), а не на `!= null`. 0 (эпоха Unix, 1
   // января 1970) — валидный safe integer, тот же модуль сам его принимает
