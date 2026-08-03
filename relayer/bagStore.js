@@ -517,9 +517,24 @@ export function cleanupBags(nowMs = Date.now()) {
       try { fs.unlinkSync(bagPathFor(key)); } catch {}
       delete _bagMeta[key];
       removed++;
-    } else {
-      kept++;
+      continue;
     }
+
+    // Мелочь (g): формально живая по сроку запись, чей файл пропал с диска
+    // (ручное вмешательство, сбой ФС) — индекс не должен утверждать
+    // существование того, чего физически нет. Без этого listBagsFor()
+    // продолжал бы отдавать такой мешок, и Задача 3 получила бы ошибку
+    // чтения на попытке выдачи вместо честного "мешка больше нет".
+    let fileExists;
+    try { fileExists = fs.existsSync(bagPathFor(key)); } catch { fileExists = false; }
+    if (!fileExists) {
+      console.error(`[bags] cleanupBags: index entry ${JSON.stringify(key)} has no file on disk — dropping from index`);
+      delete _bagMeta[key];
+      removed++;
+      continue;
+    }
+
+    kept++;
   }
   if (removed) _saveBagMeta();
 

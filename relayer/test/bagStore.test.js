@@ -881,6 +881,33 @@ describe('Мелочь (f) — removed считает и снесённых си
   });
 });
 
+// ─── Мелочь (g) — запись в индексе не переживает пропавший файл ───────────
+//
+// Находка ревью: если файл мешка пропал с диска (ручное вмешательство,
+// сбой ФС), а запись в индексе формально ещё "жива" (bagExpiryAt > now),
+// чистка считала такой мешок живым: listBagsFor() продолжал его отдавать,
+// а Задача 3 получила бы ошибку чтения на попытке выдачи. Индекс не должен
+// утверждать существование того, чего нет на диске.
+describe('Мелочь (g) — запись без файла отбрасывается чисткой, а не остаётся "живой"', () => {
+  it('живая по сроку запись без файла на диске уходит из индекса, считается removed', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // жив ещё 7 дней
+    fs.unlinkSync(path.join(DIR_BAGS, key)); // файл пропал, запись в индексе осталась
+
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0 });
+    expect(bagMetaOf(key)).toBeUndefined();
+    expect(listBagsFor(ALICE)).toHaveLength(0);
+  });
+
+  it('живая запись С файлом на диске остаётся — не задета этой проверкой', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now, { firstFetchedAt: now });
+
+    expect(cleanupBags(now)).toEqual({ removed: 0, kept: 1 });
+    expect(bagMetaOf(key)).toBeDefined();
+  });
+});
+
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
     expect(BAG_TTL_MS).toBe(7 * DAY);
