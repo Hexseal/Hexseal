@@ -127,6 +127,14 @@ export function buildLink(
  *  подмены. Поэтому expectedLastSeq — обязательная часть якоря, а
  *  expectedLastHash — опциональное усиление поверх него. */
 export interface ChainAnchor {
+  /** Обычно >= 0 — seq последнего сообщения. РОВНО -1 — зарезервированный
+   *  сигнал «сообщений не было вовсе» (раунд 7, находка m2): реальный seq
+   *  первого сообщения — 0, значит без этого значения не было способа
+   *  отличить «переписки правда не было» от «есть хотя бы одно сообщение
+   *  (seq 0), но оно скрыто» (обе ситуации при `expectedLastSeq: 0` давали
+   *  gap). Сочетать -1 с `expectedLastHash` — bad_anchor: отпечатывать
+   *  нечего, если сообщений не было. Любое другое отрицательное значение —
+   *  по-прежнему bad_anchor. */
   expectedLastSeq: number;
   expectedLastHash?: `0x${string}`;
 }
@@ -208,6 +216,19 @@ function sameHash(a: `0x${string}`, b: `0x${string}`): boolean {
  *  где x+1 === x. */
 function isSafeNonNegativeInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** expectedLastSeq допускает РОВНО ОДНО отрицательное значение: -1, зарезер-
+ *  вированный сигнал «сообщений не было вовсе» (раунд 7, находка m2).
+ *  Настоящий seq первого сообщения — 0 (см. buildLink), значит МИНИМАЛЬНЫЙ
+ *  из «обычных» якорей (0) уже утверждает существование хотя бы одного
+ *  сообщения — сказать «сообщений действительно было ноль» было нечем:
+ *  verifyChain([], {expectedLastSeq: 0}) остаётся gap (утверждает seq=0,
+ *  которого не показали), не ok:true. -1 никогда не бывает НАСТОЯЩИМ seq,
+ *  поэтому безопасен как выделенный сигнал — симметрично уже существующему
+ *  использованию -1 в missingAfterSeq («пропуск перед самым началом»). */
+function isValidExpectedLastSeq(value: unknown): value is number {
+  return value === -1 || isSafeNonNegativeInt(value);
 }
 
 /** Звено «в форме» — ровно то, что не даст linkHash бросить исключение
@@ -304,7 +325,7 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
     const rawExpectedLastSeq = Object.prototype.hasOwnProperty.call(opts, 'expectedLastSeq')
       ? (opts as unknown as Record<string, unknown>).expectedLastSeq
       : undefined;
-    if (!isSafeNonNegativeInt(rawExpectedLastSeq)) {
+    if (!isValidExpectedLastSeq(rawExpectedLastSeq)) {
       return { ok: false, reason: 'bad_anchor' };
     }
     anchor = rawExpectedLastSeq;
@@ -316,6 +337,13 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
         return { ok: false, reason: 'bad_anchor' };
       }
       hashAnchor = rawExpectedLastHash;
+    }
+    // anchor === -1 утверждает «сообщений не было вовсе» — отпечатывать в
+    // этом случае нечего (нет последнего звена, чей хеш можно было бы
+    // назвать). Сочетание — противоречие в самом якоре, а не о предъявленной
+    // цепочке, поэтому bad_anchor, а не broken/gap (раунд 7, находка m2).
+    if (anchor === -1 && hashAnchor !== undefined) {
+      return { ok: false, reason: 'bad_anchor' };
     }
   }
 
@@ -348,6 +376,17 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
     // валидацию anchor/hashAnchor однажды разъединят) — тогда снятие
     // якоря по количеству молча перестанет ловить якорь по отпечатку в
     // этой ветке, и баг проявится не сразу.
+    //
+    // РАУНД 7, находка m2: anchor === -1 — ОТДЕЛЬНЫЙ случай внутри этой же
+    // ветки, разбирается ДО общей проверки «якорь есть → gap» ниже. Якорь
+    // по количеству утверждает «сообщений не было вовсе», и предъявление
+    // пусто — это ровно то, что утверждает якорь, а не утаивание: ok:true,
+    // а не gap. hashAnchor здесь заведомо undefined (комбинация anchor:-1 +
+    // expectedLastHash уже отсеяна выше, в блоке разбора opts, как
+    // bad_anchor — отпечатывать нечего, если сообщений не было).
+    if (anchor === -1) {
+      return { ok: true, unverifiedContentAtSeq: [] };
+    }
     if (anchor !== undefined || hashAnchor !== undefined) {
       return { ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] };
     }
