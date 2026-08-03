@@ -1952,7 +1952,12 @@ app.post('/bags/pass', (req, res) => {
   const ts  = req.headers['x-ts'];
   const sig = req.headers['x-sig'];
   if (!ts || !sig) {
-    return res.status(401).json({ error: 'Missing x-ts or x-sig header' });
+    // Distinct code from ts_out_of_window (ревью, "слепота статуса"):
+    // without it, removing this presence check entirely still answers 401 —
+    // just via the window check a few lines down, since Number(undefined)
+    // is NaN and !Number.isFinite(NaN) is true. Same status, different
+    // cause; the code is what actually distinguishes them.
+    return res.status(401).json({ error: 'Missing x-ts or x-sig header', code: 'missing_credentials' });
   }
 
   const nowSec = Math.floor(Date.now() / 1000);

@@ -233,13 +233,19 @@ describe('POST /bags/pass', () => {
     expect(res.status).toBe(400);
   });
 
-  it('отсутствие x-ts или x-sig — 401', async () => {
+  it('отсутствие x-ts или x-sig — 401 с кодом missing_credentials', async () => {
+    // Голого статуса недостаточно: убери саму проверку присутствия
+    // заголовков целиком — запрос всё равно упадёт на 401, только уже из
+    // проверки окна (Number(undefined) === NaN, !Number.isFinite(NaN) ===
+    // true, код ts_out_of_window) — тот же статус, другая причина. Код
+    // отличает одно от другого.
     const { address } = await newWalletAndAddress();
     const res = await request(app)
       .post('/bags/pass')
       .set('CF-Connecting-IP', freshIp())
       .send({ address });
     expect(res.status).toBe(401);
+    expect(res.body.code).toBe('missing_credentials');
   });
 
   it('заявленный адрес не совпадает с восстановленным подписантом — 401, код отличается от pass_expired/invalid_signature', async () => {
@@ -385,17 +391,27 @@ describe('PUT /bags/:recipient', () => {
     expect(meta.size).toBe(payload.length);
   });
 
-  it('не верит адресу отправителя, подсунутому в теле', async () => {
+  it('не верит адресу отправителя ни из какого канала запроса — тело, заголовок и query разом', async () => {
+    // Находка ревью («слепота статуса»): прежняя версия этого теста красила
+    // только буквальный разбор JSON-тела — подмена ЛЮБЫМ ДРУГИМ каналом
+    // (заголовок, query-параметр) была невидима для набора. Отправитель
+    // обязан быть ТОЛЬКО адресом из пропуска, независимо от того, сколько
+    // разных полей одновременно пытаются его перебить.
     const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();
     const { address: mallory } = await newWalletAndAddress();
     const pass = await issuePassFor(alice, freshIp());
 
-    // Тело — произвольные байты по контракту (сервер их не разбирает), но
-    // если бы реализация ОШИБОЧНО парсила JSON и доверяла полю sender, вот
-    // этот payload бы её поймал.
     const payload = Buffer.from(JSON.stringify({ sender: mallory, text: 'lies' }));
-    const res = await putBag({ pass, recipient: bobAddr, body: payload });
+    const res = await request(app)
+      .put(`/bags/${bobAddr}`)
+      .query({ sender: mallory })
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-bag-pass', pass)
+      .set('x-sender', mallory)
+      .set('sender', mallory)
+      .set('Content-Type', 'application/octet-stream')
+      .send(payload);
     expect(res.status).toBe(200);
 
     const meta = bagMetaOf(res.body.key);
@@ -685,7 +701,14 @@ describe('GET /bags/:key', () => {
     // Алиса пытается прочитать мешок, адресованный Бобу, своим же пропуском.
     const res = await getBag({ pass: alicePass, key: put.body.key, ip: freshIp() });
     expect(res.status).toBe(404);
-    expect(Buffer.isBuffer(res.body) ? res.body.toString('utf8') : '').not.toContain('secret-for-bob');
+    // Находка ревью («слепота статуса»): 404 отвечает JSON — res.body уже
+    // разобранный объект, не Buffer, так что `Buffer.isBuffer(res.body) ? …
+    // : ''` раньше ВСЕГДА давал '' и сравнение с самой собой всегда
+    // проходило, что бы ни лежало в ответе. res.body напрямую (объект) +
+    // res.text (сырой текст, если supertest почему-то не распарсил) —
+    // реальная проверка вне зависимости от формы тела.
+    expect(JSON.stringify(res.body)).not.toContain('secret-for-bob');
+    expect(res.text ?? '').not.toContain('secret-for-bob');
   });
 
   it('чужой пропуск и несуществующий ключ отвечают ОДИНАКОВО', async () => {
