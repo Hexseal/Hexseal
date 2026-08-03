@@ -1550,7 +1550,6 @@ describe('assertBagStoreReady — проверка окружения НЕ на 
       MAX_BAG_SIZE: process.env.MAX_BAG_SIZE,
       STORAGE_DIR: process.env.STORAGE_DIR,
     };
-    const { vi } = await import('vitest');
 
     const storageDirAtImport = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-i3-import-'));
     const storageDirAfterDotenv = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-i3-dotenv-'));
@@ -1585,6 +1584,79 @@ describe('assertBagStoreReady — проверка окружения НЕ на 
       // Возвращаем модульный реестр в состояние, которого ждут остальные
       // тесты этого файла (тот же STORAGE_DIR=TMP, что и на момент верхнего
       // импорта).
+      await import('../bagStore.js');
+    }
+  });
+
+  // ─── C1 (шестой раунд) — читаем индекс из одного места, пишем в другое ──
+  //
+  // Находка ревью: _loadBagMeta() зовётся на уровне модуля — то есть ДО
+  // dotenv.config() — из "импортного" STORAGE_DIR. _refreshConfig() внутри
+  // assertBagStoreReady() (И-3, пятый раунд) переставляет BAG_META_PATH на
+  // боевой корень, но НЕ перечитывает индекс оттуда — в памяти остаётся то,
+  // что было загружено (обычно пусто) из старого пути. Первый же
+  // recordBag() сохраняет ЭТОТ почти-пустой in-memory индекс поверх
+  // настоящего боевого файла — до И-3 модуль стабильно читал и писал по
+  // одному (пусть и неверному) корню, эта находка о том, что фикс И-3
+  // превратил "не тот корень" в "читаю из A, пишу в B", что хуже: реальные
+  // записи не просто игнорируются, они СТИРАЮТСЯ первой же записью.
+  // Воспроизведено отдельным скриптом до этого теста (боевой индекс на 3
+  // переписки → в памяти 0 → после recordBag() боевой файл содержит 1).
+  it('assertBagStoreReady() видит записи, уже лежащие по НОВОМУ (после-dotenv) пути — не теряет их при первой же записи', async () => {
+    const savedEnv = { STORAGE_DIR: process.env.STORAGE_DIR };
+
+    const storageDirAtImport = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-c1-import-'));
+    const storageDirAfterDotenv = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-c1-dotenv-'));
+
+    process.env.STORAGE_DIR = storageDirAtImport; // "до dotenv.config()"
+    vi.resetModules();
+    const fresh = await import('../bagStore.js'); // импорт — как в app.js, раньше dotenv
+
+    try {
+      // Боевой индекс на 3 переписки уже лежит по ПРАВИЛЬНОМУ (после
+      // dotenv) пути — как если бы релеер уже поработал раньше и просто
+      // перезапускается.
+      const bootKeys = [
+        fresh.bagKeyFor(ALICE),
+        fresh.bagKeyFor(ALICE),
+        fresh.bagKeyFor(ALICE),
+      ];
+      const bootMeta = {};
+      for (const [i, key] of bootKeys.entries()) {
+        bootMeta[key] = {
+          sender: BOB, recipient: ALICE,
+          pairId: [BOB, ALICE].sort().join('-'),
+          size: 6, uploadedAt: 1000 + i, firstFetchedAt: null, dealDeadline: null,
+        };
+      }
+      fs.mkdirSync(storageDirAfterDotenv, { recursive: true });
+      fs.writeFileSync(path.join(storageDirAfterDotenv, 'bag-meta.json'), JSON.stringify(bootMeta), 'utf8');
+
+      // "dotenv.config() в теле app.js" — окружение меняется ПОСЛЕ импорта.
+      process.env.STORAGE_DIR = storageDirAfterDotenv;
+      fresh.assertBagStoreReady();
+
+      expect(fresh.listBagsFor(ALICE)).toHaveLength(3);
+
+      // И первая же запись не должна стереть эти три — иначе реордер И-3
+      // превратил "не туда" в "теряю боевые данные".
+      const newKey = fresh.bagKeyFor(ALICE);
+      fs.mkdirSync(path.dirname(path.join(fresh.DIR_BAGS, newKey)), { recursive: true });
+      fs.writeFileSync(path.join(fresh.DIR_BAGS, newKey), 'sealed');
+      fresh.recordBag({ key: newKey, sender: BOB, recipient: ALICE, size: 6, uploadedAt: 4000 });
+
+      expect(fresh.listBagsFor(ALICE)).toHaveLength(4);
+      const onDisk = JSON.parse(fs.readFileSync(path.join(storageDirAfterDotenv, 'bag-meta.json'), 'utf8'));
+      expect(Object.keys(onDisk)).toHaveLength(4);
+      for (const key of bootKeys) expect(onDisk[key]).toBeDefined(); // все три боевые записи целы
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fs.rmSync(storageDirAtImport, { recursive: true, force: true });
+      fs.rmSync(storageDirAfterDotenv, { recursive: true, force: true });
+      vi.resetModules();
       await import('../bagStore.js');
     }
   });

@@ -138,7 +138,22 @@ function assertPositiveFiniteNumber(name, value) {
 // a test — should never have the side effect of creating a directory on
 // disk before anything has decided the store is actually going to be used).
 export function assertBagStoreReady() {
+  // C1 (шестой раунд): _loadBagMeta() зовётся на уровне модуля — то есть ДО
+  // dotenv.config() — из "импортного" STORAGE_DIR. _refreshConfig() ниже
+  // переставляет BAG_META_PATH на боевой корень, но сама по себе НЕ
+  // перечитывает индекс оттуда — без этой проверки в памяти оставалось бы
+  // то, что было загружено (обычно пусто) из старого пути, и первая же
+  // запись сохранила бы этот почти-пустой in-memory индекс ПОВЕРХ настоящего
+  // боевого файла, стирая реальные переписки. Перечитываем ТОЛЬКО если путь
+  // реально изменился — иначе повторный вызов assertBagStoreReady() с тем
+  // же STORAGE_DIR не по делу перечитывал бы диск и рисковал бы затереть
+  // память, если бы (гипотетически) на диске лежало что-то более старое,
+  // чем уже накопленное в этом процессе состояние.
+  const previousBagMetaPath = BAG_META_PATH;
   _refreshConfig();
+  if (BAG_META_PATH !== previousBagMetaPath) {
+    _loadBagMeta();
+  }
   assertPositiveFiniteNumber('BAG_TTL_MS', BAG_TTL_MS);
   assertPositiveFiniteNumber('BAG_UNREAD_TTL_MS', BAG_UNREAD_TTL_MS);
   assertPositiveFiniteNumber('BAG_MAX_AGE_MS', BAG_MAX_AGE_MS);
