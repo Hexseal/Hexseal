@@ -827,6 +827,28 @@ describe('GET /bags', () => {
     expect(readRes.status).toBe(200);
   });
 
+  it('лимитер по адресу срабатывает на САМОМ GET /bags (список) даже при разных IP', async () => {
+    // Находка ревью: два незапертых места лимитера из восьми (адресный на
+    // POST /bags/pass — заперт отдельным тестом выше; читательский на
+    // GET /bags — этот тест). Прежний тест с адресом в имени этого describe
+    // на самом деле бил в GET /bags/:key (скачивание) — bagReadRateKey
+    // делит бюджет с GET /bags, но снять checkRateLimit ИМЕННО с этого
+    // маршрута было бы невидимо: список читался бы сколько угодно, пока
+    // скачивание за него расплачивалось бы своим собственным тестом.
+    const { wallet: alice } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    // BAG_READ_RATE_MAX (тестовое умолчание — 5): пять успешных опросов
+    // списка, шестой обязан упереться.
+    for (let i = 0; i < 5; i++) {
+      const res = await getBagsList({ pass, ip: freshIp() });
+      expect(res.status).toBe(200);
+    }
+    const blocked = await getBagsList({ pass, ip: freshIp() });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('rate_limited_read');
+  });
+
   it('находка ревью: заголовок вида "bag-read:<адрес жертвы>" не коллизирует с её реальным адресным бюджетом', async () => {
     // При TRUST_PROXY=true (боевая настройка) clientIp() отдаёт
     // CF-Connecting-IP дословно, без проверки, что это вообще похоже на
@@ -1092,7 +1114,7 @@ describe('GET /bags/:key', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('устойчивость к сбоям склада', () => {
-  it('recordBag() бросает — PUT отвечает 500 с JSON-телом, не роняет процесс и не виснет', async () => {
+  it('recordBag() бросает — PUT отвечает 500 с JSON-телом, не роняет процесс и не виснет, обрезок удалён', async () => {
     const { wallet: alice } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();
     const pass = await issuePassFor(alice, freshIp());
@@ -1106,8 +1128,49 @@ describe('устойчивость к сбоям склада', () => {
       // обработчик ошибок Express (HTML-страница, res.body — пустой объект,
       // не распарсенный JSON).
       expect(res.body).toHaveProperty('error');
+
+      // Находка ревью («тот же класс сироты, ради которого делалась И-2»):
+      // байты уже написаны на диск (streamWithSizeLimit успел завершиться)
+      // до того, как recordBag() бросил — если бы файл не удалялся на этой
+      // ветке отказа, он остался бы сиротой без записи в индексе.
+      const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+      const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
+      expect(leftovers).toHaveLength(0);
     } finally {
       bagStoreThrows.recordBag = false;
+    }
+  });
+
+  it('находка ревью: не удалось измерить размер после записи — обрезок тоже удаляется, не только записи-в-индекс', async () => {
+    // Тот же класс сироты, что и recordBag()-ветка выше, но на строку раньше
+    // — fs.statSync(filePath) после успешной записи может отказать
+    // (например, файл удалили гонкой сразу после дозаписи) даже когда
+    // recordBag() сам никогда не был вызван. vi.spyOn с проверкой ПУТИ —
+    // настоящая реализация используется для абсолютно всех остальных
+    // вызовов statSync в процессе (fs используется по всему app.js), сбоит
+    // только вызов с ИМЕННО этим путём.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    const realStatSync = fs.statSync;
+    const spy = vi.spyOn(fs, 'statSync').mockImplementation((p, ...rest) => {
+      const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+      if (typeof p === 'string' && p.startsWith(recipientDir)) {
+        throw new Error('simulated stat failure (test)');
+      }
+      return realStatSync(p, ...rest);
+    });
+    try {
+      const res = await putBag({ pass, recipient: bobAddr, body: Buffer.from('x') });
+      expect(res.status).toBe(500);
+      expect(res.body).toHaveProperty('error');
+
+      const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+      const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
+      expect(leftovers).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
     }
   });
 

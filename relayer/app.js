@@ -1522,6 +1522,20 @@ function formatMaxSize(maxBytes) {
 // body — none of which the three pre-existing callers below need, and none of
 // them pass a 5th argument, so their behaviour is unchanged (undefined → old
 // branch).
+// Найдено попутно (не находка ревью — обнаружено собственным флаки-прогоном
+// теста на И-1/И-2 несколько раз подряд, не одним прогоном): fs.unlink(path,
+// () => {}) — «выстрелил и забыл», колбэк не дожидается завершения удаления
+// перед тем, как маршрут отправит ответ. Тест, проверяющий сразу после
+// ответа, что осиротевшего файла на диске больше нет, время от времени видел
+// его ещё лежащим — не баг теста, а настоящая гонка: ответ мог уйти раньше,
+// чем ОС успевала обработать unlink. Синхронное удаление — тот же путь
+// исполнения (обработчик события, не запрос к сети), блокировать нечего;
+// try/catch — файла может и не быть (например, ws.destroy() не успел
+// сбросить ни байта), это не должно быть отдельной ошибкой.
+function unlinkQuietSync(filePath) {
+  try { fs.unlinkSync(filePath); } catch { /* already gone, or never existed — fine either way */ }
+}
+
 function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
   let received = 0;
   let aborted  = false;
@@ -1531,7 +1545,7 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
     if (!aborted && received > maxBytes) {
       aborted = true;
       ws.destroy();
-      fs.unlink(filePath, () => {});
+      unlinkQuietSync(filePath);
       if (!res.headersSent) res.status(413).json({ error: `File too large (max ${formatMaxSize(maxBytes)})` });
       req.destroy();
     }
@@ -1556,7 +1570,7 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
     if (aborted) return;
     aborted = true;
     ws.destroy();
-    fs.unlink(filePath, () => {});
+    unlinkQuietSync(filePath);
   });
 }
 
@@ -2127,7 +2141,7 @@ app.put('/bags/:recipient', (req, res) => {
       size = fs.statSync(filePath).size;
     } catch (e) {
       console.error('[bags] PUT stat-after-write failed:', e.message);
-      fs.unlink(filePath, () => {});
+      unlinkQuietSync(filePath);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag' });
       return;
     }
@@ -2137,7 +2151,7 @@ app.put('/bags/:recipient', (req, res) => {
     // ноль здесь — не легитимный пустой мешок, а шум (оборванная загрузка
     // до единого байта, пустой Buffer от неисправного клиента и т.п.).
     if (size === 0) {
-      fs.unlink(filePath, () => {});
+      unlinkQuietSync(filePath);
       if (!res.headersSent) res.status(400).json({ error: 'Empty bag' });
       return;
     }
@@ -2151,7 +2165,7 @@ app.put('/bags/:recipient', (req, res) => {
       // or a disk failure kills the process instead of just failing the
       // request.
       console.error('[bags] recordBag failed:', e.message);
-      fs.unlink(filePath, () => {});
+      unlinkQuietSync(filePath);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag' });
     }
   });
@@ -2258,6 +2272,12 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('Vary', 'x-bag-pass');
 
+  // Мелочь (ревью): Express auto-answers HEAD for any registered GET route
+  // by running this SAME handler and stripping the body at the wire level —
+  // without this branch, a HEAD probe/prefetch would start the 7-day
+  // "read" countdown for a bag nobody actually received a single byte of.
+  // A HEAD caller gets exactly the headers a GET would, no body, no side
+  // effect on the bag's lifetime.
   // Мелочь (ревью): Express auto-answers HEAD for any registered GET route
   // by running this SAME handler and stripping the body at the wire level —
   // without this branch, a HEAD probe/prefetch would start the 7-day
