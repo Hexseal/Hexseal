@@ -101,6 +101,47 @@ describe('bagPass', () => {
     expect(verifyBagPass(MALFORMED_GOLDEN_TOKEN, 1_700_000_000).code).toBe('pass_invalid');
   });
 
+  it('чужой префикс версии отклоняется, даже когда тело и MAC — настоящие v1', () => {
+    // verify всегда считает MAC под своим собственным жёстким доменом v1,
+    // независимо от того, что написано в первом сегменте токена, — значит
+    // единственное, что вообще проверяет заявленную версию, это сравнение
+    // parts[0] с BAG_PASS_PREFIX. Без него ротация версии неисполнима:
+    // подмена префикса на новый не отзывает старые тело+MAC.
+    const { token } = issueBagPass(ALICE);
+    const [, body, mac] = token.split('.');
+    expect(verifyBagPass(`v2.${body}.${mac}`).code).toBe('pass_invalid');
+    expect(verifyBagPass(`whatever.${body}.${mac}`).code).toBe('pass_invalid');
+  });
+
+  it('лишний сегмент после MAC отклоняется', () => {
+    const { token } = issueBagPass(ALICE);
+    expect(verifyBagPass(`${token}.garbage`).code).toBe('pass_invalid');
+  });
+
+  it('срок в теле, который не парсится в число, отклоняется — не живёт вечно', () => {
+    // NaN/строка просачивается в expiresAt изнутри issueBagPass (не через
+    // подделку тела), поэтому MAC у такого тела честный: единственное, что
+    // может отсечь такой пропуск, — Number.isFinite(expiresAt) на verify.
+    expect(verifyBagPass(issueBagPass(ALICE, NaN).token).code).toBe('pass_invalid');
+    expect(verifyBagPass(issueBagPass(ALICE, 'abc').token).code).toBe('pass_invalid');
+  });
+
+  it('золотой токен: смена домена MAC-а в реализации сломает эту заморозку', () => {
+    // Захвачен один раз через issueBagPass(ALICE, 1_700_000_000) с
+    // SERVER_SECRET='test-server-secret' (тем же, что ставит test/setup.js)
+    // и вбит литералом. Сегодня разделение с пропуском журнала спора
+    // (app.js) держится только на разной арности тела (два поля здесь,
+    // три там) — не на замке. Если домен MAC-а когда-нибудь поменяется, эта
+    // заморозка первой скажет об этом, ничего заново не пересчитывая.
+    const GOLDEN_TOKEN =
+      'v1.MHhhMWNlMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjYWZlLjE3MDAwNDMyMDA.9AzPuOnO3ch-s7H4H_r2Xrs87KgTAOX1qPvOMdcDRig';
+    expect(verifyBagPass(GOLDEN_TOKEN, 1_700_000_010)).toEqual({ address: ALICE.toLowerCase() });
+  });
+
+  it('TTL пришпилен к 12 часам буквально, не через символ', () => {
+    expect(BAG_PASS_TTL_SEC).toBe(43200);
+  });
+
   it('мусор на входе даёт вердикт, а не исключение', () => {
     for (const bad of [null, undefined, 42, {}, [], '', 'v1', 'v2.a.b', Symbol('x')]) {
       expect(() => verifyBagPass(bad)).not.toThrow();
