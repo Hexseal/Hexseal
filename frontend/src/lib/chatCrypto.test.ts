@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { bytesToHex } from 'viem';
-import { deriveChatKeypair, sealForRecipient, openSealed, CHAT_KEY_TYPED_DATA } from './chatCrypto';
+import { deriveChatKeypair, sealForRecipient, openSealed, CHAT_KEY_TYPED_DATA, type ChatKeypair } from './chatCrypto';
 
 const SIG_A = ('0x' + 'ab'.repeat(65)) as `0x${string}`;
 const SIG_B = ('0x' + 'cd'.repeat(65)) as `0x${string}`;
@@ -193,5 +193,27 @@ describe('sealForRecipient / openSealed', () => {
     await expect(
       openSealed(bob, asBase64String as unknown as Uint8Array),
     ).rejects.toThrow(TypeError);
+  });
+
+  // Находка I1 финального ревью: `sealed` был защищён `instanceof Uint8Array`
+  // ДО try, а `myKeypair.publicKey`/`myKeypair.privateKey` — нет, хотя они
+  // проходят насквозь в ту же `sodium.crypto_box_seal_open`. Строка РОВНО в
+  // 32 UTF-8-байта — тот самый провал: libsodium приводит её к 32 байтам
+  // (crypto_box_PUBLICKEYBYTES/SECRETKEYBYTES) без единой жалобы на длину и
+  // честно пытается открыть — получает `Error: incorrect key pair for the
+  // given ciphertext` (обычный `Error`, НЕ `TypeError`, проверено прогоном
+  // библиотеки), который наш собственный catch схлопывает в `null` как
+  // «мешок не наш». Наш мусор на входе выдаёт себя за штатный отказ.
+  // Другие длины сюда не годятся: на них сработала бы длинная проверка самой
+  // библиотеки (TypeError «invalid publicKey length» и т.п.) ещё ДО попытки
+  // открыть — тест был бы фиктивным, как I2 этого же ревью.
+  it('раунд 7, находка I1: ключ подан строкой ровно в 32 UTF-8-байта — не выдаётся за «мешок не наш»', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    const sealed = await sealForRecipient(bob.publicKey, text('секрет'));
+    const garbageKeypair = {
+      publicKey: 'x'.repeat(32),
+      privateKey: 'y'.repeat(32),
+    } as unknown as ChatKeypair;
+    await expect(openSealed(garbageKeypair, sealed)).rejects.toThrow(TypeError);
   });
 });

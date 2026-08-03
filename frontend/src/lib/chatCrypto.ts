@@ -173,13 +173,30 @@ export async function sealForRecipient(
  *  этим же `catch` — сработала бы верно (там уже есть `instanceof
  *  TypeError` → rethrow), но раскладка расползлась бы: гарантия входа
  *  была бы неотличима от гарантий самой криптографии. Вход валидируется
- *  до какой-либо попытки его расшифровать. */
+ *  до какой-либо попытки его расшифровать.
+ *
+ *  По той же причине и с тем же местом в коде проверяются `myKeypair.publicKey`
+ *  и `myKeypair.privateKey` (находка I1 финального ревью): строка ровно в 32
+ *  UTF-8-байта приводится libsodium к 32 байтам молча, без единой жалобы на
+ *  длину — библиотека честно пытается открыть и бросает обычный `Error`
+ *  («incorrect key pair for the given ciphertext»), НЕ `TypeError`, потому
+ *  что для неё это выглядит как обычный чужой ключ, не как мусор на входе.
+ *  Наш `catch` ниже схлопывает такой `Error` в `null` — и наш собственный
+ *  баг (перепутанный формат ключа) выглядит как «письмо не для вас». Ключи
+ *  проверяются как есть, а не приводятся: приводить строку к байтам здесь
+ *  значило бы молча решать за вызывающего, что он имел в виду. */
 export async function openSealed(
   myKeypair: ChatKeypair,
   sealed: Uint8Array,
 ): Promise<Uint8Array | null> {
   if (!(sealed instanceof Uint8Array)) {
     throw new TypeError('openSealed: sealed должен быть Uint8Array (не строка/иное)');
+  }
+  if (!(myKeypair.publicKey instanceof Uint8Array)) {
+    throw new TypeError('openSealed: myKeypair.publicKey должен быть Uint8Array (не строка/иное)');
+  }
+  if (!(myKeypair.privateKey instanceof Uint8Array)) {
+    throw new TypeError('openSealed: myKeypair.privateKey должен быть Uint8Array (не строка/иное)');
   }
 
   const sodium = (await import('libsodium-wrappers')).default;
