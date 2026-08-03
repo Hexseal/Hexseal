@@ -99,6 +99,23 @@ describe('живой разговор на боевых умолчаниях л�
       expect(res.status).not.toBe(429);
     }
 
+    // 5. Находка ревью: сценарий до этой строки просит РОВНО один пропуск
+    // на КАЖДЫЙ из двух разных адресов — снижение потолка выпуска пропуска
+    // с 30 до 1 осталось бы незамеченным (у каждого адреса и так только
+    // одна попытка). Второй пропуск для ТОГО ЖЕ адреса — реалистичный
+    // повод (вкладка перезагрузилась, кэш пропуска потерян, посреди того
+    // же разговора нужен новый) — делает замер чувствительным к самому
+    // бюджету выпуска, а не только к тому, что выпуск вообще возможен.
+    const myTs2 = Math.floor(Date.now() / 1000);
+    const mySig2 = await signBagPassChallenge(wallet, address, myTs2);
+    const secondPassRes = record(await request(app)
+      .post('/bags/pass')
+      .set('CF-Connecting-IP', LIVE_IP)
+      .set('x-ts', String(myTs2))
+      .set('x-sig', mySig2)
+      .send({ address }));
+    expect(secondPassRes.status).toBe(200);
+
     // eslint-disable-next-line no-console
     console.log(`[свойство 1] боевые умолчания: всего запросов = ${total}, заблокировано 429 = ${blocked}`);
     expect(blocked).toBe(0);
