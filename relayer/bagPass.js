@@ -49,6 +49,19 @@ export function issueBagPass(address, nowSec = Math.floor(Date.now() / 1000)) {
   // baked into the token. Reject before that can happen, not just on verify.
   const addr = String(address).toLowerCase();
   if (!ETH_ADDR_RE.test(addr)) throw new Error('issueBagPass: invalid address');
+  // Number.isInteger(1e21) is true — a bare integer check doesn't reject an
+  // absurdly large nowSec, which then silently loses precision on
+  // `+ BAG_PASS_TTL_SEC` (1e21 + 43200 === 1e21). isSafeInteger rejects it,
+  // same as it rejects the string-concatenation and dot-injection cases
+  // below, all for the same underlying reason: nowSec has to be a number
+  // arithmetic can be trusted on.
+  // Number.isInteger(1e21) is true — a bare integer check doesn't reject an
+  // absurdly large nowSec, which then silently loses precision on
+  // `+ BAG_PASS_TTL_SEC` (1e21 + 43200 === 1e21). isSafeInteger rejects it,
+  // same as it rejects the string-concatenation and dot-injection cases
+  // below, all for the same underlying reason: nowSec has to be a number
+  // arithmetic can be trusted on.
+  if (!Number.isSafeInteger(nowSec)) throw new Error('issueBagPass: invalid nowSec');
 
   const expiresAt = nowSec + BAG_PASS_TTL_SEC;
   const body = `${addr}.${expiresAt}`;

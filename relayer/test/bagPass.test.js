@@ -134,6 +134,23 @@ describe('bagPass', () => {
     expect(() => issueBagPass(`${BOB.toLowerCase()}.99999999999`, 1_800_000_000)).toThrow();
   });
 
+  it('issueBagPass бросает на негодном nowSec — тот же баг I3, с другой стороны', () => {
+    // Строка: nowSec + BAG_PASS_TTL_SEC — склейка строк, не арифметика.
+    // '99999999999' + 43200 = '9999999999943200' (строка), и пропуск живёт
+    // практически вечно — Number.isFinite на verify это пропускает, там
+    // всё ещё конечное число, просто огромное.
+    expect(() => issueBagPass(ALICE, '99999999999')).toThrow();
+    // Дробное: точка дробной части — тот же незаэкранированный разделитель
+    // тела, что и в I3, только с другой стороны. '…cafe.43201.5'
+    // вставляет лишнее поле, и возвращённый expiresAt (43201.5) расходится
+    // с тем, что реально осядет в теле после split('.') на verify (43201).
+    expect(() => issueBagPass(ALICE, 1.5)).toThrow();
+    // 1e21: Number.isInteger(1e21) === true — литеральная проверка на
+    // целое его не поймает. Число вне безопасного диапазона молча теряет
+    // точность на +BAG_PASS_TTL_SEC (1e21 + 43200 === 1e21).
+    expect(() => issueBagPass(ALICE, 1e21)).toThrow();
+  });
+
   it('verifyBagPass отсекает негодный по форме адрес в теле даже с честным MAC-ом (защита в глубину)', () => {
     // Золотой токен, захваченный ДО того, как issueBagPass стал проверять
     // форму адреса на выпуске (issueBagPass('не-адрес', 1_700_000_000) с
@@ -163,11 +180,17 @@ describe('bagPass', () => {
   });
 
   it('срок в теле, который не парсится в число, отклоняется — не живёт вечно', () => {
-    // NaN/строка просачивается в expiresAt изнутри issueBagPass (не через
-    // подделку тела), поэтому MAC у такого тела честный: единственное, что
-    // может отсечь такой пропуск, — Number.isFinite(expiresAt) на verify.
-    expect(verifyBagPass(issueBagPass(ALICE, NaN).token).code).toBe('pass_invalid');
-    expect(verifyBagPass(issueBagPass(ALICE, 'abc').token).code).toBe('pass_invalid');
+    // Золотые токены, захваченные ДО того, как issueBagPass стал проверять
+    // форму nowSec (issueBagPass(ALICE, NaN) / issueBagPass(ALICE, 'abc') с
+    // SERVER_SECRET='test-server-secret'). После фикса I1 так больше не
+    // собрать — путь остаётся только как защита в глубину на verify, и
+    // держится только на этой заморозке: Number.isFinite(expiresAt).
+    const NAN_GOLDEN_TOKEN =
+      'v1.MHhhMWNlMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjYWZlLk5hTg.oWhkY_IwvNmBJ3lVA0Mj8Ip7MiFV4csBwNzDi4G4S0s';
+    const ABC_GOLDEN_TOKEN =
+      'v1.MHhhMWNlMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjYWZlLmFiYzQzMjAw.SPMNsW9DfTRwiFZqrWr5a4qxywWP6VzZXHoJeMUBS6M';
+    expect(verifyBagPass(NAN_GOLDEN_TOKEN, 1_700_000_000).code).toBe('pass_invalid');
+    expect(verifyBagPass(ABC_GOLDEN_TOKEN, 1_700_000_000).code).toBe('pass_invalid');
   });
 
   it('золотой токен: смена домена MAC-а в реализации сломает эту заморозку', () => {
