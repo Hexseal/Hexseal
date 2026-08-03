@@ -75,6 +75,28 @@ describe('bagExpiryAt — три правила в заданном порядк
     const m = { uploadedAt: 1000, firstFetchedAt: null, dealDeadline: 1000 + DAY };
     expect(bagExpiryAt(m)).toBe(1000 + BAG_UNREAD_TTL_MS);
   });
+
+  // Находка ревью (мелочь a): firstFetchedAt проверялся на истинность
+  // (`meta.firstFetchedAt ? … : …`), а не на `!= null`. 0 (эпоха Unix, 1
+  // января 1970) — валидный safe integer, тот же модуль сам его принимает
+  // через assertNullableSafeInt. С проверкой на истинность firstFetchedAt: 0
+  // читался как "не прочитан" — правило 3 (30д от загрузки) срабатывало
+  // вместо правила 2 (7д от прочтения).
+  //
+  // dealDeadline та же проверка (`if (!meta.dealDeadline) …`) не тронута:
+  // проверено отдельно, что dealDeadline: 0 при реалистичном uploadedAt
+  // поведенчески неотличим от dealDeadline: null — Math.min(0, ceiling)
+  // всегда даёт значение ≤ 0, а base (из правила 2/3) всегда положителен на
+  // реалистичных временах, так что Math.max(base, ≤0) === base что с
+  // "признан заданным", что с "проигнорирован как отсутствующий". Написать
+  // тест, который бы отличал эти два поведения, не удалось — значит и
+  // менять код нечего запирать. Требование координатора называло только
+  // firstFetchedAt буквально; для dealDeadline это не бездумно сужено, а
+  // проверено и оставлено осознанно.
+  it('firstFetchedAt: 0 — валидное время прочтения (эпоха Unix), не "не прочитан"', () => {
+    const m = { uploadedAt: 1000, firstFetchedAt: 0, dealDeadline: null };
+    expect(bagExpiryAt(m)).toBe(0 + BAG_TTL_MS); // правило 2 (прочитан), не правило 3
+  });
 });
 
 describe('склад', () => {

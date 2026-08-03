@@ -402,7 +402,11 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
   if (meta.firstFetchedAt != null) assertSafeInt('bagExpiryAt', 'meta.firstFetchedAt', meta.firstFetchedAt);
   if (meta.dealDeadline != null) assertSafeInt('bagExpiryAt', 'meta.dealDeadline', meta.dealDeadline);
 
-  const base = meta.firstFetchedAt
+  // != null, не истинность: 0 (эпоха Unix) — валидный safe integer, тот же
+  // модуль сам его принимает через assertNullableSafeInt. С проверкой на
+  // истинность firstFetchedAt: 0 читался как "не прочитан", и правило 3
+  // (30д от загрузки) срабатывало вместо правила 2 (7д от прочтения).
+  const base = meta.firstFetchedAt != null
     ? meta.firstFetchedAt + BAG_TTL_MS
     : meta.uploadedAt + BAG_UNREAD_TTL_MS;
 
