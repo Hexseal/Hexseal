@@ -10,6 +10,27 @@ import { fileURLToPath } from 'url';
 
 dotenv.config({ path: '.env.relayer' });
 
+// Задача 3 (chat-transport-storage): статические импорты, не
+// `const { X } = await import(...)` — тот и другой модуль экспортируют
+// `export let` (DIR_BAGS, MAX_BAG_SIZE, ...), и только именованный статический
+// import (или обращение через пространство имён) даёт живую ссылку, которая
+// видит значения ПОСЛЕ assertBagStoreReady()/assertBagPassReady() ниже, а не
+// снимок на момент этой строки — см. заголовок test/bagStore.test.js.
+//
+// Текстуально ПОСЛЕ dotenv.config() по требованию ревью Задачи 3. Строго
+// говоря это не меняет порядок ВЫПОЛНЕНИЯ — ESM вычисляет все импорты раньше
+// тела импортирующего модуля независимо от того, где текстуально стоит
+// `import`, так что bagStore.js/bagPass.js в любом случае получают
+// управление до этой строки. Оба спроектированы это пережить (ленивое чтение
+// секрета в bagPass.js; module-level `_refreshConfig()` в bagStore.js,
+// повторно вызываемая из assertBagStoreReady()) — но текстовый порядок здесь
+// дешевле и надёжнее как сигнал для читателя, поэтому он такой.
+import {
+  bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
+  assertBagStoreReady, MAX_BAG_SIZE,
+} from './bagStore.js';
+import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Web Push (VAPID) ─────────────────────────────────────────────────────────
@@ -686,6 +707,15 @@ for (const dir of [DIR_FILES, DIR_PUBLIC, DIR_TEMP]) {
 
 const SERVER_SECRET = process.env.SERVER_SECRET;
 if (!SERVER_SECRET) throw new Error('SERVER_SECRET is not set');
+
+// Задача 3: перечитать/провалидировать конфигурацию пропуска и склада
+// мешков ЗДЕСЬ, после dotenv.config() выше. Оба модуля посчитали свои
+// значения ещё на импорте (до dotenv — см. комментарий у импортов выше);
+// без этого вызова первым, кто заметит отсутствующий SERVER_SECRET или
+// битый STORAGE_DIR/*_MS/*_SIZE, был бы не старт процесса, а первый живой
+// запрос к /bags/*.
+assertBagPassReady();
+assertBagStoreReady();
 
 // Single deterministic bot wallet — keccak256(SERVER_SECRET) as private key
 const BOT_PRIVATE_KEY = ethers.keccak256(ethers.toUtf8Bytes(SERVER_SECRET));
@@ -1467,7 +1497,23 @@ const MAX_FILE_SIZE   = 5 * 1024 * 1024 * 1024; // 5 GB — encrypted chat files
 const MAX_PUBLIC_SIZE =           5 * 1024 * 1024; // 5 MB — avatars, profiles
 const MAX_PART_SIZE   =          50 * 1024 * 1024; // 50 MB — per multipart chunk
 
-function streamWithSizeLimit(req, res, filePath, maxBytes) {
+// MAX_BAG_SIZE (Задача 3) is a quarter megabyte — `Math.round(bytes/1024/1024)`
+// alone renders that as "(max 0 MB)", which is a genuine lie, not just an ugly
+// number. KB below 1 MB, same rounding above it.
+function formatMaxSize(maxBytes) {
+  return maxBytes >= 1024 * 1024
+    ? `${Math.round(maxBytes / 1024 / 1024)} MB`
+    : `${Math.round(maxBytes / 1024)} KB`;
+}
+
+// onFinish, if given, replaces the default "200, empty body" success response —
+// called with the written filePath once the stream has finished, aborted:false.
+// Задача 3's bag upload route needs this: it has to stat the file (real bytes on
+// disk, not the client-claimed size), persist metadata, and shape its own JSON
+// body — none of which the three pre-existing callers below need, and none of
+// them pass a 5th argument, so their behaviour is unchanged (undefined → old
+// branch).
+function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
   let received = 0;
   let aborted  = false;
   const ws = fs.createWriteStream(filePath);
@@ -1477,12 +1523,16 @@ function streamWithSizeLimit(req, res, filePath, maxBytes) {
       aborted = true;
       ws.destroy();
       fs.unlink(filePath, () => {});
-      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)` });
+      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${formatMaxSize(maxBytes)})` });
       req.destroy();
     }
   });
   req.pipe(ws);
-  ws.on('finish', () => { if (!aborted && !res.headersSent) res.status(200).end(); });
+  ws.on('finish', () => {
+    if (aborted) return;
+    if (onFinish) { onFinish(filePath); return; }
+    if (!res.headersSent) res.status(200).end();
+  });
   ws.on('error', (err) => { if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); } });
   req.on('error', () => ws.destroy());
 }
@@ -1728,6 +1778,322 @@ app.post('/files/multipart/abort', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Bag endpoints — chat transport, blind to content ─────────────────────────
+//
+// A "bag" is an opaque, client-encrypted chat payload — the server never reads,
+// parses or logs its bytes, at upload, at download, or in cleanup (Задача 4).
+// Everything this block operates on is addresses, sizes and timestamps.
+//
+// Separate storage, separate route family, on purpose: DIR_FILES/DIR_PUBLIC
+// above are mounted under express.static and openly listable-by-guessing —
+// tolerable for ciphertext attachments nobody can open without a key, but not
+// for bags, where the metadata itself (who talked to whom, and when) is the
+// thing the product promises not to hand to a stranger. Nothing below is
+// mounted under express.static — see test/bagRoutes.test.js's direct-request
+// test for the check that actually proves it.
+//
+//   POST /bags/pass         → { pass, expiresAt } — x-ts/x-sig headers over
+//                              bagPassChallenge(address, ts), address in the
+//                              JSON body (see the long comment on the route
+//                              itself for why address can't come from the
+//                              headers alone).
+//   PUT  /bags/:recipient   → { key } — sender comes from the pass, never
+//                              from the body; body is the raw sealed bytes.
+//   GET  /bags?since=<ms>   → [{ key, sender, size, uploadedAt }] for the
+//                              address inside the pass.
+//   GET  /bags/:recipient/:filename (== GET /bags/:key, key = "recipient/filename"
+//                              — the key format from bagKeyFor() always has one
+//                              slash in it, so it needs two URL segments)
+//                            → raw bytes, only if the pass's address is the
+//                              recipient. Wrong owner and unknown key answer
+//                              identically (404, same body) — see rule 3 below.
+//
+// Rules, each locked by test/bagRoutes.test.js:
+//   1. Recipient/sender are read from the pass or the URL, never the body.
+//   2. Wrong-owner and unknown-key GETs are indistinguishable (404, same
+//      body) — a 403 there would let someone enumerate another address's
+//      bag count by the status code alone. An invalid/expired PASS is still
+//      401 with its own code — that one has to be distinguishable, or the
+//      client can't tell "re-sign" from "no such bag".
+//   3. The rate limiter runs on all four routes, keyed by IP (as elsewhere)
+//      AND by the caller's address (bagAddrRateKey below) — behind the
+//      Cloudflare Tunnel every IP collapses to one (app.js:1081-1101), so an
+//      IP-only limiter is worthless here.
+
+const BAG_PASS_HEADER = 'x-bag-pass';
+const BAG_NOT_FOUND   = { error: 'Bag not found', code: 'bag_not_found' };
+
+// One namespace, shared by all four routes — not "bag-addr:pass:<addr>" vs
+// "...:put:<addr>" etc. A per-route budget would let a caller who exhausts
+// one route's budget simply move the same load to another; a shared budget
+// is the actual constraint on "how much can this address do per minute",
+// which is what the limiter is for.
+function bagAddrRateKey(address) {
+  return `bag-addr:${address}`;
+}
+
+function bagRateLimited(res) {
+  return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
+}
+
+// Shared by PUT/GET/GET-list: verify the pass, answer 401 with its code on
+// failure, otherwise return the address it names. Every caller below treats
+// that address as the ONLY source of truth for "who is asking" — see rule 1.
+function requireBagPass(req, res) {
+  const verified = verifyBagPass(req.headers[BAG_PASS_HEADER]);
+  if (verified.error) {
+    res.status(401).json({ error: verified.error, code: verified.code });
+    return null;
+  }
+  return verified.address;
+}
+
+// POST /bags/pass — mints a bag pass from a wallet signature.
+//
+// Unlike GET /dispute-log/:dealId (app.js:1237-1258, the pattern this route
+// is otherwise copied from), there is no resource id in this URL that the
+// server already knows and can fold into the challenge — dispute-log signs
+// over `dealId`, which comes from the path. bagPassChallenge(address, ts)
+// signs over the CALLER's OWN address instead, and building that exact
+// message server-side (required before ethers.verifyMessage can recover
+// anyone) needs the address as an input, not just an output. So the caller
+// states a claimed address in the JSON body, and the route checks
+// self-consistency — recovered signer === claimed address — exactly the
+// pattern /push/subscribe and /push/unsubscribe already use below for the
+// same shape of problem (no URL-supplied resource, signer proves an address
+// that's also plain input).
+//
+// Deliberately NOT copied from /push/subscribe/unsubscribe: those two have no
+// replay protection at all (docs/OPEN-ITEMS.md #27) — a captured signature is
+// valid forever. This route keeps bagPassChallenge's ±5 minute window, the
+// same discipline GET /dispute-log/:dealId already applies to its own
+// signature path, checked via Number.isFinite (not a bare Number(ts) > …
+// comparison — that version silently accepts a non-numeric ts because
+// `NaN > 300` is always false, the exact failure mode named in the same
+// OPEN-ITEMS entry).
+//
+// Ordering is cost-ordered, cheapest first: address shape → header presence →
+// timestamp window → rate limit by the CLAIMED address → only then the actual
+// ecdsa recovery. The address-rate-limit step exists here specifically
+// because — unlike the three consuming routes below, which only learn the
+// caller's address by already having verified a pass — this route is handed
+// an address up front, so a flood of garbage signatures against one address
+// hits the limiter before paying for a single recovery.
+app.post('/bags/pass', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(ip)) return bagRateLimited(res);
+
+  const { address } = req.body || {};
+  if (typeof address !== 'string' || !ETH_ADDR_RE.test(address)) {
+    return res.status(400).json({ error: 'Invalid address' });
+  }
+  const addr = address.toLowerCase();
+
+  const ts  = req.headers['x-ts'];
+  const sig = req.headers['x-sig'];
+  if (!ts || !sig) {
+    return res.status(401).json({ error: 'Missing x-ts or x-sig header' });
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const tsNum  = Number(ts);
+  // Number.isFinite first, not just `Math.abs(nowSec - tsNum) > 300` — the
+  // same class of bug docs/OPEN-ITEMS.md #27 (subpoint 3) found in
+  // /push/subscribe's sibling code: Number('never') is NaN, and any
+  // comparison against NaN is always false, so a non-numeric x-ts silently
+  // sails through a bare magnitude check instead of being rejected by it.
+  // (bagPassChallenge() below happens to also reject NaN via its own
+  // Number.isSafeInteger guard — Задача 1's contract, not this route's — so
+  // removing this line doesn't reopen an exploit today; it does start
+  // reporting a garbage timestamp as "invalid signature" instead of what it
+  // actually is, and removes the one guard here that doesn't depend on a
+  // frozen module elsewhere still being strict tomorrow.)
+  if (!Number.isFinite(tsNum) || Math.abs(nowSec - tsNum) > 300) {
+    return res.status(401).json({ error: 'Timestamp out of window', code: 'ts_out_of_window' });
+  }
+
+  if (!checkRateLimit(bagAddrRateKey(addr))) return bagRateLimited(res);
+
+  let recovered;
+  try {
+    const message = bagPassChallenge(addr, tsNum);
+    recovered = ethers.verifyMessage(message, sig).toLowerCase();
+  } catch {
+    return res.status(401).json({ error: 'Invalid signature', code: 'invalid_signature' });
+  }
+  if (recovered !== addr) {
+    // Distinct from both pass_expired (this route doesn't consume an
+    // existing pass) and invalid_signature (the signature itself parsed and
+    // recovered fine — it just isn't for the address the caller claimed) —
+    // Задача 6 tells "re-sign" and "you sent someone else's address" apart
+    // by this code.
+    return res.status(401).json({ error: 'Signature does not match claimed address', code: 'address_mismatch' });
+  }
+
+  const { token, expiresAt } = issueBagPass(addr, nowSec);
+  res.json({ pass: token, expiresAt });
+});
+
+// PUT /bags/:recipient — body is the raw sealed bag. Sender comes from the
+// pass; the body is never parsed (bytes only, no matter what they look like).
+app.put('/bags/:recipient', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(ip)) return bagRateLimited(res);
+
+  const sender = requireBagPass(req, res);
+  if (!sender) return;
+
+  if (!checkRateLimit(bagAddrRateKey(sender))) return bagRateLimited(res);
+
+  const recipient = String(req.params.recipient || '').toLowerCase();
+  if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient' });
+
+  // Neither assertBagStoreReady() nor bagPathFor() creates the recipient's
+  // own subdirectory — only the storage root (DIR_BAGS) exists at boot. This
+  // route is the one place a bag actually lands on disk, so it has to make
+  // the directory itself, or the very first write to a new recipient fails.
+  let key, filePath;
+  try {
+    key = bagKeyFor(recipient);
+    filePath = bagPathFor(key);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  } catch (e) {
+    console.error('[bags] PUT setup failed:', e.message);
+    return res.status(500).json({ error: 'Failed to prepare bag storage' });
+  }
+
+  streamWithSizeLimit(req, res, filePath, MAX_BAG_SIZE, () => {
+    // Measure what actually landed on disk — not the client-claimed size,
+    // not a running byte count off the wire (see the comment on
+    // MAX_BAG_SIZE in bagStore.js: recordBag()'s own ceiling check only ever
+    // sees whatever number it's handed here). uploadedAt is `Date.now()`,
+    // never anything the client sent — bagStore.js's assertNotFromFuture()
+    // exists precisely so a spoofed uploadedAt can't be used to outlive the
+    // TTL rules, and that protection is worthless if this route just
+    // forwards a client-supplied value instead of stamping its own.
+    let size;
+    try {
+      size = fs.statSync(filePath).size;
+    } catch (e) {
+      console.error('[bags] PUT stat-after-write failed:', e.message);
+      fs.unlink(filePath, () => {});
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag' });
+      return;
+    }
+    try {
+      const stored = recordBag({ sender, recipient, key, size, uploadedAt: Date.now() });
+      res.status(200).json({ key: stored.key });
+    } catch (e) {
+      // recordBag() throws (bagStore.js's documented contract, not an
+      // accident) — Express 4 doesn't turn a throw from inside this
+      // callback into a response on its own, so this has to be caught here
+      // or a disk failure kills the process instead of just failing the
+      // request.
+      console.error('[bags] recordBag failed:', e.message);
+      fs.unlink(filePath, () => {});
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag' });
+    }
+  });
+});
+
+// GET /bags?since=<ms> — bags addressed to the pass's own address, oldest
+// first (listBagsFor's own order). Only the four fields Задача 3's spec
+// names ship back — not pairId, not firstFetchedAt, not dealDeadline.
+app.get('/bags', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(ip)) return bagRateLimited(res);
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  if (!checkRateLimit(bagAddrRateKey(address))) return bagRateLimited(res);
+
+  let since = null;
+  if (req.query.since !== undefined) {
+    since = Number(req.query.since);
+    if (!Number.isFinite(since)) return res.status(400).json({ error: 'Invalid since' });
+  }
+
+  let list;
+  try {
+    list = listBagsFor(address);
+  } catch (e) {
+    console.error('[bags] GET /bags failed:', e.message);
+    return res.status(500).json({ error: 'Failed to list bags' });
+  }
+
+  if (since !== null) list = list.filter((b) => b.uploadedAt > since);
+
+  res.json(list.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })));
+});
+
+// GET /bags/:recipient/:filename — download. bagKeyFor() always produces a
+// key shaped "<recipient>/<uploadedAt>-<uuid>.bin", so the external
+// "GET /bags/:key" interface needs two URL segments here, not one — a single
+// `:key` param would stop at the first `/`.
+app.get('/bags/:recipient/:filename', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(ip)) return bagRateLimited(res);
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  if (!checkRateLimit(bagAddrRateKey(address))) return bagRateLimited(res);
+
+  const key = `${req.params.recipient}/${req.params.filename}`;
+
+  // Every failure branch below — malformed key, wrong owner, meta present but
+  // the file is gone, key simply never existed — answers with the exact same
+  // 404 body. That collapse is the point (rule 2 above): a 403 on "wrong
+  // owner" vs 404 on "no such key" would let someone learn which keys exist
+  // in another address's bag list just by watching the status code.
+  let meta;
+  try {
+    meta = bagMetaOf(key);
+  } catch {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+  if (!meta || meta.recipient !== address) {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+
+  let filePath;
+  try {
+    filePath = bagPathFor(key);
+  } catch {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+
+  try {
+    markFetched(key, Date.now());
+  } catch (e) {
+    // markFetched() throws on an unknown key (bagStore.js's contract) — but
+    // this route already confirmed the key exists via bagMetaOf() above, so
+    // reaching this catch means a genuine disk failure or a race with
+    // cleanup (Задача 4) between that check and here. Either way it's the
+    // server's failure, not "no such bag" — 500, not folded into
+    // BAG_NOT_FOUND.
+    console.error('[bags] markFetched failed:', e.message);
+    return res.status(500).json({ error: 'Failed to mark bag as fetched' });
+  }
+
+  // Same defensive headers as the /files static mount (app.js:1058-1068) —
+  // ciphertext is never meant to be rendered, sniffed or cached across users.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  res.setHeader('Content-Disposition', 'attachment');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  const rs = fs.createReadStream(filePath);
+  rs.on('error', (e) => {
+    console.error('[bags] read failed:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag' });
+  });
+  rs.pipe(res);
 });
 
 // ─── Push notification endpoints ──────────────────────────────────────────────
