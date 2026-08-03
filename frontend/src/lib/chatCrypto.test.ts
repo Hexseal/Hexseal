@@ -88,11 +88,33 @@ describe('deriveChatKeypair', () => {
 
     for (const [label, input] of cases) {
       it(label, async () => {
+        // Раунд 7, находка I3: было `.rejects.toThrow()` без класса —
+        // сейчас именно TypeError, тем же классом, что sealForRecipient и
+        // openSealed бросают на своём негодном входе (см. тест ниже).
         await expect(
           deriveChatKeypair(input as unknown as `0x${string}`),
-        ).rejects.toThrow();
+        ).rejects.toThrow(TypeError);
       });
     }
+  });
+
+  // Раунд 7, находка I3: deriveChatKeypair бросал обычный Error, а
+  // sealForRecipient/openSealed — TypeError, причём openSealed использует
+  // `instanceof TypeError` КАК ПРИЗНАК смысла «это наш мусор на входе»
+  // (см. JSDoc над openSealed в chatCrypto.ts). Вызывающий, скопировавший
+  // задокументированный в этом же файле образец
+  //   catch (e) { if (e instanceof TypeError) throw e; return null }
+  // вокруг входа в чат проглотил бы негодную подпись от deriveChatKeypair
+  // как «не наш мешок» — два разных класса в одном файле означали одно и то
+  // же намерение («наш мусор на входе»), но были неотличимы по этому
+  // признаку ровно там, где признак и нужен вызывающему.
+  it('раунд 7, находка I3: все три функции бросают ОДИН класс (TypeError) на негодном входе', async () => {
+    await expect(deriveChatKeypair('' as unknown as `0x${string}`)).rejects.toBeInstanceOf(TypeError);
+    const bob = await deriveChatKeypair(SIG_B);
+    await expect(
+      sealForRecipient('не Uint8Array' as unknown as Uint8Array, text('a')),
+    ).rejects.toBeInstanceOf(TypeError);
+    await expect(openSealed(bob, new Uint8Array(3))).rejects.toBeInstanceOf(TypeError);
   });
 });
 

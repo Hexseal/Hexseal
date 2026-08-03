@@ -87,14 +87,19 @@ const SIGNATURE_HEX_RE = /^0x[0-9a-f]{130}$/;
  * статический импорт кладёт ~147 КБ gzip в общий чанк сборки Next
  * (docs/superpowers/reports/2026-08-02-chat-crypto-library-choice.md, §6).
  *
- * @throws {Error} если `signature` не 65-байтовая hex-строка — намеренно
+ * @throws {TypeError} если `signature` не 65-байтовая hex-строка — намеренно
  *   громко: молчаливый приём мусора здесь означает молчаливую утечку ключа
  *   (все, кто подал один и тот же мусорный вход, получают одну пару).
- */
+ *   Класс `TypeError`, а не обычный `Error` (находка I3 финального ревью) —
+ *   тот же класс, что `sealForRecipient`/`openSealed` бросают на своём
+ *   негодном входе, и который `openSealed` использует как ПРИЗНАК смысла
+ *   «это наш мусор, а не событие протокола» (см. JSDoc над `openSealed`).
+ *   Два разных класса в одном файле означали бы одно и то же намерение, но
+ *   были бы неотличимы вызывающим кодом ровно там, где различие и нужно. */
 export async function deriveChatKeypair(signature: `0x${string}`): Promise<ChatKeypair> {
   const sig = signature.toLowerCase() as `0x${string}`;
   if (!SIGNATURE_HEX_RE.test(sig)) {
-    throw new Error('deriveChatKeypair: ожидается 65-байтовая hex-подпись (0x + 130 hex-цифр)');
+    throw new TypeError('deriveChatKeypair: ожидается 65-байтовая hex-подпись (0x + 130 hex-цифр)');
   }
 
   const seed = keccak256(
