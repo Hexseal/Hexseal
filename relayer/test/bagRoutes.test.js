@@ -576,6 +576,63 @@ describe('PUT /bags/:recipient', () => {
     expect(leftovers).toHaveLength(0);
   });
 
+  it('находка ревью: нормализация Content-Type — с параметром, в верхнем регистре, и НЕ срабатывает на +json-суффиксе', async () => {
+    // Поведение УЖЕ верно реализовано (contentType.split(';')[0].trim()
+    // .toLowerCase() === 'application/json') — просто ни разу не запирался
+    // тестом. Три случая разом:
+    //   1. 'application/json; charset=utf-8' — express.json() съедает и
+    //      это, значит наша проверка тоже обязана отвергнуть;
+    //   2. 'APPLICATION/JSON' — express.json() матчит без учёта регистра
+    //      (сверено отдельно через сам матчер type-is), наша проверка
+    //      обязана тоже;
+    //   3. 'application/vnd.api+json' — суффикс +json НЕ матчится
+    //      express.json() по умолчанию (сверено отдельно тем же способом:
+    //      typeis.is('application/vnd.api+json', ['application/json']) ===
+    //      false) — то есть тело такого запроса НЕ съедается заранее, и
+    //      наша проверка обязана его ПРОПУСТИТЬ, а не отвергать вслепую
+    //      всё, что содержит "json".
+    const { wallet: alice } = await newWalletAndAddress();
+
+    const withCharset = await newWalletAndAddress();
+    const resCharset = await putBag({
+      pass: await issuePassFor(alice, freshIp()),
+      recipient: withCharset.address,
+      contentType: 'application/json; charset=utf-8',
+      body: JSON.stringify({ x: 1 }),
+    });
+    expect(resCharset.status).toBe(400);
+    expect(resCharset.body.error).toMatch(/content-type/i);
+
+    const upperCase = await newWalletAndAddress();
+    const resUpper = await putBag({
+      pass: await issuePassFor(alice, freshIp()),
+      recipient: upperCase.address,
+      contentType: 'APPLICATION/JSON',
+      body: JSON.stringify({ x: 1 }),
+    });
+    expect(resUpper.status).toBe(400);
+    expect(resUpper.body.error).toMatch(/content-type/i);
+
+    // Не сверяем точный размер здесь: supertest/superagent сам умеет
+    // "помогать" с Content-Type, оканчивающимся на +json, — пере-
+    // сериализует переданный Buffer в JSON-представление вида
+    // {"type":"Buffer","data":[...]} ДО того, как байты вообще уходят на
+    // сокет (проверено отдельно: реальная длина на проводе для этого теста
+    // — 227 байт, не длина исходной строки). Это особенность самого
+    // тестового клиента, не app.js — сервер честно принимает и хранит
+    // ровно то, что реально пришло. Здесь важен только факт: непустое
+    // тело с этим Content-Type не отвергается и не обнуляется express.json().
+    const suffixJson = await newWalletAndAddress();
+    const resSuffix = await putBag({
+      pass: await issuePassFor(alice, freshIp()),
+      recipient: suffixJson.address,
+      contentType: 'application/vnd.api+json',
+      body: Buffer.from('opaque-bytes-not-actually-json-but-suffix-content-type'),
+    });
+    expect(resSuffix.status).toBe(200);
+    expect(bagMetaOf(resSuffix.body.key).size).toBeGreaterThan(0);
+  });
+
   it('И-2 (ревью): оборванная посреди загрузка не оставляет обрезок на диске', async () => {
     // req.on('error', () => ws.destroy()) раньше только останавливал запись,
     // не удалял уже написанные байты — обрезок не попадал в метаиндекс
@@ -969,10 +1026,27 @@ describe('GET /bags/:key', () => {
     const bobPass = await issuePassFor(bob, freshIp());
 
     const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('cache-me-not') });
-    const res = await getBag({ pass: bobPass, key: put.body.key, ip: freshIp() });
+    // ALLOWED_ORIGINS (test/setup.js) включает этот Origin — запрос с ним
+    // проходит через app.use(cors(...)) (app.js, выше по цепочке
+    // middleware), которая сама ставит Vary: Origin. Без этого заголовка
+    // в запросе CORS не добавляет ничего в Vary, и тест не отличил бы
+    // res.append() от res.setHeader() — ровно так эта находка и осталась
+    // незапертой раньше.
+    const res = await request(app)
+      .get(`/bags/${put.body.key}`)
+      .set('CF-Connecting-IP', freshIp())
+      .set('Origin', 'http://localhost:3000')
+      .set('x-bag-pass', bobPass);
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('private, no-store');
-    expect(res.headers['vary']).toBe('x-bag-pass');
+    // Находка ревью (короткий список): CORS уже ставит Vary: Origin —
+    // res.setHeader('Vary', 'x-bag-pass') ЗАМЕНЯЛ бы это значение целиком,
+    // стирая Origin. res.append() добавляет к нему через запятую.
+    // "Содержит", а не "равен ровно этой строке" — иначе тест сам стал бы
+    // преградой для более полной формулировки заголовка в будущем.
+    const varyValues = String(res.headers['vary'] || '').split(',').map((v) => v.trim().toLowerCase());
+    expect(varyValues).toContain('x-bag-pass');
+    expect(varyValues).toContain('origin');
   });
 
   it('мешки не отдаются статикой — прямой запрос без пропуска не получает байты', async () => {

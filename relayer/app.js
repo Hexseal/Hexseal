@@ -2270,7 +2270,15 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   // tells any cache that does inspect headers that the response depends on
   // x-bag-pass, not just the URL.
   res.setHeader('Cache-Control', 'private, no-store');
-  res.setHeader('Vary', 'x-bag-pass');
+  // Найдено попутно (короткий список координатора, не измерено отдельно):
+  // app.use(cors(...)) (app.js, выше по цепочке middleware) уже ставит
+  // Vary: Origin на любой ответ с заголовком Origin. res.setHeader('Vary',
+  // ...) ЗАМЕНЯЕТ значение целиком, а не добавляет к нему — здесь это
+  // стирало бы Origin, который CORS поставил секундами раньше. Вреда от
+  // этого сегодня нет (Cache-Control: no-store уже запрещает кэширование
+  // в принципе), но append(), а не setHeader(), — правильная форма: имя
+  // заголовка одно, значения через запятую, ничего не теряется.
+  res.append('Vary', 'x-bag-pass');
 
   // Мелочь (ревью): Express auto-answers HEAD for any registered GET route
   // by running this SAME handler and stripping the body at the wire level —
