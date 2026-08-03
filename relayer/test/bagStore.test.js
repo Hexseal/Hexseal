@@ -152,11 +152,22 @@ describe('склад', () => {
     expect(bagMetaOf(key).firstFetchedAt).toBe(5000);
   });
 
-  it('метаиндекс переживает перезапуск', () => {
+  // Находка ревью (C1, четвёртый раунд): вызов _loadBagMeta() на уже живом
+  // инстансе модуля — не перезапуск. Модуль к этому моменту полностью
+  // инициализирован (весь верхнеуровневый код уже выполнился), так что
+  // ЛЮБОЙ баг порядка объявления внутри самого модуля (например, константа
+  // в temporal dead zone на момент вызова _loadBagMeta() на уровне модуля)
+  // этим тестом не ловится вообще. Настоящий перезапуск — это НОВАЯ оценка
+  // модуля с нуля: ровно то, что даёт withFreshBagStoreModule().
+  it('метаиндекс переживает НАСТОЯЩИЙ перезапуск — новый импорт модуля, а не просто повторный вызов _loadBagMeta() на уже живом инстансе', async () => {
     const key = put(ALICE, BOB, 1000);
     markFetched(key, 5000);
-    _loadBagMeta();
-    expect(bagMetaOf(key).firstFetchedAt).toBe(5000);
+
+    await withFreshBagStoreModule({}, async (fresh) => {
+      const meta = fresh.bagMetaOf(key);
+      expect(meta).toBeDefined();
+      expect(meta.firstFetchedAt).toBe(5000);
+    });
   });
 
   it('чистка сносит просроченное и оставляет живое', () => {
@@ -600,6 +611,60 @@ describe('I1 — кривая запись в индексе отбраковы�
   it('целиком нечитаемый bag-meta.json по-прежнему даёт пустой индекс, не бросает (поведение до I1 не тронуто)', () => {
     fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{not valid json', 'utf8');
     expect(() => _loadBagMeta()).not.toThrow();
+  });
+});
+
+// ─── C1 (четвёртый раунд) — ошибка программиста не маскируется под битые
+// данные ───────────────────────────────────────────────────────────────────
+//
+// Находка ревью: голый `catch { return false; }` в isValidBagMetaEntry
+// ловил ЛЮБОЙ throw — включая ReferenceError из temporal dead zone
+// (константа BAG_KEY_RE читалась до собственного объявления, см. фикс
+// выше в этом же коммите) — и тихо засчитывал его как «запись битая»,
+// уменьшая счётчик. Ошибка ПРОГРАММИСТА (наш код сломан) и ошибка ДАННЫХ
+// (uploadedAt: 'oops') — разного калибра: первая обязана быть громкой,
+// вторая может тихо отбраковываться. Ниже — тест на САМ ПРИНЦИП различения,
+// не привязанный к конкретной причине (TDZ уже не воспроизвести
+// напрямую после фикса выше — симулируем тот же КЛАСС ошибки подменой
+// Number.isSafeInteger, встроенного примитива, которым assertSafeInt
+// пользуется внутри isValidBagMetaEntry на каждой записи).
+describe('C1 (четвёртый раунд) — ошибка программиста внутри проверки записи не маскируется под "битые данные"', () => {
+  it('TypeError из нашего же кода при загрузке пробрасывается наружу, а не тихо считается отбракованной записью', () => {
+    const key = bagKeyFor(ALICE);
+    writeRawBagMeta({ [key]: validRawMeta() }); // структурно и семантически валидная запись
+
+    const spy = vi.spyOn(Number, 'isSafeInteger').mockImplementation(() => {
+      throw new TypeError('симулированная ошибка программиста');
+    });
+    try {
+      expect(() => _loadBagMeta()).toThrow(TypeError);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('ReferenceError из нашего же кода при загрузке пробрасывается наружу — тот же класс, что реальный баг TDZ', () => {
+    const key = bagKeyFor(ALICE);
+    writeRawBagMeta({ [key]: validRawMeta() });
+
+    const spy = vi.spyOn(Number, 'isSafeInteger').mockImplementation(() => {
+      throw new ReferenceError('симулированная ошибка программиста');
+    });
+    try {
+      expect(() => _loadBagMeta()).toThrow(ReferenceError);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('настоящая порча данных (Error от fail()) по-прежнему тихо отбраковывается, не пробрасывается', () => {
+    // Контрольный случай — без него первые два теста могли бы означать
+    // "загрузка теперь ВСЕГДА бросает на любой невалидной записи", что
+    // сломало бы I1 целиком (одна кривая запись снова роняла бы всё).
+    const key = bagKeyFor(ALICE);
+    writeRawBagMeta({ [key]: validRawMeta({ uploadedAt: 'oops' }) });
+    expect(() => _loadBagMeta()).not.toThrow();
+    expect(bagMetaOf(key)).toBeUndefined();
   });
 });
 
