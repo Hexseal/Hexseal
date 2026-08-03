@@ -362,6 +362,32 @@ describe('PUT /bags/:recipient', () => {
     expect(res.status).toBe(400);
   });
 
+  it('И-1 (ревью): Content-Type: application/json отвергается явно, а не съедается express.json() молча', async () => {
+    // express.json({limit:'64kb'}) (app.js, до любого маршрута) разбирает
+    // ЛЮБОЕ тело с этим Content-Type до того, как запрос доедет сюда — к
+    // моменту, когда streamWithSizeLimit начал бы читать поток, оно уже
+    // пусто. Раньше: 200 {key}, на диске 0 байт, отправитель уверен, что
+    // доставил, получатель скачивает пустоту. Проверяем ОБА конца: сам ответ
+    // и то, что запись в индекс вообще не попала (не молчаливый 400 после
+    // того, как файл уже испорчен).
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    const res = await putBag({
+      pass,
+      recipient: bobAddr,
+      contentType: 'application/json',
+      body: JSON.stringify({ not: 'a real bag, but valid json' }),
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).not.toHaveProperty('key');
+
+    const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+    const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
+    expect(leftovers).toHaveLength(0);
+  });
+
   it('лимитер по адресу срабатывает на САМОМ PUT даже при разных IP', async () => {
     // Находка ревью: адресный лимитер прежде был заперт только на
     // POST /bags/pass и GET /bags — снять его именно с PUT было бы

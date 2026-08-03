@@ -2013,6 +2013,23 @@ app.put('/bags/:recipient', (req, res) => {
 
   if (!checkRateLimit(bagWriteRateKey(sender), BAG_WRITE_RATE_MAX)) return bagRateLimited(res);
 
+  // И-1 (ревью): app.use(express.json({limit:'64kb'})) is mounted globally,
+  // ahead of every route (app.js, near the top of the file) — for any
+  // request whose Content-Type it recognises (exactly 'application/json',
+  // by default; verified against the `type-is` matcher express.json() uses
+  // internally — a `+json` suffix type like 'application/vnd.api+json' does
+  // NOT match), it fully drains and parses the body BEFORE this handler
+  // ever runs. By the time streamWithSizeLimit below tries to read the
+  // request stream, there is nothing left on it — it writes zero bytes,
+  // recordBag() happily records size:0, and the caller gets a normal
+  // `200 {key}` for a bag that was never actually stored. The sender
+  // believes it was delivered; the recipient downloads emptiness. Reject
+  // explicitly instead of silently "succeeding" with nothing on disk.
+  const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (contentType === 'application/json') {
+    return res.status(400).json({ error: 'Bag upload must not use Content-Type: application/json (body already consumed upstream)' });
+  }
+
   const recipient = String(req.params.recipient || '').toLowerCase();
   if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient' });
 
