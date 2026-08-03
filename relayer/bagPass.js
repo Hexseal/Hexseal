@@ -33,7 +33,15 @@ export const BAG_PASS_TTL_SEC = 12 * 60 * 60;
 const BAG_PASS_PREFIX = 'v1';
 
 export function bagPassChallenge(address, ts) {
-  return `hexseal:chat-bags:${String(address).toLowerCase()}:${ts}`;
+  // ':' is the phrase's field separator and is not escaped either — an
+  // address or ts containing one would let two different (address, ts)
+  // pairs collide on the exact same phrase, and one wallet signature would
+  // cover both. Same shape as I1/I3 on the token body, applied here to the
+  // thing that actually gets signed.
+  const addr = String(address).toLowerCase();
+  if (!ETH_ADDR_RE.test(addr)) throw new Error('bagPassChallenge: invalid address');
+  if (!Number.isSafeInteger(ts)) throw new Error('bagPassChallenge: invalid ts');
+  return `hexseal:chat-bags:${addr}:${ts}`;
 }
 
 function bagPassMac(body) {

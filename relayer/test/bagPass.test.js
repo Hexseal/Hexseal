@@ -278,4 +278,23 @@ describe('bagPass', () => {
     expect(bagPassChallenge(ALICE, 1700)).not.toBe(bagPassChallenge(BOB, 1700));
     expect(bagPassChallenge(ALICE, 1700)).not.toBe(bagPassChallenge(ALICE, 1701));
   });
+
+  it('bagPassChallenge бросает на негодных адресе/времени — иначе разные пары адрес+время склеиваются в одну фразу', () => {
+    // ':' — разделитель полей фразы, незаэкранированный. Без проверки формы
+    // эти два вызова с РАЗНЫМИ (address, ts) дают ОДНУ И ТУ ЖЕ фразу —
+    // одной выманенной подписи хватает на оба:
+    //   bagPassChallenge('0xaa:1700', 1701) === bagPassChallenge('0xaa', '1700:1701')
+    expect(() => bagPassChallenge('0xaa:1700', 1701)).toThrow();
+    expect(() => bagPassChallenge('0xaa', '1700:1701')).toThrow();
+    // Мусор, а не просто "иная форма" — тоже не должен тихо стать строкой.
+    expect(() => bagPassChallenge(null, undefined)).toThrow();
+    // ts — тот же баг I1, с третьей стороны: дробное/вне безопасного
+    // диапазона не экранируется отдельным разделителем здесь (fields идут
+    // через ':', а не '.'), но всё равно не то время, что имелось в виду.
+    expect(() => bagPassChallenge(ALICE, 1.5)).toThrow();
+    expect(() => bagPassChallenge(ALICE, 1e21)).toThrow();
+
+    // Годный ввод по-прежнему работает.
+    expect(bagPassChallenge(ALICE, 1700)).toBe(`hexseal:chat-bags:${ALICE.toLowerCase()}:1700`);
+  });
 });
