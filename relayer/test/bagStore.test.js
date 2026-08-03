@@ -6,10 +6,35 @@ import path from 'node:path';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-'));
 process.env.STORAGE_DIR = TMP;
 
-const { DIR_BAGS, BAG_TTL_MS, BAG_UNREAD_TTL_MS, BAG_MAX_AGE_MS, MAX_BAG_SIZE,
-        bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
+// И-2 (шестой раунд ревью) — ЛОВУШКА ДЛЯ ЗАДАЧИ 3, читай перед тем, как
+// копировать этот импорт куда-то ещё. Проверено живьём:
+//   const { MAX_BAG_SIZE } = await import('./bagStore.js');
+//   // 262144 — СНИМОК на момент этой строки, не поедет никогда, даже
+//   // после assertBagStoreReady() с другим окружением.
+//   bagStore.MAX_BAG_SIZE
+//   // живая связка — актуальное значение сразу после переприсваивания
+//   // внутри bagStore.js.
+// DIR_BAGS/BAG_TTL_MS/BAG_UNREAD_TTL_MS/BAG_MAX_AGE_MS/MAX_BAG_SIZE в
+// bagStore.js — `export let` (И-3, пятый раунд), обновляемые
+// assertBagStoreReady(). Именованный ES-экспорт `let`, взятый через
+// СТАТИЧЕСКИЙ `import { X } from '...'` (или через свойство объекта
+// модуля, как здесь), — живая связка. Но `const { X } = await import(...)`
+// — деструктуризация РЕЗУЛЬТАТА динамического импорта — копирует значение
+// НА МОМЕНТ ЭТОЙ СТРОКИ и ничего больше не отслеживает; JS в этом не
+// делает разницы между "будет меняться" и "не будет" — снимок одинаково
+// незаметно неверен что для мутируемых полей, что для констант. Поэтому
+// пять полей ниже НЕ деструктурированы — читаются как bagStore.DIR_BAGS и
+// т.д. по всему файлу. Функции (bagKeyFor, recordBag, …) не
+// переприсваиваются никогда — деструктурировать их безопасно.
+//
+// Задаче 3: то же правило для app.js — всё, что нужно ПОСЛЕ вызова
+// assertBagStoreReady(), обязано читаться через пространство имён модуля
+// (или через статический import), а не через переменную, деструктуриро-
+// ванную из динамического import() до этого вызова.
+const bagStore = await import('../bagStore.js');
+const { bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
         bagExpiryAt, cleanupBags, _loadBagMeta, _saveBagMeta, _pairIdFromAddresses,
-        assertBagStoreReady, bagPathFor } = await import('../bagStore.js');
+        assertBagStoreReady, bagPathFor } = bagStore;
 
 // app.js — да, импортируется прямо в тест склада. По указанию координатора:
 // соседние тесты (test/disputeReasonAndLog.test.js и другие) уже делают
@@ -25,8 +50,8 @@ const DAY   = 24 * 60 * 60 * 1000;
 
 function put(recipient, sender, uploadedAt, extra = {}) {
   const key = bagKeyFor(recipient);
-  fs.mkdirSync(path.dirname(path.join(DIR_BAGS, key)), { recursive: true });
-  fs.writeFileSync(path.join(DIR_BAGS, key), Buffer.from('sealed'));
+  fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+  fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), Buffer.from('sealed'));
   // C1 (ревью координатора): раньше файл всегда писался "сейчас", какой бы
   // uploadedAt ни клался в индекс — так что ни один тест не мог отличить
   // "уцелел, потому что метла сирот уважает индекс" от "уцелел, потому что
@@ -34,13 +59,13 @@ function put(recipient, sender, uploadedAt, extra = {}) {
   // ≈ его настоящее время загрузки — здесь та же связь: mtime следует за
   // uploadedAt, а не за моментом вызова put() в тесте.
   const mtime = new Date(uploadedAt);
-  fs.utimesSync(path.join(DIR_BAGS, key), mtime, mtime);
+  fs.utimesSync(path.join(bagStore.DIR_BAGS, key), mtime, mtime);
   recordBag({ key, sender, recipient, size: 6, uploadedAt, ...extra });
   return key;
 }
 
 beforeEach(() => {
-  fs.rmSync(DIR_BAGS, { recursive: true, force: true });
+  fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true });
   fs.rmSync(path.join(TMP, 'bag-meta.json'), { force: true });
   _loadBagMeta();
 });
@@ -81,12 +106,12 @@ async function withFreshBagStoreModule(envOverrides, fn) {
 describe('bagExpiryAt — три правила в заданном порядке', () => {
   it('непрочитанный живёт 30 дней от загрузки', () => {
     const m = { uploadedAt: 1000, firstFetchedAt: null, dealDeadline: null };
-    expect(bagExpiryAt(m)).toBe(1000 + BAG_UNREAD_TTL_MS);
+    expect(bagExpiryAt(m)).toBe(1000 + bagStore.BAG_UNREAD_TTL_MS);
   });
 
   it('прочитанный живёт 7 дней ОТ ПРОЧТЕНИЯ, а не от загрузки', () => {
     const m = { uploadedAt: 1000, firstFetchedAt: 1000 + 20 * DAY, dealDeadline: null };
-    expect(bagExpiryAt(m)).toBe(1000 + 20 * DAY + BAG_TTL_MS);
+    expect(bagExpiryAt(m)).toBe(1000 + 20 * DAY + bagStore.BAG_TTL_MS);
   });
 
   it('сделка перебивает оба срока', () => {
@@ -97,18 +122,18 @@ describe('bagExpiryAt — три правила в заданном порядк
 
   it('но не дольше потолка от загрузки — сделкой нельзя держать вечно', () => {
     const m = { uploadedAt: 1000, firstFetchedAt: null, dealDeadline: 1000 + 900 * DAY };
-    expect(bagExpiryAt(m)).toBe(1000 + BAG_MAX_AGE_MS);
+    expect(bagExpiryAt(m)).toBe(1000 + bagStore.BAG_MAX_AGE_MS);
   });
 
   it('срок сделки короче обычного не сокращает жизнь мешку', () => {
     // Усыновление продлевает, а не обрезает: сделка, закрывшаяся завтра, не
     // должна стирать переписку, которой по обычному правилу жить ещё месяц.
     const m = { uploadedAt: 1000, firstFetchedAt: null, dealDeadline: 1000 + DAY };
-    expect(bagExpiryAt(m)).toBe(1000 + BAG_UNREAD_TTL_MS);
+    expect(bagExpiryAt(m)).toBe(1000 + bagStore.BAG_UNREAD_TTL_MS);
   });
 
   // Находка ревью (мелочь c): фактический потолок усыновлённого мешка — это
-  // BAG_MAX_AGE_MS + BAG_TTL_MS (90+7д), не просто BAG_MAX_AGE_MS (90д).
+  // bagStore.BAG_MAX_AGE_MS + bagStore.BAG_TTL_MS (90+7д), не просто bagStore.BAG_MAX_AGE_MS (90д).
   // Прямое следствие «усыновление не обрезает» (тест выше): если мешок
   // усыновлён сделкой и прочитан за миг до 90-дневного потолка, правило 2
   // (7д от прочтения) само по себе даёт срок ДОЛЬШЕ потолка — и потолок
@@ -118,7 +143,7 @@ describe('bagExpiryAt — три правила в заданном порядк
   // поведения.
   it('потолок усыновления фактически 90+7 дней, если мешок прочитан у самой границы потолка', () => {
     const uploadedAt = 1000;
-    const ceiling = uploadedAt + BAG_MAX_AGE_MS;      // номинальный потолок (90д)
+    const ceiling = uploadedAt + bagStore.BAG_MAX_AGE_MS;      // номинальный потолок (90д)
     const readAtCeiling = ceiling - 1;                // прочитан за миллисекунду до потолка
     const m = {
       uploadedAt,
@@ -126,9 +151,9 @@ describe('bagExpiryAt — три правила в заданном порядк
       dealDeadline: uploadedAt + 900 * DAY,           // далеко за потолком — сама сделка тут не ограничитель
     };
     const expiry = bagExpiryAt(m);
-    expect(expiry).toBe(readAtCeiling + BAG_TTL_MS);   // правило 2 берёт верх над потолком сделки
+    expect(expiry).toBe(readAtCeiling + bagStore.BAG_TTL_MS);   // правило 2 берёт верх над потолком сделки
     expect(expiry).toBeGreaterThan(ceiling);            // и это ЗА пределами номинальных 90 дней
-    expect(expiry - uploadedAt).toBeLessThanOrEqual(BAG_MAX_AGE_MS + BAG_TTL_MS); // но не больше 90+7
+    expect(expiry - uploadedAt).toBeLessThanOrEqual(bagStore.BAG_MAX_AGE_MS + bagStore.BAG_TTL_MS); // но не больше 90+7
   });
 
   // Находка ревью (мелочь a): firstFetchedAt проверялся на истинность
@@ -153,7 +178,7 @@ describe('bagExpiryAt — три правила в заданном порядк
     // инвариант «прочитано не раньше загрузки» (мелочь b, ниже), а этот
     // тест проверяет другое свойство и не должен зависеть от него.
     const m = { uploadedAt: 0, firstFetchedAt: 0, dealDeadline: null };
-    expect(bagExpiryAt(m)).toBe(0 + BAG_TTL_MS); // правило 2 (прочитан), не правило 3
+    expect(bagExpiryAt(m)).toBe(0 + bagStore.BAG_TTL_MS); // правило 2 (прочитан), не правило 3
   });
 });
 
@@ -209,15 +234,15 @@ describe('склад', () => {
     const deal = put(ALICE, BOB, now - 40 * DAY,
                      { dealDeadline: now + 10 * DAY });         // сделка — жив
     cleanupBags(now);
-    expect(fs.existsSync(path.join(DIR_BAGS, old))).toBe(false);
-    expect(fs.existsSync(path.join(DIR_BAGS, read))).toBe(true);
-    expect(fs.existsSync(path.join(DIR_BAGS, deal))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, old))).toBe(false);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, read))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, deal))).toBe(true);
     expect(bagMetaOf(old)).toBeUndefined();   // запись из индекса тоже ушла
   });
 
   it('чистка не спотыкается о файл, которого нет в индексе, и наоборот', () => {
-    fs.mkdirSync(path.join(DIR_BAGS, ALICE), { recursive: true });
-    fs.writeFileSync(path.join(DIR_BAGS, ALICE, 'осиротевший.bin'), 'x');
+    fs.mkdirSync(path.join(bagStore.DIR_BAGS, ALICE), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, ALICE, 'осиротевший.bin'), 'x');
     // "Призрак" — запись в индексе без файла на диске. В брифе этот тест
     // использовал буквальный `${ALICE}/призрак.bin` как ключ; после C2
     // (проверка формы ключа против регэкспа bagKeyFor, находка ревью
@@ -251,12 +276,12 @@ describe('склад — счётчики и поведение чистки з�
 
   it('чистка сносит с диска старый файл-сирота, которого нет в индексе (не просто «не падает»)', () => {
     const now = Date.now();
-    const orphanDir = path.join(DIR_BAGS, ALICE);
+    const orphanDir = path.join(bagStore.DIR_BAGS, ALICE);
     fs.mkdirSync(orphanDir, { recursive: true });
     const orphan = path.join(orphanDir, 'stale-orphan.bin');
     fs.writeFileSync(orphan, 'x');
     const old = new Date(now - 40 * DAY);
-    fs.utimesSync(orphan, old, old);   // старше BAG_UNREAD_TTL_MS и не в индексе
+    fs.utimesSync(orphan, old, old);   // старше bagStore.BAG_UNREAD_TTL_MS и не в индексе
 
     cleanupBags(now);
     expect(fs.existsSync(orphan)).toBe(false);
@@ -264,7 +289,7 @@ describe('склад — счётчики и поведение чистки з�
 
   it('свежий файл-сирота, которого ещё нет в индексе, чистка не трогает', () => {
     const now = Date.now();
-    const orphanDir = path.join(DIR_BAGS, ALICE);
+    const orphanDir = path.join(bagStore.DIR_BAGS, ALICE);
     fs.mkdirSync(orphanDir, { recursive: true });
     const orphan = path.join(orphanDir, 'fresh-orphan.bin');
     fs.writeFileSync(orphan, 'x'); // mtime = сейчас
@@ -293,36 +318,36 @@ describe('C1 — метла сирот уважает индекс, а не пр
   it('усыновлённый 40-дневный, прочитанный-вчера 40-дневный и усыновлённый 80-дневный (под потолком) мешки не сносятся, даже когда их НАСТОЯЩИЙ mtime старше порога сирот', () => {
     const now = Date.now();
     // Усыновлённый сделкой, 40 дней от роду — без индекса mtime старше
-    // BAG_UNREAD_TTL_MS (30д), метла сирот снесла бы его, если бы не
+    // bagStore.BAG_UNREAD_TTL_MS (30д), метла сирот снесла бы его, если бы не
     // проверяла индекс в первую очередь.
     const adopted40 = put(ALICE, BOB, now - 40 * DAY, { dealDeadline: now + 10 * DAY });
     // Прочитан вчера, но САМ мешок 40 дней от роду — тот же риск.
     const read40 = put(ALICE, BOB, now - 40 * DAY, { firstFetchedAt: now - 1 * DAY });
-    // Усыновлённый, 80 дней от роду — под потолком BAG_MAX_AGE_MS (90д), но
+    // Усыновлённый, 80 дней от роду — под потолком bagStore.BAG_MAX_AGE_MS (90д), но
     // куда старше порога сирот (30д). Именно этот случай координатор назвал
     // отдельно: «мешок под потолком на 80-й день».
     const adopted80 = put(ALICE, BOB, now - 80 * DAY, { dealDeadline: now + 400 * DAY });
 
     cleanupBags(now);
 
-    expect(fs.existsSync(path.join(DIR_BAGS, adopted40))).toBe(true);
-    expect(fs.existsSync(path.join(DIR_BAGS, read40))).toBe(true);
-    expect(fs.existsSync(path.join(DIR_BAGS, adopted80))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, adopted40))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, read40))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, adopted80))).toBe(true);
   });
 
-  it('порог сирот — это буквально BAG_UNREAD_TTL_MS, не какое-то другое число: неиндексированный файл чуть моложе порога выживает, чуть старше — сносится', () => {
+  it('порог сирот — это буквально bagStore.BAG_UNREAD_TTL_MS, не какое-то другое число: неиндексированный файл чуть моложе порога выживает, чуть старше — сносится', () => {
     const now = Date.now();
-    const orphanDir = path.join(DIR_BAGS, ALICE);
+    const orphanDir = path.join(bagStore.DIR_BAGS, ALICE);
     fs.mkdirSync(orphanDir, { recursive: true });
 
     const survivor = path.join(orphanDir, 'just-under-threshold.bin');
     fs.writeFileSync(survivor, 'x');
-    const justUnder = new Date(now - BAG_UNREAD_TTL_MS + 60_000); // на минуту моложе порога
+    const justUnder = new Date(now - bagStore.BAG_UNREAD_TTL_MS + 60_000); // на минуту моложе порога
     fs.utimesSync(survivor, justUnder, justUnder);
 
     const doomed = path.join(orphanDir, 'just-over-threshold.bin');
     fs.writeFileSync(doomed, 'x');
-    const justOver = new Date(now - BAG_UNREAD_TTL_MS - 60_000); // на минуту старше порога
+    const justOver = new Date(now - bagStore.BAG_UNREAD_TTL_MS - 60_000); // на минуту старше порога
     fs.utimesSync(doomed, justOver, justOver);
 
     cleanupBags(now);
@@ -366,13 +391,13 @@ describe('форма входа — каждая публичная функци
       .toThrow();
   });
 
-  it('recordBag бросает, если size больше MAX_BAG_SIZE — мешок это сообщение, не вложение', () => {
+  it('recordBag бросает, если size больше bagStore.MAX_BAG_SIZE — мешок это сообщение, не вложение', () => {
     expect(() => recordBag({
-      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: MAX_BAG_SIZE + 1, uploadedAt: 1,
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: bagStore.MAX_BAG_SIZE + 1, uploadedAt: 1,
     })).toThrow();
     // Ровно на границе — ещё годно.
     expect(() => recordBag({
-      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: MAX_BAG_SIZE, uploadedAt: 1,
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: bagStore.MAX_BAG_SIZE, uploadedAt: 1,
     })).not.toThrow();
   });
 
@@ -467,8 +492,8 @@ describe('форма входа — каждая публичная функци
 // ─── C2 — форма ключа: единственный вход, который до этого не проверялся ──
 //
 // Находка ревью: key раньше проверялся только как "непустая строка" и шёл
-// прямо в fs.unlinkSync(path.join(DIR_BAGS, key)). '../not-a-bag.txt' как
-// key удалял файл ЗА ПРЕДЕЛАМИ DIR_BAGS; '<боб>/x.bin' с recipient=alice
+// прямо в fs.unlinkSync(path.join(bagStore.DIR_BAGS, key)). '../not-a-bag.txt' как
+// key удалял файл ЗА ПРЕДЕЛАМИ bagStore.DIR_BAGS; '<боб>/x.bin' с recipient=alice
 // проходил молча — мешок Алисы физически лежал бы в каталоге Боба. Обе дыры
 // закрыты одной проверкой формы (bagKeyFor()-формат буквально: <адрес в
 // нижнем регистре>/<цифры>-<uuid>.bin) плюс сверкой сегмента-адресата в
@@ -519,11 +544,11 @@ describe('C2 — форма ключа в recordBag и bagPathFor', () => {
     })).toThrow();
   });
 
-  it('bagPathFor отдаёт путь внутри DIR_BAGS для годного ключа', () => {
+  it('bagPathFor отдаёт путь внутри bagStore.DIR_BAGS для годного ключа', () => {
     const key = bagKeyFor(ALICE);
     const p = bagPathFor(key);
-    expect(p).toBe(path.join(DIR_BAGS, key));
-    expect(path.resolve(p).startsWith(path.resolve(DIR_BAGS) + path.sep)).toBe(true);
+    expect(p).toBe(path.join(bagStore.DIR_BAGS, key));
+    expect(path.resolve(p).startsWith(path.resolve(bagStore.DIR_BAGS) + path.sep)).toBe(true);
   });
 
   it('bagPathFor бросает на форме, которую подсунул бы клиент маршруту GET /bags/:key (Задача 3) — обход каталога, мусор, пустая строка', () => {
@@ -621,10 +646,10 @@ describe('I1 — кривая запись в индексе отбраковы�
     const expiredGoodKey = bagKeyFor(ALICE);
     const poisonedKey = bagKeyFor(ALICE);
 
-    fs.mkdirSync(path.dirname(path.join(DIR_BAGS, expiredGoodKey)), { recursive: true });
-    fs.writeFileSync(path.join(DIR_BAGS, expiredGoodKey), 'sealed');
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, expiredGoodKey)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, expiredGoodKey), 'sealed');
     const old = new Date(now - 40 * DAY);
-    fs.utimesSync(path.join(DIR_BAGS, expiredGoodKey), old, old);
+    fs.utimesSync(path.join(bagStore.DIR_BAGS, expiredGoodKey), old, old);
 
     writeRawBagMeta({
       [expiredGoodKey]: validRawMeta({ uploadedAt: now - 40 * DAY }), // непрочитан, просрочен
@@ -636,7 +661,7 @@ describe('I1 — кривая запись в индексе отбраковы�
     expect(bagMetaOf(expiredGoodKey)).toBeUndefined(); // нормально дочищен
     // Файл реально удалён — доказательство, что сработала ветка "просрочен",
     // а не "файла нет" (файл-то как раз есть).
-    expect(fs.existsSync(path.join(DIR_BAGS, expiredGoodKey))).toBe(false);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, expiredGoodKey))).toBe(false);
   });
 
   it('негодный по форме sender/recipient/pairId/size/firstFetchedAt/dealDeadline тоже отбраковывается', () => {
@@ -667,14 +692,14 @@ describe('I1 — кривая запись в индексе отбраковы�
 
   it('файл отбракованного мешка не удаляется — только запись уходит из индекса, чистка файла остаётся заботой обычной метлы сирот по mtime', () => {
     const poisonedKey = bagKeyFor(ALICE);
-    fs.mkdirSync(path.dirname(path.join(DIR_BAGS, poisonedKey)), { recursive: true });
-    fs.writeFileSync(path.join(DIR_BAGS, poisonedKey), 'sealed');
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, poisonedKey)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, poisonedKey), 'sealed');
     writeRawBagMeta({ [poisonedKey]: validRawMeta({ uploadedAt: 'oops' }) });
 
     _loadBagMeta();
 
     expect(bagMetaOf(poisonedKey)).toBeUndefined();
-    expect(fs.existsSync(path.join(DIR_BAGS, poisonedKey))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, poisonedKey))).toBe(true);
   });
 
   it('целиком нечитаемый bag-meta.json по-прежнему даёт пустой индекс, не бросает (поведение до I1 не тронуто)', () => {
@@ -905,7 +930,7 @@ describe('I2 — сохранение индекса атомарно, ошиб�
   // отказе (try { fs.unlinkSync(tmpPath); } catch {} в catch-ветке
   // _saveBagMeta) в коде была, но ничем не заперта — .tmp-* мог копиться в
   // корне STORAGE_DIR, где его не подберёт ни метла сирот (метёт только
-  // DIR_BAGS/<recipient>/, не корень), ни ежедневная чистка файлов, именно
+  // bagStore.DIR_BAGS/<recipient>/, не корень), ни ежедневная чистка файлов, именно
   // на исчерпании места, когда отказы и случаются. Реально создаём
   // временный файл (не бросаем ДО записи), потом валим публикацию
   // (renameSync) — и проверяем, что временный файл всё равно исчез.
@@ -1014,7 +1039,7 @@ describe('I2 — сохранение индекса атомарно, ошиб�
 //
 // Находка ревью: recordBag() раньше перезаписывал запись целиком —
 // firstFetchedAt обнулялся в null, uploadedAt сдвигался на новое значение,
-// а потолок BAG_MAX_AGE_MS считается ОТ uploadedAt. Повторной записью того
+// а потолок bagStore.BAG_MAX_AGE_MS считается ОТ uploadedAt. Повторной записью того
 // же ключа с новым uploadedAt потолок в 90 дней пробивался и продлевался
 // бесконечно. Ключи уникальны по построению (bagKeyFor: временная метка +
 // uuid) — значит легитимного повторного recordBag() с тем же key не
@@ -1081,7 +1106,7 @@ describe('I3 — bagMetaOf отдаёт копию, а не живую ссыл�
 //
 // Находка ревью: firstFetchedAt на сто дней раньше uploadedAt даёт срок
 // смерти раньше рождения — мешок сносится в тот же миг, в который
-// появился (правило 2 считает firstFetchedAt + BAG_TTL_MS, и если
+// появился (правило 2 считает firstFetchedAt + bagStore.BAG_TTL_MS, и если
 // firstFetchedAt глубоко в прошлом относительно uploadedAt, эта сумма
 // может оказаться МЕНЬШЕ момента загрузки). Заперто на всех входах, где
 // firstFetchedAt вообще может появиться: markFetched (реальный путь —
@@ -1134,12 +1159,12 @@ describe('Мелочь (d) — граница чистки и порядок с�
     // bagExpiryAt(m) === now должен означать "уже истёк", а не "ещё жив на
     // эту миллисекунду" — брифом Задачи 2 прямо требуется "<=".
     const now = Date.now();
-    const uploadedAt = now - BAG_UNREAD_TTL_MS; // bagExpiryAt(m) === uploadedAt + BAG_UNREAD_TTL_MS === now
+    const uploadedAt = now - bagStore.BAG_UNREAD_TTL_MS; // bagExpiryAt(m) === uploadedAt + bagStore.BAG_UNREAD_TTL_MS === now
     const key = put(ALICE, BOB, uploadedAt);
     expect(bagExpiryAt(bagMetaOf(key))).toBe(now); // предусловие: граница ровно на now
 
     cleanupBags(now);
-    expect(fs.existsSync(path.join(DIR_BAGS, key))).toBe(false);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(false);
     expect(bagMetaOf(key)).toBeUndefined();
   });
 
@@ -1166,7 +1191,7 @@ describe('Мелочь (e) — пустые каталоги адресатов 
 
     cleanupBags(now);
 
-    expect(fs.existsSync(path.join(DIR_BAGS, ALICE))).toBe(false);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, ALICE))).toBe(false);
   });
 
   it('каталог адресата остаётся, пока в нём есть хоть один живой мешок', () => {
@@ -1176,7 +1201,7 @@ describe('Мелочь (e) — пустые каталоги адресатов 
 
     cleanupBags(now);
 
-    expect(fs.existsSync(path.join(DIR_BAGS, ALICE))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, ALICE))).toBe(true);
   });
 });
 
@@ -1190,7 +1215,7 @@ describe('Мелочь (e) — пустые каталоги адресатов 
 describe('Мелочь (f) — removed считает и снесённых сирот', () => {
   it('удалённый файл-сирота увеличивает removed, даже если в _bagMeta ничего не менялось', () => {
     const now = Date.now();
-    const orphanDir = path.join(DIR_BAGS, ALICE);
+    const orphanDir = path.join(bagStore.DIR_BAGS, ALICE);
     fs.mkdirSync(orphanDir, { recursive: true });
     const orphan = path.join(orphanDir, 'stale-orphan.bin');
     fs.writeFileSync(orphan, 'x');
@@ -1204,7 +1229,7 @@ describe('Мелочь (f) — removed считает и снесённых си
     const now = Date.now();
     put(ALICE, BOB, now - 40 * DAY);                      // просрочен, из индекса
 
-    const orphanDir = path.join(DIR_BAGS, BOB);
+    const orphanDir = path.join(bagStore.DIR_BAGS, BOB);
     fs.mkdirSync(orphanDir, { recursive: true });
     const orphan = path.join(orphanDir, 'stale-orphan.bin');
     fs.writeFileSync(orphan, 'x');
@@ -1226,7 +1251,7 @@ describe('Мелочь (g) — запись без файла отбрасыва
   it('живая по сроку запись без файла на диске уходит из индекса, считается removed', () => {
     const now = Date.now();
     const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // жив ещё 7 дней
-    fs.unlinkSync(path.join(DIR_BAGS, key)); // файл пропал, запись в индексе осталась
+    fs.unlinkSync(path.join(bagStore.DIR_BAGS, key)); // файл пропал, запись в индексе осталась
 
     expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0 });
     expect(bagMetaOf(key)).toBeUndefined();
@@ -1257,7 +1282,7 @@ describe('Мелочь — _saveBagMeta создаёт свой каталог �
     try {
       await withFreshBagStoreModule({ STORAGE_DIR: freshStorageDir }, async (fresh) => {
         const key = fresh.bagKeyFor(ALICE);
-        // Файл самого мешка (DIR_BAGS/...) в этом сценарии намеренно не
+        // Файл самого мешка (bagStore.DIR_BAGS/...) в этом сценарии намеренно не
         // создаём — recordBag() не трогает файловую систему мешков, только
         // метаиндекс, и именно на его пути лежал ENOENT.
         expect(() => fresh.recordBag({
@@ -1335,7 +1360,7 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
     // Настоящий, независимый от индекса файл-сирота — метла обязана снести
     // его независимо от того, удалось ли сохранить индекс: он никогда не
     // был частью _bagMeta в этом проходе (или в каком-либо другом).
-    const orphanDir = path.join(DIR_BAGS, BOB);
+    const orphanDir = path.join(bagStore.DIR_BAGS, BOB);
     fs.mkdirSync(orphanDir, { recursive: true });
     const orphan = path.join(orphanDir, 'stale-orphan.bin');
     fs.writeFileSync(orphan, 'x');
@@ -1355,7 +1380,7 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
     // этот файл; откат в памяти (cleanupBags) вернул ключ в _bagMeta, метла
     // видит его как проиндексированный и не трогает, несмотря на то что
     // mtime (40 дней) старше её порога (30 дней).
-    expect(fs.existsSync(path.join(DIR_BAGS, key))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(true);
     expect(bagMetaOf(key)).toBeDefined();
     // Свойство 2: независимая настоящая сирота из ТОГО ЖЕ прохода всё
     // равно снесена — метла не отключается целиком из-за чужого провала.
@@ -1389,13 +1414,13 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
     expect(meta.uploadedAt).toBe(now - 40 * DAY);
     // И файл на диске тоже цел — откат не создаёт впечатление, что мешок
     // одновременно и есть, и просрочен, и без файла.
-    expect(fs.existsSync(path.join(DIR_BAGS, key))).toBe(true);
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(true);
   });
 
   it('cleanupBags откатывает и "мелочь g" удаления (запись без файла на диске), если сохранение упало', () => {
     const now = Date.now();
     const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // формально жив ещё 7 дней
-    fs.unlinkSync(path.join(DIR_BAGS, key)); // но файл пропал — обычно это ветка "мелочь g"
+    fs.unlinkSync(path.join(bagStore.DIR_BAGS, key)); // но файл пропал — обычно это ветка "мелочь g"
 
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
       throw new Error('ENOSPC (симулировано)');
@@ -1412,10 +1437,10 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
 
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
-    expect(BAG_TTL_MS).toBe(7 * DAY);
-    expect(BAG_UNREAD_TTL_MS).toBe(30 * DAY);
-    expect(BAG_MAX_AGE_MS).toBe(90 * DAY);
-    expect(MAX_BAG_SIZE).toBe(256 * 1024);
+    expect(bagStore.BAG_TTL_MS).toBe(7 * DAY);
+    expect(bagStore.BAG_UNREAD_TTL_MS).toBe(30 * DAY);
+    expect(bagStore.BAG_MAX_AGE_MS).toBe(90 * DAY);
+    expect(bagStore.MAX_BAG_SIZE).toBe(256 * 1024);
   });
 
   it('переменные окружения переопределяют умолчания при загрузке модуля', async () => {
@@ -1488,14 +1513,14 @@ describe('assertBagStoreReady — проверка окружения НЕ на 
     });
   });
 
-  it('создаёт DIR_BAGS, если каталога нет', () => {
-    fs.rmSync(DIR_BAGS, { recursive: true, force: true });
-    expect(fs.existsSync(DIR_BAGS)).toBe(false);
+  it('создаёт bagStore.DIR_BAGS, если каталога нет', () => {
+    fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true });
+    expect(fs.existsSync(bagStore.DIR_BAGS)).toBe(false);
     assertBagStoreReady();
-    expect(fs.existsSync(DIR_BAGS)).toBe(true);
+    expect(fs.existsSync(bagStore.DIR_BAGS)).toBe(true);
   });
 
-  it('свежий импорт модуля САМ ПО СЕБЕ не создаёт DIR_BAGS — каталог больше не побочный эффект загрузки', async () => {
+  it('свежий импорт модуля САМ ПО СЕБЕ не создаёт bagStore.DIR_BAGS — каталог больше не побочный эффект загрузки', async () => {
     const freshStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-freshimport-'));
     try {
       await withFreshBagStoreModule({ STORAGE_DIR: freshStorageDir }, async (fresh) => {
@@ -1511,13 +1536,13 @@ describe('assertBagStoreReady — проверка окружения НЕ на 
   //
   // Находка ревью: app.js зовёт dotenv.config() В ТЕЛЕ, после того как ESM
   // уже вычислил все импорты (тот же урок, что убил пропуск в Задаче 1,
-  // только с другой стороны). BAG_TTL_MS/BAG_UNREAD_TTL_MS/BAG_MAX_AGE_MS/
-  // MAX_BAG_SIZE/DIR_BAGS раньше замораживались НА ИМПОРТЕ — assertBagStoreReady()
+  // только с другой стороны). bagStore.BAG_TTL_MS/bagStore.BAG_UNREAD_TTL_MS/bagStore.BAG_MAX_AGE_MS/
+  // bagStore.MAX_BAG_SIZE/bagStore.DIR_BAGS раньше замораживались НА ИМПОРТЕ — assertBagStoreReady()
   // проверяла уже замороженные значения, а не то, что реально лежит в
   // process.env к моменту её вызова. Собран фальшивый app.js той же
   // структуры (import раньше dotenv) и подтверждено вживую: все четыре
   // ручки, задокументированные в .env.vps.example, ни на что не влияли, а
-  // DIR_BAGS указывал не в тот корень, что files/, logs/ и public/ —
+  // bagStore.DIR_BAGS указывал не в тот корень, что files/, logs/ и public/ —
   // assertBagStoreReady() молчала, потому что проверяла замороженные
   // значения.
   //
@@ -1756,7 +1781,7 @@ describe('listBagsFor — регистр адресата', () => {
 
   // Находка ревью: комментарий над модулем раньше утверждал, что список
   // мешков адресата — это чтение одного каталога на диске. Неправда: код
-  // фильтрует метаиндекс в памяти, а не читает DIR_BAGS/<recipient>/.
+  // фильтрует метаиндекс в памяти, а не читает bagStore.DIR_BAGS/<recipient>/.
   // Комментарий приведён в соответствие; этот тест — сам замок на
   // выбранное устройство, а не описание сегодняшнего поведения: если бы
   // listBagsFor() когда-нибудь стала читать каталог, эта запись (в
