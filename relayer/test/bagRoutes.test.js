@@ -493,6 +493,23 @@ describe('PUT /bags/:recipient', () => {
     expect(leftovers).toHaveLength(0);
   });
 
+  it('мелочь (ревью): пустое тело отвергается, а не принимается и не хранится', async () => {
+    // Настоящий запечатанный мешок от chatCrypto — это как минимум IV +
+    // тег аутентификации AES-256-GCM, никогда не ноль байт. Нулевой мешок —
+    // не легитимное состояние ни при каком реальном клиенте, только шум,
+    // который до сих пор молча принимался и хранился до истечения TTL.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    const res = await putBag({ pass, recipient: bobAddr, body: Buffer.alloc(0) });
+    expect(res.status).toBe(400);
+
+    const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+    const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
+    expect(leftovers).toHaveLength(0);
+  });
+
   it('требование 9 (ревью, не заперто прежде): uploadedAt — только серверный Date.now(), ни один канал запроса не пробивает', async () => {
     // Координатор: "можно взять из заголовка или сдвинуть на 60 дней назад,
     // никто не заметит" — не было ни одного теста, различающего "сервер сам
@@ -939,20 +956,69 @@ describe('устойчивость к сбоям склада', () => {
     }
   });
 
-  it('markFetched() бросает — GET /bags/:key отвечает 500 с JSON-телом, не роняет процесс и не виснет', async () => {
+  it('markFetched() бросает — не роняет процесс; байты уже ушли, поэтому отметка теряется молча, а не 500', async () => {
+    // Мелочь (ревью): markFetched() теперь зовётся на res 'finish' — ПОСЛЕ
+    // того, как байты реально ушли клиенту (правка на брошенное скачивание,
+    // см. соседний тест ниже), так что бросок здесь больше не может
+    // превратиться в 500 — отвечать нечем, ответ уже отправлен. Раньше этот
+    // же тест ожидал 500 (отметка ставилась до потока) — поведение
+    // изменилось осознанно, не регрессия.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice, freshIp());
+    const bobPass = await issuePassFor(bob, freshIp());
+    const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('real-bytes') });
+    const key = put.body.key;
+
+    bagStoreThrows.markFetched = true;
+    try {
+      const res = await getBag({ pass: bobPass, key, ip: freshIp() });
+      expect(res.status).toBe(200);
+      expect(res.body.toString('utf8')).toBe('real-bytes');
+      // Бросок реален (не проглочен раньше срока) — отметка не встала.
+      expect(bagMetaOf(key).firstFetchedAt).toBeNull();
+    } finally {
+      bagStoreThrows.markFetched = false;
+    }
+  });
+
+  it('мелочь (ревью): HEAD не помечает мешок прочитанным', async () => {
     const { wallet: alice } = await newWalletAndAddress();
     const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice, freshIp());
     const bobPass = await issuePassFor(bob, freshIp());
     const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('x') });
+    const key = put.body.key;
 
-    bagStoreThrows.markFetched = true;
-    try {
-      const res = await getBag({ pass: bobPass, key: put.body.key, ip: freshIp() });
-      expect(res.status).toBe(500);
-      expect(res.body).toHaveProperty('error');
-    } finally {
-      bagStoreThrows.markFetched = false;
-    }
+    const res = await request(app)
+      .head(`/bags/${key}`)
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-bag-pass', bobPass);
+    expect(res.status).toBe(200);
+    expect(bagMetaOf(key).firstFetchedAt).toBeNull();
   });
+
+  // Мелочь (ревью), намеренно БЕЗ теста на "брошенное посреди скачивание не
+  // помечает прочитанным": попытка построить его через настоящий сокет
+  // (тем же приёмом, что и И-2 выше, только в обратную сторону — не читать
+  // ответ и порвать соединение) оказалась ненадёжной не из-за слабости
+  // теста, а по факту устройства ОС/Node. Проверено отдельным скриптом на
+  // голом http+net (не vitest): для ответа размером с потолок мешка
+  // (256 КБ) событие 'finish' на сервере срабатывает практически мгновенно
+  // — ядро принимает весь ответ в свой буфер сокета за один системный
+  // вызов ДО того, как клиент вообще получает шанс что-либо прочитать, не
+  // говоря уже про socket.destroy() на любой разумной задержке. Тот же
+  // результат при socket.pause() (клиент никогда не вычитывает данные) —
+  // буфер ядра на loopback для такого объёма всё равно не переполняется
+  // достаточно, чтобы упереться в backpressure. Это следствие того, что
+  // мешок — сообщение, а не вложение (MAX_BAG_SIZE — четверть мегабайта),
+  // не изъян в правке ниже: markFetched() всё равно перенесён на res
+  // 'finish' (что для НАСТОЯЩЕГО оборванного соединения по-прежнему верно
+  // — 'finish' в принципе не то же самое, что "клиент получил байты", но
+  // для payload'ов такого размера различить эти два случая тестом,
+  // управляющим одним лишь TCP-сокетом без глубокого вмешательства в
+  // рантайм, средствами, доступными снаружи процесса, практически
+  // невозможно). HEAD-тест выше и markFetched-throws-тест — реальные,
+  // детерминированные замки того же семейства правок; этот случай
+  // сознательно оставлен незапертым, а не имитирован ложно-зелёным тестом.
 });

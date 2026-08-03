@@ -2084,6 +2084,16 @@ app.put('/bags/:recipient', (req, res) => {
       if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag' });
       return;
     }
+    // Мелочь (ревью): пустое тело раньше принималось и хранилось до
+    // истечения TTL. Настоящий запечатанный мешок от chatCrypto — это как
+    // минимум IV + тег аутентификации AES-256-GCM, никогда не ноль байт;
+    // ноль здесь — не легитимный пустой мешок, а шум (оборванная загрузка
+    // до единого байта, пустой Buffer от неисправного клиента и т.п.).
+    if (size === 0) {
+      fs.unlink(filePath, () => {});
+      if (!res.headersSent) res.status(400).json({ error: 'Empty bag' });
+      return;
+    }
     try {
       const stored = recordBag({ sender, recipient, key, size, uploadedAt: Date.now() });
       res.status(200).json({ key: stored.key });
@@ -2184,19 +2194,6 @@ app.get('/bags/:recipient/:filename', (req, res) => {
     return res.status(404).json(BAG_NOT_FOUND);
   }
 
-  try {
-    markFetched(key, Date.now());
-  } catch (e) {
-    // markFetched() throws on an unknown key (bagStore.js's contract) — but
-    // this route already confirmed the key exists via bagMetaOf() above, so
-    // reaching this catch means a genuine disk failure or a race with
-    // cleanup (Задача 4) between that check and here. Either way it's the
-    // server's failure, not "no such bag" — 500, not folded into
-    // BAG_NOT_FOUND.
-    console.error('[bags] markFetched failed:', e.message);
-    return res.status(500).json({ error: 'Failed to mark bag as fetched' });
-  }
-
   // Same defensive headers as the /files static mount (app.js:1058-1068) —
   // ciphertext is never meant to be rendered or sniffed.
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -2213,10 +2210,45 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   // x-bag-pass, not just the URL.
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('Vary', 'x-bag-pass');
+
+  // Мелочь (ревью): Express auto-answers HEAD for any registered GET route
+  // by running this SAME handler and stripping the body at the wire level —
+  // without this branch, a HEAD probe/prefetch would start the 7-day
+  // "read" countdown for a bag nobody actually received a single byte of.
+  // A HEAD caller gets exactly the headers a GET would, no body, no side
+  // effect on the bag's lifetime.
+  if (req.method === 'HEAD') {
+    return res.end();
+  }
+
   const rs = fs.createReadStream(filePath);
   rs.on('error', (e) => {
     console.error('[bags] read failed:', e.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag' });
+  });
+  // Мелочь (ревью): marking happens on res 'finish' — fired only once the
+  // response has actually been flushed to the client in full — not before
+  // streaming starts. Marking up front (the previous shape) meant a dropped
+  // connection mid-download (client closes the tab, network drop) still
+  // started the 7-day "read" clock for a bag the recipient never actually
+  // received. 'finish' does NOT fire for a connection that broke mid-write
+  // (the socket emits 'close'/'error' instead), so an aborted download
+  // correctly leaves firstFetchedAt untouched and the bag keeps living under
+  // rule 3 (unread) rather than rule 2 (read).
+  //
+  // Trade-off, stated plainly: markFetched() can still throw (bagStore.js's
+  // contract), but by the time 'finish' fires the 200 + bytes have already
+  // gone out — there is no response left to turn into a 500 for. That
+  // failure is logged and otherwise swallowed; the alternative (mark BEFORE
+  // streaming, so a throw can still become a 500) is what caused this
+  // finding in the first place, and getting the message to its recipient
+  // matters more than the read receipt.
+  res.on('finish', () => {
+    try {
+      markFetched(key, Date.now());
+    } catch (e) {
+      console.error('[bags] markFetched failed after successful delivery (read receipt lost, bytes already sent):', e.message);
+    }
   });
   rs.pipe(res);
 });
