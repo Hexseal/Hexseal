@@ -1,9 +1,36 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ethers } from 'ethers';
 import request from 'supertest';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+
+// Требование 5 (ревью, не заперто прежде): recordBag/markFetched/listBagsFor/
+// bagMetaOf/bagPathFor бросают по контракту bagStore.js — каждый вызов в
+// app.js обёрнут в try/catch, но ни один тест ни разу не заставлял их
+// РЕАЛЬНО бросить, так что мутация "снять try/catch" ничего не красила.
+// vi.mock оборачивает настоящий модуль (тот же приём, что test/setup.js уже
+// применяет к 'ethers'/'web-push') и позволяет включить бросок точечно,
+// per-тест, через мутируемые флаги — реальная реализация используется во
+// всех остальных случаях, включая тесты, читающие bagStoreNs.recordBag/
+// markFetched напрямую (требование 3, требование 9 и т.д.) — флаги по
+// умолчанию false, так что для них это прозрачно.
+const bagStoreThrows = vi.hoisted(() => ({ recordBag: false, markFetched: false }));
+
+vi.mock('../bagStore.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    recordBag: (...args) => {
+      if (bagStoreThrows.recordBag) throw new Error('simulated bagStore failure (test)');
+      return actual.recordBag(...args);
+    },
+    markFetched: (...args) => {
+      if (bagStoreThrows.markFetched) throw new Error('simulated bagStore failure (test)');
+      return actual.markFetched(...args);
+    },
+  };
+});
 
 // И-4 (ревью): реальные бюджеты (BAG_PASS_RATE_MAX/BAG_READ_RATE_MAX/
 // BAG_WRITE_RATE_MAX в app.js) выбраны под живой разговор, не под удобство
@@ -450,6 +477,34 @@ describe('PUT /bags/:recipient', () => {
     expect(leftovers).toHaveLength(0);
   });
 
+  it('требование 9 (ревью, не заперто прежде): uploadedAt — только серверный Date.now(), ни один канал запроса не пробивает', async () => {
+    // Координатор: "можно взять из заголовка или сдвинуть на 60 дней назад,
+    // никто не заметит" — не было ни одного теста, различающего "сервер сам
+    // проставил время" от "сервер поверил тому, что прислали". Пробуем
+    // протащить чужой uploadedAt сразу двумя каналами (заголовок и query) —
+    // оба обязаны быть проигнорированы одинаково молча.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    const sixtyDaysAgo = Date.now() - 60 * 24 * 60 * 60 * 1000;
+    const before = Date.now();
+    const res = await request(app)
+      .put(`/bags/${bobAddr}`)
+      .query({ uploadedAt: sixtyDaysAgo })
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-bag-pass', pass)
+      .set('x-uploaded-at', String(sixtyDaysAgo))
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('x'));
+    const after = Date.now();
+
+    expect(res.status).toBe(200);
+    const meta = bagMetaOf(res.body.key);
+    expect(meta.uploadedAt).toBeGreaterThanOrEqual(before);
+    expect(meta.uploadedAt).toBeLessThanOrEqual(after);
+  });
+
   it('лимитер по адресу срабатывает на САМОМ PUT даже при разных IP', async () => {
     // Находка ревью: адресный лимитер прежде был заперт только на
     // POST /bags/pass и GET /bags — снять его именно с PUT было бы
@@ -724,6 +779,26 @@ describe('GET /bags/:key', () => {
     expect(bodyText).not.toContain('should-never-leak-unauthenticated');
   });
 
+  it('требование 7 (ревью, не заперто прежде): обход каталога через :filename не читает файл за пределами склада', async () => {
+    // Координатор: "ручной path.join проходит все 22 теста" — не было ни
+    // одного теста, реально пытающегося сбежать из DIR_BAGS через URL.
+    // %2f — закодированный слэш: Express 4 не расщепляет по нему сегмент,
+    // так что req.params.filename может содержать буквальный '/' после
+    // декодирования, который сам маршрут никогда не порождает сам.
+    const { wallet: bob } = await newWalletAndAddress();
+    const bobAddr = (await bob.getAddress()).toLowerCase();
+    const bobPass = await issuePassFor(bob, freshIp());
+
+    const traversal = '..%2f..%2f..%2f..%2fpackage.json';
+    const res = await request(app)
+      .get(`/bags/${bobAddr}/${traversal}`)
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-bag-pass', bobPass);
+    expect(res.status).toBe(404);
+    const bodyText = Buffer.isBuffer(res.body) ? res.body.toString('utf8') : JSON.stringify(res.body);
+    expect(bodyText).not.toMatch(/"name"\s*:\s*"hexseal-relayer"/); // содержимое package.json, если бы утекло
+  });
+
   it('лимитер по адресу срабатывает на САМОМ GET /bags/:key даже при разных IP', async () => {
     // Находка ревью: прежний тест с этим названием жил в этом describe, но
     // звал getBagsList() — то есть GET /bags (список), а не этот маршрут.
@@ -814,5 +889,47 @@ describe('GET /bags/:key', () => {
     const res = await getBag({ pass: bobPass, key, ip: freshIp() });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Bag not found', code: 'bag_not_found' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Требование 5 (ревью): бросающие вызовы склада пойманы, не валят процесс
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('устойчивость к сбоям склада', () => {
+  it('recordBag() бросает — PUT отвечает 500 с JSON-телом, не роняет процесс и не виснет', async () => {
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    bagStoreThrows.recordBag = true;
+    try {
+      const res = await putBag({ pass, recipient: bobAddr, body: Buffer.from('x') });
+      expect(res.status).toBe(500);
+      // Не просто статус — JSON-тело с полем error отличает НАШ try/catch
+      // (res.status(500).json({error: ...})) от того, что дал бы дефолтный
+      // обработчик ошибок Express (HTML-страница, res.body — пустой объект,
+      // не распарсенный JSON).
+      expect(res.body).toHaveProperty('error');
+    } finally {
+      bagStoreThrows.recordBag = false;
+    }
+  });
+
+  it('markFetched() бросает — GET /bags/:key отвечает 500 с JSON-телом, не роняет процесс и не виснет', async () => {
+    const { wallet: alice } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice, freshIp());
+    const bobPass = await issuePassFor(bob, freshIp());
+    const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('x') });
+
+    bagStoreThrows.markFetched = true;
+    try {
+      const res = await getBag({ pass: bobPass, key: put.body.key, ip: freshIp() });
+      expect(res.status).toBe(500);
+      expect(res.body).toHaveProperty('error');
+    } finally {
+      bagStoreThrows.markFetched = false;
+    }
   });
 });
