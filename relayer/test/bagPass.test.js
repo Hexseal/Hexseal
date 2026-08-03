@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 
-let issueBagPass, verifyBagPass, bagPassChallenge, BAG_PASS_TTL_SEC;
+let issueBagPass, verifyBagPass, bagPassChallenge, assertBagPassReady, BAG_PASS_TTL_SEC;
 
 beforeAll(async () => {
-  process.env.SERVER_SECRET ||= 'test-secret-for-bag-pass';
-  ({ issueBagPass, verifyBagPass, bagPassChallenge, BAG_PASS_TTL_SEC } =
+  ({ issueBagPass, verifyBagPass, bagPassChallenge, assertBagPassReady, BAG_PASS_TTL_SEC } =
     await import('../bagPass.js'));
 });
 
@@ -12,6 +11,27 @@ const ALICE = '0xA1ce00000000000000000000000000000000CAfe';
 const BOB   = '0xB0b1000000000000000000000000000000005EED';
 
 describe('bagPass', () => {
+  it('секрет читается лениво: импорт без SERVER_SECRET не бросает, assertBagPassReady — бросает', async () => {
+    const saved = process.env.SERVER_SECRET;
+    delete process.env.SERVER_SECRET;
+    vi.resetModules();
+
+    // finally, not just cleanup after — a fresh import throwing here (the
+    // exact regression this test exists to catch) must not leave every
+    // later test in this file running without SERVER_SECRET.
+    try {
+      const fresh = await import('../bagPass.js'); // must not throw at import time
+      expect(() => fresh.assertBagPassReady()).toThrow(/SERVER_SECRET/);
+    } finally {
+      process.env.SERVER_SECRET = saved;
+      vi.resetModules();
+    }
+  });
+
+  it('assertBagPassReady молчит, когда секрет на месте', () => {
+    expect(() => assertBagPassReady()).not.toThrow();
+  });
+
   it('выпущенный пропуск проверяется и возвращает адрес в нижнем регистре', () => {
     const { token } = issueBagPass(ALICE);
     expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase() });

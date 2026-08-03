@@ -1,9 +1,26 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-const SERVER_SECRET = process.env.SERVER_SECRET;
-if (!SERVER_SECRET) throw new Error('SERVER_SECRET is not set');
-
 const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
+
+// Read lazily, at call time, never at module load: app.js only calls
+// dotenv.config() in its own body (after its imports have already been
+// evaluated), so a top-level read here would run before .env is loaded —
+// and app.js has no other local imports today, so this module would be the
+// first to hit that ordering hole. The loud failure on a missing secret is
+// still correct and still needs to exist; it just has to happen at a moment
+// the caller controls, not at import time. That moment is assertBagPassReady().
+function serverSecret() {
+  const secret = process.env.SERVER_SECRET;
+  if (!secret) throw new Error('SERVER_SECRET is not set');
+  return secret;
+}
+
+// Call once at boot, after dotenv has run (app.js's job — Task 3). Turns a
+// missing secret into a startup crash instead of a silent wrong-HMAC on the
+// first request.
+export function assertBagPassReady() {
+  serverSecret();
+}
 
 // Twelve hours — a working session, exactly like the dispute-log pass
 // (app.js:1155-1164). Not shorter, and not out of laziness: the pass does not
@@ -20,7 +37,7 @@ export function bagPassChallenge(address, ts) {
 }
 
 function bagPassMac(body) {
-  return createHmac('sha256', SERVER_SECRET)
+  return createHmac('sha256', serverSecret())
     .update(`hexseal:chat-bags-pass:${BAG_PASS_PREFIX}:${body}`)
     .digest('base64url');
 }
