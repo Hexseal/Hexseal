@@ -911,25 +911,39 @@ describe('verifyChain — ревью, раунд 5, находка C1: верд�
   it('честная пара: подделка + {} даёт bad_anchor, та же цепочка без якоря — честный broken', () => {
     // Здесь "перезвать без якоря" случайно совпадает с осмысленным
     // вердиктом — но это НЕ гарантия, см. следующий тест.
-    const full = chainOf(4);
+    //
+    // РАУНД 6, мелочь: фикстура намеренно ОТЛИЧАЕТСЯ от "подделанное звено
+    // видно как разрыв" (другой индекс — 3, не 2; другое поле — sender, не
+    // bodyHash; другой итоговый atSeq — 4, не 3). Побайтовое совпадение с
+    // существующей фикстурой раньше означало, что тест держит только
+    // конъюнкцию с чужим прогоном, а не стоит на своих ногах — не краснел
+    // поодиночке ни в одной из 30 мутаций раундов 1-5, только вместе с
+    // фикстурой-близнецом.
+    const full = chainOf(5);
     const forged = [...full];
-    forged[2] = { ...forged[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
+    forged[3] = { ...forged[3], sender: BOB };
     expect(verifyChain(forged, {} as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
-    expect(verifyChain(forged)).toEqual({ ok: false, reason: 'broken', atSeq: 3 });
+    expect(verifyChain(forged)).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
   });
 
   it('КОНТРПРИМЕР (прибивает предел): каскадная подделка + негодный якорь тоже bad_anchor, но без якоря — ok:true', () => {
     // Это и есть довод против старого совета: "перезвать без якоря" здесь
-    // дало бы ok:true на цепочке, где ПОДДЕЛАНО звено seq=2 — с честным
-    // якорем (expectedLastHash) было бы broken atSeq 4. bad_anchor не
-    // заменяется вердиктом без якоря — он остаётся строго слабее.
-    const full = chainOf(5);
-    const tamperedLink2 = { ...full[2], bodyHash: ('0x' + 'ee'.repeat(32)) as `0x${string}` };
-    const rebuiltLink3 = buildLink(tamperedLink2, BODY, ALICE, 1103);
-    const rebuiltLink4 = buildLink(rebuiltLink3, BODY, ALICE, 1104);
-    const cascaded = [full[0], full[1], tamperedLink2, rebuiltLink3, rebuiltLink4];
+    // дало бы ok:true на цепочке, где ПОДДЕЛАНО звено seq=1 — с честным
+    // якорем (expectedLastHash) было бы broken. bad_anchor не заменяется
+    // вердиктом без якоря — он остаётся строго слабее.
+    //
+    // РАУНД 6, мелочь: фикстура отличается от других каскадных тестов
+    // файла (длина цепочки 6, не 5; тронут индекс 1, не 2; поле sender,
+    // не bodyHash) — та же причина, что в предыдущем тесте.
+    const full = chainOf(6); // seq 0..5
+    const tamperedLink1 = { ...full[1], sender: BOB };
+    const rebuiltLink2 = buildLink(tamperedLink1, BODY, ALICE, 2202);
+    const rebuiltLink3 = buildLink(rebuiltLink2, BODY, ALICE, 2203);
+    const rebuiltLink4 = buildLink(rebuiltLink3, BODY, ALICE, 2204);
+    const rebuiltLink5 = buildLink(rebuiltLink4, BODY, ALICE, 2205);
+    const cascaded = [full[0], tamperedLink1, rebuiltLink2, rebuiltLink3, rebuiltLink4, rebuiltLink5];
     expect(verifyChain(cascaded, {} as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
-    expect(verifyChain(cascaded)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3, 4] });
+    expect(verifyChain(cascaded)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3, 4, 5] });
   });
 });
 
