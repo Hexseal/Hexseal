@@ -656,13 +656,30 @@ describe('I1 — кривая запись в индексе отбраковы�
     expect(bagMetaOf(poisonedKey)).toBeUndefined();
   });
 
-  it('отбраковка отбитой записи громко логируется (console.error), а не тихо', () => {
+  // Находка ревью (шестой раунд, мелочь): toHaveBeenCalled() без разбора,
+  // ЧЕМ вызван spy, — тест зелёный, даже если убрать ОДИН из двух
+  // console.error в _loadBagMeta() (построчный — "какой именно ключ" — и
+  // итоговый — "сколько всего отброшено"), пока жив другой. Оба несут разную
+  // информацию (какая запись битая vs. сколько их) и оба реально нужны для
+  // разбора инцидента — тест обязан ловить пропажу любого из двух, а не
+  // просто факт, что console.error хоть раз да вызвался.
+  it('отбраковка отбитых записей логируется и построчно (какой ключ), и сводкой (сколько всего) — не тихо и не только одним из двух', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const poisonedKey = bagKeyFor(ALICE);
-      writeRawBagMeta({ [poisonedKey]: validRawMeta({ uploadedAt: 'oops' }) });
+      const goodKey = bagKeyFor(ALICE);
+      const poisonedKey1 = bagKeyFor(ALICE);
+      const poisonedKey2 = bagKeyFor(ALICE);
+      writeRawBagMeta({
+        [goodKey]: validRawMeta({ uploadedAt: 1000 }),
+        [poisonedKey1]: validRawMeta({ uploadedAt: 'oops' }),
+        [poisonedKey2]: validRawMeta({ sender: 'not-an-address' }),
+      });
       _loadBagMeta();
-      expect(spy).toHaveBeenCalled();
+
+      const messages = spy.mock.calls.map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes(poisonedKey1))).toBe(true);
+      expect(messages.some((m) => m.includes(poisonedKey2))).toBe(true);
+      expect(messages.some((m) => m.includes('dropped 2 corrupt entries out of 3'))).toBe(true);
     } finally {
       spy.mockRestore();
     }
