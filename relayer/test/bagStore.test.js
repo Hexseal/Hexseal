@@ -805,6 +805,31 @@ describe('I2 — сохранение индекса атомарно, ошиб�
     expect(Object.keys(onDisk).length).toBeGreaterThan(0);
   });
 
+  // Находка ревью (И-4, пятый раунд): предыдущие тесты запирают «запись
+  // идёт через временный путь» и «обрыв во время записи в temp не портит
+  // основной», но сам АТОМАРНЫЙ ШАГ ПУБЛИКАЦИИ — замена временного файла
+  // основным — не заперт ничем. Замена fs.renameSync(tmp, BAG_META_PATH)
+  // на fs.copyFileSync(tmp, BAG_META_PATH) + fs.unlinkSync(tmp) — НЕ
+  // атомарная публикация (между copy и unlink возможно прерывание,
+  // оставляющее либо неполный BAG_META_PATH, либо дубль на диске) —
+  // проверено: проходит весь набор теста целиком. Замок — впрямую на
+  // fs.renameSync: и на сам факт вызова, и на то, что переименовывается
+  // именно временный путь во ФАЙЛ ОСНОВНОГО ИНДЕКСА, а не что-то ещё.
+  it('публикация индекса идёт через настоящий fs.renameSync(temp, основной) — атомарный шаг заперт напрямую', () => {
+    const mainPath = path.join(TMP, 'bag-meta.json');
+    const renameSpy = vi.spyOn(fs, 'renameSync');
+    try {
+      put(ALICE, BOB, 1000);
+    } finally {
+      expect(renameSpy).toHaveBeenCalledTimes(1);
+      const [src, dest] = renameSpy.mock.calls[0];
+      expect(dest).toBe(mainPath);
+      expect(src).not.toBe(dest);
+      expect(String(src)).toContain('bag-meta.json.tmp-');
+      renameSpy.mockRestore();
+    }
+  });
+
   it('_saveBagMeta бросает, если запись падает — не глотает ошибку', () => {
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
       throw new Error('ENOSPC: no space left on device');
