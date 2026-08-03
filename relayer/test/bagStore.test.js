@@ -1083,6 +1083,35 @@ describe('Мелочь (g) — запись без файла отбрасыва
   });
 });
 
+// ─── Мелочь — _saveBagMeta создаёт свой каталог сама ───────────────────────
+//
+// Находка ревью: в отличие от образца в app.js:65 (savePushSubs делает
+// fs.mkdirSync(path.dirname(PUSH_SUBS_FILE)) сама, не полагаясь на то, что
+// каталог уже создан где-то ещё), _saveBagMeta ничего подобного не делала.
+// На чистой установке, пока assertBagStoreReady() ещё не позвана (порядок
+// вызова на старте — забота Задачи 3, а не гарантия этого модуля), первый
+// же recordBag() падал с ENOENT — воспроизведено вживую.
+describe('Мелочь — _saveBagMeta создаёт свой каталог сама, не полагаясь на assertBagStoreReady()', () => {
+  it('recordBag не падает на чистой установке (STORAGE_DIR ещё не существует), даже если assertBagStoreReady() не звали', async () => {
+    const freshStorageDir = path.join(os.tmpdir(), `hexseal-bags-nodir-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    expect(fs.existsSync(freshStorageDir)).toBe(false); // предусловие: каталога действительно нет
+    try {
+      await withFreshBagStoreModule({ STORAGE_DIR: freshStorageDir }, async (fresh) => {
+        const key = fresh.bagKeyFor(ALICE);
+        // Файл самого мешка (DIR_BAGS/...) в этом сценарии намеренно не
+        // создаём — recordBag() не трогает файловую систему мешков, только
+        // метаиндекс, и именно на его пути лежал ENOENT.
+        expect(() => fresh.recordBag({
+          key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+        })).not.toThrow();
+        expect(fresh.bagMetaOf(key)).toBeDefined();
+      });
+    } finally {
+      fs.rmSync(freshStorageDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
     expect(BAG_TTL_MS).toBe(7 * DAY);

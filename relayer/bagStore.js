@@ -259,6 +259,12 @@ export function _loadBagMeta() {
 export function _saveBagMeta() {
   const tmpPath = `${BAG_META_PATH}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
+    // Тот же приём, что у savePushSubs() в app.js:65 — не полагаться на то,
+    // что каталог уже создан где-то ещё (assertBagStoreReady() создаёт
+    // DIR_BAGS на старте, но её порядок вызова относительно первого
+    // recordBag() — забота вызывающего кода, не гарантия этого модуля).
+    // На чистой установке без этого первый же recordBag() падал с ENOENT.
+    fs.mkdirSync(path.dirname(BAG_META_PATH), { recursive: true });
     fs.writeFileSync(tmpPath, JSON.stringify(_bagMeta), 'utf8');
     fs.renameSync(tmpPath, BAG_META_PATH);
   } catch (e) {
