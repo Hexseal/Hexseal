@@ -178,9 +178,18 @@ describe('sealForRecipient / openSealed', () => {
   });
 
   it('строка вместо байт публичного ключа при запечатывании пробрасывается', async () => {
+    // Находка I2 финального ревью: фикстура была 'не байты' — 15 UTF-8-байт
+    // (Buffer.byteLength('не байты', 'utf8') === 15), поэтому срабатывала
+    // СОБСТВЕННАЯ проверка длины libsodium («invalid publicKey length»,
+    // TypeError), а не наша `instanceof Uint8Array` — удаление нашей
+    // проверки оставляло этот тест зелёным (мутация выжила). Строка ровно в
+    // 32 UTF-8-байта — единственная длина, на которой библиотека НЕ жалуется
+    // на длину сама (она приводит строку к байтам и честно пытается
+    // запечатать на них, без единой ошибки, проверено прогоном библиотеки) —
+    // и потому единственная, где несущей остаётся ровно наша проверка.
     const bob = await deriveChatKeypair(SIG_B);
     await expect(
-      sealForRecipient('не байты' as unknown as Uint8Array, text('a')),
+      sealForRecipient('z'.repeat(32) as unknown as Uint8Array, text('a')),
     ).rejects.toThrow(TypeError);
   });
 
