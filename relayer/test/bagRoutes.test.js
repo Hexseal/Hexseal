@@ -334,6 +334,27 @@ describe('POST /bags/pass', () => {
     expect(res.body.error).toMatch(/address/i);
   });
 
+  it('находка ревью: адрес массивом ["0x…40hex"] — 400, не 500', async () => {
+    // typeof address !== 'string' идёт ПЕРВЫМ (короткое замыкание ||) —
+    // массив никогда не доходит до ETH_ADDR_RE.test()/toLowerCase(). Важно
+    // именно потому, что RegExp.prototype.test() САМ приводит аргумент к
+    // строке (спецификация ECMA), и String(['0x…40hex']) для ОДНОэлементного
+    // массива даёт ту же строку без скобок и запятых — тест регэкспа прошёл
+    // бы, а array.toLowerCase() ниже бросил бы (у массивов нет такого
+    // метода), необработанно — Express ловит синхронный throw в теле
+    // обработчика сам, но ответ — HTML-страница по умолчанию, 500, не наш
+    // JSON 400. Проверено мутацией: снятие typeof-проверки воспроизводит
+    // это ровно так (см. отчёт).
+    const res = await request(app)
+      .post('/bags/pass')
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-ts', String(Math.floor(Date.now() / 1000)))
+      .set('x-sig', '0xdeadbeef')
+      .send({ address: ['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/address/i);
+  });
+
   it('отсутствие x-ts или x-sig — 401 с кодом missing_credentials', async () => {
     // Голого статуса недостаточно: убери саму проверку присутствия
     // заголовков целиком — запрос всё равно упадёт на 401, только уже из
@@ -560,6 +581,36 @@ describe('PUT /bags/:recipient', () => {
     const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
     const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
     expect(leftovers).toHaveLength(0);
+  });
+
+  it('находка ревью: удаление обрезка синхронное, не гонка "выстрелил и забыл" с ответом', async () => {
+    // Побочная находка этого раунда (не из отчёта ревью изначально —
+    // вскрыта повторными прогонами набора): fs.unlink(path, () => {}) не
+    // ждёт завершения удаления перед ответом, из-за чего тест "обрезок не
+    // остаётся на диске" выше был флаки (красный на части прогонов).
+    // Заменено на unlinkQuietSync() — fs.unlinkSync внутри. Проверка на
+    // отсутствие файла сразу после ответа (без искусственной паузы) уже
+    // была в тесте выше, но проверка через таймингово-зависимое чтение
+    // каталога недостаточно надёжна как ЗАМОК сама по себе — координатор
+    // откатил на асинхронное удаление и получил 6 зелёных прогонов подряд.
+    // Проверка через трекинг вызова детерминирована независимо от скорости
+    // диска/ОС.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    const unlinkSyncSpy = vi.spyOn(fs, 'unlinkSync');
+    const unlinkAsyncSpy = vi.spyOn(fs, 'unlink');
+    try {
+      const oversized = Buffer.alloc(300_000, 7);
+      const res = await putBag({ pass, recipient: bobAddr, body: oversized });
+      expect(res.status).toBe(413);
+      expect(unlinkSyncSpy).toHaveBeenCalled();
+      expect(unlinkAsyncSpy).not.toHaveBeenCalled();
+    } finally {
+      unlinkSyncSpy.mockRestore();
+      unlinkAsyncSpy.mockRestore();
+    }
   });
 
   it('требует годный пропуск — негодный отвечает 401 с кодом', async () => {
