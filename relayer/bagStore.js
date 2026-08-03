@@ -451,11 +451,17 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
 // — иначе потерянный индекс оставит мусор на складе навсегда, а слишком
 // ранняя метла снесёт файл, для который recordBag() ещё просто не успел
 // выполниться следом за записью на диск.
+// Мелочь (f): возвращает число реально удалённых файлов — cleanupBags()
+// складывает его со своим removed. Раньше не возвращала ничего, и снесённый
+// файл-сирота не отражался в {removed, kept} вообще: вызывающий (лог/
+// метрика после ночной чистки) видел бы "ничего не сделано" при реально
+// удалённых файлах.
 function sweepOrphanFiles(nowMs) {
   const cutoff = nowMs - BAG_UNREAD_TTL_MS;
+  let removed = 0;
 
   let recipients;
-  try { recipients = fs.readdirSync(DIR_BAGS); } catch { return; }
+  try { recipients = fs.readdirSync(DIR_BAGS); } catch { return removed; }
 
   for (const recipient of recipients) {
     const recipientDir = path.join(DIR_BAGS, recipient);
@@ -471,10 +477,14 @@ function sweepOrphanFiles(nowMs) {
 
       const filePath = path.join(recipientDir, file);
       try {
-        if (fs.statSync(filePath).mtimeMs < cutoff) fs.unlinkSync(filePath);
+        if (fs.statSync(filePath).mtimeMs < cutoff) {
+          fs.unlinkSync(filePath);
+          removed++;
+        }
       } catch {}
     }
   }
+  return removed;
 }
 
 // Мелочь (e): без этого bags/<адрес>/ переживает каждый мешок, когда-либо
@@ -513,7 +523,7 @@ export function cleanupBags(nowMs = Date.now()) {
   }
   if (removed) _saveBagMeta();
 
-  sweepOrphanFiles(nowMs);
+  removed += sweepOrphanFiles(nowMs);
   removeEmptyRecipientDirs();
 
   return { removed, kept };

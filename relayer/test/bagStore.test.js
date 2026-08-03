@@ -846,6 +846,41 @@ describe('Мелочь (e) — пустые каталоги адресатов 
   });
 });
 
+// ─── Мелочь (f) — removed не считает снесённых сирот ───────────────────────
+//
+// Находка ревью: removed считал только записи, вычищенные из _bagMeta
+// (основной цикл), а не файлы-сироты, снесённые sweepOrphanFiles — снёс
+// файл, вернул {removed: 0}. Вызывающий (Задача 3, например, лог/метрика
+// после ночной чистки) видел бы "ничего не сделано" при реально удалённых
+// файлах.
+describe('Мелочь (f) — removed считает и снесённых сирот', () => {
+  it('удалённый файл-сирота увеличивает removed, даже если в _bagMeta ничего не менялось', () => {
+    const now = Date.now();
+    const orphanDir = path.join(DIR_BAGS, ALICE);
+    fs.mkdirSync(orphanDir, { recursive: true });
+    const orphan = path.join(orphanDir, 'stale-orphan.bin');
+    fs.writeFileSync(orphan, 'x');
+    const old = new Date(now - 40 * DAY);
+    fs.utimesSync(orphan, old, old);
+
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0 });
+  });
+
+  it('removed складывает записи из индекса и сирот с диска вместе', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 40 * DAY);                      // просрочен, из индекса
+
+    const orphanDir = path.join(DIR_BAGS, BOB);
+    fs.mkdirSync(orphanDir, { recursive: true });
+    const orphan = path.join(orphanDir, 'stale-orphan.bin');
+    fs.writeFileSync(orphan, 'x');
+    const old = new Date(now - 40 * DAY);
+    fs.utimesSync(orphan, old, old);
+
+    expect(cleanupBags(now)).toEqual({ removed: 2, kept: 0 });
+  });
+});
+
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
     expect(BAG_TTL_MS).toBe(7 * DAY);
