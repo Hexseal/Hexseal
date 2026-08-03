@@ -664,6 +664,36 @@ describe('I5 — recordBag отвергает повтор на уже суще�
   });
 });
 
+// ─── I3 — bagMetaOf() отдаёт копию, не живую ссылку ────────────────────────
+//
+// Находка ревью: bagMetaOf() возвращала `_bagMeta[key]` напрямую — тот же
+// объект, что живёт в индексе. `m = bagMetaOf(key); m.recipient = БОБ`
+// мгновенно "переезжал" мешок к Бобу в listBagsFor(), без единого вызова
+// recordBag()/markFetched(). Само по себе — непоследовательность (listBagsFor
+// и markFetched уже возвращают копии через спред), но в связке с I1 это
+// цепь: если Задача 3 когда-нибудь передаст объект от bagMetaOf() дальше и
+// кто-то допишет в него поле строкой вместо числа, index окажется отравлен
+// прямо в памяти, без прохода через recordBag()'s проверки формы.
+describe('I3 — bagMetaOf отдаёт копию, а не живую ссылку на запись в индексе', () => {
+  it('мутация объекта, возвращённого bagMetaOf, не меняет запись в индексе', () => {
+    const key = put(ALICE, BOB, 1000);
+    const meta = bagMetaOf(key);
+    meta.recipient = BOB; // мутируем то, что вернула bagMetaOf
+    meta.firstFetchedAt = 12345;
+
+    expect(bagMetaOf(key).recipient).toBe(ALICE);       // индекс не тронут
+    expect(bagMetaOf(key).firstFetchedAt).toBeNull();
+    expect(listBagsFor(ALICE)).toHaveLength(1);          // мешок остался у Алисы
+    expect(listBagsFor(BOB)).toHaveLength(0);
+  });
+
+  it('два последовательных вызова bagMetaOf(key) возвращают РАЗНЫЕ объекты с одинаковым содержимым', () => {
+    const key = put(ALICE, BOB, 1000);
+    expect(bagMetaOf(key)).not.toBe(bagMetaOf(key));     // не тот же объект
+    expect(bagMetaOf(key)).toEqual(bagMetaOf(key));      // но то же содержимое
+  });
+});
+
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
     expect(BAG_TTL_MS).toBe(7 * DAY);

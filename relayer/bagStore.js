@@ -363,9 +363,17 @@ export function listBagsFor(recipient) {
     .sort((a, b) => a.uploadedAt - b.uploadedAt);
 }
 
+// I3: раньше отдавала `_bagMeta[key]` напрямую — тот же объект, что живёт в
+// индексе. Мутация возвращённого объекта (`m.recipient = кто-то-другой`)
+// меняла запись в _bagMeta мгновенно, без единого вызова recordBag()/
+// markFetched() и без единой проверки формы — мешок "переезжал" к другому
+// адресату в listBagsFor() тем же тактом. listBagsFor()/markFetched() уже
+// возвращали копии (через спред) — bagMetaOf() была единственным
+// исключением из этого правила.
 export function bagMetaOf(key) {
   assertNonEmptyString('bagMetaOf', 'key', key);
-  return _bagMeta[key];
+  const meta = _bagMeta[key];
+  return meta ? { ...meta } : undefined;
 }
 
 // ─── Срок жизни ─────────────────────────────────────────────────────────────
