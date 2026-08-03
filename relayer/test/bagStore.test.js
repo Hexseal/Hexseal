@@ -27,6 +27,14 @@ function put(recipient, sender, uploadedAt, extra = {}) {
   const key = bagKeyFor(recipient);
   fs.mkdirSync(path.dirname(path.join(DIR_BAGS, key)), { recursive: true });
   fs.writeFileSync(path.join(DIR_BAGS, key), Buffer.from('sealed'));
+  // C1 (ревью координатора): раньше файл всегда писался "сейчас", какой бы
+  // uploadedAt ни клался в индекс — так что ни один тест не мог отличить
+  // "уцелел, потому что метла сирот уважает индекс" от "уцелел, потому что
+  // файл физически свежий". В реальности файл пишется ОДИН раз, его mtime
+  // ≈ его настоящее время загрузки — здесь та же связь: mtime следует за
+  // uploadedAt, а не за моментом вызова put() в тесте.
+  const mtime = new Date(uploadedAt);
+  fs.utimesSync(path.join(DIR_BAGS, key), mtime, mtime);
   recordBag({ key, sender, recipient, size: 6, uploadedAt, ...extra });
   return key;
 }
@@ -172,6 +180,64 @@ describe('склад — счётчики и поведение чистки з�
 
     cleanupBags(now);
     expect(fs.existsSync(orphan)).toBe(true);
+  });
+});
+
+// ─── C1 — метла сирот не должна путать «файл физически свежий» с «мешок
+// ещё жив по индексу» ──────────────────────────────────────────────────────
+//
+// Находка ревью: put() выше раньше писал файл ВСЕГДА "сейчас"
+// (fs.writeFileSync без последующего fs.utimesSync), какой бы uploadedAt ни
+// клался в индекс. Реальный файл пишется один раз, его mtime ≈ настоящее
+// время загрузки — put() соврал об этом каждому тесту разом. Из-за этого
+// НИ ОДИН тест не мог отличить «уцелел, потому что sweepOrphanFiles уважает
+// индекс» от «уцелел, потому что файл физически создан только что». Сломай
+// защиту индекса в sweepOrphanFiles (bagStore.js) или форму ключа при
+// сверке — раньше все тесты оставались зелёными; на настоящих временах
+// файла те же мутации убивают усыновлённый сделкой мешок 40 дней от роду,
+// прочитанный вчера мешок 40 дней от роду и мешок под потолком на 80-й
+// день. put() теперь честно выставляет mtime файла через fs.utimesSync под
+// uploadedAt — тесты ниже используют именно эту честность.
+describe('C1 — метла сирот уважает индекс, а не просто «файл свежий»', () => {
+  it('усыновлённый 40-дневный, прочитанный-вчера 40-дневный и усыновлённый 80-дневный (под потолком) мешки не сносятся, даже когда их НАСТОЯЩИЙ mtime старше порога сирот', () => {
+    const now = Date.now();
+    // Усыновлённый сделкой, 40 дней от роду — без индекса mtime старше
+    // BAG_UNREAD_TTL_MS (30д), метла сирот снесла бы его, если бы не
+    // проверяла индекс в первую очередь.
+    const adopted40 = put(ALICE, BOB, now - 40 * DAY, { dealDeadline: now + 10 * DAY });
+    // Прочитан вчера, но САМ мешок 40 дней от роду — тот же риск.
+    const read40 = put(ALICE, BOB, now - 40 * DAY, { firstFetchedAt: now - 1 * DAY });
+    // Усыновлённый, 80 дней от роду — под потолком BAG_MAX_AGE_MS (90д), но
+    // куда старше порога сирот (30д). Именно этот случай координатор назвал
+    // отдельно: «мешок под потолком на 80-й день».
+    const adopted80 = put(ALICE, BOB, now - 80 * DAY, { dealDeadline: now + 400 * DAY });
+
+    cleanupBags(now);
+
+    expect(fs.existsSync(path.join(DIR_BAGS, adopted40))).toBe(true);
+    expect(fs.existsSync(path.join(DIR_BAGS, read40))).toBe(true);
+    expect(fs.existsSync(path.join(DIR_BAGS, adopted80))).toBe(true);
+  });
+
+  it('порог сирот — это буквально BAG_UNREAD_TTL_MS, не какое-то другое число: неиндексированный файл чуть моложе порога выживает, чуть старше — сносится', () => {
+    const now = Date.now();
+    const orphanDir = path.join(DIR_BAGS, ALICE);
+    fs.mkdirSync(orphanDir, { recursive: true });
+
+    const survivor = path.join(orphanDir, 'just-under-threshold.bin');
+    fs.writeFileSync(survivor, 'x');
+    const justUnder = new Date(now - BAG_UNREAD_TTL_MS + 60_000); // на минуту моложе порога
+    fs.utimesSync(survivor, justUnder, justUnder);
+
+    const doomed = path.join(orphanDir, 'just-over-threshold.bin');
+    fs.writeFileSync(doomed, 'x');
+    const justOver = new Date(now - BAG_UNREAD_TTL_MS - 60_000); // на минуту старше порога
+    fs.utimesSync(doomed, justOver, justOver);
+
+    cleanupBags(now);
+
+    expect(fs.existsSync(survivor)).toBe(true);
+    expect(fs.existsSync(doomed)).toBe(false);
   });
 });
 
