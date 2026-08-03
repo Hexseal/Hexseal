@@ -477,6 +477,25 @@ function sweepOrphanFiles(nowMs) {
   }
 }
 
+// Мелочь (e): без этого bags/<адрес>/ переживает каждый мешок, когда-либо
+// в нём лежавший — на диске оседает список всех, кто когда-либо получал
+// мешок, дольше самих мешков. Для проекта, обещающего не быть архивом
+// (сервер не хранит то, чего не должен), это лишнее. Запускается ПОСЛЕ
+// основного цикла удаления и sweepOrphanFiles — только тогда каталог,
+// опустевший в этом же проходе чистки, действительно пуст.
+function removeEmptyRecipientDirs() {
+  let recipients;
+  try { recipients = fs.readdirSync(DIR_BAGS); } catch { return; }
+
+  for (const recipient of recipients) {
+    const recipientDir = path.join(DIR_BAGS, recipient);
+    try {
+      if (!fs.statSync(recipientDir).isDirectory()) continue;
+      if (fs.readdirSync(recipientDir).length === 0) fs.rmdirSync(recipientDir);
+    } catch {}
+  }
+}
+
 export function cleanupBags(nowMs = Date.now()) {
   assertSafeInt('cleanupBags', 'nowMs', nowMs);
 
@@ -495,6 +514,7 @@ export function cleanupBags(nowMs = Date.now()) {
   if (removed) _saveBagMeta();
 
   sweepOrphanFiles(nowMs);
+  removeEmptyRecipientDirs();
 
   return { removed, kept };
 }
