@@ -1112,6 +1112,78 @@ describe('Мелочь — _saveBagMeta создаёт свой каталог �
   });
 });
 
+// ─── Мелочи — порядок в cleanupBags и независимость метлы/уборки от
+// падения сохранения индекса ─────────────────────────────────────────────
+//
+// Находки ревью (две, объединены в один коммит — обе меняют одну и ту же
+// функцию и один и тот же кусок управления ошибками):
+// 1. Раньше файл удалялся ДО того, как удаление записи сохранялось в
+//    индексе. Худший случай при падении между этими шагами — индекс,
+//    обещающий файл, которого уже нет. Поменяли порядок: сохранить индекс
+//    (запись уже убрана из него), потом удалить файл — худший случай
+//    становится осиротевшим файлом, который подберёт обычная метла сирот
+//    по mtime, а не индексом, врущим про существование.
+// 2. sweepOrphanFiles/removeEmptyRecipientDirs стояли ПОСЛЕ сохранения
+//    индекса и не выполнялись вовсе, если сохранение бросало (I2) — хотя
+//    обе операции работают с файловой системой напрямую, не зависят от
+//    успеха сохранения индекса.
+describe('Мелочи — cleanupBags: индекс сохраняется до удаления файла, метла/уборка не зависят от падения сохранения', () => {
+  it('индекс сохраняется на диск ДО удаления файла мешка — порядок операций подтверждён напрямую', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now - 40 * DAY); // просрочен
+
+    const order = [];
+    const realWriteFileSync = fs.writeFileSync;
+    const realUnlinkSync = fs.unlinkSync;
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((...args) => {
+      order.push('write-index');
+      return realWriteFileSync(...args);
+    });
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation((...args) => {
+      order.push('unlink-file');
+      return realUnlinkSync(...args);
+    });
+    try {
+      cleanupBags(now);
+    } finally {
+      writeSpy.mockRestore();
+      unlinkSpy.mockRestore();
+    }
+
+    const writeIdx = order.indexOf('write-index');
+    const unlinkIdx = order.indexOf('unlink-file');
+    expect(writeIdx).toBeGreaterThanOrEqual(0);
+    expect(unlinkIdx).toBeGreaterThan(writeIdx);
+  });
+
+  it('упавшее сохранение индекса не отменяет метлу сирот и уборку пустых каталогов — они не зависят от судьбы индекса', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 40 * DAY); // просроченная индексированная запись — её сохранение ниже упадёт
+
+    // Настоящий, независимый от индекса файл-сирота — метла обязана снести
+    // его независимо от того, удалось ли сохранить индекс.
+    const orphanDir = path.join(DIR_BAGS, BOB);
+    fs.mkdirSync(orphanDir, { recursive: true });
+    const orphan = path.join(orphanDir, 'stale-orphan.bin');
+    fs.writeFileSync(orphan, 'x');
+    const old = new Date(now - 40 * DAY);
+    fs.utimesSync(orphan, old, old);
+
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC (симулировано)');
+    });
+    try {
+      expect(() => cleanupBags(now)).toThrow(); // сохранение по-прежнему бросает (I2) — это не глотаем
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    // Но метла сирот и уборка пустых каталогов всё равно отработали.
+    expect(fs.existsSync(orphan)).toBe(false);
+    expect(fs.existsSync(orphanDir)).toBe(false); // опустевший каталог Боба тоже убран
+  });
+});
+
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
     expect(BAG_TTL_MS).toBe(7 * DAY);

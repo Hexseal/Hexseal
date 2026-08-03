@@ -568,11 +568,15 @@ export function cleanupBags(nowMs = Date.now()) {
 
   let removed = 0;
   let kept = 0;
+  // Мелочь (порядок): файлы удаляемых мешков собираются здесь, но не
+  // трогаются немедленно — см. ниже, почему удаление файла идёт ПОСЛЕ
+  // сохранения индекса, а не до.
+  const keysToDeleteFiles = [];
 
   for (const [key, meta] of Object.entries(_bagMeta)) {
     if (bagExpiryAt(meta, nowMs) <= nowMs) {
-      try { fs.unlinkSync(bagPathFor(key)); } catch {}
       delete _bagMeta[key];
+      keysToDeleteFiles.push(key);
       removed++;
       continue;
     }
@@ -593,10 +597,29 @@ export function cleanupBags(nowMs = Date.now()) {
 
     kept++;
   }
-  if (removed) _saveBagMeta();
 
-  removed += sweepOrphanFiles(nowMs);
-  removeEmptyRecipientDirs();
+  try {
+    // Мелочь (порядок): индекс сохраняется ДО удаления файлов, не после.
+    // Раньше файл удалялся первым — если сохранение индекса падало ПОСЛЕ
+    // (I2 теперь бросает вместо молчаливого catch{}), на диске оставался
+    // индекс, продолжающий обещать файл, которого уже нет. Если вместо
+    // этого сначала сохранить индекс (запись уже убрана) и только потом
+    // удалять файл, худший случай при падении на любом из шагов —
+    // осиротевший файл, который подберёт обычная метла сирот по mtime, а
+    // не индекс, врущий про существование.
+    if (removed) _saveBagMeta();
+    for (const key of keysToDeleteFiles) {
+      try { fs.unlinkSync(bagPathFor(key)); } catch {}
+    }
+  } finally {
+    // Мелочь (независимость): sweepOrphanFiles/removeEmptyRecipientDirs
+    // работают с файловой системой напрямую, не зависят от успеха
+    // сохранения индекса — finally гарантирует, что упавшее сохранение
+    // (I2 теперь бросает) не отменяет их молча, просто оказавшись раньше
+    // return по пути исключения.
+    removed += sweepOrphanFiles(nowMs);
+    removeEmptyRecipientDirs();
+  }
 
   return { removed, kept };
 }
