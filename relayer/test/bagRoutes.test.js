@@ -539,6 +539,45 @@ describe('PUT /bags/:recipient', () => {
     expect(meta.size).toBe(payload.length);
   });
 
+  it('находка ревью: чек-суммированный (EIP-55, смешанный регистр) адрес работает сквозным путём — приём и пропуск', async () => {
+    // Ни один тест во всём наборе не посылал адрес в чек-суммированном
+    // виде — фронт (Задача 6) будет слать именно такой (ethers/viem
+    // возвращают адреса в форме EIP-55 по умолчанию). Обе нормализации
+    // (в приёме — PUT :recipient, и в пропуске — POST /bags/pass address)
+    // работают уже сегодня, но тихая регрессия в любой из них молча
+    // потеряла бы сообщения, а не дала бы явную ошибку.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { wallet: bob } = await newWalletAndAddress();
+    const bobLower = (await bob.getAddress()).toLowerCase();
+    const bobChecksummed = ethers.getAddress(bobLower); // EIP-55, смешанный регистр
+    expect(bobChecksummed).not.toBe(bobLower); // предпосылка: реально смешанный регистр, не совпадение
+
+    const alicePass = await issuePassFor(alice, freshIp());
+    const put = await putBag({ pass: alicePass, recipient: bobChecksummed, body: Buffer.from('checksummed-recipient') });
+    expect(put.status).toBe(200);
+    expect(bagMetaOf(put.body.key).recipient).toBe(bobLower);
+
+    // Пропуск Боба — тоже через чек-суммированный адрес в теле запроса.
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = await bob.signMessage(bagPassChallenge(bobLower, ts));
+    const passRes = await request(app)
+      .post('/bags/pass')
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-ts', String(ts))
+      .set('x-sig', sig)
+      .send({ address: bobChecksummed });
+    expect(passRes.status).toBe(200);
+    const bobPass = passRes.body.pass;
+
+    const listRes = await getBagsList({ pass: bobPass, ip: freshIp() });
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.map((b) => b.key)).toContain(put.body.key);
+
+    const getRes = await getBag({ pass: bobPass, key: put.body.key, ip: freshIp() });
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.toString('utf8')).toBe('checksummed-recipient');
+  });
+
   it('не верит адресу отправителя ни из какого канала запроса — тело, заголовок и query разом', async () => {
     // Находка ревью («слепота статуса»): прежняя версия этого теста красила
     // только буквальный разбор JSON-тела — подмена ЛЮБЫМ ДРУГИМ каналом
@@ -820,6 +859,36 @@ describe('PUT /bags/:recipient', () => {
     expect(blocked.body.code).toBe('rate_limited_write');
   });
 
+  it('находка ревью: окно лимитера (60с) действительно истекает и снимает блокировку', async () => {
+    // Ни один тест файла до сих пор не проверял, что 429 вообще
+    // ЗАКАНЧИВАЕТСЯ — только что он наступает. checkRateLimit() (app.js)
+    // читает Date.now() напрямую; vi.setSystemTime() двигает системное
+    // время вперёд без настоящего ожидания 60 секунд.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+    const ip = freshIp();
+
+    try {
+      for (let i = 0; i < 5; i++) {
+        const res = await putBag({ pass, recipient: bobAddr, ip, body: Buffer.from(`w${i}`) });
+        expect(res.status).toBe(200);
+      }
+      const blocked = await putBag({ pass, recipient: bobAddr, ip, body: Buffer.from('w5') });
+      expect(blocked.status).toBe(429);
+
+      // RATE_WINDOW_MS в app.js — 60_000, не экспортирована (та же
+      // конвенция, что test/helpers.test.js уже применяет к RATE_MAX:
+      // читает число буквально, не импортирует константу). +1с запаса.
+      vi.setSystemTime(Date.now() + 61_000);
+
+      const afterWindow = await putBag({ pass, recipient: bobAddr, ip, body: Buffer.from('w6') });
+      expect(afterWindow.status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('лимитер по IP срабатывает на PUT даже с разными адресами и годным пропуском', async () => {
     const sameIp = freshIp();
     let last;
@@ -866,6 +935,24 @@ describe('GET /bags', () => {
 
   it('требует годный пропуск', async () => {
     const res = await getBagsList({ pass: 'v1.garbage.garbage' });
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('pass_invalid');
+  });
+
+  it('находка ревью: пропуск принимается только из заголовка x-bag-pass, не из строки запроса', async () => {
+    // Vary: x-bag-pass (И-5) утверждает, что ответ зависит от значения
+    // ИМЕННО этого заголовка — если бы пропуск ТАКЖЕ принимался через
+    // query, это утверждение стало бы неполным (кэш, уважающий Vary, не
+    // знал бы, что ответ зависит ещё и от query-параметра). Без заголовка,
+    // только с валидным пропуском в строке запроса — тот же 401, что и
+    // вообще без пропуска.
+    const { wallet: alice } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    const res = await request(app)
+      .get('/bags')
+      .query({ 'x-bag-pass': pass, pass })
+      .set('CF-Connecting-IP', freshIp());
     expect(res.status).toBe(401);
     expect(res.body.code).toBe('pass_invalid');
   });
