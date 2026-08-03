@@ -226,25 +226,47 @@ describe('sealForRecipient / openSealed', () => {
     ).rejects.toThrow(TypeError);
   });
 
-  // Находка I1 финального ревью: `sealed` был защищён `instanceof Uint8Array`
-  // ДО try, а `myKeypair.publicKey`/`myKeypair.privateKey` — нет, хотя они
-  // проходят насквозь в ту же `sodium.crypto_box_seal_open`. Строка РОВНО в
-  // 32 UTF-8-байта — тот самый провал: libsodium приводит её к 32 байтам
-  // (crypto_box_PUBLICKEYBYTES/SECRETKEYBYTES) без единой жалобы на длину и
-  // честно пытается открыть — получает `Error: incorrect key pair for the
-  // given ciphertext` (обычный `Error`, НЕ `TypeError`, проверено прогоном
-  // библиотеки), который наш собственный catch схлопывает в `null` как
-  // «мешок не наш». Наш мусор на входе выдаёт себя за штатный отказ.
-  // Другие длины сюда не годятся: на них сработала бы длинная проверка самой
-  // библиотеки (TypeError «invalid publicKey length» и т.п.) ещё ДО попытки
-  // открыть — тест был бы фиктивным, как I2 этого же ревью.
-  it('раунд 7, находка I1: ключ подан строкой ровно в 32 UTF-8-байта — не выдаётся за «мешок не наш»', async () => {
+  // Находка I1 финального ревью (раунд 7): `sealed` был защищён
+  // `instanceof Uint8Array` ДО try, а `myKeypair.publicKey`/`privateKey` —
+  // нет, хотя они проходят насквозь в ту же `sodium.crypto_box_seal_open`.
+  // Строка РОВНО в 32 UTF-8-байта — тот самый провал: libsodium приводит её
+  // к 32 байтам (crypto_box_PUBLICKEYBYTES/SECRETKEYBYTES) без единой
+  // жалобы на длину и честно пытается открыть — получает `Error: incorrect
+  // key pair for the given ciphertext` (обычный `Error`, НЕ `TypeError`,
+  // проверено прогоном библиотеки), который наш собственный catch
+  // схлопывает в `null` как «мешок не наш». Наш мусор на входе выдаёт себя
+  // за штатный отказ. Другие длины сюда не годятся: на них сработала бы
+  // длинная проверка самой библиотеки (TypeError «invalid publicKey
+  // length» и т.п.) ещё ДО попытки открыть — тест был бы фиктивным, как I2
+  // этого же ревью.
+  //
+  // РАУНД 8, точка 3: единственный тест раунда 7 подавал мусор В ОБА слота
+  // сразу (`publicKey` и `privateKey` — оба строки по 32 байта), поэтому
+  // запирал ОБЕ проверки только ВМЕСТЕ — снятие любой ОДНОЙ из двух
+  // проверок в openSealed оставляла тест зелёным: уцелевшая проверка ловит
+  // мусор за обе (мусор есть в обоих слотах одновременно). Правдоподобный
+  // реальный сценарий именно половинчатый: открытый ключ держали байтами,
+  // закрытый подняли из хранилища строкой (или наоборот) — тот же
+  // половинчатый замок, что чинили в I2. Разведено на две фикстуры, у
+  // каждой мусор ровно в ОДНОМ слоте, второй — настоящий Uint8Array.
+
+  it('раунд 8, находка 3: garbage только в publicKey (privateKey настоящий) — ловится независимо от privateKey', async () => {
     const bob = await deriveChatKeypair(SIG_B);
     const sealed = await sealForRecipient(bob.publicKey, text('секрет'));
-    const garbageKeypair = {
+    const halfGarbage = {
       publicKey: 'x'.repeat(32),
+      privateKey: bob.privateKey,
+    } as unknown as ChatKeypair;
+    await expect(openSealed(halfGarbage, sealed)).rejects.toThrow(TypeError);
+  });
+
+  it('раунд 8, находка 3: garbage только в privateKey (publicKey настоящий) — ловится независимо от publicKey', async () => {
+    const bob = await deriveChatKeypair(SIG_B);
+    const sealed = await sealForRecipient(bob.publicKey, text('секрет'));
+    const halfGarbage = {
+      publicKey: bob.publicKey,
       privateKey: 'y'.repeat(32),
     } as unknown as ChatKeypair;
-    await expect(openSealed(garbageKeypair, sealed)).rejects.toThrow(TypeError);
+    await expect(openSealed(halfGarbage, sealed)).rejects.toThrow(TypeError);
   });
 });
