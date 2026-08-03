@@ -73,9 +73,23 @@ export function verifyBagPass(token, nowSec = Math.floor(Date.now() / 1000)) {
 
   const [, encodedBody, mac] = parts;
   let body;
+  // Dead on every currently-reachable path, not defensive theater: `token`
+  // is already checked to be a string above, `encodedBody` is always a
+  // string too (it comes from token.split('.')), and Buffer.from(string,
+  // 'base64url') does not throw for any string input in Node today —
+  // verified directly, not assumed. Kept anyway as a guard against a future
+  // Node making that stricter; if it ever does, this is where it'd need to
+  // start mattering again.
   try {
     body = Buffer.from(encodedBody, 'base64url').toString('utf8');
   } catch { return bad; }
+  // Buffer.from(x, 'base64url') is lenient: padding, embedded whitespace and
+  // stray characters all decode silently instead of throwing, so different
+  // token strings can carry the identical body+MAC. Re-encoding what we just
+  // decoded and requiring an exact match forces one canonical string per
+  // credential — needed once anything keys a cache or a rate limiter off the
+  // token text itself (Task 3), not for this task's own behavior.
+  if (Buffer.from(body, 'utf8').toString('base64url') !== encodedBody) return bad;
 
   // Constant-time compare, and only after a length check — timingSafeEqual
   // throws on mismatched lengths instead of returning false.

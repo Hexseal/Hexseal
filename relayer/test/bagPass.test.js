@@ -186,6 +186,27 @@ describe('bagPass', () => {
     expect(BAG_PASS_TTL_SEC).toBe(43200);
   });
 
+  it('нужен канонический base64url — паддинг, пробельные символы и вставки принимает Buffer.from молча, но не мы', () => {
+    // Buffer.from(x, 'base64url') тихо съедает мусор (padding '=', '\n',
+    // пробел, '!') и декодирует всё это в одно и то же тело — сегодня
+    // безвредно, но Задача 3 добавит лимитер, и всё, что ключуется строкой
+    // токена, поедет вместе с этими дублями одной и той же личности.
+    const { token } = issueBagPass(ALICE);
+    const [prefix, canonicalBody, mac] = token.split('.');
+    const variants = [
+      `${canonicalBody}=`,
+      `${canonicalBody}==`,
+      `${canonicalBody.slice(0, 4)}\n${canonicalBody.slice(4)}`,
+      `${canonicalBody.slice(0, 4)} ${canonicalBody.slice(4)}`,
+      `${canonicalBody.slice(0, 4)}!${canonicalBody.slice(4)}`,
+    ];
+    for (const variant of variants) {
+      expect(verifyBagPass(`${prefix}.${variant}.${mac}`).code).toBe('pass_invalid');
+    }
+    // Канонический вид сам по себе остаётся годным.
+    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase() });
+  });
+
   it('мусор на входе даёт вердикт, а не исключение', () => {
     for (const bad of [null, undefined, 42, {}, [], '', 'v1', 'v2.a.b', Symbol('x')]) {
       expect(() => verifyBagPass(bad)).not.toThrow();
