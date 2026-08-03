@@ -133,8 +133,16 @@ function assertFetchNotBeforeUpload(fn, uploadedAt, firstFetchedAt) {
 // test/bagStore.test.js, который сверяет её на входах с
 // pairIdFromAddresses из app.js и обязан покраснеть при расхождении.
 export function _pairIdFromAddresses(a, b) {
-  const [x, y] = [String(a).toLowerCase(), String(b).toLowerCase()].sort();
-  return `${x}-${y}`;
+  // Мелочь (h): раньше делала String(a).toLowerCase() без проверки формы —
+  // pairIdFromAddresses(null, BOB) в app.js бросает (null.toLowerCase()
+  // несёт TypeError), а эта версия молча превращала null в строку 'null' и
+  // возвращала "успешный", но мусорный pairId вроде '0xb0b1…-null'.
+  // assertAddress — та же проверка, что используют все остальные функции
+  // этого модуля; для уже провалидированных lowercase-адресов (обычный
+  // внутренний вызов из recordBag) это no-op.
+  const x = assertAddress('_pairIdFromAddresses', a);
+  const y = assertAddress('_pairIdFromAddresses', b);
+  return [x, y].sort().join('-');
 }
 
 // ─── Метаиндекс: загрузка/сохранение ───────────────────────────────────────

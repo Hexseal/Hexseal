@@ -1083,6 +1083,35 @@ describe('_pairIdFromAddresses (bagStore) обязан совпадать с pai
     expect(_pairIdFromAddresses(ALICE, BOB)).toBe(`${ALICE}-${BOB}`);
     expect(appPairIdFromAddresses(ALICE, BOB)).toBe(`${ALICE}-${BOB}`);
   });
+
+  // Находка ревью (мелочь h): на нестроковом входе (null/undefined/число)
+  // appPairIdFromAddresses бросает (несёт .toLowerCase() на не-строке), а
+  // _pairIdFromAddresses раньше молча делала String(null).toLowerCase() ===
+  // 'null' и возвращала мусорный, но "успешный" pairId вроде
+  // '0xb0b1…-null'. Сверочный набор CASES выше этого не покрывал — сверял
+  // только валидные адреса. Теперь обе стороны бросают на одном и том же
+  // не-адресном входе.
+  it.each([
+    [null, BOB],
+    [ALICE, undefined],
+    [42, BOB],
+    [ALICE, {}],
+  ])('на не-адресном входе (%s, %s) обе версии бросают, ни одна не выдаёт мусор молча', (a, b) => {
+    expect(() => _pairIdFromAddresses(a, b)).toThrow();
+    expect(() => appPairIdFromAddresses(a, b)).toThrow();
+  });
+
+  // Осознанное расхождение, не находка: app.js вообще не проверяет форму
+  // адреса (только .toLowerCase(), без ETH_ADDR_RE) — 'not-an-address' там
+  // не бросает, просто участвует в сортировке как обычная строка.
+  // _pairIdFromAddresses теперь строже (валидирует через assertAddress,
+  // как и остальные функции этого модуля) и бросает там, где app.js — нет.
+  // Это не сверяется на равенство специально: у app.js для этого входа нет
+  // "правильного" значения, с которым можно было бы сверяться.
+  it('на мусорной, но строковой форме адреса bagStore-версия строже app.js — осознанно, не находка', () => {
+    expect(() => _pairIdFromAddresses('not-an-address', BOB)).toThrow();
+    expect(() => appPairIdFromAddresses('not-an-address', BOB)).not.toThrow();
+  });
 });
 
 describe('listBagsFor — регистр адресата', () => {
