@@ -739,13 +739,28 @@ describe('I1 (четвёртый раунд) — markFetched/bagMetaOf пров�
 // глоталась — проверено подменой fs.writeFileSync: отметка о прочтении
 // есть в памяти, на диске нет ничего, вызывающий не узнаёт об этом никак.
 describe('I2 — сохранение индекса атомарно, ошибка записи не глотается', () => {
-  it('_saveBagMeta пишет через временный файл и rename — временного файла после успешной записи не остаётся', () => {
-    const key = put(ALICE, BOB, 1000);
+  it('_saveBagMeta реально пишет во временный путь, а не напрямую в основной индекс', () => {
+    // Находка ревью (I2, четвёртый раунд): прежняя версия этого теста
+    // проверяла только "нет мусора после успеха" — тривиально верное
+    // утверждение, даже если временный файл вообще никогда не создаётся
+    // (нечему было бы остаться). spyOn БЕЗ mockImplementation продолжает
+    // звать настоящую fs.writeFileSync (наблюдает, не подменяет) — прямое
+    // доказательство, что путь записи отличается от основного, а не
+    // косвенный вывод из отсутствия мусора.
+    const mainPath = path.join(TMP, 'bag-meta.json');
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    put(ALICE, BOB, 1000);
+    expect(writeSpy).toHaveBeenCalled();
+    const writtenPaths = writeSpy.mock.calls.map(call => call[0]);
+    expect(writtenPaths.length).toBeGreaterThan(0);
+    expect(writtenPaths.every(p => p !== mainPath)).toBe(true);
+    writeSpy.mockRestore();
+
+    // И после успешной записи временного файла не остаётся (rename его убрал).
     const leftovers = fs.readdirSync(TMP).filter(f => f.startsWith('bag-meta.json.tmp'));
     expect(leftovers).toEqual([]);
-    // И основной файл при этом корректен.
-    const onDisk = JSON.parse(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8'));
-    expect(onDisk[key]).toBeDefined();
+    const onDisk = JSON.parse(fs.readFileSync(mainPath, 'utf8'));
+    expect(Object.keys(onDisk).length).toBeGreaterThan(0);
   });
 
   it('_saveBagMeta бросает, если запись падает — не глотает ошибку', () => {
@@ -759,7 +774,7 @@ describe('I2 — сохранение индекса атомарно, ошиб�
     }
   });
 
-  it('падение записи не портит УЖЕ лежащий на диске индекс — временный файл не подменяет настоящий, пока сам не дописался', () => {
+  it('бросок ДО того, как записан хоть байт, не портит уже лежащий на диске индекс (простой случай)', () => {
     const key = put(ALICE, BOB, 1000); // на диске уже лежит корректный индекс
     const before = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
 
@@ -773,7 +788,40 @@ describe('I2 — сохранение индекса атомарно, ошиб�
     }
 
     const after = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
-    expect(after).toBe(before); // основной файл не тронут — записывали только во временный
+    expect(after).toBe(before);
+  });
+
+  // Находка ревью (I2, четвёртый раунд): тест выше подменяет запись броском
+  // ДО ТОГО, как что-либо записано — файл основного индекса не тронут в
+  // ОБОИХ случаях (что с temp+rename, что с наивной прямой записью), так
+  // что он не различает эти два устройства вообще. Настоящий отказ, ради
+  // которого атомарность и заведена, — ЧАСТИЧНАЯ запись (крах ровно
+  // посреди flush) — этим тестом не моделируется никак. Честная версия:
+  // подмена реально пишет обрезанное содержимое туда, куда её попросили, и
+  // только ПОСЛЕ этого бросает — симулируя обрыв между записью и rename.
+  // С temp+rename обрезанные байты попадают во временный файл, основной
+  // остаётся целиком старым. С наивной прямой записью (мутация ниже) те же
+  // обрезанные байты попали бы прямо в основной файл — тест это ловит.
+  it('честная атомарность: временный файл реально получает ОБРЕЗАННОЕ содержимое перед крахом, основной индекс всё равно остаётся старым и валидным', () => {
+    const key = put(ALICE, BOB, 1000);
+    const mainPath = path.join(TMP, 'bag-meta.json');
+    const before = fs.readFileSync(mainPath, 'utf8');
+
+    const realWriteFileSync = fs.writeFileSync;
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((filePath, data, ...rest) => {
+      const str = String(data);
+      realWriteFileSync(filePath, str.slice(0, Math.floor(str.length / 2)), ...rest);
+      throw new Error('симулированный обрыв записи после частичного flush');
+    });
+    try {
+      expect(() => markFetched(key, 9999)).toThrow();
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    const after = fs.readFileSync(mainPath, 'utf8');
+    expect(after).toBe(before);            // не подменён обрезанным содержимым
+    expect(() => JSON.parse(after)).not.toThrow(); // и остаётся валидным JSON
   });
 
   it('recordBag откатывает in-memory запись, если персист не удался — bagMetaOf не видит запись, которой нет на диске', () => {
