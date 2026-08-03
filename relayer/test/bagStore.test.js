@@ -410,6 +410,41 @@ describe('форма входа — каждая публичная функци
       .toThrow();
   });
 
+  // Находка ревью (И-3, шестой раунд), воспроизведена вживую отдельным
+  // скриптом: мешок с uploadedAt = сейчас+100 лет переживает любую чистку
+  // и истечёт только через сто лет. Потолок BAG_MAX_AGE_MS ограничивает
+  // только вклад ВЕТКИ УСЫНОВЛЕНИЯ (min(dealDeadline, uploadedAt +
+  // BAG_MAX_AGE_MS)) — а base (правило 2/3) считается ПРЯМО от uploadedAt,
+  // так что произвольно далёкое будущее в uploadedAt отодвигает срок
+  // истечения на то же произвольно далёкое время, потолок тут вообще не
+  // участвует. Если Задача 3 возьмёт uploadedAt из тела запроса, срок
+  // хранения обходится НАВСЕГДА — прямое нарушение обещания "сервер
+  // физически не может стать архивом".
+  it('recordBag отвергает uploadedAt из будущего — иначе срок хранения обходится навсегда', () => {
+    const now = Date.now();
+    const farFuture = now + 100 * 365 * DAY;
+    expect(() => recordBag({
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: farFuture,
+    }, now)).toThrow();
+  });
+
+  it('recordBag принимает uploadedAt в пределах небольшого допуска на расхождение часов', () => {
+    const now = Date.now();
+    const key = bagKeyFor(ALICE);
+    // Чуть в будущем — в пределах допуска на рассинхрон часов клиента и
+    // сервера, это не то же самое, что "выдумать" произвольную дату.
+    expect(() => recordBag({
+      key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: now + 60_000,
+    }, now)).not.toThrow();
+  });
+
+  it('recordBag принимает uploadedAt в прошлом без ограничений (никогда не было проблемой)', () => {
+    const now = Date.now();
+    expect(() => recordBag({
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: now - 40 * DAY,
+    }, now)).not.toThrow();
+  });
+
   it('recordBag бросает на негодных firstFetchedAt/dealDeadline, но принимает null/undefined', () => {
     expect(() => recordBag({
       key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1, firstFetchedAt: 'soon',

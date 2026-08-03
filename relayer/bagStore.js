@@ -205,6 +205,25 @@ function assertFetchNotBeforeUpload(fn, uploadedAt, firstFetchedAt) {
   }
 }
 
+// И-3 (шестой раунд): мешок с uploadedAt = сейчас+100 лет переживал бы
+// любую чистку и истёк бы только через сто лет — потолок BAG_MAX_AGE_MS
+// ограничивает только вклад ВЕТКИ УСЫНОВЛЕНИЯ (min(dealDeadline,
+// uploadedAt + BAG_MAX_AGE_MS) в bagExpiryAt), а base правил 2/3 считается
+// ПРЯМО от uploadedAt — потолок туда не заглядывает вообще. Если Задача 3
+// возьмёт uploadedAt из тела запроса, срок хранения обходится НАВСЕГДА —
+// прямое нарушение обещания "сервер физически не может стать архивом".
+// Небольшой допуск (не полноценная политика — просто технический зазор на
+// рассинхрон часов клиента и сервера, а не способ легитимно принять
+// будущее); в прошлом uploadedAt ничем не ограничен — это никогда не было
+// проблемой (мешок просто живёт с момента, который заявлен).
+const CLOCK_SKEW_ALLOWANCE_MS = 5 * 60 * 1000; // 5 минут
+
+function assertNotFromFuture(fn, label, value, nowMs) {
+  if (value > nowMs + CLOCK_SKEW_ALLOWANCE_MS) {
+    fail(fn, `${label} (${value}) is too far in the future relative to now (${nowMs})`);
+  }
+}
+
 // Тот же алгоритм, что у pairIdFromAddresses в app.js (сортировка нижних
 // регистров, склейка через '-'), продублирован здесь намеренно, а не
 // импортирован: обе стороны — чистые функции только от двух адресов, без
@@ -429,8 +448,9 @@ export function bagPathFor(key) {
 
 // ─── Запись / чтение метаданных ─────────────────────────────────────────────
 
-export function recordBag(meta) {
+export function recordBag(meta, nowMs = Date.now()) {
   if (!meta || typeof meta !== 'object') fail('recordBag', 'invalid meta');
+  assertSafeInt('recordBag', 'nowMs', nowMs);
 
   const sender    = assertAddress('recordBag', meta.sender);
   const recipient = assertAddress('recordBag', meta.recipient);
@@ -449,6 +469,7 @@ export function recordBag(meta) {
   if (size < 0) fail('recordBag', `invalid size: ${size}`);
   if (size > MAX_BAG_SIZE) fail('recordBag', `size ${size} exceeds MAX_BAG_SIZE ${MAX_BAG_SIZE} — a bag is a message, not an attachment`);
   const uploadedAt     = assertSafeInt('recordBag', 'uploadedAt', meta.uploadedAt);
+  assertNotFromFuture('recordBag', 'uploadedAt', uploadedAt, nowMs);
   const firstFetchedAt = assertNullableSafeInt('recordBag', 'firstFetchedAt', meta.firstFetchedAt ?? null);
   assertFetchNotBeforeUpload('recordBag', uploadedAt, firstFetchedAt);
   const dealDeadline   = assertNullableSafeInt('recordBag', 'dealDeadline', meta.dealDeadline ?? null);
