@@ -302,6 +302,15 @@ describe('verifyChain — ревью, раунд 1', () => {
     expect(verifyChain([undefined as unknown as ChainLink, full[1]])).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
   });
 
+  it('раунд 6, находка I2: мусор НЕ на позиции 0 — reportedSeqFor обязана сообщить реальный индекс, не всегда 0', () => {
+    // Обе прежние фикстуры (выше) кладут мусор ровно в индекс 0 — ветка
+    // «позиция в массиве» внутри reportedSeqFor никогда не проверялась
+    // ни на каком другом индексе. Мутация return index -> return 0
+    // пережила бы оба прежних теста незамеченной.
+    const full = chainOf(2);
+    expect(verifyChain([full[0], full[1], null as unknown as ChainLink])).toEqual({ ok: false, reason: 'broken', atSeq: 2 });
+  });
+
   // Граница проверки порядка: seq[i] <= seq[i-1], не только "<". Дубль номера
   // (тот же seq у двух звеньев подряд) — тоже unordered, а не молчаливый
   // проход дальше. Мутация "<=" → "<" не должна оставлять это зелёным.
