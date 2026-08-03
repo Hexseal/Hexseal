@@ -478,6 +478,16 @@ describe('C2 — форма ключа в recordBag и bagPathFor', () => {
     })).not.toThrow();
   });
 
+  // Находка ревью: [0-9]+ в BAG_KEY_RE не ограничен по длине — ключ со
+  // ста тысячами цифр вместо метки времени формально совпадал с формой.
+  it('recordBag бросает на key с непомерно длинной "меткой времени" в имени файла', () => {
+    const hugeDigits = '1'.repeat(100_000);
+    const key = `${ALICE}/${hugeDigits}-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.bin`;
+    expect(() => recordBag({
+      key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+    })).toThrow();
+  });
+
   it('bagPathFor отдаёт путь внутри DIR_BAGS для годного ключа', () => {
     const key = bagKeyFor(ALICE);
     const p = bagPathFor(key);
