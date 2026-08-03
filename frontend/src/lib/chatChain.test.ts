@@ -365,25 +365,30 @@ describe('verifyChain — ревью, раунд 1', () => {
   });
 
   // I2: весь массив целиком тоже может быть мусором — не только звено внутри.
+  // РАУНД 8: вердикт для этого случая — отдельный reason:'not_array', без
+  // atSeq вообще (было {reason:'broken', atSeq:-1, linksNotArray:true} —
+  // раунд 7, находка m1). Необязательный флаг никого не заставлял его
+  // читать: вызывающий, написавший естественное «подделка в звене −1»
+  // для reason:'broken', обвинил бы в подделке того, кто вообще ничего не
+  // предъявлял. Отдельная причина в объединении делает такую путаницу
+  // невозможной на уровне типов.
   it('не-массив на входе не роняет проверку', () => {
-    expect(verifyChain({} as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1, linksNotArray: true });
-    expect(verifyChain(null as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1, linksNotArray: true });
+    expect(verifyChain({} as unknown as ChainLink[])).toEqual({ ok: false, reason: 'not_array' });
+    expect(verifyChain(null as unknown as ChainLink[])).toEqual({ ok: false, reason: 'not_array' });
   });
 
-  // Раунд 7, находка m1: atSeq:-1 раньше означал побайтово одно и то же в
-  // ДВУХ разных ситуациях — «links вообще не массив» (тест выше) и «в звене
-  // РЕАЛЬНО стоит seq:-1» (звено само по себе мусор, но это мусор ВНУТРИ
-  // валидного массива, не вместо него). Вызывающий код не мог отличить
-  // «мне дали не массив» от «в звене отрицательный номер» — оба вердикта
-  // были структурно идентичны. `linksNotArray` разводит их, не добавляя
-  // нового `reason` в объединение: он есть только у первого случая.
-  it('раунд 7, находка m1: atSeq:-1 из «links не массив» отличим от atSeq:-1 из легитимного (хоть и негодного) звена с seq:-1', () => {
+  it('раунд 8: not_array отличим от broken с легитимным (хоть и негодным) звеном seq:-1 — по reason, не по флагу', () => {
+    // Раунд 7 (находка m1) отмечало, что atSeq:-1 из «links не массив» было
+    // побайтово неотличимо от atSeq:-1 из звена, где РЕАЛЬНО стоит seq:-1
+    // (мусор ВНУТРИ валидного массива, не вместо него) — чинилось флагом
+    // linksNotArray. Раунд 8 разводит их проще: разные reason, у not_array
+    // нет atSeq в принципе.
     const full = chainOf(2);
     const notArray = verifyChain(null as unknown as ChainLink[]);
     const malformedSeq = verifyChain([{ ...full[0], seq: -1 }]);
-    expect(notArray).toEqual({ ok: false, reason: 'broken', atSeq: -1, linksNotArray: true });
+    expect(notArray).toEqual({ ok: false, reason: 'not_array' });
     expect(malformedSeq).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
-    expect('linksNotArray' in malformedSeq).toBe(false);
+    expect('atSeq' in notArray).toBe(false);
   });
 
   it('мусор внутри валидного массива (null/undefined элементы) даёт broken, а не исключение', () => {
@@ -495,87 +500,116 @@ describe('verifyChain — ревью, раунд 1', () => {
   });
 });
 
-describe('verifyChain — C3: якорь хвоста (opts.expectedLastSeq)', () => {
+describe('verifyChain — C3: якорь хвоста (opts.expectedMessageCount)', () => {
   // Начало заякорено генезисом, конец — ничем: обрезка и подмена последнего
-  // предъявленного звена раньше давали ok:true. opts.expectedLastSeq —
+  // предъявленного звена раньше давали ok:true. opts.expectedMessageCount —
   // необязательный второй аргумент; источник значения решается в другом
   // плане, verifyChain знает только само число.
+  //
+  // РАУНД 8: поле называлось expectedLastSeq и хранило НОМЕР последнего
+  // сообщения — значения ниже сдвинуты на +1 относительно раунда 7 (было
+  // expectedLastSeq: N, стало expectedMessageCount: N+1), семантика
+  // «сколько сообщений всего» не изменилась, изменилось только имя и то,
+  // что оно теперь считает количество, а не номер.
 
   it('РАУНД 2, находка 2: якорь по количеству совпадает — ok:true, но последнее звено остаётся в unverifiedContentAtSeq', () => {
     // tailAnchored:true раунда 1 называл это "заверено" — неверно: якорь по
     // КОЛИЧЕСТВУ ничего не говорит о КОНТЕНТЕ последнего звена (см. тест
     // "ГРАНИЦА ЗАЩИТЫ" ниже). unverifiedContentAtSeq честно называет seq=2
-    // непроверенным, даже когда expectedLastSeq совпал.
-    const full = chainOf(3); // seq 0,1,2
-    expect(verifyChain(full, { expectedLastSeq: 2 })).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
+    // непроверенным, даже когда expectedMessageCount совпал.
+    const full = chainOf(3); // seq 0,1,2 — 3 сообщения
+    expect(verifyChain(full, { expectedMessageCount: 3 })).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
   });
 
   it('хвост утаён (якорь больше последнего показанного) — gap, недостающий номер в missingAfterSeq', () => {
-    const full = chainOf(5); // seq 0..4, реальный последний — 4
+    const full = chainOf(5); // seq 0..4, реальный последний — 4, 5 сообщений
     const shown = full.slice(0, 3); // показали только 0,1,2
-    expect(verifyChain(shown, { expectedLastSeq: 4 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [2], unverifiedContentAtSeq: [0, 1, 2] });
+    expect(verifyChain(shown, { expectedMessageCount: 5 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [2], unverifiedContentAtSeq: [0, 1, 2] });
   });
 
   it('предъявлено больше, чем существует, — broken, а не gap', () => {
     const full = chainOf(5); // seq 0..4
-    expect(verifyChain(full, { expectedLastSeq: 2 })).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
+    expect(verifyChain(full, { expectedMessageCount: 3 })).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
   });
 
-  it('пустой массив с заданным якорем — вся переписка утаена, это gap, а не ok:true', () => {
-    expect(verifyChain([], { expectedLastSeq: 0 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
+  it('пустой массив с заданным якорем (count > 0) — вся переписка утаена, это gap, а не ok:true', () => {
+    expect(verifyChain([], { expectedMessageCount: 1 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
   });
 
   it('пустой массив без якоря остаётся ok:true — брифовый тест не переопределён', () => {
     expect(verifyChain([])).toEqual({ ok: true, unverifiedContentAtSeq: [] });
   });
 
-  it('раунд 7, находка m2: expectedLastSeq:-1 — явный якорь «сообщений действительно не было», подтверждён на пустом предъявлении', () => {
-    // До находки m2 expectedLastSeq был обязан быть >= 0 — а реальный seq
-    // ПЕРВОГО сообщения тоже 0, значит МИНИМАЛЬНЫЙ валидный якорь ("0") уже
-    // означал «есть хотя бы одно сообщение, последнее — seq 0». Сказать
-    // «сообщений было ровно ноль» было нечем: verifyChain([], {expectedLastSeq:
-    // 0}) — это gap (см. тест выше), а не ok:true, потому что 0 утверждает
-    // существование seq=0. -1 никогда не бывает НАСТОЯЩИМ seq (buildLink
-    // начинает с 0), поэтому безопасен как выделенный сигнал пустоты —
-    // симметрично уже существующему использованию -1 в missingAfterSeq
-    // («пропуск перед самым началом»).
-    expect(verifyChain([], { expectedLastSeq: -1 })).toEqual({ ok: true, unverifiedContentAtSeq: [] });
+  it('раунд 8, точка 1: expectedMessageCount:0 — явный якорь «сообщений действительно не было», подтверждён на пустом предъявлении', () => {
+    // Ревью раунда 7 поймало дыру, внесённую находкой m2 того же раунда:
+    // expectedLastSeq хранил НОМЕР последнего сообщения напрямую, а у
+    // «сообщений не было вовсе» номера последнего нет и быть не может —
+    // m2 лечила это зарезервированным значением -1 у поля, чьё ИМЯ обещало
+    // номер. Из-за этого verifyChain([], {expectedLastSeq:-1}) был побайтово
+    // неотличим от verifyChain([]) без якоря вовсе (см. тест на
+    // JSON.stringify ниже, ровно то, что нашёл ревьюер) — заякоренная
+    // пустота обязана быть СИЛЬНЕЕ незаякоренной, а была той же самой.
+    // Поле переименовано в expectedMessageCount и хранит КОЛИЧЕСТВО — у
+    // количества ноль естественен, никакого зарезервированного значения
+    // больше не нужно: 0 — обычный, самый маленький валидный count.
+    expect(verifyChain([], { expectedMessageCount: 0 })).toEqual({ ok: true, unverifiedContentAtSeq: [], confirmedEmpty: true });
   });
 
-  it('раунд 7, находка m2: expectedLastSeq:-1, но реально показаны сообщения — противоречие, broken', () => {
+  it('раунд 8, точка 1: заякоренная пустота отличима от незаякоренной ПОБАЙТОВО — ровно то, что нашёл ревьюер', () => {
+    // Дословная проверка через JSON.stringify, как просил ревьюер: два
+    // вердикта обязаны быть РАЗНЫМИ байтами, не просто разными по смыслу.
+    const anchoredEmpty = verifyChain([], { expectedMessageCount: 0 });
+    const unanchoredEmpty = verifyChain([]);
+    expect(JSON.stringify(anchoredEmpty)).not.toBe(JSON.stringify(unanchoredEmpty));
+    // И оба всё ещё ok:true — confirmedEmpty усиливает, а не меняет вердикт.
+    expect(anchoredEmpty.ok).toBe(true);
+    expect(unanchoredEmpty.ok).toBe(true);
+  });
+
+  it('раунд 8, точка 1: expectedMessageCount:0, но реально показаны сообщения — противоречие, broken', () => {
     // Заявка «сообщений не было» и предъявление настоящих сообщений —
     // взаимоисключающие утверждения о том же самом факте (сколько сообщений
     // существует), тот же класс, что «предъявлено больше, чем говорит
     // якорь» выше в этом файле.
     const full = chainOf(3); // seq 0,1,2
-    expect(verifyChain(full, { expectedLastSeq: -1 })).toEqual({ ok: false, reason: 'broken', atSeq: 2 });
+    expect(verifyChain(full, { expectedMessageCount: 0 })).toEqual({ ok: false, reason: 'broken', atSeq: 2 });
   });
 
-  it('раунд 7, находка m2: expectedLastSeq:-1 вместе с expectedLastHash — bad_anchor (отпечатывать нечего, если сообщений не было)', () => {
+  it('раунд 8, точка 1: expectedMessageCount:0 вместе с expectedLastHash — bad_anchor (отпечатывать нечего, если сообщений не было)', () => {
     const H = ('0x' + '11'.repeat(32)) as `0x${string}`;
-    expect(verifyChain([], { expectedLastSeq: -1, expectedLastHash: H })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain([], { expectedMessageCount: 0, expectedLastHash: H })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
-  it('мусорный expectedLastSeq (дробный) не роняет проверку', () => {
+  it('раунд 8, точка 4: -0 в expectedMessageCount ведёт себя как обычный 0 — задокументированное, не случайное поведение', () => {
+    // isSafeNonNegativeInt принимает -0 («-0 >= 0» — true в JS), и это
+    // ВЕРНО: -0 неотличим от 0 нигде, где число дальше используется —
+    // сравнения, арифметика (count - 1 даёт -1, как и для 0), сериализация
+    // (JSON.stringify(-0) === "0"). Файл документирует прочие крайние
+    // случаи чисел (2^53, 1e100, NaN/Infinity) — этот тоже заперт, а не
+    // оставлен неявным.
+    expect(verifyChain([], { expectedMessageCount: -0 })).toEqual({ ok: true, unverifiedContentAtSeq: [], confirmedEmpty: true });
+  });
+
+  it('мусорный expectedMessageCount (дробный) не роняет проверку', () => {
     // РАУНД 2, находка 3: было {broken, atSeq:1.5} — вина уходила на
     // предъявителя честной цепочки за чужую ошибку в якоре. Теперь
     // отдельный вердикт bad_anchor, см. describe ниже.
-    expect(verifyChain(chainOf(2), { expectedLastSeq: 1.5 })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), { expectedMessageCount: 1.5 })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
-  it('мусорный expectedLastSeq (отрицательный, не спецзначение -1) не роняет проверку', () => {
-    // Раунд 7, находка m2: -1 стал ЗАРЕЗЕРВИРОВАННЫМ спецзначением
-    // («сообщений не было вовсе», см. describe m2 ниже) — этот тест раньше
-    // использовал именно -1 как «просто мусор», но с раунда 7 -1 больше не
-    // мусор. -2 остаётся мусором: единственное разрешённое отрицательное
-    // значение — ровно -1.
-    expect(verifyChain(chainOf(2), { expectedLastSeq: -2 })).toEqual({ ok: false, reason: 'bad_anchor' });
+  it('мусорный expectedMessageCount (отрицательный) не роняет проверку', () => {
+    // Раунд 8: expectedMessageCount — КОЛИЧЕСТВО, у него нет и не может
+    // быть зарезервированных отрицательных значений (в отличие от снятого
+    // раундом 8 expectedLastSeq:-1 из раунда 7) — гейт формы прежний:
+    // >= 0, целое, безопасное. Любое отрицательное — bad_anchor, без
+    // исключений.
+    expect(verifyChain(chainOf(2), { expectedMessageCount: -1 })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('внутренняя дыра и утаённый хвост — обе позиции в missingAfterSeq', () => {
     const full = chainOf(5); // seq 0..4
     const shown = [full[0], full[1], full[3]]; // нет seq=2, и хвост (seq=4) тоже не показан
-    expect(verifyChain(shown, { expectedLastSeq: 4 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1, 3], unverifiedContentAtSeq: [0, 1, 3] });
+    expect(verifyChain(shown, { expectedMessageCount: 5 })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1, 3], unverifiedContentAtSeq: [0, 1, 3] });
   });
 
   it('якорь совпадает численно, но связность подделана В СЕРЕДИНЕ — broken побеждает', () => {
@@ -584,11 +618,11 @@ describe('verifyChain — C3: якорь хвоста (opts.expectedLastSeq)', (
     tampered[2] = { ...tampered[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
     // seq=3 честный: его prevHash по-прежнему указывает на ПОДЛИННЫЙ хеш
     // seq=2, а не на пересчитанный с подделкой — расхождение поймает пара (2,3).
-    expect(verifyChain(tampered, { expectedLastSeq: 3 })).toEqual({ ok: false, reason: 'broken', atSeq: 3 });
+    expect(verifyChain(tampered, { expectedMessageCount: 4 })).toEqual({ ok: false, reason: 'broken', atSeq: 3 });
   });
 
   it('ГРАНИЦА ЗАЩИТЫ (раунд 1) — раунд 2 закрыл её в типе: unverifiedContentAtSeq называет подделанное звено', () => {
-    // expectedLastSeq — якорь по НОМЕРУ (сколько сообщений всего), а не по
+    // expectedMessageCount — якорь по КОЛИЧЕСТВУ (сколько сообщений всего), а не по
     // контенту последнего звена. prevHash звена ссылается на ПРЕДЫДУЩЕЕ, не
     // на себя: у последнего звена в массиве нет следующего, которое могло
     // бы проверить его собственный отпечаток. Подмена bodyHash/sender
@@ -602,13 +636,13 @@ describe('verifyChain — C3: якорь хвоста (opts.expectedLastSeq)', (
     const full = chainOf(3); // seq 0,1,2
     const tampered = [...full];
     tampered[2] = { ...tampered[2], bodyHash: ('0x' + 'bb'.repeat(32)) as `0x${string}` };
-    expect(verifyChain(tampered, { expectedLastSeq: 2 })).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
+    expect(verifyChain(tampered, { expectedMessageCount: 3 })).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
   });
 });
 
 describe('verifyChain — ревью, раунд 2, находка 3: bad_anchor', () => {
   // Мусор со стороны якоря — не вина того, чью цепочку разбирают. Раньше
-  // verifyChain(честнаяЦепочка, {expectedLastSeq: NaN}) отдавал
+  // verifyChain(честнаяЦепочка, {expectedMessageCount: NaN}) отдавал
   // {ok:false, reason:'broken', atSeq: NaN} — предъявителю честной цепочки
   // приписывали подделку за чужую ошибку. Плюс opts не объект (число,
   // строка, null, массив) молча игнорировался — fail-open в функции, вся
@@ -617,19 +651,19 @@ describe('verifyChain — ревью, раунд 2, находка 3: bad_anchor
   // проверку целиком.
 
   it('opts — число, не объект', () => {
-    expect(verifyChain(chainOf(2), 5 as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), 5 as unknown as { expectedMessageCount?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('opts — строка, не объект', () => {
-    expect(verifyChain(chainOf(2), '2' as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), '2' as unknown as { expectedMessageCount?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('opts — null, отличается от undefined (не передан вообще)', () => {
-    expect(verifyChain(chainOf(2), null as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), null as unknown as { expectedMessageCount?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('opts — массив, не объект-якорь', () => {
-    expect(verifyChain(chainOf(2), [1, 2] as unknown as { expectedLastSeq?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), [1, 2] as unknown as { expectedMessageCount?: number })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('opts не передан вообще (undefined) — это НЕ bad_anchor, это просто нет якоря', () => {
@@ -638,7 +672,7 @@ describe('verifyChain — ревью, раунд 2, находка 3: bad_anchor
 });
 
 describe('verifyChain — ревью, раунд 2, находка 1: якорь по отпечатку (expectedLastHash)', () => {
-  // expectedLastSeq отвечает на «сколько», expectedLastHash — на «что
+  // expectedMessageCount отвечает на «сколько», expectedLastHash — на «что
   // именно». По отдельности каждый неполон. Якорь по отпечатку последнего
   // звена закрывает КАСКАДНУЮ подделку — атакующий трогает ранее звено и
   // ПЕРЕСЧИТЫВАЕТ вперёд весь хвост через buildLink, отчего все смежные
@@ -652,13 +686,13 @@ describe('verifyChain — ревью, раунд 2, находка 1: якорь
 
   it('отпечаток совпадает с честной цепочкой — не broken, и последнее звено не в unverifiedContentAtSeq', () => {
     const full = chainOf(3);
-    expect(verifyChain(full, { expectedLastSeq: 2, expectedLastHash: linkHash(full[2]) })).toEqual({ ok: true, unverifiedContentAtSeq: [] });
+    expect(verifyChain(full, { expectedMessageCount: 3, expectedLastHash: linkHash(full[2]) })).toEqual({ ok: true, unverifiedContentAtSeq: [] });
   });
 
   it('отпечаток не совпадает — broken', () => {
     const full = chainOf(3);
     const fakeHash = ('0x' + 'dd'.repeat(32)) as `0x${string}`;
-    expect(verifyChain(full, { expectedLastSeq: 2, expectedLastHash: fakeHash })).toEqual({ ok: false, reason: 'broken', atSeq: 2 });
+    expect(verifyChain(full, { expectedMessageCount: 3, expectedLastHash: fakeHash })).toEqual({ ok: false, reason: 'broken', atSeq: 2 });
   });
 
   it('каскадная подделка (ранее звено тронуто, хвост пересчитан вперёд через buildLink) — ловится только якорем по отпечатку', () => {
@@ -678,7 +712,7 @@ describe('verifyChain — ревью, раунд 2, находка 1: якорь
     // показанные номера, не только последний (старое правило раунда 2
     // называло только seq=4, оставляя ПОДДЕЛАННОЕ seq=2 непоименованным).
     expect(verifyChain(cascaded)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3, 4] });
-    expect(verifyChain(cascaded, { expectedLastSeq: 4, expectedLastHash: trueLastHash })).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
+    expect(verifyChain(cascaded, { expectedMessageCount: 5, expectedLastHash: trueLastHash })).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
   });
 
   it('якорь по отпечатку не роняет честный внутренний пропуск в broken — «через дыру не пришивает»', () => {
@@ -691,29 +725,29 @@ describe('verifyChain — ревью, раунд 2, находка 1: якорь
     // Хеш совпал -> последнее звено (seq=4) НЕ в unverifiedContentAtSeq;
     // остаётся только seq=1 (звено перед дырой) — якорь по отпечатку
     // проверяет только сам последний элемент, не лечит дыру в середине.
-    expect(verifyChain(shown, { expectedLastSeq: 4, expectedLastHash: linkHash(full[4]) })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1], unverifiedContentAtSeq: [0, 1] });
+    expect(verifyChain(shown, { expectedMessageCount: 5, expectedLastHash: linkHash(full[4]) })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [1], unverifiedContentAtSeq: [0, 1] });
   });
 
   it('якорь по количеству указывает на утаённый хвост — якорь по отпечатку не проверяется вообще (не broken)', () => {
     // Показали только 0,1,2 из настоящих 0..4. Хеш последнего показанного
     // звена (seq=2) заведомо не совпадёт с истинным хешем seq=4 — но это
-    // не подделка, а честная обрезка, которую УЖЕ обнаружил expectedLastSeq
+    // не подделка, а честная обрезка, которую УЖЕ обнаружил expectedMessageCount
     // как gap. Сравнивать здесь нечего: неверно было бы обвинять в broken
     // то, что честно классифицировано как gap другим якорем.
     const full = chainOf(5);
     const shown = full.slice(0, 3);
-    const result = verifyChain(shown, { expectedLastSeq: 4, expectedLastHash: linkHash(full[4]) });
+    const result = verifyChain(shown, { expectedMessageCount: 5, expectedLastHash: linkHash(full[4]) });
     expect(result).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [2], unverifiedContentAtSeq: [0, 1, 2] });
   });
 
   it('expectedLastHash неверной длины — bad_anchor, а не исключение', () => {
-    // expectedLastSeq валиден (1) — изолирует именно проверку формы хеша,
+    // expectedMessageCount валиден (2) — изолирует именно проверку формы хеша,
     // не проверку "seq обязателен" (находка I2 раунда 3).
-    expect(verifyChain(chainOf(2), { expectedLastSeq: 1, expectedLastHash: ('0x' + 'aa'.repeat(31)) as `0x${string}` })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), { expectedMessageCount: 2, expectedLastHash: ('0x' + 'aa'.repeat(31)) as `0x${string}` })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('expectedLastHash не строка (число) — bad_anchor, а не исключение', () => {
-    expect(verifyChain(chainOf(2), { expectedLastSeq: 1, expectedLastHash: 42 as unknown as `0x${string}` })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), { expectedMessageCount: 2, expectedLastHash: 42 as unknown as `0x${string}` })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 });
 
@@ -795,20 +829,20 @@ describe('verifyChain — ревью, раунд 2, находка 2: unverified
   });
 
   it('unverifiedContentAtSeq отсутствует на bad_anchor', () => {
-    // -2, не -1 — с раунда 7 -1 больше не мусорное значение (см. m2 ниже).
-    const result = verifyChain(chainOf(2), { expectedLastSeq: -2 });
+    // Раунд 8: -1 у expectedMessageCount снова обычный мусор (не спецзначение).
+    const result = verifyChain(chainOf(2), { expectedMessageCount: -1 });
     expect(result).toEqual({ ok: false, reason: 'bad_anchor' });
     expect('unverifiedContentAtSeq' in result).toBe(false);
   });
 });
 
 describe('verifyChain — ревью, раунд 3, находка C1: пустой массив против якоря по отпечатку', () => {
-  // Ранний возврат для пустого массива смотрел только на expectedLastSeq —
+  // Ранний возврат для пустого массива смотрел только на expectedMessageCount —
   // полное сокрытие переписки при якоре, называющем конкретное последнее
   // звено, получало вердикт «цело, непроверенного нет». Хеш-якорь обязан
   // входить в этот возврат наравне с номером.
   //
-  // ПОСЛЕ находки I2 (тот же раунд) expectedLastSeq стал обязательным —
+  // ПОСЛЕ находки I2 (тот же раунд) expectedLastSeq (ныне expectedMessageCount) стал обязательным —
   // якорь «только по отпечатку» без номера физически недостижим (это уже
   // bad_anchor, см. describe про находку I2). Поэтому здесь оба поля
   // заданы вместе — C1 всё равно проверяем: hashAnchor в паре с seqAnchor
@@ -816,13 +850,13 @@ describe('verifyChain — ревью, раунд 3, находка C1: пуст�
   const H = ('0x' + '11'.repeat(32)) as `0x${string}`;
 
   it('пустой массив с обоими якорями — gap, а не справка о здоровье', () => {
-    expect(verifyChain([], { expectedLastSeq: 3, expectedLastHash: H })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
+    expect(verifyChain([], { expectedMessageCount: 4, expectedLastHash: H })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
   });
 
   it('согласованность: 1 звено против несходящегося хеш-якоря — broken, 0 звеньев против того же якоря — тоже отказ, не ok', () => {
     const full = chainOf(1);
-    expect(verifyChain(full, { expectedLastSeq: 0, expectedLastHash: H })).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
-    expect(verifyChain([], { expectedLastSeq: 0, expectedLastHash: H })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
+    expect(verifyChain(full, { expectedMessageCount: 1, expectedLastHash: H })).toEqual({ ok: false, reason: 'broken', atSeq: 0 });
+    expect(verifyChain([], { expectedMessageCount: 1, expectedLastHash: H })).toEqual({ ok: false, reason: 'gap', missingAfterSeq: [-1], unverifiedContentAtSeq: [] });
   });
 });
 
@@ -843,7 +877,7 @@ describe('verifyChain — ревью, раунд 3, находка I1: дове�
     // Дыра на seq=2 (настоящий real[2] не показан). real[3..5] — подлинные,
     // непрерывно связаны между собой и оканчиваются истинным хвостом.
     const shown = [fake0, fake1, real[3], real[4], real[5]];
-    const result = verifyChain(shown, { expectedLastSeq: 5, expectedLastHash: linkHash(real[5]) });
+    const result = verifyChain(shown, { expectedMessageCount: 6, expectedLastHash: linkHash(real[5]) });
     expect(result).toEqual({
       ok: false,
       reason: 'gap',
@@ -863,14 +897,14 @@ describe('verifyChain — ревью, раунд 3, находка I1: дове�
     expect(verifyChain(chainOf(5))).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3, 4] });
   });
 
-  it('expectedLastSeq совпал, но без expectedLastHash — непроверено ВСЁ, количество не защищает контент', () => {
+  it('expectedMessageCount совпал, но без expectedLastHash — непроверено ВСЁ, количество не защищает контент', () => {
     const full = chainOf(3);
-    expect(verifyChain(full, { expectedLastSeq: 2 })).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
+    expect(verifyChain(full, { expectedMessageCount: 3 })).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
   });
 
   it('сошедшийся хеш-якорь на сплошной цепочке без дыр — непроверенных нет вообще', () => {
     const full = chainOf(3);
-    expect(verifyChain(full, { expectedLastSeq: 2, expectedLastHash: linkHash(full[2]) })).toEqual({ ok: true, unverifiedContentAtSeq: [] });
+    expect(verifyChain(full, { expectedMessageCount: 3, expectedLastHash: linkHash(full[2]) })).toEqual({ ok: true, unverifiedContentAtSeq: [] });
   });
 });
 
@@ -892,7 +926,7 @@ describe('verifyChain — ревью, раунд 4, находка I1: гран�
     // Две дыры (после seq0 и после seq3) — граница обязана взять ПОСЛЕДНЮЮ.
     // Префикс [full[0], full[2], full[3]] имеет seq [0,2,3], но индексы
     // внутри среза [0,1,2] — расхождение ловит мутацию на "индекс вместо seq".
-    const result = verifyChain(shown, { expectedLastSeq: 6, expectedLastHash: linkHash(full[6]) });
+    const result = verifyChain(shown, { expectedMessageCount: 7, expectedLastHash: linkHash(full[6]) });
     expect(result).toEqual({
       ok: false,
       reason: 'gap',
@@ -908,7 +942,7 @@ describe('verifyChain — ревью, раунд 4, находка I1: гран�
     // объявила бы весь показанный кусок непроверенным).
     const full = chainOf(5); // seq 0..4
     const shown = [full[2], full[3], full[4]];
-    const result = verifyChain(shown, { expectedLastSeq: 4, expectedLastHash: linkHash(full[4]) });
+    const result = verifyChain(shown, { expectedMessageCount: 5, expectedLastHash: linkHash(full[4]) });
     expect(result).toEqual({
       ok: false,
       reason: 'gap',
@@ -922,7 +956,7 @@ describe('verifyChain — ревью, раунд 4, находка I1: гран�
     // Показаны seq 2,4,5,7,8 (индексы 0..4) — не с нуля, две дыры внутри
     // показанного (2->4 и 5->7), плюс дыра в начале (seq[0]=2 != 0).
     const shown = [full[2], full[4], full[5], full[7], full[8]];
-    const result = verifyChain(shown, { expectedLastSeq: 8, expectedLastHash: linkHash(full[8]) });
+    const result = verifyChain(shown, { expectedMessageCount: 9, expectedLastHash: linkHash(full[8]) });
     expect(result).toEqual({
       ok: false,
       reason: 'gap',
@@ -937,27 +971,27 @@ describe('verifyChain — ревью, раунд 4, находка I1: гран�
   });
 });
 
-describe('verifyChain — ревью, раунд 3, находка I2: expectedLastSeq обязателен', () => {
+describe('verifyChain — ревью, раунд 3, находка I2: expectedMessageCount обязателен', () => {
   // Отпечаток в одиночку не отличает обрезку от подделки — нужен номер,
   // чтобы сказать «сколько». verifyChain(полная.slice(0,3), {expectedLastHash:
   // linkHash(полная[4])}) раньше отдавал broken: честное умолчание (сторона
   // просто не показала хвост) превращалось в обвинение в подделке — разные
   // санкции по живому человеку, а разводить их и есть весь смысл функции.
 
-  it('честная обрезка + якорь ТОЛЬКО по отпечатку раньше была broken — теперь expectedLastSeq обязателен, и это bad_anchor (вызывающий забыл номер)', () => {
+  it('честная обрезка + якорь ТОЛЬКО по отпечатку раньше была broken — теперь expectedMessageCount обязателен, и это bad_anchor (вызывающий забыл номер)', () => {
     const full = chainOf(5);
     const shown = full.slice(0, 3); // честно показали только 0,1,2
-    // Без expectedLastSeq вызов вообще не имеет права дойти до сравнения
-    // отпечатков — типобезопасный вызов такого не построит (expectedLastSeq
+    // Без expectedMessageCount вызов вообще не имеет права дойти до сравнения
+    // отпечатков — типобезопасный вызов такого не построит (expectedMessageCount
     // обязателен в ChainAnchor), а на JS-границе это bad_anchor.
-    const badOpts = { expectedLastHash: linkHash(full[4]) } as unknown as { expectedLastSeq: number; expectedLastHash?: `0x${string}` };
+    const badOpts = { expectedLastHash: linkHash(full[4]) } as unknown as { expectedMessageCount: number; expectedLastHash?: `0x${string}` };
     expect(verifyChain(shown, badOpts)).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('честная обрезка + оба якоря (номер и отпечаток) — теперь корректно gap, минус в репутацию, не broken', () => {
     const full = chainOf(5);
     const shown = full.slice(0, 3);
-    expect(verifyChain(shown, { expectedLastSeq: 4, expectedLastHash: linkHash(full[4]) })).toEqual({
+    expect(verifyChain(shown, { expectedMessageCount: 5, expectedLastHash: linkHash(full[4]) })).toEqual({
       ok: false,
       reason: 'gap',
       missingAfterSeq: [2],
@@ -966,14 +1000,14 @@ describe('verifyChain — ревью, раунд 3, находка I2: expectedL
   });
 
   it('пустой объект {} — bad_anchor, а не молчаливое «якоря нет» (fail-open находки 3 прошлого раунда)', () => {
-    expect(verifyChain(chainOf(2), {} as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(chainOf(2), {} as unknown as { expectedMessageCount: number })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
   it('мелочь: verifyChain(null, 5) — форма якоря проверяется РАНЬШЕ формы links, не обвиняет предъявителя за мусор с обеих сторон', () => {
     // Раньше: {ok:false, reason:'broken', atSeq:-1} — обвиняло предъявителя
     // (Array.isArray(null) проверялась первой), хотя мусор пришёл и со
     // стороны опций тоже.
-    expect(verifyChain(null as unknown as ChainLink[], 5 as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(null as unknown as ChainLink[], 5 as unknown as { expectedMessageCount: number })).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 });
 
@@ -999,7 +1033,7 @@ describe('verifyChain — ревью, раунд 5, находка C1: верд�
     const full = chainOf(5);
     const forged = [...full];
     forged[3] = { ...forged[3], sender: BOB };
-    expect(verifyChain(forged, {} as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(forged, {} as unknown as { expectedMessageCount: number })).toEqual({ ok: false, reason: 'bad_anchor' });
     expect(verifyChain(forged)).toEqual({ ok: false, reason: 'broken', atSeq: 4 });
   });
 
@@ -1019,7 +1053,7 @@ describe('verifyChain — ревью, раунд 5, находка C1: верд�
     const rebuiltLink4 = buildLink(rebuiltLink3, BODY, ALICE, 2204);
     const rebuiltLink5 = buildLink(rebuiltLink4, BODY, ALICE, 2205);
     const cascaded = [full[0], tamperedLink1, rebuiltLink2, rebuiltLink3, rebuiltLink4, rebuiltLink5];
-    expect(verifyChain(cascaded, {} as unknown as { expectedLastSeq: number })).toEqual({ ok: false, reason: 'bad_anchor' });
+    expect(verifyChain(cascaded, {} as unknown as { expectedMessageCount: number })).toEqual({ ok: false, reason: 'bad_anchor' });
     expect(verifyChain(cascaded)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3, 4, 5] });
   });
 });
@@ -1037,7 +1071,7 @@ describe('verifyChain — ревью, раунд 5, находка I2: atSeq н�
     const full = chainOf(5);
     const shown = [full[2], full[3], full[4]];
     const wrongHash = ('0x' + 'dd'.repeat(32)) as `0x${string}`;
-    expect(verifyChain(shown, { expectedLastSeq: 4, expectedLastHash: wrongHash })).toEqual({
+    expect(verifyChain(shown, { expectedMessageCount: 5, expectedLastHash: wrongHash })).toEqual({
       ok: false,
       reason: 'broken',
       atSeq: 4,
@@ -1047,7 +1081,7 @@ describe('verifyChain — ревью, раунд 5, находка I2: atSeq н�
   it('переобъявление хвоста: показано 2 звена не с нуля (seq 3,4), якорь занижен — atSeq обязан быть 4, не 1 (длина-1)', () => {
     const full = chainOf(5);
     const shown = [full[3], full[4]];
-    expect(verifyChain(shown, { expectedLastSeq: 2 })).toEqual({
+    expect(verifyChain(shown, { expectedMessageCount: 3 })).toEqual({
       ok: false,
       reason: 'broken',
       atSeq: 4,
@@ -1056,35 +1090,35 @@ describe('verifyChain — ревью, раунд 5, находка I2: atSeq н�
 });
 
 describe('verifyChain — ревью, раунд 5, мелочь: собственные поля, не цепочка прототипов', () => {
-  // opts.expectedLastSeq раньше читался обычным доступом к свойству, а он
-  // проходит по цепочке прототипов — Object.create({expectedLastSeq: 3})
-  // не имеет ни одного СОБСТВЕННОГО поля, но opts.expectedLastSeq всё
+  // opts.expectedMessageCount раньше читался обычным доступом к свойству, а он
+  // проходит по цепочке прототипов — Object.create({expectedMessageCount: 4})
+  // не имеет ни одного СОБСТВЕННОГО поля, но opts.expectedMessageCount всё
   // равно резолвится в 3 через прототип. Замок раунда 3 на {} обходился:
   // мусор снаружи (JSON.parse не создаёт такого, но конструктор объекта в
   // руках вызывающего может) выдавал себя за годный якорь.
 
-  it('Object.create({expectedLastSeq: N}) — унаследованное поле не считается заданным, bad_anchor', () => {
+  it('Object.create({expectedMessageCount: N}) — унаследованное поле не считается заданным, bad_anchor', () => {
     const full = chainOf(4);
-    const evil = Object.create({ expectedLastSeq: 3 }) as { expectedLastSeq: number };
+    const evil = Object.create({ expectedMessageCount: 4 }) as { expectedMessageCount: number };
     expect(Object.keys(evil)).toEqual([]); // подтверждаем: собственных полей действительно нет
     expect(verifyChain(full, evil)).toEqual({ ok: false, reason: 'bad_anchor' });
   });
 
-  it('expectedLastSeq — собственное поле (валидно), expectedLastHash — только унаследованное: хеш игнорируется, не bad_anchor и не broken', () => {
-    // Изолирует ИМЕННО expectedLastHash-проверку от expectedLastSeq-
+  it('expectedMessageCount — собственное поле (валидно), expectedLastHash — только унаследованное: хеш игнорируется, не bad_anchor и не broken', () => {
+    // Изолирует ИМЕННО expectedLastHash-проверку от expectedMessageCount-
     // проверки (та тоже даёт bad_anchor на {}, и без этой развязки любой
     // мусор в expectedLastHash был бы замаскирован первой проверкой,
-    // сработавшей раньше). Здесь expectedLastSeq — настоящее собственное
+    // сработавшей раньше). Здесь expectedMessageCount — настоящее собственное
     // поле, совпадающее с длиной цепочки; expectedLastHash — заведомо
     // НЕСОВПАДАЮЩИЙ хеш, доступный только через прототип.
     const full = chainOf(4); // seq 0..3, честная цепочка
     const wrongHash = ('0x' + '11'.repeat(32)) as `0x${string}`;
-    const evil = Object.create({ expectedLastHash: wrongHash }) as { expectedLastSeq: number; expectedLastHash?: `0x${string}` };
-    evil.expectedLastSeq = 3; // собственное поле, совпадает с реальным последним seq
+    const evil = Object.create({ expectedLastHash: wrongHash }) as { expectedMessageCount: number; expectedLastHash?: `0x${string}` };
+    evil.expectedMessageCount = 4; // собственное поле, совпадает с реальным количеством сообщений
     expect(Object.prototype.hasOwnProperty.call(evil, 'expectedLastHash')).toBe(false);
     // Если бы унаследованный expectedLastHash читался — несовпадение дало
     // бы broken. Он должен быть проигнорирован как «не задан»: остаётся
-    // только валидный собственный expectedLastSeq, связность честная —
+    // только валидный собственный expectedMessageCount, связность честная —
     // ok:true.
     expect(verifyChain(full, evil)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3] });
   });
