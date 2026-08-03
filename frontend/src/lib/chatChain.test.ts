@@ -27,8 +27,36 @@ describe('buildLink', () => {
   });
 
   it('адрес отправителя приводится к нижнему регистру', () => {
-    const link = buildLink(null, BODY, ALICE.toUpperCase() as `0x${string}`, 1000);
-    expect(link.sender).toBe(ALICE);
+    // Раунд 7, находка m3: ALICE состоит из одних ЦИФР — String.toUpperCase()
+    // на цифрах не меняет ничего, значит ALICE.toUpperCase() отличается от
+    // ALICE ТОЛЬКО префиксом ('0x' -> '0X'). Тест ловил только приведение
+    // префикса к нижнему регистру, а приведение самих hex-цифр (a-f -> A-F)
+    // не было заперто НИЧЕМ — адрес с буквами обязателен, чтобы это
+    // проверить по-настоящему.
+    const withLetters = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd' as const;
+    const link = buildLink(null, BODY, withLetters.toUpperCase() as `0x${string}`, 1000);
+    expect(link.sender).toBe(withLetters);
+  });
+});
+
+describe('GENESIS_HASH', () => {
+  // Раунд 7, находка m3: GENESIS_HASH нигде в файле не был заперт золотым
+  // вектором — все существующие тесты ОТНОСИТЕЛЬНЫЕ (link.prevHash ===
+  // GENESIS_HASH), они истинны при ЛЮБОМ значении константы. Смена метки
+  // 'hexseal.chat.chain.genesis.v1' (например, опечатка при копипасте, или
+  // тихий сдвиг при рефакторинге) дала бы ДРУГОЙ, но по-прежнему ненулевой
+  // хеш — заведомо прошла бы мимо design-комментария «отдельная константа,
+  // а не нули» (там речь о том, ПОЧЕМУ выбрана метка, а не хардкод нулей;
+  // сама метка ничем не заперта).
+  //
+  // Значение посчитано НЕЗАВИСИМО от этого файла и от viem — отдельным
+  // скриптом на чистом node через `ethers` (`toUtf8Bytes` + `keccak256`,
+  // другая реализация обеих операций, не разделяет код с viem/@noble) —
+  // совпало с GENESIS_HASH, вычисленным viem в самом chatChain.ts.
+  it('раунд 7, находка m3: золотой вектор — смена метки меняет GENESIS_HASH, не только уход от нулей', () => {
+    expect(GENESIS_HASH).toBe(
+      '0x011f343812b5421934de4745ab6d08415d10e227c31e2fbc5300f9e3d5edc33e',
+    );
   });
 });
 
