@@ -1543,7 +1543,21 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
     if (!res.headersSent) res.status(200).end();
   });
   ws.on('error', (err) => { if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); } });
-  req.on('error', () => ws.destroy());
+  // И-2 (ревью): a dropped connection mid-upload (client closes the socket,
+  // network drop) used to only stop the write — whatever had already landed
+  // on disk stayed there, orphaned, with no metaindex entry (recordBag()
+  // never ran). The only thing that would ever pick it up is the mtime-based
+  // orphan sweep, not before BAG_UNREAD_TTL_MS (30 days by default) — and
+  // Задача 4 hasn't even wired that sweep into the nightly schedule yet.
+  // Same cleanup as the size-limit abort branch above: mark aborted so
+  // ws.on('finish') (which can still fire after this) doesn't call onFinish
+  // on a truncated file, and delete what was written so far.
+  req.on('error', () => {
+    if (aborted) return;
+    aborted = true;
+    ws.destroy();
+    fs.unlink(filePath, () => {});
+  });
 }
 
 app.put('/files/upload-put/:key', (req, res) => {

@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import request from 'supertest';
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
 
 // И-4 (ревью): реальные бюджеты (BAG_PASS_RATE_MAX/BAG_READ_RATE_MAX/
 // BAG_WRITE_RATE_MAX в app.js) выбраны под живой разговор, не под удобство
@@ -79,6 +80,48 @@ function putBag({ pass, recipient, body, ip, contentType = 'application/octet-st
     .set('x-bag-pass', pass)
     .set('Content-Type', contentType)
     .send(body);
+}
+
+/**
+ * И-2 (ревью): реального дропа TCP-соединения посреди тела запроса
+ * supertest не даёт — он всегда отправляет целиком в памяти. Открывает
+ * настоящий сокет к временно поднятому `app.listen(0)`, объявляет в
+ * Content-Length больше, чем реально пишет, и рвёт соединение — та же форма,
+ * что измерил координатор ("заявлено 262134, послано 60000, сокет
+ * разорван"). Используется только тестом на обрезок; весь остальной файл
+ * идёт через supertest.
+ */
+async function abortedPut({ recipient, pass, declaredLength, actualBytes }) {
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  const port = server.address().port;
+  try {
+    await new Promise((resolve) => {
+      const socket = net.createConnection({ port, host: '127.0.0.1' }, () => {
+        const headers = [
+          `PUT /bags/${recipient} HTTP/1.1`,
+          `Host: 127.0.0.1:${port}`,
+          `Content-Type: application/octet-stream`,
+          `x-bag-pass: ${pass}`,
+          `cf-connecting-ip: ${freshIp()}`,
+          `Content-Length: ${declaredLength}`,
+          `Connection: close`,
+          '', '',
+        ].join('\r\n');
+        socket.write(headers);
+        socket.write(Buffer.alloc(actualBytes, 1));
+        setTimeout(() => { socket.destroy(); resolve(); }, 100);
+      });
+      // ECONNRESET on our own end once the server also tears down its side
+      // is expected here, not a test failure — resolve either way.
+      socket.on('error', () => resolve());
+    });
+    // Give the server a beat to run its req 'error'/'aborted' handling
+    // before the test inspects the filesystem.
+    await new Promise((r) => setTimeout(r, 150));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 }
 
 function getBagsList({ pass, since, ip }) {
@@ -382,6 +425,25 @@ describe('PUT /bags/:recipient', () => {
     });
     expect(res.status).toBe(400);
     expect(res.body).not.toHaveProperty('key');
+
+    const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+    const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
+    expect(leftovers).toHaveLength(0);
+  });
+
+  it('И-2 (ревью): оборванная посреди загрузка не оставляет обрезок на диске', async () => {
+    // req.on('error', () => ws.destroy()) раньше только останавливал запись,
+    // не удалял уже написанные байты — обрезок не попадал в метаиндекс
+    // (recordBag() ни разу не вызывался), значит его подберёт только метла
+    // сирот по mtime не раньше BAG_UNREAD_TTL_MS (30 дней по умолчанию), а
+    // Задача 4 её ещё не подключила к расписанию вообще.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    // Меньше MAX_BAG_SIZE (256 КиБ) — так что это не путь по превышению
+    // размера (уже заперт отдельным тестом), а именно оборванное соединение.
+    await abortedPut({ recipient: bobAddr, pass, declaredLength: 262134, actualBytes: 60000 });
 
     const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
     const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
