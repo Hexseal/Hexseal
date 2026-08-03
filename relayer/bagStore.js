@@ -187,8 +187,34 @@ export function _loadBagMeta() {
   return _bagMeta;
 }
 
+// I2: раньше писала напрямую поверх BAG_META_PATH, оба catch были немые.
+// Обрезанный файл (крах ровно посреди записи — заполненный диск, убитый
+// процесс) → следующая загрузка молча получает пустой индекс: список
+// переписки человека исчезает из виду, хотя сами файлы целы на диске. И
+// ошибка самой записи глоталась — проверено подменой: markFetched()
+// отмечал прочтение в памяти, а на диске не менялось ничего, вызывающий
+// (маршрут Задачи 3) узнать об этом не мог никак.
+//
+// Пишем во временный файл и переименовываем — та же пара примитивов, что
+// защищает от обрезанного файла в любой похожей системе: fs.renameSync на
+// одной файловой системе атомарен, так что BAG_META_PATH в любой момент
+// времени — это либо полностью старое содержимое, либо полностью новое,
+// никогда наполовину записанное. И не глотаем ошибку: если запись или
+// переименование упали, это НЕ синоним "всё в порядке, продолжаем как ни
+// в чём не бывало" — throw после логирования, тот же приём, что и во всех
+// остальных assert*-хелперах этого файла (в отличие от более старого,
+// снисходительного savePushSubs() в app.js: там цена ошибки — пережить
+// рестарт без пуша, здесь — тихо потерять чужую переписку, ставки другие).
 export function _saveBagMeta() {
-  try { fs.writeFileSync(BAG_META_PATH, JSON.stringify(_bagMeta), 'utf8'); } catch {}
+  const tmpPath = `${BAG_META_PATH}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(_bagMeta), 'utf8');
+    fs.renameSync(tmpPath, BAG_META_PATH);
+  } catch (e) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    console.error(`[bags] FAILED TO SAVE ${BAG_META_PATH} — in-memory index and disk index have diverged: ${e.message}`);
+    throw e;
+  }
 }
 
 let _bagMeta = {};
@@ -278,7 +304,16 @@ export function recordBag(meta) {
     dealDeadline,
   };
   _bagMeta[key] = stored;
-  _saveBagMeta();
+  try {
+    _saveBagMeta();
+  } catch (e) {
+    // I2: не оставлять память впереди диска — если персист не удался,
+    // запись не должна продолжать "существовать" только в этом процессе.
+    // Ключи уникальны по построению (I5), так что откат каждый раз просто
+    // удаляет ровно ту запись, которую сами же секунду назад вставили.
+    delete _bagMeta[key];
+    throw e;
+  }
   return { key, ...stored };
 }
 
@@ -296,7 +331,16 @@ export function markFetched(key, nowMs = Date.now()) {
 
   if (meta.firstFetchedAt == null) {
     meta.firstFetchedAt = nowMs;
-    _saveBagMeta();
+    try {
+      _saveBagMeta();
+    } catch (e) {
+      // I2: тот же откат, что в recordBag — если запись не доехала до
+      // диска, отметка о прочтении не должна продолжать жить только в
+      // памяти этого процесса (findings: "отметка есть в памяти, на диске
+      // нет ничего").
+      meta.firstFetchedAt = null;
+      throw e;
+    }
   }
   return { key, ...meta };
 }

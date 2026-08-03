@@ -8,7 +8,7 @@ process.env.STORAGE_DIR = TMP;
 
 const { DIR_BAGS, BAG_TTL_MS, BAG_UNREAD_TTL_MS, BAG_MAX_AGE_MS, MAX_BAG_SIZE,
         bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
-        bagExpiryAt, cleanupBags, _loadBagMeta, _pairIdFromAddresses,
+        bagExpiryAt, cleanupBags, _loadBagMeta, _saveBagMeta, _pairIdFromAddresses,
         assertBagStoreReady, bagPathFor } = await import('../bagStore.js');
 
 // app.js — да, импортируется прямо в тест склада. По указанию координатора:
@@ -551,6 +551,79 @@ describe('I1 — кривая запись в индексе отбраковы�
   it('целиком нечитаемый bag-meta.json по-прежнему даёт пустой индекс, не бросает (поведение до I1 не тронуто)', () => {
     fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{not valid json', 'utf8');
     expect(() => _loadBagMeta()).not.toThrow();
+  });
+});
+
+// ─── I2 — сохранение индекса: атомарно и не глотая ошибку ─────────────────
+//
+// Находка ревью: _saveBagMeta писала напрямую, без временного файла и
+// переименования, оба catch были немые. Обрезанный файл (крах посреди
+// записи) → следующая загрузка молча ставит пустой индекс: список
+// переписки человека исчезает, хотя файлы целы на диске. Ошибка записи
+// глоталась — проверено подменой fs.writeFileSync: отметка о прочтении
+// есть в памяти, на диске нет ничего, вызывающий не узнаёт об этом никак.
+describe('I2 — сохранение индекса атомарно, ошибка записи не глотается', () => {
+  it('_saveBagMeta пишет через временный файл и rename — временного файла после успешной записи не остаётся', () => {
+    const key = put(ALICE, BOB, 1000);
+    const leftovers = fs.readdirSync(TMP).filter(f => f.startsWith('bag-meta.json.tmp'));
+    expect(leftovers).toEqual([]);
+    // И основной файл при этом корректен.
+    const onDisk = JSON.parse(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8'));
+    expect(onDisk[key]).toBeDefined();
+  });
+
+  it('_saveBagMeta бросает, если запись падает — не глотает ошибку', () => {
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC: no space left on device');
+    });
+    try {
+      expect(() => _saveBagMeta()).toThrow(/ENOSPC/);
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  it('падение записи не портит УЖЕ лежащий на диске индекс — временный файл не подменяет настоящий, пока сам не дописался', () => {
+    const key = put(ALICE, BOB, 1000); // на диске уже лежит корректный индекс
+    const before = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
+
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC');
+    });
+    try {
+      expect(() => markFetched(key, 9999)).toThrow();
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    const after = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
+    expect(after).toBe(before); // основной файл не тронут — записывали только во временный
+  });
+
+  it('recordBag откатывает in-memory запись, если персист не удался — bagMetaOf не видит запись, которой нет на диске', () => {
+    const key = bagKeyFor(ALICE);
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC');
+    });
+    try {
+      expect(() => recordBag({ key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1 })).toThrow();
+    } finally {
+      writeSpy.mockRestore();
+    }
+    expect(bagMetaOf(key)).toBeUndefined();
+  });
+
+  it('markFetched откатывает firstFetchedAt в null, если персист не удался — память не обгоняет диск', () => {
+    const key = put(ALICE, BOB, 1000);
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC');
+    });
+    try {
+      expect(() => markFetched(key, 5000)).toThrow();
+    } finally {
+      writeSpy.mockRestore();
+    }
+    expect(bagMetaOf(key).firstFetchedAt).toBeNull();
   });
 });
 
