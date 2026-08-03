@@ -976,3 +976,34 @@ describe('verifyChain — ревью, раунд 6, находка I4: гейт 
     expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
   });
 });
+
+describe('verifyChain — ревью, раунд 6, находка I3: atSeq обязан быть пригодным указателем', () => {
+  // reportedSeqFor возвращал seq как есть, если typeof seq === 'number' —
+  // а NaN и Infinity/-Infinity тоже проходят typeof-проверку (они числа
+  // по JS-типу), но JSON.stringify превращает ЛЮБОЙ из них в null.
+  // Арбитр получил бы «подделка в звене null» вместо номера или позиции —
+  // вердикт верный, указатель непригоден.
+
+  it('seq = NaN — atSeq обязан быть индексом (числом), не NaN (который JSON превращает в null)', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], seq: NaN };
+    const result = verifyChain(garbled);
+    expect(result).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+    expect(JSON.stringify(result)).not.toContain('null');
+  });
+
+  it('seq = Infinity — тот же класс: atSeq обязан быть пригодным указателем', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], seq: Infinity };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+
+  it('seq = -Infinity — тот же класс', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], seq: -Infinity };
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+});

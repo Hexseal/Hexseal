@@ -203,14 +203,18 @@ function isWellFormedLink(link: unknown): link is ChainLink {
   );
 }
 
-/** Номер для отчёта о негодном звене. Если seq хоть как-то похож на число —
- *  сообщаем его как есть (дробный/отрицательный тоже валиден как значение
- *  atSeq: number, это по-прежнему осмысленный указатель на место поломки).
- *  Если seq вообще не число — сообщаем позицию в предъявленном массиве. */
+/** Номер для отчёта о негодном звене. Если seq — конечное число, хоть как-то
+ *  похожее на разумный указатель (дробное/отрицательное тоже валидно как
+ *  значение atSeq: number — по-прежнему осмысленный указатель на место
+ *  поломки) — сообщаем его как есть. Если seq вообще не число, ИЛИ число, но
+ *  не конечное (NaN, Infinity, -Infinity — technically typeof 'number',
+ *  но негодный указатель: JSON.stringify превращает любое из них в null,
+ *  и арбитр увидел бы «подделка в звене null» вместо номера) — сообщаем
+ *  позицию в предъявленном массиве. */
 function reportedSeqFor(link: unknown, index: number): number {
   if (typeof link === 'object' && link !== null) {
     const seq = (link as Record<string, unknown>).seq;
-    if (typeof seq === 'number') return seq;
+    if (typeof seq === 'number' && Number.isFinite(seq)) return seq;
   }
   return index;
 }
