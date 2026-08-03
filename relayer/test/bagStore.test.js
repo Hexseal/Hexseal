@@ -9,7 +9,7 @@ process.env.STORAGE_DIR = TMP;
 const { DIR_BAGS, BAG_TTL_MS, BAG_UNREAD_TTL_MS, BAG_MAX_AGE_MS, MAX_BAG_SIZE,
         bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
         bagExpiryAt, cleanupBags, _loadBagMeta, _pairIdFromAddresses,
-        assertBagStoreReady } = await import('../bagStore.js');
+        assertBagStoreReady, bagPathFor } = await import('../bagStore.js');
 
 // app.js — да, импортируется прямо в тест склада. По указанию координатора:
 // соседние тесты (test/disputeReasonAndLog.test.js и другие) уже делают
@@ -119,7 +119,15 @@ describe('склад', () => {
   it('чистка не спотыкается о файл, которого нет в индексе, и наоборот', () => {
     fs.mkdirSync(path.join(DIR_BAGS, ALICE), { recursive: true });
     fs.writeFileSync(path.join(DIR_BAGS, ALICE, 'осиротевший.bin'), 'x');
-    recordBag({ key: `${ALICE}/призрак.bin`, sender: BOB, recipient: ALICE,
+    // "Призрак" — запись в индексе без файла на диске. В брифе этот тест
+    // использовал буквальный `${ALICE}/призрак.bin` как ключ; после C2
+    // (проверка формы ключа против регэкспа bagKeyFor, находка ревью
+    // координатора) recordBag() такой ключ больше не примет. Тот же сценарий
+    // (запись есть, файла нет) собран честным ключом от bagKeyFor(), файл
+    // для которого просто никогда не создаётся — свойство теста не
+    // изменилось, изменилась только форма ключа, которым его собирают.
+    const ghostKey = bagKeyFor(ALICE);
+    recordBag({ key: ghostKey, sender: BOB, recipient: ALICE,
                 size: 1, uploadedAt: Date.now() - 40 * DAY });
     expect(() => cleanupBags(Date.now())).not.toThrow();
   });
@@ -186,49 +194,49 @@ describe('форма входа — каждая публичная функци
   });
 
   it('recordBag бросает на негодных адресах отправителя/получателя', () => {
-    expect(() => recordBag({ key: 'x/y.bin', sender: 'not-an-address', recipient: ALICE, size: 1, uploadedAt: 1 }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: 'not-an-address', recipient: ALICE, size: 1, uploadedAt: 1 }))
       .toThrow();
-    expect(() => recordBag({ key: 'x/y.bin', sender: BOB, recipient: 'not-an-address', size: 1, uploadedAt: 1 }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: 'not-an-address', size: 1, uploadedAt: 1 }))
       .toThrow();
   });
 
   it('recordBag бросает на нечисловом/дробном/отрицательном size — та же дыра I1/I3, что и в bagPass', () => {
-    expect(() => recordBag({ key: 'x/y.bin', sender: BOB, recipient: ALICE, size: '6', uploadedAt: 1 }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: '6', uploadedAt: 1 }))
       .toThrow();
-    expect(() => recordBag({ key: 'x/y.bin', sender: BOB, recipient: ALICE, size: 1.5, uploadedAt: 1 }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1.5, uploadedAt: 1 }))
       .toThrow();
-    expect(() => recordBag({ key: 'x/y.bin', sender: BOB, recipient: ALICE, size: -1, uploadedAt: 1 }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: -1, uploadedAt: 1 }))
       .toThrow();
   });
 
   it('recordBag бросает, если size больше MAX_BAG_SIZE — мешок это сообщение, не вложение', () => {
     expect(() => recordBag({
-      key: 'x/y.bin', sender: BOB, recipient: ALICE, size: MAX_BAG_SIZE + 1, uploadedAt: 1,
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: MAX_BAG_SIZE + 1, uploadedAt: 1,
     })).toThrow();
     // Ровно на границе — ещё годно.
     expect(() => recordBag({
-      key: 'x/y.bin', sender: BOB, recipient: ALICE, size: MAX_BAG_SIZE, uploadedAt: 1,
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: MAX_BAG_SIZE, uploadedAt: 1,
     })).not.toThrow();
   });
 
   it('recordBag бросает на нечисловом/дробном/огромном uploadedAt', () => {
-    expect(() => recordBag({ key: 'x/y.bin', sender: BOB, recipient: ALICE, size: 1, uploadedAt: '1000' }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: '1000' }))
       .toThrow();
-    expect(() => recordBag({ key: 'x/y.bin', sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1.5 }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1.5 }))
       .toThrow();
-    expect(() => recordBag({ key: 'x/y.bin', sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1e21 }))
+    expect(() => recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1e21 }))
       .toThrow();
   });
 
   it('recordBag бросает на негодных firstFetchedAt/dealDeadline, но принимает null/undefined', () => {
     expect(() => recordBag({
-      key: 'x/y.bin', sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1, firstFetchedAt: 'soon',
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1, firstFetchedAt: 'soon',
     })).toThrow();
     expect(() => recordBag({
-      key: 'x/y.bin', sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1, dealDeadline: 'later',
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1, dealDeadline: 'later',
     })).toThrow();
     expect(() => recordBag({
-      key: 'x/y.bin', sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+      key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
       firstFetchedAt: null, dealDeadline: undefined,
     })).not.toThrow();
   });
@@ -236,8 +244,9 @@ describe('форма входа — каждая публичная функци
   it('recordBag хранит sender/recipient в нижнем регистре и считает pairId — сортировка+lower, как pairIdFromAddresses в app.js', () => {
     const upperSender    = BOB.toUpperCase().replace('0X', '0x');
     const upperRecipient = ALICE.toUpperCase().replace('0X', '0x');
-    recordBag({ key: 'x/case.bin', sender: upperSender, recipient: upperRecipient, size: 1, uploadedAt: 1 });
-    const meta = bagMetaOf('x/case.bin');
+    const key = bagKeyFor(upperRecipient); // bagKeyFor лоуэркейсит само, ключ уже будет под ALICE
+    recordBag({ key, sender: upperSender, recipient: upperRecipient, size: 1, uploadedAt: 1 });
+    const meta = bagMetaOf(key);
     expect(meta.sender).toBe(BOB);
     expect(meta.recipient).toBe(ALICE);
     const [a, b] = [BOB, ALICE].sort();
@@ -284,6 +293,81 @@ describe('форма входа — каждая публичная функци
     expect(() => cleanupBags('now')).toThrow();
     expect(() => cleanupBags(NaN)).toThrow();
     expect(() => cleanupBags(1.5)).toThrow();
+  });
+});
+
+// ─── C2 — форма ключа: единственный вход, который до этого не проверялся ──
+//
+// Находка ревью: key раньше проверялся только как "непустая строка" и шёл
+// прямо в fs.unlinkSync(path.join(DIR_BAGS, key)). '../not-a-bag.txt' как
+// key удалял файл ЗА ПРЕДЕЛАМИ DIR_BAGS; '<боб>/x.bin' с recipient=alice
+// проходил молча — мешок Алисы физически лежал бы в каталоге Боба. Обе дыры
+// закрыты одной проверкой формы (bagKeyFor()-формат буквально: <адрес в
+// нижнем регистре>/<цифры>-<uuid>.bin) плюс сверкой сегмента-адресата в
+// ключе с полем recipient.
+describe('C2 — форма ключа в recordBag и bagPathFor', () => {
+  it('recordBag бросает на попытке обхода каталога через key', () => {
+    expect(() => recordBag({
+      key: '../not-a-bag.txt', sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+    })).toThrow();
+    expect(() => recordBag({
+      key: `${ALICE}/../../etc/passwd`, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+    })).toThrow();
+  });
+
+  it('recordBag бросает, если сегмент-адресат в key не совпадает с полем recipient — мешок не может лежать у чужого', () => {
+    const key = bagKeyFor(BOB); // ключ, честно сгенерированный ДЛЯ БОБА
+    expect(() => recordBag({
+      key, sender: ALICE, recipient: ALICE, size: 1, uploadedAt: 1, // но записываем как мешок Алисы
+    })).toThrow();
+  });
+
+  it('recordBag бросает на key с лишними вложенными каталогами или без ожидаемого имени файла', () => {
+    expect(() => recordBag({
+      key: `${ALICE}/sub/dir.bin`, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+    })).toThrow();
+    expect(() => recordBag({
+      key: `${ALICE}/not-a-uuid.bin`, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+    })).toThrow();
+    expect(() => recordBag({
+      key: `${ALICE}/`, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+    })).toThrow();
+  });
+
+  it('recordBag принимает key именно того вида, что производит bagKeyFor', () => {
+    const key = bagKeyFor(ALICE);
+    expect(() => recordBag({
+      key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1,
+    })).not.toThrow();
+  });
+
+  it('bagPathFor отдаёт путь внутри DIR_BAGS для годного ключа', () => {
+    const key = bagKeyFor(ALICE);
+    const p = bagPathFor(key);
+    expect(p).toBe(path.join(DIR_BAGS, key));
+    expect(path.resolve(p).startsWith(path.resolve(DIR_BAGS) + path.sep)).toBe(true);
+  });
+
+  it('bagPathFor бросает на форме, которую подсунул бы клиент маршруту GET /bags/:key (Задача 3) — обход каталога, мусор, пустая строка', () => {
+    // Предусловие — без него каждый case ниже зелёный по неверной причине
+    // ДО того, как bagPathFor вообще реализована: TypeError «not a
+    // function» тоже толкуется как «бросает».
+    expect(typeof bagPathFor).toBe('function');
+    for (const bad of [
+      '../../../etc/passwd',
+      `${ALICE}/../../../etc/passwd`,
+      `${ALICE}/..%2f..%2fetc%2fpasswd`,
+      `${ALICE}//x.bin`,
+      `${ALICE}/x.bin/../../../y`,
+      'not-an-address/123-x.bin',
+      '',
+      null,
+      undefined,
+      42,
+      `${ALICE}/${ALICE}/123-${'a'.repeat(8)}-${'a'.repeat(4)}-4${'a'.repeat(3)}-${'a'.repeat(4)}-${'a'.repeat(12)}.bin`,
+    ]) {
+      expect(() => bagPathFor(bad)).toThrow();
+    }
   });
 });
 

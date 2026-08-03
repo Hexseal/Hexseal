@@ -147,9 +147,61 @@ _loadBagMeta();
 
 // ─── Ключи и пути ───────────────────────────────────────────────────────────
 
+// Ровно то, что производит bagKeyFor(): <адрес нижним регистром>/<цифры
+// эпохи>-<uuid>.bin. Не проверяет версию/вариант UUID (не граница
+// безопасности, просто формат) — граница здесь одна: ровно два сегмента,
+// первый — адрес, второй — этот конкретный шаблон имени файла, никаких
+// '..', никаких лишних '/'.
+const BAG_KEY_RE = /^0x[0-9a-f]{40}\/[0-9]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.bin$/;
+
+// key раньше проверялся только как «непустая строка» и шёл прямо в
+// fs.unlinkSync(path.join(DIR_BAGS, key)) — находка ревью (C2):
+// '../not-a-bag.txt' как key удалял файл ЗА ПРЕДЕЛАМИ DIR_BAGS, а
+// '<боб>/x.bin' с recipient=alice проходил молча — мешок Алисы физически
+// лежал бы в каталоге Боба. recipient здесь — уже провалидированный и
+// приведённый к нижнему регистру адрес (вызывающий обязан прогнать его
+// через assertAddress раньше).
+function assertBagKey(fn, key, recipient) {
+  assertNonEmptyString(fn, 'key', key);
+  if (!BAG_KEY_RE.test(key)) fail(fn, `invalid key shape: ${JSON.stringify(key)}`);
+  const recipientInKey = key.slice(0, key.indexOf('/'));
+  if (recipientInKey !== recipient) {
+    fail(fn, `key recipient (${recipientInKey}) does not match recipient field (${recipient})`);
+  }
+  return key;
+}
+
+// bagKeyFor() штампует имя файла временем СОЗДАНИЯ КЛЮЧА (Date.now()), а не
+// uploadedAt, который вызывающий передаст в recordBag() позже отдельным
+// полем — сигнатура из брифа не даёт bagKeyFor() увидеть uploadedAt
+// заранее. Имя файла — не источник правды о времени; источник правды —
+// meta.uploadedAt в индексе. Не чинится (см. ревью координатора) — оставлено
+// как есть, здесь только явное предупреждение, чтобы никто не начал парсить
+// метку времени из имени файла вместо чтения индекса.
 export function bagKeyFor(recipient) {
   const addr = assertAddress('bagKeyFor', recipient);
   return `${addr}/${Date.now()}-${randomUUID()}.bin`;
+}
+
+// Единственный сертифицированный способ превратить key в путь на диске.
+// Существует специально для Задачи 3: GET /bags/:key примет key ОТ КЛИЕНТА
+// и обязан превратить его в путь — единственный санитайзер в репозитории,
+// safeKey() (app.js:815), срезает слэш, а ключ мешка обязан его содержать,
+// так что safeKey() либо сломает каждый ключ, либо (если Задача 3 решит его
+// не звать) откроет обход каталога. bagPathFor() сама проверяет форму и
+// бросает на негодной — так что у Задачи 3 просто нет пути сделать это
+// неправильно, если она вызывает эту функцию, а не собирает путь вручную.
+// Regex выше уже запрещает '..' и лишние '/', resolve+startsWith ниже — та
+// же защита в глубину, что у safeLogPath (app.js:781-787), на случай
+// будущего изменения регэкспа или платформенных сюрпризов path.join.
+export function bagPathFor(key) {
+  assertNonEmptyString('bagPathFor', 'key', key);
+  if (!BAG_KEY_RE.test(key)) fail('bagPathFor', `invalid key shape: ${JSON.stringify(key)}`);
+  const filePath = path.join(DIR_BAGS, key);
+  if (!path.resolve(filePath).startsWith(path.resolve(DIR_BAGS) + path.sep)) {
+    fail('bagPathFor', 'key escapes DIR_BAGS');
+  }
+  return filePath;
 }
 
 // ─── Запись / чтение метаданных ─────────────────────────────────────────────
@@ -157,9 +209,9 @@ export function bagKeyFor(recipient) {
 export function recordBag(meta) {
   if (!meta || typeof meta !== 'object') fail('recordBag', 'invalid meta');
 
-  const key       = assertNonEmptyString('recordBag', 'key', meta.key);
   const sender    = assertAddress('recordBag', meta.sender);
   const recipient = assertAddress('recordBag', meta.recipient);
+  const key       = assertBagKey('recordBag', meta.key, recipient);
   const size      = assertSafeInt('recordBag', 'size', meta.size);
   if (size < 0) fail('recordBag', `invalid size: ${size}`);
   if (size > MAX_BAG_SIZE) fail('recordBag', `size ${size} exceeds MAX_BAG_SIZE ${MAX_BAG_SIZE} — a bag is a message, not an attachment`);
@@ -291,7 +343,7 @@ export function cleanupBags(nowMs = Date.now()) {
 
   for (const [key, meta] of Object.entries(_bagMeta)) {
     if (bagExpiryAt(meta, nowMs) <= nowMs) {
-      try { fs.unlinkSync(path.join(DIR_BAGS, key)); } catch {}
+      try { fs.unlinkSync(bagPathFor(key)); } catch {}
       delete _bagMeta[key];
       removed++;
     } else {
