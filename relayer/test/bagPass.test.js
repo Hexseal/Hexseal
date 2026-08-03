@@ -71,6 +71,17 @@ describe('bagPass', () => {
     expect(verifyBagPass(token, expiresAt)).toEqual({ error: expect.any(String), code: 'pass_expired' });
   });
 
+  it('nowSec не число — вердикт invalid, а не вечный пропуск', () => {
+    // Сравнение с не-числом в JS всегда false, поэтому единственная
+    // временная граница (nowSec >= expiresAt) молча исчезает и пропуск
+    // становится вечным. undefined безопасен — срабатывает умолчание, —
+    // но null, NaN, строка и объект таковыми не являются.
+    const { token } = issueBagPass(ALICE);
+    for (const bad of [null, NaN, 'abc', {}]) {
+      expect(verifyBagPass(token, bad).code).toBe('pass_invalid');
+    }
+  });
+
   it('собственная ошибка выпуска: негодный по форме адрес в теле не проходит даже с честным MAC-ом', () => {
     // Не подделка снаружи — честный issueBagPass, но с адресом, который не
     // прошёл бы проверку формы. MAC здесь настоящий (посчитан над этим же

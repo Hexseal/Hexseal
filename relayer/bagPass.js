@@ -54,6 +54,12 @@ export function issueBagPass(address, nowSec = Math.floor(Date.now() / 1000)) {
 export function verifyBagPass(token, nowSec = Math.floor(Date.now() / 1000)) {
   const bad = { error: 'Invalid bag pass', code: 'pass_invalid' };
   if (typeof token !== 'string') return bad;
+  // The default parameter only fires for a literally-omitted/undefined
+  // nowSec. Anything else non-numeric (null, NaN, a string, an object) skips
+  // the default and reaches `nowSec >= expiresAt` below, where a comparison
+  // against a non-number is always false — the only time boundary silently
+  // disappears and the pass turns permanent.
+  if (typeof nowSec !== 'number' || !Number.isFinite(nowSec)) return bad;
 
   const parts = token.split('.');
   if (parts.length !== 3 || parts[0] !== BAG_PASS_PREFIX) return bad;
