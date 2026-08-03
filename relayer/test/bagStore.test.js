@@ -1380,6 +1380,73 @@ describe('assertBagStoreReady — проверка окружения НЕ на 
       fs.rmSync(freshStorageDir, { recursive: true, force: true });
     }
   });
+
+  // ─── И-3 (пятый раунд) — окружение читается заново в assertBagStoreReady,
+  // не заморожено на импорте ────────────────────────────────────────────
+  //
+  // Находка ревью: app.js зовёт dotenv.config() В ТЕЛЕ, после того как ESM
+  // уже вычислил все импорты (тот же урок, что убил пропуск в Задаче 1,
+  // только с другой стороны). BAG_TTL_MS/BAG_UNREAD_TTL_MS/BAG_MAX_AGE_MS/
+  // MAX_BAG_SIZE/DIR_BAGS раньше замораживались НА ИМПОРТЕ — assertBagStoreReady()
+  // проверяла уже замороженные значения, а не то, что реально лежит в
+  // process.env к моменту её вызова. Собран фальшивый app.js той же
+  // структуры (import раньше dotenv) и подтверждено вживую: все четыре
+  // ручки, задокументированные в .env.vps.example, ни на что не влияли, а
+  // DIR_BAGS указывал не в тот корень, что files/, logs/ и public/ —
+  // assertBagStoreReady() молчала, потому что проверяла замороженные
+  // значения.
+  //
+  // ВАЖНО про сам тест: `const { X } = await import(...)` — это СНИМОК
+  // значения на момент деструктуризации, а не живая ссылка (в отличие от
+  // статического `import { X } from '...'`). Чтобы увидеть эффект
+  // assertBagStoreReady(), нужно читать fresh.BAG_TTL_MS как свойство
+  // объекта модуля КАЖДЫЙ РАЗ заново, не один раз деструктурировать.
+  it('поменять окружение ПОСЛЕ импорта модуля, позвать assertBagStoreReady() — все пять ручек подхватывают новое значение', async () => {
+    const savedEnv = {
+      BAG_TTL_MS: process.env.BAG_TTL_MS,
+      BAG_UNREAD_TTL_MS: process.env.BAG_UNREAD_TTL_MS,
+      BAG_MAX_AGE_MS: process.env.BAG_MAX_AGE_MS,
+      MAX_BAG_SIZE: process.env.MAX_BAG_SIZE,
+      STORAGE_DIR: process.env.STORAGE_DIR,
+    };
+    const { vi } = await import('vitest');
+
+    const storageDirAtImport = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-i3-import-'));
+    const storageDirAfterDotenv = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-i3-dotenv-'));
+
+    process.env.STORAGE_DIR = storageDirAtImport; // "до dotenv.config()"
+    vi.resetModules();
+    const fresh = await import('../bagStore.js'); // импорт — как в app.js, раньше dotenv
+
+    try {
+      // "dotenv.config() в теле app.js" — окружение меняется ПОСЛЕ импорта.
+      process.env.BAG_TTL_MS        = '86400000'; // 1 день вместо 7
+      process.env.BAG_UNREAD_TTL_MS = '3600000';  // 1 час вместо 30 дней
+      process.env.BAG_MAX_AGE_MS    = '7200000';  // 2 часа вместо 90 дней
+      process.env.MAX_BAG_SIZE      = '1024';     // 1 КБ вместо 256 КБ
+      process.env.STORAGE_DIR       = storageDirAfterDotenv;
+
+      fresh.assertBagStoreReady();
+
+      expect(fresh.BAG_TTL_MS).toBe(86400000);
+      expect(fresh.BAG_UNREAD_TTL_MS).toBe(3600000);
+      expect(fresh.BAG_MAX_AGE_MS).toBe(7200000);
+      expect(fresh.MAX_BAG_SIZE).toBe(1024);
+      expect(fresh.DIR_BAGS).toBe(path.join(storageDirAfterDotenv, 'bags'));
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fs.rmSync(storageDirAtImport, { recursive: true, force: true });
+      fs.rmSync(storageDirAfterDotenv, { recursive: true, force: true });
+      vi.resetModules();
+      // Возвращаем модульный реестр в состояние, которого ждут остальные
+      // тесты этого файла (тот же STORAGE_DIR=TMP, что и на момент верхнего
+      // импорта).
+      await import('../bagStore.js');
+    }
+  });
 });
 
 // ─── pairIdFromAddresses продублирован из app.js — держим обе версии в узде ─

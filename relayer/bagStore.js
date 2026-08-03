@@ -61,18 +61,56 @@ const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
 // при этом не пропускает произвольно длинную строку.
 const BAG_KEY_RE = /^0x[0-9a-f]{40}\/[0-9]{1,15}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.bin$/;
 
-const STORAGE_DIR   = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
-export const DIR_BAGS = path.join(STORAGE_DIR, 'bags');
-const BAG_META_PATH = path.join(STORAGE_DIR, 'bag-meta.json');
-
-export const BAG_TTL_MS        = Number(process.env.BAG_TTL_MS        ||  7 * 24 * 60 * 60 * 1000);
-export const BAG_UNREAD_TTL_MS = Number(process.env.BAG_UNREAD_TTL_MS || 30 * 24 * 60 * 60 * 1000);
-export const BAG_MAX_AGE_MS    = Number(process.env.BAG_MAX_AGE_MS    || 90 * 24 * 60 * 60 * 1000);
+// И-3 (пятый раунд): раньше STORAGE_DIR/DIR_BAGS/BAG_META_PATH и все
+// четыре срока/лимита были `const`, посчитанными РОВНО ОДИН РАЗ на
+// импорте. app.js зовёт dotenv.config() В ТЕЛЕ, после того как ESM уже
+// вычислил все импорты (тот же урок, что чуть не убил пропуск в Задаче 1
+// про SERVER_SECRET — только с другой стороны: там не читали ДО dotenv,
+// здесь заморозили и никогда не перечитывали). Собран фальшивый app.js той
+// же структуры (импорт раньше dotenv) — подтверждено вживую: .env говорит
+// одно, факт (то, чем реально пользуется модуль) — совсем другое, а
+// assertBagStoreReady() молчала, потому что проверяла уже замороженные
+// значения (и её же сообщение об ошибке читало process.env ПОСЛЕ dotenv —
+// могло называть значение, которое не проверялось).
+//
+// Экспорт остался по тем же именам (BAG_TTL_MS и т.д.), потому что это ES
+// module — именованный экспорт `let` это ЖИВАЯ ссылка на текущее значение
+// переменной модуля, не снимок на момент импорта: `import { BAG_TTL_MS }
+// from './bagStore.js'` или чтение `namespace.BAG_TTL_MS` всегда видит
+// актуальное значение после переприсваивания внутри этого модуля.
+// (Единственное исключение — деструктуризация РЕЗУЛЬТАТА динамического
+// import(): `const { X } = await import(...)` копирует значение в момент
+// деструктуризации, а не создаёт живую ссылку; тест ниже читает
+// namespace.BAG_TTL_MS явно по этой причине.)
+//
+// _refreshConfig() — единственное место, где эти семь переменных
+// пересчитываются из process.env; вызывается один раз при импорте (как и
+// раньше) и повторно из assertBagStoreReady() — так весь остальной код
+// модуля просто читает текущие module-level `let`, не заботясь о том,
+// когда именно они в последний раз обновлялись.
+export let DIR_BAGS;
+export let BAG_TTL_MS;
+export let BAG_UNREAD_TTL_MS;
+export let BAG_MAX_AGE_MS;
 // Четверть мегабайта: мешок — сообщение, а не вложение. Файлы по-прежнему
 // едут прежним путём (/files/*), в мешок попадает только ссылка и ключ к
 // ней. recordBag() ниже держит этот потолок сам, а не полагается на то, что
 // маршрут приёма (Задача 3) не забудет проверить его тоже.
-export const MAX_BAG_SIZE      = Number(process.env.MAX_BAG_SIZE      || 256 * 1024);
+export let MAX_BAG_SIZE;
+let STORAGE_DIR;
+let BAG_META_PATH;
+
+function _refreshConfig() {
+  STORAGE_DIR   = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
+  DIR_BAGS      = path.join(STORAGE_DIR, 'bags');
+  BAG_META_PATH = path.join(STORAGE_DIR, 'bag-meta.json');
+
+  BAG_TTL_MS        = Number(process.env.BAG_TTL_MS        ||  7 * 24 * 60 * 60 * 1000);
+  BAG_UNREAD_TTL_MS = Number(process.env.BAG_UNREAD_TTL_MS || 30 * 24 * 60 * 60 * 1000);
+  BAG_MAX_AGE_MS    = Number(process.env.BAG_MAX_AGE_MS    || 90 * 24 * 60 * 60 * 1000);
+  MAX_BAG_SIZE      = Number(process.env.MAX_BAG_SIZE      || 256 * 1024);
+}
+_refreshConfig(); // начальные значения при импорте — то же, что раньше делали `const`-инициализаторы
 
 function fail(fn, detail) {
   throw new Error(`${fn}: ${detail}`);
@@ -85,24 +123,22 @@ function assertPositiveFiniteNumber(name, value) {
 }
 
 // Call once at boot, after dotenv has run (Задача 3's job) — same reason as
-// assertBagPassReady() in bagPass.js. BAG_TTL_MS/BAG_UNREAD_TTL_MS/
-// BAG_MAX_AGE_MS/MAX_BAG_SIZE above are `export const`, computed ONCE at
-// import time (as specified by the brief) — a garbage value already sitting
-// in process.env at that moment silently becomes NaN/Infinity/0 forever for
-// the life of the process, and every check downstream that compares against
-// it (bagExpiryAt, recordBag's size ceiling) goes quietly wrong: NaN <= now
-// is always false, so nothing ever expires; 'big' → NaN → 50MB "meshki"
-// sail straight through the size ceiling. Checking here, not at module
-// level, matters for the exact reason it mattered for SERVER_SECRET in
-// bagPass.js: app.js calls dotenv.config() in its own body, AFTER ESM has
-// already evaluated every import — a check at module scope could fire
-// before the real value has even been read from .env.
+// assertBagPassReady() in bagPass.js. Refreshes config from process.env
+// FIRST (И-3, пятый раунд) — so a value that only became correct after
+// dotenv.config() ran in app.js's body is picked up here, not stuck at
+// whatever process.env happened to hold when this module was first
+// imported. Only after that does it validate: a garbage value would
+// otherwise silently become NaN/Infinity/0 and every check downstream that
+// compares against it (bagExpiryAt, recordBag's size ceiling) goes quietly
+// wrong — NaN <= now is always false, so nothing ever expires; 'big' → NaN
+// → 50MB "meshki" sail straight through the size ceiling.
 //
 // Also creates DIR_BAGS (moved here from module scope, for the same
 // ordering reason plus one more: a plain import of this module — e.g. from
 // a test — should never have the side effect of creating a directory on
 // disk before anything has decided the store is actually going to be used).
 export function assertBagStoreReady() {
+  _refreshConfig();
   assertPositiveFiniteNumber('BAG_TTL_MS', BAG_TTL_MS);
   assertPositiveFiniteNumber('BAG_UNREAD_TTL_MS', BAG_UNREAD_TTL_MS);
   assertPositiveFiniteNumber('BAG_MAX_AGE_MS', BAG_MAX_AGE_MS);
