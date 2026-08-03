@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -368,6 +368,123 @@ describe('C2 — форма ключа в recordBag и bagPathFor', () => {
     ]) {
       expect(() => bagPathFor(bad)).toThrow();
     }
+  });
+});
+
+// ─── I1 — одна кривая запись не убивает загрузку/чистку целиком ───────────
+//
+// Находка ревью: bag-meta.json с записью uploadedAt: 'oops' — структурно
+// валидный JSON, но семантически отравленный. cleanupBags() раньше бросал
+// НА СЕРЕДИНЕ прохода по _bagMeta (bagExpiryAt → assertSafeInt бросает на
+// 'oops'), файл предыдущего просроченного мешка уже был удалён, а сохранение
+// индекса в конце — нет: на диске индекс продолжает перечислять снесённое,
+// listBagsFor отдаёт мешки без файлов, каждая следующая чистка бросает
+// снова, ядовитая запись не вычищается никогда. Фикс — на границе загрузки:
+// каждая запись проверяется той же формой, что recordBag() требует на
+// записи; негодные отбрасываются с явным логом, не блокируя ни загрузку
+// остальных, ни последующую чистку.
+function validRawMeta(overrides = {}) {
+  return {
+    sender: BOB,
+    recipient: ALICE,
+    pairId: [BOB, ALICE].sort().join('-'),
+    size: 6,
+    uploadedAt: 1000,
+    firstFetchedAt: null,
+    dealDeadline: null,
+    ...overrides,
+  };
+}
+
+function writeRawBagMeta(raw) {
+  fs.writeFileSync(path.join(TMP, 'bag-meta.json'), JSON.stringify(raw), 'utf8');
+}
+
+describe('I1 — кривая запись в индексе отбраковывается при загрузке, не роняет всё остальное', () => {
+  it('_loadBagMeta отбрасывает запись с нечисловым uploadedAt, оставляет годные соседние записи', () => {
+    const goodKey1 = bagKeyFor(ALICE);
+    const poisonedKey = bagKeyFor(ALICE);
+    const goodKey2 = bagKeyFor(ALICE);
+    writeRawBagMeta({
+      [goodKey1]: validRawMeta({ uploadedAt: 1000 }),
+      [poisonedKey]: validRawMeta({ uploadedAt: 'oops' }),
+      [goodKey2]: validRawMeta({ uploadedAt: 2000 }),
+    });
+
+    _loadBagMeta();
+
+    expect(bagMetaOf(goodKey1)).toBeDefined();
+    expect(bagMetaOf(goodKey2)).toBeDefined();
+    expect(bagMetaOf(poisonedKey)).toBeUndefined();
+  });
+
+  it('отбраковка отбитой записи громко логируется (console.error), а не тихо', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const poisonedKey = bagKeyFor(ALICE);
+      writeRawBagMeta({ [poisonedKey]: validRawMeta({ uploadedAt: 'oops' }) });
+      _loadBagMeta();
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('после отбраковки cleanupBags не бросает и нормально дочищает остальное — ядовитая запись больше не блокирует весь проход', () => {
+    const now = Date.now();
+    const expiredGoodKey = bagKeyFor(ALICE);
+    const poisonedKey = bagKeyFor(ALICE);
+    writeRawBagMeta({
+      [expiredGoodKey]: validRawMeta({ uploadedAt: now - 40 * DAY }), // непрочитан, просрочен
+      [poisonedKey]: validRawMeta({ uploadedAt: 'oops' }),
+    });
+    _loadBagMeta();
+
+    expect(() => cleanupBags(now)).not.toThrow();
+    expect(bagMetaOf(expiredGoodKey)).toBeUndefined(); // нормально дочищен
+  });
+
+  it('негодный по форме sender/recipient/pairId/size/firstFetchedAt/dealDeadline тоже отбраковывается', () => {
+    const badSenderKey     = bagKeyFor(ALICE);
+    const badPairIdKey     = bagKeyFor(ALICE);
+    const badSizeKey       = bagKeyFor(ALICE);
+    const badFetchedAtKey  = bagKeyFor(ALICE);
+    const badDeadlineKey   = bagKeyFor(ALICE);
+    const mismatchedRecipientKey = bagKeyFor(ALICE); // ключ ДЛЯ ALICE...
+    writeRawBagMeta({
+      [badSenderKey]:    validRawMeta({ sender: 'not-an-address' }),
+      [badPairIdKey]:    validRawMeta({ pairId: '' }),
+      [badSizeKey]:      validRawMeta({ size: 'six' }),
+      [badFetchedAtKey]: validRawMeta({ firstFetchedAt: 'soon' }),
+      [badDeadlineKey]:  validRawMeta({ dealDeadline: 'later' }),
+      // ...но запись внутри утверждает, что получатель — БОБ: та же сверка
+      // ключ/recipient, что и в C2, повторно проверяется на границе загрузки
+      // (файл на диске мог быть отредактирован руками между перезапусками).
+      [mismatchedRecipientKey]: validRawMeta({ recipient: BOB }),
+    });
+
+    _loadBagMeta();
+
+    for (const key of [badSenderKey, badPairIdKey, badSizeKey, badFetchedAtKey, badDeadlineKey, mismatchedRecipientKey]) {
+      expect(bagMetaOf(key)).toBeUndefined();
+    }
+  });
+
+  it('файл отбракованного мешка не удаляется — только запись уходит из индекса, чистка файла остаётся заботой обычной метлы сирот по mtime', () => {
+    const poisonedKey = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(DIR_BAGS, poisonedKey)), { recursive: true });
+    fs.writeFileSync(path.join(DIR_BAGS, poisonedKey), 'sealed');
+    writeRawBagMeta({ [poisonedKey]: validRawMeta({ uploadedAt: 'oops' }) });
+
+    _loadBagMeta();
+
+    expect(bagMetaOf(poisonedKey)).toBeUndefined();
+    expect(fs.existsSync(path.join(DIR_BAGS, poisonedKey))).toBe(true);
+  });
+
+  it('целиком нечитаемый bag-meta.json по-прежнему даёт пустой индекс, не бросает (поведение до I1 не тронуто)', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{not valid json', 'utf8');
+    expect(() => _loadBagMeta()).not.toThrow();
   });
 });
 

@@ -127,14 +127,63 @@ export function _pairIdFromAddresses(a, b) {
 
 // ─── Метаиндекс: загрузка/сохранение ───────────────────────────────────────
 
-export function _loadBagMeta() {
+// I1: bag-meta.json может парситься как JSON и всё равно быть отравлен —
+// например uploadedAt: 'oops' (структурно валиден, семантически нет).
+// cleanupBags() раньше бросал НА СЕРЕДИНЕ прохода по _bagMeta на первой же
+// такой записи: файл предыдущего, уже просроченного мешка к этому моменту
+// уже удалён, а сохранение индекса в конце — нет, так что на диске индекс
+// продолжает перечислять снесённое, listBagsFor отдаёт мешки без файлов, и
+// каждая следующая чистка бросает на том же месте снова — ядовитая запись
+// не вычищается никогда. Проверяется здесь, на границе загрузки, той же
+// формой, что recordBag() требует на записи (переиспользует те же
+// assert*-хелперы через try/catch → bool, чтобы не задваивать правила
+// валидности в двух местах).
+function isValidBagMetaEntry(key, meta) {
   try {
-    _bagMeta = fs.existsSync(BAG_META_PATH)
-      ? JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8'))
-      : {};
+    if (!meta || typeof meta !== 'object') return false;
+    const recipient = assertAddress('_loadBagMeta', meta.recipient);
+    assertAddress('_loadBagMeta', meta.sender);
+    assertBagKey('_loadBagMeta', key, recipient);
+    assertNonEmptyString('_loadBagMeta', 'pairId', meta.pairId);
+    if (assertSafeInt('_loadBagMeta', 'size', meta.size) < 0) return false;
+    assertSafeInt('_loadBagMeta', 'uploadedAt', meta.uploadedAt);
+    if (meta.firstFetchedAt != null) assertSafeInt('_loadBagMeta', 'firstFetchedAt', meta.firstFetchedAt);
+    if (meta.dealDeadline != null) assertSafeInt('_loadBagMeta', 'dealDeadline', meta.dealDeadline);
+    return true;
   } catch {
-    _bagMeta = {};
+    return false;
   }
+}
+
+export function _loadBagMeta() {
+  let raw = {};
+  try {
+    raw = fs.existsSync(BAG_META_PATH) ? JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8')) : {};
+  } catch {
+    raw = {};
+  }
+
+  const clean = {};
+  let dropped = 0;
+  for (const [key, meta] of Object.entries(raw)) {
+    if (isValidBagMetaEntry(key, meta)) {
+      clean[key] = meta;
+    } else {
+      dropped++;
+      // Файл на диске (если есть) НЕ трогается здесь — только запись
+      // уходит из индекса. Мы не уверены, что означает отравленная запись
+      // (могли отравить и uploadedAt, и recipient, и что угодно ещё), так
+      // что безопасный выбор — молчать про файл и дать обычной метле
+      // сирот (sweepOrphanFiles, по mtime) разобраться с ним по своему
+      // независимому расписанию.
+      console.error(`[bags] _loadBagMeta: dropping corrupt index entry ${JSON.stringify(key)} — file on disk, if any, is left untouched, only the index entry is removed`);
+    }
+  }
+  if (dropped) {
+    console.error(`[bags] _loadBagMeta: dropped ${dropped} corrupt ${dropped === 1 ? 'entry' : 'entries'} out of ${Object.keys(raw).length} from ${BAG_META_PATH}`);
+  }
+
+  _bagMeta = clean;
   return _bagMeta;
 }
 
