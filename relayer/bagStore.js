@@ -640,10 +640,16 @@ export function cleanupBags(nowMs = Date.now()) {
   // трогаются немедленно — см. ниже, почему удаление файла идёт ПОСЛЕ
   // сохранения индекса, а не до.
   const keysToDeleteFiles = [];
+  // Мелочь (откат, пятый раунд): [key, meta] всех записей, снятых из
+  // _bagMeta в ЭТОМ проходе (и просроченных, и "мелочь g" — обе
+  // категории), нужны, чтобы вернуть их назад, если сохранение индекса не
+  // удастся — см. catch ниже.
+  const removedEntries = [];
 
   for (const [key, meta] of Object.entries(_bagMeta)) {
     if (bagExpiryAt(meta, nowMs) <= nowMs) {
       delete _bagMeta[key];
+      removedEntries.push([key, meta]);
       keysToDeleteFiles.push(key);
       removed++;
       continue;
@@ -659,6 +665,7 @@ export function cleanupBags(nowMs = Date.now()) {
     if (!fileExists) {
       console.error(`[bags] cleanupBags: index entry ${JSON.stringify(key)} has no file on disk — dropping from index`);
       delete _bagMeta[key];
+      removedEntries.push([key, meta]);
       removed++;
       continue;
     }
@@ -682,6 +689,15 @@ export function cleanupBags(nowMs = Date.now()) {
     }
   } catch (e) {
     saveFailed = true;
+    // Мелочь (откат, пятый раунд): та же дисциплина, что у recordBag()/
+    // markFetched() (I2) — если персист не удался, память не должна
+    // продолжать "видеть" удаление, которого не подтвердил диск.
+    // Восстанавливаем всё, что этот проход только что убрал из _bagMeta
+    // (файлы к этому моменту точно не тронуты — цикл их удаления идёт
+    // ПОСЛЕ _saveBagMeta() в том же try и не успел выполниться).
+    for (const [key, meta] of removedEntries) {
+      _bagMeta[key] = meta;
+    }
     throw e;
   } finally {
     // Мелочь (независимость) + находка И-1 (пятый раунд): sweepOrphanFiles/

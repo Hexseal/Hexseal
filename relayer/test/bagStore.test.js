@@ -1335,6 +1335,52 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
     expect(fs.existsSync(orphan)).toBe(false);
     expect(fs.existsSync(orphanDir)).toBe(false); // опустевший каталог Боба тоже убран
   });
+
+  // Находка ревью (мелочь, пятый раунд): recordBag()/markFetched() (I2)
+  // откатывают in-memory мутацию, если персист не удался — cleanupBags()
+  // этого не делала: удаляла запись из _bagMeta сразу в основном цикле и
+  // не возвращала её назад, если _saveBagMeta() потом бросала. Разнобой
+  // дисциплины внутри одного модуля: "в памяти нет — на диске есть" —
+  // ровно то расхождение, I2 существует, чтобы не допустить.
+  it('cleanupBags откатывает удаление из памяти, если сохранение индекса упало — та же дисциплина, что у recordBag/markFetched', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now - 40 * DAY); // просрочен, попадёт под удаление
+
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC (симулировано)');
+    });
+    try {
+      expect(() => cleanupBags(now)).toThrow();
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    // Память снова видит запись — не разошлась с диском, где она всё ещё
+    // числится (сохранение не удалось, диск не тронут).
+    const meta = bagMetaOf(key);
+    expect(meta).toBeDefined();
+    expect(meta.uploadedAt).toBe(now - 40 * DAY);
+    // И файл на диске тоже цел — откат не создаёт впечатление, что мешок
+    // одновременно и есть, и просрочен, и без файла.
+    expect(fs.existsSync(path.join(DIR_BAGS, key))).toBe(true);
+  });
+
+  it('cleanupBags откатывает и "мелочь g" удаления (запись без файла на диске), если сохранение упало', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // формально жив ещё 7 дней
+    fs.unlinkSync(path.join(DIR_BAGS, key)); // но файл пропал — обычно это ветка "мелочь g"
+
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC (симулировано)');
+    });
+    try {
+      expect(() => cleanupBags(now)).toThrow();
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(bagMetaOf(key)).toBeDefined(); // тоже откачена, не потеряна
+  });
 });
 
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
