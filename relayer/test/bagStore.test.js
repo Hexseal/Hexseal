@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -389,7 +389,12 @@ describe('форма входа — каждая публичная функци
   });
 
   it('markFetched бросает на ключе, которого нет в индексе — не тихо создаёт запись', () => {
-    expect(() => markFetched('nobody/here.bin', 5000)).toThrow();
+    // Ключ ГОДЕН по форме (проходит assertBagKeyShape), просто никогда не
+    // записывался через recordBag() — эта форма теста проверяет именно
+    // "unknown key", а не заодно и форму ключа (после I1 четвёртого раунда
+    // 'nobody/here.bin' сам по себе не прошёл бы форму и бросал бы раньше,
+    // по другой причине).
+    expect(() => markFetched(bagKeyFor(ALICE), 5000)).toThrow();
   });
 
   it('listBagsFor бросает на негодном по форме адресе', () => {
@@ -402,8 +407,14 @@ describe('форма входа — каждая публичная функци
     expect(() => bagMetaOf(null)).toThrow();
     expect(() => bagMetaOf(42)).toThrow();
     expect(() => bagMetaOf('')).toThrow();
-    // Годный по форме, но отсутствующий ключ — это не ошибка формы, а undefined.
-    expect(bagMetaOf('nobody/here.bin')).toBeUndefined();
+    // Находка ревью (I1, четвёртый раунд): 'nobody/here.bin' раньше
+    // считался "годным по форме, но отсутствующим" — bagMetaOf() проверяла
+    // только непустую строку, не форму bagKeyFor(). Теперь это тоже
+    // негодная форма (не проходит BAG_KEY_RE) и тоже бросает.
+    expect(() => bagMetaOf('nobody/here.bin')).toThrow();
+    // Годный ПО ФОРМЕ, но отсутствующий в индексе ключ — это не ошибка
+    // формы, а undefined.
+    expect(bagMetaOf(bagKeyFor(ALICE))).toBeUndefined();
   });
 
   it('bagExpiryAt бросает на негодной meta — не объект, либо негодные uploadedAt/firstFetchedAt/dealDeadline', () => {
@@ -666,6 +677,57 @@ describe('C1 (четвёртый раунд) — ошибка программи
     expect(() => _loadBagMeta()).not.toThrow();
     expect(bagMetaOf(key)).toBeUndefined();
   });
+});
+
+// ─── I1 (четвёртый раунд) — markFetched/bagMetaOf травят Object.prototype ──
+//
+// Находка ревью: C2 поставил assertBagKey на recordBag(), но markFetched()
+// и bagMetaOf() всё ещё проверяли key только как непустую строку и лезли в
+// _bagMeta[key] напрямую. Обе функции получат key ОТ КЛИЕНТА в Задаче 3.
+// _bagMeta — обычный `{}`, а не Object.create(null), так что
+// _bagMeta['__proto__'] возвращает Object.prototype (истинный объект) —
+// не undefined. bagMetaOf('__proto__') отдавала {} (истинно! проходит
+// любую проверку "существует ли"), а markFetched('__proto__', ts) писала
+// firstFetchedAt ПРЯМО в Object.prototype — травила прототип для всего
+// процесса релеера, не только для этого модуля. Воспроизведено вживую.
+describe('I1 (четвёртый раунд) — markFetched/bagMetaOf проверяют форму ключа, __proto__ не проходит', () => {
+  // На плоском {} только '__proto__' и 'constructor' резолвятся во что-то
+  // общее для всего процесса ({}['__proto__'] === Object.prototype,
+  // {}['constructor'] === Object) — проверено отдельно (node -e). 'prototype'
+  // и составные строки вроде 'constructor.prototype' на плоском объекте не
+  // резолвятся ни во что особое (bagMeta['prototype'] === undefined) — не
+  // включены как отдельные case'ы, чтобы не запирать тест, который на самом
+  // деле ничего не проверяет (прошёл бы одинаково и до, и после фикса).
+  //
+  // Cleanup в finally — не косметика: если бы фикс отсутствовал, сам факт
+  // прогона этого теста заразил бы Object.prototype/Object для ВСЕХ
+  // остальных тестов в этом файле до конца прогона. Чистим независимо от
+  // того, прошёл тест или упал.
+  afterEach(() => {
+    delete Object.prototype.firstFetchedAt;
+    delete Object.firstFetchedAt;
+  });
+
+  it('bagMetaOf("__proto__") бросает, а не возвращает {} — не должен проходить проверку "существует ли"', () => {
+    expect(() => bagMetaOf('__proto__')).toThrow();
+  });
+
+  it('bagMetaOf("constructor") бросает — тот же класс ключа, другая цель заражения', () => {
+    expect(() => bagMetaOf('constructor')).toThrow();
+  });
+
+  it.each(['__proto__', 'constructor'])(
+    'markFetched(%s, …) бросает, а не пишет в общий для процесса объект',
+    (poison) => {
+      expect(() => markFetched(poison, Date.now())).toThrow();
+      // Прямая проверка последствия, не только факта throw — если бы
+      // запись всё-таки прошла, у ЛЮБОГО {} в процессе завёлся бы
+      // firstFetchedAt (через Object.prototype) или у самого Object.
+      expect(Object.prototype.firstFetchedAt).toBeUndefined();
+      expect({}.firstFetchedAt).toBeUndefined();
+      expect(Object.firstFetchedAt).toBeUndefined();
+    },
+  );
 });
 
 // ─── I2 — сохранение индекса: атомарно и не глотая ошибку ─────────────────

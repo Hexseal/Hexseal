@@ -284,9 +284,26 @@ _loadBagMeta();
 // лежал бы в каталоге Боба. recipient здесь — уже провалидированный и
 // приведённый к нижнему регистру адрес (вызывающий обязан прогнать его
 // через assertAddress раньше).
-function assertBagKey(fn, key, recipient) {
+// Только форма — без сверки с recipient. Используется там, где recipient
+// недоступен (markFetched/bagMetaOf получают только key), но key всё равно
+// идёт напрямую в _bagMeta[key] — находка ревью (I1, четвёртый раунд):
+// _bagMeta — обычный {}, не Object.create(null), так что
+// _bagMeta['__proto__'] возвращает Object.prototype (истинный объект, не
+// undefined), а _bagMeta['constructor'] — сам Object. bagMetaOf('__proto__')
+// отдавала {} (истинно — проходит любую проверку "существует ли"),
+// markFetched('__proto__', ts) писала firstFetchedAt ПРЯМО в
+// Object.prototype — травила его для всего процесса релеера, не только
+// для этого модуля. Воспроизведено вживую. BAG_KEY_RE не совпадает ни с
+// '__proto__', ни с 'constructor' — обе формы ключа заперты этой же
+// проверкой формы.
+function assertBagKeyShape(fn, key) {
   assertNonEmptyString(fn, 'key', key);
   if (!BAG_KEY_RE.test(key)) fail(fn, `invalid key shape: ${JSON.stringify(key)}`);
+  return key;
+}
+
+function assertBagKey(fn, key, recipient) {
+  assertBagKeyShape(fn, key);
   const recipientInKey = key.slice(0, key.indexOf('/'));
   if (recipientInKey !== recipient) {
     fail(fn, `key recipient (${recipientInKey}) does not match recipient field (${recipient})`);
@@ -318,8 +335,7 @@ export function bagKeyFor(recipient) {
 // же защита в глубину, что у safeLogPath (app.js:781-787), на случай
 // будущего изменения регэкспа или платформенных сюрпризов path.join.
 export function bagPathFor(key) {
-  assertNonEmptyString('bagPathFor', 'key', key);
-  if (!BAG_KEY_RE.test(key)) fail('bagPathFor', `invalid key shape: ${JSON.stringify(key)}`);
+  assertBagKeyShape('bagPathFor', key);
   const filePath = path.join(DIR_BAGS, key);
   if (!path.resolve(filePath).startsWith(path.resolve(DIR_BAGS) + path.sep)) {
     fail('bagPathFor', 'key escapes DIR_BAGS');
@@ -382,7 +398,7 @@ export function recordBag(meta) {
 // выдачи, Задача 3) уже обязан был подтвердить существование мешка через
 // bagMetaOf()/listBagsFor().
 export function markFetched(key, nowMs = Date.now()) {
-  assertNonEmptyString('markFetched', 'key', key);
+  assertBagKeyShape('markFetched', key);
   assertSafeInt('markFetched', 'nowMs', nowMs);
 
   const meta = _bagMeta[key];
@@ -421,7 +437,7 @@ export function listBagsFor(recipient) {
 // возвращали копии (через спред) — bagMetaOf() была единственным
 // исключением из этого правила.
 export function bagMetaOf(key) {
-  assertNonEmptyString('bagMetaOf', 'key', key);
+  assertBagKeyShape('bagMetaOf', key);
   const meta = _bagMeta[key];
   return meta ? { ...meta } : undefined;
 }
