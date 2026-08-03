@@ -966,6 +966,35 @@ describe('GET /bags', () => {
     const res = await getBagsList({ pass: victimPass, ip: freshIp() });
     expect(res.status).toBe(200);
   });
+
+  it('находка ревью: список читается только по адресу из пропуска — ?who= (или любой другой канал) не подменяет его', async () => {
+    // Находка координатора: замок "адресат только из пропуска" был
+    // расширен для PUT (тело/заголовок/query — тест выше в этом файле), но
+    // для GET /bags никто такой альтернативный канал не подавал. Код и
+    // сегодня верный (address = requireBagPass(...), больше ниоткуда), но
+    // ничто не запирало это явно — мутация "взять адрес из ?who=" прошла
+    // бы все 405 тестов.
+    const { address: aliceAddr } = await newWalletAndAddress();
+    const { wallet: mallory } = await newWalletAndAddress();
+    const malloryPass = await issuePassFor(mallory, freshIp());
+
+    // Мешок в ящик Алисы — malloryPass не имеет к нему отношения вообще.
+    const { wallet: sender } = await newWalletAndAddress();
+    const senderPass = await issuePassFor(sender, freshIp());
+    await putBag({ pass: senderPass, recipient: aliceAddr, body: Buffer.from('alices-secret') });
+
+    const res = await request(app)
+      .get('/bags')
+      .query({ who: aliceAddr })
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-address', aliceAddr)
+      .set('x-bag-pass', malloryPass);
+    expect(res.status).toBe(200);
+    // Пропуск Мэллори не открывает ничего в её собственном (пустом) ящике,
+    // даже когда запрос всеми доступными каналами пытается заявить, что
+    // на самом деле читает Алиса.
+    expect(res.body).toEqual([]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
