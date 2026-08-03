@@ -577,10 +577,24 @@ describe('I1 — кривая запись в индексе отбраковы�
     }
   });
 
+  // Находка ревью (пятый раунд): фикстура клала uploadedAt: now - 40 дней,
+  // но writeRawBagMeta файла на диске не создавала — с реальным (после
+  // мелочи g, четвёртый раунд) кодом такая запись уходит веткой «файла
+  // нет», а не по сроку, независимо от того, работает ли вообще проверка
+  // срока. Отключение удаления по сроку целиком краснит 7 других тестов, а
+  // этот — нет: он проверял не то, что заявлено в названии. Тот же класс,
+  // что уже ловили дважды. Теперь фикстура создаёт настоящий файл на
+  // диске, так что удаление возможно только веткой «просрочен».
   it('после отбраковки cleanupBags не бросает и нормально дочищает остальное — ядовитая запись больше не блокирует весь проход', () => {
     const now = Date.now();
     const expiredGoodKey = bagKeyFor(ALICE);
     const poisonedKey = bagKeyFor(ALICE);
+
+    fs.mkdirSync(path.dirname(path.join(DIR_BAGS, expiredGoodKey)), { recursive: true });
+    fs.writeFileSync(path.join(DIR_BAGS, expiredGoodKey), 'sealed');
+    const old = new Date(now - 40 * DAY);
+    fs.utimesSync(path.join(DIR_BAGS, expiredGoodKey), old, old);
+
     writeRawBagMeta({
       [expiredGoodKey]: validRawMeta({ uploadedAt: now - 40 * DAY }), // непрочитан, просрочен
       [poisonedKey]: validRawMeta({ uploadedAt: 'oops' }),
@@ -589,6 +603,9 @@ describe('I1 — кривая запись в индексе отбраковы�
 
     expect(() => cleanupBags(now)).not.toThrow();
     expect(bagMetaOf(expiredGoodKey)).toBeUndefined(); // нормально дочищен
+    // Файл реально удалён — доказательство, что сработала ветка "просрочен",
+    // а не "файла нет" (файл-то как раз есть).
+    expect(fs.existsSync(path.join(DIR_BAGS, expiredGoodKey))).toBe(false);
   });
 
   it('негодный по форме sender/recipient/pairId/size/firstFetchedAt/dealDeadline тоже отбраковывается', () => {
