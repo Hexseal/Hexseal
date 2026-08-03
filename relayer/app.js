@@ -2125,7 +2125,16 @@ app.get('/bags', (req, res) => {
     return res.status(500).json({ error: 'Failed to list bags' });
   }
 
-  if (since !== null) list = list.filter((b) => b.uploadedAt > since);
+  // И-3 (ревью): nonstrict `>=`, not `>`. Two bags landing in the same
+  // millisecond is a real race, not a theoretical one (measured live by the
+  // coordinator) — a client that remembers the newest uploadedAt it has seen
+  // and polls with ?since=<that value> would, with a strict `>`, exclude a
+  // sibling bag stamped with the EXACT same millisecond forever: that bag's
+  // uploadedAt never becomes greater than the since it will keep sending
+  // from now on. `>=` re-sends the already-seen bag alongside it — a client
+  // dedupes by key, so a repeat is a no-op, not a data-loss risk the way
+  // silently dropping a message forever is.
+  if (since !== null) list = list.filter((b) => b.uploadedAt >= since);
 
   res.json(list.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })));
 });

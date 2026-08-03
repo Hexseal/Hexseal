@@ -523,7 +523,11 @@ describe('GET /bags', () => {
 
     const first = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('one') });
     await new Promise((r) => setTimeout(r, 5)); // гарантирует различный uploadedAt
-    const cutoff = bagMetaOf(first.body.key).uploadedAt;
+    // +1, не сам uploadedAt первого мешка: since нестрогое (И-3, ревью) —
+    // ?since=<uploadedAt первого> вернул бы ОБА (первый снова, второй
+    // впервые), это отдельно проверено своим тестом. Здесь под наблюдением
+    // именно фильтрация по времени как таковая — строго ПОСЛЕ первого.
+    const cutoff = bagMetaOf(first.body.key).uploadedAt + 1;
     await new Promise((r) => setTimeout(r, 5));
     const second = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('two') });
 
@@ -537,6 +541,34 @@ describe('GET /bags', () => {
     const pass = await issuePassFor(alice, freshIp());
     const res = await getBagsList({ pass, since: 'abc', ip: freshIp() });
     expect(res.status).toBe(400);
+  });
+
+  it('И-3 (ревью): ?since нестрогое — мешок из ТОЙ ЖЕ миллисекунды, что запомненный максимум, не теряется навсегда', async () => {
+    // Измерено координатором на настоящей гонке: два мешка легли в одну и ту
+    // же миллисекунду. Клиент, запомнивший эту миллисекунду максимумом (из
+    // предыдущего опроса, увидевшего первый мешок), спрашивает ?since=<та же
+    // миллисекунда> — со строгим `>` второй мешок исключается НАВСЕГДА: его
+    // uploadedAt никогда не станет больше того since, который клиент уже
+    // видел. Нестрогое `>=` возвращает оба — первый повторно, но клиент
+    // отбрасывает уже виденное по ключу, это не потеря.
+    const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const bobPass = await issuePassFor(bob, freshIp());
+
+    const { bagKeyFor, recordBag } = bagStoreNs;
+    const sameMs = Date.now();
+    const key1 = bagKeyFor(bobAddr);
+    const key2 = bagKeyFor(bobAddr);
+    const dir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(bagStoreNs.DIR_BAGS, key1), Buffer.from('one'));
+    fs.writeFileSync(path.join(bagStoreNs.DIR_BAGS, key2), Buffer.from('two'));
+    recordBag({ sender: aliceAddr, recipient: bobAddr, key: key1, size: 3, uploadedAt: sameMs });
+    recordBag({ sender: aliceAddr, recipient: bobAddr, key: key2, size: 3, uploadedAt: sameMs });
+
+    const res = await getBagsList({ pass: bobPass, since: sameMs, ip: freshIp() });
+    expect(res.status).toBe(200);
+    expect(res.body.map((b) => b.key)).toEqual(expect.arrayContaining([key1, key2]));
   });
 
   it('лимитер по IP срабатывает даже с валидным пропуском и разными адресами', async () => {
