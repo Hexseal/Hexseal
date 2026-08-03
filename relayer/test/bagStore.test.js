@@ -858,6 +858,38 @@ describe('I2 — сохранение индекса атомарно, ошиб�
     }
   });
 
+  // Находка ревью (мелочь, пятый раунд): уборка временного файла при
+  // отказе (try { fs.unlinkSync(tmpPath); } catch {} в catch-ветке
+  // _saveBagMeta) в коде была, но ничем не заперта — .tmp-* мог копиться в
+  // корне STORAGE_DIR, где его не подберёт ни метла сирот (метёт только
+  // DIR_BAGS/<recipient>/, не корень), ни ежедневная чистка файлов, именно
+  // на исчерпании места, когда отказы и случаются. Реально создаём
+  // временный файл (не бросаем ДО записи), потом валим публикацию
+  // (renameSync) — и проверяем, что временный файл всё равно исчез.
+  it('_saveBagMeta подчищает временный файл, если публикация (rename) не удалась — не копится мусором в STORAGE_DIR', () => {
+    put(ALICE, BOB, 1000);
+
+    let capturedTmpPath;
+    const realWriteFileSync = fs.writeFileSync;
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((filePath, data, ...rest) => {
+      capturedTmpPath = filePath;
+      return realWriteFileSync(filePath, data, ...rest); // реально пишем — временный файл появляется на диске
+    });
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw new Error('EXDEV (симулировано) — публикация не удалась уже после записи временного файла');
+    });
+
+    try {
+      expect(() => _saveBagMeta()).toThrow();
+    } finally {
+      writeSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+
+    expect(capturedTmpPath).toBeDefined();
+    expect(fs.existsSync(capturedTmpPath)).toBe(false);
+  });
+
   it('бросок ДО того, как записан хоть байт, не портит уже лежащий на диске индекс (простой случай)', () => {
     const key = put(ALICE, BOB, 1000); // на диске уже лежит корректный индекс
     const before = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
