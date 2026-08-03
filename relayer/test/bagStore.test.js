@@ -47,6 +47,37 @@ beforeEach(() => {
 
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
+// Находка ревью (мелочь, пятый раунд): этот хелпер раньше был объявлен на
+// 1080+ строк ниже своего первого использования — работало только за счёт
+// всплытия объявления function (function declaration), тот же паттерн
+// class ошибок, что чинился в самом модуле этим же раундом (C1, четвёртый
+// раунд — BAG_KEY_RE в temporal dead zone). Перенесён сюда, к остальной
+// инфраструктуре теста, до первого использования.
+//
+// Хелпер: свежий импорт bagStore.js под временно подменённым окружением, с
+// гарантированным восстановлением и env, и общего модульного состояния,
+// которого ждут все остальные тесты файла (тот же STORAGE_DIR=TMP, что и на
+// момент самого первого импорта наверху файла).
+async function withFreshBagStoreModule(envOverrides, fn) {
+  const saved = Object.fromEntries(Object.keys(envOverrides).map(k => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(envOverrides)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  vi.resetModules();
+  try {
+    const fresh = await import('../bagStore.js');
+    return await fn(fresh);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.resetModules();
+    await import('../bagStore.js');
+  }
+}
+
 describe('bagExpiryAt — три правила в заданном порядке', () => {
   it('непрочитанный живёт 30 дней от загрузки', () => {
     const m = { uploadedAt: 1000, firstFetchedAt: null, dealDeadline: null };
@@ -1403,9 +1434,11 @@ describe('сроки и лимиты приходят из окружения, �
     process.env.BAG_UNREAD_TTL_MS = '2222';
     process.env.BAG_MAX_AGE_MS = '3333';
     process.env.MAX_BAG_SIZE = '4444';
-    process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-env-'));
+    // Находка ревью (мелочь, пятый раунд): этот каталог раньше никогда не
+    // удалялся — по одному в /tmp на каждый прогон теста.
+    const envStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-env-'));
+    process.env.STORAGE_DIR = envStorageDir;
 
-    const { vi } = await import('vitest');
     vi.resetModules();
     try {
       const fresh = await import('../bagStore.js');
@@ -1418,6 +1451,7 @@ describe('сроки и лимиты приходят из окружения, �
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
+      fs.rmSync(envStorageDir, { recursive: true, force: true });
       vi.resetModules();
       // Возвращаем модульный реестр в состояние, которого ждут все остальные
       // тесты этого файла (тот же STORAGE_DIR=TMP, что и на момент верхнего
@@ -1427,31 +1461,6 @@ describe('сроки и лимиты приходят из окружения, �
     }
   });
 });
-
-// Хелпер: свежий импорт bagStore.js под временно подменённым окружением, с
-// гарантированным восстановлением и env, и общего модульного состояния,
-// которого ждут все остальные тесты файла (тот же STORAGE_DIR=TMP, что и на
-// момент самого первого импорта наверху файла).
-async function withFreshBagStoreModule(envOverrides, fn) {
-  const saved = Object.fromEntries(Object.keys(envOverrides).map(k => [k, process.env[k]]));
-  for (const [k, v] of Object.entries(envOverrides)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
-  const { vi } = await import('vitest');
-  vi.resetModules();
-  try {
-    const fresh = await import('../bagStore.js');
-    return await fn(fresh);
-  } finally {
-    for (const [k, v] of Object.entries(saved)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-    vi.resetModules();
-    await import('../bagStore.js');
-  }
-}
 
 describe('assertBagStoreReady — проверка окружения НЕ на уровне модуля', () => {
   it('молчит на годных значениях по умолчанию', () => {
