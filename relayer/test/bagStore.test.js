@@ -788,6 +788,37 @@ describe('Мелочь (b) — прочитано не раньше загруз
   });
 });
 
+// ─── Мелочь (d) — два ранее незапертых места ───────────────────────────────
+//
+// Находка ревью: граница чистки (`<=` в cleanupBags) и порядок сортировки
+// listBagsFor были верны по коду, но ничем не заперты — тот же приём, что и
+// «мелочь c» и register-тест listBagsFor из основной Задачи 2: поведение
+// уже правильное, замка не было. (Третий пункт находки — порог сирот — уже
+// заперт под C1; четвёртый — mkdirSync при импорте — уже убран под I4.)
+describe('Мелочь (d) — граница чистки и порядок сортировки listBagsFor', () => {
+  it('чистка сносит мешок РОВНО в момент истечения — граница "<=", не "<"', () => {
+    // bagExpiryAt(m) === now должен означать "уже истёк", а не "ещё жив на
+    // эту миллисекунду" — брифом Задачи 2 прямо требуется "<=".
+    const now = Date.now();
+    const uploadedAt = now - BAG_UNREAD_TTL_MS; // bagExpiryAt(m) === uploadedAt + BAG_UNREAD_TTL_MS === now
+    const key = put(ALICE, BOB, uploadedAt);
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(now); // предусловие: граница ровно на now
+
+    cleanupBags(now);
+    expect(fs.existsSync(path.join(DIR_BAGS, key))).toBe(false);
+    expect(bagMetaOf(key)).toBeUndefined();
+  });
+
+  it('listBagsFor отдаёт мешки в хронологическом порядке (по uploadedAt), даже если записаны вразнобой', () => {
+    const now = Date.now();
+    const third  = put(ALICE, BOB, now - 1 * DAY);
+    const first  = put(ALICE, BOB, now - 3 * DAY);
+    const second = put(ALICE, BOB, now - 2 * DAY);
+
+    expect(listBagsFor(ALICE).map(b => b.key)).toEqual([first, second, third]);
+  });
+});
+
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
     expect(BAG_TTL_MS).toBe(7 * DAY);
