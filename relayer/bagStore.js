@@ -109,6 +109,18 @@ function assertNonEmptyString(fn, label, value) {
   return value;
 }
 
+// Мелочь (b): firstFetchedAt на сто дней раньше uploadedAt даёт срок
+// смерти раньше рождения — правило 2 (firstFetchedAt + BAG_TTL_MS) может
+// оказаться меньше момента, когда мешок вообще появился, и мешок сносится
+// в тот же миг, в который был загружен. Прочитано не раньше загрузки — не
+// строгое неравенство: firstFetchedAt === uploadedAt (прочитан в ту же
+// миллисекунду) годен.
+function assertFetchNotBeforeUpload(fn, uploadedAt, firstFetchedAt) {
+  if (firstFetchedAt != null && firstFetchedAt < uploadedAt) {
+    fail(fn, `firstFetchedAt (${firstFetchedAt}) is before uploadedAt (${uploadedAt})`);
+  }
+}
+
 // Тот же алгоритм, что у pairIdFromAddresses в app.js (сортировка нижних
 // регистров, склейка через '-'), продублирован здесь намеренно, а не
 // импортирован: обе стороны — чистые функции только от двух адресов, без
@@ -149,6 +161,7 @@ function isValidBagMetaEntry(key, meta) {
     assertSafeInt('_loadBagMeta', 'uploadedAt', meta.uploadedAt);
     if (meta.firstFetchedAt != null) assertSafeInt('_loadBagMeta', 'firstFetchedAt', meta.firstFetchedAt);
     if (meta.dealDeadline != null) assertSafeInt('_loadBagMeta', 'dealDeadline', meta.dealDeadline);
+    assertFetchNotBeforeUpload('_loadBagMeta', meta.uploadedAt, meta.firstFetchedAt);
     return true;
   } catch {
     return false;
@@ -302,6 +315,7 @@ export function recordBag(meta) {
   if (size > MAX_BAG_SIZE) fail('recordBag', `size ${size} exceeds MAX_BAG_SIZE ${MAX_BAG_SIZE} — a bag is a message, not an attachment`);
   const uploadedAt     = assertSafeInt('recordBag', 'uploadedAt', meta.uploadedAt);
   const firstFetchedAt = assertNullableSafeInt('recordBag', 'firstFetchedAt', meta.firstFetchedAt ?? null);
+  assertFetchNotBeforeUpload('recordBag', uploadedAt, firstFetchedAt);
   const dealDeadline   = assertNullableSafeInt('recordBag', 'dealDeadline', meta.dealDeadline ?? null);
 
   const stored = {
@@ -340,6 +354,7 @@ export function markFetched(key, nowMs = Date.now()) {
   if (!meta) fail('markFetched', `unknown key: ${JSON.stringify(key)}`);
 
   if (meta.firstFetchedAt == null) {
+    assertFetchNotBeforeUpload('markFetched', meta.uploadedAt, nowMs);
     meta.firstFetchedAt = nowMs;
     try {
       _saveBagMeta();
@@ -401,6 +416,7 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
   assertSafeInt('bagExpiryAt', 'meta.uploadedAt', meta.uploadedAt);
   if (meta.firstFetchedAt != null) assertSafeInt('bagExpiryAt', 'meta.firstFetchedAt', meta.firstFetchedAt);
   if (meta.dealDeadline != null) assertSafeInt('bagExpiryAt', 'meta.dealDeadline', meta.dealDeadline);
+  assertFetchNotBeforeUpload('bagExpiryAt', meta.uploadedAt, meta.firstFetchedAt);
 
   // != null, не истинность: 0 (эпоха Unix) — валидный safe integer, тот же
   // модуль сам его принимает через assertNullableSafeInt. С проверкой на

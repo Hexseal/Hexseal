@@ -94,7 +94,10 @@ describe('bagExpiryAt — три правила в заданном порядк
   // firstFetchedAt буквально; для dealDeadline это не бездумно сужено, а
   // проверено и оставлено осознанно.
   it('firstFetchedAt: 0 — валидное время прочтения (эпоха Unix), не "не прочитан"', () => {
-    const m = { uploadedAt: 1000, firstFetchedAt: 0, dealDeadline: null };
+    // uploadedAt тоже 0 — иначе firstFetchedAt: 0 нарушал бы отдельный
+    // инвариант «прочитано не раньше загрузки» (мелочь b, ниже), а этот
+    // тест проверяет другое свойство и не должен зависеть от него.
+    const m = { uploadedAt: 0, firstFetchedAt: 0, dealDeadline: null };
     expect(bagExpiryAt(m)).toBe(0 + BAG_TTL_MS); // правило 2 (прочитан), не правило 3
   });
 });
@@ -713,6 +716,51 @@ describe('I3 — bagMetaOf отдаёт копию, а не живую ссыл�
     const key = put(ALICE, BOB, 1000);
     expect(bagMetaOf(key)).not.toBe(bagMetaOf(key));     // не тот же объект
     expect(bagMetaOf(key)).toEqual(bagMetaOf(key));      // но то же содержимое
+  });
+});
+
+// ─── Мелочь (b) — инвариант «прочитано не раньше загрузки» ─────────────────
+//
+// Находка ревью: firstFetchedAt на сто дней раньше uploadedAt даёт срок
+// смерти раньше рождения — мешок сносится в тот же миг, в который
+// появился (правило 2 считает firstFetchedAt + BAG_TTL_MS, и если
+// firstFetchedAt глубоко в прошлом относительно uploadedAt, эта сумма
+// может оказаться МЕНЬШЕ момента загрузки). Заперто на всех входах, где
+// firstFetchedAt вообще может появиться: markFetched (реальный путь —
+// nowMs становится firstFetchedAt), recordBag (firstFetchedAt как прямое
+// поле meta, которым пользуется put() в этом же файле), bagExpiryAt
+// (защита в глубину на сырой meta) и _loadBagMeta (та же защита при
+// восстановлении с диска, что и для остальных полей в I1).
+describe('Мелочь (b) — прочитано не раньше загрузки', () => {
+  it('markFetched бросает, если nowMs раньше uploadedAt мешка', () => {
+    const key = put(ALICE, BOB, 1000);
+    expect(() => markFetched(key, 999)).toThrow();
+    expect(bagMetaOf(key).firstFetchedAt).toBeNull(); // не записалось
+  });
+
+  it('markFetched на РОВНО uploadedAt — годно, это не строгая граница', () => {
+    const key = put(ALICE, BOB, 1000);
+    expect(() => markFetched(key, 1000)).not.toThrow();
+    expect(bagMetaOf(key).firstFetchedAt).toBe(1000);
+  });
+
+  it('recordBag бросает, если firstFetchedAt в meta раньше uploadedAt', () => {
+    const key = bagKeyFor(ALICE);
+    expect(() => recordBag({
+      key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1000, firstFetchedAt: 999,
+    })).toThrow();
+  });
+
+  it('bagExpiryAt бросает на сырой meta с firstFetchedAt раньше uploadedAt — защита в глубину', () => {
+    expect(() => bagExpiryAt({ uploadedAt: 1000, firstFetchedAt: 900, dealDeadline: null }))
+      .toThrow();
+  });
+
+  it('_loadBagMeta отбраковывает запись с firstFetchedAt раньше uploadedAt — тот же класс порчи, что I1', () => {
+    const key = bagKeyFor(ALICE);
+    writeRawBagMeta({ [key]: validRawMeta({ uploadedAt: 1000, firstFetchedAt: 900 }) });
+    _loadBagMeta();
+    expect(bagMetaOf(key)).toBeUndefined();
   });
 });
 
