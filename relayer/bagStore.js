@@ -527,7 +527,17 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
 // файл-сирота не отражался в {removed, kept} вообще: вызывающий (лог/
 // метрика после ночной чистки) видел бы "ничего не сделано" при реально
 // удалённых файлах.
-function sweepOrphanFiles(nowMs) {
+// И-1 (пятый раунд): protectedKeys — ключи, которые cleanupBags() только
+// что удалил из _bagMeta В ПАМЯТИ в этом же проходе, но чьё удаление не
+// подтверждено диском (сохранение индекса упало). С точки зрения этой
+// функции такой файл неотличим от настоящего неиндексированного сироты —
+// hasOwnProperty ниже даёт false для обоих. Без protectedKeys метла сносила
+// бы файл, который диск всё ещё обещает — ровно то состояние, которое
+// реордер в cleanupBags() (сохранить индекс до удаления файла) обещал
+// исключить. НЕСВЯЗАННЫЕ настоящие сироты (никогда не входившие в _bagMeta
+// этого процесса) protectedKeys не защищает и не должен — они метутся как
+// обычно, независимо от судьбы чужого сохранения.
+function sweepOrphanFiles(nowMs, protectedKeys = null) {
   const cutoff = nowMs - BAG_UNREAD_TTL_MS;
   let removed = 0;
 
@@ -545,6 +555,7 @@ function sweepOrphanFiles(nowMs) {
     for (const file of files) {
       const key = `${recipient}/${file}`;
       if (Object.prototype.hasOwnProperty.call(_bagMeta, key)) continue;
+      if (protectedKeys && protectedKeys.has(key)) continue;
 
       const filePath = path.join(recipientDir, file);
       try {
@@ -612,6 +623,7 @@ export function cleanupBags(nowMs = Date.now()) {
     kept++;
   }
 
+  let saveFailed = false;
   try {
     // Мелочь (порядок): индекс сохраняется ДО удаления файлов, не после.
     // Раньше файл удалялся первым — если сохранение индекса падало ПОСЛЕ
@@ -625,13 +637,22 @@ export function cleanupBags(nowMs = Date.now()) {
     for (const key of keysToDeleteFiles) {
       try { fs.unlinkSync(bagPathFor(key)); } catch {}
     }
+  } catch (e) {
+    saveFailed = true;
+    throw e;
   } finally {
-    // Мелочь (независимость): sweepOrphanFiles/removeEmptyRecipientDirs
-    // работают с файловой системой напрямую, не зависят от успеха
-    // сохранения индекса — finally гарантирует, что упавшее сохранение
-    // (I2 теперь бросает) не отменяет их молча, просто оказавшись раньше
-    // return по пути исключения.
-    removed += sweepOrphanFiles(nowMs);
+    // Мелочь (независимость) + находка И-1 (пятый раунд): sweepOrphanFiles/
+    // removeEmptyRecipientDirs работают с файловой системой напрямую, не
+    // зависят от успеха сохранения индекса в общем случае — finally
+    // гарантирует, что упавшее сохранение не отменяет их молча для
+    // НЕСВЯЗАННЫХ настоящих сирот. Но если сохранение только что упало,
+    // keysToDeleteFiles уже пропали из _bagMeta в памяти, хотя их файлы
+    // всё ещё на диске и диск-версия индекса их всё ещё обещает — с точки
+    // зрения sweepOrphanFiles такой файл неотличим от настоящего сироты.
+    // Передаём эти ключи как protectedKeys, чтобы метла их не тронула,
+    // пока рассинхрон памяти и диска не исчезнет на следующей успешной
+    // чистке.
+    removed += sweepOrphanFiles(nowMs, saveFailed ? new Set(keysToDeleteFiles) : null);
     removeEmptyRecipientDirs();
   }
 
