@@ -627,6 +627,43 @@ describe('I2 — сохранение индекса атомарно, ошиб�
   });
 });
 
+// ─── I5 — повторный recordBag на том же ключе отвергается ─────────────────
+//
+// Находка ревью: recordBag() раньше перезаписывал запись целиком —
+// firstFetchedAt обнулялся в null, uploadedAt сдвигался на новое значение,
+// а потолок BAG_MAX_AGE_MS считается ОТ uploadedAt. Повторной записью того
+// же ключа с новым uploadedAt потолок в 90 дней пробивался и продлевался
+// бесконечно. Ключи уникальны по построению (bagKeyFor: временная метка +
+// uuid) — значит легитимного повторного recordBag() с тем же key не
+// бывает никогда, и повтор — это ошибка вызывающего, которую надо отвергать
+// вслух, а не тихо принимать как "обновление".
+describe('I5 — recordBag отвергает повтор на уже существующем key', () => {
+  it('второй recordBag с тем же key бросает, первая запись не тронута', () => {
+    const key = put(ALICE, BOB, 1000);
+    expect(() => recordBag({ key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 99999 }))
+      .toThrow();
+    expect(bagMetaOf(key).uploadedAt).toBe(1000);
+  });
+
+  it('без отказа повтор пробивал бы 90-дневный потолок — тест на сам сценарий атаки, не только на факт throw', () => {
+    // До фикса: recordBag(key, uploadedAt=1000, dealDeadline=+900д) →
+    // recordBag(key, uploadedAt=Date.now(), dealDeadline=+900д) снова —
+    // потолок пересчитывается от НОВОГО uploadedAt, эффективно откладывая
+    // "смерть" мешка на ещё 90 дней от текущего момента, и так можно
+    // повторять сколько угодно раз подряд.
+    const now = Date.now();
+    const key = put(ALICE, BOB, now - 89 * DAY, { dealDeadline: now + 900 * DAY });
+    const before = bagExpiryAt(bagMetaOf(key));
+
+    expect(() => recordBag({
+      key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: now, dealDeadline: now + 900 * DAY,
+    })).toThrow();
+
+    // Запись — и, следовательно, её срок истечения — не сдвинулась.
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(before);
+  });
+});
+
 describe('сроки и лимиты приходят из окружения, не пришпилены в коде', () => {
   it('умолчания совпадают с задокументированными значениями буквально', () => {
     expect(BAG_TTL_MS).toBe(7 * DAY);

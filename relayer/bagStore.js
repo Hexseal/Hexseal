@@ -287,6 +287,16 @@ export function recordBag(meta) {
   const sender    = assertAddress('recordBag', meta.sender);
   const recipient = assertAddress('recordBag', meta.recipient);
   const key       = assertBagKey('recordBag', meta.key, recipient);
+  // I5: ключи уникальны по построению (bagKeyFor — временная метка +
+  // uuid), так что легитимного повторного recordBag() с тем же key не
+  // бывает. Раньше повтор тихо ПЕРЕЗАПИСЫВАЛ запись целиком —
+  // firstFetchedAt обнулялся в null, uploadedAt сдвигался на новое
+  // значение, а потолок BAG_MAX_AGE_MS считается ОТ uploadedAt: повторной
+  // записью того же ключа потолок в 90 дней пробивался и продлевался
+  // бесконечно. Отвергаем как ошибку вызывающего, а не тихое "обновление".
+  if (Object.prototype.hasOwnProperty.call(_bagMeta, key)) {
+    fail('recordBag', `key already recorded: ${JSON.stringify(key)}`);
+  }
   const size      = assertSafeInt('recordBag', 'size', meta.size);
   if (size < 0) fail('recordBag', `invalid size: ${size}`);
   if (size > MAX_BAG_SIZE) fail('recordBag', `size ${size} exceeds MAX_BAG_SIZE ${MAX_BAG_SIZE} — a bag is a message, not an attachment`);
