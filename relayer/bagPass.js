@@ -49,6 +49,10 @@ export function verifyBagPass(token, nowSec = Math.floor(Date.now() / 1000)) {
 
   // Constant-time compare, and only after a length check — timingSafeEqual
   // throws on mismatched lengths instead of returning false.
+  // No test can lock "constant-time" here: a mutation to plain `===` still
+  // returns the correct verdict, just leaks timing on it — a unit test can't
+  // tell the two apart, only a code-review reader can. Keep it constant-time
+  // on read, not because a green suite says so.
   const expected = Buffer.from(bagPassMac(body), 'utf8');
   const given    = Buffer.from(mac, 'utf8');
   if (expected.length !== given.length || !timingSafeEqual(expected, given)) return bad;

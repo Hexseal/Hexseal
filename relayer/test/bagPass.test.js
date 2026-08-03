@@ -40,6 +40,26 @@ describe('bagPass', () => {
     expect(verifyBagPass(`v1.${forged}.${mac}`).code).toBe('pass_invalid');
   });
 
+  it('протухает ровно на границе expiresAt, не позже', () => {
+    const now = 1_800_000_000;
+    const { token, expiresAt } = issueBagPass(ALICE, now);
+    // За секунду до границы — ещё годен.
+    expect(verifyBagPass(token, expiresAt - 1)).toEqual({ address: ALICE.toLowerCase() });
+    // Ровно на границе — уже протух. Ловит off-by-one вида `>` вместо `>=`,
+    // который существующий тест на TTL+1 не видит: там nowSec на секунду
+    // дальше границы, и оба оператора уже согласны, что пропуск мёртв.
+    expect(verifyBagPass(token, expiresAt)).toEqual({ error: expect.any(String), code: 'pass_expired' });
+  });
+
+  it('собственная ошибка выпуска: негодный по форме адрес в теле не проходит даже с честным MAC-ом', () => {
+    // Не подделка снаружи — честный issueBagPass, но с адресом, который не
+    // прошёл бы проверку формы. MAC здесь настоящий (посчитан над этим же
+    // телом), поэтому единственное, что может отсечь такой пропуск, —
+    // проверка формы адреса после проверки MAC.
+    const { token } = issueBagPass('не-адрес');
+    expect(verifyBagPass(token).code).toBe('pass_invalid');
+  });
+
   it('мусор на входе даёт вердикт, а не исключение', () => {
     for (const bad of [null, undefined, 42, {}, [], '', 'v1', 'v2.a.b', Symbol('x')]) {
       expect(() => verifyBagPass(bad)).not.toThrow();
