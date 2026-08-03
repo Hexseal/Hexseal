@@ -41,13 +41,40 @@ export const BAG_MAX_AGE_MS    = Number(process.env.BAG_MAX_AGE_MS    || 90 * 24
 // маршрут приёма (Задача 3) не забудет проверить его тоже.
 export const MAX_BAG_SIZE      = Number(process.env.MAX_BAG_SIZE      || 256 * 1024);
 
-// Гарантирует существование каталога мешков сразу при импорте — тот же приём,
-// что у DIR_LOGS в app.js (fs.mkdirSync без try/catch: если склад недоступен,
-// сервер должен упасть при старте, а не притвориться рабочим).
-fs.mkdirSync(DIR_BAGS, { recursive: true });
-
 function fail(fn, detail) {
   throw new Error(`${fn}: ${detail}`);
+}
+
+function assertPositiveFiniteNumber(name, value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    fail('assertBagStoreReady', `${name}=${JSON.stringify(process.env[name])} is not a positive finite number (parsed as ${value})`);
+  }
+}
+
+// Call once at boot, after dotenv has run (Задача 3's job) — same reason as
+// assertBagPassReady() in bagPass.js. BAG_TTL_MS/BAG_UNREAD_TTL_MS/
+// BAG_MAX_AGE_MS/MAX_BAG_SIZE above are `export const`, computed ONCE at
+// import time (as specified by the brief) — a garbage value already sitting
+// in process.env at that moment silently becomes NaN/Infinity/0 forever for
+// the life of the process, and every check downstream that compares against
+// it (bagExpiryAt, recordBag's size ceiling) goes quietly wrong: NaN <= now
+// is always false, so nothing ever expires; 'big' → NaN → 50MB "meshki"
+// sail straight through the size ceiling. Checking here, not at module
+// level, matters for the exact reason it mattered for SERVER_SECRET in
+// bagPass.js: app.js calls dotenv.config() in its own body, AFTER ESM has
+// already evaluated every import — a check at module scope could fire
+// before the real value has even been read from .env.
+//
+// Also creates DIR_BAGS (moved here from module scope, for the same
+// ordering reason plus one more: a plain import of this module — e.g. from
+// a test — should never have the side effect of creating a directory on
+// disk before anything has decided the store is actually going to be used).
+export function assertBagStoreReady() {
+  assertPositiveFiniteNumber('BAG_TTL_MS', BAG_TTL_MS);
+  assertPositiveFiniteNumber('BAG_UNREAD_TTL_MS', BAG_UNREAD_TTL_MS);
+  assertPositiveFiniteNumber('BAG_MAX_AGE_MS', BAG_MAX_AGE_MS);
+  assertPositiveFiniteNumber('MAX_BAG_SIZE', MAX_BAG_SIZE);
+  fs.mkdirSync(DIR_BAGS, { recursive: true });
 }
 
 // Форма адреса — та же проверка, что ETH_ADDR_RE в bagPass.js: нижний

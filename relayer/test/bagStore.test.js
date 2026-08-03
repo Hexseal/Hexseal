@@ -8,7 +8,8 @@ process.env.STORAGE_DIR = TMP;
 
 const { DIR_BAGS, BAG_TTL_MS, BAG_UNREAD_TTL_MS, BAG_MAX_AGE_MS, MAX_BAG_SIZE,
         bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
-        bagExpiryAt, cleanupBags, _loadBagMeta, _pairIdFromAddresses } = await import('../bagStore.js');
+        bagExpiryAt, cleanupBags, _loadBagMeta, _pairIdFromAddresses,
+        assertBagStoreReady } = await import('../bagStore.js');
 
 // app.js — да, импортируется прямо в тест склада. По указанию координатора:
 // соседние тесты (test/disputeReasonAndLog.test.js и другие) уже делают
@@ -327,6 +328,80 @@ describe('сроки и лимиты приходят из окружения, �
       // импорта) — resetModules() иначе оставил бы следующий import('../bagStore.js')
       // где-нибудь в этом файле указывающим на другое хранилище.
       await import('../bagStore.js');
+    }
+  });
+});
+
+// Хелпер: свежий импорт bagStore.js под временно подменённым окружением, с
+// гарантированным восстановлением и env, и общего модульного состояния,
+// которого ждут все остальные тесты файла (тот же STORAGE_DIR=TMP, что и на
+// момент самого первого импорта наверху файла).
+async function withFreshBagStoreModule(envOverrides, fn) {
+  const saved = Object.fromEntries(Object.keys(envOverrides).map(k => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(envOverrides)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  const { vi } = await import('vitest');
+  vi.resetModules();
+  try {
+    const fresh = await import('../bagStore.js');
+    return await fn(fresh);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.resetModules();
+    await import('../bagStore.js');
+  }
+}
+
+describe('assertBagStoreReady — проверка окружения НЕ на уровне модуля', () => {
+  it('молчит на годных значениях по умолчанию', () => {
+    expect(() => assertBagStoreReady()).not.toThrow();
+  });
+
+  it('импорт модуля с мусорным BAG_TTL_MS не бросает сам по себе — модуль вычисляется раньше, чем читаются настройки (тот же урок, что C1 из Задачи 1 про SERVER_SECRET)', async () => {
+    await withFreshBagStoreModule({ BAG_TTL_MS: 'seven-days' }, async () => {
+      // Дошли до этой строки — значит await import(...) не бросил.
+    });
+  });
+
+  it.each([
+    ['BAG_TTL_MS', 'seven-days'],
+    ['BAG_UNREAD_TTL_MS', 'thirty-days'],
+    ['BAG_MAX_AGE_MS', 'ninety-days'],
+    ['MAX_BAG_SIZE', 'big'],
+    ['BAG_TTL_MS', '0'],
+    ['BAG_TTL_MS', '-1'],
+    ['BAG_TTL_MS', 'Infinity'],
+    ['BAG_TTL_MS', 'NaN'],
+  ])('assertBagStoreReady бросает, когда %s=%s, называя виновную переменную', async (name, value) => {
+    await withFreshBagStoreModule({ [name]: value }, async (fresh) => {
+      // Не просто .toThrow() — иначе тест зелёный и до реализации функции
+      // (TypeError: assertBagStoreReady is not a function тоже «бросает»,
+      // просто по совершенно другой причине). Сообщение обязано называть
+      // переменную-виновника, не просто «что-то не так».
+      expect(() => fresh.assertBagStoreReady()).toThrow(new RegExp(name));
+    });
+  });
+
+  it('создаёт DIR_BAGS, если каталога нет', () => {
+    fs.rmSync(DIR_BAGS, { recursive: true, force: true });
+    expect(fs.existsSync(DIR_BAGS)).toBe(false);
+    assertBagStoreReady();
+    expect(fs.existsSync(DIR_BAGS)).toBe(true);
+  });
+
+  it('свежий импорт модуля САМ ПО СЕБЕ не создаёт DIR_BAGS — каталог больше не побочный эффект загрузки', async () => {
+    const freshStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-freshimport-'));
+    try {
+      await withFreshBagStoreModule({ STORAGE_DIR: freshStorageDir }, async (fresh) => {
+        expect(fs.existsSync(fresh.DIR_BAGS)).toBe(false);
+      });
+    } finally {
+      fs.rmSync(freshStorageDir, { recursive: true, force: true });
     }
   });
 });
