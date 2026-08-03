@@ -172,10 +172,19 @@ export interface ChainAnchor {
  *  арбитру как справку о здоровье цепочки НЕЛЬЗЯ НИКОГДА — только как
  *  сигнал «якорь сломан, нужен другой», отдельно от вопроса о самой
  *  цепочке. */
+/** `atSeq: -1` на `broken` раньше означал побайтово одно и то же в ДВУХ
+ *  разных ситуациях: «`links` вообще не массив» (мусор ВМЕСТО предъявления)
+ *  и «в конкретном звене реально стоит `seq: -1`» (мусор ВНУТРИ валидного
+ *  массива — `reportedSeqFor` сообщает настоящий, хоть и негодный, seq
+ *  звена как есть). Вызывающий код не мог различить «мне дали не массив» и
+ *  «звено с отрицательным номером» — оба вердикта были структурно
+ *  идентичны (раунд 7, находка m1). `linksNotArray` присутствует (`true`)
+ *  ТОЛЬКО в первом случае — не новый `reason` в объединении, а
+ *  дополнительное поле у существующего `broken`. */
 export type ChainVerdict =
   | { ok: true; unverifiedContentAtSeq: number[] }
   | { ok: false; reason: 'gap'; missingAfterSeq: number[]; unverifiedContentAtSeq: number[] }
-  | { ok: false; reason: 'broken'; atSeq: number }
+  | { ok: false; reason: 'broken'; atSeq: number; linksNotArray?: true }
   | { ok: false; reason: 'unordered' }
   | { ok: false; reason: 'bad_anchor' };
 
@@ -312,7 +321,11 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
 
   // Мусором может быть не только звено внутри массива, но и сам массив —
   // JSON.parse чужого ответа с лёгкостью даёт {} или null вместо [].
-  if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1 };
+  // linksNotArray:true (раунд 7, находка m1) — эта ветка НЕ разбирала ни
+  // одного звена, atSeq:-1 здесь не указатель ни на что реальное, в отличие
+  // от atSeq:-1 из reportedSeqFor ниже, где -1 может быть НАСТОЯЩИМ (пусть
+  // и невалидным) значением seq конкретного звена.
+  if (!Array.isArray(links)) return { ok: false, reason: 'broken', atSeq: -1, linksNotArray: true };
 
   if (links.length === 0) {
     // Пустой массив без якоря — предъявлять нечего, но врать не в чем

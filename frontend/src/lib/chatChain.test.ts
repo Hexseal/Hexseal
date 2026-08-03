@@ -338,8 +338,24 @@ describe('verifyChain — ревью, раунд 1', () => {
 
   // I2: весь массив целиком тоже может быть мусором — не только звено внутри.
   it('не-массив на входе не роняет проверку', () => {
-    expect(verifyChain({} as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
-    expect(verifyChain(null as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
+    expect(verifyChain({} as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1, linksNotArray: true });
+    expect(verifyChain(null as unknown as ChainLink[])).toEqual({ ok: false, reason: 'broken', atSeq: -1, linksNotArray: true });
+  });
+
+  // Раунд 7, находка m1: atSeq:-1 раньше означал побайтово одно и то же в
+  // ДВУХ разных ситуациях — «links вообще не массив» (тест выше) и «в звене
+  // РЕАЛЬНО стоит seq:-1» (звено само по себе мусор, но это мусор ВНУТРИ
+  // валидного массива, не вместо него). Вызывающий код не мог отличить
+  // «мне дали не массив» от «в звене отрицательный номер» — оба вердикта
+  // были структурно идентичны. `linksNotArray` разводит их, не добавляя
+  // нового `reason` в объединение: он есть только у первого случая.
+  it('раунд 7, находка m1: atSeq:-1 из «links не массив» отличим от atSeq:-1 из легитимного (хоть и негодного) звена с seq:-1', () => {
+    const full = chainOf(2);
+    const notArray = verifyChain(null as unknown as ChainLink[]);
+    const malformedSeq = verifyChain([{ ...full[0], seq: -1 }]);
+    expect(notArray).toEqual({ ok: false, reason: 'broken', atSeq: -1, linksNotArray: true });
+    expect(malformedSeq).toEqual({ ok: false, reason: 'broken', atSeq: -1 });
+    expect('linksNotArray' in malformedSeq).toBe(false);
   });
 
   it('мусор внутри валидного массива (null/undefined элементы) даёт broken, а не исключение', () => {
