@@ -685,6 +685,27 @@ describe('GET /bags/:key', () => {
     expect(bagMetaOf(key).firstFetchedAt).toBe(firstMark);
   });
 
+  it('И-5 (ревью): скачивание отвечает Cache-Control: private, no-store и Vary: x-bag-pass', async () => {
+    // Право читать этот ответ живёт ЦЕЛИКОМ в заголовке пропуска — тело
+    // ответа само по себе не несёт никакого доказательства авторизации.
+    // Посредник, кэширующий по URL (а ключ — часть URL, значит стабильный
+    // адрес кэширования), без Cache-Control: no-store вполне может отдать
+    // сохранённый ответ следующему запросу к тому же URL БЕЗ пропуска —
+    // Vary: x-bag-pass дополнительно говорит любому кэшу, уважающему
+    // заголовки, что ответ зависит от значения именно этого заголовка, не
+    // только от URL.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice, freshIp());
+    const bobPass = await issuePassFor(bob, freshIp());
+
+    const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('cache-me-not') });
+    const res = await getBag({ pass: bobPass, key: put.body.key, ip: freshIp() });
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.headers['vary']).toBe('x-bag-pass');
+  });
+
   it('мешки не отдаются статикой — прямой запрос без пропуска не получает байты', async () => {
     const { wallet: alice } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();

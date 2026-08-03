@@ -2193,11 +2193,21 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   }
 
   // Same defensive headers as the /files static mount (app.js:1058-1068) —
-  // ciphertext is never meant to be rendered, sniffed or cached across users.
+  // ciphertext is never meant to be rendered or sniffed.
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'");
   res.setHeader('Content-Disposition', 'attachment');
   res.setHeader('Content-Type', 'application/octet-stream');
+  // И-5 (ревью): the right to read this response lives ENTIRELY in the
+  // x-bag-pass header — the body itself carries no proof of authorization.
+  // A caching intermediary that keys on URL alone (and the key is part of
+  // the URL, so it's a stable cache address) could otherwise serve a stored
+  // response to a LATER request for the same URL with no pass at all.
+  // no-store forbids storing this response anywhere; Vary additionally
+  // tells any cache that does inspect headers that the response depends on
+  // x-bag-pass, not just the URL.
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Vary', 'x-bag-pass');
   const rs = fs.createReadStream(filePath);
   rs.on('error', (e) => {
     console.error('[bags] read failed:', e.message);
