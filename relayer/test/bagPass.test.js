@@ -1,10 +1,33 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+
+// Spy on node:crypto's timingSafeEqual without changing its behavior — the
+// wrapper always delegates to the real implementation, so every other test
+// in this file still gets a genuinely constant-time compare. This exists to
+// lock the one property a timing test can't: that the comparison actually
+// goes through timingSafeEqual (not a plain `===`), and only after the
+// length check runs.
+const { timingSafeEqualSpy } = vi.hoisted(() => ({ timingSafeEqualSpy: vi.fn() }));
+
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    timingSafeEqual: (...args) => {
+      timingSafeEqualSpy(...args);
+      return actual.timingSafeEqual(...args);
+    },
+  };
+});
 
 let issueBagPass, verifyBagPass, bagPassChallenge, assertBagPassReady, BAG_PASS_TTL_SEC;
 
 beforeAll(async () => {
   ({ issueBagPass, verifyBagPass, bagPassChallenge, assertBagPassReady, BAG_PASS_TTL_SEC } =
     await import('../bagPass.js'));
+});
+
+beforeEach(() => {
+  timingSafeEqualSpy.mockClear();
 });
 
 const ALICE = '0xA1ce00000000000000000000000000000000CAfe';
@@ -58,6 +81,27 @@ describe('bagPass', () => {
     const mac = token.split('.')[2];
     const forged = Buffer.from(`${BOB.toLowerCase()}.${expiresAt}`, 'utf8').toString('base64url');
     expect(verifyBagPass(`v1.${forged}.${mac}`).code).toBe('pass_invalid');
+  });
+
+  it('верный токен идёт через timingSafeEqual ровно один раз', () => {
+    const { token } = issueBagPass(ALICE);
+    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase() });
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('неверный MAC той же длины идёт через timingSafeEqual, а не через ===', () => {
+    const { token } = issueBagPass(ALICE);
+    const [prefix, body, realMac] = token.split('.');
+    const sameLengthBadMac = 'A'.repeat(realMac.length);
+    expect(verifyBagPass(`${prefix}.${body}.${sameLengthBadMac}`).code).toBe('pass_invalid');
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('MAC другой длины отклоняется без вызова timingSafeEqual — сначала длина', () => {
+    const { token } = issueBagPass(ALICE);
+    const [prefix, body] = token.split('.');
+    expect(verifyBagPass(`${prefix}.${body}.short`).code).toBe('pass_invalid');
+    expect(timingSafeEqualSpy).not.toHaveBeenCalled();
   });
 
   it('протухает ровно на границе expiresAt, не позже', () => {

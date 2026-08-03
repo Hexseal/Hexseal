@@ -79,10 +79,12 @@ export function verifyBagPass(token, nowSec = Math.floor(Date.now() / 1000)) {
 
   // Constant-time compare, and only after a length check — timingSafeEqual
   // throws on mismatched lengths instead of returning false.
-  // No test can lock "constant-time" here: a mutation to plain `===` still
-  // returns the correct verdict, just leaks timing on it — a unit test can't
-  // tell the two apart, only a code-review reader can. Keep it constant-time
-  // on read, not because a green suite says so.
+  // A test on TIME is impossible — no unit test can observe a timing
+  // side-channel. But that is not the same claim as "this line is
+  // untestable": a test on the CALL is possible and exists
+  // (test/bagPass.test.js, via vi.mock('node:crypto', ...)) — it locks that
+  // timingSafeEqual is actually invoked (not `===`), and only after the
+  // length check. Don't read the line above as "verify by eye only".
   const expected = Buffer.from(bagPassMac(body), 'utf8');
   const given    = Buffer.from(mac, 'utf8');
   if (expected.length !== given.length || !timingSafeEqual(expected, given)) return bad;
