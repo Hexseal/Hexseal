@@ -178,7 +178,19 @@ function isSafeNonNegativeInt(value: unknown): value is number {
  *  BigInt()/encodePacked бросают RangeError/IntegerOutOfRangeError). Не
  *  переиспользуем viem.size() для длины хеша: на нечётном числе hex-символов
  *  она округляет вверх и врёт, что 63 символа — это 32 байта, тогда как
- *  encodePacked всё равно бросает («bytes31.5»). Точный regexp — надёжнее. */
+ *  encodePacked всё равно бросает («bytes31.5»). Точный regexp — надёжнее.
+ *
+ *  isAddress(sender, {strict:false}), а не strict (по умолчанию): strict
+ *  отвергает ПОЛНОСТЬЮ ВЕРХНИЙ регистр (легальное по EIP-55 представление
+ *  «не чек-сумлено» — то же положение принимает полностью нижний регистр,
+ *  но не верхний, асимметрия в самом viem, проверено эмпирически). linkHash
+ *  регистро-НЕзависим для адреса (encodePacked нормализует к одному и тому
+ *  же 20-байтному значению независимо от текстового регистра, ЕСЛИ вообще
+ *  смог его принять) — гейт формы обязан трактовать регистр так же, как
+ *  отпечаток (раунд 1, `sameHash`), иначе честная цепочка получает broken
+ *  из-за текстового регистра одного поля. strict:false проверяет ТОЛЬКО
+ *  форму (40 hex-символов), не чек-сумму — сама нормализация значения
+ *  происходит ниже, в verifyChain, до любого вычисления хеша. */
 function isWellFormedLink(link: unknown): link is ChainLink {
   if (typeof link !== 'object' || link === null) return false;
   const l = link as Record<string, unknown>;
@@ -186,7 +198,7 @@ function isWellFormedLink(link: unknown): link is ChainLink {
     isSafeNonNegativeInt(l.seq) &&
     isBytes32Hex(l.prevHash) &&
     isBytes32Hex(l.bodyHash) &&
-    typeof l.sender === 'string' && isAddress(l.sender) &&
+    typeof l.sender === 'string' && isAddress(l.sender, { strict: false }) &&
     isSafeNonNegativeInt(l.sentAt)
   );
 }
@@ -296,11 +308,28 @@ export function verifyChain(links: ChainLink[], opts?: ChainAnchor): ChainVerdic
     return { ok: true, unverifiedContentAtSeq: [] };
   }
 
+  // Нормализуем sender к нижнему регистру СРАЗУ после проверки формы, до
+  // любого использования: gate выше принял и ВЕРХНИЙ регистр (валидная
+  // форма), а encodePacked внутри linkHash по-прежнему бросает на
+  // полностью верхнем регистре (не считает его «не чек-сумленным», в
+  // отличие от нижнего) — если передать его дальше как есть, связность
+  // ниже упала бы исключением на РОВНО ТОМ звене, которое gate только что
+  // признал годным. Это не гипотетика: проверено мутацией (снятие
+  // нормализации) — падает `InvalidAddressError` прямо из `linkHash`,
+  // непойманным исключением наружу из verifyChain, то есть именно то
+  // поведение, которое вся функция обязана исключать по своей главной
+  // задаче. buildLink лоукейсит sender по той же причине (эта функция
+  // просто применяет ту же нормализацию к чужим, не построенным нами
+  // звеньям).
+  const links2: ChainLink[] = [];
   for (let i = 0; i < links.length; i++) {
     if (!isWellFormedLink(links[i])) {
       return { ok: false, reason: 'broken', atSeq: reportedSeqFor(links[i], i) };
     }
+    const l = links[i];
+    links2.push(l.sender === l.sender.toLowerCase() ? l : { ...l, sender: l.sender.toLowerCase() as `0x${string}` });
   }
+  links = links2;
 
   for (let i = 1; i < links.length; i++) {
     if (links[i].seq <= links[i - 1].seq) return { ok: false, reason: 'unordered' };

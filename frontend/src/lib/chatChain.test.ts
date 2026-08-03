@@ -943,3 +943,36 @@ describe('verifyChain — ревью, раунд 5, мелочь: собстве
     expect(verifyChain(full, evil)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2, 3] });
   });
 });
+
+describe('verifyChain — ревью, раунд 6, находка I4: гейт формы адреса регистр не так, как отпечаток', () => {
+  // linkHash регистро-НЕзависим для адреса: encodePacked нормализует
+  // валидный (checksummed или полностью однорегистровый) адрес к одному и
+  // тому же 20-байтному значению независимо от текстового регистра. Но
+  // гейт формы использовал viem.isAddress(sender) БЕЗ {strict:false} —
+  // тот принимает checksummed mixed-case и ПОЛНОСТЬЮ НИЖНИЙ регистр, но
+  // отвергает ПОЛНОСТЬЮ ВЕРХНИЙ (легальное по EIP-55 представление
+  // "не чек-сумлено") как невалидный. Честная цепочка получала broken
+  // из-за текстового регистра одного поля — то же зеркало находки раунда 1
+  // про sameHash, перенесённое с хеша на адрес.
+  const CAROL = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd' as const; // с буквами — регистр значим
+
+  it('адрес отправителя в верхнем регистре (валидная форма) — цепочка не отвергается', () => {
+    const link0 = buildLink(null, BODY, ALICE, 1000);
+    const link1 = buildLink(link0, BODY, CAROL, 1001);
+    const link2 = buildLink(link1, BODY, ALICE, 1002);
+    // ('0x' + ...toUpperCase()), НЕ link1.sender.toUpperCase() целиком —
+    // тот заодно превращает префикс "0x" в "0X", который isAddress не
+    // распознаёт вообще, независимо от strict. Проверено эмпирически на
+    // собственной ошибке при первом проходе.
+    const upperCased = { ...link1, sender: ('0x' + link1.sender.slice(2).toUpperCase()) as `0x${string}` };
+    const shown = [link0, upperCased, link2];
+    expect(verifyChain(shown)).toEqual({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
+  });
+
+  it('мусор вместо адреса (не просто другой регистр, а неверная форма) по-прежнему даёт broken', () => {
+    const full = chainOf(3);
+    const garbled = [...full];
+    garbled[1] = { ...garbled[1], sender: ('0x' + 'ab'.repeat(19)) as `0x${string}` }; // на байт короче
+    expect(verifyChain(garbled)).toEqual({ ok: false, reason: 'broken', atSeq: 1 });
+  });
+});
