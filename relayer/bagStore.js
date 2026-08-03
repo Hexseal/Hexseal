@@ -271,7 +271,13 @@ export function _loadBagMeta() {
     raw = {};
   }
 
-  const clean = {};
+  // Бесплатное улучшение от ревьюера (пятый раунд): Object.create(null),
+  // не {} — assertBagKeyShape уже запирает '__proto__'/'constructor' на
+  // входе каждой публичной функции (защита по форме ключа, симптоматическая),
+  // но объект без Object.prototype убирает КЛАСС травления прототипа
+  // структурно: у него нет '__proto__' как унаследованного аксессора вообще,
+  // независимо от того, дошёл ли до него мусорный ключ мимо проверки формы.
+  const clean = Object.create(null);
   let dropped = 0;
   for (const [key, meta] of Object.entries(raw)) {
     if (isValidBagMetaEntry(key, meta)) {
@@ -331,7 +337,7 @@ export function _saveBagMeta() {
   }
 }
 
-let _bagMeta = {};
+let _bagMeta = Object.create(null);
 _loadBagMeta();
 
 // ─── Ключи и пути ───────────────────────────────────────────────────────────
