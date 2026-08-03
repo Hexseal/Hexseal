@@ -109,6 +109,13 @@ export let BAG_MAX_AGE_MS;
 // легло на диск, — два разных числа, и этот потолок ничего не гарантирует
 // про фактический объём хранилища.
 export let MAX_BAG_SIZE;
+// Мелочь (шестой раунд): раньше module-scope `const` (см. ниже, у
+// assertNotFromFuture) — единственный срок/лимит в файле, не подчинявшийся
+// прямому правилу задачи "все сроки/лимиты — env-конфигурируемы с явным
+// умолчанием". Технически это допуск на рассинхрон часов, а не бизнес-TTL,
+// но правило не делало для таких исключения — перенесена в _refreshConfig()
+// тем же приёмом, что и остальные четыре.
+export let CLOCK_SKEW_ALLOWANCE_MS;
 let STORAGE_DIR;
 let BAG_META_PATH;
 
@@ -121,6 +128,11 @@ function _refreshConfig() {
   BAG_UNREAD_TTL_MS = Number(process.env.BAG_UNREAD_TTL_MS || 30 * 24 * 60 * 60 * 1000);
   BAG_MAX_AGE_MS    = Number(process.env.BAG_MAX_AGE_MS    || 90 * 24 * 60 * 60 * 1000);
   MAX_BAG_SIZE      = Number(process.env.MAX_BAG_SIZE      || 256 * 1024);
+  // 0 — легитимное значение (запрет ЛЮБОГО будущего, без допуска вообще),
+  // так что || здесь тоже верен: process.env.CLOCK_SKEW_ALLOWANCE_MS = '0'
+  // как СТРОКА непустая и truthy — || берёт её, а не умолчание, ровно как и
+  // для остальных четырёх ручек выше.
+  CLOCK_SKEW_ALLOWANCE_MS = Number(process.env.CLOCK_SKEW_ALLOWANCE_MS || 5 * 60 * 1000);
 }
 _refreshConfig(); // начальные значения при импорте — то же, что раньше делали `const`-инициализаторы
 
@@ -131,6 +143,17 @@ function fail(fn, detail) {
 function assertPositiveFiniteNumber(name, value) {
   if (!Number.isFinite(value) || value <= 0) {
     fail('assertBagStoreReady', `${name}=${JSON.stringify(process.env[name])} is not a positive finite number (parsed as ${value})`);
+  }
+}
+
+// CLOCK_SKEW_ALLOWANCE_MS=0 — легитимное значение (запрет любого будущего
+// вообще, без допуска), в отличие от четырёх TTL/размера выше, для которых
+// 0 всегда бессмысленен (мешок с нулевым сроком жизни/нулевым потолком
+// размера — не настройка, а фактическое выключение функции). Тот же
+// diagnostic-message стиль, отдельная функция вместо <= 0 → < 0.
+function assertNonNegativeFiniteNumber(name, value) {
+  if (!Number.isFinite(value) || value < 0) {
+    fail('assertBagStoreReady', `${name}=${JSON.stringify(process.env[name])} is not a non-negative finite number (parsed as ${value})`);
   }
 }
 
@@ -170,6 +193,7 @@ export function assertBagStoreReady() {
   assertPositiveFiniteNumber('BAG_UNREAD_TTL_MS', BAG_UNREAD_TTL_MS);
   assertPositiveFiniteNumber('BAG_MAX_AGE_MS', BAG_MAX_AGE_MS);
   assertPositiveFiniteNumber('MAX_BAG_SIZE', MAX_BAG_SIZE);
+  assertNonNegativeFiniteNumber('CLOCK_SKEW_ALLOWANCE_MS', CLOCK_SKEW_ALLOWANCE_MS);
   fs.mkdirSync(DIR_BAGS, { recursive: true });
 }
 
@@ -228,7 +252,13 @@ function assertFetchNotBeforeUpload(fn, uploadedAt, firstFetchedAt) {
 // рассинхрон часов клиента и сервера, а не способ легитимно принять
 // будущее); в прошлом uploadedAt ничем не ограничен — это никогда не было
 // проблемой (мешок просто живёт с момента, который заявлен).
-const CLOCK_SKEW_ALLOWANCE_MS = 5 * 60 * 1000; // 5 минут
+//
+// Мелочь (шестой раунд): величина допуска сама по себе теперь
+// env-конфигурируема (CLOCK_SKEW_ALLOWANCE_MS — export let, объявлена и
+// вычисляется в _refreshConfig() выше, у остальных четырёх сроков/лимитов)
+// — раньше была захардкожена прямо здесь module-scope константой, ЕДИНСТВЕННЫЙ
+// срок/лимит в файле, нарушавший правило задачи "все сроки/лимиты —
+// env-конфигурируемы с явным умолчанием".
 
 function assertNotFromFuture(fn, label, value, nowMs) {
   if (value > nowMs + CLOCK_SKEW_ALLOWANCE_MS) {

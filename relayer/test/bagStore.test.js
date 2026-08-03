@@ -445,6 +445,21 @@ describe('форма входа — каждая публичная функци
     }, now)).not.toThrow();
   });
 
+  // Мелочь (шестой раунд): допуск на рассинхрон часов — тоже "лимит" по
+  // прямому правилу задачи ("все сроки/лимиты — env-конфигурируемы с явным
+  // умолчанием"), не только четыре TTL/размер. Тест поведенческий (не
+  // просто "экспортированное значение изменилось") — с CLOCK_SKEW_ALLOWANCE_MS,
+  // выставленным окружением в 0, тот же +60с uploadedAt, что выше принимался
+  // штатным 5-минутным допуском, теперь отвергается.
+  it('CLOCK_SKEW_ALLOWANCE_MS настраивается окружением — с допуском 0 то же +60с из прошлого теста уже отвергается', async () => {
+    await withFreshBagStoreModule({ CLOCK_SKEW_ALLOWANCE_MS: '0' }, async (fresh) => {
+      const now = Date.now();
+      expect(() => fresh.recordBag({
+        key: fresh.bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: now + 60_000,
+      }, now)).toThrow();
+    });
+  });
+
   it('recordBag бросает на негодных firstFetchedAt/dealDeadline, но принимает null/undefined', () => {
     expect(() => recordBag({
       key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1, firstFetchedAt: 'soon',
@@ -1493,6 +1508,12 @@ describe('сроки и лимиты приходят из окружения, �
     expect(bagStore.BAG_UNREAD_TTL_MS).toBe(30 * DAY);
     expect(bagStore.BAG_MAX_AGE_MS).toBe(90 * DAY);
     expect(bagStore.MAX_BAG_SIZE).toBe(256 * 1024);
+    // Мелочь (шестой раунд): CLOCK_SKEW_ALLOWANCE_MS (И-3, шестой раунд)
+    // была захардкожена module-scope константой, не пятой env-ручкой —
+    // отступление от прямого правила задачи "все сроки/лимиты —
+    // env-конфигурируемы с явным умолчанием". Экспортирована и вынесена в
+    // _refreshConfig() тем же приёмом, что и остальные четыре.
+    expect(bagStore.CLOCK_SKEW_ALLOWANCE_MS).toBe(5 * 60 * 1000);
   });
 
   it('переменные окружения переопределяют умолчания при загрузке модуля', async () => {
@@ -1501,12 +1522,14 @@ describe('сроки и лимиты приходят из окружения, �
       BAG_UNREAD_TTL_MS: process.env.BAG_UNREAD_TTL_MS,
       BAG_MAX_AGE_MS: process.env.BAG_MAX_AGE_MS,
       MAX_BAG_SIZE: process.env.MAX_BAG_SIZE,
+      CLOCK_SKEW_ALLOWANCE_MS: process.env.CLOCK_SKEW_ALLOWANCE_MS,
       STORAGE_DIR: process.env.STORAGE_DIR,
     };
     process.env.BAG_TTL_MS = '1111';
     process.env.BAG_UNREAD_TTL_MS = '2222';
     process.env.BAG_MAX_AGE_MS = '3333';
     process.env.MAX_BAG_SIZE = '4444';
+    process.env.CLOCK_SKEW_ALLOWANCE_MS = '5555';
     // Находка ревью (мелочь, пятый раунд): этот каталог раньше никогда не
     // удалялся — по одному в /tmp на каждый прогон теста.
     const envStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-bags-env-'));
@@ -1519,6 +1542,7 @@ describe('сроки и лимиты приходят из окружения, �
       expect(fresh.BAG_UNREAD_TTL_MS).toBe(2222);
       expect(fresh.BAG_MAX_AGE_MS).toBe(3333);
       expect(fresh.MAX_BAG_SIZE).toBe(4444);
+      expect(fresh.CLOCK_SKEW_ALLOWANCE_MS).toBe(5555);
     } finally {
       for (const [k, v] of Object.entries(savedEnv)) {
         if (v === undefined) delete process.env[k];
@@ -1555,6 +1579,11 @@ describe('assertBagStoreReady — проверка окружения НЕ на 
     ['BAG_TTL_MS', '-1'],
     ['BAG_TTL_MS', 'Infinity'],
     ['BAG_TTL_MS', 'NaN'],
+    // CLOCK_SKEW_ALLOWANCE_MS (мелочь, шестой раунд) не входит в четвёрку
+    // "позитивное число" — 0 для него легитимен (см. отдельный тест ниже),
+    // так что здесь только нечисловое и отрицательное, не '0'.
+    ['CLOCK_SKEW_ALLOWANCE_MS', 'five-minutes'],
+    ['CLOCK_SKEW_ALLOWANCE_MS', '-1'],
   ])('assertBagStoreReady бросает, когда %s=%s, называя виновную переменную', async (name, value) => {
     await withFreshBagStoreModule({ [name]: value }, async (fresh) => {
       // Не просто .toThrow() — иначе тест зелёный и до реализации функции
