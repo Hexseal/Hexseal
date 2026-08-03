@@ -85,10 +85,16 @@ function assertNonEmptyString(fn, label, value) {
 // Тот же алгоритм, что у pairIdFromAddresses в app.js (сортировка нижних
 // регистров, склейка через '-'), продублирован здесь намеренно, а не
 // импортирован: обе стороны — чистые функции только от двух адресов, без
-// разделяемого состояния, так что дублирование не может разъехаться по
-// смыслу — а импорт из app.js завёл бы цикл (см. заголовок файла).
-function pairIdFromAddresses(a, b) {
-  const [x, y] = [a, b].sort();
+// разделяемого состояния — а импорт из app.js завёл бы цикл (см. заголовок
+// файла). Дублирование чистой функции не безопасно само по себе: если
+// однажды алгоритм в app.js поменяют, эта копия разойдётся молча, и мешки
+// начнут ключеваться по одной паре, а споры — искаться по другой. Экспорт
+// с подчёркиванием — не часть публичного интерфейса склада (bagKeyFor уже
+// зовёт её напрямую и наружу этого не выставляет), а точка входа для
+// test/bagStore.test.js, который сверяет её на входах с
+// pairIdFromAddresses из app.js и обязан покраснеть при расхождении.
+export function _pairIdFromAddresses(a, b) {
+  const [x, y] = [String(a).toLowerCase(), String(b).toLowerCase()].sort();
   return `${x}-${y}`;
 }
 
@@ -137,7 +143,7 @@ export function recordBag(meta) {
   const stored = {
     sender,
     recipient,
-    pairId: pairIdFromAddresses(sender, recipient),
+    pairId: _pairIdFromAddresses(sender, recipient),
     size,
     uploadedAt,
     firstFetchedAt,

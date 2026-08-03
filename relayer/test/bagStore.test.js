@@ -8,7 +8,15 @@ process.env.STORAGE_DIR = TMP;
 
 const { DIR_BAGS, BAG_TTL_MS, BAG_UNREAD_TTL_MS, BAG_MAX_AGE_MS, MAX_BAG_SIZE,
         bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
-        bagExpiryAt, cleanupBags, _loadBagMeta } = await import('../bagStore.js');
+        bagExpiryAt, cleanupBags, _loadBagMeta, _pairIdFromAddresses } = await import('../bagStore.js');
+
+// app.js — да, импортируется прямо в тест склада. По указанию координатора:
+// соседние тесты (test/disputeReasonAndLog.test.js и другие) уже делают
+// то же самое, окружение (мокнутый ethers/web-push, обязательные env) уже
+// поднято test/setup.js как общий setupFile. Нужен только один чистый
+// экспорт — pairIdFromAddresses — чтобы свериться с продублированной
+// версией в bagStore.js и запереть их от расхождения.
+const { pairIdFromAddresses: appPairIdFromAddresses } = await import('../app.js');
 
 const ALICE = '0xa1ce00000000000000000000000000000000cafe';
 const BOB   = '0xb0b1000000000000000000000000000000005eed';
@@ -319,6 +327,86 @@ describe('сроки и лимиты приходят из окружения, �
       // импорта) — resetModules() иначе оставил бы следующий import('../bagStore.js')
       // где-нибудь в этом файле указывающим на другое хранилище.
       await import('../bagStore.js');
+    }
+  });
+});
+
+// ─── pairIdFromAddresses продублирован из app.js — держим обе версии в узде ─
+//
+// bagStore.js не импортирует pairIdFromAddresses из app.js (импорт назад
+// завёл бы цикл, когда Задача 3 подключит bagStore.js к app.js), а
+// повторяет тот же чистый алгоритм у себя. Дублирование чистой функции —
+// не баг само по себе, но тихая мина: если однажды в app.js поменяют
+// алгоритм (например, добавят чек-сумму или сменят разделитель), эта копия
+// разойдётся молча — мешки будут ключеваться по одной паре, а споры (через
+// _filePairs/getDisputedPairIds) искаться по другой. Ниже — тест, который
+// обязан покраснеть в этот момент, а не тест, описывающий сегодняшнее
+// поведение.
+describe('_pairIdFromAddresses (bagStore) обязан совпадать с pairIdFromAddresses (app.js)', () => {
+  const ZERO = '0x0000000000000000000000000000000000000000'.slice(0, 42);
+  const MAX  = '0xffffffffffffffffffffffffffffffffffffffff';
+
+  const CASES = [
+    // пара в порядке (a, b)
+    [ALICE, BOB],
+    // та же пара в обратном порядке — сортировка обязана дать тот же id
+    [BOB, ALICE],
+    // разный регистр входа с обеих сторон
+    [ALICE.toUpperCase().replace('0X', '0x'), BOB],
+    [ALICE, BOB.toUpperCase().replace('0X', '0x')],
+    [ALICE.toUpperCase().replace('0X', '0x'), BOB.toUpperCase().replace('0X', '0x')],
+    // одинаковые адреса с обеих сторон (сделка/чат "с самим собой" — не
+    // запрещено на этом уровне, оба алгоритма обязаны сходиться и здесь)
+    [ALICE, ALICE],
+    [ALICE.toUpperCase().replace('0X', '0x'), ALICE],
+    // крайние значения — минимальный и максимальный по значению адрес
+    [ZERO, MAX],
+    [MAX, ZERO],
+    [ZERO, ZERO],
+    [MAX, MAX],
+  ];
+
+  it.each(CASES)('bagStore и app.js сходятся на (%s, %s)', (a, b) => {
+    expect(_pairIdFromAddresses(a, b)).toBe(appPairIdFromAddresses(a, b));
+  });
+
+  it('обе версии сортируют одинаково независимо от порядка аргументов', () => {
+    expect(_pairIdFromAddresses(ALICE, BOB)).toBe(_pairIdFromAddresses(BOB, ALICE));
+    expect(appPairIdFromAddresses(ALICE, BOB)).toBe(appPairIdFromAddresses(BOB, ALICE));
+  });
+
+  it('золотое значение — если оба алгоритма ОДИНАКОВО уедут в сторону, сверка друг с другом это не поймает', () => {
+    // Сверка bagStore-версии с app.js-версией защищает от расхождения ДРУГ
+    // С ДРУГОМ, но не от того, что обе стороны когда-нибудь одинаково
+    // изменятся (например, кто-то решит, что сортировка не нужна, и
+    // применит правку сразу в обоих местах — сверка друг с другом такое не
+    // ловит, ей нечем отличить "оба правильные" от "оба одинаково сломаны").
+    // Один буквальный литерал, вычисленный от руки (нижний регистр,
+    // лексикографическая сортировка строк, склейка через '-'), — сторонний
+    // якорь для обеих версий разом.
+    expect(_pairIdFromAddresses(ALICE, BOB)).toBe(`${ALICE}-${BOB}`);
+    expect(appPairIdFromAddresses(ALICE, BOB)).toBe(`${ALICE}-${BOB}`);
+  });
+});
+
+describe('listBagsFor — регистр адресата', () => {
+  it('регистр адреса на входе не влияет на выдачу — верхний/нижний/смешанный видят один и тот же мешок', () => {
+    // put() всегда пишет recipient в _bagMeta уже нижним регистром (через
+    // recordBag → assertAddress), поэтому этот тест специально не трогает
+    // put() — он проверяет именно listBagsFor(), а не запись.
+    const key = put(ALICE, BOB, Date.now());
+
+    const mixedCase = '0xA1cE00000000000000000000000000000000CAfe'; // тот же адрес, что ALICE
+    expect(mixedCase.toLowerCase()).toBe(ALICE); // предусловие: это правда тот же адрес
+
+    const byLower = listBagsFor(ALICE);
+    const byUpper = listBagsFor(ALICE.toUpperCase().replace('0X', '0x'));
+    const byMixed = listBagsFor(mixedCase);
+
+    for (const list of [byLower, byUpper, byMixed]) {
+      expect(list).toHaveLength(1);
+      expect(list[0].key).toBe(key);
+      expect(list[0].sender).toBe(BOB);
     }
   });
 });
