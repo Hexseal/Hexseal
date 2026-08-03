@@ -921,14 +921,23 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX       = 10;
 const _rateMap       = new Map();
 
-export function checkRateLimit(ip) {
+// И-4 (ревью): второй параметр — тот же общий `_rateMap`/`RATE_WINDOW_MS`
+// (60с), но с СВОИМ потолком вместо глобального RATE_MAX (10/мин). Каждый
+// существующий вызывающий (везде в файле, кроме нового блока мешков ниже)
+// зовёт с одним аргументом и получает ровно прежнее поведение — потолок по
+// умолчанию `RATE_MAX`. Разные бюджеты мешков (выпуск пропуска/чтение/
+// запись, см. BAG_PASS_RATE_MAX и соседей) используют одну и ту же карту, но
+// разные КЛЮЧИ (bagPassRateKey/bagReadRateKey/bagWriteRateKey) — так что
+// потолок здесь не обязан быть одним числом для всех ключей одновременно;
+// он просто параметр конкретного вызова, а не свойство самой карты.
+export function checkRateLimit(ip, max = RATE_MAX) {
   const now = Date.now();
   const entry = _rateMap.get(ip);
   if (!entry || now > entry.resetAt) {
     _rateMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return true;
   }
-  if (entry.count >= RATE_MAX) return false;
+  if (entry.count >= max) return false;
   entry.count++;
   return true;
 }
@@ -1818,21 +1827,56 @@ app.post('/files/multipart/abort', (req, res) => {
 //      401 with its own code — that one has to be distinguishable, or the
 //      client can't tell "re-sign" from "no such bag".
 //   3. The rate limiter runs on all four routes, keyed by IP (as elsewhere)
-//      AND by the caller's address (bagAddrRateKey below) — behind the
+//      AND by the caller's address (bagPassRateKey/bagReadRateKey/
+//      bagWriteRateKey below — see the long comment there for why three
+//      separate budgets, not one shared one) — behind the
 //      Cloudflare Tunnel every IP collapses to one (app.js:1081-1101), so an
 //      IP-only limiter is worthless here.
 
 const BAG_PASS_HEADER = 'x-bag-pass';
 const BAG_NOT_FOUND   = { error: 'Bag not found', code: 'bag_not_found' };
 
-// One namespace, shared by all four routes — not "bag-addr:pass:<addr>" vs
-// "...:put:<addr>" etc. A per-route budget would let a caller who exhausts
-// one route's budget simply move the same load to another; a shared budget
-// is the actual constraint on "how much can this address do per minute",
-// which is what the limiter is for.
-function bagAddrRateKey(address) {
-  return `bag-addr:${address}`;
+// И-4 (ревью): один общий бюджет "bag-addr:<addr>" на все четыре маршрута
+// оказался и небезопасным (С1 — непроверенный адрес мог тратить чужой), и
+// непригодным для живого разговора сам по себе: 10 действий в минуту на ВСЕ
+// четыре маршрута вместе означало, что один опрос списка раз в десять секунд
+// съедал шесть, и собственная отправка следом уже голодала собственное же
+// чтение — без единого нападающего, просто от нормального использования
+// (измерено координатором: пропуск + девять отправок → своё же чтение
+// получает 429). Три отдельных бюджета — выпуск пропуска, чтение (список +
+// скачивание одного мешка — оба "прочитать что-то"), запись — не делят
+// один счётчик, так что интенсивная отправка не блокирует чтение и наоборот.
+//
+// Числа подобраны под живой разговор, не под один запрос в шесть секунд:
+//   - выпуск пропуска — редкое событие (раз в BAG_PASS_TTL_SEC = 12ч, плюс
+//     случайные переподписи), запас на повторные попытки не помешает;
+//   - чтение — список опрашивается чаще всего (раз в 1-2с в активном чате)
+//     плюс скачивание каждого нового мешка тем же бюджетом;
+//   - запись — всплеск быстрой печати/отправки короткими сообщениями.
+// Через окружение, с явными умолчаниями — то же правило, что уже применено
+// к MAX_BAG_SIZE и срокам жизни в bagStore.js.
+function readPositiveInt(envVar, defaultValue) {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === '') return defaultValue;
+  const n = Number(raw);
+  // Громкий отказ при старте, не тихий NaN — `entry.count >= NaN` всегда
+  // false, то есть битое значение здесь означает не "потолок поменьше", а
+  // "лимитера нет вообще". На старте, а не на первом запросе: ровно то же
+  // рассуждение, что assertBagStoreReady()/assertBagPassReady() выше по
+  // файлу уже применяют к своим собственным числам.
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`${envVar}=${JSON.stringify(raw)} is not a positive finite number`);
+  }
+  return n;
 }
+
+const BAG_PASS_RATE_MAX  = readPositiveInt('BAG_PASS_RATE_MAX',  30);
+const BAG_READ_RATE_MAX  = readPositiveInt('BAG_READ_RATE_MAX', 120);
+const BAG_WRITE_RATE_MAX = readPositiveInt('BAG_WRITE_RATE_MAX', 60);
+
+function bagPassRateKey(address)  { return `bag-pass:${address}`;  }
+function bagReadRateKey(address)  { return `bag-read:${address}`;  }
+function bagWriteRateKey(address) { return `bag-write:${address}`; }
 
 function bagRateLimited(res) {
   return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
@@ -1950,10 +1994,9 @@ app.post('/bags/pass', (req, res) => {
   // Бюджет адреса тратится только ЗДЕСЬ — после того, как подпись реально
   // восстановлена И совпала с заявленным адресом. `recovered` и `addr`
   // равны в этой точке (проверено строкой выше), но ключом идёт именно
-  // `recovered` — не по привычке, а как утверждение: это тот же самый
-  // бюджет, который тратят PUT/GET/GET-список под ПРОВЕРЕННЫЙ адрес из
-  // пропуска, и здесь он обязан списываться по той же самой доказанности.
-  if (!checkRateLimit(bagAddrRateKey(recovered))) return bagRateLimited(res);
+  // `recovered` — не по привычке, а как утверждение: списывается бюджет
+  // ТОЛЬКО доказанного адреса, никогда заявленного (С1).
+  if (!checkRateLimit(bagPassRateKey(recovered), BAG_PASS_RATE_MAX)) return bagRateLimited(res);
 
   const { token, expiresAt } = issueBagPass(recovered, nowSec);
   res.json({ pass: token, expiresAt });
@@ -1968,7 +2011,7 @@ app.put('/bags/:recipient', (req, res) => {
   const sender = requireBagPass(req, res);
   if (!sender) return;
 
-  if (!checkRateLimit(bagAddrRateKey(sender))) return bagRateLimited(res);
+  if (!checkRateLimit(bagWriteRateKey(sender), BAG_WRITE_RATE_MAX)) return bagRateLimited(res);
 
   const recipient = String(req.params.recipient || '').toLowerCase();
   if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient' });
@@ -2031,7 +2074,11 @@ app.get('/bags', (req, res) => {
   const address = requireBagPass(req, res);
   if (!address) return;
 
-  if (!checkRateLimit(bagAddrRateKey(address))) return bagRateLimited(res);
+  // Read budget — shared with GET /bags/:key (download) below: both are
+  // "read something", and a client that lists then downloads several new
+  // bags in one poll cycle is one coherent burst of reading, not two
+  // independent activities that should each get their own ceiling.
+  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res);
 
   let since = null;
   if (req.query.since !== undefined) {
@@ -2063,7 +2110,7 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   const address = requireBagPass(req, res);
   if (!address) return;
 
-  if (!checkRateLimit(bagAddrRateKey(address))) return bagRateLimited(res);
+  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res);
 
   const key = `${req.params.recipient}/${req.params.filename}`;
 

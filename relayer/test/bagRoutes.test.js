@@ -3,13 +3,32 @@ import { ethers } from 'ethers';
 import request from 'supertest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { app } from '../app.js';
-import { bagPassChallenge } from '../bagPass.js';
-// Static import — namespace or named, never `const { X } = await import(...)`.
-// DIR_BAGS is `export let` in bagStore.js (see that module's own header
-// comment, and test/bagStore.test.js's, for why a dynamic-import
-// destructure would silently freeze on a snapshot).
-import { DIR_BAGS, bagMetaOf } from '../bagStore.js';
+
+// И-4 (ревью): реальные бюджеты (BAG_PASS_RATE_MAX/BAG_READ_RATE_MAX/
+// BAG_WRITE_RATE_MAX в app.js) выбраны под живой разговор, не под удобство
+// тестов границы — десятки-под-сотню запросов в минуту. Гонять тест границы
+// на такую величину дорого и медленно. Переопределяем их здесь, МАЛЕНЬКИМИ,
+// до импорта app.js — тот же приём, что test/bagStore.test.js уже применяет
+// к STORAGE_DIR. Обязательно ДИНАМИЧЕСКИЙ import(), не статический: app.js
+// читает process.env.BAG_*_RATE_MAX на уровне модуля, а статический
+// `import ... from '../app.js'` поднимается ВЫШЕ этих присваиваний (ESM
+// вычисляет импорты раньше тела импортирующего модуля независимо от
+// текстового порядка) — тот же урок, что host-комментарий у dotenv.config()
+// в самом app.js.
+process.env.BAG_PASS_RATE_MAX  = '5';
+process.env.BAG_READ_RATE_MAX  = '5';
+process.env.BAG_WRITE_RATE_MAX = '5';
+
+const { app } = await import('../app.js');
+const { bagPassChallenge } = await import('../bagPass.js');
+// Пространство имён, не деструктуризация — DIR_BAGS в bagStore.js это
+// `export let`, деструктуризация РЕЗУЛЬТАТА динамического импорта копирует
+// значение один раз и не отслеживает переприсваивания (см. заголовок
+// test/bagStore.test.js). В этом файле STORAGE_DIR не переопределяется
+// повторно, так что практического риска нет, но обращение через
+// пространство имён снимает вопрос полностью, а не полагается на это.
+const bagStoreNs = await import('../bagStore.js');
+const { bagMetaOf } = bagStoreNs;
 
 // ─── Test wiring ────────────────────────────────────────────────────────────
 //
@@ -248,6 +267,30 @@ describe('POST /bags/pass', () => {
       expect(res.body.code).toBe('invalid_signature');
     }
   });
+
+  it('лимитер по IP срабатывает на POST /bags/pass даже с разными заявленными адресами', async () => {
+    const sameIp = freshIp();
+    const ts = Math.floor(Date.now() / 1000);
+    let last;
+    for (let i = 0; i < 10; i++) {
+      const { address } = await newWalletAndAddress();
+      last = await request(app)
+        .post('/bags/pass')
+        .set('CF-Connecting-IP', sameIp)
+        .set('x-ts', String(ts))
+        .set('x-sig', '0xnotasignature')
+        .send({ address });
+      expect(last.status).toBe(401);
+    }
+    const { address: eleventh } = await newWalletAndAddress();
+    last = await request(app)
+      .post('/bags/pass')
+      .set('CF-Connecting-IP', sameIp)
+      .set('x-ts', String(ts))
+      .set('x-sig', '0xnotasignature')
+      .send({ address: eleventh });
+    expect(last.status).toBe(429);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -300,7 +343,7 @@ describe('PUT /bags/:recipient', () => {
     const res = await putBag({ pass, recipient: bobAddr, body: oversized });
     expect(res.status).toBe(413);
 
-    const recipientDir = path.join(DIR_BAGS, bobAddr);
+    const recipientDir = path.join(bagStoreNs.DIR_BAGS, bobAddr);
     const leftovers = fs.existsSync(recipientDir) ? fs.readdirSync(recipientDir) : [];
     expect(leftovers).toHaveLength(0);
   });
@@ -317,6 +360,39 @@ describe('PUT /bags/:recipient', () => {
     const pass = await issuePassFor(alice, freshIp());
     const res = await putBag({ pass, recipient: 'not-an-address', body: Buffer.from('x') });
     expect(res.status).toBe(400);
+  });
+
+  it('лимитер по адресу срабатывает на САМОМ PUT даже при разных IP', async () => {
+    // Находка ревью: адресный лимитер прежде был заперт только на
+    // POST /bags/pass и GET /bags — снять его именно с PUT было бы
+    // невидимо. BAG_WRITE_RATE_MAX (тестовое умолчание — 5).
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    for (let i = 0; i < 5; i++) {
+      const res = await putBag({ pass, recipient: bobAddr, ip: freshIp(), body: Buffer.from(`w${i}`) });
+      expect(res.status).toBe(200);
+    }
+    const blocked = await putBag({ pass, recipient: bobAddr, ip: freshIp(), body: Buffer.from('w5') });
+    expect(blocked.status).toBe(429);
+  });
+
+  it('лимитер по IP срабатывает на PUT даже с разными адресами и годным пропуском', async () => {
+    const sameIp = freshIp();
+    let last;
+    for (let i = 0; i < 10; i++) {
+      const { wallet } = await newWalletAndAddress();
+      const { address: recipientAddr } = await newWalletAndAddress();
+      const pass = await issuePassFor(wallet, freshIp());
+      last = await putBag({ pass, recipient: recipientAddr, ip: sameIp, body: Buffer.from('x') });
+      expect(last.status).toBe(200);
+    }
+    const { wallet: eleventh } = await newWalletAndAddress();
+    const { address: recipient11Addr } = await newWalletAndAddress();
+    const pass11 = await issuePassFor(eleventh, freshIp());
+    last = await putBag({ pass: pass11, recipient: recipient11Addr, ip: sameIp, body: Buffer.from('x') });
+    expect(last.status).toBe(429);
   });
 });
 
@@ -366,6 +442,55 @@ describe('GET /bags', () => {
     const res = await getBagsList({ pass: bobPass, since: cutoff, ip: freshIp() });
     expect(res.status).toBe(200);
     expect(res.body.map((b) => b.key)).toEqual([second.body.key]);
+  });
+
+  it('?since=abc (не число) — 400, а не молчаливый пустой список', async () => {
+    const { wallet: alice } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+    const res = await getBagsList({ pass, since: 'abc', ip: freshIp() });
+    expect(res.status).toBe(400);
+  });
+
+  it('лимитер по IP срабатывает даже с валидным пропуском и разными адресами', async () => {
+    // Прежде ни один из четырёх маршрутов не имел теста, ловящего именно
+    // IP-половину лимитера — во всех остальных тестах файла IP намеренно
+    // меняется на каждый запрос (чтобы не мешать друг другу), так что
+    // мутация "убрать checkRateLimit(ip)" нигде не даёт красного. Общий
+    // RATE_MAX = 10 (app.js), делится вообще всеми четырьмя маршрутами по
+    // одному IP — тестовые BAG_*_RATE_MAX (по адресу) сюда не относятся.
+    // Разные кошельки на каждой итерации — чтобы адресный бюджет чтения
+    // (тестовое умолчание 5) не сработал раньше IP-бюджета (10) по ДРУГОЙ
+    // причине; пропуск выпускается с ОТДЕЛЬНОГО IP, чтобы не тратить
+    // бюджет `sameIp` на сам выпуск — под наблюдением только GET /bags.
+    const sameIp = freshIp();
+    let last;
+    for (let i = 0; i < 10; i++) {
+      const { wallet } = await newWalletAndAddress();
+      const pass = await issuePassFor(wallet, freshIp());
+      last = await getBagsList({ pass, ip: sameIp });
+      expect(last.status).toBe(200);
+    }
+    const { wallet: eleventh } = await newWalletAndAddress();
+    const pass11 = await issuePassFor(eleventh, freshIp());
+    last = await getBagsList({ pass: pass11, ip: sameIp });
+    expect(last.status).toBe(429);
+  });
+
+  it('И-4: чтение и запись — разные бюджеты, отправка не голодает своё же чтение', async () => {
+    // Ровно сценарий из отчёта ревью: пропуск + BAG_WRITE_RATE_MAX отправок
+    // (тестовое умолчание — 5, см. заголовок файла) — и собственное чтение
+    // всё ещё проходит, потому что запись и чтение не делят один счётчик.
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const pass = await issuePassFor(alice, freshIp());
+
+    for (let i = 0; i < 5; i++) {
+      const res = await putBag({ pass, recipient: bobAddr, body: Buffer.from(`msg-${i}`) });
+      expect(res.status).toBe(200);
+    }
+
+    const readRes = await getBagsList({ pass, ip: freshIp() });
+    expect(readRes.status).toBe(200);
   });
 });
 
@@ -458,22 +583,95 @@ describe('GET /bags/:key', () => {
     expect(bodyText).not.toContain('should-never-leak-unauthenticated');
   });
 
-  it('лимитер срабатывает по адресу даже при разных IP', async () => {
-    const { wallet: bob } = await newWalletAndAddress();
-    // Выпуск пропуска сам расходует одну единицу общего бюджета адреса
-    // (лимитер по адресу общий на все четыре маршрута — POST /bags/pass
-    // тоже его проверяет). RATE_MAX=10, значит после выпуска пропуска
-    // остаётся ровно 9 разрешённых запросов до 429, не 10.
-    const pass = await issuePassFor(bob, freshIp());
+  it('лимитер по адресу срабатывает на САМОМ GET /bags/:key даже при разных IP', async () => {
+    // Находка ревью: прежний тест с этим названием жил в этом describe, но
+    // звал getBagsList() — то есть GET /bags (список), а не этот маршрут.
+    // Снять адресный лимитер именно с GET /bags/:key было бы невидимо. Этот
+    // тест реально скачивает — bagReadRateKey шарит бюджет с GET /bags, но
+    // здесь под наблюдением именно скачивание как таковое: если бы у ЭТОГО
+    // маршрута не было своего checkRateLimit(bagReadRateKey(...)), запрос
+    // всё равно прошёл бы, читай сколько угодно.
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const bobPass = await issuePassFor(bob, freshIp());
 
+    // BAG_READ_RATE_MAX (тестовое умолчание — 5) мешков + один сверху,
+    // каждый от СВОЕГО отправителя — иначе один отправитель, зовущий PUT
+    // шесть раз подряд, упёрся бы в свой же (тоже тестовый = 5) бюджет
+    // ЗАПИСИ раньше, чем Боб успеет упереться в бюджет ЧТЕНИЯ, и шестой PUT
+    // молча вернул бы 429 без поля key — ровно так тест и падал до правки.
+    const keys = [];
+    for (let i = 0; i < 6; i++) {
+      const { wallet: sender } = await newWalletAndAddress();
+      const senderPass = await issuePassFor(sender, freshIp());
+      const put = await putBag({ pass: senderPass, recipient: bobAddr, ip: freshIp(), body: Buffer.from(`k${i}`) });
+      expect(put.status).toBe(200);
+      keys.push(put.body.key);
+    }
+    for (const key of keys.slice(0, 5)) {
+      const res = await getBag({ pass: bobPass, key, ip: freshIp() });
+      expect(res.status).toBe(200);
+    }
+    const blocked = await getBag({ pass: bobPass, key: keys[5], ip: freshIp() });
+    expect(blocked.status).toBe(429);
+  });
+
+  it('лимитер по IP срабатывает на GET /bags/:key даже с разными адресами и годным пропуском', async () => {
+    const sameIp = freshIp();
     let last;
-    for (let i = 0; i < 9; i++) {
-      last = await getBagsList({ pass, ip: freshIp() });
+    for (let i = 0; i < 10; i++) {
+      const { wallet: sender } = await newWalletAndAddress();
+      const { wallet: recipientWallet, address: recipientAddr } = await newWalletAndAddress();
+      const senderPass = await issuePassFor(sender, freshIp());
+      const recipientPass = await issuePassFor(recipientWallet, freshIp());
+      const put = await putBag({ pass: senderPass, recipient: recipientAddr, body: Buffer.from('x') });
+      last = await getBag({ pass: recipientPass, key: put.body.key, ip: sameIp });
       expect(last.status).toBe(200);
     }
-    // 11-й учтённый запрос под этим адресом (1 — выпуск пропуска + 9 выше +
-    // этот) — заблокирован, несмотря на то что IP каждый раз новый.
-    last = await getBagsList({ pass, ip: freshIp() });
+    const { wallet: sender11 } = await newWalletAndAddress();
+    const { wallet: recipient11, address: recipient11Addr } = await newWalletAndAddress();
+    const senderPass11 = await issuePassFor(sender11, freshIp());
+    const recipientPass11 = await issuePassFor(recipient11, freshIp());
+    const put11 = await putBag({ pass: senderPass11, recipient: recipient11Addr, body: Buffer.from('x') });
+    last = await getBag({ pass: recipientPass11, key: put11.body.key, ip: sameIp });
     expect(last.status).toBe(429);
+  });
+
+  it('протухший (но структурно годный) пропуск — 401 с кодом pass_expired, отдельным от pass_invalid', async () => {
+    // Правило 3 брифа называет ОБА случая («негодный или протухший пропуск
+    // — 401 с кодом»), но до сих пор тестировался только структурно мусорный
+    // токен ('v1.garbage.garbage', код pass_invalid). Настоящий протухший —
+    // валидный по форме и MAC-у, просто nowSec >= expiresAt — отдельная
+    // ветка verifyBagPass(), непроверенная на уровне маршрута.
+    const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
+    const longAgo = Math.floor(Date.now() / 1000) - 13 * 60 * 60; // BAG_PASS_TTL_SEC = 12ч
+    const { issueBagPass } = await import('../bagPass.js');
+    const { token } = issueBagPass(aliceAddr, longAgo);
+    void alice;
+
+    const fakeKey = `${aliceAddr}/1700000000000-00000000-0000-0000-0000-000000000000.bin`;
+    const res = await getBag({ pass: token, key: fakeKey, ip: freshIp() });
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('pass_expired');
+    expect(res.body.code).not.toBe('pass_invalid');
+  });
+
+  it('запись в индексе есть, а файла на диске нет — 404, не 500', async () => {
+    // Снятие проверки fs.existsSync(filePath) не поймано было ничем: без
+    // неё маршрут дошёл бы до markFetched()/чтения потока и упал бы на
+    // отсутствующем файле как 500, а не ответил честным "нет такого".
+    // Строим ИМЕННО этот рассинхрон напрямую через recordBag() — обычный
+    // путь (PUT) всегда пишет файл, так рассинхрон получить нельзя.
+    const { address: aliceAddr } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const bobPass = await issuePassFor(bob, freshIp());
+
+    const { bagKeyFor, recordBag } = bagStoreNs;
+    const key = bagKeyFor(bobAddr);
+    recordBag({ sender: aliceAddr, recipient: bobAddr, key, size: 3, uploadedAt: Date.now() });
+    // Файл на диске сознательно не создаётся — только запись в индексе.
+
+    const res = await getBag({ pass: bobPass, key, ip: freshIp() });
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Bag not found', code: 'bag_not_found' });
   });
 });
