@@ -861,6 +861,112 @@ describe('И-2 (пятый раунд) — bag-meta.json = "null" не роня�
   );
 });
 
+// ─── Закрывающий раунд ревью Задачи 4 (chat-transport-storage) — полная
+// потеря индекса обязана быть громкой, а метла сирот обязана отказаться
+// работать, пока индексу нельзя верить ─────────────────────────────────────
+//
+// Порча ОДНОЙ записи (I1 выше) уже громкая (два console.error) и не сносит
+// файл — sweepOrphanFiles() по-прежнему видит запись в _bagMeta (пусть и
+// отбракованную по смыслу) и её файл не трогает. Полная потеря индекса —
+// нечитаемый JSON, null, массив, обрезанный файл после краха посреди
+// записи (И-2 выше, живёт прямо над этим блоком) — была НЕМОЙ: raw молча
+// становится {}, ровно тем же кодовым путём, что и легитимное "файла ещё
+// нет" на свежей установке. Разница в последствии огромная: с пустым
+// _bagMeta метла сирот (метёт по mtime всё, чего нет в индексе) считает
+// сиротой КАЖДЫЙ настоящий мешок на складе. Пока cleanupBags() не
+// вызывалась нигде (до Задачи 4) это было безвредно. Задача 4 подключила
+// её к ночному расписанию — и один битый bag-meta.json теперь означает
+// потерю всей переписки через BAG_UNREAD_TTL_MS (30д по умолчанию), молча,
+// ночью. Различаем "файла нет" (легитимно пусто) от "файл есть, но не
+// смог быть прочитан как индекс" (потеря доверия) — и гейтим метлу сирот
+// на втором случае.
+describe('закрывающий раунд ревью Задачи 4 — полная потеря индекса громкая, метла сирот её уважает', () => {
+  it.each([
+    ['нечитаемый JSON', '{ not valid json'],
+    ['null', 'null'],
+    ['массив', '[1,2,3]'],
+    ['обрезанный посреди записи (крах на полпути)', '{"0xabc": {"sender": "0x'],
+  ])('%s — индекс по-прежнему пуст, но теперь громко, отдельной строкой от "dropped N corrupt entries"', (_label, raw) => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      fs.writeFileSync(path.join(TMP, 'bag-meta.json'), raw, 'utf8');
+      _loadBagMeta();
+
+      expect(listBagsFor(ALICE)).toEqual([]); // поведение индекса не изменилось — по-прежнему пуст
+
+      const messages = spy.mock.calls.map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes('FAILED TO LOAD INDEX'))).toBe(true);
+      // Не подделка под summary порчи ОТДЕЛЬНЫХ записей — это другая находка,
+      // другой текст, и по нему в логе нельзя перепутать «пять записей, одна
+      // битая» с «весь файл потерян».
+      expect(messages.some((m) => m.includes('dropped') && m.includes('corrupt'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('файла нет вовсе (свежая установка) — легитимное пустое состояние, НЕ считается потерей индекса', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // beforeEach уже снёс bag-meta.json этого файла тестов — файла точно нет.
+      _loadBagMeta();
+      const messages = spy.mock.calls.map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes('FAILED TO LOAD INDEX'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('после провала загрузки метла сирот НЕ сносит настоящий мешок, состарившийся за порог сирот — раньше снесла бы', () => {
+    const now = Date.now();
+    // Настоящий файл мешка на диске, как будто индекс потерялся уже ПОСЛЕ
+    // того, как этот мешок был принят (реалистично: обрезался при
+    // следующей же записи после него).
+    const key = bagKeyFor(ALICE);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+    const old = new Date(now - 40 * DAY); // старше BAG_UNREAD_TTL_MS (30д)
+    fs.utimesSync(fp, old, old);
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{ not valid json', 'utf8');
+    _loadBagMeta(); // индекс не загрузился — _bagMeta пуст, файл выглядит сиротой
+
+    cleanupBags(now);
+
+    expect(fs.existsSync(fp)).toBe(true); // пережил чистку — метла отказалась мести не глядя
+  });
+
+  it('контрольная проверка: при УДАЧНОЙ загрузке метла сирот по-прежнему метёт как раньше — гейт не выключил её насовсем', () => {
+    const now = Date.now();
+    const orphanDir = path.join(bagStore.DIR_BAGS, ALICE);
+    fs.mkdirSync(orphanDir, { recursive: true });
+    const orphan = path.join(orphanDir, 'real-orphan.bin');
+    fs.writeFileSync(orphan, 'x');
+    const old = new Date(now - 40 * DAY);
+    fs.utimesSync(orphan, old, old);
+    // beforeEach уже сделал успешную _loadBagMeta() над (отсутствующим) файлом.
+
+    cleanupBags(now);
+
+    expect(fs.existsSync(orphan)).toBe(false); // как и раньше — метла работает, когда индексу можно верить
+  });
+
+  it('провал загрузки логируется отдельной строкой и в cleanupBags() тоже — не только в _loadBagMeta()', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+      _loadBagMeta();
+      cleanupBags(Date.now());
+
+      const messages = spy.mock.calls.map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes('SKIPPING orphan sweep'))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 // ─── I1 (четвёртый раунд) — markFetched/bagMetaOf травят Object.prototype ──
 //
 // Находка ревью: C2 поставил assertBagKey на recordBag(), но markFetched()

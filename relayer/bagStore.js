@@ -332,20 +332,52 @@ function isValidBagMetaEntry(key, meta) {
   }
 }
 
+// Закрывающий раунд ревью Задачи 4 (chat-transport-storage): истинность —
+// «последняя загрузка индекса действительно нашла и разобрала настоящий
+// индекс», а не «файла ещё не было» (свежая установка — легитимное пустое
+// состояние). cleanupBags() ниже обязана свериться с этим флагом ПЕРЕД тем,
+// как звать sweepOrphanFiles(): с недостоверным (то есть насильно пустым)
+// _bagMeta метла сирот метёт по mtime всё, чего нет в индексе, — то есть
+// считает сиротой КАЖДЫЙ настоящий мешок на складе. Пока cleanupBags() не
+// была подключена ни к какому расписанию, это было безвредно; Задача 4
+// подключила её к ночному крону, и один битый bag-meta.json (нечитаемый
+// JSON, null, массив, обрезанный файл после краха посреди записи) теперь
+// означает потерю всей непрочитанной переписки через BAG_UNREAD_TTL_MS,
+// молча, ночью — если не остановить метлу здесь.
+let _bagMetaLoadOk = true;
+
 export function _loadBagMeta() {
   let raw = {};
-  try {
-    const parsed = fs.existsSync(BAG_META_PATH) ? JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8')) : {};
-    // И-2 (пятый раунд): JSON.parse('null') УСПЕШНО возвращает null — не
-    // ловится try/catch выше (разбор не бросил). Object.entries(null) чуть
-    // ниже бросает TypeError, ломая загрузку целиком (а на уровне модуля —
-    // и весь процесс). Годен только настоящий объект вида {key: meta};
-    // null/массив/примитив — тот же случай, что и совсем нечитаемый JSON:
-    // начинаем с пустого индекса, не роняя загрузку.
-    raw = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-  } catch {
-    raw = {};
+  // И-N (закрывающий раунд): раньше «файла нет» (свежая установка) и «файл
+  // есть, но не читается как индекс» (потеря доверия) шли одним и тем же
+  // путём — raw молча становился {} в обоих случаях, и ничего не отличало
+  // первый запуск от испорченного диска. Различаем явно: файла действительно
+  // нет → легитимно пусто, loadOk остаётся true; файл есть, но не JSON,
+  // или JSON, но не индекс (null/массив/примитив) → потеря доверия, громко.
+  let loadOk = true;
+  if (fs.existsSync(BAG_META_PATH)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8'));
+      // И-2 (пятый раунд): JSON.parse('null') УСПЕШНО возвращает null — не
+      // ловится try/catch выше (разбор не бросил). Object.entries(null)
+      // чуть ниже бросил бы TypeError, ломая загрузку целиком (а на уровне
+      // модуля — и весь процесс). Годен только настоящий объект вида
+      // {key: meta}; null/массив/примитив — та же потеря доверия, что и
+      // совсем нечитаемый JSON, не крах загрузки.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        raw = parsed;
+      } else {
+        loadOk = false;
+      }
+    } catch {
+      // В том числе обрезанный файл после краха посреди записи — самый
+      // вероятный боевой случай (кончилось место на диске, процесс убит
+      // между writeFileSync и renameSync temp-файла в _saveBagMeta()).
+      loadOk = false;
+    }
   }
+  // else: файла действительно нет — свежая установка, легитимное пустое
+  // состояние, loadOk остаётся true.
 
   // Бесплатное улучшение от ревьюера (пятый раунд): Object.create(null),
   // не {} — assertBagKeyShape уже запирает '__proto__'/'constructor' на
@@ -372,7 +404,21 @@ export function _loadBagMeta() {
   if (dropped) {
     console.error(`[bags] _loadBagMeta: dropped ${dropped} corrupt ${dropped === 1 ? 'entry' : 'entries'} out of ${Object.keys(raw).length} from ${BAG_META_PATH}`);
   }
+  // Отдельная строка, узнаваемым текстом, НЕ похожим на «dropped N corrupt
+  // entries» выше — та находка про порчу отдельных записей внутри в
+  // остальном годного индекса, эта про полную потерю самого индекса. Кто
+  // читает лог, обязан суметь отличить «пять записей, одна битая» от «весь
+  // файл потерян» с первого взгляда, не сверяя числа.
+  if (!loadOk) {
+    console.error(
+      `[bags] _loadBagMeta: FAILED TO LOAD INDEX from ${BAG_META_PATH} — file exists but could not be read as ` +
+      `an index (corrupt/truncated JSON, or not an object: null/array/primitive). Starting with an EMPTY ` +
+      `in-memory index. cleanupBags() will refuse to run its orphan sweep until a later load succeeds — every ` +
+      `real bag file would otherwise look like an orphan and be swept by mtime.`
+    );
+  }
 
+  _bagMetaLoadOk = loadOk;
   _bagMeta = clean;
   return _bagMeta;
 }
@@ -790,7 +836,27 @@ export function cleanupBags(nowMs = Date.now()) {
     // работают с файловой системой напрямую, не зависят от успеха
     // сохранения индекса — finally гарантирует, что упавшее сохранение не
     // отменяет их молча для НЕСВЯЗАННЫХ настоящих сирот.
-    removed += sweepOrphanFiles(nowMs);
+    //
+    // Закрывающий раунд ревью Задачи 4: но НЕЗАВИСИМОСТЬ от сохранения —
+    // не то же самое, что независимость от ЗАГРУЗКИ. sweepOrphanFiles()
+    // метёт по mtime всё, чего нет в _bagMeta; если последняя _loadBagMeta()
+    // не смогла прочитать индекс (_bagMetaLoadOk === false — см. там же),
+    // _bagMeta пуст не потому, что мешков нет, а потому, что мы не знаем,
+    // что наше. С пустым недостоверным индексом метла снесла бы КАЖДЫЙ
+    // настоящий мешок на складе как сироту. Лучше копить мусор, чем сносить
+    // живое — отказываемся мести, пока индексу нельзя верить, и говорим об
+    // этом громко: removeEmptyRecipientDirs() ниже безопасен всегда (сносит
+    // только каталоги, физически пустые на диске, — реальному мешку в них
+    // ничего не грозит), поэтому он не гейтится.
+    if (_bagMetaLoadOk) {
+      removed += sweepOrphanFiles(nowMs);
+    } else {
+      console.error(
+        '[bags] cleanupBags: SKIPPING orphan sweep — the index failed to load (see the ' +
+        'FAILED TO LOAD INDEX line from _loadBagMeta) and cannot be trusted to tell real bags ' +
+        'from orphans; garbage will accumulate until the index loads successfully again, on purpose.'
+      );
+    }
     removeEmptyRecipientDirs();
   }
 
