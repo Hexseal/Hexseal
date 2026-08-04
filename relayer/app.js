@@ -27,7 +27,7 @@ dotenv.config({ path: '.env.relayer' });
 // дешевле и надёжнее как сигнал для читателя, поэтому он такой.
 import {
   bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
-  assertBagStoreReady, MAX_BAG_SIZE,
+  assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
 
@@ -900,6 +900,28 @@ export async function runFileCleanup() {
       } catch {}
     }
   } catch {}
+
+  // Задача 4 (chat-transport-storage): мешки переписки — отдельный try, тот
+  // же принцип изоляции, что у двух блоков выше (файлы / temp-каталоги).
+  // Падение чистки мешков не должно оставить вложения непочищенными, и
+  // наоборот — до этой правки cleanupBags() не вызывалась вообще нигде, так
+  // что просроченные мешки и обрезки от оборванных загрузок не удалялись
+  // никогда (см. test/cleanup.test.js — тест ловит именно это на боевом
+  // умолчании BAG_UNREAD_TTL_MS, без переопределения в тесте). cleanupBags()
+  // сама синхронна (никаких await внутри) и работает с общим in-process
+  // состоянием (_bagMeta в bagStore.js) — так что параллельный вызов из
+  // наложившихся друг на друга запусков runFileCleanup() (ночной поверх ещё
+  // не отработавшего) не может исполниться вперемешку: событийный цикл
+  // Node.js гарантирует, что один синхронный вызов cleanupBags() всегда
+  // отрабатывает от начала до конца, прежде чем управление может перейти ко
+  // второму — это единственная причина, по которой отдельный try здесь
+  // достаточен и не требует своего собственного лока.
+  try {
+    const { removed, kept } = cleanupBags();
+    if (removed) console.log(`[bags] cleanup: removed ${removed}, kept ${kept}`);
+  } catch (e) {
+    console.error('[bags] cleanup error:', e.message);
+  }
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
