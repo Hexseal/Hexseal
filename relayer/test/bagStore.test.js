@@ -67,6 +67,15 @@ function put(recipient, sender, uploadedAt, extra = {}) {
 beforeEach(() => {
   fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true });
   fs.rmSync(path.join(TMP, 'bag-meta.json'), { force: true });
+  // Второй тур закрывающего ревью Задачи 4: _recoverBagMetaFromDisk()
+  // переименовывает битый bag-meta.json в bag-meta.json.corrupt-<ts>
+  // вместо того чтобы его стирать — правильное поведение в бою, но без
+  // уборки здесь эти файлы копятся в общем TMP на весь прогон файла
+  // тестов (TMP один на всё, чистится только в afterAll) и путают тесты,
+  // которые сами считают "сколько файлов-карантина сейчас лежит".
+  for (const f of fs.readdirSync(TMP)) {
+    if (f.startsWith('bag-meta.json.corrupt-')) fs.rmSync(path.join(TMP, f), { force: true });
+  }
   _loadBagMeta();
 });
 
@@ -963,6 +972,222 @@ describe('закрывающий раунд ревью Задачи 4 — пол
       expect(messages.some((m) => m.includes('SKIPPING orphan sweep'))).toBe(true);
     } finally {
       spy.mockRestore();
+    }
+  });
+});
+
+// ─── Второй тур закрывающего ревью Задачи 4 — гейт держался ровно до первой
+// же записи ──────────────────────────────────────────────────────────────
+//
+// Найдено координатором живым запуском: гейт из предыдущего блока (выше)
+// действительно запирает метлу сирот НА ЭТОТ ПРОГОН — но при первой же
+// последующей персистентной записи (recordBag/markFetched/сама cleanupBags,
+// если она что-то удалила) _saveBagMeta() перезаписывает битый файл
+// содержимым ТЕКУЩЕГО _bagMeta — а он после провала загрузки пуст. Три
+// следствия: (1) первая же запись стирает битый оригинал валидным JSON с
+// одной новой записью; (2) улика уничтожена — разбираться больше нечем;
+// (3) на следующем перезапуске этот обеднённый файл читается ШТАТНО,
+// _bagMetaLoadOk снова true, гейт снят — и метла сирот сносит КАЖДЫЙ
+// настоящий мешок, которого нет в этом однозаписном индексе, как сироту.
+// Воспроизведено координатором вживую до фикса ниже.
+//
+// Чинится не просто гейтом, а восстановлением: имя файла мешка само несёт
+// адресата и время загрузки (bagKeyFor: "<recipient>/<uploadedAt>-<uuid>.
+// bin") — при провале загрузки сканируем DIR_BAGS и собираем индекс заново
+// оттуда, ДО того как что-либо успеет затереть битый файл. sender
+// неизвестен (пустая строка — содержимое запечатано, отправитель внутри
+// самого сообщения), мешок считается непрочитанным и не усыновлённым
+// сделкой — консервативно, живёт ДОЛЬШЕ, а не меньше. Битый оригинал не
+// остаётся на прежнем месте (там его стёрла бы первая же запись) —
+// переименовывается в сторону ПЕРЕД пересчётом индекса. Восстановленный
+// индекс тут же персистится, чтобы не зависеть от случайности "будет ли
+// после этого хоть одна запись до следующего перезапуска". Уборщик сирот
+// всё равно не работает в этот прогон (см. блок выше, _bagMetaLoadOk
+// остаётся false) — реконструкция это хорошая догадка, а не факт.
+describe('второй тур закрывающего ревью Задачи 4 — восстановление описи с диска, а не просто гейт', () => {
+  it('битая опись переименовывается в сторону ДО пересчёта — следующая запись не затирает оригинал', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{ not valid json', 'utf8');
+    _loadBagMeta();
+
+    // "Кладём ОДИН новый мешок" — ровно шаг из отчёта координатора, который
+    // раньше затирал битый (тогда уже пустой) индекс валидным с одной
+    // записью.
+    const key = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
+    recordBag({ sender: BOB, recipient: ALICE, key, size: 6, uploadedAt: Date.now() });
+
+    const quarantined = fs.readdirSync(TMP).filter((f) => f.startsWith('bag-meta.json.corrupt-'));
+    expect(quarantined.length).toBe(1);
+    // Оригинал под новым именем — байт в байт тот же мусор, не тронут.
+    expect(fs.readFileSync(path.join(TMP, quarantined[0]), 'utf8')).toBe('{ not valid json');
+  });
+
+  it('после провала загрузки настоящие мешки с диска видны в списке (восстановлены, не потеряны из виду)', () => {
+    const key = bagKeyFor(ALICE);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    _loadBagMeta();
+
+    const list = listBagsFor(ALICE);
+    expect(list.some((b) => b.key === key)).toBe(true);
+  });
+
+  it('уборщик сирот по-прежнему не запускается в прогоне восстановления, даже когда есть что реконструировать', () => {
+    const key = bagKeyFor(ALICE);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      _loadBagMeta();
+      cleanupBags(Date.now());
+      const messages = spy.mock.calls.map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes('SKIPPING orphan sweep'))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('восстановленный мешок считается непрочитанным и не усыновлённым — живёт по длинному сроку BAG_UNREAD_TTL_MS, не по короткому', () => {
+    const key = bagKeyFor(ALICE);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    _loadBagMeta();
+
+    const meta = bagMetaOf(key);
+    expect(meta).toBeDefined();
+    expect(meta.firstFetchedAt).toBeNull();
+    expect(meta.dealDeadline).toBeNull();
+    expect(meta.sender).toBe('');
+    // Срок = uploadedAt + BAG_UNREAD_TTL_MS (правило 3, непрочитан) — не
+    // BAG_TTL_MS (правило 2, было бы короче, если бы ошибочно считался
+    // прочитанным) и не min(dealDeadline, ...) (правило 1, если бы
+    // ошибочно считался усыновлённым сделкой).
+    expect(bagExpiryAt(meta)).toBe(meta.uploadedAt + bagStore.BAG_UNREAD_TTL_MS);
+  });
+
+  // Главный тест координатора: цепочка целиком, не отдельное звено. Ровно
+  // сценарий из отчёта — от битого файла через "кладём один новый мешок" до
+  // ВТОРОГО запуска уборщика после штатной загрузки восстановленного
+  // индекса. Раньше падал на последнем шаге: настоящий мешок (не тот,
+  // что был "новой записью") сносился как сирота.
+  it('цепочка целиком (сценарий координатора): битый индекс → восстановление → новая запись → перезапуск → настоящие мешки НЕ снесены', () => {
+    const now = Date.now();
+
+    // Мешок, принятый ДО того, как индекс потерялся.
+    const key1 = bagKeyFor(ALICE);
+    const fp1 = path.join(bagStore.DIR_BAGS, key1);
+    fs.mkdirSync(path.dirname(fp1), { recursive: true });
+    fs.writeFileSync(fp1, 'sealed-1');
+
+    // Индекс потерялся — обрезанный файл, как после краха посреди записи.
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{ not valid json', 'utf8');
+
+    // "Запуск 1" — релеер поднимается после краха.
+    _loadBagMeta(); // восстанавливает индекс с диска, тут же персистит
+    cleanupBags(now); // уборщик пропущен этот прогон — mesh1 не в опасности так и так
+
+    expect(fs.existsSync(fp1)).toBe(true);
+
+    // "Кладём ОДИН новый мешок" — буквально шаг координатора.
+    const key2 = bagKeyFor(BOB);
+    const fp2 = path.join(bagStore.DIR_BAGS, key2);
+    fs.mkdirSync(path.dirname(fp2), { recursive: true });
+    fs.writeFileSync(fp2, 'sealed-2');
+    recordBag({ sender: ALICE, recipient: BOB, key: key2, size: 8, uploadedAt: now });
+
+    // Опись на диске обязана содержать ОБЕ записи — восстановленную (key1)
+    // и новую (key2), не только новую.
+    const onDisk = JSON.parse(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8'));
+    expect(Object.keys(onDisk).sort()).toEqual([key1, key2].sort());
+
+    // "Перезапуск" — свежий _loadBagMeta() читает то, что реально лежит на
+    // диске. Раньше это был момент провала: обеднённый (тогда — 1-записный)
+    // индекс читался штатно, флаг вставал в "всё хорошо", метла получала
+    // полную свободу.
+    _loadBagMeta();
+
+    // Находка при написании этого теста (снята отдельным фиксом
+    // isValidBagMetaEntry): восстановленная запись (key1, sender='') сама
+    // переживала СВОЮ ЖЕ первую перезагрузку по обычному пути — валидатор
+    // отбраковывал '' как форму адреса. Проверяем это ЯВНО, а не только
+    // косвенно через "файл ещё жив по mtime" (свежий файл пережил бы даже
+    // снятую с индекса метлу просто по молодости — тест на это ниже не
+    // ловил бы регресс).
+    expect(bagMetaOf(key1)).toBeDefined();
+    expect(bagMetaOf(key2)).toBeDefined();
+
+    // Запуск 2 — индекс загрузился штатно, метла разрешена. Оба мешка
+    // проиндексированы (восстановленный — консервативно как непрочитанный,
+    // 30-дневный) — ни один не задет, даже с разрешённой метлой.
+    cleanupBags(now);
+
+    expect(fs.existsSync(fp1)).toBe(true);
+    expect(fs.existsSync(fp2)).toBe(true);
+  });
+
+  // Отдельный, узкий тест на то, зачем именно НЕМЕДЛЕННЫЙ персист — тест
+  // "цепочка целиком" выше его НЕ ловит: там сразу после восстановления
+  // идёт recordBag() новой записи, а recordBag() сам сохраняет ПОЛНЫЙ
+  // текущий _bagMeta (в памяти уже содержащий восстановленное) — так что
+  // диск получает верные данные даже если восстановление само по себе не
+  // персистировало ничего. Опасность — в перезапуске БЕЗ единой
+  // промежуточной записи: битый оригинал уже унесён в карантин ДО того,
+  // как что-либо успело записать восстановленное на его место. Если бы
+  // восстановление персистировало не сразу, а полагалось на "рано или
+  // поздно кто-нибудь запишет", второй _loadBagMeta() увидел бы ПУСТОЕ
+  // МЕСТО там, где раньше лежал битый файл (мы же его сами унесли) —
+  // и принял бы это за легитимную "свежую установку" (loadOk=true не
+  // потому что индекс проверен, а потому что формально файла как бы
+  // никогда не было), вайпнув восстановленное из памяти и сняв гейт.
+  it('восстановленный индекс персистится СРАЗУ — перезапуск БЕЗ единой промежуточной записи всё равно видит восстановленные мешки, не пустоту', () => {
+    const key = bagKeyFor(ALICE);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{ not valid json', 'utf8');
+    _loadBagMeta(); // восстановление №1 — оригинал унесён в карантин
+
+    // "Перезапуск" СРАЗУ вслед, без единого recordBag()/markFetched() между.
+    _loadBagMeta(); // "перезапуск" №2
+
+    expect(bagMetaOf(key)).toBeDefined();
+  });
+
+  it('провал персиста восстановленного индекса — громкий лог, но восстановление остаётся в памяти для этого процесса', () => {
+    const key = bagKeyFor(ALICE);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const realWriteFileSync = fs.writeFileSync;
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((p, ...rest) => {
+      if (String(p).includes('bag-meta.json.tmp-')) throw new Error('ENOSPC (симулировано)');
+      return realWriteFileSync(p, ...rest);
+    });
+    try {
+      expect(() => _loadBagMeta()).not.toThrow();
+
+      const messages = errSpy.mock.calls.map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes('FAILED to persist reconstructed index'))).toBe(true);
+
+      // В памяти — восстановлено, несмотря на провал персиста.
+      expect(listBagsFor(ALICE).some((b) => b.key === key)).toBe(true);
+    } finally {
+      writeSpy.mockRestore();
+      errSpy.mockRestore();
     }
   });
 });
