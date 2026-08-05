@@ -28,6 +28,7 @@ dotenv.config({ path: '.env.relayer' });
 import {
   bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
+  adoptPairBags, dealDeadlineFromDispute,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
 
@@ -227,6 +228,66 @@ async function getDisputedPairIds() {
   } catch (e) {
     console.error('[files] getDisputed lookup failed, skipping TTL protection this run:', e.message);
     return new Set(); // fail open on the on-chain read — never block cleanup entirely
+  }
+}
+
+// ─── Задача 5 (chat-transport-storage): усыновление переписки сделкой ────────
+//
+// §6 спеки: бриф обсуждают ДО сделки — без усыновления самое важное истечёт
+// раньше, чем возникнет спор, а цепочка сообщений укажет на человека как на
+// утаившего, хотя он ничего не прятал. "Откуда берётся событие" — тем же
+// путём, каким релеер уже узнаёт о спорах выше (getDisputedPairIds()): один
+// registry.getDisputed() на прогон runFileCleanup(), никакого отдельного
+// опроса/крона не заводится.
+//
+// Намеренно СВОЙ вызов getDisputed(), не переиспользование готового
+// Set-а из getDisputedPairIds(): тому нужен только pairId, усыновлению
+// дополнительно нужны адрес самого агримента (для getDetails()/
+// DISPUTE_WINDOW() ниже) — расширять уже протестированную и используемую
+// в другом месте (защита вложений) функцию под нового, более требовательного
+// вызывающего было бы риском для неё, а не выгодой для этой задачи. Цена —
+// второй, дешёвый read-only вызов getDisputed() за тот же прогон; споры —
+// редкий путь (§7 спеки), так что это не пере-запрос "на файл", а "на ночь".
+//
+// disputedAt читается через Agreement.getDetails().disputedAt_ — ту же точку
+// входа, которой уже пользуется disputeResponseDeadline() ниже по файлу —
+// а не через RegistryStorage.AgreementRecord.resolvedAt, хотя для статуса
+// DISPUTED они формально совпадают (raiseDispute() выставляет оба в одной
+// транзакции, src/Agreement.sol:684,695): читать источник, который ИМЕНЕМ
+// говорит "disputedAt", явно надёжнее, чем полагаться на совпадение полей
+// двух разных контрактов, которое ничем не гарантировано на будущее.
+//
+// Каждая спорная запись — в СВОЁМ try: одна не читающаяся/бракованная
+// запись (например, staticcall до старого/несовместимого клона) не должна
+// останавливать усыновление для ВСЕХ остальных disputed-пар этого прогона.
+async function adoptDisputedPairBags(nowMs = Date.now()) {
+  let disputed;
+  try {
+    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
+    disputed = await registry.getDisputed();
+  } catch (e) {
+    console.error('[bags] adoption: getDisputed lookup failed, skipping this run:', e.message);
+    return;
+  }
+
+  for (const r of disputed) {
+    try {
+      const pairId = pairIdFromAddresses(r.client, r.executor);
+      const agr = new ethers.Contract(r.agreement, AGREEMENT_MINI_ABI, provider);
+      const details = await agr.getDetails();
+      const disputeWindowSec = await agr.DISPUTE_WINDOW();
+      // Цепь считает время в секундах (block.timestamp), bagStore.js — в мс
+      // (Date.now()-based, как и весь остальной _bagMeta).
+      const disputedAtMs = Number(details.disputedAt_) * 1000;
+      const disputeWindowMs = Number(disputeWindowSec) * 1000;
+      const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
+      const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
+      if (adopted) {
+        console.log(`[bags] adoption: extended ${adopted} bag(s) for the pair of disputed agreement ${r.agreement} to ${new Date(dealDeadline).toISOString()}`);
+      }
+    } catch (e) {
+      console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);
+    }
   }
 }
 
@@ -928,6 +989,22 @@ export async function runFileCleanup() {
   // узнаваемого сообщения — общий "[NODE-CRON] [ERROR]" не называет ИМЯ
   // задачи (в index.js их две — файлы/мешки и казна, различить можно
   // только по стеку).
+  // Задача 5: усыновление — ДО cleanupBags(), не после. Порядок в этой же
+  // функции значим: если поменять местами, продлённый в этом же прогоне
+  // мешок мог бы уже попасть под нож основного цикла cleanupBags() чуть
+  // ниже (оба читают/пишут один и тот же _bagMeta синхронно, событийный
+  // цикл между ними не переключается) — и усыновление успело бы "спасти"
+  // мешок только СО СЛЕДУЮЩЕЙ ночи, ровно то, чего задача и должна избежать
+  // (§6 спеки: важное не должно успеть истечь раньше усыновления). Отдельный
+  // try — тот же принцип изоляции, что и у остальных блоков этой функции:
+  // падение усыновления не должно останавливать ни чистку мешков, ни
+  // вложения, и наоборот.
+  try {
+    await adoptDisputedPairBags();
+  } catch (e) {
+    console.error('[bags] adoption error:', e.stack || e.message);
+  }
+
   try {
     const { removed, kept } = cleanupBags();
     // Закрывающий раунд ревью: печатать ВСЕГДА, не только когда removed>0

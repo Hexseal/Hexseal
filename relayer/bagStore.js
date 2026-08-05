@@ -61,6 +61,15 @@ const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
 // при этом не пропускает произвольно длинную строку.
 const BAG_KEY_RE = /^0x[0-9a-f]{40}\/[0-9]{1,15}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.bin$/;
 
+// Задача 5: форма pairId, ровно то, что производит _pairIdFromAddresses()
+// ниже — два адреса нижним регистром, отсортированные, склеенные через '-'.
+// Не проверка того, что вызывающий действительно имеет отношение к паре
+// (у adoptPairBags() нет способа это доказать — см. заголовок функции ниже
+// и Q5 в отчёте Задачи 5), только форма: мусорная строка не должна тихо
+// пройти как "просто ничего не нашёл" и остаться неотличимой от "нашёл и
+// не совпало ни с одной записью".
+const PAIR_ID_RE = /^0x[0-9a-f]{40}-0x[0-9a-f]{40}$/;
+
 // И-3 (пятый раунд): раньше STORAGE_DIR/DIR_BAGS/BAG_META_PATH и все
 // четыре срока/лимита были `const`, посчитанными РОВНО ОДИН РАЗ на
 // импорте. app.js зовёт dotenv.config() В ТЕЛЕ, после того как ESM уже
@@ -116,6 +125,34 @@ export let MAX_BAG_SIZE;
 // но правило не делало для таких исключения — перенесена в _refreshConfig()
 // тем же приёмом, что и остальные четыре.
 export let CLOCK_SKEW_ALLOWANCE_MS;
+// Задача 5 (chat-transport-storage) — усыновление переписки сделкой. Три
+// новые ручки, тот же приём `export let` + пересчёт в _refreshConfig(), что
+// и у пяти существующих выше (И-3, пятый раунд): env с явным умолчанием,
+// живая ES-привязка, ревалидация в assertBagStoreReady().
+//
+// BAG_ADOPTION_LOOKBACK_MS — как далеко назад от момента усыновления
+// adoptPairBags() ищет мешки этой пары (§6 спеки: бриф обсуждают до сделки,
+// 30 дней — "предложение, а не измеренная величина", см. спека §6/§12).
+export let BAG_ADOPTION_LOOKBACK_MS;
+// APPEAL_REVIEW_WINDOW_DAYS — копия одноимённой private-константы
+// ArbiterRegistryFacet.sol:147 (4 дня на сегодня). Из цепи её прочитать
+// нельзя (private constant), значит релеер обязан держать свою копию — а
+// расхождение копии с оригиналом ловит script/check-appeal-window.sh
+// (тот же класс гейта, что check-storage-layout.sh/check-gasless-sender.sh).
+// В ДНЯХ, не в мс — гейт грепает именно это имя и именно целое число дней,
+// той же формой, что и `4 days` в самом контракте.
+export let APPEAL_REVIEW_WINDOW_DAYS;
+// BAG_DEAL_GRACE_MS — небольшой буфер СВЕРХ disputedAt+DISPUTE_WINDOW+
+// APPEAL_REVIEW_WINDOW (см. dealDeadlineFromDispute() ниже). Бриф Задачи 5
+// не дал умолчания для этой ручки явно (в отличие от 30 дней для лукбэка и
+// 4 дней для окна апелляции) — выбрано намеренно: сутки, тот же порядок
+// величины, что и ночной цикл чистки (runFileCleanup через node-cron), с
+// запасом на то, что цепь и релеер не проверяют время в один и тот же миг.
+// 0 — легитимное значение (см. assertNonNegativeFiniteNumber ниже), не
+// assertPositiveFiniteNumber: "без буфера вообще" осмысленная настройка,
+// в отличие от нулевого TTL/потолка/лукбэка, каждый из которых фактически
+// выключил бы соответствующее правило целиком.
+export let BAG_DEAL_GRACE_MS;
 let STORAGE_DIR;
 let BAG_META_PATH;
 
@@ -133,6 +170,10 @@ function _refreshConfig() {
   // как СТРОКА непустая и truthy — || берёт её, а не умолчание, ровно как и
   // для остальных четырёх ручек выше.
   CLOCK_SKEW_ALLOWANCE_MS = Number(process.env.CLOCK_SKEW_ALLOWANCE_MS || 5 * 60 * 1000);
+
+  BAG_ADOPTION_LOOKBACK_MS = Number(process.env.BAG_ADOPTION_LOOKBACK_MS || 30 * 24 * 60 * 60 * 1000);
+  APPEAL_REVIEW_WINDOW_DAYS = Number(process.env.APPEAL_REVIEW_WINDOW_DAYS || 4);
+  BAG_DEAL_GRACE_MS = Number(process.env.BAG_DEAL_GRACE_MS || 24 * 60 * 60 * 1000);
 }
 _refreshConfig(); // начальные значения при импорте — то же, что раньше делали `const`-инициализаторы
 
@@ -194,6 +235,14 @@ export function assertBagStoreReady() {
   assertPositiveFiniteNumber('BAG_MAX_AGE_MS', BAG_MAX_AGE_MS);
   assertPositiveFiniteNumber('MAX_BAG_SIZE', MAX_BAG_SIZE);
   assertNonNegativeFiniteNumber('CLOCK_SKEW_ALLOWANCE_MS', CLOCK_SKEW_ALLOWANCE_MS);
+  // Задача 5: лукбэк и окно апелляции — как и остальные TTL/потолки выше,
+  // 0 фактически выключил бы правило целиком (лукбэк=0 — усыновление никогда
+  // ничего не находит; окно апелляции=0 — разошлось бы с контрактом, где оно
+  // всегда 4 дня, и сам гейт стал бы бессмысленным). Буфер (GRACE), наоборот,
+  // 0 — легитимная настройка ("без буфера"), не "выключено".
+  assertPositiveFiniteNumber('BAG_ADOPTION_LOOKBACK_MS', BAG_ADOPTION_LOOKBACK_MS);
+  assertPositiveFiniteNumber('APPEAL_REVIEW_WINDOW_DAYS', APPEAL_REVIEW_WINDOW_DAYS);
+  assertNonNegativeFiniteNumber('BAG_DEAL_GRACE_MS', BAG_DEAL_GRACE_MS);
   fs.mkdirSync(DIR_BAGS, { recursive: true });
 }
 
@@ -205,6 +254,18 @@ function assertAddress(fn, value) {
   const addr = typeof value === 'string' ? value.toLowerCase() : null;
   if (!addr || !ETH_ADDR_RE.test(addr)) fail(fn, `invalid address: ${JSON.stringify(value)}`);
   return addr;
+}
+
+// Задача 5: не lower-casing — pairId — уже-построенный опаковый идентификатор
+// (выход _pairIdFromAddresses()/app.js:pairIdFromAddresses()), не сырой
+// адрес; в отличие от assertAddress() выше, здесь нет "приведи и прими" —
+// неверный регистр отвергается как есть, тем же принципом, что и BAG_KEY_RE
+// (форма, произведённая самим кодом, а не то, что можно нормализовать).
+function assertPairId(fn, value) {
+  if (typeof value !== 'string' || !PAIR_ID_RE.test(value)) {
+    fail(fn, `invalid pairId: ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 // Number.isSafeInteger, не Number.isInteger — тот же класс бага, что в
@@ -931,6 +992,107 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
 
   const ceiling = meta.uploadedAt + BAG_MAX_AGE_MS;
   return Math.max(base, Math.min(meta.dealDeadline, ceiling));
+}
+
+// ─── Усыновление сделкой ────────────────────────────────────────────────────
+//
+// Задача 5 (chat-transport-storage). §6 спеки: бриф обсуждают ДО сделки —
+// без усыновления самое важное истечёт раньше, чем возникнет спор, а
+// цепочка сообщений укажет на человека как на утаившего, хотя он ничего не
+// прятал. Вызывающий (app.js, тем же путём, каким он уже узнаёт о спорах —
+// см. getDisputedPairIds()) зовёт adoptPairBags() при появлении спорной
+// сделки между парой.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Срок сделки — до ОКОНЧАТЕЛЬНОГО закрытия дела, не до вердикта: вердикт
+// вынесен, человек его оспаривает — а доказательства уже стёрты, апелляция
+// без них превращается в лотерею. disputedAtMs/disputeWindowMs — уже в
+// мс и уже читаны вызывающим с цепи (Agreement.getDetails().disputedAt_ и
+// Agreement.DISPUTE_WINDOW() — тем же способом, каким уже читает фронт,
+// frontend/src/app/deal/[address]/page.tsx:389-392, и каким app.js уже
+// читает DISPUTE_WINDOW для disputeResponseDeadline()). APPEAL_REVIEW_WINDOW
+// прочитать с цепи нельзя (private constant, ArbiterRegistryFacet.sol:147) —
+// отсюда собственная копия релеера, APPEAL_REVIEW_WINDOW_DAYS, и гейт
+// script/check-appeal-window.sh, держащий копию в согласии с оригиналом.
+//
+// Чистая функция — не трогает _bagMeta и не делает I/O, поэтому проверяется
+// напрямую, без мока цепи (test/bagAdoption.test.js).
+export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
+  assertSafeInt('dealDeadlineFromDispute', 'disputedAtMs', disputedAtMs);
+  assertSafeInt('dealDeadlineFromDispute', 'disputeWindowMs', disputeWindowMs);
+  return disputedAtMs + disputeWindowMs + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+}
+
+// pairId — опаковая строка, та же форма, что производит _pairIdFromAddresses
+// (и app.js:pairIdFromAddresses — заперто тестом на совпадение обеих в
+// test/bagStore.test.js). dealDeadline — уже готовое число мс, посчитанное
+// вызывающим (обычно через dealDeadlineFromDispute() выше); эта функция сама
+// формулу не знает и не пересчитывает — только применяет её ко всем
+// подходящим записям.
+//
+// ВАЖНО (Q5 отчёта Задачи 5): adoptPairBags() НЕ имеет способа проверить,
+// что вызывающий действительно вправе усыновлять именно эту пару — тот же
+// класс допущения, что уже есть у пометки пары disputedPairIds для вложений
+// (app.js: "peerA/peerB tagging on /files/presign has no proof-of-
+// participation check"). Единственная граница, реально ограничивающая
+// злоупотребление, — потолок BAG_MAX_AGE_MS в bagExpiryAt() (не здесь):
+// сколько бы ни было передано в dealDeadline, итоговый срок мешка никогда
+// не превышает uploadedAt + BAG_MAX_AGE_MS. adoptPairBags() сознательно не
+// дублирует эту проверку — дублирование двух копий одного правила в двух
+// местах разошлось бы молча при следующей правке одного из них.
+//
+// Ищет запись по uploadedAt > nowMs - BAG_ADOPTION_LOOKBACK_MS (строго
+// больше — ровно на границе лукбэка запись НЕ усыновляется, заперто тестом
+// на границу в test/bagAdoption.test.js), выставляет dealDeadline =
+// Math.max(existing ?? 0, dealDeadline) — усыновление только продлевает,
+// никогда не откатывает более дальний срок ни от предыдущего усыновления,
+// ни (см. bagExpiryAt) от обычного правила 2/3.
+//
+// Персист — ОДИН раз на весь вызов (после цикла по всем подходящим записям),
+// не по одной записи за раз: либо весь вызов целиком лёг на диск, либо (при
+// ошибке записи) НИ ОДНА мутация этого вызова не осталась в памяти дольше
+// самого вызова — тот же приём отката, что у recordBag()/markFetched() (I2)
+// и у cleanupBags() (removedEntries). Режим недоверия (_bagMetaLoadOk) через
+// _persistUnlessDistrusted() — та же дисциплина, что и у остальных писателей
+// этого файла: мутация применяется к памяти, на диск не уходит, пока индекс
+// не заслужит доверие заново честной загрузкой.
+export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now()) {
+  assertPairId('adoptPairBags', pairId);
+  assertSafeInt('adoptPairBags', 'dealDeadline', dealDeadline);
+  assertSafeInt('adoptPairBags', 'nowMs', nowMs);
+
+  const cutoff = nowMs - BAG_ADOPTION_LOOKBACK_MS;
+  const rollback = []; // [meta, previousDealDeadline] — только записи, реально изменённые этим вызовом
+  let adopted = 0;
+
+  for (const meta of Object.values(_bagMeta)) {
+    if (meta.pairId !== pairId) continue;
+    if (!(meta.uploadedAt > cutoff)) continue; // строго больше — не >=, см. докстринг выше
+
+    const current = meta.dealDeadline ?? 0;
+    const next = Math.max(current, dealDeadline);
+    if (next === current) continue; // уже не короче — ничего менять и персистить не нужно
+
+    rollback.push([meta, meta.dealDeadline]);
+    meta.dealDeadline = next;
+    adopted++;
+  }
+
+  if (adopted) {
+    try {
+      _persistUnlessDistrusted('adoptPairBags');
+    } catch (e) {
+      // I2, тот же приём, что у recordBag()/markFetched(): не оставлять
+      // память впереди диска. Откатываем РОВНО те записи, что изменил этот
+      // вызов, к их прежнему значению (undefined, если поля не было вовсе —
+      // но dealDeadline всегда присутствует в валидной записи как минимум
+      // null, так что previousDealDeadline здесь всегда null или число).
+      for (const [meta, previous] of rollback) meta.dealDeadline = previous;
+      throw e;
+    }
+  }
+  return adopted;
 }
 
 // ─── Чистка ─────────────────────────────────────────────────────────────────
