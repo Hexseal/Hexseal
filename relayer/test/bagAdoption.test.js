@@ -697,6 +697,79 @@ describe('runFileCleanup — усыновление спорной пары', ()
     const call = errSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption'));
     expect(call).toBeDefined(); // ошибка залогирована, а не проглочена молча
   });
+
+  // Мелочь (третий закрывающий раунд ревью, находка координатора):
+  // "падение усыновления не мешает ДРУГИМ вещам" уже заперто (тест выше),
+  // но НИЧЕГО не запирало изоляцию МЕЖДУ ЗАПИСЯМИ ОДНОГО И ТОГО ЖЕ
+  // getDisputed()/getActive() — снятие внутреннего try в цикле по разным
+  // причинам может остановить весь цикл на первой же бракованной записи,
+  // и ни один существующий тест этого не поймает (проверено координатором:
+  // обе такие мутации выживали при 489 зелёных).
+  it('одна бракованная спорная запись не мешает усыновить ДРУГУЮ спорную запись в том же прогоне', async () => {
+    const brokenAgreement = '0x' + '1'.repeat(40);
+    const goodAgreement = ethAddr(555, '2');
+    const goodClient = ethAddr(555, '3');
+    const goodExecutor = ethAddr(555, '4');
+    const now = Date.now();
+    const disputedAtSec = Math.floor((now - 1 * DAY) / 1000);
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [],
+      getDisputed: [
+        { agreement: brokenAgreement, client: CAROL, executor: ALICE, amount: 0n, status: 3, createdAt: 0n, resolvedAt: 0n },
+        { agreement: goodAgreement, client: goodClient, executor: goodExecutor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: BigInt(disputedAtSec) },
+      ],
+    });
+    mockContract(brokenAgreement, {
+      getDetails: async () => { throw new Error('execution reverted (симулировано, битый агримент)'); },
+      DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+    });
+    mockContract(goodAgreement, {
+      getDetails: async () => ({ disputedAt_: BigInt(disputedAtSec) }),
+      DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+    });
+
+    const goodKey = put(goodClient, goodExecutor, now - 10 * DAY);
+
+    await expect(runFileCleanup()).resolves.toBeUndefined();
+
+    expect(bagMetaOf(goodKey).dealDeadline).not.toBeNull(); // хорошая запись усыновлена, несмотря на битую соседнюю
+  });
+
+  it('одна бракованная активная запись не мешает усыновить ДРУГУЮ активную запись в том же прогоне', async () => {
+    const brokenAgreement = '0x' + '8'.repeat(40);
+    const goodAgreement = ethAddr(556, '2');
+    const goodClient = ethAddr(556, '3');
+    const goodExecutor = ethAddr(556, '4');
+    const now = Date.now();
+    const createdAtSec = Math.floor(now / 1000);
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [
+        { agreement: brokenAgreement, client: CAROL, executor: ALICE, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n },
+        { agreement: goodAgreement, client: goodClient, executor: goodExecutor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n },
+      ],
+      getDisputed: [],
+    });
+    mockContract(brokenAgreement, {
+      getDetails: async () => { throw new Error('execution reverted (симулировано, битый агримент)'); },
+      DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+      DEADLINE_GRACE: async () => 0n,
+      AUTO_APPROVE_WINDOW: async () => 0n,
+    });
+    mockContract(goodAgreement, {
+      getDetails: async () => ({ deadlineDays_: 30n, activatedAt_: 0n, disputedAt_: 0n }),
+      DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+      DEADLINE_GRACE: async () => 0n,
+      AUTO_APPROVE_WINDOW: async () => 0n,
+    });
+
+    const goodKey = put(goodClient, goodExecutor, now - 10 * DAY);
+
+    await expect(runFileCleanup()).resolves.toBeUndefined();
+
+    expect(bagMetaOf(goodKey).dealDeadline).not.toBeNull(); // хорошая запись усыновлена, несмотря на битую соседнюю
+  });
 });
 
 // ─── Дыра, найденная координатором на ревью: усыновление ТОЛЬКО по спору не
@@ -1049,6 +1122,64 @@ describe('мелочи эффективности — лишняя работа 
     await runFileCleanup(); // этап спора — тот же агримент, кэш уже тёплый
 
     expect(disputeWindowCalls).toBe(1); // не 2 — второй этап переиспользовал кэш первого
+  });
+
+  // Мелочь (третий закрывающий раунд ревью, находка координатора):
+  // "ревертнувший вызов не отравляет кэш" раньше проверялась только чтением
+  // кода (cache.set() стоит ПОСЛЕ await, не до) — без теста мутация,
+  // кладущая значение в кэш ДО ожидания (а не после), выживала бы молча.
+  // Первый вызов DISPUTE_WINDOW() ревертит (симулирует старый несовместимый
+  // клон/временный сбой RPC), второй — тем же агриментом — успевает и
+  // отдаёт настоящее число: усыновление обязано состояться на ВТОРОМ
+  // прогоне с правильным значением, не остаться отравленным первым отказом.
+  it('ревертнувший вызов DISPUTE_WINDOW() не отравляет кэш — следующий прогон честно перечитывает с цепи', async () => {
+    const client    = ethAddr(3, '7');
+    const executor  = ethAddr(3, '8');
+    const agreement = ethAddr(3, '9');
+    const now = Date.now();
+    let disputeWindowCalls = 0;
+    const realDisputeWindowSec = 4 * 24 * 60 * 60;
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(Math.floor(now / 1000)), resolvedAt: 0n }],
+      getDisputed: [],
+    });
+    mockContract(agreement, {
+      getDetails: async () => ({ deadlineDays_: 30n, activatedAt_: 0n, disputedAt_: 0n }),
+      DEADLINE_GRACE: async () => 0n,
+      AUTO_APPROVE_WINDOW: async () => 0n,
+      DISPUTE_WINDOW: () => {
+        disputeWindowCalls++;
+        throw new Error('execution reverted (симулированный первый отказ)');
+      },
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const key = put(client, executor, now - 5 * DAY);
+
+    await runFileCleanup(); // первый прогон — DISPUTE_WINDOW() ревертит, усыновления нет
+
+    expect(bagMetaOf(key).dealDeadline).toBeNull(); // не усыновлён — первая попытка провалилась
+    expect(disputeWindowCalls).toBe(1);
+
+    // Второй прогон — тот же агримент, но теперь DISPUTE_WINDOW() успевает.
+    mockContract(agreement, {
+      getDetails: async () => ({ deadlineDays_: 30n, activatedAt_: 0n, disputedAt_: 0n }),
+      DEADLINE_GRACE: async () => 0n,
+      AUTO_APPROVE_WINDOW: async () => 0n,
+      DISPUTE_WINDOW: () => {
+        disputeWindowCalls++;
+        return BigInt(realDisputeWindowSec);
+      },
+    });
+
+    await runFileCleanup();
+
+    // Если бы отказ отравил кэш (значение положено ДО await, а не после),
+    // здесь либо усыновления бы не случилось вовсе, либо оно случилось бы
+    // с "отравленным" (не настоящим) значением — dealDeadline остался бы
+    // null или неправильным числом.
+    expect(bagMetaOf(key).dealDeadline).not.toBeNull();
+    expect(disputeWindowCalls).toBe(2); // честно перечитал с цепи, не взял отравленное значение из кэша
   });
 
   it('у provider реально настроен таймаут — не 300с умолчание ethers, и значение доходит до объекта, которым пользуется библиотека', () => {
