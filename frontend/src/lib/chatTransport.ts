@@ -467,14 +467,16 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
     // завершившегося первого, сколько бы времени тот ни занял.
     while (!stopped) {
       let waitMs = intervals.activeMs; // безопасное умолчание на случай, если isActive() бросит ниже
+      // `null` — тик закончился ошибкой (транспортной ИЛИ isActive()), нечего
+      // отдавать потребителю; не null — успех, вот список для onBags.
+      let bags: BagSummary[] | null = null;
       try {
         waitMs = opts.isActive() ? intervals.activeMs : intervals.backgroundMs;
         const pass = await opts.getPass();
         if (stopped) return;
-        const bags = await listBags(pass, opts.since);
+        bags = await listBags(pass, opts.since);
         if (stopped) return;
         consecutiveFailures = 0;
-        opts.onBags(bags);
       } catch (err) {
         if (stopped) return;
         consecutiveFailures++;
@@ -488,9 +490,33 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
         if (err instanceof BagRateLimitError) {
           waitMs = Math.min(Math.max(waitMs, err.retryAfterSec * 1000), intervals.maxBackoffMs);
         }
-        opts.onError?.(err);
+        try {
+          opts.onError?.(err);
+        } catch {
+          // Обработчик ошибок сам не должен уметь остановить опрос — его
+          // работа сообщить о сбое, а не стать НОВЫМ сбоем, который
+          // выбивает while изнутри catch-блока (мелочь ревью).
+        }
       }
       if (stopped) return;
+
+      if (bags !== null) {
+        try {
+          opts.onBags(bags);
+        } catch (err) {
+          // Ошибка ЗДЕСЬ — баг колбэка потребителя (например, отрисовки), а
+          // НЕ транспорта: специально ВНЕ try/catch выше, чтобы не копилась
+          // как backoff и не шла в onError (иначе выглядела бы как сбой
+          // сети — то самое смешение, от которого весь этот файл и
+          // отстраивает две вещи разными классами ошибок). Опрос
+          // останавливается и отказ всплывает по-настоящему — тихо
+          // спрятанный баг в чужом колбэке хуже честного краха (мелочь
+          // ревью).
+          stopped = true;
+          throw err;
+        }
+      }
+
       await sleep(waitMs);
     }
   };

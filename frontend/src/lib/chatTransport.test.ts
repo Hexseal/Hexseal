@@ -700,6 +700,97 @@ describe('pollBags', () => {
     expect(slept[0]).toBeLessThan(2 ** 31);
   });
 
+  // Мелочи (ревью-координатор).
+  it('мелочь: isActive() бросает — попадает в onError, опрос не гибнет молча', async () => {
+    // isActive() бросает СИНХРОННО на первом тике, ДО единственного await
+    // внутри loop() до этой точки (await opts.getPass()) — весь первый тик
+    // (try → catch → onError → sleep) успевает отработать в ТОЙ ЖЕ
+    // синхронной цепочке вызовов, которой ещё принадлежит сам вызов
+    // pollBags(...) ниже, так что handle внутри первого sleep() ещё не
+    // присвоен. isActive throws РОВНО один раз (флагом), второй тик проходит
+    // штатно и его sleep() — уже безопасное место звать handle.stop().
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
+    const errors: unknown[] = [];
+    let isActiveCalls = 0;
+    const isActive = (): boolean => {
+      isActiveCalls++;
+      if (isActiveCalls === 1) throw new Error('isActive boom');
+      return true;
+    };
+    let handle: BagPollHandle;
+    let sleepCalls = 0;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async () => {
+      sleepCalls++;
+      if (sleepCalls === 2) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      getPass: () => 'v1.p', isActive,
+      onBags: () => {}, onError: (e) => errors.push(e),
+      sleep,
+    });
+    await done;
+
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as Error).message).toBe('isActive boom');
+  });
+
+  it('мелочь: обработчик ошибок сам бросает — не убивает цикл, следующий тик всё равно планируется', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('net down')));
+    let ticks = 0;
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async () => {
+      ticks++;
+      if (ticks === 2) { handle.stop(); resolveDone(); }
+    };
+    const onError = (): void => { throw new Error('onError сам сломан'); };
+
+    handle = pollBags({ getPass: () => 'v1.p', isActive: () => true, onBags: () => {}, onError, sleep });
+    await done;
+
+    // Дошли до ВТОРОГО тика — цикл пережил падение собственного обработчика
+    // ошибок. Без фикса брошенное из onError вылетает из catch-блока и
+    // убивает while изнутри — sleep() позвался бы только один раз.
+    expect(ticks).toBe(2);
+  });
+
+  it('мелочь: ошибка в onBags (баг отрисовки у потребителя) не считается транспортной — не идёт в onError, не копит backoff', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
+    const errors: unknown[] = [];
+    const sleep = vi.fn(async () => {});
+
+    // loop() — необработанный async IIFE внутри pollBags: подтверждаем, что
+    // ошибка колбэка потребителя реально ВСПЛЫВАЕТ (не проглатывается тихо),
+    // а не только что она "не идёт в onError". Слушатель снят сразу после
+    // проверки — не должен утекать в остальные тесты файла.
+    let unhandled: unknown = null;
+    const onUnhandledRejection = (err: unknown) => { unhandled = err; };
+    process.once('unhandledRejection', onUnhandledRejection);
+    try {
+      pollBags({
+        getPass: () => 'v1.p', isActive: () => true,
+        onBags: () => { throw new Error('render bug'); },
+        onError: (e) => errors.push(e),
+        sleep,
+      });
+      // Дать микрозадачам (getPass -> listBags -> onBags -> throw) и Node
+      // (репортинг unhandledRejection случается на следующем тике event loop,
+      // не в той же микрозадаче) реально прогнать сценарий целиком.
+      await new Promise((r) => setTimeout(r, 10));
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandledRejection);
+    }
+
+    expect(errors).toHaveLength(0); // НЕ через onError — это не сбой сети, а баг колбэка
+    expect(sleep).not.toHaveBeenCalled(); // цикл не дошёл до планирования следующего тика — остановился
+    expect(unhandled).toBeInstanceOf(Error);
+    expect((unhandled as Error).message).toBe('render bug'); // всплыло по-настоящему, не проглочено
+  });
+
   it('ошибка listBags не роняет опрос — onError зовётся, следующий тик всё равно планируется', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 
