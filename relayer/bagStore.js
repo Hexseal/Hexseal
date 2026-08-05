@@ -1002,22 +1002,68 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
 // прятал. Вызывающий (app.js, тем же путём, каким он уже узнаёт о спорах —
 // см. getDisputedPairIds()) зовёт adoptPairBags() при появлении спорной
 // сделки между парой.
-
+//
+// ДВА ЭТАПА, не один (находка координатора при ревью первой версии этой
+// задачи). Формула "до конца апелляции" (dealDeadlineFromDispute ниже)
+// требует disputedAt — а его физически не существует, пока сделка не
+// оспорена. Усыновление ТОЛЬКО по спору не закрывает риск, ради которого
+// заведена вся задача: если сделка живёт дольше BAG_ADOPTION_LOOKBACK_MS
+// (умолчание — 30 дней и у лукбэка, и у "непрочитанного" TTL) от момента
+// загрузки мешка с брифом до момента спора, обычная ночная чистка выметет
+// мешок задолго до того, как спор вообще возникнет и появится шанс его
+// усыновить — воспроизведено координатором числами, см. task-5-report.md,
+// раздел "Замер: дыра закрыта".
+//
+//   Этап 1 — dealDeadlineFromCreation(), при создании сделки (адрес пары
+//   виден в registry.getActive(), тот же путь, что getDisputedPairIds()
+//   выше). Срок ПРЕДВАРИТЕЛЬНЫЙ: у соглашения есть свой срок (deadlineDays_,
+//   читается с getDetails() сразу при регистрации, до всякой активации), от
+//   МОМЕНТА СОЗДАНИЯ — а не от disputedAt, которого ещё нет.
+//
+//   Этап 2 — dealDeadlineFromDispute(), при споре, ТОЧНЫЙ, от реального
+//   disputedAt. Не отменяет этап 1 — усыновление, что бы ни вызывало его
+//   повторно, только ПРОДЛЕВАЕТ (Math.max в adoptPairBags() ниже): если
+//   сделка закрылась спором раньше своего предварительного срока, этап 2
+//   не откатывает то, что уже дал этап 1 (заперто тестом на интеграцию в
+//   test/bagAdoption.test.js — "усыновление в два этапа").
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Срок сделки — до ОКОНЧАТЕЛЬНОГО закрытия дела, не до вердикта: вердикт
-// вынесен, человек его оспаривает — а доказательства уже стёрты, апелляция
-// без них превращается в лотерею. disputedAtMs/disputeWindowMs — уже в
-// мс и уже читаны вызывающим с цепи (Agreement.getDetails().disputedAt_ и
-// Agreement.DISPUTE_WINDOW() — тем же способом, каким уже читает фронт,
+// Этап 1: срок ПРЕДВАРИТЕЛЬНЫЙ, посчитанный от createdAtMs (регистрация
+// сделки, RegistryStorage.AgreementRecord.createdAt — доступен без лишнего
+// чтения, тот же tuple, что и у getDisputed()) и ownDeadlineMs (собственный
+// срок сделки, Agreement.getDetails().deadlineDays_ * 1 day — известен сразу
+// при регистрации, ДО funded/activated). disputeWindowMs — тот же смысл, что
+// в dealDeadlineFromDispute ниже: контракт может однажды изменить окно
+// спора, читаем с цепи, не хардкодим.
+//
+// Не претендует на точность — деньги/таймауты контракта дают ещё немного
+// сверху (DEADLINE_GRACE, AUTO_APPROVE_WINDOW — не видны без ещё одного
+// чтения контракта и здесь не учтены намеренно: цель этой оценки не быть
+// идеальной день-в-день, а не дать мешку до всякой сделки быть выметенным
+// раньше, чем возникнет спор). Если сделка закроется без спора — усыновление
+// просто перестанет продлеваться, следующий срок мешка посчитает обычное
+// правило 2/3 (bagExpiryAt); если спор всё же будет — этап 2 пересчитает
+// точно и не сократит уже данное этапом 1 (Math.max в adoptPairBags()).
+export function dealDeadlineFromCreation(createdAtMs, ownDeadlineMs, disputeWindowMs) {
+  assertSafeInt('dealDeadlineFromCreation', 'createdAtMs', createdAtMs);
+  assertSafeInt('dealDeadlineFromCreation', 'ownDeadlineMs', ownDeadlineMs);
+  assertSafeInt('dealDeadlineFromCreation', 'disputeWindowMs', disputeWindowMs);
+  return createdAtMs + ownDeadlineMs + disputeWindowMs + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+}
+
+// Этап 2. Срок сделки — до ОКОНЧАТЕЛЬНОГО закрытия дела, не до вердикта:
+// вердикт вынесен, человек его оспаривает — а доказательства уже стёрты,
+// апелляция без них превращается в лотерею. disputedAtMs/disputeWindowMs —
+// уже в мс и уже читаны вызывающим с цепи (Agreement.getDetails().disputedAt_
+// и Agreement.DISPUTE_WINDOW() — тем же способом, каким уже читает фронт,
 // frontend/src/app/deal/[address]/page.tsx:389-392, и каким app.js уже
 // читает DISPUTE_WINDOW для disputeResponseDeadline()). APPEAL_REVIEW_WINDOW
 // прочитать с цепи нельзя (private constant, ArbiterRegistryFacet.sol:147) —
 // отсюда собственная копия релеера, APPEAL_REVIEW_WINDOW_DAYS, и гейт
 // script/check-appeal-window.sh, держащий копию в согласии с оригиналом.
 //
-// Чистая функция — не трогает _bagMeta и не делает I/O, поэтому проверяется
-// напрямую, без мока цепи (test/bagAdoption.test.js).
+// Обе функции этого раздела — чистые: не трогают _bagMeta и не делают I/O,
+// поэтому проверяются напрямую, без мока цепи (test/bagAdoption.test.js).
 export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
   assertSafeInt('dealDeadlineFromDispute', 'disputedAtMs', disputedAtMs);
   assertSafeInt('dealDeadlineFromDispute', 'disputeWindowMs', disputeWindowMs);

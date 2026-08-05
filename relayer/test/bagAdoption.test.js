@@ -15,7 +15,7 @@ process.env.STORAGE_DIR = TMP;
 const bagStore = await import('../bagStore.js');
 const {
   bagKeyFor, recordBag, bagMetaOf, bagExpiryAt,
-  adoptPairBags, dealDeadlineFromDispute,
+  adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
   _loadBagMeta, _pairIdFromAddresses,
 } = bagStore;
 
@@ -165,6 +165,35 @@ describe('adoptPairBags — усыновление переписки сделк
 
     expect(adoptedSecond).toBe(0); // ни одна запись фактически не изменилась
     expect(bagMetaOf(key).dealDeadline).toBe(farDeadline);
+  });
+});
+
+// ─── Этап 1 (находка координатора): срок сделки ПРЕДВАРИТЕЛЬНО, в момент
+// создания — формула этапа 2 (dealDeadlineFromDispute) физически не
+// применима до того, как случился спор (disputedAt == 0). У соглашения
+// собственный срок известен сразу (deadlineDays_, читается с getDetails()
+// при регистрации), так что предварительная оценка — от МОМЕНТА СОЗДАНИЯ,
+// а не от момента спора, которого ещё нет.
+
+describe('dealDeadlineFromCreation — этап 1: предварительный срок при создании сделки', () => {
+  it('срок = момент создания + собственный срок сделки + окно спора + окно апелляции + запас', () => {
+    const createdAtMs = 1_700_000_000_000;
+    const ownDeadlineMs = 40 * DAY;
+    const disputeWindowMs = 4 * DAY;
+
+    const dd = dealDeadlineFromCreation(createdAtMs, ownDeadlineMs, disputeWindowMs);
+
+    // Точная формула — то же самое равенство, что и у dealDeadlineFromDispute,
+    // только якорь другой (createdAtMs вместо disputedAtMs). Мутация,
+    // убирающая любое слагаемое, красит это равенство.
+    expect(dd).toBe(createdAtMs + ownDeadlineMs + disputeWindowMs
+      + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+  });
+
+  it('нечисло на входе — бросает (тот же принцип, что у dealDeadlineFromDispute)', () => {
+    expect(() => dealDeadlineFromCreation('x', DAY, DAY)).toThrow();
+    expect(() => dealDeadlineFromCreation(1000, NaN, DAY)).toThrow();
+    expect(() => dealDeadlineFromCreation(1000, DAY, Infinity)).toThrow();
   });
 });
 
@@ -367,6 +396,7 @@ describe('runFileCleanup — усыновление спорной пары', ()
     const disputeWindowSec = 4 * 24 * 60 * 60;
 
     mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [], // сделка уже спорная — вне getActive(), только getDisputed() ниже
       getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: 0n }],
     });
     mockContract(agreement, {
@@ -400,6 +430,7 @@ describe('runFileCleanup — усыновление спорной пары', ()
     const disputedAtSec = Math.floor((now - 1 * DAY) / 1000);
 
     mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [], // сделка уже спорная — вне getActive(), только getDisputed() ниже
       getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: 0n }],
     });
     mockContract(agreement, {
@@ -426,6 +457,7 @@ describe('runFileCleanup — усыновление спорной пары', ()
     const disputedAtSec = Math.floor(now / 1000);
 
     mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [], // сделка уже спорная — вне getActive(), только getDisputed() ниже
       getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: 0n }],
     });
     mockContract(agreement, {
@@ -451,6 +483,7 @@ describe('runFileCleanup — усыновление спорной пары', ()
     const agreement = '0x' + '6'.repeat(40);
 
     mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [], // сделка уже спорная — вне getActive(), только getDisputed() ниже
       getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: 0n }],
     });
     mockContract(agreement, {
@@ -470,5 +503,165 @@ describe('runFileCleanup — усыновление спорной пары', ()
     expect(bagMetaOf(unrelatedKey)).toBeUndefined(); // обычная чистка отработала
     const call = errSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption'));
     expect(call).toBeDefined(); // ошибка залогирована, а не проглочена молча
+  });
+});
+
+// ─── Дыра, найденная координатором на ревью: усыновление ТОЛЬКО по спору не
+// защищает бриф, если спор наступает через много дней после создания сделки.
+// Мешок с брифом, отправленный ДО создания сделки, могут вымести обычной
+// ночной чисткой ЗАДОЛГО до того, как возникнет спор и появится шанс его
+// усыновить — ровно тот случай, ради которого §6 спеки требует усыновления
+// "при создании сделки", а не только при споре. Решающий замер — см.
+// task-5-report.md, раздел "Замер: дыра закрыта".
+describe('усыновление в два этапа — при создании сделки, и точнее при споре', () => {
+  it('мешок за 20 дней ДО создания сделки, сделка "живёт" 40 дней, спор на 40-й день — мешок обязан дожить до конца окна апелляции', async () => {
+    const client    = '0x' + 'e'.repeat(40);
+    const executor  = '0x' + 'f'.repeat(40);
+    const agreement = '0x' + 'd'.repeat(40);
+
+    const T0 = Date.UTC(2026, 0, 1); // фиксированная точка отсчёта — "создание сделки"
+    const ownDeadlineDays = 40;      // "сделка живёт сорок дней"
+    const disputeWindowSec = 4 * 24 * 60 * 60;
+    const uploadedAt = T0 - 20 * DAY;      // "мешок за двадцать дней до создания сделки"
+    const disputedAtMs = T0 + 40 * DAY;    // "спор на сороковой день"
+    const disputedAtSec = Math.floor(disputedAtMs / 1000);
+    const createdAtSec = Math.floor(T0 / 1000);
+
+    try {
+      vi.setSystemTime(T0);
+
+      // "Создание сделки": сделка ACTIVE, ещё не спорная.
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+        getDisputed: [],
+      });
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+      });
+
+      const key = put(client, executor, uploadedAt); // мешок брифа уже лежит на складе к моменту создания сделки
+
+      await runFileCleanup(); // прогон в день создания сделки
+
+      // Замер 1 (для отчёта): без усыновления мешок умер бы естественным
+      // путём здесь — ровно то число, которое координатор просил показать
+      // как "сегодня он умирает".
+      const naturalDeathAt = uploadedAt + bagStore.BAG_UNREAD_TTL_MS;
+      expect(naturalDeathAt).toBeLessThan(disputedAtMs); // естественная смерть раньше спора — в этом и дыра
+
+      // Ночной прогон ПОСЛЕ естественной смерти по старому правилу, но ЗАДОЛГО
+      // до спора — решающий момент: без усыновления при создании мешка тут
+      // уже не будет.
+      vi.setSystemTime(naturalDeathAt + 5 * DAY);
+      await runFileCleanup();
+
+      expect(bagMetaOf(key)).toBeDefined(); // пережил обычную смерть — усыновление при создании сработало
+
+      // Спор — на 40-й день.
+      vi.setSystemTime(disputedAtMs);
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [],
+        getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: BigInt(createdAtSec), resolvedAt: BigInt(disputedAtSec) }],
+      });
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), disputedAt_: BigInt(disputedAtSec) }),
+        DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+      });
+      await runFileCleanup();
+
+      // Замер 2 (для отчёта): срок теперь считается точно от спора — до
+      // конца окна апелляции.
+      const endOfAppealWindow = disputedAtMs + disputeWindowSec * 1000
+        + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+      expect(bagMetaOf(key).dealDeadline).toBe(endOfAppealWindow);
+      expect(bagExpiryAt(bagMetaOf(key))).toBeGreaterThanOrEqual(endOfAppealWindow);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runFileCleanup() усыновляет мешки пары при создании сделки (getActive()), сроком по формуле dealDeadlineFromCreation', async () => {
+    const client    = '0x' + '2'.repeat(40);
+    const executor  = '0x' + '3'.repeat(40);
+    const agreement = '0x' + '4'.repeat(40);
+    const now = Date.now();
+    const createdAtSec = Math.floor(now / 1000);
+    const ownDeadlineDays = 21;
+    const disputeWindowSec = 4 * 24 * 60 * 60;
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+      getDisputed: [],
+    });
+    mockContract(agreement, {
+      getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), disputedAt_: 0n }),
+      DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+    });
+
+    const key = put(client, executor, now - 15 * DAY); // бриф до сделки, в пределах лукбэка
+
+    await runFileCleanup();
+
+    const expectedDeadline = createdAtSec * 1000 + ownDeadlineDays * DAY + disputeWindowSec * 1000
+      + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+    expect(bagMetaOf(key).dealDeadline).toBe(expectedDeadline);
+  });
+
+  // Явное требование координатора: "убедись, что второй этап не обрезает то,
+  // что поставил первый, если сделка закрывается раньше ожидаемого".
+  it('спор наступает РАНЬШЕ предварительного срока (сделка закрылась быстрее ожидаемого) — этап 2 не сокращает то, что дал этап 1', async () => {
+    const client    = '0x' + '5'.repeat(40);
+    const executor  = '0x' + '6'.repeat(40);
+    const agreement = '0x' + '7'.repeat(40);
+    const T0 = Date.UTC(2026, 3, 1);
+    const ownDeadlineDays = 60; // предварительная оценка предполагала долгую сделку
+    const disputeWindowSec = 4 * 24 * 60 * 60;
+    const createdAtSec = Math.floor(T0 / 1000);
+
+    try {
+      vi.setSystemTime(T0);
+
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+        getDisputed: [],
+      });
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+      });
+
+      const key = put(client, executor, T0 - 5 * DAY);
+      await runFileCleanup(); // этап 1: предварительный срок на 60+4+4+1 = 69 дней от T0
+
+      const stage1Deadline = bagMetaOf(key).dealDeadline;
+      expect(stage1Deadline).toBe(createdAtSec * 1000 + ownDeadlineDays * DAY + disputeWindowSec * 1000
+        + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+
+      // Спор — уже на 5-й день, СИЛЬНО раньше 60-дневной предварительной
+      // оценки. Точный срок этапа 2 (5+4+4+1 = 14 дней от T0) короче того,
+      // что уже дал этап 1 (69 дней).
+      const disputedAtMs = T0 + 5 * DAY;
+      const disputedAtSec = Math.floor(disputedAtMs / 1000);
+      const stage2Deadline = disputedAtMs + disputeWindowSec * 1000
+        + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+      expect(stage2Deadline).toBeLessThan(stage1Deadline); // контроль: этап 2 в этом сценарии и правда короче
+
+      vi.setSystemTime(disputedAtMs);
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [],
+        getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: BigInt(createdAtSec), resolvedAt: BigInt(disputedAtSec) }],
+      });
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), disputedAt_: BigInt(disputedAtSec) }),
+        DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+      });
+      await runFileCleanup();
+
+      // Срок НЕ сократился — остался тем, что дал этап 1.
+      expect(bagMetaOf(key).dealDeadline).toBe(stage1Deadline);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

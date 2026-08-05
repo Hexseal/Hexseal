@@ -28,7 +28,7 @@ dotenv.config({ path: '.env.relayer' });
 import {
   bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
-  adoptPairBags, dealDeadlineFromDispute,
+  adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
 
@@ -135,6 +135,9 @@ const AGREEMENT_MINI_ABI = [
 
 const REGISTRY_MINI_ABI = [
   'function getDisputed() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
+  // Задача 5, этап 1 (усыновление при создании сделки) — тот же tuple, что
+  // getDisputed() выше, RegistryStorage.AgreementRecord одна на оба статуса.
+  'function getActive() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
 ];
 
 // ─── Who is the arbiter of a dispute (and why NOT Agreement.arbiter) ──────────
@@ -236,18 +239,29 @@ async function getDisputedPairIds() {
 // §6 спеки: бриф обсуждают ДО сделки — без усыновления самое важное истечёт
 // раньше, чем возникнет спор, а цепочка сообщений укажет на человека как на
 // утаившего, хотя он ничего не прятал. "Откуда берётся событие" — тем же
-// путём, каким релеер уже узнаёт о спорах выше (getDisputedPairIds()): один
-// registry.getDisputed() на прогон runFileCleanup(), никакого отдельного
+// путём, каким релеер уже узнаёт о спорах ниже (getDisputedPairIds()): свой
+// read-only вызов на реестр за прогон runFileCleanup(), никакого отдельного
 // опроса/крона не заводится.
 //
-// Намеренно СВОЙ вызов getDisputed(), не переиспользование готового
-// Set-а из getDisputedPairIds(): тому нужен только pairId, усыновлению
-// дополнительно нужны адрес самого агримента (для getDetails()/
-// DISPUTE_WINDOW() ниже) — расширять уже протестированную и используемую
-// в другом месте (защита вложений) функцию под нового, более требовательного
+// ДВА ЭТАПА (находка координатора при ревью первой версии — усыновление
+// только по спору не закрывает риск, ради которого заведена вся задача, см.
+// bagStore.js, комментарий над dealDeadlineFromCreation/dealDeadlineFromDispute,
+// и task-5-report.md, "Замер: дыра закрыта"):
+//
+//   adoptActivePairBags()   — при создании сделки (registry.getActive()),
+//                             срок предварительный.
+//   adoptDisputedPairBags() — при споре (registry.getDisputed()), срок
+//                             точный, до конца окна апелляции.
+//
+// Обе — свой read-only вызов на реестр, не переиспользование готового Set-а
+// из getDisputedPairIds(): тому нужен только pairId, усыновлению
+// дополнительно нужен адрес самого агримента (для getDetails()/
+// DISPUTE_WINDOW()) — расширять уже протестированную и используемую в другом
+// месте (защита вложений) функцию под нового, более требовательного
 // вызывающего было бы риском для неё, а не выгодой для этой задачи. Цена —
-// второй, дешёвый read-only вызов getDisputed() за тот же прогон; споры —
-// редкий путь (§7 спеки), так что это не пере-запрос "на файл", а "на ночь".
+// лишний read-only вызов за тот же ночной прогон (раз в сутки, не на
+// каждый файл) — споры редки (§7 спеки), а активных сделок на маркетплейсе
+// в любой момент — разумное число, не история за всё время.
 //
 // disputedAt читается через Agreement.getDetails().disputedAt_ — ту же точку
 // входа, которой уже пользуется disputeResponseDeadline() ниже по файлу —
@@ -257,9 +271,44 @@ async function getDisputedPairIds() {
 // говорит "disputedAt", явно надёжнее, чем полагаться на совпадение полей
 // двух разных контрактов, которое ничем не гарантировано на будущее.
 //
-// Каждая спорная запись — в СВОЁМ try: одна не читающаяся/бракованная
-// запись (например, staticcall до старого/несовместимого клона) не должна
-// останавливать усыновление для ВСЕХ остальных disputed-пар этого прогона.
+// Каждая запись реестра — в СВОЁМ try, в обеих функциях: одна не
+// читающаяся/бракованная запись (например, staticcall до старого/
+// несовместимого клона) не должна останавливать усыновление для ВСЕХ
+// остальных пар этого прогона.
+async function adoptActivePairBags(nowMs = Date.now()) {
+  let active;
+  try {
+    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
+    active = await registry.getActive();
+  } catch (e) {
+    console.error('[bags] adoption (creation): getActive lookup failed, skipping this run:', e.message);
+    return;
+  }
+
+  for (const r of active) {
+    try {
+      const pairId = pairIdFromAddresses(r.client, r.executor);
+      const agr = new ethers.Contract(r.agreement, AGREEMENT_MINI_ABI, provider);
+      const details = await agr.getDetails();
+      const disputeWindowSec = await agr.DISPUTE_WINDOW();
+      // r.createdAt приезжает прямо в tuple getActive() — RegistryFacet
+      // ставит его в register() (тот же миг, что и "создание сделки"), лишнего
+      // чтения агримента ради этого не нужно. deadlineDays_ — собственный
+      // срок сделки, известен сразу, до funded/activated.
+      const createdAtMs = Number(r.createdAt) * 1000;
+      const ownDeadlineMs = Number(details.deadlineDays_) * 24 * 60 * 60 * 1000;
+      const disputeWindowMs = Number(disputeWindowSec) * 1000;
+      const dealDeadline = dealDeadlineFromCreation(createdAtMs, ownDeadlineMs, disputeWindowMs);
+      const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
+      if (adopted) {
+        console.log(`[bags] adoption (creation): extended ${adopted} bag(s) for the pair of active agreement ${r.agreement} to ${new Date(dealDeadline).toISOString()} (preliminary)`);
+      }
+    } catch (e) {
+      console.error(`[bags] adoption (creation): failed for active agreement ${r.agreement}, skipping:`, e.message);
+    }
+  }
+}
+
 async function adoptDisputedPairBags(nowMs = Date.now()) {
   let disputed;
   try {
@@ -989,16 +1038,26 @@ export async function runFileCleanup() {
   // узнаваемого сообщения — общий "[NODE-CRON] [ERROR]" не называет ИМЯ
   // задачи (в index.js их две — файлы/мешки и казна, различить можно
   // только по стеку).
-  // Задача 5: усыновление — ДО cleanupBags(), не после. Порядок в этой же
-  // функции значим: если поменять местами, продлённый в этом же прогоне
-  // мешок мог бы уже попасть под нож основного цикла cleanupBags() чуть
-  // ниже (оба читают/пишут один и тот же _bagMeta синхронно, событийный
+  // Задача 5: усыновление (ОБА этапа) — ДО cleanupBags(), не после. Порядок в
+  // этой же функции значим: если поменять местами, продлённый в этом же
+  // прогоне мешок мог бы уже попасть под нож основного цикла cleanupBags()
+  // чуть ниже (оба читают/пишут один и тот же _bagMeta синхронно, событийный
   // цикл между ними не переключается) — и усыновление успело бы "спасти"
   // мешок только СО СЛЕДУЮЩЕЙ ночи, ровно то, чего задача и должна избежать
-  // (§6 спеки: важное не должно успеть истечь раньше усыновления). Отдельный
-  // try — тот же принцип изоляции, что и у остальных блоков этой функции:
-  // падение усыновления не должно останавливать ни чистку мешков, ни
-  // вложения, и наоборот.
+  // (§6 спеки: важное не должно успеть истечь раньше усыновления). Отдельные
+  // try на каждый этап — тот же принцип изоляции, что и у остальных блоков
+  // этой функции: падение ОДНОГО этапа усыновления не должно останавливать
+  // ни другой этап, ни чистку мешков, ни вложения, и наоборот. Порядок между
+  // самими этапами (создание/спор) не значим для корректности — статусы
+  // ACTIVE и DISPUTED взаимоисключающие, так что оба read-only вызова
+  // реестра возвращают непересекающиеся наборы пар в любой момент; порядок
+  // ниже — просто по смыслу повествования ("сначала создание, потом спор").
+  try {
+    await adoptActivePairBags();
+  } catch (e) {
+    console.error('[bags] adoption (creation) error:', e.stack || e.message);
+  }
+
   try {
     await adoptDisputedPairBags();
   } catch (e) {
