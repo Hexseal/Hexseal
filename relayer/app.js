@@ -221,17 +221,33 @@ const SERVICE_MINI_ABI = [
   'function getService(uint256) view returns (tuple(address executor, string title, string description, uint256 price, uint256 deadlineDays, uint8 region, uint8 status, uint256 createdAt, uint256 hiresCount))',
 ];
 
-// Set of pairIds currently holding a DISPUTED agreement — one on-chain call per
-// cleanup run, not per file.
-async function getDisputedPairIds() {
+// Raw disputed records — one on-chain call per cleanup run, not per file and
+// not per caller. Задача 5 (мелочь, закрывающий раунд ревью координатора):
+// раньше это был отдельный getDisputed() ВНУТРИ getDisputedPairIds(), и
+// adoptDisputedPairBags() ниже делала СВОЙ второй, независимый getDisputed()
+// за тот же прогон — та же самая вью-функция реестра дважды. registry.getActive()
+// /getDisputed() и без того делают по ДВА полных прохода по ИСТОРИИ ВСЕХ
+// когда-либо созданных сделок, не только текущих активных/спорных
+// (RegistryFacet.sol:219-236 — массив allAgreements только растёт, никогда
+// не усекается) — вызывать это ЛИШНИЙ раз за прогон не нужно вообще. Один
+// вызов здесь, наверху runFileCleanup(); и защита вложений (через
+// disputedPairIdsFromRecords ниже), и усыновление по спору
+// (adoptDisputedPairBags) читают ОДИН И ТОТ ЖЕ уже полученный массив.
+async function fetchDisputedRecords() {
   try {
     const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
-    const disputed = await registry.getDisputed();
-    return new Set(disputed.map((r) => pairIdFromAddresses(r.client, r.executor)));
+    return await registry.getDisputed();
   } catch (e) {
     console.error('[files] getDisputed lookup failed, skipping TTL protection this run:', e.message);
-    return new Set(); // fail open on the on-chain read — never block cleanup entirely
+    return []; // fail open on the on-chain read — never block cleanup entirely
   }
+}
+
+// Чистая функция — превращает уже полученные записи в Set pairId для защиты
+// вложений. Раньше делала I/O сама (см. fetchDisputedRecords() выше, куда
+// это переехало).
+function disputedPairIdsFromRecords(disputed) {
+  return new Set(disputed.map((r) => pairIdFromAddresses(r.client, r.executor)));
 }
 
 // ─── Задача 5 (chat-transport-storage): усыновление переписки сделкой ────────
@@ -239,9 +255,9 @@ async function getDisputedPairIds() {
 // §6 спеки: бриф обсуждают ДО сделки — без усыновления самое важное истечёт
 // раньше, чем возникнет спор, а цепочка сообщений укажет на человека как на
 // утаившего, хотя он ничего не прятал. "Откуда берётся событие" — тем же
-// путём, каким релеер уже узнаёт о спорах ниже (getDisputedPairIds()): свой
-// read-only вызов на реестр за прогон runFileCleanup(), никакого отдельного
-// опроса/крона не заводится.
+// путём, каким релеер уже узнаёт о спорах (registry.getDisputed(), см.
+// fetchDisputedRecords() выше): свой read-only вызов на реестр за прогон
+// runFileCleanup(), никакого отдельного опроса/крона не заводится.
 //
 // ДВА ЭТАПА (находка координатора при ревью первой версии — усыновление
 // только по спору не закрывает риск, ради которого заведена вся задача, см.
@@ -250,18 +266,20 @@ async function getDisputedPairIds() {
 //
 //   adoptActivePairBags()   — при создании сделки (registry.getActive()),
 //                             срок предварительный.
-//   adoptDisputedPairBags() — при споре (registry.getDisputed()), срок
-//                             точный, до конца окна апелляции.
+//   adoptDisputedPairBags() — при споре (принимает УЖЕ полученный массив
+//                             getDisputed() — см. fetchDisputedRecords() и
+//                             мелочь эффективности там же), срок точный, до
+//                             конца окна апелляции.
 //
-// Обе — свой read-only вызов на реестр, не переиспользование готового Set-а
-// из getDisputedPairIds(): тому нужен только pairId, усыновлению
-// дополнительно нужен адрес самого агримента (для getDetails()/
-// DISPUTE_WINDOW()) — расширять уже протестированную и используемую в другом
-// месте (защита вложений) функцию под нового, более требовательного
-// вызывающего было бы риском для неё, а не выгодой для этой задачи. Цена —
-// лишний read-only вызов за тот же ночной прогон (раз в сутки, не на
-// каждый файл) — споры редки (§7 спеки), а активных сделок на маркетплейсе
-// в любой момент — разумное число, не история за всё время.
+// adoptActivePairBags() — свой read-only вызов на реестр (getActive()), не
+// переиспользование того, что уже есть у getDisputed()-пути: разные
+// вью-функции реестра, разные множества сделок. Цена — лишний read-only
+// вызов за тот же ночной прогон (раз в сутки, не на каждый файл) — активных
+// сделок на маркетплейсе в любой момент — разумное число, не история за
+// всё время (в отличие от getActive()/getDisputed() внутри контракта,
+// каждая из которых уже проходит ВСЮ историю дважды сама по себе,
+// RegistryFacet.sol:219-236 — от этого релеер защититься не может, не меняя
+// сам контракт, вне объёма этой задачи).
 //
 // disputedAt читается через Agreement.getDetails().disputedAt_ — ту же точку
 // входа, которой уже пользуется disputeResponseDeadline() ниже по файлу —
@@ -271,6 +289,33 @@ async function getDisputedPairIds() {
 // говорит "disputedAt", явно надёжнее, чем полагаться на совпадение полей
 // двух разных контрактов, которое ничем не гарантировано на будущее.
 //
+// Задача 5, мелочь эффективности (закрывающий раунд ревью координатора):
+// DISPUTE_WINDOW() — `public constant` реализации Agreement, вкомпилирована
+// в байткод и для ДАННОГО клона неизменна навсегда (CLAUDE.md: "клоны
+// прибиты к своей реализации намертво"). Читать её заново staticcall'ом на
+// КАЖДУЮ ещё активную/спорную сделку КАЖДУЮ ночь не нужно — читаем один раз
+// на адрес агримента и держим в памяти процесса до перезапуска. Разные
+// клоны МОГУТ иметь разное значение (окно спора уже менялось однажды,
+// 7д→4д, между версиями реализации), поэтому кэш обязан быть по адресу
+// агримента, а не глобальной константой одной на всех.
+//
+// deadlineDays_ НЕ кэшируется отдельно тем же способом: она приезжает
+// бесплатно, в том же getDetails(), который обе функции ниже обязаны звать
+// в любом случае — ради мутирующихся полей (activatedAt_/disputedAt_),
+// которые кэшировать нельзя. Отдельный кэш под неё не убрал бы ни одного
+// сетевого вызова, только тривиальное повторное чтение уже полученного
+// ответа — не то же самое, что DISPUTE_WINDOW(), у которой свой,
+// самостоятельный staticcall.
+const _disputeWindowMsCache = new Map(); // agreement (нижний регистр) → мс
+
+async function getDisputeWindowMs(agr, agreementAddress) {
+  const key = agreementAddress.toLowerCase();
+  if (_disputeWindowMsCache.has(key)) return _disputeWindowMsCache.get(key);
+  const ms = Number(await agr.DISPUTE_WINDOW()) * 1000;
+  _disputeWindowMsCache.set(key, ms);
+  return ms;
+}
+
 // Каждая запись реестра — в СВОЁМ try, в обеих функциях: одна не
 // читающаяся/бракованная запись (например, staticcall до старого/
 // несовместимого клона) не должна останавливать усыновление для ВСЕХ
@@ -290,7 +335,7 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       const pairId = pairIdFromAddresses(r.client, r.executor);
       const agr = new ethers.Contract(r.agreement, AGREEMENT_MINI_ABI, provider);
       const details = await agr.getDetails();
-      const disputeWindowSec = await agr.DISPUTE_WINDOW();
+      const disputeWindowMs = await getDisputeWindowMs(agr, r.agreement);
       // r.createdAt приезжает прямо в tuple getActive() — RegistryFacet
       // ставит его в register() (тот же миг, что и "создание сделки"), лишнего
       // чтения агримента ради этого не нужно. deadlineDays_ — собственный
@@ -303,7 +348,6 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       const createdAtMs = Number(r.createdAt) * 1000;
       const activatedAtMs = Number(details.activatedAt_) * 1000;
       const ownDeadlineMs = Number(details.deadlineDays_) * 24 * 60 * 60 * 1000;
-      const disputeWindowMs = Number(disputeWindowSec) * 1000;
       const dealDeadline = dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs);
       const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
       if (adopted) {
@@ -315,26 +359,20 @@ async function adoptActivePairBags(nowMs = Date.now()) {
   }
 }
 
-async function adoptDisputedPairBags(nowMs = Date.now()) {
-  let disputed;
-  try {
-    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
-    disputed = await registry.getDisputed();
-  } catch (e) {
-    console.error('[bags] adoption: getDisputed lookup failed, skipping this run:', e.message);
-    return;
-  }
-
+// disputed — уже полученный массив (fetchDisputedRecords(), вызванный ОДИН
+// раз в runFileCleanup() — см. комментарий там про мелочь эффективности:
+// раньше это была вторая, независимая getDisputed() поверх той, что уже
+// делает защита вложений).
+async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
   for (const r of disputed) {
     try {
       const pairId = pairIdFromAddresses(r.client, r.executor);
       const agr = new ethers.Contract(r.agreement, AGREEMENT_MINI_ABI, provider);
       const details = await agr.getDetails();
-      const disputeWindowSec = await agr.DISPUTE_WINDOW();
+      const disputeWindowMs = await getDisputeWindowMs(agr, r.agreement);
       // Цепь считает время в секундах (block.timestamp), bagStore.js — в мс
       // (Date.now()-based, как и весь остальной _bagMeta).
       const disputedAtMs = Number(details.disputedAt_) * 1000;
-      const disputeWindowMs = Number(disputeWindowSec) * 1000;
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
       const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
       if (adopted) {
@@ -969,7 +1007,11 @@ export function safeKey(key) {
 export async function runFileCleanup() {
   const cutoff   = Date.now() - FILE_TTL_MS;
   const cutoff1d = Date.now() - 24 * 60 * 60 * 1000;
-  const disputedPairIds = await getDisputedPairIds();
+  // Один вызов getDisputed() на весь прогон (мелочь эффективности, находка
+  // координатора) — используется и защитой вложений (disputedPairIds ниже),
+  // и усыновлением по спору (adoptDisputedPairBags() дальше по функции).
+  const disputedRecords = await fetchDisputedRecords();
+  const disputedPairIds = disputedPairIdsFromRecords(disputedRecords);
 
   // Expired chat files — skip any still tagged to a currently-disputed pair,
   // but only up to MAX_PROTECTED_AGE_MS. peerA/peerB tagging on /files/presign
@@ -1055,9 +1097,10 @@ export async function runFileCleanup() {
   // этой функции: падение ОДНОГО этапа усыновления не должно останавливать
   // ни другой этап, ни чистку мешков, ни вложения, и наоборот. Порядок между
   // самими этапами (создание/спор) не значим для корректности — статусы
-  // ACTIVE и DISPUTED взаимоисключающие, так что оба read-only вызова
-  // реестра возвращают непересекающиеся наборы пар в любой момент; порядок
-  // ниже — просто по смыслу повествования ("сначала создание, потом спор").
+  // ACTIVE и DISPUTED взаимоисключающие, так что getActive() (внутри
+  // adoptActivePairBags()) и disputedRecords (уже полученный выше) отражают
+  // непересекающиеся наборы пар в любой момент; порядок ниже — просто по
+  // смыслу повествования ("сначала создание, потом спор").
   try {
     await adoptActivePairBags();
   } catch (e) {
@@ -1065,7 +1108,7 @@ export async function runFileCleanup() {
   }
 
   try {
-    await adoptDisputedPairBags();
+    await adoptDisputedPairBags(disputedRecords);
   } catch (e) {
     console.error('[bags] adoption error:', e.stack || e.message);
   }
@@ -1090,6 +1133,18 @@ export async function runFileCleanup() {
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const RPC_URL        = process.env.RPC_URL || process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
+// Задача 5, мелочь (находка координатора, закрывающий раунд): без таймаута
+// зависший RPC-узел на ЛЮБОМ вызове (изначально — только meta-транзакции и
+// пуши; теперь ЕЩЁ и getActive()/getDisputed()/getDetails()/DISPUTE_WINDOW()
+// на каждую сделку в adoptActivePairBags()/adoptDisputedPairBags()) вешает
+// ВЕСЬ ночной прогон runFileCleanup() целиком, включая обычную чистку
+// вложений и мешков — ethers v6 по умолчанию ждёт 300с (FetchRequest.timeout,
+// см. node_modules/ethers/.../fetch.js) на КАЖДЫЙ отдельный вызов, так что
+// зависание на первой же спорной сделке блокирует все остальные, и саму
+// чистку, дольше, чем есть смысл ждать один battle-тестed узел. Раньше эта
+// проблема уже существовала (мета-транзакции/пуши), новые вызовы этой задачи
+// только повышают частоту, с которой она может сработать — не вводят её.
+const RPC_TIMEOUT_MS = Number(process.env.RPC_TIMEOUT_MS || 20_000);
 const RELAYER_KEY    = process.env.RELAYER_PRIVATE_KEY;
 const FORWARDER_ADDR = process.env.TRUSTED_FORWARDER;
 const DIAMOND_ADDR   = process.env.DIAMOND_ADDRESS;
@@ -1136,7 +1191,15 @@ setInterval(() => {
 
 // ─── Ethers ───────────────────────────────────────────────────────────────────
 
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+// FetchRequest, не голая строка — единственный способ в ethers v6 задать
+// таймаут отдельного HTTP-запроса (JsonRpcProvider(url) со строкой строит
+// FetchRequest(url) сама, но с умолчанием библиотеки — 300с). Тест —
+// test/*.test.js проверяет через relayerInfo.rpcTimeoutMs/provider ниже, что
+// значение реально дошло до объекта, которым пользуется ethers, а не просто
+// лежит переменной, которую никто не читает.
+const rpcConnection = new ethers.FetchRequest(RPC_URL);
+rpcConnection.timeout = RPC_TIMEOUT_MS;
+const provider = new ethers.JsonRpcProvider(rpcConnection);
 const relayer  = new ethers.Wallet(RELAYER_KEY, provider);
 
 const FORWARDER_ABI = [
@@ -2827,6 +2890,12 @@ export const relayerInfo = {
   dirFiles:       DIR_FILES,
   dirPublic:      DIR_PUBLIC,
   port:           PORT,
+  // Задача 5, мелочь (таймаут RPC): provider — для проверки, что таймаут
+  // реально дошёл до объекта, которым пользуется ethers
+  // (provider._getConnection().timeout), не просто лежит неиспользуемой
+  // переменной.
+  provider:       provider,
+  rpcTimeoutMs:   RPC_TIMEOUT_MS,
 };
 
 export { app, botSigner, botWallet };

@@ -23,7 +23,7 @@ const {
 // разрешил этот импорт прямо в тест склада): нужен для интеграционного
 // теста runFileCleanup()/adoptDisputedPairBags(), а окружение (мокнутый
 // ethers, обязательные env) уже поднято общим setupFile test/setup.js.
-const { app, runFileCleanup } = await import('../app.js');
+const { app, runFileCleanup, relayerInfo } = await import('../app.js');
 const { mockContract } = await import('./mocks/ethersRegistry.js');
 
 const ALICE = '0xa1ce00000000000000000000000000000000cafe';
@@ -872,4 +872,96 @@ describe('C1 — задержка оплаты не открывает дыру 
       }
     },
   );
+});
+
+// ─── Мелочи эффективности (находки координатора, закрывающий раунд) ───────
+
+describe('мелочи эффективности — лишняя работа с цепью', () => {
+  it('getDisputed() вызывается РОВНО один раз за прогон runFileCleanup(), не дважды (защита вложений + усыновление по спору делят один вызов)', async () => {
+    let calls = 0;
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [],
+      getDisputed: () => { calls++; return []; },
+    });
+
+    await runFileCleanup();
+
+    expect(calls).toBe(1);
+  });
+
+  it('DISPUTE_WINDOW() читается один раз на агримент, не на каждый ночной прогон заново (кэш живёт между вызовами runFileCleanup())', async () => {
+    const client    = ethAddr(1, '1');
+    const executor  = ethAddr(1, '2');
+    const agreement = ethAddr(1, '3');
+    let disputeWindowCalls = 0;
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [],
+      getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: 0n }],
+    });
+    mockContract(agreement, {
+      getDetails: async () => ({ disputedAt_: BigInt(Math.floor(Date.now() / 1000)) }),
+      DISPUTE_WINDOW: () => { disputeWindowCalls++; return 4n * 24n * 60n * 60n; },
+    });
+
+    await runFileCleanup(); // "ночь 1"
+    await runFileCleanup(); // "ночь 2" — тот же агримент всё ещё спорный
+
+    expect(disputeWindowCalls).toBe(1); // не 2
+  });
+
+  it('кэш DISPUTE_WINDOW делит значение между этапом создания и этапом спора — один агримент, один вызов на весь процесс', async () => {
+    const client    = ethAddr(2, '4');
+    const executor  = ethAddr(2, '5');
+    const agreement = ethAddr(2, '6');
+    let disputeWindowCalls = 0;
+    const now = Date.now();
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(Math.floor(now / 1000)), resolvedAt: 0n }],
+      getDisputed: [],
+    });
+    mockContract(agreement, {
+      getDetails: async () => ({ deadlineDays_: 30n, activatedAt_: 0n, disputedAt_: 0n }),
+      DISPUTE_WINDOW: () => { disputeWindowCalls++; return 4n * 24n * 60n * 60n; },
+    });
+    await runFileCleanup(); // этап создания читает DISPUTE_WINDOW первым
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [],
+      getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: BigInt(Math.floor(now / 1000)) }],
+    });
+    mockContract(agreement, {
+      getDetails: async () => ({ deadlineDays_: 30n, activatedAt_: 0n, disputedAt_: BigInt(Math.floor(now / 1000)) }),
+      DISPUTE_WINDOW: () => { disputeWindowCalls++; return 4n * 24n * 60n * 60n; },
+    });
+    await runFileCleanup(); // этап спора — тот же агримент, кэш уже тёплый
+
+    expect(disputeWindowCalls).toBe(1); // не 2 — второй этап переиспользовал кэш первого
+  });
+
+  it('у provider реально настроен таймаут — не 300с умолчание ethers, и значение доходит до объекта, которым пользуется библиотека', () => {
+    expect(relayerInfo.rpcTimeoutMs).toBe(20_000); // умолчание
+    expect(relayerInfo.rpcTimeoutMs).toBeLessThan(300_000); // строго меньше умолчания ethers — иначе "таймаут" ничего не меняет
+    // _getConnection() — то же самое, что реально шлёт HTTP-запрос внутри
+    // JsonRpcProvider._send(); проверяем настоящий FetchRequest, а не то,
+    // что МЫ думаем, что туда положили.
+    expect(relayerInfo.provider._getConnection().timeout).toBe(relayerInfo.rpcTimeoutMs);
+  });
+
+  it('RPC_TIMEOUT_MS настраивается через окружение, с явным умолчанием (20с)', async () => {
+    const saved = process.env.RPC_TIMEOUT_MS;
+    process.env.RPC_TIMEOUT_MS = '5000';
+    vi.resetModules();
+    try {
+      const fresh = await import('../app.js');
+      expect(fresh.relayerInfo.rpcTimeoutMs).toBe(5000);
+      expect(fresh.relayerInfo.provider._getConnection().timeout).toBe(5000);
+    } finally {
+      if (saved === undefined) delete process.env.RPC_TIMEOUT_MS; else process.env.RPC_TIMEOUT_MS = saved;
+      vi.resetModules();
+      await import('../bagStore.js');
+      await import('../app.js');
+    }
+  });
 });
