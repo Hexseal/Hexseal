@@ -690,6 +690,69 @@ describe('pollBags', () => {
     expect(errors[0]).toBeInstanceOf(TypeError);
   });
 
+  // I4 (ревью-координатор, важная находка). Отступление раньше срабатывало
+  // ТОЛЬКО на 429 — сеть лежит, 500, затянувшийся 401 давали ровно пять
+  // секунд бесконечно, без нарастания и без предела. Замер координатора:
+  // [5000, 5000, 5000, 5000]. Сервер (или сеть) сигналит "мне плохо" любым
+  // из этих способов, не только явным 429, — клиент обязан отступать на всё.
+  it('I4: повторяющаяся ЛЮБАЯ ошибка нарастает — не [5000,5000,5000,5000] вечно', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const slept: number[] = [];
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async (ms: number) => {
+      slept.push(ms);
+      if (slept.length === 4) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      getPass: () => 'v1.p', isActive: () => true,
+      onBags: () => {}, onError: () => {},
+      sleep,
+    });
+    await done;
+
+    expect(slept[0]).toBe(DEFAULT_BAG_POLL_INTERVALS.activeMs); // первый отказ — база, не сразу штраф
+    expect(slept[1]).toBeGreaterThan(slept[0]);
+    expect(slept[2]).toBeGreaterThan(slept[1]);
+    expect(slept[3]).toBeLessThanOrEqual(DEFAULT_BAG_POLL_INTERVALS.maxBackoffMs); // растёт, но не бесконечно
+  });
+
+  it('I4: сброс нарастания при первом успехе — следующий отказ снова начинает с базового интервала', async () => {
+    let call = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      call++;
+      if (call <= 2) throw new TypeError('Failed to fetch');       // тики 1-2: отказ (нарастание)
+      if (call === 3) return { ok: true, json: async () => ([]) }; // тик 3: успех (сброс)
+      throw new TypeError('Failed to fetch');                       // тик 4: отказ СРАЗУ после успеха
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const slept: number[] = [];
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async (ms: number) => {
+      slept.push(ms);
+      if (slept.length === 4) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      getPass: () => 'v1.p', isActive: () => true,
+      onBags: () => {}, onError: () => {},
+      sleep,
+    });
+    await done;
+
+    const base = DEFAULT_BAG_POLL_INTERVALS.activeMs;
+    expect(slept[0]).toBe(base);          // тик1: первый отказ — база
+    expect(slept[1]).toBeGreaterThan(base); // тик2: второй отказ подряд — нарастание
+    expect(slept[2]).toBe(base);          // тик3: успех — обычный интервал, не капнутое нарастание
+    expect(slept[3]).toBe(base);          // тик4: отказ СРАЗУ после успеха — снова с нуля
+  });
+
   it('stop() останавливает опрос — после него новых запросов не бывает', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
     vi.stubGlobal('fetch', fetchMock);

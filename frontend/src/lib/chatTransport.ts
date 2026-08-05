@@ -454,6 +454,11 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
   let stopped = false;
   const intervals = opts.intervals ?? DEFAULT_BAG_POLL_INTERVALS;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  // I4 (ревью-координатор, важная находка): раньше отступление срабатывало
+  // ТОЛЬКО на явный 429 — сеть лежит, 500, затянувшийся 401 давали ровно
+  // базовый интервал бесконечно (замер координатора: [5000,5000,5000,5000]).
+  // Сервер или сеть сигналят "мне плохо" любым отказом, не только 429.
+  let consecutiveFailures = 0;
 
   const loop = async () => {
     // Цикл последовательный: следующая итерация начинается только после
@@ -461,19 +466,25 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
     // невозможно, чтобы второй запрос ушёл в полёт поверх ещё не
     // завершившегося первого, сколько бы времени тот ни занял.
     while (!stopped) {
-      let waitMs = opts.isActive() ? intervals.activeMs : intervals.backgroundMs;
+      let waitMs = intervals.activeMs; // безопасное умолчание на случай, если isActive() бросит ниже
       try {
+        waitMs = opts.isActive() ? intervals.activeMs : intervals.backgroundMs;
         const pass = await opts.getPass();
         if (stopped) return;
         const bags = await listBags(pass, opts.since);
         if (stopped) return;
+        consecutiveFailures = 0;
         opts.onBags(bags);
       } catch (err) {
         if (stopped) return;
-        // Долбят нарочно (429): отступаем минимум на Retry-After сервера
-        // (пол — иначе крошечный Retry-After молчаливо бьёт с базовым
-        // интервалом сильнее, чем сервер просил), но не длиннее maxBackoffMs
-        // (потолок — I3, см. докстринг поля).
+        consecutiveFailures++;
+        // Экспоненциально от базового интервала этого тика, с потолком
+        // (I3): 1-й отказ подряд — база, 2-й — ×2, 3-й — ×4, и т.д., но не
+        // длиннее maxBackoffMs. Сбрасывается ЛЮБЫМ успехом (см. выше).
+        waitMs = Math.min(waitMs * 2 ** (consecutiveFailures - 1), intervals.maxBackoffMs);
+        // Долбят нарочно (429): отдельно ещё и не короче Retry-After
+        // сервера (пол — иначе крошечный Retry-After молчаливо бьёт сильнее,
+        // чем сервер просил), тем же потолком сверху.
         if (err instanceof BagRateLimitError) {
           waitMs = Math.min(Math.max(waitMs, err.retryAfterSec * 1000), intervals.maxBackoffMs);
         }
