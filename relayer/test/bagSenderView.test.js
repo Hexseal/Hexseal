@@ -168,10 +168,10 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
   // честное значение, если проверять сразу после события. Здесь момент
   // события — заведомо ДАЛЁКОЕ прошлое (два часа назад), вставленное прямо
   // в склад в обход HTTP (PUT/GET сами штампуют Date.now(), другого способа
-  // получить заведомо НЕ "сейчас" время нет) — если бы lastSeenAt брался из
+  // получить заведомо НЕ "сейчас" время нет) — если бы lastActivityWithMeAt брался из
   // текущего момента запроса, а не из настоящей метки события, разница была
   // бы кратна секундам, не часам.
-  it('lastSeenAt — настоящий момент события (firstFetchedAt), а не момент запроса — мутация "presence = Date.now()" красит именно этот тест', async () => {
+  it('lastActivityWithMeAt — настоящий момент события (firstFetchedAt), а не момент запроса — мутация "presence = Date.now()" красит именно этот тест', async () => {
     const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice);
@@ -188,18 +188,18 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     const res = await getBags({ pass: alicePass });
     const bobPeer = res.body.peers.find((p) => p.address === bobAddr);
     expect(bobPeer).toBeDefined();
-    expect(bobPeer.lastSeenAt).toBe(Math.floor(twoHoursAgo / 60000) * 60000);
+    expect(bobPeer.lastActivityWithMeAt).toBe(Math.floor(twoHoursAgo / 60000) * 60000);
     // Явный замок против "сейчас": момент запроса (Date.now() в эту самую
     // секунду) заведомо намного позже twoHoursAgo — при "presence = Date.now()"
     // разница была бы меньше минуты, а не больше часа.
-    expect(Date.now() - bobPeer.lastSeenAt).toBeGreaterThan(60 * 60 * 1000);
+    expect(Date.now() - bobPeer.lastActivityWithMeAt).toBeGreaterThan(60 * 60 * 1000);
   });
 
   // Находка ревью (координатор, мутационное тестирование): «входящий мешок
   // вообще не признак присутствия» — то есть удаление ветки, которая берёт
   // uploadedAt чужого ВХОДЯЩЕГО мешка как доказательство присутствия
   // отправителя, — тоже выживала на всех тестах выше. Все прежние тесты на
-  // lastSeenAt так или иначе включали ЗАБОР (fetch) стороной, чьё присутствие
+  // lastActivityWithMeAt так или иначе включали ЗАБОР (fetch) стороной, чьё присутствие
   // проверяется, — эта ветка (просто написал, ничего не забирал) не была
   // затронута НИ РАЗУ.
   it('входящий мешок (собеседник написал МНЕ, ничего не забирал) тоже доказывает присутствие — мутация "считать только своё исходящее" красит именно этот тест', async () => {
@@ -217,14 +217,14 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     const res = await getBags({ pass: alicePass });
     const bobPeer = res.body.peers.find((p) => p.address === bobAddr);
     expect(bobPeer).toBeDefined();
-    expect(bobPeer.lastSeenAt).not.toBeNull(); // сам факт написанного мешка — доказательство присутствия
-    expect(bobPeer.lastSeenAt).toBe(Math.floor(bagMetaOf(bobToAlice.body.key).uploadedAt / 60000) * 60000);
+    expect(bobPeer.lastActivityWithMeAt).not.toBeNull(); // сам факт написанного мешка — доказательство присутствия
+    expect(bobPeer.lastActivityWithMeAt).toBe(Math.floor(bagMetaOf(bobToAlice.body.key).uploadedAt / 60000) * 60000);
   });
 
   // Живой замер (не строгая проверка направления округления — та ниже,
   // отдельным тестом): реальный забор через настоящий HTTP-путь всё ещё
   // обязан дать кратную минуте, недалёкую от настоящего момента метку.
-  it('lastSeenAt (живой забор) кратен минуте и не дальше минуты от настоящего момента', async () => {
+  it('lastActivityWithMeAt (живой забор) кратен минуте и не дальше минуты от настоящего момента', async () => {
     const { wallet: alice } = await newWalletAndAddress();
     const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice);
@@ -237,11 +237,11 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     const aliceView = await getBags({ pass: alicePass });
     const bobPeer = aliceView.body.peers.find((p) => p.address === bobAddr);
     expect(bobPeer).toBeDefined();
-    expect(bobPeer.lastSeenAt).not.toBeNull();
-    expect(bobPeer.lastSeenAt % 60000).toBe(0);
+    expect(bobPeer.lastActivityWithMeAt).not.toBeNull();
+    expect(bobPeer.lastActivityWithMeAt % 60000).toBe(0);
 
     const realFetchedAt = bagMetaOf(put1.body.key).firstFetchedAt;
-    expect(Math.abs(realFetchedAt - bobPeer.lastSeenAt)).toBeLessThan(60000);
+    expect(Math.abs(realFetchedAt - bobPeer.lastActivityWithMeAt)).toBeLessThan(60000);
   });
 
   // Находка ревью (координатор): версия ВЫШЕ проверяла "не дальше минуты",
@@ -254,7 +254,7 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
   // суток, хуже отсутствующего — здесь фиксированное время (recordBag()
   // напрямую, в обход HTTP), секунды заведомо ЗА границей округления,
   // независимо от того, когда реально выполняется прогон.
-  it('lastSeenAt округляется ВНИЗ до минуты, не к ближайшей — фиксированное время, не Date.now() (мутация Math.floor → Math.round красит именно этот тест)', async () => {
+  it('lastActivityWithMeAt округляется ВНИЗ до минуты, не к ближайшей — фиксированное время, не Date.now() (мутация Math.floor → Math.round красит именно этот тест)', async () => {
     const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice);
@@ -277,8 +277,8 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     const res = await getBags({ pass: alicePass });
     const bobPeer = res.body.peers.find((p) => p.address === bobAddr);
     expect(bobPeer).toBeDefined();
-    expect(bobPeer.lastSeenAt).toBe(expectedFloor);
-    expect(bobPeer.lastSeenAt).not.toBe(wrongRound);
+    expect(bobPeer.lastActivityWithMeAt).toBe(expectedFloor);
+    expect(bobPeer.lastActivityWithMeAt).not.toBe(wrongRound);
   });
 
   it('ни одно поле не требует чтения содержимого мешка', async () => {

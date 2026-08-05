@@ -181,14 +181,21 @@ export interface SentBagSummary {
 
 /**
  * Собеседник, с которым есть переписка (хоть один мешок в любую сторону —
- * посторонний по публичному адресу сюда не попадает). `lastSeenAt` —
- * округлено сервером до минуты, `null` — переписка есть, но ни одного
- * сигнала присутствия ещё не было (никто ничего не забирал/не присылал
- * заново).
+ * посторонний по публичному адресу сюда не попадает).
+ *
+ * ⚠️ `lastActivityWithMeAt` — НЕ «онлайн-статус». Переименовано 6 августа
+ * (ревью Задачи 1): поле называлось `lastSeenAt`, а спека обещала «когда
+ * адрес последний раз обращался к серверу» — реализовано и осталось иначе:
+ * «когда собеседник последний раз тронул что-то МОЁ» (забрал мой мешок или
+ * прислал свой). Это не то же самое, что присутствие: человек может час
+ * сидеть в открытом чате, ничего из вашего не трогать — поле честно покажет
+ * «час назад», а не «прямо сейчас». Округлено сервером до минуты. `null` —
+ * переписка есть, но ни одного такого сигнала ещё не было (никто ничего не
+ * забирал и не присылал заново).
  */
 export interface PeerSummary {
   address: `0x${string}`;
-  lastSeenAt: number | null;
+  lastActivityWithMeAt: number | null;
 }
 
 /** Форма ответа `GET /bags` целиком — см. `listBags()` ниже. */
@@ -504,12 +511,13 @@ function isSentBagSummary(x: unknown): x is SentBagSummary {
   );
 }
 
-/** `lastSeenAt` — `null` («неизвестно») ИЛИ конечное число, ничего третьего. */
+/** `lastActivityWithMeAt` — `null` («неизвестно») ИЛИ конечное число, ничего третьего. */
 function isPeerSummary(x: unknown): x is PeerSummary {
   if (!x || typeof x !== 'object') return false;
   const o = x as Record<string, unknown>;
   if (typeof o.address !== 'string' || !SENDER_RE.test(o.address)) return false;
-  return o.lastSeenAt === null || (typeof o.lastSeenAt === 'number' && Number.isFinite(o.lastSeenAt));
+  return o.lastActivityWithMeAt === null ||
+    (typeof o.lastActivityWithMeAt === 'number' && Number.isFinite(o.lastActivityWithMeAt));
 }
 
 /**

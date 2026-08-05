@@ -439,7 +439,7 @@ describe('listBags', () => {
   it('корректные inbox/sent/peers проходят как есть', async () => {
     const item: BagSummary = { key: 'a/1.bin', sender: ALICE, size: 42, uploadedAt: 1000 };
     const sentItem: SentBagSummary = { key: 'b/1.bin', recipient: ALICE, uploadedAt: 2000, fetched: true };
-    const peer: PeerSummary = { address: ALICE, lastSeenAt: 1740000 };
+    const peer: PeerSummary = { address: ALICE, lastActivityWithMeAt: 1740000 };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true, json: async () => ({ inbox: [item], sent: [sentItem], peers: [peer] }),
     }));
@@ -447,10 +447,10 @@ describe('listBags', () => {
   });
 
   // §3.4 плана: собеседник, о котором есть переписка, но ни одного сигнала
-  // присутствия (ни он не писал сам, ни забирал присланное) — lastSeenAt:
+  // присутствия (ни он не писал сам, ни забирал присланное) — lastActivityWithMeAt:
   // null ("неизвестно"), не ошибка формы и не выдуманное число.
-  it('peers.lastSeenAt может быть null — «неизвестно», не ошибка формы', async () => {
-    const peer: PeerSummary = { address: ALICE, lastSeenAt: null };
+  it('peers.lastActivityWithMeAt может быть null — «неизвестно», не ошибка формы', async () => {
+    const peer: PeerSummary = { address: ALICE, lastActivityWithMeAt: null };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true, json: async () => ({ inbox: [], sent: [], peers: [peer] }),
     }));
@@ -542,21 +542,21 @@ describe('listBags', () => {
 
   it('peers: элемент без address — не проходит', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ lastSeenAt: 1000 }] }),
+      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ lastActivityWithMeAt: 1000 }] }),
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });
 
   it('peers: address не похож на адрес — не проходит', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ address: 'не-адрес', lastSeenAt: 1000 }] }),
+      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ address: 'не-адрес', lastActivityWithMeAt: 1000 }] }),
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });
 
-  it('peers: lastSeenAt — не null и не число (например, строка) — не проходит', async () => {
+  it('peers: lastActivityWithMeAt — не null и не число (например, строка) — не проходит', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ address: ALICE, lastSeenAt: 'недавно' }] }),
+      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ address: ALICE, lastActivityWithMeAt: 'недавно' }] }),
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });

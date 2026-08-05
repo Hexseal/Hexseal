@@ -52,7 +52,7 @@ describe('сквозной стенд', () => {
       ]);
       // Собеседник появился в peers ДО того, как он вообще что-либо забрал —
       // переписка есть с момента первого мешка в любую сторону (§3.4).
-      expect(aliceView1.peers).toEqual([{ address: bobAddr.toLowerCase(), lastSeenAt: null }]);
+      expect(aliceView1.peers).toEqual([{ address: bobAddr.toLowerCase(), lastActivityWithMeAt: null }]);
 
       const bobPass = await requestBagPass((msg) => bob.signMessage(msg), bobAddr);
       const bytes = await fetchBag(bobPass.pass, key);
@@ -63,7 +63,7 @@ describe('сквозной стенд', () => {
         { key, recipient: bobAddr.toLowerCase(), uploadedAt: expect.any(Number), fetched: true },
       ]);
       expect(aliceView2.peers[0].address).toBe(bobAddr.toLowerCase());
-      expect(aliceView2.peers[0].lastSeenAt).not.toBeNull(); // Боб теперь дал сигнал присутствия — забрал мешок
+      expect(aliceView2.peers[0].lastActivityWithMeAt).not.toBeNull(); // Боб теперь дал сигнал присутствия — забрал мешок
     } finally {
       await stand.stop();
       delete process.env.NEXT_PUBLIC_RELAYER_URL;
