@@ -32,6 +32,13 @@ import {
   assertNotFromFuture,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
+// Задача 2 (chat-client): справочник открытых ключей чата. Тот же порядок
+// комментария, что у bagStore.js/bagPass.js двумя строками выше — текстуально
+// после dotenv.config(), но ESM всё равно вычисляет импорт раньше тела этого
+// модуля; assertDirectoryReady() ниже (рядом с assertBagStoreReady()/
+// assertBagPassReady()) — то место, где directory.js реально перечитывает
+// process.env ПОСЛЕ dotenv.
+import { putKey, getKeyRecord, assertDirectoryReady } from './directory.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -978,6 +985,7 @@ if (!SERVER_SECRET) throw new Error('SERVER_SECRET is not set');
 // запрос к /bags/*.
 assertBagPassReady();
 assertBagStoreReady();
+assertDirectoryReady();
 
 // Single deterministic bot wallet — keccak256(SERVER_SECRET) as private key
 const BOT_PRIVATE_KEY = ethers.keccak256(ethers.toUtf8Bytes(SERVER_SECRET));
@@ -2831,6 +2839,96 @@ app.get('/bags/:recipient/:filename', (req, res) => {
     }
   });
   rs.pipe(res);
+});
+
+// ─── Справочник открытых ключей чата (Задача 2, chat-client) ───────────────
+//
+// POST /keys — положить свой открытый ключ. Требует пропуск (правило 1
+// брифа: адрес берётся ИЗ пропуска через requireBagPass(), не из тела —
+// тело может утверждать что угодно про `address`, это поле просто никогда
+// не читается). GET /keys/:address — прочитать чужой, БЕЗ пропуска
+// (правило 4: открытый ключ на то и открытый; требовать пропуск на чтение
+// значило бы выдавать список того, кто кем интересуется).
+//
+// Свои собственные бюджеты лимитера, не переиспользуют BAG_*_RATE_MAX —
+// справочник и мешки логически разные ресурсы (регистрация ключа — редкое
+// событие, на порядок реже, чем опрос списка мешков), общий счётчик заставил
+// бы всплеск одного голодать другой без единого нападающего, тот же урок,
+// что И-4 (ревью Задачи 3, см. комментарий у BAG_PASS_RATE_MAX и соседей)
+// уже поймал для трёх видов бюджетов мешков.
+const KEYS_WRITE_RATE_MAX = readPositiveInt('KEYS_WRITE_RATE_MAX', 20);
+// Один общий IP-бюджет на оба маршрута справочника (не разбит по
+// чтение/запись, как адресный) — то же обоснование, что у BAG_IP_RATE_MAX:
+// грубая сетевая защита "не заваливай нас отсюда", GET не имеет
+// авторизованного адреса вызывающего вообще (правило 4), так что адресный
+// бюджет для него физически нечем ключевать.
+const KEYS_IP_RATE_MAX = readPositiveInt('KEYS_IP_RATE_MAX', 120);
+
+function keysWriteRateKey(address) { return `keys-write:${address}`; }
+function keysIpRateKey(ip)         { return `keys-ip:${ip}`;         }
+
+const KEY_NOT_FOUND = { error: 'No chat key on file for this address', code: 'key_not_found' };
+
+// bagRateLimited() (объявлена выше, у маршрутов мешков) — форма ответа
+// generic ({error, code} на 429 с Retry-After), не специфична для мешков
+// несмотря на имя; переиспользуется здесь буквально, а не копируется.
+app.post('/keys', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(keysIpRateKey(ip), KEYS_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  if (!checkRateLimit(keysWriteRateKey(address), KEYS_WRITE_RATE_MAX)) return bagRateLimited(res, 'rate_limited_write');
+
+  const { key } = req.body || {};
+  try {
+    const stored = putKey(address, key, Date.now());
+    res.json({ address: stored.address, key: stored.key, updatedAt: stored.updatedAt, history: stored.history });
+  } catch (e) {
+    if (e.code === 'invalid_key') {
+      return res.status(400).json({ error: e.message, code: 'invalid_key' });
+    }
+    if (e.code === 'directory_unavailable') {
+      return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
+    }
+    console.error('[keys] POST /keys failed:', e.message);
+    return res.status(500).json({ error: 'Failed to store chat key' });
+  }
+});
+
+app.get('/keys/:address', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(keysIpRateKey(ip), KEYS_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  // Тот же приём, что PUT /bags/:recipient уже применяет к req.params.recipient
+  // (app.js, выше) — сырой URL-параметр приходит из жизни как угодно
+  // (кошелёк отдаёт чексуммированный, смешанного регистра, адрес), лоуэркейс
+  // до проверки формы, а не отдельная ветка "не нашли, потому что не тот регистр".
+  const address = String(req.params.address || '').toLowerCase();
+  if (!ETH_ADDR_RE.test(address)) {
+    return res.status(400).json({ error: 'Invalid address', code: 'invalid_address' });
+  }
+
+  let record;
+  try {
+    record = getKeyRecord(address);
+  } catch (e) {
+    if (e.code === 'directory_unavailable') {
+      return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
+    }
+    console.error('[keys] GET /keys failed:', e.message);
+    return res.status(500).json({ error: 'Failed to read chat key' });
+  }
+
+  // Правило 5: незнакомый адрес — 404 с кодом, не пустой 200. "Не заходил"
+  // и "что-то сломалось" не должны выглядеть одинаково — заявленная порча
+  // всего справочника (ветка выше) уже отдельно отвечает 503, так что 404
+  // здесь однозначно означает именно "этот адрес никогда не регистрировал
+  // ключ", а не "искали и не нашли по неизвестной причине".
+  if (!record) return res.status(404).json(KEY_NOT_FOUND);
+
+  res.json(record);
 });
 
 // ─── Push notification endpoints ──────────────────────────────────────────────
