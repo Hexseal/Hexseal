@@ -367,11 +367,20 @@ const getAutoApproveWindowMs = makeCachedConstantMsReader('AUTO_APPROVE_WINDOW')
 // обрезал (cappedCount > 0): "хотели X, дали Y, потому что потолок" — с
 // обоими числами, не одним. Не чинит сам потолок (BAG_MAX_AGE_MS) — то
 // отдельное решение, вынесенное к владельцу; здесь только честность лога.
+//
+// Решение владельца (раунд после И-1/C-1/И-2): потолок BAG_MAX_AGE_MS
+// больше не действует одинаково для всех — оплаченная сделка (fundedAt_ >
+// 0) от него освобождена. Требование владельца, п.5: "в логе говори, какой
+// режим применён — с оплатой или без", человек, глядя в лог, обязан
+// понимать, ПОЧЕМУ срок такой. paymentTag ниже — это и есть ответ на этот
+// вопрос, отдельно от cappedCount (который для оплаченной записи и так
+// всегда 0 — см. докстринг adoptPairBags() в bagStore.js).
 function logAdoptionResult(logPrefix, agreementAddress, kind, result) {
-  const { adopted, requested, minEffectiveExpiry, cappedCount } = result;
+  const { adopted, requested, minEffectiveExpiry, cappedCount, funded } = result;
   if (!adopted) return;
-  const tail = kind === 'creation' ? ' (preliminary)' : '';
-  console.log(`${logPrefix}: extended ${adopted} bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress} to ${new Date(minEffectiveExpiry).toISOString()}${tail}`);
+  const paymentTag = funded ? 'paid — ceiling does not apply' : 'unpaid — 90d ceiling applies';
+  const tail = kind === 'creation' ? `preliminary, ${paymentTag}` : paymentTag;
+  console.log(`${logPrefix}: extended ${adopted} bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress} to ${new Date(minEffectiveExpiry).toISOString()} (${tail})`);
   if (cappedCount) {
     console.warn(
       `${logPrefix}: BAG_MAX_AGE_MS ceiling cut ${cappedCount} of ${adopted} bag(s) short for agreement ${agreementAddress} — ` +
@@ -415,11 +424,21 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       const createdAtMs = Number(r.createdAt) * 1000;
       const activatedAtMs = Number(details.activatedAt_) * 1000;
       const ownDeadlineMs = Number(details.deadlineDays_) * 24 * 60 * 60 * 1000;
+      // Решение владельца (раунд после И-1/C-1/И-2): "оплачена" — это
+      // fundedAt_ > 0 (src/Agreement.sol: fund()/fundFromFactory() ставят
+      // ТОЛЬКО fundedAt, деньги реально в эскроу), НЕ activatedAt_ — это
+      // разные, неатомарные события (activate() зовёт ИСПОЛНИТЕЛЬ отдельным
+      // вызовом, требует fundedAt != 0; между ними реальный разрыв до
+      // ACTIVATION_WINDOW = 2 дня, статус FUNDED, деньги уже заперты, работа
+      // ещё не началась). Читается из ТОГО ЖЕ getDetails(), что и остальные
+      // поля выше — ни одного лишнего вызова в цепь. fundedAt_ уже был в
+      // AGREEMENT_MINI_ABI (читался раньше, просто не использовался).
+      const funded = Number(details.fundedAt_) > 0;
       const dealDeadline = dealDeadlineFromCreation({
         createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs,
         deadlineGraceMs, autoApproveWindowMs, nowMs,
       });
-      const result = adoptPairBags(pairId, dealDeadline, nowMs);
+      const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption (creation)', r.agreement, 'creation', result);
     } catch (e) {
       console.error(`[bags] adoption (creation): failed for active agreement ${r.agreement}, skipping:`, e.message);
@@ -441,8 +460,13 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       // Цепь считает время в секундах (block.timestamp), bagStore.js — в мс
       // (Date.now()-based, как и весь остальной _bagMeta).
       const disputedAtMs = Number(details.disputedAt_) * 1000;
+      // Не предполагаем true (хотя спор физически не может возникнуть на
+      // незапущенном эскроу) — читаем fundedAt_ из ТОГО ЖЕ getDetails(),
+      // тем же принципом, что и на этапе 1: не доверять, проверять явно,
+      // даже когда ожидаемое значение очевидно.
+      const funded = Number(details.fundedAt_) > 0;
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
-      const result = adoptPairBags(pairId, dealDeadline, nowMs);
+      const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);
     } catch (e) {
       console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);

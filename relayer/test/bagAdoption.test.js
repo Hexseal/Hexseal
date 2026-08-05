@@ -550,6 +550,131 @@ describe('adoptPairBags — злоупотребление усыновлени�
   });
 });
 
+// ─── Решение владельца (раунд, следующий за И-1/C-1/И-2): потолок BAG_MAX_AGE_MS
+// не применяется к мешкам, усыновлённым ОПЛАЧЕННОЙ сделкой (fundedAt_ > 0 —
+// деньги реально вошли в эскроу, src/Agreement.sol:fund()/fundFromFactory()).
+// Ко всему остальному (не зарегистрирована, зарегистрирована но не оплачена,
+// отменена/брошена неоплаченной, мешки без всякой сделки) потолок остаётся
+// как был. Обоснование владельца: потолок стоял единственной защитой от
+// злоупотребления пометкой чужой перепиской "сделкой" — но завести сделку и
+// не заплатить стоит только газа, а заморозить деньги в эскроро — уже
+// реальное участие. Защита не исчезает, она переезжает с диска на капитал.
+//
+// fundedAt_ ≠ activatedAt_ — НЕ то же самое поле, что уже используется
+// якорем dealDeadlineFromCreation(). Разведано явно (иначе легко перепутать
+// с уже существующим C1-анкором): src/Agreement.sol — fund()/fundFromFactory()
+// (строки 557/581) ставят ТОЛЬКО fundedAt = block.timestamp; activate()
+// (строка 596, вызывает ИСПОЛНИТЕЛЬ, требует fundedAt != 0) — отдельный,
+// более поздний вызов, ставит activatedAt. Между ними реальный разрыв —
+// ACTIVATION_WINDOW = 2 дня (строка 276): деньги уже в эскроу
+// (status() == FUNDED), а деадлайн работы ещё не начал тикать
+// (activatedAt всё ещё 0). Оба поля МОНОТОННЫ (грep по всему файлу — ни
+// одного `= 0` после установки), значит "усыновление только продлевает"
+// работает и здесь без изменений: разрешено ставить dealFunded только в
+// true, никогда обратно.
+describe('bagExpiryAt/adoptPairBags — оплаченная сделка: потолок BAG_MAX_AGE_MS не применяется', () => {
+  it('dealFunded=true — потолок НЕ ограничивает, эффективный срок равен запрошенному, сколько угодно дней вперёд', () => {
+    const now = Date.now();
+    const uploadedAt = now - 5 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    const farDeadline = uploadedAt + 200 * DAY; // далеко за потолком (90д)
+
+    adoptPairBags(pairId, farDeadline, now, true); // funded=true
+
+    const expiry = bagExpiryAt(bagMetaOf(key));
+    expect(expiry).toBe(farDeadline); // потолок не сработал вообще
+    expect(expiry).toBeGreaterThan(uploadedAt + bagStore.BAG_MAX_AGE_MS); // и правда дальше потолка
+  });
+
+  it('dealFunded не передан (или false) — потолок работает как раньше (контроль регрессии)', () => {
+    const now = Date.now();
+    const uploadedAt = now - 5 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    const farDeadline = uploadedAt + 200 * DAY;
+
+    adoptPairBags(pairId, farDeadline, now); // funded не передан — по умолчанию false
+
+    const expiry = bagExpiryAt(bagMetaOf(key));
+    expect(expiry).toBe(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок по-прежнему победил
+  });
+
+  it('adoptPairBags() возвращает funded=true, когда хотя бы одна затронутая запись стала оплаченной этим вызовом', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 5 * DAY);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+
+    const result = adoptPairBags(pairId, now + 200 * DAY, now, true);
+
+    expect(result.funded).toBe(true);
+  });
+
+  it('adoptPairBags() возвращает funded=false, когда усыновление было неоплаченным', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 5 * DAY);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+
+    const result = adoptPairBags(pairId, now + 200 * DAY, now, false);
+
+    expect(result.funded).toBe(false);
+  });
+
+  it('переход только вперёд: неоплаченная запись (уже усыновлена, потолок применяется) получает fundedAt_ позже — на следующем прогоне становится безлимитной', () => {
+    const now = Date.now();
+    const uploadedAt = now - 5 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+
+    // Ночь 1: сделка зарегистрирована, ещё не оплачена — короткий
+    // предварительный срок, потолок применяется.
+    adoptPairBags(pairId, uploadedAt + 300 * DAY, now, false);
+    const expiryUnfunded = bagExpiryAt(bagMetaOf(key));
+    expect(expiryUnfunded).toBe(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок ограничил
+
+    // Ночь 2: пришла оплата (fundedAt_ теперь > 0) — тот же вызов, funded=true.
+    adoptPairBags(pairId, uploadedAt + 300 * DAY, now, true);
+    const expiryFunded = bagExpiryAt(bagMetaOf(key));
+    expect(expiryFunded).toBe(uploadedAt + 300 * DAY); // потолок больше не ограничивает
+    expect(expiryFunded).toBeGreaterThan(expiryUnfunded); // и это продление, не откат
+  });
+
+  it('переход НЕ идёт назад: однажды оплаченная запись остаётся безлимитной, даже если её снова "усыновляют" без флага оплаты (мусор/на всякий случай)', () => {
+    const now = Date.now();
+    const uploadedAt = now - 5 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+
+    adoptPairBags(pairId, uploadedAt + 300 * DAY, now, true); // оплачена
+    adoptPairBags(pairId, uploadedAt + 300 * DAY, now, false); // повторный вызов без флага — не должен откатывать
+
+    const expiry = bagExpiryAt(bagMetaOf(key));
+    expect(expiry).toBe(uploadedAt + 300 * DAY); // всё ещё безлимитный — статус оплаты не откатился
+  });
+
+  it('несколько мешков одной пары — потолок каждого свой (uploadedAt разный), но с оплатой ни один не режется', () => {
+    const now = Date.now();
+    const uploadedOld = now - 80 * DAY;
+    const keyOld = put(ALICE, BOB, uploadedOld); // почти у потолка сейчас
+    const keyNew = put(ALICE, BOB, now - 1 * DAY);  // совсем свежий
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    const farDeadline = now + 200 * DAY;
+
+    // И-2: гейт первого усыновления смотрит "жив ли мешок ПРЯМО СЕЙЧАС" —
+    // keyOld непрочитан и загружен 80 дней назад, его собственный 30-дневный
+    // срок (правило 3) уже истёк к моменту now, независимо от оплаты. В
+    // реальном потоке это никогда бы не возникло (этап 1 трогает каждую
+    // активную сделку КАЖДУЮ ночь с самого начала), так что здесь моделируем
+    // то же самое: более раннее усыновление, пока keyOld ещё жив.
+    adoptPairBags(pairId, uploadedOld + 1 * DAY, uploadedOld);
+
+    adoptPairBags(pairId, farDeadline, now, true);
+
+    expect(bagExpiryAt(bagMetaOf(keyOld))).toBe(farDeadline);
+    expect(bagExpiryAt(bagMetaOf(keyNew))).toBe(farDeadline);
+  });
+});
+
 // ─── Q1/Q2 — перезапуск / диск кончился посреди усыновления ───────────────
 
 describe('adoptPairBags — устойчивость к сбоям', () => {

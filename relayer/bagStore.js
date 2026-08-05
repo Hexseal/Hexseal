@@ -527,6 +527,14 @@ function isValidBagMetaEntry(key, meta) {
     assertSafeInt('_loadBagMeta', 'uploadedAt', meta.uploadedAt);
     if (meta.firstFetchedAt != null) assertSafeInt('_loadBagMeta', 'firstFetchedAt', meta.firstFetchedAt);
     if (meta.dealDeadline != null) assertSafeInt('_loadBagMeta', 'dealDeadline', meta.dealDeadline);
+    // Решение владельца (раунд после И-1/C-1/И-2): dealFunded — новое поле,
+    // булево или отсутствующее (старые записи с диска, записанные ДО этого
+    // раунда, никогда его не имели — читается как falsy, тот же класс
+    // обратной совместимости, что и остальные необязательные поля этого
+    // модуля). Мусорное НЕбулево значение — та же порча данных, что и любое
+    // другое, отбраковывается здесь же, а не падает молча дальше при первом
+    // же bagExpiryAt().
+    if (meta.dealFunded != null && typeof meta.dealFunded !== 'boolean') return false;
     assertFetchNotBeforeUpload('_loadBagMeta', meta.uploadedAt, meta.firstFetchedAt);
     return true;
   } catch (e) {
@@ -1098,6 +1106,33 @@ export function bagMetaOf(key) {
 // укорачивает — потолок ограничивает только вклад САМОЙ сделки, а не общий
 // результат. Заперто тестом ниже.
 //
+// Решение владельца (раунд, следующий за И-1/C-1/И-2): потолок
+// BAG_MAX_AGE_MS НЕ применяется к мешкам, усыновлённым ОПЛАЧЕННОЙ сделкой
+// (meta.dealFunded — см. adoptPairBags() ниже, откуда поле приходит;
+// источник правды на цепи — Agreement.getDetails().fundedAt_ > 0, деньги
+// реально вошли в эскроу через fund()/fundFromFactory()). Обоснование
+// владельца: потолок был единственной защитой от пометки чужой переписки
+// "сделкой" без доказательства участия (см. докстринг adoptPairBags() —
+// "НЕ имеет способа проверить, что вызывающий вправе усыновлять именно эту
+// пару") — но завести сделку и не заплатить стоит только газа, а
+// заморозить деньги в эскроу — уже реальное участие. Защита не исчезает,
+// она переезжает с диска релеера на капитал контрагента: платит за
+// хранение своим замороженным капиталом, а не нашим диском. К НЕОПЛАЧЕННЫМ
+// сделкам (зарегистрирована, но fundedAt_ всё ещё 0 — включая брошенные,
+// отменённые через таймаут активации, любые) потолок остаётся как был.
+//
+// dealFunded, однажды выставленный в true, никогда не откатывается назад
+// (тот же принцип монотонности, что у самого fundedAt_ на цепи — деньги,
+// однажды вошедшие в эскроу, не могут "выйти оттуда не потратившись и не
+// вернувшись" без прохождения через какой-то finalize-путь, но САМ факт
+// "деньги когда-то были заморожены" не отменяется этим путём). Значит
+// усыновлённый оплаченной сделкой мешок остаётся безлимитным даже после
+// того, как сделка перестала быть ACTIVE в реестре (например,
+// triggerActivationTimeout() вернул деньги клиенту и она выпала из
+// registry.getActive() навсегда) — тот же класс решения, что уже
+// задокументирован как "не чинится" для отменённой сделки вообще (см.
+// отчёт Задачи 5): adoptPairBags() не отзывает то, что уже выдал.
+//
 // nowMs в сигнатуре не используется — срок истечения абсолютный, посчитан
 // целиком из полей meta. Параметр оставлен для симметрии с cleanupBags(nowMs)
 // и на случай будущего использования; подчёркивание в имени — сигнал, что
@@ -1118,6 +1153,15 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
     : meta.uploadedAt + BAG_UNREAD_TTL_MS;
 
   if (!meta.dealDeadline) return base;
+
+  // Оплаченная сделка — потолок не участвует вообще, даже в Math.min. Не
+  // "очень большой потолок", а именно ЕГО ОТСУТСТВИЕ: dealDeadline (посчитан
+  // до конца дела — dealDeadlineFromCreation()/dealDeadlineFromDispute())
+  // побеждает напрямую, Math.max(base, ...) — та же логика "усыновление не
+  // обрезает", что и в правиле выше, просто без второго аргумента min().
+  if (meta.dealFunded) {
+    return Math.max(base, meta.dealDeadline);
+  }
 
   const ceiling = meta.uploadedAt + BAG_MAX_AGE_MS;
   return Math.max(base, Math.min(meta.dealDeadline, ceiling));
@@ -1379,19 +1423,38 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
 // изменённых записей), requested (что было запрошено этим вызовом),
 // minEffectiveExpiry (худший — самый ранний — РЕАЛЬНЫЙ bagExpiryAt среди
 // записей, изменённых ИМЕННО этим вызовом, или null, если ничего не
-// изменилось) и cappedCount (сколько из них получили реальный срок КОРОЧЕ
-// запрошенного — то есть потолок реально их обрезал). Вызывающий (app.js)
-// обязан логировать minEffectiveExpiry, не requested, и явно предупреждать,
-// когда cappedCount > 0 — см. adoptActivePairBags()/adoptDisputedPairBags().
-export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now()) {
+// изменилось), cappedCount (сколько из них получили реальный срок КОРОЧЕ
+// запрошенного — то есть потолок реально их обрезал) и funded (см. ниже).
+// Вызывающий (app.js) обязан логировать minEffectiveExpiry, не requested,
+// и явно предупреждать, когда cappedCount > 0 — см.
+// adoptActivePairBags()/adoptDisputedPairBags().
+//
+// funded (решение владельца, раунд после И-1/C-1/И-2): true, если сделка
+// ОПЛАЧЕНА (Agreement.getDetails().fundedAt_ > 0 — деньги реально в
+// эскроу), false/не передан — как раньше, неоплаченная. Выставляет
+// meta.dealFunded на КАЖДОЙ затронутой записи пары — bagExpiryAt() выше
+// читает именно это поле, чтобы решить, участвует ли потолок
+// BAG_MAX_AGE_MS вообще. Монотонно, тем же принципом, что и dealDeadline
+// (Math.max, "только продлевать"): meta.dealFunded один раз выставленный в
+// true никогда не откатывается обратно в false этим вызовом, даже если
+// funded=false передан повторно (тот же аргумент, что и у остальных
+// временных меток на цепи — fundedAt_ на цепи тоже монотонен, см.
+// докстринг bagExpiryAt()). Запись, чей dealDeadline этим вызовом НЕ
+// сдвинулся (next === current), но чей dealFunded ВПЕРВЫЕ стал true, всё
+// равно засчитывается как изменённая (adopted++, персист) — иначе переход
+// "оплата пришла позже" (требование владельца, п.4) молча терялся бы: запись
+// формально "не изменилась" по числу dealDeadline, но реально стала
+// безлимитной, и это изменение обязано попасть на диск.
+export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded = false) {
   assertPairId('adoptPairBags', pairId);
   assertSafeInt('adoptPairBags', 'dealDeadline', dealDeadline);
   assertSafeInt('adoptPairBags', 'nowMs', nowMs);
 
-  const rollback = []; // [meta, previousDealDeadline] — только записи, реально изменённые этим вызовом
+  const rollback = []; // [meta, previousDealDeadline, previousDealFunded] — только записи, реально изменённые этим вызовом
   let adopted = 0;
   let minEffectiveExpiry = null;
   let cappedCount = 0;
+  let anyFunded = false;
 
   for (const meta of Object.values(_bagMeta)) {
     if (meta.pairId !== pairId) continue;
@@ -1403,19 +1466,27 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now()) {
 
     const current = meta.dealDeadline ?? 0;
     const next = Math.max(current, dealDeadline);
-    if (next === current) continue; // уже не короче — ничего менять и персистить не нужно
+    const currentFunded = !!meta.dealFunded;
+    const nextFunded = currentFunded || !!funded; // монотонно — только в true, см. докстринг выше
 
-    rollback.push([meta, meta.dealDeadline]);
+    if (next === current && nextFunded === currentFunded) continue; // менять нечего — ни срок, ни статус оплаты
+
+    rollback.push([meta, meta.dealDeadline, meta.dealFunded]);
     meta.dealDeadline = next;
+    meta.dealFunded = nextFunded;
     adopted++;
+    if (nextFunded) anyFunded = true;
 
     // C-1: РЕАЛЬНЫЙ срок этой конкретной записи после потолка BAG_MAX_AGE_MS
-    // — считаем ПОСЛЕ meta.dealDeadline = next (bagExpiryAt читает именно
-    // это поле). dealDeadline (аргумент функции — запрошенное этим вызовом
-    // значение) — то, с чем сравниваем, не next: next мог быть БОЛЬШЕ
-    // запроса, если у записи уже был более длинный срок (ratchet), и в этом
-    // случае "обрезал ли потолок ИМЕННО ЭТОТ запрос" — вопрос про
-    // dealDeadline, а не про уже победивший current.
+    // — считаем ПОСЛЕ meta.dealDeadline/meta.dealFunded обновлены (bagExpiryAt
+    // читает именно эти поля). dealDeadline (аргумент функции — запрошенное
+    // этим вызовом значение) — то, с чем сравниваем, не next: next мог быть
+    // БОЛЬШЕ запроса, если у записи уже был более длинный срок (ratchet), и
+    // в этом случае "обрезал ли потолок ИМЕННО ЭТОТ запрос" — вопрос про
+    // dealDeadline, а не про уже победивший current. Для оплаченной записи
+    // потолок не участвует вовсе (см. bagExpiryAt()), так что effective
+    // здесь никогда не меньше dealDeadline — cappedCount для неё всегда 0,
+    // без отдельного условия: это просто следствие новой ветки в bagExpiryAt.
     const effective = bagExpiryAt(meta, nowMs);
     if (minEffectiveExpiry === null || effective < minEffectiveExpiry) minEffectiveExpiry = effective;
     if (effective < dealDeadline) cappedCount++;
@@ -1429,12 +1500,16 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now()) {
       // память впереди диска. Откатываем РОВНО те записи, что изменил этот
       // вызов, к их прежнему значению (undefined, если поля не было вовсе —
       // но dealDeadline всегда присутствует в валидной записи как минимум
-      // null, так что previousDealDeadline здесь всегда null или число).
-      for (const [meta, previous] of rollback) meta.dealDeadline = previous;
+      // null, так что previousDealDeadline здесь всегда null или число;
+      // dealFunded аналогично — минимум false/undefined).
+      for (const [meta, previousDeadline, previousFunded] of rollback) {
+        meta.dealDeadline = previousDeadline;
+        meta.dealFunded = previousFunded;
+      }
       throw e;
     }
   }
-  return { adopted, requested: dealDeadline, minEffectiveExpiry, cappedCount };
+  return { adopted, requested: dealDeadline, minEffectiveExpiry, cappedCount, funded: anyFunded };
 }
 
 // ─── Чистка ─────────────────────────────────────────────────────────────────
