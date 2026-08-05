@@ -1344,31 +1344,93 @@ describe('pollBags', () => {
     expect(sign).toHaveBeenCalledTimes(1); // кэш держался всё это время
   });
 
-  it('C1-R1: отказ ДРУГОГО рода (не 401) тоже прерывает серию — считаем именно подряд идущие', async () => {
-    // Отказ #1 (401), отказ #2 (сеть — не BagPassError, серия прерывается),
-    // отказ #3 (401 — это отказ #1 НОВОЙ серии, не #3 старой). Без сброса на
-    // не-auth-ошибке кумулятивный счёт auth-отказов (1, [пропуск], 1) не
-    // достиг бы 3 — но с ОШИБОЧНЫМ сбросом "только на успехе, а не на любом
-    // прерывании" 401-серия 1,1 тоже не добралась бы до предела. Ключевая
-    // проверка здесь: 401 после сетевого сбоя — снова отказ #1, а не #2.
+  // C1-R2 (ревью-координатор, критическая находка — петля вернулась через
+  // соседнюю дверь). Счётчик из C1-R1 считал ТОЛЬКО BagPassError. Человек
+  // может ОТКАЗАТЬСЯ подписывать — кошелёк бросает СВОЁ исключение, не
+  // BagPassError, — и старый код это трактовал как "отказ другого рода",
+  // ОБНУЛЯЯ счётчик. Итог: отказ подписывать раз за разом никогда не
+  // достигал authFailureLimit, отступление упиралось в потолок 5 минут —
+  // 12 окон кошелька в час, бесконечно. Тот же класс, что и остальные три
+  // находки в этой задаче про "закрыто на одном пути, не закрыто на
+  // соседнем": предел был заперт на КОНКРЕТНОМ классе ошибки, не на самом
+  // ЯВЛЕНИИ "подряд идущие неудачи входа".
+  //
+  // Фикс (см. pollBags ниже): счётчик считает ЛЮБУЮ неудачу тика — не
+  // только BagPassError. Сбрасывается ТОЛЬКО успехом.
+  it('C1-R2: замер — человек отказывается подписывать РОВНО authFailureLimit раз, потом стоп и onAuthFailed', async () => {
+    // signMessage бросает СВОЁ исключение — ровно то, что кошелёк реально
+    // делает при отказе человека (MetaMask и аналоги: `UserRejectedRequestError`
+    // или простой Error с текстом вроде "User rejected the request").
+    const sign = vi.fn().mockRejectedValue(new Error('User rejected the request'));
+    const fetchMock = vi.fn(); // не должен звониться вовсе — подпись падает раньше POST /bags/pass
+    vi.stubGlobal('fetch', fetchMock);
+
+    let authFailedCalls = 0;
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    let sleepCalls = 0;
+    const sleep = async () => {
+      sleepCalls++;
+      // Страховка теста: без фикса цикл тикал бы неограниченно (до потолка
+      // отступления в 5 минут КАЖДЫЙ раз) — не дать ему улететь за разумный
+      // предел вместо честного красного assert'а.
+      if (sleepCalls >= 50) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      getPass: () => requestBagPass(sign, ALICE).then((p) => p.pass),
+      isActive: () => true,
+      onBags: () => {},
+      onAuthFailed: () => { authFailedCalls++; resolveDone(); },
+      sleep,
+    });
+    await done;
+
+    // Замер по прямому требованию координатора: сколько окон кошелька
+    // (попыток подписать) увидит человек, прежде чем опрос сдастся.
+    expect(sign).toHaveBeenCalledTimes(3);      // РОВНО три — не 257, не бесконечно
+    expect(authFailedCalls).toBe(1);
+    expect(fetchMock).not.toHaveBeenCalled();   // отказ подписи — до сети вовсе, ни одного POST /bags/pass
+  });
+
+  it('C1-R2: 401 вперемешку с сетевой ошибкой ДРУГОГО рода — счётчик отказов входа НЕ обнуляется промежуточной ошибкой', async () => {
+    // Второй сценарий координатора: "тоньше и вероятнее". 'v1.a' не в
+    // реальной 3-сегментной форме — forgetBagPassByToken не может разобрать
+    // из него адрес и молча не делает ничего (см. describe('forgetBagPass')
+    // выше), так что кэш держится весь тест, POST /bags/pass — РОВНО один
+    // раз, дальше только GET /bags — тест целится в подсчёт РАЗНОРОДНЫХ
+    // отказов входа подряд, не в механику выброса кэша.
+    //
+    // Сетевой отказ listBags (тик2) сам по себе НЕ отказ входа (см.
+    // докстринг consecutiveAuthFailures в pollBags — у него свой,
+    // отдельный, бесконечный откат, I4/T1) — счётчик входа он не
+    // ОБНУЛЯЕТ, но и не двигает. Три РЕАЛЬНЫХ 401 (тики 1, 3, 4) —
+    // ровно то число, что и требуется, несмотря на постороннюю сетевую
+    // ошибку между ними: если бы она "сбрасывала" счётчик (старый баг),
+    // предел не был бы достигнут вообще на этих четырёх тиках.
     const sign = vi.fn().mockResolvedValue('0xsig');
     const fail401 = { ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }) };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }) }) // POST — один раз
-      .mockResolvedValueOnce(fail401)                              // тик1: 401, auth-отказ #1
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))      // тик2: сеть — НЕ auth-отказ, сбрасывает серию
-      .mockResolvedValueOnce(fail401)                              // тик3: 401 — auth-отказ #1 новой серии
-      .mockResolvedValueOnce(fail401);                             // тик4: 401 — auth-отказ #2
+      .mockResolvedValueOnce(fail401)                              // тик1: 401 — отказ входа #1
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))      // тик2: сеть — НЕ отказ входа (свой откат, не эта серия)
+      .mockResolvedValueOnce(fail401)                              // тик3: 401 — отказ входа #2 (серия НЕ сброшена тиком2)
+      .mockResolvedValueOnce(fail401);                             // тик4: 401 — отказ входа #3 → предел
     vi.stubGlobal('fetch', fetchMock);
 
     let handle: BagPollHandle;
     let authFailedCalls = 0;
-    let sleepCalls = 0;
     let resolveDone!: () => void;
     const done = new Promise<void>((r) => { resolveDone = r; });
+    let sleepCalls = 0;
     const sleep = async () => {
       sleepCalls++;
-      if (sleepCalls >= 4) { handle.stop(); resolveDone(); }
+      // Страховка теста: без фикса счётчик обнуляется на сетевой ошибке,
+      // предел никогда не достигается — не дать циклу улететь за разумный
+      // предел (мокнутые ответы кончились бы и дали TypeError на undefined)
+      // вместо честного красного assert'а.
+      if (sleepCalls >= 20) { handle.stop(); resolveDone(); }
     };
 
     handle = pollBags({
@@ -1381,7 +1443,10 @@ describe('pollBags', () => {
     });
     await done;
 
-    expect(authFailedCalls).toBe(0); // максимум подряд auth-отказов — 2, не 3
+    // Три отказа ВХОДА (401) в четырёх тиках, разделённых посторонней
+    // сетевой ошибкой, — обязаны сложиться в ОДНУ серию, а не сброситься.
+    expect(authFailedCalls).toBe(1);
+    expect(sign).toHaveBeenCalledTimes(1); // единственная подпись — кэш держался (см. комментарий выше)
   });
 });
 
