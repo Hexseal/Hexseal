@@ -247,7 +247,18 @@ async function fetchDisputedRecords() {
     const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
     return await registry.getDisputed();
   } catch (e) {
+    // I-C (третий закрывающий раунд ревью, находка координатора): слив
+    // двух вызовов getDisputed() в один (мелочь эффективности, коммит
+    // perf(bags)) молча убрал СВОЁ сообщение об ошибке у этапа 2 —
+    // adoptDisputedPairBags() получает уже готовый (пустой при отказе)
+    // массив и просто не находит, что усыновлять, без единого слова о
+    // причине. При отказе теперь ДВЕ строки, не одна: обе стороны,
+    // которым нужен этот вызов (защита вложений И усыновление по спору),
+    // получают СВОЙ узнаваемый префикс — иначе человек, ищущий в логе
+    // "усыновление", не найдёт вообще ничего и решит, что оно просто ни
+    // разу не сработало этой ночью, а не что причина известна и одна.
     console.error('[files] getDisputed lookup failed, skipping TTL protection this run:', e.message);
+    console.error('[bags] adoption: getDisputed lookup failed, skipping this run:', e.message);
     return []; // fail open on the on-chain read — never block cleanup entirely
   }
 }

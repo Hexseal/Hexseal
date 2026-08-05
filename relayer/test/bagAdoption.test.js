@@ -16,7 +16,7 @@ const bagStore = await import('../bagStore.js');
 const {
   bagKeyFor, recordBag, bagMetaOf, bagExpiryAt, cleanupBags,
   adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
-  _loadBagMeta, _pairIdFromAddresses,
+  _loadBagMeta, _pairIdFromAddresses, assertBagStoreReady,
 } = bagStore;
 
 // app.js — тем же приёмом, что test/bagStore.test.js:46 (координатор уже
@@ -980,6 +980,26 @@ describe('мелочи эффективности — лишняя работа 
     expect(calls).toBe(1);
   });
 
+  // I-C (третий закрывающий раунд ревью, находка координатора): слив двух
+  // вызовов getDisputed() в один раньше означал, что при отказе чтения
+  // adoptDisputedPairBags() получает уже готовый (пустой) массив и МОЛЧА
+  // ничего не усыновляет — в лог уходила только строка про защиту вложений,
+  // про усыновление ни слова.
+  it('отказ общего getDisputed() даёт ДВЕ строки в лог — про защиту вложений И про усыновление по спору, не только про первое', async () => {
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [],
+      getDisputed: () => { throw new Error('execution reverted (симулировано)'); },
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runFileCleanup()).resolves.toBeUndefined();
+
+    const filesMsg = errSpy.mock.calls.find(args => String(args[0]).includes('[files]') && String(args[0]).includes('getDisputed'));
+    const bagsMsg = errSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption') && String(args[0]).includes('getDisputed'));
+    expect(filesMsg).toBeDefined();
+    expect(bagsMsg).toBeDefined(); // раньше этой строки не было вовсе
+  });
+
   it('DISPUTE_WINDOW() читается один раз на агримент, не на каждый ночной прогон заново (кэш живёт между вызовами runFileCleanup())', async () => {
     const client    = ethAddr(1, '1');
     const executor  = ethAddr(1, '2');
@@ -1244,6 +1264,68 @@ describe('I-B не отменяет потолок BAG_MAX_AGE_MS — контр
       expect(r.diedOnDay).toBe(90);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+// ─── I-D (третий закрывающий раунд ревью, находка координатора): BAG_MAX_AGE_MS
+// режет уже усыновлённый срок молча — предупреждение при старте, если
+// потолок физически не даёт дожить до конца апелляции.
+describe('I-D — предупреждение при старте, если BAG_MAX_AGE_MS не даёт дожить до конца апелляции', () => {
+  it('на боевом умолчании (90д) предупреждения нет — потолок с запасом больше нужного', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      assertBagStoreReady();
+      const call = warnSpy.mock.calls.find(args => String(args[0]).includes('BAG_MAX_AGE_MS'));
+      expect(call).toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // Замер координатора: BAG_MAX_AGE_MS=6д — потолок явно недостаточен
+  // (окно спора+финализации+апелляции+запас — минимум ~14д при боевых
+  // умолчаниях: 4+1+4+1 = 10д плюс оценка окна спора ~4д = ~14д).
+  it('BAG_MAX_AGE_MS=6 дней (замер координатора) — предупреждение при старте, называющее BAG_MAX_AGE_MS и апелляцию', async () => {
+    const saved = process.env.BAG_MAX_AGE_MS;
+    process.env.BAG_MAX_AGE_MS = String(6 * DAY);
+    vi.resetModules();
+    try {
+      const fresh = await import('../bagStore.js');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        fresh.assertBagStoreReady();
+        const call = warnSpy.mock.calls.find(args => String(args[0]).includes('BAG_MAX_AGE_MS'));
+        expect(call).toBeDefined();
+        expect(String(call[0])).toMatch(/апелляции/);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    } finally {
+      if (saved === undefined) delete process.env.BAG_MAX_AGE_MS; else process.env.BAG_MAX_AGE_MS = saved;
+      vi.resetModules();
+      await import('../bagStore.js');
+      await import('../app.js');
+    }
+  });
+
+  it('не бросает — предупреждение, не ошибка (маленький потолок может быть намеренным)', async () => {
+    const saved = process.env.BAG_MAX_AGE_MS;
+    process.env.BAG_MAX_AGE_MS = String(1 * DAY);
+    vi.resetModules();
+    try {
+      const fresh = await import('../bagStore.js');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        expect(() => fresh.assertBagStoreReady()).not.toThrow();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    } finally {
+      if (saved === undefined) delete process.env.BAG_MAX_AGE_MS; else process.env.BAG_MAX_AGE_MS = saved;
+      vi.resetModules();
+      await import('../bagStore.js');
+      await import('../app.js');
     }
   });
 });

@@ -283,7 +283,50 @@ export function assertBagStoreReady() {
   // script/check-appeal-window.sh на этапе CI, не рантайм.
   assertPositiveFiniteNumber('BAG_ADOPTION_LOOKBACK_MS', BAG_ADOPTION_LOOKBACK_MS);
   assertNonNegativeFiniteNumber('BAG_DEAL_GRACE_MS', BAG_DEAL_GRACE_MS);
+  _warnIfBagMaxAgeTooSmallForAppeal();
   fs.mkdirSync(DIR_BAGS, { recursive: true });
+}
+
+// I-D (третий закрывающий раунд ревью, находка координатора): BAG_MAX_AGE_MS
+// режет УЖЕ УСЫНОВЛЁННЫЙ срок — ceiling в bagExpiryAt() ниже это
+// `uploadedAt + BAG_MAX_AGE_MS`, и ничто не мешает ему оказаться МЕНЬШЕ,
+// чем реально нужно, чтобы дожить до конца апелляции. Замер координатора:
+// 60 дней превращались в 25 при BAG_MAX_AGE_MS=6д. Тот же класс дыры, ради
+// которой закрыли env-переопределение APPEAL_REVIEW_WINDOW_DAYS/
+// FINALIZE_DELAY_HOURS (I3), но через ЗАКОННУЮ ручку: assertPositiveFiniteNumber
+// выше пропускает её, смотрит только "положительное конечное число", гейт
+// её не видит (не копия константы контракта, обычный env-таймаут), в лог
+// ничего не идёт.
+//
+// Дёшево: предупреждаем при старте, НЕ бросаем — маленький BAG_MAX_AGE_MS
+// может быть намеренным выбором на тестовом окружении (или сознательным
+// решением "мы принимаем этот риск"), это не повод ронять процесс, только
+// повод узнать об этом заранее, а не молча терять доказательства позже.
+//
+// DISPUTE_WINDOW НЕ входит в расчёт точно — читается с цепи для каждого
+// агримента отдельно (может отличаться между клонами реализации), при
+// старте процесса недоступен без RPC-вызова, а стартовая проверка не
+// должна зависеть от доступности сети. Консервативная ОЦЕНКА — тот же
+// порядок величины, что APPEAL_REVIEW_WINDOW_DAYS: комментарий в самом
+// контракте прямым текстом говорит "APPEAL_REVIEW_WINDOW = 4 days —
+// столько же, сколько DISPUTE_WINDOW даёт арбитру" (ArbiterRegistryFacet.sol:147).
+// Это ОЦЕНКА, не точный расчёт — если реальный DISPUTE_WINDOW когда-нибудь
+// разойдётся с этим предположением, порог предупреждения будет неточным
+// (в любую сторону), но само предупреждение остаётся честной приблизительной
+// проверкой, а не тихим нулём.
+function _warnIfBagMaxAgeTooSmallForAppeal() {
+  const estimatedDisputeWindowMs = APPEAL_REVIEW_WINDOW_DAYS * DAY_MS; // оценка, см. докстринг выше
+  const minimumForAppealMs = estimatedDisputeWindowMs + FINALIZE_DELAY_MS
+    + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+  if (BAG_MAX_AGE_MS < minimumForAppealMs) {
+    console.warn(
+      `[bags] BAG_MAX_AGE_MS=${BAG_MAX_AGE_MS}мс (~${(BAG_MAX_AGE_MS / DAY_MS).toFixed(1)}д) меньше оценочного ` +
+      `минимума ~${minimumForAppealMs}мс (~${(minimumForAppealMs / DAY_MS).toFixed(1)}д: окно спора (оценка) + ` +
+      `окно финализации + окно апелляции + запас) — усыновлённый мешок физически не может дожить до конца ` +
+      `апелляции спора, потолок BAG_MAX_AGE_MS обрежет срок раньше. Если это осознанный выбор — можно ` +
+      `игнорировать; если нет — увеличь BAG_MAX_AGE_MS.`
+    );
+  }
 }
 
 // Форма адреса — та же проверка, что ETH_ADDR_RE в bagPass.js: нижний
