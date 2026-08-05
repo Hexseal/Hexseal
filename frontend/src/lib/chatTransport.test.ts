@@ -63,6 +63,33 @@ describe('requestBagPass', () => {
     expect(JSON.parse(String(init.body))).toEqual({ address: ALICE });
   });
 
+  // T2 (ревью-координатор, важная находка). Тест выше проверяет ФОРМУ обоих
+  // значений отдельно (оба — "какие-то цифры"), но не то, что это ОДНИ И ТЕ
+  // ЖЕ цифры. Замер координатора против настоящего сервера настоящим
+  // кошельком: расхождение времени в заголовке и во подписанном сообщении
+  // на одну секунду → сервер восстанавливает подпись под ДРУГОЙ фразой,
+  // чем та, что реально пришла в x-ts, — 401 на каждый запрос пропуска,
+  // вход не работает вообще, при этом голый набор тестов формы (\d+ и \d+)
+  // остаётся полностью зелёным. Тот же класс, что I2 (тогда — регистр,
+  // сейчас — согласованность времени): мутация меняет ВТОРОЕ значение
+  // независимо от первого, форма не страдает, а согласованность — да.
+  it('T2: время в заголовке x-ts РОВНО совпадает со временем, зашитым в подписанное сообщение', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestBagPass(sign, ALICE);
+
+    const signedMessage = sign.mock.calls[0][0] as string;
+    const tsInMessage = signedMessage.split(':').pop();
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const tsInHeader = (init.headers as Record<string, string>)['x-ts'];
+
+    expect(tsInHeader).toBe(tsInMessage);
+  });
+
   it('повторный вызов с живым пропуском — ноль обращений в сеть, ноль запросов подписи', async () => {
     const sign = vi.fn().mockResolvedValue('0xsig');
     const fetchMock = vi.fn().mockResolvedValue({
