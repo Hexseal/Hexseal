@@ -1238,6 +1238,154 @@ describe('усыновление в два этапа — при создани�
   });
 });
 
+// ─── Решение владельца (раунд после И-1/C-1/И-2): интеграционные тесты
+// через настоящий runFileCleanup(), не голый adoptPairBags() — три
+// сценария из требования владельца, которые обязательно нужно запереть
+// на уровне полного ночного прогона, а не только на уровне функции.
+describe('Решение владельца — интеграция через runFileCleanup()', () => {
+  // Реальный разрыв, найденный при чтении Agreement.sol: fund() и
+  // activate() — разные, неатомарные вызовы (activate() зовёт
+  // ИСПОЛНИТЕЛЬ, требует fundedAt != 0). Между ними — status() == FUNDED,
+  // деньги уже заперты в эскроу, но деадлайн работы ещё не тикает
+  // (activatedAt всё ещё 0). Потолок обязан сняться уже В ЭТОМ ОКНЕ, не
+  // дожидаясь activate().
+  it('деньги внесены (fundedAt_ > 0), но исполнитель ещё не подтвердил старт (activatedAt_ == 0) — потолок уже не действует', async () => {
+    const client    = ethAddr(950, '1');
+    const executor  = ethAddr(950, '2');
+    const agreement = ethAddr(950, '3');
+    const now = Date.now();
+    const createdAtSec = Math.floor(now / 1000);
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+      getDisputed: [],
+    });
+    mockContract(agreement, {
+      // FUNDED, не ACTIVE: fundedAt_ > 0, activatedAt_ == 0 — окно
+      // ACTIVATION_WINDOW (2 дня в контракте), моделируется здесь как
+      // "прямо сейчас", до какой-либо активации.
+      getDetails: async () => ({ deadlineDays_: 300n, fundedAt_: BigInt(createdAtSec), activatedAt_: 0n, disputedAt_: 0n }),
+      DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+      DEADLINE_GRACE: async () => 0n,
+      AUTO_APPROVE_WINDOW: async () => 0n,
+    });
+
+    const uploadedAt = now - 5 * DAY;
+    const key = put(client, executor, uploadedAt);
+
+    await runFileCleanup();
+
+    const expiry = bagExpiryAt(bagMetaOf(key));
+    expect(expiry).toBeGreaterThan(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок уже не участвует
+  });
+
+  // Требование владельца, п.4: "переход считается только вперёд: сделку
+  // оплатили — срок продлевается на следующем же прогоне". Ночь 1:
+  // зарегистрирована, НЕ оплачена, короткий срок работы — предварительный
+  // срок капается потолком. Ночь 2: пришла оплата — тот же прогон обязан
+  // снять потолок и не быть заблокирован ранее выданным коротким сроком.
+  it('оплата пришла позже — на следующем прогоне срок продлевается за потолок, ранее выданный короткий срок не мешает', async () => {
+    const client    = ethAddr(951, '1');
+    const executor  = ethAddr(951, '2');
+    const agreement = ethAddr(951, '3');
+    const T0 = Date.UTC(2031, 0, 1);
+    const createdAtSec = Math.floor(T0 / 1000);
+
+    try {
+      vi.setSystemTime(T0);
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+        getDisputed: [],
+      });
+      // Ночь 1: НЕ оплачена, срок работы длинный (300д) — потолок реально
+      // режет предварительный срок.
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: 300n, fundedAt_: 0n, activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+
+      const uploadedAt = T0 - 1 * DAY;
+      const key = put(client, executor, uploadedAt);
+
+      await runFileCleanup();
+      const expiryBeforePayment = bagExpiryAt(bagMetaOf(key));
+      expect(expiryBeforePayment).toBe(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок реально сработал
+
+      // Ночь 2: оплата пришла.
+      vi.setSystemTime(T0 + 1 * DAY);
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: 300n, fundedAt_: BigInt(createdAtSec), activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+
+      await runFileCleanup();
+      const expiryAfterPayment = bagExpiryAt(bagMetaOf(key));
+      expect(expiryAfterPayment).toBeGreaterThan(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок больше не режет
+      expect(expiryAfterPayment).toBeGreaterThan(expiryBeforePayment); // и это продление, не откат
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Требование владельца, п.4 (пункт про отменённую сделку — решение моё,
+  // с обоснованием, см. отчёт): деньги были заморожены — значит участие
+  // состоялось, переписку стоит сохранить до конца окна спора. Ночь 1:
+  // сделка оплачена и усыновлена (безлимитный срок выставлен). Ночь 2:
+  // сделка выпала из registry.getActive() (тем же способом, каким это
+  // происходит в реальности — triggerActivationTimeout()/любой другой
+  // forward-only путь завершения переводит её в REFUNDED и она
+  // ПЕРЕСТАЁТ приходить оттуда навсегда, RegistryFacet.getActive()
+  // фильтрует строго по ACTIVE). adoptPairBags() физически не может
+  // узнать об отмене (нет вызова, нечего передать) — ранее выданный
+  // безлимитный срок должен остаться как есть, не откатиться на потолок.
+  it('сделка отменена/выпала из реестра ПОСЛЕ того, как была оплачена — уже выданный безлимитный срок не отзывается (решение: деньги были заморожены — участие состоялось)', async () => {
+    const client    = ethAddr(952, '1');
+    const executor  = ethAddr(952, '2');
+    const agreement = ethAddr(952, '3');
+    const T0 = Date.UTC(2031, 2, 1);
+    const createdAtSec = Math.floor(T0 / 1000);
+
+    try {
+      vi.setSystemTime(T0);
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+        getDisputed: [],
+      });
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: 300n, fundedAt_: BigInt(createdAtSec), activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+
+      const uploadedAt = T0 - 1 * DAY;
+      const key = put(client, executor, uploadedAt);
+
+      await runFileCleanup(); // оплачена, усыновлена безлимитно
+      const expiryWhileFunded = bagExpiryAt(bagMetaOf(key));
+      expect(expiryWhileFunded).toBeGreaterThan(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок снят
+
+      // "Отмена": сделка выпадает из getActive() навсегда (тот же эффект,
+      // что и REFUNDED в реестре) — ни getActive(), ни getDisputed() её
+      // больше не отдают. Никакого специального кода для этого не нужно —
+      // adoptPairBags() просто больше не вызывается для этой пары.
+      vi.setSystemTime(T0 + 5 * DAY);
+      mockContract(process.env.DIAMOND_ADDRESS, { getActive: [], getDisputed: [] });
+
+      await runFileCleanup();
+      const expiryAfterCancel = bagExpiryAt(bagMetaOf(key));
+      expect(expiryAfterCancel).toBe(expiryWhileFunded); // не изменился — ни отозван, ни урезан
+      expect(expiryAfterCancel).toBeGreaterThan(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок по-прежнему не участвует
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 // ─── C1 (находка координатора, закрывающий раунд): главный путь доски
 // заказов — JobBoardFacet.acceptApplicant() регистрирует сделку
 // НЕОПЛАЧЕННОЙ (FactoryFacet.sol:232-273), а у fund() нет дедлайна вообще
