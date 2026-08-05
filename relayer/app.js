@@ -10,6 +10,29 @@ import { fileURLToPath } from 'url';
 
 dotenv.config({ path: '.env.relayer' });
 
+// Задача 3 (chat-transport-storage): статические импорты, не
+// `const { X } = await import(...)` — тот и другой модуль экспортируют
+// `export let` (DIR_BAGS, MAX_BAG_SIZE, ...), и только именованный статический
+// import (или обращение через пространство имён) даёт живую ссылку, которая
+// видит значения ПОСЛЕ assertBagStoreReady()/assertBagPassReady() ниже, а не
+// снимок на момент этой строки — см. заголовок test/bagStore.test.js.
+//
+// Текстуально ПОСЛЕ dotenv.config() по требованию ревью Задачи 3. Строго
+// говоря это не меняет порядок ВЫПОЛНЕНИЯ — ESM вычисляет все импорты раньше
+// тела импортирующего модуля независимо от того, где текстуально стоит
+// `import`, так что bagStore.js/bagPass.js в любом случае получают
+// управление до этой строки. Оба спроектированы это пережить (ленивое чтение
+// секрета в bagPass.js; module-level `_refreshConfig()` в bagStore.js,
+// повторно вызываемая из assertBagStoreReady()) — но текстовый порядок здесь
+// дешевле и надёжнее как сигнал для читателя, поэтому он такой.
+import {
+  bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
+  assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
+  adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
+  assertNotFromFuture,
+} from './bagStore.js';
+import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Web Push (VAPID) ─────────────────────────────────────────────────────────
@@ -109,10 +132,22 @@ const AGREEMENT_MINI_ABI = [
   // начнёт врать в пуше молча — а пуш живёт в шторке уведомлений, его не
   // отзовёшь. Тем же способом читает фронт (frontend/src/app/deal/[address]).
   'function DISPUTE_WINDOW() view returns (uint256)',
+  // Задача 5, мелочь (закрывающий раунд ревью, находка координатора): этап 1
+  // (adoptActivePairBags ниже) без спора считал предварительный срок только
+  // от deadlineDays_, не учитывая, что собственный худший случай сделки БЕЗ
+  // спора длиннее — грейс перед автовозвратом и окно клиента среагировать
+  // после markDone тоже сдвигают момент, до которого спор в принципе
+  // возможен. Обе — public constant, читаются тем же staticcall'ом, что и
+  // DISPUTE_WINDOW выше.
+  'function DEADLINE_GRACE() view returns (uint256)',
+  'function AUTO_APPROVE_WINDOW() view returns (uint256)',
 ];
 
 const REGISTRY_MINI_ABI = [
   'function getDisputed() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
+  // Задача 5, этап 1 (усыновление при создании сделки) — тот же tuple, что
+  // getDisputed() выше, RegistryStorage.AgreementRecord одна на оба статуса.
+  'function getActive() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
 ];
 
 // ─── Who is the arbiter of a dispute (and why NOT Agreement.arbiter) ──────────
@@ -196,16 +231,264 @@ const SERVICE_MINI_ABI = [
   'function getService(uint256) view returns (tuple(address executor, string title, string description, uint256 price, uint256 deadlineDays, uint8 region, uint8 status, uint256 createdAt, uint256 hiresCount))',
 ];
 
-// Set of pairIds currently holding a DISPUTED agreement — one on-chain call per
-// cleanup run, not per file.
-async function getDisputedPairIds() {
+// Raw disputed records — one on-chain call per cleanup run, not per file and
+// not per caller. Задача 5 (мелочь, закрывающий раунд ревью координатора):
+// раньше это был отдельный getDisputed() ВНУТРИ getDisputedPairIds(), и
+// adoptDisputedPairBags() ниже делала СВОЙ второй, независимый getDisputed()
+// за тот же прогон — та же самая вью-функция реестра дважды. registry.getActive()
+// /getDisputed() и без того делают по ДВА полных прохода по ИСТОРИИ ВСЕХ
+// когда-либо созданных сделок, не только текущих активных/спорных
+// (RegistryFacet.sol:219-236 — массив allAgreements только растёт, никогда
+// не усекается) — вызывать это ЛИШНИЙ раз за прогон не нужно вообще. Один
+// вызов здесь, наверху runFileCleanup(); и защита вложений (через
+// disputedPairIdsFromRecords ниже), и усыновление по спору
+// (adoptDisputedPairBags) читают ОДИН И ТОТ ЖЕ уже полученный массив.
+async function fetchDisputedRecords() {
   try {
     const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
-    const disputed = await registry.getDisputed();
-    return new Set(disputed.map((r) => pairIdFromAddresses(r.client, r.executor)));
+    return await registry.getDisputed();
   } catch (e) {
+    // I-C (третий закрывающий раунд ревью, находка координатора): слив
+    // двух вызовов getDisputed() в один (мелочь эффективности, коммит
+    // perf(bags)) молча убрал СВОЁ сообщение об ошибке у этапа 2 —
+    // adoptDisputedPairBags() получает уже готовый (пустой при отказе)
+    // массив и просто не находит, что усыновлять, без единого слова о
+    // причине. При отказе теперь ДВЕ строки, не одна: обе стороны,
+    // которым нужен этот вызов (защита вложений И усыновление по спору),
+    // получают СВОЙ узнаваемый префикс — иначе человек, ищущий в логе
+    // "усыновление", не найдёт вообще ничего и решит, что оно просто ни
+    // разу не сработало этой ночью, а не что причина известна и одна.
     console.error('[files] getDisputed lookup failed, skipping TTL protection this run:', e.message);
-    return new Set(); // fail open on the on-chain read — never block cleanup entirely
+    console.error('[bags] adoption: getDisputed lookup failed, skipping this run:', e.message);
+    return []; // fail open on the on-chain read — never block cleanup entirely
+  }
+}
+
+// Чистая функция — превращает уже полученные записи в Set pairId для защиты
+// вложений. Раньше делала I/O сама (см. fetchDisputedRecords() выше, куда
+// это переехало).
+function disputedPairIdsFromRecords(disputed) {
+  return new Set(disputed.map((r) => pairIdFromAddresses(r.client, r.executor)));
+}
+
+// ─── Задача 5 (chat-transport-storage): усыновление переписки сделкой ────────
+//
+// §6 спеки: бриф обсуждают ДО сделки — без усыновления самое важное истечёт
+// раньше, чем возникнет спор, а цепочка сообщений укажет на человека как на
+// утаившего, хотя он ничего не прятал. "Откуда берётся событие" — тем же
+// путём, каким релеер уже узнаёт о спорах (registry.getDisputed(), см.
+// fetchDisputedRecords() выше): свой read-only вызов на реестр за прогон
+// runFileCleanup(), никакого отдельного опроса/крона не заводится.
+//
+// ДВА ЭТАПА (находка координатора при ревью первой версии — усыновление
+// только по спору не закрывает риск, ради которого заведена вся задача, см.
+// bagStore.js, комментарий над dealDeadlineFromCreation/dealDeadlineFromDispute,
+// и task-5-report.md, "Замер: дыра закрыта"):
+//
+//   adoptActivePairBags()   — при создании сделки (registry.getActive()),
+//                             срок предварительный.
+//   adoptDisputedPairBags() — при споре (принимает УЖЕ полученный массив
+//                             getDisputed() — см. fetchDisputedRecords() и
+//                             мелочь эффективности там же), срок точный, до
+//                             конца окна апелляции.
+//
+// adoptActivePairBags() — свой read-only вызов на реестр (getActive()), не
+// переиспользование того, что уже есть у getDisputed()-пути: разные
+// вью-функции реестра, разные множества сделок. Цена — лишний read-only
+// вызов за тот же ночной прогон (раз в сутки, не на каждый файл) — активных
+// сделок на маркетплейсе в любой момент — разумное число, не история за
+// всё время (в отличие от getActive()/getDisputed() внутри контракта,
+// каждая из которых уже проходит ВСЮ историю дважды сама по себе,
+// RegistryFacet.sol:219-236 — от этого релеер защититься не может, не меняя
+// сам контракт, вне объёма этой задачи).
+//
+// disputedAt читается через Agreement.getDetails().disputedAt_ — ту же точку
+// входа, которой уже пользуется disputeResponseDeadline() ниже по файлу —
+// а не через RegistryStorage.AgreementRecord.resolvedAt, хотя для статуса
+// DISPUTED они формально совпадают (raiseDispute() выставляет оба в одной
+// транзакции, src/Agreement.sol:684,695): читать источник, который ИМЕНЕМ
+// говорит "disputedAt", явно надёжнее, чем полагаться на совпадение полей
+// двух разных контрактов, которое ничем не гарантировано на будущее.
+//
+// Задача 5, мелочь эффективности (закрывающий раунд ревью координатора):
+// DISPUTE_WINDOW() — `public constant` реализации Agreement, вкомпилирована
+// в байткод и для ДАННОГО клона неизменна навсегда (CLAUDE.md: "клоны
+// прибиты к своей реализации намертво"). Читать её заново staticcall'ом на
+// КАЖДУЮ ещё активную/спорную сделку КАЖДУЮ ночь не нужно — читаем один раз
+// на адрес агримента и держим в памяти процесса до перезапуска. Разные
+// клоны МОГУТ иметь разное значение (окно спора уже менялось однажды,
+// 7д→4д, между версиями реализации), поэтому кэш обязан быть по адресу
+// агримента, а не глобальной константой одной на всех.
+//
+// deadlineDays_ НЕ кэшируется отдельно тем же способом: она приезжает
+// бесплатно, в том же getDetails(), который обе функции ниже обязаны звать
+// в любом случае — ради мутирующихся полей (activatedAt_/disputedAt_),
+// которые кэшировать нельзя. Отдельный кэш под неё не убрал бы ни одного
+// сетевого вызова, только тривиальное повторное чтение уже полученного
+// ответа — не то же самое, что DISPUTE_WINDOW()/DEADLINE_GRACE()/
+// AUTO_APPROVE_WINDOW(), у каждой из которых свой, самостоятельный
+// staticcall.
+//
+// Фабрика, не три копипасты одной и той же функции с разным именем метода:
+// свой Map на каждый вызов makeCachedConstantMsReader — три независимых
+// кэша (окно спора / грейс дедлайна / окно автоприёма), но один код.
+// Кэш заполняется ТОЛЬКО ПОСЛЕ успешного await — если staticcall
+// ревертит (например, старый несовместимый клон без этого метода), запись
+// в кэш не попадает вовсе, и следующая попытка честно перечитает с цепи, а
+// не запомнит ошибку как будто это было валидное значение (см. "мелочи",
+// отчёт Задачи 5 — "ревертнувший вызов не отравляет кэш", проверено этим же
+// порядком операций: await ДО set(), не после).
+function makeCachedConstantMsReader(methodName) {
+  const cache = new Map(); // agreement (нижний регистр) → мс
+  return async function (agr, agreementAddress) {
+    const key = agreementAddress.toLowerCase();
+    if (cache.has(key)) return cache.get(key);
+    const ms = Number(await agr[methodName]()) * 1000;
+    cache.set(key, ms);
+    return ms;
+  };
+}
+
+const getDisputeWindowMs = makeCachedConstantMsReader('DISPUTE_WINDOW');
+const getDeadlineGraceMs = makeCachedConstantMsReader('DEADLINE_GRACE');
+const getAutoApproveWindowMs = makeCachedConstantMsReader('AUTO_APPROVE_WINDOW');
+
+// C-1 (координатор, четвёртый закрывающий раунд ревью): раньше обе функции
+// ниже логировали ЗАПРОШЕННЫЙ dealDeadline ("to <дата> (preliminary)"), а
+// не то, что реально получилось после потолка BAG_MAX_AGE_MS в bagExpiryAt()
+// (adoptPairBags() теперь возвращает объект — см. её докстринг в bagStore.js
+// — вместо голого числа именно ради этого). Замер координатора: сделка на
+// 378 дней вперёд (контракт и фронт разрешают срок работы до 365 дней,
+// JobBoardFacet.sol:213/ServiceBoardFacet.sol:218/
+// frontend/src/config/constants.ts:30) давала лог "extended 1 bag(s) ... to
+// 2030-01-23 (preliminary)" — а мешок реально жил 90 дней, ни слова о
+// расхождении. Общая точка для обеих функций ниже — один и тот же формат
+// строки успеха (по РЕАЛЬНОМУ minEffectiveExpiry, не requested) и одно и то
+// же условие для громкого предупреждения, когда потолок реально что-то
+// обрезал (cappedCount > 0): "хотели X, дали Y, потому что потолок" — с
+// обоими числами, не одним. Не чинит сам потолок (BAG_MAX_AGE_MS) — то
+// отдельное решение, вынесенное к владельцу; здесь только честность лога.
+//
+// Решение владельца (раунд после И-1/C-1/И-2): потолок BAG_MAX_AGE_MS
+// больше не действует одинаково для всех — оплаченная сделка (fundedAt_ >
+// 0) от него освобождена. Требование владельца, п.5: "в логе говори, какой
+// режим применён — с оплатой или без", человек, глядя в лог, обязан
+// понимать, ПОЧЕМУ срок такой. paymentTag ниже — это и есть ответ на этот
+// вопрос, отдельно от cappedCount (который для оплаченной записи и так
+// всегда 0 — см. докстринг adoptPairBags() в bagStore.js).
+function logAdoptionResult(logPrefix, agreementAddress, kind, result) {
+  const { adopted, requested, minEffectiveExpiry, cappedCount, funded } = result;
+  if (!adopted) return;
+  const paymentTag = funded ? 'paid — ceiling does not apply' : 'unpaid — 90d ceiling applies';
+  const tail = kind === 'creation' ? `preliminary, ${paymentTag}` : paymentTag;
+  console.log(`${logPrefix}: extended ${adopted} bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress} to ${new Date(minEffectiveExpiry).toISOString()} (${tail})`);
+  if (cappedCount) {
+    console.warn(
+      `${logPrefix}: BAG_MAX_AGE_MS ceiling cut ${cappedCount} of ${adopted} bag(s) short for agreement ${agreementAddress} — ` +
+      `wanted ${new Date(requested).toISOString()}, gave ${new Date(minEffectiveExpiry).toISOString()} instead, because of the ceiling.`
+    );
+  }
+}
+
+// Каждая запись реестра — в СВОЁМ try, в обеих функциях: одна не
+// читающаяся/бракованная запись (например, staticcall до старого/
+// несовместимого клона) не должна останавливать усыновление для ВСЕХ
+// остальных пар этого прогона.
+async function adoptActivePairBags(nowMs = Date.now()) {
+  let active;
+  try {
+    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
+    active = await registry.getActive();
+  } catch (e) {
+    console.error('[bags] adoption (creation): getActive lookup failed, skipping this run:', e.message);
+    return;
+  }
+
+  for (const r of active) {
+    try {
+      const pairId = pairIdFromAddresses(r.client, r.executor);
+      const agr = new ethers.Contract(r.agreement, AGREEMENT_MINI_ABI, provider);
+      const details = await agr.getDetails();
+      const disputeWindowMs = await getDisputeWindowMs(agr, r.agreement);
+      const deadlineGraceMs = await getDeadlineGraceMs(agr, r.agreement);
+      const autoApproveWindowMs = await getAutoApproveWindowMs(agr, r.agreement);
+      // r.createdAt приезжает прямо в tuple getActive() — RegistryFacet
+      // ставит его в register() (тот же миг, что и "создание сделки"), лишнего
+      // чтения агримента ради этого не нужно. deadlineDays_ — собственный
+      // срок сделки, известен сразу, до funded/activated. activatedAt_ — С1
+      // (находка координатора): приезжает в ТОМ ЖЕ getDetails(), что уже
+      // читаем строкой выше — ни одного лишнего вызова в цепь. 0, пока
+      // сделка не активирована — I-B: пока так, якорь dealDeadlineFromCreation()
+      // берёт nowMs, а не застревает на createdAtMs навсегда (см. докстринг
+      // там же); следующий ночной прогон сам подхватит настоящий activatedAtMs,
+      // когда он появится, и Math.max не даст сроку откатиться назад.
+      const createdAtMs = Number(r.createdAt) * 1000;
+      const activatedAtMs = Number(details.activatedAt_) * 1000;
+      const ownDeadlineMs = Number(details.deadlineDays_) * 24 * 60 * 60 * 1000;
+      // Решение владельца (раунд после И-1/C-1/И-2): "оплачена" — это
+      // fundedAt_ > 0 (src/Agreement.sol: fund()/fundFromFactory() ставят
+      // ТОЛЬКО fundedAt, деньги реально в эскроу), НЕ activatedAt_ — это
+      // разные, неатомарные события (activate() зовёт ИСПОЛНИТЕЛЬ отдельным
+      // вызовом, требует fundedAt != 0; между ними реальный разрыв до
+      // ACTIVATION_WINDOW = 2 дня, статус FUNDED, деньги уже заперты, работа
+      // ещё не началась). Читается из ТОГО ЖЕ getDetails(), что и остальные
+      // поля выше — ни одного лишнего вызова в цепь. fundedAt_ уже был в
+      // AGREEMENT_MINI_ABI (читался раньше, просто не использовался).
+      //
+      // Мелочь (координатор, критический раунд): единственное поле этого
+      // ответа, оставшееся без проверки "не из будущего" — метка из
+      // 5138 года молча давала бы бессрочное освобождение от потолка
+      // (funded вычисляется только через > 0, любая положительная метка,
+      // хоть настоящая, хоть абсурдная, проходит одинаково). Тот же
+      // assertNotFromFuture, что уже применяется к createdAtMs/activatedAtMs
+      // в dealDeadlineFromCreation() — тем же принципом, но здесь, у
+      // самого входа: funded не параметр формулы, значение проверяется
+      // ДО того, как превратится в булев флаг, а не внутри чужой функции,
+      // которая funded вообще не видит.
+      const fundedAtMs = Number(details.fundedAt_) * 1000;
+      if (fundedAtMs > 0) assertNotFromFuture('adoptActivePairBags', 'fundedAtMs', fundedAtMs, nowMs);
+      const funded = fundedAtMs > 0;
+      const dealDeadline = dealDeadlineFromCreation({
+        createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs,
+        deadlineGraceMs, autoApproveWindowMs, nowMs,
+      });
+      const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
+      logAdoptionResult('[bags] adoption (creation)', r.agreement, 'creation', result);
+    } catch (e) {
+      console.error(`[bags] adoption (creation): failed for active agreement ${r.agreement}, skipping:`, e.message);
+    }
+  }
+}
+
+// disputed — уже полученный массив (fetchDisputedRecords(), вызванный ОДИН
+// раз в runFileCleanup() — см. комментарий там про мелочь эффективности:
+// раньше это была вторая, независимая getDisputed() поверх той, что уже
+// делает защита вложений).
+async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
+  for (const r of disputed) {
+    try {
+      const pairId = pairIdFromAddresses(r.client, r.executor);
+      const agr = new ethers.Contract(r.agreement, AGREEMENT_MINI_ABI, provider);
+      const details = await agr.getDetails();
+      const disputeWindowMs = await getDisputeWindowMs(agr, r.agreement);
+      // Цепь считает время в секундах (block.timestamp), bagStore.js — в мс
+      // (Date.now()-based, как и весь остальной _bagMeta).
+      const disputedAtMs = Number(details.disputedAt_) * 1000;
+      // Не предполагаем true (хотя спор физически не может возникнуть на
+      // незапущенном эскроу) — читаем fundedAt_ из ТОГО ЖЕ getDetails(),
+      // тем же принципом, что и на этапе 1: не доверять, проверять явно,
+      // даже когда ожидаемое значение очевидно. Мелочь (координатор): та
+      // же проверка "не из будущего", что и на этапе 1 — см. комментарий
+      // там.
+      const fundedAtMs = Number(details.fundedAt_) * 1000;
+      if (fundedAtMs > 0) assertNotFromFuture('adoptDisputedPairBags', 'fundedAtMs', fundedAtMs, nowMs);
+      const funded = fundedAtMs > 0;
+      const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
+      const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
+      logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);
+    } catch (e) {
+      console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);
+    }
   }
 }
 
@@ -687,6 +970,15 @@ for (const dir of [DIR_FILES, DIR_PUBLIC, DIR_TEMP]) {
 const SERVER_SECRET = process.env.SERVER_SECRET;
 if (!SERVER_SECRET) throw new Error('SERVER_SECRET is not set');
 
+// Задача 3: перечитать/провалидировать конфигурацию пропуска и склада
+// мешков ЗДЕСЬ, после dotenv.config() выше. Оба модуля посчитали свои
+// значения ещё на импорте (до dotenv — см. комментарий у импортов выше);
+// без этого вызова первым, кто заметит отсутствующий SERVER_SECRET или
+// битый STORAGE_DIR/*_MS/*_SIZE, был бы не старт процесса, а первый живой
+// запрос к /bags/*.
+assertBagPassReady();
+assertBagStoreReady();
+
 // Single deterministic bot wallet — keccak256(SERVER_SECRET) as private key
 const BOT_PRIVATE_KEY = ethers.keccak256(ethers.toUtf8Bytes(SERVER_SECRET));
 const botWallet = new ethers.Wallet(BOT_PRIVATE_KEY);
@@ -823,7 +1115,11 @@ export function safeKey(key) {
 export async function runFileCleanup() {
   const cutoff   = Date.now() - FILE_TTL_MS;
   const cutoff1d = Date.now() - 24 * 60 * 60 * 1000;
-  const disputedPairIds = await getDisputedPairIds();
+  // Один вызов getDisputed() на весь прогон (мелочь эффективности, находка
+  // координатора) — используется и защитой вложений (disputedPairIds ниже),
+  // и усыновлением по спору (adoptDisputedPairBags() дальше по функции).
+  const disputedRecords = await fetchDisputedRecords();
+  const disputedPairIds = disputedPairIdsFromRecords(disputedRecords);
 
   // Expired chat files — skip any still tagged to a currently-disputed pair,
   // but only up to MAX_PROTECTED_AGE_MS. peerA/peerB tagging on /files/presign
@@ -870,11 +1166,93 @@ export async function runFileCleanup() {
       } catch {}
     }
   } catch {}
+
+  // Задача 4 (chat-transport-storage): мешки переписки — отдельный try, тот
+  // же принцип изоляции, что у двух блоков выше (файлы / temp-каталоги).
+  // Падение чистки мешков не должно оставить вложения непочищенными, и
+  // наоборот — до этой правки cleanupBags() не вызывалась вообще нигде, так
+  // что просроченные мешки и обрезки от оборванных загрузок не удалялись
+  // никогда (см. test/cleanup.test.js — тест ловит именно это на боевом
+  // умолчании BAG_UNREAD_TTL_MS, без переопределения в тесте). cleanupBags()
+  // сама синхронна (никаких await внутри) и работает с общим in-process
+  // состоянием (_bagMeta в bagStore.js) — так что параллельный вызов из
+  // наложившихся друг на друга запусков runFileCleanup() (ночной поверх ещё
+  // не отработавшего) не может исполниться вперемешку: событийный цикл
+  // Node.js гарантирует, что один синхронный вызов cleanupBags() всегда
+  // отрабатывает от начала до конца, прежде чем управление может перейти ко
+  // второму — это единственная причина, по которой отдельный try здесь
+  // достаточен и не требует своего собственного лока.
+  //
+  // Про node-cron (закрывающий раунд ревью): проверено запуском на
+  // установленной версии (node-cron@4.2.1, см. package.json) —
+  // Runner.runTask() уже ловит исключение задачи сам (свой try/catch →
+  // onError → собственный логгер) и не даёт процессу упасть, даже без
+  // этого try/catch здесь. Это СВОЙСТВО КОНКРЕТНОЙ ВЕРСИИ зависимости, не
+  // нашего кода — при апгрейде/даунгрейде node-cron посылка может
+  // вернуться. Не полагаемся на неё: этот try/catch остаётся ради (а)
+  // изоляции мешков от вложений внутри одного вызова и (б) собственного
+  // узнаваемого сообщения — общий "[NODE-CRON] [ERROR]" не называет ИМЯ
+  // задачи (в index.js их две — файлы/мешки и казна, различить можно
+  // только по стеку).
+  // Задача 5: усыновление (ОБА этапа) — ДО cleanupBags(), не после. Порядок в
+  // этой же функции значим: если поменять местами, продлённый в этом же
+  // прогоне мешок мог бы уже попасть под нож основного цикла cleanupBags()
+  // чуть ниже (оба читают/пишут один и тот же _bagMeta синхронно, событийный
+  // цикл между ними не переключается) — и усыновление успело бы "спасти"
+  // мешок только СО СЛЕДУЮЩЕЙ ночи, ровно то, чего задача и должна избежать
+  // (§6 спеки: важное не должно успеть истечь раньше усыновления). Отдельные
+  // try на каждый этап — тот же принцип изоляции, что и у остальных блоков
+  // этой функции: падение ОДНОГО этапа усыновления не должно останавливать
+  // ни другой этап, ни чистку мешков, ни вложения, и наоборот. Порядок между
+  // самими этапами (создание/спор) не значим для корректности — статусы
+  // ACTIVE и DISPUTED взаимоисключающие, так что getActive() (внутри
+  // adoptActivePairBags()) и disputedRecords (уже полученный выше) отражают
+  // непересекающиеся наборы пар в любой момент; порядок ниже — просто по
+  // смыслу повествования ("сначала создание, потом спор").
+  try {
+    await adoptActivePairBags();
+  } catch (e) {
+    console.error('[bags] adoption (creation) error:', e.stack || e.message);
+  }
+
+  try {
+    await adoptDisputedPairBags(disputedRecords);
+  } catch (e) {
+    console.error('[bags] adoption error:', e.stack || e.message);
+  }
+
+  try {
+    const { removed, kept } = cleanupBags();
+    // Закрывающий раунд ревью: печатать ВСЕГДА, не только когда removed>0
+    // — иначе ночь без единого удаления и ночь, когда расписание вообще не
+    // сработало (крон не выстрелил, процесс не поднялся), выглядят в логе
+    // одинаково — тишиной. Явная строка с обоими числами превращает
+    // "ничего не залогировано" в однозначный сигнал "чистка не отработала".
+    console.log(`[bags] cleanup: removed ${removed}, kept ${kept}`);
+  } catch (e) {
+    // Стек, не только e.message — собственный узнаваемый префикс
+    // "[bags] cleanup error" не должен проигрывать в информативности тому,
+    // что напечатала бы сама библиотека, если бы броску дали долететь до
+    // её собственного catch (см. комментарий про node-cron выше).
+    console.error('[bags] cleanup error:', e.stack || e.message);
+  }
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const RPC_URL        = process.env.RPC_URL || process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
+// Задача 5, мелочь (находка координатора, закрывающий раунд): без таймаута
+// зависший RPC-узел на ЛЮБОМ вызове (изначально — только meta-транзакции и
+// пуши; теперь ЕЩЁ и getActive()/getDisputed()/getDetails()/DISPUTE_WINDOW()
+// на каждую сделку в adoptActivePairBags()/adoptDisputedPairBags()) вешает
+// ВЕСЬ ночной прогон runFileCleanup() целиком, включая обычную чистку
+// вложений и мешков — ethers v6 по умолчанию ждёт 300с (FetchRequest.timeout,
+// см. node_modules/ethers/.../fetch.js) на КАЖДЫЙ отдельный вызов, так что
+// зависание на первой же спорной сделке блокирует все остальные, и саму
+// чистку, дольше, чем есть смысл ждать один battle-тестed узел. Раньше эта
+// проблема уже существовала (мета-транзакции/пуши), новые вызовы этой задачи
+// только повышают частоту, с которой она может сработать — не вводят её.
+const RPC_TIMEOUT_MS = Number(process.env.RPC_TIMEOUT_MS || 20_000);
 const RELAYER_KEY    = process.env.RELAYER_PRIVATE_KEY;
 const FORWARDER_ADDR = process.env.TRUSTED_FORWARDER;
 const DIAMOND_ADDR   = process.env.DIAMOND_ADDRESS;
@@ -891,14 +1269,23 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX       = 10;
 const _rateMap       = new Map();
 
-export function checkRateLimit(ip) {
+// И-4 (ревью): второй параметр — тот же общий `_rateMap`/`RATE_WINDOW_MS`
+// (60с), но с СВОИМ потолком вместо глобального RATE_MAX (10/мин). Каждый
+// существующий вызывающий (везде в файле, кроме нового блока мешков ниже)
+// зовёт с одним аргументом и получает ровно прежнее поведение — потолок по
+// умолчанию `RATE_MAX`. Разные бюджеты мешков (выпуск пропуска/чтение/
+// запись, см. BAG_PASS_RATE_MAX и соседей) используют одну и ту же карту, но
+// разные КЛЮЧИ (bagPassRateKey/bagReadRateKey/bagWriteRateKey) — так что
+// потолок здесь не обязан быть одним числом для всех ключей одновременно;
+// он просто параметр конкретного вызова, а не свойство самой карты.
+export function checkRateLimit(ip, max = RATE_MAX) {
   const now = Date.now();
   const entry = _rateMap.get(ip);
   if (!entry || now > entry.resetAt) {
     _rateMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return true;
   }
-  if (entry.count >= RATE_MAX) return false;
+  if (entry.count >= max) return false;
   entry.count++;
   return true;
 }
@@ -912,7 +1299,15 @@ setInterval(() => {
 
 // ─── Ethers ───────────────────────────────────────────────────────────────────
 
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+// FetchRequest, не голая строка — единственный способ в ethers v6 задать
+// таймаут отдельного HTTP-запроса (JsonRpcProvider(url) со строкой строит
+// FetchRequest(url) сама, но с умолчанием библиотеки — 300с). Тест —
+// test/*.test.js проверяет через relayerInfo.rpcTimeoutMs/provider ниже, что
+// значение реально дошло до объекта, которым пользуется ethers, а не просто
+// лежит переменной, которую никто не читает.
+const rpcConnection = new ethers.FetchRequest(RPC_URL);
+rpcConnection.timeout = RPC_TIMEOUT_MS;
+const provider = new ethers.JsonRpcProvider(rpcConnection);
 const relayer  = new ethers.Wallet(RELAYER_KEY, provider);
 
 const FORWARDER_ABI = [
@@ -1467,7 +1862,37 @@ const MAX_FILE_SIZE   = 5 * 1024 * 1024 * 1024; // 5 GB — encrypted chat files
 const MAX_PUBLIC_SIZE =           5 * 1024 * 1024; // 5 MB — avatars, profiles
 const MAX_PART_SIZE   =          50 * 1024 * 1024; // 50 MB — per multipart chunk
 
-function streamWithSizeLimit(req, res, filePath, maxBytes) {
+// MAX_BAG_SIZE (Задача 3) is a quarter megabyte — `Math.round(bytes/1024/1024)`
+// alone renders that as "(max 0 MB)", which is a genuine lie, not just an ugly
+// number. KB below 1 MB, same rounding above it.
+function formatMaxSize(maxBytes) {
+  return maxBytes >= 1024 * 1024
+    ? `${Math.round(maxBytes / 1024 / 1024)} MB`
+    : `${Math.round(maxBytes / 1024)} KB`;
+}
+
+// onFinish, if given, replaces the default "200, empty body" success response —
+// called with the written filePath once the stream has finished, aborted:false.
+// Задача 3's bag upload route needs this: it has to stat the file (real bytes on
+// disk, not the client-claimed size), persist metadata, and shape its own JSON
+// body — none of which the three pre-existing callers below need, and none of
+// them pass a 5th argument, so their behaviour is unchanged (undefined → old
+// branch).
+// Найдено попутно (не находка ревью — обнаружено собственным флаки-прогоном
+// теста на И-1/И-2 несколько раз подряд, не одним прогоном): fs.unlink(path,
+// () => {}) — «выстрелил и забыл», колбэк не дожидается завершения удаления
+// перед тем, как маршрут отправит ответ. Тест, проверяющий сразу после
+// ответа, что осиротевшего файла на диске больше нет, время от времени видел
+// его ещё лежащим — не баг теста, а настоящая гонка: ответ мог уйти раньше,
+// чем ОС успевала обработать unlink. Синхронное удаление — тот же путь
+// исполнения (обработчик события, не запрос к сети), блокировать нечего;
+// try/catch — файла может и не быть (например, ws.destroy() не успел
+// сбросить ни байта), это не должно быть отдельной ошибкой.
+function unlinkQuietSync(filePath) {
+  try { fs.unlinkSync(filePath); } catch { /* already gone, or never existed — fine either way */ }
+}
+
+function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
   let received = 0;
   let aborted  = false;
   const ws = fs.createWriteStream(filePath);
@@ -1476,15 +1901,45 @@ function streamWithSizeLimit(req, res, filePath, maxBytes) {
     if (!aborted && received > maxBytes) {
       aborted = true;
       ws.destroy();
-      fs.unlink(filePath, () => {});
-      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)` });
+      unlinkQuietSync(filePath);
+      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${formatMaxSize(maxBytes)})` });
       req.destroy();
     }
   });
   req.pipe(ws);
-  ws.on('finish', () => { if (!aborted && !res.headersSent) res.status(200).end(); });
-  ws.on('error', (err) => { if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); } });
-  req.on('error', () => ws.destroy());
+  ws.on('finish', () => {
+    if (aborted) return;
+    if (onFinish) { onFinish(filePath); return; }
+    if (!res.headersSent) res.status(200).end();
+  });
+  // Находка ревью: четвёртая ветка сироты, не три — ws.on('error') это
+  // отказ самой ЗАПИСИ посреди приёма (буквально "кончилось место на
+  // диске", ENOSPC, а не оборванное соединение или превышение размера).
+  // Раньше эта ветка не выставляла aborted и не удаляла файл вообще —
+  // обрезок оставался на диске точно так же, как в двух других ветках,
+  // ради которых делалась И-2, только про эту забыли. Общий помощник —
+  // значит то же самое относилось и к обычным файловым маршрутам
+  // (/files/*), не только к мешкам.
+  ws.on('error', (err) => {
+    aborted = true;
+    unlinkQuietSync(filePath);
+    if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); }
+  });
+  // И-2 (ревью): a dropped connection mid-upload (client closes the socket,
+  // network drop) used to only stop the write — whatever had already landed
+  // on disk stayed there, orphaned, with no metaindex entry (recordBag()
+  // never ran). The only thing that would ever pick it up is the mtime-based
+  // orphan sweep, not before BAG_UNREAD_TTL_MS (30 days by default) — and
+  // Задача 4 hasn't even wired that sweep into the nightly schedule yet.
+  // Same cleanup as the size-limit abort branch above: mark aborted so
+  // ws.on('finish') (which can still fire after this) doesn't call onFinish
+  // on a truncated file, and delete what was written so far.
+  req.on('error', () => {
+    if (aborted) return;
+    aborted = true;
+    ws.destroy();
+    unlinkQuietSync(filePath);
+  });
 }
 
 app.put('/files/upload-put/:key', (req, res) => {
@@ -1728,6 +2183,525 @@ app.post('/files/multipart/abort', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Bag endpoints — chat transport, blind to content ─────────────────────────
+//
+// A "bag" is an opaque, client-encrypted chat payload — the server never reads,
+// parses or logs its bytes, at upload, at download, or in cleanup (Задача 4).
+// Everything this block operates on is addresses, sizes and timestamps.
+//
+// Separate storage, separate route family, on purpose: DIR_FILES/DIR_PUBLIC
+// above are mounted under express.static and openly listable-by-guessing —
+// tolerable for ciphertext attachments nobody can open without a key, but not
+// for bags, where the metadata itself (who talked to whom, and when) is the
+// thing the product promises not to hand to a stranger. Nothing below is
+// mounted under express.static — see test/bagRoutes.test.js's direct-request
+// test for the check that actually proves it.
+//
+//   POST /bags/pass         → { pass, expiresAt } — x-ts/x-sig headers over
+//                              bagPassChallenge(address, ts), address in the
+//                              JSON body (see the long comment on the route
+//                              itself for why address can't come from the
+//                              headers alone).
+//   PUT  /bags/:recipient   → { key } — sender comes from the pass, never
+//                              from the body; body is the raw sealed bytes.
+//   GET  /bags?since=<ms>   → [{ key, sender, size, uploadedAt }] for the
+//                              address inside the pass.
+//   GET  /bags/:recipient/:filename (== GET /bags/:key, key = "recipient/filename"
+//                              — the key format from bagKeyFor() always has one
+//                              slash in it, so it needs two URL segments)
+//                            → raw bytes, only if the pass's address is the
+//                              recipient. Wrong owner and unknown key answer
+//                              identically (404, same body) — see rule 3 below.
+//
+// Rules, each locked by test/bagRoutes.test.js:
+//   1. Recipient/sender are read from the pass or the URL, never the body.
+//   2. Wrong-owner and unknown-key GETs are indistinguishable (404, same
+//      body) — a 403 there would let someone enumerate another address's
+//      bag count by the status code alone. An invalid/expired PASS is still
+//      401 with its own code — that one has to be distinguishable, or the
+//      client can't tell "re-sign" from "no such bag".
+//   3. The rate limiter runs on all four routes, keyed by IP (as elsewhere)
+//      AND by the caller's address (bagPassRateKey/bagReadRateKey/
+//      bagWriteRateKey below — see the long comment there for why three
+//      separate budgets, not one shared one) — behind the
+//      Cloudflare Tunnel every IP collapses to one (app.js:1081-1101), so an
+//      IP-only limiter is worthless here.
+
+const BAG_PASS_HEADER = 'x-bag-pass';
+const BAG_NOT_FOUND   = { error: 'Bag not found', code: 'bag_not_found' };
+
+// И-4 (ревью): один общий бюджет "bag-addr:<addr>" на все четыре маршрута
+// оказался и небезопасным (С1 — непроверенный адрес мог тратить чужой), и
+// непригодным для живого разговора сам по себе: 10 действий в минуту на ВСЕ
+// четыре маршрута вместе означало, что один опрос списка раз в десять секунд
+// съедал шесть, и собственная отправка следом уже голодала собственное же
+// чтение — без единого нападающего, просто от нормального использования
+// (измерено координатором: пропуск + девять отправок → своё же чтение
+// получает 429). Три отдельных бюджета — выпуск пропуска, чтение (список +
+// скачивание одного мешка — оба "прочитать что-то"), запись — не делят
+// один счётчик, так что интенсивная отправка не блокирует чтение и наоборот.
+//
+// Числа подобраны под живой разговор, не под один запрос в шесть секунд:
+//   - выпуск пропуска — редкое событие (раз в BAG_PASS_TTL_SEC = 12ч, плюс
+//     случайные переподписи), запас на повторные попытки не помешает;
+//   - чтение — список опрашивается чаще всего (раз в 1-2с в активном чате)
+//     плюс скачивание каждого нового мешка тем же бюджетом;
+//   - запись — всплеск быстрой печати/отправки короткими сообщениями.
+// Через окружение, с явными умолчаниями — то же правило, что уже применено
+// к MAX_BAG_SIZE и срокам жизни в bagStore.js.
+function readPositiveInt(envVar, defaultValue) {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === '') return defaultValue;
+  const n = Number(raw);
+  // Громкий отказ при старте, не тихий NaN — `entry.count >= NaN` всегда
+  // false, то есть битое значение здесь означает не "потолок поменьше", а
+  // "лимитера нет вообще". На старте, а не на первом запросе: ровно то же
+  // рассуждение, что assertBagStoreReady()/assertBagPassReady() выше по
+  // файлу уже применяют к своим собственным числам.
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`${envVar}=${JSON.stringify(raw)} is not a positive finite number`);
+  }
+  return n;
+}
+
+const BAG_PASS_RATE_MAX  = readPositiveInt('BAG_PASS_RATE_MAX',  30);
+const BAG_READ_RATE_MAX  = readPositiveInt('BAG_READ_RATE_MAX', 120);
+const BAG_WRITE_RATE_MAX = readPositiveInt('BAG_WRITE_RATE_MAX', 60);
+
+// Находка ревью (критическая, второй раунд): все четыре маршрута мешков
+// начинались с checkRateLimit(ip) БЕЗ второго аргумента — то есть с
+// глобальным RATE_MAX=10, тем же самым, что рассчитан на мета-транзакции
+// /relay. Это делало три бюджета выше ЛИТЕРАЛЬНО бесполезными: какими бы
+// щедрыми ни были BAG_PASS_RATE_MAX/BAG_READ_RATE_MAX/BAG_WRITE_RATE_MAX,
+// IP-лимитер срабатывал первым и жёстче любого из них. Измерено на боевых
+// умолчаниях, без единого тестового переопределения (см.
+// test/bagRoutesLiveDefaults.test.js): минута живого разговора одного
+// человека — выпуск пропуска, опрос списка раз в 1-2с, десяток отправок,
+// десяток скачиваний, 52 запроса всего — давала 42 ответа 429 из
+// 52 ДО этой правки. Собственный IP-бюджет мешков, отдельный от RATE_MAX,
+// с потолком, вмещающим сумму трёх адресных бюджетов (30+120+60=210) с
+// запасом на реальную нагрузку — после правки 0 из тех же 52.
+//
+// Оставлен ОДНИМ общим счётчиком на все четыре маршрута (не разбит по
+// назначению, как адресные) — IP-лимитер это грубая сетевая защита "не
+// заваливай нас отсюда", не "не мешай себе самому по видам деятельности";
+// последнее уже решено адресными бюджетами выше.
+const BAG_IP_RATE_MAX = readPositiveInt('BAG_IP_RATE_MAX', 300);
+
+// Находка ревью (Important): bag-read:<адрес> и сырая строка из clientIp()
+// жили в одном и том же _rateMap. При TRUST_PROXY=true clientIp() отдаёт
+// заголовок CF-Connecting-IP дословно, без проверки, что это вообще похоже
+// на IP (ни IPv4, ни IPv6 формат не проверяется нигде) — заголовок
+// `CF-Connecting-IP: bag-read:0x<жертва>` превращал бы IP-ключ буквально в
+// ключ чужого адресного бюджета чтения, списывая с него как со своего.
+// Сегодня недостижимо из интернета за реальным туннелем Cloudflare (он сам
+// выставляет этот заголовок и вычищает клиентский), но это ровно тот же
+// класс ошибки конфигурации, что и С1 — одна неверная настройка прокси, и
+// снова кто угодно с сети жжёт бюджет чужого адреса. Префикс `ip:` не
+// может встретиться ни в одном из bagPassRateKey/bagReadRateKey/
+// bagWriteRateKey (они начинаются на `bag-`) — коллизия исключена по
+// форме ключа, а не по вере в то, что заголовок всегда честный.
+function bagIpRateKey(ip)         { return `ip:${ip}`;             }
+function bagPassRateKey(address)  { return `bag-pass:${address}`;  }
+function bagReadRateKey(address)  { return `bag-read:${address}`;  }
+function bagWriteRateKey(address) { return `bag-write:${address}`; }
+
+// Свойство 3 (ревью, второй раунд): раньше все восемь мест лимитера отвечали
+// БУКВАЛЬНО одним и тем же телом — { error: 'Rate limit exceeded' }, без
+// кода. Тест на границу IP-бюджета и тест на границу адресного бюджета
+// одного и того же маршрута оба проверяли только res.status === 429 —
+// значит если бы IP-проверку СЛУЧАЙНО перепутали местами с адресной (или
+// адресный бюджет одного назначения — с бюджетом другого), тест бы этого
+// не заметил: 429 остаётся 429 независимо от того, ЧЕЙ именно бюджет
+// сработал. `code` называет источник явно — reason обязателен, не
+// опционален, чтобы новое место лимитера нельзя было забыть его назвать.
+function bagRateLimited(res, reason) {
+  return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded', code: reason });
+}
+
+// Shared by PUT/GET/GET-list: verify the pass, answer 401 with its code on
+// failure, otherwise return the address it names. Every caller below treats
+// that address as the ONLY source of truth for "who is asking" — see rule 1.
+function requireBagPass(req, res) {
+  const verified = verifyBagPass(req.headers[BAG_PASS_HEADER]);
+  if (verified.error) {
+    res.status(401).json({ error: verified.error, code: verified.code });
+    return null;
+  }
+  return verified.address;
+}
+
+// POST /bags/pass — mints a bag pass from a wallet signature.
+//
+// Unlike GET /dispute-log/:dealId (app.js:1237-1258, the pattern this route
+// is otherwise copied from), there is no resource id in this URL that the
+// server already knows and can fold into the challenge — dispute-log signs
+// over `dealId`, which comes from the path. bagPassChallenge(address, ts)
+// signs over the CALLER's OWN address instead, and building that exact
+// message server-side (required before ethers.verifyMessage can recover
+// anyone) needs the address as an input, not just an output. So the caller
+// states a claimed address in the JSON body, and the route checks
+// self-consistency — recovered signer === claimed address — exactly the
+// pattern /push/subscribe and /push/unsubscribe already use below for the
+// same shape of problem (no URL-supplied resource, signer proves an address
+// that's also plain input).
+//
+// Deliberately NOT copied from /push/subscribe/unsubscribe: those two have no
+// replay protection at all (docs/OPEN-ITEMS.md #27) — a captured signature is
+// valid forever. This route keeps bagPassChallenge's ±5 minute window, the
+// same discipline GET /dispute-log/:dealId already applies to its own
+// signature path, checked via Number.isFinite (not a bare Number(ts) > …
+// comparison — that version silently accepts a non-numeric ts because
+// `NaN > 300` is always false, the exact failure mode named in the same
+// OPEN-ITEMS entry).
+//
+// Ordering is cost-ordered, cheapest first: address shape → header presence →
+// timestamp window → rate limit by the CLAIMED address → only then the actual
+// ecdsa recovery. The address-rate-limit step exists here specifically
+// because — unlike the three consuming routes below, which only learn the
+// caller's address by already having verified a pass — this route is handed
+// an address up front, so a flood of garbage signatures against one address
+// hits the limiter before paying for a single recovery.
+app.post('/bags/pass', (req, res) => {
+  const ip = clientIp(req);
+  // Not the app-wide checkRateLimit(ip) (RATE_MAX=10, sized for /relay's
+  // meta-transactions) — see the long comment at BAG_IP_RATE_MAX above for
+  // why the bag routes need their own IP budget, and the measured numbers
+  // that proved the old shared one made every per-purpose budget below moot.
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const { address } = req.body || {};
+  if (typeof address !== 'string' || !ETH_ADDR_RE.test(address)) {
+    return res.status(400).json({ error: 'Invalid address' });
+  }
+  const addr = address.toLowerCase();
+
+  const ts  = req.headers['x-ts'];
+  const sig = req.headers['x-sig'];
+  if (!ts || !sig) {
+    // Distinct code from ts_out_of_window (ревью, "слепота статуса"):
+    // without it, removing this presence check entirely still answers 401 —
+    // just via the window check a few lines down, since Number(undefined)
+    // is NaN and !Number.isFinite(NaN) is true. Same status, different
+    // cause; the code is what actually distinguishes them.
+    return res.status(401).json({ error: 'Missing x-ts or x-sig header', code: 'missing_credentials' });
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const tsNum  = Number(ts);
+  // Number.isFinite first, not just `Math.abs(nowSec - tsNum) > 300` — the
+  // same class of bug docs/OPEN-ITEMS.md #27 (subpoint 3) found in
+  // /push/subscribe's sibling code: Number('never') is NaN, and any
+  // comparison against NaN is always false, so a non-numeric x-ts silently
+  // sails through a bare magnitude check instead of being rejected by it.
+  // (bagPassChallenge() below happens to also reject NaN via its own
+  // Number.isSafeInteger guard — Задача 1's contract, not this route's — so
+  // removing this line doesn't reopen an exploit today; it does start
+  // reporting a garbage timestamp as "invalid signature" instead of what it
+  // actually is, and removes the one guard here that doesn't depend on a
+  // frozen module elsewhere still being strict tomorrow.)
+  if (!Number.isFinite(tsNum) || Math.abs(nowSec - tsNum) > 300) {
+    return res.status(401).json({ error: 'Timestamp out of window', code: 'ts_out_of_window' });
+  }
+
+  // С1 (ревью, критическая — координаторская, не моя изначальная идея):
+  // раньше здесь стоял `checkRateLimit(bagAddrRateKey(addr))` — бюджет
+  // адреса тратился ЗАЯВЛЕННЫМ (непроверенным) адресом из тела, ДО
+  // восстановления подписи. Это тот же бюджет, что PUT/GET/GET-список
+  // списывают под настоящий, проверенный адрес — так что нападающий, ни
+  // разу не подписавшись как жертва, мог 9-10 мусорными попытками в минуту
+  // разрядить бюджет чужого адреса и держать человека отрезанным от
+  // собственного чата постоянно, повторяя раз в минуту. Кошелёк жертвы не
+  // нужен вообще — адреса публичны в цепи.
+  //
+  // Защита от нагрузки ДО восстановления подписи — только IP-лимитер выше
+  // (`checkRateLimit(ip)`), больше ничего с адресом не связанного здесь не
+  // трогается. Координатор явно допускал два варианта («только по IP, либо
+  // по отдельному пространству имён, никак не связанному с бюджетом
+  // адреса») — выбран первый, более простой: заводить третье пространство
+  // имён ради ограничения объёма чистого ecdsa-восстановления (микросекунды
+  // на попытку) не стоит сложности, которую оно добавляет.
+  let recovered;
+  try {
+    const message = bagPassChallenge(addr, tsNum);
+    recovered = ethers.verifyMessage(message, sig).toLowerCase();
+  } catch {
+    return res.status(401).json({ error: 'Invalid signature', code: 'invalid_signature' });
+  }
+  if (recovered !== addr) {
+    // Distinct from both pass_expired (this route doesn't consume an
+    // existing pass) and invalid_signature (the signature itself parsed and
+    // recovered fine — it just isn't for the address the caller claimed) —
+    // Задача 6 tells "re-sign" and "you sent someone else's address" apart
+    // by this code.
+    return res.status(401).json({ error: 'Signature does not match claimed address', code: 'address_mismatch' });
+  }
+
+  // Бюджет адреса тратится только ЗДЕСЬ — после того, как подпись реально
+  // восстановлена И совпала с заявленным адресом. `recovered` и `addr`
+  // равны в этой точке (проверено строкой выше), но ключом идёт именно
+  // `recovered` — не по привычке, а как утверждение: списывается бюджет
+  // ТОЛЬКО доказанного адреса, никогда заявленного (С1).
+  if (!checkRateLimit(bagPassRateKey(recovered), BAG_PASS_RATE_MAX)) return bagRateLimited(res, 'rate_limited_pass');
+
+  const { token, expiresAt } = issueBagPass(recovered, nowSec);
+  res.json({ pass: token, expiresAt });
+});
+
+// PUT /bags/:recipient — body is the raw sealed bag. Sender comes from the
+// pass; the body is never parsed (bytes only, no matter what they look like).
+app.put('/bags/:recipient', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const sender = requireBagPass(req, res);
+  if (!sender) return;
+
+  if (!checkRateLimit(bagWriteRateKey(sender), BAG_WRITE_RATE_MAX)) return bagRateLimited(res, 'rate_limited_write');
+
+  // И-1 (ревью): app.use(express.json({limit:'64kb'})) is mounted globally,
+  // ahead of every route (app.js, near the top of the file) — for any
+  // request whose Content-Type it recognises (exactly 'application/json',
+  // by default; verified against the `type-is` matcher express.json() uses
+  // internally — a `+json` suffix type like 'application/vnd.api+json' does
+  // NOT match), it fully drains and parses the body BEFORE this handler
+  // ever runs. By the time streamWithSizeLimit below tries to read the
+  // request stream, there is nothing left on it — it writes zero bytes,
+  // recordBag() happily records size:0, and the caller gets a normal
+  // `200 {key}` for a bag that was never actually stored. The sender
+  // believes it was delivered; the recipient downloads emptiness. Reject
+  // explicitly instead of silently "succeeding" with nothing on disk.
+  const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (contentType === 'application/json') {
+    return res.status(400).json({ error: 'Bag upload must not use Content-Type: application/json (body already consumed upstream)' });
+  }
+
+  const recipient = String(req.params.recipient || '').toLowerCase();
+  if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient' });
+
+  // Neither assertBagStoreReady() nor bagPathFor() creates the recipient's
+  // own subdirectory — only the storage root (DIR_BAGS) exists at boot. This
+  // route is the one place a bag actually lands on disk, so it has to make
+  // the directory itself, or the very first write to a new recipient fails.
+  let key, filePath;
+  try {
+    key = bagKeyFor(recipient);
+    filePath = bagPathFor(key);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  } catch (e) {
+    console.error('[bags] PUT setup failed:', e.message);
+    return res.status(500).json({ error: 'Failed to prepare bag storage' });
+  }
+
+  streamWithSizeLimit(req, res, filePath, MAX_BAG_SIZE, () => {
+    // Measure what actually landed on disk — not the client-claimed size,
+    // not a running byte count off the wire (see the comment on
+    // MAX_BAG_SIZE in bagStore.js: recordBag()'s own ceiling check only ever
+    // sees whatever number it's handed here). uploadedAt is `Date.now()`,
+    // never anything the client sent — bagStore.js's assertNotFromFuture()
+    // exists precisely so a spoofed uploadedAt can't be used to outlive the
+    // TTL rules, and that protection is worthless if this route just
+    // forwards a client-supplied value instead of stamping its own.
+    let size;
+    try {
+      size = fs.statSync(filePath).size;
+    } catch (e) {
+      console.error('[bags] PUT stat-after-write failed:', e.message);
+      unlinkQuietSync(filePath);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag' });
+      return;
+    }
+    // Мелочь (ревью): пустое тело раньше принималось и хранилось до
+    // истечения TTL. Настоящий запечатанный мешок от chatCrypto — это как
+    // минимум IV + тег аутентификации AES-256-GCM, никогда не ноль байт;
+    // ноль здесь — не легитимный пустой мешок, а шум (оборванная загрузка
+    // до единого байта, пустой Buffer от неисправного клиента и т.п.).
+    if (size === 0) {
+      unlinkQuietSync(filePath);
+      if (!res.headersSent) res.status(400).json({ error: 'Empty bag' });
+      return;
+    }
+    try {
+      const stored = recordBag({ sender, recipient, key, size, uploadedAt: Date.now() });
+      res.status(200).json({ key: stored.key });
+    } catch (e) {
+      // recordBag() throws (bagStore.js's documented contract, not an
+      // accident) — Express 4 doesn't turn a throw from inside this
+      // callback into a response on its own, so this has to be caught here
+      // or a disk failure kills the process instead of just failing the
+      // request.
+      console.error('[bags] recordBag failed:', e.message);
+      unlinkQuietSync(filePath);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag' });
+    }
+  });
+});
+
+// GET /bags?since=<ms> — bags addressed to the pass's own address, oldest
+// first (listBagsFor's own order). Only the four fields Задача 3's spec
+// names ship back — not pairId, not firstFetchedAt, not dealDeadline.
+app.get('/bags', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  // Read budget — shared with GET /bags/:key (download) below: both are
+  // "read something", and a client that lists then downloads several new
+  // bags in one poll cycle is one coherent burst of reading, not two
+  // independent activities that should each get their own ceiling.
+  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res, 'rate_limited_read');
+
+  let since = null;
+  if (req.query.since !== undefined) {
+    since = Number(req.query.since);
+    if (!Number.isFinite(since)) return res.status(400).json({ error: 'Invalid since' });
+  }
+
+  let list;
+  try {
+    list = listBagsFor(address);
+  } catch (e) {
+    console.error('[bags] GET /bags failed:', e.message);
+    return res.status(500).json({ error: 'Failed to list bags' });
+  }
+
+  // И-3 (ревью): nonstrict `>=`, not `>`. Two bags landing in the same
+  // millisecond is a real race, not a theoretical one (measured live by the
+  // coordinator) — a client that remembers the newest uploadedAt it has seen
+  // and polls with ?since=<that value> would, with a strict `>`, exclude a
+  // sibling bag stamped with the EXACT same millisecond forever: that bag's
+  // uploadedAt never becomes greater than the since it will keep sending
+  // from now on. `>=` re-sends the already-seen bag alongside it — a client
+  // dedupes by key, so a repeat is a no-op, not a data-loss risk the way
+  // silently dropping a message forever is.
+  if (since !== null) list = list.filter((b) => b.uploadedAt >= since);
+
+  res.json(list.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })));
+});
+
+// GET /bags/:recipient/:filename — download. bagKeyFor() always produces a
+// key shaped "<recipient>/<uploadedAt>-<uuid>.bin", so the external
+// "GET /bags/:key" interface needs two URL segments here, not one — a single
+// `:key` param would stop at the first `/`.
+app.get('/bags/:recipient/:filename', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  if (!checkRateLimit(bagReadRateKey(address), BAG_READ_RATE_MAX)) return bagRateLimited(res, 'rate_limited_read');
+
+  const key = `${req.params.recipient}/${req.params.filename}`;
+
+  // Every failure branch below — malformed key, wrong owner, meta present but
+  // the file is gone, key simply never existed — answers with the exact same
+  // 404 body. That collapse is the point (rule 2 above): a 403 on "wrong
+  // owner" vs 404 on "no such key" would let someone learn which keys exist
+  // in another address's bag list just by watching the status code.
+  let meta;
+  try {
+    meta = bagMetaOf(key);
+  } catch {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+  if (!meta || meta.recipient !== address) {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+
+  let filePath;
+  try {
+    filePath = bagPathFor(key);
+  } catch {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json(BAG_NOT_FOUND);
+  }
+
+  // Same defensive headers as the /files static mount (app.js:1058-1068) —
+  // ciphertext is never meant to be rendered or sniffed.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  res.setHeader('Content-Disposition', 'attachment');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  // И-5 (ревью): the right to read this response lives ENTIRELY in the
+  // x-bag-pass header — the body itself carries no proof of authorization.
+  // A caching intermediary that keys on URL alone (and the key is part of
+  // the URL, so it's a stable cache address) could otherwise serve a stored
+  // response to a LATER request for the same URL with no pass at all.
+  // no-store forbids storing this response anywhere; Vary additionally
+  // tells any cache that does inspect headers that the response depends on
+  // x-bag-pass, not just the URL.
+  res.setHeader('Cache-Control', 'private, no-store');
+  // Найдено попутно (короткий список координатора, не измерено отдельно):
+  // app.use(cors(...)) (app.js, выше по цепочке middleware) уже ставит
+  // Vary: Origin на любой ответ с заголовком Origin. res.setHeader('Vary',
+  // ...) ЗАМЕНЯЕТ значение целиком, а не добавляет к нему — здесь это
+  // стирало бы Origin, который CORS поставил секундами раньше. Вреда от
+  // этого сегодня нет (Cache-Control: no-store уже запрещает кэширование
+  // в принципе), но append(), а не setHeader(), — правильная форма: имя
+  // заголовка одно, значения через запятую, ничего не теряется.
+  res.append('Vary', 'x-bag-pass');
+
+  // Мелочь (ревью): Express auto-answers HEAD for any registered GET route
+  // by running this SAME handler and stripping the body at the wire level —
+  // without this branch, a HEAD probe/prefetch would start the 7-day
+  // "read" countdown for a bag nobody actually received a single byte of.
+  // A HEAD caller gets exactly the headers a GET would, no body, no side
+  // effect on the bag's lifetime.
+  if (req.method === 'HEAD') {
+    return res.end();
+  }
+
+  const rs = fs.createReadStream(filePath);
+  rs.on('error', (e) => {
+    console.error('[bags] read failed:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag' });
+  });
+  // Мелочь (ревью): marking happens on res 'finish' — fired only once the
+  // response has finished being handed to the socket — not before streaming
+  // starts. Marking up front (the previous shape) meant a dropped connection
+  // mid-download (client closes the tab, network drop) still started the
+  // 7-day "read" clock for a bag the recipient never actually received.
+  // 'finish' at least removes the worst case (nothing streamed at all, or
+  // the response object itself errors) from counting as read.
+  //
+  // Found by review, corrected here after the code first shipped saying the
+  // opposite: 'finish' is NOT a reliable proxy for "the client actually
+  // received the bytes" at bag scale. Measured directly (see
+  // relayer/scripts/ history and task-3-report.md): for a payload at
+  // MAX_BAG_SIZE (256 KB), the kernel accepts the entire response into its
+  // own socket send buffer in one write() call before a client that never
+  // reads a single byte and then destroys the connection even gets a chance
+  // to do so — 'finish' fires regardless, well before any abort could
+  // interrupt it. So a dropped connection can still, in practice, mark a
+  // bag as fetched. Consequence, stated plainly: an undelivered message can
+  // move from the 30-day "unread" TTL to the 7-day "read" one early. This is
+  // a real limitation of marking on a completion event for small payloads,
+  // not a bug to fix here — the server has no other signal available to
+  // tell "handed to the kernel" apart from "received by the recipient" at
+  // this size, short of application-level acks this protocol doesn't have.
+  //
+  // Trade-off, stated plainly: markFetched() can still throw (bagStore.js's
+  // contract), but by the time 'finish' fires the 200 + bytes have already
+  // gone out — there is no response left to turn into a 500 for. That
+  // failure is logged and otherwise swallowed; the alternative (mark BEFORE
+  // streaming, so a throw can still become a 500) is what caused this
+  // finding in the first place, and getting the message to its recipient
+  // matters more than the read receipt.
+  res.on('finish', () => {
+    try {
+      markFetched(key, Date.now());
+    } catch (e) {
+      console.error('[bags] markFetched failed after successful delivery (read receipt lost, bytes already sent):', e.message);
+    }
+  });
+  rs.pipe(res);
 });
 
 // ─── Push notification endpoints ──────────────────────────────────────────────
@@ -2024,6 +2998,12 @@ export const relayerInfo = {
   dirFiles:       DIR_FILES,
   dirPublic:      DIR_PUBLIC,
   port:           PORT,
+  // Задача 5, мелочь (таймаут RPC): provider — для проверки, что таймаут
+  // реально дошёл до объекта, которым пользуется ethers
+  // (provider._getConnection().timeout), не просто лежит неиспользуемой
+  // переменной.
+  provider:       provider,
+  rpcTimeoutMs:   RPC_TIMEOUT_MS,
 };
 
 export { app, botSigner, botWallet };

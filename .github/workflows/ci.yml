@@ -56,6 +56,9 @@ jobs:
       - name: Check ERC-2771 sender rule (no raw msg.sender in gasless contracts)
         run: ./script/check-gasless-sender.sh
 
+      - name: Check appeal window (relayer copy matches contract)
+        run: ./script/check-appeal-window.sh
+
   # Симметрия к `contracts`: у фронта и релеера тесты были написаны и зелены,
   # но не запускались нигде — то есть памяти о поломках у них не было вовсе.
   # Всё, что здесь перечислено, уже существует в репозитории; job ничего не
