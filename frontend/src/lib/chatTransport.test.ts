@@ -333,9 +333,29 @@ describe('listBags', () => {
     await expect(listBags('v1.p')).rejects.toThrow();
   });
 
-  it('ответ не массивом — тоже мусор, не тихая пустота', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ bags: [] }) }));
+  // Мелочь (ревью-координатор): sender не был заперт ни одной мутацией —
+  // все существующие фикстуры со всем ОСТАЛЬНЫМ валидным брали настоящий
+  // ALICE. Проверено вживую до фикса: снять регулярку SENDER_RE целиком
+  // (оставить только typeof === 'string') оставляло весь набор зелёным.
+  it('элемент с валидными key/size/uploadedAt, но sender не похож на адрес — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ([{ key: 'a/1.bin', sender: 'не-адрес', size: 42, uploadedAt: 1000 }]),
+    }));
     await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  // Мелочь (ревью-координатор): `.rejects.toThrow()` голым текстом здесь
+  // ничего не запирало — не-массив, отданный в `for...of` БЕЗ явной
+  // Array.isArray-проверки, и так бросает свой собственный TypeError
+  // ("is not iterable"), так что мутация "убрать проверку целиком" тоже
+  // проходила бы этот тест. `toBeInstanceOf(BagTransportError)` различает
+  // "наша проверка сработала" от "JS сам споткнулся об это по случайности".
+  it('ответ не массивом — тоже мусор, не тихая пустота (и не случайный TypeError от for-of)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ bags: [] }) }));
+    let caught: unknown;
+    try { await listBags('v1.p'); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(BagTransportError);
+    expect((caught as Error).message).toMatch(/not an array/i);
   });
 
   it('битый JSON в успешном ответе пробрасывается, а не превращается в пустой список', async () => {
@@ -393,6 +413,21 @@ describe('fetchBag', () => {
     }));
     const got = await fetchBag('v1.p', 'a/1.bin');
     expect(got).toEqual(bytes);
+  });
+
+  // Мелочь (ревью-координатор). Настоящий запечатанный мешок от ядра
+  // шифрования — как минимум IV + тег аутентификации AES-256-GCM, никогда
+  // не ноль байт (сервер применяет РОВНО это же правило на приёме — см.
+  // relayer/app.js, PUT /bags/:recipient, "Настоящий запечатанный мешок...
+  // ноль здесь — не легитимный пустой мешок, а шум"). 0 байт на СКАЧИВАНИИ
+  // — тот же шум (обрыв, диск, что угодно), а не штатный пустой мешок;
+  // ядро шифрования эту дичь тоже отловит на попытке расшифровать, но
+  // транспорту не обязательно доводить очевидный мусор до чужого модуля.
+  it('мелочь: 200 с пустым телом — не легитимный пустой мешок, а мусор', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+    await expect(fetchBag('v1.p', 'a/1.bin')).rejects.toThrow();
   });
 
   it('обрыв сети ПОСРЕДИ скачивания (после 200) тоже бросает, а не отдаёт пусто/частично', async () => {

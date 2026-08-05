@@ -400,6 +400,13 @@ export async function fetchBag(pass: string, key: string): Promise<Uint8Array | 
   if (!res.ok) await throwForFailedResponse(res, 'Failed to fetch bag', pass);
 
   const buf = await res.arrayBuffer();
+  // Мелочь (ревью): реальный запечатанный мешок — минимум IV + тег
+  // аутентификации AES-256-GCM, никогда не ноль байт (сервер применяет
+  // РОВНО это же правило на приёме, relayer/app.js PUT /bags/:recipient).
+  // 0 байт на скачивании — не легитимный пустой мешок, а шум; ядро
+  // шифрования это тоже отловит на расшифровке, но нет смысла доводить
+  // очевидный мусор до чужого модуля, когда транспорт уже видит его сам.
+  if (buf.byteLength === 0) throw new BagTransportError('Empty bag body');
   return new Uint8Array(buf);
 }
 
