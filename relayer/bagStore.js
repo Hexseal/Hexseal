@@ -1080,45 +1080,65 @@ const FINALIZE_DELAY_MS = FINALIZE_DELAY_HOURS * HOUR_MS;
 // изменить окно спора, читаем с цепи, не хардкодим.
 //
 // C1 (находка координатора, закрывающий раунд ревью): якорь — max(createdAtMs,
-// activatedAtMs), НЕ просто createdAtMs. Главный путь доски заказов
-// (JobBoardFacet.acceptApplicant() → FactoryFacet.sol:232-273) регистрирует
-// сделку НЕОПЛАЧЕННОЙ — activatedAt на этот момент 0 — а у fund() нет
-// дедлайна вообще (Agreement.sol:557): между "создали" и "оплатили" может
-// пройти сколько угодно дней. Настоящий дедлайн работы контракт считает от
-// activatedAt (Agreement.deadline(): activatedAt + deadlineDays*1 days), не
-// от createdAt — якорь только по createdAt считал сделку "просроченной"
-// на фиксированный день независимо от того, когда её реально оплатили и
-// начали, и при задержке оплаты дольше ~8 дней (при 30-дневном сроке
-// работы) дыра открывалась заново, воспроизведено координатором таблицей
-// задержек (0/2/5/7д — защита держит, 8/10/20д — нет), см.
-// test/bagAdoption.test.js, describe "C1".
+// activatedAtMs), НЕ просто createdAtMs, КОГДА activatedAtMs известен (> 0).
+// Главный путь доски заказов (JobBoardFacet.acceptApplicant() →
+// FactoryFacet.sol:232-273) регистрирует сделку НЕОПЛАЧЕННОЙ — activatedAt на
+// этот момент 0 — а у fund() нет дедлайна вообще (Agreement.sol:557): между
+// "создали" и "оплатили" может пройти сколько угодно дней. Настоящий дедлайн
+// работы контракт считает от activatedAt (Agreement.deadline(): activatedAt +
+// deadlineDays*1 days), не от createdAt.
 //
-// Чинится бесплатно: activatedAtMs передаёт вызывающий из ТОГО ЖЕ
-// getDetails(), что уже читает ownDeadlineMs (app.js делает один вызов на
-// агримент, не два). Пока сделка не активирована, activatedAtMs = 0,
-// Math.max(createdAtMs, 0) = createdAtMs — поведение не меняется. Как
-// только контракт видит активацию, СЛЕДУЮЩИЙ ночной прогон (adoptActivePairBags
-// зовётся КАЖДУЮ ночь для каждой ещё ACTIVE сделки, не только в день
-// регистрации) подхватывает новый activatedAtMs, и Math.max в
-// adoptPairBags() ("усыновление только продлевает") сам доводит срок вперёд
-// — отдельного кода на "заметить активацию" не нужно.
+// I-B (третий закрывающий раунд ревью, находка координатора): просто
+// max(createdAtMs, activatedAtMs) — недостаточно само по себе. Пока
+// activatedAtMs всё ещё 0, якорь остаётся createdAtMs НАВСЕГДА (createdAt —
+// число, зафиксированное в день регистрации, не растёт) — а лукбэк
+// (BAG_ADOPTION_LOOKBACK_MS в adoptPairBags()) когда-то перестаёт пускать
+// ПЕРВОЕ усыновление мешков старше 30 дней, и даже после починки лукбэка
+// для УЖЕ усыновлённых записей (см. докстринг adoptPairBags()) сам
+// ПРЕДВАРИТЕЛЬНЫЙ срок (createdAt + ownDeadline + хвост) остаётся коротким,
+// если ownDeadline — короткая сделка: запись сметает cleanupBags() ДО того,
+// как активация вообще случится, и переякоривать уже нечего. Координатор
+// воспроизвёл двумя таблицами (test/bagAdoption.test.js, describe "I-B"):
+// без активации срок сделки в 3 дня умирает на 13-й день независимо от
+// задержки оплаты, 30-дневная — на 40-й.
 //
-// Не претендует на точность день-в-день сверх этого — деньги/таймауты
-// контракта дают ещё немного сверху (DEADLINE_GRACE, AUTO_APPROVE_WINDOW —
-// не видны без ещё одного чтения контракта и здесь не учтены намеренно:
-// цель этой оценки не быть идеальной, а не дать мешку до всякой сделки быть
-// выметенным раньше, чем возникнет спор). Если сделка закроется без спора —
-// усыновление просто перестанет продлеваться, следующий срок мешка посчитает
-// обычное правило 2/3 (bagExpiryAt); если спор всё же будет — этап 2
-// пересчитает точно и не сократит уже данное этапом 1 (Math.max в
-// adoptPairBags()).
-export function dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs) {
+// Починка: пока activatedAtMs ещё 0 (сделка ЕЩЁ НЕ активирована), якорь —
+// nowMs (момент ЭТОГО прогона), не createdAtMs. Каждую ночь, пока сделка
+// остаётся ACTIVE (adoptActivePairBags зовётся КАЖДУЮ ночь для каждой ещё
+// ACTIVE сделки, не только в день регистрации), якорь сдвигается на день
+// вперёд вместе с "сегодня" — предварительный срок никогда не отстаёт
+// больше чем на ownDeadline+хвост от текущей ночи, и запись не может
+// сгореть, пока ночной прогон продолжает происходить. Правило "только
+// продлевать" (Math.max в adoptPairBags()) не даёт этому откатиться назад.
+// Как только контракт покажет activatedAtMs > 0, якорь ПЕРЕКЛЮЧАЕТСЯ на
+// max(createdAtMs, activatedAtMs) — стабильное, не растущее дальше значение,
+// отражающее НАСТОЯЩИЙ график сделки, а не бесконечно уезжающую оценку.
+//
+// deadlineGraceMs/autoApproveWindowMs — мелочь того же раунда: собственный
+// худший случай сделки БЕЗ спора длиннее, чем просто ownDeadlineMs —
+// Agreement.DEADLINE_GRACE (запас перед автовозвратом, 1 день) и
+// AUTO_APPROVE_WINDOW (окно клиента среагировать после markDone, 2 дня) тоже
+// сдвигают момент, до которого спор в принципе возможен. Обе — public
+// constant в ТОМ ЖЕ контракте, откуда уже читаем DISPUTE_WINDOW — не лишний
+// класс чтения, тот же приём, тот же кэш (см. app.js).
+export function dealDeadlineFromCreation({
+  createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs,
+  deadlineGraceMs, autoApproveWindowMs, nowMs,
+}) {
   assertSafeInt('dealDeadlineFromCreation', 'createdAtMs', createdAtMs);
   assertSafeInt('dealDeadlineFromCreation', 'activatedAtMs', activatedAtMs);
   assertSafeInt('dealDeadlineFromCreation', 'ownDeadlineMs', ownDeadlineMs);
   assertSafeInt('dealDeadlineFromCreation', 'disputeWindowMs', disputeWindowMs);
-  const anchor = Math.max(createdAtMs, activatedAtMs);
-  return anchor + ownDeadlineMs + disputeWindowMs + FINALIZE_DELAY_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+  assertSafeInt('dealDeadlineFromCreation', 'deadlineGraceMs', deadlineGraceMs);
+  assertSafeInt('dealDeadlineFromCreation', 'autoApproveWindowMs', autoApproveWindowMs);
+  assertSafeInt('dealDeadlineFromCreation', 'nowMs', nowMs);
+
+  const anchor = activatedAtMs > 0
+    ? Math.max(createdAtMs, activatedAtMs)
+    : Math.max(createdAtMs, nowMs);
+
+  return anchor + ownDeadlineMs + deadlineGraceMs + autoApproveWindowMs
+    + disputeWindowMs + FINALIZE_DELAY_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
 }
 
 // Этап 2. Срок сделки — до ОКОНЧАТЕЛЬНОГО закрытия дела, не до вердикта:
@@ -1175,12 +1195,33 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
 // дублирует эту проверку — дублирование двух копий одного правила в двух
 // местах разошлось бы молча при следующей правке одного из них.
 //
-// Ищет запись по uploadedAt > nowMs - BAG_ADOPTION_LOOKBACK_MS (строго
-// больше — ровно на границе лукбэка запись НЕ усыновляется, заперто тестом
-// на границу в test/bagAdoption.test.js), выставляет dealDeadline =
-// Math.max(existing ?? 0, dealDeadline) — усыновление только продлевает,
-// никогда не откатывает более дальний срок ни от предыдущего усыновления,
-// ни (см. bagExpiryAt) от обычного правила 2/3.
+// I-B (третий закрывающий раунд ревью, находка координатора): лукбэк
+// (uploadedAt > nowMs - BAG_ADOPTION_LOOKBACK_MS) гейтит ТОЛЬКО первое
+// усыновление записи (meta.dealDeadline ещё null) — уже усыновлённая
+// запись пересчитывается на КАЖДОМ прогоне НЕЗАВИСИМО от лукбэка. Раньше
+// лукбэк проверялся всегда, и это ломало главный путь доски заказов:
+// этап 1 (adoptActivePairBags) усыновляет мешок В ДЕНЬ СОЗДАНИЯ сделки
+// (uploadedAt тогда свежий, лукбэк проходит), но якорь на тот момент —
+// только createdAt (activatedAt ещё 0, см. С1). Если оплата задерживается
+// дольше BAG_ADOPTION_LOOKBACK_MS (умолчание — 30 дней) от МОМЕНТА
+// ЗАГРУЗКИ мешка, к моменту, когда контракт наконец покажет activatedAt,
+// uploadedAt мешка уже вне лукбэка — старый код тут просто пропускал
+// запись (`continue`) НАВСЕГДА, и предварительный срок, посчитанный от
+// createdAt в день ноль, оставался замороженным, даже когда правильный,
+// куда более поздний dealDeadline (от activatedAt) был уже известен и ждал
+// применения. Воспроизведено координатором таблицей задержек (граница —
+// ровно 30 дней, совпадает с BAG_ADOPTION_LOOKBACK_MS) — не совпадение, это
+// и есть механизм.
+//
+// Правило «только продлевать» (Math.max ниже) уже гарантирует, что
+// пропуск лукбэка для уже усыновлённой записи не может НИЧЕГО ухудшить —
+// max(current, dealDeadline) либо оставляет прежнее значение, либо
+// увеличивает его, никогда не уменьшает. Значит снятие гейта здесь
+// безопасно при любом раскладе, ровно как и написал координатор.
+//
+// Для НИКОГДА не усыновлявшейся записи (dealDeadline всё ещё null) лукбэк
+// работает как раньше — мешок старше 30 дней с самого начала по-прежнему
+// не усыновляется (тест на границу в test/bagAdoption.test.js не тронут).
 //
 // Персист — ОДИН раз на весь вызов (после цикла по всем подходящим записям),
 // не по одной записи за раз: либо весь вызов целиком лёг на диск, либо (при
@@ -1201,7 +1242,11 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now()) {
 
   for (const meta of Object.values(_bagMeta)) {
     if (meta.pairId !== pairId) continue;
-    if (!(meta.uploadedAt > cutoff)) continue; // строго больше — не >=, см. докстринг выше
+    // I-B: лукбэк гейтит ТОЛЬКО первое усыновление (dealDeadline ещё null)
+    // — уже усыновлённая запись (dealDeadline != null) пересчитывается
+    // независимо от возраста uploadedAt, см. докстринг выше.
+    const alreadyAdopted = meta.dealDeadline != null;
+    if (!alreadyAdopted && !(meta.uploadedAt > cutoff)) continue; // строго больше — не >=, см. докстринг выше
 
     const current = meta.dealDeadline ?? 0;
     const next = Math.max(current, dealDeadline);

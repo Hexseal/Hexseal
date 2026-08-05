@@ -131,6 +131,15 @@ const AGREEMENT_MINI_ABI = [
   // начнёт врать в пуше молча — а пуш живёт в шторке уведомлений, его не
   // отзовёшь. Тем же способом читает фронт (frontend/src/app/deal/[address]).
   'function DISPUTE_WINDOW() view returns (uint256)',
+  // Задача 5, мелочь (закрывающий раунд ревью, находка координатора): этап 1
+  // (adoptActivePairBags ниже) без спора считал предварительный срок только
+  // от deadlineDays_, не учитывая, что собственный худший случай сделки БЕЗ
+  // спора длиннее — грейс перед автовозвратом и окно клиента среагировать
+  // после markDone тоже сдвигают момент, до которого спор в принципе
+  // возможен. Обе — public constant, читаются тем же staticcall'ом, что и
+  // DISPUTE_WINDOW выше.
+  'function DEADLINE_GRACE() view returns (uint256)',
+  'function AUTO_APPROVE_WINDOW() view returns (uint256)',
 ];
 
 const REGISTRY_MINI_ABI = [
@@ -304,17 +313,33 @@ function disputedPairIdsFromRecords(disputed) {
 // в любом случае — ради мутирующихся полей (activatedAt_/disputedAt_),
 // которые кэшировать нельзя. Отдельный кэш под неё не убрал бы ни одного
 // сетевого вызова, только тривиальное повторное чтение уже полученного
-// ответа — не то же самое, что DISPUTE_WINDOW(), у которой свой,
-// самостоятельный staticcall.
-const _disputeWindowMsCache = new Map(); // agreement (нижний регистр) → мс
-
-async function getDisputeWindowMs(agr, agreementAddress) {
-  const key = agreementAddress.toLowerCase();
-  if (_disputeWindowMsCache.has(key)) return _disputeWindowMsCache.get(key);
-  const ms = Number(await agr.DISPUTE_WINDOW()) * 1000;
-  _disputeWindowMsCache.set(key, ms);
-  return ms;
+// ответа — не то же самое, что DISPUTE_WINDOW()/DEADLINE_GRACE()/
+// AUTO_APPROVE_WINDOW(), у каждой из которых свой, самостоятельный
+// staticcall.
+//
+// Фабрика, не три копипасты одной и той же функции с разным именем метода:
+// свой Map на каждый вызов makeCachedConstantMsReader — три независимых
+// кэша (окно спора / грейс дедлайна / окно автоприёма), но один код.
+// Кэш заполняется ТОЛЬКО ПОСЛЕ успешного await — если staticcall
+// ревертит (например, старый несовместимый клон без этого метода), запись
+// в кэш не попадает вовсе, и следующая попытка честно перечитает с цепи, а
+// не запомнит ошибку как будто это было валидное значение (см. "мелочи",
+// отчёт Задачи 5 — "ревертнувший вызов не отравляет кэш", проверено этим же
+// порядком операций: await ДО set(), не после).
+function makeCachedConstantMsReader(methodName) {
+  const cache = new Map(); // agreement (нижний регистр) → мс
+  return async function (agr, agreementAddress) {
+    const key = agreementAddress.toLowerCase();
+    if (cache.has(key)) return cache.get(key);
+    const ms = Number(await agr[methodName]()) * 1000;
+    cache.set(key, ms);
+    return ms;
+  };
 }
+
+const getDisputeWindowMs = makeCachedConstantMsReader('DISPUTE_WINDOW');
+const getDeadlineGraceMs = makeCachedConstantMsReader('DEADLINE_GRACE');
+const getAutoApproveWindowMs = makeCachedConstantMsReader('AUTO_APPROVE_WINDOW');
 
 // Каждая запись реестра — в СВОЁМ try, в обеих функциях: одна не
 // читающаяся/бракованная запись (например, staticcall до старого/
@@ -336,19 +361,25 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       const agr = new ethers.Contract(r.agreement, AGREEMENT_MINI_ABI, provider);
       const details = await agr.getDetails();
       const disputeWindowMs = await getDisputeWindowMs(agr, r.agreement);
+      const deadlineGraceMs = await getDeadlineGraceMs(agr, r.agreement);
+      const autoApproveWindowMs = await getAutoApproveWindowMs(agr, r.agreement);
       // r.createdAt приезжает прямо в tuple getActive() — RegistryFacet
       // ставит его в register() (тот же миг, что и "создание сделки"), лишнего
       // чтения агримента ради этого не нужно. deadlineDays_ — собственный
       // срок сделки, известен сразу, до funded/activated. activatedAt_ — С1
       // (находка координатора): приезжает в ТОМ ЖЕ getDetails(), что уже
       // читаем строкой выше — ни одного лишнего вызова в цепь. 0, пока
-      // сделка не активирована; Math.max в dealDeadlineFromCreation() ниже
-      // не даёт этому полю укоротить срок, а следующий ночной прогон сам
-      // подхватит настоящее значение, когда оно появится.
+      // сделка не активирована — I-B: пока так, якорь dealDeadlineFromCreation()
+      // берёт nowMs, а не застревает на createdAtMs навсегда (см. докстринг
+      // там же); следующий ночной прогон сам подхватит настоящий activatedAtMs,
+      // когда он появится, и Math.max не даст сроку откатиться назад.
       const createdAtMs = Number(r.createdAt) * 1000;
       const activatedAtMs = Number(details.activatedAt_) * 1000;
       const ownDeadlineMs = Number(details.deadlineDays_) * 24 * 60 * 60 * 1000;
-      const dealDeadline = dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs);
+      const dealDeadline = dealDeadlineFromCreation({
+        createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs,
+        deadlineGraceMs, autoApproveWindowMs, nowMs,
+      });
       const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
       if (adopted) {
         console.log(`[bags] adoption (creation): extended ${adopted} bag(s) for the pair of active agreement ${r.agreement} to ${new Date(dealDeadline).toISOString()} (preliminary)`);

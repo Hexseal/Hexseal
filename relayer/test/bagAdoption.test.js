@@ -14,7 +14,7 @@ process.env.STORAGE_DIR = TMP;
 
 const bagStore = await import('../bagStore.js');
 const {
-  bagKeyFor, recordBag, bagMetaOf, bagExpiryAt,
+  bagKeyFor, recordBag, bagMetaOf, bagExpiryAt, cleanupBags,
   adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
   _loadBagMeta, _pairIdFromAddresses,
 } = bagStore;
@@ -186,13 +186,23 @@ describe('adoptPairBags — усыновление переписки сделк
 // при регистрации), так что предварительная оценка — от МОМЕНТА СОЗДАНИЯ,
 // а не от момента спора, которого ещё нет.
 
+// Хелпер: то же умолчание "деньги/грейс" на каждый вызов, чтобы не повторять
+// эти два поля в каждом тесте буквально — они не в фокусе этого блока
+// (у них свой блок ниже, "мелочи — DEADLINE_GRACE/AUTO_APPROVE_WINDOW").
+function ddFromCreation(overrides) {
+  return dealDeadlineFromCreation({
+    deadlineGraceMs: 0, autoApproveWindowMs: 0,
+    ...overrides,
+  });
+}
+
 describe('dealDeadlineFromCreation — этап 1: предварительный срок при создании сделки', () => {
-  it('не активирована (activatedAtMs=0 < createdAtMs) — якорь остаётся createdAtMs, формула как раньше', () => {
+  it('не активирована, самая первая ночь (nowMs === createdAtMs) — якорь = createdAtMs', () => {
     const createdAtMs = 1_700_000_000_000;
     const ownDeadlineMs = 40 * DAY;
     const disputeWindowMs = 4 * DAY;
 
-    const dd = dealDeadlineFromCreation(createdAtMs, 0, ownDeadlineMs, disputeWindowMs);
+    const dd = ddFromCreation({ createdAtMs, activatedAtMs: 0, ownDeadlineMs, disputeWindowMs, nowMs: createdAtMs });
 
     // Точная формула — то же самое равенство, что и у dealDeadlineFromDispute,
     // только якорь другой (createdAtMs вместо disputedAtMs). Мутация,
@@ -201,37 +211,92 @@ describe('dealDeadlineFromCreation — этап 1: предварительны�
       + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
   });
 
-  // C1 (находка координатора, закрывающий раунд): якорь — max(createdAtMs,
-  // activatedAtMs), не только createdAtMs. Мутация "вернуть якорь на просто
-  // createdAtMs" красит это равенство напрямую (activatedAtMs здесь БОЛЬШЕ
-  // createdAtMs — задержка оплаты 8 дней, тот самый порог из отчёта).
-  it('активирована ПОЗЖЕ создания (задержка оплаты) — якорь переключается на activatedAtMs, срок сдвигается вперёд ровно на задержку', () => {
+  // I-B (третий закрывающий раунд ревью, находка координатора): пока сделка
+  // НЕ активирована, якорь — nowMs (момент ЭТОГО прогона), не застывший
+  // createdAtMs. Без этого предварительный срок навсегда остаётся тем же
+  // числом, посчитанным в день регистрации, а лукбэк рано или поздно
+  // перестаёт пускать его переякорение — короткая сделка с задержкой оплаты
+  // умирает раньше активации. Мутация "взять просто createdAtMs" красит
+  // это равенство: на 20-й неактивированной ночи dd обязан сдвинуться на
+  // 20 дней вперёд относительно первой.
+  it('не активирована, 20-я ночь без оплаты — якорь сдвигается на nowMs, срок растёт вместе с "сегодня"', () => {
+    const createdAtMs = 1_700_000_000_000;
+    const nowMs = createdAtMs + 20 * DAY;
+    const ownDeadlineMs = 10 * DAY;
+    const disputeWindowMs = 4 * DAY;
+
+    const dd = ddFromCreation({ createdAtMs, activatedAtMs: 0, ownDeadlineMs, disputeWindowMs, nowMs });
+
+    expect(dd).toBe(nowMs + ownDeadlineMs + disputeWindowMs
+      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+  });
+
+  // C1 (находка координатора): якорь — max(createdAtMs, activatedAtMs) КОГДА
+  // activatedAtMs известен (> 0) — и, что важно для I-B, ПЕРЕСТАЁТ зависеть
+  // от nowMs, как только сделка активирована: значение стабильно, не растёт
+  // дальше вместе с "сегодня", даже если прогон случится намного позже.
+  it('активирована ПОЗЖЕ создания (задержка оплаты) — якорь переключается на activatedAtMs и БОЛЬШЕ НЕ растёт вместе с nowMs', () => {
     const createdAtMs = 1_700_000_000_000;
     const paymentDelayMs = 8 * DAY;
     const activatedAtMs = createdAtMs + paymentDelayMs;
     const ownDeadlineMs = 30 * DAY;
     const disputeWindowMs = 4 * DAY;
 
-    const ddNotActivated = dealDeadlineFromCreation(createdAtMs, 0, ownDeadlineMs, disputeWindowMs);
-    const ddActivatedLate = dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs);
+    const ddNotActivated = ddFromCreation({ createdAtMs, activatedAtMs: 0, ownDeadlineMs, disputeWindowMs, nowMs: createdAtMs });
+    const ddActivatedLate = ddFromCreation({ createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs, nowMs: activatedAtMs });
+    // Прогон СИЛЬНО позже активации (месяц спустя) — значение то же самое,
+    // не растёт вместе с nowMs, раз activatedAtMs уже известен.
+    const ddActivatedMuchLater = ddFromCreation({ createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs, nowMs: activatedAtMs + 30 * DAY });
 
     expect(ddActivatedLate).toBe(ddNotActivated + paymentDelayMs); // сдвиг равен ровно задержке
     expect(ddActivatedLate).toBe(activatedAtMs + ownDeadlineMs + disputeWindowMs
       + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+    expect(ddActivatedMuchLater).toBe(ddActivatedLate); // стабильно, не уехало вместе с nowMs
   });
 
   it('активирована РАНЬШЕ создания — невозможно по контракту, но если бы: якорь не откатывается назад (Math.max, не последнее значение)', () => {
     const createdAtMs = 1_700_000_000_000;
-    const dd = dealDeadlineFromCreation(createdAtMs, createdAtMs - DAY, 30 * DAY, 4 * DAY);
+    const dd = ddFromCreation({ createdAtMs, activatedAtMs: createdAtMs - DAY, ownDeadlineMs: 30 * DAY, disputeWindowMs: 4 * DAY, nowMs: createdAtMs });
     expect(dd).toBe(createdAtMs + 30 * DAY + 4 * DAY
       + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
   });
 
   it('нечисло на входе — бросает (тот же принцип, что у dealDeadlineFromDispute)', () => {
-    expect(() => dealDeadlineFromCreation('x', 0, DAY, DAY)).toThrow();
-    expect(() => dealDeadlineFromCreation(1000, NaN, DAY, DAY)).toThrow();
-    expect(() => dealDeadlineFromCreation(1000, 0, NaN, DAY)).toThrow();
-    expect(() => dealDeadlineFromCreation(1000, 0, DAY, Infinity)).toThrow();
+    const base = { createdAtMs: 1000, activatedAtMs: 0, ownDeadlineMs: DAY, disputeWindowMs: DAY, deadlineGraceMs: 0, autoApproveWindowMs: 0, nowMs: 1000 };
+    expect(() => dealDeadlineFromCreation({ ...base, createdAtMs: 'x' })).toThrow();
+    expect(() => dealDeadlineFromCreation({ ...base, activatedAtMs: NaN })).toThrow();
+    expect(() => dealDeadlineFromCreation({ ...base, ownDeadlineMs: NaN })).toThrow();
+    expect(() => dealDeadlineFromCreation({ ...base, disputeWindowMs: Infinity })).toThrow();
+    expect(() => dealDeadlineFromCreation({ ...base, deadlineGraceMs: NaN })).toThrow();
+    expect(() => dealDeadlineFromCreation({ ...base, autoApproveWindowMs: Infinity })).toThrow();
+    expect(() => dealDeadlineFromCreation({ ...base, nowMs: 'never' })).toThrow();
+  });
+
+  // Мелочь (закрывающий раунд ревью, находка координатора): собственный
+  // худший случай сделки БЕЗ спора длиннее одного deadlineDays_ —
+  // Agreement.DEADLINE_GRACE (запас перед автовозвратом) и
+  // AUTO_APPROVE_WINDOW (окно клиента среагировать после markDone) тоже
+  // сдвигают момент, до которого спор в принципе возможен. Раньше этап 1
+  // отставал от истинного худшего случая на сумму этих двух окон.
+  describe('мелочь — DEADLINE_GRACE/AUTO_APPROVE_WINDOW учтены в предварительном сроке', () => {
+    it('добавляют ровно себя к сроку (1 день + 2 дня — контрактные значения)', () => {
+      const createdAtMs = 1_700_000_000_000;
+      const ownDeadlineMs = 30 * DAY;
+      const disputeWindowMs = 4 * DAY;
+      const deadlineGraceMs = 1 * DAY;
+      const autoApproveWindowMs = 2 * DAY;
+
+      const withoutGraceEtc = dealDeadlineFromCreation({
+        createdAtMs, activatedAtMs: 0, ownDeadlineMs, disputeWindowMs,
+        deadlineGraceMs: 0, autoApproveWindowMs: 0, nowMs: createdAtMs,
+      });
+      const withGraceEtc = dealDeadlineFromCreation({
+        createdAtMs, activatedAtMs: 0, ownDeadlineMs, disputeWindowMs,
+        deadlineGraceMs, autoApproveWindowMs, nowMs: createdAtMs,
+      });
+
+      expect(withGraceEtc).toBe(withoutGraceEtc + deadlineGraceMs + autoApproveWindowMs);
+    });
   });
 });
 
@@ -666,6 +731,8 @@ describe('усыновление в два этапа — при создани�
       mockContract(agreement, {
         getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: 0n, disputedAt_: 0n }),
         DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
       });
 
       const key = put(client, executor, uploadedAt); // мешок брифа уже лежит на складе к моменту создания сделки
@@ -698,11 +765,16 @@ describe('усыновление в два этапа — при создани�
       });
       await runFileCleanup();
 
-      // Замер 2 (для отчёта): срок теперь считается точно от спора — до
-      // конца окна апелляции.
+      // Замер 2 (для отчёта): срок дожил как минимум до конца окна апелляции
+      // от спора. Не точное равенство (было им до I-B): промежуточный
+      // прогон "5 дней после естественной смерти", пока сделка ещё не
+      // активирована, теперь САМ переякоривается на nowMs (см. докстринг
+      // dealDeadlineFromCreation) и может дать вклад БОЛЬШЕ, чем точная
+      // disputedAt-формула этапа 2 — Math.max берёт больший, это и есть
+      // "усыновление только продлевает", а не откат к меньшему числу.
       const endOfAppealWindow = disputedAtMs + disputeWindowSec * 1000
         + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
-      expect(bagMetaOf(key).dealDeadline).toBe(endOfAppealWindow);
+      expect(bagMetaOf(key).dealDeadline).toBeGreaterThanOrEqual(endOfAppealWindow);
       expect(bagExpiryAt(bagMetaOf(key))).toBeGreaterThanOrEqual(endOfAppealWindow);
     } finally {
       vi.useRealTimers();
@@ -713,27 +785,40 @@ describe('усыновление в два этапа — при создани�
     const client    = '0x' + '2'.repeat(40);
     const executor  = '0x' + '3'.repeat(40);
     const agreement = '0x' + '4'.repeat(40);
-    const now = Date.now();
+    // I-B: якорь этапа 1, пока сделка не активирована, — nowMs (см.
+    // dealDeadlineFromCreation) — время обязано быть заморожено
+    // vi.setSystemTime(), иначе между "now" здесь и Date.now() внутри
+    // adoptActivePairBags() пройдут настоящие миллисекунды реального
+    // времени, и точное равенство ниже станет хрупким флейком.
+    const now = Date.UTC(2026, 8, 1);
     const createdAtSec = Math.floor(now / 1000);
     const ownDeadlineDays = 21;
     const disputeWindowSec = 4 * 24 * 60 * 60;
 
-    mockContract(process.env.DIAMOND_ADDRESS, {
-      getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
-      getDisputed: [],
-    });
-    mockContract(agreement, {
-      getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: 0n, disputedAt_: 0n }),
-      DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
-    });
+    try {
+      vi.setSystemTime(now);
 
-    const key = put(client, executor, now - 15 * DAY); // бриф до сделки, в пределах лукбэка
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+        getDisputed: [],
+      });
+      mockContract(agreement, {
+        getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
 
-    await runFileCleanup();
+      const key = put(client, executor, now - 15 * DAY); // бриф до сделки, в пределах лукбэка
 
-    const expectedDeadline = createdAtSec * 1000 + ownDeadlineDays * DAY + disputeWindowSec * 1000
-      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
-    expect(bagMetaOf(key).dealDeadline).toBe(expectedDeadline);
+      await runFileCleanup();
+
+      const expectedDeadline = createdAtSec * 1000 + ownDeadlineDays * DAY + disputeWindowSec * 1000
+        + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+      expect(bagMetaOf(key).dealDeadline).toBe(expectedDeadline);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Явное требование координатора: "убедись, что второй этап не обрезает то,
@@ -757,6 +842,8 @@ describe('усыновление в два этапа — при создани�
       mockContract(agreement, {
         getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: 0n, disputedAt_: 0n }),
         DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
       });
 
       const key = put(client, executor, T0 - 5 * DAY);
@@ -827,6 +914,8 @@ describe('C1 — задержка оплаты не открывает дыру 
         mockContract(agreement, {
           getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: 0n, disputedAt_: 0n }),
           DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+          DEADLINE_GRACE: async () => 0n,
+          AUTO_APPROVE_WINDOW: async () => 0n,
         });
 
         const key = put(client, executor, T0); // мешок брифа, отправлен вместе с созданием
@@ -842,6 +931,8 @@ describe('C1 — задержка оплаты не открывает дыру 
         mockContract(agreement, {
           getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: BigInt(activatedAtSec), disputedAt_: 0n }),
           DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+          DEADLINE_GRACE: async () => 0n,
+          AUTO_APPROVE_WINDOW: async () => 0n,
         });
         await runFileCleanup();
 
@@ -962,6 +1053,197 @@ describe('мелочи эффективности — лишняя работа 
       vi.resetModules();
       await import('../bagStore.js');
       await import('../app.js');
+    }
+  });
+});
+
+// ─── I-B (третий закрывающий раунд ревью): лукбэк блокировал переякорение
+// уже усыновлённой записи — DIAGNOSTIC, временно, будет заменён финальными
+// тестами.
+
+/**
+ * Симулирует ежедневные ночные прогоны runFileCleanup() от создания сделки
+ * до спора — тем же методом, что координатор ("ежедневные прогоны", не
+ * редкие контрольные точки). Между "интересными" днями (когда состояние на
+ * цепи реально меняется) полный runFileCleanup() не нужен:
+ * adoptActivePairBags() на "скучный" день пересчитывает РОВНО ТО ЖЕ
+ * значение (на цепи ничего не изменилось) — не-оп, эквивалентный прямому
+ * вызову cleanupBags() без переусыновления. Три контрольные точки: день 0
+ * (создание), день paymentDelayDays (активация), день спора.
+ */
+async function simulateDailyProtection({
+  client, executor, agreement, T0, ownDeadlineDays, paymentDelayDays,
+  uploadedAt, firstFetchedAt, disputeAfterDays,
+}) {
+  const disputeWindowSec = 4 * 24 * 60 * 60;
+  const deadlineGraceSec = 24 * 60 * 60;       // Agreement.DEADLINE_GRACE — 1 день
+  const autoApproveWindowSec = 2 * 24 * 60 * 60; // Agreement.AUTO_APPROVE_WINDOW — 2 дня
+  const createdAtSec = Math.floor(T0 / 1000);
+
+  // Мок агримента ставится ОДИН раз для "неактивированного" состояния и
+  // переиспользуется на каждом "скучном" дне — DEADLINE_GRACE/AUTO_APPROVE_WINDOW
+  // обязаны быть замоканы (app.js читает их теперь тоже), иначе adoptActivePairBags()
+  // молча падает в catch на каждую ночь, и усыновление не срабатывает вовсе
+  // (проверено вживую при первой версии этого хелпера — без этих двух моков
+  // и unread-, и read-сценарии откатывались к голым базовым правилам
+  // bagExpiryAt, маскируя вообще всякий эффект фикса I-B).
+  const notActivatedGetDetails = async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: 0n, disputedAt_: 0n });
+  const agreementMocks = () => ({
+    getDetails: notActivatedGetDetails,
+    DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+    DEADLINE_GRACE: async () => BigInt(deadlineGraceSec),
+    AUTO_APPROVE_WINDOW: async () => BigInt(autoApproveWindowSec),
+  });
+
+  vi.setSystemTime(T0);
+  mockContract(process.env.DIAMOND_ADDRESS, {
+    getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+    getDisputed: [],
+  });
+  mockContract(agreement, agreementMocks());
+
+  const key = put(client, executor, uploadedAt, firstFetchedAt != null ? { firstFetchedAt } : {});
+
+  await runFileCleanup(); // день 0
+
+  const activatedAtMs = T0 + paymentDelayDays * DAY;
+  const activatedAtSec = Math.floor(activatedAtMs / 1000);
+  const realWorkDeadlineMs = activatedAtMs + ownDeadlineDays * DAY;
+  const disputedAtMs = realWorkDeadlineMs + disputeAfterDays * DAY;
+  const disputedAtSec = Math.floor(disputedAtMs / 1000);
+  const disputeDayOffset = Math.round((disputedAtMs - T0) / DAY);
+
+  // I-B: пока сделка НЕ активирована, якорь предварительного срока — nowMs
+  // (см. докстринг dealDeadlineFromCreation), значит КАЖДЫЙ день до
+  // активации обязан быть настоящим прогоном runFileCleanup(), не
+  // "скучным" cleanupBags() без переусыновления — иначе тест сам не
+  // воспроизводит механизм, который проверяет (ровно так ошиблась первая
+  // версия этого хелпера: показывала "работает" там, где на самом деле не
+  // работало, потому что не звала адопцию на дни, где та единственная и
+  // давала эффект).
+  for (let d = 1; d < paymentDelayDays; d++) {
+    vi.setSystemTime(T0 + d * DAY);
+    await runFileCleanup();
+    if (!bagMetaOf(key)) return { survived: false, diedOnDay: d };
+  }
+
+  if (paymentDelayDays > 0) {
+    vi.setSystemTime(activatedAtMs);
+    mockContract(agreement, {
+      getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: BigInt(activatedAtSec), disputedAt_: 0n }),
+      DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+      DEADLINE_GRACE: async () => BigInt(deadlineGraceSec),
+      AUTO_APPROVE_WINDOW: async () => BigInt(autoApproveWindowSec),
+    });
+    await runFileCleanup();
+    if (!bagMetaOf(key)) return { survived: false, diedOnDay: paymentDelayDays };
+  }
+
+  // После активации якорь стабилен (max(createdAt, activatedAt), не растёт
+  // дальше сам по себе) — дальнейшие ночи до спора действительно "скучные",
+  // прямой cleanupBags() эквивалентен полному прогону без изменений.
+  for (let d = paymentDelayDays + 1; d < disputeDayOffset; d++) {
+    vi.setSystemTime(T0 + d * DAY);
+    cleanupBags(T0 + d * DAY);
+    if (!bagMetaOf(key)) return { survived: false, diedOnDay: d };
+  }
+
+  vi.setSystemTime(disputedAtMs);
+  mockContract(process.env.DIAMOND_ADDRESS, {
+    getActive: [],
+    getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: BigInt(createdAtSec), resolvedAt: BigInt(disputedAtSec) }],
+  });
+  mockContract(agreement, {
+    getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: BigInt(activatedAtSec), disputedAt_: BigInt(disputedAtSec) }),
+    DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
+  });
+  await runFileCleanup();
+
+  if (!bagMetaOf(key)) return { survived: false, diedOnDay: disputeDayOffset };
+  return { survived: true, diedOnDay: null };
+}
+
+// Таблица 1 координатора: непрочитанный мешок, сделка с 10-дневным сроком
+// работы (короткий, чтобы задержки до 60 дней не упирались в ПОТОЛОК
+// BAG_MAX_AGE_MS — 90 дней от загрузки, отдельный, уже существующий и
+// заведомо корректный анти-абьюз механизм, не имеющий отношения к I-B —
+// см. отдельный тест на потолок в конце этого describe). Спор — через
+// сутки после реального дедлайна работы (activatedAt + deadlineDays + 1д).
+describe('I-B, таблица 1 (координатор): непрочитанный мешок — защита при любой задержке оплаты', () => {
+  it.each([0, 2, 5, 7, 8, 10, 20, 25, 28, 29, 30, 31, 40, 60])(
+    'задержка оплаты %d дней — мешок доживает до спора',
+    async (paymentDelayDays) => {
+      const T0 = Date.UTC(2029, 0, 1) + paymentDelayDays;
+      try {
+        const r = await simulateDailyProtection({
+          client: ethAddr(paymentDelayDays, '1'),
+          executor: ethAddr(paymentDelayDays, '2'),
+          agreement: ethAddr(paymentDelayDays, '3'),
+          T0, ownDeadlineDays: 10, paymentDelayDays,
+          uploadedAt: T0, firstFetchedAt: null, disputeAfterDays: 1,
+        });
+        expect(r).toEqual({ survived: true, diedOnDay: null });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+// Таблица 2 координатора: ПРОЧИТАННЫЙ мешок (контрагент открыл бриф — база
+// bagExpiryAt в этом случае короче, 7д от прочтения вместо 30д от загрузки,
+// см. правило 2 в bagStore.js) + КОРОТКАЯ сделка — граница раньше, чем в
+// таблице 1, потому что слабая база больше не маскирует то, что до фикса
+// I-B давал сам предварительный срок этапа 1. Значения задержек — ровно
+// те, на которых координатор нашёл поломку ДО фикса (14/18/25/30 дней для
+// сроков работы 3/7/14/30), плюс запас сверху, доказывающий, что дело не в
+// частном совпадении чисел.
+describe('I-B, таблица 2 (координатор): прочитанный мешок + короткая сделка — защита при задержке, на которой раньше ломалось', () => {
+  it.each([
+    [3, 14],  [3, 20],
+    [7, 18],  [7, 25],
+    [14, 25], [14, 32],
+    [30, 30], [30, 40],
+  ])(
+    'срок работы %d дней, задержка оплаты %d дней (координатор: до фикса здесь уже не работало) — мешок доживает до спора',
+    async (ownDeadlineDays, paymentDelayDays) => {
+      const T0 = Date.UTC(2029, 3, 1) + ownDeadlineDays * 100 + paymentDelayDays;
+      try {
+        const r = await simulateDailyProtection({
+          client: ethAddr(ownDeadlineDays * 100 + paymentDelayDays, '4'),
+          executor: ethAddr(ownDeadlineDays * 100 + paymentDelayDays, '5'),
+          agreement: ethAddr(ownDeadlineDays * 100 + paymentDelayDays, '6'),
+          T0, ownDeadlineDays, paymentDelayDays,
+          uploadedAt: T0, firstFetchedAt: T0, disputeAfterDays: 1,
+        });
+        expect(r).toEqual({ survived: true, diedOnDay: null });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+// Потолок BAG_MAX_AGE_MS — отдельный, уже существующий анти-абьюз механизм
+// (Q5 отчёта по этапу 2/3) — I-B на него НЕ ПОСЯГАЕТ: если задержка + срок
+// работы физически не укладываются в 90 дней от загрузки, потолок всё
+// равно побеждает. Контроль, что фикс I-B не сломал эту, отдельную границу
+// (тот же сценарий, что дал day90 в первой версии этого раунда — задержка
+// 60д + срок работы 30д + сутки запаса = 91д, за пределами потолка).
+describe('I-B не отменяет потолок BAG_MAX_AGE_MS — контроль', () => {
+  it('задержка + срок работы физически превышают 90 дней от загрузки — потолок всё равно побеждает, мешок не переживает его', async () => {
+    const T0 = Date.UTC(2029, 6, 1);
+    try {
+      const r = await simulateDailyProtection({
+        client: ethAddr(777, '7'), executor: ethAddr(777, '8'), agreement: ethAddr(777, '9'),
+        T0, ownDeadlineDays: 30, paymentDelayDays: 60, uploadedAt: T0, firstFetchedAt: null, disputeAfterDays: 1,
+      });
+      // 60 (задержка) + 30 (срок работы) + 1 (запас) = 91д > 90д (BAG_MAX_AGE_MS) —
+      // потолок останавливает рост срока раньше, чем наступает спор.
+      expect(r.survived).toBe(false);
+      expect(r.diedOnDay).toBe(90);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
