@@ -1310,6 +1310,216 @@ describe('продолжение третьего тура — отсутств�
   });
 });
 
+// ─── Закрывающий раунд (после режима недоверия) — метла ходит по симлинкам,
+// а самодельная опись убивает молча ────────────────────────────────────────
+//
+// Две находки координатора поверх режима недоверия, обе не про сам режим:
+//
+// 1. sweepOrphanFiles()/removeEmptyRecipientDirs() обходили каталоги
+//    получателей через fs.statSync() — СЛЕДУЕТ за симлинком. Каталог
+//    получателя, вынесенный симлинком на другой том (обычное действие
+//    администратора при нехватке места, не атака), проходил isDirectory()
+//    как настоящий каталог — обход уходил по ссылке НАСКВОЗЬ и удалял файлы
+//    ФИЗИЧЕСКИ СНАРУЖИ DIR_BAGS. Не зависит от режима недоверия — тот же
+//    побег в обычном, доверенном режиме с честной пустой описью. Заменено
+//    на lstatSync (тот же приём, что уже был в реконструкции) — симлинк не
+//    проходит isDirectory(), обход внутрь не спускается.
+//
+// 2. "echo '{}' > bag-meta.json" — синтаксически валидная, но пустая опись
+//    — неотличима от настоящей персистированной пустоты. Режим недоверия
+//    (прошлый коммит) закрыл случай "человек удалил файл"; эта находка —
+//    случай "человек сделал, чтобы парсилось", то есть буквально то, что
+//    подсказывает лог "restore the index file". Кода-фикса нет и не будет
+//    — легитимный конец жизни ("все мешки истекли, индекс честно пуст")
+//    неотличим от подделки по содержимому файла, а завязываться на разницу
+//    в таймингах между записью файла на диск и обновлением описи означало
+//    бы сломать саму идею уборщика (нормальная гонка "файл уже есть, опись
+//    ещё не успела" при обычной загрузке стала бы неотличима от подделки).
+//    Задокументировано текстом (громкое предупреждение в логе режима
+//    недоверия) и заперто тестом ГРАНИЦЫ — чтобы поведение было известным,
+//    а не забытым.
+describe('закрывающий раунд — метла не ходит по симлинкам; самодельная опись — задокументированная граница, не баг', () => {
+  it('каталог получателя-симлинк не даёт метле выйти за пределы DIR_BAGS и удалить чужие файлы (обычный доверенный режим, без связи с режимом недоверия)', () => {
+    const now = Date.now();
+    const outsideDir = fs.mkdtempSync(path.join(TMP, 'outside-volume-'));
+    const outsideFiles = ['a.bin', 'b.bin', 'c.bin'].map((name) => {
+      const fp = path.join(outsideDir, name);
+      fs.writeFileSync(fp, 'not a bag, must never be reachable through DIR_BAGS');
+      const old = new Date(now - 40 * DAY); // старше порога сирот — метла снесла бы, если бы добралась
+      fs.utimesSync(fp, old, old);
+      return fp;
+    });
+
+    // Каталог получателя ВЫНЕСЕН симлинком на другой том — обычное
+    // администраторское действие, не атака. DIR_BAGS обязан физически
+    // существовать (beforeEach его сносит) — иначе symlinkSync падает на
+    // отсутствующем родителе, и это была бы ошибка теста, не находка.
+    fs.mkdirSync(bagStore.DIR_BAGS, { recursive: true });
+    fs.symlinkSync(outsideDir, path.join(bagStore.DIR_BAGS, ALICE));
+
+    // Опись валидна и пуста — обычный, доверенный режим; ничего не связано
+    // с режимом недоверия (та часть уже заперта отдельными тестами).
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{}', 'utf8');
+    _loadBagMeta();
+
+    cleanupBags(now);
+
+    for (const fp of outsideFiles) {
+      expect(fs.existsSync(fp)).toBe(true);
+    }
+
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('контроль того же измерения: та же раскладка (симлинк с реальными файлами), но опись битая → режим недоверия, ноль снесено', () => {
+    const now = Date.now();
+    const outsideDir = fs.mkdtempSync(path.join(TMP, 'outside-volume-'));
+    const outsideFiles = ['a.bin', 'b.bin', 'c.bin'].map((name) => {
+      const fp = path.join(outsideDir, name);
+      fs.writeFileSync(fp, 'not a bag');
+      const old = new Date(now - 40 * DAY);
+      fs.utimesSync(fp, old, old);
+      return fp;
+    });
+    fs.mkdirSync(bagStore.DIR_BAGS, { recursive: true });
+    fs.symlinkSync(outsideDir, path.join(bagStore.DIR_BAGS, ALICE));
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{ not valid json', 'utf8');
+    _loadBagMeta(); // режим недоверия — единый гейт в cleanupBags() ниже даже не дойдёт до sweepOrphanFiles()
+
+    cleanupBags(now);
+
+    for (const fp of outsideFiles) {
+      expect(fs.existsSync(fp)).toBe(true);
+    }
+
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  // Задокументированная граница, не цель для фикса — координатор явно
+  // отказался придумывать код-фикс без ломки идеи уборщика. Название теста
+  // сформулировано так, чтобы следующий человек, наткнувшись на него, понял:
+  // это известное поведение, а не пропущенный баг.
+  it('ГРАНИЦА (не баг): валидная самодельная опись ("echo \'{}\' > bag-meta.json") при непустом складе неотличима от настоящей пустоты — мешки становятся сиротами и умирают по mtime независимо от прочтения или усыновления сделкой', () => {
+    const now = Date.now();
+
+    function put(recipient, uploadedAt, extra = {}) {
+      const key = manualKey(recipient, uploadedAt);
+      const fp = path.join(bagStore.DIR_BAGS, key);
+      fs.mkdirSync(path.dirname(fp), { recursive: true });
+      fs.writeFileSync(fp, 'sealed');
+      const mtime = new Date(uploadedAt);
+      fs.utimesSync(fp, mtime, mtime); // честный mtime — файл пишется один раз, при загрузке
+      recordBag({ sender: BOB, recipient, key, size: 6, uploadedAt, ...extra });
+      return { key, fp };
+    }
+
+    // Все трое загружены 35 дней назад (mtime уже за порогом метлы сирот,
+    // BAG_UNREAD_TTL_MS = 30д) — но под ЧЕСТНЫМ индексом у двух из трёх
+    // было бы намного больше жизни впереди.
+    const uploadedAt = now - 35 * DAY;
+    const wouldHaveExpiredAnyway = put(ALICE, uploadedAt); // ничем не защищён — умер бы и по-честному
+    const recentlyRead = put(ALICE, uploadedAt, { firstFetchedAt: now }); // правило 2: ещё BAG_TTL_MS от СЕГОДНЯ
+    const dealAdopted = put(ALICE, uploadedAt, { dealDeadline: now + 60 * DAY }); // правило 1: ещё ~55д
+
+    // Проверка не голословна: под настоящим индексом оба защищены далеко
+    // вперёд от "сейчас" — bagExpiryAt считает именно так.
+    expect(bagExpiryAt(bagMetaOf(recentlyRead.key))).toBeGreaterThan(now);
+    expect(bagExpiryAt(bagMetaOf(dealAdopted.key))).toBeGreaterThan(now + 50 * DAY);
+
+    // Человек "чинит" опись самой естественной командой — валидный, но
+    // пустой JSON. Лог теперь явно предупреждает не делать так (см. текст
+    // ниже) — но именно это легко набрать не читая.
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{}', 'utf8');
+    _loadBagMeta(); // индекс парсится штатно — ДОВЕРИЕ восстановлено, тихо, без единой строки лога
+
+    cleanupBags(now);
+
+    // Задокументированная граница: ВСЕ трое сочтены сиротами и снесены —
+    // не только тот, что истёк бы и без потери индекса.
+    expect(fs.existsSync(wouldHaveExpiredAnyway.fp)).toBe(false);
+    expect(fs.existsSync(recentlyRead.fp)).toBe(false);
+    expect(fs.existsSync(dealAdopted.fp)).toBe(false);
+  });
+
+  it('предупреждение в логе режима недоверия прямо называет опасность самодельной описи и безопасные действия', () => {
+    const key = manualKey(ALICE, Date.now() - 5 * DAY);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8'); // любая из четырёх причин недоверия подходит
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      _loadBagMeta();
+      const messages = spy.mock.calls.map((call) => call.join(' '));
+      const warning = messages.find((m) => m.includes('ENTERING DISTRUST MODE'));
+      expect(warning).toBeDefined();
+      expect(warning.toLowerCase()).toContain('do not');
+      expect(warning.toLowerCase()).toContain('empty');
+      expect(warning.toLowerCase()).toContain('just as destructive');
+      expect(warning.toLowerCase()).toContain('restore the real index from a backup');
+      expect(warning.toLowerCase()).toContain('remove both the index file and every bag file');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Мелочь координатора: осколки bag-meta.json.tmp-* после обрыва (диск
+  // кончился/процесс убит между writeFileSync и renameSync в _saveBagMeta())
+  // раньше не подметались НИКЕМ — копятся именно тогда, когда обрывы и
+  // случаются чаще всего.
+  it('осколки bag-meta.json.tmp-* после обрыва подметаются обычной чисткой', () => {
+    const stale = `${path.join(TMP, 'bag-meta.json')}.tmp-99999-${Date.now()}-deadbeef-0000-4000-8000-000000000000`;
+    fs.writeFileSync(stale, 'partial write, process died here');
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 часа — заведомо дольше одной записи+переименования
+    fs.utimesSync(stale, old, old);
+
+    cleanupBags(Date.now());
+
+    expect(fs.existsSync(stale)).toBe(false);
+  });
+
+  it('свежий .tmp-* файл (только что созданный) не трогается — не забегать вперёд активной записи', () => {
+    const fresh = `${path.join(TMP, 'bag-meta.json')}.tmp-99999-${Date.now()}-deadbeef-0000-4000-8000-000000000001`;
+    fs.writeFileSync(fresh, 'partial write, still in progress');
+    // mtime = сейчас (fs.writeFileSync уже это гарантирует, без utimesSync).
+
+    cleanupBags(Date.now());
+
+    expect(fs.existsSync(fresh)).toBe(true);
+    fs.rmSync(fresh, { force: true });
+  });
+
+  // Мелочь координатора (замер): ветка "описи нет" была дороже ветки
+  // "опись битая" — 445мс против 411мс на 60 000 мешков — потому что склад
+  // обходился дважды (счёт, потом реконструкция). Слито в _scanDiskBags() —
+  // один обход. Считаем реальные вызовы fs.readdirSync() на КОНКРЕТНОМ
+  // каталоге получателя, а не полагаемся на общее время (шумно на малых
+  // объёмах, которые уместны в юнит-тесте).
+  it('мелочь координатора: ветка "описи нет, склад не пуст" обходит каталог получателя ОДИН раз, не дважды', () => {
+    const key = manualKey(ALICE, Date.now() - 5 * DAY);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    const aliceDir = path.join(bagStore.DIR_BAGS, ALICE);
+    const realReaddirSync = fs.readdirSync;
+    let aliceDirScans = 0;
+    const spy = vi.spyOn(fs, 'readdirSync').mockImplementation((p, ...rest) => {
+      if (path.resolve(String(p)) === path.resolve(aliceDir)) aliceDirScans++;
+      return realReaddirSync(p, ...rest);
+    });
+    try {
+      _loadBagMeta();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(aliceDirScans).toBe(1);
+  });
+});
+
 // ─── I1 (четвёртый раунд) — markFetched/bagMetaOf травят Object.prototype ──
 //
 // Находка ревью: C2 поставил assertBagKey на recordBag(), но markFetched()

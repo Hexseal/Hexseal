@@ -397,48 +397,31 @@ function _isDiskReadable() {
   }
 }
 
-// Продолжение третьего тура (координатор, следующий раунд): отсутствие
-// bag-meta.json — легитимная пустота ТОЛЬКО когда склад тоже пуст или
-// отсутствует. «Мешки на диске лежат, а описи нет» само по себе на свежей
-// установке не возникает — либо файл убрали рукой (самый естественный
-// способ «починить» режим недоверия, и именно он воскрешает беду, от
-// которой весь режим и заводился — воспроизведено координатором вживую:
-// 35-дневный мешок переживал недоверие, но умирал сразу после такого
-// "лечения" удалением), либо запись не доехала до диска. Оба случая —
-// недоверие, не свежий старт. Считает файлы, а не просто "есть ли
-// хоть один" — число идёт в громкую строку лога, отдельную от других
-// причин недоверия (см. _loadBagMeta ниже).
-//
-// Считает ЛЮБОЙ файл в подкаталогах получателей, не только те, что
-// проходят BAG_KEY_RE — сама неоднозначность "тут что-то есть, а описи
-// нет" уже повод не доверять, независимо от того, мусор это или настоящие
-// мешки; разбираться, что именно там лежит, — дело человека, не метлы.
-function _countDiskBags() {
-  if (!fs.existsSync(DIR_BAGS)) return 0;
-  let recipients = [];
-  try { recipients = fs.readdirSync(DIR_BAGS); } catch { return 0; } // нечитаемый склад — отдельная причина, см. _isDiskReadable
-  let count = 0;
-  for (const recipient of recipients) {
-    const recipientDir = path.join(DIR_BAGS, recipient);
-    try {
-      const st = fs.lstatSync(recipientDir);
-      if (!st.isDirectory()) continue;
-      count += fs.readdirSync(recipientDir).length;
-    } catch { continue; }
-  }
-  return count;
-}
-
-// Реконструкция ИСКЛЮЧИТЕЛЬНО в памяти — ничего не пишет на диск (ни здесь,
-// ни через _saveBagMeta()). Имя файла мешка само несёт адресата и время
-// загрузки (bagKeyFor: "<recipient>/<uploadedAt>-<uuid>.bin") — вот и всё,
-// что можно узнать без индекса: sender/firstFetchedAt/dealDeadline
-// восстановлению не подлежат, консервативные умолчания ниже.
+// Один обход склада, а не два. Раньше "описи нет" сначала звала
+// _countDiskBags() (посчитать — есть ли вообще что-то, для решения
+// "доверять ли"), а если решение было "нет" — _loadBagMeta() ЕЩЁ РАЗ звала
+// отдельную _reconstructInMemory() (восстановить содержимое). Оба обходят
+// ОДНИ И ТЕ ЖЕ каталоги получателей. Замерено координатором: 445мс против
+// 411мс на 60 000 мешков — ветка "описи нет" дороже ветки "опись битая"
+// ровно на стоимость второго обхода. Слито в одну функцию: обход происходит
+// один раз, результат — оба числа сразу (сырой счёт файлов ДЛЯ решения
+// "доверять ли" и реконструированные записи ДЛЯ памяти, если решение —
+// "нет"). rawFileCount считает ЛЮБОЙ файл в подкаталогах получателей, не
+// только те, что проходят BAG_KEY_RE — сама неоднозначность "тут что-то
+// есть, а описи нет" уже повод не доверять, независимо от того, мусор это
+// или настоящие мешки. reconstructed — то же, чем раньше была
+// _reconstructInMemory(): имя файла мешка само несёт адресата и время
+// загрузки (bagKeyFor: "<recipient>/<uploadedAt>-<uuid>.bin") — единственное,
+// что можно узнать без индекса.
 //
 // Единственный путь в индекс мимо проверок recordBag() — значит те же
 // проверки нужны и здесь, а не только форма ключа: `fs.lstatSync` (НЕ
 // `statSync` — не следовать за симлинком, иначе симлинк на файл СНАРУЖИ
-// DIR_BAGS с подходящим именем становится скачиваемым через GET /bags/:key),
+// DIR_BAGS с подходящим именем становится скачиваемым через GET /bags/:key;
+// та же причина, по которой sweepOrphanFiles/removeEmptyRecipientDirs ниже
+// в этом же раунде переведены с statSync на lstatSync для каталогов
+// получателей — координатор замерил живой побег метлы сирот сквозь
+// симлинк-каталог, эта функция была защищена от него с самого начала),
 // `.isFile()` (не каталог, не что-то ещё), потолок MAX_BAG_SIZE (файл,
 // который не мог быть легитимно записан через recordBag(), не имеет права
 // попасть в индекс и отсюда), метка времени не из будущего (тем же
@@ -447,10 +430,17 @@ function _countDiskBags() {
 // который никогда не истечёт). Итоговый кандидат прогоняется через
 // isValidBagMetaEntry() — тот же путь, что и любая запись из штатно
 // прочитанной описи.
-function _reconstructInMemory(nowMs) {
-  const recovered = Object.create(null);
+//
+// Логирование НЕ здесь — вызывающий (_loadBagMeta) решает, входить ли в
+// режим недоверия вообще; функция может быть вызвана и тогда, когда
+// результат в итоге не понадобится (склад пуст, доверие остаётся), и в
+// этом случае молчать обязательно (см. тест "файла нет вовсе — легитимное
+// пустое состояние, НЕ считается потерей индекса").
+function _scanDiskBags(nowMs) {
+  const reconstructed = Object.create(null);
   let recoveredCount = 0;
   let skippedGarbage = 0;
+  let rawFileCount = 0;
   let recipients = [];
   try { recipients = fs.readdirSync(DIR_BAGS); } catch {}
 
@@ -462,6 +452,8 @@ function _reconstructInMemory(nowMs) {
       if (!st.isDirectory()) continue; // включая симлинк на каталог — lstat его не проходит isDirectory()
       files = fs.readdirSync(recipientDir);
     } catch { continue; }
+
+    rawFileCount += files.length;
 
     for (const file of files) {
       const key = `${recipient}/${file}`;
@@ -493,18 +485,12 @@ function _reconstructInMemory(nowMs) {
       };
       if (!isValidBagMetaEntry(key, candidate)) { skippedGarbage++; continue; }
 
-      recovered[key] = candidate;
+      reconstructed[key] = candidate;
       recoveredCount++;
     }
   }
 
-  console.error(
-    `[bags] _reconstructInMemory: recovered ${recoveredCount} bag(s) from disk scan of ${DIR_BAGS}` +
-    (skippedGarbage ? ` (skipped ${skippedGarbage} non-bag/invalid ${skippedGarbage === 1 ? 'entry' : 'entries'})` : '') +
-    ` — IN MEMORY ONLY, nothing written to disk. sender, read state and deal adoption are unknown/unread/unadopted.`
-  );
-
-  return recovered;
+  return { rawFileCount, recoveredCount, skippedGarbage, reconstructed };
 }
 
 export function _loadBagMeta() {
@@ -521,6 +507,13 @@ export function _loadBagMeta() {
   // переменная (не пересчитывать в теле console.error) — нужна и для
   // решения "доверять ли", и для числа в громкой строке лога.
   let diskBagCount = 0;
+  // Заполняется ТОЛЬКО в ветке "индекса нет" ниже, одним обходом склада —
+  // если решение окажется "недоверие", этот же результат используется
+  // ниже вместо повторного обхода (координатор замерил: раньше "описи
+  // нет" обходила склад дважды — счёт, потом реконструкция — и была
+  // дороже "опись битая" на стоимость второго обхода; 445мс vs 411мс на
+  // 60 000 мешков).
+  let precomputedScan = null;
 
   if (indexExists) {
     try {
@@ -551,10 +544,12 @@ export function _loadBagMeta() {
     // которой режим недоверия и заводился, воспроизведено координатором
     // живьём), либо запись не доехала до диска. Оба случая — недоверие,
     // не свежий старт.
-    diskBagCount = _countDiskBags();
+    precomputedScan = _scanDiskBags(Date.now());
+    diskBagCount = precomputedScan.rawFileCount;
     if (diskBagCount > 0) indexOk = false;
     // else: и описи нет, и склад пуст/отсутствует — действительно свежая
-    // установка, indexOk остаётся true.
+    // установка, indexOk остаётся true (precomputedScan просто не
+    // пригодится — обход всё равно был один-единственный).
   }
 
   // Третий тур: диск отдельно от описи — см. _isDiskReadable() выше. Опись
@@ -593,10 +588,35 @@ export function _loadBagMeta() {
       `The index file, if any, is left EXACTLY as it is — it is the evidence, not something to clean up. ` +
       `Nothing will be written to disk (neither the reconstruction below nor any new bag) and nothing will be ` +
       `deleted (neither the orphan sweep nor the main expiry pass in cleanupBags()) until a LATER load reads a ` +
-      `genuinely healthy index. No automatic recovery.`
+      `genuinely healthy index. No automatic recovery. ` +
+      // Закрывающий раунд координатора: режим недоверия закрывает "человек
+      // удалил файл", но не "человек сделал, чтобы парсилось" — а это
+      // ровно то, что подсказывает фраза "restore the index file" выше,
+      // если прочитать её невнимательно. Кода-фикса нет (см. комментарий
+      // над describe-блоком в test/bagStore.test.js: легитимный честный
+      // конец жизни описи неотличим от подделки по одному только
+      // содержимому файла) — единственная защита здесь текстовая, и она
+      // обязана быть прямой, а не намёком.
+      `WARNING: do NOT "fix" this by hand-writing an empty or made-up index (e.g. an empty {} written directly ` +
+      `to the file) — a syntactically valid index that does not match what is really on disk is JUST AS ` +
+      `DESTRUCTIVE as no index at all: every bag on disk becomes invisible to it and gets swept as an orphan ` +
+      `by mtime alone, regardless of read state or deal adoption. Safe options: restore the REAL index from a ` +
+      `backup, or — only if starting genuinely clean — remove BOTH the index file and every bag file on disk ` +
+      `together.`
+    );
+    // Один обход на всю функцию: если решение "недоверие" пришло из ветки
+    // "индекса нет" выше, обход уже сделан (precomputedScan) — переиспользуем
+    // его результат, а не сканируем склад заново. Иначе (индекс есть, но
+    // битый, или сам диск не читается) — единственный обход происходит
+    // здесь и сейчас.
+    const scan = precomputedScan ?? _scanDiskBags(Date.now());
+    console.error(
+      `[bags] _scanDiskBags: recovered ${scan.recoveredCount} bag(s) from disk scan of ${DIR_BAGS}` +
+      (scan.skippedGarbage ? ` (skipped ${scan.skippedGarbage} non-bag/invalid ${scan.skippedGarbage === 1 ? 'entry' : 'entries'})` : '') +
+      ` — IN MEMORY ONLY, nothing written to disk. sender, read state and deal adoption are unknown/unread/unadopted.`
     );
     _bagMetaLoadOk = false;
-    _bagMeta = _reconstructInMemory(Date.now());
+    _bagMeta = scan.reconstructed;
     return _bagMeta;
   }
 
@@ -669,7 +689,7 @@ export function _saveBagMeta() {
 
 // Третий тур закрывающего ревью Задачи 4: recordBag()/markFetched() persist
 // normally EXCEPT while the index is in distrust mode (_bagMetaLoadOk ===
-// false, see _loadBagMeta()/_reconstructInMemory() above) — then the change
+// false, see _loadBagMeta()/_scanDiskBags() above) — then the change
 // stays in memory only, for this process, until a session ends. Without
 // this, the very first write after a lost index would overwrite the
 // missing/corrupt file with itself alone — the exact class of hole this
@@ -936,6 +956,18 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
 // ниже его и защищает. Отдельный параметр protectedKeys стал мёртвым
 // весом (мутация, отключающая его целиком, переставала на что-либо
 // влиять) — убран, а не оставлен неиспользуемым.
+// Закрывающий раунд (следующая находка координатора после режима
+// недоверия): `fs.statSync(recipientDir)` СЛЕДУЕТ за симлинком — каталог
+// получателя, вынесенный симлинком на другой том (обычное администраторское
+// действие при нехватке места), проходил `.isDirectory()` как настоящий
+// каталог, и обход уходил ПО ССЫЛКЕ НАСКВОЗЬ. Замерено вживую: три мешка за
+// симлинком, описи нет → метла сносит 2 из 3, ПЛЮС удаляет файлы, физически
+// лежащие СНАРУЖИ DIR_BAGS в целевом каталоге ссылки — то есть чужое, не
+// только не проиндексированное. Это НЕ зависит от режима недоверия: тот же
+// побег происходит и в обычном, доверенном режиме с честной описью, раз сам
+// обход каталогов получателей идёт через statSync. `lstatSync` (как уже
+// применяется в _scanDiskBags) видит сам симлинк, не то, на что он
+// указывает, — `.isDirectory()` на нём false, и обход внутрь не спускается.
 function sweepOrphanFiles(nowMs) {
   const cutoff = nowMs - BAG_UNREAD_TTL_MS;
   let removed = 0;
@@ -947,7 +979,7 @@ function sweepOrphanFiles(nowMs) {
     const recipientDir = path.join(DIR_BAGS, recipient);
     let files;
     try {
-      if (!fs.statSync(recipientDir).isDirectory()) continue;
+      if (!fs.lstatSync(recipientDir).isDirectory()) continue; // симлинк — не спускаемся
       files = fs.readdirSync(recipientDir);
     } catch { continue; }
 
@@ -980,10 +1012,51 @@ function removeEmptyRecipientDirs() {
   for (const recipient of recipients) {
     const recipientDir = path.join(DIR_BAGS, recipient);
     try {
-      if (!fs.statSync(recipientDir).isDirectory()) continue;
+      // lstat — та же причина, что в sweepOrphanFiles выше: не следовать за
+      // симлинком. fs.rmdirSync на симлинке (не каталоге) само по себе
+      // бросило бы ENOTDIR и ничего не сломало бы, но isDirectory() через
+      // statSync уже увёл бы readdirSync/дальнейшую логику по цепочке за
+      // пределы DIR_BAGS — тот же класс дыры, что и в метле сирот.
+      if (!fs.lstatSync(recipientDir).isDirectory()) continue;
       if (fs.readdirSync(recipientDir).length === 0) fs.rmdirSync(recipientDir);
     } catch {}
   }
+}
+
+// Мелочь (координатор, закрывающий раунд): _saveBagMeta() пишет во
+// временный файл `${BAG_META_PATH}.tmp-<pid>-<ts>-<uuid>` и переименовывает
+// его — но обрыв МЕЖДУ writeFileSync и renameSync (кончилось место,
+// процесс убит) оставляет обрезок лежать в корне STORAGE_DIR НАВСЕГДА:
+// ни sweepOrphanFiles (смотрит только внутрь DIR_BAGS), ни основной цикл
+// cleanupBags (смотрит только на _bagMeta) его никогда не видели. Копится
+// именно тогда, когда обрывы и случаются чаще всего — на нехватке места.
+// Порог — час, заведомо дольше, чем может идти одна запись+переименование
+// (миллисекунды в норме); не трогаем свежие осколки, чтобы не забежать
+// вперёд ещё идущей записи другого процесса.
+function sweepStaleTmpFiles(nowMs) {
+  const cutoff = nowMs - 60 * 60 * 1000;
+  const dir = path.dirname(BAG_META_PATH);
+  const prefix = `${path.basename(BAG_META_PATH)}.tmp-`;
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return 0; }
+
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const fp = path.join(dir, entry);
+    try {
+      // lstat — тот же принцип, что и везде в этом раунде: имя осколка
+      // предсказуемо (наш собственный формат), но что физически лежит по
+      // этому имени — не обязано быть обычным файлом.
+      const st = fs.lstatSync(fp);
+      if (!st.isFile()) continue;
+      if (st.mtimeMs < cutoff) {
+        fs.unlinkSync(fp);
+        removed++;
+      }
+    } catch {}
+  }
+  return removed;
 }
 
 export function cleanupBags(nowMs = Date.now()) {
@@ -1086,6 +1159,9 @@ export function cleanupBags(nowMs = Date.now()) {
     // пустые на диске, — реальному мешку в них ничего не грозит).
     removed += sweepOrphanFiles(nowMs);
     removeEmptyRecipientDirs();
+    // Мелочь (координатор): осколки .tmp-* от оборванных сохранений — та
+    // же независимость от успеха ЭТОГО прохода, тот же finally.
+    sweepStaleTmpFiles(nowMs);
   }
 
   return { removed, kept };
