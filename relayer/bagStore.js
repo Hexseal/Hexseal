@@ -355,51 +355,67 @@ function isValidBagMetaEntry(key, meta) {
   }
 }
 
-// Закрывающий раунд ревью Задачи 4 (chat-transport-storage): истинность —
-// «последняя загрузка индекса действительно нашла и разобрала настоящий
-// индекс», а не «файла ещё не было» (свежая установка — легитимное пустое
-// состояние). cleanupBags() ниже обязана свериться с этим флагом ПЕРЕД тем,
-// как звать sweepOrphanFiles(): с недостоверным (то есть насильно пустым)
-// _bagMeta метла сирот метёт по mtime всё, чего нет в индексе, — то есть
-// считает сиротой КАЖДЫЙ настоящий мешок на складе. Пока cleanupBags() не
-// была подключена ни к какому расписанию, это было безвредно; Задача 4
-// подключила её к ночному крону, и один битый bag-meta.json (нечитаемый
-// JSON, null, массив, обрезанный файл после краха посреди записи) теперь
-// означает потерю всей непрочитанной переписки через BAG_UNREAD_TTL_MS,
-// молча, ночью — если не остановить метлу здесь.
+// Третий тур закрывающего ревью Задачи 4 (chat-transport-storage) — «режим
+// недоверия». Полностью заменяет оба предыдущих раунда (карантин + немедленный
+// персист реконструкции), которые координатор воспроизвёл вживую как небезопасные:
+// окно между "унесли битый файл в сторону" и "записали восстановленное" —
+// это ~840мс на 100 000 мешков (реально измерено), и ЛЮБОЙ обрыв в этом окне
+// (сбой процесса, кончившееся место, второй процесс, нечитаемый DIR_BAGS)
+// оставляет ПОЛНОЕ ОТСУТСТВИЕ файла описи — а отсутствие читается как
+// «свежая установка», не как «был битый». Доверие восстанавливалось молча,
+// метла получала полную свободу против неполного индекса.
+//
+// Новое правило проще и строго безопаснее ровно потому, что ничего не пишет:
+//   • битый файл описи НИКОГДА не трогается (не переименовывается, не
+//     удаляется) — он и есть признак «войти в режим недоверия» на каждом
+//     следующем запуске, пока человек не разберётся;
+//   • реконструкция с диска — ТОЛЬКО в памяти, никогда не персистится;
+//   • новые мешки (recordBag/markFetched) в режиме недоверия ТОЖЕ не
+//     персистятся (см. эти функции ниже) — иначе тот же класс дыры: первая
+//     запись перезаписала бы отсутствующий файл собой одним;
+//   • ничего не удаляется — ни метла сирот, ни основной цикл истечения
+//     срока в cleanupBags() (единый гейт в начале функции, не два разных);
+//   • выход из режима — только когда _loadBagMeta() честно, штатно прочитала
+//     индекс. Никакой автоматики через запись, время или счётчик попыток.
 let _bagMetaLoadOk = true;
 
-// Второй тур закрывающего ревью Задачи 4: воспроизведено координатором
-// вживую — гейт _bagMetaLoadOk запирал метлу сирот НА ТОТ прогон, но
-// оставлял _bagMeta пустым. Первая же следующая персистентная запись
-// (recordBag/markFetched/cleanupBags) перезаписывала битый bag-meta.json
-// валидным JSON, содержащим ТОЛЬКО эту новую запись — улика уничтожена,
-// а на следующем перезапуске этот обеднённый файл читается штатно,
-// _bagMetaLoadOk снова true, гейт снят, и метла сносит каждый настоящий
-// мешок, которого нет в этом однозаписном индексе.
-//
-// Лечится восстановлением, не только гейтом: имя файла мешка само несёт
-// адресата и время загрузки (bagKeyFor: "<recipient>/<uploadedAt>-<uuid>.
-// bin") — при провале загрузки сканируем DIR_BAGS и собираем индекс заново
-// оттуда, персистим НЕМЕДЛЕННО (не дожидаясь случайной следующей записи), и
-// только после этого разрешаем чему-либо ещё в процессе делать новые
-// записи. Битый оригинал не остаётся под старым именем (там его стёрла бы
-// первая запись) — переименовывается в сторону ДО пересчёта.
-function _recoverBagMetaFromDisk() {
-  if (fs.existsSync(BAG_META_PATH)) {
-    const quarantinePath = `${BAG_META_PATH}.corrupt-${Date.now()}`;
-    try {
-      fs.renameSync(BAG_META_PATH, quarantinePath);
-      console.error(`[bags] _recoverBagMetaFromDisk: moved unreadable index aside to ${quarantinePath} — original preserved, will not be overwritten by the next write`);
-    } catch (e) {
-      // Не смогли даже подвинуть файл (права, гонка) — не бросаем: сама
-      // реконструкция с диска всё ещё возможна и важнее сохранности одной
-      // улики. Но и молчать нельзя — следующая запись всё-таки может
-      // перетереть оригинал, раз убрать его в сторону не вышло.
-      console.error(`[bags] _recoverBagMetaFromDisk: FAILED to quarantine unreadable index at ${BAG_META_PATH}: ${e.message} — proceeding with reconstruction anyway, original file may still be overwritten by a later save`);
-    }
+// Диск (DIR_BAGS) отдельно от описи — независимая причина войти в режим
+// недоверия, даже если сама опись прочиталась штатно. «Пустой» (readdirSync
+// вернул []) — не то же самое, что «нечитаемый» (readdirSync бросил): первое
+// значит "мешков действительно нет", второе значит "мы не знаем, есть они
+// или нет" (не примонтированный том, гонка с mkdir, права). Раньше эти два
+// случая были склеены одним глухим `catch {}` в реконструкции — и «склад не
+// прочитался» тихо становился «мешков ноль», что при персисте (которого
+// больше нет) стирало бы всё реально лежащее на диске.
+function _isDiskReadable() {
+  if (!fs.existsSync(DIR_BAGS)) return true; // каталога ещё нет вовсе — легитимно пусто (до первого mkdirSync)
+  try {
+    fs.readdirSync(DIR_BAGS);
+    return true;
+  } catch {
+    return false;
   }
+}
 
+// Реконструкция ИСКЛЮЧИТЕЛЬНО в памяти — ничего не пишет на диск (ни здесь,
+// ни через _saveBagMeta()). Имя файла мешка само несёт адресата и время
+// загрузки (bagKeyFor: "<recipient>/<uploadedAt>-<uuid>.bin") — вот и всё,
+// что можно узнать без индекса: sender/firstFetchedAt/dealDeadline
+// восстановлению не подлежат, консервативные умолчания ниже.
+//
+// Единственный путь в индекс мимо проверок recordBag() — значит те же
+// проверки нужны и здесь, а не только форма ключа: `fs.lstatSync` (НЕ
+// `statSync` — не следовать за симлинком, иначе симлинк на файл СНАРУЖИ
+// DIR_BAGS с подходящим именем становится скачиваемым через GET /bags/:key),
+// `.isFile()` (не каталог, не что-то ещё), потолок MAX_BAG_SIZE (файл,
+// который не мог быть легитимно записан через recordBag(), не имеет права
+// попасть в индекс и отсюда), метка времени не из будущего (тем же
+// допуском, что и assertNotFromFuture — без этого злоумышленник с локальным
+// доступом к ФС мог бы вписать себе метку на 33658 год и получить мешок,
+// который никогда не истечёт). Итоговый кандидат прогоняется через
+// isValidBagMetaEntry() — тот же путь, что и любая запись из штатно
+// прочитанной описи.
+function _reconstructInMemory(nowMs) {
   const recovered = Object.create(null);
   let recoveredCount = 0;
   let skippedGarbage = 0;
@@ -410,24 +426,20 @@ function _recoverBagMetaFromDisk() {
     const recipientDir = path.join(DIR_BAGS, recipient);
     let files;
     try {
-      if (!fs.statSync(recipientDir).isDirectory()) continue;
+      const st = fs.lstatSync(recipientDir);
+      if (!st.isDirectory()) continue; // включая симлинк на каталог — lstat его не проходит isDirectory()
       files = fs.readdirSync(recipientDir);
     } catch { continue; }
 
     for (const file of files) {
       const key = `${recipient}/${file}`;
-      // Только то, что реально соответствует форме, которую производит
-      // bagKeyFor() — та же граница, что и везде в этом файле. Что-то
-      // ещё, случайно оказавшееся в DIR_BAGS (мусор, чужая рука), — не
-      // мешок, и sweepOrphanFiles() (в следующие прогоны, когда индексу
-      // снова можно верить) с ним разберётся сама.
       if (!BAG_KEY_RE.test(key)) { skippedGarbage++; continue; }
 
       const filePath = path.join(recipientDir, file);
-      let size;
-      try {
-        size = fs.statSync(filePath).size;
-      } catch { skippedGarbage++; continue; }
+      let st;
+      try { st = fs.lstatSync(filePath); } catch { skippedGarbage++; continue; }
+      if (!st.isFile()) { skippedGarbage++; continue; } // симлинк/каталог/сокет — никогда не следовать
+      if (st.size > MAX_BAG_SIZE) { skippedGarbage++; continue; }
 
       // recipient и метка времени — прямо из формы ключа (см. bagKeyFor):
       // "<recipient>/<uploadedAt-epoch-ms>-<uuid>.bin". BAG_KEY_RE уже
@@ -436,39 +448,31 @@ function _recoverBagMetaFromDisk() {
       // не содержат '-' сами по себе).
       const afterSlash = key.slice(key.indexOf('/') + 1);
       const uploadedAt = Number(afterSlash.slice(0, afterSlash.indexOf('-')));
+      if (uploadedAt > nowMs + CLOCK_SKEW_ALLOWANCE_MS) { skippedGarbage++; continue; }
 
-      recovered[key] = {
+      const candidate = {
         sender: '',            // неизвестен — содержимое запечатано, отправитель внутри сообщения
         recipient,
         pairId: '',            // не вычислим без настоящего sender; ничем публично не читается
-        size,
+        size: st.size,
         uploadedAt,
         firstFetchedAt: null,  // консервативно: считается непрочитанным — длинный срок (правило 3)
         dealDeadline: null,    // консервативно: считается не усыновлённым сделкой (правило 1 не применяется)
       };
+      if (!isValidBagMetaEntry(key, candidate)) { skippedGarbage++; continue; }
+
+      recovered[key] = candidate;
       recoveredCount++;
     }
   }
 
   console.error(
-    `[bags] _recoverBagMetaFromDisk: reconstructed ${recoveredCount} bag(s) from disk scan of ${DIR_BAGS}` +
-    (skippedGarbage ? ` (skipped ${skippedGarbage} non-bag ${skippedGarbage === 1 ? 'entry' : 'entries'})` : '') +
-    ` — sender, read state and deal adoption were NOT recoverable and default to unknown/unread/unadopted (longer, not shorter, lifetime)`
+    `[bags] _reconstructInMemory: recovered ${recoveredCount} bag(s) from disk scan of ${DIR_BAGS}` +
+    (skippedGarbage ? ` (skipped ${skippedGarbage} non-bag/invalid ${skippedGarbage === 1 ? 'entry' : 'entries'})` : '') +
+    ` — IN MEMORY ONLY, nothing written to disk. sender, read state and deal adoption are unknown/unread/unadopted.`
   );
 
-  _bagMeta = recovered;
-  try {
-    _saveBagMeta();
-    console.error(`[bags] _recoverBagMetaFromDisk: reconstructed index persisted to ${BAG_META_PATH}`);
-  } catch (e) {
-    // _saveBagMeta() уже залогировала свою часть (FAILED TO SAVE) и
-    // пробросила — не даём этому броску уйти выше: реконструкция уже
-    // сделала своё дело В ПАМЯТИ для этого процесса, и это лучше, чем
-    // ничего, даже если персист не удался.
-    console.error(`[bags] _recoverBagMetaFromDisk: FAILED to persist reconstructed index — it exists only in memory for this process until the next successful save: ${e.message}`);
-  }
-
-  return _bagMeta;
+  return recovered;
 }
 
 export function _loadBagMeta() {
@@ -479,7 +483,7 @@ export function _loadBagMeta() {
   // первый запуск от испорченного диска. Различаем явно: файла действительно
   // нет → легитимно пусто, loadOk остаётся true; файл есть, но не JSON,
   // или JSON, но не индекс (null/массив/примитив) → потеря доверия, громко.
-  let loadOk = true;
+  let indexOk = true;
   if (fs.existsSync(BAG_META_PATH)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8'));
@@ -492,32 +496,44 @@ export function _loadBagMeta() {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         raw = parsed;
       } else {
-        loadOk = false;
+        indexOk = false;
       }
     } catch {
       // В том числе обрезанный файл после краха посреди записи — самый
       // вероятный боевой случай (кончилось место на диске, процесс убит
       // между writeFileSync и renameSync temp-файла в _saveBagMeta()).
-      loadOk = false;
+      indexOk = false;
     }
   }
   // else: файла действительно нет — свежая установка, легитимное пустое
-  // состояние, loadOk остаётся true.
+  // состояние, indexOk остаётся true.
 
-  if (!loadOk) {
-    // Отдельная строка, узнаваемым текстом, НЕ похожим на «dropped N
-    // corrupt entries» ниже — та находка про порчу отдельных записей
-    // внутри в остальном годного индекса, эта про полную потерю самого
-    // индекса. Кто читает лог, обязан суметь отличить «пять записей, одна
-    // битая» от «весь файл потерян» с первого взгляда, не сверяя числа.
+  // Третий тур: диск отдельно от описи — см. _isDiskReadable() выше. Опись
+  // может быть идеально валидной, а DIR_BAGS в этот самый момент —
+  // непрочитанным (не примонтирован, гонка), и это ТОЖЕ повод не доверять
+  // ничему, что дальше решит удалить хоть что-то.
+  const diskOk = _isDiskReadable();
+
+  if (!indexOk || !diskOk) {
+    // Громкая строка НА КАЖДОМ запуске, пока не починят руками — не
+    // одноразовая. Текст, узнаваемо отличный от «dropped N corrupt
+    // entries» ниже (та находка про порчу отдельных записей внутри в
+    // остальном годного индекса, эта про полную потерю доверия целиком) —
+    // и от старого «FAILED TO LOAD INDEX / recovering» (тот текст обещал
+    // персист, которого больше нет; эта версия обещает то, что модуль
+    // теперь реально делает).
     console.error(
-      `[bags] _loadBagMeta: FAILED TO LOAD INDEX from ${BAG_META_PATH} — file exists but could not be read as ` +
-      `an index (corrupt/truncated JSON, or not an object: null/array/primitive). Recovering from disk instead ` +
-      `of starting empty — see _recoverBagMetaFromDisk below. cleanupBags() will refuse to run its orphan sweep ` +
-      `this run regardless — the recovery is a good guess, not a fact.`
+      `[bags] _loadBagMeta: ENTERING DISTRUST MODE — ` +
+      (!indexOk ? `index at ${BAG_META_PATH} exists but could not be read as an index (corrupt/truncated JSON, or not an object: null/array/primitive). ` : '') +
+      (!diskOk ? `${DIR_BAGS} could not be enumerated (this is NOT the same as being empty — it means "unknown", not "zero"). ` : '') +
+      `The index file, if any, is left EXACTLY as it is — it is the evidence, not something to clean up. ` +
+      `Nothing will be written to disk (neither the reconstruction below nor any new bag) and nothing will be ` +
+      `deleted (neither the orphan sweep nor the main expiry pass in cleanupBags()) until a LATER load reads a ` +
+      `genuinely healthy index — fix or remove the file by hand and restart. No automatic recovery.`
     );
     _bagMetaLoadOk = false;
-    return _recoverBagMetaFromDisk();
+    _bagMeta = _reconstructInMemory(Date.now());
+    return _bagMeta;
   }
 
   // Бесплатное улучшение от ревьюера (пятый раунд): Object.create(null),
@@ -585,6 +601,24 @@ export function _saveBagMeta() {
     console.error(`[bags] FAILED TO SAVE ${BAG_META_PATH} — in-memory index and disk index have diverged: ${e.message}`);
     throw e;
   }
+}
+
+// Третий тур закрывающего ревью Задачи 4: recordBag()/markFetched() persist
+// normally EXCEPT while the index is in distrust mode (_bagMetaLoadOk ===
+// false, see _loadBagMeta()/_reconstructInMemory() above) — then the change
+// stays in memory only, for this process, until a session ends. Without
+// this, the very first write after a lost index would overwrite the
+// missing/corrupt file with itself alone — the exact class of hole this
+// whole round exists to close, just from the writer's side instead of the
+// reconstruction's. Not an error for the caller: the upload/read-receipt
+// still succeeds from the client's point of view, it just doesn't survive
+// a restart until a human fixes the index.
+function _persistUnlessDistrusted(fn) {
+  if (!_bagMetaLoadOk) {
+    console.error(`[bags] ${fn}: DISTRUST MODE — change kept in memory only, NOT written to ${BAG_META_PATH}. Fix or remove the index file and restart to resume persisting.`);
+    return;
+  }
+  _saveBagMeta();
 }
 
 let _bagMeta = Object.create(null);
@@ -701,7 +735,7 @@ export function recordBag(meta, nowMs = Date.now()) {
   };
   _bagMeta[key] = stored;
   try {
-    _saveBagMeta();
+    _persistUnlessDistrusted('recordBag');
   } catch (e) {
     // I2: не оставлять память впереди диска — если персист не удался,
     // запись не должна продолжать "существовать" только в этом процессе.
@@ -729,7 +763,7 @@ export function markFetched(key, nowMs = Date.now()) {
     assertFetchNotBeforeUpload('markFetched', meta.uploadedAt, nowMs);
     meta.firstFetchedAt = nowMs;
     try {
-      _saveBagMeta();
+      _persistUnlessDistrusted('markFetched');
     } catch (e) {
       // I2: тот же откат, что в recordBag — если запись не доехала до
       // диска, отметка о прочтении не должна продолжать жить только в
@@ -891,6 +925,23 @@ function removeEmptyRecipientDirs() {
 export function cleanupBags(nowMs = Date.now()) {
   assertSafeInt('cleanupBags', 'nowMs', nowMs);
 
+  // Третий тур закрывающего ревью Задачи 4: ЕДИНЫЙ гейт в начале функции,
+  // не два разных (раньше только sweepOrphanFiles() была под гейтом внутри
+  // finally — основной цикл истечения срока чуть выше был открыт всегда).
+  // Координатор замерил живьём: мешок с полусотней оставшихся дней снесён
+  // немедленно основным циклом в прогоне, где лог сам печатал «описи
+  // нельзя верить» — гейта на этом пути не было вообще. Ничего не удаляем
+  // ни через один путь, пока индекс не заслужил доверия свежей штатной
+  // загрузкой.
+  if (!_bagMetaLoadOk) {
+    console.error(
+      '[bags] cleanupBags: DISTRUST MODE — deletion disabled entirely this run, both the main expiry pass and ' +
+      'the orphan sweep. The index could not be trusted at load time (see _loadBagMeta). Fix or remove the ' +
+      'index file and restart to resume deleting anything.'
+    );
+    return { removed: 0, kept: Object.keys(_bagMeta).length };
+  }
+
   let removed = 0;
   let kept = 0;
   // Мелочь (порядок): файлы удаляемых мешков собираются здесь, но не
@@ -963,28 +1014,13 @@ export function cleanupBags(nowMs = Date.now()) {
     // Мелочь (независимость): sweepOrphanFiles/removeEmptyRecipientDirs
     // работают с файловой системой напрямую, не зависят от успеха
     // сохранения индекса — finally гарантирует, что упавшее сохранение не
-    // отменяет их молча для НЕСВЯЗАННЫХ настоящих сирот.
-    //
-    // Закрывающий раунд ревью Задачи 4: но НЕЗАВИСИМОСТЬ от сохранения —
-    // не то же самое, что независимость от ЗАГРУЗКИ. sweepOrphanFiles()
-    // метёт по mtime всё, чего нет в _bagMeta; если последняя _loadBagMeta()
-    // не смогла прочитать индекс (_bagMetaLoadOk === false — см. там же),
-    // _bagMeta пуст не потому, что мешков нет, а потому, что мы не знаем,
-    // что наше. С пустым недостоверным индексом метла снесла бы КАЖДЫЙ
-    // настоящий мешок на складе как сироту. Лучше копить мусор, чем сносить
-    // живое — отказываемся мести, пока индексу нельзя верить, и говорим об
-    // этом громко: removeEmptyRecipientDirs() ниже безопасен всегда (сносит
-    // только каталоги, физически пустые на диске, — реальному мешку в них
-    // ничего не грозит), поэтому он не гейтится.
-    if (_bagMetaLoadOk) {
-      removed += sweepOrphanFiles(nowMs);
-    } else {
-      console.error(
-        '[bags] cleanupBags: SKIPPING orphan sweep — the index failed to load (see the ' +
-        'FAILED TO LOAD INDEX line from _loadBagMeta) and cannot be trusted to tell real bags ' +
-        'from orphans; garbage will accumulate until the index loads successfully again, on purpose.'
-      );
-    }
+    // отменяет их молча для НЕСВЯЗАННЫХ настоящих сирот. Гейт на
+    // sweepOrphanFiles() больше не нужен здесь отдельно — весь путь уже
+    // отсекается ранним возвратом в начале функции, когда индексу нельзя
+    // верить (третий тур, см. верх cleanupBags()). removeEmptyRecipientDirs()
+    // по-прежнему безопасен всегда (сносит только каталоги, физически
+    // пустые на диске, — реальному мешку в них ничего не грозит).
+    removed += sweepOrphanFiles(nowMs);
     removeEmptyRecipientDirs();
   }
 
