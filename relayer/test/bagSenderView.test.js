@@ -21,7 +21,7 @@ import path from 'node:path';
 const { app } = await import('../app.js');
 const { bagPassChallenge } = await import('../bagPass.js');
 const bagStoreNs = await import('../bagStore.js');
-const { bagKeyFor, DIR_BAGS, _loadBagMeta, bagMetaOf } = bagStoreNs;
+const { bagKeyFor, recordBag, DIR_BAGS, _loadBagMeta, bagMetaOf } = bagStoreNs;
 
 let _ipCounter = 0;
 function freshIp() {
@@ -159,6 +159,66 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
 
     const res = await getBags({ pass: alicePass });
     expect(res.body.peers).toEqual([]);
+  });
+
+  // Находка ревью (координатор, мутационное тестирование): «присутствие
+  // собеседника = Date.now()» (взять текущий момент запроса вместо
+  // настоящей улики) выживала на всех тестах выше — округление до минуты
+  // (тест ниже) на живом Date.now() почти всегда даёт то же самое, что и
+  // честное значение, если проверять сразу после события. Здесь момент
+  // события — заведомо ДАЛЁКОЕ прошлое (два часа назад), вставленное прямо
+  // в склад в обход HTTP (PUT/GET сами штампуют Date.now(), другого способа
+  // получить заведомо НЕ "сейчас" время нет) — если бы lastSeenAt брался из
+  // текущего момента запроса, а не из настоящей метки события, разница была
+  // бы кратна секундам, не часам.
+  it('lastSeenAt — настоящий момент события (firstFetchedAt), а не момент запроса — мутация "presence = Date.now()" красит именно этот тест', async () => {
+    const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    const key = bagKeyFor(bobAddr);
+    fs.mkdirSync(path.dirname(path.join(DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(DIR_BAGS, key), 'sealed');
+    recordBag({
+      sender: aliceAddr, recipient: bobAddr, key, size: 6,
+      uploadedAt: twoHoursAgo, firstFetchedAt: twoHoursAgo,
+    });
+
+    const res = await getBags({ pass: alicePass });
+    const bobPeer = res.body.peers.find((p) => p.address === bobAddr);
+    expect(bobPeer).toBeDefined();
+    expect(bobPeer.lastSeenAt).toBe(Math.floor(twoHoursAgo / 60000) * 60000);
+    // Явный замок против "сейчас": момент запроса (Date.now() в эту самую
+    // секунду) заведомо намного позже twoHoursAgo — при "presence = Date.now()"
+    // разница была бы меньше минуты, а не больше часа.
+    expect(Date.now() - bobPeer.lastSeenAt).toBeGreaterThan(60 * 60 * 1000);
+  });
+
+  // Находка ревью (координатор, мутационное тестирование): «входящий мешок
+  // вообще не признак присутствия» — то есть удаление ветки, которая берёт
+  // uploadedAt чужого ВХОДЯЩЕГО мешка как доказательство присутствия
+  // отправителя, — тоже выживала на всех тестах выше. Все прежние тесты на
+  // lastSeenAt так или иначе включали ЗАБОР (fetch) стороной, чьё присутствие
+  // проверяется, — эта ветка (просто написал, ничего не забирал) не была
+  // затронута НИ РАЗУ.
+  it('входящий мешок (собеседник написал МНЕ, ничего не забирал) тоже доказывает присутствие — мутация "считать только своё исходящее" красит именно этот тест', async () => {
+    const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+    const bobPass = await issuePassFor(bob);
+
+    // Только Боб пишет Алисе — Алиса Бобу ничего не отправляла и ничего не
+    // забирала, единственная улика присутствия Боба — то, что он сам
+    // написал (uploadedAt его исходящего, он же для Алисы — входящего).
+    const bobToAlice = await putBag({ pass: bobPass, recipient: aliceAddr, body: Buffer.from('hi') });
+    expect(bobToAlice.status).toBe(200);
+
+    const res = await getBags({ pass: alicePass });
+    const bobPeer = res.body.peers.find((p) => p.address === bobAddr);
+    expect(bobPeer).toBeDefined();
+    expect(bobPeer.lastSeenAt).not.toBeNull(); // сам факт написанного мешка — доказательство присутствия
+    expect(bobPeer.lastSeenAt).toBe(Math.floor(bagMetaOf(bobToAlice.body.key).uploadedAt / 60000) * 60000);
   });
 
   it('lastSeenAt округлён до минуты', async () => {
