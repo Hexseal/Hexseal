@@ -1087,6 +1087,49 @@ describe('pollBags', () => {
     expect(fetchMock.mock.calls.length).toBe(callsAtStop);
   });
 
+  // Мелочь (ревью-координатор). stop() раньше только ставила флаг — запрос,
+  // УЖЕ ушедший в сеть (getPass()/listBags() виснут, например, на медленном
+  // ответе или на ожидании подписи кошелька) не прерывался: страница честно
+  // говорит "остановлено", а fetch на сервер всё ещё летит. listBags()
+  // теперь принимает необязательный AbortSignal (третий, опциональный
+  // параметр — интерфейс задачи `listBags(pass, since?)` не ломается ни для
+  // одного существующего вызывающего), и pollBags создаёт AbortController
+  // на каждый тик, привязывая его к stop().
+  it('мелочь: stop() прерывает запрос в полёте через AbortSignal', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise(() => {}); // никогда не резолвится — имитирует зависший в полёте запрос
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = pollBags({
+      getPass: () => 'v1.p', isActive: () => true, onBags: () => {},
+      sleep: async () => {},
+    });
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(capturedSignal?.aborted).toBe(false);
+
+    handle.stop();
+    expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  it('мелочь: listBags сама принимает и уважает AbortSignal (не только через pollBags)', async () => {
+    const ctrl = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise(() => {});
+    }));
+
+    void listBags('v1.p', undefined, ctrl.signal);
+    await Promise.resolve();
+
+    expect(capturedSignal).toBe(ctrl.signal);
+  });
+
   // C1-R1 (ревью-координатор, КРИТИЧЕСКАЯ находка). Сервер отвечает 401
   // ВСЕГДА, включая свежую подпись (расхождение версий, испорченный секрет,
   // съехавшие часы). getPass подключён РОВНО так, как раньше предписывал

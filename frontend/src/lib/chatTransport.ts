@@ -429,11 +429,18 @@ function isBagSummary(x: unknown): x is BagSummary {
   );
 }
 
-export async function listBags(pass: string, since?: number): Promise<BagSummary[]> {
+/**
+ * `signal` — необязательный, третий параметр (не часть исходного интерфейса
+ * задачи `listBags(pass, since?)`, но обратно совместимый: ни один
+ * существующий двухаргументный вызов не меняет поведения). Даёт
+ * `pollBags` возможность реально ПРЕРВАТЬ запрос в полёте на `stop()`
+ * (мелочь ревью), а не просто дождаться и отбросить результат.
+ */
+export async function listBags(pass: string, since?: number, signal?: AbortSignal): Promise<BagSummary[]> {
   const url = new URL(`${RELAYER_URL}/bags`);
   if (since !== undefined) url.searchParams.set('since', String(since));
 
-  const res = await fetch(url.toString(), { headers: { [BAG_PASS_HEADER]: pass } });
+  const res = await fetch(url.toString(), { headers: { [BAG_PASS_HEADER]: pass }, signal });
   if (!res.ok) await throwForFailedResponse(res, 'Failed to list bags', pass);
 
   const body: unknown = await res.json();
@@ -568,6 +575,15 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
   // открывает противоположную дыру: пропуск больше не застревает, но и
   // ничто не мешает переподписывать его бесконечно.
   let consecutiveAuthFailures = 0;
+  // Мелочь ревью: stop() раньше только ставила флаг — запрос, УЖЕ ушедший в
+  // сеть (`listBags`), не прерывался, он просто дожидался ответа и
+  // отбрасывался. `currentAbort` — контроллер ТЕКУЩЕГО тика; stop() зовёт
+  // `.abort()`, если он есть. `getPass()` сюда не входит: у неё нет
+  // AbortSignal-параметра (это функция вызывающей стороны, обычно —
+  // `requestBagPass`), и оборвать зависшую подпись кошелька этим
+  // механизмом нельзя — честное, документированное ограничение, не тихая
+  // недоделка.
+  let currentAbort: AbortController | null = null;
 
   const loop = async () => {
     // Цикл последовательный: следующая итерация начинается только после
@@ -583,12 +599,15 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
         waitMs = opts.isActive() ? intervals.activeMs : intervals.backgroundMs;
         const pass = await opts.getPass();
         if (stopped) return;
-        bags = await listBags(pass, opts.since);
+        currentAbort = new AbortController();
+        bags = await listBags(pass, opts.since, currentAbort.signal);
+        currentAbort = null;
         if (stopped) return;
         consecutiveFailures = 0;
         consecutiveAuthFailures = 0;
       } catch (err) {
         if (stopped) return;
+        currentAbort = null; // тик закончился (ошибкой) — контроллер больше ничему не соответствует
         consecutiveFailures++;
         // Экспоненциально от базового интервала этого тика, с потолком
         // (I3): 1-й отказ подряд — база, 2-й — ×2, 3-й — ×4, и т.д., но не
@@ -653,6 +672,9 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
 
   void loop();
   return {
-    stop() { stopped = true; },
+    stop() {
+      stopped = true;
+      currentAbort?.abort();
+    },
   };
 }
