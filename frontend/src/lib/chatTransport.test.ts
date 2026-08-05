@@ -201,6 +201,36 @@ describe('putBag', () => {
     expect(init.body).toBeInstanceOf(Uint8Array);
   });
 
+  // I5 (ревью-координатор, важная находка). Предыдущий тест смотрел ТОЛЬКО
+  // тело — мутация, кладущая адрес отдельным заголовком (`x-sender`),
+  // проходила чисто (проверено вживую: `'x-sender': recipient` в заголовках
+  // putBag не красит ни один существующий тест). Адрес мог бы уехать телом,
+  // заголовком или в самом URL сверх легитимного `recipient` — все три пути
+  // здесь заперты явно, не только тело.
+  it('I5: адрес отправителя не уезжает НИГДЕ — ни в теле, ни в заголовке, ни в URL сверх recipient', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: 'k' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await putBag('v1.p', ALICE, new Uint8Array([1, 2, 3]));
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    // URL — ровно /bags/<recipient>, без query-строки и без лишних сегментов
+    // (recipient — легитимный путь; НИЧЕГО кроме него).
+    const parsed = new URL(String(url));
+    expect(parsed.pathname).toBe(`/bags/${ALICE}`);
+    expect(parsed.search).toBe('');
+
+    // Заголовки — ровно x-bag-pass и content-type, никакого x-sender/from/…
+    const headers = init.headers as Record<string, string>;
+    const headerNames = Object.keys(headers).map((h) => h.toLowerCase());
+    expect(headerNames.sort()).toEqual(['content-type', 'x-bag-pass']);
+    for (const [name, value] of Object.entries(headers)) {
+      if (name.toLowerCase() === 'x-bag-pass') continue; // сам пропуск — не адрес
+      expect(name.toLowerCase()).not.toMatch(/sender|from/i);
+      expect(String(value).toLowerCase()).not.toBe(ALICE);
+    }
+  });
+
   // I2 (ревью-координатор): getula получателя из wagmi приходит с контрольной
   // суммой — сервер строит путь ТОЛЬКО из нижнего регистра
   // (`req.params.recipient.toLowerCase()` в relayer/app.js), значит если
