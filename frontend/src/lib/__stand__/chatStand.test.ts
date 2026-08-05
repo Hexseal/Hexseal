@@ -69,4 +69,51 @@ describe('сквозной стенд', () => {
       delete process.env.NEXT_PUBLIC_RELAYER_URL;
     }
   });
+
+  // Находка координатора (ревью): докстринг файла заявлял «можно звать
+  // параллельно, ни общего диска, ни общего процесса» — воспроизведено
+  // ОБРАТНОЕ: `Promise.all([startChatStand(), startChatStand()])` даёт ОДИН
+  // экземпляр app.js на двоих (общий env/module-registry процесса), мешок с
+  // первого стенда виден на втором, а stop() первого сносит каталог, которым
+  // пользуется второй — молчаливое смешение складов вместо честной ошибки.
+  //
+  // Решение (координатор явно предложил оба варианта, выбран второй — «либо
+  // почини… либо убери обещание и напиши прямо: стенд один на процесс, для
+  // двух пользователей — два кошелька на одном стенде»): не пытаемся дать
+  // параллелизм (это значило бы реальный отдельный ОС-процесс на стенд —
+  // отдельная задача сама по себе), а запираем ОДИН активный стенд на
+  // процесс явной, громкой ошибкой вместо тихой порчи. Два кошелька,
+  // которые уже отдаёт один стенд, — это и есть «два пользователя» для
+  // всех задач этого плана.
+  it('второй стенд, пока первый ещё жив, отвергается громко — не тихое смешение складов (см. докстринг chatStand.ts)', async () => {
+    const stand1 = await startChatStand();
+    try {
+      await expect(startChatStand()).rejects.toThrow(/already running|already active/i);
+    } finally {
+      await stand1.stop();
+    }
+
+    // Ограничение не залипает навсегда — после честного stop() первого
+    // следующий стенд поднимается нормально.
+    const stand2 = await startChatStand();
+    await stand2.stop();
+  });
+
+  // Та же гарантия, но буквально репродукцией координатора —
+  // Promise.all([startChatStand(), startChatStand()]): ровно один поднимается
+  // и живёт, второй отвергается — никогда оба одновременно и никогда оба с
+  // ошибкой (флаг корректно освобождается, если проигравший бросил ДО
+  // какой-либо мутации процесса — см. реализацию).
+  it('Promise.all([startChatStand(), startChatStand()]) — ровно один поднимается, второй отвергается, склады не смешиваются', async () => {
+    const results = await Promise.allSettled([startChatStand(), startChatStand()]);
+    const fulfilled = results.filter(
+      (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof startChatStand>>> => r.status === 'fulfilled',
+    );
+    const rejected = results.filter((r) => r.status === 'rejected');
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    await fulfilled[0].value.stop();
+  });
 });
