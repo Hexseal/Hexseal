@@ -272,6 +272,89 @@ describe('dealDeadlineFromCreation — этап 1: предварительны�
     expect(() => dealDeadlineFromCreation({ ...base, nowMs: 'never' })).toThrow();
   });
 
+  // Мелочи (координатор, пятый закрывающий раунд ревью): два вида мусора с
+  // цепи молча проходили и раньше не проверялись отдельно — отрицательный
+  // deadlineDays_ (складывается со знаком минус, УКОРАЧИВАЯ формулу без
+  // единой строки в логе) и activatedAt_ из будущего (абсурдный срок на
+  // годы вперёд, спасаемый только потолком BAG_MAX_AGE_MS). Оба теперь
+  // бросают вместо тихого прохода — see assertNonNegativeSafeInt/
+  // assertNotFromFuture в bagStore.js.
+  describe('мелочи (координатор) — мусор с цепи: отрицательная длительность и метка времени из будущего', () => {
+    const base = { createdAtMs: 1_700_000_000_000, activatedAtMs: 0, ownDeadlineMs: 10 * DAY, disputeWindowMs: 4 * DAY, deadlineGraceMs: DAY, autoApproveWindowMs: 2 * DAY, nowMs: 1_700_000_000_000 };
+
+    it('отрицательный ownDeadlineMs — бросает, не укорачивает срок молча', () => {
+      expect(() => dealDeadlineFromCreation({ ...base, ownDeadlineMs: -5 * DAY })).toThrow(/negative/);
+    });
+
+    it('отрицательный disputeWindowMs/deadlineGraceMs/autoApproveWindowMs — тот же класс, тоже бросает (не только названный координатором deadlineDays_)', () => {
+      expect(() => dealDeadlineFromCreation({ ...base, disputeWindowMs: -1 })).toThrow(/negative/);
+      expect(() => dealDeadlineFromCreation({ ...base, deadlineGraceMs: -1 })).toThrow(/negative/);
+      expect(() => dealDeadlineFromCreation({ ...base, autoApproveWindowMs: -1 })).toThrow(/negative/);
+    });
+
+    it('отрицательный disputeWindowMs в dealDeadlineFromDispute (этап 2) — тот же класс, тоже бросает', () => {
+      expect(() => dealDeadlineFromDispute(1_700_000_000_000, -1)).toThrow(/negative/);
+    });
+
+    it('activatedAtMs из будущего относительно nowMs — бросает, не даёт абсурдный срок на годы вперёд', () => {
+      const nowMs = base.createdAtMs;
+      expect(() => dealDeadlineFromCreation({ ...base, nowMs, activatedAtMs: nowMs + 365 * DAY })).toThrow(/future/);
+    });
+
+    it('activatedAtMs в пределах допуска на рассинхрон часов (CLOCK_SKEW_ALLOWANCE_MS) — НЕ бросает', () => {
+      const nowMs = base.createdAtMs;
+      expect(() => dealDeadlineFromCreation({ ...base, nowMs, activatedAtMs: nowMs + 1000 })).not.toThrow();
+    });
+
+    it('createdAtMs из будущего относительно nowMs — тот же класс входа (то же getActive()), тоже бросает', () => {
+      const nowMs = base.createdAtMs;
+      expect(() => dealDeadlineFromCreation({ ...base, nowMs, createdAtMs: nowMs + 365 * DAY })).toThrow(/future/);
+    });
+
+    // Интеграция: мусорный вход по ОДНОЙ спорной/активной записи не должен
+    // валить весь ночной прогон — тот же принцип изоляции по записям, что
+    // уже заперт для staticcall-отказов (describe "runFileCleanup" выше).
+    // Свежий, не тронутый ГАРБАЖ-агримент рядом с ХОРОШИМ — усыновление
+    // ХОРОШЕГО обязано состояться, несмотря на бросок в СОСЕДНЕЙ записи.
+    it('интеграция: отрицательный deadlineDays_ у ОДНОЙ активной записи не мешает усыновить ДРУГУЮ (изоляция по записям)', async () => {
+      const garbageAgreement = ethAddr(901, '1');
+      const goodAgreement = ethAddr(901, '2');
+      const goodClient = ethAddr(901, '3');
+      const goodExecutor = ethAddr(901, '4');
+      const now = Date.now();
+      const createdAtSec = Math.floor(now / 1000);
+
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [
+          { agreement: garbageAgreement, client: CAROL, executor: ALICE, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n },
+          { agreement: goodAgreement, client: goodClient, executor: goodExecutor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n },
+        ],
+        getDisputed: [],
+      });
+      mockContract(garbageAgreement, {
+        getDetails: async () => ({ deadlineDays_: -5n, activatedAt_: 0n, disputedAt_: 0n }), // отрицательный — мусор
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+      mockContract(goodAgreement, {
+        getDetails: async () => ({ deadlineDays_: 30n, activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+
+      const goodKey = put(goodClient, goodExecutor, now - 10 * DAY);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await expect(runFileCleanup()).resolves.toBeUndefined();
+
+      expect(bagMetaOf(goodKey).dealDeadline).not.toBeNull(); // хорошая запись усыновлена, несмотря на мусор в соседней
+      const call = errSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption') && String(args[0]).includes(garbageAgreement));
+      expect(call).toBeDefined(); // и мусор не проглочен молча — залогирован
+    });
+  });
+
   // Мелочь (закрывающий раунд ревью, находка координатора): собственный
   // худший случай сделки БЕЗ спора длиннее одного deadlineDays_ —
   // Agreement.DEADLINE_GRACE (запас перед автовозвратом) и

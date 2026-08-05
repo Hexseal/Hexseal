@@ -375,6 +375,24 @@ function assertSafeInt(fn, label, value) {
   return value;
 }
 
+// Мелочь (координатор, пятый закрывающий раунд ревью): дедлайны/окна,
+// приезжающие с цепи (Agreement.getDetails().deadlineDays_ и т.п.) —
+// протокольно uint256, отрицательными на настоящем ABI-декодировании быть
+// не могут, но этот модуль не полагается на "не может быть" молчаливо —
+// тот же принцип, что у остальных assert*-хелперов файла: любое значение,
+// пришедшее снаружи (в т.ч. через несовместимый/поддельный клон на другом
+// конце staticcall), проверяется явно, а не доверяется по умолчанию.
+// Отрицательная "продолжительность" молча УКОРАЧИВАЕТ формулу (складывается
+// со знаком минус) — координатор нашёл именно это: отрицательный
+// deadlineDays_ давал укороченный срок без единой строки в логе. assertSafeInt
+// уже пропускает отрицательные числа (валидные safe integers), так что
+// требование "не отрицательное" — отдельная, более узкая проверка.
+function assertNonNegativeSafeInt(fn, label, value) {
+  assertSafeInt(fn, label, value);
+  if (value < 0) fail(fn, `${label} is negative: ${JSON.stringify(value)} — malformed chain data, not a legitimately shortened deadline`);
+  return value;
+}
+
 // null/undefined — легитимное "ещё не наступило" (мешок не прочитан / не
 // усыновлён сделкой). Всё остальное обязано быть тем же safe integer, что и
 // обязательные временные поля.
@@ -1179,17 +1197,38 @@ const FINALIZE_DELAY_MS = FINALIZE_DELAY_HOURS * HOUR_MS;
 // сдвигают момент, до которого спор в принципе возможен. Обе — public
 // constant в ТОМ ЖЕ контракте, откуда уже читаем DISPUTE_WINDOW — не лишний
 // класс чтения, тот же приём, тот же кэш (см. app.js).
+// Мелочь (координатор, пятый закрывающий раунд ревью): два вида мусора с
+// цепи молча проходили и раньше не проверялись отдельно:
+//   • отрицательный ownDeadlineMs (Agreement.getDetails().deadlineDays_ *
+//     1 day) — складывается со знаком минус, УКОРАЧИВАЯ формулу, без единой
+//     строки в логе (не бросок — тихий более короткий срок, худший вид
+//     ошибки: выглядит как успех). Тот же риск — у трёх остальных "длин",
+//     читаемых staticcall'ом (disputeWindowMs/deadlineGraceMs/
+//     autoApproveWindowMs) — тот же класс входа, тот же контракт, тот же
+//     принцип "не полагаться на то, что uint256 не может декодироваться в
+//     отрицательное" — assertNonNegativeSafeInt на все четыре разом, не
+//     только на названную координатором.
+//   • activatedAtMs из будущего (относительно nowMs, этого же прогона) —
+//     давал абсурдный срок на годы вперёд, спасаемый только потолком
+//     BAG_MAX_AGE_MS (тот же класс дыры, ради которой чинили C-1: лог мог
+//     бы рапортовать честный потолок, но сам вход остаётся мусором).
+//     Тот же assertNotFromFuture, что уже применяется к uploadedAt в
+//     recordBag() — тот же принцип, применённый здесь. createdAtMs —
+//     того же происхождения (то же getActive()/тот же контракт), закрыт
+//     тем же способом заодно, не как отдельная находка.
 export function dealDeadlineFromCreation({
   createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs,
   deadlineGraceMs, autoApproveWindowMs, nowMs,
 }) {
   assertSafeInt('dealDeadlineFromCreation', 'createdAtMs', createdAtMs);
   assertSafeInt('dealDeadlineFromCreation', 'activatedAtMs', activatedAtMs);
-  assertSafeInt('dealDeadlineFromCreation', 'ownDeadlineMs', ownDeadlineMs);
-  assertSafeInt('dealDeadlineFromCreation', 'disputeWindowMs', disputeWindowMs);
-  assertSafeInt('dealDeadlineFromCreation', 'deadlineGraceMs', deadlineGraceMs);
-  assertSafeInt('dealDeadlineFromCreation', 'autoApproveWindowMs', autoApproveWindowMs);
+  assertNonNegativeSafeInt('dealDeadlineFromCreation', 'ownDeadlineMs', ownDeadlineMs);
+  assertNonNegativeSafeInt('dealDeadlineFromCreation', 'disputeWindowMs', disputeWindowMs);
+  assertNonNegativeSafeInt('dealDeadlineFromCreation', 'deadlineGraceMs', deadlineGraceMs);
+  assertNonNegativeSafeInt('dealDeadlineFromCreation', 'autoApproveWindowMs', autoApproveWindowMs);
   assertSafeInt('dealDeadlineFromCreation', 'nowMs', nowMs);
+  assertNotFromFuture('dealDeadlineFromCreation', 'createdAtMs', createdAtMs, nowMs);
+  assertNotFromFuture('dealDeadlineFromCreation', 'activatedAtMs', activatedAtMs, nowMs);
 
   const anchor = activatedAtMs > 0
     ? Math.max(createdAtMs, activatedAtMs)
@@ -1239,7 +1278,13 @@ export function dealDeadlineFromCreation({
 // поэтому проверяются напрямую, без мока цепи (test/bagAdoption.test.js).
 export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
   assertSafeInt('dealDeadlineFromDispute', 'disputedAtMs', disputedAtMs);
-  assertSafeInt('dealDeadlineFromDispute', 'disputeWindowMs', disputeWindowMs);
+  // Мелочь (координатор, пятый закрывающий раунд): тот же класс входа, что
+  // ownDeadlineMs/disputeWindowMs и т.д. в dealDeadlineFromCreation выше —
+  // отрицательный disputeWindowMs укоротил бы формулу молча. Нет nowMs в
+  // сигнатуре этой функции (не менялась ради этого мелкого пункта — сигнатура
+  // используется и тестами, и app.js как позиционная, без него), так что
+  // "не из будущего" здесь не проверяется — только неотрицательность.
+  assertNonNegativeSafeInt('dealDeadlineFromDispute', 'disputeWindowMs', disputeWindowMs);
   return disputedAtMs + disputeWindowMs + FINALIZE_DELAY_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
 }
 
