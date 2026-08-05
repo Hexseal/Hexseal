@@ -91,15 +91,18 @@ echo "✓ окно финализации сходится: $sol_hours ч."
 # подмена одного из них (например, DAY_MS = 60*60*1000, дни на часы) даёт
 # сравнение "4=4" зелёным, при этом формула считает в 24 раза меньший
 # интервал.
-day_ms_expr="$(grep -oP '^const DAY_MS = \K[0-9 \*]+(?=;)' "$JS" | head -1 || true)"
-hour_ms_expr="$(grep -oP '^const HOUR_MS = \K[0-9 \*]+(?=;)' "$JS" | head -1 || true)"
-
-if [[ -z "$day_ms_expr" ]]; then
-  echo "❌ не нашёл объявление DAY_MS в $JS — гейт сломан, почини гейт"; exit 1
-fi
-if [[ -z "$hour_ms_expr" ]]; then
-  echo "❌ не нашёл объявление HOUR_MS в $JS — гейт сломан, почини гейт"; exit 1
-fi
+#
+# I2 (координатор, критический раунд): та же пара дыр, что уже чинили для
+# APPEAL_REVIEW_WINDOW/FINALIZE_DELAY (I-4) выше, здесь оставалась
+# нетронутой. Замер координатора: комментарий выше настоящего объявления
+# ("дубль const DAY_MS, настоящий — второй (час)") и `head -1` на СЫРОМ
+# $JS (не $js_clean) — обе позволяли фальшивому значению победить. Тот же
+# приём: comment-stripped источник + extract_unique_or_die вместо
+# grep|head -1.
+extract_unique_or_die day_ms_expr "$JS (DAY_MS)" "$js_clean" \
+  '^const DAY_MS = \K[0-9 \*]+(?=;)'
+extract_unique_or_die hour_ms_expr "$JS (HOUR_MS)" "$js_clean" \
+  '^const HOUR_MS = \K[0-9 \*]+(?=;)'
 
 day_ms_value=$(( day_ms_expr ))
 hour_ms_value=$(( hour_ms_expr ))
@@ -114,35 +117,81 @@ if [[ "$hour_ms_value" -ne 3600000 ]]; then
 fi
 echo "✓ множители сходятся: DAY_MS=$day_ms_value мс, HOUR_MS=$hour_ms_value мс"
 
-# I-3 (четвёртый закрывающий раунд ревью, находка координатора): проверка
-# "формула применяет множитель к правильной константе" раньше искала строку
-# 'APPEAL_REVIEW_WINDOW_DAYS * DAY_MS' по ВСЕМУ файлу (grep -q "$JS") — а её
-# удовлетворяла СОВСЕМ ДРУГАЯ строка, из _warnIfBagMaxAgeTooSmallForAppeal()
-# (I-D), которая считает ТУ ЖЕ константу для ДРУГОЙ цели (предупреждение при
-# старте). Три мутации, ломающие ОБЕ формулы (умножение на HOUR_MS вместо
-# DAY_MS, выброшенное слагаемое апелляции, выброшенное слагаемое
-# финализации), проходили гейт зелёным, потому что формулу никто не
-# смотрел — смотрели файл целиком. Извлекаем ИМЕННО тело каждой формулы
-# (от объявления функции до закрывающей `}` в начале строки) и проверяем
-# ВНУТРИ него, не снаружи.
-extract_function_body() {
-  local file="$1" func_name="$2"
-  sed -n "/^export function ${func_name}/,/^}\$/p" "$file"
-}
+# I2 (координатор, критический раунд, находка): проверка "формула считает
+# правильно" раньше была ЧИСТО ТЕКСТУАЛЬНОЙ — grep на присутствие токенов
+# 'FINALIZE_DELAY_MS' и 'APPEAL_REVIEW_WINDOW_DAYS * DAY_MS' ГДЕ-ТО внутри
+# тела функции, не проверяя, что эти токены реально УЧАСТВУЮТ в
+# возвращаемом значении. Девять мутаций координатора проходили зелёными
+# именно поэтому: ранний return с мёртвым кодом настоящей формулы ниже
+# (токены есть в тексте — участия в результате нет), знак минус вместо
+# плюса (токен есть, вклад в сумму отрицательный), умножение на ноль
+# (токен есть, вклад нулевой), декой-функция, объявленная раньше настоящей
+# и т.д. — grep текста НЕ МОЖЕТ отличить формулу, которая действительно
+# складывает эти слагаемые, от формулы, которая просто упоминает их имена.
+#
+# Единственный способ поймать все девять разом — ПОЗВАТЬ настоящие функции
+# с контролируемым входом и сверить ЧИСЛО, которое они реально вернули, с
+# числом, посчитанным независимо (снаружи, из уже провалидированных
+# sol_days/js_days/sol_hours/js_hours и внешне известных 86400000/3600000
+# — не из day_ms_expr/hour_ms_expr самого JS, чтобы не доверять дважды
+# одному и тому же возможно скомпрометированному источнику). Никакая
+# декой-функция/дохлый код/подмена знака не может пройти это — если
+# реально возвращённое число не совпадает с независимо посчитанным
+# ожиданием, гейт красный, с конкретными числами обеих сторон.
+FORMULA_CHECK_STORAGE_DIR="$(mktemp -d)"
+formula_check_stderr="$(mktemp)"
+formula_check_output="$(STORAGE_DIR="$FORMULA_CHECK_STORAGE_DIR" node --input-type=module -e "
+import { dealDeadlineFromDispute, dealDeadlineFromCreation, APPEAL_REVIEW_WINDOW_DAYS, FINALIZE_DELAY_HOURS, BAG_DEAL_GRACE_MS } from '$(pwd)/$JS';
 
-for fn in dealDeadlineFromDispute dealDeadlineFromCreation; do
-  body="$(extract_function_body "$JS" "$fn")"
-  if [[ -z "$body" ]]; then
-    echo "❌ не нашёл функцию $fn() в $JS — гейт сломан, почини гейт"
-    exit 1
-  fi
-  if ! grep -q 'FINALIZE_DELAY_MS' <<<"$body"; then
-    echo "❌ формула $fn() в $JS не содержит FINALIZE_DELAY_MS — слагаемое окна финализации выброшено из формулы"
-    exit 1
-  fi
-  if ! grep -q 'APPEAL_REVIEW_WINDOW_DAYS \* DAY_MS' <<<"$body"; then
-    echo "❌ формула $fn() в $JS не содержит 'APPEAL_REVIEW_WINDOW_DAYS * DAY_MS' — слагаемое окна апелляции выброшено или множитель подменён (дни на часы?)"
-    exit 1
-  fi
-done
-echo "✓ обе формулы (dealDeadlineFromDispute/dealDeadlineFromCreation) содержат оба слагаемых с правильными множителями"
+const DAY_MS = 86400000; // внешне известное, не из day_ms_expr этого же файла
+const HOUR_MS = 3600000;
+
+// dealDeadlineFromDispute: контрольные, произвольно выбранные входы.
+const disputedAtMs = 1700000000000;
+const disputeWindowMs = 4 * DAY_MS;
+const expectedDispute = disputedAtMs + disputeWindowMs
+  + FINALIZE_DELAY_HOURS * HOUR_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+const gotDispute = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
+
+// dealDeadlineFromCreation: activatedAtMs=0, nowMs=createdAtMs — анкор
+// становится ровно createdAtMs (см. докстринг функции), формула проще для
+// независимого пересчёта здесь же.
+const createdAtMs = 1700000000000;
+const ownDeadlineMs = 10 * DAY_MS;
+const disputeWindowMs2 = 4 * DAY_MS;
+const deadlineGraceMs = 1 * DAY_MS;
+const autoApproveWindowMs = 2 * DAY_MS;
+const expectedCreation = createdAtMs + ownDeadlineMs + deadlineGraceMs + autoApproveWindowMs
+  + disputeWindowMs2 + FINALIZE_DELAY_HOURS * HOUR_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+const gotCreation = dealDeadlineFromCreation({
+  createdAtMs, activatedAtMs: 0, ownDeadlineMs, disputeWindowMs: disputeWindowMs2,
+  deadlineGraceMs, autoApproveWindowMs, nowMs: createdAtMs,
+});
+
+console.log(JSON.stringify({ expectedDispute, gotDispute, expectedCreation, gotCreation }));
+" 2>"$formula_check_stderr")"
+node_exit=$?
+rm -rf "$FORMULA_CHECK_STORAGE_DIR"
+
+if [[ "$node_exit" -ne 0 ]]; then
+  echo "❌ не удалось выполнить формулы $JS через node (код выхода $node_exit) — гейт сломан, синтаксическая ошибка (в т.ч. дубль объявления) или экспорт сломан (dealDeadlineFromDispute/dealDeadlineFromCreation/APPEAL_REVIEW_WINDOW_DAYS/FINALIZE_DELAY_HOURS/BAG_DEAL_GRACE_MS обязаны быть export):"
+  cat "$formula_check_stderr"
+  rm -f "$formula_check_stderr"
+  exit 1
+fi
+rm -f "$formula_check_stderr"
+
+expected_dispute="$(node -e "console.log(JSON.parse(process.argv[1]).expectedDispute)" "$formula_check_output")"
+got_dispute="$(node -e "console.log(JSON.parse(process.argv[1]).gotDispute)" "$formula_check_output")"
+expected_creation="$(node -e "console.log(JSON.parse(process.argv[1]).expectedCreation)" "$formula_check_output")"
+got_creation="$(node -e "console.log(JSON.parse(process.argv[1]).gotCreation)" "$formula_check_output")"
+
+if [[ "$got_dispute" != "$expected_dispute" ]]; then
+  echo "❌ dealDeadlineFromDispute($JS) вернула $got_dispute, ожидалось $expected_dispute — формула считает не то (дохлый код/подмена знака/декой-функция?)"
+  exit 1
+fi
+if [[ "$got_creation" != "$expected_creation" ]]; then
+  echo "❌ dealDeadlineFromCreation($JS) вернула $got_creation, ожидалось $expected_creation — формула считает не то (дохлый код/подмена знака/декой-функция?)"
+  exit 1
+fi
+echo "✓ обе формулы (dealDeadlineFromDispute/dealDeadlineFromCreation) реально ВЫЧИСЛЕНЫ и дают правильное число, не просто содержат правильные слова"
