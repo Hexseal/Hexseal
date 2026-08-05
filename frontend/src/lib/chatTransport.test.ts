@@ -586,6 +586,42 @@ describe('forgetBagPass', () => {
     expect(sign).toHaveBeenCalledTimes(2);
   });
 
+  // Мелочь (ревью-координатор). Внутренний выброс-по-401 (см.
+  // forgetBagPassByToken/throwForFailedResponse) раньше выбрасывал кэш ПО
+  // АДРЕСУ, не по конкретному токену — запоздавший 401 по уже вытесненному
+  // (старому) пропуску убивал СВЕЖИЙ пропуск того же адреса, который тем
+  // временем успел встать в кэш. Цена: лишний поход в сеть и лишнее окно
+  // кошелька там, где кэш был совершенно рабочим. `forgetBagPass(address)`
+  // — публичная функция для явного разлогина и т.п. — по-прежнему
+  // выбрасывает БЕЗУСЛОВНО (см. тесты выше); это про ВНУТРЕННИЙ механизм
+  // 401-обработки конкретно.
+  it('мелочь: запоздавший 401 по уже вытесненному пропуску не убивает свежий пропуск того же адреса', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const passOld = fakePass(ALICE, 'old');
+    const passNew = fakePass(ALICE, 'new');
+
+    // Кэш Алисы сейчас держит passNew — как будто он появился ПОСЛЕ того,
+    // как какой-то запрос со СТАРЫМ passOld уже улетел в сеть и просто
+    // медленно возвращается.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: passNew, expiresAt: nowSec() + 3600 }),
+    }));
+    await requestBagPass(sign, ALICE);
+
+    // Запоздавший 401 приходит по СТАРОМУ (уже неактуальному) пропуску.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }),
+    }));
+    await expect(listBags(passOld)).rejects.toBeInstanceOf(BagPassError);
+
+    // Кэш Алисы должен остаться на passNew — не выброшен.
+    const fetchMock3 = vi.fn();
+    vi.stubGlobal('fetch', fetchMock3);
+    const still = await requestBagPass(sign, ALICE);
+    expect(still.pass).toBe(passNew);
+    expect(fetchMock3).not.toHaveBeenCalled(); // кэш жив, сети не было
+  });
+
   it('putBag сама зовёт forgetBagPass на 401 — следующий requestBagPass того же адреса не отдаёт кэш', async () => {
     const sign = vi.fn().mockResolvedValue('0xsig');
     const passA = fakePass(ALICE, 'a');

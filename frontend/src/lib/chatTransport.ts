@@ -237,9 +237,22 @@ function parseBagPassAddress(pass: string): string | null {
   return ETH_ADDR_RE.test(addr) ? addr : null;
 }
 
+/**
+ * Выбрасывает кэш ТОЛЬКО если он всё ещё держит ИМЕННО этот проваленный
+ * токен (мелочь ревью). Без сравнения — запоздавший 401 по уже
+ * вытесненному (старому) пропуску убивал бы СВЕЖИЙ пропуск того же
+ * адреса, который тем временем успел встать в кэш (например, из другого
+ * тика опроса): цена — лишний поход в сеть и лишнее окно кошелька там, где
+ * кэш был совершенно рабочим. Публичный `forgetBagPass(address)` (для
+ * явного разлогина и т.п.) сравнения НЕ делает и выбрасывает безусловно —
+ * это намеренно другое поведение для другого вызывающего.
+ */
 function forgetBagPassByToken(pass: string): void {
   const addr = parseBagPassAddress(pass);
-  if (addr) forgetBagPass(addr);
+  if (!addr) return;
+  if (_passCache.get(addr)?.pass === pass) {
+    _passCache.delete(addr);
+  }
 }
 
 async function parseErrorBody(res: Response): Promise<{ error?: string; code?: string }> {
