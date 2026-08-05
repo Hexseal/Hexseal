@@ -1028,27 +1028,52 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
 //   test/bagAdoption.test.js — "усыновление в два этапа").
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Этап 1: срок ПРЕДВАРИТЕЛЬНЫЙ, посчитанный от createdAtMs (регистрация
-// сделки, RegistryStorage.AgreementRecord.createdAt — доступен без лишнего
-// чтения, тот же tuple, что и у getDisputed()) и ownDeadlineMs (собственный
-// срок сделки, Agreement.getDetails().deadlineDays_ * 1 day — известен сразу
-// при регистрации, ДО funded/activated). disputeWindowMs — тот же смысл, что
-// в dealDeadlineFromDispute ниже: контракт может однажды изменить окно
-// спора, читаем с цепи, не хардкодим.
+// Этап 1: срок ПРЕДВАРИТЕЛЬНЫЙ, посчитанный от якоря и ownDeadlineMs
+// (собственный срок сделки, Agreement.getDetails().deadlineDays_ * 1 day —
+// известен сразу при регистрации, ДО funded/activated). disputeWindowMs —
+// тот же смысл, что в dealDeadlineFromDispute ниже: контракт может однажды
+// изменить окно спора, читаем с цепи, не хардкодим.
 //
-// Не претендует на точность — деньги/таймауты контракта дают ещё немного
-// сверху (DEADLINE_GRACE, AUTO_APPROVE_WINDOW — не видны без ещё одного
-// чтения контракта и здесь не учтены намеренно: цель этой оценки не быть
-// идеальной день-в-день, а не дать мешку до всякой сделки быть выметенным
-// раньше, чем возникнет спор). Если сделка закроется без спора — усыновление
-// просто перестанет продлеваться, следующий срок мешка посчитает обычное
-// правило 2/3 (bagExpiryAt); если спор всё же будет — этап 2 пересчитает
-// точно и не сократит уже данное этапом 1 (Math.max в adoptPairBags()).
-export function dealDeadlineFromCreation(createdAtMs, ownDeadlineMs, disputeWindowMs) {
+// C1 (находка координатора, закрывающий раунд ревью): якорь — max(createdAtMs,
+// activatedAtMs), НЕ просто createdAtMs. Главный путь доски заказов
+// (JobBoardFacet.acceptApplicant() → FactoryFacet.sol:232-273) регистрирует
+// сделку НЕОПЛАЧЕННОЙ — activatedAt на этот момент 0 — а у fund() нет
+// дедлайна вообще (Agreement.sol:557): между "создали" и "оплатили" может
+// пройти сколько угодно дней. Настоящий дедлайн работы контракт считает от
+// activatedAt (Agreement.deadline(): activatedAt + deadlineDays*1 days), не
+// от createdAt — якорь только по createdAt считал сделку "просроченной"
+// на фиксированный день независимо от того, когда её реально оплатили и
+// начали, и при задержке оплаты дольше ~8 дней (при 30-дневном сроке
+// работы) дыра открывалась заново, воспроизведено координатором таблицей
+// задержек (0/2/5/7д — защита держит, 8/10/20д — нет), см.
+// test/bagAdoption.test.js, describe "C1".
+//
+// Чинится бесплатно: activatedAtMs передаёт вызывающий из ТОГО ЖЕ
+// getDetails(), что уже читает ownDeadlineMs (app.js делает один вызов на
+// агримент, не два). Пока сделка не активирована, activatedAtMs = 0,
+// Math.max(createdAtMs, 0) = createdAtMs — поведение не меняется. Как
+// только контракт видит активацию, СЛЕДУЮЩИЙ ночной прогон (adoptActivePairBags
+// зовётся КАЖДУЮ ночь для каждой ещё ACTIVE сделки, не только в день
+// регистрации) подхватывает новый activatedAtMs, и Math.max в
+// adoptPairBags() ("усыновление только продлевает") сам доводит срок вперёд
+// — отдельного кода на "заметить активацию" не нужно.
+//
+// Не претендует на точность день-в-день сверх этого — деньги/таймауты
+// контракта дают ещё немного сверху (DEADLINE_GRACE, AUTO_APPROVE_WINDOW —
+// не видны без ещё одного чтения контракта и здесь не учтены намеренно:
+// цель этой оценки не быть идеальной, а не дать мешку до всякой сделки быть
+// выметенным раньше, чем возникнет спор). Если сделка закроется без спора —
+// усыновление просто перестанет продлеваться, следующий срок мешка посчитает
+// обычное правило 2/3 (bagExpiryAt); если спор всё же будет — этап 2
+// пересчитает точно и не сократит уже данное этапом 1 (Math.max в
+// adoptPairBags()).
+export function dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs) {
   assertSafeInt('dealDeadlineFromCreation', 'createdAtMs', createdAtMs);
+  assertSafeInt('dealDeadlineFromCreation', 'activatedAtMs', activatedAtMs);
   assertSafeInt('dealDeadlineFromCreation', 'ownDeadlineMs', ownDeadlineMs);
   assertSafeInt('dealDeadlineFromCreation', 'disputeWindowMs', disputeWindowMs);
-  return createdAtMs + ownDeadlineMs + disputeWindowMs + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+  const anchor = Math.max(createdAtMs, activatedAtMs);
+  return anchor + ownDeadlineMs + disputeWindowMs + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
 }
 
 // Этап 2. Срок сделки — до ОКОНЧАТЕЛЬНОГО закрытия дела, не до вердикта:

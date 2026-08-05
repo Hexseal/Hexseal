@@ -294,11 +294,17 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       // r.createdAt приезжает прямо в tuple getActive() — RegistryFacet
       // ставит его в register() (тот же миг, что и "создание сделки"), лишнего
       // чтения агримента ради этого не нужно. deadlineDays_ — собственный
-      // срок сделки, известен сразу, до funded/activated.
+      // срок сделки, известен сразу, до funded/activated. activatedAt_ — С1
+      // (находка координатора): приезжает в ТОМ ЖЕ getDetails(), что уже
+      // читаем строкой выше — ни одного лишнего вызова в цепь. 0, пока
+      // сделка не активирована; Math.max в dealDeadlineFromCreation() ниже
+      // не даёт этому полю укоротить срок, а следующий ночной прогон сам
+      // подхватит настоящее значение, когда оно появится.
       const createdAtMs = Number(r.createdAt) * 1000;
+      const activatedAtMs = Number(details.activatedAt_) * 1000;
       const ownDeadlineMs = Number(details.deadlineDays_) * 24 * 60 * 60 * 1000;
       const disputeWindowMs = Number(disputeWindowSec) * 1000;
-      const dealDeadline = dealDeadlineFromCreation(createdAtMs, ownDeadlineMs, disputeWindowMs);
+      const dealDeadline = dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs);
       const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
       if (adopted) {
         console.log(`[bags] adoption (creation): extended ${adopted} bag(s) for the pair of active agreement ${r.agreement} to ${new Date(dealDeadline).toISOString()} (preliminary)`);
