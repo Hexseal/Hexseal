@@ -173,6 +173,41 @@ describe('requestBagPass', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  // Мелочь (ревью-координатор). На холодном кэше два ОДНОВРЕМЕННЫХ вызова
+  // (например, две компоненты страницы независимо решили "перед действием
+  // убедимся, что пропуск есть") раньше давали ДВА окна кошелька — шапка
+  // модуля обещает, что кэш защищает от повторной подписи, но кэш
+  // заполняется только ПОСЛЕ того, как первый вызов долетит до сети, а
+  // второй к этому моменту уже успел стартовать свой собственный sign().
+  it('мелочь: дедуп в полёте — два одновременных запроса на холодном кэше дают ОДНО окно кошелька', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [a, b] = await Promise.all([requestBagPass(sign, ALICE), requestBagPass(sign, ALICE)]);
+
+    expect(a).toEqual(b);
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('мелочь: дедуп в полёте не смешивает РАЗНЫЕ адреса — каждый получает своё окно', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const BOB = '0xb0b000000000000000000000000000000000b0b0' as const;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: 'v1.alice', expiresAt: nowSec() + 3600 }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: 'v1.bob', expiresAt: nowSec() + 3600 }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [a, b] = await Promise.all([requestBagPass(sign, ALICE), requestBagPass(sign, BOB)]);
+
+    expect(a.pass).toBe('v1.alice');
+    expect(b.pass).toBe('v1.bob');
+    expect(sign).toHaveBeenCalledTimes(2);
+  });
+
   it('отказ сервера бросает ошибку С КОДОМ, не текстом для парсинга', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false, status: 401, json: async () => ({ error: 'Signature does not match claimed address', code: 'address_mismatch' }),

@@ -314,6 +314,14 @@ function isBagPassBody(x: unknown): x is BagPass {
     typeof o.expiresAt === 'number' && Number.isFinite(o.expiresAt);
 }
 
+/** Дедуп в полёте (мелочь ревью) — на холодном кэше два ОДНОВРЕМЕННЫХ
+ *  вызова `requestBagPass` для ОДНОГО адреса раньше давали два независимых
+ *  окна кошелька: кэш заполняется только ПОСЛЕ того, как первый вызов
+ *  долетит до сети, а второй к этому моменту уже успел стартовать свой
+ *  собственный `signMessage()`. Ключ — адрес: второй одновременный вызов
+ *  того же адреса просто ждёт тот же промис, не начиная свой. */
+const _inFlight = new Map<string, Promise<BagPass>>();
+
 export async function requestBagPass(
   signMessage: (msg: string) => Promise<string>,
   address: `0x${string}`,
@@ -324,31 +332,49 @@ export async function requestBagPass(
   const cached = cachedPass(addr, nowSec);
   if (cached) return cached;
 
-  const ts = String(nowSec);
-  // Формат фразы совпадает буквально с bagPassChallenge() на сервере
-  // (relayer/bagPass.js) — менять что-либо здесь без синхронной правки там
-  // означает подписывать фразу, которую сервер не восстановит.
-  const message = `hexseal:chat-bags:${addr}:${ts}`;
-  const sig = await signMessage(message);
+  const pending = _inFlight.get(addr);
+  if (pending) return pending;
 
-  const res = await fetch(`${RELAYER_URL}/bags/pass`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ts': ts, 'x-sig': sig },
-    body: JSON.stringify({ address: addr }),
-  });
-  if (!res.ok) await throwForFailedResponse(res, 'Failed to obtain bag pass');
+  const promise = (async (): Promise<BagPass> => {
+    const ts = String(nowSec);
+    // Формат фразы совпадает буквально с bagPassChallenge() на сервере
+    // (relayer/bagPass.js) — менять что-либо здесь без синхронной правки там
+    // означает подписывать фразу, которую сервер не восстановит.
+    const message = `hexseal:chat-bags:${addr}:${ts}`;
+    const sig = await signMessage(message);
 
-  const body: unknown = await res.json();
-  if (!isBagPassBody(body)) throw new BagTransportError('Malformed response from POST /bags/pass');
+    const res = await fetch(`${RELAYER_URL}/bags/pass`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-ts': ts, 'x-sig': sig },
+      body: JSON.stringify({ address: addr }),
+    });
+    if (!res.ok) await throwForFailedResponse(res, 'Failed to obtain bag pass');
 
-  const fresh: BagPass = { pass: body.pass, expiresAt: body.expiresAt };
-  _passCache.set(addr, fresh);
-  return fresh;
+    const body: unknown = await res.json();
+    if (!isBagPassBody(body)) throw new BagTransportError('Malformed response from POST /bags/pass');
+
+    const fresh: BagPass = { pass: body.pass, expiresAt: body.expiresAt };
+    _passCache.set(addr, fresh);
+    return fresh;
+  })();
+
+  // Снимается и при успехе, и при отказе — застрявшая запись держала бы
+  // ВСЕ следующие вызовы этого адреса на уже провалившемся промисе
+  // навсегда, вместо того чтобы дать им попробовать заново.
+  _inFlight.set(addr, promise);
+  promise.finally(() => {
+    if (_inFlight.get(addr) === promise) _inFlight.delete(addr);
+  }).catch(() => {}); // не создавать необработанное отклонение здесь — оно уже летит из `promise` самого
+
+  return promise;
 }
 
-/** Только для тестов: забыть весь кэш пропусков между кейсами. */
+/** Только для тестов: забыть весь кэш пропусков и записи "в полёте" между
+ *  кейсами — иначе повисший (например, никогда не разрешённый в тесте)
+ *  дедуп-промис одного теста мог бы прилипнуть к следующему. */
 export function _resetBagPassCacheForTest(): void {
   _passCache.clear();
+  _inFlight.clear();
 }
 
 /* ────────────────────────────── putBag ──────────────────────────────── */
