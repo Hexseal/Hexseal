@@ -876,6 +876,43 @@ describe('pollBags', () => {
     expect(slept[3]).toBeLessThanOrEqual(DEFAULT_BAG_POLL_INTERVALS.maxBackoffMs); // растёт, но не бесконечно
   });
 
+  // T1 (ревью-координатор, важная находка). Тест выше останавливается на
+  // четвёртом тике (5, 10, 20, 40 секунд) — потолок физически не может на
+  // эти числа повлиять (все они меньше maxBackoffMs), так что мутация,
+  // снимающая Math.min(..., intervals.maxBackoffMs) на ОБЩЕЙ (не 429-ветке)
+  // формуле, тест выше НЕ ловит: 669/669 остаются зелёными, а на 20-м
+  // отказе подряд сон без потолка был бы 5000×2^19 ≈ 2.6 млрд мс (≈30
+  // суток) — и три настоящих setTimeout с такими delay отрабатывают
+  // почти мгновенно (спецификация клипует значение выше 2^31-1). Тест
+  // доведён до значения, где потолок физически обязан включиться.
+  it('T1: потолок на ОБЩЕЙ (не 429) ветке нарастания реально включается на дальних отказах', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const slept: number[] = [];
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async (ms: number) => {
+      slept.push(ms);
+      if (slept.length === 20) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      getPass: () => 'v1.p', isActive: () => true,
+      onBags: () => {}, onError: () => {},
+      sleep,
+    });
+    await done;
+
+    // 5000×2^6 = 320000 > maxBackoffMs (300000) — потолок обязан включиться
+    // не позже седьмого отказа и держать РОВНО это значение до конца.
+    expect(slept[6]).toBe(DEFAULT_BAG_POLL_INTERVALS.maxBackoffMs);
+    expect(slept[19]).toBe(DEFAULT_BAG_POLL_INTERVALS.maxBackoffMs);
+    // Явно ниже границы, за которой таймер молча клипует delay — та же
+    // защита, что уже заперта для 429-ветки (I3).
+    expect(slept[19]).toBeLessThan(2 ** 31);
+  });
+
   it('I4: сброс нарастания при первом успехе — следующий отказ снова начинает с базового интервала', async () => {
     let call = 0;
     const fetchMock = vi.fn().mockImplementation(async () => {
