@@ -286,6 +286,45 @@ describe('I2 — запас над концом апелляции не уход
   });
 });
 
+// ─── I3 (находка координатора, закрывающий раунд): копии private-констант
+// контракта не должны переопределяться из окружения. Замер координатора:
+// APPEAL_REVIEW_WINDOW_DAYS=1 в env давал disputedAt+6д вместо +9д — на три
+// дня короче нужного — а гейт (проверяющий позитивность, не равенство
+// четырём) оставался зелёным, потому что гейт статически сверяет ИСХОДНИК,
+// а не то, с чем реально запущен процесс.
+describe('I3 — копии private-констант контракта не переопределяются из окружения', () => {
+  it('APPEAL_REVIEW_WINDOW_DAYS в process.env не имеет эффекта — значение всегда 4, как в контракте', async () => {
+    const saved = process.env.APPEAL_REVIEW_WINDOW_DAYS;
+    process.env.APPEAL_REVIEW_WINDOW_DAYS = '1'; // замер координатора: было бы на 3 дня короче
+    vi.resetModules();
+    try {
+      const fresh = await import('../bagStore.js');
+      expect(fresh.APPEAL_REVIEW_WINDOW_DAYS).toBe(4); // не 1 — переменная окружения проигнорирована
+      fresh.assertBagStoreReady(); // и не бросает на "мусорном" (для настраиваемой ручки) значении — она больше не читается вовсе
+    } finally {
+      if (saved === undefined) delete process.env.APPEAL_REVIEW_WINDOW_DAYS; else process.env.APPEAL_REVIEW_WINDOW_DAYS = saved;
+      vi.resetModules();
+      await import('../bagStore.js');
+      await import('../app.js');
+    }
+  });
+
+  it('FINALIZE_DELAY_HOURS в process.env тоже не имеет эффекта (тот же класс константы)', async () => {
+    const saved = process.env.FINALIZE_DELAY_HOURS;
+    process.env.FINALIZE_DELAY_HOURS = '1';
+    vi.resetModules();
+    try {
+      const fresh = await import('../bagStore.js');
+      expect(fresh.FINALIZE_DELAY_HOURS).toBe(24);
+    } finally {
+      if (saved === undefined) delete process.env.FINALIZE_DELAY_HOURS; else process.env.FINALIZE_DELAY_HOURS = saved;
+      vi.resetModules();
+      await import('../bagStore.js');
+      await import('../app.js');
+    }
+  });
+});
+
 // ─── Q4 — мусор на входе: вердикт (бросок), а не тихий проглот ────────────
 
 describe('adoptPairBags — мусор на входе', () => {

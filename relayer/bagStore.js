@@ -141,7 +141,23 @@ export let BAG_ADOPTION_LOOKBACK_MS;
 // (тот же класс гейта, что check-storage-layout.sh/check-gasless-sender.sh).
 // В ДНЯХ, не в мс — гейт грепает именно это имя и именно целое число дней,
 // той же формой, что и `4 days` в самом контракте.
-export let APPEAL_REVIEW_WINDOW_DAYS;
+//
+// I3 (находка координатора, закрывающий раунд): ПЛОСКАЯ константа, не
+// `export let` + env-переопределение, как остальные ручки этого файла —
+// намеренное ИСКЛЮЧЕНИЕ из общего правила задачи "сроки/лимиты через
+// окружение". Смысл этого конкретного значения — быть РАВНЫМ оригиналу в
+// контракте байт-в-байт, а не "разумным умолчанием, которое можно подвинуть
+// под нагрузку/окружение". env-переопределение такой ручки — не гибкость, а
+// тихий способ рассинхронизировать копию с контрактом МИМО гейта:
+// script/check-appeal-window.sh статически сверяет ИСХОДНИК (то, что видит
+// CI), а не то, с чем реально запущен процесс на конкретном деплое —
+// переменная окружения там невидима вообще. Замер координатора: поставить
+// APPEAL_REVIEW_WINDOW_DAYS=1 в окружении давало срок на три дня короче
+// нужного, а assertBagStoreReady() (проверяла только позитивность, не
+// равенство четырём) оставалась зелёной. Обычный `const` эту дыру убирает
+// физически — настроить её через окружение стало невозможно, а не просто
+// "не рекомендуется".
+export const APPEAL_REVIEW_WINDOW_DAYS = 4;
 // I2 (находка координатора, закрывающий раунд): FINALIZE_DELAY_HOURS —
 // копия ещё одной private-константы того же контракта
 // (ArbiterRegistryFacet.sol:140, "FINALIZE_DELAY", 24 часа) — окно, в
@@ -193,7 +209,9 @@ function _refreshConfig() {
   CLOCK_SKEW_ALLOWANCE_MS = Number(process.env.CLOCK_SKEW_ALLOWANCE_MS || 5 * 60 * 1000);
 
   BAG_ADOPTION_LOOKBACK_MS = Number(process.env.BAG_ADOPTION_LOOKBACK_MS || 30 * 24 * 60 * 60 * 1000);
-  APPEAL_REVIEW_WINDOW_DAYS = Number(process.env.APPEAL_REVIEW_WINDOW_DAYS || 4);
+  // APPEAL_REVIEW_WINDOW_DAYS/FINALIZE_DELAY_HOURS НЕ здесь — они плоские
+  // `const`, объявленные при первом чтении файла (И3, находка координатора):
+  // копии private-констант контракта не читают process.env вообще.
   BAG_DEAL_GRACE_MS = Number(process.env.BAG_DEAL_GRACE_MS || 24 * 60 * 60 * 1000);
 }
 _refreshConfig(); // начальные значения при импорте — то же, что раньше делали `const`-инициализаторы
@@ -256,13 +274,14 @@ export function assertBagStoreReady() {
   assertPositiveFiniteNumber('BAG_MAX_AGE_MS', BAG_MAX_AGE_MS);
   assertPositiveFiniteNumber('MAX_BAG_SIZE', MAX_BAG_SIZE);
   assertNonNegativeFiniteNumber('CLOCK_SKEW_ALLOWANCE_MS', CLOCK_SKEW_ALLOWANCE_MS);
-  // Задача 5: лукбэк и окно апелляции — как и остальные TTL/потолки выше,
-  // 0 фактически выключил бы правило целиком (лукбэк=0 — усыновление никогда
-  // ничего не находит; окно апелляции=0 — разошлось бы с контрактом, где оно
-  // всегда 4 дня, и сам гейт стал бы бессмысленным). Буфер (GRACE), наоборот,
-  // 0 — легитимная настройка ("без буфера"), не "выключено".
+  // Задача 5: лукбэк — как и остальные TTL/потолки выше, 0 фактически
+  // выключил бы правило целиком (усыновление никогда ничего не находит).
+  // Буфер (GRACE), наоборот, 0 — легитимная настройка ("без буфера"), не
+  // "выключено". APPEAL_REVIEW_WINDOW_DAYS/FINALIZE_DELAY_HOURS здесь не
+  // валидируются — они плоские `const` (И3), process.env не читают вообще,
+  // значения не от пользователя, а от исходника, который проверяет гейт
+  // script/check-appeal-window.sh на этапе CI, не рантайм.
   assertPositiveFiniteNumber('BAG_ADOPTION_LOOKBACK_MS', BAG_ADOPTION_LOOKBACK_MS);
-  assertPositiveFiniteNumber('APPEAL_REVIEW_WINDOW_DAYS', APPEAL_REVIEW_WINDOW_DAYS);
   assertNonNegativeFiniteNumber('BAG_DEAL_GRACE_MS', BAG_DEAL_GRACE_MS);
   fs.mkdirSync(DIR_BAGS, { recursive: true });
 }
