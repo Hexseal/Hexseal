@@ -1603,12 +1603,21 @@ describe('мелочи эффективности — лишняя работа 
  */
 async function simulateDailyProtection({
   client, executor, agreement, T0, ownDeadlineDays, paymentDelayDays,
-  uploadedAt, firstFetchedAt, disputeAfterDays,
+  uploadedAt, firstFetchedAt, disputeAfterDays, funded = false,
 }) {
   const disputeWindowSec = 4 * 24 * 60 * 60;
   const deadlineGraceSec = 24 * 60 * 60;       // Agreement.DEADLINE_GRACE — 1 день
   const autoApproveWindowSec = 2 * 24 * 60 * 60; // Agreement.AUTO_APPROVE_WINDOW — 2 дня
   const createdAtSec = Math.floor(T0 / 1000);
+  // Решение владельца: funded управляет ТОЛЬКО fundedAt_ (деньги в эскроу,
+  // с T0 — оплата пришла сразу при регистрации, реалистичный частый случай)
+  // — НЕЗАВИСИМО от paymentDelayDays, который по-прежнему двигает ТОЛЬКО
+  // activatedAt_ (исполнитель подтверждает старт отдельным вызовом, может
+  // задержаться). Это как раз и воспроизводит реальный разрыв
+  // FUNDED-но-не-ACTIVE, который нашёлся при чтении Agreement.sol:
+  // деньги уже заперты (funded=true с первого дня), а якорь предварительного
+  // срока всё ещё растёт вместе с nowMs, пока activatedAt_ не наступит.
+  const fundedAtSec = funded ? createdAtSec : 0;
 
   // Мок агримента ставится ОДИН раз для "неактивированного" состояния и
   // переиспользуется на каждом "скучном" дне — DEADLINE_GRACE/AUTO_APPROVE_WINDOW
@@ -1617,7 +1626,7 @@ async function simulateDailyProtection({
   // (проверено вживую при первой версии этого хелпера — без этих двух моков
   // и unread-, и read-сценарии откатывались к голым базовым правилам
   // bagExpiryAt, маскируя вообще всякий эффект фикса I-B).
-  const notActivatedGetDetails = async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: 0n, disputedAt_: 0n });
+  const notActivatedGetDetails = async () => ({ deadlineDays_: BigInt(ownDeadlineDays), fundedAt_: BigInt(fundedAtSec), activatedAt_: 0n, disputedAt_: 0n });
   const agreementMocks = () => ({
     getDetails: notActivatedGetDetails,
     DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
@@ -1660,7 +1669,7 @@ async function simulateDailyProtection({
   if (paymentDelayDays > 0) {
     vi.setSystemTime(activatedAtMs);
     mockContract(agreement, {
-      getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: BigInt(activatedAtSec), disputedAt_: 0n }),
+      getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), fundedAt_: BigInt(fundedAtSec), activatedAt_: BigInt(activatedAtSec), disputedAt_: 0n }),
       DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
       DEADLINE_GRACE: async () => BigInt(deadlineGraceSec),
       AUTO_APPROVE_WINDOW: async () => BigInt(autoApproveWindowSec),
@@ -1684,7 +1693,7 @@ async function simulateDailyProtection({
     getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: BigInt(createdAtSec), resolvedAt: BigInt(disputedAtSec) }],
   });
   mockContract(agreement, {
-    getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), activatedAt_: BigInt(activatedAtSec), disputedAt_: BigInt(disputedAtSec) }),
+    getDetails: async () => ({ deadlineDays_: BigInt(ownDeadlineDays), fundedAt_: BigInt(fundedAtSec), activatedAt_: BigInt(activatedAtSec), disputedAt_: BigInt(disputedAtSec) }),
     DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
   });
   await runFileCleanup();
@@ -1703,7 +1712,24 @@ async function simulateDailyProtection({
   // прогонов, которые могли бы его снова подвинуть), так что сравнить
   // ИТОГОВЫЙ bagExpiryAt с истинным концом апелляции достаточно один раз,
   // без досимуляции дней до самого конца.
-  const expectedEndOfAppealMs = bagStore.dealDeadlineFromDispute(disputedAtMs, disputeWindowSec * 1000);
+  //
+  // Мелочь (найдено при перемере под "решением владельца"): считать
+  // expectedEndOfAppealMs от disputedAtMs (полная миллисекундная точность
+  // JS-числа) — не то же самое, что реально прошло через систему.
+  // Настоящий Agreement.getDetails().disputedAt_ — block.timestamp, ЦЕЛЫЕ
+  // СЕКУНДЫ; adoptDisputedPairBags() (app.js) восстанавливает disputedAtMs
+  // как Number(details.disputedAt_) * 1000 — то есть ОБРЕЗАННЫЙ до секунды.
+  // T0 в этих тестах намеренно содержит миллисекундный джиттер
+  // (T0 = Date.UTC(...) + paymentDelayDays — ради уникальности каждой
+  // it.each-итерации), и этот джиттер протекает в disputedAtMs. Сравнение
+  // "в лоб" с необрезанным disputedAtMs искусственно давало на
+  // paymentDelayDays миллисекунд БОЛЬШЕ, чем система реально способна
+  // посчитать (у настоящей цепи miллисекунд не существует вообще) —
+  // ложная, тестовая "дыра" на пару миллисекунд, а не настоящая. Обрезаем
+  // здесь тем же способом, каким это делает app.js, чтобы сравнивать
+  // сравнимое.
+  const disputedAtMsFromChain = disputedAtSec * 1000;
+  const expectedEndOfAppealMs = bagStore.dealDeadlineFromDispute(disputedAtMsFromChain, disputeWindowSec * 1000);
   const actualExpiry = bagExpiryAt(bagMetaOf(key));
   if (actualExpiry < expectedEndOfAppealMs) {
     return {
@@ -1796,6 +1822,33 @@ describe('И-1, таблица 1 — ДЫРА (координатор): мешо
   );
 });
 
+// Решение владельца: ПЕРЕМЕР таблицы 1 целиком под ОПЛАЧЕННОЙ сделкой —
+// объединяет ОБА списка выше (зелёные строки координатора + ДЫРА-строки
+// И-1) в один it.each. Требование владельца дословно: "обе таблицы,
+// которые ты только что перемерил, по оплаченным сделкам обязаны стать
+// зелёными во всех строках, включая те, что сейчас красные из-за
+// потолка" — это и есть доказательство, что дыра закрыта, не рассуждение.
+describe('Решение владельца — таблица 1, ОПЛАЧЕНО: потолок BAG_MAX_AGE_MS не режет ни одну строку, включая бывшие ДЫРА', () => {
+  it.each([0, 2, 5, 7, 8, 10, 20, 25, 28, 29, 30, 31, 40, 60, 69, 70, 71, 75])(
+    'задержка оплаты %d дней, ОПЛАЧЕНА — мешок доживает до конца апелляции (потолок не участвует)',
+    async (paymentDelayDays) => {
+      const T0 = Date.UTC(2030, 0, 1) + paymentDelayDays;
+      try {
+        const r = await simulateDailyProtection({
+          client: ethAddr(paymentDelayDays, 'a'),
+          executor: ethAddr(paymentDelayDays, 'b'),
+          agreement: ethAddr(paymentDelayDays, 'c'),
+          T0, ownDeadlineDays: 10, paymentDelayDays,
+          uploadedAt: T0, firstFetchedAt: null, disputeAfterDays: 1, funded: true,
+        });
+        expect(r).toEqual({ survived: true, diedOnDay: null });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
 // Таблица 2 координатора: ПРОЧИТАННЫЙ мешок (контрагент открыл бриф — база
 // bagExpiryAt в этом случае короче, 7д от прочтения вместо 30д от загрузки,
 // см. правило 2 в bagStore.js) + КОРОТКАЯ сделка — граница раньше, чем в
@@ -1861,14 +1914,43 @@ describe('И-1, таблица 2 — ДЫРА (координатор): мешо
   );
 });
 
+// Решение владельца: ПЕРЕМЕР таблицы 2 целиком под ОПЛАЧЕННОЙ сделкой —
+// та же логика, что у таблицы 1 выше.
+describe('Решение владельца — таблица 2, ОПЛАЧЕНО: потолок BAG_MAX_AGE_MS не режет ни одну строку, включая бывшие ДЫРА', () => {
+  it.each([
+    [3, 14],  [3, 20],  [3, 77],
+    [7, 18],  [7, 25],  [7, 73],
+    [14, 25], [14, 32], [14, 66],
+    [30, 30], [30, 40], [30, 50], [30, 55],
+  ])(
+    'срок работы %d дней, задержка оплаты %d дней, ОПЛАЧЕНА — мешок доживает до конца апелляции (потолок не участвует)',
+    async (ownDeadlineDays, paymentDelayDays) => {
+      const T0 = Date.UTC(2030, 3, 1) + ownDeadlineDays * 100 + paymentDelayDays;
+      try {
+        const r = await simulateDailyProtection({
+          client: ethAddr(ownDeadlineDays * 1000 + paymentDelayDays, 'd'),
+          executor: ethAddr(ownDeadlineDays * 1000 + paymentDelayDays, 'e'),
+          agreement: ethAddr(ownDeadlineDays * 1000 + paymentDelayDays, 'f'),
+          T0, ownDeadlineDays, paymentDelayDays,
+          uploadedAt: T0, firstFetchedAt: T0, disputeAfterDays: 1, funded: true,
+        });
+        expect(r).toEqual({ survived: true, diedOnDay: null });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
 // Потолок BAG_MAX_AGE_MS — отдельный, уже существующий анти-абьюз механизм
 // (Q5 отчёта по этапу 2/3) — I-B на него НЕ ПОСЯГАЕТ: если задержка + срок
 // работы физически не укладываются в 90 дней от загрузки, потолок всё
-// равно побеждает. Контроль, что фикс I-B не сломал эту, отдельную границу
-// (тот же сценарий, что дал day90 в первой версии этого раунда — задержка
-// 60д + срок работы 30д + сутки запаса = 91д, за пределами потолка).
+// равно побеждает — НО ТОЛЬКО пока сделка НЕ оплачена (решение владельца).
+// Контроль, что фикс I-B не сломал эту, отдельную границу (тот же сценарий,
+// что дал day90 в первой версии этого раунда — задержка 60д + срок работы
+// 30д + сутки запаса = 91д, за пределами потолка).
 describe('I-B не отменяет потолок BAG_MAX_AGE_MS — контроль', () => {
-  it('задержка + срок работы физически превышают 90 дней от загрузки — потолок всё равно побеждает, мешок не переживает его', async () => {
+  it('НЕОПЛАЧЕНА: задержка + срок работы физически превышают 90 дней от загрузки — потолок всё равно побеждает, мешок не переживает его', async () => {
     const T0 = Date.UTC(2029, 6, 1);
     try {
       const r = await simulateDailyProtection({
@@ -1879,6 +1961,45 @@ describe('I-B не отменяет потолок BAG_MAX_AGE_MS — контр
       // потолок останавливает рост срока раньше, чем наступает спор.
       expect(r.survived).toBe(false);
       expect(r.diedOnDay).toBe(90);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Требование владельца, дословно: "неоплаченная сделка на 365 дней
+  // по-прежнему упирается в 90 — потолок не должен исчезнуть вместе с
+  // решением". Контракт и фронт разрешают срок работы до 365 дней
+  // (JobBoardFacet.sol:213/ServiceBoardFacet.sol:218/
+  // frontend/src/config/constants.ts:30) — тот же пример, что дал
+  // координатор в C-1, теперь явно проверенный именно как "мусор с цепи
+  // vs решение про потолок" — это ДВЕ разные вещи, и правка одной не
+  // должна тихо задеть другую.
+  it('НЕОПЛАЧЕНА, срок работы 365 дней (легальный контрактный максимум) — потолок всё равно побеждает', async () => {
+    const T0 = Date.UTC(2029, 8, 1);
+    try {
+      const r = await simulateDailyProtection({
+        client: ethAddr(888, '1'), executor: ethAddr(888, '2'), agreement: ethAddr(888, '3'),
+        T0, ownDeadlineDays: 365, paymentDelayDays: 0, uploadedAt: T0, firstFetchedAt: null, disputeAfterDays: 1,
+      });
+      expect(r.survived).toBe(false);
+      expect(r.diedOnDay).toBe(90); // тот же потолок, тот же день — решение про оплату его не тронуло
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Зеркальный тест той же самой геометрии (60д задержка + 30д срок
+  // работы = 91д, ровно то, что убивает мешок выше), но ОПЛАЧЕНО — и
+  // теперь доживает: доказывает, что ИМЕННО оплата, а не что-то ещё,
+  // снимает потолок именно в этой граничной точке.
+  it('ОПЛАЧЕНА: та же геометрия (91д > 90д), что убивала мешок выше — теперь доживает', async () => {
+    const T0 = Date.UTC(2029, 6, 1) + 1000;
+    try {
+      const r = await simulateDailyProtection({
+        client: ethAddr(778, '7'), executor: ethAddr(778, '8'), agreement: ethAddr(778, '9'),
+        T0, ownDeadlineDays: 30, paymentDelayDays: 60, uploadedAt: T0, firstFetchedAt: null, disputeAfterDays: 1, funded: true,
+      });
+      expect(r).toEqual({ survived: true, diedOnDay: null });
     } finally {
       vi.useRealTimers();
     }
