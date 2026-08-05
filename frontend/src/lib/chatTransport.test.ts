@@ -9,6 +9,17 @@ import {
 
 const ALICE = '0xa1ce00000000000000000000000000000000cafe' as const;
 
+// I2 (ревью-координатор). wagmi's useAccount().address отдаёт адрес С
+// КОНТРОЛЬНОЙ СУММОЙ (заглавные буквы по EIP-55), не нижним регистром — а
+// сервер строит фразу для подписи и хранит recipient ИСКЛЮЧИТЕЛЬНО в нижнем
+// регистре (ETH_ADDR_RE = /^0x[0-9a-f]{40}$/ в relayer/bagPass.js и app.js
+// отвергает заглавные буквы вовсе). Фикстура `ALICE` сама уже в нижнем
+// регистре — тест на `.toLowerCase()`, взятый прямо на ней, ничего не
+// проверяет: `ALICE.toLowerCase() === ALICE`, мутация "убрать приведение"
+// не меняет исход. Этот адрес — тот же самый ALICE, но с регистром, какой
+// реально придёт из кошелька.
+const ALICE_CHECKSUM = '0xA1cE00000000000000000000000000000000CAfE' as const;
+
 const nowSec = () => Math.floor(Date.now() / 1000);
 
 /** Токен в РЕАЛЬНОЙ форме сервера (`v1.<base64url(addr.expiresAt)>.<mac>`,
@@ -84,6 +95,42 @@ describe('requestBagPass', () => {
     expect(sign).toHaveBeenCalledTimes(2);
   });
 
+  // I2 (ревью-координатор). На адресе С КОНТРОЛЬНОЙ СУММОЙ (как реально
+  // приходит из wagmi) — иначе тест не отличает "приводим регистр" от
+  // "просто передаём как есть", раз фикстура уже нижнего регистра.
+  it('I2: адрес с контрольной суммой (как из wagmi) — подпись и тело POST в НИЖНЕМ регистре', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestBagPass(sign, ALICE_CHECKSUM);
+
+    const signedMessage = sign.mock.calls[0][0] as string;
+    expect(signedMessage).toBe(`hexseal:chat-bags:${ALICE}:${signedMessage.split(':').pop()}`);
+    expect(signedMessage).not.toContain('CAfE');
+    expect(signedMessage).not.toContain('A1cE');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(String(init.body)) as { address: string };
+    expect(sentBody.address).toBe(ALICE); // не ALICE_CHECKSUM — сервер отверг бы заглавные ETH_ADDR_RE
+  });
+
+  it('I2: кэш по адресу нормализован — контрольная сумма и нижний регистр бьют в ОДНУ запись', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = await requestBagPass(sign, ALICE);
+    const second = await requestBagPass(sign, ALICE_CHECKSUM); // тот же адрес, другой регистр
+
+    expect(second).toEqual(first);
+    expect(sign).toHaveBeenCalledTimes(1); // не 2 — иначе кэш не признал их одним адресом
+  });
+
   it('разные адреса кэшируются раздельно', async () => {
     const sign = vi.fn().mockResolvedValue('0xsig');
     const BOB = '0xb0b000000000000000000000000000000000b0b0' as const;
@@ -152,6 +199,21 @@ describe('putBag', () => {
     expect((init.headers as Record<string, string>)['content-type']).not.toBe('application/json');
     expect((init.headers as Record<string, string>)['x-bag-pass']).toBe('v1.p');
     expect(init.body).toBeInstanceOf(Uint8Array);
+  });
+
+  // I2 (ревью-координатор): getula получателя из wagmi приходит с контрольной
+  // суммой — сервер строит путь ТОЛЬКО из нижнего регистра
+  // (`req.params.recipient.toLowerCase()` в relayer/app.js), значит если
+  // клиент не приведёт сам, URL совпадёт с сервером только случайно (когда
+  // в адресе нет ни одной буквы a-f, что для реального адреса — редкость).
+  it('I2: recipient с контрольной суммой (как из wagmi) — URL в НИЖНЕМ регистре', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: 'k' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await putBag('v1.p', ALICE_CHECKSUM, new Uint8Array([1]));
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(String(url)).toBe(`http://localhost:3001/bags/${ALICE}`);
+    expect(String(url)).not.toContain('CAfE');
   });
 
   it('возвращает key из ответа сервера', async () => {
