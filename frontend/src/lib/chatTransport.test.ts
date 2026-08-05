@@ -586,7 +586,7 @@ describe('forgetBagPass', () => {
     expect(sign).toHaveBeenCalledTimes(2);
   });
 
-  it('listBags/putBag/fetchBag сами зовут forgetBagPass на 401 — следующий requestBagPass того же адреса не отдаёт кэш', async () => {
+  it('putBag сама зовёт forgetBagPass на 401 — следующий requestBagPass того же адреса не отдаёт кэш', async () => {
     const sign = vi.fn().mockResolvedValue('0xsig');
     const passA = fakePass(ALICE, 'a');
     const passB = fakePass(ALICE, 'b');
@@ -600,6 +600,36 @@ describe('forgetBagPass', () => {
       ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }),
     }));
     await expect(putBag(passA, ALICE, new Uint8Array([1]))).rejects.toBeInstanceOf(BagPassError);
+
+    const fetchMock2 = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: passB, expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock2);
+    const after = await requestBagPass(sign, ALICE);
+    expect(after.pass).toBe(passB); // не passA из кэша
+    expect(sign).toHaveBeenCalledTimes(2);
+  });
+
+  // T3 (ревью-координатор, важная находка). Отчёт задачи заявлял покрытие
+  // всех трёх маршрутов (listBags/putBag/fetchBag), но заперты были только
+  // два: listBags — тестом C1 выше ("C1: 401 при формально живом..."),
+  // putBag — тестом непосредственно над этим. Собственного участия
+  // fetchBag в выбросе кэша не было заперто НИЧЕМ — проверено вживую до
+  // фикса: убрать pass из её вызова throwForFailedResponse и весь набор
+  // остаётся зелёным.
+  it('fetchBag сама зовёт forgetBagPass на 401 — следующий requestBagPass того же адреса не отдаёт кэш', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const passA = fakePass(ALICE, 'a');
+    const passB = fakePass(ALICE, 'b');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: passA, expiresAt: nowSec() + 3600 }),
+    }));
+    await requestBagPass(sign, ALICE); // засеваем кэш живым по местным часам пропуском
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }),
+    }));
+    await expect(fetchBag(passA, 'a/1.bin')).rejects.toBeInstanceOf(BagPassError);
 
     const fetchMock2 = vi.fn().mockResolvedValue({
       ok: true, json: async () => ({ pass: passB, expiresAt: nowSec() + 3600 }),
