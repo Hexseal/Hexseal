@@ -549,7 +549,7 @@ describe('forgetBagPass', () => {
 
 describe('pollBags', () => {
   it('переключает интервал по активности: 5с активно, 30с в фоне (умолчания)', async () => {
-    expect(DEFAULT_BAG_POLL_INTERVALS).toEqual({ activeMs: 5_000, backgroundMs: 30_000 });
+    expect(DEFAULT_BAG_POLL_INTERVALS).toEqual({ activeMs: 5_000, backgroundMs: 30_000, maxBackoffMs: 300_000 });
 
     let activeFlag = true;
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
@@ -619,6 +619,55 @@ describe('pollBags', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(BagRateLimitError);
+  });
+
+  // I3 (ревью-координатор, важная находка). Пол: Retry-After: 0.001 давал бы
+  // 1мс — предыдущий тест на 429 брал retryAfterSec=90 (БОЛЬШЕ базового
+  // интервала), так что Math.max(base, retryAfterSec*1000) выбирал бы
+  // retryAfterSec*1000 ЛЮБЫМ способом (в том числе через Math.min по ошибке)
+  // — этот тест намеренно берёт МЕНЬШЕЕ число, чтобы отличить "пол
+  // держит базовый интервал" от "просто взяли то, что пришло".
+  it('I3: пол — крошечный Retry-After не отступает МЕНЬШЕ базового интервала', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 429, json: async () => ({ code: 'rate_limited_read' }),
+      headers: { get: (h: string) => h.toLowerCase() === 'retry-after' ? '0.001' : null },
+    }));
+    const slept: number[] = [];
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async (ms: number) => { slept.push(ms); handle.stop(); resolveDone(); };
+
+    handle = pollBags({ getPass: () => 'v1.p', isActive: () => true, onBags: () => {}, sleep });
+    await done;
+
+    expect(slept[0]).toBe(DEFAULT_BAG_POLL_INTERVALS.activeMs); // не 1мс
+  });
+
+  // Замер координатора вживую на настоящем таймере: Retry-After: 3000000
+  // (3 млн секунд) давало delay в 3 МИЛЛИАРДА миллисекунд — выше предела,
+  // который HTML/Node-таймер молча зажимает до ~1мс (32-битное знаковое
+  // число, ~24.8 дня) — "отступление" переворачивалось в тесный цикл: три
+  // отказа меньше чем за полсекунды, с предупреждением среды выполнения.
+  it('I3: потолок — гигантский Retry-After не улетает за предел, который таймер зажимает до ~1мс', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 429, json: async () => ({ code: 'rate_limited_read' }),
+      headers: { get: (h: string) => h.toLowerCase() === 'retry-after' ? '3000000' : null },
+    }));
+    const slept: number[] = [];
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async (ms: number) => { slept.push(ms); handle.stop(); resolveDone(); };
+
+    handle = pollBags({ getPass: () => 'v1.p', isActive: () => true, onBags: () => {}, sleep });
+    await done;
+
+    expect(slept[0]).toBe(DEFAULT_BAG_POLL_INTERVALS.maxBackoffMs);
+    // Явно ниже предела 2**31-1, за которым setTimeout спецификацией
+    // молча укорачивает delay до ~1мс — не только "меньше 3 миллиардов",
+    // а безопасно меньше именно ЭТОЙ границы.
+    expect(slept[0]).toBeLessThan(2 ** 31);
   });
 
   it('ошибка listBags не роняет опрос — onError зовётся, следующий тик всё равно планируется', async () => {
