@@ -30,6 +30,7 @@ const ALICE = '0xa1ce00000000000000000000000000000000cafe';
 const BOB   = '0xb0b1000000000000000000000000000000005eed';
 const CAROL = '0xca401000000000000000000000000000000005ee';
 const DAY   = 24 * 60 * 60 * 1000;
+const HOUR  = 60 * 60 * 1000;
 
 // Детерминированный, но РАЗЛИЧНЫЙ на каждый (seed, tag) валидный адрес —
 // нужен для it.each по нескольким сделкам подряд: одноимённые адреса на
@@ -142,7 +143,7 @@ describe('adoptPairBags — усыновление переписки сделк
     // Точная формула — заперта равенством, а не только "больше": мутация,
     // убирающая слагаемое APPEAL_REVIEW_WINDOW_DAYS*DAY_MS целиком, красит
     // это же равенство (совпало бы с verdictOnlyDeadline + GRACE, не с dd).
-    expect(dd).toBe(verdictOnlyDeadline + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+    expect(dd).toBe(verdictOnlyDeadline + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
     expect(dd).toBeGreaterThan(verdictOnlyDeadline);
 
     // End-to-end: мешок, прочитанный сразу (короткий базовый срок — 7д от
@@ -197,7 +198,7 @@ describe('dealDeadlineFromCreation — этап 1: предварительны�
     // только якорь другой (createdAtMs вместо disputedAtMs). Мутация,
     // убирающая любое слагаемое, красит это равенство.
     expect(dd).toBe(createdAtMs + ownDeadlineMs + disputeWindowMs
-      + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
   });
 
   // C1 (находка координатора, закрывающий раунд): якорь — max(createdAtMs,
@@ -216,14 +217,14 @@ describe('dealDeadlineFromCreation — этап 1: предварительны�
 
     expect(ddActivatedLate).toBe(ddNotActivated + paymentDelayMs); // сдвиг равен ровно задержке
     expect(ddActivatedLate).toBe(activatedAtMs + ownDeadlineMs + disputeWindowMs
-      + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
   });
 
   it('активирована РАНЬШЕ создания — невозможно по контракту, но если бы: якорь не откатывается назад (Math.max, не последнее значение)', () => {
     const createdAtMs = 1_700_000_000_000;
     const dd = dealDeadlineFromCreation(createdAtMs, createdAtMs - DAY, 30 * DAY, 4 * DAY);
     expect(dd).toBe(createdAtMs + 30 * DAY + 4 * DAY
-      + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
   });
 
   it('нечисло на входе — бросает (тот же принцип, что у dealDeadlineFromDispute)', () => {
@@ -231,6 +232,57 @@ describe('dealDeadlineFromCreation — этап 1: предварительны�
     expect(() => dealDeadlineFromCreation(1000, NaN, DAY, DAY)).toThrow();
     expect(() => dealDeadlineFromCreation(1000, 0, NaN, DAY)).toThrow();
     expect(() => dealDeadlineFromCreation(1000, 0, DAY, Infinity)).toThrow();
+  });
+});
+
+// ─── I2 (находка координатора, закрывающий раунд): запас над концом
+// апелляции. Реальная цепочка: submitVerdict ≤ disputedAt+DISPUTE_WINDOW,
+// raiseAppeal только до submittedAt+FINALIZE_DELAY (24ч), appealDeadline —
+// от МОМЕНТА АПЕЛЛЯЦИИ, не от submittedAt. Худший случай реальной цепочки —
+// disputedAt + DISPUTE_WINDOW + FINALIZE_DELAY + APPEAL_REVIEW_WINDOW —
+// формула обязана его достигать (запас ≥ 0) при ЛЮБОЙ легальной настройке
+// BAG_DEAL_GRACE_MS, включая 0.
+describe('I2 — запас над концом апелляции не уходит в минус даже при BAG_DEAL_GRACE_MS=0', () => {
+  it('BAG_DEAL_GRACE_MS=0 (легальная настройка) — срок всё равно достигает истинного конца апелляции, не отстаёт на день', async () => {
+    const saved = process.env.BAG_DEAL_GRACE_MS;
+    process.env.BAG_DEAL_GRACE_MS = '0';
+    vi.resetModules();
+    try {
+      const fresh = await import('../bagStore.js');
+      const disputedAtMs = 1_700_000_000_000;
+      const disputeWindowMs = 4 * DAY;
+
+      const dd = fresh.dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
+
+      // Истинный худший случай реальной цепочки контракта — ровно то, что
+      // координатор выписал руками (submitVerdict в последний момент
+      // DISPUTE_WINDOW, raiseAppeal в последний момент FINALIZE_DELAY,
+      // APPEAL_REVIEW_WINDOW от момента апелляции).
+      const trueEndOfAppeal = disputedAtMs + disputeWindowMs
+        + fresh.FINALIZE_DELAY_HOURS * HOUR + fresh.APPEAL_REVIEW_WINDOW_DAYS * DAY;
+
+      // До фикса (без FINALIZE_DELAY_MS в формуле): dd = disputedAt+4д+4д+0 =
+      // +8д, trueEndOfAppeal = disputedAt+4д+1д+4д = +9д — dd МЕНЬШЕ на день
+      // ("минус один день", буквально находка координатора). После фикса —
+      // dd === trueEndOfAppeal, запас ровно 0 (легально, не отрицательно).
+      expect(dd).toBeGreaterThanOrEqual(trueEndOfAppeal);
+      expect(dd).toBe(trueEndOfAppeal); // запас ровно 0 при GRACE=0, не больше и не меньше
+    } finally {
+      if (saved === undefined) delete process.env.BAG_DEAL_GRACE_MS; else process.env.BAG_DEAL_GRACE_MS = saved;
+      vi.resetModules();
+      await import('../bagStore.js');
+      await import('../app.js');
+    }
+  });
+
+  it('на боевом умолчании (BAG_DEAL_GRACE_MS=1д) запас теперь реально положительный, не съеден отсутствующим FINALIZE_DELAY', () => {
+    const disputedAtMs = 1_700_000_000_000;
+    const disputeWindowMs = 4 * DAY;
+    const dd = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
+    const trueEndOfAppeal = disputedAtMs + disputeWindowMs
+      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY;
+    expect(dd - trueEndOfAppeal).toBe(bagStore.BAG_DEAL_GRACE_MS); // запас = ровно GRACE, не 0
+    expect(dd - trueEndOfAppeal).toBeGreaterThan(0); // и он положительный на умолчании
   });
 });
 
@@ -448,7 +500,7 @@ describe('runFileCleanup — усыновление спорной пары', ()
 
     const expectedDeadline =
       disputedAtSec * 1000 + disputeWindowSec * 1000
-      + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
     expect(bagMetaOf(key).dealDeadline).toBe(expectedDeadline);
   });
 
@@ -610,7 +662,7 @@ describe('усыновление в два этапа — при создани�
       // Замер 2 (для отчёта): срок теперь считается точно от спора — до
       // конца окна апелляции.
       const endOfAppealWindow = disputedAtMs + disputeWindowSec * 1000
-        + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+        + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
       expect(bagMetaOf(key).dealDeadline).toBe(endOfAppealWindow);
       expect(bagExpiryAt(bagMetaOf(key))).toBeGreaterThanOrEqual(endOfAppealWindow);
     } finally {
@@ -641,7 +693,7 @@ describe('усыновление в два этапа — при создани�
     await runFileCleanup();
 
     const expectedDeadline = createdAtSec * 1000 + ownDeadlineDays * DAY + disputeWindowSec * 1000
-      + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+      + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
     expect(bagMetaOf(key).dealDeadline).toBe(expectedDeadline);
   });
 
@@ -673,7 +725,7 @@ describe('усыновление в два этапа — при создани�
 
       const stage1Deadline = bagMetaOf(key).dealDeadline;
       expect(stage1Deadline).toBe(createdAtSec * 1000 + ownDeadlineDays * DAY + disputeWindowSec * 1000
-        + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
+        + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS);
 
       // Спор — уже на 5-й день, СИЛЬНО раньше 60-дневной предварительной
       // оценки. Точный срок этапа 2 (5+4+4+1 = 14 дней от T0) короче того,
@@ -681,7 +733,7 @@ describe('усыновление в два этапа — при создани�
       const disputedAtMs = T0 + 5 * DAY;
       const disputedAtSec = Math.floor(disputedAtMs / 1000);
       const stage2Deadline = disputedAtMs + disputeWindowSec * 1000
-        + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
+        + bagStore.FINALIZE_DELAY_HOURS * HOUR + bagStore.APPEAL_REVIEW_WINDOW_DAYS * DAY + bagStore.BAG_DEAL_GRACE_MS;
       expect(stage2Deadline).toBeLessThan(stage1Deadline); // контроль: этап 2 в этом сценарии и правда короче
 
       vi.setSystemTime(disputedAtMs);

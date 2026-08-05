@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# APPEAL_REVIEW_WINDOW объявлен private в ArbiterRegistryFacet, из цепи его не
-# прочитать, поэтому релеер держит копию. Копия обязана совпадать с оригиналом:
-# если окно апелляции удлинят, а релеер об этом не узнает, он сотрёт
-# доказательства до того, как апелляция закончится — и оспорить вердикт станет
-# нечем. Тот же класс гейта, что check-storage-layout.sh и check-gasless-sender.sh.
+# APPEAL_REVIEW_WINDOW и FINALIZE_DELAY объявлены private в
+# ArbiterRegistryFacet, из цепи их не прочитать, поэтому релеер держит свои
+# копии (обе нужны формуле dealDeadlineFromDispute()/dealDeadlineFromCreation()
+# в relayer/bagStore.js — конец окна апелляции считается через ОБЕ константы,
+# см. докстринг там же, находка I2 закрывающего раунда ревью). Копии обязаны
+# совпадать с оригиналом: если любое из окон удлинят, а релеер об этом не
+# узнает, он сотрёт доказательства до того, как апелляция закончится — и
+# оспорить вердикт станет нечем. Тот же класс гейта, что check-storage-layout.sh
+# и check-gasless-sender.sh.
 set -euo pipefail
 
 SOL="src/facets/ArbiterRegistryFacet.sol"
@@ -46,3 +50,28 @@ if [[ "$sol_days" != "$js_days" ]]; then
   exit 1
 fi
 echo "✓ окно апелляции сходится: $sol_days дн."
+
+# I2 (закрывающий раунд ревью): второе звено той же цепочки — окно между
+# вердиктом и правом подать апелляцию (FINALIZE_DELAY). Без него формула
+# dealDeadlineFromDispute() пропускала целый день реального худшего случая —
+# см. её докстринг в relayer/bagStore.js. Якорь регексом на JS-стороне —
+# `^export const ... = \K[0-9]+`: FINALIZE_DELAY_HOURS — плоская константа
+# (не env-ручка, находка I3 — копия private-константы контракта не должна
+# быть настраиваемой), так что достаточно точного совпадения строки
+# объявления; `^` не даёт спутать её с прозой в комментариях выше по файлу,
+# упоминающих то же имя.
+sol_hours="$(grep -oP 'FINALIZE_DELAY\s*=\s*\K[0-9]+(?=\s*hours)' "$SOL" | head -1 || true)"
+js_hours="$(grep -oP '^export const FINALIZE_DELAY_HOURS = \K[0-9]+' "$JS" | head -1 || true)"
+
+if [[ -z "$sol_hours" ]]; then
+  echo "❌ не нашёл FINALIZE_DELAY в $SOL — гейт сломан, почини гейт"; exit 1
+fi
+if [[ -z "$js_hours" ]]; then
+  echo "❌ не нашёл FINALIZE_DELAY_HOURS в $JS"; exit 1
+fi
+if [[ "$sol_hours" != "$js_hours" ]]; then
+  echo "❌ окно финализации разошлось: контракт $sol_hours ч., релеер $js_hours ч."
+  echo "   Пока они не совпадут, релеер будет стирать доказательства до того, как окно апелляции реально откроется/закроется."
+  exit 1
+fi
+echo "✓ окно финализации сходится: $sol_hours ч."

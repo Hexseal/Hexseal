@@ -142,6 +142,27 @@ export let BAG_ADOPTION_LOOKBACK_MS;
 // В ДНЯХ, не в мс — гейт грепает именно это имя и именно целое число дней,
 // той же формой, что и `4 days` в самом контракте.
 export let APPEAL_REVIEW_WINDOW_DAYS;
+// I2 (находка координатора, закрывающий раунд): FINALIZE_DELAY_HOURS —
+// копия ещё одной private-константы того же контракта
+// (ArbiterRegistryFacet.sol:140, "FINALIZE_DELAY", 24 часа) — окно, в
+// которое можно поднять апелляцию ПОСЛЕ вердикта (raiseAppeal() требует
+// block.timestamp < submittedAt + FINALIZE_DELAY, строка 755), и только
+// ПОСЛЕ подачи апелляции запускается APPEAL_REVIEW_WINDOW (appealDeadline =
+// момент апелляции + APPEAL_REVIEW_WINDOW, строка 781) — не от submittedAt.
+// Реальная цепочка на худший случай:
+//   submitVerdict ≤ disputedAt + DISPUTE_WINDOW
+//   raiseAppeal   ≤ submittedAt + FINALIZE_DELAY
+//   appealDeadline = момент апелляции + APPEAL_REVIEW_WINDOW
+//   худший случай = disputedAt + DISPUTE_WINDOW + FINALIZE_DELAY + APPEAL_REVIEW_WINDOW
+// Формула ниже (dealDeadlineFromDispute/dealDeadlineFromCreation) раньше
+// этого звена не имела вовсе — BAG_DEAL_GRACE_MS (умолчание — сутки) молча
+// подменял собой это слагаемое: на умолчаниях запас получался РОВНО 0 (сутки
+// GRACE в точности гасились отсутствующим днём FINALIZE_DELAY), а на
+// легальной настройке BAG_DEAL_GRACE_MS=0 срок отставал от истинного конца
+// апелляции на день — доказательства стирались бы за сутки до того, как
+// апелляция реально закрывается. В ЧАСАХ, не в днях — контракт объявляет
+// её как `24 hours`, гейт грепает именно эту форму.
+export const FINALIZE_DELAY_HOURS = 24;
 // BAG_DEAL_GRACE_MS — небольшой буфер СВЕРХ disputedAt+DISPUTE_WINDOW+
 // APPEAL_REVIEW_WINDOW (см. dealDeadlineFromDispute() ниже). Бриф Задачи 5
 // не дал умолчания для этой ручки явно (в отличие от 30 дней для лукбэка и
@@ -1027,6 +1048,11 @@ export function bagExpiryAt(meta, _nowMs = Date.now()) {
 //   не откатывает то, что уже дал этап 1 (заперто тестом на интеграцию в
 //   test/bagAdoption.test.js — "усыновление в два этапа").
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+// I2: слагаемое обеих формул ниже — FINALIZE_DELAY между вердиктом и правом
+// подать апелляцию (см. докстринг у FINALIZE_DELAY_HOURS выше). Вынесено
+// один раз сюда, а не дублируется в обеих функциях по отдельности.
+const FINALIZE_DELAY_MS = FINALIZE_DELAY_HOURS * HOUR_MS;
 
 // Этап 1: срок ПРЕДВАРИТЕЛЬНЫЙ, посчитанный от якоря и ownDeadlineMs
 // (собственный срок сделки, Agreement.getDetails().deadlineDays_ * 1 day —
@@ -1073,7 +1099,7 @@ export function dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadline
   assertSafeInt('dealDeadlineFromCreation', 'ownDeadlineMs', ownDeadlineMs);
   assertSafeInt('dealDeadlineFromCreation', 'disputeWindowMs', disputeWindowMs);
   const anchor = Math.max(createdAtMs, activatedAtMs);
-  return anchor + ownDeadlineMs + disputeWindowMs + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+  return anchor + ownDeadlineMs + disputeWindowMs + FINALIZE_DELAY_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
 }
 
 // Этап 2. Срок сделки — до ОКОНЧАТЕЛЬНОГО закрытия дела, не до вердикта:
@@ -1087,12 +1113,29 @@ export function dealDeadlineFromCreation(createdAtMs, activatedAtMs, ownDeadline
 // отсюда собственная копия релеера, APPEAL_REVIEW_WINDOW_DAYS, и гейт
 // script/check-appeal-window.sh, держащий копию в согласии с оригиналом.
 //
+// I2 (находка координатора, закрывающий раунд): формула раньше пропускала
+// целое звено цепочки. Настоящая последовательность —
+//   submitVerdict   ≤ disputedAt + DISPUTE_WINDOW
+//   raiseAppeal     только до submittedAt + FINALIZE_DELAY (24ч,
+//                   ArbiterRegistryFacet.sol:140,755)
+//   appealDeadline  = МОМЕНТ АПЕЛЛЯЦИИ + APPEAL_REVIEW_WINDOW (не от
+//                   submittedAt, строка 781)
+//   худший случай   = disputedAt + DISPUTE_WINDOW + FINALIZE_DELAY + APPEAL_REVIEW_WINDOW
+// Без FINALIZE_DELAY_MS ниже формула давала ровно disputedAt+9д на
+// умолчаниях — численно совпадало с истинным минимумом только потому, что
+// BAG_DEAL_GRACE_MS (умолчание — сутки) молча покрывал недостающий день;
+// реальный запас был РОВНО 0, а на легальной настройке BAG_DEAL_GRACE_MS=0
+// срок отставал от истинного конца апелляции на день — доказательства
+// стирались бы за сутки до того, как апелляция реально закрывается.
+// Заперто тестом на точную границу (BAG_DEAL_GRACE_MS=0) в
+// test/bagAdoption.test.js.
+//
 // Обе функции этого раздела — чистые: не трогают _bagMeta и не делают I/O,
 // поэтому проверяются напрямую, без мока цепи (test/bagAdoption.test.js).
 export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
   assertSafeInt('dealDeadlineFromDispute', 'disputedAtMs', disputedAtMs);
   assertSafeInt('dealDeadlineFromDispute', 'disputeWindowMs', disputeWindowMs);
-  return disputedAtMs + disputeWindowMs + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+  return disputedAtMs + disputeWindowMs + FINALIZE_DELAY_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
 }
 
 // pairId — опаковая строка, та же форма, что производит _pairIdFromAddresses
