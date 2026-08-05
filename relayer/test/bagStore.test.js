@@ -121,9 +121,26 @@ describe('bagExpiryAt — три правила в заданном порядк
     expect(bagExpiryAt(m)).toBe(deadline);
   });
 
-  it('но не дольше потолка от загрузки — сделкой нельзя держать вечно', () => {
+  // C1 (координатор, критическая находка): потолок BAG_MAX_AGE_MS больше НЕ
+  // применяется здесь, внутри bagExpiryAt() — раньше он был Math.min(dealDeadline,
+  // ceiling) прямо в этой функции, и это оказалось дырой: потолок мог быть
+  // снят навсегда флагом НА ЗАПИСИ (meta.dealFunded), не зависящим от того,
+  // какая именно сделка сейчас продлевает срок. Потолок переехал в
+  // adoptPairBags() — решение "резать или нет" принимается НА КАЖДОЕ
+  // продление отдельно, ДО того как кандидат попадает в meta.dealDeadline
+  // (см. test/bagAdoption.test.js, describe "C1" — там же настоящий замер
+  // "храповик 1000 дней неоплаченной сделкой не двигает срок"). bagExpiryAt()
+  // теперь ДОВЕРЯЕТ meta.dealDeadline как уже готовому, правильно обрезанному
+  // (или намеренно безлимитному) значению — её единственная работа —
+  // Math.max(base, dealDeadline), без какого-либо потолка внутри.
+  it('bagExpiryAt() берёт dealDeadline КАК ЕСТЬ, без внутреннего потолка — потолок теперь целиком в adoptPairBags()', () => {
     const m = { uploadedAt: 1000, firstFetchedAt: null, dealDeadline: 1000 + 900 * DAY };
-    expect(bagExpiryAt(m)).toBe(1000 + bagStore.BAG_MAX_AGE_MS);
+    // Сырое, ничем не обрезанное значение — ровно то, что дал бы вызов
+    // adoptPairBags(..., funded=true) (оплаченная сделка законно даёт срок
+    // дальше потолка). bagExpiryAt() не должен и не может знать, была ли
+    // сделка, выдавшая ИМЕННО ЭТО значение, оплачена — это знание уже
+    // применено ДО того, как значение попало в meta.dealDeadline.
+    expect(bagExpiryAt(m)).toBe(1000 + 900 * DAY);
   });
 
   it('срок сделки короче обычного не сокращает жизнь мешку', () => {
@@ -142,17 +159,26 @@ describe('bagExpiryAt — три правила в заданном порядк
   // итоговый результат Math.max. Не баг, задокументировано в комментарии
   // над bagExpiryAt(); этот тест — сам замок, а не описание сегодняшнего
   // поведения.
-  it('потолок усыновления фактически 90+7 дней, если мешок прочитан у самой границы потолка', () => {
+  //
+  // C1 (координатор, критическая находка): потолок теперь применяется в
+  // adoptPairBags(), ДО того, как значение попадает в meta.dealDeadline —
+  // здесь, в bagExpiryAt(), dealDeadline подаётся УЖЕ ОБРЕЗАННЫМ (ровно
+  // тем, что дал бы adoptPairBags() неоплаченной сделке), не сырым
+  // "далеко за потолком" значением — тест теперь про то, что base
+  // (правило 2) может ПЕРЕБИТЬ уже обрезанный dealDeadline через
+  // Math.max, не про capping внутри самой bagExpiryAt() (её там больше
+  // нет).
+  it('мешок с уже обрезанным потолком dealDeadline (типичный результат adoptPairBags для неоплаченной сделки), прочитанный у самой границы, живёт фактически 90+7 дней', () => {
     const uploadedAt = 1000;
     const ceiling = uploadedAt + bagStore.BAG_MAX_AGE_MS;      // номинальный потолок (90д)
     const readAtCeiling = ceiling - 1;                // прочитан за миллисекунду до потолка
     const m = {
       uploadedAt,
       firstFetchedAt: readAtCeiling,
-      dealDeadline: uploadedAt + 900 * DAY,           // далеко за потолком — сама сделка тут не ограничитель
+      dealDeadline: ceiling,           // уже обрезан потолком — ровно то, что даёт adoptPairBags() неоплаченной сделке
     };
     const expiry = bagExpiryAt(m);
-    expect(expiry).toBe(readAtCeiling + bagStore.BAG_TTL_MS);   // правило 2 берёт верх над потолком сделки
+    expect(expiry).toBe(readAtCeiling + bagStore.BAG_TTL_MS);   // правило 2 берёт верх над уже обрезанным dealDeadline
     expect(expiry).toBeGreaterThan(ceiling);            // и это ЗА пределами номинальных 90 дней
     expect(expiry - uploadedAt).toBeLessThanOrEqual(bagStore.BAG_MAX_AGE_MS + bagStore.BAG_TTL_MS); // но не больше 90+7
   });

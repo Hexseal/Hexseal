@@ -67,9 +67,9 @@ describe('adoptPairBags — усыновление переписки сделк
     const now = Date.now();
     const key = put(ALICE, BOB, now - 20 * DAY); // непрочитан, ещё жив (правило 3: 30д от загрузки)
     const pairId = _pairIdFromAddresses(ALICE, BOB);
-    const deadline = now + 100 * DAY;
+    const deadline = now + 100 * DAY; // за пределами потолка (90д) — funded=true, чтобы этот базовый тест не путался с C1 (см. describe "C1")
 
-    const result = adoptPairBags(pairId, deadline, now);
+    const result = adoptPairBags(pairId, deadline, now, true);
 
     expect(result.adopted).toBe(1);
     expect(bagMetaOf(key).dealDeadline).toBe(deadline);
@@ -106,8 +106,8 @@ describe('adoptPairBags — усыновление переписки сделк
 
     const pairAB = _pairIdFromAddresses(ALICE, BOB);
     const pairCB = _pairIdFromAddresses(CAROL, BOB);
-    adoptPairBags(pairAB, now + 100 * DAY, now);
-    adoptPairBags(pairCB, now + 100 * DAY, now);
+    adoptPairBags(pairAB, now + 100 * DAY, now, true); // funded=true — за пределами потолка, не про C1 здесь
+    adoptPairBags(pairCB, now + 100 * DAY, now, true);
 
     expect(bagMetaOf(exactlyAtExpiry).dealDeadline).toBeNull();       // ровно на границе — не усыновлён
     expect(bagMetaOf(justAliveByOneMs).dealDeadline).toBe(now + 100 * DAY); // на мс живее — усыновлён
@@ -119,7 +119,7 @@ describe('adoptPairBags — усыновление переписки сделк
     const keyBC = put(CAROL, BOB, now - 10 * DAY); // другая пара (BOB-CAROL)
     const pairAB = _pairIdFromAddresses(ALICE, BOB);
 
-    adoptPairBags(pairAB, now + 100 * DAY, now);
+    adoptPairBags(pairAB, now + 100 * DAY, now, true); // funded=true — за пределами потолка, не про C1 здесь
 
     expect(bagMetaOf(keyAB).dealDeadline).toBe(now + 100 * DAY);
     expect(bagMetaOf(keyBC).dealDeadline).toBeNull();
@@ -190,10 +190,10 @@ describe('adoptPairBags — усыновление переписки сделк
     const now = Date.now();
     const key = put(ALICE, BOB, now - 10 * DAY);
     const pairId = _pairIdFromAddresses(ALICE, BOB);
-    const farDeadline = now + 100 * DAY;
+    const farDeadline = now + 100 * DAY; // за пределами потолка (90д) — funded=true, не про C1 здесь
     const nearDeadline = now + 5 * DAY;
 
-    adoptPairBags(pairId, farDeadline, now);
+    adoptPairBags(pairId, farDeadline, now, true);
     const resultSecond = adoptPairBags(pairId, nearDeadline, now);
 
     expect(resultSecond.adopted).toBe(0); // ни одна запись фактически не изменилась
@@ -1386,6 +1386,138 @@ describe('Решение владельца — интеграция через 
   });
 });
 
+// ─── C1 (координатор, критическая находка): освобождение от потолка не
+// свойство МЕШКА, а свойство КАЖДОГО ПРОДЛЕНИЯ отдельно. Пара платит ОДИН
+// раз — и раньше это освобождало мешок от потолка НАВСЕГДА, даже когда
+// продление дальше выдаёт СОВЕРШЕННО ДРУГАЯ, никогда не оплаченная сделка
+// той же пары. У зарегистрированной неоплаченной сделки нет выхода из
+// активных без оплаты или запуска (все девять путей завершения требуют
+// одного из двух) — а taймаут активации возвращает клиенту ВСЮ сумму,
+// то есть капитал, "купивший" освобождение, возвращается, остаётся один
+// газ. Обоснование решения владельца ("хранение оплачивается чужим
+// капиталом") перестаёт быть правдой ровно в момент, когда капитал вернули.
+//
+// Чинится так: `bagExpiryAt()` больше НЕ хранит и не читает никакого
+// per-мешок "оплачен ли когда-либо" флага — решение "резать потолком или
+// нет" принимается в adoptPairBags() НА КАЖДОЕ продление отдельно, ДО
+// сравнения с текущим значением: кандидат от неоплаченной сделки обрезается
+// потолком (Math.min(dealDeadline, ceiling)) ПРЕЖДЕ, чем идёт в Math.max с
+// текущим — кандидат от оплаченной идёт в Math.max как есть, без обрезки.
+// Правило "только продлевать" остаётся ровно тем же Math.max, просто
+// теперь сравнивает УЖЕ ОБРЕЗАННОГО (если нужно) кандидата, а не сырой.
+describe('C1 (координатор, критическая находка) — освобождение от потолка не переживает сделку, которая его выдала', () => {
+  it('пара оплатила короткую сделку, сделка отменена/завершилась, заведена НИКОГДА не оплаченная — срок не растёт дальше потолка (замер: день 400 и день 1000, координатор)', () => {
+    const now = Date.now();
+    const uploadedAt = now - 1 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    const ceiling = uploadedAt + bagStore.BAG_MAX_AGE_MS;
+
+    // Сделка A: короткая (условный "конец дела" — 40 дней от загрузки, ЗАВЕДОМО
+    // больше обычного 30-дневного правила 3 (непрочитан), чтобы Math.max(base, ...)
+    // не маскировал результат — правило "усыновление не сокращает" не при чём
+    // в ЭТОМ тесте), ОПЛАЧЕНА. Много меньше потолка (90д) — освобождение здесь
+    // пока не заметно само по себе, ключевой момент впереди.
+    const dealADeadline = uploadedAt + 40 * DAY;
+    adoptPairBags(pairId, dealADeadline, uploadedAt, true); // funded=true
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(dealADeadline);
+
+    // Сделка A отменена/завершилась (в проде — выпала из getActive()).
+    // Сделка B той же пары: НИКОГДА не оплачена, ежедневный храповик
+    // предлагает предварительный срок, растущий вместе с nowMs (тот же
+    // класс, что реальная dealDeadlineFromCreation() для неактивированной
+    // сделки) — замер на день 400 и день 1000, координаторские точки.
+    for (const day of [400, 1000]) {
+      const nowMsDay = uploadedAt + day * DAY;
+      const candidateB = nowMsDay + 300 * DAY; // "далеко в будущем" — растущий preliminary
+      adoptPairBags(pairId, candidateB, nowMsDay, false); // funded=false
+      const expiry = bagExpiryAt(bagMetaOf(key));
+      expect(expiry).toBe(ceiling); // ровно потолок — НЕ "день 443"/"день 1043"
+    }
+
+    // Контроль координатора: тот же мешок БЕЗ первой оплаты вообще — то же
+    // самое значение потолка, никакой разницы с историей "была оплата,
+    // потом отменили". Первое касание — рано (пока мешок ещё жив по
+    // обычному правилу, И-2 иначе отверг бы САМО первое усыновление как
+    // мёртвой записи — не то, что здесь проверяется, см. докстринг И-2),
+    // тем же приёмом, что уже применяется во всех остальных тестах этого
+    // файла с "долгой историей".
+    const controlKey = put(ALICE, CAROL, uploadedAt);
+    const controlPairId = _pairIdFromAddresses(ALICE, CAROL);
+    adoptPairBags(controlPairId, uploadedAt + 2 * DAY, uploadedAt + 1 * DAY, false); // первое (живое) касание
+    adoptPairBags(controlPairId, uploadedAt + 1300 * DAY, uploadedAt + 1000 * DAY, false); // много позже, тот же ratchet
+    expect(bagExpiryAt(bagMetaOf(controlKey))).toBe(ceiling);
+  });
+
+  // Тот же сценарий, но настоящий "храповик" — много последовательных
+  // ночей подряд (не только две координаторские точки), доказывает, что
+  // срок не ползёт ни на день ни на одной из промежуточных ночей, не
+  // только на выбранных контрольных датах.
+  it('храповик КАЖДУЮ ночь на протяжении 1000 дней неоплаченной сделкой той же пары — срок стоит на месте с момента первого касания потолка', () => {
+    const now = Date.now();
+    const uploadedAt = now - 1 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    const ceiling = uploadedAt + bagStore.BAG_MAX_AGE_MS;
+
+    adoptPairBags(pairId, uploadedAt + 14 * DAY, uploadedAt, true); // сделка A, оплачена, отменена дальше
+
+    let touchedCeilingOnDay = null;
+    for (let day = 2; day <= 1000; day += 7) { // каждую "неделю" — 1000/7 ≈ 143 реальных вызова, не 1000 ради скорости, поведение идентично: adoptPairBags не хранит состояния кроме meta
+      const nowMsDay = uploadedAt + day * DAY;
+      adoptPairBags(pairId, nowMsDay + 300 * DAY, nowMsDay, false);
+      const expiry = bagExpiryAt(bagMetaOf(key));
+      if (expiry === ceiling && touchedCeilingOnDay === null) touchedCeilingOnDay = day;
+      // С момента первого касания потолка — НИ ОДНА последующая ночь не
+      // должна сдвинуть срок дальше него.
+      expect(expiry).toBeLessThanOrEqual(ceiling);
+    }
+    expect(touchedCeilingOnDay).not.toBeNull(); // потолок реально был достигнут, не просто "случайно не превышен"
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(ceiling); // и остался ровно на нём к концу тысячи дней
+  });
+
+  it('срок, выданный ОПЛАЧЕННОЙ сделкой, НЕ сокращается последующими неоплаченными попытками — даже когда сама оплаченная сделка была длинной (её dealDeadline больше потолка)', () => {
+    const now = Date.now();
+    const uploadedAt = now - 1 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    const ceiling = uploadedAt + bagStore.BAG_MAX_AGE_MS;
+
+    // Сделка A: ДЛИННАЯ (200 дней от загрузки — больше потолка в 90),
+    // ОПЛАЧЕНА — законно даёт безлимитный срок дальше потолка.
+    const dealADeadline = uploadedAt + 200 * DAY;
+    adoptPairBags(pairId, dealADeadline, uploadedAt, true);
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(dealADeadline);
+    expect(dealADeadline).toBeGreaterThan(ceiling); // контроль: действительно больше потолка
+
+    // Сделка B той же пары, НИКОГДА не оплачена, пытается продлить —
+    // кандидат обрезается потолком (много меньше уже выданных 200 дней),
+    // Math.max с уже выданным dealADeadline его сохраняет как есть.
+    adoptPairBags(pairId, uploadedAt + 500 * DAY, uploadedAt + 300 * DAY, false);
+
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(dealADeadline); // не урезан до потолка, не изменился вообще
+  });
+
+  it('новая ОПЛАЧЕННАЯ сделка после отменённой/неоплаченной истории — продлевает нормально, без обрезки', () => {
+    const now = Date.now();
+    const uploadedAt = now - 1 * DAY;
+    const key = put(ALICE, BOB, uploadedAt);
+    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    const ceiling = uploadedAt + bagStore.BAG_MAX_AGE_MS;
+
+    adoptPairBags(pairId, uploadedAt + 14 * DAY, uploadedAt, true); // сделка A, оплачена, отменена
+    adoptPairBags(pairId, uploadedAt + 500 * DAY, uploadedAt + 100 * DAY, false); // сделка B, никогда не оплачена
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(ceiling); // капнуто потолком, как и должно быть
+
+    // Сделка C той же пары — НОВАЯ, ОПЛАЧЕНА, законно длинная (за потолком).
+    const dealCDeadline = uploadedAt + 400 * DAY;
+    adoptPairBags(pairId, dealCDeadline, uploadedAt + 150 * DAY, true);
+
+    expect(bagExpiryAt(bagMetaOf(key))).toBe(dealCDeadline); // продлилось нормально, потолок больше не участвует
+    expect(dealCDeadline).toBeGreaterThan(ceiling);
+  });
+});
+
 // ─── C1 (находка координатора, закрывающий раунд): главный путь доски
 // заказов — JobBoardFacet.acceptApplicant() регистрирует сделку
 // НЕОПЛАЧЕННОЙ (FactoryFacet.sol:232-273), а у fund() нет дедлайна вообще
@@ -1548,19 +1680,29 @@ describe('C-1 — лог сообщает РЕАЛЬНЫЙ (обрезанный
 
     await runFileCleanup();
 
-    const requested = bagMetaOf(key).dealDeadline; // поле само по себе не капается — см. докстринг adoptPairBags
-    const realExpiry = bagExpiryAt(bagMetaOf(key)); // а вот РЕАЛЬНЫЙ срок — да
+    // C1 (координатор, критическая находка): meta.dealDeadline теперь САМ
+    // уже обрезан потолком (капается в adoptPairBags(), ДО записи в meta —
+    // см. её докстринг) — читать "requested" оттуда больше нельзя, это
+    // теперь то же самое число, что и realExpiry. Источник правды на
+    // "что было запрошено" — сама предупреждающая строка лога (она несёт
+    // "wanted X" отдельно, извлечённая из ВОЗВРАЩЁННОГО adoptPairBags()
+    // requested, который остаётся сырым — см. её докстринг).
+    const realExpiry = bagExpiryAt(bagMetaOf(key));
     expect(realExpiry).toBe(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок реально сработал
-    expect(realExpiry).toBeLessThan(requested); // и он меньше запрошенного — есть что скрывать в логе, если врать
 
     const successLine = logSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption (creation)') && String(args[0]).includes('extended'));
     expect(successLine).toBeDefined();
-    expect(String(successLine[0])).toContain(new Date(realExpiry).toISOString());       // лог называет РЕАЛЬНЫЙ (обрезанный) срок…
-    expect(String(successLine[0])).not.toContain(new Date(requested).toISOString());    // …а не запрошенный (координатор: было наоборот)
+    expect(String(successLine[0])).toContain(new Date(realExpiry).toISOString()); // лог называет РЕАЛЬНЫЙ (обрезанный) срок
 
     const capWarning = warnSpy.mock.calls.find(args => String(args[0]).includes('ceiling cut'));
     expect(capWarning).toBeDefined(); // и явное предупреждение о том, что потолок обрезал
-    expect(String(capWarning[0])).toContain(new Date(requested).toISOString());  // хотели — со своим числом
+    const wantedMatch = String(capWarning[0]).match(/wanted (\S+), gave (\S+) instead/);
+    expect(wantedMatch).toBeDefined();
+    const wantedIso = wantedMatch[1];
+    const gaveIso = wantedMatch[2];
+    expect(gaveIso).toBe(new Date(realExpiry).toISOString()); // "дали" совпадает с реальным сроком
+    expect(new Date(wantedIso).getTime()).toBeGreaterThan(realExpiry); // "хотели" — больше реального (иначе не было бы обрезки)
+    expect(String(successLine[0])).not.toContain(wantedIso); // строка успеха не называет ЗАПРОШЕННЫЙ срок (координатор: было наоборот)
     expect(String(capWarning[0])).toContain(new Date(realExpiry).toISOString()); // дали — со своим числом
   });
 });
