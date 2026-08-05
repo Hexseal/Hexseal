@@ -924,6 +924,7 @@ describe('pollBags', () => {
   it('мелочь: ошибка в onBags (баг отрисовки у потребителя) не считается транспортной — не идёт в onError, не копит backoff', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
     const errors: unknown[] = [];
+    const bagsErrors: unknown[] = [];
     const sleep = vi.fn(async () => {});
 
     // loop() — необработанный async IIFE внутри pollBags: подтверждаем, что
@@ -938,6 +939,7 @@ describe('pollBags', () => {
         getPass: () => 'v1.p', isActive: () => true,
         onBags: () => { throw new Error('render bug'); },
         onError: (e) => errors.push(e),
+        onBagsError: (e) => bagsErrors.push(e),
         sleep,
       });
       // Дать микрозадачам (getPass -> listBags -> onBags -> throw) и Node
@@ -950,6 +952,11 @@ describe('pollBags', () => {
 
     expect(errors).toHaveLength(0); // НЕ через onError — это не сбой сети, а баг колбэка
     expect(sleep).not.toHaveBeenCalled(); // цикл не дошёл до планирования следующего тика — остановился
+    // Мелочь (ревью-координатор): необработанное отклонение — не
+    // единственный сигнал. onBagsError даёт потребителю программный крючок,
+    // не только строку в консоли браузера.
+    expect(bagsErrors).toHaveLength(1);
+    expect((bagsErrors[0] as Error).message).toBe('render bug');
     expect(unhandled).toBeInstanceOf(Error);
     expect((unhandled as Error).message).toBe('render bug'); // всплыло по-настоящему, не проглочено
   });
