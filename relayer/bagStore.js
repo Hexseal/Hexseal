@@ -397,6 +397,38 @@ function _isDiskReadable() {
   }
 }
 
+// Продолжение третьего тура (координатор, следующий раунд): отсутствие
+// bag-meta.json — легитимная пустота ТОЛЬКО когда склад тоже пуст или
+// отсутствует. «Мешки на диске лежат, а описи нет» само по себе на свежей
+// установке не возникает — либо файл убрали рукой (самый естественный
+// способ «починить» режим недоверия, и именно он воскрешает беду, от
+// которой весь режим и заводился — воспроизведено координатором вживую:
+// 35-дневный мешок переживал недоверие, но умирал сразу после такого
+// "лечения" удалением), либо запись не доехала до диска. Оба случая —
+// недоверие, не свежий старт. Считает файлы, а не просто "есть ли
+// хоть один" — число идёт в громкую строку лога, отдельную от других
+// причин недоверия (см. _loadBagMeta ниже).
+//
+// Считает ЛЮБОЙ файл в подкаталогах получателей, не только те, что
+// проходят BAG_KEY_RE — сама неоднозначность "тут что-то есть, а описи
+// нет" уже повод не доверять, независимо от того, мусор это или настоящие
+// мешки; разбираться, что именно там лежит, — дело человека, не метлы.
+function _countDiskBags() {
+  if (!fs.existsSync(DIR_BAGS)) return 0;
+  let recipients = [];
+  try { recipients = fs.readdirSync(DIR_BAGS); } catch { return 0; } // нечитаемый склад — отдельная причина, см. _isDiskReadable
+  let count = 0;
+  for (const recipient of recipients) {
+    const recipientDir = path.join(DIR_BAGS, recipient);
+    try {
+      const st = fs.lstatSync(recipientDir);
+      if (!st.isDirectory()) continue;
+      count += fs.readdirSync(recipientDir).length;
+    } catch { continue; }
+  }
+  return count;
+}
+
 // Реконструкция ИСКЛЮЧИТЕЛЬНО в памяти — ничего не пишет на диск (ни здесь,
 // ни через _saveBagMeta()). Имя файла мешка само несёт адресата и время
 // загрузки (bagKeyFor: "<recipient>/<uploadedAt>-<uuid>.bin") — вот и всё,
@@ -481,10 +513,16 @@ export function _loadBagMeta() {
   // есть, но не читается как индекс» (потеря доверия) шли одним и тем же
   // путём — raw молча становился {} в обоих случаях, и ничего не отличало
   // первый запуск от испорченного диска. Различаем явно: файла действительно
-  // нет → легитимно пусто, loadOk остаётся true; файл есть, но не JSON,
+  // нет → легитимно пусто, indexOk остаётся true; файл есть, но не JSON,
   // или JSON, но не индекс (null/массив/примитив) → потеря доверия, громко.
   let indexOk = true;
-  if (fs.existsSync(BAG_META_PATH)) {
+  const indexExists = fs.existsSync(BAG_META_PATH);
+  // Считается только когда индекса нет — см. ветку else ниже. Отдельная
+  // переменная (не пересчитывать в теле console.error) — нужна и для
+  // решения "доверять ли", и для числа в громкой строке лога.
+  let diskBagCount = 0;
+
+  if (indexExists) {
     try {
       const parsed = JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8'));
       // И-2 (пятый раунд): JSON.parse('null') УСПЕШНО возвращает null — не
@@ -504,9 +542,20 @@ export function _loadBagMeta() {
       // между writeFileSync и renameSync temp-файла в _saveBagMeta()).
       indexOk = false;
     }
+  } else {
+    // Продолжение третьего тура (координатор): отсутствие описи —
+    // легитимная пустота ТОЛЬКО когда склад тоже пуст или отсутствует.
+    // «Мешки лежат, а описи нет» само по себе на свежей установке не
+    // возникает — либо файл убрали рукой (самый естественный способ
+    // «починить» режим недоверия — и именно он воскрешает беду, от
+    // которой режим недоверия и заводился, воспроизведено координатором
+    // живьём), либо запись не доехала до диска. Оба случая — недоверие,
+    // не свежий старт.
+    diskBagCount = _countDiskBags();
+    if (diskBagCount > 0) indexOk = false;
+    // else: и описи нет, и склад пуст/отсутствует — действительно свежая
+    // установка, indexOk остаётся true.
   }
-  // else: файла действительно нет — свежая установка, легитимное пустое
-  // состояние, indexOk остаётся true.
 
   // Третий тур: диск отдельно от описи — см. _isDiskReadable() выше. Опись
   // может быть идеально валидной, а DIR_BAGS в этот самый момент —
@@ -516,20 +565,35 @@ export function _loadBagMeta() {
 
   if (!indexOk || !diskOk) {
     // Громкая строка НА КАЖДОМ запуске, пока не починят руками — не
-    // одноразовая. Текст, узнаваемо отличный от «dropped N corrupt
-    // entries» ниже (та находка про порчу отдельных записей внутри в
-    // остальном годного индекса, эта про полную потерю доверия целиком) —
-    // и от старого «FAILED TO LOAD INDEX / recovering» (тот текст обещал
-    // персист, которого больше нет; эта версия обещает то, что модуль
-    // теперь реально делает).
+    // одноразовая. Три разные причины дают три РАЗНЫХ, узнаваемых текста —
+    // человек, который только что удалил файл рукой, обязан понять из
+    // лога, почему стало не лучше, а так же, и что сделать вместо этого:
+    // либо тоже убрать мешки (чистый лист), либо вернуть индекс
+    // (восстановление). Не подделка ни под «dropped N corrupt entries» (та
+    // находка про порчу отдельных записей внутри в остальном годного
+    // индекса), ни под старое «FAILED TO LOAD INDEX / recovering» (тот
+    // текст обещал персист, которого больше нет).
+    const reasons = [];
+    if (!indexOk && indexExists) {
+      reasons.push(
+        `index at ${BAG_META_PATH} exists but could not be read as an index (corrupt/truncated JSON, or not an object: null/array/primitive).`
+      );
+    } else if (!indexOk && !indexExists) {
+      reasons.push(
+        `index at ${BAG_META_PATH} is MISSING, but the store at ${DIR_BAGS} is not empty (${diskBagCount} file(s) found) — ` +
+        `this cannot be a fresh install. Either the index was removed by hand or it never reached disk. ` +
+        `To start clean, ALSO remove the bag files on disk; to recover, restore the index file.`
+      );
+    }
+    if (!diskOk) {
+      reasons.push(`${DIR_BAGS} could not be enumerated (this is NOT the same as being empty — it means "unknown", not "zero").`);
+    }
     console.error(
-      `[bags] _loadBagMeta: ENTERING DISTRUST MODE — ` +
-      (!indexOk ? `index at ${BAG_META_PATH} exists but could not be read as an index (corrupt/truncated JSON, or not an object: null/array/primitive). ` : '') +
-      (!diskOk ? `${DIR_BAGS} could not be enumerated (this is NOT the same as being empty — it means "unknown", not "zero"). ` : '') +
+      `[bags] _loadBagMeta: ENTERING DISTRUST MODE — ${reasons.join(' ')} ` +
       `The index file, if any, is left EXACTLY as it is — it is the evidence, not something to clean up. ` +
       `Nothing will be written to disk (neither the reconstruction below nor any new bag) and nothing will be ` +
       `deleted (neither the orphan sweep nor the main expiry pass in cleanupBags()) until a LATER load reads a ` +
-      `genuinely healthy index — fix or remove the file by hand and restart. No automatic recovery.`
+      `genuinely healthy index. No automatic recovery.`
     );
     _bagMetaLoadOk = false;
     _bagMeta = _reconstructInMemory(Date.now());

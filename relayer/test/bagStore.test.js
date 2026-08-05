@@ -1149,6 +1149,167 @@ describe('третий тур закрывающего ревью Задачи 4
   });
 });
 
+// ─── Продолжение третьего тура — отсутствие описи не всегда легитимная
+// пустота ───────────────────────────────────────────────────────────────
+//
+// Найдено координатором сразу после третьего тура (собственная проверка
+// отчёта, не новое ревью): «человек убрал или починил файл» — формулировка
+// самого координатора для выхода из режима недоверия — на практике
+// означает «человек, скорее всего, выберет убрать: это естественнее
+// починки». Но отсутствие описи неотличимо от свежей установки, если
+// смотреть только на сам файл — а свежая установка ЕЩЁ и склад пустой.
+// Воспроизведено с числами (см. коммит): 35-дневный мешок переживал режим
+// недоверия, а на первой же чистке ПОСЛЕ удаления битого файла и
+// перезапуска — умирал немедленно, потому что "описи нет" читалось как
+// "доверие", доверие снимало гейт, а метла сирот мела по mtime как обычно.
+//
+// Правило: описи нет и склад пуст (или отсутствует) → свежая установка,
+// доверие. Описи нет, а склад не пуст → несогласованность, не установка —
+// режим недоверия так же, как и остальные три причины.
+describe('продолжение третьего тура — отсутствие описи легитимно пусто только вместе с пустым складом', () => {
+  it('описи нет + склад физически пуст (каталог существует, но в нём ничего) → доверие, обычная работа, удаление разрешено', () => {
+    fs.mkdirSync(bagStore.DIR_BAGS, { recursive: true }); // каталог есть, но пуст
+    _loadBagMeta();
+
+    const now = Date.now();
+    const key = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
+    recordBag({ sender: BOB, recipient: ALICE, key, size: 6, uploadedAt: now - 40 * DAY }); // сразу просрочен
+
+    const res = cleanupBags(now);
+    expect(res.removed).toBe(1); // удаление РАЗРЕШЕНО — доверие есть, не режим недоверия
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(false);
+  });
+
+  it('каталога склада нет вовсе → доверие (это действительно чистая установка)', () => {
+    fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true }); // не просто пуст — отсутствует
+    _loadBagMeta();
+
+    expect(cleanupBags(Date.now()).removed).toBe(0); // нечего удалять, но это НЕ недоверие
+
+    // Доказательство доверия, не просто "нечего делать": новая запись
+    // персистится нормально, а не остаётся только в памяти.
+    const key = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
+    recordBag({ sender: BOB, recipient: ALICE, key, size: 6, uploadedAt: Date.now() });
+    const onDisk = JSON.parse(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8'));
+    expect(Object.keys(onDisk)).toEqual([key]);
+  });
+
+  it('описи нет, а мешки на диске лежат → режим недоверия, мешок старше тридцати дней НЕ удалён', () => {
+    const now = Date.now();
+    const uploadedAt = now - 40 * DAY;
+    const key = manualKey(ALICE, uploadedAt);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+    // C1 (напоминание из предыдущих раундов): mtime файла должен ЧЕСТНО
+    // отражать uploadedAt, а не остаться "сейчас" — иначе тест проходит по
+    // случайности (файл слишком молод для sweepOrphanFiles() по mtime), а
+    // не потому, что режим недоверия действительно защищает. Найдено этим
+    // же прогоном (мутация "снять проверку непустого склада" не красила
+    // тест до этого фикса).
+    const old = new Date(uploadedAt);
+    fs.utimesSync(fp, old, old);
+    // bag-meta.json НЕ существует вовсе — beforeEach это уже гарантировал.
+
+    _loadBagMeta();
+    cleanupBags(now);
+
+    expect(fs.existsSync(fp)).toBe(true);
+  });
+
+  it('строка в лог для "описи нет, мешки есть" — отдельная и внятная: число найденных файлов, что убрать для чистого листа, что вернуть для восстановления', () => {
+    const key = manualKey(ALICE, Date.now() - 5 * DAY);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      _loadBagMeta();
+      const messages = spy.mock.calls.map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes('MISSING') && m.includes('1 file(s) found'))).toBe(true);
+      expect(messages.some((m) => m.toLowerCase().includes('remove the bag files'))).toBe(true);
+      expect(messages.some((m) => m.toLowerCase().includes('restore the index file'))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Главный тест координатора — тот самый сценарий из отчёта, теперь с
+  // требованием "обязан остаться жив" вместо прежнего "сегодня умирает".
+  it('сценарий координатора целиком: 35-дневный мешок переживает недоверие, человек удаляет опись, ночная чистка — мешок ОБЯЗАН остаться жив', () => {
+    const now = Date.now();
+    const uploadedAt = now - 35 * DAY;
+    const key = manualKey(ALICE, uploadedAt);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+    // Честный mtime — та же причина, что в тесте выше: без этого файл
+    // пережил бы обе чистки просто по молодости, а не благодаря режиму
+    // недоверия, и тест не ловил бы регресс на втором (главном) шаге.
+    const old = new Date(uploadedAt);
+    fs.utimesSync(fp, old, old);
+
+    // Индекс бьётся — режим недоверия, мешок не удалён (уже проверено
+    // третьим туром, но нужно для полноты сценария целиком).
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{ not valid json', 'utf8');
+    _loadBagMeta();
+    cleanupBags(now);
+    expect(fs.existsSync(fp)).toBe(true);
+
+    // Человек "чинит" удалением файла — самый естественный, но неверный шаг.
+    fs.rmSync(path.join(TMP, 'bag-meta.json'), { force: true });
+
+    // Перезапуск + ночная чистка.
+    _loadBagMeta();
+    cleanupBags(now);
+
+    expect(fs.existsSync(fp)).toBe(true); // раньше снесён этим же шагом — теперь обязан выжить
+  });
+
+  // Координатор явно попросил проверить мутацией, что новая ветка не
+  // разлочила старые две.
+  it('регресс-гейт: "склад не прочитался" (бросок, не пустой список) по-прежнему даёт недоверие', () => {
+    fs.mkdirSync(bagStore.DIR_BAGS, { recursive: true }); // должен физически существовать для мока ниже
+    const now = Date.now();
+    const key = bagKeyFor(ALICE);
+    writeRawBagMeta({ [key]: validRawMeta({ uploadedAt: now - 40 * DAY }) }); // валидная опись сама по себе
+
+    const realReaddirSync = fs.readdirSync;
+    const spy = vi.spyOn(fs, 'readdirSync').mockImplementation((p, ...rest) => {
+      if (path.resolve(String(p)) === path.resolve(bagStore.DIR_BAGS)) {
+        throw new Error('EIO (симулировано): том не примонтирован');
+      }
+      return realReaddirSync(p, ...rest);
+    });
+    try {
+      _loadBagMeta();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(cleanupBags(now).removed).toBe(0); // всё ещё недоверие
+  });
+
+  it('регресс-гейт: "опись не парсится" по-прежнему даёт недоверие', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    const now = Date.now();
+    const key = manualKey(ALICE, now - 40 * DAY);
+    const fp = path.join(bagStore.DIR_BAGS, key);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    _loadBagMeta();
+    cleanupBags(now);
+
+    expect(fs.existsSync(fp)).toBe(true); // недоверие держит, как и раньше
+  });
+});
+
 // ─── I1 (четвёртый раунд) — markFetched/bagMetaOf травят Object.prototype ──
 //
 // Находка ревью: C2 поставил assertBagKey на recordBag(), но markFetched()
