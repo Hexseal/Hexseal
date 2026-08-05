@@ -78,18 +78,20 @@ describe('живой разговор на боевых умолчаниях л�
     // времени; фиксированное окно не становится мягче, если растянуть
     // нагрузку — оно либо вмещает эти 40+10+10+2 запроса в 60-секундное
     // окно, либо нет, реальные секунды между вызовами тут не помогают.
-    let lastListBody = [];
+    // Задача 1 (chat-client): GET /bags теперь отдаёт {inbox, sent, peers} —
+    // здесь под наблюдением именно inbox (что собеседник реально получил).
+    let lastInbox = [];
     for (let i = 0; i < 40; i++) {
       const res = record(await request(app)
         .get('/bags')
         .set('CF-Connecting-IP', LIVE_IP)
         .set('x-bag-pass', counterpartyPass));
       expect(res.status).not.toBe(429);
-      if (res.status === 200) lastListBody = res.body;
+      if (res.status === 200) lastInbox = res.body.inbox;
     }
 
     // 4. Десяток скачиваний — собеседник читает то, что ему прислали.
-    const keysToRead = lastListBody.slice(0, 10).map((b) => b.key);
+    const keysToRead = lastInbox.slice(0, 10).map((b) => b.key);
     expect(keysToRead.length).toBeGreaterThan(0);
     for (const key of keysToRead) {
       const res = record(await request(app)

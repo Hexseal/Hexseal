@@ -571,7 +571,7 @@ describe('PUT /bags/:recipient', () => {
 
     const listRes = await getBagsList({ pass: bobPass, ip: freshIp() });
     expect(listRes.status).toBe(200);
-    expect(listRes.body.map((b) => b.key)).toContain(put.body.key);
+    expect(listRes.body.inbox.map((b) => b.key)).toContain(put.body.key);
 
     const getRes = await getBag({ pass: bobPass, key: put.body.key, ip: freshIp() });
     expect(getRes.status).toBe(200);
@@ -913,7 +913,10 @@ describe('PUT /bags/:recipient', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('GET /bags', () => {
-  it('отдаёт только мешки адреса из пропуска, форма — {key, sender, size, uploadedAt}', async () => {
+  it('отдаёт только мешки адреса из пропуска в inbox, форма — {key, sender, size, uploadedAt}', async () => {
+    // Задача 1 (chat-client): ответ стал объектом {inbox, sent, peers} —
+    // этот тест остаётся про inbox конкретно (форма/адресация приёма); sent
+    // и peers заперты отдельно, test/bagSenderView.test.js.
     const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
     const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice, freshIp());
@@ -924,8 +927,8 @@ describe('GET /bags', () => {
 
     const res = await getBagsList({ pass: bobPass, ip: freshIp() });
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0]).toEqual({
+    expect(res.body.inbox).toHaveLength(1);
+    expect(res.body.inbox[0]).toEqual({
       key: toBob.body.key,
       sender: aliceAddr,
       size: 6,
@@ -975,7 +978,7 @@ describe('GET /bags', () => {
 
     const res = await getBagsList({ pass: bobPass, since: cutoff, ip: freshIp() });
     expect(res.status).toBe(200);
-    expect(res.body.map((b) => b.key)).toEqual([second.body.key]);
+    expect(res.body.inbox.map((b) => b.key)).toEqual([second.body.key]);
   });
 
   it('?since=abc (не число) — 400, а не молчаливый пустой список', async () => {
@@ -1011,7 +1014,7 @@ describe('GET /bags', () => {
 
     const res = await getBagsList({ pass: bobPass, since: sameMs, ip: freshIp() });
     expect(res.status).toBe(200);
-    expect(res.body.map((b) => b.key)).toEqual(expect.arrayContaining([key1, key2]));
+    expect(res.body.inbox.map((b) => b.key)).toEqual(expect.arrayContaining([key1, key2]));
   });
 
   it('лимитер по IP срабатывает даже с валидным пропуском и разными адресами', async () => {
@@ -1131,7 +1134,7 @@ describe('GET /bags', () => {
     // Пропуск Мэллори не открывает ничего в её собственном (пустом) ящике,
     // даже когда запрос всеми доступными каналами пытается заявить, что
     // на самом деле читает Алиса.
-    expect(res.body).toEqual([]);
+    expect(res.body.inbox).toEqual([]);
   });
 });
 

@@ -165,6 +165,39 @@ export interface BagSummary {
   uploadedAt: number;
 }
 
+/**
+ * Задача 1 плана «Клиент чата» (docs/superpowers/plans/2026-08-06-chat-
+ * client.md): взгляд отправителя на СОБСТВЕННЫЕ мешки — только те, что
+ * отправил владелец пропуска. `fetched` — булево ("дошло ли до устройства
+ * собеседника"), НЕ отметка времени: точное время забора — метаданные
+ * собеседника, отправителю знать незачем (relayer/app.js, GET /bags).
+ */
+export interface SentBagSummary {
+  key: string;
+  recipient: `0x${string}`;
+  uploadedAt: number;
+  fetched: boolean;
+}
+
+/**
+ * Собеседник, с которым есть переписка (хоть один мешок в любую сторону —
+ * посторонний по публичному адресу сюда не попадает). `lastSeenAt` —
+ * округлено сервером до минуты, `null` — переписка есть, но ни одного
+ * сигнала присутствия ещё не было (никто ничего не забирал/не присылал
+ * заново).
+ */
+export interface PeerSummary {
+  address: `0x${string}`;
+  lastSeenAt: number | null;
+}
+
+/** Форма ответа `GET /bags` целиком — см. `listBags()` ниже. */
+export interface ListBagsResult {
+  inbox: BagSummary[];
+  sent: SentBagSummary[];
+  peers: PeerSummary[];
+}
+
 /* ───────────────────────────── ошибки ───────────────────────────────── */
 
 export class BagTransportError extends Error {
@@ -457,14 +490,44 @@ function isBagSummary(x: unknown): x is BagSummary {
   );
 }
 
+/** Тот же уровень паранойи, что у `isBagSummary` выше — сервер обещает
+ *  булево `fetched` (не отметку времени), но клиент не обязан верить
+ *  обещанию молча: `typeof o.fetched === 'boolean'`, а не «поле есть». */
+function isSentBagSummary(x: unknown): x is SentBagSummary {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.key === 'string' && o.key.length > 0 &&
+    typeof o.recipient === 'string' && SENDER_RE.test(o.recipient) &&
+    typeof o.uploadedAt === 'number' && Number.isFinite(o.uploadedAt) &&
+    typeof o.fetched === 'boolean'
+  );
+}
+
+/** `lastSeenAt` — `null` («неизвестно») ИЛИ конечное число, ничего третьего. */
+function isPeerSummary(x: unknown): x is PeerSummary {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  if (typeof o.address !== 'string' || !SENDER_RE.test(o.address)) return false;
+  return o.lastSeenAt === null || (typeof o.lastSeenAt === 'number' && Number.isFinite(o.lastSeenAt));
+}
+
 /**
  * `signal` — необязательный, третий параметр (не часть исходного интерфейса
  * задачи `listBags(pass, since?)`, но обратно совместимый: ни один
  * существующий двухаргументный вызов не меняет поведения). Даёт
  * `pollBags` возможность реально ПРЕРВАТЬ запрос в полёте на `stop()`
  * (мелочь ревью), а не просто дождаться и отбросить результат.
+ *
+ * Задача 1 (chat-client): `GET /bags` теперь отдаёт объект
+ * `{inbox, sent, peers}`, не голый массив (решение координатора при сверке
+ * плана — тот же самый опрос раз в 5с несёт и то, что нужно отправителю про
+ * исходящие, и список собеседников, без отдельного запроса). Старая форма
+ * (голый массив — доездоровившийся сервер, версия до этой задачи) отвергается
+ * так же громко, как и любой другой мусор: рассинхрон версий обязан быть
+ * виден, а не молча прочитан как «пустой список».
  */
-export async function listBags(pass: string, since?: number, signal?: AbortSignal): Promise<BagSummary[]> {
+export async function listBags(pass: string, since?: number, signal?: AbortSignal): Promise<ListBagsResult> {
   const url = new URL(`${RELAYER_URL}/bags`);
   if (since !== undefined) url.searchParams.set('since', String(since));
 
@@ -472,11 +535,27 @@ export async function listBags(pass: string, since?: number, signal?: AbortSigna
   if (!res.ok) await throwForFailedResponse(res, 'Failed to list bags', pass);
 
   const body: unknown = await res.json();
-  if (!Array.isArray(body)) throw new BagTransportError('Malformed response from GET /bags: not an array');
-  for (const item of body) {
+  if (!body || typeof body !== 'object') {
+    throw new BagTransportError('Malformed response from GET /bags: not an object');
+  }
+  const { inbox, sent, peers } = body as Record<string, unknown>;
+
+  if (!Array.isArray(inbox)) throw new BagTransportError('Malformed response from GET /bags: inbox is not an array');
+  for (const item of inbox) {
     if (!isBagSummary(item)) throw new BagTransportError('Malformed bag entry in GET /bags response');
   }
-  return body as BagSummary[];
+
+  if (!Array.isArray(sent)) throw new BagTransportError('Malformed response from GET /bags: sent is not an array');
+  for (const item of sent) {
+    if (!isSentBagSummary(item)) throw new BagTransportError('Malformed sent entry in GET /bags response');
+  }
+
+  if (!Array.isArray(peers)) throw new BagTransportError('Malformed response from GET /bags: peers is not an array');
+  for (const item of peers) {
+    if (!isPeerSummary(item)) throw new BagTransportError('Malformed peer entry in GET /bags response');
+  }
+
+  return { inbox: inbox as BagSummary[], sent: sent as SentBagSummary[], peers: peers as PeerSummary[] };
 }
 
 /* ────────────────────────────── fetchBag ─────────────────────────────── */
@@ -697,7 +776,15 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
         if (stopped) return;
         stage = 'listBags';
         currentAbort = new AbortController();
-        bags = await listBags(pass, opts.since, currentAbort.signal);
+        // Задача 1 (chat-client): listBags() теперь отдаёт {inbox, sent,
+        // peers}, не голый массив — pollBags() пока прокидывает потребителю
+        // только inbox (её публичный контракт onBags(bags) не меняется в
+        // этой задаче: подключение sent/peers к хукам — отдельные задачи
+        // плана, 5/6). sent/peers из этого ответа сегодня просто отбрасываются
+        // здесь — не потеряны для системы в целом, GET /bags так и так
+        // отдаёт их на каждом тике, следующая задача их подхватит.
+        const result = await listBags(pass, opts.since, currentAbort.signal);
+        bags = result.inbox;
         currentAbort = null;
         if (stopped) return;
         consecutiveFailures = 0;

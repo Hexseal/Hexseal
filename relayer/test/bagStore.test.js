@@ -33,7 +33,7 @@ process.env.STORAGE_DIR = TMP;
 // (или через статический import), а не через переменную, деструктуриро-
 // ванную из динамического import() до этого вызова.
 const bagStore = await import('../bagStore.js');
-const { bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
+const { bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, bagMetaOf,
         bagExpiryAt, cleanupBags, _loadBagMeta, _saveBagMeta, _pairIdFromAddresses,
         assertBagStoreReady, bagPathFor } = bagStore;
 
@@ -281,6 +281,111 @@ describe('склад', () => {
     recordBag({ key: ghostKey, sender: BOB, recipient: ALICE,
                 size: 1, uploadedAt: Date.now() - 40 * DAY });
     expect(() => cleanupBags(Date.now())).not.toThrow();
+  });
+});
+
+// ─── listBagsBySender — Задача 1 плана «Клиент чата» ──────────────────────
+//
+// Зеркало listBagsFor() выше: та же самая живая _bagMeta, тот же O(n) обход
+// без единого обращения к диску, но фильтр по meta.sender вместо
+// meta.recipient. Понадобилась, потому что GET /bags до сих пор отвечал
+// только про то, что адресовано владельцу пропуска, — отправитель не мог
+// узнать судьбу собственных мешков (docs/superpowers/specs/2026-08-06-chat-
+// client-design.md, §3.3/3.4). app.js строит на ней поля `sent` и `peers`.
+describe('listBagsBySender — зеркало listBagsFor, взгляд отправителя (Задача 1 плана «Клиент чата»)', () => {
+  it('отдаёт только мешки, отправленные ЭТИМ адресом', () => {
+    put(ALICE, BOB, Date.now());   // BOB -> ALICE
+    put(BOB, ALICE, Date.now());   // ALICE -> BOB
+    expect(listBagsBySender(BOB)).toHaveLength(1);
+    expect(listBagsBySender(BOB)[0].recipient).toBe(ALICE);
+    expect(listBagsBySender(ALICE)).toHaveLength(1);
+    expect(listBagsBySender(ALICE)[0].recipient).toBe(BOB);
+  });
+
+  it('бросает на негодном по форме адресе — тот же контракт, что у listBagsFor', () => {
+    expect(() => listBagsBySender('not-an-address')).toThrow();
+    expect(() => listBagsBySender(null)).toThrow();
+    expect(() => listBagsBySender(42)).toThrow();
+  });
+
+  it('отдаёт в хронологическом порядке (по uploadedAt), даже если записаны вразнобой', () => {
+    const second = put(ALICE, BOB, 2000);
+    const first  = put(ALICE, BOB, 1000);
+    const third  = put(ALICE, BOB, 3000);
+    expect(listBagsBySender(BOB).map((b) => b.key)).toEqual([first, second, third]);
+  });
+
+  it('пуст, если этот адрес ничего не отправлял', () => {
+    put(ALICE, BOB, Date.now());
+    expect(listBagsBySender(ALICE)).toEqual([]);
+  });
+});
+
+// ─── listBagsBySender и режим недоверия ────────────────────────────────────
+//
+// Подводный камень координатора (найден при ревью замысла, до реализации):
+// у записи, реконструированной _scanDiskBags() из одного только имени файла
+// (см. её докстринг и candidate.sender === '' там же), отправитель не
+// восстановим — recipient и uploadedAt несёт само имя файла
+// ("<recipient>/<uploadedAt>-<uuid>.bin"), а вот кто прислал мешок, знает
+// только сам сервер в момент PUT (bagPass), и это знание живёт исключительно
+// в описи. Опись потеряна — значит и знание потеряно, не приблизительно, а
+// совсем: подставить НИЧЕГО не значит "предположить самый вероятный
+// вариант", это значит соврать.
+//
+// listBagsBySender(addr) фильтрует meta.sender === addr, а addr всегда —
+// настоящий, проверенный ETH_ADDR_RE адрес (assertAddress бросает на любом
+// другом виде входа) — значит meta.sender === '' НИКОГДА ни с одним таким
+// addr не совпадёт. Реконструированная запись остаётся невидимой для
+// listBagsBySender автоматически, без отдельной ветки "а если недоверие" —
+// это следствие формы данных, а не отдельная проверка режима, которую
+// можно забыть обновить at the next refactor.
+describe('listBagsBySender в режиме недоверия — отправитель реконструированной записи неизвестен, значит не приписывается никому', () => {
+  it('реконструированный (из одного имени файла) мешок не числится отправленным ни за одним настоящим адресом', () => {
+    const oldKey = manualKey(ALICE, Date.now() - DAY);
+    const fp = path.join(bagStore.DIR_BAGS, oldKey);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8'); // индекса нет, склад не пуст
+    _loadBagMeta(); // режим недоверия — реконструкция
+
+    expect(listBagsFor(ALICE)).toHaveLength(1); // получатель виден — он был в имени файла
+    expect(listBagsBySender(BOB)).toEqual([]);   // отправитель — нет, ни для кого
+    expect(listBagsBySender(ALICE)).toEqual([]); // включая саму получательницу
+  });
+
+  it('недоверие не отключает функцию целиком — мешок, честно записанный ЖИВЫМ recordBag() ПОСЛЕ входа в режим недоверия (сервер сам проверил пропуск, sender не реконструирован), виден немедленно', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    _loadBagMeta(); // режим недоверия, склад пуст на этот момент
+
+    const key = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
+    recordBag({ sender: BOB, recipient: ALICE, key, size: 6, uploadedAt: Date.now() });
+
+    // Не персистировано на диск (см. "выход из режима" ниже и существующий
+    // тест на recordBag() в недоверии выше в файле) — но в ПАМЯТИ отправитель
+    // настоящий, не выдуманный, так что listBagsBySender обязана его видеть.
+    expect(listBagsBySender(BOB)).toHaveLength(1);
+  });
+
+  it('доверие восстанавливается честной загрузкой описи — listBagsBySender сразу видит настоящего отправителя, без перезапуска процесса или какого-либо ручного шага сверх самой _loadBagMeta()', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    _loadBagMeta(); // режим недоверия
+    expect(listBagsBySender(BOB)).toEqual([]);
+
+    // Человек чинит индекс руками — валидная запись с НАСТОЯЩИМ отправителем
+    // (не тем, что мог бы придумать сам сервер).
+    const key = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
+    writeRawBagMeta({ [key]: validRawMeta({ sender: BOB, recipient: ALICE, uploadedAt: 1000 }) });
+
+    _loadBagMeta(); // единственное действие для выхода — честная загрузка
+
+    expect(listBagsBySender(BOB)).toHaveLength(1);
+    expect(listBagsBySender(BOB)[0].key).toBe(key);
   });
 });
 

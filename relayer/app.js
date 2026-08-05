@@ -26,7 +26,7 @@ dotenv.config({ path: '.env.relayer' });
 // повторно вызываемая из assertBagStoreReady()) — но текстовый порядок здесь
 // дешевле и надёжнее как сигнал для читателя, поэтому он такой.
 import {
-  bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
+  bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, bagMetaOf, bagPathFor,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
   adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
   assertNotFromFuture,
@@ -2539,9 +2539,89 @@ app.put('/bags/:recipient', (req, res) => {
   });
 });
 
-// GET /bags?since=<ms> — bags addressed to the pass's own address, oldest
-// first (listBagsFor's own order). Only the four fields Задача 3's spec
-// names ship back — not pairId, not firstFetchedAt, not dealDeadline.
+// ─── sent / peers (Задача 1, chat-client) ──────────────────────────────────
+//
+// docs/superpowers/specs/2026-08-06-chat-client-design.md, §3.3/3.4:
+// отправитель до сих пор не мог узнать судьбу собственных мешков ("забрали
+// ли"), и заодно решено бесплатно отдать "когда собеседник последний раз
+// был в сети" — обе вещи из ТЕХ ЖЕ данных, что GET /bags и так уже читает
+// каждый опрос (раз в 5с), без единого лишнего обращения к складу.
+//
+// Координатор, при сверке плана — четыре правила, каждое заперто тестом
+// (relayer/test/bagSenderView.test.js):
+//   - sent — только мешки ВЛАДЕЛЬЦА ПРОПУСКА (listBagsBySender(address), не
+//     чужой список).
+//   - fetched — булево (firstFetchedAt != null), НЕ временная метка: точное
+//     время забора — метаданные собеседника, отправителю знать незачем.
+//   - peers — только адреса, с которыми есть переписка хоть в одну сторону.
+//   - lastSeenAt — округлён ВНИЗ до минуты (roundDownToMinute) — секундная
+//     точность рисует слишком подробную картину чужого дня.
+// Ни одно поле не читает содержимое мешка — только то, что уже даёт
+// listBagsFor()/listBagsBySender() (адреса, размеры, время).
+
+const MINUTE_MS = 60 * 1000;
+
+/**
+ * "Видели не позже этого момента" — округление ВНИЗ, не к ближайшей минуте:
+ * округление вверх нарисовало бы присутствие раньше, чем оно случилось.
+ */
+function roundDownToMinute(ms) {
+  return Math.floor(ms / MINUTE_MS) * MINUTE_MS;
+}
+
+/**
+ * peers из уже полученных `received`/`sent` (никакого отдельного чтения
+ * склада) — те же два сигнала, что уже дают галочку fetched:
+ *   - собеседник САМ прислал мешок → uploadedAt этого мешка — прямое
+ *     доказательство, что он был жив в этот момент;
+ *   - собеседник забрал мешок, присланный ему, → firstFetchedAt — тоже
+ *     прямое доказательство присутствия.
+ * Без доказательства ни в одну сторону peer всё равно попадает в список
+ * (переписка есть — хоть один мешок в любую сторону, только его прочитать
+ * ещё не забрали и он ничего не присылал сам) с lastSeenAt: null — честное
+ * "неизвестно", не выдуманная метка.
+ *
+ * ETH_ADDR_RE-проверка на `b.sender` из `received` — единственная защита от
+ * режима недоверия bagStore.js (test/bagStore.test.js, describe про
+ * listBagsBySender): реконструированная с диска запись несёт
+ * meta.sender === '' (имя файла не хранит отправителя). listBagsBySender()
+ * уже сама никогда не отдаёт такие записи ни для одного настоящего адреса
+ * (assertAddress требует валидную форму), так что `sent` в этой защите не
+ * нуждается — только `received`, где sender берётся из ЧУЖОЙ записи и мог
+ * бы быть этим самым ''.
+ */
+function buildPeerView(received, sent) {
+  const lastSeen = new Map(); // адрес -> последняя ЧЕСТНАЯ метка (до округления)
+  const noteEvidence = (addr, ts) => {
+    const prev = lastSeen.get(addr);
+    if (prev === undefined || ts > prev) lastSeen.set(addr, ts);
+  };
+
+  const peers = new Set();
+  for (const b of received) {
+    if (!ETH_ADDR_RE.test(b.sender)) continue; // '' в режиме недоверия — не адрес, не собеседник
+    peers.add(b.sender);
+    noteEvidence(b.sender, b.uploadedAt);
+  }
+  for (const b of sent) {
+    peers.add(b.recipient); // recipient всегда настоящий адрес — форма проверена recordBag()/PUT
+    if (b.firstFetchedAt != null) noteEvidence(b.recipient, b.firstFetchedAt);
+  }
+
+  return [...peers].map((address) => {
+    const ts = lastSeen.get(address);
+    return { address, lastSeenAt: ts === undefined ? null : roundDownToMinute(ts) };
+  });
+}
+
+// GET /bags?since=<ms> — {inbox, sent, peers} для адреса из пропуска.
+// Раньше отдавал голый массив (только inbox) — форма сменилась объектом
+// решением координатора при сверке плана (docs/superpowers/plans/2026-08-
+// 06-chat-client.md, §"Сверка плана"): добавить sent/peers в ТОТ ЖЕ ответ
+// вместо отдельного запроса, раз опрос и так идёт каждые 5с. `since`
+// применяется только к inbox — sent/peers каждый раз целиком (оба сегодня
+// малы: список исходящих и список собеседников одного человека, не история
+// всего склада).
 app.get('/bags', (req, res) => {
   const ip = clientIp(req);
   if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
@@ -2561,13 +2641,16 @@ app.get('/bags', (req, res) => {
     if (!Number.isFinite(since)) return res.status(400).json({ error: 'Invalid since' });
   }
 
-  let list;
+  let received, sentRaw;
   try {
-    list = listBagsFor(address);
+    received = listBagsFor(address);
+    sentRaw = listBagsBySender(address);
   } catch (e) {
     console.error('[bags] GET /bags failed:', e.message);
     return res.status(500).json({ error: 'Failed to list bags' });
   }
+
+  const peers = buildPeerView(received, sentRaw);
 
   // И-3 (ревью): nonstrict `>=`, not `>`. Two bags landing in the same
   // millisecond is a real race, not a theoretical one (measured live by the
@@ -2578,9 +2661,15 @@ app.get('/bags', (req, res) => {
   // from now on. `>=` re-sends the already-seen bag alongside it — a client
   // dedupes by key, so a repeat is a no-op, not a data-loss risk the way
   // silently dropping a message forever is.
-  if (since !== null) list = list.filter((b) => b.uploadedAt >= since);
+  const inboxList = since !== null ? received.filter((b) => b.uploadedAt >= since) : received;
 
-  res.json(list.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })));
+  res.json({
+    inbox: inboxList.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })),
+    sent: sentRaw.map(({ key, recipient, uploadedAt, firstFetchedAt }) => ({
+      key, recipient, uploadedAt, fetched: firstFetchedAt != null,
+    })),
+    peers,
+  });
 });
 
 // GET /bags/:recipient/:filename — download. bagKeyFor() always produces a
