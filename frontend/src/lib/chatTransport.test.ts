@@ -308,6 +308,37 @@ describe('putBag', () => {
     expect(String(url)).not.toContain('CAfE');
   });
 
+  // Мелочь (ревью-координатор). recipient уезжал в адрес запроса БЕЗ
+  // кодирования — "../../../etc/passwd" и "?x=1" доезжали как есть. Сервер
+  // сам проверяет форму получателя (ETH_ADDR_RE), но кодировать надо на
+  // нашей стороне — практика defense-in-depth, а не расчёт на то, что
+  // сервер всегда единственный слой защиты.
+  it('мелочь: recipient кодируется в адресе запроса — путь и query не уезжают как есть', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: 'k' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await putBag('v1.p', '../../../etc/passwd' as `0x${string}`, new Uint8Array([1]));
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    // Настоящая проверка через сам URL-парсер: recipient здесь НЕ равен
+    // буквально ".."/"." целиком (он длиннее, с внутренними "/"), значит
+    // кодирование внутренних "/" реально защищает — /bags/ остаётся на
+    // месте, значение целиком уходит ОДНИМ сегментом.
+    const parsed = new URL(String(url));
+    expect(parsed.pathname.startsWith('/bags/')).toBe(true);
+    expect(parsed.pathname.split('/').filter(Boolean)).toHaveLength(2); // bags + один сегмент
+  });
+
+  // Кодирование точек НЕ защищает само по себе (см. соседний тест в
+  // describe('fetchBag', ...) с полным разбором через WHATWG URL Standard).
+  // Единственная рабочая защита для recipient, равного РОВНО "..", — отказ
+  // до сети, а не попытка "закодировать" то, что кодированием не лечится.
+  it('мелочь: recipient, буквально равный "..", — отказ ДО сети, не закодированный обход', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(putBag('v1.p', '..' as `0x${string}`, new Uint8Array([1]))).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('возвращает key из ответа сервера', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: 'alice/123-abc.bin' }) }));
     await expect(putBag('v1.p', ALICE, new Uint8Array([9]))).resolves.toEqual({ key: 'alice/123-abc.bin' });
@@ -516,6 +547,41 @@ describe('fetchBag', () => {
     await fetchBag('v1.p', 'a/1.bin');
     expect(String(fetchMock.mock.calls[0][0])).toBe('http://localhost:3001/bags/a/1.bin');
     expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ 'x-bag-pass': 'v1.p' });
+  });
+
+  // Мелочь (ревью-координатор). key — опаковая строка снаружи (тип просто
+  // `string`), обычно приходит из listBags(), но ничто не мешает
+  // вызывающему передать что угодно. Ключ всегда РОВНО два сегмента
+  // (получатель/имя файла — см. bagKeyFor() на сервере), так что кодируем
+  // ОБА по отдельности, разделяя по ПЕРВОМУ "/" — иначе "/" внутри второго
+  // сегмента открыл бы новый путь обхода уже после кодирования.
+  // Кодирование точек НЕ защищает само по себе: WHATWG URL Standard явно
+  // трактует %2E как эквивалент буквальной точки при разборе dot-сегментов
+  // пути — проверено вживую (`new URL('.../bags/%2E%2E/x').pathname` ===
+  // `new URL('.../bags/../x').pathname`, оба теряют `/bags/`). Единственная
+  // рабочая защита для сегмента, равного РОВНО "..", — отказ до сети.
+  it('мелочь: key-сегмент, буквально равный ".." — отказ ДО сети, не закодированный обход', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchBag('v1.p', '../evil/../../file?x=1')).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('мелочь: key без буквального dot-сегмента всё равно кодируется — путь и query не уезжают как есть', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+    vi.stubGlobal('fetch', fetchMock);
+    // Первый сегмент ("recipient") НЕ равен буквально ".."/"." — второй
+    // содержит ".." только ВНУТРИ более длинной строки, не как отдельный
+    // сегмент, так что кодирование его реально защищает (закрывает лишний
+    // "/" и "?" внутри значения).
+    await fetchBag('v1.p', 'recipient/evil/../../file?x=1');
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    const parsed = new URL(String(url));
+    // Настоящая проверка через сам URL-парсер, не текстовый grep.
+    expect(parsed.pathname.startsWith('/bags/')).toBe(true);
+    expect(parsed.pathname.split('/').filter(Boolean)).toHaveLength(3); // bags + два сегмента key
+    expect(parsed.search).toBe(''); // "?x=1" не стало отдельной query-строкой
   });
 });
 

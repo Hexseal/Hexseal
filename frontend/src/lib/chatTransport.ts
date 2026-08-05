@@ -133,6 +133,31 @@ const RELAYER_URL = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:30
 
 const BAG_PASS_HEADER = 'x-bag-pass';
 
+/**
+ * `encodeURIComponent` для одного URL-сегмента — с одним отказом вместо
+ * попытки закодировать то, что кодированием не лечится (мелочь ревью,
+ * найдено при попытке зачинить именно кодированием — не сработало).
+ *
+ * Голый `encodeURIComponent(value)` защищает от ЧУЖОГО `/`/`?` ВНУТРИ
+ * значения (не даёт ему создать лишний сегмент пути или query-строку) —
+ * этой части достаточно для любого значения, которое не равно буквально
+ * `.` или `..`. Но сегмент, равный РОВНО `..` (или `.`), — отдельный
+ * случай: WHATWG URL Standard ЯВНО трактует `%2E` как эквивалент буквальной
+ * точки при разборе dot-сегментов пути ("подняться на уровень"), то есть
+ * процентное экранирование точек НЕ защищает от этого в принципе — ни один
+ * добросовестный разборщик URL (браузерный `fetch`, `undici` в Node,
+ * промежуточный прокси) не обязан видеть разницу между `..` и `%2E%2E`.
+ * Проверено вживую: `new URL('.../bags/%2E%2E/x').pathname` совпадает с
+ * `new URL('.../bags/../x').pathname` — оба теряют `/bags/` из пути.
+ * Единственная рабочая защита — не пускать такой сегмент в путь ВООБЩЕ.
+ */
+function encodePathSegment(segment: string): string {
+  if (segment === '.' || segment === '..') {
+    throw new BagTransportError(`Refusing to build a request with a "${segment}" path segment`);
+  }
+  return encodeURIComponent(segment);
+}
+
 export interface BagSummary {
   key: string;
   sender: `0x${string}`;
@@ -389,7 +414,10 @@ export async function putBag(
   recipient: `0x${string}`,
   sealed: Uint8Array,
 ): Promise<{ key: string }> {
-  const res = await fetch(`${RELAYER_URL}/bags/${recipient.toLowerCase()}`, {
+  // Мелочь ревью: recipient уезжал в URL БЕЗ кодирования — сервер проверяет
+  // его форму сам (ETH_ADDR_RE), но кодировать надо и на нашей стороне
+  // (defense in depth, не расчёт на единственный слой защиты).
+  const res = await fetch(`${RELAYER_URL}/bags/${encodePathSegment(recipient.toLowerCase())}`, {
     method: 'PUT',
     headers: {
       [BAG_PASS_HEADER]: pass,
@@ -454,7 +482,16 @@ export async function listBags(pass: string, since?: number, signal?: AbortSigna
 /* ────────────────────────────── fetchBag ─────────────────────────────── */
 
 export async function fetchBag(pass: string, key: string): Promise<Uint8Array | null> {
-  const res = await fetch(`${RELAYER_URL}/bags/${key}`, { headers: { [BAG_PASS_HEADER]: pass } });
+  // Мелочь ревью: key уезжал в URL БЕЗ кодирования — сервер сам проверяет
+  // его форму, но кодировать надо и на нашей стороне. Ключ — ВСЕГДА два
+  // сегмента (recipient/filename, см. bagKeyFor() на сервере), поэтому
+  // кодируем по отдельности вокруг ПЕРВОГО "/" — иначе "/" внутри второго
+  // сегмента открыл бы дополнительный путь обхода уже после кодирования.
+  const slashIdx = key.indexOf('/');
+  const urlKey = slashIdx === -1
+    ? encodePathSegment(key)
+    : `${encodePathSegment(key.slice(0, slashIdx))}/${encodePathSegment(key.slice(slashIdx + 1))}`;
+  const res = await fetch(`${RELAYER_URL}/bags/${urlKey}`, { headers: { [BAG_PASS_HEADER]: pass } });
 
   // Чужой ключ и несуществующий отвечают одинаковым 404 (see relayer/app.js) —
   // намеренно не парсим тело здесь: сервер на эту ветку тела может не дать.
