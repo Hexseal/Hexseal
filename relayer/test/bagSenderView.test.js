@@ -221,7 +221,10 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     expect(bobPeer.lastSeenAt).toBe(Math.floor(bagMetaOf(bobToAlice.body.key).uploadedAt / 60000) * 60000);
   });
 
-  it('lastSeenAt округлён до минуты', async () => {
+  // Живой замер (не строгая проверка направления округления — та ниже,
+  // отдельным тестом): реальный забор через настоящий HTTP-путь всё ещё
+  // обязан дать кратную минуте, недалёкую от настоящего момента метку.
+  it('lastSeenAt (живой забор) кратен минуте и не дальше минуты от настоящего момента', async () => {
     const { wallet: alice } = await newWalletAndAddress();
     const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice);
@@ -237,12 +240,45 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     expect(bobPeer.lastSeenAt).not.toBeNull();
     expect(bobPeer.lastSeenAt % 60000).toBe(0);
 
-    // Не "случайно кратно минуте" — обязано быть НЕ ПОЗЖЕ настоящего момента
-    // скачивания и не дальше минуты в прошлое от него (округление ВНИЗ, не
-    // "к ближайшей" — не рисуем присутствие раньше, чем оно случилось).
     const realFetchedAt = bagMetaOf(put1.body.key).firstFetchedAt;
-    expect(bobPeer.lastSeenAt).toBeLessThanOrEqual(realFetchedAt);
-    expect(realFetchedAt - bobPeer.lastSeenAt).toBeLessThan(60000);
+    expect(Math.abs(realFetchedAt - bobPeer.lastSeenAt)).toBeLessThan(60000);
+  });
+
+  // Находка ревью (координатор): версия ВЫШЕ проверяла "не дальше минуты",
+  // а не саму сторону округления — на Date.now() это совпадает с floor()
+  // ТОЛЬКО когда тест выполняется в первые ~30 секунд минуты (round() вниз
+  // при секундах <30, вверх — при >=30). Мутация floor -> round выживала
+  // или ловилась в зависимости от того, В КАКУЮ СЕКУНДУ ПРОШЁЛ ПРОГОН —
+  // измерено вживую: 8 запусков подряд с интервалом 6с дали 5 красных, 3
+  // зелёных, ровно по границе секунды 30. Тест, красящийся от времени
+  // суток, хуже отсутствующего — здесь фиксированное время (recordBag()
+  // напрямую, в обход HTTP), секунды заведомо ЗА границей округления,
+  // независимо от того, когда реально выполняется прогон.
+  it('lastSeenAt округляется ВНИЗ до минуты, не к ближайшей — фиксированное время, не Date.now() (мутация Math.floor → Math.round красит именно этот тест)', async () => {
+    const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+
+    // 12:30:45 — заведомо за границей .5 минуты: Math.round дал бы 12:31:00
+    // (следующую минуту), Math.floor — 12:30:00 (эту же). В прошлом
+    // относительно "сегодня" любого разумного прогона (assertNotFromFuture).
+    const fixedMoment = Date.UTC(2026, 0, 1, 12, 30, 45);
+    const expectedFloor = Date.UTC(2026, 0, 1, 12, 30, 0);
+    const wrongRound = Date.UTC(2026, 0, 1, 12, 31, 0);
+
+    const key = bagKeyFor(bobAddr);
+    fs.mkdirSync(path.dirname(path.join(DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(DIR_BAGS, key), 'sealed');
+    recordBag({
+      sender: aliceAddr, recipient: bobAddr, key, size: 6,
+      uploadedAt: fixedMoment, firstFetchedAt: fixedMoment,
+    });
+
+    const res = await getBags({ pass: alicePass });
+    const bobPeer = res.body.peers.find((p) => p.address === bobAddr);
+    expect(bobPeer).toBeDefined();
+    expect(bobPeer.lastSeenAt).toBe(expectedFloor);
+    expect(bobPeer.lastSeenAt).not.toBe(wrongRound);
   });
 
   it('ни одно поле не требует чтения содержимого мешка', async () => {
