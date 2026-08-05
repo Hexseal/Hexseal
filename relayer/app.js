@@ -2663,9 +2663,24 @@ app.get('/bags', (req, res) => {
   // silently dropping a message forever is.
   const inboxList = since !== null ? received.filter((b) => b.uploadedAt >= since) : received;
 
+  // Находка ревью (координатор): `since` фильтровал только inbox — sent
+  // ехал ЦЕЛИКОМ на каждом тике, даже когда в нём ничего не изменилось.
+  // Замерено координатором: 41КБ на 10 000 мешков, 244КБ на 60 000, каждые
+  // пять секунд, каждому. Фильтр — по ЛЮБОМУ из двух событий, не только по
+  // uploadedAt (зеркалом inbox): мешок, отправленный ДО cutoff, но
+  // забранный ПОСЛЕ него, обязан остаться в ответе — иначе отправитель
+  // никогда не узнал бы о собственной галочке, появившейся уже после того,
+  // как мешок стал "старым" по времени загрузки. `peers` — ИЗ уже
+  // посчитанного выше `buildPeerView(received, sentRaw)`, на НЕфильтрованных
+  // списках: presence/lastSeenAt обязаны отражать всю историю, а не только
+  // то, что попало в окно этого конкретного опроса.
+  const sentList = since !== null
+    ? sentRaw.filter((b) => b.uploadedAt >= since || (b.firstFetchedAt != null && b.firstFetchedAt >= since))
+    : sentRaw;
+
   res.json({
     inbox: inboxList.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })),
-    sent: sentRaw.map(({ key, recipient, uploadedAt, firstFetchedAt }) => ({
+    sent: sentList.map(({ key, recipient, uploadedAt, firstFetchedAt }) => ({
       key, recipient, uploadedAt, fetched: firstFetchedAt != null,
     })),
     peers,

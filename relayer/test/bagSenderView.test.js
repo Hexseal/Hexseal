@@ -302,6 +302,52 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     ]);
     expect(res.body.peers.map((p) => p.address)).toEqual([bobAddr]);
   });
+
+  // Находка ревью (координатор): `since` фильтровал только inbox — sent
+  // ехал целиком на КАЖДОМ тике, включая те, где ничего нового нет.
+  // Замерено координатором: 41КБ на десяти тысячах мешков, 244КБ на
+  // шестидесяти, каждые пять секунд, каждому пользователю.
+  it('?since применяется и к sent — старый, без изменений, отправленный мешок не пересылается заново', async () => {
+    const { wallet: alice } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+
+    const put1 = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('old') });
+    await new Promise((r) => setTimeout(r, 5));
+    const cutoff = bagMetaOf(put1.body.key).uploadedAt + 1; // строго ПОСЛЕ загрузки, ничего не изменилось с тех пор
+
+    const res = await getBags({ pass: alicePass, since: cutoff });
+    expect(res.status).toBe(200);
+    expect(res.body.sent).toEqual([]);
+  });
+
+  // Если фильтровать sent ТОЛЬКО по uploadedAt (зеркалом inbox буквально),
+  // мешок, отправленный ДО cutoff, но забранный ПОСЛЕ него, навсегда
+  // выпадает из ответа — отправитель никогда не узнал бы о galочке,
+  // появившейся уже после того, как мешок стал "старым" по её собственным
+  // часам. since обязан учитывать ОБА события: новый мешок (uploadedAt) И
+  // изменившийся fetched (firstFetchedAt).
+  it('?since не прячет sent-мешок, у которого изменился fetched (галочка), даже если сам мешок старше cutoff', async () => {
+    const { wallet: alice } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+    const bobPass = await issuePassFor(bob);
+
+    const put1 = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('old') });
+    await new Promise((r) => setTimeout(r, 5));
+    const cutoff = bagMetaOf(put1.body.key).uploadedAt + 1; // мешок теперь строго СТАРШЕ cutoff
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Забор — уже ПОСЛЕ cutoff: свежая, ещё не увиденная клиентом информация.
+    const download = await getBag({ pass: bobPass, key: put1.body.key });
+    expect(download.status).toBe(200);
+
+    const res = await getBags({ pass: alicePass, since: cutoff });
+    expect(res.status).toBe(200);
+    expect(res.body.sent).toEqual([
+      { key: put1.body.key, recipient: bobAddr, uploadedAt: expect.any(Number), fetched: true },
+    ]);
+  });
 });
 
 // ─── Режим недоверия склада — на уровне маршрута ──────────────────────────
