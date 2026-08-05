@@ -234,6 +234,52 @@ describe('requestBagPass', () => {
     expect((caught as BagRateLimitError).retryAfterSec).toBe(90);
   });
 
+  // Мелочь (ревью-координатор). Все существующие тесты на 429 подсовывали
+  // ВАЛИДНЫЙ положительный Retry-After — путь "заголовка нет вовсе" и путь
+  // "заголовок есть, но мусор" не были заперты НИ ОДНИМ тестом: запасное
+  // значение DEFAULT_RETRY_AFTER_SEC (60) и проверка `n > 0` могли быть
+  // сняты — набор оставался бы зелёным.
+  it('429 без заголовка Retry-After вовсе — запасное значение 60, не NaN/0', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 429,
+      json: async () => ({ code: 'rate_limited_pass' }),
+      headers: { get: () => null },
+    }));
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    let caught: unknown;
+    try { await requestBagPass(sign, ALICE); } catch (e) { caught = e; }
+    expect((caught as BagRateLimitError).retryAfterSec).toBe(60);
+  });
+
+  it('429 с полностью отсутствующим объектом headers — тоже запасное значение, не падение', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 429,
+      json: async () => ({ code: 'rate_limited_pass' }),
+      // headers вовсе нет в ответе — реалистичный мусорный мок/прокси.
+    }));
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    let caught: unknown;
+    try { await requestBagPass(sign, ALICE); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(BagRateLimitError);
+    expect((caught as BagRateLimitError).retryAfterSec).toBe(60);
+  });
+
+  it.each([
+    ['отрицательное', '-5'],
+    ['ноль', '0'],
+    ['не число', 'скоро'],
+  ])('429 с невалидным Retry-After (%s: %s) — запасное значение 60, не мусорное', async (_label, raw) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 429,
+      json: async () => ({ code: 'rate_limited_pass' }),
+      headers: { get: (h: string) => h.toLowerCase() === 'retry-after' ? raw : null },
+    }));
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    let caught: unknown;
+    try { await requestBagPass(sign, ALICE); } catch (e) { caught = e; }
+    expect((caught as BagRateLimitError).retryAfterSec).toBe(60);
+  });
+
   it('мусор вместо {pass, expiresAt} не проходит за успех', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }));
     await expect(requestBagPass(vi.fn().mockResolvedValue('0xsig'), ALICE)).rejects.toThrow();
