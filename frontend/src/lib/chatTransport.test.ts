@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  requestBagPass, putBag, listBags, fetchBag, pollBags,
+  requestBagPass, putBag, listBags, fetchBag, pollBags, forgetBagPass,
   BagTransportError, BagPassError, BagRateLimitError,
   DEFAULT_BAG_POLL_INTERVALS,
   _resetBagPassCacheForTest,
@@ -10,6 +10,17 @@ import {
 const ALICE = '0xa1ce00000000000000000000000000000000cafe' as const;
 
 const nowSec = () => Math.floor(Date.now() / 1000);
+
+/** Токен в РЕАЛЬНОЙ форме сервера (`v1.<base64url(addr.expiresAt)>.<mac>`,
+ *  см. relayer/bagPass.js `issueBagPass()`), но с фиктивным mac — тесты на
+ *  выброс кэша (C1) должны реально суметь извлечь адрес из тела, а
+ *  произвольная строка вроде `'v1.old'` для этого не годится (в ней нет
+ *  даже трёх точечных сегментов). `marker` — чтобы разные "версии" пропуска
+ *  одного адреса были текстуально различимы в assert'ах. */
+function fakePass(address: string, marker: string): string {
+  const body = `${address.toLowerCase()}.${nowSec() + 3600}`;
+  return `v1.${Buffer.from(body, 'utf8').toString('base64url')}.${marker}`;
+}
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -345,6 +356,130 @@ describe('образец повтора (из документации моду�
     expect(bags).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  // C1 (ревью-координатор, критическая находка). Пропуск живёт 12 часов по
+  // КЛИЕНТСКИМ часам. Если сервер начал отвечать 401 раньше срока по этим
+  // часам (перезапуск с новым секретом, разъехавшиеся в разрешённых ±5 мин
+  // часы, урезанный прокси заголовок) — requestBagPass смотрит СВОИ часы,
+  // видит "живой" кэш и отдаёт ТОТ ЖЕ мёртвый пропуск. Образец выше это не
+  // ловит вообще, если сервер не считает пропуск протухшим ПО СВОИМ часам —
+  // ключевая часть этого теста в том, что requestBagPass() успел закэшировать
+  // ДОЛГИЙ срок ДО того, как сервер сказал "нет".
+  it('C1: 401 при формально живом по МЕСТНЫМ часам пропуске — транспорт сам выбрасывает кэш, повтор даёт НОВУЮ подпись и успех', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const stalePass = fakePass(ALICE, 'stale');
+    const freshPass = fakePass(ALICE, 'fresh');
+    const fetchMock = vi.fn()
+      // 1) requestBagPass -> пропуск с долгим сроком по МЕСТНЫМ часам (кэш будет жить ещё час)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: stalePass, expiresAt: nowSec() + 3600 }) })
+      // 2) listBags этим пропуском -> СЕРВЕР считает его мёртвым прямо сейчас
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }) })
+      // 3) requestBagPass повторно -> ОБЯЗАН реально сходить в сеть за подписью,
+      //    раз кэш выброшен транспортом, а не тихо отдать stalePass снова
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: freshPass, expiresAt: nowSec() + 3600 }) })
+      // 4) повтор listBags новым пропуском -> успех
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = await requestBagPass(sign, ALICE);
+    expect(first.pass).toBe(stalePass);
+
+    let bags: BagSummary[];
+    try {
+      bags = await listBags(first.pass);
+    } catch (e) {
+      if (!(e instanceof BagPassError)) throw e;
+      const fresh = await requestBagPass(sign, ALICE);
+      bags = await listBags(fresh.pass);
+    }
+
+    expect(bags).toEqual([]);
+    // Была дыра: без выброса кэша это осталось бы 1 — requestBagPass отдавал
+    // бы тот же stalePass из кэша навсегда, и повтор падал бы тем же 401.
+    expect(sign).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('forgetBagPass', () => {
+  it('выбрасывает кэш конкретного адреса — следующий requestBagPass реально подписывает заново', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: fakePass(ALICE, 'a'), expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestBagPass(sign, ALICE);
+    forgetBagPass(ALICE);
+    await requestBagPass(sign, ALICE);
+
+    expect(sign).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('регистр адреса значения не имеет', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: fakePass(ALICE, 'a'), expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestBagPass(sign, ALICE);
+    forgetBagPass(ALICE.toUpperCase() as `0x${string}`);
+    await requestBagPass(sign, ALICE);
+
+    expect(sign).toHaveBeenCalledTimes(2);
+  });
+
+  it('listBags/putBag/fetchBag сами зовут forgetBagPass на 401 — следующий requestBagPass того же адреса не отдаёт кэш', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const passA = fakePass(ALICE, 'a');
+    const passB = fakePass(ALICE, 'b');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: passA, expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await requestBagPass(sign, ALICE); // засеваем кэш живым по местным часам пропуском
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }),
+    }));
+    await expect(putBag(passA, ALICE, new Uint8Array([1]))).rejects.toBeInstanceOf(BagPassError);
+
+    const fetchMock2 = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: passB, expiresAt: nowSec() + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock2);
+    const after = await requestBagPass(sign, ALICE);
+    expect(after.pass).toBe(passB); // не passA из кэша
+    expect(sign).toHaveBeenCalledTimes(2);
+  });
+
+  it('putBag с пропуском ДРУГОГО адреса не задевает кэш вызывающего (парсим владельца ИЗ токена, не из аргументов вызова)', async () => {
+    const BOB = '0xb0b000000000000000000000000000000000b0b0' as const;
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const aliceFirst = fakePass(ALICE, 'a1');
+    const bobFirst = fakePass(BOB, 'b1');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: aliceFirst, expiresAt: nowSec() + 3600 }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: bobFirst, expiresAt: nowSec() + 3600 }) }));
+    await requestBagPass(sign, ALICE);
+    await requestBagPass(sign, BOB);
+
+    // putBag зовётся ПРОПУСКОМ БОБА (Боб шлёт получателю Алисы), но 401
+    // относится к пропуску Боба — кэш Алисы трогать не должен.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }),
+    }));
+    await expect(putBag(bobFirst, ALICE, new Uint8Array([1]))).rejects.toBeInstanceOf(BagPassError);
+
+    // Кэш Алисы жив — requestBagPass(ALICE) не должен подписывать заново.
+    const fetchMock3 = vi.fn();
+    vi.stubGlobal('fetch', fetchMock3);
+    const aliceAgain = await requestBagPass(sign, ALICE);
+    expect(aliceAgain.pass).toBe(aliceFirst);
+    expect(fetchMock3).not.toHaveBeenCalled();
   });
 });
 

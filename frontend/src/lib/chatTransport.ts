@@ -31,9 +31,21 @@
  * там `listBags(pass)` сама якобы ходит за новым пропуском, не имея под
  * рукой ничего, чем можно подписать челлендж). На протухший или неверный
  * пропуск (`401`) они бросают `BagPassError` с полем `.code`
- * (`'pass_expired' | 'pass_invalid'` — коды сервера, не текст для парсинга)
- * — и на этом их работа заканчивается. Обновление пропуска и повтор — дело
- * вызывающей стороны, а не транспорта.
+ * (`'pass_expired' | 'pass_invalid'` — коды сервера, не текст для парсинга).
+ *
+ * ⚠️ ПЕРЕД тем как бросить — они САМИ забывают кэш этого адреса
+ * (`forgetBagPass`, извлекая адрес прямо из тела пропуска, см. ниже). Это не
+ * опционально: пропуск живёт 12 часов по КЛИЕНТСКИМ часам, и если сервер
+ * начал отвечать `401` РАНЬШЕ (перезапуск с новым секретом, разъехавшиеся в
+ * разрешённых ±5 минут часы, урезанный прокси заголовок), а кэш никто не
+ * трогает — `requestBagPass` смотрит СВОИ часы, видит «живой» кэш и отдаёт
+ * ТОТ ЖЕ мёртвый пропуск навсегда: образец ниже без этого не выходит из
+ * отказа, а поллер молотит один и тот же 401 каждый тик до перезагрузки
+ * вкладки (найдено ревью, C1 — заявленный «правильный» образец повтора сам
+ * содержал ровно ту дыру, ради которой был написан). Обновление пропуска и
+ * ПОВТОР — по-прежнему дело вызывающей стороны, а не транспорта; но ЗАБЫТЬ
+ * мёртвый пропуск — дело транспорта, потому что только он в момент 401
+ * достоверно знает, что пропуск мёртв.
  *
  * ОБРАЗЕЦ ПРАВИЛЬНОГО ПОВТОРА (скопируйте буквально, не сочиняйте свой):
  *
@@ -41,7 +53,10 @@
  *     return await listBags(pass);
  *   } catch (e) {
  *     if (e instanceof BagPassError) {
- *       const fresh = await requestBagPass(signMessage, address); // дёшево, если пропуск ещё жив
+ *       // Кэш уже пуст — listBags выбросила его сама на этом самом 401,
+ *       // так что requestBagPass ниже НЕ отдаст тот же мёртвый пропуск:
+ *       // она реально попросит у кошелька новую подпись.
+ *       const fresh = await requestBagPass(signMessage, address);
  *       return await listBags(fresh.pass);                        // повтор РОВНО один раз
  *     }
  *     throw e;
@@ -52,9 +67,9 @@
  * разъехались, секрет сменился) — цикл будет спрашивать подпись у человека
  * бесконечно, окно за окном, без единого шанса на успех. Один повтор — это
  * «дать второй шанс транзиентной проблеме»; второй повтор — это уже
- * упрямство мимо человека. В этом проекте уже дважды обжигались на том, что
- * ближайший пример для копирования оказывался плохим — не повторяйте это
- * здесь третий раз.
+ * упрямство мимо человека. В этом проекте это уже ТРЕТИЙ раз, когда ближайший
+ * пример для копирования оказывался плохим — включая сам этот образец, до
+ * фикса C1 — не повторяйте это в четвёртый.
  *
  * ─── ОШИБКИ ─────────────────────────────────────────────────────────────
  *
@@ -144,6 +159,67 @@ export class BagRateLimitError extends BagTransportError {
  *  тому, что сервер шлёт сегодня. */
 const DEFAULT_RETRY_AFTER_SEC = 60;
 
+/* ─────────────────────── кэш пропуска и его выброс ──────────────────────
+ * Определён здесь, а не ниже (вместе с `requestBagPass`), потому что
+ * `throwForFailedResponse` уже здесь на него ссылается — 401 у ЛЮБОГО из
+ * трёх потребляющих маршрутов обязан уметь выбросить кэш немедленно. */
+
+const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
+
+/** На вкладку, в памяти модуля — НЕ localStorage/sessionStorage. Переживает
+ *  переходы внутри вкладки, не переживает перезагрузку; две вкладки держат
+ *  каждая свой кэш и не видят друг друга (см. вопрос №3 в отчёте задачи). */
+const _passCache = new Map<string, { pass: string; expiresAt: number }>();
+
+/**
+ * Выбрасывает кэш конкретного адреса. Публичная — пригодится и потребителю
+ * (например, при явном разлогине/смене аккаунта), но в первую очередь её
+ * зовут ИЗНУТРИ `listBags`/`putBag`/`fetchBag` на каждый `401` (C1, отчёт
+ * задачи): только транспорт в момент 401 достоверно знает, что пропуск
+ * мёртв, и не должен ждать, пока кто-то снаружи додумается его выбросить.
+ */
+export function forgetBagPass(address: string): void {
+  _passCache.delete(address.toLowerCase());
+}
+
+/**
+ * Достаёт адрес прямо из тела пропуска — БЕЗ проверки MAC (это не проверка
+ * подлинности, сервер её всё равно сделает сам на следующем запросе; здесь
+ * только «чей кэш выбросить»). Формат — `v1.<base64url(adr.expiresAt)>.<mac>`,
+ * тот же, что `issueBagPass()` в `relayer/bagPass.js`. Неразбираемый токен —
+ * `null`: тогда выбрасывать нечего, это не повод падать самому 401-обработчику.
+ */
+function base64UrlDecode(s: string): string {
+  const std = s.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = std + '='.repeat((4 - (std.length % 4)) % 4);
+  if (typeof atob === 'function') {
+    const bin = atob(padded);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+  // Node/SSR без atob (тесты, серверный рендер) — тот же байт-порядок через Buffer.
+  return Buffer.from(padded, 'base64').toString('utf8');
+}
+
+function parseBagPassAddress(pass: string): string | null {
+  const parts = pass.split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1') return null;
+  let body: string;
+  try {
+    body = base64UrlDecode(parts[1]);
+  } catch {
+    return null;
+  }
+  const addr = body.split('.')[0] ?? '';
+  return ETH_ADDR_RE.test(addr) ? addr : null;
+}
+
+function forgetBagPassByToken(pass: string): void {
+  const addr = parseBagPassAddress(pass);
+  if (addr) forgetBagPass(addr);
+}
+
 async function parseErrorBody(res: Response): Promise<{ error?: string; code?: string }> {
   try {
     const body: unknown = await res.json();
@@ -161,9 +237,18 @@ function retryAfterSecOf(res: Response): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_RETRY_AFTER_SEC;
 }
 
-async function throwForFailedResponse(res: Response, fallback: string): Promise<never> {
+/**
+ * `passToForget` — передайте `pass`, если вызывающий код держит опаковый
+ * токен, из которого стоит выбросить кэш на 401 (см. `forgetBagPass` ниже и
+ * C1 в отчёте задачи). `requestBagPass` сама этот параметр не передаёт: она
+ * ещё ничего не закэшировала, выбрасывать нечего.
+ */
+async function throwForFailedResponse(res: Response, fallback: string, passToForget?: string): Promise<never> {
   const body = await parseErrorBody(res);
-  if (res.status === 401) throw new BagPassError(body.error ?? fallback, body.code, 401);
+  if (res.status === 401) {
+    if (passToForget) forgetBagPassByToken(passToForget);
+    throw new BagPassError(body.error ?? fallback, body.code, 401);
+  }
   if (res.status === 429) throw new BagRateLimitError(body.error ?? fallback, body.code, retryAfterSecOf(res));
   throw new BagTransportError(body.error ?? fallback, body.code, res.status);
 }
@@ -179,11 +264,6 @@ export interface BagPass {
  *  пропуск, которому осталось меньше, считаем истёкшим ЗДЕСЬ, вместо
  *  гарантированного 401 с той стороны на следующем же вызове. */
 const PASS_EXPIRY_SKEW_SEC = 30;
-
-/** На вкладку, в памяти модуля — НЕ localStorage/sessionStorage. Переживает
- *  переходы внутри вкладки, не переживает перезагрузку; две вкладки держат
- *  каждая свой кэш и не видят друг друга (см. вопрос №3 в отчёте задачи). */
-const _passCache = new Map<string, BagPass>();
 
 function cachedPass(addr: string, nowSec: number): BagPass | null {
   const entry = _passCache.get(addr);
@@ -266,7 +346,7 @@ export async function putBag(
     // `fetch` реально принимает `Uint8Array` как тело — это ArrayBufferView).
     body: sealed as BodyInit,
   });
-  if (!res.ok) await throwForFailedResponse(res, 'Failed to store bag');
+  if (!res.ok) await throwForFailedResponse(res, 'Failed to store bag', pass);
 
   const body: unknown = await res.json();
   if (!isPutBagBody(body)) throw new BagTransportError('Malformed response from PUT /bags/:recipient');
@@ -293,7 +373,7 @@ export async function listBags(pass: string, since?: number): Promise<BagSummary
   if (since !== undefined) url.searchParams.set('since', String(since));
 
   const res = await fetch(url.toString(), { headers: { [BAG_PASS_HEADER]: pass } });
-  if (!res.ok) await throwForFailedResponse(res, 'Failed to list bags');
+  if (!res.ok) await throwForFailedResponse(res, 'Failed to list bags', pass);
 
   const body: unknown = await res.json();
   if (!Array.isArray(body)) throw new BagTransportError('Malformed response from GET /bags: not an array');
@@ -311,7 +391,7 @@ export async function fetchBag(pass: string, key: string): Promise<Uint8Array | 
   // Чужой ключ и несуществующий отвечают одинаковым 404 (see relayer/app.js) —
   // намеренно не парсим тело здесь: сервер на эту ветку тела может не дать.
   if (res.status === 404) return null;
-  if (!res.ok) await throwForFailedResponse(res, 'Failed to fetch bag');
+  if (!res.ok) await throwForFailedResponse(res, 'Failed to fetch bag', pass);
 
   const buf = await res.arrayBuffer();
   return new Uint8Array(buf);
