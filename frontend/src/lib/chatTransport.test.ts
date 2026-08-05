@@ -921,6 +921,141 @@ describe('pollBags', () => {
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(fetchMock.mock.calls.length).toBe(callsAtStop);
   });
+
+  // C1-R1 (ревью-координатор, КРИТИЧЕСКАЯ находка). Сервер отвечает 401
+  // ВСЕГДА, включая свежую подпись (расхождение версий, испорченный секрет,
+  // съехавшие часы). getPass подключён РОВНО так, как раньше предписывал
+  // докстринг (`() => requestBagPass(signMessage, address).then(p => p.pass)`).
+  // Без предела — цикл спрашивает у кошелька подпись на КАЖДЫЙ тик
+  // бесконечно: 25 тиков — 25 окон, час на активном интервале — 17 окон,
+  // на плато — 12 окон/час без остановки, без счётчика, без сигнала
+  // потребителю. Ирония: шапка модуля дословно запрещала именно это для
+  // РУЧНОГО кода ("заворачивать это в while(true)... подпись у человека
+  // бесконечно, окно за окном"), а pollBags — этот самый цикл.
+  it('C1-R1: замер — сервер отвечает 401 всегда, РОВНО authFailureLimit окон кошелька, потом стоп и onAuthFailed', async () => {
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    // ВСЕГДА 401 — и на POST /bags/pass (свежая подпись тоже не принимается
+    // сервером), и, будь возможность дойти дальше, на GET /bags.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 401, json: async () => ({ code: 'invalid_signature' }),
+    }));
+
+    const errors: unknown[] = [];
+    let authFailedCalls = 0;
+    let handle: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    let sleepCalls = 0;
+    const sleep = async () => {
+      sleepCalls++;
+      // Страховка теста: без фикса цикл тикал бы неограниченно — не дать
+      // ему улететь за разумный предел вместо честного красного assert'а.
+      if (sleepCalls >= 50) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      // Ровно образец из (старого) докстринга getPass.
+      getPass: () => requestBagPass(sign, ALICE).then((p) => p.pass),
+      isActive: () => true,
+      onBags: () => {},
+      onError: (e) => errors.push(e),
+      onAuthFailed: () => { authFailedCalls++; resolveDone(); },
+      sleep,
+    });
+    await done;
+
+    // Замер по прямому требованию координатора: сколько окон кошелька
+    // увидит человек и когда опрос остановится.
+    expect(sign).toHaveBeenCalledTimes(3);   // РОВНО три — не 25, не бесконечно
+    expect(authFailedCalls).toBe(1);          // сигнал потребителю пришёл РОВНО один раз
+    expect(sleepCalls).toBe(2);               // между попытками 1↔2 и 2↔3 — не после третьего отказа
+    expect(errors).toHaveLength(3);           // каждый отказ всё равно виден в onError
+  });
+
+  it('C1-R1: счётчик отказов подлинности сбрасывается при первом успехе', async () => {
+    // 'v1.a' (не в реальной 3-сегментной форме) — форгет-по-токену не может
+    // разобрать из него адрес и молча не делает ничего (см. `forgetBagPass`
+    // выше): кэш остаётся тем же весь тест, POST /bags/pass — РОВНО один
+    // раз, дальше только GET /bags. Это НАМЕРЕННО — тест целится в сброс
+    // consecutiveAuthFailures при успехе, а не в механику выброса кэша (та
+    // отдельно заперта в describe('forgetBagPass', ...) выше).
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fail401 = { ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }) };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }) }) // POST — один раз
+      .mockResolvedValueOnce(fail401) // тик1 — отказ #1
+      .mockResolvedValueOnce(fail401) // тик2 — отказ #2 (ещё не 3)
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) }) // тик3 — успех, счётчик в ноль
+      .mockResolvedValueOnce(fail401) // тик4 — отказ #1 (НЕ #3 — доказывает, что сброс сработал)
+      .mockResolvedValueOnce(fail401); // тик5 — отказ #2
+    vi.stubGlobal('fetch', fetchMock);
+
+    let handle: BagPollHandle;
+    let authFailedCalls = 0;
+    let sleepCalls = 0;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async () => {
+      sleepCalls++;
+      if (sleepCalls >= 5) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      getPass: () => requestBagPass(sign, ALICE).then((p) => p.pass),
+      isActive: () => true,
+      onBags: () => {},
+      onAuthFailed: () => { authFailedCalls++; resolveDone(); },
+      sleep,
+      authFailureLimit: 3,
+    });
+    await done;
+
+    // Без сброса кумулятивный счёт отказов (1,2,[сброс?],1,2 → либо 2, либо
+    // 4 без сброса) достиг бы 3 к пятому тику и onAuthFailed сработал бы —
+    // здесь он НЕ должен сработать вовсе: максимум подряд — 2.
+    expect(authFailedCalls).toBe(0);
+    expect(sign).toHaveBeenCalledTimes(1); // кэш держался всё это время
+  });
+
+  it('C1-R1: отказ ДРУГОГО рода (не 401) тоже прерывает серию — считаем именно подряд идущие', async () => {
+    // Отказ #1 (401), отказ #2 (сеть — не BagPassError, серия прерывается),
+    // отказ #3 (401 — это отказ #1 НОВОЙ серии, не #3 старой). Без сброса на
+    // не-auth-ошибке кумулятивный счёт auth-отказов (1, [пропуск], 1) не
+    // достиг бы 3 — но с ОШИБОЧНЫМ сбросом "только на успехе, а не на любом
+    // прерывании" 401-серия 1,1 тоже не добралась бы до предела. Ключевая
+    // проверка здесь: 401 после сетевого сбоя — снова отказ #1, а не #2.
+    const sign = vi.fn().mockResolvedValue('0xsig');
+    const fail401 = { ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }) };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }) }) // POST — один раз
+      .mockResolvedValueOnce(fail401)                              // тик1: 401, auth-отказ #1
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))      // тик2: сеть — НЕ auth-отказ, сбрасывает серию
+      .mockResolvedValueOnce(fail401)                              // тик3: 401 — auth-отказ #1 новой серии
+      .mockResolvedValueOnce(fail401);                             // тик4: 401 — auth-отказ #2
+    vi.stubGlobal('fetch', fetchMock);
+
+    let handle: BagPollHandle;
+    let authFailedCalls = 0;
+    let sleepCalls = 0;
+    let resolveDone!: () => void;
+    const done = new Promise<void>((r) => { resolveDone = r; });
+    const sleep = async () => {
+      sleepCalls++;
+      if (sleepCalls >= 4) { handle.stop(); resolveDone(); }
+    };
+
+    handle = pollBags({
+      getPass: () => requestBagPass(sign, ALICE).then((p) => p.pass),
+      isActive: () => true,
+      onBags: () => {},
+      onAuthFailed: () => { authFailedCalls++; resolveDone(); },
+      sleep,
+      authFailureLimit: 3,
+    });
+    await done;
+
+    expect(authFailedCalls).toBe(0); // максимум подряд auth-отказов — 2, не 3
+  });
 });
 
 /* ──────────────────────── общий класс ошибок ──────────────────────────── */
