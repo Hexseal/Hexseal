@@ -107,7 +107,13 @@
  * повторов ровно по тому лимиту, который уже превышен»).
  */
 
-const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
+// Хвостовой слэш срезан — та же дисциплина, что уже применена в шести
+// других местах проекта, читающих эту же переменную (lib/xmtp.ts:911,
+// app/api/ipfs/upload/route.ts, app/api/relay/route.ts,
+// app/api/dispute-reason/route.ts): без среза "http://host/" даёт
+// "http://host//bags/pass" — двойной слэш, который не всякий сервер
+// нормализует сам.
+const RELAYER_URL = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
 const BAG_PASS_HEADER = 'x-bag-pass';
 

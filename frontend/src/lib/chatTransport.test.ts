@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   requestBagPass, putBag, listBags, fetchBag, pollBags, forgetBagPass,
   BagTransportError, BagPassError, BagRateLimitError,
@@ -896,5 +896,40 @@ describe('BagTransportError', () => {
     const re = new BagRateLimitError('x', 'rate_limited_read', 60);
     expect(pe).toBeInstanceOf(BagTransportError);
     expect(re).toBeInstanceOf(BagTransportError);
+  });
+});
+
+// Мелочь (ревью-координатор): NEXT_PUBLIC_RELAYER_URL с хвостовым слэшем
+// (легко получить простой опечаткой в .env — шесть остальных потребителей
+// в проекте, включая lib/xmtp.ts:911 и app/api/relay/route.ts, уже режут
+// его через .replace(/\/$/, '')) давал бы URL вида
+// "http://host//bags/pass" — двойной слэш. `vi.resetModules()` +
+// динамический import — модуль читает переменную окружения один раз на
+// уровне модуля (тот же приём, что lib/walletLock.test.ts уже применяет к
+// своим модуль-level константам).
+describe('RELAYER_URL', () => {
+  const ORIGINAL = process.env.NEXT_PUBLIC_RELAYER_URL;
+
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.NEXT_PUBLIC_RELAYER_URL;
+    else process.env.NEXT_PUBLIC_RELAYER_URL = ORIGINAL;
+    vi.resetModules();
+  });
+
+  it('хвостовой слэш в NEXT_PUBLIC_RELAYER_URL не даёт двойной слэш в пути', async () => {
+    process.env.NEXT_PUBLIC_RELAYER_URL = 'http://example.test:9000/';
+    vi.resetModules();
+    const fresh = await import('./chatTransport');
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ pass: 'v1.a', expiresAt: Math.floor(Date.now() / 1000) + 3600 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fresh.requestBagPass(vi.fn().mockResolvedValue('0xsig'), ALICE);
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(String(url)).toBe('http://example.test:9000/bags/pass');
+    expect(String(url)).not.toContain('//bags');
   });
 });
