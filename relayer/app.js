@@ -29,6 +29,7 @@ import {
   bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
   adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
+  assertNotFromFuture,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
 
@@ -433,7 +434,20 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       // ещё не началась). Читается из ТОГО ЖЕ getDetails(), что и остальные
       // поля выше — ни одного лишнего вызова в цепь. fundedAt_ уже был в
       // AGREEMENT_MINI_ABI (читался раньше, просто не использовался).
-      const funded = Number(details.fundedAt_) > 0;
+      //
+      // Мелочь (координатор, критический раунд): единственное поле этого
+      // ответа, оставшееся без проверки "не из будущего" — метка из
+      // 5138 года молча давала бы бессрочное освобождение от потолка
+      // (funded вычисляется только через > 0, любая положительная метка,
+      // хоть настоящая, хоть абсурдная, проходит одинаково). Тот же
+      // assertNotFromFuture, что уже применяется к createdAtMs/activatedAtMs
+      // в dealDeadlineFromCreation() — тем же принципом, но здесь, у
+      // самого входа: funded не параметр формулы, значение проверяется
+      // ДО того, как превратится в булев флаг, а не внутри чужой функции,
+      // которая funded вообще не видит.
+      const fundedAtMs = Number(details.fundedAt_) * 1000;
+      if (fundedAtMs > 0) assertNotFromFuture('adoptActivePairBags', 'fundedAtMs', fundedAtMs, nowMs);
+      const funded = fundedAtMs > 0;
       const dealDeadline = dealDeadlineFromCreation({
         createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs,
         deadlineGraceMs, autoApproveWindowMs, nowMs,
@@ -463,8 +477,12 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       // Не предполагаем true (хотя спор физически не может возникнуть на
       // незапущенном эскроу) — читаем fundedAt_ из ТОГО ЖЕ getDetails(),
       // тем же принципом, что и на этапе 1: не доверять, проверять явно,
-      // даже когда ожидаемое значение очевидно.
-      const funded = Number(details.fundedAt_) > 0;
+      // даже когда ожидаемое значение очевидно. Мелочь (координатор): та
+      // же проверка "не из будущего", что и на этапе 1 — см. комментарий
+      // там.
+      const fundedAtMs = Number(details.fundedAt_) * 1000;
+      if (fundedAtMs > 0) assertNotFromFuture('adoptDisputedPairBags', 'fundedAtMs', fundedAtMs, nowMs);
+      const funded = fundedAtMs > 0;
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
       const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);

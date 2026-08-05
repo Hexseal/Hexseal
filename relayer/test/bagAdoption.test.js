@@ -375,6 +375,56 @@ describe('dealDeadlineFromCreation — этап 1: предварительны�
       const call = errSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption') && String(args[0]).includes(garbageAgreement));
       expect(call).toBeDefined(); // и мусор не проглочен молча — залогирован
     });
+
+    // Мелочь (координатор, критический раунд): fundedAt_ — единственное
+    // поле ответа getDetails(), оставшееся без проверки "не из будущего".
+    // Метка из 5138 года молча даёт бессрочное освобождение от потолка
+    // (funded вычисляется только через > 0, любая положительная метка
+    // проходит одинаково, реальная или абсурдная). Тот же класс изоляции
+    // по записям, что и у остальных мелочей этого блока.
+    it('интеграция: fundedAt_ из будущего у ОДНОЙ активной записи не мешает усыновить ДРУГУЮ, и не даёт бессрочное освобождение мусорной записи', async () => {
+      const garbageAgreement = ethAddr(902, '1');
+      const goodAgreement = ethAddr(902, '2');
+      const goodClient = ethAddr(902, '3');
+      const goodExecutor = ethAddr(902, '4');
+      const now = Date.now();
+      const createdAtSec = Math.floor(now / 1000);
+      const farFutureSec = Math.floor((now + 365 * DAY) / 1000); // "год 5138" — тот же класс, взят ближе для точных чисел в тесте
+
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [
+          { agreement: garbageAgreement, client: CAROL, executor: ALICE, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n },
+          { agreement: goodAgreement, client: goodClient, executor: goodExecutor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n },
+        ],
+        getDisputed: [],
+      });
+      mockContract(garbageAgreement, {
+        // fundedAt_ из будущего — мусор, если бы прошёл без проверки, дал
+        // бы funded=true (fundedAtMs > 0 истинно для ЛЮБОЙ положительной
+        // метки) и бессрочное освобождение от потолка мусорной записи.
+        getDetails: async () => ({ deadlineDays_: 30n, fundedAt_: BigInt(farFutureSec), activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+      mockContract(goodAgreement, {
+        getDetails: async () => ({ deadlineDays_: 30n, fundedAt_: 0n, activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+
+      const garbageKey = put(CAROL, ALICE, now - 10 * DAY);
+      const goodKey = put(goodClient, goodExecutor, now - 10 * DAY);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await expect(runFileCleanup()).resolves.toBeUndefined();
+
+      expect(bagMetaOf(goodKey).dealDeadline).not.toBeNull(); // хорошая запись усыновлена, несмотря на мусор в соседней
+      expect(bagMetaOf(garbageKey).dealDeadline).toBeNull(); // мусорная НЕ усыновлена вовсе — бросок остановил её ДО adoptPairBags
+      const call = errSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption') && String(args[0]).includes(garbageAgreement));
+      expect(call).toBeDefined(); // и мусор не проглочен молча — залогирован
+    });
   });
 
   // Мелочь (закрывающий раунд ревью, находка координатора): собственный
