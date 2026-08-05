@@ -63,44 +63,54 @@ afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
 // ─── Шаг 3 брифа — шесть тестов буквально по именам ───────────────────────
 
 describe('adoptPairBags — усыновление переписки сделкой', () => {
-  it('усыновление продлевает мешки пары за последние 30 дней', () => {
+  it('усыновление продлевает мешки пары (мешок ещё жив по обычному правилу)', () => {
     const now = Date.now();
-    const key = put(ALICE, BOB, now - 20 * DAY); // внутри лукбэка (умолчание 30д)
+    const key = put(ALICE, BOB, now - 20 * DAY); // непрочитан, ещё жив (правило 3: 30д от загрузки)
     const pairId = _pairIdFromAddresses(ALICE, BOB);
     const deadline = now + 100 * DAY;
 
-    const adopted = adoptPairBags(pairId, deadline, now);
+    const result = adoptPairBags(pairId, deadline, now);
 
-    expect(adopted).toBe(1);
+    expect(result.adopted).toBe(1);
     expect(bagMetaOf(key).dealDeadline).toBe(deadline);
   });
 
-  it('мешок старше 30 дней не усыновляется', () => {
+  it('мешок, уже истёкший по обычному правилу к моменту вызова, не усыновляется (И-2: критерий — жив, не возраст)', () => {
     const now = Date.now();
-    const key = put(ALICE, BOB, now - 31 * DAY); // за пределами лукбэка
+    // Непрочитан, за пределами обычного 30-дневного срока — bagExpiryAt
+    // уже в прошлом относительно now, запись физически мертва к этому вызову.
+    const key = put(ALICE, BOB, now - 31 * DAY);
     const pairId = _pairIdFromAddresses(ALICE, BOB);
+    expect(bagExpiryAt(bagMetaOf(key))).toBeLessThan(now); // контроль: действительно уже мёртв
 
-    const adopted = adoptPairBags(pairId, now + 100 * DAY, now);
+    const result = adoptPairBags(pairId, now + 100 * DAY, now);
 
-    expect(adopted).toBe(0);
+    expect(result.adopted).toBe(0);
     expect(bagMetaOf(key).dealDeadline).toBeNull();
   });
 
-  // Не из шести буквальных, но запирает ОПЕРАТОР ("> cutoff", не ">="),
-  // а не просто "где-то около 30 дней" — брифовый тест выше (31 день)
-  // покраснел бы одинаково что от ">", что от ">=" на его расстоянии от
-  // границы; мутация ">" → ">=" эту границу не задевает вовсе.
-  it('граница лукбэка строгая: ровно на cutoff не усыновляется, на миллисекунду позже — усыновляется', () => {
+  // И-2 (пятый закрывающий раунд ревью, находка координатора): гейт первого
+  // усыновления — bagExpiryAt(meta, nowMs) > nowMs, СТРОГОЕ неравенство, не
+  // ">=". Запирает именно ОПЕРАТОР границы, не просто "мёртв/жив вообще" —
+  // мутация ">" → ">=" его не задевала бы, будь граница проверена только
+  // тестами выше.
+  it('граница живости строгая: ровно на bagExpiryAt не усыновляется, на миллисекунду раньше истечения — усыновляется', () => {
     const now = Date.now();
-    const cutoff = now - bagStore.BAG_ADOPTION_LOOKBACK_MS;
-    const exactlyAtCutoff = put(ALICE, BOB, cutoff);
-    const justAfterCutoff = put(ALICE, BOB, cutoff + 1);
-    const pairId = _pairIdFromAddresses(ALICE, BOB);
+    // Непрочитанный мешок: bagExpiryAt = uploadedAt + BAG_UNREAD_TTL_MS.
+    // uploadedAt подобран так, чтобы это равнялось ровно now (граница) и
+    // now+1 (на мс раньше границы, ещё жив) для двух разных записей.
+    const exactlyAtExpiry = put(ALICE, BOB, now - bagStore.BAG_UNREAD_TTL_MS);
+    const justAliveByOneMs = put(CAROL, BOB, now - bagStore.BAG_UNREAD_TTL_MS + 1);
+    expect(bagExpiryAt(bagMetaOf(exactlyAtExpiry))).toBe(now);
+    expect(bagExpiryAt(bagMetaOf(justAliveByOneMs))).toBe(now + 1);
 
-    adoptPairBags(pairId, now + 100 * DAY, now);
+    const pairAB = _pairIdFromAddresses(ALICE, BOB);
+    const pairCB = _pairIdFromAddresses(CAROL, BOB);
+    adoptPairBags(pairAB, now + 100 * DAY, now);
+    adoptPairBags(pairCB, now + 100 * DAY, now);
 
-    expect(bagMetaOf(exactlyAtCutoff).dealDeadline).toBeNull();
-    expect(bagMetaOf(justAfterCutoff).dealDeadline).toBe(now + 100 * DAY);
+    expect(bagMetaOf(exactlyAtExpiry).dealDeadline).toBeNull();       // ровно на границе — не усыновлён
+    expect(bagMetaOf(justAliveByOneMs).dealDeadline).toBe(now + 100 * DAY); // на мс живее — усыновлён
   });
 
   it('мешки другой пары не трогаются', () => {
@@ -157,6 +167,18 @@ describe('adoptPairBags — усыновление переписки сделк
     const baseExpiry = bagExpiryAt(bagMetaOf(key));
     expect(baseExpiry).toBeLessThan(verdictOnlyDeadline);
 
+    // И-2: к МОМЕНТУ СПОРА (disputedAtMs) базовое правило само по себе УЖЕ
+    // истекло (baseExpiry < verdictOnlyDeadline < disputedAtMs+DISPUTE_WINDOW
+    // ... собственно baseExpiry ниже disputedAtMs тоже) — гейт первого
+    // усыновления ("мешок ещё жив") в этот момент НЕ пропустил бы прямой
+    // одноразовый вызов adoptPairBags(pairId, dd, disputedAtMs) на НИКОГДА
+    // не усыновлявшуюся запись. Реалистичный путь — тот же, что даёт
+    // runFileCleanup() в проде: этап 1 усыновляет мешок РАНЬШЕ, пока он ещё
+    // жив (сразу после загрузки, любым предварительным сроком) — после
+    // этого запись уже "усыновлена", и гейт живости её больше не проверяет
+    // (см. докстринг adoptPairBags(), правило "только продлевать").
+    adoptPairBags(pairId, uploadedAt + 1 * DAY, uploadedAt);
+
     adoptPairBags(pairId, dd, disputedAtMs);
 
     const expiryAfterAdoption = bagExpiryAt(bagMetaOf(key));
@@ -172,9 +194,9 @@ describe('adoptPairBags — усыновление переписки сделк
     const nearDeadline = now + 5 * DAY;
 
     adoptPairBags(pairId, farDeadline, now);
-    const adoptedSecond = adoptPairBags(pairId, nearDeadline, now);
+    const resultSecond = adoptPairBags(pairId, nearDeadline, now);
 
-    expect(adoptedSecond).toBe(0); // ни одна запись фактически не изменилась
+    expect(resultSecond.adopted).toBe(0); // ни одна запись фактически не изменилась
     expect(bagMetaOf(key).dealDeadline).toBe(farDeadline);
   });
 });
@@ -692,18 +714,36 @@ describe('runFileCleanup — усыновление спорной пары', ()
   });
 
   // Порядок внутри runFileCleanup() значим (см. комментарий в app.js) — этот
-  // тест специально ловит перестановку блоков местами: мешок прочитан давно
-  // и по обычному правилу 2 (7д от прочтения) уже истёк бы САМ ПО СЕБЕ, до
-  // этого самого прогона, но остаётся в пределах лукбэка усыновления (25д).
-  // Если бы cleanupBags() успела отработать раньше усыновления в ЭТОМ ЖЕ
-  // прогоне, мешок был бы снесён до того, как усыновление успело бы его
-  // продлить — рассчитано на следующую ночь, которой уже не будет.
-  it('усыновление успевает спасти в ТОМ ЖЕ прогоне мешок, который иначе снесла бы cleanupBags() этим же прогоном (порядок внутри runFileCleanup значим)', async () => {
+  // тест специально ловит перестановку блоков местами. И-2 (пятый
+  // закрывающий раунд ревью) заменил гейт ПЕРВОГО усыновления с "моложе 30
+  // дней" на "ещё жив" — запись, которая к моменту вызова УЖЕ мертва по
+  // своему базовому правилу, первым усыновлением больше не спасается (это
+  // и есть смысл находки: "продлеваем то, что есть, а не то, что молодое").
+  // Значит, чтобы порядок "усыновление до чистки" всё ещё имел значение,
+  // сценарий обязан быть про УЖЕ УСЫНОВЛЁННУЮ запись (гейт живости для неё
+  // не действует вовсе, см. докстринг adoptPairBags(), "только продлевать")
+  // — реалистичный путь: более раннее усыновление (этап 1, тем же приёмом,
+  // каким это происходит в проде) дало короткий предварительный срок, этот
+  // срок сам успел истечь к моменту спора, а точный срок этапа 2 успевает
+  // переякорить запись РАНЬШЕ, чем до неё в этом же прогоне доберётся
+  // cleanupBags().
+  it('усыновление успевает спасти в ТОМ ЖЕ прогоне УЖЕ усыновлённый мешок, чей прежний срок истёк ровно к этому прогону (порядок внутри runFileCleanup значим)', async () => {
     const client   = '0x' + '7'.repeat(40);
     const executor = '0x' + '8'.repeat(40);
     const agreement = '0x' + '9'.repeat(40);
     const now = Date.now();
     const disputedAtSec = Math.floor((now - 1 * DAY) / 1000);
+    const uploadedAt = now - 25 * DAY;
+
+    const key = put(client, executor, uploadedAt, { firstFetchedAt: uploadedAt });
+    const pairId = _pairIdFromAddresses(client, executor);
+
+    // Более раннее усыновление (представляет этап 1 на какую-то из прошлых
+    // ночей, пока мешок ещё жив) — намеренно КОРОТКИМ сроком, который сам
+    // истекает ДО этого прогона.
+    adoptPairBags(pairId, now - 1, uploadedAt);
+    // Контроль: прежний срок уже истёк к началу ЭТОГО прогона.
+    expect(bagExpiryAt(bagMetaOf(key))).toBeLessThan(now);
 
     mockContract(process.env.DIAMOND_ADDRESS, {
       getActive: [], // сделка уже спорная — вне getActive(), только getDisputed() ниже
@@ -714,18 +754,18 @@ describe('runFileCleanup — усыновление спорной пары', ()
       DISPUTE_WINDOW: async () => BigInt(4 * 24 * 60 * 60),
     });
 
-    const uploadedAt = now - 25 * DAY; // в пределах лукбэка (30д)
-    const key = put(client, executor, uploadedAt, { firstFetchedAt: uploadedAt });
-    // Контроль: без усыновления мешок уже мёртв по обычному правилу 2.
-    expect(bagExpiryAt(bagMetaOf(key))).toBeLessThan(now);
-
     await runFileCleanup();
 
     expect(bagMetaOf(key)).toBeDefined(); // пережил ЭТОТ ЖЕ прогон
-    expect(bagMetaOf(key).dealDeadline).not.toBeNull();
+    expect(bagMetaOf(key).dealDeadline).toBeGreaterThan(now); // переякорен точным сроком этапа 2
   });
 
-  it('спор по паре из-за пределов лукбэка (мешок отправлен >30д назад) не усыновляется', async () => {
+  // И-2 (пятый закрывающий раунд ревью, находка координатора, замер): мешок
+  // вне СТАРОГО 30-дневного возрастного окна, но ПРОЧИТАННЫЙ недавно —
+  // правило 2 (7д от прочтения) само по себе держит его живым дольше 30
+  // дней. Старый гейт (по возрасту) отвергал такую запись; новый (по
+  // живости) — усыновляет, потому что она физически ещё существует.
+  it('спор по паре: мешок вне старого 30-дневного окна, но ещё живой (прочитан недавно) — теперь усыновляется (И-2)', async () => {
     const client   = '0x' + '1'.repeat(40);
     const executor = '0x' + '2'.repeat(40);
     const agreement = '0x' + '3'.repeat(40);
@@ -741,16 +781,52 @@ describe('runFileCleanup — усыновление спорной пары', ()
       DISPUTE_WINDOW: async () => BigInt(4 * 24 * 60 * 60),
     });
 
-    // uploadedAt за пределами лукбэка (40д), но прочитан недавно (5д назад)
-    // — обычное правило 2 (7д от прочтения) держит мешок живым САМ ПО СЕБЕ,
-    // независимо от усыновления, так что тест проверяет именно "не
-    // усыновлён", а не путает это с "снесён по любой другой причине".
+    // uploadedAt 40 дней назад (за пределами СТАРОГО возрастного окна), но
+    // прочитан 5 дней назад — bagExpiryAt = firstFetchedAt+7д = now+2д > now,
+    // мешок физически ещё жив на момент вызова.
     const key = put(client, executor, now - 40 * DAY, { firstFetchedAt: now - 5 * DAY });
+    expect(bagExpiryAt(bagMetaOf(key))).toBeGreaterThan(now); // контроль: действительно ещё жив
 
     await runFileCleanup();
 
     expect(bagMetaOf(key)).toBeDefined();
-    expect(bagMetaOf(key).dealDeadline).toBeNull();
+    expect(bagMetaOf(key).dealDeadline).not.toBeNull(); // усыновлён — раньше не усыновлялся бы
+  });
+
+  // Companion-тест: мешок, который И вне старого окна, И уже ДЕЙСТВИТЕЛЬНО
+  // мёртв (не просто старый) — по-прежнему не усыновляется, но теперь по
+  // ПРАВИЛЬНОЙ причине ("мёртв", а не "старый"). Различие важно: без этого
+  // теста мутация, откатывающая И-2 обратно на возрастной гейт, могла бы
+  // остаться незамеченной, если бы единственный "не усыновлён" тест этого
+  // блока (выше) был просто удалён вместе с находкой.
+  it('спор по паре: мешок вне старого 30-дневного окна И уже мёртв по обычному правилу (не прочитан) — не усыновляется, потому что мёртв', async () => {
+    const client   = '0x' + '4'.repeat(40);
+    const executor = '0x' + '5'.repeat(40);
+    const agreement = '0x' + '6'.repeat(40);
+    const now = Date.now();
+    const disputedAtSec = Math.floor(now / 1000);
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [],
+      getDisputed: [{ agreement, client, executor, amount: 0n, status: 3, createdAt: 0n, resolvedAt: 0n }],
+    });
+    mockContract(agreement, {
+      getDetails: async () => ({ disputedAt_: BigInt(disputedAtSec) }),
+      DISPUTE_WINDOW: async () => BigInt(4 * 24 * 60 * 60),
+    });
+
+    // Непрочитан, 40 дней от загрузки — правило 3 (30д) само по себе уже
+    // истекло 10 дней назад, независимо от усыновления.
+    const key = put(client, executor, now - 40 * DAY);
+    expect(bagExpiryAt(bagMetaOf(key))).toBeLessThan(now); // контроль: действительно уже мёртв
+
+    await runFileCleanup();
+
+    // Не усыновлена (гейт живости отверг её верно) И, раз уж она
+    // действительно мертва, а не только "не продлена", обычная cleanupBags()
+    // в этом же прогоне сметает её как любую другую просроченную запись —
+    // усыновление её не спасает и не обязано спасать.
+    expect(bagMetaOf(key)).toBeUndefined();
   });
 
   it('падение усыновления (например, staticcall до несовместимого клона) не мешает ни чистке мешков, ни вложениям, и наружу не улетает', async () => {
@@ -1119,6 +1195,101 @@ describe('C1 — задержка оплаты не открывает дыру 
       }
     },
   );
+});
+
+// ─── C-1 (координатор, четвёртый закрывающий раунд ревью): лог обязан
+// называть РЕАЛЬНЫЙ, обрезанный потолком BAG_MAX_AGE_MS срок — не
+// запрошенный. Замер координатора: сделка на срок работы вплоть до 365
+// дней (контракт/фронт это разрешают) давала лог "extended 1 bag(s) ... to
+// 2030-01-23 (preliminary)" (378 дней вперёд), хотя мешок реально жил 90
+// дней — и ни слова о расхождении. adoptPairBags() теперь возвращает
+// { adopted, requested, minEffectiveExpiry, cappedCount } вместо голого
+// числа именно ради этого (bagStore.js), а logAdoptionResult() в app.js
+// обязана логировать minEffectiveExpiry, не requested, и явно
+// предупреждать при cappedCount > 0.
+describe('C-1 — лог сообщает РЕАЛЬНЫЙ (обрезанный потолком) срок, а не запрошенный', () => {
+  it('потолок НЕ режет (короткая сделка) — лог называет РАВНЫЙ запрошенному срок, предупреждения нет', async () => {
+    const client    = ethAddr(910, 'a');
+    const executor  = ethAddr(910, 'b');
+    const agreement = ethAddr(910, 'c');
+    const now = Date.now();
+    const createdAtSec = Math.floor(now / 1000);
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+      getDisputed: [],
+    });
+    mockContract(agreement, {
+      // 60 дней — достаточно длинная сделка, чтобы запрошенный срок (60д +
+      // хвост ≈ 70д) ПЕРЕКРЫВАЛ обычный необсуждённый srok (30д, правило 3
+      // bagExpiryAt) — иначе Math.max(base, ...) внутри bagExpiryAt взял бы
+      // BASE, а не dealDeadline, и тест путал бы это правило ("усыновление
+      // не сокращает") с проверкой потолка, которая здесь не в фокусе.
+      // При этом 70д всё ещё далеко от потолка BAG_MAX_AGE_MS (90д).
+      getDetails: async () => ({ deadlineDays_: 60n, activatedAt_: 0n, disputedAt_: 0n }),
+      DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+      DEADLINE_GRACE: async () => 0n,
+      AUTO_APPROVE_WINDOW: async () => 0n,
+    });
+
+    const key = put(client, executor, now);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runFileCleanup();
+
+    const requested = bagMetaOf(key).dealDeadline;
+    const successLine = logSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption (creation)') && String(args[0]).includes('extended'));
+    expect(successLine).toBeDefined();
+    expect(String(successLine[0])).toContain(new Date(requested).toISOString()); // лог называет РЕАЛЬНЫЙ срок — здесь он равен запрошенному
+    const capWarning = warnSpy.mock.calls.find(args => String(args[0]).includes('ceiling cut'));
+    expect(capWarning).toBeUndefined(); // потолок ничего не резал — предупреждения быть не должно
+  });
+
+  it('потолок РЕЖЕТ (длинная сделка, до 365 дней разрешено контрактом/фронтом) — лог называет ОБРЕЗАННЫЙ срок и печатает предупреждение с обоими числами', async () => {
+    const client    = ethAddr(911, 'a');
+    const executor  = ethAddr(911, 'b');
+    const agreement = ethAddr(911, 'c');
+    const now = Date.now();
+    const createdAtSec = Math.floor(now / 1000);
+
+    mockContract(process.env.DIAMOND_ADDRESS, {
+      getActive: [{ agreement, client, executor, amount: 0n, status: 0, createdAt: BigInt(createdAtSec), resolvedAt: 0n }],
+      getDisputed: [],
+    });
+    mockContract(agreement, {
+      // 365 дней — контрактный/фронтовый максимум (JobBoardFacet.sol:213,
+      // ServiceBoardFacet.sol:218, frontend/src/config/constants.ts:30);
+      // предварительный срок этапа 1 (365д+хвост) намного больше потолка
+      // BAG_MAX_AGE_MS (90д от загрузки).
+      getDetails: async () => ({ deadlineDays_: 365n, activatedAt_: 0n, disputedAt_: 0n }),
+      DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+      DEADLINE_GRACE: async () => 0n,
+      AUTO_APPROVE_WINDOW: async () => 0n,
+    });
+
+    const uploadedAt = now;
+    const key = put(client, executor, uploadedAt);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runFileCleanup();
+
+    const requested = bagMetaOf(key).dealDeadline; // поле само по себе не капается — см. докстринг adoptPairBags
+    const realExpiry = bagExpiryAt(bagMetaOf(key)); // а вот РЕАЛЬНЫЙ срок — да
+    expect(realExpiry).toBe(uploadedAt + bagStore.BAG_MAX_AGE_MS); // потолок реально сработал
+    expect(realExpiry).toBeLessThan(requested); // и он меньше запрошенного — есть что скрывать в логе, если врать
+
+    const successLine = logSpy.mock.calls.find(args => String(args[0]).includes('[bags] adoption (creation)') && String(args[0]).includes('extended'));
+    expect(successLine).toBeDefined();
+    expect(String(successLine[0])).toContain(new Date(realExpiry).toISOString());       // лог называет РЕАЛЬНЫЙ (обрезанный) срок…
+    expect(String(successLine[0])).not.toContain(new Date(requested).toISOString());    // …а не запрошенный (координатор: было наоборот)
+
+    const capWarning = warnSpy.mock.calls.find(args => String(args[0]).includes('ceiling cut'));
+    expect(capWarning).toBeDefined(); // и явное предупреждение о том, что потолок обрезал
+    expect(String(capWarning[0])).toContain(new Date(requested).toISOString());  // хотели — со своим числом
+    expect(String(capWarning[0])).toContain(new Date(realExpiry).toISOString()); // дали — со своим числом
+  });
 });
 
 // ─── Мелочи эффективности (находки координатора, закрывающий раунд) ───────

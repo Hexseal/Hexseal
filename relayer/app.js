@@ -352,6 +352,34 @@ const getDisputeWindowMs = makeCachedConstantMsReader('DISPUTE_WINDOW');
 const getDeadlineGraceMs = makeCachedConstantMsReader('DEADLINE_GRACE');
 const getAutoApproveWindowMs = makeCachedConstantMsReader('AUTO_APPROVE_WINDOW');
 
+// C-1 (координатор, четвёртый закрывающий раунд ревью): раньше обе функции
+// ниже логировали ЗАПРОШЕННЫЙ dealDeadline ("to <дата> (preliminary)"), а
+// не то, что реально получилось после потолка BAG_MAX_AGE_MS в bagExpiryAt()
+// (adoptPairBags() теперь возвращает объект — см. её докстринг в bagStore.js
+// — вместо голого числа именно ради этого). Замер координатора: сделка на
+// 378 дней вперёд (контракт и фронт разрешают срок работы до 365 дней,
+// JobBoardFacet.sol:213/ServiceBoardFacet.sol:218/
+// frontend/src/config/constants.ts:30) давала лог "extended 1 bag(s) ... to
+// 2030-01-23 (preliminary)" — а мешок реально жил 90 дней, ни слова о
+// расхождении. Общая точка для обеих функций ниже — один и тот же формат
+// строки успеха (по РЕАЛЬНОМУ minEffectiveExpiry, не requested) и одно и то
+// же условие для громкого предупреждения, когда потолок реально что-то
+// обрезал (cappedCount > 0): "хотели X, дали Y, потому что потолок" — с
+// обоими числами, не одним. Не чинит сам потолок (BAG_MAX_AGE_MS) — то
+// отдельное решение, вынесенное к владельцу; здесь только честность лога.
+function logAdoptionResult(logPrefix, agreementAddress, kind, result) {
+  const { adopted, requested, minEffectiveExpiry, cappedCount } = result;
+  if (!adopted) return;
+  const tail = kind === 'creation' ? ' (preliminary)' : '';
+  console.log(`${logPrefix}: extended ${adopted} bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress} to ${new Date(minEffectiveExpiry).toISOString()}${tail}`);
+  if (cappedCount) {
+    console.warn(
+      `${logPrefix}: BAG_MAX_AGE_MS ceiling cut ${cappedCount} of ${adopted} bag(s) short for agreement ${agreementAddress} — ` +
+      `wanted ${new Date(requested).toISOString()}, gave ${new Date(minEffectiveExpiry).toISOString()} instead, because of the ceiling.`
+    );
+  }
+}
+
 // Каждая запись реестра — в СВОЁМ try, в обеих функциях: одна не
 // читающаяся/бракованная запись (например, staticcall до старого/
 // несовместимого клона) не должна останавливать усыновление для ВСЕХ
@@ -391,10 +419,8 @@ async function adoptActivePairBags(nowMs = Date.now()) {
         createdAtMs, activatedAtMs, ownDeadlineMs, disputeWindowMs,
         deadlineGraceMs, autoApproveWindowMs, nowMs,
       });
-      const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
-      if (adopted) {
-        console.log(`[bags] adoption (creation): extended ${adopted} bag(s) for the pair of active agreement ${r.agreement} to ${new Date(dealDeadline).toISOString()} (preliminary)`);
-      }
+      const result = adoptPairBags(pairId, dealDeadline, nowMs);
+      logAdoptionResult('[bags] adoption (creation)', r.agreement, 'creation', result);
     } catch (e) {
       console.error(`[bags] adoption (creation): failed for active agreement ${r.agreement}, skipping:`, e.message);
     }
@@ -416,10 +442,8 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       // (Date.now()-based, как и весь остальной _bagMeta).
       const disputedAtMs = Number(details.disputedAt_) * 1000;
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
-      const adopted = adoptPairBags(pairId, dealDeadline, nowMs);
-      if (adopted) {
-        console.log(`[bags] adoption: extended ${adopted} bag(s) for the pair of disputed agreement ${r.agreement} to ${new Date(dealDeadline).toISOString()}`);
-      }
+      const result = adoptPairBags(pairId, dealDeadline, nowMs);
+      logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);
     } catch (e) {
       console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);
     }
