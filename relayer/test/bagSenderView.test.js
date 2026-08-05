@@ -305,8 +305,9 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
 
   // Находка ревью (координатор): `since` фильтровал только inbox — sent
   // ехал целиком на КАЖДОМ тике, включая те, где ничего нового нет.
-  // Замерено координатором: 41КБ на десяти тысячах мешков, 244КБ на
-  // шестидесяти, каждые пять секунд, каждому пользователю.
+  // Замерено честно (JSON.stringify реальной формы записи, ~207 байт на
+  // элемент): ~243КБ у адреса с 1 200 СОБСТВЕННЫХ отправленных, ~12,16МБ
+  // у адреса с 60 000 — каждые пять секунд, каждому пользователю.
   it('?since применяется и к sent — старый, без изменений, отправленный мешок не пересылается заново', async () => {
     const { wallet: alice } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();
@@ -347,6 +348,84 @@ describe('GET /bags — sent/peers (Задача 1, взгляд отправи�
     expect(res.body.sent).toEqual([
       { key: put1.body.key, recipient: bobAddr, uploadedAt: expect.any(Number), fetched: true },
     ]);
+  });
+
+  // Находка ревью (координатор): peers обязан отражать ВСЮ историю, не
+  // окно since — мутация "считать peers из отфильтрованных по since
+  // списков" выживала на 608 зелёных. Следствие: на каждом обычном "тихом"
+  // тике (ничего нового ни во входящих, ни в исходящих) собеседник исчезал
+  // бы из peers вместе со статусом присутствия — а он не должен, since
+  // касается только "что нового показать", не "с кем вообще есть переписка".
+  it('peers отражает всю историю, а не окно ?since — на тихом тике собеседник и его lastActivityWithMeAt не пропадают', async () => {
+    const { wallet: alice } = await newWalletAndAddress();
+    const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+    const bobPass = await issuePassFor(bob);
+
+    const put1 = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('hi') });
+    const download = await getBag({ pass: bobPass, key: put1.body.key });
+    expect(download.status).toBe(200);
+
+    // Курсор строго ПОСЛЕ всех событий выше — типичный "тихий" тик опроса,
+    // где во входящих/исходящих действительно ничего нового.
+    const since = Date.now() + 1000;
+
+    const res = await getBags({ pass: alicePass, since });
+    expect(res.status).toBe(200);
+    expect(res.body.inbox).toEqual([]); // тихий тик — ожидаемо пусто
+    expect(res.body.sent).toEqual([]);  // тихий тик — ожидаемо пусто (правка 4)
+    // НО peers/статус остаются — since не должен их касаться вовсе.
+    expect(res.body.peers).toEqual([
+      { address: bobAddr, lastActivityWithMeAt: expect.any(Number) },
+    ]);
+    expect(res.body.peers[0].lastActivityWithMeAt).not.toBeNull();
+  });
+
+  // Находка ревью (координатор): нестрогое сравнение на sent не заперто —
+  // зеркало уже купленной находки И-3 (bagRoutes.test.js) для inbox, там же
+  // причина в докстринге: два события в ОДНУ и ту же миллисекунду — не
+  // теоретический случай, а измеренная координатором гонка. `>` вместо `>=`
+  // навсегда прячет от отправителя мешок, чьё время СОВПАДАЕТ с курсором
+  // клиента.
+  it('?since на sent нестрогое — мешок с uploadedAt РОВНО равным cutoff не теряется (зеркало И-3 для отправленных)', async () => {
+    const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+
+    const sameMs = Date.now();
+    const key1 = bagKeyFor(bobAddr);
+    const key2 = bagKeyFor(bobAddr);
+    fs.mkdirSync(path.join(DIR_BAGS, bobAddr), { recursive: true });
+    fs.writeFileSync(path.join(DIR_BAGS, key1), Buffer.from('one'));
+    fs.writeFileSync(path.join(DIR_BAGS, key2), Buffer.from('two'));
+    recordBag({ sender: aliceAddr, recipient: bobAddr, key: key1, size: 3, uploadedAt: sameMs });
+    recordBag({ sender: aliceAddr, recipient: bobAddr, key: key2, size: 3, uploadedAt: sameMs });
+
+    const res = await getBags({ pass: alicePass, since: sameMs });
+    expect(res.status).toBe(200);
+    expect(res.body.sent.map((b) => b.key)).toEqual(expect.arrayContaining([key1, key2]));
+  });
+
+  // Тот же класс нестрогости, но по ВТОРОМУ событию (firstFetchedAt) —
+  // галочка, появившаяся РОВНО в момент cutoff, не должна теряться так же,
+  // как и новый мешок с uploadedAt ровно на cutoff выше.
+  it('?since на sent нестрогое и по firstFetchedAt — галочка, появившаяся РОВНО в момент cutoff, не теряется', async () => {
+    const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
+    const { address: bobAddr } = await newWalletAndAddress();
+    const alicePass = await issuePassFor(alice);
+
+    const sameMs = Date.now();
+    const key = bagKeyFor(bobAddr);
+    fs.mkdirSync(path.join(DIR_BAGS, bobAddr), { recursive: true });
+    fs.writeFileSync(path.join(DIR_BAGS, key), Buffer.from('old'));
+    recordBag({
+      sender: aliceAddr, recipient: bobAddr, key, size: 3,
+      uploadedAt: sameMs - 60000, firstFetchedAt: sameMs,
+    });
+
+    const res = await getBags({ pass: alicePass, since: sameMs });
+    expect(res.status).toBe(200);
+    expect(res.body.sent.map((b) => b.key)).toContain(key);
   });
 });
 
