@@ -836,7 +836,36 @@ export interface SentMessage {
  */
 export const NOT_STORED_STATUSES: readonly number[] = [400, 401, 403, 413, 429];
 
+/**
+ * МАШИННЫЕ КОДЫ склада, каждый из которых — точное утверждение сервера «этот
+ * мешок не сохранён». Смотреть на них НАДО РАНЬШЕ статуса.
+ *
+ * Найдено при проверке хуков, настоящий дефект: у склада кончается место, он
+ * ТОЧНО это знает — удаляет недописанный файл и отвечает `write_failed`
+ * (`relayer/app.js`, `ws.on('error')`), — но статус при этом `500`, а `500` в
+ * списке статусов нет и быть не должно (при обычной пятисотке мешок мог и
+ * лечь). Итог был: номер сгорал, у собеседника оставалась дыра, а дыру
+ * отличить от намеренного утаивания нечем (`docs/OPEN-ITEMS.md`, пункт 34) —
+ * человек получал тяжёлое обвинение за чужой кончившийся диск.
+ *
+ * ⚠️ `internal_error` сюда НЕ входит, хотя сегодня все три ветки `PUT /bags`,
+ * отвечающие им, тоже удаляют файл. Причина: это КАТЧ-ОЛЛ — тем же кодом
+ * отвечают `GET /bags` и `GET /keys`. Читать общий код как точное обещание
+ * про ЭТОТ мешок значит вешать гарантию на имя, которое её не давало: первая
+ * же будущая ветка, которая успеет сохранить и упасть после, вернула бы нам
+ * переиспользованный номер, то есть `unordered` — обвинение в ПОДДЕЛКЕ, а оно
+ * тяжелее дыры. Цена решения — лишняя дыра в редком случае; чтобы её убрать,
+ * этой ветке склада нужен свой код, как у `write_failed`.
+ */
+export const NOT_STORED_CODES: readonly string[] = [
+  'write_failed',        // ENOSPC на записи: файл удалён
+  'empty_bag',           // ноль байт: файл удалён
+  'invalid_recipient',   // адрес не адрес: до записи не дошло
+  'payload_too_large',   // сверх MAX_BAG_SIZE: файл удалён
+];
+
 const DEFINITELY_NOT_STORED = new Set(NOT_STORED_STATUSES);
+const DEFINITELY_NOT_STORED_CODES = new Set(NOT_STORED_CODES);
 
 /**
  * Отправляет сообщение: конверт → звено → подпись → мешок на склад.
@@ -937,7 +966,14 @@ export async function sendMessage(
       ({ key } = await putBag(opts.pass, peerAddr, frame));
     } catch (err) {
       const status = err instanceof BagTransportError ? err.status : undefined;
-      if (status !== undefined && DEFINITELY_NOT_STORED.has(status)) {
+      const code = err instanceof BagTransportError ? err.code : undefined;
+      // КОД РАНЬШЕ СТАТУСА: код — точное утверждение сервера про ЭТОТ мешок,
+      // статус — догадка по классу ответа. Там, где сервер знает наверняка, мы
+      // обязаны верить ему, а не гадать (см. `NOT_STORED_CODES`).
+      const notStored =
+        (code !== undefined && DEFINITELY_NOT_STORED_CODES.has(code)) ||
+        (status !== undefined && DEFINITELY_NOT_STORED.has(status));
+      if (notStored) {
         // Мешок ТОЧНО не лёг — возвращаем номер, дыры быть не должно.
         const rolledBack: StoredHead | null = stored ?? null;
         if (rolledBack) {
