@@ -109,6 +109,10 @@ import { deriveChatKeypair, CHAT_KEY_TYPED_DATA, type ChatKeypair } from './chat
 
 export type SessionOrigin = 'signature' | 'recovery';
 
+/** Род кошелька по коду на цепи. `eoa` включает и адреса с делегацией
+ *  EIP-7702 — см. `DELEGATION_INDICATOR_RE`. */
+export type WalletKind = 'eoa' | 'contract';
+
 export interface ChatSession {
   keypair: ChatKeypair;
   /** Адрес В ТОМ ВИДЕ, В КАКОМ ЕГО ПОДАЛИ (с контрольной суммой, как отдаёт
@@ -117,6 +121,17 @@ export interface ChatSession {
    *  же кошелёк в разной записи выглядел бы двумя разными людьми. */
   address: `0x${string}`;
   origin: SessionOrigin;
+  /** Род кошелька, выясненный ПО ЦЕПИ и записанный рядом с ключом.
+   *
+   *  Отдельно от `origin` намеренно (находка К-3 независимой проверки):
+   *  `origin` говорит, ОТКУДА взялся ключ, а `walletKind` — КОМУ он
+   *  принадлежит. Раньше существовал обход: обычный кошелёк один раз вводил
+   *  код восстановления, происхождение на диске становилось `recovery`, и на
+   *  этом устройстве он НАВСЕГДА терял свой выводимый ключ. «Защита в
+   *  интерфейсе» такого не ловит: интерфейс может не показать кнопку, но не
+   *  может отменить уже переписанную запись. Поэтому род кошелька выясняет
+   *  сам модуль и сверяется с ним при выдаче кода. */
+  walletKind: WalletKind;
   /** `true` — ключ взят с устройства (окна подписи НЕ было). `false` — ключ
    *  только что заведён. Для кошелька-контракта это ровно тот признак, по
    *  которому интерфейс обязан показать код восстановления немедленно:
@@ -232,10 +247,13 @@ const DB_VERSION = 1;
 const STORE_NAME = 'sessions';
 
 /** Версия ФОРМАТА ЗАПИСИ, не версия базы. Запись с другой (в т.ч. без поля
- *  `v` вовсе — формат до этой версии) считается ОТСУТСТВУЮЩЕЙ: лучше одно
- *  лишнее окно подписи, чем ключ, собранный из полей, значение которых
- *  сегодня другое. */
-const RECORD_VERSION = 1;
+ *  `v` вовсе, и в т.ч. с БОЛЬШЕЙ — от более новой сборки) считается
+ *  ОТСУТСТВУЮЩЕЙ: лучше одно лишнее окно подписи, чем ключ, собранный из
+ *  полей, значение которых сегодня другое.
+ *
+ *  Версия 2 добавила `walletKind` (находка К-3). Экспортирована — тесты
+ *  сверяются с ней напрямую, а не задваивают число литералом. */
+export const RECORD_VERSION = 2;
 
 interface StoredSession {
   v: number;
@@ -245,6 +263,10 @@ interface StoredSession {
    *  (класс «заперто на одном пути, открыто на соседнем»). */
   address: string;
   origin: SessionOrigin;
+  /** Род кошелька по цепи — см. `ChatSession.walletKind`. Лежит в записи,
+   *  чтобы выдача кода сверялась с ним и на восстановленном сеансе, а не
+   *  только в момент заведения. */
+  walletKind: WalletKind;
   publicKey: Uint8Array;
   privateKey: Uint8Array;
   /** Только для `origin: 'recovery'`. Хранится, чтобы код можно было показать
@@ -351,6 +373,7 @@ function isWellFormedRecord(value: unknown, expectedKey: string): value is Store
   if (r.v !== RECORD_VERSION) return false;
   if (r.address !== expectedKey) return false;
   if (r.origin !== 'signature' && r.origin !== 'recovery') return false;
+  if (r.walletKind !== 'eoa' && r.walletKind !== 'contract') return false;
   if (!(r.publicKey instanceof Uint8Array) || r.publicKey.length !== KEY_LEN) return false;
   if (!(r.privateKey instanceof Uint8Array) || r.privateKey.length !== KEY_LEN) return false;
 
@@ -539,7 +562,7 @@ export type SignChatKey = (typedData: typeof CHAT_KEY_TYPED_DATA) => Promise<`0x
 async function walletKind(
   address: `0x${string}`,
   opts: OpenSessionOptions,
-): Promise<'eoa' | 'contract'> {
+): Promise<WalletKind> {
   if (!opts.getBytecode) {
     throw new ChatSessionError(
       'chatSession: без getBytecode нельзя отличить обычный кошелёк от контрактного',
@@ -575,6 +598,7 @@ function buildSession(
     keypair: { publicKey: record.publicKey, privateKey: record.privateKey },
     address,
     origin: record.origin,
+    walletKind: record.walletKind,
     restored: flags.restored,
     persisted: flags.persisted,
   };
@@ -641,6 +665,7 @@ async function doOpenSession(
         v: RECORD_VERSION,
         address: key,
         origin: 'recovery',
+        walletKind: kind,
         publicKey: keypair.publicKey,
         privateKey: keypair.privateKey,
         recoveryCode: code,
@@ -652,6 +677,7 @@ async function doOpenSession(
         v: RECORD_VERSION,
         address: key,
         origin: 'signature',
+        walletKind: kind,
         publicKey: keypair.publicKey,
         privateKey: keypair.privateKey,
       };
@@ -677,6 +703,7 @@ async function doOpenSession(
 export async function openSessionFromRecoveryCode(
   address: `0x${string}`,
   code: string,
+  opts: OpenSessionOptions = {},
 ): Promise<ChatSession> {
   if (typeof code !== 'string') {
     throw new TypeError('openSessionFromRecoveryCode: code должен быть строкой');
@@ -735,11 +762,24 @@ export async function openSessionFromRecoveryCode(
     );
   }
 
+  // Род кошелька выясняет САМ МОДУЛЬ, а не вызывающий (находка К-3). Гейт
+  // стоит ПОСЛЕ дешёвых местных проверок кода (опечатку незачем оплачивать
+  // обращением к цепи) и ДО вывода ключа и записи — обычный кошелёк не
+  // должен уметь загнать себя в ветку восстановления ни одним способом.
+  const kind = await walletKind(address, opts);
+  if (kind !== 'contract') {
+    throw new ChatSessionError(
+      'У этого кошелька ключ чата выводится из подписи: код восстановления ему не нужен и не принимается',
+      'recovery_not_applicable',
+    );
+  }
+
   const keypair = await keypairFromRecoveryCode(normalized);
   const record: StoredSession = {
     v: RECORD_VERSION,
     address: key,
     origin: 'recovery',
+    walletKind: kind,
     publicKey: keypair.publicKey,
     privateKey: keypair.privateKey,
     recoveryCode: normalized,
@@ -758,7 +798,11 @@ export async function openSessionFromRecoveryCode(
  *   кода нет и не должно быть; его восстановление — сам кошелёк.
  */
 export function exportRecoveryCode(session: ChatSession): string {
-  if (session.origin === 'signature') {
+  // Два независимых условия, а не одно с запасом: `origin` говорит, откуда
+  // ключ, `walletKind` — кому он принадлежит. Сверка с родом кошелька ловит
+  // запись, у которой происхождение подменено (находка К-3): интерфейс может
+  // не показать кнопку, но не может отменить уже переписанную запись.
+  if (session.origin === 'signature' || session.walletKind !== 'contract') {
     throw new ChatSessionError(
       'У обычного кошелька кода восстановления нет: подпишите те же данные тем же кошельком на новом устройстве',
       'recovery_not_applicable',

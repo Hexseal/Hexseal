@@ -10,6 +10,7 @@ import {
   ChatSessionError,
   SESSION_LOCK_TIMEOUT_MS,
   RECOVERY_WORD_COUNT,
+  RECORD_VERSION,
 } from './chatSession';
 
 // ─── Заготовки берут данные в том виде, в каком они приходят из жизни ──────
@@ -415,7 +416,7 @@ describe('кошелёк-контракт: код восстановления',
     const code = exportRecoveryCode(session);
 
     installStorage(); // другое устройство
-    const restored = await openSessionFromRecoveryCode(ALICE, code);
+    const restored = await openSessionFromRecoveryCode(ALICE, code, contractOpts());
 
     expect(hex(restored.keypair.privateKey)).toBe(hex(session.keypair.privateKey));
     expect(hex(restored.keypair.publicKey)).toBe(hex(session.keypair.publicKey));
@@ -434,7 +435,7 @@ describe('кошелёк-контракт: код восстановления',
     const code = exportRecoveryCode(session);
 
     installStorage();
-    const restored = await openSessionFromRecoveryCode(ALICE, code);
+    const restored = await openSessionFromRecoveryCode(ALICE, code, contractOpts());
     expect(exportRecoveryCode(restored)).toBe(code);
 
     // и пережил перезагрузку вкладки — код лежит на устройстве
@@ -474,7 +475,7 @@ describe('золотые векторы вывода ключа', () => {
 
   it('код восстановления: двенадцать слов → ровно этот ключ', async () => {
     expect(GOLD).toBe('legal winner thank year wave sausage worth useful legal winner thank yellow');
-    const session = await openSessionFromRecoveryCode(ALICE, GOLD);
+    const session = await openSessionFromRecoveryCode(ALICE, GOLD, contractOpts());
     expect(hex(session.keypair.publicKey))
       .toBe('377e94d7047bf2f0241998be0c9ab6bae18ac90139edc3f2d2f4bf51f2c53253');
     expect(hex(session.keypair.privateKey))
@@ -482,7 +483,7 @@ describe('золотые векторы вывода ключа', () => {
   });
 
   it('ключ из кода и ключ из подписи — РАЗНЫЕ, дороги не пересекаются', async () => {
-    const byCode = await openSessionFromRecoveryCode(ALICE, GOLD);
+    const byCode = await openSessionFromRecoveryCode(ALICE, GOLD, contractOpts());
     installStorage();
     const bySig = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
     expect(hex(byCode.keypair.privateKey)).not.toBe(hex(bySig.keypair.privateKey));
@@ -496,10 +497,10 @@ describe('негодный код восстановления отказыва�
    *  отказу ведёт несколько дорог, и молчаливо ДРУГОЙ ключ здесь читается
    *  человеком как «переписка пропала». */
   async function expectCode(code: string, expected: string) {
-    await expect(openSessionFromRecoveryCode(ALICE, code)).rejects.toMatchObject({
+    await expect(openSessionFromRecoveryCode(ALICE, code, contractOpts())).rejects.toMatchObject({
       code: expected,
     });
-    await expect(openSessionFromRecoveryCode(ALICE, code)).rejects.toBeInstanceOf(ChatSessionError);
+    await expect(openSessionFromRecoveryCode(ALICE, code, contractOpts())).rejects.toBeInstanceOf(ChatSessionError);
   }
 
   it('пустая строка', async () => {
@@ -537,13 +538,13 @@ describe('негодный код восстановления отказыва�
 
   it('не строка вовсе — TypeError, как в ядре: это НАШ мусор, а не событие', async () => {
     await expect(
-      openSessionFromRecoveryCode(ALICE, undefined as unknown as string),
+      openSessionFromRecoveryCode(ALICE, undefined as unknown as string, contractOpts()),
     ).rejects.toBeInstanceOf(TypeError);
   });
 
   it('ни один отказ НИЧЕГО не записал на устройство', async () => {
     for (const bad of ['', GOLD.split(' ').slice(0, 11).join(' '), GOLD.replace('yellow', 'zoo')]) {
-      await openSessionFromRecoveryCode(ALICE, bad).catch(() => {});
+      await openSessionFromRecoveryCode(ALICE, bad, contractOpts()).catch(() => {});
     }
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
@@ -555,7 +556,7 @@ describe('негодный код восстановления отказыва�
 
     installStorage();
     const messy = `  ${code.toUpperCase().replace(/ /g, '   ')}\n`;
-    const restored = await openSessionFromRecoveryCode(ALICE, messy);
+    const restored = await openSessionFromRecoveryCode(ALICE, messy, contractOpts());
 
     expect(hex(restored.keypair.privateKey)).toBe(hex(session.keypair.privateKey));
     // и выдаётся обратно в опрятном виде, а не как человек его набрал
@@ -570,7 +571,7 @@ describe('код восстановления поверх живого сеан
     const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
     const myCode = exportRecoveryCode(mine);
 
-    await expect(openSessionFromRecoveryCode(ALICE, GOLD)).rejects.toMatchObject({
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD, contractOpts())).rejects.toMatchObject({
       code: 'session_already_present',
     });
 
@@ -584,7 +585,7 @@ describe('код восстановления поверх живого сеан
     const sign = vi.fn(async () => ALICE_SIG);
     const mine = await openSession(ALICE, sign, eoaOpts());
 
-    await expect(openSessionFromRecoveryCode(ALICE, GOLD)).rejects.toMatchObject({
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD, contractOpts())).rejects.toMatchObject({
       code: 'session_already_present',
     });
 
@@ -598,15 +599,122 @@ describe('код восстановления поверх живого сеан
     const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
     await forgetSession(ALICE);
 
-    const restored = await openSessionFromRecoveryCode(ALICE, GOLD);
+    const restored = await openSessionFromRecoveryCode(ALICE, GOLD, contractOpts());
     expect(hex(restored.keypair.privateKey)).not.toBe(hex(mine.keypair.privateKey));
     expect(exportRecoveryCode(restored)).toBe(GOLD);
   });
 
   it('по СВОБОДНОМУ соседнему адресу код по-прежнему принимается', async () => {
     await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    const bob = await openSessionFromRecoveryCode(BOB, GOLD);
+    const bob = await openSessionFromRecoveryCode(BOB, GOLD, contractOpts());
     expect(exportRecoveryCode(bob)).toBe(GOLD);
+  });
+});
+
+// ═══ К-3: обычный кошелёк не может уйти в ветку кода восстановления ══════
+
+describe('род кошелька выясняет сам модуль, а не вызывающий', () => {
+  it('обычному кошельку код восстановления не принимается вовсе', async () => {
+    const sign = vi.fn(async () => ALICE_SIG);
+
+    await expect(
+      openSessionFromRecoveryCode(ALICE, GOLD, eoaOpts()),
+    ).rejects.toMatchObject({ code: 'recovery_not_applicable' });
+
+    // и на диске по-прежнему пусто — обычный заход даёт ВЫВОДИМЫЙ ключ
+    const session = await openSession(ALICE, sign, eoaOpts());
+    expect(session.origin).toBe('signature');
+    expect(hex(session.keypair.publicKey))
+      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+  });
+
+  it('умный аккаунт EIP-7702 — тоже обычный, кода не получает', async () => {
+    await expect(
+      openSessionFromRecoveryCode(ALICE, GOLD, { getBytecode: delegationBytecode }),
+    ).rejects.toMatchObject({ code: 'recovery_not_applicable' });
+  });
+
+  it('без getBytecode модуль не гадает и не принимает код', async () => {
+    await expect(
+      openSessionFromRecoveryCode(ALICE, GOLD),
+    ).rejects.toMatchObject({ code: 'wallet_kind_unknown' });
+  });
+
+  it('сеть отказала — отказ с кодом, ничего не записано', async () => {
+    const failing = vi.fn(async () => { throw new Error('HTTP request failed'); });
+    await expect(
+      openSessionFromRecoveryCode(ALICE, GOLD, { getBytecode: failing }),
+    ).rejects.toMatchObject({ code: 'wallet_kind_unknown' });
+    const store = fakeIdb._disk.get('sessions');
+    expect(store === undefined || store.size === 0).toBe(true);
+  });
+
+  it('род кошелька лежит В ЗАПИСИ и сверяется при выдаче кода', async () => {
+    // Обход через подмену происхождения на диске: даже если запись говорит
+    // origin=recovery, род кошелька в ней говорит правду, и код не выдаётся.
+    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    expect(session.walletKind).toBe('contract');
+
+    const store = fakeIdb._disk.get('sessions')!;
+    const key = Array.from(store.keys())[0];
+    const rec = store.get(key) as Record<string, unknown>;
+    store.set(key, { ...rec, walletKind: 'eoa' });
+
+    const tampered = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    expect(tampered.walletKind).toBe('eoa');
+    let thrown: unknown;
+    try { exportRecoveryCode(tampered); } catch (err) { thrown = err; }
+    expect((thrown as ChatSessionError)?.code).toBe('recovery_not_applicable');
+  });
+
+  it('запись без walletKind отвергается — тип не должен врать пустотой', async () => {
+    // Отличается от годной РОВНО отсутствием поля. Без этого замка запись
+    // проходила бы, а `session.walletKind` был бы undefined при типе
+    // WalletKind — то самое «заперто на одном пути, открыто на соседнем».
+    await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const store = fakeIdb._disk.get('sessions')!;
+    const key = Array.from(store.keys())[0];
+    const rec = { ...(store.get(key) as Record<string, unknown>) };
+    expect(rec.walletKind).toBe('eoa'); // запись действительно годная
+    delete rec.walletKind;
+    store.set(key, rec);
+
+    const sign = vi.fn(async () => ALICE_SIG);
+    const after = await openSession(ALICE, sign, eoaOpts());
+
+    expect(sign).toHaveBeenCalledTimes(1); // отвергнута, подписали заново
+    expect(after.walletKind).toBe('eoa');
+    expect(after.restored).toBe(false);
+  });
+
+  it('обычный сеанс несёт walletKind eoa, контрактный — contract', async () => {
+    const eoa = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const contract = await openSession(BOB, async () => BOB_SIG, contractOpts());
+    expect(eoa.walletKind).toBe('eoa');
+    expect(contract.walletKind).toBe('contract');
+  });
+});
+
+// ═══ В-2: гейт версии записи — собственный замок ═════════════════════════
+
+describe('версия формата записи', () => {
+  it('запись, годная ВО ВСЁМ ОСТАЛЬНОМ, но с чужой версией — отвергается', async () => {
+    // Прежний тест целился в этот гейт, но клал запись без версии — она
+    // отлетала раньше, на проверке происхождения, и сам гейт версии не
+    // сторожил никто (снять его давало 0 красных). Здесь запись отличается
+    // от годной РОВНО версией.
+    const good = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const store = fakeIdb._disk.get('sessions')!;
+    const key = Array.from(store.keys())[0];
+    const rec = store.get(key) as Record<string, unknown>;
+    expect(rec.v).toBe(RECORD_VERSION); // запись действительно годная
+    store.set(key, { ...rec, v: RECORD_VERSION + 1 });
+
+    const sign = vi.fn(async () => ALICE_SIG);
+    const after = await openSession(ALICE, sign, eoaOpts());
+
+    expect(sign).toHaveBeenCalledTimes(1); // запись отвергнута, подписали заново
+    expect(hex(after.keypair.privateKey)).toBe(hex(good.keypair.privateKey));
   });
 });
 
@@ -1021,7 +1129,7 @@ describe('мусор на входе — вердикт, а не падение'
     expect(session.keypair.publicKey).toHaveLength(32);
     // запись заменена годной
     const rec = fakeIdb._disk.get('sessions')!.get(ALICE.toLowerCase()) as { v: number };
-    expect(rec.v).toBe(1);
+    expect(rec.v).toBe(RECORD_VERSION);
   });
 
   it('в IndexedDB запись с ключом не той длины — отвергается', async () => {
@@ -1029,9 +1137,10 @@ describe('мусор на входе — вердикт, а не падение'
     fakeIdb._disk.set('sessions', new Map([[
       ALICE.toLowerCase(),
       {
-        v: 1,
+        v: RECORD_VERSION,
         address: ALICE.toLowerCase(),
         origin: 'signature',
+        walletKind: 'eoa',
         publicKey: new Uint8Array(31),
         privateKey: new Uint8Array(32),
       },
@@ -1046,9 +1155,10 @@ describe('мусор на входе — вердикт, а не падение'
     fakeIdb._disk.set('sessions', new Map([[
       ALICE.toLowerCase(),
       {
-        v: 1,
+        v: RECORD_VERSION,
         address: ALICE.toLowerCase(),
         origin: 'recovery',
+        walletKind: 'contract',
         publicKey: new Uint8Array(32),
         privateKey: new Uint8Array(32),
       },
