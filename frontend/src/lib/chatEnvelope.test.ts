@@ -142,10 +142,27 @@ describe('packEnvelope / unpackEnvelope', () => {
     });
   });
 
-  it('метка сделки не встречается в байтах конверта', async () => {
+  it('метка сделки не встречается в байтах конверта (И-2, ревью координатора: искать в той кодировке, в которой она реально лежит)', async () => {
+    // dealId живёт в JSON payload'а ОБЫЧНОЙ строкой ("0x1234...7890") — если
+    // бы шифрование не работало, она утекла бы как ASCII/UTF-8-байты, то
+    // есть каждый символ строки как СВОЙ байт. Старая проверка искала СЫРЫЕ
+    // hex-байты (адрес как 20 декодированных байт, упакованных по 2 hex-
+    // цифры на байт) — кодировку, в которой метка нигде в реальности не
+    // лежит. Найдено ревью координатора мутацией: утечка метки СТРОКОЙ в
+    // хвост конверта оставляла старую проверку зелёной.
     const { bob, alice } = await actors();
     const env = await packEnvelope({ text: 'привет', dealId: DEAL }, bob.publicKey, alice.publicKey);
-    const hay = Buffer.from(env).toString('hex');
+    const raw = Buffer.from(env);
+
+    // Как она реально лежит в JSON — ASCII/UTF-8 строкой, в разных
+    // вероятных вариантах регистра/префикса.
+    expect(raw.includes(Buffer.from(DEAL))).toBe(false);
+    expect(raw.includes(Buffer.from(DEAL.toLowerCase()))).toBe(false);
+    expect(raw.includes(Buffer.from(DEAL.slice(2)))).toBe(false);
+
+    // Дополнительный слой — сырые hex-декодированные байты (на случай другой
+    // сериализации в будущем): менее вероятная, но тоже стоит перекрыть.
+    const hay = raw.toString('hex');
     expect(hay).not.toContain(DEAL.slice(2).toLowerCase());
   });
 
