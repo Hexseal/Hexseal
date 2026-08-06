@@ -1,0 +1,748 @@
+/**
+ * chatSession.ts — сеанс чата: ключ переписки, его жизнь на устройстве и код
+ * восстановления для кошельков-контрактов.
+ *
+ * НЕ ЗНАЕТ: про сеть чата (`chatTransport.ts`), про React, про wagmi/viem-
+ * клиент. Кошелёк и цепь входят сюда ДВУМЯ колбэками (`signTypedData`,
+ * `getBytecode`), а не импортом — модуль проверяется целиком без браузера и
+ * без узла RPC. Потребляет из ядра ровно `deriveChatKeypair`,
+ * `CHAT_KEY_TYPED_DATA` и тип `ChatKeypair` (`chatCrypto.ts`).
+ *
+ * ─── ДВА ПРОИСХОЖДЕНИЯ КЛЮЧА, И ОНИ НЕ СИММЕТРИЧНЫ ──────────────────────
+ *
+ * `origin: 'signature'` — ОБЫЧНЫЙ кошелёк. Подпись фиксированных
+ * типизированных данных (`CHAT_KEY_TYPED_DATA`) всегда одна и та же, значит
+ * `deriveChatKeypair` всегда даёт один и тот же ключ. Восстановление такому
+ * человеку не нужно и не выдаётся: **восстановление обычного кошелька — это
+ * сам кошелёк**. Он заходит с нового устройства, подписывает то же самое и
+ * получает тот же ключ (спека, §4).
+ *
+ * `origin: 'recovery'` — КОШЕЛЁК-КОНТРАКТ (Coinbase Smart Wallet, Safe). Его
+ * подпись переменной длины и, что важнее, НЕ обязана оставаться прежней при
+ * смене состава владельцев — обещание «та же фраза даёт тот же ключ» для него
+ * ложно. Поэтому ключ генерируется случайно, а человеку выдаётся код
+ * восстановления, который он хранит сам.
+ *
+ * ⚠️ ПОЧЕМУ КОДА НЕТ У ОБЫЧНОГО КОШЕЛЬКА, ЕСЛИ «ТАК УДОБНЕЕ». Семя ключа из
+ * подписи — 256-битное (`keccak256`). Двенадцать слов BIP-39 несут 128 бит.
+ * Выдать обычному кошельку двенадцатисловный код означало бы ВТИХУЮ срезать
+ * стойкость его ключа вчетверо ради удобства, которого у него и так нет
+ * (см. абзац выше). Поэтому `exportRecoveryCode` для `origin: 'signature'`
+ * ОТКАЗЫВАЕТ с кодом `recovery_not_applicable`, а не отдаёт пустую строку и
+ * не выдаёт что попало.
+ *
+ * Код восстановления — 128 бит энтропии → 12 слов BIP-39 → растяжка
+ * PBKDF2-HMAC-SHA512 (2048 итераций, `mnemonicToSeed`) → 32-байтное семя →
+ * та же пара X25519, что даёт `deriveChatKeypair`. Двенадцать слов, 128 бит
+ * — размен принят намеренно: длиннее человек не перепишет с бумажки, а 128
+ * бит для этой задачи достаточно.
+ *
+ * ─── ХРАНИЛИЩЕ — IndexedDB, И ЭТО НЕ ВКУСОВЩИНА ────────────────────────
+ *
+ * Ключ кладётся в `IndexedDB`, НЕ в `localStorage`, по трём причинам, и все
+ * три проверены тестами, а не заявлены:
+ *
+ *  1. `localStorage` хранит только строки — сырые байты ключа пришлось бы
+ *     кодировать в hex/base64, то есть держать ключ в виде, который любой
+ *     дамп хранилища покажет читаемым текстом.
+ *  2. `localStorage` синхронен и не имеет транзакций: закрытая посреди записи
+ *     вкладка может оставить половину. У `IndexedDB` транзакция атомарна —
+ *     либо запись целиком, либо ничего (см. `writeRecord` ниже: ответ даётся
+ *     на `tx.oncomplete`, то есть на ФИКСАЦИИ, а не на успехе запроса).
+ *  3. `localStorage` — самое обшариваемое место в браузере; расширения и
+ *     отладочные снимки лезут туда в первую очередь.
+ *
+ * Никакой ПРИНЦИПИАЛЬНОЙ защиты это не даёт: `IndexedDB` того же origin
+ * читается тем же JavaScript. Обещание здесь ровно одно и оно скромное —
+ * ключ не лежит в самом людном месте в виде строки. Спека §3.2 честно
+ * называет цену: доступ к разблокированному устройству равен доступу ко всей
+ * переписке.
+ *
+ * ─── ЗАПИСЬ МОГЛА НЕ ПРОЙТИ, И ЭТО ВИДНО ───────────────────────────────
+ *
+ * Квота кончилась, приватный режим, хранилище отключено — `IndexedDB` умеет
+ * отказать. Сеанс в этом случае ВСЁ РАВНО отдаётся (переписка в этой вкладке
+ * работает), но с `persisted: false` и громкой записью в журнал. Молчаливый
+ * отказ здесь означал бы окно подписи при каждой перезагрузке без единого
+ * объяснения — а для кошелька-контракта ещё и потерю личности навсегда, если
+ * человек не переписал код. Флаг существует, чтобы вызывающий мог об этом
+ * сказать, а не чтобы о нём знал только этот файл.
+ *
+ * ─── ОДНО ОКНО ПОДПИСИ НА ВСЕ ВКЛАДКИ ──────────────────────────────────
+ *
+ * Две вкладки, открытые разом, обязаны показать ОДНО окно подписи, не два
+ * (второй запрос кошелёк отклоняет как `-32002` и в мобильном MetaMask его
+ * нечем снять — та же боль, ради которой существует `walletLock.ts`).
+ * Держится двумя независимыми замками:
+ *
+ *  - внутри вкладки — карта незавершённых вызовов (`_inFlight`): второй
+ *    вызов на тот же адрес ПРИСОЕДИНЯЕТСЯ к первому, а не заводит свой;
+ *  - между вкладками — Web Locks (`navigator.locks`), тот же приём и тот же
+ *    таймаут, что в `walletLock.ts`.
+ *
+ * ⚠️ Замок сам по себе НИЧЕГО не даёт: вторая вкладка, дождавшись своей
+ * очереди, спокойно откроет второе окно подписи, если не ПЕРЕЧИТАЕТ
+ * хранилище под замком. Перечитывание (`readRecord` внутри `withCrossTabLock`)
+ * — не осторожность, а единственное, ради чего замок здесь берётся. В этом
+ * проекте уже был «замок, который не запирает»; тест меряет число вызовов
+ * `signTypedData` из ДВУХ экземпляров модуля, а не факт взятия замка.
+ *
+ * ─── ЧЕГО ЭТОТ МОДУЛЬ НЕ ДЕЛАЕТ ────────────────────────────────────────
+ *
+ *  - НЕ сверяет восстановленный ключ со справочником открытых ключей на
+ *    сервере. Код восстановления не связан с адресом (см. `RECOVERY_SEED_
+ *    CONTEXT`), поэтому чужой код, введённый под своим адресом, даст ЧУЖОЙ
+ *    ключ молча. Поймать это можно только сравнением с опубликованным
+ *    открытым ключом — а это сеть, то есть слой хука (Задача 6).
+ *  - НЕ проверяет, что `openSessionFromRecoveryCode` зовут для кошелька-
+ *    контракта. Обычному кошельку код не нужен и вреден (перебьёт его
+ *    восстановимый ключ ключом из кода); показывать этот путь только
+ *    контрактным — обязанность интерфейса.
+ *  - НЕ показывает предупреждение про код восстановления. Смысл, который
+ *    интерфейс ОБЯЗАН донести рядом с кодом: это доступ ко всей переписке
+ *    навсегда; кто его получил, читает всё; восстановить или отозвать
+ *    нельзя. Точный текст утверждается владельцем (план, Задача 4).
+ */
+
+import { keccak256, concat, stringToBytes } from 'viem';
+import { deriveChatKeypair, CHAT_KEY_TYPED_DATA, type ChatKeypair } from './chatCrypto';
+
+export type SessionOrigin = 'signature' | 'recovery';
+
+export interface ChatSession {
+  keypair: ChatKeypair;
+  /** Адрес В ТОМ ВИДЕ, В КАКОМ ЕГО ПОДАЛИ (с контрольной суммой, как отдаёт
+   *  `useAccount()`) — интерфейсу показывать именно его. Ключом хранилища
+   *  служит приведённый к нижнему регистру (`storageKey`), иначе один и тот
+   *  же кошелёк в разной записи выглядел бы двумя разными людьми. */
+  address: `0x${string}`;
+  origin: SessionOrigin;
+  /** `true` — ключ взят с устройства (окна подписи НЕ было). `false` — ключ
+   *  только что заведён. Для кошелька-контракта это ровно тот признак, по
+   *  которому интерфейс обязан показать код восстановления немедленно:
+   *  второго случая его показать может не быть. */
+  restored: boolean;
+  /** `false` — ключ НЕ лёг на устройство (квота, приватный режим, хранилища
+   *  нет). Сеанс работает, но до перезагрузки вкладки. См. раздел «запись
+   *  могла не пройти» в шапке файла. */
+  persisted: boolean;
+}
+
+export type ChatSessionErrorCode =
+  /** У обычного кошелька кода восстановления нет по устройству, а не по
+   *  недоделке (см. шапку файла). */
+  | 'recovery_not_applicable'
+  /** Сеанс есть, но кода к нему в памяти этой вкладки нет — защитный случай:
+   *  объект сеанса пришёл не от этого экземпляра модуля. */
+  | 'recovery_code_unavailable'
+  | 'recovery_code_empty'
+  | 'recovery_code_word_count'
+  | 'recovery_code_unknown_word'
+  | 'recovery_code_checksum'
+  /** Кошелёк вернул не 65-байтовую подпись (пусто, обрезок, ERC-1271). */
+  | 'signature_malformed'
+  /** Не удалось выяснить, обычный это кошелёк или контрактный. Гадать нельзя
+   *  — см. `walletKind`. */
+  | 'wallet_kind_unknown'
+  /** `forgetSession` не смогла удалить запись. Молча вернуть «забыто» —
+   *  соврать про то, что ключ всё ещё на устройстве. */
+  | 'forget_failed';
+
+/** Каждый отказ несёт `.code` ОТДЕЛЬНЫМ полем — та же дисциплина, что в
+ *  `chatTransport.ts`: сравнение текста ошибки ломается от первой же правки
+ *  формулировки, а к одному коду часто ведёт несколько дорог. */
+export class ChatSessionError extends Error {
+  readonly code: ChatSessionErrorCode;
+  constructor(message: string, code: ChatSessionErrorCode, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'ChatSessionError';
+    this.code = code;
+  }
+}
+
+/** Сколько слов в коде восстановления. Ровно двенадцать — не «12-24, как
+ *  разрешает BIP-39»: 24-словная мнемоника это чей-то СИДФРАЗА КОШЕЛЬКА, и
+ *  принять её здесь значило бы молча завести чат на ключе, выведенном из
+ *  денег человека. Экспортировано — тест сверяет напрямую, а не задваивает
+ *  число. */
+export const RECOVERY_WORD_COUNT = 12;
+
+/** 128 бит энтропии = 12 слов. См. шапку файла про размен. */
+const RECOVERY_ENTROPY_BITS = 128;
+
+/** Метка назначения внутри семени — та же дисциплина, что
+ *  `CHAT_KEY_SEED_CONTEXT` в `chatCrypto.ts`: разводит ключ ЧАТА и любой
+ *  будущий ключ, выведенный из того же кода восстановления.
+ *
+ *  Адреса здесь НЕТ намеренно. Подмешать адрес — значит сделать так, что код,
+ *  введённый под ЧУЖИМ адресом, даст ДРУГОЙ ключ: человек, ошибившийся
+ *  кошельком, потерял бы историю навсегда и без сигнала. Без подмеси тот же
+ *  промах всего лишь кладёт правильный ключ не под тем адресом — история
+ *  читается, ошибка обратима. Из двух молчаливых промахов выбран обратимый. */
+const RECOVERY_SEED_CONTEXT = 'hexseal.chat.recovery.seed.v1';
+
+/** Длина обеих половин пары X25519 (`crypto_box`) — 32 байта. Проверяется на
+ *  чтении записи с устройства: строка ровно в 32 UTF-8 байта приводится
+ *  libsodium молча (разобрано в `openSealed`, chatCrypto.ts), поэтому форма
+ *  сверяется здесь, а не «как-нибудь потом». */
+const KEY_LEN = 32;
+
+/** Потолок ожидания межвкладочного замка. То же значение и та же причина, что
+ *  `WALLET_LOCK_TIMEOUT_MS` в `walletLock.ts`: под замком стоит ЖИВОЕ окно
+ *  подписи, человек имеет право думать минуты. Держатель, брошенный навсегда
+ *  (вкладку выгрузили посреди подписи), не должен заклинить чат до
+ *  перезагрузки — по истечении срока едем без межвкладочной защиты, ценой
+ *  возможного второго окна. */
+export const SESSION_LOCK_TIMEOUT_MS = 3 * 60_000;
+
+const DB_NAME = 'hexseal-chat';
+const DB_VERSION = 1;
+const STORE_NAME = 'sessions';
+
+/** Версия ФОРМАТА ЗАПИСИ, не версия базы. Запись с другой (в т.ч. без поля
+ *  `v` вовсе — формат до этой версии) считается ОТСУТСТВУЮЩЕЙ: лучше одно
+ *  лишнее окно подписи, чем ключ, собранный из полей, значение которых
+ *  сегодня другое. */
+const RECORD_VERSION = 1;
+
+interface StoredSession {
+  v: number;
+  /** Приведённый адрес — дублирует ключ хранилища НАМЕРЕННО. Ключ говорит,
+   *  где запись лежит; поле — чья она. Совпадение проверяется на чтении: без
+   *  этого регресс в вычислении ключа выдал бы ключ одного человека другому
+   *  (класс «заперто на одном пути, открыто на соседнем»). */
+  address: string;
+  origin: SessionOrigin;
+  publicKey: Uint8Array;
+  privateKey: Uint8Array;
+  /** Только для `origin: 'recovery'`. Хранится, чтобы код можно было показать
+   *  повторно (человек не переписал сразу) — по чувствительности это ровно то
+   *  же, что лежащий рядом закрытый ключ, отдельной тайны не добавляет. */
+  recoveryCode?: string;
+}
+
+/** Код восстановления живёт ЗДЕСЬ, а не полем в `ChatSession`. Причина
+ *  практическая: объект сеанса уедет в состояние React, в отладочные снимки,
+ *  в `JSON.stringify` журнала — и код уехал бы вместе с ним. `WeakMap` не
+ *  сериализуется никак, отдаётся только через `exportRecoveryCode` и умирает
+ *  вместе с самим объектом сеанса. */
+const _codes = new WeakMap<ChatSession, string>();
+
+/** Незавершённые открытия сеанса, по приведённому адресу. Второй вызов на тот
+ *  же адрес присоединяется к первому — одно окно подписи внутри вкладки. */
+const _inFlight = new Map<string, Promise<ChatSession>>();
+
+function storageKey(address: string): string {
+  return address.toLowerCase();
+}
+
+// ─── IndexedDB: тонкий слой, ничего своего ────────────────────────────────
+
+function idbFactory(): IDBFactory | null {
+  const g = globalThis as { indexedDB?: IDBFactory };
+  return g.indexedDB ?? null;
+}
+
+function openDb(): Promise<IDBDatabase> {
+  const factory = idbFactory();
+  if (!factory) return Promise.reject(new Error('chatSession: IndexedDB недоступен'));
+  return new Promise((resolve, reject) => {
+    const req = factory.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error('chatSession: не удалось открыть хранилище'));
+  });
+}
+
+async function idbGet(key: string): Promise<unknown> {
+  const db = await openDb();
+  try {
+    return await new Promise<unknown>((resolve, reject) => {
+      const tx = db.transaction([STORE_NAME], 'readonly');
+      const req = tx.objectStore(STORE_NAME).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error ?? new Error('chatSession: чтение не удалось'));
+      tx.onabort = () => reject(tx.error ?? new Error('chatSession: чтение прервано'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Ответ даётся на `tx.oncomplete` — на ФИКСАЦИИ транзакции, а не на успехе
+ *  запроса. Разница ровно в том вопросе, ради которого выбран IndexedDB:
+ *  успех запроса ещё не означает, что данные переживут закрытие вкладки, а
+ *  фиксация — означает. Ответить раньше значило бы пообещать сохранность,
+ *  которой нет. */
+async function idbPut(key: string, value: StoredSession): Promise<void> {
+  const db = await openDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([STORE_NAME], 'readwrite');
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error ?? new Error('chatSession: запись прервана'));
+      tx.onerror = () => reject(tx.error ?? new Error('chatSession: запись не удалась'));
+      tx.objectStore(STORE_NAME).put(value, key);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function idbDelete(key: string): Promise<void> {
+  const db = await openDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([STORE_NAME], 'readwrite');
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error ?? new Error('chatSession: удаление прервано'));
+      tx.onerror = () => reject(tx.error ?? new Error('chatSession: удаление не удалось'));
+      tx.objectStore(STORE_NAME).delete(key);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Гейт формы записи с устройства. Данные из хранилища доверия не заслуживают
+ *  ровно как данные из сети: их мог записать предыдущий выпуск, их мог
+ *  испортить сбой, их мог подменить кто-то с доступом к вкладке. Всё, что не
+ *  сходится, считается ОТСУТСТВИЕМ записи — путь тогда обычный (подпись),
+ *  видимый человеку, а не тихая выдача мусора под видом ключа. */
+function isWellFormedRecord(value: unknown, expectedKey: string): value is StoredSession {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+
+  if (r.v !== RECORD_VERSION) return false;
+  if (r.address !== expectedKey) return false;
+  if (r.origin !== 'signature' && r.origin !== 'recovery') return false;
+  if (!(r.publicKey instanceof Uint8Array) || r.publicKey.length !== KEY_LEN) return false;
+  if (!(r.privateKey instanceof Uint8Array) || r.privateKey.length !== KEY_LEN) return false;
+
+  // Сеанс происхождения `recovery` БЕЗ кода — это сеанс, который человек уже
+  // не сможет перенести никуда. Отдать его молча значит пообещать
+  // восстановимость, которой нет.
+  if (r.origin === 'recovery') {
+    if (typeof r.recoveryCode !== 'string') return false;
+    if (r.recoveryCode.split(' ').length !== RECOVERY_WORD_COUNT) return false;
+  }
+
+  return true;
+}
+
+async function readRecord(key: string): Promise<StoredSession | null> {
+  if (!idbFactory()) return null; // хранилища нет — не ошибка, просто пусто
+  let raw: unknown;
+  try {
+    raw = await idbGet(key);
+  } catch (err) {
+    // Читать не смогли — ведём себя как «записи нет» (человек увидит окно
+    // подписи), но НЕ молчим: иначе окно подписи на каждой перезагрузке
+    // выглядит как сломанный кошелёк, а не как сломанное хранилище.
+    console.warn('[chatSession] не удалось прочитать ключ с устройства:', err);
+    return null;
+  }
+  if (raw === undefined || raw === null) return null;
+  if (!isWellFormedRecord(raw, key)) {
+    console.warn('[chatSession] запись на устройстве не той формы — считаем, что ключа нет');
+    return null;
+  }
+  return raw;
+}
+
+/** Возвращает `true`, если запись действительно зафиксирована. Никогда не
+ *  бросает: неудачная запись не повод отказать человеку в переписке прямо
+ *  сейчас — но и не повод промолчать. */
+async function writeRecord(key: string, record: StoredSession): Promise<boolean> {
+  if (!idbFactory()) {
+    console.warn(
+      '[chatSession] хранилища IndexedDB нет — ключ чата останется только в памяти вкладки; ' +
+      'после перезагрузки кошелёк спросит подпись заново',
+    );
+    return false;
+  }
+  try {
+    await idbPut(key, record);
+    return true;
+  } catch (err) {
+    console.warn(
+      '[chatSession] не удалось сохранить ключ чата на устройстве (квота/приватный режим): ' +
+      'сеанс работает, но до перезагрузки вкладки',
+      err,
+    );
+    return false;
+  }
+}
+
+// ─── Замок между вкладками ────────────────────────────────────────────────
+
+/** Тот же приём, что в `walletLock.ts`: Web Locks, где есть; мягкая
+ *  деградация, где нет (защита остаётся в пределах вкладки — карта
+ *  `_inFlight`). Потолок ожидания обязателен: держатель, брошенный навсегда,
+ *  иначе заклинил бы чат до перезагрузки страницы. */
+async function withCrossTabLock<T>(name: string, timeoutMs: number, fn: () => Promise<T>): Promise<T> {
+  const locks = (globalThis as { navigator?: Navigator }).navigator?.locks;
+  if (!locks) return fn();
+
+  let release: (() => void) | undefined;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const acquired = new Promise<void>(resolve => {
+    locks
+      .request(name, () => { resolve(); return held; })
+      .catch(() => { resolve(); }); // не поддержано/отказ — едем без замка
+  });
+
+  try {
+    await Promise.race([
+      acquired,
+      new Promise<void>(resolve => { timer = setTimeout(resolve, timeoutMs); }),
+    ]);
+    return await fn();
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    // Безусловно: если замок достанется нам ПОСЛЕ таймаута, `held` уже
+    // разрешён и очередь поедет дальше сразу, а не встанет на нас.
+    release?.();
+  }
+}
+
+// ─── Вывод ключа ──────────────────────────────────────────────────────────
+
+async function keypairFromSignature(signature: unknown): Promise<ChatKeypair> {
+  if (typeof signature !== 'string') {
+    throw new ChatSessionError(
+      'chatSession: кошелёк вернул не строку вместо подписи',
+      'signature_malformed',
+    );
+  }
+  try {
+    return await deriveChatKeypair(signature as `0x${string}`);
+  } catch (err) {
+    // `deriveChatKeypair` бросает `TypeError` ровно на «это не 65-байтовая
+    // подпись»: пусто, обрезок, ERC-1271 переменной длины. Наружу это должно
+    // выйти вердиктом с кодом, а не голым TypeError, который вызывающему
+    // неотличим от нашего собственного бага.
+    if (err instanceof TypeError) {
+      throw new ChatSessionError(
+        'chatSession: кошелёк вернул не 65-байтовую подпись — для кошелька-контракта нужен код восстановления',
+        'signature_malformed',
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+}
+
+async function keypairFromRecoveryCode(normalizedCode: string): Promise<ChatKeypair> {
+  const { mnemonicToSeed } = await import('@scure/bip39');
+  // Растяжка BIP-39: PBKDF2-HMAC-SHA512, 2048 итераций, 64 байта.
+  const stretched = await mnemonicToSeed(normalizedCode);
+  const seed = keccak256(
+    concat([stringToBytes(RECOVERY_SEED_CONTEXT), stretched]),
+    'bytes',
+  );
+
+  // Тот же алгоритм и тот же вход, что у `deriveChatKeypair` (chatCrypto.ts):
+  // 32-байтное семя → `crypto_box_seed_keypair`. Динамический импорт — по той
+  // же причине, что там: статический кладёт ~147 КБ gzip в общий чанк Next.
+  const sodium = (await import('libsodium-wrappers')).default;
+  await sodium.ready;
+  const { publicKey, privateKey } = sodium.crypto_box_seed_keypair(seed);
+  return { publicKey, privateKey };
+}
+
+/** Приводит код к тому виду, в каком он проверяется и хранится.
+ *
+ *  Регистр и лишние пробелы прощаются НАМЕРЕННО: человек перепечатывает
+ *  двенадцать слов с бумажки, и «ALPHA  BRAVO» от «alpha bravo» отличается
+ *  только его почерком. `@scure/bip39` сам этого не прощает — он делит строку
+ *  ровно по одному пробелу и сверяет слова побайтово, так что без этой
+ *  нормализации законный код отвергался бы с той же ошибкой, что настоящая
+ *  опечатка, и человек искал бы несуществующую ошибку в словах.
+ *
+ *  NFKD — до всего остального: тот же порядок, что внутри BIP-39. */
+function normalizeRecoveryCode(code: string): string {
+  return code.normalize('NFKD').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// ─── Открытие сеанса ──────────────────────────────────────────────────────
+
+export interface OpenSessionOptions {
+  /** Чтение кода по адресу с цепи — обычно `publicClient.getBytecode`.
+   *  Обязателен: без него выяснить тип кошелька нечем, а гадать нельзя
+   *  (см. `walletKind`). */
+  getBytecode?: (address: `0x${string}`) => Promise<`0x${string}` | undefined | null>;
+  /** Потолок ожидания межвкладочного замка. Умолчание —
+   *  `SESSION_LOCK_TIMEOUT_MS`; параметр существует ради тестов. */
+  lockTimeoutMs?: number;
+}
+
+/** Подписать РОВНО те типизированные данные, которые дал этот модуль. Тип
+ *  аргумента прибит к `CHAT_KEY_TYPED_DATA` намеренно: вызывающий forward'ит
+ *  их в кошелёк, а не собирает структуру заново — иначе появился бы второй
+ *  источник истины о том, из чего выводится ключ (разобрано в шапке
+ *  `chatCrypto.ts`). */
+export type SignChatKey = (typedData: typeof CHAT_KEY_TYPED_DATA) => Promise<`0x${string}`>;
+
+/**
+ * Выясняет, обычный это кошелёк или контрактный.
+ *
+ * ⚠️ Отказ сети — ОТДЕЛЬНЫЙ исход, а не повод предположить. Обе догадки
+ * дорогие и молчаливые:
+ *  - решить «обычный» для контрактного — кошелёк вернёт подпись переменной
+ *    длины, и человек упрётся в `signature_malformed` без объяснения;
+ *  - решить «контрактный» для обычного — человек получит СЛУЧАЙНЫЙ ключ
+ *    вместо восстановимого, и на другом устройстве его переписка не сойдётся
+ *    никогда, причём узнает он об этом много позже.
+ * Поэтому — внятный отказ, который человек может повторить.
+ *
+ * Сеть спрашивается ТОЛЬКО когда ключа на устройстве ещё нет: при обычном
+ * заходе (`restored`) этой функции не существует для потребителя вовсе.
+ */
+async function walletKind(
+  address: `0x${string}`,
+  opts: OpenSessionOptions,
+): Promise<'eoa' | 'contract'> {
+  if (!opts.getBytecode) {
+    throw new ChatSessionError(
+      'chatSession: без getBytecode нельзя отличить обычный кошелёк от контрактного',
+      'wallet_kind_unknown',
+    );
+  }
+  let code: `0x${string}` | undefined | null;
+  try {
+    code = await opts.getBytecode(address);
+  } catch (err) {
+    throw new ChatSessionError(
+      'chatSession: не удалось прочитать код кошелька с цепи — повторите позже',
+      'wallet_kind_unknown',
+      { cause: err },
+    );
+  }
+  // `undefined` и `'0x'` оба означают «кода нет»: разные узлы и разные версии
+  // viem отдают по-разному, и полагаться на одну форму нельзя. Сравнение идёт
+  // по приведённой строке, а не по литералу типа: сюда приходит ответ узла,
+  // а он не обязан совпадать с тем, что обещает тип на границе.
+  const normalized = typeof code === 'string' ? code.trim().toLowerCase() : '';
+  if (normalized === '' || normalized === '0x') return 'eoa';
+  return 'contract';
+}
+
+function buildSession(
+  record: StoredSession,
+  address: `0x${string}`,
+  flags: { restored: boolean; persisted: boolean },
+): ChatSession {
+  const session: ChatSession = {
+    keypair: { publicKey: record.publicKey, privateKey: record.privateKey },
+    address,
+    origin: record.origin,
+    restored: flags.restored,
+    persisted: flags.persisted,
+  };
+  if (record.origin === 'recovery' && record.recoveryCode) {
+    _codes.set(session, record.recoveryCode);
+  }
+  return session;
+}
+
+/**
+ * Открывает сеанс чата: берёт ключ с устройства, а если его там нет — заводит.
+ *
+ * Обычный кошелёк — одно окно подписи ЗА ВСЁ ВРЕМЯ на этом устройстве.
+ * Кошелёк-контракт — ни одного окна вовсе, вместо него код восстановления
+ * (`exportRecoveryCode`).
+ */
+export async function openSession(
+  address: `0x${string}`,
+  signTypedData: SignChatKey,
+  opts: OpenSessionOptions = {},
+): Promise<ChatSession> {
+  const key = storageKey(address);
+
+  const joined = _inFlight.get(key);
+  if (joined) return joined; // второй вызов в этой вкладке — к первому
+
+  const started = doOpenSession(address, key, signTypedData, opts);
+  _inFlight.set(key, started);
+  try {
+    return await started;
+  } finally {
+    if (_inFlight.get(key) === started) _inFlight.delete(key);
+  }
+}
+
+async function doOpenSession(
+  address: `0x${string}`,
+  key: string,
+  signTypedData: SignChatKey,
+  opts: OpenSessionOptions,
+): Promise<ChatSession> {
+  // Чтение с устройства — ПЕРВЫМ, до сети и до замка. Обычный заход не должен
+  // зависеть ни от узла RPC, ни от соседней вкладки.
+  const stored = await readRecord(key);
+  if (stored) return buildSession(stored, address, { restored: true, persisted: true });
+
+  const timeoutMs = opts.lockTimeoutMs ?? SESSION_LOCK_TIMEOUT_MS;
+  return withCrossTabLock(`hexseal-chat-session-${key}`, timeoutMs, async () => {
+    // ПЕРЕЧИТАТЬ под замком. Единственное, ради чего замок здесь берётся:
+    // без этой строки вторая вкладка, дождавшись очереди, откроет второе
+    // окно подписи — замок будет вызван и ничего не запрёт.
+    const again = await readRecord(key);
+    if (again) return buildSession(again, address, { restored: true, persisted: true });
+
+    const kind = await walletKind(address, opts);
+
+    let record: StoredSession;
+    if (kind === 'contract') {
+      const { generateMnemonic } = await import('@scure/bip39');
+      const { wordlist } = await import('@scure/bip39/wordlists/english');
+      const code = generateMnemonic(wordlist, RECOVERY_ENTROPY_BITS);
+      const keypair = await keypairFromRecoveryCode(code);
+      record = {
+        v: RECORD_VERSION,
+        address: key,
+        origin: 'recovery',
+        publicKey: keypair.publicKey,
+        privateKey: keypair.privateKey,
+        recoveryCode: code,
+      };
+    } else {
+      const signature = await signTypedData(CHAT_KEY_TYPED_DATA);
+      const keypair = await keypairFromSignature(signature);
+      record = {
+        v: RECORD_VERSION,
+        address: key,
+        origin: 'signature',
+        publicKey: keypair.publicKey,
+        privateKey: keypair.privateKey,
+      };
+    }
+
+    const persisted = await writeRecord(key, record);
+    return buildSession(record, address, { restored: false, persisted });
+  });
+}
+
+/**
+ * Восстанавливает сеанс кошелька-контракта из кода восстановления.
+ *
+ * Каждый отказ — `ChatSessionError` со СВОИМ кодом, а не общий «код не
+ * подошёл»: молчаливо другой ключ читается человеком как «переписка
+ * пропала», и он не поймёт, что ошибся в одном слове. Различаются: пусто,
+ * не то число слов, слово не из списка, контрольная сумма не сошлась.
+ *
+ * @throws {TypeError} если `code` не строка — это НАШ мусор на входе, то же
+ *   правило, что в ядре (`chatCrypto.ts`): сбой не должен носить костюм
+ *   штатного результата.
+ */
+export async function openSessionFromRecoveryCode(
+  address: `0x${string}`,
+  code: string,
+): Promise<ChatSession> {
+  if (typeof code !== 'string') {
+    throw new TypeError('openSessionFromRecoveryCode: code должен быть строкой');
+  }
+
+  const normalized = normalizeRecoveryCode(code);
+  if (normalized === '') {
+    throw new ChatSessionError('Код восстановления пуст', 'recovery_code_empty');
+  }
+
+  const words = normalized.split(' ');
+  if (words.length !== RECOVERY_WORD_COUNT) {
+    throw new ChatSessionError(
+      `Код восстановления — ${RECOVERY_WORD_COUNT} слов, введено ${words.length}`,
+      'recovery_code_word_count',
+    );
+  }
+
+  const { validateMnemonic } = await import('@scure/bip39');
+  const { wordlist } = await import('@scure/bip39/wordlists/english');
+
+  // Слово не из списка — отдельный ответ: человеку надо показать НОМЕР слова,
+  // а не «код не подошёл» на всю строку. Само слово в сообщение не идёт —
+  // сообщение может уехать в журнал.
+  const unknownAt = words.findIndex(word => !wordlist.includes(word));
+  if (unknownAt !== -1) {
+    throw new ChatSessionError(
+      `Слово №${unknownAt + 1} не из списка BIP-39`,
+      'recovery_code_unknown_word',
+    );
+  }
+
+  // Контрольная сумма BIP-39 ловит и переставленные слова, и опечатку,
+  // случайно давшую другое существующее слово.
+  if (!validateMnemonic(normalized, wordlist)) {
+    throw new ChatSessionError(
+      'Контрольная сумма кода не сходится — проверьте слова и их порядок',
+      'recovery_code_checksum',
+    );
+  }
+
+  const keypair = await keypairFromRecoveryCode(normalized);
+  const key = storageKey(address);
+  const record: StoredSession = {
+    v: RECORD_VERSION,
+    address: key,
+    origin: 'recovery',
+    publicKey: keypair.publicKey,
+    privateKey: keypair.privateKey,
+    recoveryCode: normalized,
+  };
+  const persisted = await writeRecord(key, record);
+  return buildSession(record, address, { restored: false, persisted });
+}
+
+/**
+ * Отдаёт код восстановления сеанса.
+ *
+ * Интерфейс ОБЯЗАН показать рядом предупреждение (см. шапку файла): код —
+ * доступ ко всей переписке навсегда, отозвать его нельзя.
+ *
+ * @throws {ChatSessionError} `recovery_not_applicable` — у обычного кошелька
+ *   кода нет и не должно быть; его восстановление — сам кошелёк.
+ */
+export function exportRecoveryCode(session: ChatSession): string {
+  if (session.origin === 'signature') {
+    throw new ChatSessionError(
+      'У обычного кошелька кода восстановления нет: подпишите те же данные тем же кошельком на новом устройстве',
+      'recovery_not_applicable',
+    );
+  }
+  const code = _codes.get(session);
+  if (!code) {
+    throw new ChatSessionError(
+      'Код восстановления недоступен для этого объекта сеанса',
+      'recovery_code_unavailable',
+    );
+  }
+  return code;
+}
+
+/**
+ * Убирает ключ с устройства. Следующее открытие сеанса заведёт его заново —
+ * обычному кошельку через новое окно подписи (тот же ключ), кошельку-
+ * контракту через новый случайный ключ (прежняя переписка станет нечитаемой,
+ * если код восстановления не сохранён).
+ *
+ * @throws {ChatSessionError} `forget_failed` — удалить не удалось. Молча
+ *   вернуть «забыто» значило бы соврать: ключ остался на устройстве.
+ */
+export async function forgetSession(address: `0x${string}`): Promise<void> {
+  if (!idbFactory()) return; // хранилища нет — забывать нечего
+  try {
+    await idbDelete(storageKey(address));
+  } catch (err) {
+    throw new ChatSessionError(
+      'chatSession: не удалось убрать ключ с устройства',
+      'forget_failed',
+      { cause: err },
+    );
+  }
+}
