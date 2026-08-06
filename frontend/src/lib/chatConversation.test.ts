@@ -24,6 +24,7 @@ import {
   readConversationHead,
   listBurnedSeqs,
   forgetConversationHead,
+  _resetConversationMemoryForTest,
   type SentMessage,
   type IncomingBag,
 } from './chatConversation';
@@ -237,6 +238,10 @@ const PASS = 'v1.dGVzdC5wYXNz.mac';
 beforeEach(() => {
   fakeIdb = makeFakeIndexedDB();
   g.indexedDB = fakeIdb;
+  // Запасная голова живёт в памяти МОДУЛЯ и переживает подмену хранилища:
+  // без этой уборки нумерация одного кейса протекала в соседний (поймано
+  // после правки «память читается, а не только пишется»).
+  _resetConversationMemoryForTest();
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
@@ -1377,6 +1382,22 @@ describe('голова разговора на устройстве', () => {
 
     await forgetConversationHead(ALICE, BOB);
     expect(await readConversationHead(ALICE, BOB)).toBeNull();
+    const again = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'заново' }, null, { pass: PASS });
+    expect(again.link.seq).toBe(0);
+  });
+
+  it('forgetConversationHead убирает и ЗАПАСНУЮ голову, а не только диск', async () => {
+    // Иначе «забыто» — неправда: при кончившейся квоте нумерация живёт в
+    // памяти вкладки, и снятие отчиталось бы об успехе, ничего не сняв.
+    installFetchStub();
+    g.indexedDB = makeFakeIndexedDB({ failPut: true });
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    await sendMessage(alice, BOB, bob.keypair.publicKey, { text: '0' }, null, { pass: PASS });
+    const second = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: '1' }, null, { pass: PASS });
+    expect(second.link.seq).toBe(1);
+
+    await forgetConversationHead(ALICE, BOB);
     const again = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'заново' }, null, { pass: PASS });
     expect(again.link.seq).toBe(0);
   });
