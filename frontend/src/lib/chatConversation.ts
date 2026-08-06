@@ -236,6 +236,20 @@ export const MESSAGE_BODY_CONTEXT = 'hexseal.chat.body.v1';
  *  должен запирать переписку до перезагрузки страницы. */
 export const CONVERSATION_LOCK_TIMEOUT_MS = 30_000;
 
+/**
+ * Сколько сгоревших номеров помнить. Список ложится на диск при КАЖДОЙ
+ * отправке, поэтому расти без предела он не может: триста обрывов — триста
+ * записей в каждой последующей транзакции. Вытесняется самое давнее: свежий
+ * обрыв человеку интереснее прошлогоднего, а для «сколько всего» этот список
+ * и не предназначен.
+ *
+ * ⚠️ Цена вытеснения названа вслух: обрывов больше потолка — и самые ранние
+ * дыры в нашей нумерации перестают быть отличимы от утаивания даже у НАС.
+ * Двести — заведомо больше, чем бывает у живого человека между заходами, и
+ * заведомо меньше, чем стоит держать в одной записи.
+ */
+export const MAX_BURNED_SEQS = 200;
+
 const DB_NAME = 'hexseal-chat-conv';
 const DB_VERSION = 1;
 const STORE_NAME = 'conversations';
@@ -365,6 +379,19 @@ export function linkSignaturePreimage(link: ChainLink): Uint8Array {
 export function messageBodyHash(signerPublicKey: Uint8Array, envelope: Uint8Array): `0x${string}` {
   if (!(signerPublicKey instanceof Uint8Array) || !(envelope instanceof Uint8Array)) {
     throw new TypeError('messageBodyHash: ожидаются Uint8Array (подписной ключ и конверт)');
+  }
+  // Ширина ключа ФИКСИРОВАНА, и это не формальность: при плавающей ширине
+  // `МЕТКА ‖ ключ ‖ конверт` — два поля переменной ширины подряд, то есть
+  // ровно та неоднозначность упаковки, которую запрещает `chatChain.ts`
+  // (граница МЕЖДУ ними плавает). Коллизия найдена враждебной проверкой:
+  // ключ на байт короче плюс тот же байт в начало конверта дают ТОТ ЖЕ
+  // отпечаток. На проводе недостижимо — кадр фиксирует 32 байта, — но эта
+  // функция вынесена наружу, значит гейт обязан стоять в ней самой, а не в её
+  // единственном сегодняшнем вызывающем.
+  if (signerPublicKey.length !== LINK_SIGNING_PUBLIC_KEY_LEN) {
+    throw new TypeError(
+      `messageBodyHash: подписной ключ должен быть ${LINK_SIGNING_PUBLIC_KEY_LEN} байт, получено ${signerPublicKey.length}`,
+    );
   }
   return keccak256(concat([stringToBytes(MESSAGE_BODY_CONTEXT), signerPublicKey, envelope]));
 }
@@ -762,7 +789,9 @@ export interface SentMessage {
  * одним номером — вердикт `unordered`, обвинение в ПОДДЕЛКЕ. Дыра (`gap`,
  * обвинение в утаивании) — меньшее зло, см. шапку файла.
  */
-const DEFINITELY_NOT_STORED = new Set([400, 401, 403, 413, 429]);
+export const NOT_STORED_STATUSES: readonly number[] = [400, 401, 403, 413, 429];
+
+const DEFINITELY_NOT_STORED = new Set(NOT_STORED_STATUSES);
 
 /**
  * Отправляет сообщение: конверт → звено → подпись → мешок на склад.
@@ -874,7 +903,10 @@ export async function sendMessage(
         }
       } else {
         // Судьба мешка неизвестна — номер сгорает и записывается НАШЕЙ бедой.
-        const withBurn: StoredHead = { ...reserved, burned: [...burned, link.seq] };
+        const withBurn: StoredHead = {
+          ...reserved,
+          burned: [...burned, link.seq].slice(-MAX_BURNED_SEQS),
+        };
         if (persisted) await writeHeadRecord(id, withBurn); else _memoryHeads.set(id, withBurn);
       }
       throw new ChatConversationError(
