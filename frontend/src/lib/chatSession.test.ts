@@ -419,6 +419,42 @@ describe('восстановление обычного кошелька — э�
   });
 });
 
+// ═══ Код восстановления не живёт в объекте сеанса ═══════════════════════
+
+describe('код восстановления держится вне объекта сеанса', () => {
+  it('его нет ни в JSON, ни СРЕДИ ПОЛЕЙ объекта — ни под каким именем (В-3)', async () => {
+    // Шапка обещает прямо: объект сеанса уедет в состояние интерфейса, в
+    // отладочные снимки, в журнал — и код уехал бы вместе с ним; поэтому он
+    // держится в WeakMap, который не сериализуется никак. Обещание было, а
+    // замка не было: мутация «положить код полем» давала 0 красных.
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    const code = exportRecoveryCode(session);
+    expect(code.split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
+
+    expect(JSON.stringify(session)).not.toContain(code);
+    expect(JSON.stringify(session)).not.toContain(code.split(' ')[0]);
+
+    const seen: string[] = [];
+    const walk = (v: unknown, depth: number) => {
+      if (depth > 4 || v === null || typeof v !== 'object') return;
+      for (const [, val] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof val === 'string') seen.push(val);
+        else walk(val, depth + 1);
+      }
+    };
+    walk(session, 0);
+    expect(seen.some(s => s.includes(code.split(' ')[0]))).toBe(false);
+  });
+
+  it('и у восстановленного с диска сеанса тоже', async () => {
+    await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    const reopened = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    expect(reopened.restored).toBe(true);
+    const code = exportRecoveryCode(reopened);
+    expect(JSON.stringify(reopened)).not.toContain(code.split(' ')[0]);
+  });
+});
+
 // ═══ Признак рода кошелька — САМА ПОДПИСЬ, а не код на цепи ══════════════
 
 describe('род кошелька выясняется подписью', () => {
@@ -900,6 +936,35 @@ describe('запись прежней/незнакомой версии', () => 
     expect(rec.recoveryCode).toBe(GOLD); // код на месте, ничего не стёрто
   });
 
+  it('щедрость гейта несущая: хватает ОДНОГО признака из двух (В-2)', async () => {
+    // Все прежние заготовки несли оба признака сразу, поэтому то
+    // единственное, ради чего гейт написан, не проверялось ничем: подмена
+    // «или» на «и» давала 0 красных. Запись будущего формата, где остался
+    // только ОДИН из признаков, — ровно то будущее, ради которого правка и
+    // делалась.
+    for (const marker of [{ origin: 'recovery' }, { walletKind: 'contract' }]) {
+      installStorage();
+      fakeIdb._disk.set('sessions', new Map([[
+        ALICE.toLowerCase(),
+        {
+          v: RECORD_VERSION + 7,
+          address: ALICE.toLowerCase(),
+          ...marker,
+          publicKey: new Uint8Array(32).fill(3),
+          privateKey: new Uint8Array(32).fill(4),
+          recoveryCode: GOLD,
+        },
+      ]]));
+
+      const sign = vi.fn(async () => ALICE_SIG);
+      await expect(openSession(ALICE, sign))
+        .rejects.toMatchObject({ code: 'storage_version_unknown' });
+      expect(sign).toHaveBeenCalledTimes(0);
+      const rec = fakeIdb._disk.get('sessions')!.get(ALICE.toLowerCase()) as Record<string, unknown>;
+      expect(rec.recoveryCode).toBe(GOLD); // диск не тронут
+    }
+  });
+
   it('версия ИЗ БУДУЩЕГО у кошелька-контракта — тоже отказ', async () => {
     putLegacyContractRecord(RECORD_VERSION + 5);
     await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
@@ -1220,6 +1285,18 @@ describe('IndexedDB отказала в записи (квота)', () => {
     const session = await openSession(ALICE, async () => ALICE_SIG);
     expect(session.persisted).toBe(true);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('«хранилища нет вовсе» — НЕ отказ чтения, и для контрактного тоже (мелочь)', async () => {
+    // Различие несущее: под мутацией «нет хранилища = отказ чтения»
+    // контрактный кошелёк в приватном режиме получал бы отказ вместо
+    // рабочего сеанса с кодом. Там, где хранилища нет, в нём ничего и не
+    // могло лежать — вывод «пусто» обоснован, а не предположен.
+    delete g.indexedDB;
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    expect(session.walletKind).toBe('contract');
+    expect(session.persisted).toBe(false);
+    expect(exportRecoveryCode(session).split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
   });
 
   it('хранилища нет вовсе (сервер, приватный режим) — тот же честный ответ', async () => {
@@ -1771,25 +1848,34 @@ describe('мусор на входе — вердикт, а не падение'
   });
 
   it('сбой чтения у обычного кошелька НИЧЕГО не пишет поверх непрочитанного', async () => {
-    // Под непрочитанной записью может лежать чужой сеанс. Работать в
-    // памяти — да, писать вслепую — нет.
-    const before = await openSession(BOB, async () => BOB_SIG);
+    // ⚠️ Заготовка нарочно ТАКАЯ: на диске лежит КОНТРАКТНАЯ запись, а
+    // кошелёк отдаёт свои 65 байт. Иначе тест поймать ничего не может — у
+    // обычного кошелька ключ детерминирован, и слепая запись положила бы
+    // байт в байт то же самое, а сравнение прошло бы (мутация «дописать
+    // запись» давала 0 красных). Здесь слепая запись затирает ЧУЖОЕ и
+    // становится видна.
+    const before = await openSession(BOB, async () => BOB_CONTRACT_SIG);
+    const beforeCode = exportRecoveryCode(before);
     const snapshot = structuredClone(fakeIdb._disk.get('sessions')!.get(BOB.toLowerCase()));
 
     installStorageKeepingDisk({ failGet: true });
     const blind = await openSession(BOB, async () => BOB_SIG);
     expect(blind.persisted).toBe(false);
+    expect(blind.walletKind).toBe('eoa');
 
     // диск байт в байт прежний: ни новой записи, ни перезаписи
     const after = fakeIdb._disk.get('sessions')!;
     expect(after.size).toBe(1);
     expect(after.get(BOB.toLowerCase())).toEqual(snapshot);
 
-    // чтение починилось — на месте ровно то, что лежало
+    // чтение починилось — на месте ровно то, что лежало: контрактная
+    // личность с её кодом, а не выведенный ключ, записанный вслепую
     installStorageKeepingDisk({});
-    const back = await openSession(BOB, async () => BOB_SIG);
+    const back = await openSession(BOB, async () => BOB_CONTRACT_SIG);
     expect(back.restored).toBe(true);
+    expect(back.walletKind).toBe('contract');
     expect(hex(back.keypair.privateKey)).toBe(hex(before.keypair.privateKey));
+    expect(exportRecoveryCode(back)).toBe(beforeCode);
   });
 
   it('сбой чтения НЕ уничтожает личность кошелька-контракта (К-4)', async () => {
