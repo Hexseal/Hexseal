@@ -642,3 +642,186 @@ describe('Q3 — два запроса разом на один и тот же �
     expect(read.body.keyChangeCount).toBe(1);
   });
 });
+
+// ─── Замки на шесть находок ревью (round 2, координатор) ───────────────────
+//
+// «Числа работают, но следующая правка сломает их бесшумно» — шесть
+// мутаций выживали на 645 зелёных. Каждая заперта отдельно ниже, тем же
+// приёмом мутации-с-числом, что и остальной файл.
+
+describe('directory.js — атомарность записи заперта напрямую (замок 1)', () => {
+  // Тот же приём, что test/bagStore.test.js, describe "I2 — сохранение
+  // индекса атомарно" — spyOn БЕЗ mockImplementation продолжает звать
+  // настоящий fs.writeFileSync (наблюдает, не подменяет), прямое
+  // доказательство, что путь записи отличается от основного файла, а не
+  // косвенный вывод из отсутствия мусора после успеха.
+  it('_saveDirectory пишет во временный путь, не напрямую в DIRECTORY_FILE', () => {
+    const mainPath = directory.DIRECTORY_FILE;
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    expect(writeSpy).toHaveBeenCalled();
+    const writtenPaths = writeSpy.mock.calls.map((call) => call[0]);
+    expect(writtenPaths.length).toBeGreaterThan(0);
+    expect(writtenPaths.every((p) => p !== mainPath)).toBe(true);
+    writeSpy.mockRestore();
+
+    const leftovers = fs.readdirSync(path.dirname(mainPath))
+      .filter((f) => f.startsWith(`${path.basename(mainPath)}.tmp`));
+    expect(leftovers).toEqual([]);
+  });
+
+  // Находка ревью: предыдущий тест запирает "запись идёт через временный
+  // путь", но сам АТОМАРНЫЙ ШАГ ПУБЛИКАЦИИ (замена временного файла
+  // основным) не заперт ничем — замена fs.renameSync на
+  // fs.copyFileSync+fs.unlinkSync (НЕ атомарная публикация: между copy и
+  // unlink возможно прерывание) молча проходит весь набор теста целиком,
+  // включая тест выше (copyFileSync тоже пишет не в mainPath напрямую).
+  it('публикация идёт через настоящий fs.renameSync(temp, DIRECTORY_FILE) — заперт напрямую', () => {
+    const mainPath = directory.DIRECTORY_FILE;
+    const renameSpy = vi.spyOn(fs, 'renameSync');
+    try {
+      putKey(ALICE, { boxKey: KEY_A }, 1000);
+    } finally {
+      expect(renameSpy).toHaveBeenCalledTimes(1);
+      const [src, dest] = renameSpy.mock.calls[0];
+      expect(dest).toBe(mainPath);
+      expect(src).not.toBe(dest);
+      expect(String(src)).toContain(`${path.basename(mainPath)}.tmp-`);
+      renameSpy.mockRestore();
+    }
+  });
+});
+
+describe('/keys — лимитер заперт на обоих маршрутах (замок 2)', () => {
+  // KEYS_WRITE_RATE_MAX='5' (env выше). Один адрес/пропуск, разные IP на
+  // каждый вызов — так граница ловит именно АДРЕСНЫЙ бюджет записи, не
+  // делится с IP-бюджетом (тот же приём, что test/bagRoutes.test.js,
+  // "лимитер по адресу срабатывает на САМОМ PUT даже при разных IP").
+  it('KEYS_WRITE_RATE_MAX срабатывает на POST /keys — 5 успехов, 6-й 429 rate_limited_write', async () => {
+    const wallet = ethers.Wallet.createRandom();
+    const pass = await issuePassFor(wallet, freshIp());
+
+    for (let i = 0; i < 5; i++) {
+      const res = await postKeys({ pass, body: { boxKey: KEY_A }, ip: freshIp() });
+      expect(res.status).toBe(200);
+    }
+    const blocked = await postKeys({ pass, body: { boxKey: KEY_B }, ip: freshIp() });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('rate_limited_write');
+  });
+
+  // KEYS_IP_RATE_MAX='10' (env выше). Один IP, разные адреса/пропуска на
+  // каждый вызов — граница ловит именно IP-бюджет, не адресный.
+  it('KEYS_IP_RATE_MAX срабатывает на POST /keys — 10 успехов, 11-й 429 rate_limited_ip', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) {
+      const wallet = ethers.Wallet.createRandom();
+      const pass = await issuePassFor(wallet, freshIp()); // выпуск пропуска — свой IP, не тратит бюджет /keys
+      const res = await postKeys({ pass, body: { boxKey: KEY_A }, ip });
+      expect(res.status).toBe(200);
+    }
+    const walletLast = ethers.Wallet.createRandom();
+    const passLast = await issuePassFor(walletLast, freshIp());
+    const blocked = await postKeys({ pass: passLast, body: { boxKey: KEY_A }, ip });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('rate_limited_ip');
+  });
+
+  // Тот же IP-бюджет, но на GET — маршрут БЕЗ пропуска (правило 4), так что
+  // единственная защита от долбёжки здесь вообще — этот лимитер. Отдельная
+  // мутация ("снять лимитер только с GET, оставить на POST") иначе прошла
+  // бы мимо предыдущего теста незамеченной.
+  it('KEYS_IP_RATE_MAX срабатывает на GET /keys/:address — 10 успехов, 11-й 429 rate_limited_ip', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) {
+      const wallet = ethers.Wallet.createRandom();
+      const address = (await wallet.getAddress()).toLowerCase();
+      const res = await getKeys(address, { ip });
+      // Случайный кошелёк здесь никогда не регистрировал ключ — честные
+      // 404, не 200. С точки зрения ЛИМИТЕРА это всё равно "прошёл", не
+      // "заблокирован" — граница ниже (429) проверяется отдельно.
+      expect(res.status).toBe(404);
+    }
+    const walletLast = ethers.Wallet.createRandom();
+    const addressLast = (await walletLast.getAddress()).toLowerCase();
+    const blocked = await getKeys(addressLast, { ip });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('rate_limited_ip');
+  });
+});
+
+// Свежий импорт directory.js под временно подменённым окружением — тот же
+// приём, что withFreshBagStoreModule() в test/bagStore.test.js.
+async function withFreshDirectoryModule(envOverrides, fn) {
+  const saved = Object.fromEntries(Object.keys(envOverrides).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(envOverrides)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  vi.resetModules();
+  try {
+    const fresh = await import('../directory.js');
+    return await fn(fresh);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.resetModules();
+    await import('../directory.js');
+  }
+}
+
+describe('assertDirectoryReady — проверка MAX_KEY_HISTORY заперта напрямую (замок 3)', () => {
+  it('молчит на годном значении по умолчанию', () => {
+    expect(() => assertDirectoryReady()).not.toThrow();
+  });
+
+  it.each([
+    ['0', '0'],
+    ['-1', '-1'],
+    ['не число', 'twenty'],
+  ])('assertDirectoryReady бросает, когда MAX_KEY_HISTORY=%s, называя переменную', async (_label, value) => {
+    await withFreshDirectoryModule({ MAX_KEY_HISTORY: value }, async (fresh) => {
+      expect(() => fresh.assertDirectoryReady()).toThrow(/MAX_KEY_HISTORY/);
+    });
+  });
+});
+
+describe('assertDirectoryReady — окружение читается заново, не заморожено на импорте (замок 4, урок bagStore.js И-3)', () => {
+  // Находка ревью: app.js зовёт dotenv.config() В ТЕЛЕ, после того как ESM
+  // уже вычислил все импорты — тот же урок, что уже дважды кусал bagStore.js
+  // и bagPass.js (см. их собственные комментарии над импортом в app.js).
+  // Без повторного _refreshConfig() внутри assertDirectoryReady() STORAGE_DIR,
+  // прочитанный НА ИМПОРТЕ (до dotenv), замораживался бы навсегда для
+  // этого процесса — ровно как замораживался DIR_BAGS до фикса И-3 в
+  // bagStore.js.
+  it('поменять STORAGE_DIR ПОСЛЕ импорта модуля, позвать assertDirectoryReady() — DIRECTORY_FILE подхватывает новый путь', async () => {
+    const storageDirAtImport = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-directory-lock4-import-'));
+    const storageDirAfterDotenv = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-directory-lock4-dotenv-'));
+    const savedStorageDir = process.env.STORAGE_DIR;
+
+    process.env.STORAGE_DIR = storageDirAtImport; // "до dotenv.config()"
+    vi.resetModules();
+    const fresh = await import('../directory.js'); // импорт — как в app.js, раньше dotenv
+
+    try {
+      process.env.STORAGE_DIR = storageDirAfterDotenv; // "dotenv.config() в теле app.js"
+      fresh.assertDirectoryReady();
+
+      expect(fresh.DIRECTORY_FILE).toBe(path.join(storageDirAfterDotenv, 'chat-key-directory.json'));
+
+      // Не только имя пути — реальное поведение: запись после
+      // assertDirectoryReady() обязана попасть на НОВЫЙ путь, не на старый.
+      fresh.putKey(ALICE, { boxKey: KEY_A }, 1000);
+      expect(fs.existsSync(path.join(storageDirAfterDotenv, 'chat-key-directory.json'))).toBe(true);
+      expect(fs.existsSync(path.join(storageDirAtImport, 'chat-key-directory.json'))).toBe(false);
+    } finally {
+      process.env.STORAGE_DIR = savedStorageDir;
+      fs.rmSync(storageDirAtImport, { recursive: true, force: true });
+      fs.rmSync(storageDirAfterDotenv, { recursive: true, force: true });
+      vi.resetModules();
+      await import('../directory.js');
+    }
+  });
+});
