@@ -1669,6 +1669,48 @@ describe('галочка дошло/не дошло', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Доказательства собеседника (В-4): без них не собрать «копию контрагента»
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('доказательства на принятых сообщениях', () => {
+  it('принятое сообщение несёт звено, подпись, подписной ключ и байты кадра', async () => {
+    // Находка В-4: наружу отдавались только номер, автор, время, содержимое и
+    // признак доставки. Значит предъявить арбитру можно было ТОЛЬКО СВОЁ, а
+    // «копию контрагента», на которой стоит весь §5 общей спеки и весь план 4,
+    // этим видом не собрать вовсе.
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const sent = await conversationFrom(bob, alice, ['доказуемое']);
+
+    const state = await receiveBags(alice, [bagOf(sent[0], BOB, 1)]);
+    const proof = state.messages[0].proof!;
+    expect(proof).toBeDefined();
+    expect(proof.link).toEqual(sent[0].link);
+    expect(hex(proof.signature)).toBe(hex(sent[0].signature));
+    expect(hex(proof.signerPublicKey)).toBe(hex(sent[0].signerPublicKey));
+    expect(hex(proof.frame)).toBe(hex(sent[0].frame));
+
+    // И этого достаточно, чтобы проверить подпись заново, ничего не спрашивая
+    // у отправителя — то есть предъявленное самодостаточно.
+    const sodium = (await import('libsodium-wrappers')).default;
+    await sodium.ready;
+    expect(sodium.crypto_sign_verify_detached(
+      proof.signature, linkSignaturePreimage(proof.link), proof.signerPublicKey,
+    )).toBe(true);
+  });
+
+  it('своё отправленное несёт то же самое — обе половины предъявляются одинаково', async () => {
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const mine = await conversationFrom(alice, bob, ['моё']);
+    const state = await receiveBags(alice, [], { own: mine, peer: BOB });
+    expect(hex(state.messages[0].proof!.frame)).toBe(hex(mine[0].frame));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Метка сделки доезжает внутри запечатанного (готовим план 4)
 // ═══════════════════════════════════════════════════════════════════════════
 
