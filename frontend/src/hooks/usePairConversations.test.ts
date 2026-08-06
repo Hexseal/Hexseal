@@ -128,6 +128,79 @@ describe('список переписок', () => {
     expect(rows[0].lastAt).toBe(0);
   }, 20_000);
 
+  it('ЗАМЕР: на собеседника скачивается РОВНО один мешок — самый свежий, а не вся переписка', async () => {
+    // Что красит: «качать всё подряд» вместо «самый свежий». На переписке в
+    // тысячу сообщений разница между 1 и 1000 скачиваниями на КАЖДОЕ
+    // открытие списка — это и есть вопрос «долбят нарочно», только сами себе.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const older = await oneBag(bob, BOB, alice.keypair.publicKey, 'старое', 1_700_000_010_000);
+    const newer = await oneBag(bob, BOB, alice.keypair.publicKey, 'новое', 1_700_000_020_000);
+    // ⚠️ Порядок НАРОЧНО «новое раньше старого». Склад порядок выдачи не
+    // обещает, а первая версия этого замка клала мешки по возрастанию — и
+    // мутация «брать не самый свежий, а последний в списке» проходила
+    // зелёной чисто по совпадению порядка.
+    const bags = [newer, older];
+
+    const downloaded: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+      const u = new URL(String(url));
+      if (u.pathname === '/bags') {
+        return new Response(JSON.stringify({
+          inbox: bags.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })),
+          sent: [],
+          peers: [{ address: BOB.toLowerCase(), lastActivityWithMeAt: 1_700_000_020_000 }],
+        }), { status: 200 });
+      }
+      const key = decodeURIComponent(u.pathname.replace(/^\/bags\//, ''));
+      downloaded.push(key);
+      const bag = bags.find(b => b.key === key);
+      return bag ? new Response(bag.body, { status: 200 }) : new Response('{}', { status: 404 });
+    }));
+
+    const rows = await loadPairConversations(alice, 'v1.p');
+
+    expect(downloaded).toEqual([newer.key]);
+    expect(rows[0].lastText).toBe('новое');
+  }, 20_000);
+
+  it('склад отказал на скачивании превью — строка остаётся, остальные тоже', async () => {
+    // Отличается от «битого мешка» ниже: там скачивание УДАЛОСЬ и мусор
+    // разобрался в вердикт, здесь оно ПРОВАЛИЛОСЬ. Разные ветки, и вторая
+    // (try/catch вокруг скачивания) без этого замка не проверялась ничем.
+    const alice = await makeSession(ALICE, 'a1');
+    const carol = await makeSession(CAROL, 'cc');
+    const good = await oneBag(carol, CAROL, alice.keypair.publicKey, 'кэрол на связи', 1_700_000_030_000);
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+      const u = new URL(String(url));
+      if (u.pathname === '/bags') {
+        return new Response(JSON.stringify({
+          inbox: [
+            { key: `${ALICE.toLowerCase()}/broken.bin`, sender: BOB.toLowerCase(), size: 9, uploadedAt: 1_700_000_031_000 },
+            { key: good.key, sender: good.sender, size: good.size, uploadedAt: good.uploadedAt },
+          ],
+          sent: [],
+          peers: [
+            { address: BOB.toLowerCase(), lastActivityWithMeAt: 1_700_000_031_000 },
+            { address: CAROL.toLowerCase(), lastActivityWithMeAt: 1_700_000_030_000 },
+          ],
+        }), { status: 200 });
+      }
+      const key = decodeURIComponent(u.pathname.replace(/^\/bags\//, ''));
+      if (key === good.key) return new Response(good.body, { status: 200 });
+      return new Response(JSON.stringify({ error: 'boom', code: 'internal_error' }), { status: 500 });
+    }));
+
+    const rows = await loadPairConversations(alice, 'v1.p');
+
+    expect(rows).toHaveLength(2);
+    const bobRow = rows.find(r => r.peerAddress === BOB.toLowerCase());
+    const carolRow = rows.find(r => r.peerAddress === CAROL.toLowerCase());
+    expect(bobRow?.lastText).toBe('');            // превью не собралось
+    expect(carolRow?.lastText).toBe('кэрол на связи'); // а соседняя строка цела
+  }, 20_000);
+
   it('нечитаемый мешок собеседника не роняет весь список', async () => {
     // Вопрос «пришёл мусор»: один битый мешок не должен стоить человеку
     // ВСЕХ его переписок.
