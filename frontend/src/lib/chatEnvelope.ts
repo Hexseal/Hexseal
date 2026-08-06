@@ -106,6 +106,9 @@
  */
 
 import { sealForRecipient, openSealed, type ChatKeypair } from './chatCrypto';
+import { stripDangerousKeys, sanitizePayload, type ChatPayload } from './chatPayloadForm';
+
+export type { ChatPayload } from './chatPayloadForm';
 
 /** Приводит вид `Uint8Array` (в т.ч. срез со смещением через `subarray()`) к
  *  самостоятельному `ArrayBuffer`. Web Crypto API в этой версии TypeScript
@@ -115,21 +118,6 @@ import { sealForRecipient, openSealed, type ChatKeypair } from './chatCrypto';
  *  любой `ArrayBufferView`, конфликт только в типах, не в поведении). */
 function toArrayBuffer(view: Uint8Array): ArrayBuffer {
   return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
-}
-
-export interface ChatPayload {
-  text?: string;
-  file?: { url: string; name: string; size: number; keyHex: string; ivHex: string };
-  /** Метка сделки — ВНУТРИ запечатанного, не снаружи (см. докстринг файла и
-   *  тест «метка сделки не встречается в байтах конверта»). Форма — адрес
-   *  Agreement-контракта (`0x` + 40 hex-символов), как везде в проекте
-   *  (`dealCtx.agreementAddr`, `DisputeLog dealId=agreement` в
-   *  `app/arbiter/page.tsx`) — НЕ bytes32. `unpackEnvelope` проверяет форму
-   *  ПОЛНОСТЬЮ (см. `DEAL_ID_RE`) — но при несовпадении отбрасывает ТОЛЬКО
-   *  это поле, не всё сообщение (исправлено после ревью координатора:
-   *  ослабленная проверка «только префикс» пропускала произвольные
-   *  строки — путь в будущий адрес запроса арбитра и ключ хранилища). */
-  dealId?: `0x${string}`;
 }
 
 const ENVELOPE_VERSION = 1;
@@ -263,111 +251,6 @@ export function assertOneTimeKeyLength(bytes: Uint8Array): void {
       `unpackEnvelope: unexpected recovered key length (${bytes.length}), expected ${ONE_TIME_KEY_LEN}`,
     );
   }
-}
-
-/**
- * Форма `dealId` — см. JSDoc у `ChatPayload.dealId`. Проверяется ПОЛНОСТЬЮ:
- * префикс `0x` + ровно 40 hex-символов сегодняшнего адреса.
- *
- * ⚠️ ИСПРАВЛЕНО после ревью координатора — прежнее решение (проверять
- * только префикс `0x`, принимая любую длину/содержимое) было ошибочным.
- * Независимая проверка провела строку через модуль насквозь и проследила,
- * куда она попадёт при подключении: dealId становится частью адреса
- * запроса на странице арбитра и ключом хранилища
- * (`app/arbiter/page.tsx`/`disputeLogPass.ts`, план 4). Ослабленная
- * проверка пропускала `0x`, `0xZZZZ` (невалидный hex), строку на сто тысяч
- * символов, `0x../../../../storage/files` (попытка обхода пути), разметку,
- * нулевой байт — сегодня безвредно (модуль ещё никем не подключён), но
- * ровно то, что стало бы инъекцией в день подключения.
- *
- * Правильная форма — не «строго ИЛИ ослабленно», а ОБА СРАЗУ: полная
- * проверка формы здесь (см. `sanitizePayload` ниже — при НЕСОВПАДЕНИИ
- * отбрасывается ТОЛЬКО ПОЛЕ dealId, не всё сообщение). Тогда подстановка
- * невозможна (форма проверена полностью), и смена формата метки в будущем
- * не съедает переписку (страдает только сама метка, не текст/вложение).
- */
-const DEAL_ID_RE = /^0x[0-9a-fA-F]{40}$/;
-
-/** Опасные имена ключей — открывают путь к загрязнению прототипа у
- *  БУДУЩЕГО потребителя, который сольёт разобранный payload с умолчаниями
- *  через `{...defaults, ...payload}`/`Object.assign` (В-7, ревью
- *  координатора). `JSON.parse` НЕ трогает реальный `[[Prototype]]` объекта
- *  (`__proto__` в JSON становится обычным СВОИМ свойством, не спецсимволом,
- *  как в литерале `{__proto__: x}`) — прототип модуля не загрязняется САМ
- *  ПО СЕБЕ, но политика «незнакомые поля не стираем» сохраняла бы и это
- *  свойство, готовое отравить цель слияния у потребителя, которого сегодня
- *  ещё нет, но который появится. */
-const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-/**
- * Рекурсивно вычищает `DANGEROUS_KEYS` из разобранного JSON — объекты и
- * массивы любой глубины (не только верхний уровень и не только `file`;
- * общий проход, не зависящий от того, что именно `ChatPayload` знает
- * сегодня — тот же принцип устойчивости к будущей форме, что и у
- * `DEAL_ID_RE`/сохранения незнакомых полей). Всегда строит НОВЫЙ объект/
- * массив (не мутирует вход) — безопасно передавать результат дальше на
- * мутацию (`sanitizePayload` ниже удаляет `dealId` из уже склонированного
- * объекта). Примитивы возвращаются как есть. Экспортирована — проверяема
- * напрямую, без сборки целого конверта.
- */
-export function stripDangerousKeys(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(stripDangerousKeys);
-  }
-  if (value !== null && typeof value === 'object') {
-    const clean: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      if (DANGEROUS_KEYS.has(key)) continue;
-      clean[key] = stripDangerousKeys((value as Record<string, unknown>)[key]);
-    }
-    return clean;
-  }
-  return value;
-}
-
-/**
- * Гейт формы разобранного payload — та же дисциплина, что `isBagSummary`/
- * `isWellFormedLink` в соседних модулях: данные из сети, вере не подлежат.
- * Проверяет ТОЛЬКО известные поля; любые лишние (СЕМАНТИЧЕСКИ безопасные —
- * опасные уже вычищены `stripDangerousKeys` до вызова) — не повод
- * отказывать (см. докстринг файла про незнакомые поля).
- *
- * `null` — структурная порча (не объект, `text`/`file` не той формы):
- * отказ ВСЕМУ сообщению, восстанавливать нечего. `dealId` — ОСОБЫЙ случай:
- * при несовпадении формы (см. `DEAL_ID_RE`) отбрасывается ТОЛЬКО ОНО,
- * остальной payload возвращается как есть (В-7-соседняя находка ревью —
- * dealId ЗНАКОМОЕ поле с подвижной формой, а не незнакомое поле целиком,
- * терять из-за него текст/вложение сообщения не за что).
- *
- * Мутирует и возвращает СВОЙ аргумент (`v`) — вызывающая сторона обязана
- * передавать сюда уже склонированный `stripDangerousKeys` результат, не
- * исходный объект из `JSON.parse`.
- */
-function sanitizePayload(value: unknown): ChatPayload | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const v = value as Record<string, unknown>;
-
-  if (v.text !== undefined && typeof v.text !== 'string') return null;
-
-  if (v.file !== undefined) {
-    if (typeof v.file !== 'object' || v.file === null || Array.isArray(v.file)) return null;
-    const f = v.file as Record<string, unknown>;
-    if (
-      typeof f.url !== 'string' ||
-      typeof f.name !== 'string' ||
-      typeof f.size !== 'number' || !Number.isFinite(f.size) || f.size < 0 ||
-      typeof f.keyHex !== 'string' ||
-      typeof f.ivHex !== 'string'
-    ) {
-      return null;
-    }
-  }
-
-  if (v.dealId !== undefined && (typeof v.dealId !== 'string' || !DEAL_ID_RE.test(v.dealId))) {
-    delete v.dealId;
-  }
-
-  return v as ChatPayload;
 }
 
 /**
@@ -527,17 +410,28 @@ export async function unpackEnvelope(
     return null;
   }
 
-  // stripDangerousKeys/sanitizePayload — ВНЕ try (В-5, ревью координатора).
-  // Найдено независимой проверкой: гейты формы возвращали вердикт ЧЕРЕЗ
-  // перехват выше — если сама проверка бросала (например, регресс,
-  // снимающий короткое замыкание `typeof x !== 'string' ||` перед вызовом
-  // метода строки на не-строке), catch выше это глотал, и мутация "снят
-  // гейт типа" выживала: тест видел null и не мог отличить «гейт честно
-  // отказал» от «гейт сломался и это подобрал чужой catch». Гейты формы
-  // обязаны возвращать вердикт САМИ; если они когда-нибудь бросят — это
-  // наш собственный баг (JSON.parse уже гарантированно дал только простые
-  // объекты/массивы/примитивы, без Proxy и без throwing-геттеров —
-  // исключение отсюда может родиться только из НАШЕЙ логики), и он обязан
-  // быть виден, а не спрятан под тем же кодом, что «мешок не наш».
+  // stripDangerousKeys/sanitizePayload (chatPayloadForm.ts) — ВНЕ try (В-5,
+  // ревью координатора). Найдено независимой проверкой: гейты формы
+  // возвращали вердикт ЧЕРЕЗ перехват выше — если сама проверка бросала
+  // (например, регресс, снимающий короткое замыкание `typeof x !==
+  // 'string' ||` перед вызовом метода строки на не-строке), catch выше это
+  // глотал, и мутация "снят гейт типа" выживала: тест видел null и не мог
+  // отличить «гейт честно отказал» от «гейт сломался и это подобрал чужой
+  // catch». Гейты формы обязаны возвращать вердикт САМИ; если они
+  // когда-нибудь бросят — это наш собственный баг (JSON.parse уже
+  // гарантированно дал только простые объекты/массивы/примитивы, без Proxy
+  // и без throwing-геттеров — исключение отсюда может родиться только из
+  // НАШЕЙ логики), и он обязан быть виден, а не спрятан под тем же кодом,
+  // что «мешок не наш».
+  //
+  // Гейты вынесены в ОТДЕЛЬНЫЙ модуль (`chatPayloadForm.ts`, закрывающий
+  // круг ревью) ровно ради того, чтобы эту находку можно было ЗАПЕРЕТЬ
+  // тестом: подмена `sanitizePayload` через `vi.spyOn` на МЕЖМОДУЛЬНЫЙ
+  // именованный импорт (тот же приём, что для `chatCrypto.ts` в В-1/В-2) —
+  // надёжная, живая ESM-привязка. Self-import того же файла для этой цели
+  // ненадёжен (нет гарантии, что подмена namespace-экспорта того же модуля
+  // повлияет на ЛОКАЛЬНУЮ ссылку внутри него же), а глобальная подмена
+  // встроенных функций (`Object.keys` и т.п.) слишком груба — задевает
+  // посторонний код в том же тесте.
   return sanitizePayload(stripDangerousKeys(parsed));
 }

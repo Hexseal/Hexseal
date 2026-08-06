@@ -3,9 +3,11 @@ import { getAddress } from 'viem';
 import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCrypto';
 import * as chatCryptoModule from './chatCrypto';
 import {
-  packEnvelope, unpackEnvelope, assertSealedKeyLength, assertOneTimeKeyLength, stripDangerousKeys,
-  MAX_ENVELOPE_BYTES, type ChatPayload,
+  packEnvelope, unpackEnvelope, assertSealedKeyLength, assertOneTimeKeyLength,
+  MAX_ENVELOPE_BYTES,
 } from './chatEnvelope';
+import { stripDangerousKeys, type ChatPayload } from './chatPayloadForm';
+import * as chatPayloadFormModule from './chatPayloadForm';
 
 // Подписи разной формы — тот же приём, что в chatCrypto.test.ts (SIG_A/SIG_B):
 // 65-байтная hex-строка, три разных актёра.
@@ -443,6 +445,30 @@ describe('packEnvelope / unpackEnvelope', () => {
       const env = await buildRawEnvelope(shape, bob.publicKey, alice.publicKey);
       await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
     }
+  });
+
+  it('В-5 (закрывающий круг, ревью координатора): бросок гейта формы РЕАЛЬНО отличим от «мешок испорчен», не глотается перехватом', async () => {
+    // Прямая инъекция вместо естественного (недостижимого сегодня без
+    // регресса в самом sanitizePayload) сценария: sanitizePayload
+    // (chatPayloadForm.ts) подменена через vi.spyOn на МЕЖМОДУЛЬНЫЙ
+    // именованный экспорт — тот же приём, что доказанно надёжен для
+    // chatCrypto.ts (В-1/В-2). Гейты вынесены в отдельный модуль ИМЕННО
+    // ради этого: self-import того же файла не даёт гарантии, что подмена
+    // затронет ЛОКАЛЬНУЮ ссылку внутри него же (живая ESM-привязка
+    // гарантирована только между модулями), а глобальная подмена (скажем,
+    // Object.keys) слишком груба и потащила бы за собой посторонние
+    // падения где угодно ещё в этом же тесте.
+    //
+    // Что именно красит этот тест: если бы вызов sanitizePayload
+    // когда-нибудь вернули ВНУТРЬ try/catch (регресс, отменяющий В-5),
+    // этот же брошенный `boom` был бы пойман тем catch и превращён в
+    // тихий `null` — .rejects.toBe(boom) провалился бы (получили null
+    // вместо отклонённого промиса). Сейчас — не глотается.
+    const { bob, alice } = await actors();
+    const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+    const boom = new Error('гипотетический баг гейта формы, не «мешок испорчен»');
+    vi.spyOn(chatPayloadFormModule, 'sanitizePayload').mockImplementationOnce(() => { throw boom; });
+    await expect(unpackEnvelope(env, bob)).rejects.toBe(boom);
   });
 
   describe('мелочь ревью: гейт формы вложения заперт ПО ПОЛЮ — каждая проверка ломает РОВНО одно поле, не несколько разом', () => {
