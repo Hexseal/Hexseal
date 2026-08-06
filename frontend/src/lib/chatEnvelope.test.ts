@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { getAddress } from 'viem';
 import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCrypto';
+import * as chatCryptoModule from './chatCrypto';
 import {
   packEnvelope, unpackEnvelope, assertSealedKeyLength, assertOneTimeKeyLength, MAX_ENVELOPE_BYTES, type ChatPayload,
 } from './chatEnvelope';
@@ -470,5 +471,32 @@ describe('packEnvelope / unpackEnvelope', () => {
     expect(() => assertOneTimeKeyLength(new Uint8Array(33)))
       .toThrow(/unexpected recovered key length \(33\), expected 32/);
     expect(() => assertOneTimeKeyLength(new Uint8Array(32))).not.toThrow();
+  });
+
+  describe('В-1/В-2 (ревью координатора): проводка — функции не только верны в изоляции, но и реально вызваны в нужном месте', () => {
+    // Найдено независимой проверкой: убрать вызов assertOneTimeKeyLength в
+    // unpackEnvelope целиком → 24 зелёных (сценарий никогда не наступает
+    // естественным путём — crypto_box_seal фиксирует длину плейнтекста
+    // жёстко). Перенести вызов ВНУТРЬ try/catch (вернуть ровно дефект,
+    // который тот коммит чинил) → тоже 24 зелёных, по той же причине.
+    // "Проверено изолированно" — не значит "проверено, что вызвано и стоит
+    // в нужном месте". Здесь — прямая проверка проводки через vi.spyOn на
+    // ИМЕНОВАННЫЙ экспорт chatCrypto.ts (не vi.mock целого модуля — тот
+    // приём мы явно избегали раньше как хрупкий; spyOn с restoreAllMocks в
+    // afterEach — точечный, снимается сам после каждого теста).
+
+    it('assertOneTimeKeyLength реально стоит ДО try — брошенное не глотается catch', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      vi.spyOn(chatCryptoModule, 'openSealed').mockResolvedValueOnce(new Uint8Array(31)); // не 32
+      await expect(unpackEnvelope(env, bob)).rejects.toThrow(/unexpected recovered key length \(31\), expected 32/);
+    });
+
+    it('assertSealedKeyLength реально вызывается в packEnvelope на оба слота', async () => {
+      const { bob, alice } = await actors();
+      vi.spyOn(chatCryptoModule, 'sealForRecipient').mockResolvedValueOnce(new Uint8Array(79)); // не 80, только первый (recipient) вызов
+      await expect(packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey))
+        .rejects.toThrow(/unexpected recipient sealed key length \(79\), expected 80/);
+    });
   });
 });
