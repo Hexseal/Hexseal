@@ -107,6 +107,21 @@ describe('directory.js — форма и хранение', () => {
     ['объект вместо строки', { key: '0x' + '11'.repeat(32) }],
     ['null',             null],
     ['undefined',        undefined],
+    // Мелочь (ревью координатора, round 2): раньше верхний регистр
+    // принимался и молча приводился к нижнему — строковое сравнение на
+    // клиенте (например, "тот же ли ключ я только что отправил") могло
+    // разойтись с тем, что реально хранит сервер. Форма, в которой ключ
+    // реально приходит из жизни (viem bytesToHex), — ВСЕГДА нижний регистр;
+    // отвергаем, а не подстраиваемся. 'ab' (не '11') — цифры регистра не
+    // меняют, нужны настоящие hex-буквы, иначе .toUpperCase() — молчаливый
+    // no-op и мутация этого теста не поймала бы вообще ничего.
+    ['верхний регистр (не coerce, а отказ)', '0x' + 'ab'.repeat(32).toUpperCase()],
+    // Мелочь (ревью координатора, round 2): все-нулевой X25519-ключ — один
+    // из известных вырожденных low-order-точек кривой (RFC 7748 §5) —
+    // запечатать на него можно, но результат крипто-бессмыслен; чаще всего
+    // это сигнатура неинициализированного буфера на клиенте, а не
+    // настоящий ключ. Отклоняем по форме, не пытаясь понять природу байт.
+    ['все нули (вырожденный X25519-ключ)', '0x' + '00'.repeat(32)],
   ])('putKey отвергает мусорный boxKey (%s) с кодом invalid_key, не меняя справочник', (_label, badKey) => {
     expect(() => putKey(ALICE, { boxKey: badKey }, 1000)).toThrow();
     try {
@@ -394,6 +409,19 @@ describe('directory.js — громкий отказ при потере/пор�
     // Мутация: без этого различия порча ОДНОЙ записи вела бы себя как порча
     // ВСЕГО файла (isDirectoryHealthy() === false), закрывая доступ и к Bob,
     // хотя его запись цела и валидна.
+    expect(isDirectoryHealthy()).toBe(true);
+    expect(getKeyRecord(ALICE)).toBeNull();
+    expect(getKeyRecord(BOB).boxKey).toBe(KEY_B);
+  });
+
+  it('запись с all-zero boxKey на диске (обошла putKey рукой) отбрасывается при загрузке как повреждённая', () => {
+    putKey(BOB, { boxKey: KEY_B }, 1000);
+
+    const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    raw[ALICE] = { v: 1, boxKey: '0x' + '00'.repeat(32), updatedAt: 1000, history: [], keyChangeCount: 0 };
+    fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(raw), 'utf8');
+    _loadDirectory();
+
     expect(isDirectoryHealthy()).toBe(true);
     expect(getKeyRecord(ALICE)).toBeNull();
     expect(getKeyRecord(BOB).boxKey).toBe(KEY_B);

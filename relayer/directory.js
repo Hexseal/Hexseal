@@ -90,6 +90,13 @@ const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
 // case-insensitive) — см. _isValidKeyHex ниже, почему это НЕ то же самое,
 // что адрес кошелька с чексуммой.
 const KEY_HEX_RE = /^0x[0-9a-f]{64}$/;
+// Мелочь (ревью координатора, round 2): всенулевой ключ — один из
+// известных вырожденных low-order-точек кривой X25519 (RFC 7748 §5) —
+// проходит по форме (32 байта, hex), но запечатать на него содержательно
+// нельзя: shared secret вырождается. Чаще всего это признак
+// неинициализированного буфера на клиенте, а не настоящего ключа —
+// отклоняем по форме, не пытаясь угадать намерение.
+const ALL_ZERO_KEY_RE = /^0x0{64}$/;
 
 export let STORAGE_DIR;
 export let DIRECTORY_FILE;
@@ -154,7 +161,7 @@ class DirectoryUnavailableError extends Error {
 const RECORD_VERSION = 1;
 
 function _isValidKeyHex(v) {
-  return typeof v === 'string' && KEY_HEX_RE.test(v);
+  return typeof v === 'string' && KEY_HEX_RE.test(v) && !ALL_ZERO_KEY_RE.test(v);
 }
 
 function _isValidHistoryEntry(h) {
@@ -311,8 +318,12 @@ function assertReady() {
 }
 
 function _assertKeyHexInput(fieldName, value) {
-  if (typeof value !== 'string' || !KEY_HEX_RE.test(value)) {
-    const err = new Error(`putKey: invalid ${fieldName} — expected 0x + 64 lower-case hex chars (32 bytes), got ${JSON.stringify(value)}`);
+  // Единый источник истины с _isValidRecord/_loadDirectory (_isValidKeyHex)
+  // — форма, которую сервер принимает НА ЗАПИСИ, обязана быть в точности
+  // той же, что он считает валидной ПРИ ЗАГРУЗКЕ; две отдельные копии
+  // одной и той же проверки рано или поздно разойдутся молча.
+  if (!_isValidKeyHex(value)) {
+    const err = new Error(`putKey: invalid ${fieldName} — expected 0x + 64 lower-case hex chars (32 bytes), not the all-zero key, got ${JSON.stringify(value)}`);
     err.code = 'invalid_key';
     throw err;
   }
