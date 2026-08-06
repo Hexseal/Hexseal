@@ -591,6 +591,65 @@ describe('порядок восстанавливается по номерам'
     expect(state.messages.map(m => (m.payload as ChatPayload).text)).toEqual(['#0', '#1', '#2']);
   });
 
+  it('двести перестановок доставки: порядок ОДИН И ТОТ ЖЕ, и номера внутри стороны не идут вспять', async () => {
+    // Находка К-2 враждебной проверки. Сравнение «внутри стороны по номеру,
+    // между сторонами по времени» НЕТРАНЗИТИВНО: достаточно, чтобы время
+    // спорило с номером — а его ставит сам отправитель, и оно может врать.
+    // Замер проверяющего: 126 перестановок из 200 давали номера вспять.
+    //
+    // Прежний тест этого не видел, потому что в нём ОДИН отправитель: без
+    // межстороннего сравнения нетранзитивности не возникает вовсе.
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+
+    // Время идёт ВСПЯТЬ у обеих сторон, и промежутки нарочно перекрываются.
+    const mine: SentMessage[] = [];
+    let prevA: ChainLink | null = null;
+    for (let i = 0; i < 8; i++) {
+      const s = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: `A${i}` }, prevA,
+        { pass: PASS, now: () => 9_000 - i * 100 });
+      mine.push(s); prevA = s.link;
+    }
+    const theirs: SentMessage[] = [];
+    let prevB: ChainLink | null = null;
+    for (let i = 0; i < 8; i++) {
+      const s = await sendMessage(bob, ALICE, alice.keypair.publicKey, { text: `B${i}` }, prevB,
+        { pass: PASS, now: () => 8_950 - i * 100 });
+      theirs.push(s); prevB = s.link;
+    }
+
+    /** Детерминированная перестановка — тест обязан повторяться в точности. */
+    function shuffled<T>(list: T[], salt: number): T[] {
+      const out = [...list];
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = (i * 7919 + salt * 104729) % (i + 1);
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out;
+    }
+
+    let reference: string[] | null = null;
+    for (let round = 0; round < 200; round++) {
+      const bags = shuffled(theirs.map((s, i) => bagOf(s, BOB, 1_000 + i)), round);
+      const own = shuffled(mine, round * 3 + 1);
+      const state = await receiveBags(alice, bags, { own, peer: BOB });
+      const order = state.messages.map(
+        m => `${m.from === ALICE.toLowerCase() ? 'A' : 'B'}${m.seq}`,
+      );
+      expect(order).toHaveLength(16);
+
+      // 1. Внутри стороны номера СТРОГО по возрастанию — при любом времени.
+      for (const side of ['A', 'B']) {
+        const seqs = order.filter(t => t.startsWith(side)).map(t => Number(t.slice(1)));
+        expect({ round, side, seqs }).toEqual({ round, side, seqs: [...seqs].sort((x, y) => x - y) });
+      }
+      // 2. Порядок показа не зависит от порядка прихода — ни в одной из 200.
+      if (reference === null) reference = order;
+      else expect({ round, order }).toEqual({ round, order: reference });
+    }
+  }, 120_000);
+
   it('свои и чужие сообщения сливаются по времени отправки, номера внутри стороны не путаются', async () => {
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
