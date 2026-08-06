@@ -249,6 +249,39 @@ describe('packEnvelope / unpackEnvelope', () => {
     expect(MAX_ENVELOPE_BYTES).toBe(262144); // 256 КиБ = 1/4 мегабайта = MAX_BAG_SIZE склада, не выдумано
   });
 
+  describe('мелочь ревью: границы сравнения — строгое `>`/`<`, не нестрогое, заперто на точной длине', () => {
+    it('ровно MAX_ENVELOPE_BYTES — потолок ПРОПУСКАЕТ (decrypt реально пытается), не отклоняет по размеру', async () => {
+      const { bob, alice } = await actors();
+      const decryptSpy = vi.spyOn(crypto.subtle, 'decrypt');
+      const validEnv = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      const exact = new Uint8Array(MAX_ENVELOPE_BYTES); // ровно на границе, не +1
+      exact.set(validEnv.subarray(0, Math.min(validEnv.length, exact.length)), 0);
+      await unpackEnvelope(exact, bob);
+      // Итог всё равно null (хвост — мусор, ломает тег), но decrypt ОБЯЗАН
+      // быть вызван — потолок не должен отклонять ровно граничный размер.
+      expect(decryptSpy.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it('ровно на заголовке (173 байта, без ciphertext) — проверка длины срезов ПРОПУСКАЕТ, пробует вскрыть слоты', async () => {
+      const { bob, alice } = await actors();
+      const openSealedSpy = vi.spyOn(chatCryptoModule, 'openSealed');
+      const validEnv = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      const exactlyHeader = validEnv.subarray(0, 173); // ровно граница, не короче
+      await unpackEnvelope(exactlyHeader, bob);
+      expect(openSealedSpy.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it('на 1 байт короче заголовка (172) — проверка длины срезов ОТКЛОНЯЕТ, openSealed не вызывается', async () => {
+      const { bob, alice } = await actors();
+      const openSealedSpy = vi.spyOn(chatCryptoModule, 'openSealed');
+      const validEnv = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      const oneShort = validEnv.subarray(0, 172);
+      const opened = await unpackEnvelope(oneShort, bob);
+      expect(opened).toBeNull();
+      expect(openSealedSpy.mock.calls.length).toBe(0);
+    });
+  });
+
   describe('версия и структура — незнакомый/повреждённый конверт не роняет разбор', () => {
     it('неизвестный байт версии — null, БЕЗ попытки расшифровать (В-3, ревью координатора)', async () => {
       // Побочный эффект К-1 (AAD): версия входит в заголовок, а заголовок —
