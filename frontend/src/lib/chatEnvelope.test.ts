@@ -223,6 +223,34 @@ describe('packEnvelope / unpackEnvelope', () => {
     });
   });
 
+  it('И-1 (ревью координатора): разовый ключ и вектор — РАЗНЫЕ СЫРЫЕ БАЙТЫ на каждый вызов, не только байты итогового конверта', async () => {
+    // Сравнение байтов КОНВЕРТА (как в тесте на одновременную упаковку ниже)
+    // не запирает это свойство: sealForRecipient сама рандомизирует
+    // эфемерный ключ печати при КАЖДОМ вызове (chatCrypto.ts,
+    // crypto_box_seal), так что итоговые байты конверта различались бы,
+    // даже если бы разовый ключ и вектор были намертво прибиты к одной и
+    // той же константе на все сообщения — находка координатора: обе такие
+    // мутации порознь дают 0 красных из всего набора. Перехватываем именно
+    // СЫРЫЕ входы в crypto.subtle (то, что packEnvelope реально сгенерировала
+    // как разовый ключ/вектор), а не то, что получилось после запечатывания.
+    const { bob, alice } = await actors();
+    const importSpy = vi.spyOn(crypto.subtle, 'importKey');
+    const encryptSpy = vi.spyOn(crypto.subtle, 'encrypt');
+
+    await packEnvelope({ text: 'первое' }, bob.publicKey, alice.publicKey);
+    await packEnvelope({ text: 'второе' }, bob.publicKey, alice.publicKey);
+
+    // importKey('raw', oneTimeKey, ...) — второй аргумент обоих вызовов.
+    const key1 = new Uint8Array(importSpy.mock.calls[0]![1] as ArrayBuffer);
+    const key2 = new Uint8Array(importSpy.mock.calls[1]![1] as ArrayBuffer);
+    expect(Buffer.from(key1).toString('hex')).not.toBe(Buffer.from(key2).toString('hex'));
+
+    // encrypt({name, iv, additionalData}, ...) — вектор в первом аргументе.
+    const iv1 = (encryptSpy.mock.calls[0]![0] as AesGcmParams).iv as Uint8Array;
+    const iv2 = (encryptSpy.mock.calls[1]![0] as AesGcmParams).iv as Uint8Array;
+    expect(Buffer.from(iv1).toString('hex')).not.toBe(Buffer.from(iv2).toString('hex'));
+  });
+
   it('вопрос 3 отчёта: два конверта пакуются ОДНОВРЕМЕННО — разовые ключи и содержимое не путаются', async () => {
     const { bob, alice } = await actors();
     const [envA, envB] = await Promise.all([
