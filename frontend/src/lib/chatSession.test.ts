@@ -748,6 +748,96 @@ describe('версия формата записи', () => {
   });
 });
 
+// ═══ Повышение версии записи не стирает личность ════════════════════════
+
+describe('запись прежней/незнакомой версии', () => {
+  /** Запись версии 1 кошелька-контракта: годная во всём, кроме версии.
+   *  Ровно то, что окажется на диске у каждого контрактного пользователя
+   *  при следующем повышении формата. */
+  function putLegacyContractRecord(version: number) {
+    fakeIdb._disk.set('sessions', new Map([[
+      ALICE.toLowerCase(),
+      {
+        v: version,
+        address: ALICE.toLowerCase(),
+        origin: 'recovery',
+        walletKind: 'contract',
+        publicKey: new Uint8Array(32).fill(3),
+        privateKey: new Uint8Array(32).fill(4),
+        recoveryCode: GOLD,
+      },
+    ]]));
+  }
+
+  it('версия 1 у кошелька-контракта — ОТКАЗ, а не новая личность', async () => {
+    // До правки: restored:false, persisted:true, ключ другой, код стёрт —
+    // К-4 дословно, только через другую дверь. Обоснование «лучше лишнее
+    // окно подписи, чем ключ из полей другого значения» верно для обычного
+    // кошелька и неверно для контрактного: его цена — не окно, а личность.
+    putLegacyContractRecord(1);
+    const sign = vi.fn(async () => ALICE_CONTRACT_SIG);
+
+    await expect(openSession(ALICE, sign))
+      .rejects.toMatchObject({ code: 'storage_version_unknown' });
+
+    expect(sign).toHaveBeenCalledTimes(0);
+    const rec = fakeIdb._disk.get('sessions')!.get(ALICE.toLowerCase()) as Record<string, unknown>;
+    expect(rec.v).toBe(1);
+    expect(rec.recoveryCode).toBe(GOLD); // код на месте, ничего не стёрто
+  });
+
+  it('версия ИЗ БУДУЩЕГО у кошелька-контракта — тоже отказ', async () => {
+    putLegacyContractRecord(RECORD_VERSION + 5);
+    await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
+      .rejects.toMatchObject({ code: 'storage_version_unknown' });
+  });
+
+  it('код восстановления поверх такой записи тоже не встаёт', async () => {
+    // К-2 через ту же дверь: ввод ДРУГОГО кода поверх записи версии 1
+    // вставал без отказа, потому что запись считалась отсутствующей.
+    putLegacyContractRecord(1);
+    const other = entropyToMnemonic(new Uint8Array(16).fill(0x11), wordlist);
+
+    await expect(openSessionFromRecoveryCode(ALICE, other, async () => ALICE_CONTRACT_SIG))
+      .rejects.toMatchObject({ code: 'storage_version_unknown' });
+
+    const rec = fakeIdb._disk.get('sessions')!.get(ALICE.toLowerCase()) as Record<string, unknown>;
+    expect(rec.recoveryCode).toBe(GOLD);
+  });
+
+  it('а у ОБЫЧНОГО кошелька старая версия просто выбрасывается', async () => {
+    // Ему терять нечего: ключ выведется тот же самый.
+    fakeIdb._disk.set('sessions', new Map([[
+      ALICE.toLowerCase(),
+      {
+        v: 1,
+        address: ALICE.toLowerCase(),
+        origin: 'signature',
+        walletKind: 'eoa',
+        publicKey: new Uint8Array(32).fill(3),
+        privateKey: new Uint8Array(32).fill(4),
+      },
+    ]]));
+
+    const sign = vi.fn(async () => ALICE_SIG);
+    const session = await openSession(ALICE, sign);
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(hex(session.keypair.publicKey))
+      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+  });
+
+  it('мусор без признаков рода — по-прежнему просто отсутствие записи', async () => {
+    fakeIdb._disk.set('sessions', new Map([[
+      ALICE.toLowerCase(), { какие: 'то', чужие: 'поля' },
+    ]]));
+    const sign = vi.fn(async () => ALICE_SIG);
+    const session = await openSession(ALICE, sign);
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(session.walletKind).toBe('eoa');
+  });
+});
+
 // ═══ 8. exportRecoveryCode отказывает обычному кошельку ═══════════════════
 
 describe('у обычного кошелька кода восстановления нет и не должно быть', () => {

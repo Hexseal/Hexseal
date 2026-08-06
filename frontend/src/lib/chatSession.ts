@@ -195,7 +195,11 @@ export type ChatSessionErrorCode =
   /** Адрес не похож на адрес. Без этой проверки пустая строка заводила
    *  РАБОЧИЙ сеанс под ключом `''` — не «голое системное сообщение», а
    *  молчаливый мусорный сеанс. */
-  | 'address_malformed';
+  | 'address_malformed'
+  /** На устройстве лежит запись НЕЗНАКОМОЙ версии формата, и по её виду это
+   *  личность кошелька-контракта. Выбросить её значит стереть личность
+   *  навсегда — отказываем и не трогаем. */
+  | 'storage_version_unknown';
 
 /** Каждый отказ несёт `.code` ОТДЕЛЬНЫМ полем — та же дисциплина, что в
  *  `chatTransport.ts`: сравнение текста ошибки ломается от первой же правки
@@ -491,14 +495,43 @@ type ReadOutcome =
   | { status: 'empty' }
   | { status: 'failed'; error: ChatSessionError };
 
+/** Отказы, означающие «состояние диска установить НЕ УДАЛОСЬ». Только они
+ *  превращаются в исход `failed` и лечатся ветками `openWithoutStorage`.
+ *
+ *  `storage_version_unknown` сюда НЕ входит намеренно: там диск прочитан
+ *  успешно, и на нём лежит чужая по формату личность кошелька-контракта.
+ *  Это не «непонятно, что на диске», а «понятно, и трогать нельзя» —
+ *  спасательная ветка тут не только не нужна, но и вредна: она попросила бы
+ *  подпись, чтобы всё равно отказать. */
+const UNREADABLE_CODES: ReadonlySet<ChatSessionErrorCode> = new Set([
+  'storage_read_failed',
+  'storage_blocked',
+  'storage_open_timeout',
+]);
+
 async function tryReadRecord(key: string): Promise<ReadOutcome> {
   try {
     const record = await readRecord(key);
     return record ? { status: 'found', record } : { status: 'empty' };
   } catch (err) {
-    if (err instanceof ChatSessionError) return { status: 'failed', error: err };
+    if (err instanceof ChatSessionError && UNREADABLE_CODES.has(err.code)) {
+      return { status: 'failed', error: err };
+    }
     throw err;
   }
+}
+
+/**
+ * Похожа ли запись НЕЗНАКОМОЙ формы на личность кошелька-контракта.
+ *
+ * Смотрим по-простому, на два поля-строки: их значение не зависит от версии
+ * формата, а ошибка в сторону «похоже» стоит одного внятного отказа, тогда
+ * как ошибка в другую сторону стоит человеку всей переписки.
+ */
+function looksLikeContractIdentity(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return r.origin === 'recovery' || r.walletKind === 'contract';
 }
 
 async function readRecord(key: string): Promise<StoredSession | null> {
@@ -520,6 +553,24 @@ async function readRecord(key: string): Promise<StoredSession | null> {
   }
   if (raw === undefined || raw === null) return null;
   if (!isWellFormedRecord(raw, key)) {
+    // ⚠️ Прежде ЛЮБАЯ незнакомая запись считалась отсутствующей, и
+    // обоснование звучало так: «лучше лишнее окно подписи, чем ключ из
+    // полей, значение которых сегодня другое». Для обычного кошелька это
+    // верно — ему выведется тот же ключ. Для КОНТРАКТНОГО неверно: его цена
+    // не окно подписи, а личность. Замер до правки (годная запись версии 1):
+    // restored:false, persisted:true, ключ другой, код восстановления стёрт,
+    // и сеанс рапортует себя здоровым — К-4 дословно, через другую дверь.
+    //
+    // Сегодня записей прежних версий нет ни у кого (выкатки не было), но
+    // правило написано на будущее: следующее повышение версии проделало бы
+    // это с КАЖДЫМ контрактным пользователем разом.
+    if (looksLikeContractIdentity(raw)) {
+      throw new ChatSessionError(
+        'chatSession: на устройстве личность кошелька-контракта в незнакомом формате — ' +
+        'заводить новую поверх неё нельзя',
+        'storage_version_unknown',
+      );
+    }
     console.warn('[chatSession] запись на устройстве не той формы — считаем, что ключа нет');
     return null;
   }
