@@ -156,7 +156,13 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
 
     get(key: string): FakeRequest {
       return this.tx.run(
-        () => disk.get(this.name)?.get(key),
+        () => {
+          // Настоящее хранилище отдаёт СВЕЖУЮ копию на каждое чтение —
+          // подделка обязана делать так же, иначе вызывающий, изменивший
+          // прочитанное, незаметно правил бы «диск» (мелочь ревью).
+          const found = disk.get(this.name)?.get(key);
+          return found === undefined ? undefined : structuredClone(found);
+        },
         control.failGet ? new Error('read failed') : undefined,
       );
     }
@@ -1153,8 +1159,11 @@ describe('мусор на входе — вердикт, а не падение'
     expect(sign).toHaveBeenCalledTimes(1);
   });
 
-  it('в IndexedDB запись «recovery» без кода — отвергается, а не отдаётся без кода', async () => {
-    const sign = vi.fn(async () => ALICE_SIG);
+  it('в IndexedDB запись «recovery» без кода — ключ цел, кода нет (В-3, К-4)', async () => {
+    // Отвергать такую запись целиком значило бы завести НОВУЮ личность
+    // поверх живого ключа — та же беда, что в К-4, только помельче. Ключ
+    // отдаётся, а вот кода нет, и об этом говорится кодом ошибки.
+    const keys = { pub: new Uint8Array(32).fill(9), priv: new Uint8Array(32).fill(8) };
     fakeIdb._disk.set('sessions', new Map([[
       ALICE.toLowerCase(),
       {
@@ -1162,13 +1171,67 @@ describe('мусор на входе — вердикт, а не падение'
         address: ALICE.toLowerCase(),
         origin: 'recovery',
         walletKind: 'contract',
-        publicKey: new Uint8Array(32),
-        privateKey: new Uint8Array(32),
+        publicKey: keys.pub,
+        privateKey: keys.priv,
       },
     ]]));
 
-    await openSession(ALICE, sign, eoaOpts());
-    expect(sign).toHaveBeenCalledTimes(1);
+    const sign = vi.fn(async () => ALICE_SIG);
+    const session = await openSession(ALICE, sign, contractOpts());
+
+    expect(sign).toHaveBeenCalledTimes(0);
+    expect(hex(session.keypair.privateKey)).toBe(hex(keys.priv));
+    let thrown: unknown;
+    try { exportRecoveryCode(session); } catch (err) { thrown = err; }
+    expect((thrown as ChatSessionError)?.code).toBe('recovery_code_unavailable');
+  });
+
+  it('в IndexedDB код из двенадцати НЕСУЩЕСТВУЮЩИХ слов — не выдаётся человеку (В-3)', async () => {
+    // Годность кода в записи проверялась СЧЁТОМ ПРОБЕЛОВ. Человек получал
+    // «aaa bbb ccc ...», переписывал на бумажку и считал себя застрахованным.
+    const junk = 'aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll';
+    fakeIdb._disk.set('sessions', new Map([[
+      ALICE.toLowerCase(),
+      {
+        v: RECORD_VERSION,
+        address: ALICE.toLowerCase(),
+        origin: 'recovery',
+        walletKind: 'contract',
+        publicKey: new Uint8Array(32).fill(9),
+        privateKey: new Uint8Array(32).fill(8),
+        recoveryCode: junk,
+      },
+    ]]));
+
+    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+
+    let thrown: unknown;
+    try { exportRecoveryCode(session); } catch (err) { thrown = err; }
+    expect((thrown as ChatSessionError)?.code).toBe('recovery_code_unavailable');
+    expect(String((thrown as Error)?.message)).not.toContain('aaa');
+  });
+
+  it('в IndexedDB код с несошедшейся контрольной суммой — тоже не выдаётся (В-3)', async () => {
+    // Все слова настоящие, длина верная — ловится только суммой.
+    const spoiled = GOLD.split(' ').slice(0, 11).concat('zoo').join(' ');
+    expect(spoiled.split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
+    fakeIdb._disk.set('sessions', new Map([[
+      ALICE.toLowerCase(),
+      {
+        v: RECORD_VERSION,
+        address: ALICE.toLowerCase(),
+        origin: 'recovery',
+        walletKind: 'contract',
+        publicKey: new Uint8Array(32).fill(9),
+        privateKey: new Uint8Array(32).fill(8),
+        recoveryCode: spoiled,
+      },
+    ]]));
+
+    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    let thrown: unknown;
+    try { exportRecoveryCode(session); } catch (err) { thrown = err; }
+    expect((thrown as ChatSessionError)?.code).toBe('recovery_code_unavailable');
   });
 
   it('чтение хранилища отказало — это ОТКАЗ с кодом, а не пустота (К-4)', async () => {

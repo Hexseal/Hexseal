@@ -381,15 +381,31 @@ function isWellFormedRecord(value: unknown, expectedKey: string): value is Store
   if (!(r.publicKey instanceof Uint8Array) || r.publicKey.length !== KEY_LEN) return false;
   if (!(r.privateKey instanceof Uint8Array) || r.privateKey.length !== KEY_LEN) return false;
 
-  // Сеанс происхождения `recovery` БЕЗ кода — это сеанс, который человек уже
-  // не сможет перенести никуда. Отдать его молча значит пообещать
-  // восстановимость, которой нет.
-  if (r.origin === 'recovery') {
-    if (typeof r.recoveryCode !== 'string') return false;
-    if (r.recoveryCode.split(' ').length !== RECOVERY_WORD_COUNT) return false;
-  }
+  // Код восстановления, если он есть, обязан быть строкой. ГОДНОСТЬ его тут
+  // не проверяется: это делает `validRecoveryCode` ниже, контрольной суммой
+  // BIP-39, а не счётом пробелов (находка В-3 независимой проверки — раньше
+  // проверялось именно число пробелов, и человеку выдавались двенадцать
+  // несуществующих слов, которые он переписывал на бумажку как страховку).
+  //
+  // Негодный или отсутствующий код НЕ делает запись негодной: ключ в ней
+  // настоящий, и отвергать её целиком значило бы завести новую личность
+  // поверх живой — та же беда, что К-4, только помельче. Ключ отдаётся,
+  // код не выдаётся.
+  if (r.recoveryCode !== undefined && typeof r.recoveryCode !== 'string') return false;
 
   return true;
+}
+
+/** Годен ли код восстановления НА САМОМ ДЕЛЕ — по контрольной сумме BIP-39,
+ *  а не по форме. Используется на чтении записи с устройства: то, что
+ *  человек однажды перепишет на бумажку, обязано быть проверено ровно так
+ *  же, как то, что он потом введёт обратно. */
+async function validRecoveryCode(code: string): Promise<boolean> {
+  const normalized = normalizeRecoveryCode(code);
+  if (normalized.split(' ').length !== RECOVERY_WORD_COUNT) return false;
+  const { validateMnemonic } = await import('@scure/bip39');
+  const { wordlist } = await import('@scure/bip39/wordlists/english');
+  return validateMnemonic(normalized, wordlist);
 }
 
 /**
@@ -430,6 +446,19 @@ async function readRecord(key: string): Promise<StoredSession | null> {
   if (!isWellFormedRecord(raw, key)) {
     console.warn('[chatSession] запись на устройстве не той формы — считаем, что ключа нет');
     return null;
+  }
+
+  // Код проверяется контрольной суммой, а не формой (В-3). Не сошлось —
+  // ключ остаётся, код снимается: лучше честное «кода нет», чем двенадцать
+  // слов, которые ничего не восстановят.
+  if (raw.origin === 'recovery' && raw.recoveryCode !== undefined) {
+    if (!(await validRecoveryCode(raw.recoveryCode))) {
+      console.warn(
+        '[chatSession] код восстановления на устройстве не проходит контрольную сумму BIP-39 — ' +
+        'ключ цел, но кода у этого сеанса нет',
+      );
+      delete raw.recoveryCode;
+    }
   }
   return raw;
 }
