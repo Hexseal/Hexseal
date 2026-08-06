@@ -915,6 +915,30 @@ export interface ChatMessage {
    *  ЧУЖИХ сообщений всегда `true`: они уже у нас. Для СВОИХ — по ответу
    *  склада (`deliveredKeys`). */
   delivered: boolean;
+  /**
+   * Всё, чем это сообщение доказывается третьему лицу: звено, подпись,
+   * подписной ключ и байты кадра, как они лежали на складе.
+   *
+   * Есть у ОБЕИХ половин разговора — и у своих отправленных, и у принятых
+   * (находка В-4 враждебной проверки: раньше доказательства были только у
+   * своих, а «копия контрагента», на которой стоит §5 общей спеки и весь план
+   * 4, этим наружным видом не собиралась вовсе).
+   *
+   * Необязательное — потому что сообщение может прийти путём, где кадра нет
+   * (сегодня такого пути нет; поле необязательно, чтобы будущий такой путь не
+   * пришлось выдавать за доказанный).
+   */
+  proof?: MessageProof;
+}
+
+/** Самодостаточное доказательство одного сообщения: по нему подпись
+ *  проверяется заново, ничего не спрашивая у отправителя. */
+export interface MessageProof {
+  link: ChainLink;
+  signature: Uint8Array;
+  signerPublicKey: Uint8Array;
+  /** Байты мешка целиком, как они лежали на складе. */
+  frame: Uint8Array;
 }
 
 export type ConversationTrouble =
@@ -996,6 +1020,11 @@ interface AcceptedLink {
   link: ChainLink;
   envelope: Uint8Array;
   signerPublicKey: Uint8Array;
+  /** Подпись и байты кадра переносятся ЦЕЛИКОМ, а не пересобираются: то, что
+   *  предъявляется третьему лицу, обязано быть тем же самым, что пришло со
+   *  склада, а не нашей копией с точностью до нашего же кодирования (В-4). */
+  signature: Uint8Array;
+  frame: Uint8Array;
   uploadedAt: number;
 }
 
@@ -1156,7 +1185,8 @@ export async function receiveBags(
     const list = bySender.get(attested) ?? [];
     list.push({
       key: bag.key, link: frame.link, envelope: frame.envelope,
-      signerPublicKey: frame.signerPublicKey, uploadedAt: bag.uploadedAt,
+      signerPublicKey: frame.signerPublicKey, signature: frame.signature,
+      frame: bag.body, uploadedAt: bag.uploadedAt,
     });
     bySender.set(attested, list);
   }
@@ -1220,7 +1250,13 @@ export async function receiveBags(
         troubles.push({ kind: 'undecryptable', key: item.key, seq: item.link.seq, from });
         continue;
       }
-      messages.push({ seq: item.link.seq, from, sentAt: item.link.sentAt, payload, delivered: true });
+      messages.push({
+        seq: item.link.seq, from, sentAt: item.link.sentAt, payload, delivered: true,
+        proof: {
+          link: item.link, signature: item.signature,
+          signerPublicKey: item.signerPublicKey, frame: item.frame,
+        },
+      });
     }
   }
 
@@ -1236,6 +1272,10 @@ export async function receiveBags(
       messages.push({
         seq: s.link.seq, from: own, sentAt: s.link.sentAt,
         payload: s.payload, delivered: delivered.has(s.key),
+        proof: {
+          link: s.link, signature: s.signature,
+          signerPublicKey: s.signerPublicKey, frame: s.frame,
+        },
       });
     }
   }
