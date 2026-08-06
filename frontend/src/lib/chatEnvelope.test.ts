@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { getAddress } from 'viem';
 import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCrypto';
-import { packEnvelope, unpackEnvelope, type ChatPayload } from './chatEnvelope';
+import { packEnvelope, unpackEnvelope, MAX_ENVELOPE_BYTES, type ChatPayload } from './chatEnvelope';
 
 // Подписи разной формы — тот же приём, что в chatCrypto.test.ts (SIG_A/SIG_B):
 // 65-байтная hex-строка, три разных актёра.
@@ -300,21 +300,41 @@ describe('packEnvelope / unpackEnvelope', () => {
     expect(openedB).toEqual({ text: 'второе' });
   });
 
-  it('вопрос 5 отчёта: раздутый конверт отклоняется БЕЗ попытки расшифровать (не только null, а именно отказ до дорогой операции)', async () => {
+  it('вопрос 5 отчёта: конверт над потолком отклоняется БЕЗ попытки расшифровать (К-2, ревью координатора)', async () => {
+    // К-2, ревью координатора (важная переработка после round 1): ДВЕ
+    // правки одновременно, обе обязательны.
+    //
+    // (1) Размер входа — РОВНО на границе (MAX_ENVELOPE_BYTES + 1), а не
+    // произвольно огромный (было 6 МиБ). Раньше тест сам был источником
+    // риска: у Vitest/Node в этом окружении замерено (координатором и
+    // независимо перепроверено здесь), что ПРОВАЛИВШАЯСЯ проверка
+    // `.not.toHaveBeenCalled()` над АРГУМЕНТОМ в несколько мегабайт
+    // печатает диагностику катастрофически дорого (гигабайты кучи и падение
+    // воркера, а не сам crypto.subtle.decrypt — прямой вызов decrypt на
+    // 6 МиБ мусора вне тестового раннера отрабатывает штатно за 14 мс).
+    // Дело не в шифровании, а именно в печати ПРОВАЛИВШЕЙСЯ проверки с
+    // большим аргументом: голая ошибка сохраняется, даже если разработчик
+    // уберёт потолок и тест обязан покраснеть — раньше в этой ситуации он
+    // не читаемо краснел, а убивал процесс тестов целиком.
+    //
+    // (2) Assertion — по ЧИСЛУ вызовов (`mock.calls.length`), не по
+    // смысловому матчеру: при провале печатает два маленьких числа
+    // ("expected 1 to be 0"), а не пытается сериализовать сами аргументы
+    // вызова.
+    //
+    // Обе правки проверены по отдельности (маленький вход со старым
+    // матчером; большой вход с новым матчером) — обе сами по себе снимают
+    // риск; здесь применены вместе.
     const { bob, alice } = await actors();
-    // Слоты запечатывания — НАСТОЯЩИЕ (валидный конверт от packEnvelope),
-    // а раздутость — в хвосте после них. Так тест ловит именно отсутствие
-    // потолка по размеру, а не побочный эффект «мусорные слоты и так не
-    // открылись бы»: с валидными слотами, но БЕЗ потолка, функция дошла бы
-    // до crypto.subtle.decrypt (и там честно провалилась бы на несходящемся
-    // теге) — потолок обязан отсечь это РАНЬШЕ, до самой попытки.
     const decryptSpy = vi.spyOn(crypto.subtle, 'decrypt');
     const validEnv = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
-    const huge = new Uint8Array(validEnv.length + 6 * 1024 * 1024); // > 1 МиБ предела
-    huge.set(validEnv, 0);
-    const opened = await unpackEnvelope(huge, bob);
+    // Ровно на 1 байт больше потолка — наименьший вход, реально
+    // пересекающий границу, а не произвольно огромный.
+    const overLimit = new Uint8Array(MAX_ENVELOPE_BYTES + 1);
+    overLimit.set(validEnv.subarray(0, Math.min(validEnv.length, overLimit.length)), 0);
+    const opened = await unpackEnvelope(overLimit, bob);
     expect(opened).toBeNull();
-    expect(decryptSpy).not.toHaveBeenCalled();
+    expect(decryptSpy.mock.calls.length).toBe(0);
   });
 
   it('мусор внутри полей расшифрованного payload — null для каждой формы, ни разу не искажённые поля и не исключение', async () => {
