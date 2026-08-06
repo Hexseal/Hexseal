@@ -3,10 +3,11 @@
  * восстановления для кошельков-контрактов.
  *
  * НЕ ЗНАЕТ: про сеть чата (`chatTransport.ts`), про React, про wagmi/viem-
- * клиент. Кошелёк и цепь входят сюда ДВУМЯ колбэками (`signTypedData`,
- * `getBytecode`), а не импортом — модуль проверяется целиком без браузера и
- * без узла RPC. Потребляет из ядра ровно `deriveChatKeypair`,
- * `CHAT_KEY_TYPED_DATA` и тип `ChatKeypair` (`chatCrypto.ts`).
+ * клиент. И про ЦЕПЬ тоже не знает: кошелёк входит сюда ОДНИМ колбэком
+ * (`signTypedData`), а не импортом — модуль проверяется целиком без браузера
+ * и без узла RPC, потому что узел ему больше не нужен ни для чего.
+ * Потребляет из ядра ровно `deriveChatKeypair`, `CHAT_KEY_TYPED_DATA` и тип
+ * `ChatKeypair` (`chatCrypto.ts`).
  *
  * ─── ДВА ПРОИСХОЖДЕНИЯ КЛЮЧА, И ОНИ НЕ СИММЕТРИЧНЫ ──────────────────────
  *
@@ -109,8 +110,9 @@ import { deriveChatKeypair, CHAT_KEY_TYPED_DATA, type ChatKeypair } from './chat
 
 export type SessionOrigin = 'signature' | 'recovery';
 
-/** Род кошелька по коду на цепи. `eoa` включает и адреса с делегацией
- *  EIP-7702 — см. `DELEGATION_INDICATOR_RE`. */
+/** Род кошелька ПО ЕГО ПОДПИСИ — см. `establishIdentity`. `eoa` — тот, чья
+ *  подпись обычной длины (включая делегированных EIP-7702); `contract` —
+ *  чья подпись переменной длины (ERC-1271, счётные по ERC-6492). */
 export type WalletKind = 'eoa' | 'contract';
 
 export interface ChatSession {
@@ -121,7 +123,8 @@ export interface ChatSession {
    *  же кошелёк в разной записи выглядел бы двумя разными людьми. */
   address: `0x${string}`;
   origin: SessionOrigin;
-  /** Род кошелька, выясненный ПО ЦЕПИ и записанный рядом с ключом.
+  /** Род кошелька, установленный ПО ЕГО ПОДПИСИ в момент заведения сеанса
+   *  и записанный рядом с ключом.
    *
    *  Отдельно от `origin` намеренно (находка К-3 независимой проверки):
    *  `origin` говорит, ОТКУДА взялся ключ, а `walletKind` — КОМУ он
@@ -129,8 +132,15 @@ export interface ChatSession {
    *  код восстановления, происхождение на диске становилось `recovery`, и на
    *  этом устройстве он НАВСЕГДА терял свой выводимый ключ. «Защита в
    *  интерфейсе» такого не ловит: интерфейс может не показать кнопку, но не
-   *  может отменить уже переписанную запись. Поэтому род кошелька выясняет
-   *  сам модуль и сверяется с ним при выдаче кода. */
+   *  может отменить уже переписанную запись.
+   *
+   *  ⚠️ Честно о том, что это за гейт (замечание третьей проверки). На
+   *  ВОССТАНОВЛЕНИИ сеанса с устройства род НЕ переспрашивается — он
+   *  читается из записи как есть. То есть сверка при выдаче кода защищает от
+   *  подмены ОДНОГО поля диска другим полем того же диска: доступ для обеих
+   *  правок нужен один и тот же. Настоящий гейт стоит в другом месте — в
+   *  `openSessionFromRecoveryCode`, которая спрашивает подпись и отказывает
+   *  обычному кошельку ДО того, как что-либо запишет. */
   walletKind: WalletKind;
   /** `true` — ключ взят с устройства (окна подписи НЕ было). `false` — ключ
    *  только что заведён. Для кошелька-контракта это ровно тот признак, по
@@ -141,6 +151,14 @@ export interface ChatSession {
    *  нет). Сеанс работает, но до перезагрузки вкладки. См. раздел «запись
    *  могла не пройти» в шапке файла. */
   persisted: boolean;
+  /** ПОЧЕМУ не лёг, когда `persisted: false`. Существует ради одного
+   *  конкретного случая: у `storage_blocked` есть ДЕЙСТВИЕ («закройте
+   *  вторую вкладку сайта»), которого человек иначе не узнал бы никогда —
+   *  он просто подписывал бы заново при каждой перезагрузке, не понимая
+   *  почему. Без этого поля совет существовал бы только внутри исключения,
+   *  которое на этой ветке не бросается (обычный кошелёк продолжает
+   *  работать). `undefined`, когда всё в порядке. */
+  storageIssue?: ChatSessionErrorCode;
 }
 
 export type ChatSessionErrorCode =
@@ -159,9 +177,6 @@ export type ChatSessionErrorCode =
   | 'session_already_present'
   /** Кошелёк вернул не 65-байтовую подпись (пусто, обрезок, ERC-1271). */
   | 'signature_malformed'
-  /** Не удалось выяснить, обычный это кошелёк или контрактный. Гадать нельзя
-   *  — см. `walletKind`. */
-  | 'wallet_kind_unknown'
   /** `forgetSession` не смогла удалить запись. Молча вернуть «забыто» —
    *  соврать про то, что ключ всё ещё на устройстве. */
   | 'forget_failed'
@@ -169,6 +184,9 @@ export type ChatSessionErrorCode =
    *  не установили, а завести новый ключ вслепую значит для кошелька-
    *  контракта уничтожить прежнюю личность (К-4). */
   | 'storage_read_failed'
+  /** Записать ключ на устройство не удалось (квота, приватный режим). Сеанс
+   *  работает, но до перезагрузки вкладки. */
+  | 'storage_write_failed'
   /** Открытие базы упёрлось в соседнюю вкладку, держащую прежнюю версию.
    *  Человеку надо закрыть другие вкладки сайта, а не «повторить». */
   | 'storage_blocked'
@@ -233,27 +251,6 @@ const KEY_LEN = 32;
  *  перезагрузки — по истечении срока едем без межвкладочной защиты, ценой
  *  возможного второго окна. */
 export const SESSION_LOCK_TIMEOUT_MS = 3 * 60_000;
-
-/**
- * Указатель делегации EIP-7702: `0xef0100` ‖ 20 байт адреса реализации,
- * РОВНО 23 байта. По коду на цепи такой адрес неотличим от контракта
- * простой проверкой «код непустой» — а по существу это ОБЫЧНЫЙ кошелёк:
- * подпись у него даёт обычный секретный ключ, она обычной длины и
- * стабильна, значит ключ чата обязан выводиться из неё, как у всех.
- *
- * Цена ошибки замерена (находка К-1 независимой проверки): человек с
- * «умным аккаунтом» MetaMask на Base получал случайный ключ вместо
- * выведенного — без окна подписи и без объяснения; включил делегацию —
- * один ключ, снял — другой, переписка распадалась на куски. Устройство
- * спасало только потому, что диск читается ДО обращения к цепи, то есть
- * спасало случай, который и так работал, и не спасало самый частый —
- * заход с нового устройства.
- *
- * Длина в шаблоне жёсткая (`{40}` и `$`) НАМЕРЕННО: признак «начинается с
- * ef0100» отдал бы этой ветке настоящий контракт, чей код случайно
- * начинается так же.
- */
-const DELEGATION_INDICATOR_RE = /^0xef0100[0-9a-f]{40}$/;
 
 /**
  * Потолок ожидания ОТКРЫТИЯ базы. `indexedDB.open` умеет не ответить вовсе:
@@ -662,10 +659,6 @@ function normalizeRecoveryCode(code: string): string {
 // ─── Открытие сеанса ──────────────────────────────────────────────────────
 
 export interface OpenSessionOptions {
-  /** Чтение кода по адресу с цепи — обычно `publicClient.getBytecode`.
-   *  Обязателен: без него выяснить тип кошелька нечем, а гадать нельзя
-   *  (см. `walletKind`). */
-  getBytecode?: (address: `0x${string}`) => Promise<`0x${string}` | undefined | null>;
   /** Потолок ожидания межвкладочного замка. Умолчание —
    *  `SESSION_LOCK_TIMEOUT_MS`; параметр существует ради тестов. */
   lockTimeoutMs?: number;
@@ -678,55 +671,99 @@ export interface OpenSessionOptions {
  *  `chatCrypto.ts`). */
 export type SignChatKey = (typedData: typeof CHAT_KEY_TYPED_DATA) => Promise<`0x${string}`>;
 
+/** Обычная ECDSA-подпись: ровно 65 байт (`r ‖ s ‖ v`) в hex. Ровно то, что
+ *  принимает `deriveChatKeypair` (chatCrypto.ts) — два места обязаны
+ *  сходиться, иначе «обычный кошелёк» по нашему признаку упирался бы в
+ *  `TypeError` ядра. */
+const PLAIN_SIGNATURE_RE = /^0x[0-9a-f]{130}$/;
+
+/** Хоть сколько-то похоже на hex-строку с байтами. Пустое (`''`, `'0x'`) и
+ *  не-hex — это мусор кошелька, а не «подпись контрактного вида». */
+const ANY_SIGNATURE_RE = /^0x([0-9a-f]{2})+$/;
+
+/** Что удалось установить, попросив кошелёк подписать. */
+interface EstablishedIdentity {
+  kind: WalletKind;
+  keypair: ChatKeypair;
+  /** Только для `contract`. */
+  recoveryCode?: string;
+}
+
 /**
- * Выясняет, обычный это кошелёк или контрактный.
+ * Заводит личность, спрашивая кошелёк — и род кошелька определяет ПО САМОЙ
+ * ПОДПИСИ, а не по коду на цепи.
  *
- * ⚠️ Отказ сети — ОТДЕЛЬНЫЙ исход, а не повод предположить. Обе догадки
- * дорогие и молчаливые:
- *  - решить «обычный» для контрактного — кошелёк вернёт подпись переменной
- *    длины, и человек упрётся в `signature_malformed` без объяснения;
- *  - решить «контрактный» для обычного — человек получит СЛУЧАЙНЫЙ ключ
- *    вместо восстановимого, и на другом устройстве его переписка не сойдётся
- *    никогда, причём узнает он об этом много позже.
- * Поэтому — внятный отказ, который человек может повторить.
+ * ⚠️ ПОЧЕМУ НЕ КОД НА ЦЕПИ (замена признака, третья независимая проверка).
+ * Нас интересует единственное свойство: даёт ли кошелёк обычную подпись
+ * постоянной длины, из которой выводится ключ. Код на цепи отвечал на этот
+ * вопрос НЕВЕРНО дважды:
  *
- * Сеть спрашивается ТОЛЬКО когда ключа на устройстве ещё нет: при обычном
- * заходе (`restored`) этой функции не существует для потребителя вовсе.
+ *  - **делегированные EIP-7702** («умный аккаунт» MetaMask): код ЕСТЬ, а
+ *    подпись обычная. Лечилось отдельной проверкой указателя `0xef0100`.
+ *  - **счётные смарт-кошельки** (Coinbase Smart Wallet до первой
+ *    транзакции — а `providers.tsx` предлагает его прямо сейчас): кода НЕТ,
+ *    а подпись переменной длины (обёртка ERC-6492). Такой человек не имел
+ *    дороги в чат ВООБЩЕ и получал два противоречащих отказа: по дороге
+ *    подписи — `signature_malformed` («нужен код восстановления»), по
+ *    дороге кода — `recovery_not_applicable` («код тебе не положен»).
+ *
+ * Подпись — признак прямой, а не подпорка: она и есть то, чем мы пользуемся.
+ * Оба рода лечатся сами, а сетевой вызов исчезает вовсе — вместе с веткой
+ * «род не выяснен» и ожиданием узла RPC на первом заходе.
+ *
+ * Цена: кошелёк-контракт один раз подпишет то, что мы выбросим. Платится
+ * однажды, за единственный надёжный признак.
+ *
+ * ⚠️ Сжатая подпись 64 байта (EIP-2098) уходит в КОНТРАКТНУЮ ветку. Замерено
+ * по ядру: `deriveChatKeypair` такую подпись отвергает (`TypeError`) и молча
+ * другого ключа НЕ выводит — то есть худшее последствие здесь «человек
+ * получил код восстановления вместо выводимого ключа», чат работает, тихой
+ * подмены личности нет. Разворачивать её в 65 байт мы не беремся намеренно:
+ * отличить сжатую подпись обычного кошелька от 64 произвольных байт
+ * контрактного нечем, и догадка стоила бы ключа, выведенного из мусора.
+ *
+ * @throws {ChatSessionError} `signature_malformed` — кошелёк вернул не
+ *   строку, пустоту или не-hex. Это мусор, а не «подпись другого вида».
  */
-async function walletKind(
-  address: `0x${string}`,
-  opts: OpenSessionOptions,
-): Promise<WalletKind> {
-  if (!opts.getBytecode) {
+async function establishIdentity(signTypedData: SignChatKey): Promise<EstablishedIdentity> {
+  const signature = await signTypedData(CHAT_KEY_TYPED_DATA);
+
+  if (typeof signature !== 'string') {
     throw new ChatSessionError(
-      'chatSession: без getBytecode нельзя отличить обычный кошелёк от контрактного',
-      'wallet_kind_unknown',
+      'chatSession: кошелёк вернул не строку вместо подписи',
+      'signature_malformed',
     );
   }
-  let code: `0x${string}` | undefined | null;
-  try {
-    code = await opts.getBytecode(address);
-  } catch (err) {
+  const sig = signature.toLowerCase();
+  if (!ANY_SIGNATURE_RE.test(sig)) {
     throw new ChatSessionError(
-      'chatSession: не удалось прочитать код кошелька с цепи — повторите позже',
-      'wallet_kind_unknown',
-      { cause: err },
+      'chatSession: кошелёк вернул не подпись (пусто, не hex или нечётная длина)',
+      'signature_malformed',
     );
   }
-  // `undefined` и `'0x'` оба означают «кода нет»: разные узлы и разные версии
-  // viem отдают по-разному, и полагаться на одну форму нельзя. Сравнение идёт
-  // по приведённой строке, а не по литералу типа: сюда приходит ответ узла,
-  // а он не обязан совпадать с тем, что обещает тип на границе.
-  const normalized = typeof code === 'string' ? code.trim().toLowerCase() : '';
-  if (normalized === '' || normalized === '0x') return 'eoa';
-  if (DELEGATION_INDICATOR_RE.test(normalized)) return 'eoa';
-  return 'contract';
+
+  if (PLAIN_SIGNATURE_RE.test(sig)) {
+    return { kind: 'eoa', keypair: await keypairFromSignature(sig) };
+  }
+
+  // Любая другая длина — кошелёк-контракт: его подпись проверяется
+  // контрактом, переменной длины и НЕ обязана остаться прежней при смене
+  // состава владельцев. Выводить из неё ключ нельзя, поэтому ключ случайный
+  // плюс код восстановления.
+  const { generateMnemonic } = await import('@scure/bip39');
+  const { wordlist } = await import('@scure/bip39/wordlists/english');
+  const recoveryCode = generateMnemonic(wordlist, RECOVERY_ENTROPY_BITS);
+  return {
+    kind: 'contract',
+    keypair: await keypairFromRecoveryCode(recoveryCode),
+    recoveryCode,
+  };
 }
 
 function buildSession(
   record: StoredSession,
   address: `0x${string}`,
-  flags: { restored: boolean; persisted: boolean },
+  flags: { restored: boolean; persisted: boolean; storageIssue?: ChatSessionErrorCode },
 ): ChatSession {
   const session: ChatSession = {
     keypair: { publicKey: record.publicKey, privateKey: record.privateKey },
@@ -735,6 +772,7 @@ function buildSession(
     walletKind: record.walletKind,
     restored: flags.restored,
     persisted: flags.persisted,
+    ...(flags.storageIssue ? { storageIssue: flags.storageIssue } : {}),
   };
   if (record.origin === 'recovery' && record.recoveryCode) {
     _codes.set(session, record.recoveryCode);
@@ -788,53 +826,43 @@ async function doOpenSession(
     // ПЕРЕЧИТАТЬ под замком. Единственное, ради чего замок здесь берётся:
     // без этой строки вторая вкладка, дождавшись очереди, откроет второе
     // окно подписи — замок будет вызван и ничего не запрёт.
-    const again = await tryReadRecord(key);
+    //
+    // НО только если первое чтение сказало «пусто». Если оно ОТКАЗАЛО,
+    // повтор стоил бы второго полного ожидания подряд — молчащее хранилище
+    // держало бы человека вдвое дольше своего же потолка, ни на что при
+    // этом не отвечая. Ожидание складывается, а не удваивается.
+    const again = first.status === 'failed' ? first : await tryReadRecord(key);
     if (again.status === 'found') {
       return buildSession(again.record, address, { restored: true, persisted: true });
     }
     if (again.status === 'failed') {
-      return openWithoutStorage(address, signTypedData, opts, again.error);
+      return openWithoutStorage(address, signTypedData, again.error);
     }
 
-    const kind = await walletKind(address, opts);
-
-    let record: StoredSession;
-    if (kind === 'contract') {
-      const { generateMnemonic } = await import('@scure/bip39');
-      const { wordlist } = await import('@scure/bip39/wordlists/english');
-      const code = generateMnemonic(wordlist, RECOVERY_ENTROPY_BITS);
-      const keypair = await keypairFromRecoveryCode(code);
-      record = {
-        v: RECORD_VERSION,
-        address: key,
-        origin: 'recovery',
-        walletKind: kind,
-        publicKey: keypair.publicKey,
-        privateKey: keypair.privateKey,
-        recoveryCode: code,
-      };
-    } else {
-      const signature = await signTypedData(CHAT_KEY_TYPED_DATA);
-      const keypair = await keypairFromSignature(signature);
-      record = {
-        v: RECORD_VERSION,
-        address: key,
-        origin: 'signature',
-        walletKind: kind,
-        publicKey: keypair.publicKey,
-        privateKey: keypair.privateKey,
-      };
-    }
+    const identity = await establishIdentity(signTypedData);
+    const record: StoredSession = {
+      v: RECORD_VERSION,
+      address: key,
+      origin: identity.kind === 'contract' ? 'recovery' : 'signature',
+      walletKind: identity.kind,
+      publicKey: identity.keypair.publicKey,
+      privateKey: identity.keypair.privateKey,
+      ...(identity.recoveryCode ? { recoveryCode: identity.recoveryCode } : {}),
+    };
 
     const persisted = await writeRecord(key, record);
-    return buildSession(record, address, { restored: false, persisted });
+    return buildSession(record, address, {
+      restored: false,
+      persisted,
+      storageIssue: persisted ? undefined : 'storage_write_failed',
+    });
   });
 }
 
 /**
- * Диск прочитать не удалось. Что делать — зависит от РОДА КОШЕЛЬКА, и
- * разводка возможна только потому, что род берётся ИЗ ЦЕПИ, а не с диска:
- * даже при непрочитанном хранилище мы знаем, с кем имеем дело.
+ * Диск прочитать не удалось. Что делать — зависит от РОДА КОШЕЛЬКА, и род
+ * теперь выясняется ТОЙ ЖЕ подписью, что и всё остальное (`establishIdentity`)
+ * — то есть доступен даже при непрочитанном хранилище и без сети.
  *
  * Размен несимметричен, и это замерено:
  *
@@ -844,35 +872,32 @@ async function doOpenSession(
  *    отказывать такому человеку в переписке не за что.
  *  - **кошелёк-контракт**: ключ случайный, диск — его единственный источник.
  *    Работа вслепую означала бы новую личность поверх старой. Отказ.
- *  - **род не выяснен** (сеть отказала, `getBytecode` не передали): отказ.
- *    Догадка здесь дороже отказа — ошибка в сторону «обычный» упрёт
- *    контрактного в невнятную подпись, ошибка в сторону «контрактный»
- *    молча разведёт его переписку по двум ключам.
+ *  - **подписать не удалось**: наружу идёт ошибка кошелька как есть —
+ *    человек отказался, и это его ответ, а не наша беда с хранилищем.
+ *
+ * Цена для контрактного кошелька названа честно: он один раз подпишет, и
+ * ему откажут. Иначе род не установить, а не установив — либо отказать
+ * обоим (наказать обычного за чужую беду), либо завести новую личность
+ * поверх старой.
  *
  * ⚠️ НИЧЕГО НЕ ПИШЕТ. Под непрочитанной записью может лежать чужой сеанс
  * (соседний адрес, прежняя версия формата, запись другой вкладки) —
  * работать в памяти можно, писать вслепую нельзя. Поэтому `persisted:
  * false` здесь не «не получилось сохранить», а «сохранять и не пробовали».
+ *
+ * `storageIssue` доносит ПРИЧИНУ до вызывающего: у «занято другой вкладкой»
+ * есть действие («закройте её»), которого человек иначе не узнал бы никогда
+ * — он просто подписывал бы заново при каждой перезагрузке, не понимая,
+ * почему (находка пятого пункта третьей проверки).
  */
 async function openWithoutStorage(
   address: `0x${string}`,
   signTypedData: SignChatKey,
-  opts: OpenSessionOptions,
   readError: ChatSessionError,
 ): Promise<ChatSession> {
-  let kind: WalletKind;
-  try {
-    kind = await walletKind(address, opts);
-  } catch {
-    // Проба рода — попытка СМЯГЧИТЬ исходную беду, и её собственный провал
-    // диагноз не подменяет: сломалось чтение хранилища, о нём и сообщаем.
-    throw readError;
-  }
+  const identity = await establishIdentity(signTypedData);
+  if (identity.kind === 'contract') throw readError;
 
-  if (kind === 'contract') throw readError;
-
-  const signature = await signTypedData(CHAT_KEY_TYPED_DATA);
-  const keypair = await keypairFromSignature(signature);
   console.warn(
     '[chatSession] хранилище не читается — ключ чата выведен из подписи и живёт только в памяти вкладки; ' +
     'на диск ничего не писали (под непрочитанной записью может лежать чужой сеанс), ' +
@@ -880,12 +905,13 @@ async function openWithoutStorage(
     readError,
   );
   return {
-    keypair,
+    keypair: identity.keypair,
     address,
     origin: 'signature',
-    walletKind: kind,
+    walletKind: 'eoa',
     restored: false,
     persisted: false,
+    storageIssue: readError.code,
   };
 }
 
@@ -904,6 +930,7 @@ async function openWithoutStorage(
 export async function openSessionFromRecoveryCode(
   address: `0x${string}`,
   code: string,
+  signTypedData: SignChatKey,
   opts: OpenSessionOptions = {},
 ): Promise<ChatSession> {
   if (typeof code !== 'string') {
@@ -963,11 +990,13 @@ export async function openSessionFromRecoveryCode(
     );
   }
 
-  // Род кошелька выясняет САМ МОДУЛЬ, а не вызывающий (находка К-3). Гейт
-  // стоит ПОСЛЕ дешёвых местных проверок кода (опечатку незачем оплачивать
-  // обращением к цепи) и ДО вывода ключа и записи — обычный кошелёк не
-  // должен уметь загнать себя в ветку восстановления ни одним способом.
-  const kind = await walletKind(address, opts);
+  // Род кошелька выясняет САМ МОДУЛЬ, а не вызывающий (находка К-3) — и той
+  // же подписью, что везде. Гейт стоит ПОСЛЕ дешёвых местных проверок кода
+  // (опечатку незачем оплачивать окном подписи) и ДО вывода ключа и записи:
+  // обычный кошелёк не должен уметь загнать себя в ветку восстановления ни
+  // одним способом, потому что это стоило бы ему выводимого ключа НАВСЕГДА
+  // на этом устройстве.
+  const { kind } = await establishIdentity(signTypedData);
   if (kind !== 'contract') {
     throw new ChatSessionError(
       'У этого кошелька ключ чата выводится из подписи: код восстановления ему не нужен и не принимается',

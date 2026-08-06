@@ -88,6 +88,10 @@ function quotaError(): Error {
 }
 
 function makeFakeIndexedDB(control: FakeControl = {}) {
+  /** Сколько раз хранилище реально трогали. Без счётчика утверждение «одно
+   *  ожидание, а не два» непроверяемо: снаружи оба случая выглядят как
+   *  «сеанс в итоге получен». */
+  const stats = { opens: 0, gets: 0, puts: 0 };
   /** Каталог «устройства»: имя хранилища → ключ → значение. Живёт в подделке,
    *  а не в объекте базы: перезагрузка вкладки открывает базу заново и обязана
    *  видеть то же самое, а «другое устройство» — это НОВАЯ подделка. */
@@ -163,6 +167,7 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
     constructor(private name: string, private tx: FakeTransaction) {}
 
     get(key: string): FakeRequest {
+      stats.gets += 1;
       return this.tx.run(
         () => {
           // Настоящее хранилище отдаёт СВЕЖУЮ копию на каждое чтение —
@@ -176,6 +181,7 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
     }
 
     put(value: unknown, key: string): FakeRequest {
+      stats.puts += 1;
       const cloned = structuredClone(value);
       return this.tx.run(
         () => {
@@ -217,7 +223,9 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
     /** Прямой осмотр «диска» — тесты смотрят, что реально осело, а не верят
      *  возвращённому значению. */
     _disk: disk,
+    _stats: stats,
     open(_name: string, version: number): FakeRequest {
+      stats.opens += 1;
       const req = new FakeRequest();
       setTimeout(() => {
         if (control.hangOpen) return; // тишина: ни одного события
@@ -296,24 +304,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Обычный кошелёк: кода на цепи нет. Настоящий `getBytecode` (viem) отдаёт
- *  для такого адреса `undefined`, а не `'0x'` — обе формы встречаются в жизни
- *  (разные узлы/версии), поэтому проверяются обе. */
-const eoaBytecode = vi.fn(async () => undefined);
-const eoaBytecodeEmptyHex = vi.fn(async () => '0x' as const);
-/** Кошелёк-контракт: минимальный EIP-1167 клон — настоящая форма из этого же
- *  проекта (`AgreementDeployer` клонирует именно так). */
-const contractBytecode = vi.fn(
-  async () => '0x363d3d373d3d3d363d73bebebebebebebebebebebebebebebebebebebebe5af43d82803e903d91602b57fd5bf3' as const,
-);
-/** Указатель делегации EIP-7702: `0xef0100` ‖ 20 байт адреса реализации,
- *  ровно 23 байта. Это НЕ кошелёк-контракт — подпись у такого адреса
- *  остаётся обычной подписью обычного ключа (К-1). */
-const DELEGATION = '0xef0100bebebebebebebebebebebebebebebebebebebebe';
-const delegationBytecode = vi.fn(async () => DELEGATION as `0x${string}`);
-
-function eoaOpts() { return { getBytecode: eoaBytecode }; }
-function contractOpts() { return { getBytecode: contractBytecode }; }
+/** Подпись КОШЕЛЬКА-КОНТРАКТА: переменной длины, проверяется контрактом
+ *  (ERC-1271, у счётных — обёрнутая по ERC-6492). Род кошелька определяется
+ *  ИМЕННО ЭТИМ — длиной подписи, а не кодом на цепи: код отвечал неверно и
+ *  на делегированных (код есть, подпись обычная), и на счётных (кода нет,
+ *  подпись необычная). */
+const ALICE_CONTRACT_SIG = `0x${'ab'.repeat(220)}` as `0x${string}`;
+const BOB_CONTRACT_SIG = `0x${'cd'.repeat(180)}` as `0x${string}`;
 
 function hex(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
@@ -325,8 +322,8 @@ describe('сеанс чата: ключ живёт на устройстве', (
   it('два открытия подряд — РОВНО ОДИН вызов signTypedData', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
 
-    const first = await openSession(ALICE, sign, eoaOpts());
-    const second = await openSession(ALICE, sign, eoaOpts());
+    const first = await openSession(ALICE, sign);
+    const second = await openSession(ALICE, sign);
 
     // Замер, а не рассуждение: единица — весь смысл этого теста.
     expect(sign).toHaveBeenCalledTimes(1);
@@ -338,7 +335,7 @@ describe('сеанс чата: ключ живёт на устройстве', (
 
   it('подписывать дают РОВНО CHAT_KEY_TYPED_DATA, не пересобранную копию', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
-    await openSession(ALICE, sign, eoaOpts());
+    await openSession(ALICE, sign);
 
     // Сравнение по ссылке: пересобранная структура с тем же содержимым не
     // пройдёт. Единственный источник истины о том, что подписывается, —
@@ -348,7 +345,7 @@ describe('сеанс чата: ключ живёт на устройстве', (
 
   it('десять открытий подряд — всё ещё одна подпись', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
-    for (let i = 0; i < 10; i += 1) await openSession(ALICE, sign, eoaOpts());
+    for (let i = 0; i < 10; i += 1) await openSession(ALICE, sign);
     expect(sign).toHaveBeenCalledTimes(1);
   });
 });
@@ -358,12 +355,12 @@ describe('сеанс чата: ключ живёт на устройстве', (
 describe('восстановление обычного кошелька — это сам кошелёк', () => {
   it('другое устройство, та же подпись — тот же ключ', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
-    const onPhone = await openSession(ALICE, sign, eoaOpts());
+    const onPhone = await openSession(ALICE, sign);
 
     // «Другое устройство» = чистое хранилище. Ключ обязан совпасть, потому
     // что он выводится из подписи, а не из того, что лежало на диске.
     installStorage();
-    const onLaptop = await openSession(ALICE, sign, eoaOpts());
+    const onLaptop = await openSession(ALICE, sign);
 
     expect(hex(onLaptop.keypair.privateKey)).toBe(hex(onPhone.keypair.privateKey));
     expect(sign).toHaveBeenCalledTimes(2); // по разу на устройство
@@ -371,110 +368,122 @@ describe('восстановление обычного кошелька — э�
   });
 
   it('другая подпись — другой ключ', async () => {
-    const a = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const a = await openSession(ALICE, async () => ALICE_SIG);
     installStorage();
-    const b = await openSession(ALICE, async () => BOB_SIG, eoaOpts());
+    const b = await openSession(ALICE, async () => BOB_SIG);
     expect(hex(b.keypair.privateKey)).not.toBe(hex(a.keypair.privateKey));
   });
 
-  it('умный аккаунт EIP-7702 — обычный кошелёк, а не контрактный (К-1)', async () => {
-    // Боевая форма указателя делегации: 0xef0100 ‖ 20 байт адреса, ровно 23
-    // байта. MetaMask на Base предлагает «умный аккаунт» прямо сейчас.
-    // Подпись у такого адреса остаётся ОБЫЧНОЙ подписью обычного ключа и
-    // остаётся стабильной — значит и ключ чата обязан быть выводимым.
+  it('умный аккаунт EIP-7702 — обычный кошелёк: подпись у него обычная (К-1)', async () => {
+    // Делегированный адрес подписывает СВОИМ ключом: подпись 65 байт и
+    // стабильна. Прежде для этого нужна была отдельная проверка указателя
+    // 0xef0100 в байткоде; с признаком по подписи род определяется тем же
+    // путём, что у всех, и подпорка не нужна.
     const sign = vi.fn(async () => ALICE_SIG);
-    const session = await openSession(ALICE, sign, { getBytecode: delegationBytecode });
+    const session = await openSession(ALICE, sign);
 
     expect(session.origin).toBe('signature');
+    expect(session.walletKind).toBe('eoa');
     expect(sign).toHaveBeenCalledTimes(1);
-    // тот же ключ, что у него же без делегации
     expect(hex(session.keypair.publicKey))
       .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
   });
 
   it('включил делегацию, снял делегацию — ключ НЕ меняется (К-1)', async () => {
-    const withDelegation = await openSession(ALICE, async () => ALICE_SIG, {
-      getBytecode: delegationBytecode,
-    });
-    installStorage(); // новое устройство, делегация уже снята
-    const without = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
-
+    // Подпись у делегированного и у обычного одна и та же, значит и ключ.
+    const withDelegation = await openSession(ALICE, async () => ALICE_SIG);
+    installStorage(); // новое устройство, делегация снята
+    const without = await openSession(ALICE, async () => ALICE_SIG);
     expect(hex(without.keypair.privateKey)).toBe(hex(withDelegation.keypair.privateKey));
-  });
-
-  it('настоящий контрактный код всё ещё контрактный, а не «почти делегация»', async () => {
-    // Граница: 0xef0100 с ЛИШНИМИ байтами — уже не указатель делегации, а
-    // просто код, начинающийся так же. Такой адрес обязан остаться
-    // контрактным, иначе признак превратился бы в «начинается с ef0100».
-    const almost = vi.fn(async () => (DELEGATION + 'ff') as `0x${string}`);
-    const s = await openSession(ALICE, async () => ALICE_SIG, { getBytecode: almost });
-    expect(s.origin).toBe('recovery');
-  });
-
-  it('пустой байткод в виде «0x» — тоже обычный кошелёк, не контрактный', async () => {
-    const sign = vi.fn(async () => ALICE_SIG);
-    const s = await openSession(ALICE, sign, { getBytecode: eoaBytecodeEmptyHex });
-    expect(s.origin).toBe('signature');
-    expect(sign).toHaveBeenCalledTimes(1);
   });
 });
 
-// ═══ 3. Код восстановления возвращает тот же ключ ═════════════════════════
+// ═══ Признак рода кошелька — САМА ПОДПИСЬ, а не код на цепи ══════════════
 
-describe('кошелёк-контракт: код восстановления', () => {
-  it('подписи не просят вовсе, а код — ровно 12 слов из английского списка', async () => {
-    const sign = vi.fn(async () => ALICE_SIG);
-    const session = await openSession(ALICE, sign, contractOpts());
+describe('род кошелька выясняется подписью', () => {
+  /** Счётный смарт-кошелёк (Coinbase Smart Wallet до первой транзакции):
+   *  КОДА НА ЦЕПИ НЕТ, а подпись переменной длины — ERC-6492 обёртка.
+   *  Прежний признак звал его обычным, и человек упирался в два
+   *  противоречащих отказа: «нужен код восстановления» и «код не положен».
+   *  Дороги в чат не было ни одной. */
+  const counterfactualSignature = `0x${'ab'.repeat(220)}` as `0x${string}`;
 
-    expect(sign).toHaveBeenCalledTimes(0);
+  it('счётный смарт-кошелёк (кода на цепи нет, подпись длинная) получает код', async () => {
+    const sign = vi.fn(async () => counterfactualSignature);
+    const session = await openSession(ALICE, sign);
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(session.walletKind).toBe('contract');
     expect(session.origin).toBe('recovery');
-
-    const code = exportRecoveryCode(session);
-    const words = code.split(' ');
-    expect(words).toHaveLength(12);
-    expect(RECOVERY_WORD_COUNT).toBe(12);
-    for (const w of words) expect(wordlist).toContain(w);
+    expect(exportRecoveryCode(session).split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
   });
 
-  it('код на другом устройстве возвращает ТОТ ЖЕ ключ', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    const code = exportRecoveryCode(session);
-
-    installStorage(); // другое устройство
-    const restored = await openSessionFromRecoveryCode(ALICE, code, contractOpts());
-
-    expect(hex(restored.keypair.privateKey)).toBe(hex(session.keypair.privateKey));
-    expect(hex(restored.keypair.publicKey)).toBe(hex(session.keypair.publicKey));
-    expect(restored.origin).toBe('recovery');
+  it('обычная 65-байтовая подпись — обычный кошелёк, ключ выводится', async () => {
+    const session = await openSession(ALICE, async () => ALICE_SIG);
+    expect(session.walletKind).toBe('eoa');
+    expect(session.origin).toBe('signature');
+    expect(hex(session.keypair.publicKey))
+      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
   });
 
-  it('два кошелька-контракта получают РАЗНЫЕ коды и разные ключи', async () => {
-    const a = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    const b = await openSession(BOB, async () => BOB_SIG, contractOpts());
-    expect(exportRecoveryCode(a)).not.toBe(exportRecoveryCode(b));
-    expect(hex(a.keypair.privateKey)).not.toBe(hex(b.keypair.privateKey));
+  it('делегированный EIP-7702 лечится сам: подпись обычная — кошелёк обычный', async () => {
+    // Раньше для этого нужна была отдельная проверка указателя 0xef0100.
+    // С признаком по подписи род определяется тем же путём, что у всех.
+    const session = await openSession(ALICE, async () => ALICE_SIG);
+    expect(session.walletKind).toBe('eoa');
   });
 
-  it('после восстановления код выдаётся снова, и он тот же', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    const code = exportRecoveryCode(session);
+  it('сжатая подпись 64 байта НЕ даёт молча другой ключ — уходит в контрактную ветку', async () => {
+    // Замер по ядру: deriveChatKeypair такую подпись ОТВЕРГАЕТ (TypeError),
+    // молча другого ключа не выводит. Значит худшее, что бывает, — человек
+    // получает код восстановления вместо выводимого ключа: чат работает,
+    // тихой подмены личности нет.
+    const compact = `0x${'1c3d'.repeat(130).slice(0, 128)}` as `0x${string}`;
+    expect((compact.length - 2) / 2).toBe(64);
 
-    installStorage();
-    const restored = await openSessionFromRecoveryCode(ALICE, code, contractOpts());
-    expect(exportRecoveryCode(restored)).toBe(code);
-
-    // и пережил перезагрузку вкладки — код лежит на устройстве
-    const reopened = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    expect(reopened.restored).toBe(true);
-    expect(exportRecoveryCode(reopened)).toBe(code);
+    const session = await openSession(ALICE, async () => compact);
+    expect(session.walletKind).toBe('contract');
+    expect(hex(session.keypair.publicKey))
+      .not.toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+    expect(exportRecoveryCode(session).split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
   });
 
-  it('код НЕ вылезает в JSON сеанса — его негде случайно залогировать', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    const code = exportRecoveryCode(session);
-    const dump = JSON.stringify(session);
-    expect(dump).not.toContain(code);
-    expect(dump).not.toContain(code.split(' ')[0] + ' ' + code.split(' ')[1]);
+  it('сети не касаемся вовсе: цепь не спрашивается ни разу', async () => {
+    // Шпион подаётся приведением: `getBytecode` в типе OpenSessionOptions
+    // больше НЕТ вовсе — сети модулю взять негде. Проверка на исполнении:
+    // даже подсунутый насильно, он не зовётся ни разу.
+    const bytecode = vi.fn(async () => undefined);
+    const smuggled = { getBytecode: bytecode } as unknown as Parameters<typeof openSession>[2];
+    await openSession(ALICE, async () => ALICE_SIG, smuggled);
+    await openSession(ALICE, async () => ALICE_SIG, smuggled);
+    expect(bytecode).toHaveBeenCalledTimes(0);
+  });
+
+  it('подписать не удалось — отказ, и ничего не записано', async () => {
+    const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });
+    let thrown: unknown;
+    try {
+      await openSession(ALICE, async () => { throw rejection; });
+    } catch (err) { thrown = err; }
+    expect(thrown).toBe(rejection);
+    const store = fakeIdb._disk.get('sessions');
+    expect(store === undefined || store.size === 0).toBe(true);
+  });
+
+  it('подпись — не строка: вердикт с кодом, а не падение', async () => {
+    await expect(
+      openSession(ALICE, async () => undefined as unknown as `0x${string}`),
+    ).rejects.toMatchObject({ code: 'signature_malformed' });
+  });
+
+  it('род, выясненный подписью, ложится в запись и переживает перезаход', async () => {
+    const first = await openSession(ALICE, async () => counterfactualSignature);
+    const sign = vi.fn(async () => counterfactualSignature);
+    const second = await openSession(ALICE, sign);
+
+    expect(sign).toHaveBeenCalledTimes(0); // взят с устройства
+    expect(second.walletKind).toBe('contract');
+    expect(exportRecoveryCode(second)).toBe(exportRecoveryCode(first));
   });
 });
 
@@ -491,7 +500,7 @@ describe('золотые векторы вывода ключа', () => {
    *  Заперты обе дороги: подпись обычного кошелька и код восстановления. */
 
   it('обычный кошелёк: подпись → ровно этот ключ', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const session = await openSession(ALICE, async () => ALICE_SIG);
     expect(hex(session.keypair.publicKey))
       .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
     expect(hex(session.keypair.privateKey))
@@ -500,7 +509,7 @@ describe('золотые векторы вывода ключа', () => {
 
   it('код восстановления: двенадцать слов → ровно этот ключ', async () => {
     expect(GOLD).toBe('legal winner thank year wave sausage worth useful legal winner thank yellow');
-    const session = await openSessionFromRecoveryCode(ALICE, GOLD, contractOpts());
+    const session = await openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG);
     expect(hex(session.keypair.publicKey))
       .toBe('377e94d7047bf2f0241998be0c9ab6bae18ac90139edc3f2d2f4bf51f2c53253');
     expect(hex(session.keypair.privateKey))
@@ -508,9 +517,9 @@ describe('золотые векторы вывода ключа', () => {
   });
 
   it('ключ из кода и ключ из подписи — РАЗНЫЕ, дороги не пересекаются', async () => {
-    const byCode = await openSessionFromRecoveryCode(ALICE, GOLD, contractOpts());
+    const byCode = await openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG);
     installStorage();
-    const bySig = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const bySig = await openSession(ALICE, async () => ALICE_SIG);
     expect(hex(byCode.keypair.privateKey)).not.toBe(hex(bySig.keypair.privateKey));
   });
 });
@@ -522,10 +531,10 @@ describe('негодный код восстановления отказыва�
    *  отказу ведёт несколько дорог, и молчаливо ДРУГОЙ ключ здесь читается
    *  человеком как «переписка пропала». */
   async function expectCode(code: string, expected: string) {
-    await expect(openSessionFromRecoveryCode(ALICE, code, contractOpts())).rejects.toMatchObject({
+    await expect(openSessionFromRecoveryCode(ALICE, code, async () => ALICE_CONTRACT_SIG)).rejects.toMatchObject({
       code: expected,
     });
-    await expect(openSessionFromRecoveryCode(ALICE, code, contractOpts())).rejects.toBeInstanceOf(ChatSessionError);
+    await expect(openSessionFromRecoveryCode(ALICE, code, async () => ALICE_CONTRACT_SIG)).rejects.toBeInstanceOf(ChatSessionError);
   }
 
   it('пустая строка', async () => {
@@ -563,25 +572,25 @@ describe('негодный код восстановления отказыва�
 
   it('не строка вовсе — TypeError, как в ядре: это НАШ мусор, а не событие', async () => {
     await expect(
-      openSessionFromRecoveryCode(ALICE, undefined as unknown as string, contractOpts()),
+      openSessionFromRecoveryCode(ALICE, undefined as unknown as string, async () => ALICE_CONTRACT_SIG),
     ).rejects.toBeInstanceOf(TypeError);
   });
 
   it('ни один отказ НИЧЕГО не записал на устройство', async () => {
     for (const bad of ['', GOLD.split(' ').slice(0, 11).join(' '), GOLD.replace('yellow', 'zoo')]) {
-      await openSessionFromRecoveryCode(ALICE, bad, contractOpts()).catch(() => {});
+      await openSessionFromRecoveryCode(ALICE, bad, async () => ALICE_CONTRACT_SIG).catch(() => {});
     }
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
   });
 
   it('лишние пробелы и ДРУГОЙ РЕГИСТР — работают: человек перепечатывает с бумажки', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     const code = exportRecoveryCode(session);
 
     installStorage();
     const messy = `  ${code.toUpperCase().replace(/ /g, '   ')}\n`;
-    const restored = await openSessionFromRecoveryCode(ALICE, messy, contractOpts());
+    const restored = await openSessionFromRecoveryCode(ALICE, messy, async () => ALICE_CONTRACT_SIG);
 
     expect(hex(restored.keypair.privateKey)).toBe(hex(session.keypair.privateKey));
     // и выдаётся обратно в опрятном виде, а не как человек его набрал
@@ -593,45 +602,45 @@ describe('негодный код восстановления отказыва�
 
 describe('код восстановления поверх живого сеанса — отказ, а не тихая замена', () => {
   it('чужой код по адресу с сеансом отвергается, ключ и код на месте', async () => {
-    const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const mine = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     const myCode = exportRecoveryCode(mine);
 
-    await expect(openSessionFromRecoveryCode(ALICE, GOLD, contractOpts())).rejects.toMatchObject({
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG)).rejects.toMatchObject({
       code: 'session_already_present',
     });
 
     // ничего не сдвинулось: тот же ключ, тот же код, без окна подписи
-    const after = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const after = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     expect(hex(after.keypair.privateKey)).toBe(hex(mine.keypair.privateKey));
     expect(exportRecoveryCode(after)).toBe(myCode);
   });
 
   it('обычный сеанс тоже не затирается кодом', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
-    const mine = await openSession(ALICE, sign, eoaOpts());
+    const mine = await openSession(ALICE, sign);
 
-    await expect(openSessionFromRecoveryCode(ALICE, GOLD, contractOpts())).rejects.toMatchObject({
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG)).rejects.toMatchObject({
       code: 'session_already_present',
     });
 
-    const after = await openSession(ALICE, sign, eoaOpts());
+    const after = await openSession(ALICE, sign);
     expect(hex(after.keypair.privateKey)).toBe(hex(mine.keypair.privateKey));
     expect(after.origin).toBe('signature');
     expect(sign).toHaveBeenCalledTimes(1);
   });
 
   it('снять сеанс можно только явно — через forgetSession', async () => {
-    const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const mine = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     await forgetSession(ALICE);
 
-    const restored = await openSessionFromRecoveryCode(ALICE, GOLD, contractOpts());
+    const restored = await openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG);
     expect(hex(restored.keypair.privateKey)).not.toBe(hex(mine.keypair.privateKey));
     expect(exportRecoveryCode(restored)).toBe(GOLD);
   });
 
   it('по СВОБОДНОМУ соседнему адресу код по-прежнему принимается', async () => {
-    await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    const bob = await openSessionFromRecoveryCode(BOB, GOLD, contractOpts());
+    await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    const bob = await openSessionFromRecoveryCode(BOB, GOLD, async () => BOB_CONTRACT_SIG);
     expect(exportRecoveryCode(bob)).toBe(GOLD);
   });
 });
@@ -643,11 +652,11 @@ describe('род кошелька выясняет сам модуль, а не 
     const sign = vi.fn(async () => ALICE_SIG);
 
     await expect(
-      openSessionFromRecoveryCode(ALICE, GOLD, eoaOpts()),
+      openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_SIG),
     ).rejects.toMatchObject({ code: 'recovery_not_applicable' });
 
     // и на диске по-прежнему пусто — обычный заход даёт ВЫВОДИМЫЙ ключ
-    const session = await openSession(ALICE, sign, eoaOpts());
+    const session = await openSession(ALICE, sign);
     expect(session.origin).toBe('signature');
     expect(hex(session.keypair.publicKey))
       .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
@@ -655,21 +664,17 @@ describe('род кошелька выясняет сам модуль, а не 
 
   it('умный аккаунт EIP-7702 — тоже обычный, кода не получает', async () => {
     await expect(
-      openSessionFromRecoveryCode(ALICE, GOLD, { getBytecode: delegationBytecode }),
+      openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_SIG),
     ).rejects.toMatchObject({ code: 'recovery_not_applicable' });
   });
 
-  it('без getBytecode модуль не гадает и не принимает код', async () => {
-    await expect(
-      openSessionFromRecoveryCode(ALICE, GOLD),
-    ).rejects.toMatchObject({ code: 'wallet_kind_unknown' });
-  });
-
-  it('сеть отказала — отказ с кодом, ничего не записано', async () => {
-    const failing = vi.fn(async () => { throw new Error('HTTP request failed'); });
-    await expect(
-      openSessionFromRecoveryCode(ALICE, GOLD, { getBytecode: failing }),
-    ).rejects.toMatchObject({ code: 'wallet_kind_unknown' });
+  it('подписать не удалось — код не принят, ошибка кошелька как есть', async () => {
+    const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });
+    let thrown: unknown;
+    try {
+      await openSessionFromRecoveryCode(ALICE, GOLD, async () => { throw rejection; });
+    } catch (err) { thrown = err; }
+    expect(thrown).toBe(rejection);
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
   });
@@ -677,7 +682,7 @@ describe('род кошелька выясняет сам модуль, а не 
   it('род кошелька лежит В ЗАПИСИ и сверяется при выдаче кода', async () => {
     // Обход через подмену происхождения на диске: даже если запись говорит
     // origin=recovery, род кошелька в ней говорит правду, и код не выдаётся.
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     expect(session.walletKind).toBe('contract');
 
     const store = fakeIdb._disk.get('sessions')!;
@@ -685,7 +690,7 @@ describe('род кошелька выясняет сам модуль, а не 
     const rec = store.get(key) as Record<string, unknown>;
     store.set(key, { ...rec, walletKind: 'eoa' });
 
-    const tampered = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const tampered = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     expect(tampered.walletKind).toBe('eoa');
     let thrown: unknown;
     try { exportRecoveryCode(tampered); } catch (err) { thrown = err; }
@@ -696,7 +701,7 @@ describe('род кошелька выясняет сам модуль, а не 
     // Отличается от годной РОВНО отсутствием поля. Без этого замка запись
     // проходила бы, а `session.walletKind` был бы undefined при типе
     // WalletKind — то самое «заперто на одном пути, открыто на соседнем».
-    await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    await openSession(ALICE, async () => ALICE_SIG);
     const store = fakeIdb._disk.get('sessions')!;
     const key = Array.from(store.keys())[0];
     const rec = { ...(store.get(key) as Record<string, unknown>) };
@@ -705,7 +710,7 @@ describe('род кошелька выясняет сам модуль, а не 
     store.set(key, rec);
 
     const sign = vi.fn(async () => ALICE_SIG);
-    const after = await openSession(ALICE, sign, eoaOpts());
+    const after = await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(1); // отвергнута, подписали заново
     expect(after.walletKind).toBe('eoa');
@@ -713,8 +718,8 @@ describe('род кошелька выясняет сам модуль, а не 
   });
 
   it('обычный сеанс несёт walletKind eoa, контрактный — contract', async () => {
-    const eoa = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
-    const contract = await openSession(BOB, async () => BOB_SIG, contractOpts());
+    const eoa = await openSession(ALICE, async () => ALICE_SIG);
+    const contract = await openSession(BOB, async () => BOB_CONTRACT_SIG);
     expect(eoa.walletKind).toBe('eoa');
     expect(contract.walletKind).toBe('contract');
   });
@@ -728,7 +733,7 @@ describe('версия формата записи', () => {
     // отлетала раньше, на проверке происхождения, и сам гейт версии не
     // сторожил никто (снять его давало 0 красных). Здесь запись отличается
     // от годной РОВНО версией.
-    const good = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const good = await openSession(ALICE, async () => ALICE_SIG);
     const store = fakeIdb._disk.get('sessions')!;
     const key = Array.from(store.keys())[0];
     const rec = store.get(key) as Record<string, unknown>;
@@ -736,7 +741,7 @@ describe('версия формата записи', () => {
     store.set(key, { ...rec, v: RECORD_VERSION + 1 });
 
     const sign = vi.fn(async () => ALICE_SIG);
-    const after = await openSession(ALICE, sign, eoaOpts());
+    const after = await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(1); // запись отвергнута, подписали заново
     expect(hex(after.keypair.privateKey)).toBe(hex(good.keypair.privateKey));
@@ -747,7 +752,7 @@ describe('версия формата записи', () => {
 
 describe('у обычного кошелька кода восстановления нет и не должно быть', () => {
   it('exportRecoveryCode отказывает с кодом, а не отдаёт пустую строку', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const session = await openSession(ALICE, async () => ALICE_SIG);
     expect(session.origin).toBe('signature');
 
     let thrown: unknown;
@@ -763,9 +768,9 @@ describe('у обычного кошелька кода восстановлен
 describe('forgetSession', () => {
   it('следующий заход снова просит подпись — замер: 2 вызова', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
-    await openSession(ALICE, sign, eoaOpts());
+    await openSession(ALICE, sign);
     await forgetSession(ALICE);
-    await openSession(ALICE, sign, eoaOpts());
+    await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(2);
     // и на диске снова ровно одна запись, а не две
@@ -775,17 +780,17 @@ describe('forgetSession', () => {
   it('забывает ТОЛЬКО названный адрес — сеанс соседа цел', async () => {
     const signA = vi.fn(async () => ALICE_SIG);
     const signB = vi.fn(async () => BOB_SIG);
-    await openSession(ALICE, signA, eoaOpts());
-    await openSession(BOB, signB, eoaOpts());
+    await openSession(ALICE, signA);
+    await openSession(BOB, signB);
 
     await forgetSession(ALICE);
 
-    await openSession(BOB, signB, eoaOpts());
+    await openSession(BOB, signB);
     expect(signB).toHaveBeenCalledTimes(1); // сеанс BOB не тронут
   });
 
   it('не смог удалить — говорит об этом, а не врёт «забыто»', async () => {
-    await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    await openSession(ALICE, async () => ALICE_SIG);
     installStorageKeepingDisk({ failDelete: true });
 
     await expect(forgetSession(ALICE)).rejects.toMatchObject({ code: 'forget_failed' });
@@ -809,7 +814,7 @@ function installStorageKeepingDisk(control: FakeControl) {
 
 describe('ключа нет в localStorage — прямой осмотр', () => {
   it('после открытия сеанса localStorage пуст и его не трогали на запись', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const session = await openSession(ALICE, async () => ALICE_SIG);
 
     expect(fakeLs._map.size).toBe(0);
     expect(fakeLs._calls.filter(c => c.startsWith('set:'))).toHaveLength(0);
@@ -821,7 +826,7 @@ describe('ключа нет в localStorage — прямой осмотр', () =
   });
 
   it('и у кошелька-контракта тоже: ни ключа, ни кода восстановления', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     const code = exportRecoveryCode(session);
 
     expect(fakeLs._map.size).toBe(0);
@@ -836,9 +841,9 @@ describe('ключ принадлежит своему адресу, а не у�
     const signA = vi.fn(async () => ALICE_SIG);
     const signB = vi.fn(async () => BOB_SIG);
 
-    const a1 = await openSession(ALICE, signA, eoaOpts());
-    const b  = await openSession(BOB, signB, eoaOpts());
-    const a2 = await openSession(ALICE, signA, eoaOpts());
+    const a1 = await openSession(ALICE, signA);
+    const b  = await openSession(BOB, signB);
+    const a2 = await openSession(ALICE, signA);
 
     // Замер держит мутацию «ключевать хранилище константой»: тогда запись B
     // затрёт запись A, и третий заход попросит подпись — станет 3.
@@ -853,15 +858,15 @@ describe('ключ принадлежит своему адресу, а не у�
 
   it('тот же адрес в другом регистре — тот же сеанс, а не второе окно подписи', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
-    await openSession(ALICE, sign, eoaOpts());
-    await openSession(ALICE.toLowerCase() as `0x${string}`, sign, eoaOpts());
+    await openSession(ALICE, sign);
+    await openSession(ALICE.toLowerCase() as `0x${string}`, sign);
 
     expect(sign).toHaveBeenCalledTimes(1);
     expect(fakeIdb._disk.get('sessions')?.size).toBe(1);
   });
 
   it('запись, подписанная чужим адресом, не выдаётся за свою', async () => {
-    await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    await openSession(ALICE, async () => ALICE_SIG);
     // подменяем адрес внутри записи, ключ хранилища оставляем
     const store = fakeIdb._disk.get('sessions')!;
     const key = Array.from(store.keys())[0];
@@ -869,7 +874,7 @@ describe('ключ принадлежит своему адресу, а не у�
     store.set(key, { ...rec, address: BOB.toLowerCase() });
 
     const sign = vi.fn(async () => ALICE_SIG);
-    const again = await openSession(ALICE, sign, eoaOpts());
+    const again = await openSession(ALICE, sign);
     expect(sign).toHaveBeenCalledTimes(1); // запись отвергнута, подписали заново
     expect(again.origin).toBe('signature');
   });
@@ -882,7 +887,7 @@ describe('вкладку закрыли между подписью и запи�
     installStorage({ failPut: true }); // запись откатывается транзакцией
     const sign = vi.fn(async () => ALICE_SIG);
 
-    const session = await openSession(ALICE, sign, eoaOpts());
+    const session = await openSession(ALICE, sign);
 
     // сеанс отдан — переписка в этой вкладке работает
     expect(session.keypair.privateKey).toHaveLength(32);
@@ -903,8 +908,8 @@ describe('вкладку закрыли между подписью и запи�
     // интерфейс обязан не обещать сохранность — для этого persisted.
     installStorage({ failPut: true });
 
-    const first = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
-    const second = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const first = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    const second = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
 
     expect(first.persisted).toBe(false);
     expect(second.persisted).toBe(false);
@@ -915,8 +920,8 @@ describe('вкладку закрыли между подписью и запи�
   it('следующий заход читает пустоту, а не мусор', async () => {
     installStorage({ failPut: true });
     const sign = vi.fn(async () => ALICE_SIG);
-    await openSession(ALICE, sign, eoaOpts());
-    const second = await openSession(ALICE, sign, eoaOpts());
+    await openSession(ALICE, sign);
+    const second = await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(2);
     expect(second.keypair.privateKey).toHaveLength(32);
@@ -928,7 +933,7 @@ describe('вкладку закрыли между подписью и запи�
 describe('IndexedDB отказала в записи (квота)', () => {
   it('сеанс работает, но помечен неcохранённым и об этом сказано вслух', async () => {
     installStorage({ failPut: true });
-    const session = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const session = await openSession(ALICE, async () => ALICE_SIG);
 
     expect(session.persisted).toBe(false);
     expect(warn).toHaveBeenCalledTimes(1);
@@ -937,7 +942,7 @@ describe('IndexedDB отказала в записи (квота)', () => {
   });
 
   it('успешная запись НЕ жалуется', async () => {
-    const session = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    const session = await openSession(ALICE, async () => ALICE_SIG);
     expect(session.persisted).toBe(true);
     expect(warn).not.toHaveBeenCalled();
   });
@@ -945,7 +950,7 @@ describe('IndexedDB отказала в записи (квота)', () => {
   it('хранилища нет вовсе (сервер, приватный режим) — тот же честный ответ', async () => {
     delete g.indexedDB;
     const sign = vi.fn(async () => ALICE_SIG);
-    const session = await openSession(ALICE, sign, eoaOpts());
+    const session = await openSession(ALICE, sign);
     expect(session.persisted).toBe(false);
     expect(session.keypair.privateKey).toHaveLength(32);
   });
@@ -954,10 +959,8 @@ describe('IndexedDB отказала в записи (квота)', () => {
     // Браузер шлёт `blocked` и больше ничего. Без обработчика это вечное
     // молчание — не отказ, а зависший чат без единого сигнала.
     installStorage({ blockOpen: true });
-    const sign = vi.fn(async () => ALICE_SIG);
-    await expect(openSession(ALICE, sign, contractOpts()))
+    await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
       .rejects.toMatchObject({ code: 'storage_blocked' });
-    expect(sign).toHaveBeenCalledTimes(0);
   });
 
   it('открытие молчит вовсе — потолок ожидания, а не зависание (В-4)', async () => {
@@ -969,7 +972,7 @@ describe('IndexedDB отказала в записи (квота)', () => {
       return realSetTimeout(fn, ms === STORAGE_OPEN_TIMEOUT_MS ? 0 : ms, ...rest);
     }));
     try {
-      await expect(openSession(ALICE, async () => ALICE_SIG, contractOpts()))
+      await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
         .rejects.toMatchObject({ code: 'storage_open_timeout' });
       // и потолок — боевой, а не подставленный
       expect(delays).toContain(STORAGE_OPEN_TIMEOUT_MS);
@@ -986,10 +989,8 @@ describe('IndexedDB отказала в записи (квота)', () => {
     // «Не смогли открыть» — не «там пусто». Различить нечем, а цена ошибки
     // для кошелька-контракта — новая личность поверх старой.
     installStorage({ failOpen: true });
-    const sign = vi.fn(async () => ALICE_SIG);
-    await expect(openSession(ALICE, sign, contractOpts()))
+    await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
       .rejects.toMatchObject({ code: 'storage_read_failed' });
-    expect(sign).toHaveBeenCalledTimes(0);
   });
 });
 
@@ -1002,8 +1003,8 @@ describe('две вкладки открывают сеанс одновреме
     const sign = vi.fn(() => gate);
 
     const both = Promise.all([
-      openSession(ALICE, sign, eoaOpts()),
-      openSession(ALICE, sign, eoaOpts()),
+      openSession(ALICE, sign),
+      openSession(ALICE, sign),
     ]);
     // даём обоим дойти до места, где они решают спрашивать подпись
     await new Promise(r => setTimeout(r, 20));
@@ -1026,8 +1027,8 @@ describe('две вкладки открывают сеанс одновреме
     const sign = vi.fn(() => gate);
 
     const both = Promise.all([
-      tabOne.openSession(ALICE, sign, eoaOpts()),
-      tabTwo.openSession(ALICE, sign, eoaOpts()),
+      tabOne.openSession(ALICE, sign),
+      tabTwo.openSession(ALICE, sign),
     ]);
     await new Promise(r => setTimeout(r, 20));
     resolveSign!(ALICE_SIG);
@@ -1056,8 +1057,8 @@ describe('две вкладки открывают сеанс одновреме
       const sign = vi.fn(() => gate);
 
       const both = Promise.all([
-        openSession(ALICE, sign, eoaOpts()),
-        openSession(ALICE, sign, eoaOpts()),
+        openSession(ALICE, sign),
+        openSession(ALICE, sign),
       ]);
       await new Promise(r => setTimeout(r, 20));
       resolveSign!(ALICE_SIG);
@@ -1084,7 +1085,7 @@ describe('две вкладки открывают сеанс одновреме
 
     const sign = vi.fn(async () => ALICE_SIG);
     const started = Date.now();
-    const session = await openSession(ALICE, sign, { ...eoaOpts(), lockTimeoutMs: 30 });
+    const session = await openSession(ALICE, sign, { lockTimeoutMs: 30 });
     const waited = Date.now() - started;
 
     expect(sign).toHaveBeenCalledTimes(1);
@@ -1117,7 +1118,7 @@ describe('две вкладки открывают сеанс одновреме
       await takenP;
 
       const sign = vi.fn(async () => ALICE_SIG);
-      await openSession(ALICE, sign, eoaOpts()); // умолчание, не подставленное
+      await openSession(ALICE, sign); // умолчание, не подставленное
 
       expect(delays).toContain(SESSION_LOCK_TIMEOUT_MS);
       expect(sign).toHaveBeenCalledTimes(1);
@@ -1141,25 +1142,35 @@ describe('две вкладки открывают сеанс одновреме
 describe('мусор на входе — вердикт, а не падение', () => {
   it('подпись пустая', async () => {
     await expect(
-      openSession(ALICE, async () => '' as `0x${string}`, eoaOpts()),
+      openSession(ALICE, async () => '' as `0x${string}`),
     ).rejects.toMatchObject({ code: 'signature_malformed' });
   });
 
-  it('подпись не той длины (кошелёк-контракт, ERC-1271)', async () => {
+  it('подпись не той длины — это НЕ мусор, а признак кошелька-контракта', async () => {
+    // Прежде такой ответ был отказом signature_malformed и оставлял человека
+    // без чата вовсе. Теперь это сам признак: длинная подпись → код.
     const long = ('0x' + 'ab'.repeat(200)) as `0x${string}`;
-    await expect(
-      openSession(ALICE, async () => long, eoaOpts()),
-    ).rejects.toMatchObject({ code: 'signature_malformed' });
+    const session = await openSession(ALICE, async () => long);
+    expect(session.walletKind).toBe('contract');
+    expect(exportRecoveryCode(session).split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
+  });
+
+  it('подпись не hex, пустая или нечётной длины — вот это мусор', async () => {
+    for (const junk of ['', '0x', '0xzz', '0x' + 'ab'.repeat(200) + 'a']) {
+      await expect(
+        openSession(ALICE, async () => junk as `0x${string}`),
+      ).rejects.toMatchObject({ code: 'signature_malformed' });
+    }
   });
 
   it('подпись — не строка вовсе', async () => {
     await expect(
-      openSession(ALICE, async () => undefined as unknown as `0x${string}`, eoaOpts()),
+      openSession(ALICE, async () => undefined as unknown as `0x${string}`),
     ).rejects.toMatchObject({ code: 'signature_malformed' });
   });
 
   it('негодная подпись НИЧЕГО не записала на устройство', async () => {
-    await openSession(ALICE, async () => '' as `0x${string}`, eoaOpts()).catch(() => {});
+    await openSession(ALICE, async () => '' as `0x${string}`).catch(() => {});
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
   });
@@ -1170,63 +1181,18 @@ describe('мусор на входе — вердикт, а не падение'
     const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });
     let thrown: unknown;
     try {
-      await openSession(ALICE, async () => { throw rejection; }, eoaOpts());
+      await openSession(ALICE, async () => { throw rejection; });
     } catch (err) { thrown = err; }
     expect(thrown).toBe(rejection);
   });
 
-  it('getBytecode отказал по сети — отказ с кодом, БЕЗ подписи и БЕЗ записи', async () => {
+  it('второй заход не трогает ни кошелёк, ни что-либо ещё', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
-    const failing = vi.fn(async () => { throw new Error('HTTP request failed'); });
+    await openSession(ALICE, sign);
+    const second = await openSession(ALICE, sign);
 
-    await expect(
-      openSession(ALICE, sign, { getBytecode: failing }),
-    ).rejects.toMatchObject({ code: 'wallet_kind_unknown' });
-
-    // Гадать нельзя: ошибись в сторону «обычный» — контрактный кошелёк
-    // получит негодную подпись; ошибись в сторону «контрактный» — обычный
-    // получит случайный ключ вместо восстановимого, и история разъедется.
-    expect(sign).toHaveBeenCalledTimes(0);
-    const store = fakeIdb._disk.get('sessions');
-    expect(store === undefined || store.size === 0).toBe(true);
-  });
-
-  it('getBytecode не передали вовсе — отказ с тем же кодом, а не догадка', async () => {
-    const sign = vi.fn(async () => ALICE_SIG);
-    await expect(openSession(ALICE, sign)).rejects.toMatchObject({ code: 'wallet_kind_unknown' });
-    expect(sign).toHaveBeenCalledTimes(0);
-  });
-
-  it('сеть отказала, но сеанс УЖЕ на устройстве — getBytecode даже не спрашивают', async () => {
-    const sign = vi.fn(async () => ALICE_SIG);
-    await openSession(ALICE, sign, eoaOpts());
-
-    const failing = vi.fn(async () => { throw new Error('HTTP request failed'); });
-    const second = await openSession(ALICE, sign, { getBytecode: failing });
-
-    expect(failing).toHaveBeenCalledTimes(0);
     expect(second.restored).toBe(true);
     expect(sign).toHaveBeenCalledTimes(1);
-  });
-
-  it('пустой и кривой адрес — наш вердикт, а не голое системное сообщение', async () => {
-    // Единственный вход, у которого вердикта не было: адрес уезжал в
-    // toLowerCase() и наружу вылетало сообщение движка.
-    const sign = vi.fn(async () => ALICE_SIG);
-    for (const bad of ['', '0x', 'не адрес', ALICE.slice(0, 20), `${ALICE}00`]) {
-      await expect(openSession(bad as `0x${string}`, sign, eoaOpts()))
-        .rejects.toMatchObject({ code: 'address_malformed' });
-    }
-    await expect(openSession(undefined as unknown as `0x${string}`, sign, eoaOpts()))
-      .rejects.toMatchObject({ code: 'address_malformed' });
-    expect(sign).toHaveBeenCalledTimes(0);
-  });
-
-  it('кривой адрес отвергают и код восстановления, и forgetSession', async () => {
-    await expect(openSessionFromRecoveryCode('0x' as `0x${string}`, GOLD, contractOpts()))
-      .rejects.toMatchObject({ code: 'address_malformed' });
-    await expect(forgetSession('' as `0x${string}`))
-      .rejects.toMatchObject({ code: 'address_malformed' });
   });
 
   it('в IndexedDB запись прежней версии формата — не мусор наружу, а новая подпись', async () => {
@@ -1236,7 +1202,7 @@ describe('мусор на входе — вердикт, а не падение'
       { address: ALICE.toLowerCase(), secret: 'старый формат без версии' },
     ]]));
 
-    const session = await openSession(ALICE, sign, eoaOpts());
+    const session = await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(1);
     expect(session.keypair.privateKey).toHaveLength(32);
@@ -1260,7 +1226,7 @@ describe('мусор на входе — вердикт, а не падение'
       },
     ]]));
 
-    await openSession(ALICE, sign, eoaOpts());
+    await openSession(ALICE, sign);
     expect(sign).toHaveBeenCalledTimes(1);
   });
 
@@ -1282,7 +1248,7 @@ describe('мусор на входе — вердикт, а не падение'
     ]]));
 
     const sign = vi.fn(async () => ALICE_SIG);
-    const session = await openSession(ALICE, sign, contractOpts());
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
 
     expect(sign).toHaveBeenCalledTimes(0);
     expect(hex(session.keypair.privateKey)).toBe(hex(keys.priv));
@@ -1308,7 +1274,7 @@ describe('мусор на входе — вердикт, а не падение'
       },
     ]]));
 
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
 
     let thrown: unknown;
     try { exportRecoveryCode(session); } catch (err) { thrown = err; }
@@ -1333,7 +1299,7 @@ describe('мусор на входе — вердикт, а не падение'
       },
     ]]));
 
-    const session = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     let thrown: unknown;
     try { exportRecoveryCode(session); } catch (err) { thrown = err; }
     expect((thrown as ChatSessionError)?.code).toBe('recovery_code_unavailable');
@@ -1352,7 +1318,7 @@ describe('мусор на входе — вердикт, а не падение'
     installStorage({ failGet: true });
     const sign = vi.fn(async () => ALICE_SIG);
 
-    const session = await openSession(ALICE, sign, eoaOpts());
+    const session = await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(1);
     expect(session.origin).toBe('signature');
@@ -1364,10 +1330,11 @@ describe('мусор на входе — вердикт, а не падение'
   });
 
   it('ветка 2: сбой чтения + делегированный EIP-7702 — тоже работает', async () => {
+    // Делегированный подписывает как обычный, значит и спасается как обычный.
     installStorage({ failGet: true });
     const sign = vi.fn(async () => ALICE_SIG);
 
-    const session = await openSession(ALICE, sign, { getBytecode: delegationBytecode });
+    const session = await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(1);
     expect(session.origin).toBe('signature');
@@ -1375,42 +1342,92 @@ describe('мусор на входе — вердикт, а не падение'
     expect(session.persisted).toBe(false);
   });
 
-  it('ветка 3: сбой чтения + кошелёк-контракт — отказ, ничего не спрошено', async () => {
+  it('ветка 3: сбой чтения + кошелёк-контракт — отказ, на диск ничего', async () => {
+    // Цена нового признака названа честно: род выясняется подписью, значит
+    // контрактный кошелёк ОДИН РАЗ подпишет — и получит отказ. Иначе род не
+    // установить, а не установив, пришлось бы либо отказать и обычному
+    // (наказать его за чужую беду), либо завести новую личность поверх старой.
     installStorage({ failGet: true });
-    const sign = vi.fn(async () => ALICE_SIG);
+    const sign = vi.fn(async () => ALICE_CONTRACT_SIG);
 
-    await expect(openSession(ALICE, sign, contractOpts()))
+    await expect(openSession(ALICE, sign))
       .rejects.toMatchObject({ code: 'storage_read_failed' });
 
-    expect(sign).toHaveBeenCalledTimes(0);
+    expect(sign).toHaveBeenCalledTimes(1);
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
   });
 
-  it('ветка 4: сбой чтения + род выяснить не удалось — отказ, догадка дороже', async () => {
+  it('ветка 4: сбой чтения + подписать не удалось — ответ человека, а не наш', async () => {
+    // Ветки «род не выяснен» больше нет: род выясняется подписью, и если
+    // подписи нет, то нет и вопроса. Наружу идёт ошибка кошелька КАК ЕСТЬ —
+    // человек отказался, это его ответ, а не наша беда с хранилищем.
     installStorage({ failGet: true });
+    const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });
+
+    let thrown: unknown;
+    try {
+      await openSession(ALICE, async () => { throw rejection; });
+    } catch (err) { thrown = err; }
+
+    expect(thrown).toBe(rejection);
+    const store = fakeIdb._disk.get('sessions');
+    expect(store === undefined || store.size === 0).toBe(true);
+  });
+
+  it('молчащее хранилище стоит ОДНО ожидание, а не два подряд', async () => {
+    // Первое чтение и перечитывание под замком — два полных ожидания
+    // подряд: человек сидел бы вдвое дольше собственного потолка, а
+    // хранилище за это время так и не ответило бы ни на одно из них.
+    installStorage({ failGet: true });
+
+    await openSession(ALICE, async () => ALICE_SIG);
+
+    expect(fakeIdb._stats.gets).toBe(1);
+  });
+
+  it('а вот пустое хранилище перечитывается — на этом стоит замок', async () => {
+    // Обратная сторона: когда первое чтение сказало «пусто», перечитать под
+    // замком ОБЯЗАТЕЛЬНО — иначе вторая вкладка откроет второе окно подписи.
+    await openSession(ALICE, async () => ALICE_SIG);
+    expect(fakeIdb._stats.gets).toBe(2);
+  });
+
+  it('совет «закройте другую вкладку» доезжает и до ОБЫЧНОГО кошелька', async () => {
+    // Побочка разводки приватного режима: обычный кошелёк продолжает
+    // работать, а значит исключения со storage_blocked не увидит никогда —
+    // и подписывал бы заново при каждой перезагрузке, не зная почему.
+    installStorage({ blockOpen: true });
     const sign = vi.fn(async () => ALICE_SIG);
-    const failing = vi.fn(async () => { throw new Error('HTTP request failed'); });
 
-    // отдаётся ИСХОДНАЯ беда: сломалось чтение, а проба рода была лишь
-    // попыткой её смягчить, и её собственный провал диагноз не подменяет
-    await expect(openSession(ALICE, sign, { getBytecode: failing }))
-      .rejects.toMatchObject({ code: 'storage_read_failed' });
-    expect(sign).toHaveBeenCalledTimes(0);
+    const session = await openSession(ALICE, sign);
 
-    await expect(openSession(ALICE, sign))
-      .rejects.toMatchObject({ code: 'storage_read_failed' });
-    expect(sign).toHaveBeenCalledTimes(0);
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(session.persisted).toBe(false);
+    expect(session.storageIssue).toBe('storage_blocked');
+  });
+
+  it('у неудачной ЗАПИСИ причина тоже названа, а не только «не сохранилось»', async () => {
+    installStorage({ failPut: true });
+    const session = await openSession(ALICE, async () => ALICE_SIG);
+    expect(session.persisted).toBe(false);
+    expect(session.storageIssue).toBe('storage_write_failed');
+  });
+
+  it('когда всё в порядке — причины нет вовсе', async () => {
+    const session = await openSession(ALICE, async () => ALICE_SIG);
+    expect(session.persisted).toBe(true);
+    expect(session.storageIssue).toBeUndefined();
   });
 
   it('сбой чтения у обычного кошелька НИЧЕГО не пишет поверх непрочитанного', async () => {
     // Под непрочитанной записью может лежать чужой сеанс. Работать в
     // памяти — да, писать вслепую — нет.
-    const before = await openSession(BOB, async () => BOB_SIG, eoaOpts());
+    const before = await openSession(BOB, async () => BOB_SIG);
     const snapshot = structuredClone(fakeIdb._disk.get('sessions')!.get(BOB.toLowerCase()));
 
     installStorageKeepingDisk({ failGet: true });
-    const blind = await openSession(BOB, async () => BOB_SIG, eoaOpts());
+    const blind = await openSession(BOB, async () => BOB_SIG);
     expect(blind.persisted).toBe(false);
 
     // диск байт в байт прежний: ни новой записи, ни перезаписи
@@ -1420,7 +1437,7 @@ describe('мусор на входе — вердикт, а не падение'
 
     // чтение починилось — на месте ровно то, что лежало
     installStorageKeepingDisk({});
-    const back = await openSession(BOB, async () => BOB_SIG, eoaOpts());
+    const back = await openSession(BOB, async () => BOB_SIG);
     expect(back.restored).toBe(true);
     expect(hex(back.keypair.privateKey)).toBe(hex(before.keypair.privateKey));
   });
@@ -1429,23 +1446,23 @@ describe('мусор на входе — вердикт, а не падение'
     // Самое дорогое следствие прежнего поведения: отказ чтения трактовался
     // как «записи нет», поверх живого ключа ложился новый случайный, и сеанс
     // при этом рапортовал persisted: true.
-    const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const mine = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     const myCode = exportRecoveryCode(mine);
 
     installStorageKeepingDisk({ failGet: true });
-    await expect(openSession(ALICE, async () => ALICE_SIG, contractOpts()))
+    await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
       .rejects.toMatchObject({ code: 'storage_read_failed' });
 
     // диск не тронут: чтение починилось — ключ и код на месте
     installStorageKeepingDisk({});
-    const after = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const after = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     expect(hex(after.keypair.privateKey)).toBe(hex(mine.keypair.privateKey));
     expect(exportRecoveryCode(after)).toBe(myCode);
   });
 
   it('код восстановления при сбое чтения тоже не принимается вслепую (К-4)', async () => {
     installStorage({ failGet: true });
-    await expect(openSessionFromRecoveryCode(ALICE, GOLD, contractOpts()))
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG))
       .rejects.toMatchObject({ code: 'storage_read_failed' });
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
