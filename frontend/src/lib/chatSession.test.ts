@@ -280,6 +280,11 @@ const eoaBytecodeEmptyHex = vi.fn(async () => '0x' as const);
 const contractBytecode = vi.fn(
   async () => '0x363d3d373d3d3d363d73bebebebebebebebebebebebebebebebebebebebe5af43d82803e903d91602b57fd5bf3' as const,
 );
+/** Указатель делегации EIP-7702: `0xef0100` ‖ 20 байт адреса реализации,
+ *  ровно 23 байта. Это НЕ кошелёк-контракт — подпись у такого адреса
+ *  остаётся обычной подписью обычного ключа (К-1). */
+const DELEGATION = '0xef0100bebebebebebebebebebebebebebebebebebebebe';
+const delegationBytecode = vi.fn(async () => DELEGATION as `0x${string}`);
 
 function eoaOpts() { return { getBytecode: eoaBytecode }; }
 function contractOpts() { return { getBytecode: contractBytecode }; }
@@ -344,6 +349,40 @@ describe('восстановление обычного кошелька — э�
     installStorage();
     const b = await openSession(ALICE, async () => BOB_SIG, eoaOpts());
     expect(hex(b.keypair.privateKey)).not.toBe(hex(a.keypair.privateKey));
+  });
+
+  it('умный аккаунт EIP-7702 — обычный кошелёк, а не контрактный (К-1)', async () => {
+    // Боевая форма указателя делегации: 0xef0100 ‖ 20 байт адреса, ровно 23
+    // байта. MetaMask на Base предлагает «умный аккаунт» прямо сейчас.
+    // Подпись у такого адреса остаётся ОБЫЧНОЙ подписью обычного ключа и
+    // остаётся стабильной — значит и ключ чата обязан быть выводимым.
+    const sign = vi.fn(async () => ALICE_SIG);
+    const session = await openSession(ALICE, sign, { getBytecode: delegationBytecode });
+
+    expect(session.origin).toBe('signature');
+    expect(sign).toHaveBeenCalledTimes(1);
+    // тот же ключ, что у него же без делегации
+    expect(hex(session.keypair.publicKey))
+      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+  });
+
+  it('включил делегацию, снял делегацию — ключ НЕ меняется (К-1)', async () => {
+    const withDelegation = await openSession(ALICE, async () => ALICE_SIG, {
+      getBytecode: delegationBytecode,
+    });
+    installStorage(); // новое устройство, делегация уже снята
+    const without = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+
+    expect(hex(without.keypair.privateKey)).toBe(hex(withDelegation.keypair.privateKey));
+  });
+
+  it('настоящий контрактный код всё ещё контрактный, а не «почти делегация»', async () => {
+    // Граница: 0xef0100 с ЛИШНИМИ байтами — уже не указатель делегации, а
+    // просто код, начинающийся так же. Такой адрес обязан остаться
+    // контрактным, иначе признак превратился бы в «начинается с ef0100».
+    const almost = vi.fn(async () => (DELEGATION + 'ff') as `0x${string}`);
+    const s = await openSession(ALICE, async () => ALICE_SIG, { getBytecode: almost });
+    expect(s.origin).toBe('recovery');
   });
 
   it('пустой байткод в виде «0x» — тоже обычный кошелёк, не контрактный', async () => {
