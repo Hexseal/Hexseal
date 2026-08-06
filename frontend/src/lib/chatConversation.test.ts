@@ -1779,22 +1779,49 @@ describe('подписной ключ собеседника', () => {
     expect(state.messages).toHaveLength(0);
   });
 
-  it('пин НЕ той длины отвергается, а не совпадает по префиксу (В-7)', async () => {
-    // Находка В-7: сравнение байт без проверки длины давало 0 красных — на
-    // проводе не эксплуатируется (кадр фиксирует 32 байта), но подписной ключ
-    // собеседника придёт СНАРУЖИ, из справочника задачи 6, и именно там
-    // сравнение станет несущим: обрезанный ключ совпал бы по префиксу.
+  it('пин НЕ той длины отвергается — в ОБЕ стороны, включая ДЛИННЕЕ настоящего (В-7)', async () => {
+    // Находка В-7: сравнение байт без проверки длины не было заперто ничем.
+    //
+    // ⚠️ И первая моя попытка запереть его тоже была слепой: я подал пин на
+    // байт КОРОЧЕ, а цикл сравнения идёт по длине ПЕРВОГО аргумента (32 байта
+    // настоящего ключа) — `b[31]` оказывается `undefined`, `a[31] ^ undefined`
+    // даёт `a[31]`, то есть неравенство находится и БЕЗ проверки длины.
+    // Мутация «снять проверку длины» так и осталась 0 красных из 138.
+    //
+    // Опасна ДРУГАЯ сторона: пин ДЛИННЕЕ настоящего, чьи первые 32 байта
+    // совпадают. Тогда цикл проходит ровно 32 сравнения, все сходятся, и без
+    // проверки длины чужой ключ с приписанным хвостом принимается как свой.
+    // Именно это и придёт из справочника задачи 6: значение там строковое, и
+    // лишние hex-цифры — самая естественная порча.
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
     const bob = await makeSession('7f2e', BOB);
-    const sent = await conversationFrom(bob, alice, ['от Боба']);
+    const sent = await conversationFrom(bob, alice, ['от Боба', 'и ещё']);
     const real = (await deriveLinkSigningKeypair(bob.keypair)).publicKey;
 
-    const state = await receiveBags(alice, [bagOf(sent[0], BOB, 1)], {
-      peerSigningPublicKeys: { [BOB.toLowerCase()]: real.slice(0, 31) }, // тот же ключ, на байт короче
+    const longer = new Uint8Array(33);
+    longer.set(real, 0);
+    longer[32] = 0xff; // те же 32 байта плюс приписанный хвост
+    const withLonger = await receiveBags(alice, sent.map((s, i) => bagOf(s, BOB, i)), {
+      peerSigningPublicKeys: { [BOB.toLowerCase()]: longer },
     });
-    expect(state.troubles).toContainEqual(expect.objectContaining({ kind: 'signer_unexpected' }));
-    expect(state.messages).toHaveLength(0);
+    expect(withLonger.troubles.filter(t => t.kind === 'signer_unexpected')).toHaveLength(2);
+    expect(withLonger.messages).toHaveLength(0);
+
+    // Короче — тоже отвергается (эта сторона держалась бы и без проверки, но
+    // обе стороны границы обязаны быть заперты).
+    const withShorter = await receiveBags(alice, sent.map((s, i) => bagOf(s, BOB, i)), {
+      peerSigningPublicKeys: { [BOB.toLowerCase()]: real.slice(0, 31) },
+    });
+    expect(withShorter.messages).toHaveLength(0);
+
+    // И контроль: настоящий ключ той же длины по-прежнему ПРИНИМАЕТСЯ —
+    // иначе тест краснел бы на чём угодно, включая «пин не работает вовсе».
+    const withReal = await receiveBags(alice, sent.map((s, i) => bagOf(s, BOB, i)), {
+      peerSigningPublicKeys: { [BOB.toLowerCase()]: real },
+    });
+    expect(withReal.messages).toHaveLength(2);
+    expect(withReal.troubles).toEqual([]);
   });
 
   it('без пина ключ прибивается к первому звену — смена ключа посреди переписки видна', async () => {
