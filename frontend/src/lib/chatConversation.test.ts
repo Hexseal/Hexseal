@@ -269,15 +269,38 @@ describe('подписная пара звена', () => {
     expect(kp.privateKey).toHaveLength(64); // Ed25519 secret = seed ‖ pub
   });
 
-  it('семя подписи — НЕ закрытый ключ шифрования и не производная без метки', async () => {
-    // Главная ловушка задачи: скормить то же семя второму алгоритму. Здесь
-    // заперто числом — семя обязано совпасть с keccak(МЕТКА ‖ ключ), а не с
-    // самим ключом и не с keccak(ключ) без метки.
-    const withContext = keccak256(concat([stringToBytes(LINK_SIGNING_KEY_CONTEXT), PRIV]));
-    const withoutContext = keccak256(PRIV);
-    expect(withContext).toBe(GOLD_SIGN_SEED);
-    expect(withoutContext).not.toBe(GOLD_SIGN_SEED);
-    expect(hex(PRIV)).not.toBe(GOLD_SIGN_SEED);
+  it('семя подписи — отдельный под-ключ: не сам ключ и не производная без метки', async () => {
+    // Главная ловушка задачи: скормить то же семя второму алгоритму.
+    //
+    // ⚠️ Первая версия этого теста считала три семени ЗДЕСЬ и сравнивала их
+    // МЕЖДУ СОБОЙ — то есть не звала модуль вообще и покраснеть не могла ни от
+    // какой правки в нём (мутация «то же семя второму алгоритму» давала 2
+    // красных, и ни одна из них не была этой). Классическая слепая заготовка.
+    // Теперь тест проводит ключ ЧЕРЕЗ модуль и сверяет с тремя кандидатами,
+    // посчитанными независимо.
+    const fromModule = await deriveLinkSigningKeypair({ publicKey: PUB_STUB, privateKey: PRIV });
+    const sodium = (await import('libsodium-wrappers')).default;
+    await sodium.ready;
+
+    const withContext = hexToBytes(keccak256(concat([stringToBytes(LINK_SIGNING_KEY_CONTEXT), PRIV])));
+    const withoutContext = hexToBytes(keccak256(PRIV));
+
+    expect(hex(withContext)).toBe(GOLD_SIGN_SEED); // золотой вектор сходится с формулой
+    expect(hex(fromModule.publicKey))
+      .toBe(hex(sodium.crypto_sign_seed_keypair(withContext).publicKey));
+    expect(hex(fromModule.publicKey))
+      .not.toBe(hex(sodium.crypto_sign_seed_keypair(withoutContext).publicKey));
+    // И, главное, — НЕ то, что дал бы закрытый ключ шифрования, скормленный
+    // Ed25519 напрямую.
+    expect(hex(fromModule.publicKey))
+      .not.toBe(hex(sodium.crypto_sign_seed_keypair(PRIV).publicKey));
+  });
+
+  it('метки назначения — записанные руками строки, а не «какие-нибудь»', () => {
+    // Смена любой из них — миграция: подписи перестают проверяться у всех
+    // разом. Сравнение модуля с самим собой этого не поймало бы.
+    expect(LINK_SIGNING_KEY_CONTEXT).toBe('hexseal.chat.link.sig.key.v1');
+    expect(LINK_SIGNATURE_DOMAIN).toBe('hexseal.chat.link.sig.v1');
   });
 
   it('подписной открытый ключ НЕ равен ключу шифрования той же пары', async () => {
@@ -860,6 +883,53 @@ describe('нумерация и две вкладки', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('перезапустили посреди отправки', () => {
+  it('вкладку закрыли МЕЖДУ «положил мешок» и «записал, что положен» — номер уже занят', async () => {
+    // Мутация «резерв не ложится на диск ДО отправки» выжила на 66 зелёных
+    // (0 красных): все прежние тесты доходили до `catch` внутри sendMessage, а
+    // он и без резерва дописывал сгоревший номер. Настоящий случай другой —
+    // вкладка исчезает ПОСРЕДИ похода на склад, никакого catch не будет
+    // вовсе. Здесь это воспроизведено буквально: ответ склада не придёт
+    // никогда, промис отправки бросается недождавшимся, и «перезагрузка» —
+    // новый экземпляр модуля на том же диске.
+    const stub = installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    await sendMessage(alice, BOB, bob.keypair.publicKey, { text: '0' }, null, { pass: PASS });
+
+    // ⚠️ Обрыв обязан быть УПРАВЛЯЕМЫМ. Первая версия этого теста оставляла
+    // запрос висеть навсегда — вместе с ним навсегда оставался взят
+    // межвкладочный замок, и СЛЕДУЮЩИЕ 14 тестов файла падали по таймауту,
+    // пряча настоящую причину. Ровно тот класс, о котором предупреждает
+    // задание: тест, убивающий исполнителя тестов вместо честного провала.
+    let dropConnection!: () => void;
+    stub.next = () => new Promise<Response>((_, reject) => {
+      dropConnection = () => reject(new TypeError('fetch failed'));
+    });
+    const hanging = sendMessage(alice, BOB, bob.keypair.publicKey, { text: '1' }, null,
+      { pass: PASS, lockTimeoutMs: 500 });
+    void hanging.catch(() => {}); // вкладки уже нет — результат никого не ждёт
+    await new Promise(r => setTimeout(r, 80)); // дать дойти до склада
+    expect(stub.calls.filter(c => c.method === 'PUT')).toHaveLength(2); // мешок реально ушёл в сеть
+
+    // «Перезагрузка»: новый экземпляр модуля, тот же диск. Голова читается БЕЗ
+    // замка — то есть именно в тот момент, когда мешок ещё в полёте.
+    vi.resetModules();
+    const afterReload = await import('./chatConversation');
+    const head = await afterReload.readConversationHead(ALICE, BOB);
+    expect(head!.link.seq).toBe(1);   // резерв УЖЕ на диске
+    expect(head!.key).toBeNull();     // и он именно резерв: мешок не подтверждён
+
+    dropConnection();
+    await hanging.catch(() => {});    // замок отпущен, файл больше никого не держит
+    stub.next = () => new Response(JSON.stringify({ key: '0x00/после.bin' }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+
+    const next = await afterReload.sendMessage(
+      alice, BOB, bob.keypair.publicKey, { text: '2' }, null, { pass: PASS, lockTimeoutMs: 500 },
+    );
+    expect(next.link.seq).toBe(2);    // номер 1 не выдан второй раз
+  }, 30_000);
+
   it('после перезагрузки вкладки нумерация продолжается с диска, а не с нуля', async () => {
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
@@ -981,6 +1051,24 @@ describe('склад отказал', () => {
     expect(s.link.seq).toBe(0);
     expect(s.persisted).toBe(false);
     expect(warn).toHaveBeenCalled();
+  });
+
+  it('квота кончилась — нумерация НЕ откатывается к нулю на каждом сообщении', async () => {
+    // Дыра в первой реализации: запасная голова в памяти вкладки ЗАПИСЫВАЛАСЬ
+    // при неудачной записи на диск, но ЧИТАЛАСЬ только когда хранилища нет
+    // ВОВСЕ. То есть при кончившейся квоте каждое сообщение получало номер 0
+    // заново — а у собеседника это вердикт `unordered`, обвинение в ПОДДЕЛКЕ
+    // за кончившееся место. Собственная починка оказалась бы хуже дефекта.
+    installFetchStub();
+    g.indexedDB = makeFakeIndexedDB({ failPut: true });
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const a = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: '0' }, null, { pass: PASS });
+    const b = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: '1' }, null, { pass: PASS });
+    const c = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: '2' }, null, { pass: PASS });
+    expect([a.link.seq, b.link.seq, c.link.seq]).toEqual([0, 1, 2]);
+    expect(a.persisted).toBe(false);
+    expect(verifyChain([a.link, b.link, c.link])).toMatchObject({ ok: true });
   });
 });
 
@@ -1371,6 +1459,23 @@ describe('галочка дошло/не дошло', () => {
     expect(byText['ушло']).toBe(true);
     expect(byText['ещё ушло']).toBe(false);
     expect(byText['пришло']).toBe(true);
+  });
+
+  it('свои сообщения ДРУГОМУ собеседнику не попадают в этот разговор', async () => {
+    // `own` приходит списком; без собственного поля «кому» модуль не мог бы
+    // отсеять чужой разговор, и переписка с Бобом показала бы сообщения,
+    // отправленные Кэрол. Собеседник в `SentMessage` — не украшение.
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const carol = await makeSession('9b4a', CAROL);
+    const toBob = await conversationFrom(alice, bob, ['Бобу']);
+    const toCarol = await conversationFrom(alice, carol, ['Кэрол']);
+
+    const state = await receiveBags(alice, [], { peer: BOB, own: [...toBob, ...toCarol] });
+    expect(state.messages.map(m => (m.payload as ChatPayload).text)).toEqual(['Бобу']);
+    expect(toBob[0].peer).toBe(BOB.toLowerCase());
+    expect(toCarol[0].peer).toBe(CAROL.toLowerCase());
   });
 });
 
