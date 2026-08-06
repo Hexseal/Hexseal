@@ -2691,7 +2691,23 @@ app.get('/bags', (req, res) => {
     return res.status(500).json({ error: 'Failed to list bags', code: 'internal_error' });
   }
 
+  // `peers` считается на ИСХОДНЫХ списках, до объединения ниже: иначе в
+  // собеседниках у человека появился бы он сам.
   const peers = buildPeerView(received, sentRaw);
+
+  // К-1: читаемое владельцем пропуска — это обе половины переписки, а не
+  // только адресованная ему. Своя половина иначе недостижима: ключи мешков
+  // человек видит в `sent`, но скачать их не мог, и после перезагрузки
+  // вкладки от собственных сообщений не оставалось ничего.
+  //
+  // Дедупликация по ключу обязательна: переписка с самим собой — тот
+  // единственный случай, где один и тот же мешок стоит в обоих списках, и
+  // без неё он приехал бы дважды, дав `duplicate_seq` на разборе цепочки.
+  const readable = [];
+  const seenKeys = new Set();
+  for (const b of received) { seenKeys.add(b.key); readable.push(b); }
+  for (const b of sentRaw) { if (!seenKeys.has(b.key)) readable.push(b); }
+  readable.sort((a, b) => a.uploadedAt - b.uploadedAt);
 
   // И-3 (ревью): nonstrict `>=`, not `>`. Two bags landing in the same
   // millisecond is a real race, not a theoretical one (measured live by the
@@ -2702,7 +2718,7 @@ app.get('/bags', (req, res) => {
   // from now on. `>=` re-sends the already-seen bag alongside it — a client
   // dedupes by key, so a repeat is a no-op, not a data-loss risk the way
   // silently dropping a message forever is.
-  const inboxList = since !== null ? received.filter((b) => b.uploadedAt >= since) : received;
+  const inboxList = since !== null ? readable.filter((b) => b.uploadedAt >= since) : readable;
 
   // Находка ревью (координатор): `since` фильтровал только inbox — sent
   // ехал ЦЕЛИКОМ на каждом тике, даже когда в нём ничего не изменилось.
@@ -2758,7 +2774,19 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   } catch {
     return res.status(404).json(BAG_NOT_FOUND);
   }
-  if (!meta || meta.recipient !== address) {
+  // К-1: читать мешок вправе тот, кто в нём НАЗВАН — получатель ИЛИ
+  // отправитель. До этого стояло только `meta.recipient !== address`, и
+  // собственных отправленных человек не мог забрать НИКОГДА: ни после
+  // перезагрузки вкладки, ни на новом устройстве. Конверт при этом
+  // запечатан двумя слотами, второй — на себя, ровно ради собственного
+  // архива (план «Клиент чата», Задача 3): слот был, доставать нечем.
+  //
+  // Утечки здесь нет и взяться ей неоткуда: `meta.sender` пишет СЕРВЕР из
+  // пропуска на PUT, а не клиент из тела (см. PUT /bags/:recipient). То
+  // есть «я отправитель» означает «я это и загрузил» — человек получает
+  // свои же байты, которые сам же сюда и положил.
+  const owner = meta && (meta.recipient === address || meta.sender === address);
+  if (!owner) {
     return res.status(404).json(BAG_NOT_FOUND);
   }
 
@@ -2843,7 +2871,15 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   // streaming, so a throw can still become a 500) is what caused this
   // finding in the first place, and getting the message to its recipient
   // matters more than the read receipt.
+  // ⚠️ ОТМЕТКА — ТОЛЬКО НА ЧТЕНИИ ПОЛУЧАТЕЛЕМ (К-1). Отправитель теперь тоже
+  // вправе скачать свой мешок, и если бы его чтение поднимало `fetched`,
+  // человек, открывший собственную переписку, САМ СЕБЕ зажигал бы галочку
+  // «доставлено» — она начала бы врать, причём в сторону, которую невозможно
+  // заметить. Заодно поехал бы и срок жизни: 7 дней «прочитан» вместо 30
+  // «не прочитан», у мешка, которого получатель ещё в глаза не видел.
+  const marksRead = meta.recipient === address;
   res.on('finish', () => {
+    if (!marksRead) return;
     try {
       markFetched(key, Date.now());
     } catch (e) {

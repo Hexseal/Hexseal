@@ -1469,7 +1469,15 @@ export async function receiveBags(
   return {
     messages: mergeSides(messages),
     gaps: [...gaps].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.afterSeq - b.afterSeq)),
-    gapAfterSeq: [...new Set(gaps.map(g => g.afterSeq))].sort((a, b) => a - b),
+    // К-1: дыры СВОЕЙ цепочки сюда НЕ идут. Плоский список читается
+    // интерфейсом как «здесь собеседник чего-то не предъявил» и рисуется
+    // значком разрыва; с тех пор как своя половина тоже проверяется цепочкой,
+    // собственная пропажа (мешок истёк на складе, отправка оборвалась на
+    // сгоревшем номере) обвиняла бы невиновного. В `gaps` она есть — с
+    // автором, то есть с нами.
+    gapAfterSeq: [...new Set(
+      gaps.filter(g => g.from !== ownAddress).map(g => g.afterSeq),
+    )].sort((a, b) => a - b),
     chains,
     troubles,
   };
