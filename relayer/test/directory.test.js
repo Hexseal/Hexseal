@@ -698,7 +698,11 @@ describe('POST /keys — правило 1: адрес берётся из про
 
     const res = await postKeys({ body: { boxKey: KEY_A, address: addrA } });
     expect(res.status).toBe(401);
-    expect(res.body.code).toBeDefined();
+    // Мелочь (ревью координатора, round 3): toBeDefined() не сверяет,
+    // КАКОЙ именно код — прошло бы с любым кодом, хоть с опечаткой.
+    // requireBagPass()/verifyBagPass() (bagPass.js) на отсутствующий
+    // заголовок отвечают именно этим кодом — сверяем его буквально.
+    expect(res.body.code).toBe('pass_invalid');
 
     const check = await getKeys(addrA);
     expect(check.status).toBe(404);
@@ -741,6 +745,30 @@ describe('POST /keys — правило 2: форма ключа, мусор с 
     const res = await postKeys({ pass, body: { boxKey: badKey } });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('invalid_key');
+  });
+
+  // Мелочь (ревью координатора, round 3): "413 — единственный ответ без
+  // кода. Раунд закрыл 500, соседа пропустил." Тело сверх лимита
+  // express.json({limit:'64kb'}) сегодня даёт HTML-страницу Express со
+  // стеком вызовов, не JSON, — обязано отвечать так же честно, как и
+  // остальные статусы этого маршрута (400/401/404/503/500 — все несут
+  // code). Настоящий socket-запрос, не supertest .send() — supertest
+  // сериализует тело в памяти и не бьёт по реальному размеру, минуя
+  // проверку body-parser'а.
+  it('тело сверх 64кб — 413 с кодом payload_too_large, JSON, не HTML-страница express', async () => {
+    const wallet = ethers.Wallet.createRandom();
+    const pass = await issuePassFor(wallet);
+    const oversized = JSON.stringify({ boxKey: KEY_A, pad: 'x'.repeat(70 * 1024) });
+
+    const res = await request(app)
+      .post('/keys')
+      .set('CF-Connecting-IP', freshIp())
+      .set('x-bag-pass', pass)
+      .set('Content-Type', 'application/json')
+      .send(oversized);
+
+    expect(res.status).toBe(413);
+    expect(res.body.code).toBe('payload_too_large');
   });
 });
 
@@ -814,6 +842,11 @@ describe('GET /keys/:address — правило 5: неизвестный адр
   it('мусорный адрес в URL — 400, не 404 (разные причины — разный код)', async () => {
     const res = await getKeys('not-an-address');
     expect(res.status).toBe(400);
+    // Мелочь (ревью координатора, round 3): заголовок теста обещал "разный
+    // код" — тело код не сверяло вовсе, само название теста было
+    // единственным, что это утверждало. app.js отвечает invalid_address
+    // именно на эту ветку (ETH_ADDR_RE.test(address) провалился).
+    expect(res.body.code).toBe('invalid_address');
   });
 });
 
