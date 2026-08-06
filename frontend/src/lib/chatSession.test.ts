@@ -563,6 +563,53 @@ describe('негодный код восстановления отказыва�
   });
 });
 
+// ═══ К-2: код восстановления не затирает уже лежащий сеанс ═══════════════
+
+describe('код восстановления поверх живого сеанса — отказ, а не тихая замена', () => {
+  it('чужой код по адресу с сеансом отвергается, ключ и код на месте', async () => {
+    const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const myCode = exportRecoveryCode(mine);
+
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD)).rejects.toMatchObject({
+      code: 'session_already_present',
+    });
+
+    // ничего не сдвинулось: тот же ключ, тот же код, без окна подписи
+    const after = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    expect(hex(after.keypair.privateKey)).toBe(hex(mine.keypair.privateKey));
+    expect(exportRecoveryCode(after)).toBe(myCode);
+  });
+
+  it('обычный сеанс тоже не затирается кодом', async () => {
+    const sign = vi.fn(async () => ALICE_SIG);
+    const mine = await openSession(ALICE, sign, eoaOpts());
+
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD)).rejects.toMatchObject({
+      code: 'session_already_present',
+    });
+
+    const after = await openSession(ALICE, sign, eoaOpts());
+    expect(hex(after.keypair.privateKey)).toBe(hex(mine.keypair.privateKey));
+    expect(after.origin).toBe('signature');
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('снять сеанс можно только явно — через forgetSession', async () => {
+    const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    await forgetSession(ALICE);
+
+    const restored = await openSessionFromRecoveryCode(ALICE, GOLD);
+    expect(hex(restored.keypair.privateKey)).not.toBe(hex(mine.keypair.privateKey));
+    expect(exportRecoveryCode(restored)).toBe(GOLD);
+  });
+
+  it('по СВОБОДНОМУ соседнему адресу код по-прежнему принимается', async () => {
+    await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const bob = await openSessionFromRecoveryCode(BOB, GOLD);
+    expect(exportRecoveryCode(bob)).toBe(GOLD);
+  });
+});
+
 // ═══ 8. exportRecoveryCode отказывает обычному кошельку ═══════════════════
 
 describe('у обычного кошелька кода восстановления нет и не должно быть', () => {
