@@ -616,10 +616,9 @@
     "enable_messaging": "Activer la messagerie",
     "file_expired": "Durée de conservation écoulée — redemandez le fichier",
     "file_expired_image": "Durée de conservation écoulée",
-    "recovery_warning_title": "Notez ces 12 mots et gardez-les comme les clés de chez vous.",
-    "recovery_warning_access": "C’est votre accès à toute la conversation. Quiconque obtient ces mots lira tous vos messages, passés et à venir. Ils ne peuvent être ni révoqués ni changés.",
-    "recovery_warning_where": "Ne les conservez pas dans une messagerie, dans un e-mail ni dans le cloud. Uniquement sur papier ou dans un gestionnaire de mots de passe.",
-    "recovery_warning_loss": "Si vous les perdez, vous perdez la conversation. Ni nous ni personne ne pourra la restaurer.",
+    "recovery_warning_title": "Code de récupération",
+    "recovery_warning_access": "Ceci est l’accès à toute votre conversation. Quiconque obtient ces 12 mots peut tout lire. Ils ne peuvent être ni révoqués ni modifiés.",
+    "recovery_warning_loss": "Si vous les perdez, les messages sont perdus définitivement.",
     "privacy_badge_title": "Rien qu’entre vous deux",
     "privacy_badge_storage": "Les messages sont chiffrés. Le serveur les conserve illisibles et ne détient aucune clé.",
     "privacy_badge_dispute": "En cas de litige, chaque partie peut présenter la conversation à l’arbitre — depuis son propre appareil.",
@@ -629,7 +628,8 @@
     "key_not_saved": "La clé de discussion n’a pas pu être enregistrée sur cet appareil — la messagerie fonctionne, mais seulement jusqu’au rechargement de l’onglet.",
     "key_not_saved_blocked": "La clé de discussion n’a pas été enregistrée : le site est ouvert dans un autre onglet. Fermez-le, sinon une signature sera demandée à chaque fois.",
     "chain_unverified": "Certains messages de votre interlocuteur n’ont pas passé la vérification d’authenticité et ne sont pas affichés.",
-    "undecryptable": "Certains messages ne s’ouvrent pas avec votre clé — ils sont peut-être scellés sur une clé plus ancienne."
+    "undecryptable": "Certains messages ne s’ouvrent pas avec votre clé — ils sont peut-être scellés sur une clé plus ancienne.",
+    "recovery_warning_keep": "Notez-les et gardez-les secrets."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

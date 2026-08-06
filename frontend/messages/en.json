@@ -616,10 +616,9 @@
     "enable_messaging": "Enable messaging",
     "file_expired": "Storage period ended — ask for the file again",
     "file_expired_image": "Storage period ended",
-    "recovery_warning_title": "Write these 12 words down and keep them like the keys to your home.",
-    "recovery_warning_access": "This is your access to all your messages. Anyone who gets these words will read everything you have written and everything you will write. They cannot be revoked or changed.",
-    "recovery_warning_where": "Do not keep them in chats, in email, or in the cloud. Paper or a password manager only.",
-    "recovery_warning_loss": "Lose them and you lose your messages. Neither we nor anyone else can bring them back.",
+    "recovery_warning_title": "Recovery code",
+    "recovery_warning_access": "This is access to all your messages. Anyone who gets these 12 words can read everything. They cannot be revoked or changed.",
+    "recovery_warning_loss": "Lose them and your messages are gone for good.",
     "privacy_badge_title": "Just the two of you",
     "privacy_badge_storage": "Messages are encrypted. The server keeps them unreadable and holds no keys.",
     "privacy_badge_dispute": "In a dispute, either side can present the conversation to an arbiter — from their own device.",
@@ -629,7 +628,8 @@
     "key_not_saved": "The chat key could not be saved on this device — messaging works, but only until you reload the tab.",
     "key_not_saved_blocked": "The chat key was not saved: the site is open in another tab. Close it, or you will be asked to sign every time.",
     "chain_unverified": "Some of your peer’s messages failed the authenticity check and are not shown.",
-    "undecryptable": "Some messages cannot be opened with your key — they may be sealed to an older one."
+    "undecryptable": "Some messages cannot be opened with your key — they may be sealed to an older one.",
+    "recovery_warning_keep": "Write them down and keep them secret."
   },
   "deal_bar": {
     "application_received": "Application received",

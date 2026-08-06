@@ -616,10 +616,9 @@
     "enable_messaging": "Attiva messaggistica",
     "file_expired": "Periodo di conservazione terminato: chiedi di nuovo il file",
     "file_expired_image": "Periodo di conservazione terminato",
-    "recovery_warning_title": "Annota queste 12 parole e conservale come le chiavi di casa.",
-    "recovery_warning_access": "Sono il tuo accesso a tutta la conversazione. Chi ottiene queste parole leggerà tutti i tuoi messaggi, passati e futuri. Non possono essere revocate né cambiate.",
-    "recovery_warning_where": "Non conservarle in chat, nell’email o nel cloud. Solo su carta o in un gestore di password.",
-    "recovery_warning_loss": "Se le perdi, perdi la conversazione. Né noi né altri potremo recuperarla.",
+    "recovery_warning_title": "Codice di recupero",
+    "recovery_warning_access": "Questo è l’accesso a tutta la tua conversazione. Chi ottiene queste 12 parole può leggere tutto. Non possono essere revocate né modificate.",
+    "recovery_warning_loss": "Se le perdi, i messaggi spariscono per sempre.",
     "privacy_badge_title": "Solo voi due",
     "privacy_badge_storage": "I messaggi sono cifrati. Il server li conserva illeggibili e non possiede le chiavi.",
     "privacy_badge_dispute": "In caso di controversia, ciascuna parte può presentare la conversazione all’arbitro — dal proprio dispositivo.",
@@ -629,7 +628,8 @@
     "key_not_saved": "Non è stato possibile salvare la chiave della chat su questo dispositivo — la chat funziona, ma solo fino al ricaricamento della scheda.",
     "key_not_saved_blocked": "La chiave della chat non è stata salvata: il sito è aperto in un’altra scheda. Chiudila, altrimenti ti verrà chiesta la firma ogni volta.",
     "chain_unverified": "Alcuni messaggi del tuo interlocutore non hanno superato il controllo di autenticità e non vengono mostrati.",
-    "undecryptable": "Alcuni messaggi non si aprono con la tua chiave: potrebbero essere sigillati su una precedente."
+    "undecryptable": "Alcuni messaggi non si aprono con la tua chiave: potrebbero essere sigillati su una precedente.",
+    "recovery_warning_keep": "Annotale e tienile segrete."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

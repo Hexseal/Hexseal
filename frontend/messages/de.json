@@ -616,10 +616,9 @@
     "enable_messaging": "Nachrichten aktivieren",
     "file_expired": "Aufbewahrungsfrist abgelaufen — bitte die Datei erneut anfordern",
     "file_expired_image": "Aufbewahrungsfrist abgelaufen",
-    "recovery_warning_title": "Schreiben Sie diese 12 Wörter auf und bewahren Sie sie wie Ihren Wohnungsschlüssel auf.",
-    "recovery_warning_access": "Sie sind Ihr Zugang zum gesamten Schriftverkehr. Wer diese Wörter erhält, liest alle Ihre Nachrichten – vergangene wie künftige. Sie lassen sich weder widerrufen noch ändern.",
-    "recovery_warning_where": "Bewahren Sie sie nicht im Chat, in E-Mails oder in der Cloud auf. Nur auf Papier oder in einem Passwortmanager.",
-    "recovery_warning_loss": "Verlieren Sie sie, verlieren Sie Ihren Schriftverkehr. Weder wir noch sonst jemand kann ihn wiederherstellen.",
+    "recovery_warning_title": "Wiederherstellungscode",
+    "recovery_warning_access": "Dies ist der Zugang zu Ihrem gesamten Nachrichtenverlauf. Wer diese 12 Wörter erhält, kann alles lesen. Sie lassen sich weder widerrufen noch ändern.",
+    "recovery_warning_loss": "Gehen sie verloren, sind die Nachrichten endgültig weg.",
     "privacy_badge_title": "Nur ihr zwei",
     "privacy_badge_storage": "Die Nachrichten sind verschlüsselt. Der Server speichert sie unlesbar und besitzt keine Schlüssel.",
     "privacy_badge_dispute": "Im Streitfall kann jede Seite den Verlauf einem Schiedsrichter vorlegen — vom eigenen Gerät aus.",
@@ -629,7 +628,8 @@
     "key_not_saved": "Der Chat-Schlüssel konnte auf diesem Gerät nicht gespeichert werden — der Chat läuft, aber nur bis zum Neuladen des Tabs.",
     "key_not_saved_blocked": "Der Chat-Schlüssel wurde nicht gespeichert: Die Seite ist in einem anderen Tab offen. Schließen Sie ihn, sonst wird jedes Mal eine Signatur verlangt.",
     "chain_unverified": "Einige Nachrichten Ihres Gegenübers haben die Echtheitsprüfung nicht bestanden und werden nicht angezeigt.",
-    "undecryptable": "Einige Nachrichten lassen sich mit Ihrem Schlüssel nicht öffnen — sie sind womöglich auf einen älteren versiegelt."
+    "undecryptable": "Einige Nachrichten lassen sich mit Ihrem Schlüssel nicht öffnen — sie sind womöglich auf einen älteren versiegelt.",
+    "recovery_warning_keep": "Notieren Sie sie und bewahren Sie sie geheim auf."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

@@ -616,10 +616,9 @@
     "enable_messaging": "Activar mensajería",
     "file_expired": "El periodo de almacenamiento terminó: pide el archivo de nuevo",
     "file_expired_image": "El periodo de almacenamiento terminó",
-    "recovery_warning_title": "Anota estas 12 palabras y guárdalas como las llaves de tu casa.",
-    "recovery_warning_access": "Son tu acceso a toda tu conversación. Quien obtenga estas palabras leerá todos tus mensajes, pasados y futuros. No se pueden revocar ni cambiar.",
-    "recovery_warning_where": "No las guardes en chats, en el correo ni en la nube. Solo en papel o en un gestor de contraseñas.",
-    "recovery_warning_loss": "Si las pierdes, pierdes tu conversación. Ni nosotros ni nadie podrá recuperarla.",
+    "recovery_warning_title": "Código de recuperación",
+    "recovery_warning_access": "Esto es el acceso a toda tu conversación. Quien obtenga estas 12 palabras podrá leerlo todo. No se pueden revocar ni cambiar.",
+    "recovery_warning_loss": "Si las pierdes, los mensajes se pierden para siempre.",
     "privacy_badge_title": "Solo vosotros dos",
     "privacy_badge_storage": "Los mensajes están cifrados. El servidor los guarda ilegibles y no tiene las claves.",
     "privacy_badge_dispute": "En una disputa, cualquiera de las partes puede presentar la conversación al árbitro — desde su propio dispositivo.",
@@ -629,7 +628,8 @@
     "key_not_saved": "No se pudo guardar la clave del chat en este dispositivo — el chat funciona, pero solo hasta que recargues la pestaña.",
     "key_not_saved_blocked": "La clave del chat no se guardó: el sitio está abierto en otra pestaña. Ciérrala o te pedirán firmar cada vez.",
     "chain_unverified": "Algunos mensajes de tu interlocutor no pasaron la comprobación de autenticidad y no se muestran.",
-    "undecryptable": "Algunos mensajes no se abren con tu clave: puede que estén sellados con una anterior."
+    "undecryptable": "Algunos mensajes no se abren con tu clave: puede que estén sellados con una anterior.",
+    "recovery_warning_keep": "Anótalas y guárdalas en secreto."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

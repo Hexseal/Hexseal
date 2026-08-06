@@ -616,10 +616,9 @@
     "enable_messaging": "开启消息功能",
     "file_expired": "保存期已结束 — 请对方重新发送",
     "file_expired_image": "保存期已结束",
-    "recovery_warning_title": "请抄下这 12 个词，像保管家门钥匙一样保管它们。",
-    "recovery_warning_access": "这是你进入全部聊天记录的钥匙。拿到这些词的人，能读到你过去和将来的所有消息。它们无法撤销，也无法更换。",
-    "recovery_warning_where": "不要存放在聊天、邮件或云端。只写在纸上，或存进密码管理器。",
-    "recovery_warning_loss": "丢了它们，就等于丢了聊天记录。我们和任何人都无法帮你找回。",
+    "recovery_warning_title": "恢复码",
+    "recovery_warning_access": "这是你全部聊天记录的访问权限。拿到这 12 个词的人可以读到一切。无法撤销，也无法更换。",
+    "recovery_warning_loss": "一旦丢失，聊天记录将永远无法找回。",
     "privacy_badge_title": "只有你们两人",
     "privacy_badge_storage": "消息经过加密。服务器以不可读的形式保存，并且不持有密钥。",
     "privacy_badge_dispute": "发生争议时，任何一方都可以从自己的设备向仲裁人出示这段对话。",
@@ -629,7 +628,8 @@
     "key_not_saved": "无法在此设备上保存聊天密钥 — 聊天可用，但仅限于刷新标签页之前。",
     "key_not_saved_blocked": "聊天密钥未保存：本站已在另一个标签页中打开。请关闭它，否则每次都会要求签名。",
     "chain_unverified": "对方的部分消息未通过真实性校验，未予显示。",
-    "undecryptable": "部分消息无法用你的密钥打开 — 它们可能是用旧密钥封装的。"
+    "undecryptable": "部分消息无法用你的密钥打开 — 它们可能是用旧密钥封装的。",
+    "recovery_warning_keep": "请抄写下来并妥善保密。"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

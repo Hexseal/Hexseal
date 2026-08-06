@@ -616,10 +616,9 @@
     "enable_messaging": "Ativar mensagens",
     "file_expired": "Prazo de armazenamento terminou — peça o ficheiro novamente",
     "file_expired_image": "Prazo de armazenamento terminou",
-    "recovery_warning_title": "Anote estas 12 palavras e guarde-as como as chaves de casa.",
-    "recovery_warning_access": "É o seu acesso a toda a conversa. Quem obtiver estas palavras lerá todas as suas mensagens, passadas e futuras. Não podem ser revogadas nem alteradas.",
-    "recovery_warning_where": "Não as guarde em conversas, no e-mail nem na nuvem. Apenas em papel ou num gestor de senhas.",
-    "recovery_warning_loss": "Se as perder, perde a conversa. Nem nós nem ninguém conseguirá recuperá-la.",
+    "recovery_warning_title": "Código de recuperação",
+    "recovery_warning_access": "Isto é o acesso a toda a sua conversa. Quem obtiver estas 12 palavras poderá ler tudo. Não podem ser revogadas nem alteradas.",
+    "recovery_warning_loss": "Se as perder, as mensagens somem para sempre.",
     "privacy_badge_title": "Só vocês dois",
     "privacy_badge_storage": "As mensagens são cifradas. O servidor guarda-as ilegíveis e não tem as chaves.",
     "privacy_badge_dispute": "Numa disputa, qualquer das partes pode apresentar a conversa ao árbitro — a partir do seu próprio dispositivo.",
@@ -629,7 +628,8 @@
     "key_not_saved": "Não foi possível guardar a chave da conversa neste dispositivo — a conversa funciona, mas apenas até recarregar o separador.",
     "key_not_saved_blocked": "A chave da conversa não foi guardada: o site está aberto noutro separador. Feche-o, ou ser-lhe-á pedida assinatura sempre.",
     "chain_unverified": "Algumas mensagens do seu interlocutor não passaram na verificação de autenticidade e não são mostradas.",
-    "undecryptable": "Algumas mensagens não abrem com a sua chave — podem estar seladas numa anterior."
+    "undecryptable": "Algumas mensagens não abrem com a sua chave — podem estar seladas numa anterior.",
+    "recovery_warning_keep": "Anote-as e mantenha-as em segredo."
   },
   "messaging": {
     "enabled_title": "Mensagens habilitadas",
