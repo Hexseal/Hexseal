@@ -312,6 +312,28 @@ const _codes = new WeakMap<ChatSession, string>();
  *  же адрес присоединяется к первому — одно окно подписи внутри вкладки. */
 const _inFlight = new Map<string, Promise<ChatSession>>();
 
+/** Очередь на адрес для путей, которые НЕ присоединяются к чужому вызову, а
+ *  обязаны идти строго после него (восстановление по коду: у него свой
+ *  вход и свой возможный отказ, слить его с обычным открытием нельзя).
+ *  Та же форма, что `_walletLocks` в `walletLock.ts`. Нужна там, где нет
+ *  `navigator.locks`: с ним очередь между вкладками держит он. */
+const _addressQueue = new Map<string, Promise<unknown>>();
+
+async function withAddressQueue<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const ahead = _addressQueue.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const ours = new Promise<void>(resolve => { release = resolve; });
+  // Встаём хвостом очереди ДО любого await, чтобы третий вызов встал за нами.
+  _addressQueue.set(key, ours);
+  await ahead.then(() => {}, () => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (_addressQueue.get(key) === ours) _addressQueue.delete(key);
+  }
+}
+
 /** Форма адреса — двадцать байт в hex. Проверяется НА ИСПОЛНЕНИИ, а не
  *  только типом: `` `0x${string}` `` пропускает и `'0x'`, и пустую строку
  *  через любое `as`, а адрес сюда приходит из хука, то есть в конечном счёте
@@ -989,14 +1011,34 @@ export async function openSessionFromRecoveryCode(
   }
 
   const key = storageKey(address);
+  const timeoutMs = opts.lockTimeoutMs ?? SESSION_LOCK_TIMEOUT_MS;
 
-  // ПЕРЕД записью — прочитать. Без этой проверки код восстановления сносил
-  // уже лежащий по адресу сеанс, и следующий обычный заход молча отдавал
-  // чужой ключ, без окна подписи (находка К-2 независимой проверки). Для
-  // кошелька-контракта, чей код не переписан, это потеря навсегда — то есть
-  // ровно та необратимость, отсутствие которой обещала шапка этого файла.
+  // Тот же замок, что у `openSession`, и по той же причине. Без него два
+  // восстановления, запущенные разом, ОБА проходили: сеансов, считающих
+  // себя сохранёнными, — два, ключей на диске — один. Один жил на ключе,
+  // которого нет нигде, и ему было сказано `persisted: true` — а для
+  // кошелька-контракта это значит, что показанный человеку код принадлежит
+  // ИСЧЕЗНУВШЕМУ ключу. То есть ровно тот отказ, ради предотвращения
+  // которого сделана проверка К-2, достигнутый одновременностью вместо
+  // последовательности (находка третьей независимой проверки).
+  return withAddressQueue(key, () =>
+    withCrossTabLock(`hexseal-chat-session-${key}`, timeoutMs, () =>
+      restoreFromCodeUnderLock(address, key, code, signTypedData)));
+}
+
+async function restoreFromCodeUnderLock(
+  address: `0x${string}`,
+  key: string,
+  code: string,
+  signTypedData: SignChatKey,
+): Promise<ChatSession> {
+  // ПЕРЕД записью — прочитать, и обязательно ПОД замком. Без этой проверки
+  // код восстановления сносил уже лежащий по адресу сеанс, и следующий
+  // обычный заход молча отдавал чужой ключ, без окна подписи (находка К-2).
+  // Для кошелька-контракта, чей код не переписан, это потеря навсегда.
   // Снятие сеанса обязано быть отдельным явным действием (`forgetSession`),
-  // а не побочным следствием ввода кода.
+  // а не побочным следствием ввода кода — и тем более не следствием того,
+  // что два восстановления случились в одну секунду.
   const existing = await readRecord(key);
   if (existing) {
     throw new ChatSessionError(

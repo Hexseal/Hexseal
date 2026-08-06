@@ -838,6 +838,77 @@ describe('запись прежней/незнакомой версии', () => 
   });
 });
 
+// ═══ Гонка в восстановлении по коду ═════════════════════════════════════
+
+describe('два восстановления разом на один адрес', () => {
+  it('второе получает ОТКАЗ, а не второй «сохранённый» сеанс', async () => {
+    // До правки оба успешны: сеансов, считающих себя сохранёнными, — 2,
+    // ключей на диске — 1. Один живёт на ключе, которого нет нигде, и ему
+    // сказано persisted: true. Для кошелька-контракта это значит, что
+    // показанный на экране код принадлежит ИСЧЕЗНУВШЕМУ ключу.
+    const codeA = GOLD;
+    const codeB = entropyToMnemonic(new Uint8Array(16).fill(0x11), wordlist);
+
+    const results = await Promise.allSettled([
+      openSessionFromRecoveryCode(ALICE, codeA, async () => ALICE_CONTRACT_SIG),
+      openSessionFromRecoveryCode(ALICE, codeB, async () => ALICE_CONTRACT_SIG),
+    ]);
+
+    const ok = results.filter(r => r.status === 'fulfilled');
+    expect(ok).toHaveLength(1);
+    expect(fakeIdb._disk.get('sessions')!.size).toBe(1);
+
+    // и уцелевший сеанс — ровно тот, чей ключ лежит на диске
+    const survivor = (ok[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof openSessionFromRecoveryCode>>>).value;
+    expect(survivor.persisted).toBe(true);
+    const reopened = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    expect(hex(reopened.keypair.privateKey)).toBe(hex(survivor.keypair.privateKey));
+    expect(exportRecoveryCode(reopened)).toBe(exportRecoveryCode(survivor));
+  });
+
+  it('и отказ внятный: тот же код, что у последовательного повтора', async () => {
+    const results = await Promise.allSettled([
+      openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG),
+      openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG),
+    ]);
+    const rejected = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toMatchObject({ code: 'session_already_present' });
+  });
+
+  it('и без Web Locks тоже: очередь на адрес держит сама', async () => {
+    const navDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'test' }, configurable: true, writable: true,
+    });
+    try {
+      const codeB = entropyToMnemonic(new Uint8Array(16).fill(0x11), wordlist);
+      const results = await Promise.allSettled([
+        openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG),
+        openSessionFromRecoveryCode(ALICE, codeB, async () => ALICE_CONTRACT_SIG),
+      ]);
+      expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      expect(fakeIdb._disk.get('sessions')!.size).toBe(1);
+    } finally {
+      if (navDescriptor) Object.defineProperty(globalThis, 'navigator', navDescriptor);
+    }
+  });
+
+  it('восстановление и обычный заход разом не расходятся', async () => {
+    const results = await Promise.allSettled([
+      openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG),
+      openSession(ALICE, async () => ALICE_CONTRACT_SIG),
+    ]);
+    expect(fakeIdb._disk.get('sessions')!.size).toBe(1);
+    const ok = results.filter(r => r.status === 'fulfilled');
+    // оба могут вернуться успешно, но ключ обязан быть ОДИН
+    const keys = new Set(ok.map(r => hex(
+      (r as PromiseFulfilledResult<{ keypair: { privateKey: Uint8Array } }>).value.keypair.privateKey,
+    )));
+    expect(keys.size).toBe(1);
+  });
+});
+
 // ═══ 8. exportRecoveryCode отказывает обычному кошельку ═══════════════════
 
 describe('у обычного кошелька кода восстановления нет и не должно быть', () => {
