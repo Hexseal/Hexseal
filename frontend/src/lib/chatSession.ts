@@ -168,7 +168,12 @@ export type ChatSessionErrorCode =
   /** Прочитать хранилище не удалось. НЕ то же, что «записи нет»: пустоту мы
    *  не установили, а завести новый ключ вслепую значит для кошелька-
    *  контракта уничтожить прежнюю личность (К-4). */
-  | 'storage_read_failed';
+  | 'storage_read_failed'
+  /** Открытие базы упёрлось в соседнюю вкладку, держащую прежнюю версию.
+   *  Человеку надо закрыть другие вкладки сайта, а не «повторить». */
+  | 'storage_blocked'
+  /** Открытие базы не ответило ничем за отведённое время. */
+  | 'storage_open_timeout';
 
 /** Каждый отказ несёт `.code` ОТДЕЛЬНЫМ полем — та же дисциплина, что в
  *  `chatTransport.ts`: сравнение текста ошибки ломается от первой же правки
@@ -246,6 +251,18 @@ export const SESSION_LOCK_TIMEOUT_MS = 3 * 60_000;
  */
 const DELEGATION_INDICATOR_RE = /^0xef0100[0-9a-f]{40}$/;
 
+/**
+ * Потолок ожидания ОТКРЫТИЯ базы. `indexedDB.open` умеет не ответить вовсе:
+ * ни `success`, ни `error` — например, пока жива соседняя вкладка с прежней
+ * версией базы (тогда приходит `blocked`, а за ним может не прийти ничего)
+ * или когда браузер придерживает хранилище. Без потолка это не отказ, а
+ * ТИШИНА: чат просто не заводится, и никто не узнает почему (находка В-4).
+ *
+ * Десять секунд — заведомо больше любого нормального открытия локальной
+ * базы (миллисекунды) и заведомо меньше человеческого терпения.
+ */
+export const STORAGE_OPEN_TIMEOUT_MS = 10_000;
+
 const DB_NAME = 'hexseal-chat';
 const DB_VERSION = 1;
 const STORE_NAME = 'sessions';
@@ -305,13 +322,35 @@ function openDb(): Promise<IDBDatabase> {
   const factory = idbFactory();
   if (!factory) return Promise.reject(new Error('chatSession: IndexedDB недоступен'));
   return new Promise((resolve, reject) => {
+    let settled = false;
+    // Ровно один исход, что бы ни пришло первым, и таймер снимается всегда.
+    const finish = (act: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      act();
+    };
+    const timer = setTimeout(() => finish(() => reject(new ChatSessionError(
+      'chatSession: хранилище не открылось за отведённое время',
+      'storage_open_timeout',
+    ))), STORAGE_OPEN_TIMEOUT_MS);
+
     const req = factory.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error('chatSession: не удалось открыть хранилище'));
+    req.onsuccess = () => finish(() => resolve(req.result));
+    req.onerror = () => finish(() => reject(
+      req.error ?? new Error('chatSession: не удалось открыть хранилище'),
+    ));
+    // `blocked` приходит, когда соседняя вкладка держит прежнюю версию базы.
+    // Сегодня версия одна и этого не бывает; первое же её повышение делает
+    // это обычным делом, и без обработчика тут была бы вечная тишина.
+    req.onblocked = () => finish(() => reject(new ChatSessionError(
+      'chatSession: хранилище занято другой вкладкой этого сайта — закройте её и повторите',
+      'storage_blocked',
+    )));
   });
 }
 
@@ -436,6 +475,11 @@ async function readRecord(key: string): Promise<StoredSession | null> {
   try {
     raw = await idbGet(key);
   } catch (err) {
+    // Уже внятный отказ (занято соседней вкладкой, не открылось за срок)
+    // проходит КАК ЕСТЬ: «закройте другую вкладку» и «повторите позже» —
+    // разные советы человеку, и схлопывать их в один код значило бы стереть
+    // единственное, что отличает одно от другого.
+    if (err instanceof ChatSessionError) throw err;
     throw new ChatSessionError(
       'chatSession: не удалось прочитать ключ чата с устройства — повторите позже',
       'storage_read_failed',

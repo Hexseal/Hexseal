@@ -11,6 +11,7 @@ import {
   SESSION_LOCK_TIMEOUT_MS,
   RECOVERY_WORD_COUNT,
   RECORD_VERSION,
+  STORAGE_OPEN_TIMEOUT_MS,
 } from './chatSession';
 
 // ─── Заготовки берут данные в том виде, в каком они приходят из жизни ──────
@@ -58,6 +59,12 @@ const GOLD = entropyToMnemonic(new Uint8Array(16).fill(0x7f), wordlist);
 
 interface FakeControl {
   failOpen?: boolean;
+  /** Открытие упирается в соседнюю вкладку, держащую прежнюю версию базы:
+   *  браузер шлёт `blocked` и БОЛЬШЕ НИЧЕГО. Сегодня недостижимо (версия
+   *  одна), но первое же её повышение делает это обычным делом. */
+  blockOpen?: boolean;
+  /** Открытие молчит вовсе — ни успеха, ни ошибки, ни блокировки. */
+  hangOpen?: boolean;
   failPut?: boolean;
   failGet?: boolean;
   failDelete?: boolean;
@@ -69,6 +76,7 @@ class FakeRequest {
   onsuccess: Handler = null;
   onerror: Handler = null;
   onupgradeneeded: Handler = null;
+  onblocked: Handler = null;
   result: unknown = undefined;
   error: unknown = null;
 }
@@ -212,6 +220,11 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
     open(_name: string, version: number): FakeRequest {
       const req = new FakeRequest();
       setTimeout(() => {
+        if (control.hangOpen) return; // тишина: ни одного события
+        if (control.blockOpen) {
+          req.onblocked?.({ target: req });
+          return;
+        }
         if (control.failOpen) {
           req.error = new Error('open failed');
           req.onerror?.({ target: req });
@@ -275,6 +288,12 @@ afterEach(() => {
   delete g.indexedDB;
   delete g.localStorage;
   warn.mockRestore();
+  // Безусловно, а не в `finally` внутри теста: тест, упавший по таймауту,
+  // до своего `finally` не доходит и оставил бы подменённый `setTimeout`
+  // всему остальному файлу — 20 чужих тестов падали бы по времени, пряча
+  // настоящую причину. Тот же класс, что «тест, убивающий исполнителя
+  // тестов вместо провала».
+  vi.unstubAllGlobals();
 });
 
 /** Обычный кошелёк: кода на цепи нет. Настоящий `getBytecode` (viem) отдаёт
@@ -929,6 +948,38 @@ describe('IndexedDB отказала в записи (квота)', () => {
     const session = await openSession(ALICE, sign, eoaOpts());
     expect(session.persisted).toBe(false);
     expect(session.keypair.privateKey).toHaveLength(32);
+  });
+
+  it('соседняя вкладка держит прежнюю версию базы — отказ, а не тишина (В-4)', async () => {
+    // Браузер шлёт `blocked` и больше ничего. Без обработчика это вечное
+    // молчание — не отказ, а зависший чат без единого сигнала.
+    installStorage({ blockOpen: true });
+    const sign = vi.fn(async () => ALICE_SIG);
+    await expect(openSession(ALICE, sign, eoaOpts()))
+      .rejects.toMatchObject({ code: 'storage_blocked' });
+    expect(sign).toHaveBeenCalledTimes(0);
+  });
+
+  it('открытие молчит вовсе — потолок ожидания, а не зависание (В-4)', async () => {
+    installStorage({ hangOpen: true });
+    const realSetTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    vi.stubGlobal('setTimeout', ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+      delays.push(ms ?? 0);
+      return realSetTimeout(fn, ms === STORAGE_OPEN_TIMEOUT_MS ? 0 : ms, ...rest);
+    }));
+    try {
+      await expect(openSession(ALICE, async () => ALICE_SIG, eoaOpts()))
+        .rejects.toMatchObject({ code: 'storage_open_timeout' });
+      // и потолок — боевой, а не подставленный
+      expect(delays).toContain(STORAGE_OPEN_TIMEOUT_MS);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('боевой потолок открытия хранилища — не тестовое значение', () => {
+    expect(STORAGE_OPEN_TIMEOUT_MS).toBe(10_000);
   });
 
   it('база не открывается — отказ с кодом: пустоты мы не установили (К-4)', async () => {
