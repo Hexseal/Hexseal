@@ -12,6 +12,7 @@ import {
   MAX_LINK_SEQ,
   MAX_BURNED_SEQS,
   NOT_STORED_STATUSES,
+  NOT_STORED_CODES,
   CONVERSATION_LOCK_TIMEOUT_MS,
   LINK_SIGNING_KEY_CONTEXT,
   LINK_SIGNATURE_DOMAIN,
@@ -1292,6 +1293,80 @@ describe('перезапустили посреди отправки', () => {
     ).rejects.toBeTruthy();
     expect(await listBurnedSeqs(ALICE, BOB)).toEqual([0]);
   }, 60_000);
+
+  it('кончившееся у СКЛАДА место не превращается в обвинение человеку', async () => {
+    // Настоящий дефект, найденный при проверке хуков. У склада кончилось
+    // место — он ТОЧНО знает, что мешок не лёг: отвечает `write_failed` и
+    // УДАЛЯЕТ недописанный файл (relayer/app.js, `ws.on('error')`). Сомнений
+    // нет никаких.
+    //
+    // А решение «сгорел номер или нет» смотрело на СТАТУС. Статус там 500, а
+    // 500 в списке нет — и правильно, что нет: при обычной пятисотке мешок мог
+    // и лечь. Итог: номер сгорал, у собеседника оставалась дыра, а дыру
+    // отличить от намеренного утаивания нечем (docs/OPEN-ITEMS.md, пункт 34).
+    // Человек получал тяжёлое обвинение за чужой кончившийся диск.
+    const stub = installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+
+    stub.next = () => new Response(
+      JSON.stringify({ error: 'Write error', code: 'write_failed' }),
+      { status: 500, headers: { 'content-type': 'application/json' } },
+    );
+    await expect(
+      sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'место кончилось' }, null, { pass: PASS }),
+    ).rejects.toMatchObject({ code: 'send_failed', status: 500 });
+
+    expect(await listBurnedSeqs(ALICE, BOB)).toEqual([]);  // ни одной дыры
+    stub.next = () => new Response(JSON.stringify({ key: '0x00/ok.bin' }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    const again = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'повтор' }, null, { pass: PASS });
+    expect(again.link.seq).toBe(0);                        // номер переиспользован
+  });
+
+  it('пятисотка БЕЗ машинного кода — номер всё-таки сгорает: мешок мог лечь', async () => {
+    // Обратная сторона той же правки. Код есть — верим коду; кода нет — гадать
+    // нельзя, и гадаем в сторону дыры (обвинение в утаивании), а не двойного
+    // номера (обвинение в подделке). Тот же размен, что во всём файле.
+    const stub = installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    stub.next = () => new Response('<html>502 from proxy</html>',
+      { status: 500, headers: { 'content-type': 'text/html' } });
+    await expect(
+      sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'неизвестно' }, null, { pass: PASS }),
+    ).rejects.toBeTruthy();
+    expect(await listBurnedSeqs(ALICE, BOB)).toEqual([0]);
+  });
+
+  it('общий код (internal_error) НЕ считается точным «не лёг» — и это осознанно', async () => {
+    // На сегодняшнем складе все три ветки PUT с `internal_error` тоже удаляют
+    // файл, то есть по факту мешок не лёг. Но `internal_error` — КАТЧ-ОЛЛ,
+    // тот же код отвечают GET /bags и GET /keys. Читать общий код как точное
+    // обещание про ЭТОТ мешок значит вешать гарантию на имя, которое её не
+    // давало: первая же будущая ветка, которая успеет сохранить и упасть
+    // после, вернёт нам переиспользованный номер — то есть `unordered`,
+    // обвинение в ПОДДЕЛКЕ, а оно тяжелее дыры. Цена решения — лишняя дыра в
+    // редком случае, и она названа в отчёте.
+    const stub = installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    stub.next = () => new Response(JSON.stringify({ error: 'Failed to record bag', code: 'internal_error' }),
+      { status: 500, headers: { 'content-type': 'application/json' } });
+    await expect(
+      sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'общий код' }, null, { pass: PASS }),
+    ).rejects.toBeTruthy();
+    expect(await listBurnedSeqs(ALICE, BOB)).toEqual([0]);
+  });
+
+  it('точные коды склада заперты руками записанным списком', () => {
+    // Список кодов заперт числами так же, как список статусов, — но главное
+    // про него проверяется ПОВЕДЕНИЕМ выше (сгорел номер или нет), а не
+    // составом: состав можно поменять и не заметить.
+    expect([...NOT_STORED_CODES].sort()).toEqual(
+      ['empty_bag', 'invalid_recipient', 'payload_too_large', 'write_failed'],
+    );
+  });
 
   it('список сгоревших номеров не растёт без предела', async () => {
     // Мелочь враждебной проверки: 300 обрывов — 300 записей, и всё это ложится
