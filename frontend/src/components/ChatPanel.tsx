@@ -457,7 +457,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const {
     messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress,
     streamDead, reconnect, needsSetup, gapAfterSeq, peerKnown,
-    passSignaturePending, storageNotice,
+    passSignaturePending, storageNotice, chainUnverified, undecryptable,
   } = usePairChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   // Состояние САМОГО сеанса — отдельно от состояния этой переписки. Раньше
@@ -1135,10 +1135,31 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
             </div>
           )}
 
-          {/* «Сообщений пока нет» — только когда переписка РАБОТАЕТ и в ней
-              действительно пусто. В остальных состояниях эта надпись
-              утверждала бы то, чего никто не проверял. */}
-          {!isLoading && !error && peerKnown && !needsSetup && messages.length === 0 && (
+          {/* ⚠️ ЭКРАН НЕ МОЛЧИТ, КОГДА С ЦЕПОЧКОЙ НЕПОРЯДОК.
+              Замерено до этой правки: цепочка собеседника, переписанная чужим
+              ключом, отвергается ЦЕЛИКОМ — ноль сообщений и пустой
+              `gapAfterSeq`. Панель в этом состоянии рисовала «Сообщений пока
+              нет», то есть УТВЕРЖДАЛА обратное произошедшему.
+              Две формулировки, не одна: «не заслуживает доверия» и «не
+              открывается нашим ключом» — разные события с разной ценой, и
+              вторая никого ни в чём не обвиняет. */}
+          {!isLoading && chainUnverified && (
+            <div className="mx-1 mb-2 px-3 py-2 rounded-[12px] bg-amber-500/[0.07] border border-amber-500/15">
+              <p className="text-xs text-amber-400/70">{t("chat.chain_unverified")}</p>
+            </div>
+          )}
+          {!isLoading && undecryptable && (
+            <div className="mx-1 mb-2 px-3 py-2 rounded-[12px] bg-white/[0.04] border border-white/[0.08]">
+              <p className="text-xs text-white/45">{t("chat.undecryptable")}</p>
+            </div>
+          )}
+
+          {/* «Сообщений пока нет» — только когда переписка РАБОТАЕТ, в ней
+              действительно пусто И претензий к предъявленному нет. В
+              остальных состояниях эта надпись утверждала бы то, чего никто не
+              проверял. */}
+          {!isLoading && !error && peerKnown && !needsSetup && !chainUnverified && !undecryptable
+            && messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
               <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-white/[0.15]" />

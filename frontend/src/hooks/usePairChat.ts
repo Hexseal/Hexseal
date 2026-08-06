@@ -106,6 +106,53 @@ export interface PairChatMessage {
   };
 }
 
+/**
+ * Претензия движка в той форме, которая нужна разбору ниже. Своя структурная
+ * форма, а не импорт `ConversationTrouble`: разбору важен ТОЛЬКО род, и
+ * привязка к полному типу заставляла бы тест собирать поля, на которые никто
+ * не смотрит.
+ */
+export interface ConversationTroubleLike { kind: string }
+
+/**
+ * Два признака, и они РАЗНЫЕ ПО СМЫСЛУ — смешивать их нельзя.
+ *
+ *  - `chainUnverified` — предъявленное НЕ ЗАСЛУЖИВАЕТ ДОВЕРИЯ: подпись не
+ *    сходится, отпечаток тела не сходится, подписной ключ не тот, отправитель
+ *    не тот, номер задвоен, кадр не разбирается. Это про подлинность.
+ *  - `undecryptable` — звено ЧЕСТНОЕ, но наш ключ его не открывает
+ *    (собеседник запечатал на прежний открытый ключ). Это про нас, а не про
+ *    него, и говорить тут «подделка» значило бы обвинить человека в чужой
+ *    беде.
+ *
+ * ⚠️ ЗАЧЕМ ЭТО ВООБЩЕ ВЫВЕДЕНО НАВЕРХ. Замерено до правки: цепочка
+ * собеседника, переписанная чужим ключом, отвергается ЦЕЛИКОМ — ноль
+ * сообщений, пустой `gapAfterSeq`. Панель в этом состоянии рисовала
+ * «Сообщений пока нет», то есть УТВЕРЖДАЛА обратное тому, что произошло.
+ */
+export interface TroubleSummary {
+  chainUnverified: boolean;
+  undecryptable: boolean;
+}
+
+/** Роды претензий, означающие «предъявленному верить нельзя». Перечислены
+ *  ЯВНО, а не «всё, что не undecryptable»: новый род претензии обязан быть
+ *  отнесён руками, иначе он молча попал бы в самую мягкую формулировку. */
+const UNVERIFIED_KINDS: ReadonlySet<string> = new Set([
+  'malformed', 'sender_mismatch', 'body_mismatch', 'bad_signature',
+  'signer_unexpected', 'signer_changed', 'duplicate_seq',
+]);
+
+export function troubleSummary(troubles: readonly ConversationTroubleLike[]): TroubleSummary {
+  let chainUnverified = false;
+  let undecryptable = false;
+  for (const t of troubles) {
+    if (t.kind === 'undecryptable') undecryptable = true;
+    else if (UNVERIFIED_KINDS.has(t.kind)) chainUnverified = true;
+  }
+  return { chainUnverified, undecryptable };
+}
+
 export interface PairChatState {
   messages: PairChatMessage[];
   /** Номера, ПОСЛЕ которых чего-то не хватает; `-1` — не предъявлено начало. */
@@ -372,6 +419,7 @@ export function usePairChat(peerAddress: string) {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [gapAfterSeq, setGapAfterSeq] = useState<number[]>([]);
   const [peerKnown, setPeerKnown] = useState(true);
+  const [troubles, setTroubles] = useState<TroubleSummary>({ chainUnverified: false, undecryptable: false });
   const [streamDead, setStreamDead] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   /** Окно кошелька за пропуском склада открыто ПРЯМО СЕЙЧАС. Ставится из
@@ -403,6 +451,7 @@ export function usePairChat(peerAddress: string) {
         setMessages(s.messages);
         setGapAfterSeq(s.gapAfterSeq);
         setPeerKnown(s.peerKnown);
+        setTroubles(troubleSummary(s.troubles));
         setIsInitialized(true);
         setIsLoading(false);
       },
@@ -492,6 +541,10 @@ export function usePairChat(peerAddress: string) {
     streamDead, reconnect, needsSetup: status !== 'ready',
     /** Разрывы в цепочке собеседника и «собеседник ещё не заходил». */
     gapAfterSeq, peerKnown,
+    /** Предъявленному верить нельзя (подпись, отпечаток, ключ, номер). */
+    chainUnverified: troubles.chainUnverified,
+    /** Честное звено, которое не открывается нашим ключом. */
+    undecryptable: troubles.undecryptable,
     /** Окно кошелька за пропуском склада открыто прямо сейчас. */
     passSignaturePending,
     /** Ключ переписки не лёг на устройство — см. `sessionStorageNotice`. */

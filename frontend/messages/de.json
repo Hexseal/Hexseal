@@ -627,7 +627,9 @@
     "chain_gap_start": "Der Anfang dieses Verlaufs wurde nicht vorgelegt",
     "pass_signature_hint": "Die Wallet bittet um eine Signatur: Sie belegt dem Server, dass diese Pakete Ihnen gehören. Sie wiederholt sich höchstens alle 12 Stunden und berührt den Chat-Schlüssel nie.",
     "key_not_saved": "Der Chat-Schlüssel konnte auf diesem Gerät nicht gespeichert werden — der Chat läuft, aber nur bis zum Neuladen des Tabs.",
-    "key_not_saved_blocked": "Der Chat-Schlüssel wurde nicht gespeichert: Die Seite ist in einem anderen Tab offen. Schließen Sie ihn, sonst wird jedes Mal eine Signatur verlangt."
+    "key_not_saved_blocked": "Der Chat-Schlüssel wurde nicht gespeichert: Die Seite ist in einem anderen Tab offen. Schließen Sie ihn, sonst wird jedes Mal eine Signatur verlangt.",
+    "chain_unverified": "Einige Nachrichten Ihres Gegenübers haben die Echtheitsprüfung nicht bestanden und werden nicht angezeigt.",
+    "undecryptable": "Einige Nachrichten lassen sich mit Ihrem Schlüssel nicht öffnen — sie sind womöglich auf einen älteren versiegelt."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

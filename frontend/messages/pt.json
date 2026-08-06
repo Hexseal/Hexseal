@@ -627,7 +627,9 @@
     "chain_gap_start": "O início desta conversa não foi apresentado",
     "pass_signature_hint": "A carteira pede uma assinatura: prova ao servidor que estes pacotes são seus. Repete-se no máximo uma vez a cada 12 horas e nunca toca na sua chave de conversa.",
     "key_not_saved": "Não foi possível guardar a chave da conversa neste dispositivo — a conversa funciona, mas apenas até recarregar o separador.",
-    "key_not_saved_blocked": "A chave da conversa não foi guardada: o site está aberto noutro separador. Feche-o, ou ser-lhe-á pedida assinatura sempre."
+    "key_not_saved_blocked": "A chave da conversa não foi guardada: o site está aberto noutro separador. Feche-o, ou ser-lhe-á pedida assinatura sempre.",
+    "chain_unverified": "Algumas mensagens do seu interlocutor não passaram na verificação de autenticidade e não são mostradas.",
+    "undecryptable": "Algumas mensagens não abrem com a sua chave — podem estar seladas numa anterior."
   },
   "messaging": {
     "enabled_title": "Mensagens habilitadas",

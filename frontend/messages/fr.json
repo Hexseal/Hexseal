@@ -627,7 +627,9 @@
     "chain_gap_start": "Le début de cette conversation n’a pas été présenté",
     "pass_signature_hint": "Le portefeuille demande une signature : elle prouve au serveur que ces paquets sont les vôtres. Elle se répète au plus une fois toutes les 12 heures et ne touche jamais votre clé de discussion.",
     "key_not_saved": "La clé de discussion n’a pas pu être enregistrée sur cet appareil — la messagerie fonctionne, mais seulement jusqu’au rechargement de l’onglet.",
-    "key_not_saved_blocked": "La clé de discussion n’a pas été enregistrée : le site est ouvert dans un autre onglet. Fermez-le, sinon une signature sera demandée à chaque fois."
+    "key_not_saved_blocked": "La clé de discussion n’a pas été enregistrée : le site est ouvert dans un autre onglet. Fermez-le, sinon une signature sera demandée à chaque fois.",
+    "chain_unverified": "Certains messages de votre interlocuteur n’ont pas passé la vérification d’authenticité et ne sont pas affichés.",
+    "undecryptable": "Certains messages ne s’ouvrent pas avec votre clé — ils sont peut-être scellés sur une clé plus ancienne."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

@@ -627,7 +627,9 @@
     "chain_gap_start": "The beginning of this conversation was not presented",
     "pass_signature_hint": "Your wallet is asking for a signature: it proves to the server that these bags are yours. It repeats at most once every 12 hours and never touches your chat key.",
     "key_not_saved": "The chat key could not be saved on this device — messaging works, but only until you reload the tab.",
-    "key_not_saved_blocked": "The chat key was not saved: the site is open in another tab. Close it, or you will be asked to sign every time."
+    "key_not_saved_blocked": "The chat key was not saved: the site is open in another tab. Close it, or you will be asked to sign every time.",
+    "chain_unverified": "Some of your peer’s messages failed the authenticity check and are not shown.",
+    "undecryptable": "Some messages cannot be opened with your key — they may be sealed to an older one."
   },
   "deal_bar": {
     "application_received": "Application received",

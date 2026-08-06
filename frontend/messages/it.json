@@ -627,7 +627,9 @@
     "chain_gap_start": "L’inizio di questa conversazione non è stato presentato",
     "pass_signature_hint": "Il wallet chiede una firma: dimostra al server che questi pacchetti sono tuoi. Si ripete al massimo una volta ogni 12 ore e non tocca mai la chiave della chat.",
     "key_not_saved": "Non è stato possibile salvare la chiave della chat su questo dispositivo — la chat funziona, ma solo fino al ricaricamento della scheda.",
-    "key_not_saved_blocked": "La chiave della chat non è stata salvata: il sito è aperto in un’altra scheda. Chiudila, altrimenti ti verrà chiesta la firma ogni volta."
+    "key_not_saved_blocked": "La chiave della chat non è stata salvata: il sito è aperto in un’altra scheda. Chiudila, altrimenti ti verrà chiesta la firma ogni volta.",
+    "chain_unverified": "Alcuni messaggi del tuo interlocutore non hanno superato il controllo di autenticità e non vengono mostrati.",
+    "undecryptable": "Alcuni messaggi non si aprono con la tua chiave: potrebbero essere sigillati su una precedente."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",
