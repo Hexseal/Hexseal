@@ -906,33 +906,44 @@ describe('перезапустили посреди отправки', () => {
     // межвкладочный замок, и СЛЕДУЮЩИЕ 14 тестов файла падали по таймауту,
     // пряча настоящую причину. Ровно тот класс, о котором предупреждает
     // задание: тест, убивающий исполнителя тестов вместо честного провала.
-    let dropConnection!: () => void;
+    let dropConnection: (() => void) | undefined;
     stub.next = () => new Promise<Response>((_, reject) => {
       dropConnection = () => reject(new TypeError('fetch failed'));
     });
     const hanging = sendMessage(alice, BOB, bob.keypair.publicKey, { text: '1' }, null,
       { pass: PASS, lockTimeoutMs: 500 });
     void hanging.catch(() => {}); // вкладки уже нет — результат никого не ждёт
-    await new Promise(r => setTimeout(r, 80)); // дать дойти до склада
-    expect(stub.calls.filter(c => c.method === 'PUT')).toHaveLength(2); // мешок реально ушёл в сеть
 
-    // «Перезагрузка»: новый экземпляр модуля, тот же диск. Голова читается БЕЗ
-    // замка — то есть именно в тот момент, когда мешок ещё в полёте.
-    vi.resetModules();
-    const afterReload = await import('./chatConversation');
-    const head = await afterReload.readConversationHead(ALICE, BOB);
-    expect(head!.link.seq).toBe(1);   // резерв УЖЕ на диске
-    expect(head!.key).toBeNull();     // и он именно резерв: мешок не подтверждён
+    // finally обязателен: если ЛЮБАЯ проверка ниже упадёт, обрыв всё равно
+    // должен произойти, иначе замок останется взят и следующие пятнадцать
+    // тестов файла упадут по таймауту, скрыв единственный настоящий провал.
+    // Проверено мутацией: без finally мутация M8 давала 16 красных вместо 1.
+    try {
+      await new Promise(r => setTimeout(r, 80)); // дать дойти до склада
+      expect(stub.calls.filter(c => c.method === 'PUT')).toHaveLength(2); // мешок реально ушёл в сеть
 
-    dropConnection();
-    await hanging.catch(() => {});    // замок отпущен, файл больше никого не держит
-    stub.next = () => new Response(JSON.stringify({ key: '0x00/после.bin' }),
-      { status: 200, headers: { 'content-type': 'application/json' } });
+      // «Перезагрузка»: новый экземпляр модуля, тот же диск. Голова читается
+      // БЕЗ замка — то есть именно в тот момент, когда мешок ещё в полёте.
+      vi.resetModules();
+      const afterReload = await import('./chatConversation');
+      const head = await afterReload.readConversationHead(ALICE, BOB);
+      expect(head!.link.seq).toBe(1);   // резерв УЖЕ на диске
+      expect(head!.key).toBeNull();     // и он именно резерв: мешок не подтверждён
 
-    const next = await afterReload.sendMessage(
-      alice, BOB, bob.keypair.publicKey, { text: '2' }, null, { pass: PASS, lockTimeoutMs: 500 },
-    );
-    expect(next.link.seq).toBe(2);    // номер 1 не выдан второй раз
+      dropConnection?.();
+      dropConnection = undefined;
+      await hanging.catch(() => {});    // замок отпущен, файл больше никого не держит
+      stub.next = () => new Response(JSON.stringify({ key: '0x00/после.bin' }),
+        { status: 200, headers: { 'content-type': 'application/json' } });
+
+      const next = await afterReload.sendMessage(
+        alice, BOB, bob.keypair.publicKey, { text: '2' }, null, { pass: PASS, lockTimeoutMs: 500 },
+      );
+      expect(next.link.seq).toBe(2);    // номер 1 не выдан второй раз
+    } finally {
+      dropConnection?.();
+      await hanging.catch(() => {});
+    }
   }, 30_000);
 
   it('после перезагрузки вкладки нумерация продолжается с диска, а не с нуля', async () => {
