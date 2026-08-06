@@ -955,7 +955,7 @@ describe('IndexedDB отказала в записи (квота)', () => {
     // молчание — не отказ, а зависший чат без единого сигнала.
     installStorage({ blockOpen: true });
     const sign = vi.fn(async () => ALICE_SIG);
-    await expect(openSession(ALICE, sign, eoaOpts()))
+    await expect(openSession(ALICE, sign, contractOpts()))
       .rejects.toMatchObject({ code: 'storage_blocked' });
     expect(sign).toHaveBeenCalledTimes(0);
   });
@@ -969,7 +969,7 @@ describe('IndexedDB отказала в записи (квота)', () => {
       return realSetTimeout(fn, ms === STORAGE_OPEN_TIMEOUT_MS ? 0 : ms, ...rest);
     }));
     try {
-      await expect(openSession(ALICE, async () => ALICE_SIG, eoaOpts()))
+      await expect(openSession(ALICE, async () => ALICE_SIG, contractOpts()))
         .rejects.toMatchObject({ code: 'storage_open_timeout' });
       // и потолок — боевой, а не подставленный
       expect(delays).toContain(STORAGE_OPEN_TIMEOUT_MS);
@@ -987,7 +987,7 @@ describe('IndexedDB отказала в записи (квота)', () => {
     // для кошелька-контракта — новая личность поверх старой.
     installStorage({ failOpen: true });
     const sign = vi.fn(async () => ALICE_SIG);
-    await expect(openSession(ALICE, sign, eoaOpts()))
+    await expect(openSession(ALICE, sign, contractOpts()))
       .rejects.toMatchObject({ code: 'storage_read_failed' });
     expect(sign).toHaveBeenCalledTimes(0);
   });
@@ -1339,17 +1339,90 @@ describe('мусор на входе — вердикт, а не падение'
     expect((thrown as ChatSessionError)?.code).toBe('recovery_code_unavailable');
   });
 
-  it('чтение хранилища отказало — это ОТКАЗ с кодом, а не пустота (К-4)', async () => {
+  // ─── Сбой чтения: размен несимметричен, поэтому разведён по роду ──────
+  //
+  // Обычному кошельку непрочитанный диск не стоит НИЧЕГО, кроме лишнего
+  // окна подписи: ключ выводится из подписи и получается побайтово тот же.
+  // Кошельку-контракту он стоит личности: ключ случайный, диск — его
+  // единственный источник. Отказывать обоим одинаково значит наказывать
+  // первого за беду второго. Разводка возможна потому, что род кошелька
+  // берётся ИЗ ЦЕПИ, а не с диска: при отказе чтения он всё ещё известен.
+
+  it('ветка 1: сбой чтения + обычный кошелёк — работает, ключ ТОТ ЖЕ (К-4-бис)', async () => {
     installStorage({ failGet: true });
     const sign = vi.fn(async () => ALICE_SIG);
 
-    await expect(openSession(ALICE, sign, eoaOpts()))
+    const session = await openSession(ALICE, sign, eoaOpts());
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(session.origin).toBe('signature');
+    expect(session.persisted).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    // побайтово тот же ключ, что при исправном диске — терять нечего
+    expect(hex(session.keypair.publicKey))
+      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+  });
+
+  it('ветка 2: сбой чтения + делегированный EIP-7702 — тоже работает', async () => {
+    installStorage({ failGet: true });
+    const sign = vi.fn(async () => ALICE_SIG);
+
+    const session = await openSession(ALICE, sign, { getBytecode: delegationBytecode });
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(session.origin).toBe('signature');
+    expect(session.walletKind).toBe('eoa');
+    expect(session.persisted).toBe(false);
+  });
+
+  it('ветка 3: сбой чтения + кошелёк-контракт — отказ, ничего не спрошено', async () => {
+    installStorage({ failGet: true });
+    const sign = vi.fn(async () => ALICE_SIG);
+
+    await expect(openSession(ALICE, sign, contractOpts()))
       .rejects.toMatchObject({ code: 'storage_read_failed' });
 
-    // ничего не спросили и ничего не написали — человек может повторить
     expect(sign).toHaveBeenCalledTimes(0);
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
+  });
+
+  it('ветка 4: сбой чтения + род выяснить не удалось — отказ, догадка дороже', async () => {
+    installStorage({ failGet: true });
+    const sign = vi.fn(async () => ALICE_SIG);
+    const failing = vi.fn(async () => { throw new Error('HTTP request failed'); });
+
+    // отдаётся ИСХОДНАЯ беда: сломалось чтение, а проба рода была лишь
+    // попыткой её смягчить, и её собственный провал диагноз не подменяет
+    await expect(openSession(ALICE, sign, { getBytecode: failing }))
+      .rejects.toMatchObject({ code: 'storage_read_failed' });
+    expect(sign).toHaveBeenCalledTimes(0);
+
+    await expect(openSession(ALICE, sign))
+      .rejects.toMatchObject({ code: 'storage_read_failed' });
+    expect(sign).toHaveBeenCalledTimes(0);
+  });
+
+  it('сбой чтения у обычного кошелька НИЧЕГО не пишет поверх непрочитанного', async () => {
+    // Под непрочитанной записью может лежать чужой сеанс. Работать в
+    // памяти — да, писать вслепую — нет.
+    const before = await openSession(BOB, async () => BOB_SIG, eoaOpts());
+    const snapshot = structuredClone(fakeIdb._disk.get('sessions')!.get(BOB.toLowerCase()));
+
+    installStorageKeepingDisk({ failGet: true });
+    const blind = await openSession(BOB, async () => BOB_SIG, eoaOpts());
+    expect(blind.persisted).toBe(false);
+
+    // диск байт в байт прежний: ни новой записи, ни перезаписи
+    const after = fakeIdb._disk.get('sessions')!;
+    expect(after.size).toBe(1);
+    expect(after.get(BOB.toLowerCase())).toEqual(snapshot);
+
+    // чтение починилось — на месте ровно то, что лежало
+    installStorageKeepingDisk({});
+    const back = await openSession(BOB, async () => BOB_SIG, eoaOpts());
+    expect(back.restored).toBe(true);
+    expect(hex(back.keypair.privateKey)).toBe(hex(before.keypair.privateKey));
   });
 
   it('сбой чтения НЕ уничтожает личность кошелька-контракта (К-4)', async () => {

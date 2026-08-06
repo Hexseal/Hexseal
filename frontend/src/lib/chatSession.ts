@@ -473,11 +473,12 @@ async function validRecoveryCode(code: string): Promise<boolean> {
  * полностью здоровым (`persisted: true`). Два пути были разведены по
  * последствиям и не разведены по обработке.
  *
- * Цена решения названа вслух: там, где `IndexedDB` не открывается вовсе
- * (приватный режим некоторых браузеров), чат теперь не заводится, а не
- * работает «до перезагрузки». Это хуже по доступности и лучше по честности:
- * отказ с кодом человек увидит и повторит, а молча заведённая личность
- * поверх старой не заметна никому и невосстановима.
+ * Цена решения названа вслух и РАЗВЕДЕНА ПО РОДУ КОШЕЛЬКА (см.
+ * `openWithoutStorage`): там, где `IndexedDB` не читается вовсе (приватный
+ * режим некоторых браузеров), кошелёк-контракт чат не заводит, а обычный
+ * работает без сохранения — с окном подписи на каждый заход. Отказывать
+ * обоим одинаково значило бы наказывать первого за беду второго: у него
+ * ключ выводится из подписи и получается тот же самый.
  *
  * Отсутствие самого API `IndexedDB` — ДРУГОЙ случай и остаётся пустотой:
  * там, где хранилища нет вовсе, в нём ничего и не могло лежать, то есть
@@ -485,6 +486,24 @@ async function validRecoveryCode(code: string): Promise<boolean> {
  *
  * @throws {ChatSessionError} `storage_read_failed`
  */
+/** Исход попытки прочитать запись. `failed` — ОТДЕЛЬНЫЙ исход, а не
+ *  разновидность пустоты: что делать дальше, зависит от рода кошелька
+ *  (см. `openWithoutStorage`). */
+type ReadOutcome =
+  | { status: 'found'; record: StoredSession }
+  | { status: 'empty' }
+  | { status: 'failed'; error: ChatSessionError };
+
+async function tryReadRecord(key: string): Promise<ReadOutcome> {
+  try {
+    const record = await readRecord(key);
+    return record ? { status: 'found', record } : { status: 'empty' };
+  } catch (err) {
+    if (err instanceof ChatSessionError) return { status: 'failed', error: err };
+    throw err;
+  }
+}
+
 async function readRecord(key: string): Promise<StoredSession | null> {
   if (!idbFactory()) return null; // хранилища нет — вывод «пусто» обоснован
   let raw: unknown;
@@ -756,17 +775,26 @@ async function doOpenSession(
   opts: OpenSessionOptions,
 ): Promise<ChatSession> {
   // Чтение с устройства — ПЕРВЫМ, до сети и до замка. Обычный заход не должен
-  // зависеть ни от узла RPC, ни от соседней вкладки.
-  const stored = await readRecord(key);
-  if (stored) return buildSession(stored, address, { restored: true, persisted: true });
+  // зависеть ни от узла RPC, ни от соседней вкладки. Отказ чтения здесь НЕ
+  // решает ничего: решение принимается под замком, на повторном чтении —
+  // моргнувший диск не должен стоить окна подписи.
+  const first = await tryReadRecord(key);
+  if (first.status === 'found') {
+    return buildSession(first.record, address, { restored: true, persisted: true });
+  }
 
   const timeoutMs = opts.lockTimeoutMs ?? SESSION_LOCK_TIMEOUT_MS;
   return withCrossTabLock(`hexseal-chat-session-${key}`, timeoutMs, async () => {
     // ПЕРЕЧИТАТЬ под замком. Единственное, ради чего замок здесь берётся:
     // без этой строки вторая вкладка, дождавшись очереди, откроет второе
     // окно подписи — замок будет вызван и ничего не запрёт.
-    const again = await readRecord(key);
-    if (again) return buildSession(again, address, { restored: true, persisted: true });
+    const again = await tryReadRecord(key);
+    if (again.status === 'found') {
+      return buildSession(again.record, address, { restored: true, persisted: true });
+    }
+    if (again.status === 'failed') {
+      return openWithoutStorage(address, signTypedData, opts, again.error);
+    }
 
     const kind = await walletKind(address, opts);
 
@@ -801,6 +829,64 @@ async function doOpenSession(
     const persisted = await writeRecord(key, record);
     return buildSession(record, address, { restored: false, persisted });
   });
+}
+
+/**
+ * Диск прочитать не удалось. Что делать — зависит от РОДА КОШЕЛЬКА, и
+ * разводка возможна только потому, что род берётся ИЗ ЦЕПИ, а не с диска:
+ * даже при непрочитанном хранилище мы знаем, с кем имеем дело.
+ *
+ * Размен несимметричен, и это замерено:
+ *
+ *  - **обычный кошелёк** (включая делегированный EIP-7702): ключ выводится
+ *    из подписи и при повторном выводе получается ПОБАЙТОВО ТОТ ЖЕ.
+ *    Непрочитанный диск не стоит ему ничего, кроме лишнего окна подписи —
+ *    отказывать такому человеку в переписке не за что.
+ *  - **кошелёк-контракт**: ключ случайный, диск — его единственный источник.
+ *    Работа вслепую означала бы новую личность поверх старой. Отказ.
+ *  - **род не выяснен** (сеть отказала, `getBytecode` не передали): отказ.
+ *    Догадка здесь дороже отказа — ошибка в сторону «обычный» упрёт
+ *    контрактного в невнятную подпись, ошибка в сторону «контрактный»
+ *    молча разведёт его переписку по двум ключам.
+ *
+ * ⚠️ НИЧЕГО НЕ ПИШЕТ. Под непрочитанной записью может лежать чужой сеанс
+ * (соседний адрес, прежняя версия формата, запись другой вкладки) —
+ * работать в памяти можно, писать вслепую нельзя. Поэтому `persisted:
+ * false` здесь не «не получилось сохранить», а «сохранять и не пробовали».
+ */
+async function openWithoutStorage(
+  address: `0x${string}`,
+  signTypedData: SignChatKey,
+  opts: OpenSessionOptions,
+  readError: ChatSessionError,
+): Promise<ChatSession> {
+  let kind: WalletKind;
+  try {
+    kind = await walletKind(address, opts);
+  } catch {
+    // Проба рода — попытка СМЯГЧИТЬ исходную беду, и её собственный провал
+    // диагноз не подменяет: сломалось чтение хранилища, о нём и сообщаем.
+    throw readError;
+  }
+
+  if (kind === 'contract') throw readError;
+
+  const signature = await signTypedData(CHAT_KEY_TYPED_DATA);
+  const keypair = await keypairFromSignature(signature);
+  console.warn(
+    '[chatSession] хранилище не читается — ключ чата выведен из подписи и живёт только в памяти вкладки; ' +
+    'на диск ничего не писали (под непрочитанной записью может лежать чужой сеанс), ' +
+    'поэтому подпись будет спрошена снова',
+    readError,
+  );
+  return {
+    keypair,
+    address,
+    origin: 'signature',
+    walletKind: kind,
+    restored: false,
+    persisted: false,
+  };
 }
 
 /**
