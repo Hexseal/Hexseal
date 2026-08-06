@@ -1042,6 +1042,40 @@ describe('две вкладки открывают сеанс одновреме
     release();
   });
 
+  it('боевой потолок реально ПРОВОДИТСЯ в ожидание, а не только объявлен (В-1)', async () => {
+    // Значение заперто соседним тестом, но проводки не было: подмена
+    // «умолчание → 5 секунд» при нетронутой константе давала 0 красных,
+    // потому что единственный поведенческий тест подставлял свои 30 мс.
+    // Здесь openSession зовётся БЕЗ lockTimeoutMs, а таймер боевой длины
+    // подменяется на немедленный — сама длина при этом наблюдаема.
+    const realSetTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    vi.stubGlobal('setTimeout', ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+      delays.push(ms ?? 0);
+      return realSetTimeout(fn, ms === SESSION_LOCK_TIMEOUT_MS ? 0 : ms, ...rest);
+    }));
+    try {
+      let release!: () => void;
+      const held = new Promise<void>(r => { release = r; });
+      let taken!: () => void;
+      const takenP = new Promise<void>(r => { taken = r; });
+      void navigator.locks.request(`hexseal-chat-session-${ALICE.toLowerCase()}`, () => {
+        taken();
+        return held;
+      });
+      await takenP;
+
+      const sign = vi.fn(async () => ALICE_SIG);
+      await openSession(ALICE, sign, eoaOpts()); // умолчание, не подставленное
+
+      expect(delays).toContain(SESSION_LOCK_TIMEOUT_MS);
+      expect(sign).toHaveBeenCalledTimes(1);
+      release();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('боевой потолок ожидания замка — не тестовое значение', () => {
     // Правило проекта: правка, проверенная только на подставленных значениях,
     // может не изменить ничего. Боевое умолчание заперто здесь.
