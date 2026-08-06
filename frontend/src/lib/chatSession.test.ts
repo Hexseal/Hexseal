@@ -1400,6 +1400,26 @@ describe('мусор на входе — вердикт, а не падение'
     expect(sign).toHaveBeenCalledTimes(1);
   });
 
+  it('пустой и кривой адрес — наш вердикт, а не голое системное сообщение', async () => {
+    // Единственный вход, у которого вердикта не было: адрес уезжал в
+    // toLowerCase(), и пустая строка заводила РАБОЧИЙ сеанс под ключом ''.
+    const sign = vi.fn(async () => ALICE_SIG);
+    for (const bad of ['', '0x', 'не адрес', ALICE.slice(0, 20), `${ALICE}00`]) {
+      await expect(openSession(bad as `0x${string}`, sign))
+        .rejects.toMatchObject({ code: 'address_malformed' });
+    }
+    await expect(openSession(undefined as unknown as `0x${string}`, sign))
+      .rejects.toMatchObject({ code: 'address_malformed' });
+    expect(sign).toHaveBeenCalledTimes(0);
+  });
+
+  it('кривой адрес отвергают и код восстановления, и forgetSession', async () => {
+    await expect(openSessionFromRecoveryCode('0x' as `0x${string}`, GOLD, async () => ALICE_CONTRACT_SIG))
+      .rejects.toMatchObject({ code: 'address_malformed' });
+    await expect(forgetSession('' as `0x${string}`))
+      .rejects.toMatchObject({ code: 'address_malformed' });
+  });
+
   it('в IndexedDB запись прежней версии формата — не мусор наружу, а новая подпись', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
     fakeIdb._disk.set('sessions', new Map([[
