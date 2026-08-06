@@ -1,414 +1,459 @@
 'use client';
 
+/**
+ * usePairChat.ts — одна переписка: опрос, приём, порядок, отправка.
+ *
+ * Внутренности заменены целиком (Задача 6 плана «Клиент чата»): вместо XMTP
+ * — наш склад мешков (`chatTransport.ts`), наш конверт (`chatEnvelope.ts`),
+ * наш сеанс (`chatSession.ts`) и наш разговор (`chatConversation.ts`).
+ * НАРУЖНЫЙ ВИД СОХРАНЁН: `ChatPanel.tsx` не должен заметить подмены —
+ * пересадка вида это Задача 7.
+ *
+ * ─── ПОЧЕМУ ДВИЖОК ОТДЕЛЬНО ОТ ХУКА ─────────────────────────────────────
+ *
+ * У фронта нет ни jsdom, ни @testing-library: `npm test` берёт vitest у
+ * релеера, окружение `node`. Отрисовать хук и проверить его эффекты НЕЧЕМ.
+ * Поэтому вся логика живёт в `startPairChat()` — обычной функции без React,
+ * запертой замерами (`usePairChat.test.ts`), а хук сведён к состоянию и
+ * ОДНОМУ вызову `stop()` в уборке эффекта. Всё, что нельзя проверить,
+ * обязано быть тривиальным — не наоборот.
+ *
+ * ─── ЧТО ДЕЛАЕТ ДВИЖОК ЗА ОДИН ТИК ──────────────────────────────────────
+ *
+ *   опрос склада (курсор двигается сам) → скачать ТОЛЬКО новые мешки →
+ *   разобрать ВСЁ накопленное (`receiveBags`) → отдать наверх
+ *
+ * Разбирается всегда весь накопленный набор, а не только новинки: цепочка
+ * проверяется целиком, и вердикт по половине переписки — не вердикт.
+ * Скачивается при этом каждый мешок ровно один раз — на этом и стоит смысл
+ * курсора.
+ *
+ * ─── ГАЛОЧКА «ДОШЛО» НАКАПЛИВАЕТСЯ, А НЕ ПЕРЕЧИТЫВАЕТСЯ ─────────────────
+ *
+ * `sent[]` сервер фильтрует тем же `since`, что и `inbox`. Значит мешок,
+ * забранный собеседником ДАВНО, из ответа со временем уходит. Если бы
+ * галочка бралась из последнего ответа как есть, она бы ПРОПАДАЛА у старых
+ * сообщений — «дошло» превращалось бы в «неизвестно» само собой. Поэтому
+ * множество доставленных только пополняется.
+ *
+ * ─── ЧЕГО ДВИЖОК НЕ ДЕЛАЕТ ──────────────────────────────────────────────
+ *
+ *  - НЕ ходит за пропуском сам: `getPass` приходит снаружи. Уметь ходить
+ *    значило бы уметь открывать окно кошелька из глубины опроса.
+ *  - НЕ грузит вложения: файл шифруется и кладётся на склад ВЫШЕ (хук),
+ *    сюда приезжает уже готовым `ChatPayload.file`. Так `fileStorage.ts` не
+ *    попадает в движок, а движок остаётся проверяемым в `node`.
+ *  - НЕ отменяет отправку на `stop()`. Разбор — в докстринге `putBag`:
+ *    оборванная отправка оставляет сгоревший номер, то есть дыру, которую
+ *    собеседник видит как утаивание. Экономия одного запроса того не стоит.
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useAccount } from 'wagmi';
-import { useXmtp } from '@/contexts/XmtpContext';
+import { useAccount, useSignMessage } from 'wagmi';
 import {
-  getXmtpClientIfCached,
-  findOrCreatePairGroup,
-  assertPeerCanReceive,
-  loadGroupMessages,
-  normalizeGroupMessage,
-  buildInboxAddressMap,
-  encodeFileMessage,
-  encodeDealContextMarker,
-  getBotAddress,
-  pairLogIsIncomplete,
-  readReceiptTimestampMs,
-  xmtpCrumb,
-  type ChatMessage,
-  type XmtpClient,
-  type XmtpGroup,
-} from '@/lib/xmtp';
+  requestBagPass, fetchBag, pollBags,
+  BagTransportError,
+  type BagPollHandle, type BagPollIntervalsMs, type ListBagsResult,
+} from '@/lib/chatTransport';
+import {
+  sendMessage, receiveBags,
+  type IncomingBag, type SentMessage, type ConversationTrouble,
+} from '@/lib/chatConversation';
+import type { ChatPayload } from '@/lib/chatPayloadForm';
+import type { ChatSession } from '@/lib/chatSession';
+import {
+  useChatSession, fetchPeerChatKeys, publishChatKeys,
+  ChatDirectoryError, type PeerChatKeys,
+} from './useChatSession';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
 import { notifyPush } from '@/lib/webpush';
 
-// Module-level cache — survives navigation (same as board/conversation-list pattern).
-// Keyed by `${myAddressLc}:${peerAddressLc}` — NOT peer-only. A bare peer key let one
-// wallet account's real, decrypted message content (and its isFromMe bit, computed
-// for the WRONG account) render under a different account after a same-device wallet
-// switch, until the reload effect below finished — a genuine cross-account leak.
-const _msgCache = new Map<string, ChatMessage[]>();
+/* ─────────────────────────── наружная форма ───────────────────────────── */
+
+/**
+ * Сообщение в том виде, в каком его ждёт `ChatPanel.tsx`. Форма СОВПАДАЕТ с
+ * `ChatMessage` из `lib/xmtp.ts` поле в поле — намеренно: панель не должна
+ * заметить подмены. Свой тип, а не импорт оттуда, потому что тот файл
+ * удаляется в Задаче 7, а этот останется.
+ */
+export interface PairChatMessage {
+  id: string;
+  from: string;
+  text: string;
+  timestamp: number;
+  isFromMe: boolean;
+  attachment?: {
+    name: string;
+    url: string;
+    fileKey?: string;
+    size?: number;
+    mime?: string;
+    key?: string;
+    iv?: string;
+    chunked?: boolean;
+    chunkCount?: number;
+    chunkSize?: number;
+  };
+}
+
+export interface PairChatState {
+  messages: PairChatMessage[];
+  /** Номера, ПОСЛЕ которых чего-то не хватает; `-1` — не предъявлено начало. */
+  gapAfterSeq: number[];
+  troubles: ConversationTrouble[];
+  /** `false` — собеседник ни разу не заходил, писать ему некуда. */
+  peerKnown: boolean;
+}
+
+/* ──────────────────────────────── движок ──────────────────────────────── */
+
+export interface PairChatEngineOptions {
+  session: ChatSession;
+  peer: `0x${string}`;
+  /** Свежий пропуск склада. Обычно обёртка над `requestBagPass`. */
+  getPass: () => Promise<string>;
+  /** true — чат открыт (5 с), false — фон (30 с). */
+  isActive?: () => boolean;
+  onState: (state: PairChatState) => void;
+  onError?: (err: unknown) => void;
+  /** Опрос остановлен, пропуск не восстанавливается. */
+  onAuthFailed?: () => void;
+  /** Только тесты. Умолчания и есть боевое поведение. */
+  sleep?: (ms: number) => Promise<void>;
+  intervals?: BagPollIntervalsMs;
+}
+
+export interface PairChatEngine {
+  /** Останавливает опрос и обрывает ВСЁ в полёте (список и скачивания). */
+  stop(): void;
+  /** Отправляет готовый payload. Бросает `ChatConversationError` с `.code`. */
+  send(payload: ChatPayload): Promise<PairChatMessage>;
+  /** Сколько скачиваний движок начал и ещё не закончил. Для замеров. */
+  inFlight(): number;
+}
+
+function payloadToMessage(
+  payload: ChatPayload, from: string, seq: number, sentAt: number, isFromMe: boolean,
+): PairChatMessage {
+  return {
+    id: `${from}-${seq}`,
+    from,
+    text: payload.text ?? payload.file?.name ?? '',
+    timestamp: sentAt,
+    isFromMe,
+    ...(payload.file
+      ? {
+        attachment: {
+          name: payload.file.name,
+          url: payload.file.url,
+          size: payload.file.size,
+          key: payload.file.keyHex,
+          iv: payload.file.ivHex,
+        },
+      }
+      : {}),
+  };
+}
+
+export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
+  const own = opts.session.address.toLowerCase();
+  const peer = opts.peer.toLowerCase() as `0x${string}`;
+
+  // ОДИН контроллер на всю жизнь движка. Он и есть ответ на «уход со
+  // страницы отменяет всё в полёте»: и перечисление (через pollBags), и
+  // каждое скачивание держат ЭТОТ сигнал, а не свой собственный.
+  const abort = new AbortController();
+  let stopped = false;
+
+  /** Всё скачанное за жизнь движка, по ключу мешка. Цепочка проверяется
+   *  целиком — вердикт по половине переписки не вердикт. */
+  const bags = new Map<string, IncomingBag>();
+  /** Свои отправленные — чтобы разговор был разговором, а не половиной. */
+  const ownSent: SentMessage[] = [];
+  /** Только пополняется, см. шапку файла. */
+  const delivered = new Set<string>();
+
+  let peerKeys: PeerChatKeys | null = null;
+  let peerKnown = true;
+  let keysPublished = false;
+  let downloads = 0;
+
+  /** Ключи собеседника — один раз за жизнь движка, дальше из памяти. */
+  async function ensurePeerKeys(): Promise<PeerChatKeys | null> {
+    if (peerKeys) return peerKeys;
+    try {
+      peerKeys = await fetchPeerChatKeys(peer, abort.signal);
+      peerKnown = true;
+      return peerKeys;
+    } catch (err) {
+      if (err instanceof ChatDirectoryError && err.code === 'peer_unknown') {
+        // Не поломка: у этой причины есть человеческое действие («пришлите
+        // ему ссылку»). Смешать её с сетевым отказом значило бы показать
+        // «что-то сломалось» там, где всё работает.
+        peerKnown = false;
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  /** Свои ключи в справочник — один раз. Повтор байт-в-байт сервер и так
+   *  отбрасывает ранним возвратом, но лишний запрос каждые пять секунд
+   *  незачем. */
+  async function ensureOwnKeysPublished(pass: string): Promise<void> {
+    if (keysPublished) return;
+    await publishChatKeys(pass, opts.session, abort.signal);
+    keysPublished = true;
+  }
+
+  async function emit(): Promise<void> {
+    const pinned = peerKeys?.signKey ? { [peer]: peerKeys.signKey } : undefined;
+    const state = await receiveBags(opts.session, [...bags.values()], {
+      peer,
+      ...(pinned ? { peerSigningPublicKeys: pinned } : {}),
+      own: ownSent,
+      deliveredKeys: [...delivered],
+    });
+    if (stopped) return;
+    opts.onState({
+      messages: state.messages.map(m =>
+        payloadToMessage(m.payload, m.from, m.seq, m.sentAt, m.from.toLowerCase() === own)),
+      gapAfterSeq: state.gapAfterSeq,
+      troubles: state.troubles,
+      peerKnown,
+    });
+  }
+
+  /** Тики сериализуются: медленный разбор не должен наложиться на следующий
+   *  и удвоить скачивания. */
+  let chain: Promise<void> = Promise.resolve();
+
+  async function handleTick(result: ListBagsResult, pass: string): Promise<void> {
+    for (const s of result.sent) if (s.fetched) delivered.add(s.key);
+
+    for (const summary of result.inbox) {
+      if (stopped) return;
+      // ⚠️ Честно: сегодня эта строка ничего не меняет — `pollBags` уже
+      // отдаёт только новое (курсор плюс дедуп на границе миллисекунды), и
+      // мутация «убрать её» не красит ни один замок. Оставлена вторым слоем
+      // сознательно: настоящий дедуп заперт замерами уровнем ниже
+      // (`chatTransportCursor.test.ts`), а здесь она стоит копейку и
+      // страхует от регресса там. Утверждать, что она заперта, было бы
+      // неправдой — поэтому сказано прямо.
+      if (bags.has(summary.key)) continue;
+      downloads++;
+      try {
+        const body = await fetchBag(pass, summary.key, abort.signal);
+        // `null` — мешка нет (истёк, забрали, чужой ключ). Не повод падать и
+        // не повод считать переписку сломанной: его место в цепочке всё равно
+        // окажется дырой, и это честный вердикт.
+        if (body) {
+          bags.set(summary.key, {
+            key: summary.key, sender: summary.sender,
+            uploadedAt: summary.uploadedAt, body,
+          });
+        }
+      } finally {
+        downloads--;
+      }
+    }
+    if (stopped) return;
+    await emit();
+  }
+
+  const handle: BagPollHandle = pollBags({
+    getPass: async () => {
+      const pass = await opts.getPass();
+      // Публикация своих ключей и добор чужих идут ВНУТРИ тика опроса
+      // намеренно: у них тот же пропуск, та же отмена и тот же откат при
+      // отказе, что у самого опроса — отдельная лестница повторов рядом с
+      // существующей была бы вторым, несогласованным механизмом.
+      await ensureOwnKeysPublished(pass);
+      await ensurePeerKeys();
+      return pass;
+    },
+    isActive: opts.isActive ?? (() => true),
+    onBags: (result) => {
+      chain = chain.then(async () => {
+        if (stopped) return;
+        const pass = await opts.getPass();
+        await handleTick(result, pass);
+      }).catch((err) => { if (!stopped) opts.onError?.(err); });
+    },
+    onError: (err) => { opts.onError?.(err); },
+    onBagsError: (err) => { opts.onError?.(err); },
+    ...(opts.onAuthFailed ? { onAuthFailed: opts.onAuthFailed } : {}),
+    ...(opts.sleep ? { sleep: opts.sleep } : {}),
+    ...(opts.intervals ? { intervals: opts.intervals } : {}),
+  });
+
+  return {
+    stop() {
+      stopped = true;
+      handle.stop();
+      abort.abort();
+    },
+    inFlight: () => downloads,
+    async send(payload: ChatPayload): Promise<PairChatMessage> {
+      const pass = await opts.getPass();
+      const keys = await ensurePeerKeys();
+      if (!keys) {
+        throw new ChatDirectoryError(
+          'Собеседник ещё не заходил в переписку — писать ему пока некуда',
+          'peer_unknown',
+        );
+      }
+      const prev = ownSent.length > 0 ? ownSent[ownSent.length - 1].link : null;
+      const sent = await sendMessage(opts.session, peer, keys.boxKey, payload, prev, { pass });
+      ownSent.push(sent);
+      await emit();
+      return payloadToMessage(payload, own, sent.link.seq, sent.link.sentAt, true);
+    },
+  };
+}
+
+/* ──────────────────────────────── хук ─────────────────────────────────── */
+
+/** Пережимает переходы между страницами — тот же приём, что был у прежней
+ *  версии на XMTP. Ключ — `${мой}:${собеседник}`, не только собеседник:
+ *  голый ключ собеседника однажды показал расшифрованную переписку одного
+ *  аккаунта под другим после смены кошелька на том же устройстве. */
+const _msgCache = new Map<string, PairChatMessage[]>();
 
 export function usePairChat(peerAddress: string) {
   const { address } = useAccount();
-  const { status } = useXmtp();
+  const { signMessageAsync } = useSignMessage();
+  const { status, session } = useChatSession();
 
   const peerLc = peerAddress.toLowerCase();
   const myLc = address?.toLowerCase() ?? '';
   const pairKey = `${myLc}:${peerLc}`;
 
-  const [messages, setMessages]             = useState<ChatMessage[]>(() => _msgCache.get(pairKey) ?? []);
-  // Skip the loading screen if we already have cached messages — show them
-  // instantly (SWR pattern) while the effect quietly re-syncs in the background.
-  const [isLoading, setIsLoading]           = useState(() => (_msgCache.get(pairKey) ?? []).length === 0);
-  const [isInitialized, setIsInitialized]   = useState(() => (_msgCache.get(pairKey) ?? []).length > 0);
-  const [error, setError]                   = useState<string | null>(null);
-  const [hasMore, setHasMore]               = useState(false);
+  const [messages, setMessages] = useState<PairChatMessage[]>(() => _msgCache.get(pairKey) ?? []);
+  const [isLoading, setIsLoading] = useState(() => (_msgCache.get(pairKey) ?? []).length === 0);
+  const [isInitialized, setIsInitialized] = useState(() => (_msgCache.get(pairKey) ?? []).length > 0);
+  const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [streamDead, setStreamDead]         = useState(false);
-  /** Бота релеера в парной группе нет и добавить его не вышло — значит эта
-   *  переписка в журнал спора не попадает. Раньше это выпадение было молчаливым
-   *  и узнать о нём можно было только при споре, когда уже поздно. */
-  const [logIncomplete, setLogIncomplete]   = useState(false);
-  const [retryKey, setRetryKey]             = useState(0);
-  // Latest read-receipt timestamp (ms) the peer has sent us — any of our own
-  // messages at or before this time are "read" (2 checks); after it, just "sent".
-  // Persisted in localStorage: read status is monotonic ("read" never becomes
-  // "unread"), and MLS forward-secrecy can make the peer's read-receipt
-  // undecryptable when re-reading history on reload (SecretReuseError / "secret
-  // deleted to preserve forward secrecy"). Seeding from the cache and only ever
-  // increasing keeps the "read" tick from reverting to a single tick on reload.
-  // Scoped by `${myLc}:${peerLc}` for the same reason as _msgCache above.
-  const peerReadKey = `hexseal_peerread_${pairKey}`;
-  const [peerLastReadAt, setPeerLastReadAt] = useState<number | null>(() => {
-    try { const v = localStorage.getItem(peerReadKey); return v ? Number(v) : null; }
-    catch { return null; }
-  });
-  const bumpPeerRead = (ms: number | null | undefined) => {
-    if (ms == null) return;
-    setPeerLastReadAt(prev => {
-      const next = prev == null ? ms : Math.max(prev, ms);
-      try { localStorage.setItem(peerReadKey, String(next)); } catch { /* unavailable */ }
-      return next;
-    });
-  };
+  const [gapAfterSeq, setGapAfterSeq] = useState<number[]>([]);
+  const [peerKnown, setPeerKnown] = useState(true);
+  const [streamDead, setStreamDead] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
-  const clientRef         = useRef<XmtpClient | null>(null);
-  const groupRef          = useRef<XmtpGroup | null>(null);
-  const oldestNsRef       = useRef<bigint | null>(null);
-  const peerRef           = useRef(peerAddress);
-  const streamRef         = useRef<{ return: () => void } | null>(null);
-  const autoReconnectRef  = useRef(false);
-  // Личность соединения, от которой отсчитывается «одна авто-попытка».
-  // retryKey в неё намеренно НЕ входит — см. сброс флага в теле эффекта ниже.
-  const connKeyRef        = useRef('');
-  const pairKeyRef        = useRef(pairKey);
-  useEffect(() => { peerRef.current = peerAddress; }, [peerAddress]);
+  const engineRef = useRef<PairChatEngine | null>(null);
+  const activeRef = useRef(true);
 
   useEffect(() => {
-    // Ранний выход обязан ЧИСТИТЬ ошибку, а не только гасить спиннер. Иначе
-    // строка «Не удалось подключиться · Messaging not initialized», записанная
-    // прошлым прогоном, висела поверх чата до тех пор, пока XMTP снова не
-    // станет 'ready' — то есть после смены аккаунта в кошельке человек читал
-    // отказ о том, чего сейчас никто и не пробовал сделать.
-    if (!address || !peerAddress || status !== 'ready') {
+    if (!address || !peerAddress || status !== 'ready' || !session) {
       setError(null);
       setIsLoading(false);
       return;
     }
-
-    let cancelled = false;
-    // Бюджет авто-переподключения обнуляется только при смене САМОГО соединения
-    // (аккаунт, собеседник, готовность XMTP) — не на каждом прогоне эффекта.
-    //
-    // Эффект перезапускает сам себя: обрыв стрима ставит autoReconnectRef и
-    // через 3 с дёргает setRetryKey, а retryKey стоит в его зависимостях
-    // (см. массив в конце эффекта). Пока сброс здесь был безусловным, он
-    // затирал только что поставленный флаг, и ветка `else { setStreamDead(true) }`
-    // ниже не достигалась НИКОГДА. Вместо задуманного «одна попытка → баннер с
-    // кнопкой Reconnect» получался бесконечный цикл: каждые 3 секунды полная
-    // перезагрузка истории, повторный read-receipt и новый стрим — молча, без
-    // единого следа в журнале. Баннер `streamDead` в ChatPanel был при этом
-    // мёртвым кодом, а человек видел внешне обычный чат, который на самом деле
-    // безостановочно долбится в сеть. Ровно тот андроидный путь, где WASM-воркер
-    // и роняет вкладку по памяти.
-    const connKey = `${address}|${peerAddress}|${status}`;
-    if (connKeyRef.current !== connKey) {
-      connKeyRef.current = connKey;
-      autoReconnectRef.current = false;
-    }
-    setStreamDead(false);
-
-    // Reset synchronously (before any async work) whenever the (my address, peer)
-    // pair actually changed — e.g. a same-device wallet-account switch while this
-    // chat stayed open (chat/page.tsx keys its wrapper by peer only, not by
-    // address, so this hook instance survives the switch). Without this, the
-    // PREVIOUS pair's messages/read-state keep rendering — under the NEW
-    // account's identity — until the reload below resolves.
-    if (pairKeyRef.current !== pairKey) {
-      pairKeyRef.current = pairKey;
-      const cached = _msgCache.get(pairKey) ?? [];
-      setMessages(cached);
-      setIsInitialized(cached.length > 0);
-      try {
-        const v = localStorage.getItem(peerReadKey);
-        setPeerLastReadAt(v ? Number(v) : null);
-      } catch { setPeerLastReadAt(null); }
-      // Also drop the OLD pair's group/client refs so a send() that somehow fires
-      // in the brief window before the reload below resolves can't go out through
-      // the previous account's XMTP client/group — sendMessage/sendFile's `if
-      // (!group)` path rebuilds a fresh one for the new pair.
-      groupRef.current = null;
-      clientRef.current = null;
-      oldestNsRef.current = null;
-    }
-
-    // If we have cached messages, don't show the loading screen — silently re-sync.
-    if (!_msgCache.has(pairKey)) setIsLoading(true);
     setError(null);
+    setStreamDead(false);
+    if (!_msgCache.has(pairKey)) setIsLoading(true);
 
-    (async () => {
-      try {
-        const myAddress = address.toLowerCase();
-        // status === 'ready' guarantees the client is in cache — no need to re-init.
-        const xmtp = getXmtpClientIfCached(myAddress);
-        if (!xmtp) { setError('Messaging not initialized'); setIsLoading(false); return; }
-        if (cancelled) return;
-        clientRef.current = xmtp;
-
-        const botAddr = await getBotAddress();
-        // Look up only — the group is created on the first send (see sendMessage).
-        const group = await findOrCreatePairGroup(xmtp, [myAddress, peerAddress], botAddr, false);
-        if (cancelled) return;
-        groupRef.current = group;
-        setLogIncomplete(pairLogIsIncomplete(group?.id));
-
-        if (!group) {
-          // No conversation exists yet. Render an empty but fully usable thread so
-          // the user can type; sending is what actually creates the group.
-          _msgCache.set(pairKey, []);
-          setMessages([]);
-          setHasMore(false);
-          setIsInitialized(true);
-          setIsLoading(false);
-          return;
-        }
-
-        // Sync group state from network before loading messages.
-        // Fetches missing identity updates and resolves MLS install diffs.
-        try { await group.sync(); } catch { /* non-critical */ }
-        if (cancelled) return;
-
-        const loaded = await loadGroupMessages(group, xmtp.inboxId ?? '', myAddress);
-        if (cancelled) return;
-        _msgCache.set(pairKey, loaded.messages);
-        setMessages(loaded.messages);
-        setHasMore(loaded.hasMore);
-        bumpPeerRead(loaded.peerLastReadAt);
-        xmtpCrumb(`rr:load peerLastReadAt=${loaded.peerLastReadAt ?? 'null'}`);
-        oldestNsRef.current = loaded.oldestNs;
+    const engine = startPairChat({
+      session,
+      peer: peerAddress as `0x${string}`,
+      getPass: async () => (await requestBagPass(
+        (msg) => signMessageAsync({ message: msg }),
+        address,
+      )).pass,
+      isActive: () => activeRef.current,
+      onState: (s) => {
+        _msgCache.set(pairKey, s.messages);
+        setMessages(s.messages);
+        setGapAfterSeq(s.gapAfterSeq);
+        setPeerKnown(s.peerKnown);
         setIsInitialized(true);
         setIsLoading(false);
+      },
+      onError: (err) => {
+        // Код отказа — отдельным полем, текст только как запасной вариант:
+        // разбор английского запрещён прямым требованием плана.
+        setError(err instanceof BagTransportError || err instanceof ChatDirectoryError
+          ? (err.code ?? err.message)
+          : err instanceof Error ? err.message : 'Chat error');
+        setIsLoading(false);
+      },
+      onAuthFailed: () => { setStreamDead(true); },
+    });
+    engineRef.current = engine;
 
-        // Opening the conversation counts as reading whatever the peer already
-        // sent — best-effort, never blocks rendering.
-        if (loaded.messages.some(m => !m.isFromMe)) {
-          group.sendReadReceipt()
-            .then(() => xmtpCrumb('rr:send-ok open'))
-            .catch(e => xmtpCrumb(`rr:send-FAIL open ${e instanceof Error ? e.message.slice(0, 40) : e}`));
-        }
+    // Единственная строка уборки — и она же весь смысл того, что движок
+    // отдельный: одна отмена, обрывающая и перечисление, и скачивания.
+    return () => { engine.stop(); engineRef.current = null; };
+  }, [address, peerAddress, status, session, pairKey, signMessageAsync, retryKey]);
 
-        const stream = await group.stream();
-        streamRef.current = stream as unknown as { return: () => void };
-        const inboxToAddr = buildInboxAddressMap(await group.members());
-        for await (const msg of stream) {
-          if (cancelled) break;
-
-          // Read receipts aren't chat messages — they update peerLastReadAt
-          // (for our own sent messages' check marks) and never render.
-          const readMs = readReceiptTimestampMs(msg, xmtp.inboxId ?? '');
-          if (readMs !== null) {
-            xmtpCrumb(`rr:recv ${readMs}`);
-            bumpPeerRead(readMs);
-            continue;
-          }
-
-          const norm = normalizeGroupMessage(msg, xmtp.inboxId ?? '', myAddress, inboxToAddr);
-          if (!norm) continue;
-          setMessages(prev => {
-            if (prev.some(m => m.id === norm.id)) return prev;
-            let next: ChatMessage[];
-            if (norm.isFromMe) {
-              let optIdx = -1;
-              for (let i = prev.length - 1; i >= 0; i--) {
-                if (prev[i].id.startsWith('opt-') && prev[i].text === norm.text) { optIdx = i; break; }
-              }
-              next = optIdx >= 0 ? prev.map((m, i) => i === optIdx ? norm : m) : [...prev, norm];
-            } else {
-              // Notify the sidebar to refresh immediately (only for incoming messages)
-              window.dispatchEvent(new Event('hexseal-conv-update'));
-              // The chat panel is open and just received this — mark it read.
-              group.sendReadReceipt()
-                .then(() => xmtpCrumb('rr:send-ok inbound'))
-                .catch(e => xmtpCrumb(`rr:send-FAIL inbound ${e instanceof Error ? e.message.slice(0, 40) : e}`));
-              next = [...prev, norm];
-            }
-            // Keep module-level cache current (exclude optimistic placeholders)
-            _msgCache.set(pairKey, next.filter(m => !m.id.startsWith('opt-')));
-            return next;
-          });
-        }
-        // Stream ended (network drop, VPN reconnect, server timeout).
-        // Auto-reconnect once after 3s. If it fails again → show manual banner.
-        if (!cancelled) {
-          if (!autoReconnectRef.current) {
-            autoReconnectRef.current = true;
-            setTimeout(() => { if (!cancelled) setRetryKey(k => k + 1); }, 3_000);
-          } else {
-            setStreamDead(true);
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Chat error');
-          setIsLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      streamRef.current?.return();
-      streamRef.current = null;
-    };
-  // address (not walletClient): walletClient's object reference can change mid-session
-  // for reasons unrelated to any user action (wallet reconnect, chain re-sync, etc — the
-  // same reference-churn class fixed in providers.tsx's PushAutoMount and guarded against
-  // in XmtpContext's triedRef) — keying on it here tore down and rebuilt the whole open
-  // chat (killed the live stream, reloaded the full message history, sent a duplicate
-  // read receipt) whenever that happened, even though status stayed 'ready' throughout.
-  // address is the only thing this effect actually derives from walletClient, and it's
-  // a stable string that only changes when the connected account itself changes.
-  }, [address, peerAddress, status, retryKey]);
-
-  const loadMore = useCallback(async () => {
-    const group = groupRef.current;
-    const xmtp  = clientRef.current;
-    if (!group || !xmtp || !oldestNsRef.current) return;
-    const myAddress = xmtp.accountIdentifier?.identifier?.toLowerCase() ?? '';
-    const loaded = await loadGroupMessages(group, xmtp.inboxId ?? '', myAddress, oldestNsRef.current);
-    oldestNsRef.current = loaded.oldestNs;
-    setHasMore(loaded.hasMore);
-    setMessages(prev => [...loaded.messages, ...prev]);
+  // Вкладка ушла в фон — опрос переходит на 30 секунд. Читается на КАЖДОМ
+  // тике (`isActive`), поэтому хватает ссылки: перезапускать движок ради
+  // смены интервала незачем.
+  useEffect(() => {
+    const onVisibility = () => { activeRef.current = document.visibilityState === 'visible'; };
+    onVisibility();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
-  const sendMessage = useCallback(async (text: string) => {
-    const xmtp = clientRef.current;
-    if (!text.trim()) return;
-    const myAddress = xmtp?.accountIdentifier?.identifier?.toLowerCase() ?? '';
-    const optId = `opt-${Date.now()}`;
-    setMessages(prev => [...prev, {
-      id: optId, from: myAddress, text: text.trim(),
-      timestamp: Date.now(), isFromMe: true,
-    }]);
-    try {
-      let group = groupRef.current;
-      let created = false;
-      // Lazy creation: the MLS group is made on the FIRST send, not on open. If the
-      // peer never enabled XMTP, that surfaces here (ChatPanel matches the message to
-      // show the "share an invite" UI) instead of blocking the chat from opening.
-      if (!group) {
-        if (!xmtp) throw new Error('Messaging not initialized');
-        const botAddr = await getBotAddress();
-        group = await findOrCreatePairGroup(xmtp, [myAddress, peerRef.current], botAddr, true);
-        if (!group) throw new Error('Could not start the conversation');
-        groupRef.current = group;
-        setLogIncomplete(pairLogIsIncomplete(group.id));
-        created = true;
-      }
-      // Группа могла быть собрана когда-то БЕЗ собеседника (у него не было ни
-      // одной живой установки в тот момент) — тогда всё, что в неё отправлено,
-      // лежит в группе, членом которой он никогда не был. Раньше такая отправка
-      // выглядела успешной: пузырь, галочка, ноль сомнений. Проверяем перед
-      // каждой отправкой в уже существующую группу; только что созданная своё
-      // условие уже прошла внутри findOrCreatePairGroup. См. lib/xmtpDelivery.
-      if (!created && xmtp) await assertPeerCanReceive(xmtp, group, peerRef.current);
-      await group.sendText(text.trim());
-      notifyPush(peerRef.current, text.trim(), `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
-      // Re-run the open effect so the brand-new group gets its message stream.
-      if (created) setRetryKey(k => k + 1);
-    } catch (err) {
-      // Remove the optimistic message so user knows the send failed
-      setMessages(prev => prev.filter(m => m.id !== optId));
-      throw err;
-    }
-  }, [address]);
+  const sendMessageText = useCallback(async (text: string) => {
+    const engine = engineRef.current;
+    if (!engine || !text.trim()) return;
+    await engine.send({ text: text.trim() });
+    notifyPush(peerLc, text.trim(), `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
+  }, [peerLc, myLc]);
 
   const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
-    const xmtp = clientRef.current;
-    const myAddress = xmtp?.accountIdentifier?.identifier?.toLowerCase() ?? '';
-
-    // Lazy creation, same as sendMessage — done BEFORE the upload so an unreachable
-    // peer fails fast instead of after a pointless multi-MB upload.
-    let group = groupRef.current;
-    let created = false;
-    if (!group) {
-      if (!xmtp) throw new Error('Messaging not initialized');
-      const botAddr = await getBotAddress();
-      group = await findOrCreatePairGroup(xmtp, [myAddress, peerRef.current], botAddr, true);
-      if (!group) throw new Error('Could not start the conversation');
-      groupRef.current = group;
-      setLogIncomplete(pairLogIsIncomplete(group.id));
-      created = true;
-    }
-    // До загрузки, а не после: см. соседний комментарий про fail fast — и тот же
-    // гейт «не дойдёт — не делаем вид, что дошло», что в sendMessage.
-    if (!created && xmtp) await assertPeerCanReceive(xmtp, group, peerRef.current);
-
+    const engine = engineRef.current;
+    if (!engine) throw new Error('Chat is not ready');
     setUploadProgress(0);
     let result: Awaited<ReturnType<typeof uploadFileWithEncryption>>;
     try {
-      result = await uploadFileWithEncryption(file, file.name, setUploadProgress, signal, address ? { self: address, peer: peerRef.current } : undefined);
+      result = await uploadFileWithEncryption(
+        file, file.name, setUploadProgress, signal,
+        address ? { self: address, peer: peerAddress } : undefined,
+      );
     } finally {
       setUploadProgress(null);
     }
     signal?.throwIfAborted();
+    await engine.send({
+      file: {
+        url: result.url, name: file.name, size: file.size,
+        keyHex: result.keyHex, ivHex: result.ivHex,
+      },
+    });
+    notifyPush(peerLc, `📎 ${file.name}`, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
+  }, [address, peerAddress, peerLc, myLc]);
 
-    const { url, fileKey, keyHex, ivHex, chunked, chunkCount, chunkSize } = result;
-    const chunkedOpts = chunked && chunkCount && chunkSize
-      ? { chunked: true as const, chunkCount, chunkSize }
-      : undefined;
-    const encoded = encodeFileMessage(file.name, url, file.size, file.type || undefined, keyHex, ivHex, chunkedOpts, fileKey);
+  /** Наследство XMTP: постраничная подгрузка истории. Склад отдаёт всё, что
+   *  у него есть, одним списком — подгружать нечего, и `hasMore` всегда
+   *  `false`. Оставлено, чтобы `ChatPanel.tsx` не переписывался здесь. */
+  const loadMore = useCallback(async () => {}, []);
 
-    const optId = `opt-${Date.now()}`;
-    setMessages(prev => [...prev, {
-      id: optId, from: myAddress, text: file.name,
-      attachment: { name: file.name, url, fileKey, size: file.size, mime: file.type || undefined, key: keyHex, iv: ivHex, ...chunkedOpts },
-      timestamp: Date.now(), isFromMe: true,
-    }]);
-
-    // Тот же снимающий catch, что и в sendMessage. Без него провал отправки
-    // (собеседник потерял установку, сеть отвалилась) оставлял оптимистичный
-    // пузырь висеть «отправленным»: человек видел файл в переписке, а
-    // собеседник не получал ничего и никогда.
-    try {
-      await group.sendText(encoded);
-    } catch (err) {
-      setMessages(prev => prev.filter(m => m.id !== optId));
-      throw err;
-    }
-    notifyPush(peerRef.current, `📎 ${file.name}`, `/chat?peer=${address?.toLowerCase() ?? ''}`, `/chat?peer=${peerRef.current.toLowerCase()}`);
-    // Re-run the open effect so the brand-new group gets its message stream.
-    if (created) setRetryKey(k => k + 1);
-  }, [address]);
-
-  const markDealContext = useCallback(async (dealId: string | null) => {
-    const group = groupRef.current;
-    if (!group) return;
-    try { await group.sendText(encodeDealContextMarker(dealId)); } catch { /* best-effort */ }
-  }, []);
+  /** Наследство XMTP: маркер сделки уезжал отдельным сообщением боту. Теперь
+   *  метка едет ВНУТРИ запечатанного каждого сообщения (`ChatPayload.dealId`),
+   *  отдельного сообщения не нужно. */
+  const markDealContext = useCallback(async (_dealId: string | null) => {}, []);
 
   const reconnect = useCallback(() => {
     setStreamDead(false);
-    // Осознанное нажатие человека заново открывает бюджет одной авто-попытки:
-    // соединение то же, поэтому сброс в эффекте (по connKey) здесь не
-    // сработает, а без этой строки после первого же ручного переподключения
-    // любой следующий обрыв сразу показывал бы баннер, минуя авто-попытку.
-    autoReconnectRef.current = false;
     setIsInitialized(false);
-    // Keep cached messages visible during reconnect — no jarring blank screen
-    if (!_msgCache.has(pairKey)) {
-      setIsLoading(true);
-      setMessages([]);
-    }
     setRetryKey(k => k + 1);
-  }, [pairKey]);
+  }, []);
 
   return {
-    messages, sendMessage, sendFile, loadMore, markDealContext,
-    hasMore, isLoading, isInitialized, error, uploadProgress,
-    streamDead, reconnect, needsSetup: status !== 'ready', peerLastReadAt,
-    logIncomplete,
+    messages, sendMessage: sendMessageText, sendFile, loadMore, markDealContext,
+    hasMore: false, isLoading, isInitialized, error, uploadProgress,
+    streamDead, reconnect, needsSetup: status !== 'ready',
+    /** Галочка теперь одна («дошло до устройства»), и она в самих сообщениях.
+     *  Поле оставлено ради наружного вида; Задача 7 убирает его вместе со
+     *  второй галочкой. */
+    peerLastReadAt: null as number | null,
+    /** Журнал спора вёл бот XMTP, которого больше нет: предъявляет переписку
+     *  каждая сторона со своего устройства. Всегда `false`; Задача 7 убирает
+     *  янтарную плашку. */
+    logIncomplete: false,
+    /** Новое: разрывы в цепочке и «собеседник ещё не заходил». */
+    gapAfterSeq, peerKnown,
   };
 }

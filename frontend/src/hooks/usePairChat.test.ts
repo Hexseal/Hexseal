@@ -85,7 +85,13 @@ function fakeRelayer(opts: {
   keysStatus?: number;
   putStatus?: number;
   putBody?: unknown;
+  /** Виснет ВСЁ (список и скачивание). */
   hang?: boolean;
+  /** Виснет ТОЛЬКО скачивание — список отвечает нормально и приносит мешки.
+   *  Разведено намеренно: замок «отмена доходит до скачивания» на общем
+   *  `hang` был слеп — вис только список, который и так обрывается через
+   *  `pollBags`, а мутация «stop() не зовёт abort()» проходила зелёной. */
+  hangDownloads?: boolean;
 }) {
   const downloads: string[] = [];
   const inFlight = new Set<number>();
@@ -125,7 +131,7 @@ function fakeRelayer(opts: {
     // скачивание мешка
     const key = decodeURIComponent(p.replace(/^\/bags\//, ''));
     downloads.push(key);
-    if (opts.hang) {
+    if (opts.hang || opts.hangDownloads) {
       const id = ++n; inFlight.add(id);
       return new Promise<Response>((_r, rej) => {
         init?.signal?.addEventListener('abort', () => { inFlight.delete(id); rej(new DOMException('Aborted', 'AbortError')); });
@@ -138,24 +144,41 @@ function fakeRelayer(opts: {
   return { fetchMock, downloads, inFlight };
 }
 
-/** Гоняет движок ровно `ticks` тиков. */
-function drive(engineOpts: Parameters<typeof startPairChat>[0], ticks: number) {
+/** Ждёт условия НАСТОЯЩИМИ таймерами. Прокрутка микрозадач тут не годится:
+ *  разбор мешка идёт через libsodium и `Response.arrayBuffer()`, а это не
+ *  микрозадачи — первая версия этих тестов ждала `Promise.resolve()` и
+ *  читала состояние ДО того, как оно появлялось. */
+async function waitFor(cond: () => boolean, ms = 10_000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > until) throw new Error('waitFor: условие не наступило за отведённое время');
+    await new Promise(r => setTimeout(r, 5));
+  }
+}
+
+/**
+ * Гоняет движок, пока не наберётся `states` состояний, и только потом
+ * останавливает. Считать ТИКИ здесь нельзя: тик и выдача состояния —
+ * разные события (скачивание и разбор идут после ответа списка), и замер по
+ * тикам читал бы состояние раньше, чем оно родилось.
+ */
+function drive(engineOpts: Parameters<typeof startPairChat>[0], wantStates: number) {
   const states: PairChatState[] = [];
   const slept: number[] = [];
   const errors: unknown[] = [];
-  let engine!: ReturnType<typeof startPairChat>;
-  let resolveDone!: () => void;
-  const done = new Promise<void>(r => { resolveDone = r; });
-  const sleep = async (ms: number) => {
-    slept.push(ms);
-    if (slept.length >= ticks) { engine.stop(); resolveDone(); }
-  };
-  engine = startPairChat({
+  const engine = startPairChat({
     ...engineOpts,
     onState: (s) => { states.push(s); },
     onError: (e) => { errors.push(e); },
-    sleep,
+    // ⚠️ НАСТОЯЩАЯ, пусть и крошечная, пауза — не мгновенно разрешённый
+    // промис. Мгновенный `sleep` держит цикл опроса в микрозадачах, до
+    // макрозадач управление не доходит НИКОГДА, `setTimeout` в `waitFor` не
+    // срабатывает — и тест не падает, а убивает исполнителя тестов
+    // («Worker exited unexpectedly»). Замерено здесь же, первой версией
+    // этого файла.
+    sleep: async (ms) => { slept.push(ms); await new Promise(r => setTimeout(r, 1)); },
   });
+  const done = waitFor(() => states.length >= wantStates).finally(() => engine.stop());
   return { engine, done, states, slept, errors };
 }
 
@@ -185,9 +208,33 @@ describe('движок переписки: приём и опрос', () => {
 
     const last = run.states[run.states.length - 1];
     expect(last.messages.map(m => m.text)).toEqual(['раз', 'два']);
-    // Каждый мешок скачан РОВНО один раз за три тика.
+    // Каждый мешок скачан РОВНО один раз за ТРИ выдачи состояния — то есть
+    // за три полных тика опроса, а не за один.
+    expect(run.states.length).toBeGreaterThanOrEqual(3);
     expect(downloads).toHaveLength(2);
     expect(new Set(downloads).size).toBe(2);
+  }, 20_000);
+
+  it('ЗАМЕР: свои ключи уезжают в справочник РОВНО один раз, а не каждые пять секунд', async () => {
+    // Без этого замка публикация «на всякий случай каждый тик» выглядела бы
+    // безобидно: сервер отбрасывает байт-в-байт повтор ранним возвратом. Но
+    // это запрос каждые пять секунд от каждого открытого чата — та самая
+    // нагрузка, которую весь курсор и убирает.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const { fetchMock } = fakeRelayer({ bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 3);
+    await run.done;
+
+    const publishes = fetchMock.mock.calls.filter(
+      c => new URL(String(c[0])).pathname === '/keys' && (c[1] as RequestInit | undefined)?.method === 'POST',
+    );
+    const peerReads = fetchMock.mock.calls.filter(c => new URL(String(c[0])).pathname.startsWith('/keys/'));
+    expect(run.states.length).toBeGreaterThanOrEqual(3);
+    expect(publishes).toHaveLength(1);
+    expect(peerReads).toHaveLength(1);
   }, 20_000);
 
   it('ЗАМЕР: боевые умолчания опроса — 5000 мс активно, 30000 мс в фоне', async () => {
@@ -212,6 +259,7 @@ describe('движок переписки: приём и опрос', () => {
         slept.push(ms);
         if (slept.length === 1) active = false;
         if (slept.length >= 2) { engine.stop(); resolveDone(); }
+        await new Promise(r => setTimeout(r, 1)); // см. комментарий в drive()
       },
     });
     await done;
@@ -240,7 +288,7 @@ describe('пин подписного ключа: справочник → recei
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 1);
     await run.done;
 
     const last = run.states[run.states.length - 1];
@@ -255,7 +303,7 @@ describe('пин подписного ключа: справочник → recei
     const { fetchMock } = fakeRelayer({ bags, peerBoxKey: bob.keypair.publicKey, peerSignKey: null });
     vi.stubGlobal('fetch', fetchMock);
 
-    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 1);
     await run.done;
 
     expect(run.states[run.states.length - 1].messages.map(m => m.text)).toEqual(['привет']);
@@ -269,7 +317,7 @@ describe('пин подписного ключа: справочник → recei
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 1);
     await run.done;
 
     expect(run.states[run.states.length - 1].peerKnown).toBe(false);
@@ -280,25 +328,37 @@ describe('пин подписного ключа: справочник → recei
 
 describe('уход со страницы отменяет всё в полёте', () => {
   it('ЗАМЕР: после stop() незавершённых запросов ноль', async () => {
+    // ⚠️ Виснет СКАЧИВАНИЕ, а не список. Список обрывается своим собственным
+    // контроллером внутри `pollBags` — на нём мутация «stop() не зовёт
+    // abort()» проходит зелёной, потому что до скачиваний замер просто не
+    // доходит. Ровно то, ради чего задача добавляла сигнал `fetchBag`.
     const alice = await makeSession(ALICE, 'a1');
     const bob = await makeSession(BOB, 'bb');
+    const bags = await buildBags(bob, BOB, alice.keypair.publicKey, ['раз', 'два', 'три']);
     const { fetchMock, inFlight } = fakeRelayer({
-      bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null, hang: true,
+      bags, peerBoxKey: bob.keypair.publicKey, peerSignKey: null, hangDownloads: true,
     });
     vi.stubGlobal('fetch', fetchMock);
 
     const engine = startPairChat({
       session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
-      onState: () => {}, onError: () => {}, sleep: async () => {},
+      onState: () => {}, onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
     });
 
-    // Дать циклу уйти в сеть и повиснуть там.
-    for (let i = 0; i < 30; i++) await Promise.resolve();
+    // Список ответил, движок пошёл качать — и завис на первом же мешке.
+    await waitFor(() => inFlight.size > 0);
     expect(inFlight.size).toBeGreaterThan(0);
+    expect(engine.inFlight()).toBeGreaterThan(0);
 
     engine.stop();
-    for (let i = 0; i < 30; i++) await Promise.resolve();
+    // Оба счётчика: у сети (запрос реально оборван) и у движка (он узнал об
+    // этом и снял свой). Ждём ОБА — отмена доходит до сети синхронно, а до
+    // `finally` внутри `fetchBag` микрозадачей позже, и замер по одному
+    // счётчику прочёл бы «единица» на совершенно исправной отмене.
+    await waitFor(() => inFlight.size === 0 && engine.inFlight() === 0);
     expect(inFlight.size).toBe(0);
+    expect(engine.inFlight()).toBe(0);
   }, 20_000);
 });
 
@@ -363,7 +423,7 @@ describe('слишком длинное сообщение', () => {
     try {
       // Дать движку добрать ключ собеседника (иначе отказ пришёл бы «нет ключа»,
       // а не «слишком длинно» — и замок проверял бы не то).
-      for (let i = 0; i < 40; i++) await Promise.resolve();
+      await waitFor(() => fetchMock.mock.calls.some(c => String(c[0]).includes('/keys/')));
       const before = fetchMock.mock.calls.filter(c => (c[1] as RequestInit | undefined)?.method === 'PUT').length;
 
       await expect(engine.send({ text: 'я'.repeat(263_000) }))
@@ -397,7 +457,7 @@ describe('пришёл мусор — вердикт, а не падение', (
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 1);
     await run.done;
 
     const last = run.states[run.states.length - 1];
