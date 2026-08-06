@@ -1223,6 +1223,24 @@ export async function receiveBags(
   }
   const troubles: ConversationTrouble[] = [];
   const onlyPeer = opts.peer ? assertAddress(opts.peer, 'адрес собеседника') : null;
+  const ownAddress = assertAddress(session.address, 'свой адрес');
+
+  /**
+   * Получатель мешка — из его КЛЮЧА (`<получатель>/<файл>.bin`, см.
+   * `relayer/bagStore.js` `bagKeyFor`). Нужен ровно для одного: отобрать СВОИ
+   * отправленные, относящиеся к ЭТОЙ переписке.
+   *
+   * Почему из ключа, а не из содержимого: содержимое ещё не прочитано, а имя
+   * получателя присвоил СЕРВЕР при записи (`PUT /bags/:recipient`) — это то
+   * же свидетельство, что и `sender`, только с другой стороны. `null` —
+   * ключ не той формы; такой мешок в свою половину не попадёт.
+   */
+  const recipientOfKey = (key: string): `0x${string}` | null => {
+    const slash = key.indexOf('/');
+    if (slash <= 0) return null;
+    const addr = key.slice(0, slash).toLowerCase();
+    return ADDRESS_RE.test(addr) ? (addr as `0x${string}`) : null;
+  };
 
   // ─── шаг 1: кадр, свидетельство сервера, отпечаток тела, подпись ───
   const sodium = (await import('libsodium-wrappers')).default;
@@ -1251,7 +1269,22 @@ export async function receiveBags(
       continue;
     }
     const attested = bag.sender.toLowerCase() as `0x${string}`;
-    if (onlyPeer && attested !== onlyPeer) continue;
+    // К-1: свой отправленный мешок — вторая половина ЭТОЙ ЖЕ переписки, а не
+    // чужой шум. Склад теперь отдаёт его владельцу пропуска (мешок один,
+    // копий не появилось), и без этой ветки собственные сообщения пропадали
+    // при любой перезагрузке вкладки: в памяти их нет, а с диска мы их
+    // выбрасывали здесь же, первой строкой разбора.
+    //
+    // Отбор по ПОЛУЧАТЕЛЮ, не по отправителю: отправитель у всех своих
+    // мешков один и тот же (мы сами), и сравнение с `onlyPeer` не отсеивало
+    // бы ничего — переписка с Бобом показывала бы написанное Кэрол.
+    const isOwnOutgoing = attested === ownAddress;
+    if (onlyPeer) {
+      const belongs = isOwnOutgoing
+        ? recipientOfKey(bag.key) === onlyPeer
+        : attested === onlyPeer;
+      if (!belongs) continue;
+    }
 
     let frame: SignedLinkFrame | null;
     try {
@@ -1308,6 +1341,13 @@ export async function receiveBags(
   const chains: Record<string, ChainVerdict> = {};
   const gaps: ConversationGap[] = [];
   const messages: ChatMessage[] = [];
+  /** Номера разрывов СВОЕЙ цепочки — вычитаются из плоского `gapAfterSeq`. */
+  const ownGapSeqs: number[] = [];
+  /** Ключи мешков, уже превращённых в сообщения на шаге 2. Шаг 3 по ним
+   *  отсеивает свои из памяти вкладки: один и тот же мешок теперь приезжает
+   *  ДВУМЯ путями (память и склад), и без этого одно сообщение показалось бы
+   *  дважды. */
+  const shownKeys = new Set<string>();
 
   for (const [from, listRaw] of bySender) {
     // Порядок по номеру, при равенстве — по времени загрузки: разбор дублей и
@@ -1350,6 +1390,13 @@ export async function receiveBags(
       // виден в ящике, просто положив туда мешок.
       for (const n of verdict.missingAfterSeq) gaps.push({ from, afterSeq: n });
     }
+    // К-1: дыра в СВОЕЙ цепочке (мешок истёк на складе, отправка оборвалась)
+    // в плоский `gapAfterSeq` не идёт. Он читается интерфейсом как «здесь
+    // собеседник чего-то не предъявил», и своя же пропажа выглядела бы
+    // обвинением невиновного. В `gaps` она есть — с автором, то есть с нами.
+    if (from === ownAddress) ownGapSeqs.push(...(
+      !verdict.ok && verdict.reason === 'gap' ? verdict.missingAfterSeq : []
+    ));
 
     for (const item of accepted) {
       // Автор — тот, кого ЗАСВИДЕТЕЛЬСТВОВАЛ СЕРВЕР (`from`), а не тот, кого
@@ -1382,14 +1429,29 @@ export async function receiveBags(
       // сообщений один и тот же (мы сами), и сравнение с ним не отсеивало
       // ничего — переписка с Бобом показывала бы написанное Кэрол.
       if (onlyPeer && s.peer?.toLowerCase() !== onlyPeer) continue;
-      messages.push({
+      const mine: ChatMessage = {
         seq: s.link.seq, from: own, sentAt: s.link.sentAt,
         payload: s.payload, delivered: delivered.has(s.key),
         proof: {
           link: s.link, signature: s.signature,
           signerPublicKey: s.signerPublicKey, frame: s.frame,
         },
-      });
+      };
+      // ⚠️ Своя половина переписки приезжает ДВАЖДЫ с тех пор, как задача 7
+      // сделала её достижимой с сервера (поле отправителя в описи): мешком из
+      // ящика и этим списком из памяти вкладки. Показать оба — значит удвоить
+      // человеку его же сообщения, а заодно посчитать по удвоенному ряду
+      // разрывы и вердикты.
+      //
+      // Побеждает ЭТОТ экземпляр, а не тот, что со склада: только здесь
+      // известно `delivered` (склад про свои мешки отвечает отдельным списком,
+      // а не признаком в мешке). Звено при этом уже прошло разбор наравне с
+      // чужими и участвовало в проверке цепочки — то есть перекрёстная сверка
+      // «что у сервера против того, что помню я» не теряется, теряется только
+      // лишняя строка на экране.
+      const already = messages.findIndex(m => m.from === own && m.seq === mine.seq);
+      if (already === -1) messages.push(mine);
+      else messages[already] = mine;
     }
   }
 
