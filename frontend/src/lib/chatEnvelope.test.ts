@@ -240,6 +240,48 @@ describe('packEnvelope / unpackEnvelope', () => {
       const opened = await unpackEnvelope(env, bob);
       expect(opened).toEqual({ text: okText });
     });
+
+    describe('граница потолка на сборке — ровно на числе и на числе минус один (закрывающий круг, ревью координатора)', () => {
+      // Найдено: между «запас 1000 байт вниз» и «перелёт ~200 байт вверх»
+      // (тесты выше) — дыра примерно ±189 байт (ровно накладные расходы
+      // конверта), в которую проваливается вся арифметика границы. Замер:
+      // строгое сравнение (`>`) на нестрогое (`>=`) в assertPayloadFitsEnvelope
+      // — 0 красных из существующего набора; накладные расходы, обнулённые
+      // в формуле — тоже 0 красных. С обнулёнными накладными на живом
+      // релеере сборка выпустила бы конверт 262333 байта (413 File too
+      // large), а тест на "потолок+1" по прежней арифметике ложно отказал
+      // бы РОВНО на 262144 — размере, который склад принимает. Нужны тесты
+      // РОВНО на границе (должен пройти) и РОВНО на границе плюс один
+      // (должен бросить), с длиной текста, посчитанной руками.
+      //
+      // Накладные расходы конверта — РОВНО 189 байт (заголовок 173 + тег
+      // GCM 16, см. ENVELOPE_OVERHEAD_BYTES в chatEnvelope.ts) плюс обёртка
+      // JSON `{"text":"..."}` — РОВНО 11 байт (`JSON.stringify({text:
+      // ''}).length === 11`, посчитано и перепроверено отдельно, не
+      // производное от модуля). Итого накладные поверх самого текста —
+      // 189 + 11 = 200 байт. Длина текста для итогового конверта РОВНО
+      // MAX_ENVELOPE_BYTES — MAX_ENVELOPE_BYTES минус 200; для
+      // MAX_ENVELOPE_BYTES + 1 — минус 199. Числа перепроверены отдельным
+      // прогоном через настоящий packEnvelope вне тестового набора:
+      // N=MAX-200 даёt конверт ровно MAX_ENVELOPE_BYTES байт,
+      // N=MAX-199 — ровно MAX_ENVELOPE_BYTES + 1.
+      const OVERHEAD_PLUS_JSON_WRAPPER = 200; // 189 (заголовок+тег) + 11 (обёртка `{"text":""}`)
+
+      it('текст даёт конверт РОВНО MAX_ENVELOPE_BYTES — не бросает (граница включена)', async () => {
+        const { bob, alice } = await actors();
+        const text = 'a'.repeat(MAX_ENVELOPE_BYTES - OVERHEAD_PLUS_JSON_WRAPPER);
+        const env = await packEnvelope({ text }, bob.publicKey, alice.publicKey);
+        expect(env.length).toBe(MAX_ENVELOPE_BYTES);
+        const opened = await unpackEnvelope(env, bob);
+        expect(opened).toEqual({ text });
+      });
+
+      it('текст даёт конверт РОВНО MAX_ENVELOPE_BYTES + 1 — бросает (на один байт за границей)', async () => {
+        const { bob, alice } = await actors();
+        const text = 'a'.repeat(MAX_ENVELOPE_BYTES - OVERHEAD_PLUS_JSON_WRAPPER + 1);
+        await expect(packEnvelope({ text }, bob.publicKey, alice.publicKey)).rejects.toThrow(/payload too large/);
+      });
+    });
   });
 
   it('В-4 (ревью координатора): значение потолка — число, записанное руками, не переиспользование константы модуля', () => {
