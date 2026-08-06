@@ -256,6 +256,7 @@ export function _loadDirectory() {
     return _directory;
   }
 
+  const totalCount = Object.keys(parsed).length;
   const clean = Object.create(null);
   let dropped = 0;
   for (const [addr, rec] of Object.entries(parsed)) {
@@ -283,8 +284,39 @@ export function _loadDirectory() {
       console.error(`[directory] _loadDirectory: dropping corrupt entry ${JSON.stringify(addr)} from ${DIRECTORY_FILE} — the rest of the directory is unaffected`);
     }
   }
+  // C1 (ревью координатора, round 3, КРИТИЧЕСКАЯ): "отбросили ВСЕ записи" —
+  // не то же самое, что "отбросили несколько кривых, остальное здоровое".
+  // Если записей было больше нуля и КАЖДАЯ провалила форму, это неотличимо
+  // от "формат целиком незнаком этому коду" (откат релеера на ревизию,
+  // не знающую boxKey — рассинхрон, который эта же задача и создала
+  // переименованием поля; накат обратно после отката; будущий signKey
+  // другого размера) — а не от "каждый адрес одновременно испортился
+  // случайно по отдельности". Без этой ветки: справочник объявлял бы себя
+  // здоровым и пустым, GET отвечал бы 404 key_not_found (= "вы никогда не
+  // регистрировались") КАЖДОМУ адресу, что реально был на диске, а первая
+  // же запись ЛЮБОГО постороннего адреса переписала бы файл ровно этой
+  // одной записью — навсегда. Тот же класс, ради которого шапка модуля
+  // обещает громкость при полной потере; ветка "не парсится" его уже
+  // держала, эта — нет.
+  if (totalCount > 0 && dropped === totalCount) {
+    console.error(
+      `[directory] _loadDirectory: ENTERING DISTRUST MODE — index at ${DIRECTORY_FILE} has ${totalCount} ` +
+      `${totalCount === 1 ? 'entry' : 'entries'}, and EVERY ONE failed the shape check (see the ` +
+      `"dropping corrupt entry" line(s) above for which and why). Treating this as "a few bad entries, ` +
+      `otherwise healthy and empty" would answer every read with 404 'key_not_found' — indistinguishable ` +
+      `from "this address never registered" — and let the very next successful write from ANY unrelated ` +
+      `address overwrite this file with just that one record, permanently. The most likely cause is not ` +
+      `simultaneous per-address corruption but a format this reader does not understand at all (a rollback ` +
+      `to code predating a field rename, for example). Both POST /keys and GET /keys/:address will answer ` +
+      `with code 'directory_unavailable' until a human restores this file from backup and restarts the ` +
+      `process. The file is left EXACTLY as it is. No automatic recovery.`
+    );
+    _directory = Object.create(null);
+    _directoryLoadOk = false;
+    return _directory;
+  }
   if (dropped) {
-    console.error(`[directory] _loadDirectory: dropped ${dropped} corrupt ${dropped === 1 ? 'entry' : 'entries'} out of ${Object.keys(parsed).length} from ${DIRECTORY_FILE}`);
+    console.error(`[directory] _loadDirectory: dropped ${dropped} corrupt ${dropped === 1 ? 'entry' : 'entries'} out of ${totalCount} from ${DIRECTORY_FILE}`);
   }
 
   _directory = clean;

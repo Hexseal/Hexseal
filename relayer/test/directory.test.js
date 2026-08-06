@@ -467,6 +467,83 @@ describe('directory.js — громкий отказ при потере/пор�
     expect(isDirectoryHealthy()).toBe(true);
     expect(getKeyRecord(ALICE)).toBeNull();
   });
+
+  it('пустой объект {} на диске (не отсутствие файла) — тоже легитимная пустота, не потеря доверия', () => {
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    fs.writeFileSync(directory.DIRECTORY_FILE, '{}', 'utf8');
+    _loadDirectory();
+
+    expect(isDirectoryHealthy()).toBe(true);
+    expect(getKeyRecord(ALICE)).toBeNull();
+  });
+});
+
+// ─── C1 (ревью координатора, round 3, КРИТИЧЕСКАЯ): все записи не прошли
+// форму ≠ "отбросили несколько кривых, остальное здоровое". Если ОТБРОШЕНЫ
+// ВСЕ записи (и их было больше нуля), это неотличимо от "формат целиком
+// незнаком этому коду" (откат релеера на код, который ещё не знает
+// boxKey — рассинхрон, который эта же задача и создала переименованием
+// поля; или накат обратно после отката; или будущий signKey другого
+// размера) — а НЕ от "каждый адрес одновременно испортился по отдельности
+// случайно". Без этого замка: справочник объявляет себя здоровым и пустым,
+// GET отвечает 404 key_not_found (= "вы никогда не регистрировались") для
+// КАЖДОГО адреса, что реально был на диске, а первая же запись ЛЮБОГО
+// постороннего адреса переписывает файл одной этой записью — навсегда.
+// Ровно тот урок, на который bagStore.js потратил шесть раундов, и шапка
+// этого же модуля обещает: полная потеря обязана быть громкой.
+describe('directory.js — C1: ВСЕ записи не прошли форму — тоже потеря доверия, не "здоров и пуст"', () => {
+  it('откат ревизии: файл в СТАРОМ формате (только key, без boxKey) — распознаётся как потеря доверия, файл НЕ переписан', () => {
+    // Симулирует ровно то, что нашёл координатор: старая (округлённая до
+    // Задачи 2, до И-1) ревизия писала record = {key, updatedAt, history}
+    // — новый код требует boxKey, старый формат для него полностью чужой.
+    const oldFormatRaw = JSON.stringify({
+      [ALICE]: { key: '0x' + '11'.repeat(32), updatedAt: 1000, history: [] },
+      [BOB]:   { key: '0x' + '22'.repeat(32), updatedAt: 2000, history: [] },
+    });
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    fs.writeFileSync(directory.DIRECTORY_FILE, oldFormatRaw, 'utf8');
+    _loadDirectory();
+
+    // Мутация: без этого замка isDirectoryHealthy() был бы true, а оба
+    // getKeyRecord() — null (не throw) вместо directory_unavailable.
+    expect(isDirectoryHealthy()).toBe(false);
+    expect(() => getKeyRecord(ALICE)).toThrow();
+    try { getKeyRecord(ALICE); } catch (e) { expect(e.code).toBe('directory_unavailable'); }
+
+    // Главное: файл СТАРОГО формата — улика, не мусор. Первая же запись
+    // постороннего адреса (Chuck) НЕ должна переписать его одной записью.
+    expect(() => putKey('0x' + 'c4' + '0'.repeat(38), { boxKey: KEY_A }, 3000))
+      .toThrow();
+    expect(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8')).toBe(oldFormatRaw);
+  });
+
+  it('все записи повреждены по РАЗНЫМ причинам (не одна и та же) — всё равно потеря доверия целиком', () => {
+    const raw = JSON.stringify({
+      [ALICE]: { boxKey: 'не ключ', updatedAt: 1000, history: [], keyChangeCount: 0 },
+      [BOB]:   { boxKey: '0x' + '00'.repeat(32), updatedAt: 1000, history: [], keyChangeCount: 0 }, // all-zero
+    });
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    fs.writeFileSync(directory.DIRECTORY_FILE, raw, 'utf8');
+    _loadDirectory();
+
+    expect(isDirectoryHealthy()).toBe(false);
+    expect(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8')).toBe(raw);
+  });
+
+  it('контраст: хотя бы ОДНА валидная запись среди прочих — остаётся частичной порчей, не переходит в недоверие целиком', () => {
+    const raw = JSON.stringify({
+      [ALICE]: { boxKey: 'не ключ', updatedAt: 1000, history: [], keyChangeCount: 0 }, // битая
+      [BOB]:   { v: 1, boxKey: KEY_B, updatedAt: 1000, history: [], keyChangeCount: 0 }, // валидная
+    });
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    fs.writeFileSync(directory.DIRECTORY_FILE, raw, 'utf8');
+    _loadDirectory();
+
+    // Ключевая граница C1: "не все" остаётся здоровым (как и было).
+    expect(isDirectoryHealthy()).toBe(true);
+    expect(getKeyRecord(ALICE)).toBeNull();
+    expect(getKeyRecord(BOB).boxKey).toBe(KEY_B);
+  });
 });
 
 describe('directory.js — диск кончился (Q2 отчёта)', () => {
