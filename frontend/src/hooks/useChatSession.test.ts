@@ -33,8 +33,10 @@ import type { ChatSession } from '@/lib/chatSession';
 import { sendMessage, receiveBags, deriveLinkSigningKeypair, encodeFrame, messageBodyHash, linkSignaturePreimage } from '@/lib/chatConversation';
 import { buildLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
+import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
 import {
   publishChatKeys, fetchPeerChatKeys, sessionStorageNotice,
+  getBagPass, signChatKeyLocked,
   ChatDirectoryError,
   type PeerChatKeys,
 } from './useChatSession';
@@ -67,6 +69,7 @@ function hexOf(bytes: Uint8Array): string {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  _resetBagPassCacheForTest();
 });
 
 /* ───────────── А. проводка подписного ключа в справочник ───────────── */
@@ -304,5 +307,77 @@ describe('слишком длинное сообщение получает от
       alice, bob.address, bob.keypair.publicKey, { text: 'коротко' }, null, { pass: 'v1.p' },
     );
     expect(sent.key).toBe('b/1');
+  });
+});
+
+/* ─────────── В-1/В-2: ОБА пути подписи под общим мьютексом ─────────── */
+
+describe('мьютекс кошелька доказывается удержанием, а не строкой импорта', () => {
+  // В-2 независимой проверки: гейт `lib/signaturePaths.test.ts` смотрит на
+  // НАЛИЧИЕ строки импорта — «снять замок, импорт оставить» давало 0 красных
+  // из 497. Значит поведение обязано проверяться отдельно и именно
+  // удержанием: пока чужой держатель не отпустил, подписей должно быть НОЛЬ.
+
+  it('ЗАМЕР: пропуск склада ждёт чужого держателя замка — 0 подписей, после отпускания 1', async () => {
+    const { acquireWalletLock } = await import('@/lib/walletLock');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ pass: 'v1.p', expiresAt: Math.floor(Date.now() / 1000) + 3600 }), { status: 200 },
+    )));
+
+    let signs = 0;
+    const signMessageAsync = vi.fn(async () => { signs++; return sig('11'); });
+
+    const release = await acquireWalletLock(ALICE);
+    const pending = getBagPass(ALICE, signMessageAsync);
+    await new Promise(r => setTimeout(r, 30));
+    expect(signs).toBe(0);          // держатель чужой — окна нет
+
+    release();
+    await pending;
+    expect(signs).toBe(1);          // отпустили — ровно одно окно
+  });
+
+  it('ЗАМЕР: подпись ключа переписки ждёт того же держателя — 0 подписей, после отпускания 1', async () => {
+    // В-1: путей к подписи ДВА. Второй — подпись типизированных данных при
+    // заведении сеанса; `chatSession.ts` мьютекс кошелька не импортирует
+    // вовсе, у него свой замок с другим именем, и с окном от подписки на
+    // уведомления или страницы сделки он не пересекается.
+    const { acquireWalletLock } = await import('@/lib/walletLock');
+
+    let signs = 0;
+    const signTypedDataAsync = vi.fn(async () => { signs++; return sig('22'); });
+
+    const release = await acquireWalletLock(ALICE);
+    const pending = signChatKeyLocked(ALICE, signTypedDataAsync);
+    await new Promise(r => setTimeout(r, 30));
+    expect(signs).toBe(0);
+
+    release();
+    await pending;
+    expect(signs).toBe(1);
+  });
+
+  it('два пути подписи не сталкиваются между собой — второй ждёт первого', async () => {
+    // Тот же мьютекс, значит окна не наложатся друг на друга: ровно та гонка,
+    // ради которой walletLock существует (-32002 в мобильном MetaMask нечем
+    // отменить).
+    _resetBagPassCacheForTest();
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstDone = new Promise<void>(r => { releaseFirst = r; });
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ pass: 'v1.p', expiresAt: Math.floor(Date.now() / 1000) + 3600 }), { status: 200 },
+    )));
+
+    const a = signChatKeyLocked(ALICE, async () => { order.push('typed:start'); await firstDone; order.push('typed:end'); return sig('22'); });
+    await new Promise(r => setTimeout(r, 10));
+    const b = getBagPass(ALICE, async () => { order.push('msg:start'); return sig('11'); });
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(order).toEqual(['typed:start']); // второй ещё не начинался
+    releaseFirst();
+    await Promise.all([a, b]);
+    expect(order).toEqual(['typed:start', 'typed:end', 'msg:start']);
   });
 });

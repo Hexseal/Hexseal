@@ -434,3 +434,105 @@ describe('курсор против настоящего сервера (сте�
     // сервера, а не медлительность замера.
   }, 30_000);
 });
+
+/* ────────── В-6: пропуск и перезагрузка страницы ────────── */
+
+describe('пропуск склада переживает перезагрузку страницы', () => {
+  // Независимая проверка, В-6: кэш пропуска жил в памяти МОДУЛЯ. Двенадцать
+  // часов — срок годности самого пропуска, а не кэша. Значит окно подписи
+  // приходило на КАЖДУЮ загрузку страницы и в КАЖДОЙ вкладке; докстринг при
+  // этом обещал «максимум дважды в сутки». Замер ниже — обе стороны обещания.
+
+  function fakeStorage() {
+    const store = new Map<string, string>();
+    return {
+      store,
+      api: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => { store.set(k, v); },
+        removeItem: (k: string) => { store.delete(k); },
+      },
+    };
+  }
+
+  it('ЗАМЕР: два «захода» на страницу — РОВНО одно окно подписи, а не два', async () => {
+    const { api } = fakeStorage();
+    vi.stubGlobal('localStorage', api);
+    let signs = 0;
+    const sign = async () => { signs++; return '0xsig'; };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ pass: 'v1.p', expiresAt: Math.floor(Date.now() / 1000) + 3600 }), { status: 200 },
+    )));
+
+    vi.resetModules();
+    const first = await import('./chatTransport');
+    await first.requestBagPass(sign, '0xa1ce00000000000000000000000000000000cafe');
+    expect(signs).toBe(1);
+
+    // Перезагрузка страницы = новый экземпляр модуля, та же кладовая браузера.
+    vi.resetModules();
+    const second = await import('./chatTransport');
+    const again = await second.requestBagPass(sign, '0xa1ce00000000000000000000000000000000cafe');
+
+    expect(signs).toBe(1);
+    expect(again.pass).toBe('v1.p');
+  });
+
+  it('истёкший пропуск из кладовой не берётся — окно будет, и это правильно', async () => {
+    const { api } = fakeStorage();
+    vi.stubGlobal('localStorage', api);
+    let signs = 0;
+    const sign = async () => { signs++; return '0xsig'; };
+    // Первый ответ — уже почти истёкший (меньше запаса на дорогу).
+    const responses = [
+      { pass: 'v1.old', expiresAt: Math.floor(Date.now() / 1000) + 5 },
+      { pass: 'v1.new', expiresAt: Math.floor(Date.now() / 1000) + 3600 },
+    ];
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(responses[n++]), { status: 200 })));
+
+    vi.resetModules();
+    const first = await import('./chatTransport');
+    await first.requestBagPass(sign, '0xa1ce00000000000000000000000000000000cafe');
+
+    vi.resetModules();
+    const second = await import('./chatTransport');
+    const fresh = await second.requestBagPass(sign, '0xa1ce00000000000000000000000000000000cafe');
+
+    expect(signs).toBe(2);
+    expect(fresh.pass).toBe('v1.new');
+  });
+
+  it('401 выбрасывает пропуск и из кладовой тоже, не только из памяти', async () => {
+    // Иначе мёртвый пропуск переживал бы перезагрузку — ровно та дыра (C1),
+    // ради которой транспорт вообще научился выбрасывать кэш на 401, только
+    // теперь она стала бы вечной.
+    const { api, store } = fakeStorage();
+    vi.stubGlobal('localStorage', api);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ pass: 'v1.p', expiresAt: Math.floor(Date.now() / 1000) + 3600 }), { status: 200 },
+    )));
+
+    vi.resetModules();
+    const t = await import('./chatTransport');
+    await t.requestBagPass(async () => '0xsig', '0xa1ce00000000000000000000000000000000cafe');
+    expect([...store.keys()].length).toBeGreaterThan(0);
+
+    t.forgetBagPass('0xa1ce00000000000000000000000000000000cafe');
+    expect([...store.keys()].length).toBe(0);
+  });
+
+  it('кладовой нет вовсе (серверный рендер) — работает как раньше, без падения', async () => {
+    vi.stubGlobal('localStorage', undefined);
+    let signs = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ pass: 'v1.p', expiresAt: Math.floor(Date.now() / 1000) + 3600 }), { status: 200 },
+    )));
+
+    vi.resetModules();
+    const t = await import('./chatTransport');
+    const got = await t.requestBagPass(async () => { signs++; return '0xsig'; }, '0xa1ce00000000000000000000000000000000cafe');
+    expect(got.pass).toBe('v1.p');
+    expect(signs).toBe(1);
+  });
+});

@@ -23,7 +23,7 @@ import { deriveLinkSigningKeypair, encodeFrame, messageBodyHash, linkSignaturePr
 import { buildLink, type ChainLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
 import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
-import { startPairChat, type PairChatState } from './usePairChat';
+import { startPairChat, type PairChatState, type PairChatEngine } from './usePairChat';
 
 const ALICE = '0xA1cE00000000000000000000000000000000CAfE' as const;
 const BOB   = '0xB0b1000000000000000000000000000000005eEd' as const;
@@ -622,4 +622,113 @@ describe('поля, которые человек видит глазами', ()
       engine.stop();
     }
   }, 30_000);
+});
+
+/* ───────── В-3: вложение теряло пять полей по дороге ───────── */
+
+describe('вложение доезжает целиком, а не наполовину', () => {
+  /** Гоняет один payload через настоящую отправку и настоящий приём. */
+  async function roundTrip(payload: Parameters<PairChatEngine['send']>[0]) {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    let stored: Uint8Array | null = null;
+
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url)); const p = u.pathname;
+      if (p === '/keys' && init?.method === 'POST') return new Response('{}', { status: 200 });
+      if (p.startsWith('/keys/')) return new Response(JSON.stringify({ boxKey: hexOf(alice.keypair.publicKey) }), { status: 200 });
+      if (p === '/bags' && (init?.method ?? 'GET') === 'GET') {
+        const inbox = stored ? [{ key: 'a/1', sender: ALICE.toLowerCase(), size: stored.length, uploadedAt: 7 }] : [];
+        return new Response(JSON.stringify({ inbox, sent: [], peers: [] }), { status: 200 });
+      }
+      if (init?.method === 'PUT') {
+        stored = new Uint8Array(init.body as ArrayBufferView as Uint8Array);
+        return new Response(JSON.stringify({ key: 'a/1' }), { status: 200 });
+      }
+      return new Response(stored ?? new Uint8Array(0), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Алиса шлёт (сама себе как «собеседнику» — ключ в справочнике её же,
+    // значит Боб ниже её мешок вскроет ровно как настоящий получатель).
+    const sender = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: () => {}, onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
+    try {
+      const mine = await sender.send(payload);
+      // …и она же читает своё обратно со склада: конверт запечатан ДВАЖДЫ,
+      // отправитель обязан читать своё (свойство 2 конверта).
+      const states: PairChatState[] = [];
+      const receiver = startPairChat({
+        session: alice, peer: ALICE, getPass: async () => 'v1.p', isActive: () => true,
+        onState: (s) => { states.push(s); }, onError: () => {},
+        sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+      });
+      try {
+        await waitFor(() => states.some(s => s.messages.length > 0));
+        const got = states[states.length - 1].messages[0];
+        return { mine, got };
+      } finally { receiver.stop(); }
+    } finally { sender.stop(); }
+  }
+
+  it('ЗАМЕР: большой файл — все пять потерянных полей на месте у ПОЛУЧАТЕЛЯ', async () => {
+    // Что красит: сегодня отправка кладёт в конверт только url/name/size/
+    // keyHex/ivHex. Признак нарезки теряется — панель идёт НЕ ТОЙ веткой
+    // расшифровки, и файл больше 20 МБ приезжает битым.
+    const { got } = await roundTrip({
+      file: {
+        url: 'https://relay.example/files/abc', name: 'большой.zip', size: 41_943_040,
+        keyHex: 'aa'.repeat(32), ivHex: 'bb'.repeat(12),
+        fileKey: 'files/abc', mime: 'application/zip',
+        chunked: true, chunkCount: 5, chunkSize: 8 * 1024 * 1024,
+      },
+    });
+
+    expect(got.attachment).toEqual({
+      name: 'большой.zip',
+      url: 'https://relay.example/files/abc',
+      size: 41_943_040,
+      key: 'aa'.repeat(32),
+      iv: 'bb'.repeat(12),
+      fileKey: 'files/abc',
+      mime: 'application/zip',
+      chunked: true,
+      chunkCount: 5,
+      chunkSize: 8 * 1024 * 1024,
+    });
+  }, 40_000);
+
+  it('маленький файл: ключ файла и тип содержимого доезжают, нарезки нет', async () => {
+    const { got } = await roundTrip({
+      file: {
+        url: 'https://relay.example/files/small', name: 'кот.png', size: 12_345,
+        keyHex: 'cc'.repeat(32), ivHex: 'dd'.repeat(12),
+        fileKey: 'files/small', mime: 'image/png', chunked: false,
+      },
+    });
+
+    // Тип содержимого — то, из-за чего есть превью картинки и правильное имя
+    // при сохранении. Ключ файла — то, чем обновляют протухший адрес; без
+    // него адрес, запечатанный в конверте, не обновить НИКОГДА.
+    expect(got.attachment?.mime).toBe('image/png');
+    expect(got.attachment?.fileKey).toBe('files/small');
+    expect(got.attachment?.chunked).toBe(false);
+    expect(got.attachment?.chunkCount).toBeUndefined();
+  }, 40_000);
+
+  it('старое вложение без новых полей читается как прежде — обратная совместимость', async () => {
+    const { got } = await roundTrip({
+      file: {
+        url: 'https://relay.example/files/old', name: 'старое.txt', size: 10,
+        keyHex: 'ee'.repeat(32), ivHex: 'ff'.repeat(12),
+      },
+    });
+    expect(got.attachment).toEqual({
+      name: 'старое.txt', url: 'https://relay.example/files/old', size: 10,
+      key: 'ee'.repeat(32), iv: 'ff'.repeat(12),
+    });
+  }, 40_000);
 });

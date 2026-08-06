@@ -16,7 +16,9 @@ import { deriveLinkSigningKeypair, encodeFrame, messageBodyHash, linkSignaturePr
 import { buildLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
 import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
-import { loadPairConversations } from './usePairConversations';
+import {
+  loadPairConversations, createConversationLoader, CONVERSATION_AUTH_FAILURE_LIMIT,
+} from './usePairConversations';
 
 const ALICE = '0xA1cE00000000000000000000000000000000CAfE' as const;
 const BOB   = '0xB0b1000000000000000000000000000000005eEd' as const;
@@ -221,4 +223,101 @@ describe('список переписок', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].lastText).toBe('');
   }, 20_000);
+});
+
+/* ───── К-1: свой цикл опроса обязан иметь предел неудач входа ───── */
+
+describe('свой цикл опроса не спрашивает подпись бесконечно', () => {
+  // Шапка `chatTransport.ts` запрещает это дословно: «Если вы пишете СВОЙ
+  // цикл опроса поверх listBags/getPass вместо pollBags — этот запрет снова
+  // в силе, и защиты по числу неудач у вас не будет». Список переписок
+  // писал ровно такой цикл: setInterval на 30 секунд плюс слушатель возврата
+  // во вкладку, отказ уходил в состояние ошибки, цикл не останавливался
+  // НИКОГДА. Десять попыток — десять окон кошелька, и так каждые полминуты.
+
+  it('ЗАМЕР: человек отказывается подписывать 10 раз — окон РОВНО 3, потом стоп', async () => {
+    let asks = 0;
+    let authFailed = 0;
+    const errors: unknown[] = [];
+    const loader = createConversationLoader({
+      getPass: async () => { asks++; throw new Error('User rejected the request'); },
+      loadWithPass: async () => [],
+      onRows: () => {},
+      onError: (e) => { errors.push(e); },
+      onAuthFailed: () => { authFailed++; },
+    });
+
+    for (let i = 0; i < 10; i++) await loader.run();
+
+    expect(asks).toBe(CONVERSATION_AUTH_FAILURE_LIMIT);
+    expect(asks).toBe(3);            // число записано руками, не взято из модуля
+    expect(authFailed).toBe(1);      // ровно один раз, а не на каждый следующий тик
+    expect(loader.stopped()).toBe(true);
+    expect(errors).toHaveLength(3);
+  });
+
+  it('401 от самого списка тоже считается неудачей ВХОДА, а не сбоем запроса', async () => {
+    const { BagPassError } = await import('@/lib/chatTransport');
+    let asks = 0;
+    let authFailed = 0;
+    const loader = createConversationLoader({
+      getPass: async () => { asks++; return 'v1.p'; },
+      loadWithPass: async () => { throw new BagPassError('expired', 'pass_expired', 401); },
+      onRows: () => {},
+      onError: () => {},
+      onAuthFailed: () => { authFailed++; },
+    });
+
+    for (let i = 0; i < 10; i++) await loader.run();
+
+    expect(asks).toBe(3);
+    expect(authFailed).toBe(1);
+  });
+
+  it('сетевой отказ СПИСКА предела входа не трогает — цикл продолжает пытаться', async () => {
+    // Тот же разбор, что у `pollBags` (C1-R2): отказал ЗАПРОС, а не вход.
+    // Свести оба под один счётчик значит закрывать чат от моргнувшей сети.
+    let asks = 0;
+    let authFailed = 0;
+    const loader = createConversationLoader({
+      getPass: async () => { asks++; return 'v1.p'; },
+      loadWithPass: async () => { throw new TypeError('fetch failed'); },
+      onRows: () => {},
+      onError: () => {},
+      onAuthFailed: () => { authFailed++; },
+    });
+
+    for (let i = 0; i < 10; i++) await loader.run();
+
+    expect(asks).toBe(10);
+    expect(authFailed).toBe(0);
+    expect(loader.stopped()).toBe(false);
+  });
+
+  it('успех обнуляет счётчик — две неудачи подряд не копятся через удачную попытку', async () => {
+    let asks = 0;
+    let authFailed = 0;
+    let failNext = true;
+    const loader = createConversationLoader({
+      getPass: async () => {
+        asks++;
+        if (failNext) throw new Error('rejected');
+        return 'v1.p';
+      },
+      loadWithPass: async () => [],
+      onRows: () => {},
+      onError: () => {},
+      onAuthFailed: () => { authFailed++; },
+    });
+
+    await loader.run(); await loader.run();   // две неудачи
+    failNext = false;
+    await loader.run();                        // успех — счётчик обнулён
+    failNext = true;
+    await loader.run(); await loader.run();   // ещё две
+
+    expect(authFailed).toBe(0);
+    expect(loader.stopped()).toBe(false);
+    expect(asks).toBe(5);
+  });
 });
