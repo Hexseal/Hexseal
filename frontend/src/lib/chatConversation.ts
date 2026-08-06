@@ -1016,7 +1016,10 @@ export async function receiveBags(
   const sodium = (await import('libsodium-wrappers')).default;
   await sodium.ready;
 
-  const bySender = new Map<string, AcceptedLink[]>();
+  // Ключ — приведённый адрес отправителя, ЗАСВИДЕТЕЛЬСТВОВАННЫЙ СЕРВЕРОМ (тип
+  // сохраняется, а не сплющивается в `string`: ниже он уезжает и в `troubles`,
+  // и в `messages[].from`, где форма адреса — часть контракта).
+  const bySender = new Map<`0x${string}`, AcceptedLink[]>();
 
   for (let i = 0; i < bags.length; i++) {
     const bag = bags[i];
