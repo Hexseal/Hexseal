@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { keccak256, concat, stringToBytes, hexToBytes, toHex } from 'viem';
 import { deriveChatKeypair } from './chatCrypto';
-import { GENESIS_HASH, linkPreimage, verifyChain, type ChainLink } from './chatChain';
+import { GENESIS_HASH, buildLink, linkPreimage, verifyChain, type ChainLink } from './chatChain';
 import { packEnvelope, type ChatPayload } from './chatEnvelope';
 import type { ChatSession } from './chatSession';
 import {
@@ -310,16 +310,40 @@ describe('подписная пара звена', () => {
     expect(LINK_SIGNATURE_DOMAIN).toBe('hexseal.chat.link.sig.v1');
   });
 
-  it('подписной открытый ключ НЕ равен ключу шифрования той же пары', async () => {
+  it('подписная пара выведена ИЗ ключа шифрования и не совпадает с ним', async () => {
+    // ⚠️ Прежняя версия сравнивала два разных 32-байтовых значения на
+    // неравенство — различающая способность около нуля (находка В-8). Здесь
+    // проверяется ПОЛОЖИТЕЛЬНОЕ утверждение: подписной ключ — это ровно то,
+    // что даёт независимо посчитанное семя, и заодно он не равен ключу
+    // шифрования.
     const session = await makeSession('1c3d', ALICE);
     const sign = await deriveLinkSigningKeypair(session.keypair);
+    const sodium = (await import('libsodium-wrappers')).default;
+    await sodium.ready;
+    const seed = hexToBytes(keccak256(concat([
+      stringToBytes(LINK_SIGNING_KEY_CONTEXT), session.keypair.privateKey,
+    ])));
+    expect(hex(sign.publicKey)).toBe(hex(sodium.crypto_sign_seed_keypair(seed).publicKey));
     expect(hex(sign.publicKey)).not.toBe(hex(session.keypair.publicKey));
-    expect(hex(sign.privateKey.slice(0, 32))).not.toBe(hex(session.keypair.privateKey));
+    // Закрытая половина Ed25519 — это семя ‖ открытый ключ; первые 32 байта
+    // обязаны быть ИМЕННО семенем, а не ключом шифрования.
+    expect(hex(sign.privateKey.slice(0, 32))).toBe(hex(seed));
   });
 
-  it('разные ключи шифрования — разные подписные пары', async () => {
-    const a = await deriveLinkSigningKeypair((await makeSession('1c3d', ALICE)).keypair);
-    const b = await deriveLinkSigningKeypair((await makeSession('7f2e', BOB)).keypair);
+  it('разные ключи шифрования — разные подписные пары, и каждая своя', async () => {
+    const alice = (await makeSession('1c3d', ALICE)).keypair;
+    const bob = (await makeSession('7f2e', BOB)).keypair;
+    const a = await deriveLinkSigningKeypair(alice);
+    const b = await deriveLinkSigningKeypair(bob);
+    const sodium = (await import('libsodium-wrappers')).default;
+    await sodium.ready;
+    const seedOf = (priv: Uint8Array) => hexToBytes(keccak256(concat([
+      stringToBytes(LINK_SIGNING_KEY_CONTEXT), priv,
+    ])));
+    // Не «они разные» (это верно у любых двух случайных байт), а «каждая —
+    // ровно та, что следует из СВОЕГО ключа шифрования».
+    expect(hex(a.publicKey)).toBe(hex(sodium.crypto_sign_seed_keypair(seedOf(alice.privateKey)).publicKey));
+    expect(hex(b.publicKey)).toBe(hex(sodium.crypto_sign_seed_keypair(seedOf(bob.privateKey)).publicKey));
     expect(hex(a.publicKey)).not.toBe(hex(b.publicKey));
   });
 
@@ -560,6 +584,40 @@ function bagOf(sent: SentMessage, from: `0x${string}`, uploadedAt: number): Inco
   return { key: sent.key, sender: from.toLowerCase() as `0x${string}`, uploadedAt, body: sent.frame };
 }
 
+/**
+ * Собирает цепочку кадров РУКАМИ, ключом самого отправителя — так, как её
+ * пересобрал бы он сам, задним числом. Ничего «не того» здесь нет: каждое
+ * звено подписано законным владельцем ключа и сцеплено с предыдущим, поэтому
+ * результат неотличим от честной переписки без внешнего якоря.
+ */
+async function forgeChain(
+  from: ChatSession, to: ChatSession, texts: string[],
+): Promise<Uint8Array[]> {
+  const signer = await deriveLinkSigningKeypair(from.keypair);
+  const sodium = (await import('libsodium-wrappers')).default;
+  await sodium.ready;
+  const out: Uint8Array[] = [];
+  let prev: ChainLink | null = null;
+  for (const [i, text] of texts.entries()) {
+    const envelope = await packEnvelope(
+      { text }, to.keypair.publicKey, from.keypair.publicKey,
+      from.address.toLowerCase() as `0x${string}`,
+    );
+    const link = buildLink(
+      prev, messageBodyHash(signer.publicKey, envelope),
+      from.address, 1_754_400_000_000 + i * 1000,
+    );
+    out.push(encodeFrame({
+      link,
+      signature: sodium.crypto_sign_detached(linkSignaturePreimage(link), signer.privateKey),
+      signerPublicKey: signer.publicKey,
+      envelope,
+    }));
+    prev = link;
+  }
+  return out;
+}
+
 async function conversationFrom(
   from: ChatSession, to: ChatSession, texts: string[],
 ): Promise<SentMessage[]> {
@@ -674,14 +732,13 @@ describe('порядок восстанавливается по номерам'
     const theirs = await conversationFrom(bob, alice, ['их-0', 'их-1']);
 
     const state = await receiveBags(alice, theirs.map((s, i) => bagOf(s, BOB, 100 + i)), { own: mine });
-    expect(state.messages).toHaveLength(4);
-    for (const m of state.messages) {
-      expect([ALICE.toLowerCase(), BOB.toLowerCase()]).toContain(m.from);
-    }
-    const mineSeqs = state.messages.filter(m => m.from === ALICE.toLowerCase()).map(m => m.seq);
-    const theirSeqs = state.messages.filter(m => m.from === BOB.toLowerCase()).map(m => m.seq);
-    expect(mineSeqs).toEqual([0, 1]);
-    expect(theirSeqs).toEqual([0, 1]);
+    // ⚠️ Прежняя версия проверяла ТОЛЬКО порядок внутри каждой стороны —
+    // межсторонний, ради которого тест назван, не проверялся вовсе, и это
+    // скрыло находку К-2. Здесь заперт ВЕСЬ показанный ряд целиком.
+    expect(state.messages.map(m => (m.payload as ChatPayload).text))
+      .toEqual(['мой-0', 'мой-1', 'их-0', 'их-1']);
+    expect(state.messages.map(m => m.from))
+      .toEqual([ALICE.toLowerCase(), ALICE.toLowerCase(), BOB.toLowerCase(), BOB.toLowerCase()]);
   });
 });
 
@@ -872,16 +929,36 @@ describe('подделка звена видна', () => {
     expect(state.messages).toHaveLength(4);
   });
 
-  it('переписанная задним числом цепочка целиком (каскад) НЕ ловится — и вердикт этого не скрывает', async () => {
-    // Правда, а не обещание: без внешнего якоря `ok:true` означает только
-    // «самопротиворечий не нашлось». unverifiedContentAtSeq называет ВСЁ
-    // показанное — это и есть честный ответ (§5 общей спеки).
+  it('НАСТОЯЩАЯ каскадная подделка проходит как целая — и вердикт этого не скрывает', async () => {
+    // ⚠️ Прежняя версия этого теста НЕ СТРОИЛА никакой подделки: в теле была
+    // честная переписка из трёх сообщений (находка В-8 враждебной проверки —
+    // при полностью выключенной проверке подписи краснели четыре теста, и
+    // этого среди них не было). Тест назывался главным свойством и не строил
+    // того, что называет.
+    //
+    // Здесь подделка настоящая: Боб переписывает СВОЁ ЖЕ второе сообщение и
+    // пересчитывает весь хвост своим ключом. Он законный владелец ключа, так
+    // что каждое звено безупречно и каждая смежная пара сходится.
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
     const bob = await makeSession('7f2e', BOB);
-    const sent = await conversationFrom(bob, alice, ['а', 'б', 'в']);
-    const state = await receiveBags(alice, sent.map((s, i) => bagOf(s, BOB, i)));
-    expect(state.chains[BOB.toLowerCase()]).toMatchObject({ ok: true, unverifiedContentAtSeq: [0, 1, 2] });
+    const forged = await forgeChain(bob, alice, ['а', 'НЕ ТО, ЧТО БЫЛО', 'в']);
+
+    const state = await receiveBags(alice, forged.map((f, i) => ({
+      key: `подделка-${i}`, sender: BOB.toLowerCase() as `0x${string}`, uploadedAt: i, body: f,
+    })));
+
+    // Не ловится. И это не наш недосмотр, а свойство любой такой цепочки
+    // (§5 общей спеки): подделка согласована сама с собой, потому что
+    // пересчитана вперёд тем же ключом.
+    expect(state.chains[BOB.toLowerCase()]).toMatchObject({ ok: true });
+    expect(state.messages.map(m => (m.payload as ChatPayload).text))
+      .toEqual(['а', 'НЕ ТО, ЧТО БЫЛО', 'в']);
+    // Единственное, что вердикт обязан сказать честно: не заверено НИЧЕГО из
+    // показанного. Пустой этот список означал бы «всё проверено», и вот это
+    // было бы враньём.
+    expect((state.chains[BOB.toLowerCase()] as { unverifiedContentAtSeq: number[] })
+      .unverifiedContentAtSeq).toEqual([0, 1, 2]);
   });
 });
 
@@ -1483,7 +1560,12 @@ describe('тысяча мешков', () => {
     expect(elapsed).toBeLessThan(120_000);
   }, 300_000);
 
-  it('тысяча мешков, которые НЕ вскрываются — не дороже честных (проверка идёт до расшифровки)', async () => {
+  it('тысяча невскрываемых мешков разбирается без сообщений и без падения (цена — в отчёте)', async () => {
+    // ⚠️ Прежнее название обещало «не дороже честных» и НИЧЕГО НИ С ЧЕМ НЕ
+    // СРАВНИВАЛО, а само утверждение оказалось ложным (замер проверяющего:
+    // 624 мс против 520, дороже на пятую часть — невскрытый мешок платит за
+    // ДВЕ неудачные попытки открыть слот, честный за одну удачную). Название
+    // приведено к тому, что тест делает; цена честно названа замером ниже.
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
     const bob = await makeSession('7f2e', BOB);
@@ -1506,7 +1588,11 @@ describe('тысяча мешков', () => {
     expect(elapsed).toBeLessThan(120_000);
   }, 300_000);
 
-  it('тысяча мешков с мусорной подписью — отвергаются ДО расшифровки', async () => {
+  it('двести мешков с мусорной подписью — НОЛЬ обращений к расшифровке', async () => {
+    // ⚠️ Прежняя версия печатала время и НЕ НАБЛЮДАЛА главного: что расшифровка
+    // не звалась (находка В-8). Свойство было верным, но запирал его шпион
+    // проверяющего, а не этот тест. Плюс в названии стояла тысяча, а мешков
+    // было двести — число приведено к правде.
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
     const bob = await makeSession('7f2e', BOB);
@@ -1517,11 +1603,20 @@ describe('тысяча мешков', () => {
       bag.body[33] ^= 0xff;
       return bag;
     });
-    const started = Date.now();
-    const state = await receiveBags(alice, bags);
-    console.info(`[замер] приём 200 мешков с мусорной подписью: ${Date.now() - started} мс`);
-    expect(state.troubles.filter(t => t.kind === 'bad_signature')).toHaveLength(200);
-    expect(state.messages).toHaveLength(0);
+
+    // Расшифровка — единственное по-настоящему дорогое место разбора. Считаем
+    // её вызовы напрямую: замер времени сказал бы «быстро», а не «не звалось».
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+    try {
+      const started = Date.now();
+      const state = await receiveBags(alice, bags);
+      console.info(`[замер] приём 200 мешков с мусорной подписью: ${Date.now() - started} мс`);
+      expect(state.troubles.filter(t => t.kind === 'bad_signature')).toHaveLength(200);
+      expect(state.messages).toHaveLength(0);
+      expect(decrypt).toHaveBeenCalledTimes(0);
+    } finally {
+      decrypt.mockRestore();
+    }
   }, 300_000);
 });
 
