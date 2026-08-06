@@ -937,10 +937,25 @@ export type ConversationTrouble =
    *  запечатал на устаревший ключ. НЕ разрыв — звено остаётся в цепочке. */
   | { kind: 'undecryptable'; key: string; seq: number; from: `0x${string}` };
 
+/** Разрыв С УКАЗАНИЕМ АВТОРА. `afterSeq: -1` — не предъявлено начало
+ *  переписки этого отправителя. */
+export interface ConversationGap {
+  from: `0x${string}`;
+  afterSeq: number;
+}
+
 export interface ConversationState {
   messages: ChatMessage[];
-  /** Номера звеньев, ПОСЛЕ которых чего-то не хватает; `-1` — не предъявлено
-   *  начало переписки. Объединение по всем отправителям, по возрастанию. */
+  /** Разрывы с автором — ЕДИНСТВЕННОЕ, по чему можно кого-то в чём-то
+   *  заподозрить. Отсортированы по автору, затем по номеру. */
+  gaps: ConversationGap[];
+  /** То же самое, но ПЛОСКО и БЕЗ автора — только для потребителя, который уже
+   *  ограничил разбор одним собеседником (`opts.peer`).
+   *
+   *  ⚠️ НЕ ДЛЯ ОБВИНЕНИЯ, когда собеседник не задан (В-3 враждебной проверки):
+   *  ящик общий, посторонний становится в нём виден, просто положив мешок, и
+   *  его дыра в этом списке неотличима от дыры собеседника. Для чего угодно,
+   *  кроме «показать значок разрыва в открытой переписке», берите `gaps`. */
   gapAfterSeq: number[];
   /** Вердикт цепочки НА КАЖДОГО отправителя отдельно: мешок постороннего не
    *  должен портить вердикт собеседнику. */
@@ -1075,6 +1090,17 @@ export async function receiveBags(
   // сохраняется, а не сплющивается в `string`: ниже он уезжает и в `troubles`,
   // и в `messages[].from`, где форма адреса — часть контракта).
   const bySender = new Map<`0x${string}`, AcceptedLink[]>();
+  // От кого мешки ВООБЩЕ приходили — отдельно от того, у кого хоть что-то
+  // прошло проверки (В-2). Отсутствие записи в карте вердиктов читается как
+  // «претензий нет», и именно в самом тяжёлом случае — когда отвергнуто ВСЁ —
+  // потребитель не увидел бы ничего. Номера отвергнутых звеньев нужны, чтобы
+  // вердикт «не в порядке» мог указать МЕСТО, а не только факт.
+  const rejectedSeqs = new Map<`0x${string}`, number[]>();
+  const noteRejected = (from: `0x${string}`, seq: number): void => {
+    const list = rejectedSeqs.get(from) ?? [];
+    list.push(seq);
+    rejectedSeqs.set(from, list);
+  };
 
   for (let i = 0; i < bags.length; i++) {
     const bag = bags[i];
@@ -1101,11 +1127,13 @@ export async function receiveBags(
 
     if (frame.link.sender !== attested) {
       troubles.push({ kind: 'sender_mismatch', key: bag.key, claimed: frame.link.sender, attested });
+      noteRejected(attested, frame.link.seq);
       continue;
     }
 
     if (messageBodyHash(frame.signerPublicKey, frame.envelope).toLowerCase() !== frame.link.bodyHash.toLowerCase()) {
       troubles.push({ kind: 'body_mismatch', key: bag.key, seq: frame.link.seq, from: attested });
+      noteRejected(attested, frame.link.seq);
       continue;
     }
 
@@ -1121,6 +1149,7 @@ export async function receiveBags(
     }
     if (!signatureOk) {
       troubles.push({ kind: 'bad_signature', key: bag.key, seq: frame.link.seq, from: attested });
+      noteRejected(attested, frame.link.seq);
       continue;
     }
 
@@ -1134,7 +1163,7 @@ export async function receiveBags(
 
   // ─── шаг 2: по каждому отправителю — ключ, дубли, цепочка, расшифровка ───
   const chains: Record<string, ChainVerdict> = {};
-  const gapSet = new Set<number>();
+  const gaps: ConversationGap[] = [];
   const messages: ChatMessage[] = [];
 
   for (const [from, listRaw] of bySender) {
@@ -1156,10 +1185,12 @@ export async function receiveBags(
           kind: pinned ? 'signer_unexpected' : 'signer_changed',
           key: item.key, seq: item.link.seq, from,
         });
+        noteRejected(from, item.link.seq);
         continue;
       }
       if (lastSeq !== null && item.link.seq === lastSeq) {
         troubles.push({ kind: 'duplicate_seq', key: item.key, seq: item.link.seq, from });
+        noteRejected(from, item.link.seq);
         continue;
       }
       lastSeq = item.link.seq;
@@ -1171,7 +1202,10 @@ export async function receiveBags(
     const verdict = verifyChain(accepted.map(a => a.link));
     chains[from] = verdict;
     if (!verdict.ok && verdict.reason === 'gap') {
-      for (const n of verdict.missingAfterSeq) gapSet.add(n);
+      // Разрыв НАЗЫВАЕТ АВТОРА (В-3). Плоское объединение приписывало дыру
+      // постороннего переписке с собеседником — а посторонний становится
+      // виден в ящике, просто положив туда мешок.
+      for (const n of verdict.missingAfterSeq) gaps.push({ from, afterSeq: n });
     }
 
     for (const item of accepted) {
@@ -1206,9 +1240,21 @@ export async function receiveBags(
     }
   }
 
+  // В-2: отправитель, от которого мешки БЫЛИ, но не прошло НИ ОДНО звено,
+  // получает явный вердикт «не в порядке», а не отсутствие записи. Отсутствие
+  // записи читается потребителем как «претензий нет» — ровно наоборот смыслу.
+  // `broken`, а не `gap`: отвергнуть звено могли только проверки подлинности
+  // (свидетельство сервера, отпечаток тела, подпись, подписной ключ), то есть
+  // предъявленное не заслуживает доверия, а не «чего-то не показали».
+  for (const [from, seqs] of rejectedSeqs) {
+    if (chains[from] !== undefined) continue;
+    chains[from] = { ok: false, reason: 'broken', atSeq: Math.min(...seqs) };
+  }
+
   return {
     messages: mergeSides(messages),
-    gapAfterSeq: [...gapSet].sort((a, b) => a - b),
+    gaps: [...gaps].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.afterSeq - b.afterSeq)),
+    gapAfterSeq: [...new Set(gaps.map(g => g.afterSeq))].sort((a, b) => a - b),
     chains,
     troubles,
   };

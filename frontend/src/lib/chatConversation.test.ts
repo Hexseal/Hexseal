@@ -1376,7 +1376,9 @@ describe('мусор на приёме — вердикт, а не падени�
 
   it('пустой список мешков — пустой разговор, без вердиктов и без разрывов', async () => {
     const state = await receiveBags(alice, []);
-    expect(state).toEqual({ messages: [], gapAfterSeq: [], chains: {}, troubles: [] });
+    // Сравнение ЦЕЛИКОМ, а не по полям: новое поле в наружном виде обязано
+    // проехать через этот тест и быть замечено, а не тихо появиться.
+    expect(state).toEqual({ messages: [], gaps: [], gapAfterSeq: [], chains: {}, troubles: [] });
   });
 });
 
