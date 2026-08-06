@@ -1910,7 +1910,13 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
       aborted = true;
       ws.destroy();
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${formatMaxSize(maxBytes)})` });
+      // `code` (Задача 6, план «Клиент чата»): у 401/404/429 машинный признак
+      // был с самого начала, у 413 — нет, и клиенту оставалось разбирать
+      // английский текст, чтобы отличить «слишком большой файл» от «негодный
+      // адрес» (оба 4xx). То же значение, что уже отдаёт обработчик
+      // `entity.too.large` ниже — одна причина, один код, независимо от того,
+      // поймал её парсер тела или этот поток.
+      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${formatMaxSize(maxBytes)})`, code: 'payload_too_large' });
       req.destroy();
     }
   });
@@ -1931,7 +1937,11 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
   ws.on('error', (err) => {
     aborted = true;
     unlinkQuietSync(filePath);
-    if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); }
+    // `write_failed`, а не `internal_error`: это НЕ «сервер сломался», это
+    // «кончилось место на диске» — единственный отказ загрузки, о котором
+    // человеку стоит сказать другими словами («попробуйте позже», а не
+    // «сократите файл»). Различить их клиент обязан кодом.
+    if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error', code: 'write_failed' }); }
   });
   // И-2 (ревью): a dropped connection mid-upload (client closes the socket,
   // network drop) used to only stop the write — whatever had already landed
@@ -2382,7 +2392,7 @@ app.post('/bags/pass', (req, res) => {
 
   const { address } = req.body || {};
   if (typeof address !== 'string' || !ETH_ADDR_RE.test(address)) {
-    return res.status(400).json({ error: 'Invalid address' });
+    return res.status(400).json({ error: 'Invalid address', code: 'invalid_address' });
   }
   const addr = address.toLowerCase();
 
@@ -2483,11 +2493,16 @@ app.put('/bags/:recipient', (req, res) => {
   // explicitly instead of silently "succeeding" with nothing on disk.
   const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
   if (contentType === 'application/json') {
-    return res.status(400).json({ error: 'Bag upload must not use Content-Type: application/json (body already consumed upstream)' });
+    return res.status(400).json({ error: 'Bag upload must not use Content-Type: application/json (body already consumed upstream)', code: 'bag_content_type' });
   }
 
   const recipient = String(req.params.recipient || '').toLowerCase();
-  if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient' });
+  // Отдельный код от `bag_content_type` и `empty_bag` (Задача 6): все три
+  // отвечают 400, и статус про причину не говорит ничего. Съеденное
+  // json-парсером тело приезжает сюда пустым — то есть ветка «пустой мешок»
+  // ниже перехватывает ТОТ ЖЕ случай своим 400, и без разных кодов клиент
+  // не отличил бы «вы прислали не тот content-type» от «вы прислали ноль байт».
+  if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient', code: 'invalid_recipient' });
 
   // Neither assertBagStoreReady() nor bagPathFor() creates the recipient's
   // own subdirectory — only the storage root (DIR_BAGS) exists at boot. This
@@ -2500,7 +2515,7 @@ app.put('/bags/:recipient', (req, res) => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
   } catch (e) {
     console.error('[bags] PUT setup failed:', e.message);
-    return res.status(500).json({ error: 'Failed to prepare bag storage' });
+    return res.status(500).json({ error: 'Failed to prepare bag storage', code: 'internal_error' });
   }
 
   streamWithSizeLimit(req, res, filePath, MAX_BAG_SIZE, () => {
@@ -2518,7 +2533,7 @@ app.put('/bags/:recipient', (req, res) => {
     } catch (e) {
       console.error('[bags] PUT stat-after-write failed:', e.message);
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag', code: 'internal_error' });
       return;
     }
     // Мелочь (ревью): пустое тело раньше принималось и хранилось до
@@ -2528,7 +2543,7 @@ app.put('/bags/:recipient', (req, res) => {
     // до единого байта, пустой Buffer от неисправного клиента и т.п.).
     if (size === 0) {
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(400).json({ error: 'Empty bag' });
+      if (!res.headersSent) res.status(400).json({ error: 'Empty bag', code: 'empty_bag' });
       return;
     }
     try {
@@ -2542,7 +2557,7 @@ app.put('/bags/:recipient', (req, res) => {
       // request.
       console.error('[bags] recordBag failed:', e.message);
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag', code: 'internal_error' });
     }
   });
 });
@@ -2667,7 +2682,7 @@ app.get('/bags', (req, res) => {
   let since = null;
   if (req.query.since !== undefined) {
     since = Number(req.query.since);
-    if (!Number.isFinite(since)) return res.status(400).json({ error: 'Invalid since' });
+    if (!Number.isFinite(since)) return res.status(400).json({ error: 'Invalid since', code: 'invalid_since' });
   }
 
   let received, sentRaw;
@@ -2676,7 +2691,7 @@ app.get('/bags', (req, res) => {
     sentRaw = listBagsBySender(address);
   } catch (e) {
     console.error('[bags] GET /bags failed:', e.message);
-    return res.status(500).json({ error: 'Failed to list bags' });
+    return res.status(500).json({ error: 'Failed to list bags', code: 'internal_error' });
   }
 
   const peers = buildPeerView(received, sentRaw);
@@ -2798,7 +2813,7 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   const rs = fs.createReadStream(filePath);
   rs.on('error', (e) => {
     console.error('[bags] read failed:', e.message);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag', code: 'internal_error' });
   });
   // Мелочь (ревью): marking happens on res 'finish' — fired only once the
   // response has finished being handed to the socket — not before streaming
@@ -2946,12 +2961,28 @@ app.get('/keys/:address', (req, res) => {
 // функции, не по имени) — ловит ТОЛЬКО ошибки, всплывшие при обработке
 // запроса на /keys*, не трогает остальные маршруты (у которых своя,
 // общепроектная договорённость про эту дыру — не эта задача).
-app.use('/keys', (err, req, res, next) => {
+// Задача 6 (план «Клиент чата»): тот же обработчик теперь стоит и на /bags,
+// и знает вторую ошибку тела — `entity.parse.failed` (битый JSON). Обе
+// уходили в дефолтный обработчик Express, то есть приезжали клиенту HTML-
+// страницей со стеком: `parseErrorBody()` в frontend/src/lib/chatTransport.ts
+// не находит в такой странице ни `error`, ни `code`, и отказ становится
+// БЕЗЫМЯННЫМ ровно там, где вся задача про имена отказов. Вопрос «пришёл
+// мусор — вердикт или падение»: теперь вердикт с кодом.
+//
+// Скоуп по-прежнему путевой (`/keys`, `/bags`), не глобальный: у остальных
+// маршрутов проекта своя договорённость про эту дыру, и менять её здесь
+// значило бы тронуть /relay, /files и /push заодно — не эта задача.
+function bodyParserErrorHandler(err, req, res, next) {
   if (err && err.type === 'entity.too.large') {
     return res.status(413).json({ error: 'Request body too large (max 64kb)', code: 'payload_too_large' });
   }
+  if (err && (err.type === 'entity.parse.failed' || err.type === 'encoding.unsupported')) {
+    return res.status(400).json({ error: 'Malformed JSON body', code: 'malformed_json' });
+  }
   next(err);
-});
+}
+app.use('/keys', bodyParserErrorHandler);
+app.use('/bags', bodyParserErrorHandler);
 
 // ─── Push notification endpoints ──────────────────────────────────────────────
 
