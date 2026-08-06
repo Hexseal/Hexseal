@@ -447,6 +447,7 @@ export async function unpackEnvelope(
   // же тест ниже, через vi.spyOn на openSealed.
   assertOneTimeKeyLength(oneTimeKey);
 
+  let parsed: unknown;
   try {
     const cryptoKey = await crypto.subtle.importKey('raw', toArrayBuffer(oneTimeKey), { name: 'AES-GCM' }, false, ['decrypt']);
     // Заголовок ЦЕЛИКОМ — тот же AAD, что packEnvelope связал с тегом при
@@ -458,8 +459,7 @@ export async function unpackEnvelope(
       cryptoKey,
       toArrayBuffer(ciphertext),
     );
-    const parsed: unknown = JSON.parse(new TextDecoder().decode(plaintext));
-    return isWellFormedPayload(parsed) ? parsed : null;
+    parsed = JSON.parse(new TextDecoder().decode(plaintext));
   } catch {
     // Провал аутентификации AES-GCM (подмена байта, чужой разовый ключ) или
     // невалидный JSON — «мешок испорчен/не наш», а не наша ошибка типов.
@@ -468,4 +468,19 @@ export async function unpackEnvelope(
     // (мелочь ревью) проверена и брошена ДО этого try — сюда не долетает.
     return null;
   }
+
+  // isWellFormedPayload — ВНЕ try (В-5, ревью координатора). Найдено
+  // независимой проверкой: гейты формы возвращали вердикт ЧЕРЕЗ перехват
+  // выше — если сама проверка бросала (например, регресс, снимающий
+  // короткое замыкание `typeof x !== 'string' ||` перед вызовом метода
+  // строки на не-строке), catch выше это глотал, и мутация "снят гейт
+  // типа" выживала: тест видел null и не мог отличить «гейт честно
+  // отказал» от «гейт сломался и это подобрал чужой catch». Гейты формы
+  // обязаны возвращать вердикт САМИ; если `isWellFormedPayload` когда-нибудь
+  // бросит — это наш собственный баг в проверке формы (JSON.parse уже
+  // гарантированно дал только простые объекты/массивы/примитивы, без
+  // Proxy и без throwing-геттеров — исключение отсюда может родиться
+  // только из НАШЕЙ логики), и он обязан быть виден, а не спрятан под
+  // тем же кодом, что «мешок не наш».
+  return isWellFormedPayload(parsed) ? parsed : null;
 }
