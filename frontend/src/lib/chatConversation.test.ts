@@ -10,6 +10,8 @@ import {
   LINK_SIGNATURE_LEN,
   LINK_SIGNING_PUBLIC_KEY_LEN,
   MAX_LINK_SEQ,
+  MAX_BURNED_SEQS,
+  NOT_STORED_STATUSES,
   CONVERSATION_LOCK_TIMEOUT_MS,
   LINK_SIGNING_KEY_CONTEXT,
   LINK_SIGNATURE_DOMAIN,
@@ -346,6 +348,20 @@ describe('подписная пара звена', () => {
     expect(hex(pre.slice(0, domain.length))).toBe(hex(domain));
     expect(hex(pre.slice(domain.length))).toBe(hex(raw));
     expect(hex(pre)).not.toBe(hex(raw));
+  });
+
+  it('отпечаток тела требует ключ РОВНО той ширины — иначе граница плавает', () => {
+    // Мелочь враждебной проверки, найденная коллизией: `keccak(МЕТКА ‖ ключ ‖
+    // конверт)` при НЕФИКСИРОВАННОЙ ширине ключа — это два поля переменной
+    // ширины подряд, то есть ровно та неоднозначность упаковки, которую
+    // chatChain.ts запрещает своим списком типов. Ключ на байт короче плюс
+    // байт в начало конверта дают ТОТ ЖЕ отпечаток. На проводе недостижимо
+    // (кадр фиксирует 32 байта), но функция вынесена наружу — значит гейт
+    // обязан стоять в ней самой, а не в её единственном сегодняшнем вызове.
+    const key = new Uint8Array(32).fill(7);
+    expect(() => messageBodyHash(key.slice(0, 31), new Uint8Array([7, 1, 2]))).toThrow(TypeError);
+    expect(() => messageBodyHash(new Uint8Array(33), new Uint8Array([1]))).toThrow(TypeError);
+    expect(() => messageBodyHash('не байты' as unknown as Uint8Array, new Uint8Array([1]))).toThrow(TypeError);
   });
 
   it('золотой вектор отпечатка тела: метка ‖ подписной ключ ‖ конверт', () => {
@@ -1162,6 +1178,62 @@ describe('перезапустили посреди отправки', () => {
     expect(third.link.seq).toBe(3);
   }, 30_000);
 
+  it('список «мешок точно не лёг» заперт числами И поведением (В-6)', async () => {
+    // Находка В-6: список кодов не был заперт ничем — добавление постороннего
+    // кода давало 0 красных из 71. А на этом списке стоит весь размен «дыра
+    // вместо двойного номера»: прежний тест проверял, что код ДОШЁЛ до
+    // вызывающего, но не что номер СГОРЕЛ или НЕ сгорел.
+    expect([...NOT_STORED_STATUSES].sort((a, b) => a - b)).toEqual([400, 401, 403, 413, 429]);
+
+    const stub = installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+
+    // Каждый код из списка: номер возвращается, дырки нет.
+    for (const status of [400, 401, 403, 413, 429]) {
+      await forgetConversationHead(ALICE, BOB);
+      stub.next = () => new Response(JSON.stringify({ error: 'nope', code: `c${status}` }),
+        { status, headers: { 'content-type': 'application/json' } });
+      await expect(
+        sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'нет' }, null, { pass: PASS }),
+      ).rejects.toBeTruthy();
+      expect({ status, burned: await listBurnedSeqs(ALICE, BOB) }).toEqual({ status, burned: [] });
+
+      stub.next = () => new Response(JSON.stringify({ key: '0x00/ok.bin' }),
+        { status: 200, headers: { 'content-type': 'application/json' } });
+      const ok = await sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'да' }, null, { pass: PASS });
+      expect({ status, seq: ok.link.seq }).toEqual({ status, seq: 0 }); // номер переиспользован
+    }
+
+    // 500 в списке НЕТ и быть не должно: за ним может стоять прокси, и мешок
+    // мог доехать. Номер обязан сгореть.
+    await forgetConversationHead(ALICE, BOB);
+    stub.next = () => new Response(JSON.stringify({ error: 'Write error' }),
+      { status: 500, headers: { 'content-type': 'application/json' } });
+    await expect(
+      sendMessage(alice, BOB, bob.keypair.publicKey, { text: 'неизвестно' }, null, { pass: PASS }),
+    ).rejects.toBeTruthy();
+    expect(await listBurnedSeqs(ALICE, BOB)).toEqual([0]);
+  }, 60_000);
+
+  it('список сгоревших номеров не растёт без предела', async () => {
+    // Мелочь враждебной проверки: 300 обрывов — 300 записей, и всё это ложится
+    // на диск при каждой отправке. Верхняя граница обязана быть, и старое
+    // должно вытесняться новым: свежий обрыв человеку интереснее давнего.
+    const stub = installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    stub.next = () => { throw new TypeError('fetch failed'); };
+    for (let i = 0; i < MAX_BURNED_SEQS + 5; i++) {
+      await sendMessage(alice, BOB, bob.keypair.publicKey, { text: `${i}` }, null, { pass: PASS })
+        .catch(() => {});
+    }
+    const burned = await listBurnedSeqs(ALICE, BOB);
+    expect(burned).toHaveLength(MAX_BURNED_SEQS);
+    expect(burned[burned.length - 1]).toBe(MAX_BURNED_SEQS + 4); // последний обрыв на месте
+    expect(burned[0]).toBe(5);                                    // самые давние вытеснены
+  }, 120_000);
+
   it('хранилища нет вовсе — отправка работает, но об этом сказано вслух', async () => {
     installFetchStub();
     delete g.indexedDB;
@@ -1607,6 +1679,24 @@ describe('подписной ключ собеседника', () => {
 
     const state = await receiveBags(alice, [bagOf(sent[0], BOB, 1)], {
       peerSigningPublicKeys: { [BOB.toLowerCase()]: carolSigner.publicKey },
+    });
+    expect(state.troubles).toContainEqual(expect.objectContaining({ kind: 'signer_unexpected' }));
+    expect(state.messages).toHaveLength(0);
+  });
+
+  it('пин НЕ той длины отвергается, а не совпадает по префиксу (В-7)', async () => {
+    // Находка В-7: сравнение байт без проверки длины давало 0 красных — на
+    // проводе не эксплуатируется (кадр фиксирует 32 байта), но подписной ключ
+    // собеседника придёт СНАРУЖИ, из справочника задачи 6, и именно там
+    // сравнение станет несущим: обрезанный ключ совпал бы по префиксу.
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const sent = await conversationFrom(bob, alice, ['от Боба']);
+    const real = (await deriveLinkSigningKeypair(bob.keypair)).publicKey;
+
+    const state = await receiveBags(alice, [bagOf(sent[0], BOB, 1)], {
+      peerSigningPublicKeys: { [BOB.toLowerCase()]: real.slice(0, 31) }, // тот же ключ, на байт короче
     });
     expect(state.troubles).toContainEqual(expect.objectContaining({ kind: 'signer_unexpected' }));
     expect(state.messages).toHaveLength(0);
