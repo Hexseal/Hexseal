@@ -987,22 +987,13 @@ assertBagPassReady();
 assertBagStoreReady();
 assertDirectoryReady();
 
-// Single deterministic bot wallet — keccak256(SERVER_SECRET) as private key
-const BOT_PRIVATE_KEY = ethers.keccak256(ethers.toUtf8Bytes(SERVER_SECRET));
-const botWallet = new ethers.Wallet(BOT_PRIVATE_KEY);
-
-// XMTP signer for node-sdk (same shape as browser-sdk signer)
-const botSigner = {
-  type: 'EOA',
-  getIdentifier: () => ({
-    identifier: botWallet.address.toLowerCase(),
-    identifierKind: 0, // IdentifierKind.Ethereum
-  }),
-  signMessage: async (message) => {
-    const sig = await botWallet.signMessage(message);
-    return ethers.getBytes(sig);
-  },
-};
+// Бот-кошелька и его XMTP-сайнера здесь больше нет: 6 августа 2026 бот
+// выключен целиком (разбор — хвост `index.js`). Он существовал ровно затем,
+// чтобы состоять в парных группах XMTP и писать переписку в журнал спора
+// открытым текстом; ни для чего другого его подпись не использовалась.
+//
+// Вместе с ним ушёл и `GET /bot-address` — маршрут отдавал адрес бота фронту,
+// чтобы тот добавлял его в группу. Добавлять больше некого и некуда.
 
 // ─── Log encryption ───────────────────────────────────────────────────────────
 
@@ -1086,6 +1077,18 @@ export function safeLogPath(pairId) {
   return logPath;
 }
 
+/**
+ * ⚠️ ПИСАТЕЛЯ У ЖУРНАЛА СЕЙЧАС НЕТ. Единственным был бот XMTP (`botLog.js`),
+ * выключенный 6 августа 2026 вместе со всей XMTP-обвязкой: он держал ключи от
+ * переписки, а экран теперь обещает обратное. Функция оставлена не «на
+ * всякий случай», а как место, куда придёт предъявление сторон (отдельный
+ * план): у обеих половин разговора лежат самодостаточные доказательства
+ * (`chatConversation.MessageProof`), и класть их сюда — та же запись.
+ *
+ * Пока писателя нет, `GET /dispute-log/:dealId` отдаёт то, что бот успел
+ * записать до выключения, и НИЧЕГО НОВОГО. Арбитру это сказано словами —
+ * `arbiter.no_history_log` в локалях больше не пишет «сообщений пока нет».
+ */
 export function appendLogEntry(pairId, entry) {
   const key = deriveLogKey(pairId);
   const encrypted = encryptEntry(key, entry);
@@ -1093,10 +1096,9 @@ export function appendLogEntry(pairId, entry) {
   fs.appendFileSync(safeLogPath(pairId), line);
 }
 
-// Экспортирован: `botLog.js` читает журнал ПЕРЕД дочитыванием истории, чтобы
-// знать, какие сообщения уже записаны (дедупликация) и на какой глубине
-// остановиться. До этого журнал только дописывался и никогда не перечитывался
-// ботом — отсюда и брались дыры.
+// Читает журнал. Прежний потребитель (`botLog.js`, дедупликация при
+// дочитывании истории) удалён вместе с ботом; остался `GET
+// /dispute-log/:dealId` — им пользуется арбитр.
 export function readLog(pairId) {
   const logPath = safeLogPath(pairId);
   if (!fs.existsSync(logPath)) return [];
@@ -1525,11 +1527,6 @@ app.get('/balance', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-
-// Returns the relay bot's XMTP address so the frontend knows who to invite.
-app.get('/bot-address', (_req, res) => {
-  res.json({ address: botWallet.address.toLowerCase() });
 });
 
 // ─── Dispute-log session pass ────────────────────────────────────────────────
@@ -3286,7 +3283,7 @@ export const relayerInfo = {
   rpcTimeoutMs:   RPC_TIMEOUT_MS,
 };
 
-export { app, botSigner, botWallet };
+export { app };
 
 // ─── Treasury keeper ──────────────────────────────────────────────────────────
 //
