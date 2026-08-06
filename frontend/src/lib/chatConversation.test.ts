@@ -437,7 +437,13 @@ describe('отправка не открывает кошелёк', () => {
     // считаем окна, открытые ОТПРАВКОЙ, а не входом.
     const { openSession } = await import('./chatSession');
     const signTypedData = vi.fn(async () => signatureOf('1c3d'));
-    const session = await openSession(ALICE, signTypedData, { getBytecode: async () => undefined });
+    // `lockTimeoutMs` подставлен НЕ ради проверяемого свойства, а чтобы этот
+    // тест не мог зависнуть на три минуты (боевой потолок замка сеанса), если
+    // межвкладочный замок кто-то держит: тест, который вешает исполнителя
+    // тестов вместо честного провала, прячет причину.
+    const session = await openSession(ALICE, signTypedData, {
+      getBytecode: async () => undefined, lockTimeoutMs: 1_000,
+    });
     expect(signTypedData).toHaveBeenCalledTimes(1); // вход — одно окно
 
     signTypedData.mockClear();
