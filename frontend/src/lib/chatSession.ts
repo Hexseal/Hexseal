@@ -690,30 +690,6 @@ async function withCrossTabLock<T>(name: string, timeoutMs: number, fn: () => Pr
 
 // ─── Вывод ключа ──────────────────────────────────────────────────────────
 
-async function keypairFromSignature(signature: unknown): Promise<ChatKeypair> {
-  if (typeof signature !== 'string') {
-    throw new ChatSessionError(
-      'chatSession: кошелёк вернул не строку вместо подписи',
-      'signature_malformed',
-    );
-  }
-  try {
-    return await deriveChatKeypair(signature as `0x${string}`);
-  } catch (err) {
-    // `deriveChatKeypair` бросает `TypeError` ровно на «это не 65-байтовая
-    // подпись»: пусто, обрезок, ERC-1271 переменной длины. Наружу это должно
-    // выйти вердиктом с кодом, а не голым TypeError, который вызывающему
-    // неотличим от нашего собственного бага.
-    if (err instanceof TypeError) {
-      throw new ChatSessionError(
-        'chatSession: кошелёк вернул не 65-байтовую подпись — для кошелька-контракта нужен код восстановления',
-        'signature_malformed',
-        { cause: err },
-      );
-    }
-    throw err;
-  }
-}
 
 async function keypairFromRecoveryCode(normalizedCode: string): Promise<ChatKeypair> {
   const { mnemonicToSeed } = await import('@scure/bip39');
@@ -908,7 +884,17 @@ async function establishIdentity(
 
   // Ступень 2: ровно 65 байт — спрашиваем не длину, а ПРИНАДЛЕЖНОСТЬ.
   if (bytes === PLAIN_SIGNATURE_BYTES && await signedByAccount(sig, address)) {
-    return { kind: 'eoa', keypair: await keypairFromSignature(sig) };
+    // Прямо, без обёртки. Обёртка, ловившая `TypeError` из
+    // `deriveChatKeypair` и переводившая его в `signature_malformed`, стала
+    // МЁРТВОЙ после смены признака: сюда доезжает только подпись, уже
+    // проверенная выше — 65 байт, нижний регистр, целые hex-байты, и адрес
+    // из неё восстановлен и сошёлся. Ни один вход, описанный в её
+    // комментарии, дойти не может. Оставить её значило бы держать код,
+    // который объясняет несуществующее, — а такой комментарий однажды
+    // прочитают как правду (в этом проекте уже ловили трижды). Если
+    // `deriveChatKeypair` теперь бросит, это НАША поломка, и она обязана
+    // выйти наружу голой, а не переодетой в вердикт о кошельке.
+    return { kind: 'eoa', keypair: await deriveChatKeypair(sig) };
   }
 
   // Ступень 3: всё остальное — кошелёк-контракт.
