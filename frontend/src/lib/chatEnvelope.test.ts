@@ -248,11 +248,24 @@ describe('packEnvelope / unpackEnvelope', () => {
   });
 
   describe('версия и структура — незнакомый/повреждённый конверт не роняет разбор', () => {
-    it('неизвестный байт версии — null, не исключение', async () => {
+    it('неизвестный байт версии — null, БЕЗ попытки расшифровать (В-3, ревью координатора)', async () => {
+      // Побочный эффект К-1 (AAD): версия входит в заголовок, а заголовок —
+      // в AAD, поэтому подмена version-байта и БЕЗ явного гейта версии
+      // рвёт тег аутентификации на decrypt — итог (null) не отличить.
+      // Найдено независимой проверкой: снятие явного гейта
+      // `envelope[0] !== ENVELOPE_VERSION` оставляло этот тест зелёным
+      // (подтверждено здесь отдельным прогоном перед фиксом). Явный гейт
+      // всё ещё нужен — он экономит попытку открыть слоты/расшифровать на
+      // заведомо непонятном формате, а не просто дублирует AAD — поэтому
+      // тест ловит именно ЭТО: что decrypt НЕ был вызван вовсе, а не
+      // просто что итог null.
       const { bob, alice } = await actors();
+      const decryptSpy = vi.spyOn(crypto.subtle, 'decrypt');
       const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
       env[0] = 99;
-      await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+      const opened = await unpackEnvelope(env, bob);
+      expect(opened).toBeNull();
+      expect(decryptSpy.mock.calls.length).toBe(0);
     });
 
     it('пустой Uint8Array — null, не исключение', async () => {
