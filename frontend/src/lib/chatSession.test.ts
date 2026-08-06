@@ -60,11 +60,17 @@ const GOLD = entropyToMnemonic(new Uint8Array(16).fill(0x7f), wordlist);
 interface FakeControl {
   failOpen?: boolean;
   /** Открытие упирается в соседнюю вкладку, держащую прежнюю версию базы:
-   *  браузер шлёт `blocked` и БОЛЬШЕ НИЧЕГО. Сегодня недостижимо (версия
-   *  одна), но первое же её повышение делает это обычным делом. */
+   *  браузер шлёт `blocked`. По умолчанию подделка на этом умолкает —
+   *  ХУЖЕ, чем настоящий браузер. */
   blockOpen?: boolean;
   /** Открытие молчит вовсе — ни успеха, ни ошибки, ни блокировки. */
   hangOpen?: boolean;
+  /** ⚠️ Как на самом деле: браузер шлёт `blocked`, а когда соседняя вкладка
+   *  закроется, ВСЁ-ТАКИ открывает базу — уже после того, как мы отказали.
+   *  Без этого поведения подделка снисходительнее браузера, и утечка
+   *  запоздавшего соединения непроверяема в принципе (находка четвёртого
+   *  пункта третьей проверки). Задержка в миллисекундах. */
+  succeedAfterMs?: number;
   failPut?: boolean;
   failGet?: boolean;
   failDelete?: boolean;
@@ -91,7 +97,7 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
   /** Сколько раз хранилище реально трогали. Без счётчика утверждение «одно
    *  ожидание, а не два» непроверяемо: снаружи оба случая выглядят как
    *  «сеанс в итоге получен». */
-  const stats = { opens: 0, gets: 0, puts: 0 };
+  const stats = { opens: 0, gets: 0, puts: 0, closes: 0 };
   /** Каталог «устройства»: имя хранилища → ключ → значение. Живёт в подделке,
    *  а не в объекте базы: перезагрузка вкладки открывает базу заново и обязана
    *  видеть то же самое, а «другое устройство» — это НОВАЯ подделка. */
@@ -209,6 +215,7 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
 
   class FakeDatabase {
     objectStoreNames = { contains: (name: string) => disk.has(name) };
+    closed = false;
     createObjectStore(name: string) {
       if (!disk.has(name)) disk.set(name, new Map());
       return {};
@@ -216,7 +223,7 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
     transaction(_names: string[] | string, _mode?: string) {
       return new FakeTransaction();
     }
-    close() {}
+    close() { this.closed = true; stats.closes += 1; }
   }
 
   return {
@@ -228,9 +235,24 @@ function makeFakeIndexedDB(control: FakeControl = {}) {
       stats.opens += 1;
       const req = new FakeRequest();
       setTimeout(() => {
-        if (control.hangOpen) return; // тишина: ни одного события
+        const openDb = () => {
+          const db = new FakeDatabase();
+          req.result = db;
+          if (dbVersion < version) {
+            dbVersion = version;
+            req.onupgradeneeded?.({ target: req });
+          }
+          req.onsuccess?.({ target: req });
+        };
+        if (control.hangOpen) {
+          // молчание, а потом — если велено — запоздавший успех
+          if (control.succeedAfterMs !== undefined) setTimeout(openDb, control.succeedAfterMs);
+          return;
+        }
         if (control.blockOpen) {
           req.onblocked?.({ target: req });
+          // соседняя вкладка закрылась — база всё-таки открывается
+          if (control.succeedAfterMs !== undefined) setTimeout(openDb, control.succeedAfterMs);
           return;
         }
         if (control.failOpen) {
@@ -1534,6 +1556,40 @@ describe('мусор на входе — вердикт, а не падение'
     expect(thrown).toBe(rejection);
     const store = fakeIdb._disk.get('sessions');
     expect(store === undefined || store.size === 0).toBe(true);
+  });
+
+  it('запоздавшее соединение закрывается, а не течёт (пункт 4)', async () => {
+    // Браузер шлёт «занято», а потом ВСЁ-ТАКИ открывает базу, когда соседняя
+    // вкладка закроется. Мы к тому моменту уже отказали — и если полученную
+    // базу не закрыть, утёкшее соединение само становится тем, что блокирует
+    // следующее повышение версии: отказ создаёт причину следующего отказа.
+    installStorage({ blockOpen: true, succeedAfterMs: 5 });
+
+    await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
+      .rejects.toMatchObject({ code: 'storage_blocked' });
+
+    await new Promise(r => setTimeout(r, 30)); // база приезжает с опозданием
+    expect(fakeIdb._stats.opens).toBeGreaterThan(0);
+    expect(fakeIdb._stats.closes).toBe(fakeIdb._stats.opens);
+  });
+
+  it('то же для запоздавшего успеха после молчания', async () => {
+    installStorage({ hangOpen: true, succeedAfterMs: 5 });
+    const realSetTimeout = globalThis.setTimeout;
+    vi.stubGlobal('setTimeout', ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) =>
+      realSetTimeout(fn, ms === STORAGE_OPEN_TIMEOUT_MS ? 0 : ms, ...rest)));
+
+    await expect(openSession(ALICE, async () => ALICE_CONTRACT_SIG))
+      .rejects.toMatchObject({ code: 'storage_open_timeout' });
+
+    await new Promise(r => realSetTimeout(r, 30));
+    expect(fakeIdb._stats.closes).toBe(fakeIdb._stats.opens);
+  });
+
+  it('в обычной жизни соединение тоже не копится', async () => {
+    await openSession(ALICE, async () => ALICE_SIG);
+    await openSession(ALICE, async () => ALICE_SIG);
+    expect(fakeIdb._stats.closes).toBe(fakeIdb._stats.opens);
   });
 
   it('молчащее хранилище стоит ОДНО ожидание, а не два подряд', async () => {

@@ -379,7 +379,20 @@ function openDb(): Promise<IDBDatabase> {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
     };
-    req.onsuccess = () => finish(() => resolve(req.result));
+    req.onsuccess = () => {
+      // ⚠️ База может приехать ПОСЛЕ того, как мы уже отказали: браузер шлёт
+      // `blocked`, а когда соседняя вкладка закроется — всё-таки открывает.
+      // Не закрыть такое соединение значит оставить именно то, что блокирует
+      // следующее повышение версии: отказ создал бы причину следующего
+      // отказа (находка четвёртого пункта третьей проверки; штатная подделка
+      // показать этого не могла — она слала событие и умолкала навсегда, а
+      // браузер так себя не ведёт).
+      if (settled) {
+        try { req.result.close(); } catch { /* закрывать нечего */ }
+        return;
+      }
+      finish(() => resolve(req.result));
+    };
     req.onerror = () => finish(() => reject(
       req.error ?? new Error('chatSession: не удалось открыть хранилище'),
     ));
