@@ -979,6 +979,56 @@ interface AcceptedLink {
   uploadedAt: number;
 }
 
+/**
+ * Слияние сторон разговора в один показанный порядок.
+ *
+ * ⚠️ НЕ `Array.prototype.sort` со сравнением «свои по номеру, чужие по
+ * времени» — оно НЕТРАНЗИТИВНО (находка К-2 враждебной проверки, замер: 126
+ * перестановок из 200 давали номера ОДНОЙ СТОРОНЫ вспять). Достаточно, чтобы
+ * время спорило с номером — а время ставит сам отправитель, оно приходит из
+ * сети и врать может как угодно. Нетранзитивное сравнение делает результат
+ * `sort` зависящим от порядка ПРИХОДА, то есть от того, в каком порядке склад
+ * отдал мешки; переставлялась при этом та самая расшифровка, которую увидит
+ * арбитр.
+ *
+ * Здесь — обычное слияние отсортированных списков: каждая сторона уже идёт
+ * строго по своему номеру, и берётся всегда голова той стороны, чьё время
+ * отправки меньше (при равенстве — по адресу). Порядок ВНУТРИ стороны не может
+ * быть нарушен ни при каком времени: список стороны просматривается только с
+ * головы. Время отправки остаётся ПОДСКАЗКОЙ о том, как перемежать стороны, а
+ * не основанием порядка.
+ */
+function mergeSides(messages: ChatMessage[]): ChatMessage[] {
+  const sides = new Map<string, ChatMessage[]>();
+  for (const m of messages) {
+    const list = sides.get(m.from) ?? [];
+    list.push(m);
+    sides.set(m.from, list);
+  }
+  // Внутри стороны — строго по номеру. Это единственная сортировка, и она
+  // сравнивает ОДНОРОДНЫЕ величины (номера одного отправителя), поэтому
+  // транзитивна по построению.
+  const queues = [...sides.entries()]
+    .sort((x, y) => (x[0] < y[0] ? -1 : 1))
+    .map(([, list]) => list.sort((a, b) => a.seq - b.seq));
+
+  const at = queues.map(() => 0);
+  const out: ChatMessage[] = [];
+  for (let taken = 0; taken < messages.length; taken++) {
+    let best = -1;
+    for (let i = 0; i < queues.length; i++) {
+      if (at[i] >= queues[i].length) continue;
+      if (best === -1) { best = i; continue; }
+      const cand = queues[i][at[i]];
+      const cur = queues[best][at[best]];
+      if (cand.sentAt < cur.sentAt || (cand.sentAt === cur.sentAt && cand.from < cur.from)) best = i;
+    }
+    if (best === -1) break; // недостижимо: taken < messages.length ⇒ очередь есть
+    out.push(queues[best][at[best]++]);
+  }
+  return out;
+}
+
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -1148,16 +1198,8 @@ export async function receiveBags(
     }
   }
 
-  // Слияние: внутри одной стороны — строго по номеру (время отправки ставит
-  // сам отправитель, и оно может врать); между сторонами — по времени
-  // отправки, при равенстве — по адресу, чтобы порядок был устойчивым.
-  messages.sort((a, b) => {
-    if (a.from === b.from) return a.seq - b.seq;
-    return a.sentAt - b.sentAt || (a.from < b.from ? -1 : 1);
-  });
-
   return {
-    messages,
+    messages: mergeSides(messages),
     gapAfterSeq: [...gapSet].sort((a, b) => a - b),
     chains,
     troubles,
