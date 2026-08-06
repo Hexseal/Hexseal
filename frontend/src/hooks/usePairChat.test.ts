@@ -1,0 +1,407 @@
+/**
+ * usePairChat.test.ts — движок одной переписки: опрос, приём, отправка.
+ *
+ * Задача 6 плана «Клиент чата». Свойства, заперты здесь:
+ *  1. опрос на БОЕВЫХ умолчаниях (5 с / 30 с), без подстановки своих чисел;
+ *  2. курсор двигается — второй тик не скачивает того, что скачал первый;
+ *  3. уход со страницы отменяет ВСЁ в полёте, не только перечисление;
+ *  4. отказ склада различается кодом, не английским текстом;
+ *  5. переписанная целиком чужим ключом цепочка отвергается — ПИН РЕАЛЬНО
+ *     ДОЕЗЖАЕТ из справочника до проверки (в `useChatSession.test.ts`
+ *     заперто, что `receiveBags` умеет пинить; здесь — что хук ей это даёт);
+ *  6. слишком длинное сообщение получает отказ ДО отправки.
+ *
+ * ⚠️ Тестируется ЧИСТЫЙ движок (`startPairChat`), не React-обёртка: у фронта
+ * нет ни jsdom, ни @testing-library (окружение vitest — `node`). Обёртка
+ * сведена к состоянию и одному вызову `stop()` в уборке эффекта, движок
+ * несёт всю логику. Разбор — в шапке `useChatSession.ts`.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { deriveChatKeypair } from '@/lib/chatCrypto';
+import type { ChatSession } from '@/lib/chatSession';
+import { deriveLinkSigningKeypair, encodeFrame, messageBodyHash, linkSignaturePreimage } from '@/lib/chatConversation';
+import { buildLink, type ChainLink } from '@/lib/chatChain';
+import { packEnvelope } from '@/lib/chatEnvelope';
+import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
+import { startPairChat, type PairChatState } from './usePairChat';
+
+const ALICE = '0xA1cE00000000000000000000000000000000CAfE' as const;
+const BOB   = '0xB0b1000000000000000000000000000000005eEd' as const;
+const BOB_LC = BOB.toLowerCase() as `0x${string}`;
+
+function sig(fill: string): `0x${string}` {
+  return ('0x' + fill.repeat(130).slice(0, 130)) as `0x${string}`;
+}
+
+async function makeSession(address: `0x${string}`, seed: string): Promise<ChatSession> {
+  return {
+    keypair: await deriveChatKeypair(sig(seed)),
+    address, origin: 'signature', walletKind: 'eoa', restored: false, persisted: true,
+  };
+}
+
+function hexOf(bytes: Uint8Array): string {
+  let s = '0x';
+  for (const b of bytes) s += b.toString(16).padStart(2, '0');
+  return s;
+}
+
+/** Настоящие мешки: конверт → звено → подпись → кадр, как их собирает отправка. */
+async function buildBags(
+  from: ChatSession, claimedSender: `0x${string}`, recipientPub: Uint8Array, texts: string[],
+) {
+  const sodium = (await import('libsodium-wrappers')).default;
+  await sodium.ready;
+  const signer = await deriveLinkSigningKeypair(from.keypair);
+  const out: { key: string; sender: string; size: number; uploadedAt: number; body: Uint8Array }[] = [];
+  let prev: ChainLink | null = null;
+  for (let i = 0; i < texts.length; i++) {
+    const envelope = await packEnvelope(
+      { text: texts[i] }, recipientPub, from.keypair.publicKey, claimedSender.toLowerCase() as `0x${string}`,
+    );
+    const bodyHash = messageBodyHash(signer.publicKey, envelope);
+    const link = buildLink(prev, bodyHash, claimedSender.toLowerCase() as `0x${string}`, 1_700_000_000_000 + i);
+    const signature = sodium.crypto_sign_detached(linkSignaturePreimage(link), signer.privateKey);
+    const body = encodeFrame({ link, signature, signerPublicKey: signer.publicKey, envelope });
+    out.push({
+      key: `${ALICE.toLowerCase()}/${1_700_000_000_000 + i}.bin`,
+      sender: claimedSender.toLowerCase(), size: body.length,
+      uploadedAt: 1_700_000_000_000 + i, body,
+    });
+    prev = link;
+  }
+  return out;
+}
+
+/**
+ * Поддельный релеер поверх `fetch`. Ведёт себя как настоящий там, где это
+ * важно для замеров: `since` нестрогое (`>=`), скачивание отдаёт байты,
+ * справочник отдаёт обе половины ключа.
+ */
+function fakeRelayer(opts: {
+  bags: { key: string; sender: string; size: number; uploadedAt: number; body: Uint8Array }[];
+  peerBoxKey: Uint8Array;
+  peerSignKey: Uint8Array | null;
+  keysStatus?: number;
+  putStatus?: number;
+  putBody?: unknown;
+  hang?: boolean;
+}) {
+  const downloads: string[] = [];
+  const inFlight = new Set<number>();
+  let n = 0;
+  const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(String(url));
+    const p = u.pathname;
+
+    if (p === '/keys' && init?.method === 'POST') {
+      return new Response(JSON.stringify({ address: ALICE.toLowerCase() }), { status: 200 });
+    }
+    if (p.startsWith('/keys/')) {
+      if (opts.keysStatus && opts.keysStatus !== 200) {
+        return new Response(JSON.stringify({ error: 'no', code: 'key_not_found' }), { status: opts.keysStatus });
+      }
+      return new Response(JSON.stringify({
+        address: BOB_LC, boxKey: hexOf(opts.peerBoxKey),
+        ...(opts.peerSignKey ? { signKey: hexOf(opts.peerSignKey) } : {}),
+      }), { status: 200 });
+    }
+    if (p === '/bags' && (init?.method ?? 'GET') === 'GET') {
+      const raw = u.searchParams.get('since');
+      const since = raw === null ? null : Number(raw);
+      const inbox = (since === null ? opts.bags : opts.bags.filter(b => b.uploadedAt >= since))
+        .map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt }));
+      if (opts.hang) {
+        const id = ++n; inFlight.add(id);
+        return new Promise<Response>((_r, rej) => {
+          init?.signal?.addEventListener('abort', () => { inFlight.delete(id); rej(new DOMException('Aborted', 'AbortError')); });
+        });
+      }
+      return new Response(JSON.stringify({ inbox, sent: [], peers: [] }), { status: 200 });
+    }
+    if (init?.method === 'PUT') {
+      return new Response(JSON.stringify(opts.putBody ?? { key: 'a/1' }), { status: opts.putStatus ?? 200 });
+    }
+    // скачивание мешка
+    const key = decodeURIComponent(p.replace(/^\/bags\//, ''));
+    downloads.push(key);
+    if (opts.hang) {
+      const id = ++n; inFlight.add(id);
+      return new Promise<Response>((_r, rej) => {
+        init?.signal?.addEventListener('abort', () => { inFlight.delete(id); rej(new DOMException('Aborted', 'AbortError')); });
+      });
+    }
+    const bag = opts.bags.find(b => b.key === key);
+    if (!bag) return new Response(JSON.stringify({ error: 'Bag not found', code: 'bag_not_found' }), { status: 404 });
+    return new Response(bag.body, { status: 200 });
+  });
+  return { fetchMock, downloads, inFlight };
+}
+
+/** Гоняет движок ровно `ticks` тиков. */
+function drive(engineOpts: Parameters<typeof startPairChat>[0], ticks: number) {
+  const states: PairChatState[] = [];
+  const slept: number[] = [];
+  const errors: unknown[] = [];
+  let engine!: ReturnType<typeof startPairChat>;
+  let resolveDone!: () => void;
+  const done = new Promise<void>(r => { resolveDone = r; });
+  const sleep = async (ms: number) => {
+    slept.push(ms);
+    if (slept.length >= ticks) { engine.stop(); resolveDone(); }
+  };
+  engine = startPairChat({
+    ...engineOpts,
+    onState: (s) => { states.push(s); },
+    onError: (e) => { errors.push(e); },
+    sleep,
+  });
+  return { engine, done, states, slept, errors };
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  _resetBagPassCacheForTest();
+});
+
+/* ─────────────────── приём, курсор и боевые умолчания ─────────────────── */
+
+describe('движок переписки: приём и опрос', () => {
+  it('ЗАМЕР: два сообщения приезжают, второй тик скачивает НОЛЬ мешков', async () => {
+    // Свойство 2 задачи на уровне хука: без движущегося курсора движок качал
+    // бы те же два мешка каждые пять секунд, вечно.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const bags = await buildBags(bob, BOB, alice.keypair.publicKey, ['раз', 'два']);
+    const { fetchMock, downloads } = fakeRelayer({
+      bags, peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 3);
+    await run.done;
+
+    const last = run.states[run.states.length - 1];
+    expect(last.messages.map(m => m.text)).toEqual(['раз', 'два']);
+    // Каждый мешок скачан РОВНО один раз за три тика.
+    expect(downloads).toHaveLength(2);
+    expect(new Set(downloads).size).toBe(2);
+  }, 20_000);
+
+  it('ЗАМЕР: боевые умолчания опроса — 5000 мс активно, 30000 мс в фоне', async () => {
+    // ⚠️ `intervals` НЕ передаётся. Числа записаны руками: правка
+    // ограничителя однажды прошла ревью зелёной ровно потому, что тесты
+    // подставляли свои значения вместо боевых.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const { fetchMock } = fakeRelayer({ bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null });
+    vi.stubGlobal('fetch', fetchMock);
+
+    let active = true;
+    const slept: number[] = [];
+    let engine!: ReturnType<typeof startPairChat>;
+    let resolveDone!: () => void;
+    const done = new Promise<void>(r => { resolveDone = r; });
+    engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p',
+      isActive: () => active,
+      onState: () => {},
+      sleep: async (ms) => {
+        slept.push(ms);
+        if (slept.length === 1) active = false;
+        if (slept.length >= 2) { engine.stop(); resolveDone(); }
+      },
+    });
+    await done;
+
+    expect(slept).toEqual([5_000, 30_000]);
+  }, 20_000);
+});
+
+/* ──────────── пин подписного ключа доезжает из справочника ────────────── */
+
+describe('пин подписного ключа: справочник → receiveBags', () => {
+  it('ЗАМЕР: переписанная целиком чужим ключом цепочка — ноль сообщений и три signer_unexpected', async () => {
+    // Что красит: снятие `peerSigningPublicKeys` в движке. Тогда подделка
+    // проходит как своя — три сообщения, ноль претензий (замерено в
+    // useChatSession.test.ts второй половиной той же пары).
+    const alice = await makeSession(ALICE, 'a1');
+    const bobReal = await makeSession(BOB, 'bb');
+    const mallory = await makeSession(BOB, 'ee');
+    const bobSigner = await deriveLinkSigningKeypair(bobReal.keypair);
+    const forged = await buildBags(mallory, BOB, alice.keypair.publicKey, ['раз', 'два', 'три']);
+
+    const { fetchMock } = fakeRelayer({
+      bags: forged,
+      peerBoxKey: bobReal.keypair.publicKey,
+      peerSignKey: bobSigner.publicKey, // справочник знает НАСТОЯЩИЙ ключ Боба
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    await run.done;
+
+    const last = run.states[run.states.length - 1];
+    expect(last.messages).toHaveLength(0);
+    expect(last.troubles.filter(t => t.kind === 'signer_unexpected')).toHaveLength(3);
+  }, 20_000);
+
+  it('справочник без signKey (старая запись) — переписка работает, просто без пина', async () => {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bags = await buildBags(bob, BOB, alice.keypair.publicKey, ['привет']);
+    const { fetchMock } = fakeRelayer({ bags, peerBoxKey: bob.keypair.publicKey, peerSignKey: null });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    await run.done;
+
+    expect(run.states[run.states.length - 1].messages.map(m => m.text)).toEqual(['привет']);
+  }, 20_000);
+
+  it('«собеседник ещё не заходил» — не падение, а признак', async () => {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const { fetchMock } = fakeRelayer({
+      bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null, keysStatus: 404,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    await run.done;
+
+    expect(run.states[run.states.length - 1].peerKnown).toBe(false);
+  }, 20_000);
+});
+
+/* ───────────────────────── отмена в полёте ────────────────────────────── */
+
+describe('уход со страницы отменяет всё в полёте', () => {
+  it('ЗАМЕР: после stop() незавершённых запросов ноль', async () => {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const { fetchMock, inFlight } = fakeRelayer({
+      bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null, hang: true,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: () => {}, onError: () => {}, sleep: async () => {},
+    });
+
+    // Дать циклу уйти в сеть и повиснуть там.
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(inFlight.size).toBeGreaterThan(0);
+
+    engine.stop();
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(inFlight.size).toBe(0);
+  }, 20_000);
+});
+
+/* ──────────────────────── отказы различаются кодом ─────────────────────── */
+
+describe('отказ склада различается кодом, а не английским текстом', () => {
+  const CASES: { status: number; code: string }[] = [
+    { status: 400, code: 'invalid_recipient' },
+    { status: 401, code: 'pass_expired' },
+    { status: 404, code: 'bag_not_found' },
+    { status: 413, code: 'payload_too_large' },
+    { status: 429, code: 'rate_limited_write' },
+    { status: 500, code: 'internal_error' },
+  ];
+
+  it('ЗАМЕР: шесть кодов — шесть разных вердиктов отправки, ни одного разбора текста', async () => {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const seen: { status?: number; code?: string }[] = [];
+
+    for (const c of CASES) {
+      const { fetchMock } = fakeRelayer({
+        bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null,
+        putStatus: c.status, putBody: { error: 'whatever the english says', code: c.code },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const engine = startPairChat({
+        session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+        onState: () => {}, onError: () => {}, sleep: async () => new Promise(() => {}),
+      });
+      try {
+        await engine.send({ text: `проба ${c.status}` });
+        seen.push({});
+      } catch (err) {
+        const e = err as { status?: number; cause?: { code?: string } };
+        seen.push({ status: e.status, code: e.cause?.code });
+      } finally {
+        engine.stop();
+      }
+    }
+
+    expect(seen.map(s => s.status)).toEqual(CASES.map(c => c.status));
+    expect(seen.map(s => s.code)).toEqual(CASES.map(c => c.code));
+    expect(new Set(seen.map(s => s.code)).size).toBe(6);
+  }, 30_000);
+});
+
+/* ─────────────── слишком длинное — отказ ДО отправки ──────────────────── */
+
+describe('слишком длинное сообщение', () => {
+  it('ЗАМЕР: отказ с кодом message_too_large и НОЛЬ обращений к складу за отправку', async () => {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const { fetchMock } = fakeRelayer({ bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: () => {}, onError: () => {}, sleep: async () => new Promise(() => {}),
+    });
+    try {
+      // Дать движку добрать ключ собеседника (иначе отказ пришёл бы «нет ключа»,
+      // а не «слишком длинно» — и замок проверял бы не то).
+      for (let i = 0; i < 40; i++) await Promise.resolve();
+      const before = fetchMock.mock.calls.filter(c => (c[1] as RequestInit | undefined)?.method === 'PUT').length;
+
+      await expect(engine.send({ text: 'я'.repeat(263_000) }))
+        .rejects.toMatchObject({ code: 'message_too_large' });
+
+      const after = fetchMock.mock.calls.filter(c => (c[1] as RequestInit | undefined)?.method === 'PUT').length;
+      expect(after - before).toBe(0);
+    } finally {
+      engine.stop();
+    }
+  }, 20_000);
+});
+
+/* ────────────────────────────── мусор ─────────────────────────────────── */
+
+describe('пришёл мусор — вердикт, а не падение', () => {
+  it('склад отдал половину мешка и чужой мешок — переписка жива, претензии названы', async () => {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const good = await buildBags(bob, BOB, alice.keypair.publicKey, ['целое']);
+    // Обрезок: те же байты, но половина.
+    const half = {
+      ...good[0], key: `${ALICE.toLowerCase()}/1700000000009.bin`,
+      uploadedAt: 1_700_000_000_009,
+      body: good[0].body.slice(0, Math.floor(good[0].body.length / 2)),
+    };
+
+    const { fetchMock } = fakeRelayer({
+      bags: [good[0], half], peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true }, 2);
+    await run.done;
+
+    const last = run.states[run.states.length - 1];
+    expect(last.messages.map(m => m.text)).toEqual(['целое']);
+    expect(last.troubles.length).toBeGreaterThan(0);
+  }, 20_000);
+});
