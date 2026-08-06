@@ -413,6 +413,43 @@ describe('кошелёк-контракт: код восстановления',
   });
 });
 
+// ═══ Золотые векторы: вывод ключа прибит намертво ════════════════════════
+
+describe('золотые векторы вывода ключа', () => {
+  /** Все остальные проверки здесь — КРУГОВЫЕ: сгенерировали, восстановили,
+   *  сравнили сами с собой. Такая проверка остаётся зелёной при ЛЮБОЙ смене
+   *  формулы вывода — а смена формулы означает, что у всех существующих людей
+   *  переписка становится нечитаемой молча, без единой ошибки. Векторы ниже
+   *  посчитаны один раз и зафиксированы; их изменение — не правка, а
+   *  миграция, которую надо объявлять вслух.
+   *
+   *  Заперты обе дороги: подпись обычного кошелька и код восстановления. */
+
+  it('обычный кошелёк: подпись → ровно этот ключ', async () => {
+    const session = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    expect(hex(session.keypair.publicKey))
+      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+    expect(hex(session.keypair.privateKey))
+      .toBe('2d7ca08f696a30497580d743da64687362744d309f062c65dc02e4229a2514d9');
+  });
+
+  it('код восстановления: двенадцать слов → ровно этот ключ', async () => {
+    expect(GOLD).toBe('legal winner thank year wave sausage worth useful legal winner thank yellow');
+    const session = await openSessionFromRecoveryCode(ALICE, GOLD);
+    expect(hex(session.keypair.publicKey))
+      .toBe('377e94d7047bf2f0241998be0c9ab6bae18ac90139edc3f2d2f4bf51f2c53253');
+    expect(hex(session.keypair.privateKey))
+      .toBe('0a177c57e1eb21a420c0b7e39336ce68335d5395c85e105909ccf17304c72ad0');
+  });
+
+  it('ключ из кода и ключ из подписи — РАЗНЫЕ, дороги не пересекаются', async () => {
+    const byCode = await openSessionFromRecoveryCode(ALICE, GOLD);
+    installStorage();
+    const bySig = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
+    expect(hex(byCode.keypair.privateKey)).not.toBe(hex(bySig.keypair.privateKey));
+  });
+});
+
 // ═══ 4. Негодный код — внятная ошибка с кодом, а не другой ключ ═══════════
 
 describe('негодный код восстановления отказывает внятно', () => {
