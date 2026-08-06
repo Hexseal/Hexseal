@@ -150,7 +150,11 @@
 // app/api/dispute-reason/route.ts): без среза "http://host/" даёт
 // "http://host//bags/pass" — двойной слэш, который не всякий сервер
 // нормализует сам.
-const RELAYER_URL = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+// Экспортирована (Задача 6): справочник ключей (`hooks/useChatSession.ts`)
+// ходит на тот же релеер, и второй экземпляр этой же строки означал бы два
+// источника истины об адресе сервера — расхождение вылезло бы не сразу и
+// молча (у одного модуля хвостовой слэш срезан, у другого нет).
+export const RELAYER_URL = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
 const BAG_PASS_HEADER = 'x-bag-pass';
 

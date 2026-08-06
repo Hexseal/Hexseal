@@ -173,7 +173,15 @@ describe('переписанная целиком чужим ключом цеп
     const bags = [];
     let prev = null as ReturnType<typeof buildLink> | null;
     for (let i = 0; i < texts.length; i++) {
-      const envelope = await packEnvelope({ text: texts[i] }, recipientPub, signerSession.keypair.publicKey);
+      // Четвёртым аргументом — АВТОР, тот же, кого называет звено и кого
+      // засвидетельствует склад. Конверт связан с автором ПО ПОСТРОЕНИЮ
+      // (`envelopeAad`, находка В-1): собранный без автора, он у `receiveBags`
+      // просто не расшифруется, и подделка стала бы неотличима от «не тот
+      // ключ» — то есть замок ниже проверял бы не то, что заявляет.
+      const envelope = await packEnvelope(
+        { text: texts[i] }, recipientPub, signerSession.keypair.publicKey,
+        claimedSender.toLowerCase() as `0x${string}`,
+      );
       const bodyHash = messageBodyHash(signer.publicKey, envelope);
       const link = buildLink(prev, bodyHash, claimedSender.toLowerCase() as `0x${string}`, 1_700_000_000_000 + i);
       const signature = sodium.crypto_sign_detached(linkSignaturePreimage(link), signer.privateKey);
