@@ -445,6 +445,51 @@ describe('packEnvelope / unpackEnvelope', () => {
     }
   });
 
+  describe('мелочь ревью: гейт формы вложения заперт ПО ПОЛЮ — каждая проверка ломает РОВНО одно поле, не несколько разом', () => {
+    // Найдено: старая заготовка `{"url": 1, "name": "a", "size": "big", ...}`
+    // ломала url И size ОДНОВРЕМЕННО — снятие ЛЮБОЙ ОДНОЙ проверки в коде
+    // всё равно оставляло тест красным (другая проверка того же фикстура
+    // подхватывала), то есть НИ ОДНА проверка не была заперта по отдельности.
+    // Также найдена реальная дыра: отрицательный размер (`Number.isFinite(-1)`
+    // — true, не ловится) проезжал как валидный. Бесконечный размер
+    // (`1e400` в JSON — переполняется в Infinity при разборе) уже ловился
+    // `!Number.isFinite`, но тоже не был заперт ИЗОЛИРОВАННО.
+    const good = { url: 'https://x', name: 'f.pdf', size: 100, keyHex: 'ab', ivHex: 'cd' };
+
+    it.each([
+      ['url не строка', { ...good, url: 1 }],
+      ['name не строка', { ...good, name: 1 }],
+      ['size не число', { ...good, size: 'big' }],
+      ['size отрицательный (Number.isFinite(-1) === true — не ловится изолированно без явной проверки)', { ...good, size: -1 }],
+      ['keyHex не строка', { ...good, keyHex: 1 }],
+      ['ivHex не строка', { ...good, ivHex: 1 }],
+    ])('%s — null, ровно эта форма', async (_label, badFile) => {
+      const { bob, alice } = await actors();
+      const raw = JSON.stringify({ file: badFile });
+      const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+      await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+    });
+
+    it('size бесконечный (JSON-литерал 1e400 переполняется в Infinity при JSON.parse) — null, изолированно от остальных полей', async () => {
+      // JSON.stringify(Infinity) сам даёт "null" (JS JSON API так решает
+      // сериализовать не-конечные числа) — обычный object-based фикстур
+      // (как в it.each выше) НЕ может выразить эту форму, нужен сырой
+      // JSON-текст напрямую: `1e400` — валидный JSON-литерал числа,
+      // переполняющийся в JS `Infinity` при разборе (проверено отдельно).
+      const { bob, alice } = await actors();
+      const raw = '{"file":{"url":"https://x","name":"f.pdf","size":1e400,"keyHex":"ab","ivHex":"cd"}}';
+      const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+      await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+    });
+
+    it('валидный file (контрольный случай) проходит круг как есть', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({ file: good }, bob.publicKey, alice.publicKey);
+      const opened = await unpackEnvelope(env, bob);
+      expect(opened).toEqual({ file: good });
+    });
+  });
+
   describe('dealId — форма проверяется ПОЛНОСТЬЮ, но при несовпадении отбрасывается ТОЛЬКО ПОЛЕ (исправлено после ревью)', () => {
     // Прошлое решение (мелочь раунда 2, ослабленная проверка — только
     // префикс 0x) было признано ошибочным ревью координатора: внутрь

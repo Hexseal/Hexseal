@@ -355,7 +355,7 @@ function sanitizePayload(value: unknown): ChatPayload | null {
     if (
       typeof f.url !== 'string' ||
       typeof f.name !== 'string' ||
-      typeof f.size !== 'number' || !Number.isFinite(f.size) ||
+      typeof f.size !== 'number' || !Number.isFinite(f.size) || f.size < 0 ||
       typeof f.keyHex !== 'string' ||
       typeof f.ivHex !== 'string'
     ) {
