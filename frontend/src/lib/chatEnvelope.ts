@@ -186,7 +186,7 @@ export const MAX_ENVELOPE_BYTES = 1024 * 1024; // 1 МиБ
  * @throws {Error} если `bytes.length !== SEALED_KEY_LEN` — громкий отказ
  *   здесь, а не тихая порча раскладки конверта у случайного получателя.
  */
-function assertSealedKeyLength(bytes: Uint8Array, label: string): void {
+export function assertSealedKeyLength(bytes: Uint8Array, label: string): void {
   if (bytes.length !== SEALED_KEY_LEN) {
     throw new Error(
       `packEnvelope: unexpected ${label} sealed key length (${bytes.length}), expected ${SEALED_KEY_LEN}`,

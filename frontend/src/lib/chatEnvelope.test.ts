@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { getAddress } from 'viem';
 import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCrypto';
-import { packEnvelope, unpackEnvelope, MAX_ENVELOPE_BYTES, type ChatPayload } from './chatEnvelope';
+import { packEnvelope, unpackEnvelope, assertSealedKeyLength, MAX_ENVELOPE_BYTES, type ChatPayload } from './chatEnvelope';
 
 // Подписи разной формы — тот же приём, что в chatCrypto.test.ts (SIG_A/SIG_B):
 // 65-байтная hex-строка, три разных актёра.
@@ -366,5 +366,21 @@ describe('packEnvelope / unpackEnvelope', () => {
     const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
     const opened = await unpackEnvelope(env, bob);
     expect(opened).toEqual({ text: 'привет', replyTo: 'msg-42' });
+  });
+
+  it('мелочь ревью: замок на длину запечатанного слота при сборке реально бросает — проверено изолированно, без подмены chatCrypto.ts целиком', () => {
+    // packEnvelope зовёт эту проверку на выходе sealForRecipient, но до
+    // ревью она сама была ничем не проверена (единственная громкая проверка
+    // во всём модуле). Подмена chatCrypto.ts через vi.mock ради проверки
+    // "а что если sealForRecipient вернула не ту длину" создала бы риск
+    // загрязнения состояния между остальными 20+ тестами файла — тот же
+    // класс хрупкости, что чинили в К-2. Функция вынесена отдельно (см.
+    // chatEnvelope.ts) ровно для того, чтобы это можно было проверить
+    // напрямую, без мокирования вообще.
+    expect(() => assertSealedKeyLength(new Uint8Array(79), 'recipient'))
+      .toThrow(/unexpected recipient sealed key length \(79\), expected 80/);
+    expect(() => assertSealedKeyLength(new Uint8Array(81), 'own'))
+      .toThrow(/unexpected own sealed key length \(81\), expected 80/);
+    expect(() => assertSealedKeyLength(new Uint8Array(80), 'own')).not.toThrow();
   });
 });
