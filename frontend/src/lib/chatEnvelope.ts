@@ -56,6 +56,20 @@
  * результата `sealForRecipient` и бросает ГРОМКО, а не молча портит
  * раскладку конверта для случайного получателя месяцы спустя.
  *
+ * ─── ЗАГОЛОВОК АУТЕНТИФИЦИРОВАН ЦЕЛИКОМ (AAD) ───────────────────────────
+ *
+ * АES-256-GCM подтверждает подлинность НЕ только шифротекста: весь заголовок
+ * (версия + оба запечатанных слота + вектор — все 173 байта до `ciphertext`)
+ * передаётся как Additional Authenticated Data и связывается с тегом
+ * аутентификации. Без этого GCM защищал бы только `ciphertext` — подмена
+ * байта внутри "чужого" слота была бы НЕВИДИМА той стороне, чей слот не
+ * задет (получатель никогда не трогает slotB, отправитель никогда не
+ * трогает slotA), а другая сторона тихо теряла бы доступ без единого
+ * сигнала кому-либо (находка К-1, ревью координатора, критическая — 160 из
+ * 237 байт реального конверта были защищены НИКАК). С AAD подмена ЛЮБОГО
+ * байта заголовка рвёт проверку тега для ОБЕИХ сторон одинаково — порча
+ * становится видимой (`null`), а не тихой.
+ *
  * ─── НЕЗНАКОМЫЙ/ПОВРЕЖДЁННЫЙ ВХОД ───────────────────────────────────────
  *
  * `packEnvelope` не проверяет форму `payload` глубоко (это НАШИ собственные
@@ -141,6 +155,23 @@ const HEADER_LEN = 1 + SEALED_KEY_LEN * 2 + IV_LEN; // 173
  *  трафик, а про защиту от входа, поданного в обход транспорта. */
 const MAX_ENVELOPE_BYTES = 1024 * 1024; // 1 МиБ
 
+/**
+ * Замок на собственное предположение о форме `sealForRecipient()` (см.
+ * докстринг файла, «формат провода») — выделен в отдельную функцию, чтобы
+ * быть проверяемым НАПРЯМУЮ, без подмены `chatCrypto.ts` целиком через
+ * `vi.mock` (риск загрязнения состояния остальных тестов файла — тот же
+ * класс хрупкости теста, что разобран в отчёте задачи для другой находки).
+ * @throws {Error} если `bytes.length !== SEALED_KEY_LEN` — громкий отказ
+ *   здесь, а не тихая порча раскладки конверта у случайного получателя.
+ */
+function assertSealedKeyLength(bytes: Uint8Array, label: string): void {
+  if (bytes.length !== SEALED_KEY_LEN) {
+    throw new Error(
+      `packEnvelope: unexpected ${label} sealed key length (${bytes.length}), expected ${SEALED_KEY_LEN}`,
+    );
+  }
+}
+
 /** Форма `dealId` — адрес Agreement-контракта (см. JSDoc у `ChatPayload.dealId`). */
 const DEAL_ID_RE = /^0x[0-9a-fA-F]{40}$/;
 
@@ -190,30 +221,39 @@ export async function packEnvelope(
   const oneTimeKey = crypto.getRandomValues(new Uint8Array(ONE_TIME_KEY_LEN));
   const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
 
-  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
-  const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, plaintext),
-  );
-
   // Порядок вызовов — «сначала получатель, потом себя» — задаёт РАСКЛАДКУ
   // байтов ниже (slotA/slotB), не смысл; см. докстринг файла.
   const sealedSlotA = await sealForRecipient(recipientPub, oneTimeKey);
   const sealedSlotB = await sealForRecipient(ownPub, oneTimeKey);
+  assertSealedKeyLength(sealedSlotA, 'recipient');
+  assertSealedKeyLength(sealedSlotB, 'own');
 
-  // Замок на собственное предположение о форме (см. докстринг файла) —
-  // громкий отказ здесь, а не тихая порча раскладки у случайного получателя.
-  if (sealedSlotA.length !== SEALED_KEY_LEN || sealedSlotB.length !== SEALED_KEY_LEN) {
-    throw new Error(
-      `packEnvelope: unexpected sealed key length (${sealedSlotA.length}/${sealedSlotB.length}), expected ${SEALED_KEY_LEN}`,
-    );
-  }
+  // Заголовок собирается ДО шифрования — он целиком идёт в AAD ниже (К-1,
+  // ревью координатора). До этой правки AES-GCM аутентифицировал только
+  // ciphertext: подмена байта внутри "чужого" слота была НЕВИДИМА той
+  // стороне, чей слот не тронут (получатель не трогает slotB, отправитель
+  // не трогает slotA) — склад мог тихо испортить архив одной стороны, не
+  // подавая никакого сигнала вообще. Заголовок как AAD связывает ВСЕ его
+  // байты с тегом аутентификации — подмена любого из них рвёт проверку
+  // ОБЕИМ сторонам одинаково, независимо от того, чей слот задет.
+  const header = new Uint8Array(HEADER_LEN);
+  header[0] = ENVELOPE_VERSION;
+  header.set(sealedSlotA, 1);
+  header.set(sealedSlotB, 1 + SEALED_KEY_LEN);
+  header.set(iv, 1 + SEALED_KEY_LEN * 2);
+
+  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+  const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: toArrayBuffer(header) },
+      cryptoKey,
+      plaintext,
+    ),
+  );
 
   const out = new Uint8Array(HEADER_LEN + ciphertext.length);
-  out[0] = ENVELOPE_VERSION;
-  out.set(sealedSlotA, 1);
-  out.set(sealedSlotB, 1 + SEALED_KEY_LEN);
-  out.set(iv, 1 + SEALED_KEY_LEN * 2);
+  out.set(header, 0);
   out.set(ciphertext, HEADER_LEN);
   return out;
 }
@@ -246,6 +286,7 @@ export async function unpackEnvelope(
   if (envelope.length < HEADER_LEN) return null;
   if (envelope[0] !== ENVELOPE_VERSION) return null;
 
+  const header = envelope.subarray(0, HEADER_LEN);
   const sealedSlotA = envelope.subarray(1, 1 + SEALED_KEY_LEN);
   const sealedSlotB = envelope.subarray(1 + SEALED_KEY_LEN, 1 + SEALED_KEY_LEN * 2);
   const iv = envelope.subarray(1 + SEALED_KEY_LEN * 2, HEADER_LEN);
@@ -263,8 +304,12 @@ export async function unpackEnvelope(
 
   try {
     const cryptoKey = await crypto.subtle.importKey('raw', toArrayBuffer(oneTimeKey), { name: 'AES-GCM' }, false, ['decrypt']);
+    // Заголовок ЦЕЛИКОМ — тот же AAD, что packEnvelope связал с тегом при
+    // шифровании (К-1, ревью координатора). Подмена ЛЮБОГО байта заголовка
+    // (версия, любой из двух слотов, вектор) рвёт проверку тега здесь —
+    // ОДИНАКОВО для обеих сторон, независимо от того, чей слот задет.
     const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: toArrayBuffer(iv) },
+      { name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: toArrayBuffer(header) },
       cryptoKey,
       toArrayBuffer(ciphertext),
     );

@@ -40,18 +40,30 @@ async function buildRawEnvelope(
 ): Promise<Uint8Array> {
   const oneTimeKey = crypto.getRandomValues(new Uint8Array(32));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
-  const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, new TextEncoder().encode(jsonText)),
-  );
   const sealedA = await sealForRecipient(recipientPub, oneTimeKey);
   const sealedB = await sealForRecipient(ownPub, oneTimeKey);
-  const out = new Uint8Array(1 + sealedA.length + sealedB.length + iv.length + ciphertext.length);
-  out[0] = 1;
-  out.set(sealedA, 1);
-  out.set(sealedB, 1 + sealedA.length);
-  out.set(iv, 1 + sealedA.length + sealedB.length);
-  out.set(ciphertext, 1 + sealedA.length + sealedB.length + iv.length);
+
+  // Заголовок собирается ДО шифрования и идёт в AAD — тот же порядок и то
+  // же связывание, что реальный packEnvelope делает теперь (К-1, ревью
+  // координатора). Без этого расшифровка любого сюда собранного конверта
+  // проваливалась бы по тегу аутентификации, даже когда сами байты честные.
+  const header = new Uint8Array(1 + sealedA.length + sealedB.length + iv.length);
+  header[0] = 1;
+  header.set(sealedA, 1);
+  header.set(sealedB, 1 + sealedA.length);
+  header.set(iv, 1 + sealedA.length + sealedB.length);
+
+  const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: header },
+      cryptoKey,
+      new TextEncoder().encode(jsonText),
+    ),
+  );
+  const out = new Uint8Array(header.length + ciphertext.length);
+  out.set(header, 0);
+  out.set(ciphertext, header.length);
   return out;
 }
 
@@ -137,18 +149,34 @@ describe('packEnvelope / unpackEnvelope', () => {
     expect(hay).not.toContain(DEAL.slice(2).toLowerCase());
   });
 
-  it('подмена одного байта даёт null, а не искажённое содержимое', async () => {
+  it('К-1 (ревью координатора): подмена ЛЮБОГО байта конверта — перебор ВСЕХ, не одного — блокирует чтение ОБЕИМ сторонам', async () => {
+    // Заголовок (версия + оба запечатанных слота + вектор) обязан быть
+    // защищён целиком, не только шифротекст: до этой находки подмена байта
+    // внутри "чужого" слота (81..160 для получателя, 1..80 для отправителя)
+    // была НЕВИДИМА — тот, чей слот не тронут, продолжал читать как ни в
+    // чём не бывало, а другая сторона тихо теряла архив без единого сигнала.
+    // Перебор всех байт, не выборочный (один байт на 90% пути показывал
+    // только часть поверхности — заголовок вообще не задет).
     const { bob, alice } = await actors();
     const payload: ChatPayload = { text: 'важное сообщение о сумме перевода' };
-    const env = await packEnvelope(payload, bob.publicKey, alice.publicKey);
-    // Байт внутри шифротекста (не в байте версии и не в длине) — 90% пути.
-    const idx = Math.floor(env.length * 0.9);
-    env[idx] ^= 0x01;
-    const opened = await unpackEnvelope(env, bob);
-    // Не просто null — а именно НЕ объект с испорченным text (доказывает,
-    // что AES-GCM аутентификация отвергает целиком, а не отдаёт огрызок).
-    expect(opened).toBeNull();
-    expect(opened).not.toEqual(payload);
+    const original = await packEnvelope(payload, bob.publicKey, alice.publicKey);
+
+    for (let i = 0; i < original.length; i++) {
+      const tampered = original.slice();
+      tampered[i] ^= 0xff;
+      const [openedByBob, openedByAlice] = await Promise.all([
+        unpackEnvelope(tampered, bob),
+        unpackEnvelope(tampered, alice),
+      ]);
+      expect(openedByBob, `байт ${i}: получатель должен получить null`).toBeNull();
+      expect(openedByAlice, `байт ${i}: отправитель должен получить null на своей копии`).toBeNull();
+    }
+
+    // Контроль: неповреждённый конверт по-прежнему читается ОБЕИМИ сторонами —
+    // без этого цикл выше мог бы быть зелёным просто потому, что обе стороны
+    // вообще ничего не читают (сломанный тест, не сломанный конверт).
+    expect(await unpackEnvelope(original, bob)).toEqual(payload);
+    expect(await unpackEnvelope(original, alice)).toEqual(payload);
   });
 
   describe('размер', () => {
