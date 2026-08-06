@@ -341,8 +341,8 @@ describe('packEnvelope / unpackEnvelope', () => {
     const { bob, alice } = await actors();
     const badShapes = [
       '{"text": 123}',                                                                    // text не строка
-      '{"dealId": "не-hex-совсем"}',                                                       // dealId неправильной формы
-      '{"dealId": "0x1234"}',                                                              // dealId слишком короткий
+      '{"dealId": "не-hex-совсем"}',                                                       // dealId без префикса 0x
+      '{"dealId": 12345}',                                                                 // dealId не строка вовсе
       '{"file": {"url": 1, "name": "a", "size": "big", "keyHex": "x", "ivHex": "y"}}',      // поля file не той формы
       '{"file": {"url": "u", "name": "n"}}',                                               // file без обязательных полей
       'не json вовсе {{{',                                                                  // невалидный JSON целиком
@@ -354,6 +354,24 @@ describe('packEnvelope / unpackEnvelope', () => {
       const env = await buildRawEnvelope(shape, bob.publicKey, alice.publicKey);
       await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
     }
+  });
+
+  it('мелочь ревью: dealId непривычной формы (не сегодняшний адрес) переживает разбор — та же дисциплина, что незнакомые поля', async () => {
+    // Найдено ревью: строгая проверка формы (ровно 40 hex-символов адреса)
+    // роняла бы ВСЁ сообщение целиком, если однажды метка сделки сменит
+    // форму (например, на другой тип идентификатора) — противоречит
+    // соседнему правилу «незнакомое поле не повод отказывать» (см. тест
+    // ниже про replyTo). Разница в том, что dealId — ЗНАКОМОЕ поле с
+    // подвижной формой, а не незнакомое поле целиком; тест ниже подтверждает,
+    // что дисциплина одна и та же и для этого случая: текст выживает, даже
+    // если метка не в сегодняшнем формате адреса (66-символьная bytes32-
+    // подобная строка — правдоподобный вид будущей формы).
+    const { bob, alice } = await actors();
+    const futureDealId = '0x' + 'ab'.repeat(32); // 64 hex-символа — не сегодняшние 40
+    const raw = JSON.stringify({ text: 'привет', dealId: futureDealId });
+    const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+    const opened = await unpackEnvelope(env, bob);
+    expect(opened).toEqual({ text: 'привет', dealId: futureDealId });
   });
 
   it('незнакомое дополнительное поле в payload переживает разбор — задел на будущее расширение формата', async () => {

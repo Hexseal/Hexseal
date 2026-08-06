@@ -121,10 +121,12 @@ export interface ChatPayload {
   text?: string;
   file?: { url: string; name: string; size: number; keyHex: string; ivHex: string };
   /** Метка сделки — ВНУТРИ запечатанного, не снаружи (см. докстринг файла и
-   *  тест «метка сделки не встречается в байтах конверта»). Форма — адрес
-   *  Agreement-контракта (`0x` + 40 hex-символов), как везде в проекте
+   *  тест «метка сделки не встречается в байтах конверта»). Форма СЕГОДНЯ —
+   *  адрес Agreement-контракта (`0x` + 40 hex-символов), как везде в проекте
    *  (`dealCtx.agreementAddr`, `DisputeLog dealId=agreement` в
-   *  `app/arbiter/page.tsx`) — НЕ bytes32. */
+   *  `app/arbiter/page.tsx`) — НЕ bytes32. `unpackEnvelope` проверяет
+   *  только префикс `0x` (см. `isPlausibleDealId`), не длину — сообщение
+   *  с меткой непривычной формы не теряется целиком (мелочь ревью). */
   dealId?: `0x${string}`;
 }
 
@@ -194,8 +196,24 @@ export function assertSealedKeyLength(bytes: Uint8Array, label: string): void {
   }
 }
 
-/** Форма `dealId` — адрес Agreement-контракта (см. JSDoc у `ChatPayload.dealId`). */
-const DEAL_ID_RE = /^0x[0-9a-fA-F]{40}$/;
+/**
+ * Форма `dealId` — см. JSDoc у `ChatPayload.dealId`. Проверяется ТОЛЬКО
+ * префикс `0x` (сам тип, `` `0x${string}` ``) — НЕ конкретная длина
+ * (сегодняшние 40 hex-символов адреса).
+ *
+ * Мелочь ревью: строгая проверка полной формы адреса РОНЯЛА БЫ ВСЁ
+ * сообщение целиком (текст, вложение — не только метку), если однажды
+ * форма метки сменится (другой тип идентификатора сделки) — противоречит
+ * соседнему правилу «незнакомое ПОЛЕ не повод отказывать» (см. докстринг
+ * файла): dealId — ЗНАКОМОЕ поле с подвижной формой, а не незнакомое поле
+ * целиком, но старый клиент терял бы старые сообщения точно так же молча.
+ * Семантическую проверку формы (действительно ли это адрес существующего
+ * Agreement) делает тот, кто реально сверяет метку со сделкой — не этот
+ * слой.
+ */
+function isPlausibleDealId(value: string): boolean {
+  return value.startsWith('0x');
+}
 
 /** Гейт формы разобранного payload — та же дисциплина, что `isBagSummary`/
  *  `isWellFormedLink` в соседних модулях: данные из сети, вере не подлежат.
@@ -208,7 +226,7 @@ function isWellFormedPayload(value: unknown): value is ChatPayload {
   const v = value as Record<string, unknown>;
 
   if (v.text !== undefined && typeof v.text !== 'string') return false;
-  if (v.dealId !== undefined && (typeof v.dealId !== 'string' || !DEAL_ID_RE.test(v.dealId))) return false;
+  if (v.dealId !== undefined && (typeof v.dealId !== 'string' || !isPlausibleDealId(v.dealId))) return false;
 
   if (v.file !== undefined) {
     if (typeof v.file !== 'object' || v.file === null || Array.isArray(v.file)) return false;
