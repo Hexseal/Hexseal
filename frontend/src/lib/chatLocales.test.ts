@@ -71,13 +71,20 @@ describe('тексты пересадки — 14 локалей', () => {
   it('третья строка бейджа — настоящее предложение, а не заглушка', () => {
     // Смысл проверить нечем, длину и несовпадение — можно. Заглушка вида
     // "TODO" или копия соседней строки этот замок красит.
+    //
+    // Порог разный: иероглифическое письмо укладывает то же предложение
+    // втрое короче по символам (ja/zh-CN — 36–37 знаков против 88 у ru), и
+    // единый латинский порог красил бы честный перевод. Числа записаны
+    // руками по факту, а не выведены формулой.
+    const MIN_LEN: Record<string, number> = { ja: 20, ko: 20, 'zh-CN': 18, th: 30 };
     const bad: string[] = [];
     for (const locale of LOCALES) {
       const dict = read(locale);
       const dispute = pick(dict, 'chat.privacy_badge_dispute');
       const storage = pick(dict, 'chat.privacy_badge_storage');
       const title = pick(dict, 'chat.privacy_badge_title');
-      if (typeof dispute !== 'string' || dispute.length < 40) bad.push(`${locale}: короткая`);
+      const min = MIN_LEN[locale] ?? 40;
+      if (typeof dispute !== 'string' || dispute.length < min) bad.push(`${locale}: короткая`);
       if (dispute === storage || dispute === title) bad.push(`${locale}: копия соседней`);
     }
     expect(bad).toEqual([]);

@@ -12,17 +12,15 @@ import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { usePairChat } from '@/hooks/usePairChat';
-import { useXmtp } from '@/contexts/XmtpContext';
+import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
+import { useChatSession } from '@/hooks/useChatSession';
 import { useFeeConfig } from '@/hooks/useFeeConfig';
 import { quoteFeeLocal } from '@/lib/fee';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
-  Copy, Check, CheckCheck, Paperclip, FileText, ExternalLink, Lock,
-  ChevronDown, Download, Search, X, Clock, Archive, RotateCw,
+  Copy, Check, Paperclip, FileText, ExternalLink, Lock,
+  ChevronDown, Download, Search, X, Clock, RotateCw, ShieldCheck, Scissors, PenLine,
 } from 'lucide-react';
-import type { ChatMessage } from '@/lib/xmtp';
-import { useXmtpFailureText } from '@/hooks/useXmtpFailureText';
 import { classifyAttachmentFailure, type AttachmentFailure } from '@/lib/attachmentFailure';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE, isTrustedAttachmentUrl } from '@/lib/fileCrypto';
 import { MAX_FILE_SIZE, refreshDownloadUrl } from '@/lib/fileStorage';
@@ -39,6 +37,20 @@ function formatBytes(b: number): string {
 }
 
 
+/**
+ * Код отказа отдельным полем — единственный опознавательный признак, которым
+ * этой панели разрешено пользоваться. Разбор английского текста запрещён
+ * прямым требованием плана: строка приходит из чужих пакетов, меняется с
+ * версией и на тринадцати языках из четырнадцати человеку не говорит ничего.
+ */
+function errorCodeOf(err: unknown): string | null {
+  if (err && typeof err === 'object' && 'code' in err) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+  }
+  return null;
+}
+
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
@@ -52,7 +64,7 @@ function isImageMime(mime?: string) {
 
 // ─── Attachment components ────────────────────────────────────────────────────
 
-function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
+function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
   const [src, setSrc]               = useState<string | null>(null);
   const [decrypting, setDecrypting] = useState(false);
   // Не булево «не вышло», а ЧТО именно не вышло: истёкший срок хранения и
@@ -133,7 +145,7 @@ function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<ChatMessage['attachme
   );
 }
 
-function FileCard({ a, isMe, sentAt }: { a: NonNullable<ChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
+function FileCard({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
   const [saving,     setSaving]     = useState(false);
   // См. тот же комментарий в ImageBubble: «истёк срок хранения» и «не удалось
   // расшифровать» больше не выглядят одинаково.
@@ -262,16 +274,15 @@ function DateDivider({ ts }: { ts: number }) {
   );
 }
 
-/** Полоса на месте поля ввода, пока мессенджер не готов.
+/** Полоса на месте поля ввода, пока переписка не готова.
  *
  *  `explained` = «то же самое уже написано крупно в центре панели». Тогда
  *  полоса оставляет только ДЕЙСТВИЕ (отмена/включить) и молчит: иначе один и тот
  *  же текст с одной и той же кнопкой стоял бы на экране дважды — в центре и
  *  внизу. Текст полосы остаётся, когда центр занят историей переписки и
  *  объяснить состояние больше негде. */
-function XmtpStatusBar({ explained = false }: { explained?: boolean }) {
-  const { status, retry, cancel } = useXmtp();
-  const failureText = useXmtpFailureText();
+function ChatSetupBar({ explained = false }: { explained?: boolean }) {
+  const { status, retry, cancel } = useChatSession();
   const t = useTranslations();
 
   if (status === 'loading') {
@@ -280,13 +291,12 @@ function XmtpStatusBar({ explained = false }: { explained?: boolean }) {
         {!explained && (
           <>
             <div className="w-4 h-4 border-2 border-white/20 border-t-white/50 rounded-full animate-spin flex-shrink-0" />
-            <span className="text-xs text-white/30">{t("chat.connecting_messenger")}</span>
+            <span className="text-xs text-white/30">{t("chat.connecting")}</span>
           </>
         )}
-        {/* Именно cancel(), а не disable(): кнопка обещает отменить ожидание, а
-            disable() отказывался от мессенджера на всю сессию и стирал флаг
-            `xmtp-registered-*`, вместе с которым навсегда глохли внутренние
-            уведомления о сообщениях. Разбор — в шапке cancel() в XmtpContext. */}
+        {/* Именно cancel(), а не disable(): кнопка обещает отменить ожидание.
+            `disable()` СНИМАЕТ КЛЮЧ С УСТРОЙСТВА — цена несопоставима с
+            «мне надоело ждать». */}
         <button
           onClick={cancel}
           className="flex-shrink-0 text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors"
@@ -302,20 +312,20 @@ function XmtpStatusBar({ explained = false }: { explained?: boolean }) {
     }`}>
       {!explained && (
         <p className="text-xs text-white/40 min-w-0 line-clamp-2">
-          {failureText ?? t("chat.messaging_off")}
+          {t("chat.messaging_off")}
         </p>
       )}
       <button
         onClick={retry}
         className="flex-shrink-0 text-xs text-white/50 hover:text-white/80 underline underline-offset-2 transition-colors"
       >
-        {failureText ? t("chat.retry") : t("chat.enable_messaging")}
+        {t("chat.enable_messaging")}
       </button>
     </div>
   );
 }
 
-function XmtpConnecting() {
+function ChatOpening() {
   const t = useTranslations();
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-4">
@@ -332,6 +342,66 @@ function XmtpConnecting() {
           {t("chat.connecting_desc")}
         </p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Раскрытая часть бейджа «Только вы двое» — три строки утверждённого текста.
+ *
+ * ⚠️ ТРЕТЬЯ СТРОКА ОБЯЗАТЕЛЬНА, и это не стилистика. Уходя от «платформа всё
+ * видит», человек не теряет защиту в споре — он получает её в свои руки: у
+ * обеих половин разговора лежат самодостаточные доказательства
+ * (`chatConversation.MessageProof`), и предъявить переписку арбитру может
+ * КАЖДАЯ из сторон со своего устройства. Убрать эту строку — значит оставить
+ * человека с ощущением, что вместе с сервером он потерял и арбитраж.
+ *
+ * Экспортирован намеренно: раскрытое состояние живёт в React-состоянии
+ * панели, а у фронта нет DOM, чтобы нажать кнопку в тесте. Отдельный
+ * компонент — единственный способ отрисовать раскрытый вид тем же кодом,
+ * которым его видит человек, а не его описанием.
+ */
+export function PrivacyNotice({ open }: { open: boolean }) {
+  const t = useTranslations();
+  if (!open) return null;
+  return (
+    <div className="px-4 pb-3">
+      <div className="rounded-[14px] border border-white/[0.07] bg-white/[0.03] px-3.5 py-3 space-y-1.5">
+        <p className="text-xs font-semibold text-white/75 flex items-center gap-1.5">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400/60 flex-shrink-0" />
+          {t("chat.privacy_badge_title")}
+        </p>
+        <p className="text-[11px] text-white/45 leading-relaxed">{t("chat.privacy_badge_storage")}</p>
+        <p className="text-[11px] text-white/45 leading-relaxed">{t("chat.privacy_badge_dispute")}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Значок разрыва цепочки — между сообщениями, ровно на месте пропажи.
+ *
+ * ⚠️ ЧТО ОН ЗНАЧИТ И ЧЕГО НЕ ЗНАЧИТ. Он говорит «здесь чего-то не хватает» и
+ * НЕ говорит, кто виноват: мешок мог не доехать, истечь на складе или быть
+ * утаён. Разница между этими тремя случаями с нашей стороны не видна вовсе
+ * (замер Задачи 6, пункт Г) — и молчать про разрыв было бы хуже, чем назвать
+ * его без обвинения.
+ *
+ * И отдельно, чтобы значок не обещал больше кода: ОТСУТСТВИЕ значка НЕ
+ * означает «предъявлено всё». Обрезанный ХВОСТ переписки цепочкой не
+ * ловится — содержимое последнего звена не покрыто ничьим отпечатком (замок
+ * `chatConversation.test.ts`, «вырезано ПОСЛЕДНЕЕ»). Ловится якорем, а якорь
+ * — отдельный план.
+ */
+function ChainGap({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 my-3 px-2">
+      <div className="flex-1 h-px bg-amber-400/20" />
+      <span className="flex items-center gap-1.5 text-[10px] text-amber-400/60 whitespace-nowrap">
+        <Scissors className="w-3 h-3 flex-shrink-0" />
+        {label}
+      </span>
+      <div className="flex-1 h-px bg-amber-400/20" />
     </div>
   );
 }
@@ -384,15 +454,18 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const { address } = useAccount();
   const t = useTranslations();
   const queryClient = useQueryClient();
-  const { messages, sendMessage, sendFile, loadMore, hasMore, isLoading, isInitialized, error, uploadProgress, streamDead, reconnect, needsSetup, markDealContext, peerLastReadAt, logIncomplete } =
-    usePairChat(recipientAddress);
+  const {
+    messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress,
+    streamDead, reconnect, needsSetup, gapAfterSeq, peerKnown,
+    passSignaturePending, storageNotice,
+  } = usePairChat(recipientAddress);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
-  // Состояние САМОГО мессенджера — отдельно от состояния этой переписки.
-  // Раньше панель их не различала и на выключенном мессенджере крутила спиннер
-  // «Инициализация мессенджера…» рядом с надписью «Сообщений пока нет», хотя
-  // ничего не инициализировалось и инициализироваться не собиралось.
-  const { status: xmtpStatus, retry: retryXmtp } = useXmtp();
-  const xmtpFailureText = useXmtpFailureText();
+  // Состояние САМОГО сеанса — отдельно от состояния этой переписки. Раньше
+  // панель их не различала и на выключенном мессенджере крутила спиннер
+  // «Инициализация…» рядом с надписью «Сообщений пока нет», хотя ничего не
+  // инициализировалось и инициализироваться не собиралось.
+  const { status: sessionStatus, retry: retrySession } = useChatSession();
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
 
@@ -405,19 +478,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     return dealContexts.find(d => d.agreementAddr === selectedDealId) ?? dealContexts[dealContexts.length - 1];
   }, [dealContexts, selectedDealId]);
 
-  // Tell the shared thread which deal is "current" so the relayer's arbiter
-  // dispute-log bot can tag entries by deal instead of one undifferentiated
-  // stream. Fires once per resolved value (including null, for "just chatting"),
-  // never resent for the same value — see usePairChat.markDealContext.
-  const lastMarkedDealRef = useRef<string | null | undefined>(null);
-  useEffect(() => {
-    if (!isInitialized) return;
-    const current = dealContext?.agreementAddr?.toLowerCase() ?? null;
-    if (lastMarkedDealRef.current === current) return;
-    lastMarkedDealRef.current = current;
-    markDealContext(current);
-  }, [dealContext?.agreementAddr, isInitialized, markDealContext]);
-
+  // Отдельного сообщения «текущая сделка» здесь больше нет: метку сделки
+  // возил боту XMTP, теперь она едет ВНУТРИ запечатанного каждого сообщения
+  // (`ChatPayload.dealId`), и посылать её отдельно нечего и некому.
 
   const [text, setText]             = useState('');
   const [sending, setSending]       = useState(false);
@@ -581,14 +644,16 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     catch (err) {
       console.error('[ChatPanel] send failed:', err);
       setText(trimmed);
-      // The conversation is only created on the first send, so "this peer has no XMTP
-      // identity yet" surfaces HERE rather than when opening the chat. Without a toast
-      // the message just vanished from the thread with nothing on screen explaining why.
-      const msg = err instanceof Error ? err.message : '';
+      // ⚠️ ПО КОДУ, А НЕ ПО АНГЛИЙСКОМУ ТЕКСТУ. Раньше здесь стояло
+      // `msg.includes('not registered')` — разбор чужой английской строки,
+      // которая менялась вместе с версией пакета и в тринадцати локалях
+      // означала для человека просто пропавшее сообщение. Все отказы чата
+      // несут `.code` отдельным полем (`ChatDirectoryError`,
+      // `ChatConversationError`, `BagTransportError`).
       toast.error(
-        msg.includes('not registered') || msg.includes('not set up')
+        errorCodeOf(err) === 'peer_unknown'
           ? t("chat.recipient_no_messaging")
-          : (msg ? msg.slice(0, 120) : t("common.error")),
+          : t("common.error"),
         { duration: 6000 },
       );
     }
@@ -629,14 +694,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     } catch (err: unknown) {
       const isAbort = err instanceof DOMException && err.name === 'AbortError';
       if (!isAbort) {
-        // Тот же разбор, что у текстовой отправки: «до этого адреса не дойдёт»
-        // — это не «загрузка не удалась», и человеку надо сказать именно это,
-        // на его языке, а не показать английскую строку из lib/xmtp.
-        const msg = err instanceof Error ? err.message : '';
+        // Тот же разбор по коду, что у текстовой отправки: «до этого адреса
+        // не дойдёт» — это не «загрузка не удалась», и человеку надо сказать
+        // именно это, на его языке.
         setUploadErr(
-          msg.includes('not registered') || msg.includes('not set up')
+          errorCodeOf(err) === 'peer_unknown'
             ? t("chat.recipient_no_messaging")
-            : (msg || 'Upload failed'),
+            : t("common.error"),
         );
       }
     } finally {
@@ -833,22 +897,30 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-white/30" />}
-            {/* No "live" badge here: a green dot next to someone's name reads as
-                "this person is online", and XMTP has no presence concept at all — it
-                only ever meant "my own stream is attached". The signal that actually
-                matters (a dead stream) is already surfaced by the streamDead banner. */}
+            {/* Значка «на связи» здесь нет: зелёная точка рядом с чужим
+                именем читается как «человек сейчас онлайн», а мы этого не
+                знаем — склад не рассказывает, кто когда заходил. */}
             {!isLoading && error && <AlertCircle className="w-3.5 h-3.5 text-red-400/60" />}
-            {/* Раньше здесь стоял замок с подписью «E2E». Транспорт и правда
-                зашифрован, но замок читается как «кроме нас двоих никто не
-                прочтёт», а это неправда: бот релеера состоит в каждой парной
-                группе и весь тред ложится на диск открытым текстом — намеренно,
-                это доказательная база для арбитража. Значок не должен обещать
-                больше, чем есть (docs/OPEN-ITEMS.md, п. 25). */}
-            <span className="flex items-center gap-1 text-[11px] text-white/20"
-              title={t("chat.dispute_log_hint")}>
-              <Archive className="w-2.5 h-2.5" />
-              <span className="hidden sm:inline">{t("chat.dispute_log_badge")}</span>
-            </span>
+            {/* ЗДЕСЬ СТОЯЛ БЕЙДЖ «Хранится для споров» — и он говорил правду
+                про прежнее устройство: бот релеера состоял в каждой парной
+                группе, весь тред ложился на диск открытым текстом. Бота нет,
+                ключей у сервера нет, и бейдж обязан был поменяться вместе с
+                устройством, а не пережить его.
+
+                Подсказка несёт ВСЕ ТРИ строки: на десктопе она под курсором,
+                на телефоне тем же нажатием раскрывается `PrivacyNotice` —
+                мысль про арбитра не должна быть доступна только тем, у кого
+                есть мышь. */}
+            <button
+              onClick={() => setShowPrivacy(v => !v)}
+              className={`flex items-center gap-1 text-[11px] rounded-[8px] px-1.5 py-1 transition-colors ${
+                showPrivacy ? 'bg-white/[0.08] text-white/60' : 'text-white/25 hover:text-white/50 hover:bg-white/[0.05]'
+              }`}
+              title={`${t("chat.privacy_badge_title")}\n${t("chat.privacy_badge_storage")}\n${t("chat.privacy_badge_dispute")}`}
+            >
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" />
+              <span className="hidden sm:inline">{t("chat.privacy_badge_title")}</span>
+            </button>
             <button onClick={toggleSearch}
               className={`p-1.5 rounded-[10px] transition-colors ${
                 showSearch ? 'bg-white/[0.08] text-white/70' : 'text-white/30 hover:text-white/60 hover:bg-white/[0.06]'
@@ -858,6 +930,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
             </button>
           </div>
         </div>
+
+        <PrivacyNotice open={showPrivacy} />
 
         {/* Search bar */}
         {showSearch && (
@@ -874,12 +948,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 className="w-full bg-white/[0.05] border border-white/[0.07] rounded-[14px] pl-9 pr-4 py-2 text-sm text-white placeholder:text-white/22 focus:outline-none focus:border-white/[0.14] focus:bg-white/[0.07] transition-all"
               />
             </div>
+            {/* Без «…» и без подсказки про историю: склад отдаёт всю
+                переписку одним списком, поиск идёт по ней целиком. */}
             {searchQuery && (
-              <span
-                className="text-[11px] text-white/35 flex-shrink-0"
-                title={hasMore ? t("chat.search_history_hint") : undefined}
-              >
-                {visibleMessages.length} / {messages.length}{hasMore ? '…' : ''}
+              <span className="text-[11px] text-white/35 flex-shrink-0">
+                {visibleMessages.length} / {messages.length}
               </span>
             )}
             <button onClick={() => { setSearchQuery(''); setShowSearch(false); }}
@@ -977,87 +1050,95 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black px-3" style={{ overscrollBehavior: 'none', overflowAnchor: 'none' }}>
-        {isLoading && <XmtpConnecting />}
+        {isLoading && <ChatOpening />}
         {!isLoading && !needsSetup && !error && messages.length > 0 && <div className="flex-1" />}
         <div className="py-4">
 
-          {/* Оба блока ниже — состояния ПУСТОГО экрана: если история уже
-              подгружена из кэша, её и надо показывать, а про мессенджер скажет
-              полоса под полем ввода (XmtpStatusBar). Иначе большой центральный
+          {/* Блоки ниже — состояния ПУСТОГО экрана: если история уже
+              подгружена из кэша, её и надо показывать, а про сеанс скажет
+              полоса под полем ввода (ChatSetupBar). Иначе большой центральный
               блок висел бы поверх нормальной переписки. */}
 
-          {/* Мессенджер действительно поднимается — вот здесь спиннер уместен. */}
-          {!isLoading && needsSetup && messages.length === 0 && xmtpStatus === 'loading' && (
+          {/* Сеанс действительно открывается — вот здесь спиннер уместен. */}
+          {!isLoading && needsSetup && messages.length === 0 && sessionStatus === 'loading' && (
             <div className="flex flex-col items-center justify-center py-16 gap-3 px-4 text-center">
               <div className="w-8 h-8 border-2 border-white/10 border-t-white/30 rounded-full animate-spin" />
-              <p className="text-sm text-white/25">{t("chat.connecting_messenger")}</p>
+              <p className="text-sm text-white/25">{t("chat.connecting")}</p>
             </div>
           )}
 
-          {/* Мессенджер выключен или не поднялся. Крутить спиннер здесь значило
-              бы обещать работу, которой никто не делает; человеку нужно честное
-              состояние и кнопка. */}
-          {!isLoading && needsSetup && messages.length === 0 && xmtpStatus !== 'loading' && (
+          {/* Чат выключен человеком (`disable()`), либо сеанс не открылся.
+              Крутить спиннер здесь значило бы обещать работу, которой никто не
+              делает; человеку нужно честное состояние и кнопка.
+
+              ⚠️ ЗДЕСЬ БЫЛ ЗООПАРК. Семь причин отказа XMTP (`tab_busy`,
+              `too_many_installations`, `brave`, `wrong_chain`,
+              `insecure_context`, `timeout`, `wallet_pending`) существовали
+              потому, что подключение к чужой сети умело отказать семью
+              способами. Своей сети у чата нет — есть склад мешков и ключ на
+              устройстве, и отказать они умеют двумя способами, оба ниже. */}
+          {!isLoading && needsSetup && messages.length === 0 && sessionStatus !== 'loading' && (
             <div className="flex flex-col items-center justify-center py-16 gap-3 px-4 text-center">
               <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-white/[0.15]" />
               </div>
               <div>
-                <p className="text-sm text-white/45 mb-1">{xmtpFailureText ?? t("chat.messaging_off")}</p>
-                {!xmtpFailureText && (
-                  <p className="text-white/25 text-xs max-w-[240px] leading-relaxed">
-                    {t("chat.messaging_off_hint")}
-                  </p>
-                )}
+                <p className="text-sm text-white/45 mb-1">{t("chat.messaging_off")}</p>
+                <p className="text-white/25 text-xs max-w-[240px] leading-relaxed">
+                  {t("chat.messaging_off_hint")}
+                </p>
               </div>
-              <button onClick={retryXmtp}
+              <button onClick={retrySession}
                 className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                {xmtpFailureText ? <RotateCw className="w-3.5 h-3.5" /> : <MessageCircle className="w-3.5 h-3.5" />}
-                {xmtpFailureText ? t("chat.retry") : t("chat.enable_messaging")}
+                <MessageCircle className="w-3.5 h-3.5" />
+                {t("chat.enable_messaging")}
               </button>
             </div>
           )}
 
-          {!isLoading && error && (
+          {/* СОСТОЯНИЕ ПЕРВОЕ: собеседник ещё не заходил.
+              Это НЕ поломка: у причины есть человеческое действие — послать
+              ему ссылку. Признак приходит отдельным полем (`peerKnown`), а не
+              разбором английского текста ошибки, как было до пересадки. */}
+          {!isLoading && !peerKnown && (
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
-              <div className="w-12 h-12 rounded-[16px] bg-amber-500/8 border border-amber-500/20 flex items-center justify-center">
-                <MessageCircle className="w-5 h-5 text-amber-400/55" />
+              <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+                <MessageCircle className="w-5 h-5 text-white/[0.15]" />
               </div>
               <div>
-                <p className="text-white/70 text-sm font-semibold mb-1">
-                  {error.includes('not set up') || error.includes('not registered')
-                    ? t("chat.recipient_no_messaging")
-                    : t("chat.could_not_connect")}
-                </p>
-                <p className="text-white/35 text-xs max-w-xs leading-relaxed">
-                  {error.includes('not set up') || error.includes('not registered')
-                    ? t("chat.share_invite_hint")
-                    : error}
-                </p>
+                <p className="text-white/70 text-sm font-semibold mb-1">{t("chat.recipient_no_messaging")}</p>
+                <p className="text-white/35 text-xs max-w-xs leading-relaxed">{t("chat.share_invite_hint")}</p>
               </div>
-              {(error.includes('not set up') || error.includes('not registered')) ? (
-                chatUrl && (
-                  <button onClick={copyInvite}
-                    className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                    {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" />{t("chat.copied")}</> : <><Copy className="w-3.5 h-3.5" />{t("chat.copy_invite")}</>}
-                  </button>
-                )
-              ) : (
-                // Кнопка была только у «собеседник не зарегистрирован». На любой
-                // другой ошибке единственным выходом оставалось уйти со страницы
-                // и вернуться — то есть перезагрузка вместо повтора.
-                <button onClick={reconnect}
+              {chatUrl && (
+                <button onClick={copyInvite}
                   className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                  <RotateCw className="w-3.5 h-3.5" />{t("chat.retry")}
+                  {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" />{t("chat.copied")}</> : <><Copy className="w-3.5 h-3.5" />{t("chat.copy_invite")}</>}
                 </button>
               )}
             </div>
           )}
 
-          {/* «Сообщений пока нет» — только когда мессенджер РАБОТАЕТ и в
-              переписке действительно пусто. При выключенном мессенджере эта
-              надпись утверждала бы то, чего никто не проверял. */}
-          {!isLoading && !error && !needsSetup && messages.length === 0 && (
+          {/* СОСТОЯНИЕ ВТОРОЕ И ПОСЛЕДНЕЕ: нет связи со складом.
+              Код отказа (`write_failed`, `payload_too_large`, `rate_limited`…)
+              человеку НЕ показывается: это слово для журнала, а не для
+              экрана. Действие у всех этих причин одно — повторить. */}
+          {!isLoading && peerKnown && error && (
+            <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
+              <div className="w-12 h-12 rounded-[16px] bg-amber-500/8 border border-amber-500/20 flex items-center justify-center">
+                <MessageCircle className="w-5 h-5 text-amber-400/55" />
+              </div>
+              <p className="text-white/70 text-sm font-semibold">{t("chat.could_not_connect")}</p>
+              <button onClick={reconnect}
+                className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
+                <RotateCw className="w-3.5 h-3.5" />{t("chat.retry")}
+              </button>
+            </div>
+          )}
+
+          {/* «Сообщений пока нет» — только когда переписка РАБОТАЕТ и в ней
+              действительно пусто. В остальных состояниях эта надпись
+              утверждала бы то, чего никто не проверял. */}
+          {!isLoading && !error && peerKnown && !needsSetup && messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
               <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-white/[0.15]" />
@@ -1069,31 +1150,21 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           {!isLoading && !error && searchQuery && visibleMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center gap-1.5">
               <p className="text-white/30 text-sm">{t("chat.no_match")} &ldquo;{searchQuery}&rdquo;</p>
-              {hasMore && (
-                <p className="text-white/20 text-xs max-w-[220px] leading-relaxed">
-                  {t("chat.search_history_hint")}
-                </p>
-              )}
             </div>
           )}
 
-          {/* Load older messages */}
-          {!isLoading && !error && hasMore && messages.length > 0 && (
-            <div className="flex justify-center py-3">
-              <button
-                onClick={loadMore}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-[20px] bg-white/[0.05] border border-white/[0.08] text-xs text-white/40 hover:bg-white/[0.09] hover:text-white/65 transition-colors whitespace-nowrap"
-              >
-                <ChevronDown className="w-3 h-3 rotate-180" />
-                {t("chat.load_older")}
-              </button>
-            </div>
-          )}
+          {/* Кнопки «загрузить старые» здесь больше нет. Склад отдаёт всё,
+              что у него есть, ОДНИМ списком — подгружать нечего, и кнопка,
+              которая ничего не делает, читается как «связь плохая». */}
 
           {!isLoading && !error && (() => {
             const items: React.ReactNode[] = [];
             let lastDay = '';
             let lastGroupEnd = -1;
+            // Множество, а не поиск по массиву: на тысяче сообщений
+            // `includes` внутри цикла — это тысяча проходов по списку.
+            const gapSet = new Set(gapAfterSeq);
+            let startGapShown = false;
 
             visibleMessages.forEach((msg, i) => {
               const isMe    = msg.from === address?.toLowerCase();
@@ -1102,6 +1173,14 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               // Break the bubble group if sender changes OR the gap exceeds TIME_BREAK
               const isFirst = !prev || prev.from !== msg.from || (msg.timestamp  - prev.timestamp) > TIME_BREAK;
               const isLast  = !next || next.from !== msg.from || (next.timestamp - msg.timestamp)  > TIME_BREAK;
+
+              // Значок «начало не предъявлено» (−1) — ПЕРЕД первым
+              // сообщением собеседника, до разделителя даты: он про то, чего
+              // на экране нет, и вставать после первой строки ему негде.
+              if (!isMe && !startGapShown && gapSet.has(-1)) {
+                startGapShown = true;
+                items.push(<ChainGap key="gap-start" label={t("chat.chain_gap_start")} />);
+              }
 
               // Date divider
               const day = new Date(msg.timestamp).toDateString();
@@ -1164,12 +1243,17 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                           {isLast && (
                             <div className="flex items-center justify-end gap-1 mt-1 -mb-0.5 text-[10px] text-white/50">
                               <span>{formatTime(msg.timestamp)}</span>
+                              {/* ОДНА галочка, не две. Вторая означала
+                                  «прочитано глазами» — сервер этого не видит
+                                  и видеть не должен. Здесь «дошло до
+                                  устройства»: склад подтвердил, что мешок
+                                  забрали. Часы — всё остальное, включая
+                                  «неизвестно»: смешивать «неизвестно» с
+                                  «дошло» нельзя. */}
                               {isMe && (
-                                msg.id.startsWith('opt-')
-                                  ? <Clock className="w-2.5 h-2.5 flex-shrink-0" />
-                                  : msg.timestamp <= (peerLastReadAt ?? -Infinity)
-                                    ? <CheckCheck className="w-3 h-3 text-white flex-shrink-0" />
-                                    : <Check className="w-3 h-3 flex-shrink-0" />
+                                msg.delivered
+                                  ? <Check className="w-3 h-3 flex-shrink-0" />
+                                  : <Clock className="w-2.5 h-2.5 flex-shrink-0" />
                               )}
                             </div>
                           )}
@@ -1179,14 +1263,23 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                     {isLast && msg.attachment && (
                       <span className="text-[10px] text-white/20 mt-1 px-1 flex items-center gap-1">
                         {formatTime(msg.timestamp)}
-                        {isMe && msg.id.startsWith('opt-') && (
-                          <Clock className="w-2.5 h-2.5 opacity-60" />
-                        )}
+                        {isMe && (msg.delivered
+                          ? <Check className="w-3 h-3 opacity-60" />
+                          : <Clock className="w-2.5 h-2.5 opacity-60" />)}
                       </span>
                     )}
                   </div>
                 </div>
               );
+
+              // ⚠️ Значок вешается ТОЛЬКО на сообщение СОБЕСЕДНИКА. `gapAfterSeq`
+              // считается по его цепочке (`receiveBags` с заданным `peer`), а
+              // номера у сторон свои: у меня тоже есть seq 1. Совпадение номера
+              // на своём сообщении обвиняло бы человека в том, что он утаил
+              // собственное письмо.
+              if (!isMe && gapSet.has(msg.seq)) {
+                items.push(<ChainGap key={`gap-${msg.seq}`} label={t("chat.chain_gap")} />);
+              }
             });
             return items;
           })()}
@@ -1208,7 +1301,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
       {/* Input */}
       {/* explained: центральные блоки выше рисуются ровно при пустой переписке
           и уже всё объясняют — полосе остаётся только действие. */}
-      {needsSetup ? <XmtpStatusBar explained={messages.length === 0} /> : <div
+      {needsSetup ? <ChatSetupBar explained={messages.length === 0} /> : <div
         className="flex-shrink-0 px-2 pt-1 flex flex-col gap-1 bg-black"
         style={{
           paddingBottom: '4px',
@@ -1280,14 +1373,37 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
             </div>
           </div>
         )}
-        {/* Журнал спора для этой пары не ведётся: бота релеера в группе нет и
-            добавить его не вышло. Ничего не блокирует — невозможность вести
-            протокол не повод запрещать людям общаться, — но и не молчит:
-            узнать об этом при споре, когда эскроу уже делят, было бы поздно.
-            Разбор — в шапке `lib/xmtpBotMembership.ts`. */}
-        {logIncomplete && (
+        {/* ЗДЕСЬ БЫЛА ЯНТАРНАЯ ПЛАШКА «журнал спора эту переписку не пишет».
+            Она предупреждала о том, что бот релеера не попал в парную группу,
+            и потому арбитр не увидит сообщений. Бота больше нет ни у одной
+            пары, значит плашка горела бы ВСЕГДА и ни о чём — а предъявляют
+            переписку теперь сами стороны (третья строка бейджа в шапке). */}
+
+        {/* Окно кошелька открылось не по нажатию — надо сказать, зачем.
+            Пропуск склада живёт 12 часов, и раз в 12 часов подпись всплывает
+            при ОТКРЫТИИ чата, без единого действия человека. Формально это не
+            нарушает «кошелёк спрашивают один раз в жизни» (речь про ключ
+            переписки, а это пропуск на выдачу мешков), но глазами человека
+            это второе окно, о котором ему никто не обещал. Молчать про него —
+            и есть способ выглядеть сломанным. */}
+        {passSignaturePending && (
+          <div className="flex items-start gap-2 px-3 py-2 mx-1 mb-1 rounded-[12px] bg-white/[0.04] border border-white/[0.08]">
+            <PenLine className="w-3.5 h-3.5 text-white/35 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-white/45 leading-relaxed">{t("chat.pass_signature_hint")}</p>
+          </div>
+        )}
+
+        {/* Ключ переписки не лёг на устройство. Молчать нельзя: без записи
+            подпись будет спрашиваться при каждой перезагрузке, и человек не
+            поймёт, почему обещанное «один раз» не сбывается именно у него.
+            Действие предлагается ТОЛЬКО там, где оно есть: закрыть соседнюю
+            вкладку можно, а «освободить место в приватном режиме» — нет, и
+            советовать это значило бы врать. */}
+        {storageNotice && (
           <div className="px-3 py-2 mx-1 mb-1 rounded-[12px] bg-amber-500/[0.07] border border-amber-500/15">
-            <p className="text-xs text-amber-400/70">{t("chat.log_incomplete")}</p>
+            <p className="text-xs text-amber-400/70">
+              {storageNotice.actionable ? t("chat.key_not_saved_blocked") : t("chat.key_not_saved")}
+            </p>
           </div>
         )}
         {/* Stream dead banner */}

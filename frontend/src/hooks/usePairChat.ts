@@ -71,10 +71,14 @@ import { notifyPush } from '@/lib/webpush';
 /* ─────────────────────────── наружная форма ───────────────────────────── */
 
 /**
- * Сообщение в том виде, в каком его ждёт `ChatPanel.tsx`. Форма СОВПАДАЕТ с
- * `ChatMessage` из `lib/xmtp.ts` поле в поле — намеренно: панель не должна
- * заметить подмены. Свой тип, а не импорт оттуда, потому что тот файл
- * удаляется в Задаче 7, а этот останется.
+ * Сообщение в том виде, в каком его рисует `ChatPanel.tsx`. Форма выросла из
+ * прежнего `ChatMessage` XMTP-обвязки (файл удалён в Задаче 7) и добавила два
+ * поля, которых у XMTP не было и быть не могло:
+ *
+ *  - `seq` — номер звена в цепочке ОТПРАВИТЕЛЯ. По нему панель ставит значок
+ *    разрыва: `gapAfterSeq` называет номера, а не идентификаторы.
+ *  - `delivered` — «дошло до устройства». Одна галочка, не две: прочтение
+ *    глазами сервер не видит и видеть не должен (§3.3 спеки плана).
  */
 export interface PairChatMessage {
   id: string;
@@ -82,6 +86,12 @@ export interface PairChatMessage {
   text: string;
   timestamp: number;
   isFromMe: boolean;
+  /** Номер звена в цепочке отправителя. */
+  seq: number;
+  /** Мешок забран получателем. У ЧУЖИХ сообщений всегда `true` — они уже у
+   *  нас; у своих — по ответу склада. «Неизвестно» и «дошло» не смешиваются:
+   *  всё, чего склад не подтвердил, остаётся недошедшим. */
+  delivered: boolean;
   attachment?: {
     name: string;
     url: string;
@@ -133,7 +143,8 @@ export interface PairChatEngine {
 }
 
 function payloadToMessage(
-  payload: ChatPayload, from: string, seq: number, sentAt: number, isFromMe: boolean,
+  payload: ChatPayload, from: string, seq: number, sentAt: number,
+  isFromMe: boolean, delivered: boolean,
 ): PairChatMessage {
   return {
     id: `${from}-${seq}`,
@@ -141,6 +152,8 @@ function payloadToMessage(
     text: payload.text ?? payload.file?.name ?? '',
     timestamp: sentAt,
     isFromMe,
+    seq,
+    delivered,
     ...(payload.file
       ? {
         attachment: {
@@ -217,7 +230,7 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     if (stopped) return;
     opts.onState({
       messages: state.messages.map(m =>
-        payloadToMessage(m.payload, m.from, m.seq, m.sentAt, m.from.toLowerCase() === own)),
+        payloadToMessage(m.payload, m.from, m.seq, m.sentAt, m.from.toLowerCase() === own, m.delivered)),
       gapAfterSeq: state.gapAfterSeq,
       troubles: state.troubles,
       peerKnown,
@@ -307,7 +320,10 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       const sent = await sendMessage(opts.session, peer, keys.boxKey, payload, prev, { pass });
       ownSent.push(sent);
       await emit();
-      return payloadToMessage(payload, own, sent.link.seq, sent.link.sentAt, true);
+      // `delivered: false` — мешок только что положен, склад ещё не сказал,
+      // что его забрали. Ставить здесь `true` значило бы рисовать галочку
+      // «дошло» по факту УСПЕШНОЙ ОТПРАВКИ, то есть обещать за собеседника.
+      return payloadToMessage(payload, own, sent.link.seq, sent.link.sentAt, true, false);
     },
   };
 }
@@ -320,10 +336,30 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
  *  аккаунта под другим после смены кошелька на том же устройстве. */
 const _msgCache = new Map<string, PairChatMessage[]>();
 
+/**
+ * Тело пуш-уведомления. НЕ текст сообщения и НЕ имя файла — намеренно.
+ *
+ * ⚠️ ЭТО БЫЛА ДЫРА, И ОНА ПРОТИВОРЕЧИЛА БЕЙДЖУ. До 6 августа 2026 сюда
+ * уезжал `text.trim()` и `📎 ${file.name}`: пуш идёт `POST /api/push` →
+ * релеер → служба доставки, то есть содержимое сообщения покидало браузер
+ * ОТКРЫТЫМ ТЕКСТОМ — по пути, к мешкам отношения не имеющему. Всё остальное
+ * в этом плане пряталось от сервера, а превью уведомления отдавало его
+ * добровольно.
+ *
+ * Экран теперь говорит «сервер не имеет ключей». Пока превью ехало открытым,
+ * это было бы правдой про склад и ложью про человека.
+ *
+ * Цена честная и названная: в шторке ОС видно, что сообщение пришло, и не
+ * видно, от кого и о чём. Так же поступает Signal по умолчанию. Английский
+ * без перевода — язык получателя отправителю неизвестен, а придумать его за
+ * него хуже, чем не угадать.
+ */
+const PUSH_BODY = 'New message';
+
 export function usePairChat(peerAddress: string) {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
-  const { status, session } = useChatSession();
+  const { status, session, storageNotice } = useChatSession();
 
   const peerLc = peerAddress.toLowerCase();
   const myLc = address?.toLowerCase() ?? '';
@@ -338,6 +374,9 @@ export function usePairChat(peerAddress: string) {
   const [peerKnown, setPeerKnown] = useState(true);
   const [streamDead, setStreamDead] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  /** Окно кошелька за пропуском склада открыто ПРЯМО СЕЙЧАС. Ставится из
+   *  `getBagPass`, вокруг самого вызова кошелька — см. его докстринг. */
+  const [passSignaturePending, setPassSignaturePending] = useState(false);
 
   const engineRef = useRef<PairChatEngine | null>(null);
   const activeRef = useRef(true);
@@ -357,7 +396,7 @@ export function usePairChat(peerAddress: string) {
       peer: peerAddress as `0x${string}`,
       // Единственное место подписи во всём чате — и оно под общим мьютексом
       // кошелька (`getBagPass`, см. его докстринг).
-      getPass: () => getBagPass(address, signMessageAsync),
+      getPass: () => getBagPass(address, signMessageAsync, setPassSignaturePending),
       isActive: () => activeRef.current,
       onState: (s) => {
         _msgCache.set(pairKey, s.messages);
@@ -398,7 +437,7 @@ export function usePairChat(peerAddress: string) {
     const engine = engineRef.current;
     if (!engine || !text.trim()) return;
     await engine.send({ text: text.trim() });
-    notifyPush(peerLc, text.trim(), `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
+    notifyPush(peerLc, PUSH_BODY, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
   }, [peerLc, myLc]);
 
   const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
@@ -421,18 +460,25 @@ export function usePairChat(peerAddress: string) {
         keyHex: result.keyHex, ivHex: result.ivHex,
       },
     });
-    notifyPush(peerLc, `📎 ${file.name}`, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
+    notifyPush(peerLc, PUSH_BODY, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
   }, [address, peerAddress, peerLc, myLc]);
 
-  /** Наследство XMTP: постраничная подгрузка истории. Склад отдаёт всё, что
-   *  у него есть, одним списком — подгружать нечего, и `hasMore` всегда
-   *  `false`. Оставлено, чтобы `ChatPanel.tsx` не переписывался здесь. */
-  const loadMore = useCallback(async () => {}, []);
-
-  /** Наследство XMTP: маркер сделки уезжал отдельным сообщением боту. Теперь
-   *  метка едет ВНУТРИ запечатанного каждого сообщения (`ChatPayload.dealId`),
-   *  отдельного сообщения не нужно. */
-  const markDealContext = useCallback(async (_dealId: string | null) => {}, []);
+  // ─── ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ И ПОЧЕМУ ───────────────────────────────────
+  //
+  // Задача 6 оставила три пустышки ради того, чтобы `ChatPanel.tsx` собрался
+  // без правок. Задача 7 их УБРАЛА, а не доделала — по каждой есть причина,
+  // и ни одна из них не «руки не дошли»:
+  //
+  //  - `loadMore`/`hasMore` — склад отдаёт всё, что у него есть, ОДНИМ
+  //    списком (`GET /bags`), страниц не существует. Пустая функция, которую
+  //    зовёт кнопка, выглядит как работа: человек жмёт «загрузить старые» и
+  //    не получает ничего, а винит связь. Кнопка убрана вместе с функцией.
+  //  - `markDealContext` — метка сделки уезжала отдельным сообщением боту;
+  //    теперь она едет ВНУТРИ запечатанного каждого сообщения
+  //    (`ChatPayload.dealId`), и звать отдельно нечего.
+  //  - `peerLastReadAt` — «прочитано глазами» серверу неизвестно и не должно
+  //    быть известно. Осталась ОДНА галочка, и она в самих сообщениях
+  //    (`PairChatMessage.delivered`).
 
   const reconnect = useCallback(() => {
     setStreamDead(false);
@@ -441,18 +487,14 @@ export function usePairChat(peerAddress: string) {
   }, []);
 
   return {
-    messages, sendMessage: sendMessageText, sendFile, loadMore, markDealContext,
-    hasMore: false, isLoading, isInitialized, error, uploadProgress,
+    messages, sendMessage: sendMessageText, sendFile,
+    isLoading, isInitialized, error, uploadProgress,
     streamDead, reconnect, needsSetup: status !== 'ready',
-    /** Галочка теперь одна («дошло до устройства»), и она в самих сообщениях.
-     *  Поле оставлено ради наружного вида; Задача 7 убирает его вместе со
-     *  второй галочкой. */
-    peerLastReadAt: null as number | null,
-    /** Журнал спора вёл бот XMTP, которого больше нет: предъявляет переписку
-     *  каждая сторона со своего устройства. Всегда `false`; Задача 7 убирает
-     *  янтарную плашку. */
-    logIncomplete: false,
-    /** Новое: разрывы в цепочке и «собеседник ещё не заходил». */
+    /** Разрывы в цепочке собеседника и «собеседник ещё не заходил». */
     gapAfterSeq, peerKnown,
+    /** Окно кошелька за пропуском склада открыто прямо сейчас. */
+    passSignaturePending,
+    /** Ключ переписки не лёг на устройство — см. `sessionStorageNotice`. */
+    storageNotice,
   };
 }

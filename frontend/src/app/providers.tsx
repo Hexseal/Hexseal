@@ -35,7 +35,6 @@ import { injected } from "wagmi/connectors";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes";
 import { appChain, appChainId, isMainnet } from "@/config/chain";
-import { useXmtpNotifications } from "@/hooks/useXmtpNotifications";
 import { LocaleProvider } from "@/components/LocaleProvider";
 import { PushProvider } from "@/contexts/PushContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
@@ -45,20 +44,24 @@ import { QueryRefreshBridge } from "@/components/QueryRefreshBridge";
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
 // ── Debug breadcrumb trail (temporary Android diagnostic) ──────────────────────
-// A shared localStorage trail that both the wallet-connect tracer (below) and the
-// XMTP init path (xmtpCrumb in lib/xmtp.ts) append to. localStorage survives a tab
-// crash *and* a tab kill+recreate, so after the tester returns from the wallet app
-// we can read the exact sequence — and, via the per-load id, tell whether Android
-// threw the whole tab away and recreated it (trail restarts with a new load id) or
-// kept it alive (same id, more lines appended).
-const XMTP_CRUMB_KEY = "hexseal-xmtp-crumb";
-const XMTP_DEBUG_KEY = "hexseal-xmtp-debug";
+// A localStorage trail the wallet-connect tracer (below) appends to. localStorage
+// survives a tab crash *and* a tab kill+recreate, so after the tester returns from
+// the wallet app we can read the exact sequence — and, via the per-load id, tell
+// whether Android threw the whole tab away and recreated it (trail restarts with a
+// new load id) or kept it alive (same id, more lines appended).
+//
+// Второй писатель этой тропы (инициализация XMTP, `xmtpCrumb`) исчез вместе с
+// XMTP 6 августа 2026 — вместе с ним переименованы ключ и флаг (`?walletdebug=1`
+// вместо `?walletdebug=1`). Тропа и так стирается на каждой загрузке, так что
+// переименование ключа ничего не теряет; заново вооружить оверлей придётся.
+const WALLET_CRUMB_KEY = "hexseal-wallet-crumb";
+const WALLET_DEBUG_KEY = "hexseal-wallet-debug";
 function dbgCrumb(step: string): void {
   try {
     const t = new Date().toISOString().slice(11, 23);
-    const prev = localStorage.getItem(XMTP_CRUMB_KEY);
+    const prev = localStorage.getItem(WALLET_CRUMB_KEY);
     const trail = (prev ? prev.split("\n") : []).concat(`${t} ${step}`).slice(-28);
-    localStorage.setItem(XMTP_CRUMB_KEY, trail.join("\n"));
+    localStorage.setItem(WALLET_CRUMB_KEY, trail.join("\n"));
   } catch { /* localStorage unavailable */ }
 }
 // Runs at module eval — before any React effect — so it always beats the app's own
@@ -66,9 +69,9 @@ function dbgCrumb(step: string): void {
 // starts this load's trail with a fresh random id.
 if (typeof window !== "undefined") {
   try {
-    const live = localStorage.getItem(XMTP_CRUMB_KEY);
-    if (live) localStorage.setItem(`${XMTP_CRUMB_KEY}-prev`, live);
-    localStorage.removeItem(XMTP_CRUMB_KEY);
+    const live = localStorage.getItem(WALLET_CRUMB_KEY);
+    if (live) localStorage.setItem(`${WALLET_CRUMB_KEY}-prev`, live);
+    localStorage.removeItem(WALLET_CRUMB_KEY);
     dbgCrumb(`load:${Math.random().toString(36).slice(2, 7)} ${location.pathname}`);
   } catch { /* localStorage unavailable */ }
 }
@@ -167,14 +170,25 @@ const config = projectId
       pollingInterval: 6_000,
     });
 
-// NOTE: this MUST be rendered as a descendant of <XmtpProvider> (it lives under it in
-// client-layout.tsx), otherwise useXmtp() inside useXmtpNotifications reads the default
-// context value and its `status` is frozen at 'loading' forever — the effect then never
-// re-runs on ready and the in-app notification store is never fed on a resumed PWA.
-export function XmtpNotificationsMount() {
-  useXmtpNotifications();
-  return null;
-}
+// ⚠️ ЗДЕСЬ БЫЛ `XmtpNotificationsMount`, И ВМЕСТЕ С НИМ УШЛА ОДНА ВОЗМОЖНОСТЬ.
+//
+// Он слушал поток XMTP по всему приложению и на каждое входящее сообщение
+// клал запись в колокольчик (центр уведомлений) плюс поднимал тост или
+// системное уведомление. Работал он ровно потому, что XMTP держал открытую
+// подписку на любой странице.
+//
+// У переписки на нашем складе такого фона нет и не может быть дёшево: чтобы
+// узнать о новом сообщении, надо иметь ПРОПУСК СКЛАДА, а пропуск — это
+// подпись кошелька. Держать такой опрос на каждой странице означало бы
+// спрашивать подпись у человека, который зашёл посмотреть свой профиль.
+//
+// Что осталось работать: пуш-уведомления ОС (`notifyPush` → `/api/push` →
+// релеер → служба доставки) — отправитель шлёт получателю сигнал «новое
+// сообщение» без содержимого. Что перестало: строка в колокольчике и
+// внутренний тост про новое сообщение, пока чат не открыт.
+//
+// Это НЕ доделано и НЕ спрятано: отдельная задача — фоновый опрос, который
+// не требует пропуска (например, счётчик непрочитанного по адресу).
 
 function RainbowKitProviders({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -203,8 +217,6 @@ function RainbowKitProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <RainbowKitProvider theme={rkTheme}>
-      {/* XmtpNotificationsMount is NOT rendered here — it must live under <XmtpProvider>
-          (see client-layout.tsx) so useXmtp()'s status isn't frozen at 'loading'. */}
       {children}
     </RainbowKitProvider>
   );
@@ -225,36 +237,36 @@ function WalletConnectTracer() {
   return null;
 }
 
-// Temporary Android diagnostic overlay. Arm once with ?xmtpdebug=1 (?xmtpdebug=0 to
+// Temporary Android diagnostic overlay. Arm once with ?walletdebug=1 (?walletdebug=0 to
 // disarm). While armed it shows, live (refreshing every second, no reload needed),
 // this load's trail plus the previous load's trail — so both the no-reload connect
 // flow AND the crash-on-reload are visible on the device with no USB / debugger.
 //
 // Stored as an expiry timestamp, not a plain "1" flag — a tester device that was
-// armed once and never explicitly revisited with ?xmtpdebug=0 used to run the 1s
+// armed once and never explicitly revisited with ?walletdebug=0 used to run the 1s
 // poll loop (and show the panel, if the trail is non-empty) forever. Auto-expires
 // instead so a forgotten test device doesn't stay armed indefinitely.
-const XMTP_DEBUG_TTL = 48 * 60 * 60 * 1000; // 48h — long enough to cover a test session
-function XmtpDebugOverlay() {
+const WALLET_DEBUG_TTL = 48 * 60 * 60 * 1000; // 48h — long enough to cover a test session
+function WalletDebugOverlay() {
   const [armed, setArmed] = useState(false);
   const [text, setText] = useState("");
   const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
     let iv: ReturnType<typeof setInterval> | undefined;
     try {
-      const q = new URLSearchParams(window.location.search).get("xmtpdebug");
-      if (q === "1") localStorage.setItem(XMTP_DEBUG_KEY, String(Date.now() + XMTP_DEBUG_TTL));
-      if (q === "0") localStorage.removeItem(XMTP_DEBUG_KEY);
-      const expiry = Number(localStorage.getItem(XMTP_DEBUG_KEY));
+      const q = new URLSearchParams(window.location.search).get("walletdebug");
+      if (q === "1") localStorage.setItem(WALLET_DEBUG_KEY, String(Date.now() + WALLET_DEBUG_TTL));
+      if (q === "0") localStorage.removeItem(WALLET_DEBUG_KEY);
+      const expiry = Number(localStorage.getItem(WALLET_DEBUG_KEY));
       if (!expiry || Date.now() > expiry) {
-        localStorage.removeItem(XMTP_DEBUG_KEY);
+        localStorage.removeItem(WALLET_DEBUG_KEY);
         return;
       }
       setArmed(true);
       const read = () => {
         try {
-          const prev = localStorage.getItem(`${XMTP_CRUMB_KEY}-prev`) || "";
-          const cur = localStorage.getItem(XMTP_CRUMB_KEY) || "(no steps yet)";
+          const prev = localStorage.getItem(`${WALLET_CRUMB_KEY}-prev`) || "";
+          const cur = localStorage.getItem(WALLET_CRUMB_KEY) || "(no steps yet)";
           setText((prev ? `── previous load ──\n${prev}\n\n` : "") + `── this load ──\n${cur}`);
         } catch { /* ignore */ }
       };
@@ -269,7 +281,7 @@ function XmtpDebugOverlay() {
       <div style={{ color: "#fff", marginBottom: 4 }}>Hexseal debug trail (live) — newest at bottom:</div>
       {text}
       <div style={{ marginTop: 8, display: "flex", gap: 12 }}>
-        <button onClick={() => { try { localStorage.removeItem(XMTP_CRUMB_KEY); localStorage.removeItem(`${XMTP_CRUMB_KEY}-prev`); } catch {} }} style={{ color: "#ff8", background: "none", border: "1px solid #663", padding: "2px 10px", borderRadius: 4 }}>clear</button>
+        <button onClick={() => { try { localStorage.removeItem(WALLET_CRUMB_KEY); localStorage.removeItem(`${WALLET_CRUMB_KEY}-prev`); } catch {} }} style={{ color: "#ff8", background: "none", border: "1px solid #663", padding: "2px 10px", borderRadius: 4 }}>clear</button>
         <button onClick={() => setDismissed(true)} style={{ color: "#8ff", background: "none", border: "1px solid #366", padding: "2px 10px", borderRadius: 4 }}>close</button>
       </div>
     </div>
@@ -329,7 +341,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
               которое событий не эмитит. */}
           <QueryRefreshBridge queryClient={queryClient} />
           <WalletConnectTracer />
-          <XmtpDebugOverlay />
+          <WalletDebugOverlay />
           <NextThemesProvider attribute="class" forcedTheme="dark">
             <LocaleProvider>
               <NotificationsProvider>

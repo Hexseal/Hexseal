@@ -130,39 +130,24 @@ describe('пути подписи', () => {
       // (`chatSession.ts`). Оба под общим мьютексом кошелька.
       'hooks/useChatSession.ts',
       'lib/relay.ts',                    // гейслесс-действия — все по нажатию
-      'lib/xmtp.ts',                     // сайнер XMTP — только из ручного включения
     ]);
   });
 });
 
 describe('автоматических подписей не осталось', () => {
-  it('Client.create() существует в одном экземпляре и только в lib/xmtp.ts', () => {
-    // Client.create() — единственный конструктор XMTP, принимающий сайнера, то
-    // есть единственный, который может попросить подпись. Автоматика обязана
-    // ходить через Client.build(), у которого сайнера нет вовсе.
-    const withCreate = FILES.filter(f => /Client\.create\s*\(/.test(f.text));
-    expect(withCreate.map(f => f.path)).toEqual(['lib/xmtp.ts']);
-
-    const occurrences = (withCreate[0].text.match(/Client\.create\s*\(/g) ?? []).length;
-    expect(occurrences).toBe(1);
-  });
-
-  it('lib/xmtp.ts отдаёт путь без подписи через Client.build + isRegistered', () => {
-    const xmtp = FILES.find(f => f.path === 'lib/xmtp.ts')!;
-    expect(xmtp.text).toMatch(/Client\.build\s*\(/);
-    expect(xmtp.text).toMatch(/isRegistered\s*\(\s*\)/);
-    expect(xmtp.text).toMatch(/export function buildXmtpClient/);
-  });
-
-  it('XmtpContext зовёт подписывающий initXmtpClient ровно один раз — в ручной ветке', () => {
-    const ctx = FILES.find(f => f.path === 'contexts/XmtpContext.tsx')!;
-    // Один вызов на весь файл: если бы автоматическая ветка тоже его звала
-    // (как было до починки), их стало бы два.
-    const calls = (ctx.text.match(/\binitXmtpClient\s*\(\s*walletClient/g) ?? []).length;
-    expect(calls).toBe(1);
-    // …и автоматическая ветка идёт через сборку без сайнера.
-    expect(ctx.text).toMatch(/await buildXmtpClient\(/);
-  });
+  // ⚠️ ТРИ ЗАМКА ОТСЮДА УБРАНЫ ВМЕСТЕ С ТЕМ, ЧТО ОНИ СТЕРЕГЛИ (6 августа 2026).
+  //
+  // Они стерегли `Client.create()` XMTP — единственный конструктор,
+  // принимавший сайнера, то есть единственный, способный попросить подпись из
+  // автоматики. Ни `lib/xmtp.ts`, ни `contexts/XmtpContext.tsx` больше не
+  // существуют; замок на несуществующий файл — не замок, а зелёная галочка ни
+  // о чём.
+  //
+  // Само свойство при этом НЕ осталось без охраны, и охрана стала строже:
+  // «ни один модуль в src/ не импортирует XMTP» (`lib/noXmtpImports.test.ts`,
+  // разбор дерева импортов) плюс замок «места подписи наперечёт» выше — он
+  // теперь называет ВОСЕМЬ файлов вместо девяти, и любой новый в списке
+  // требует осознанного решения, а не молчаливого прохода.
 
   it('PushContext подписывает только из явного enable()', () => {
     const ctx = FILES.find(f => f.path === 'contexts/PushContext.tsx')!;

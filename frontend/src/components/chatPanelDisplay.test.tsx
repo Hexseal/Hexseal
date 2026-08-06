@@ -253,8 +253,14 @@ describe('разрыв цепочки виден', () => {
 
 describe('зоопарк ошибок подключения свёрнут до двух', () => {
   it('собеседник ещё не заходил — своё состояние со ссылкой-приглашением', async () => {
+    // Кнопка «скопировать приглашение» собирает ссылку из `window.location`.
+    // В `node` его нет вовсе, и без подмены проверялся бы серверный рендер
+    // (где кнопки честно нет), а не то, что видит человек в браузере.
+    // Подменяется РОВНО origin, ничего больше.
+    (globalThis as { window?: unknown }).window = { location: { origin: 'https://hexseal.com' } };
     setState({ peerKnown: false });
     const html = await renderPanel();
+    delete (globalThis as { window?: unknown }).window;
     expect(html).toContain(translate('chat.recipient_no_messaging'));
     expect(html).toContain(translate('chat.share_invite_hint'));
     expect(html).toContain(translate('chat.copy_invite'));

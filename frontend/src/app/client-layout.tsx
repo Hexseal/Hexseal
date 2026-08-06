@@ -7,8 +7,6 @@ import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
-import { XmtpProvider } from "@/contexts/XmtpContext";
-import { XmtpNotificationsMount } from "./providers";
 
 // Page transition via pure CSS animation (page-enter keyframe in globals.css).
 // CSS animations run on the compositor thread — independent of JS work — so
@@ -190,22 +188,14 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const isChatPage = pathname?.startsWith('/chat');
   const isHome = pathname === '/';
 
-  // Single XmtpProvider wraps all layout branches so it survives route changes.
-  // Three separate <XmtpProvider> wrappers (one per branch) would remount on every
-  // chat ↔ home ↔ other navigation, resetting the init state and triedRef.
-  //
-  // <Header/> is hoisted above the branches for the same reason: it used to be
+  // <Header/> is hoisted above the branches so it isn't remounted on navigation: it used to be
   // rendered separately inside each branch (plus a 4th copy in the chat Suspense
   // fallback), so React treated it as a brand-new subtree on every chat ↔ home ↔
   // other navigation and remounted it — resetting WalletMenu's local state and
   // re-firing every account/profile/contract read it holds. One instance here
   // survives all of that; only the content below it changes per branch.
   return (
-    <XmtpProvider>
-      {/* Mounted HERE (under XmtpProvider) — not in providers.tsx — so useXmtpNotifications
-          sees the real XMTP status and its effect re-runs on ready. Single instance above
-          the route branches, so it survives navigation like <Header/>. */}
-      <XmtpNotificationsMount />
+    <>
       <Header />
       {isChatPage ? (
         <Suspense fallback={
@@ -241,6 +231,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <Toaster />
         </>
       )}
-    </XmtpProvider>
+    </>
   );
 }

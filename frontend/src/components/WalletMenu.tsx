@@ -22,7 +22,7 @@ import { useLocale } from "@/hooks/useLocale";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
-import { useXmtp } from "@/contexts/XmtpContext";
+import { useChatSession } from "@/hooks/useChatSession";
 
 
 interface Props {
@@ -42,7 +42,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
-  const { status: xmtpStatus, disable: disableXmtp, retry: retryXmtp } = useXmtp();
+  const { status: chatStatus, disable: disableChat, retry: retryChat } = useChatSession();
   const { subscribed: pushOn, stale: pushStale, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
@@ -372,7 +372,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
             <HelpCircle className="w-3.5 h-3.5" />
             {t("wallet.how_it_works")}
           </DropdownMenuItem>
-          {xmtpStatus === 'loading' && (
+          {chatStatus === 'loading' && (
             <DropdownMenuItem
               disabled
               className="flex items-center gap-2.5 text-white/25"
@@ -381,18 +381,18 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               {t("wallet.connecting_messaging")}
             </DropdownMenuItem>
           )}
-          {xmtpStatus === 'ready' && (
+          {chatStatus === 'ready' && (
             <DropdownMenuItem
-              onClick={disableXmtp}
+              onClick={disableChat}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
               <MessageCircleOff className="w-3.5 h-3.5" />
               {t("wallet.disable_messaging")}
             </DropdownMenuItem>
           )}
-          {xmtpStatus === 'error' && (
+          {chatStatus === 'error' && (
             <DropdownMenuItem
-              onClick={retryXmtp}
+              onClick={retryChat}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
               <MessageCircle className="w-3.5 h-3.5" />

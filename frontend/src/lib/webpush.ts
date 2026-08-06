@@ -203,6 +203,36 @@ export async function enablePush(
 // Sends a push notification via the relayer, routed through the Next.js API so
 // the relayer secret never reaches the browser. `from` is never accepted here —
 // the server drops any client-supplied sender to prevent notification impersonation.
+/**
+ * Сказать всем зарегистрированным арбитрам, что открыт спор.
+ *
+ * ⚠️ ЭТО ЗАМЕНА, А НЕ НОВОЕ. До 6 августа 2026 то же самое делал
+ * `notifyArbiters` через личку XMTP — с той же оговоркой «лучшим усилием» и
+ * тем же охватом «кто подключил канал, тот и узнает». Канал сменился, охват и
+ * обещание — нет.
+ *
+ * Сервер этого не делает и делать не может дёшево: `Agreement.arbiter` в
+ * момент открытия спора ещё `address(0)` (разбор — `relayer/app.js`, ветка
+ * `both+arbiter`), а «оповестить всех зарегистрированных» — решение продукта,
+ * а не просмотр поля. Поэтому зовёт тот, кто спор и открыл.
+ *
+ * Потолок нужен: `getArbiters()` растёт без ограничения сверху, и цикл без
+ * потолка означал бы, что одно нажатие человека рассылает столько запросов,
+ * сколько арбитров успело зарегистрироваться.
+ */
+const ARBITER_FANOUT_CAP = 50;
+
+export function notifyArbitersOfDispute(arbiters: readonly string[], dealAddress: string): void {
+  for (const arbiter of arbiters.slice(0, ARBITER_FANOUT_CAP)) {
+    notifyPush(
+      arbiter,
+      'A dispute was opened',
+      `/arbiter?deal=${dealAddress.toLowerCase()}`,
+      `dispute-${dealAddress.toLowerCase()}`,
+    );
+  }
+}
+
 export function notifyPush(to: string, body: string, url?: string, tag?: string): void {
   fetch('/api/push', {
     method: 'POST',

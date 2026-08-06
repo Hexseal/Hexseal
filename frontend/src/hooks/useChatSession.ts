@@ -236,13 +236,30 @@ export async function fetchPeerChatKeys(
  * вызовы одного адреса, так что на живом пропуске подписи нет вовсе —
  * мьютекс здесь для холодного кэша и для соседства с остальными окнами
  * приложения (страница сделки, профиль, пуши).
+ *
+ * ⚠️ `onSigning` — ЕДИНСТВЕННОЕ честное место, откуда отображение может
+ * узнать, что окно кошелька открывается ПРЯМО СЕЙЧАС. Снаружи это неизвестно:
+ * `requestBagPass` на живом пропуске подписи не просит вовсе, а угадать
+ * заранее нельзя — срок пропуска знает только он. Колбэк зовётся ровно вокруг
+ * вызова кошелька (`true` перед, `false` после — в `finally`, чтобы отказ
+ * человека не оставил экран с вечным «подпишите»). Замер, ради которого он
+ * заведён: подпись всплывает не по нажатию, а при открытии чата раз в 12
+ * часов, и человеку это надо сказать словами (`chat.pass_signature_hint`).
  */
 export async function getBagPass(
   address: `0x${string}`,
   signMessageAsync: (args: { message: string }) => Promise<string>,
+  onSigning?: (busy: boolean) => void,
 ): Promise<string> {
   return withWalletLock(address, async () => {
-    const pass = await requestBagPass((message) => signMessageAsync({ message }), address);
+    const pass = await requestBagPass(async (message) => {
+      onSigning?.(true);
+      try {
+        return await signMessageAsync({ message });
+      } finally {
+        onSigning?.(false);
+      }
+    }, address);
     return pass.pass;
   });
 }
