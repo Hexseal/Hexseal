@@ -725,7 +725,7 @@ async function keypairFromRecoveryCode(normalizedCode: string): Promise<ChatKeyp
  *  неверно (замечание третьей проверки), а настоящую без NFKD не закрыть:
  *  «ｌｅｇａｌ» остаётся другим словом, и человек получил бы «слово не из
  *  списка» на совершенно правильном коде. */
-function normalizeRecoveryCode(code: string): string {
+export function normalizeRecoveryCode(code: string): string {
   return code.normalize('NFKD').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
