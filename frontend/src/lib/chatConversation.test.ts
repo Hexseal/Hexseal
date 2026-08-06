@@ -1987,6 +1987,38 @@ describe('доказательства на принятых сообщения�
     )).toBe(true);
   });
 
+  it('своя половина, приехавшая СО СКЛАДА, не двоится с той, что помнит вкладка', async () => {
+    // Задача 7 сделала свою половину переписки достижимой с сервера (поле
+    // отправителя в описи). Значит те же самые сообщения теперь приезжают
+    // ДВАЖДЫ: мешком из ящика и списком `own` из памяти вкладки. Без сверки
+    // человек увидел бы каждое своё сообщение в двух экземплярах — и это не
+    // косметика: `gaps` и вердикты считаются по тому же ряду.
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const mine = await conversationFrom(alice, bob, ['моё-0', 'моё-1']);
+
+    // Склад отдаёт наши же мешки: отправитель засвидетельствован как МЫ САМИ.
+    const state = await receiveBags(
+      alice, mine.map((s, i) => bagOf(s, ALICE, 100 + i)), { own: mine, peer: BOB },
+    );
+
+    expect(state.messages.map(m => (m.payload as ChatPayload).text)).toEqual(['моё-0', 'моё-1']);
+    expect(state.messages).toHaveLength(2);
+    // И ни одного разрыва: одна и та же пара звеньев, посчитанная дважды, не
+    // должна выглядеть ни дырой, ни двойным номером.
+    expect(state.gaps).toEqual([]);
+    expect(state.troubles).toEqual([]);
+
+    // ⚠️ И БЕЗ `peer` тоже. С заданным собеседником свои мешки отсеиваются
+    // фильтром ящика — то есть тот случай держится сам собой и ничего не
+    // доказывает. Опасен разбор ВСЕГО ящика, где свои мешки доходят до
+    // разбора наравне с чужими.
+    const whole = await receiveBags(alice, mine.map((s, i) => bagOf(s, ALICE, 100 + i)), { own: mine });
+    expect(whole.messages.map(m => (m.payload as ChatPayload).text)).toEqual(['моё-0', 'моё-1']);
+    expect(whole.gaps).toEqual([]);
+  });
+
   it('своё отправленное несёт то же самое — обе половины предъявляются одинаково', async () => {
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
