@@ -925,11 +925,14 @@ describe('IndexedDB отказала в записи (квота)', () => {
     expect(session.keypair.privateKey).toHaveLength(32);
   });
 
-  it('база не открывается — тоже не молча', async () => {
+  it('база не открывается — отказ с кодом: пустоты мы не установили (К-4)', async () => {
+    // «Не смогли открыть» — не «там пусто». Различить нечем, а цена ошибки
+    // для кошелька-контракта — новая личность поверх старой.
     installStorage({ failOpen: true });
-    const session = await openSession(ALICE, async () => ALICE_SIG, eoaOpts());
-    expect(session.persisted).toBe(false);
-    expect(warn).toHaveBeenCalled();
+    const sign = vi.fn(async () => ALICE_SIG);
+    await expect(openSession(ALICE, sign, eoaOpts()))
+      .rejects.toMatchObject({ code: 'storage_read_failed' });
+    expect(sign).toHaveBeenCalledTimes(0);
   });
 });
 
@@ -1168,11 +1171,42 @@ describe('мусор на входе — вердикт, а не падение'
     expect(sign).toHaveBeenCalledTimes(1);
   });
 
-  it('чтение хранилища отказало — сеанс всё равно есть, но сказано вслух', async () => {
+  it('чтение хранилища отказало — это ОТКАЗ с кодом, а не пустота (К-4)', async () => {
     installStorage({ failGet: true });
     const sign = vi.fn(async () => ALICE_SIG);
-    const session = await openSession(ALICE, sign, eoaOpts());
-    expect(session.keypair.privateKey).toHaveLength(32);
-    expect(warn).toHaveBeenCalled();
+
+    await expect(openSession(ALICE, sign, eoaOpts()))
+      .rejects.toMatchObject({ code: 'storage_read_failed' });
+
+    // ничего не спросили и ничего не написали — человек может повторить
+    expect(sign).toHaveBeenCalledTimes(0);
+    const store = fakeIdb._disk.get('sessions');
+    expect(store === undefined || store.size === 0).toBe(true);
+  });
+
+  it('сбой чтения НЕ уничтожает личность кошелька-контракта (К-4)', async () => {
+    // Самое дорогое следствие прежнего поведения: отказ чтения трактовался
+    // как «записи нет», поверх живого ключа ложился новый случайный, и сеанс
+    // при этом рапортовал persisted: true.
+    const mine = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const myCode = exportRecoveryCode(mine);
+
+    installStorageKeepingDisk({ failGet: true });
+    await expect(openSession(ALICE, async () => ALICE_SIG, contractOpts()))
+      .rejects.toMatchObject({ code: 'storage_read_failed' });
+
+    // диск не тронут: чтение починилось — ключ и код на месте
+    installStorageKeepingDisk({});
+    const after = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    expect(hex(after.keypair.privateKey)).toBe(hex(mine.keypair.privateKey));
+    expect(exportRecoveryCode(after)).toBe(myCode);
+  });
+
+  it('код восстановления при сбое чтения тоже не принимается вслепую (К-4)', async () => {
+    installStorage({ failGet: true });
+    await expect(openSessionFromRecoveryCode(ALICE, GOLD, contractOpts()))
+      .rejects.toMatchObject({ code: 'storage_read_failed' });
+    const store = fakeIdb._disk.get('sessions');
+    expect(store === undefined || store.size === 0).toBe(true);
   });
 });
