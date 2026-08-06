@@ -793,6 +793,52 @@ describe('подделка звена видна', () => {
     expect(state.messages).toHaveLength(0);
   });
 
+  it('ВСЁ отвергнуто — вердикт «не в порядке», а НЕ отсутствие записи (В-2)', async () => {
+    // Находка В-2: при полном отвержении карта цепочек оставалась пустой, и
+    // потребитель, написавший естественное «цепочка собеседника не в порядке?»,
+    // не видел НИЧЕГО именно в самом тяжёлом случае — отсутствие записи
+    // читается как «претензий нет».
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const sent = await conversationFrom(bob, alice, ['раз', 'два', 'три']);
+    const bags = sent.map((s, i) => {
+      const bag = bagOf(s, BOB, 100 + i);
+      bag.body = new Uint8Array(bag.body);
+      bag.body[33] ^= 0xff; // подпись каждого испорчена
+      return bag;
+    });
+
+    const state = await receiveBags(alice, bags);
+    expect(state.chains[BOB.toLowerCase()]).toBeDefined();
+    expect(state.chains[BOB.toLowerCase()]).toMatchObject({ ok: false });
+    expect(state.messages).toHaveLength(0);
+  });
+
+  it('разрыв назван С АВТОРОМ: дыра постороннего не приписывается собеседнику (В-3)', async () => {
+    // Находка В-3: список разрывов был объединением по всем отправителям без
+    // указания автора. Посторонний, положивший мешок в ящик, добавлял свой
+    // разрыв — и общий итог показывал его как разрыв переписки с собеседником.
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+    const carol = await makeSession('9b4a', CAROL);
+
+    const fromBob = await conversationFrom(bob, alice, ['б0', 'б1']);     // честно, без дыр
+    const fromCarol = await conversationFrom(carol, alice, ['к0', 'к1', 'к2']);
+
+    // У ПОСТОРОННЕЙ дыра: второе её сообщение не показано.
+    const state = await receiveBags(alice, [
+      bagOf(fromBob[0], BOB, 1), bagOf(fromBob[1], BOB, 2),
+      bagOf(fromCarol[0], CAROL, 3), bagOf(fromCarol[2], CAROL, 4),
+    ]);
+
+    expect(state.gaps).toEqual([{ from: CAROL.toLowerCase(), afterSeq: 0 }]);
+    expect(state.gaps.filter(g => g.from === BOB.toLowerCase())).toEqual([]);
+    expect(state.chains[BOB.toLowerCase()]).toMatchObject({ ok: true });
+    expect(state.chains[CAROL.toLowerCase()]).toMatchObject({ ok: false, reason: 'gap' });
+  });
+
   it('чужая цепочка НЕ смешивается со своей: у каждого отправителя свой вердикт', async () => {
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
