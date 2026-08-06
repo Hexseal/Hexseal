@@ -159,6 +159,36 @@ describe('экран не молчит, когда с цепочкой собе�
   });
 });
 
+describe('К-5: своя половина не обвиняет своего же владельца', () => {
+  it('своя цепочка не с нуля — на экране НИЧЕГО про скрытое', async () => {
+    // Через семь дней старые мешки истекают, и своя уцелевшая цепочка
+    // начинается не с нуля. Панель обязана молчать: свою историю мы знаем
+    // локально, склад ей не источник истины.
+    setState({
+      messages: [
+        { id: `${ME.toLowerCase()}-7`, from: ME.toLowerCase(), seq: 7, text: 'моё позднее',
+          timestamp: Date.UTC(2026, 7, 6, 10), isFromMe: true, delivered: true },
+      ],
+      gapAfterSeq: [],   // своя дыра сюда не попадает (`chatConversation`, К-1)
+    });
+    const html = await renderPanel();
+    expect(html).toContain('моё позднее');
+    expect(html).not.toContain(translate('chat.chain_gap'));
+    expect(html).not.toContain(translate('chat.chain_gap_start'));
+    expect(html).not.toContain(translate('chat.chain_unverified'));
+  });
+
+  it('сбитая своя нумерация НЕ читается как «не прошло проверку подлинности»', () => {
+    // `own_numbering_reset` — своя беда с известной причиной, и в разбор
+    // претензий она попадать не должна ни одним из двух признаков.
+    const s = troubleSummary([{ kind: 'own_numbering_reset' } as ConversationTroubleLike]);
+    expect(s).toEqual({ chainUnverified: false, undecryptable: false });
+    // А чужой повтор номера — по-прежнему признак подделки.
+    const peer = troubleSummary([{ kind: 'duplicate_seq' } as ConversationTroubleLike]);
+    expect(peer.chainUnverified).toBe(true);
+  });
+});
+
 describe('тысяча сообщений на экране', () => {
   it('разметка тысячи сообщений собирается за разумное время', async () => {
     const messages = Array.from({ length: 1000 }, (_, i) => ({

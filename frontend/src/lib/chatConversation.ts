@@ -1070,6 +1070,17 @@ export type ConversationTrouble =
   | { kind: 'signer_changed'; key: string; seq: number; from: `0x${string}` }
   /** Два звена с одним номером от одного отправителя. */
   | { kind: 'duplicate_seq'; key: string; seq: number; from: `0x${string}` }
+  /**
+   * То же самое, но номер повторили МЫ САМИ (К-5).
+   *
+   * Отдельный род, а не `duplicate_seq`, потому что читается он совершенно
+   * иначе. У собеседника повтор номера — признак подделки: кто-то предъявил
+   * два разных звена под одним номером. У себя это своя же беда и с известной
+   * причиной: вкладка потеряла голову разговора (браузер очистил хранилище,
+   * приватный режим) и начала счёт заново. Обвинять тут некого, а показать
+   * человеку надо — собеседник эти сообщения увидит как непроверенные.
+   */
+  | { kind: 'own_numbering_reset'; key: string; seq: number; from: `0x${string}` }
   /** Звено честное, а конверт нашей парой не вскрывается: собеседник
    *  запечатал на устаревший ключ. НЕ разрыв — звено остаётся в цепочке. */
   | { kind: 'undecryptable'; key: string; seq: number; from: `0x${string}` };
@@ -1191,6 +1202,49 @@ function mergeSides(messages: ChatMessage[]): ChatMessage[] {
   return out;
 }
 
+/* ───────────────── К-2: повторный разбор того же мешка ────────────────── */
+//
+// ⚠️ К-2: ПОВТОРНЫЙ РАЗБОР. `receiveBags` вызывается на КАЖДОМ тике опроса и
+// разбирает ВЕСЬ накопленный набор — цепочка проверяется целиком, вердикт по
+// половине переписки не вердикт. Замер: 1000 мешков — 503 мс, каждые пять
+// секунд, пока чат открыт; на среднем телефоне это половина ядра в основном
+// потоке. Дорогого в мешке ровно два места: проверка подписи звена и
+// расшифровка конверта — оба зависят ТОЛЬКО от байтов мешка (и второе ещё от
+// нашей пары ключей).
+//
+// ОПОРА КЭША — ТОЖДЕСТВО ОБЪЕКТА ТЕЛА, а не ключ мешка. Ключ выдаёт СЕРВЕР, и
+// верить ему как отпечатку нельзя: под тем же ключом могут приехать другие
+// байты. Тождество же означает буквально «это тот самый массив, который мы уже
+// проверили» — сильнее любого отпечатка и стоит одно сравнение ссылок.
+// Движок держит скачанные мешки в карте и подаёт те же объекты каждый тик,
+// поэтому попадание — обычный случай, а не удача.
+//
+// Цена ошибки, если опору ослабить до ключа: подделанный мешок прошёл бы по
+// вердикту предыдущего. Заперто отдельно (`chatParseCache.test.ts`).
+
+/** Потолок записей. Кэш живёт на модуле, то есть на вкладку; без потолка
+ *  длинная переписка держала бы в памяти всё, что когда-либо разбиралось. */
+const PARSE_CACHE_MAX = 5_000;
+
+function cachePut<V>(cache: Map<string, V>, key: string, value: V): V {
+  if (cache.size >= PARSE_CACHE_MAX) {
+    // Map хранит порядок вставки — выбывает самое старое.
+    const oldest = cache.keys().next();
+    if (!oldest.done) cache.delete(oldest.value);
+  }
+  cache.set(key, value);
+  return value;
+}
+
+const _signatureCache = new Map<string, { body: Uint8Array; ok: boolean }>();
+const _payloadCache = new Map<string, { body: Uint8Array; ownPub: Uint8Array; payload: ChatPayload | null }>();
+
+/** Только тесты: разбор обязан быть проверяем с холодного кэша. */
+export function _resetParseCacheForTest(): void {
+  _signatureCache.clear();
+  _payloadCache.clear();
+}
+
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -1242,6 +1296,14 @@ export async function receiveBags(
     return ADDRESS_RE.test(addr) ? (addr as `0x${string}`) : null;
   };
 
+  /** Ключи своих мешков, про которые ЭТА вкладка помнит, что они ушли
+   *  выбранному собеседнику. Второй источник привязки, см. ниже. */
+  const ownKeysForPeer = new Set<string>(
+    onlyPeer
+      ? (opts.own ?? []).filter(s2 => s2.peer?.toLowerCase() === onlyPeer).map(s2 => s2.key)
+      : [],
+  );
+
   // ─── шаг 1: кадр, свидетельство сервера, отпечаток тела, подпись ───
   const sodium = (await import('libsodium-wrappers')).default;
   await sodium.ready;
@@ -1280,8 +1342,17 @@ export async function receiveBags(
     // бы ничего — переписка с Бобом показывала бы написанное Кэрол.
     const isOwnOutgoing = attested === ownAddress;
     if (onlyPeer) {
+      // У своего мешка ДВА независимых источника «кому это было»:
+      //  1. наша собственная память об отправке (`opts.own` — там записан
+      //     собеседник) — она главная, пока вкладка жива;
+      //  2. получатель из ключа мешка, который присвоил сервер, — она
+      //     единственная после перезагрузки, когда память пуста, и ради неё
+      //     весь К-1 и делался.
+      // Достаточно любого: совпали — мешок наш, этой переписки.
       const belongs = isOwnOutgoing
-        ? recipientOfKey(bag.key) === onlyPeer
+        ? (onlyPeer === ownAddress                    // переписка с самим собой
+          || ownKeysForPeer.has(bag.key)              // помним, что слали ему
+          || recipientOfKey(bag.key) === onlyPeer)    // сервер назвал получателя
         : attested === onlyPeer;
       if (!belongs) continue;
     }
@@ -1313,10 +1384,17 @@ export async function receiveBags(
     }
 
     let signatureOk: boolean;
-    try {
-      signatureOk = sodium.crypto_sign_verify_detached(
-        frame.signature, linkSignaturePreimage(frame.link), frame.signerPublicKey,
-      );
+    const sigHit = _signatureCache.get(bag.key);
+    if (sigHit && sigHit.body === bag.body) {
+      // К-2: те же байты уже проверялись — самая дорогая половина разбора.
+      signatureOk = sigHit.ok;
+    } else try {
+      signatureOk = cachePut(_signatureCache, bag.key, {
+        body: bag.body,
+        ok: sodium.crypto_sign_verify_detached(
+          frame.signature, linkSignaturePreimage(frame.link), frame.signerPublicKey,
+        ),
+      }).ok;
     } catch {
       // libsodium бросает TypeError на негодной длине — форма уже проверена
       // разбором кадра, но чужие данные не повод падать целиком.
@@ -1372,7 +1450,11 @@ export async function receiveBags(
         continue;
       }
       if (lastSeq !== null && item.link.seq === lastSeq) {
-        troubles.push({ kind: 'duplicate_seq', key: item.key, seq: item.link.seq, from });
+        // К-5: свой повтор — не подделка, а потерянная голова разговора.
+        troubles.push({
+          kind: from === ownAddress ? 'own_numbering_reset' : 'duplicate_seq',
+          key: item.key, seq: item.link.seq, from,
+        });
         noteRejected(from, item.link.seq);
         continue;
       }
@@ -1402,7 +1484,17 @@ export async function receiveBags(
       // Автор — тот, кого ЗАСВИДЕТЕЛЬСТВОВАЛ СЕРВЕР (`from`), а не тот, кого
       // назвало содержимое: содержимое ещё не прочитано, и верить ему нечем.
       // Конверт, собранный другим автором, здесь просто не расшифруется (В-1).
-      const payload = await unpackEnvelope(item.envelope, session.keypair, from);
+      // К-2: расшифровка — вторая дорогая половина. Опора та же (тождество
+      // тела), плюс наша открытая половина: содержимое зависит от пары
+      // ключей, и кэш без неё отдал бы расшифрованное чужому сеансу.
+      const decHit = _payloadCache.get(item.key);
+      const payload = (decHit && decHit.body === item.frame && sameBytes(decHit.ownPub, session.keypair.publicKey))
+        ? decHit.payload
+        : cachePut(_payloadCache, item.key, {
+          body: item.frame,
+          ownPub: session.keypair.publicKey,
+          payload: await unpackEnvelope(item.envelope, session.keypair, from),
+        }).payload;
       if (!payload) {
         // Звено остаётся в цепочке — оно честное и подписанное. Не вскрылось у
         // НАС; выкинув его, мы превратили бы собственную неудачу в дыру, то
