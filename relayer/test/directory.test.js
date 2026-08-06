@@ -18,6 +18,14 @@
 // переменные выставлены здесь, на уровне модуля теста, ДО динамического
 // import() и directory.js, и app.js — тот же приём, что bagStore.test.js/
 // bagRoutes.test.js уже применяют.
+//
+// ⚠️ Раунд 2 (ревью координатора, находки И-1/И-2): поле переименовано
+// key → boxKey (честно: это ключ ЗАПЕЧАТЫВАНИЯ, не проверки подписи —
+// signKey заведён рядом, пока всегда пуст), потолок истории поднят 20→200,
+// заведены keyChangeCount (никогда не обрезается) и historyTruncated
+// (честное "не знаю" вместо неверного ответа). Живые умолчания (200/20/120)
+// проверяются ОТДЕЛЬНО, в test/directoryLiveDefaults.test.js — этот файл
+// продолжает переопределять их маленькими числами для дешёвых границ.
 
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
@@ -30,10 +38,10 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-directory-'));
 process.env.STORAGE_DIR = TMP;
 // Малый потолок истории — граничные тесты дешевле гонять на маленьком числе,
 // чем на боевом умолчании (тот же приём, что test/bagRoutes.test.js уже
-// применяет к BAG_*_RATE_MAX). Боевое умолчание (без переопределения) не
-// тестируется отдельным "live defaults" файлом в этой задаче — сравни с
-// test/bagRoutesLiveDefaults.test.js, который появился РЕАКТИВНО, после
-// того как нашли конкретный провал; здесь такой находки пока нет.
+// применяет к BAG_*_RATE_MAX). Боевое умолчание проверяется отдельно, БЕЗ
+// переопределения — test/directoryLiveDefaults.test.js (раунд 2, находка
+// координатора: "боевое умолчание истории 20 → миллион" пережила 645
+// зелёных именно потому, что ни один тест не смотрел на настоящее число).
 process.env.MAX_KEY_HISTORY = '4';
 // Маленькие бюджеты для быстрых границ лимитера — тот же приём, что и выше.
 process.env.KEYS_WRITE_RATE_MAX = '5';
@@ -53,6 +61,8 @@ const BOB   = '0xb0b1000000000000000000000000000000005eed';
 const KEY_A = '0x' + '11'.repeat(32);
 const KEY_B = '0x' + '22'.repeat(32);
 const KEY_C = '0x' + '33'.repeat(32);
+const SIGN_A = '0x' + 'aa'.repeat(32);
+const SIGN_B = '0x' + 'bb'.repeat(32);
 
 beforeEach(() => {
   fs.rmSync(directory.DIRECTORY_FILE, { force: true });
@@ -69,15 +79,20 @@ describe('directory.js — форма и хранение', () => {
     expect(isDirectoryHealthy()).toBe(true);
   });
 
-  it('putKey сохраняет, getKeyRecord читает обратно тот же ключ', () => {
-    const stored = putKey(ALICE, KEY_A, 1000);
-    expect(stored.key).toBe(KEY_A);
+  it('putKey сохраняет boxKey, версию, нулевой счётчик смен, false-truncated', () => {
+    const stored = putKey(ALICE, { boxKey: KEY_A }, 1000);
+    expect(stored.boxKey).toBe(KEY_A);
     expect(stored.updatedAt).toBe(1000);
+    expect(typeof stored.v).toBe('number');
+    expect(stored.keyChangeCount).toBe(0);
+    expect(stored.historyTruncated).toBe(false);
+    expect(stored.signKey).toBeUndefined();
 
     const rec = getKeyRecord(ALICE);
-    expect(rec.key).toBe(KEY_A);
+    expect(rec.boxKey).toBe(KEY_A);
     expect(rec.updatedAt).toBe(1000);
     expect(rec.history).toEqual([]);
+    expect(rec.keyChangeCount).toBe(0);
   });
 
   // Правило 2: форма — 32 байта, hex. Мусор отвергается с кодом.
@@ -92,10 +107,10 @@ describe('directory.js — форма и хранение', () => {
     ['объект вместо строки', { key: '0x' + '11'.repeat(32) }],
     ['null',             null],
     ['undefined',        undefined],
-  ])('putKey отвергает мусорный ключ (%s) с кодом invalid_key, не меняя справочник', (_label, badKey) => {
-    expect(() => putKey(ALICE, badKey, 1000)).toThrow();
+  ])('putKey отвергает мусорный boxKey (%s) с кодом invalid_key, не меняя справочник', (_label, badKey) => {
+    expect(() => putKey(ALICE, { boxKey: badKey }, 1000)).toThrow();
     try {
-      putKey(ALICE, badKey, 1000);
+      putKey(ALICE, { boxKey: badKey }, 1000);
       expect.unreachable();
     } catch (e) {
       expect(e.code).toBe('invalid_key');
@@ -106,43 +121,117 @@ describe('directory.js — форма и хранение', () => {
     expect(getKeyRecord(ALICE)).toBeNull();
   });
 
-  it('замена ключа сохраняет старый в истории, с меткой времени замены', () => {
-    putKey(ALICE, KEY_A, 1000);
-    putKey(ALICE, KEY_B, 2000);
+  it.each([
+    ['голая строка вместо {boxKey}', KEY_A],
+    ['null вместо {boxKey}', null],
+    ['массив вместо {boxKey}', [KEY_A]],
+  ])('putKey отвергает keys целиком не-объектом (%s) с кодом invalid_key', (_label, badKeys) => {
+    try {
+      putKey(ALICE, badKeys, 1000);
+      expect.unreachable();
+    } catch (e) {
+      expect(e.code).toBe('invalid_key');
+    }
+    expect(getKeyRecord(ALICE)).toBeNull();
+  });
+
+  it('замена boxKey сохраняет старый в истории, двигает updatedAt и keyChangeCount', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B }, 2000);
 
     const rec = getKeyRecord(ALICE);
-    expect(rec.key).toBe(KEY_B);
+    expect(rec.boxKey).toBe(KEY_B);
     expect(rec.updatedAt).toBe(2000);
-    expect(rec.history).toEqual([{ key: KEY_A, replacedAt: 2000 }]);
+    expect(rec.history).toEqual([{ boxKey: KEY_A, replacedAt: 2000 }]);
+    expect(rec.keyChangeCount).toBe(1);
   });
 
-  it('повторная отправка ТОГО ЖЕ ключа не создаёт запись в истории', () => {
-    putKey(ALICE, KEY_A, 1000);
-    putKey(ALICE, KEY_A, 2000);
+  it('повторная отправка ТОГО ЖЕ boxKey не создаёт запись в истории, не двигает keyChangeCount и НЕ ДВИГАЕТ updatedAt', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    // И-2 (находка координатора, round 2): раньше updatedAt переписывался
+    // на nowMs даже при идентичной повторной отправке — "с какого момента
+    // ключ действует" становилось невосстановимо для адреса, который
+    // вообще никогда не менял ключ. nowMs здесь заведомо ПОЗЖЕ (5000) —
+    // если бы отметка двигалась, тест поймал бы это напрямую по числу.
+    putKey(ALICE, { boxKey: KEY_A }, 5000);
 
     const rec = getKeyRecord(ALICE);
-    expect(rec.key).toBe(KEY_A);
+    expect(rec.boxKey).toBe(KEY_A);
     expect(rec.history).toEqual([]);
+    expect(rec.keyChangeCount).toBe(0);
+    expect(rec.updatedAt).toBe(1000); // НЕ 5000
   });
 
-  it('история не растёт без предела — потолок MAX_KEY_HISTORY (=4 в тесте), хранит НОВЕЙШИЕ замены', () => {
-    putKey(ALICE, KEY_A, 1000);
-    // Пять смен подряд разными ключами — потолок 4 в тесте (env выше).
+  it('signKey необязателен: putKey без него оставляет поле отсутствующим', () => {
+    const stored = putKey(ALICE, { boxKey: KEY_A }, 1000);
+    expect(stored.signKey).toBeUndefined();
+    expect(getKeyRecord(ALICE).signKey).toBeUndefined();
+  });
+
+  it('signKey сохраняется и переживает последующий putKey без него', () => {
+    putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 1000);
+    expect(getKeyRecord(ALICE).signKey).toBe(SIGN_A);
+
+    // Второй вызов не передаёт signKey вовсе — не должен стереть уже сохранённый.
+    putKey(ALICE, { boxKey: KEY_A }, 2000);
+    expect(getKeyRecord(ALICE).signKey).toBe(SIGN_A);
+  });
+
+  it('смена ТОЛЬКО signKey (boxKey тот же) не создаёт запись в истории, не двигает updatedAt/keyChangeCount', () => {
+    putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_B }, 5000);
+
+    const rec = getKeyRecord(ALICE);
+    expect(rec.signKey).toBe(SIGN_B);
+    expect(rec.boxKey).toBe(KEY_A);
+    expect(rec.history).toEqual([]);
+    expect(rec.keyChangeCount).toBe(0);
+    expect(rec.updatedAt).toBe(1000);
+  });
+
+  it.each([
+    ['слишком короткий', '0x1234'],
+    ['не hex', '0x' + 'zz'.repeat(32)],
+    ['число', 42],
+  ])('putKey отвергает мусорный signKey (%s) с кодом invalid_key, не меняя справочник', (_label, badSignKey) => {
+    try {
+      putKey(ALICE, { boxKey: KEY_A, signKey: badSignKey }, 1000);
+      expect.unreachable();
+    } catch (e) {
+      expect(e.code).toBe('invalid_key');
+    }
+    expect(getKeyRecord(ALICE)).toBeNull();
+  });
+
+  it('история капается на MAX_KEY_HISTORY (=4 в тесте), но keyChangeCount считает ВСЕ смены и не обрезается', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    // Пять смен подряд разными ключами — потолок 4 в тесте (env выше),
+    // итого 6 настоящих смен считая самую первую регистрацию как "смену 0".
     for (let i = 0; i < 6; i++) {
-      putKey(ALICE, '0x' + String(i).padStart(2, '9') + '00'.repeat(31), 2000 + i);
+      putKey(ALICE, { boxKey: '0x' + String(i).padStart(2, '9') + '00'.repeat(31) }, 2000 + i);
     }
     const rec = getKeyRecord(ALICE);
     expect(rec.history.length).toBe(4);
     // Мутация числом: если бы потолок не работал, длина была бы 6, не 4.
-    // Если бы срез шёл не с того конца (хранил бы старейшие, не новейшие),
-    // KEY_A (самая первая замена) остался бы в истории — его там быть не
-    // должно, потолок обязан выталкивать САМОЕ старое.
-    expect(rec.history.some(h => h.key === KEY_A)).toBe(false);
+    expect(rec.history.some(h => h.boxKey === KEY_A)).toBe(false);
+    // И-2, находка координатора: keyChangeCount — 6 (шесть настоящих смен
+    // произошло), а не 4 (не путается с длиной обрезанной истории).
+    expect(rec.keyChangeCount).toBe(6);
+    // historyTruncated честно говорит "не всё уцелело" — 6 > 4.
+    expect(rec.historyTruncated).toBe(true);
+  });
+
+  it('historyTruncated остаётся false, пока смен меньше или равно потолку', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B }, 2000); // 1 смена, потолок 4 — не превышен
+    const rec = getKeyRecord(ALICE);
+    expect(rec.keyChangeCount).toBe(1);
+    expect(rec.historyTruncated).toBe(false);
   });
 
   it('переживает перезапуск процесса: putKey → перечитать файл заново → данные на месте', () => {
-    putKey(ALICE, KEY_A, 1000);
-    putKey(ALICE, KEY_B, 2000);
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B }, 2000);
 
     // Симулирует рестарт: сбрасывает in-memory состояние модуля тем же
     // приёмом, каким сервер грузит справочник при старте — читает файл с
@@ -150,14 +239,122 @@ describe('directory.js — форма и хранение', () => {
     _loadDirectory();
 
     const rec = getKeyRecord(ALICE);
-    expect(rec.key).toBe(KEY_B);
-    expect(rec.history).toEqual([{ key: KEY_A, replacedAt: 2000 }]);
+    expect(rec.boxKey).toBe(KEY_B);
+    expect(rec.history).toEqual([{ boxKey: KEY_A, replacedAt: 2000 }]);
+    expect(rec.keyChangeCount).toBe(1);
   });
 
   it('запись на диск атомарна: файл всегда валидный JSON, содержит адрес после putKey', () => {
-    putKey(ALICE, KEY_A, 1000);
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
     const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
-    expect(raw[ALICE].key).toBe(KEY_A);
+    expect(raw[ALICE].boxKey).toBe(KEY_A);
+  });
+
+  it('деep-копия: мутация возвращённой записи (getKeyRecord) не портит состояние модуля', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B }, 2000);
+
+    const rec = getKeyRecord(ALICE);
+    // Мутируем то, что нам вернули — как это сделала бы небрежная
+    // вызывающая сторона (случайно переиспользовала объект).
+    rec.history[0].boxKey = '0x' + 'ff'.repeat(32);
+    rec.history.push({ boxKey: '0x' + 'ee'.repeat(32), replacedAt: 9999 });
+
+    // Мутация замка: без деep-копии оба изменения выше отразились бы на
+    // ВНУТРЕННЕМ состоянии модуля — следующий независимый вызов
+    // getKeyRecord() тоже увидел бы испорченное звено и лишний элемент.
+    const rec2 = getKeyRecord(ALICE);
+    expect(rec2.history[0].boxKey).toBe(KEY_A);
+    expect(rec2.history.length).toBe(1);
+  });
+
+  it('деep-копия: putKey() тоже отдаёт свежие объекты-звенья, не разделяемые с модулем', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    const stored = putKey(ALICE, { boxKey: KEY_B }, 2000);
+    stored.history[0].boxKey = '0x' + 'ff'.repeat(32);
+
+    const rec = getKeyRecord(ALICE);
+    expect(rec.history[0].boxKey).toBe(KEY_A);
+  });
+
+  // И-1 (ревью координатора, round 2, вторая половина находки — целиком
+  // моя): раньше _loadDirectory() пересобирала запись, явно перечисляя
+  // только known-поля — любое постороннее поле стиралось молча на КАЖДОЙ
+  // загрузке. Ломающая миграция, обнаруживаемая не сразу.
+  it('неизвестное поле переживает ЗАГРУЗКУ (форма записи вперёд-совместима)', () => {
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify({
+      [ALICE]: {
+        v: 7, // гипотетическая будущая версия — не должна отвергаться
+        boxKey: KEY_A,
+        updatedAt: 1000,
+        history: [],
+        keyChangeCount: 0,
+        futureField: 'написано версией кода, которой ещё нет',
+      },
+    }), 'utf8');
+    _loadDirectory();
+
+    const rec = getKeyRecord(ALICE);
+    expect(rec.boxKey).toBe(KEY_A);
+    expect(rec.v).toBe(7);
+    expect(rec.futureField).toBe('написано версией кода, которой ещё нет');
+  });
+
+  it('неизвестное поле переживает и ПОСЛЕДУЮЩУЮ ЗАПИСЬ, не только загрузку', () => {
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify({
+      [ALICE]: {
+        v: 7,
+        boxKey: KEY_A,
+        updatedAt: 1000,
+        history: [],
+        keyChangeCount: 0,
+        futureField: 'написано версией кода, которой ещё нет',
+      },
+    }), 'utf8');
+    _loadDirectory();
+
+    // Этот процесс (текущая версия кода) не понимает futureField, но
+    // всё равно меняет boxKey — putKey() не имеет права стереть то, чего
+    // не понимает, просто потому что он что-то ДРУГОЕ поменял.
+    putKey(ALICE, { boxKey: KEY_B }, 2000);
+
+    // Мутация: без spread `...existing` в putKey() запись пересобиралась
+    // бы заново только из known-полей — futureField пропал бы уже здесь,
+    // на первой же записи ПОСЛЕ загрузки, даже если бы сама загрузка его
+    // сохраняла честно.
+    const rec = getKeyRecord(ALICE);
+    expect(rec.boxKey).toBe(KEY_B);
+    expect(rec.futureField).toBe('написано версией кода, которой ещё нет');
+
+    // И на диске — не только в памяти этого процесса.
+    _loadDirectory();
+    expect(getKeyRecord(ALICE).futureField).toBe('написано версией кода, которой ещё нет');
+  });
+
+  it('потолок истории применяется и ПРИ ЗАГРУЗКЕ, не только при следующей смене (И-2)', () => {
+    // На диске — история длиннее текущего MAX_KEY_HISTORY (4 в тесте),
+    // как если бы её писала версия/окружение с бОльшим потолком, а читает
+    // — с меньшим (администратор понизил ручку). recordBag-стиль: пишем
+    // файл руками, не через putKey (у putKey и так есть свой тест на
+    // применение потолка на ЗАПИСИ, это тест именно про ЧТЕНИЕ).
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    const bigHistory = Array.from({ length: 9 }, (_, i) => ({
+      boxKey: '0x' + String(i).padStart(2, '8') + '00'.repeat(31),
+      replacedAt: 1000 + i,
+    }));
+    fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify({
+      [ALICE]: { v: 1, boxKey: KEY_A, updatedAt: 2000, history: bigHistory, keyChangeCount: 9 },
+    }), 'utf8');
+    _loadDirectory();
+
+    const rec = getKeyRecord(ALICE);
+    // Мутация числом: без применения потолка на загрузке длина осталась
+    // бы 9, не 4 — и жила бы так до следующей смены ключа этого адреса.
+    expect(rec.history.length).toBe(4);
+    expect(rec.keyChangeCount).toBe(9); // счётчик НЕ обрезается никогда
+    expect(rec.historyTruncated).toBe(true);
   });
 });
 
@@ -170,7 +367,7 @@ describe('directory.js — громкий отказ при потере/пор�
     expect(isDirectoryHealthy()).toBe(false);
     expect(() => getKeyRecord(ALICE)).toThrow();
     try { getKeyRecord(ALICE); } catch (e) { expect(e.code).toBe('directory_unavailable'); }
-    try { putKey(ALICE, KEY_A, 1000); } catch (e) { expect(e.code).toBe('directory_unavailable'); }
+    try { putKey(ALICE, { boxKey: KEY_A }, 1000); } catch (e) { expect(e.code).toBe('directory_unavailable'); }
 
     // Битый файл — это улика, не мусор для уборки: НЕ переписан молча.
     expect(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8')).toBe('это не json{{{');
@@ -186,11 +383,11 @@ describe('directory.js — громкий отказ при потере/пор�
   });
 
   it('порча ОДНОЙ записи не топит весь справочник — остальные адреса читаются, справочник здоров', () => {
-    putKey(ALICE, KEY_A, 1000);
-    putKey(BOB, KEY_B, 1000);
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(BOB, { boxKey: KEY_B }, 1000);
 
     const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
-    raw[ALICE] = { key: 'не ключ', updatedAt: 'не число', history: 'не массив' };
+    raw[ALICE] = { boxKey: 'не ключ', updatedAt: 'не число', history: 'не массив', keyChangeCount: 'не число' };
     fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(raw), 'utf8');
     _loadDirectory();
 
@@ -199,7 +396,7 @@ describe('directory.js — громкий отказ при потере/пор�
     // хотя его запись цела и валидна.
     expect(isDirectoryHealthy()).toBe(true);
     expect(getKeyRecord(ALICE)).toBeNull();
-    expect(getKeyRecord(BOB).key).toBe(KEY_B);
+    expect(getKeyRecord(BOB).boxKey).toBe(KEY_B);
   });
 
   it('нет файла вообще — легитимная пустота (свежая установка), не потеря доверия', () => {
@@ -213,23 +410,23 @@ describe('directory.js — громкий отказ при потере/пор�
 
 describe('directory.js — диск кончился (Q2 отчёта)', () => {
   it('запись падает (диск полон) — putKey бросает, а не тихо теряет изменение; память откатывается к прежнему значению', () => {
-    putKey(ALICE, KEY_A, 1000); // прежнее, "хорошее" состояние
+    putKey(ALICE, { boxKey: KEY_A }, 1000); // прежнее, "хорошее" состояние
 
     const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
       throw new Error('ENOSPC: no space left on device (simulated)');
     });
     try {
-      expect(() => putKey(ALICE, KEY_B, 2000)).toThrow(/ENOSPC/);
+      expect(() => putKey(ALICE, { boxKey: KEY_B }, 2000)).toThrow(/ENOSPC/);
     } finally {
       spy.mockRestore();
     }
 
     // Память НЕ забежала вперёд диска: неудавшаяся запись не оставила
     // ALICE указывающей на KEY_B, которого на диске никогда не было.
-    expect(getKeyRecord(ALICE).key).toBe(KEY_A);
+    expect(getKeyRecord(ALICE).boxKey).toBe(KEY_A);
     // И на диске лежит то же самое старое значение — ничего не рассинхронилось.
     const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
-    expect(raw[ALICE].key).toBe(KEY_A);
+    expect(raw[ALICE].boxKey).toBe(KEY_A);
   });
 });
 
@@ -272,7 +469,7 @@ describe('POST /keys — правило 1: адрес берётся из про
     const walletA = ethers.Wallet.createRandom();
     const addrA = (await walletA.getAddress()).toLowerCase();
 
-    const res = await postKeys({ body: { key: KEY_A, address: addrA } });
+    const res = await postKeys({ body: { boxKey: KEY_A, address: addrA } });
     expect(res.status).toBe(401);
     expect(res.body.code).toBeDefined();
 
@@ -289,7 +486,7 @@ describe('POST /keys — правило 1: адрес берётся из про
     const passA = await issuePassFor(walletA);
 
     // A держит пропуск НА СЕБЯ, но в теле указывает адрес жертвы.
-    const res = await postKeys({ pass: passA, body: { key: KEY_A, address: addrVictim } });
+    const res = await postKeys({ pass: passA, body: { boxKey: KEY_A, address: addrVictim } });
     expect(res.status).toBe(200);
     // Мутация: без правила 1 сервер прочитал бы address из тела — ключ
     // оказался бы у жертвы, а этот тест это заметил бы (addrVictim имел бы
@@ -298,7 +495,7 @@ describe('POST /keys — правило 1: адрес берётся из про
 
     const own = await getKeys(addrA);
     expect(own.status).toBe(200);
-    expect(own.body.key).toBe(KEY_A);
+    expect(own.body.boxKey).toBe(KEY_A);
 
     const victim = await getKeys(addrVictim);
     expect(victim.status).toBe(404);
@@ -314,27 +511,42 @@ describe('POST /keys — правило 2: форма ключа, мусор с 
   ])('%s — 400, code invalid_key', async (_label, badKey) => {
     const wallet = ethers.Wallet.createRandom();
     const pass = await issuePassFor(wallet);
-    const res = await postKeys({ pass, body: { key: badKey } });
+    const res = await postKeys({ pass, body: { boxKey: badKey } });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('invalid_key');
   });
 });
 
 describe('POST /keys — правило 3: замена разрешена, старый ключ остаётся в истории', () => {
-  it('вторая отправка меняет текущий, GET отдаёт историю со старым', async () => {
+  it('вторая отправка меняет текущий, GET отдаёт историю со старым и keyChangeCount', async () => {
     const wallet = ethers.Wallet.createRandom();
     const address = (await wallet.getAddress()).toLowerCase();
     const pass = await issuePassFor(wallet);
 
-    await postKeys({ pass, body: { key: KEY_A } });
-    const second = await postKeys({ pass, body: { key: KEY_B } });
+    await postKeys({ pass, body: { boxKey: KEY_A } });
+    const second = await postKeys({ pass, body: { boxKey: KEY_B } });
     expect(second.status).toBe(200);
-    expect(second.body.key).toBe(KEY_B);
+    expect(second.body.boxKey).toBe(KEY_B);
 
     const read = await getKeys(address);
     expect(read.status).toBe(200);
-    expect(read.body.key).toBe(KEY_B);
-    expect(read.body.history).toEqual([{ key: KEY_A, replacedAt: expect.any(Number) }]);
+    expect(read.body.boxKey).toBe(KEY_B);
+    expect(read.body.history).toEqual([{ boxKey: KEY_A, replacedAt: expect.any(Number) }]);
+    expect(read.body.keyChangeCount).toBe(1);
+    expect(read.body.historyTruncated).toBe(false);
+  });
+
+  it('signKey проходит по HTTP-границе целиком (POST принимает, GET отдаёт)', async () => {
+    const wallet = ethers.Wallet.createRandom();
+    const address = (await wallet.getAddress()).toLowerCase();
+    const pass = await issuePassFor(wallet);
+
+    const res = await postKeys({ pass, body: { boxKey: KEY_A, signKey: SIGN_A } });
+    expect(res.status).toBe(200);
+    expect(res.body.signKey).toBe(SIGN_A);
+
+    const read = await getKeys(address);
+    expect(read.body.signKey).toBe(SIGN_A);
   });
 });
 
@@ -343,23 +555,23 @@ describe('GET /keys/:address — правило 4: чтение чужого б�
     const wallet = ethers.Wallet.createRandom();
     const address = (await wallet.getAddress()).toLowerCase();
     const pass = await issuePassFor(wallet);
-    await postKeys({ pass, body: { key: KEY_A } });
+    await postKeys({ pass, body: { boxKey: KEY_A } });
 
     const res = await request(app).get(`/keys/${address}`).set('CF-Connecting-IP', freshIp());
     // Явно НЕ ставим x-bag-pass вовсе.
     expect(res.status).toBe(200);
-    expect(res.body.key).toBe(KEY_A);
+    expect(res.body.boxKey).toBe(KEY_A);
   });
 
   it('чексуммированный адрес (как отдаёт кошелёк) находит ключ, зарегистрированный через пропуск', async () => {
     const wallet = ethers.Wallet.createRandom();
     const checksummed = ethers.getAddress(await wallet.getAddress()); // EIP-55, смешанный регистр
     const pass = await issuePassFor(wallet);
-    await postKeys({ pass, body: { key: KEY_A } });
+    await postKeys({ pass, body: { boxKey: KEY_A } });
 
     const res = await getKeys(checksummed);
     expect(res.status).toBe(200);
-    expect(res.body.key).toBe(KEY_A);
+    expect(res.body.boxKey).toBe(KEY_A);
   });
 });
 
@@ -385,8 +597,8 @@ describe('Q3 — два запроса разом на один и тот же �
     const pass = await issuePassFor(wallet);
 
     const [r1, r2] = await Promise.all([
-      postKeys({ pass, body: { key: KEY_B } }),
-      postKeys({ pass, body: { key: KEY_C } }),
+      postKeys({ pass, body: { boxKey: KEY_B } }),
+      postKeys({ pass, body: { boxKey: KEY_C } }),
     ]);
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
@@ -396,8 +608,9 @@ describe('Q3 — два запроса разом на один и тот же �
     // (зависит от сети), но результат ОБЯЗАН быть непротиворечивым: текущий
     // ключ — один из двух, и ДРУГОЙ обязан оказаться в истории, а не
     // потеряться молча (что случилось бы при гонке read-modify-write).
-    expect([KEY_B, KEY_C]).toContain(read.body.key);
-    const other = read.body.key === KEY_B ? KEY_C : KEY_B;
-    expect(read.body.history.some(h => h.key === other)).toBe(true);
+    expect([KEY_B, KEY_C]).toContain(read.body.boxKey);
+    const other = read.body.boxKey === KEY_B ? KEY_C : KEY_B;
+    expect(read.body.history.some(h => h.boxKey === other)).toBe(true);
+    expect(read.body.keyChangeCount).toBe(1);
   });
 });

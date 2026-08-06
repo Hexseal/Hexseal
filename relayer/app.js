@@ -2881,10 +2881,13 @@ app.post('/keys', (req, res) => {
 
   if (!checkRateLimit(keysWriteRateKey(address), KEYS_WRITE_RATE_MAX)) return bagRateLimited(res, 'rate_limited_write');
 
-  const { key } = req.body || {};
+  // signKey — И-1 (ревью координатора): поле заведено для Задачи 5 (ключ
+  // проверки подписи звеньев chatChain.ts, которого в проекте пока нет),
+  // необязательное — тело без него по-прежнему кладёт только boxKey.
+  const { boxKey, signKey } = req.body || {};
   try {
-    const stored = putKey(address, key, Date.now());
-    res.json({ address: stored.address, key: stored.key, updatedAt: stored.updatedAt, history: stored.history });
+    const stored = putKey(address, { boxKey, signKey }, Date.now());
+    res.json(stored);
   } catch (e) {
     if (e.code === 'invalid_key') {
       return res.status(400).json({ error: e.message, code: 'invalid_key' });

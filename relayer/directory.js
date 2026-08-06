@@ -1,16 +1,24 @@
 // ─── Справочник открытых ключей чата ───────────────────────────────────────
 //
-// Хранит ТОЛЬКО открытую половину ключа чата на адрес — X25519 public key,
-// 32 байта, hex, ровно то, что `deriveChatKeypair()` (frontend/src/lib/
-// chatCrypto.ts) отдаёт как keypair.publicKey. Ничего секретного здесь нет
-// и быть не может: открытый ключ на то и открытый, его знание не даёт
-// ничего, кроме возможности запечатать сообщение ДЛЯ этого адреса — не
-// прочитать чужое (см. sealForRecipient() в chatCrypto.ts).
+// Хранит открытые ключи чата на адрес. Сегодня это только `boxKey` — X25519
+// ключ ЗАПЕЧАТЫВАНИЯ (то, что `deriveChatKeypair()`, frontend/src/lib/
+// chatCrypto.ts, отдаёт как keypair.publicKey; `sealForRecipient()` шифрует
+// на него). `signKey` — ключ ПРОВЕРКИ ПОДПИСИ звеньев `chatChain.ts` —
+// поле заведено рядом, но пока всегда пусто: пары для подписи в проекте
+// ЕЩЁ НЕТ (docs/superpowers/specs/2026-08-02-e2e-chat-design.md:257),
+// появится и станет заполняться в Задаче 5. Ничего секретного здесь нет и
+// быть не может ни для одного из двух: открытый ключ на то и открытый.
+//
+// ⚠️ РЕВЬЮ КООРДИНАТОРА (И-1, после первой версии этого файла): поле
+// называлось просто `key` — неправда по умолчанию наводила на мысль, что
+// в справочнике достаточно данных, чтобы проверить подпись. Не наводила бы,
+// если бы поле называлось честно. Переименовано; `signKey` заведено
+// заранее пустым местом, а не задним числом, когда понадобится.
 //
 // Хранение — по образцу _profileNonces в app.js (JSON на диске, загрузка
-// при старте, перезапись при изменении), но с двумя уроками, на которые
-// прямо указывает бриф Задачи 2 (bagStore.js прошёл шесть раундов правок
-// именно на этой теме):
+// при старте, перезапись при изменении), но с уроками, на которые прямо
+// указывает бриф Задачи 2 и ревью координатора (bagStore.js прошёл шесть
+// раундов правок именно на этой теме):
 //
 //   1. Потеря/порча ВСЕГО файла обязана быть громкой, не тихим "начнём с
 //      пустого". В отличие от bagStore.js, здесь НЕТ независимого источника
@@ -19,11 +27,14 @@
 //      есть данные, не индекс НАД данными. Поэтому при обнаруженной порче
 //      ВСЕГО файла справочник входит в режим недоверия — putKey()/
 //      getKeyRecord() бросают ошибку с кодом 'directory_unavailable', а не
-//      ведут себя так, будто никто никогда не регистрировался (что было бы
-//      неотличимо от адреса, который просто не заходил — ровно то смешение,
-//      против которого поставлено правило 5 брифа). Порча ОДНОЙ записи —
-//      другое дело: остальные адреса читаются нормально, теряется только
-//      битая запись (тот же приём, что и в bagStore.js).
+//      ведут себя так, будто никто никогда не регистрировался. Порча ОДНОЙ
+//      записи — другое дело: остальные адреса читаются нормально, теряется
+//      только битая запись (тот же приём, что и в bagStore.js). Оговорка
+//      (найдена ревью, см. комментарий над _loadDirectory ниже): это
+//      защищает только порчу, случившуюся ДО загрузки — порча ПОСЛЕ
+//      успешного старта процесса не перечитывается заново до рестарта, и
+//      следующая успешная запись честно перезапишет испорченный файл своим
+//      in-memory состоянием, как и любой другой JSON-стор в этом проекте.
 //
 //   2. Порядок «переменные окружения — до импорта»: пути и потолок истории
 //      считаются лениво, через _refreshConfig()/assertDirectoryReady(), а
@@ -31,6 +42,19 @@
 //      assertDirectoryReady() ПОСЛЕ dotenv.config(), тем же порядком, что и
 //      assertBagStoreReady()/assertBagPassReady() уже делают для своих
 //      модулей (см. комментарий над их импортом в app.js).
+//
+//   3. Форма записи ВПЕРЁД-СОВМЕСТИМА (И-1, вторая половина находки,
+//      целиком моя): раньше _loadDirectory() пересобирала запись, явно
+//      перечисляя только известные поля (key/updatedAt/history) — любое
+//      постороннее поле стиралось молча на КАЖДОЙ загрузке. Это значит, что
+//      любое будущее расширение формы записи (например, `signKey`,
+//      реально заполненный Задачей 5) было бы ломающей миграцией,
+//      обнаруживаемой не сразу, а после первого перезапуска процесса на
+//      промежуточной версии кода. Починено: _loadDirectory() и putKey()
+//      теперь СОХРАНЯЮТ любое незнакомое поле через spread, проверяя форму
+//      только известных полей. Поле версии (`v`) заведено на будущее — не
+//      гейтится строго (readerа новее писавшего это не смущает), только
+//      фиксирует, каким писателем запись была создана.
 //
 // Запись — целиком СИНХРОННАЯ (fs.writeFileSync/renameSync), не async: то
 // же рассуждение, что и в bagStore.js — событийный цикл Node.js гарантирует,
@@ -62,35 +86,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
 
 // 32 байта, hex, с 0x — ровно то, что `bytesToHex(keypair.publicKey)` (viem)
-// отдаёт для X25519-ключа chatCrypto.ts. Регистр не диктуется формой (это
-// не адрес кошелька с чексуммой, обычные байты) — принимаем оба варианта на
-// входе, но храним нормализованным к нижнему, чтобы сравнение "ключ не
-// поменялся" (putKey ниже, дедуп повторной идентичной регистрации) не
-// зависело от регистра, которым конкретный вызов его прислал.
-const KEY_HEX_RE = /^0x[0-9a-fA-F]{64}$/;
+// отдаёт для X25519-ключа chatCrypto.ts. Строго нижний регистр (не
+// case-insensitive) — см. _isValidKeyHex ниже, почему это НЕ то же самое,
+// что адрес кошелька с чексуммой.
+const KEY_HEX_RE = /^0x[0-9a-f]{64}$/;
 
 export let STORAGE_DIR;
 export let DIRECTORY_FILE;
-// Сколько последних СМЕНЁННЫХ ключей адрес хранит в истории (правило 3
-// брифа Задачи 2). Не "без ограничения": история растёт от каждой НАСТОЯЩЕЙ
-// смены ключа (повторная отправка того же значения — не смена, putKey ниже
-// это различает и не пишет дубль), но putKey не проверяет, что новое
-// значение — реальный X25519 public key чьей-то настоящей пары: это 32
-// произвольных байта по форме, авторизованных только фактом владения
-// пропуском. Без потолка авторизованный, но недобросовестный вызывающий
-// (свой собственный адрес, свой собственный пропуск) мог бы разогнать
-// историю СВОЕГО же адреса до произвольного размера чистым перебором
-// случайных 32 байт — заперто числом здесь (ограничивает ИТОГ) вместе со
-// скоростью (KEYS_WRITE_RATE_MAX в app.js ограничивает, как быстро можно
-// писать — см. отчёт задачи, вопрос 5). 20 — на порядок больше, чем реально
-// нужно человеку за всю жизнь чата (потеря устройства — редкое событие), с
-// запасом.
+// Сколько последних СМЕНЁННЫХ boxKey адрес хранит в истории (правило 3
+// брифа Задачи 2). Замер координатора (round 2): на прежнем умолчании (20)
+// владелец адреса может 21 сменой ключа за считанные минуты вытолкнуть из
+// истории ЛЮБОЙ конкретный старый ключ — включая тот, которым подписано
+// неудобное сообщение, после чего проверка этой подписи перестаёт быть
+// возможной. 200 делает то же самое непрактичным (смена ключа — событие
+// уровня «потерял устройство», честный человек не наберёт 20 таких событий
+// за всю жизнь, не то что 200) — но НЕ делает невозможным теоретически,
+// поэтому рядом заведён `keyChangeCount` (см. putKey), который НЕ обрезается
+// никогда: даже если история физически не может хранить всё, число смен
+// само по себе — недорогая, вечная улика для арбитра ("этот адрес менял
+// ключ 47 раз").
 export let MAX_KEY_HISTORY;
 
 function _refreshConfig() {
   STORAGE_DIR = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
   DIRECTORY_FILE = path.join(STORAGE_DIR, 'chat-key-directory.json');
-  MAX_KEY_HISTORY = Number(process.env.MAX_KEY_HISTORY || 20);
+  MAX_KEY_HISTORY = Number(process.env.MAX_KEY_HISTORY || 200);
 }
 _refreshConfig();
 
@@ -126,16 +146,40 @@ class DirectoryUnavailableError extends Error {
   }
 }
 
+// Текущая версия формата записи, которую ЭТОТ код умеет писать с нуля.
+// Записи, загруженные с ДРУГИМ (в т.ч. более новым) `v`, не отвергаются —
+// см. _isValidRecord/_loadDirectory: поле проверяется по типу (число), не
+// по значению, и любые незнакомые соседние поля переживают загрузку и
+// повторное сохранение через spread, а не стираются.
+const RECORD_VERSION = 1;
+
+function _isValidKeyHex(v) {
+  return typeof v === 'string' && KEY_HEX_RE.test(v);
+}
+
+function _isValidHistoryEntry(h) {
+  if (!h || typeof h !== 'object' || Array.isArray(h)) return false;
+  if (!_isValidKeyHex(h.boxKey)) return false;
+  if (typeof h.replacedAt !== 'number' || !Number.isFinite(h.replacedAt)) return false;
+  if (h.signKey !== undefined && !_isValidKeyHex(h.signKey)) return false;
+  return true;
+}
+
 function _isValidRecord(rec) {
   if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return false;
-  if (typeof rec.key !== 'string' || !KEY_HEX_RE.test(rec.key)) return false;
+  if (!_isValidKeyHex(rec.boxKey)) return false;
   if (typeof rec.updatedAt !== 'number' || !Number.isFinite(rec.updatedAt)) return false;
-  if (!Array.isArray(rec.history)) return false;
-  for (const h of rec.history) {
-    if (!h || typeof h !== 'object') return false;
-    if (typeof h.key !== 'string' || !KEY_HEX_RE.test(h.key)) return false;
-    if (typeof h.replacedAt !== 'number' || !Number.isFinite(h.replacedAt)) return false;
-  }
+  if (!Array.isArray(rec.history) || !rec.history.every(_isValidHistoryEntry)) return false;
+  if (rec.signKey !== undefined && !_isValidKeyHex(rec.signKey)) return false;
+  // keyChangeCount — счётчик ВСЕХ смен boxKey за всю жизнь адреса, никогда
+  // не обрезается (в отличие от history) и никогда не убывает (И-2,
+  // находка координатора, round 2: без него обрезанная history даёт
+  // УВЕРЕННО НЕВЕРНЫЙ ответ на "какой ключ действовал в момент T", а не
+  // честное "не знаю" — этот счётчик и historyTruncated ниже дают читателю
+  // способ отличить одно от другого).
+  if (typeof rec.keyChangeCount !== 'number' || !Number.isFinite(rec.keyChangeCount) || rec.keyChangeCount < 0) return false;
+  // v — только тип, не конкретное значение: вперёд-совместимость, не гейт версии.
+  if (rec.v !== undefined && typeof rec.v !== 'number') return false;
   return true;
 }
 
@@ -159,6 +203,18 @@ export function isDirectoryHealthy() {
 //   - файл есть, парсится в объект, но ОТДЕЛЬНЫЕ записи в нём не проходят
 //     форму (isValidRecord) → эти записи отбрасываются поодиночке, громко,
 //     но справочник В ЦЕЛОМ остаётся здоров — соседние адреса не задеты.
+//
+// ⚠️ Вызывается ОДИН РАЗ при старте (и повторно из assertDirectoryReady(),
+// если STORAGE_DIR реально сменился) — НЕ на каждый запрос. Порча файла
+// РУКАМИ, случившаяся ПОСЛЕ того, как процесс уже успешно загрузился,
+// этой функцией не замечается вообще: _directoryLoadOk остаётся true,
+// GET /keys/:address продолжает честно отвечать 200 из памяти, а
+// СЛЕДУЮЩАЯ успешная putKey()/_saveDirectory() молча перезапишет испорченный
+// файл своим in-memory состоянием — той же участи, что и у любого другого
+// JSON-стора этого проекта (_profileNonces, _pushSubs, bag-meta.json).
+// Раньше комментарий здесь утверждал обратное ("файл не тронут") без этой
+// оговорки — верно только для порчи, обнаруженной ПРИ загрузке, не для
+// порчи, случившейся уже под живым процессом (найдено ревью).
 export function _loadDirectory() {
   if (!fs.existsSync(DIRECTORY_FILE)) {
     _directory = Object.create(null);
@@ -197,10 +253,23 @@ export function _loadDirectory() {
   let dropped = 0;
   for (const [addr, rec] of Object.entries(parsed)) {
     if (ETH_ADDR_RE.test(addr) && _isValidRecord(rec)) {
+      // И-1 (вторая половина, целиком моя находка при ревью): spread
+      // `...rec` СНАЧАЛА — любое поле, которого эта версия кода не знает
+      // (будущая находка Задачи 5, например), переживает загрузку как есть,
+      // вместо того чтобы быть молча стёртым явным перечислением полей.
+      // Известные поля переопределяются НАД ним. Регистр здесь уже не
+      // нормализуется (мелочь, ревью координатора): _isValidRecord/
+      // _isValidKeyHex гейтят на СТРОГО нижний регистр раньше, чем
+      // выполнение доходит до этой строки — запись с boxKey не в нижнем
+      // регистре уже отброшена как повреждённая веткой else ниже, а не
+      // молча приведена. Единственная реальная нормализация здесь — потолок
+      // истории (И-2: применяется и при ЗАГРУЗКЕ, не только при следующей
+      // смене — иначе длинная история, унаследованная с диска при понижении
+      // MAX_KEY_HISTORY окружением, жила бы до следующей смены ключа), плюс
+      // свежие объекты-звенья вместо алиасов на то, что вернул JSON.parse.
       clean[addr] = {
-        key: rec.key.toLowerCase(),
-        updatedAt: rec.updatedAt,
-        history: rec.history.map((h) => ({ key: h.key.toLowerCase(), replacedAt: h.replacedAt })),
+        ...rec,
+        history: rec.history.map((h) => ({ ...h })).slice(0, MAX_KEY_HISTORY),
       };
     } else {
       dropped++;
@@ -241,50 +310,124 @@ function assertReady() {
   if (!_directoryLoadOk) throw new DirectoryUnavailableError();
 }
 
+function _assertKeyHexInput(fieldName, value) {
+  if (typeof value !== 'string' || !KEY_HEX_RE.test(value)) {
+    const err = new Error(`putKey: invalid ${fieldName} — expected 0x + 64 lower-case hex chars (32 bytes), got ${JSON.stringify(value)}`);
+    err.code = 'invalid_key';
+    throw err;
+  }
+  return value;
+}
+
+// Деep-копия для всего, что покидает модуль (мелочь, найдена ревью:
+// getKeyRecord() раньше отдавала history.slice() — новый МАССИВ, но те же
+// ОБЪЕКТЫ-звенья, что лежат в _directory. Вызывающий код, случайно
+// мутировавший одно поле одного звена возвращённой записи, менял бы
+// состояние модуля исподтишка, без единого явного putKey().
+function _cloneHistoryEntry(h) {
+  return { ...h };
+}
+
+// historyTruncated — И-2, третья часть находки: если keyChangeCount больше
+// того, что физически уместилось в history (потолок сработал), запросу
+// "какой ключ действовал в момент T" неоткуда взять честный ответ для
+// момента раньше самой старой уцелевшей записи — читатель обязан узнать об
+// этом явным признаком, а не догадываться по совпадению длины истории с
+// умолчанием.
+function _cloneRecordForCaller(address, rec) {
+  return {
+    ...rec,
+    address,
+    history: rec.history.map(_cloneHistoryEntry),
+    historyTruncated: rec.keyChangeCount > rec.history.length,
+  };
+}
+
 /**
- * Кладёт открытый ключ для адреса. `address` обязан быть уже нормализован
+ * Кладёт открытые ключи для адреса. `address` обязан быть уже нормализован
  * (нижний регистр, ровно 40 hex-цифр после 0x) — вызывающая сторона
  * (маршрут POST /keys в app.js) обязана брать его ИЗ ПРОПУСКА, не из тела
  * запроса (правило 1 брифа); этот модуль про пропуска ничего не знает и
  * просто доверяет форме своего аргумента, как и bagStore.js доверяет форме
  * своих.
  *
- * Смена ключа (новое значение отличается от текущего) уносит СТАРЫЙ в
- * `history`, срез до MAX_KEY_HISTORY последних (правило 3). Повторная
- * отправка ТОГО ЖЕ значения — не смена: history не растёт (обычный путь
- * клиента при каждом открытии сеанса — см. lib/chatSession.ts, Задача 4 —
- * не должен раздувать историю на каждый визит).
+ * `keys.boxKey` обязателен. `keys.signKey` необязателен (пока всегда
+ * отсутствует — см. докстринг файла) — если передан, сохраняется рядом, но
+ * НЕ считается сменой сам по себе: history/keyChangeCount/updatedAt следят
+ * только за `boxKey`, потому что именно он определяет, какие сообщения
+ * читаются (правило 3 брифа — "переписка станет нечитаемой" относится к
+ * запечатыванию, не к подписи). Если у Задачи 5 окажется, что смена
+ * signKey тоже должна двигать historyу — это отдельное решение, не взятое
+ * здесь по умолчанию.
  *
- * @throws {Error} с `.code === 'invalid_key'`, если keyHex не 32-байтовый
- *   hex (правило 2) — сюда же попадает "не строка вовсе" (число, массив,
- *   объект, null/undefined): мусор на входе, не событие протокола.
+ * Смена boxKey (новое значение отличается от текущего) уносит СТАРЫЙ в
+ * `history` (срез до MAX_KEY_HISTORY последних, правило 3) и увеличивает
+ * `keyChangeCount` — этот счётчик НЕ обрезается никогда, переживает любой
+ * потолок истории. Повторная отправка ТОГО ЖЕ boxKey — не смена: history и
+ * keyChangeCount не растут, `updatedAt` НЕ двигается (И-2, находка
+ * координатора: если бы двигался, "с какого момента ключ действует" было
+ * бы невосстановимо для адреса, который вообще никогда не менял ключ, —
+ * observer видел бы только "недавно", даже если это неправда).
+ *
+ * @throws {Error} с `.code === 'invalid_key'`, если boxKey/signKey не
+ *   32-байтовый нижнерегистровый hex (правило 2) — сюда же попадает "не
+ *   строка вовсе" (число, массив, объект, null/undefined) и `keys` целиком
+ *   не объект: мусор на входе, не событие протокола.
  * @throws {DirectoryUnavailableError} (`.code === 'directory_unavailable'`),
  *   если справочник в режиме недоверия (см. _loadDirectory).
  */
-export function putKey(address, keyHex, nowMs = Date.now()) {
+export function putKey(address, keys, nowMs = Date.now()) {
   assertReady();
   if (typeof address !== 'string' || !ETH_ADDR_RE.test(address)) {
     fail('putKey', `invalid address ${JSON.stringify(address)} — caller must normalize (lower-case, from a verified pass) before calling`);
   }
-  if (typeof keyHex !== 'string' || !KEY_HEX_RE.test(keyHex)) {
-    const err = new Error(`putKey: invalid chat public key — expected 0x + 64 hex chars (32 bytes), got ${JSON.stringify(keyHex)}`);
+  if (!keys || typeof keys !== 'object' || Array.isArray(keys)) {
+    const err = new Error(`putKey: invalid key input — expected { boxKey, signKey? }, got ${JSON.stringify(keys)}`);
     err.code = 'invalid_key';
     throw err;
   }
+  const boxKey = _assertKeyHexInput('boxKey', keys.boxKey);
+  const signKey = keys.signKey !== undefined ? _assertKeyHexInput('signKey', keys.signKey) : undefined;
   if (!Number.isSafeInteger(nowMs)) {
     fail('putKey', `invalid nowMs ${JSON.stringify(nowMs)}`);
   }
 
-  const key = keyHex.toLowerCase();
   const existing = _directory[address];
   const previous = existing; // record целиком — откатываем присваиванием, не точечной мутацией полей
 
+  const isRealChange = !existing || existing.boxKey !== boxKey;
+
   let history = existing ? existing.history : [];
-  if (existing && existing.key !== key) {
-    history = [{ key: existing.key, replacedAt: nowMs }, ...history].slice(0, MAX_KEY_HISTORY);
+  let keyChangeCount = existing ? existing.keyChangeCount : 0;
+  if (existing && isRealChange) {
+    const histEntry = { boxKey: existing.boxKey, replacedAt: nowMs };
+    if (existing.signKey !== undefined) histEntry.signKey = existing.signKey;
+    history = [histEntry, ...history].slice(0, MAX_KEY_HISTORY);
+    keyChangeCount += 1;
   }
 
-  _directory[address] = { key, updatedAt: nowMs, history };
+  const updatedAt = isRealChange ? nowMs : existing.updatedAt;
+
+  // spread `...(existing || {})` СНАЧАЛА — то же правило И-1, что и в
+  // _loadDirectory: если у existing были поля, которых ЭТА версия кода не
+  // понимает (более новая запись, преодолевшая _isValidRecord благодаря
+  // вперёд-совместимости), они переживают и эту перезапись, не только
+  // загрузку. `v` НЕ переустанавливается на RECORD_VERSION для уже
+  // существующей записи — этот писатель не обязан заявлять о ней больше,
+  // чем реально знает.
+  const record = {
+    ...(existing || {}),
+    v: existing ? (existing.v ?? RECORD_VERSION) : RECORD_VERSION,
+    boxKey,
+    updatedAt,
+    history,
+    keyChangeCount,
+  };
+  if (signKey !== undefined) record.signKey = signKey;
+  // signKey не передан этим вызовом — ничего доп. делать не нужно: если он
+  // уже был у existing, spread выше его уже сохранил как есть.
+
+  _directory[address] = record;
   try {
     _saveDirectory();
   } catch (e) {
@@ -292,11 +435,11 @@ export function putKey(address, keyHex, nowMs = Date.now()) {
     else delete _directory[address];
     throw e;
   }
-  return { address, key, updatedAt: nowMs, history: history.slice() };
+  return _cloneRecordForCaller(address, record);
 }
 
 /**
- * Читает открытый ключ адреса — без пропуска, открытый ключ на то и
+ * Читает открытые ключи адреса — без пропуска, открытый ключ на то и
  * открытый (правило 4). `null`, если адрес никогда не регистрировал ключ
  * (правило 5: вызывающая сторона, маршрут GET /keys/:address, обязана
  * превратить это в 404 с кодом — не в пустой 200).
@@ -310,5 +453,5 @@ export function getKeyRecord(address) {
   }
   const rec = _directory[address];
   if (!rec) return null;
-  return { address, key: rec.key, updatedAt: rec.updatedAt, history: rec.history.slice() };
+  return _cloneRecordForCaller(address, rec);
 }
