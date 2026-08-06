@@ -293,6 +293,36 @@ export function _loadDirectory() {
 }
 _loadDirectory(); // начальная загрузка при импорте — перечитывается assertDirectoryReady(), если путь реально сменился
 
+// Мелочь (ревью координатора, round 2, "51 крах — 51 файл, уборки нет"):
+// крах ровно между writeFileSync и renameSync (кончилось место, процесс
+// убит) оставляет `.tmp-*` осколок в STORAGE_DIR навсегда — ни один
+// штатный путь этого модуля его не видит (_loadDirectory читает только
+// DIRECTORY_FILE по точному имени). Тот же приём, что sweepStaleTmpFiles()
+// в bagStore.js: подчищаем осколки СТАРШЕ часа (заведомо дольше, чем может
+// идти одна запись+переименование в норме, миллисекунды) — свежие не
+// трогаем, чтобы не забежать вперёд ещё идущей записи ДРУГОГО процесса,
+// который в этот самый момент пишет свой временный файл. Опортунистично,
+// при следующей УСПЕШНОЙ записи (не отдельным расписанием — в отличие от
+// bagStore.js, у directory.js нет собственного ночного cron-цикла).
+function _sweepStaleTmpFiles(nowMs) {
+  const cutoffMs = nowMs - 60 * 60 * 1000;
+  const dir = path.dirname(DIRECTORY_FILE);
+  const prefix = `${path.basename(DIRECTORY_FILE)}.tmp-`;
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const fp = path.join(dir, entry);
+    try {
+      // lstat, не stat — осколок не обязан физически быть обычным файлом
+      // (символьная ссылка по предсказуемому имени и т.п.), не следуем за ней.
+      const st = fs.lstatSync(fp);
+      if (!st.isFile()) continue;
+      if (st.mtimeMs < cutoffMs) fs.unlinkSync(fp);
+    } catch { /* лучшая попытка — не мешает основной записи */ }
+  }
+}
+
 // Пишет во временный файл и переименовывает — тот же приём, что
 // _saveBagMeta() (bagStore.js) и savePushSubs()/saveProfileNonces() (app.js):
 // fs.renameSync на одной файловой системе атомарен, так что DIRECTORY_FILE
@@ -311,6 +341,9 @@ function _saveDirectory() {
     console.error(`[directory] FAILED TO SAVE ${DIRECTORY_FILE} — in-memory directory and disk directory would have diverged, change rolled back by the caller: ${e.message}`);
     throw e;
   }
+  // Только после УСПЕХА — падение самой записи не должно тащить за собой
+  // ещё и отказ метлы как часть той же ошибки вызывающему.
+  try { _sweepStaleTmpFiles(Date.now()); } catch { /* лучшая попытка */ }
 }
 
 function assertReady() {

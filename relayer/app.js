@@ -2896,7 +2896,7 @@ app.post('/keys', (req, res) => {
       return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
     }
     console.error('[keys] POST /keys failed:', e.message);
-    return res.status(500).json({ error: 'Failed to store chat key' });
+    return res.status(500).json({ error: 'Failed to store chat key', code: 'internal_error' });
   }
 });
 
@@ -2921,7 +2921,7 @@ app.get('/keys/:address', (req, res) => {
       return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
     }
     console.error('[keys] GET /keys failed:', e.message);
-    return res.status(500).json({ error: 'Failed to read chat key' });
+    return res.status(500).json({ error: 'Failed to read chat key', code: 'internal_error' });
   }
 
   // Правило 5: незнакомый адрес — 404 с кодом, не пустой 200. "Не заходил"

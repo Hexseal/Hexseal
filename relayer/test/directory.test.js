@@ -265,6 +265,39 @@ describe('directory.js — форма и хранение', () => {
     expect(raw[ALICE].boxKey).toBe(KEY_A);
   });
 
+  // Мелочь (ревью координатора, round 2): "51 крах — 51 файл, уборки нет".
+  // Крах ровно между writeFileSync и renameSync (кончилось место, процесс
+  // убит) оставляет `.tmp-*` осколок в STORAGE_DIR навсегда — ни один
+  // штатный путь этого модуля его не видит (_loadDirectory читает только
+  // DIRECTORY_FILE по имени). Тот же приём, что sweepStaleTmpFiles() в
+  // bagStore.js: подчищаем осколки СТАРШЕ часа (заведомо дольше, чем может
+  // идти одна запись+переименование в норме) — не трогаем свежие, чтобы не
+  // забежать вперёд ещё идущей записи другого процесса. Опортунистично, при
+  // следующей УСПЕШНОЙ записи — не отдельным расписанием (у directory.js,
+  // в отличие от bagStore.js, нет ночного cron-цикла, который мог бы это
+  // сделать вместо этого).
+  it('осиротевшие .tmp-* файлы старше часа подчищаются при следующей успешной записи, свежие не трогаются', () => {
+    const dir = path.dirname(directory.DIRECTORY_FILE);
+    fs.mkdirSync(dir, { recursive: true });
+    const stalePath = path.join(dir, `${path.basename(directory.DIRECTORY_FILE)}.tmp-99999-1-aaaa`);
+    const freshPath = path.join(dir, `${path.basename(directory.DIRECTORY_FILE)}.tmp-99999-2-bbbb`);
+    fs.writeFileSync(stalePath, 'orphan');
+    fs.writeFileSync(freshPath, 'orphan');
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    fs.utimesSync(stalePath, twoHoursAgo, twoHoursAgo);
+    // freshPath держит "сейчас" mtime — как если бы это была ещё идущая
+    // запись другого процесса; метла обязана её не тронуть.
+
+    try {
+      putKey(ALICE, { boxKey: KEY_A }, 1000); // успешная запись — триггер метлы
+
+      expect(fs.existsSync(stalePath)).toBe(false);
+      expect(fs.existsSync(freshPath)).toBe(true);
+    } finally {
+      fs.rmSync(freshPath, { force: true });
+    }
+  });
+
   it('деep-копия: мутация возвращённой записи (getKeyRecord) не портит состояние модуля', () => {
     putKey(ALICE, { boxKey: KEY_A }, 1000);
     putKey(ALICE, { boxKey: KEY_B }, 2000);
