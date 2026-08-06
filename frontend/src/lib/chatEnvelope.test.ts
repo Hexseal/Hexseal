@@ -1,0 +1,261 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { getAddress } from 'viem';
+import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCrypto';
+import { packEnvelope, unpackEnvelope, type ChatPayload } from './chatEnvelope';
+
+// Подписи разной формы — тот же приём, что в chatCrypto.test.ts (SIG_A/SIG_B):
+// 65-байтная hex-строка, три разных актёра.
+const SIG_BOB   = ('0x' + '11'.repeat(65)) as `0x${string}`;
+const SIG_ALICE = ('0x' + '22'.repeat(65)) as `0x${string}`;
+const SIG_EVE   = ('0x' + '33'.repeat(65)) as `0x${string}`;
+
+// Настоящий чек-суммленный адрес (как отдаёт useAccount()/getAddress()), а не
+// строчными буквами вручную — правило проекта, купленное находкой «650
+// зелёных тестов означали нерабочий вход» (адрес в заготовке был не той формы,
+// какую реально отдаёт кошелёк).
+const DEAL = getAddress('0x1234567890123456789012345678901234567890') as `0x${string}`;
+
+async function actors() {
+  const [bob, alice, eve] = await Promise.all([
+    deriveChatKeypair(SIG_BOB),
+    deriveChatKeypair(SIG_ALICE),
+    deriveChatKeypair(SIG_EVE),
+  ]);
+  return { bob, alice, eve };
+}
+
+/**
+ * Собирает конверт вручную из тех же кирпичей, что и `packEnvelope` (версия
+ * 1, `sealForRecipient` дважды, AES-256-GCM), но берёт СЫРОЙ JSON-текст
+ * как есть — включая формы, которые `ChatPayload` в TypeScript никогда не
+ * пропустил бы. Нужен ровно для одного класса тестов: по сети прислать
+ * произвольный JSON внутри честно запечатанного конверта может кто угодно,
+ * у кого есть открытый ключ получателя — `packEnvelope` типами этого не
+ * ловит (мусор рождается не на нашей стороне), а `unpackEnvelope` обязан.
+ */
+async function buildRawEnvelope(
+  jsonText: string,
+  recipientPub: Uint8Array,
+  ownPub: Uint8Array,
+): Promise<Uint8Array> {
+  const oneTimeKey = crypto.getRandomValues(new Uint8Array(32));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, new TextEncoder().encode(jsonText)),
+  );
+  const sealedA = await sealForRecipient(recipientPub, oneTimeKey);
+  const sealedB = await sealForRecipient(ownPub, oneTimeKey);
+  const out = new Uint8Array(1 + sealedA.length + sealedB.length + iv.length + ciphertext.length);
+  out[0] = 1;
+  out.set(sealedA, 1);
+  out.set(sealedB, 1 + sealedA.length);
+  out.set(iv, 1 + sealedA.length + sealedB.length);
+  out.set(ciphertext, 1 + sealedA.length + sealedB.length + iv.length);
+  return out;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('packEnvelope / unpackEnvelope', () => {
+  it('получатель вскрывает, содержимое совпадает', async () => {
+    const { bob, alice } = await actors();
+    const payload: ChatPayload = {
+      text: 'бриф: лендинг',
+      dealId: DEAL,
+      file: {
+        url: 'https://relayer.example/files/abc',
+        name: 'скан.pdf',
+        size: 123456,
+        keyHex: 'ab'.repeat(32),
+        ivHex: 'cd'.repeat(12),
+      },
+    };
+    const env = await packEnvelope(payload, bob.publicKey, alice.publicKey);
+    // Вопрос 2 отчёта («память кончилась на большом вложении»): конверт
+    // несёт только УКАЗАТЕЛЬ на вложение (url/keyHex/ivHex — короткие
+    // строки), не сами байты файла — байты идут отдельным путём
+    // (fileCrypto.ts, чанками по 8 МБ, вообще не через этот модуль). Даже с
+    // заполненным `file` конверт остаётся в единицах КБ, не растёт с
+    // реальным размером файла (1 КБ он или 10 ГБ — для этого модуля разницы нет).
+    expect(env.length).toBeLessThan(1024);
+    const opened = await unpackEnvelope(env, bob);
+    expect(opened).toEqual(payload);
+  });
+
+  it('отправитель вскрывает своё же', async () => {
+    const { bob, alice } = await actors();
+    const payload: ChatPayload = { text: 'моё собственное сообщение — читаю с другого устройства' };
+    const env = await packEnvelope(payload, bob.publicKey, alice.publicKey);
+    const opened = await unpackEnvelope(env, alice);
+    expect(opened).toEqual(payload);
+  });
+
+  it('третий получает null, а не исключение и не мусор', async () => {
+    const { bob, alice, eve } = await actors();
+    const env = await packEnvelope({ text: 'секрет' }, bob.publicKey, alice.publicKey);
+    const opened = await unpackEnvelope(env, eve);
+    expect(opened).toBeNull();
+  });
+
+  describe('испорченный конверт — null; не-Uint8Array — исключение', () => {
+    it('подмена последнего байта (тег GCM) — null получателю, не исключение', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      env[env.length - 1] ^= 0xff;
+      await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+    });
+
+    it('строка вместо байт конверта — исключение (TypeError), не null', async () => {
+      const { bob } = await actors();
+      await expect(
+        unpackEnvelope('не Uint8Array' as unknown as Uint8Array, bob),
+      ).rejects.toThrow(TypeError);
+    });
+
+    it('мусор вместо publicKey своей пары — исключение (TypeError)', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      const broken = { publicKey: 'мусор', privateKey: bob.privateKey } as unknown as ChatKeypair;
+      await expect(unpackEnvelope(env, broken)).rejects.toThrow(TypeError);
+    });
+
+    it('мусор вместо privateKey своей пары — исключение (TypeError)', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      const broken = { publicKey: bob.publicKey, privateKey: 'мусор' } as unknown as ChatKeypair;
+      await expect(unpackEnvelope(env, broken)).rejects.toThrow(TypeError);
+    });
+  });
+
+  it('метка сделки не встречается в байтах конверта', async () => {
+    const { bob, alice } = await actors();
+    const env = await packEnvelope({ text: 'привет', dealId: DEAL }, bob.publicKey, alice.publicKey);
+    const hay = Buffer.from(env).toString('hex');
+    expect(hay).not.toContain(DEAL.slice(2).toLowerCase());
+  });
+
+  it('подмена одного байта даёт null, а не искажённое содержимое', async () => {
+    const { bob, alice } = await actors();
+    const payload: ChatPayload = { text: 'важное сообщение о сумме перевода' };
+    const env = await packEnvelope(payload, bob.publicKey, alice.publicKey);
+    // Байт внутри шифротекста (не в байте версии и не в длине) — 90% пути.
+    const idx = Math.floor(env.length * 0.9);
+    env[idx] ^= 0x01;
+    const opened = await unpackEnvelope(env, bob);
+    // Не просто null — а именно НЕ объект с испорченным text (доказывает,
+    // что AES-GCM аутентификация отвергает целиком, а не отдаёт огрызок).
+    expect(opened).toBeNull();
+    expect(opened).not.toEqual(payload);
+  });
+
+  describe('размер', () => {
+    it('конверт с пустым текстом влезает в разумные сотни байт, не килобайты', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({ text: '' }, bob.publicKey, alice.publicKey);
+      expect(env.length).toBeLessThan(512);
+      // Не подозрительно маленький — там реально два запечатанных 80-байтных
+      // слота плюс IV плюс тег GCM, даже для пустого текста.
+      expect(env.length).toBeGreaterThan(150);
+    });
+
+    it('пустой payload ({}) тоже проходит круг', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({}, bob.publicKey, alice.publicKey);
+      const opened = await unpackEnvelope(env, bob);
+      expect(opened).toEqual({});
+    });
+  });
+
+  describe('версия и структура — незнакомый/повреждённый конверт не роняет разбор', () => {
+    it('неизвестный байт версии — null, не исключение', async () => {
+      const { bob, alice } = await actors();
+      const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      env[0] = 99;
+      await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+    });
+
+    it('пустой Uint8Array — null, не исключение', async () => {
+      const { bob } = await actors();
+      await expect(unpackEnvelope(new Uint8Array(0), bob)).resolves.toBeNull();
+    });
+
+    it('обрубленный конверт (короче заголовка) — null, не исключение', async () => {
+      const { bob } = await actors();
+      await expect(unpackEnvelope(new Uint8Array(10), bob)).resolves.toBeNull();
+    });
+
+    it('случайный мусор ровно на границе заголовка — null, не исключение', async () => {
+      const { bob } = await actors();
+      const junk = crypto.getRandomValues(new Uint8Array(173));
+      junk[0] = 1; // подделаем правильную версию, остальное — мусор
+      await expect(unpackEnvelope(junk, bob)).resolves.toBeNull();
+    });
+  });
+
+  it('вопрос 3 отчёта: два конверта пакуются ОДНОВРЕМЕННО — разовые ключи и содержимое не путаются', async () => {
+    const { bob, alice } = await actors();
+    const [envA, envB] = await Promise.all([
+      packEnvelope({ text: 'первое' }, bob.publicKey, alice.publicKey),
+      packEnvelope({ text: 'второе' }, bob.publicKey, alice.publicKey),
+    ]);
+    // Разные разовые ключи ⇒ разные конверты даже при близких по смыслу payload.
+    expect(Buffer.from(envA).toString('hex')).not.toBe(Buffer.from(envB).toString('hex'));
+    const [openedA, openedB] = await Promise.all([
+      unpackEnvelope(envA, bob),
+      unpackEnvelope(envB, bob),
+    ]);
+    expect(openedA).toEqual({ text: 'первое' });
+    expect(openedB).toEqual({ text: 'второе' });
+  });
+
+  it('вопрос 5 отчёта: раздутый конверт отклоняется БЕЗ попытки расшифровать (не только null, а именно отказ до дорогой операции)', async () => {
+    const { bob, alice } = await actors();
+    // Слоты запечатывания — НАСТОЯЩИЕ (валидный конверт от packEnvelope),
+    // а раздутость — в хвосте после них. Так тест ловит именно отсутствие
+    // потолка по размеру, а не побочный эффект «мусорные слоты и так не
+    // открылись бы»: с валидными слотами, но БЕЗ потолка, функция дошла бы
+    // до crypto.subtle.decrypt (и там честно провалилась бы на несходящемся
+    // теге) — потолок обязан отсечь это РАНЬШЕ, до самой попытки.
+    const decryptSpy = vi.spyOn(crypto.subtle, 'decrypt');
+    const validEnv = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+    const huge = new Uint8Array(validEnv.length + 6 * 1024 * 1024); // > 1 МиБ предела
+    huge.set(validEnv, 0);
+    const opened = await unpackEnvelope(huge, bob);
+    expect(opened).toBeNull();
+    expect(decryptSpy).not.toHaveBeenCalled();
+  });
+
+  it('мусор внутри полей расшифрованного payload — null для каждой формы, ни разу не искажённые поля и не исключение', async () => {
+    const { bob, alice } = await actors();
+    const badShapes = [
+      '{"text": 123}',                                                                    // text не строка
+      '{"dealId": "не-hex-совсем"}',                                                       // dealId неправильной формы
+      '{"dealId": "0x1234"}',                                                              // dealId слишком короткий
+      '{"file": {"url": 1, "name": "a", "size": "big", "keyHex": "x", "ivHex": "y"}}',      // поля file не той формы
+      '{"file": {"url": "u", "name": "n"}}',                                               // file без обязательных полей
+      'не json вовсе {{{',                                                                  // невалидный JSON целиком
+      '[1,2,3]',                                                                            // валидный JSON, но не объект
+      'null',                                                                               // валидный JSON null
+      '"просто строка"',                                                                    // валидный JSON, но не объект
+    ];
+    for (const shape of badShapes) {
+      const env = await buildRawEnvelope(shape, bob.publicKey, alice.publicKey);
+      await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+    }
+  });
+
+  it('незнакомое дополнительное поле в payload переживает разбор — задел на будущее расширение формата', async () => {
+    const { bob, alice } = await actors();
+    // `replyTo` — гипотетическое поле будущей версии, которого ChatPayload
+    // сегодня не знает. unpackEnvelope не обязан его понимать, но не должен
+    // молча стирать: тот же урок, что был куплен в Задаче 2 (справочник
+    // ключей стирал незнакомые поля при перезаписи).
+    const raw = JSON.stringify({ text: 'привет', replyTo: 'msg-42' });
+    const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+    const opened = await unpackEnvelope(env, bob);
+    expect(opened).toEqual({ text: 'привет', replyTo: 'msg-42' });
+  });
+});
