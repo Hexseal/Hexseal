@@ -111,6 +111,39 @@ describe('packEnvelope / unpackEnvelope', () => {
     expect(opened).toEqual(payload);
   });
 
+  it('мелочь ревью (закрывающий круг): перестановка слотов местами при записи не меняет результат разбора ни для одной стороны', async () => {
+    // Докстринг файла заявляет "подмена местами двух слотов при записи не
+    // меняет результат разбора ни для кого (отчёт задачи проверяет это
+    // явно, а не оставляет предположением)" — но явного теста на это в
+    // наборе не было (свойство проверялось только вручную, мутацией, в
+    // отчёте, не запертым автоматическим тестом). Здесь — прямая проверка:
+    // конверт собран вручную с ОБРАТНЫМ порядком слотов (сначала "свой",
+    // потом "получателя" — наоборот обычного, где packEnvelope пишет
+    // сначала получателя). Обе стороны обязаны прочитать одинаково.
+    const { bob, alice } = await actors();
+    const payload: ChatPayload = { text: 'слоты переставлены местами' };
+    const oneTimeKey = crypto.getRandomValues(new Uint8Array(32));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sealedOwnFirst = await sealForRecipient(alice.publicKey, oneTimeKey);       // обычно здесь получатель
+    const sealedRecipientSecond = await sealForRecipient(bob.publicKey, oneTimeKey);  // обычно здесь свой
+    const header = new Uint8Array(173);
+    header[0] = 1;
+    header.set(sealedOwnFirst, 1);
+    header.set(sealedRecipientSecond, 81);
+    header.set(iv, 161);
+    const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+    const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
+    const ciphertext = new Uint8Array(
+      await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: header }, cryptoKey, plaintext),
+    );
+    const env = new Uint8Array(173 + ciphertext.length);
+    env.set(header, 0);
+    env.set(ciphertext, 173);
+
+    expect(await unpackEnvelope(env, bob)).toEqual(payload);
+    expect(await unpackEnvelope(env, alice)).toEqual(payload);
+  });
+
   it('третий получает null, а не исключение и не мусор', async () => {
     const { bob, alice, eve } = await actors();
     const env = await packEnvelope({ text: 'секрет' }, bob.publicKey, alice.publicKey);
@@ -231,6 +264,26 @@ describe('packEnvelope / unpackEnvelope', () => {
       const hugeText = 'a'.repeat(MAX_ENVELOPE_BYTES); // заведомо превышает: overhead конверта ещё +189 байт
       await expect(packEnvelope({ text: hugeText }, bob.publicKey, alice.publicKey))
         .rejects.toThrow(/payload too large/);
+    });
+
+    it('мелочь ревью (закрывающий круг): отказ реально ДО крипто-работы — ни один примитив не вызван, не просто "в итоге бросает"', async () => {
+      // Докстринг заявляет "зовётся ДО какой-либо криптографической
+      // работы" — но перенос вызова ЗА запечатывание (после
+      // sealForRecipient/crypto.subtle.encrypt, всё ещё до return) дал бы
+      // тот же итоговый бросок и ту же ошибку, и тест "бросает" выше
+      // остался бы зелёным, ничего не заметив. Здесь — проверка САМОГО
+      // факта экономии: ни sealForRecipient, ни crypto.subtle.encrypt/
+      // importKey не вызваны вовсе на заведомо большом payload.
+      const { bob, alice } = await actors();
+      const sealSpy = vi.spyOn(chatCryptoModule, 'sealForRecipient');
+      const encryptSpy = vi.spyOn(crypto.subtle, 'encrypt');
+      const importKeySpy = vi.spyOn(crypto.subtle, 'importKey');
+      const hugeText = 'a'.repeat(MAX_ENVELOPE_BYTES);
+      await expect(packEnvelope({ text: hugeText }, bob.publicKey, alice.publicKey))
+        .rejects.toThrow(/payload too large/);
+      expect(sealSpy.mock.calls.length).toBe(0);
+      expect(encryptSpy.mock.calls.length).toBe(0);
+      expect(importKeySpy.mock.calls.length).toBe(0);
     });
 
     it('текст чуть МЕНЬШЕ потолка — проходит круг как обычно, не ложный отказ', async () => {
