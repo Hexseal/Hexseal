@@ -405,6 +405,31 @@ describe('отказ склада различается кодом, а не а�
     expect(seen.map(s => s.code)).toEqual(CASES.map(c => c.code));
     expect(new Set(seen.map(s => s.code)).size).toBe(6);
   }, 30_000);
+
+  it('ЗАМЕР: только что отправленное — НЕ «дошло», пока склад не подтвердил', async () => {
+    // Пойман мутацией, а не рассуждением: `delivered: true` на возврате
+    // `send()` проходил все замки зелёным. Галочка «дошло» по факту успешной
+    // ОТПРАВКИ обещает за собеседника — мешок лежит на складе, забрал он его
+    // или нет, мы в этот момент не знаем и знать не можем.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const { fetchMock } = fakeRelayer({
+      bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: null,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: () => {}, onError: () => {}, sleep: async () => new Promise(() => {}),
+    });
+    try {
+      const sent = await engine.send({ text: 'только что' });
+      expect(sent.delivered).toBe(false);
+      expect(sent.isFromMe).toBe(true);
+    } finally {
+      engine.stop();
+    }
+  }, 20_000);
 });
 
 /* ─────────────── слишком длинное — отказ ДО отправки ──────────────────── */
@@ -464,4 +489,137 @@ describe('пришёл мусор — вердикт, а не падение', (
     expect(last.messages.map(m => m.text)).toEqual(['целое']);
     expect(last.troubles.length).toBeGreaterThan(0);
   }, 20_000);
+});
+
+/* ────────── В-4/В-5: два видимых поля, не запертых ничем ────────── */
+
+describe('поля, которые человек видит глазами', () => {
+  it('ЗАМЕР (В-4): «это моё сообщение» отличает своё от чужого — 1 своё, 1 чужое', async () => {
+    // Самое заметное поле панели (пузырь слева или справа) в первой версии
+    // моих тестов не наблюдалось НИ РАЗУ: мутация «всегда ложь» давала 0
+    // красных. Независимая проверка нашла это раньше меня.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const bags = await buildBags(bob, BOB, alice.keypair.publicKey, ['от Боба']);
+    const { fetchMock } = fakeRelayer({
+      bags, peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const states: PairChatState[] = [];
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: (s) => { states.push(s); }, onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
+    try {
+      await waitFor(() => states.length > 0 && states[states.length - 1].messages.length === 1);
+      await engine.send({ text: 'от Алисы' });
+      await waitFor(() => states[states.length - 1].messages.length === 2);
+
+      const last = states[states.length - 1].messages;
+      const mine = last.filter(m => m.isFromMe);
+      const theirs = last.filter(m => !m.isFromMe);
+      expect(mine.map(m => m.text)).toEqual(['от Алисы']);
+      expect(theirs.map(m => m.text)).toEqual(['от Боба']);
+      expect(mine[0].from).toBe(ALICE.toLowerCase());
+      expect(theirs[0].from).toBe(BOB.toLowerCase());
+    } finally {
+      engine.stop();
+    }
+  }, 30_000);
+
+  it('ЗАМЕР (В-5): галочка «дошло» НЕ пропадает, когда склад перестал о ней рассказывать', async () => {
+    // Собственная шапка описывала именно этот регресс («галочка пропадала бы
+    // у старых сообщений»), а мутация «очищать множество перед каждым тиком»
+    // проходила молча. Сервер фильтрует `sent` тем же `since`, что и `inbox`,
+    // значит давняя доставка из ответа СО ВРЕМЕНЕМ УХОДИТ — это не выдумка.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+
+    let sentView: { key: string; recipient: string; uploadedAt: number; fetched: boolean }[] = [];
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const p = u.pathname;
+      if (p === '/keys' && init?.method === 'POST') return new Response('{}', { status: 200 });
+      if (p.startsWith('/keys/')) {
+        return new Response(JSON.stringify({ boxKey: hexOf(bob.keypair.publicKey) }), { status: 200 });
+      }
+      if (p === '/bags' && (init?.method ?? 'GET') === 'GET') {
+        return new Response(JSON.stringify({ inbox: [], sent: sentView, peers: [] }), { status: 200 });
+      }
+      if (init?.method === 'PUT') return new Response(JSON.stringify({ key: 'a/1' }), { status: 200 });
+      return new Response('{}', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const states: PairChatState[] = [];
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: (s) => { states.push(s); }, onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
+    try {
+      await waitFor(() => states.length > 0);
+      await engine.send({ text: 'моё' });
+
+      // 1) склад ещё не отдавал мешок собеседнику
+      sentView = [{ key: 'a/1', recipient: BOB.toLowerCase(), uploadedAt: 1, fetched: false }];
+      await waitFor(() => states[states.length - 1].messages.length === 1);
+      const before = states.length;
+      await waitFor(() => states.length > before);
+      expect(states[states.length - 1].messages[0].delivered).toBe(false);
+
+      // 2) забрал — галочка появилась
+      sentView = [{ key: 'a/1', recipient: BOB.toLowerCase(), uploadedAt: 1, fetched: true }];
+      await waitFor(() => states[states.length - 1].messages[0].delivered === true);
+
+      // 3) курсор уехал, склад больше про этот мешок не рассказывает —
+      //    галочка обязана ОСТАТЬСЯ.
+      sentView = [];
+      const mark = states.length;
+      await waitFor(() => states.length > mark + 2);
+      expect(states[states.length - 1].messages[0].delivered).toBe(true);
+    } finally {
+      engine.stop();
+    }
+  }, 30_000);
+
+  it('ЗАМЕР: список переписок получает сигнал о НОВОМ входящем и не получает на тихом тике', async () => {
+    // Мелочь независимой проверки, но заметная глазами: событие
+    // `hexseal-conv-update` слали только те два файла XMTP, которые сносит
+    // задача 7. Без него мгновенное обновление списка вырождалось в тридцать
+    // секунд ожидания.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const all = await buildBags(bob, BOB, alice.keypair.publicKey, ['раз', 'два']);
+    const bags = [all[0]];
+    const { fetchMock } = fakeRelayer({
+      bags, peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    let signals = 0;
+    const states: PairChatState[] = [];
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: (s) => { states.push(s); }, onError: () => {},
+      onIncoming: () => { signals++; },
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
+    try {
+      await waitFor(() => signals === 1);
+      const quiet = states.length;
+      await waitFor(() => states.length > quiet + 3);
+      expect(signals).toBe(1);          // тихие тики сигнала не дают
+
+      bags.push(all[1]);                 // приехало второе
+      await waitFor(() => signals === 2);
+      expect(signals).toBe(2);
+    } finally {
+      engine.stop();
+    }
+  }, 30_000);
 });
