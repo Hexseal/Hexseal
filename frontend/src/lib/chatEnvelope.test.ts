@@ -3,7 +3,8 @@ import { getAddress } from 'viem';
 import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCrypto';
 import * as chatCryptoModule from './chatCrypto';
 import {
-  packEnvelope, unpackEnvelope, assertSealedKeyLength, assertOneTimeKeyLength, MAX_ENVELOPE_BYTES, type ChatPayload,
+  packEnvelope, unpackEnvelope, assertSealedKeyLength, assertOneTimeKeyLength, stripDangerousKeys,
+  MAX_ENVELOPE_BYTES, type ChatPayload,
 } from './chatEnvelope';
 
 // Подписи разной формы — тот же приём, что в chatCrypto.test.ts (SIG_A/SIG_B):
@@ -398,8 +399,6 @@ describe('packEnvelope / unpackEnvelope', () => {
     const { bob, alice } = await actors();
     const badShapes = [
       '{"text": 123}',                                                                    // text не строка
-      '{"dealId": "не-hex-совсем"}',                                                       // dealId без префикса 0x
-      '{"dealId": 12345}',                                                                 // dealId не строка вовсе
       '{"file": {"url": 1, "name": "a", "size": "big", "keyHex": "x", "ivHex": "y"}}',      // поля file не той формы
       '{"file": {"url": "u", "name": "n"}}',                                               // file без обязательных полей
       'не json вовсе {{{',                                                                  // невалидный JSON целиком
@@ -413,22 +412,45 @@ describe('packEnvelope / unpackEnvelope', () => {
     }
   });
 
-  it('мелочь ревью: dealId непривычной формы (не сегодняшний адрес) переживает разбор — та же дисциплина, что незнакомые поля', async () => {
-    // Найдено ревью: строгая проверка формы (ровно 40 hex-символов адреса)
-    // роняла бы ВСЁ сообщение целиком, если однажды метка сделки сменит
-    // форму (например, на другой тип идентификатора) — противоречит
-    // соседнему правилу «незнакомое поле не повод отказывать» (см. тест
-    // ниже про replyTo). Разница в том, что dealId — ЗНАКОМОЕ поле с
-    // подвижной формой, а не незнакомое поле целиком; тест ниже подтверждает,
-    // что дисциплина одна и та же и для этого случая: текст выживает, даже
-    // если метка не в сегодняшнем формате адреса (66-символьная bytes32-
-    // подобная строка — правдоподобный вид будущей формы).
-    const { bob, alice } = await actors();
-    const futureDealId = '0x' + 'ab'.repeat(32); // 64 hex-символа — не сегодняшние 40
-    const raw = JSON.stringify({ text: 'привет', dealId: futureDealId });
-    const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
-    const opened = await unpackEnvelope(env, bob);
-    expect(opened).toEqual({ text: 'привет', dealId: futureDealId });
+  describe('dealId — форма проверяется ПОЛНОСТЬЮ, но при несовпадении отбрасывается ТОЛЬКО ПОЛЕ (исправлено после ревью)', () => {
+    // Прошлое решение (мелочь раунда 2, ослабленная проверка — только
+    // префикс 0x) было признано ошибочным ревью координатора: внутрь
+    // проезжали `0x`, `0xZZZZ`, строка на сто тысяч символов,
+    // `0x../../../../storage/files`, разметка, нулевой байт — сегодня
+    // безопасно (модуль ещё никем не подключён), но ЭТА строка станет
+    // частью адреса запроса на странице арбитра и ключом хранилища при
+    // подключении (docs/superpowers/specs/2026-08-06-chat-client-design.md,
+    // план 4). Правильная форма — И строгая проверка (префикс + 40
+    // hex-символов), И отбрасывание только поля при несовпадении (не всего
+    // сообщения) — тогда подстановка невозможна, а смена формата в будущем
+    // не съедает переписку.
+    const DEAL = getAddress('0x1234567890123456789012345678901234567890') as `0x${string}`;
+
+    it('валидный dealId (0x + 40 hex) сохраняется как есть', async () => {
+      const { bob, alice } = await actors();
+      const raw = JSON.stringify({ text: 'привет', dealId: DEAL });
+      const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+      const opened = await unpackEnvelope(env, bob);
+      expect(opened).toEqual({ text: 'привет', dealId: DEAL });
+    });
+
+    it.each([
+      ['голый префикс без байт', '0x'],
+      ['невалидные hex-символы', '0xZZZZ00000000000000000000000000000000'],
+      ['строка на 100 000 символов', '0x' + 'a'.repeat(100_000)],
+      ['попытка подмены пути (обход хранилища/маршрута арбитра)', '0x../../../../storage/files'],
+      ['HTML/разметка', '0x<script>alert(1)</script>0000000000000'],
+      ['нулевой байт внутри строки', '0x1234567890123456789012345678901234\x0000'],
+      ['короче формы (39 hex)', '0x123456789012345678901234567890123456789'],
+      ['длиннее формы (41 hex)', '0x12345678901234567890123456789012345678901'],
+      ['не строка вовсе', 12345],
+    ])('%s — отбрасывается ТОЛЬКО dealId, текст сообщения выживает', async (_label, badDealId) => {
+      const { bob, alice } = await actors();
+      const raw = JSON.stringify({ text: 'привет', dealId: badDealId });
+      const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+      const opened = await unpackEnvelope(env, bob);
+      expect(opened).toEqual({ text: 'привет' }); // dealId отсутствует, text цел
+    });
   });
 
   it('незнакомое дополнительное поле в payload переживает разбор — задел на будущее расширение формата', async () => {
@@ -441,6 +463,59 @@ describe('packEnvelope / unpackEnvelope', () => {
     const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
     const opened = await unpackEnvelope(env, bob);
     expect(opened).toEqual({ text: 'привет', replyTo: 'msg-42' });
+  });
+
+  describe('В-7 (ревью координатора): опасные имена ключей (__proto__ и т.п.) не проезжают насквозь', () => {
+    // Контраст с тестом выше: НЕЗНАКОМЫЕ поля переживают разбор (задел на
+    // будущее расширение) — но ОПАСНЫЕ имена ключей не должны, даже если
+    // формально они тоже «незнакомое поле». JSON.parse НЕ трогает реальный
+    // [[Prototype]] объекта (`__proto__` в JSON — обычное СВОЁ свойство, не
+    // спецсимвол литерала) — прототип модуля не загрязняется сам по себе,
+    // но политика «незнакомое не стираем» сохраняла бы это свойство готовым
+    // отравить цель у БУДУЩЕГО потребителя, который сольёт payload с
+    // умолчаниями (`{...defaults, ...payload}`/`Object.assign`). Потребителя
+    // сегодня нет — чиним сейчас, пока цена нулевая.
+
+    it('stripDangerousKeys (изолированно): __proto__/constructor/prototype вычищены рекурсивно, безопасные поля целы', () => {
+      // ВАЖНО: собран через JSON.parse, не объектным литералом — литерал
+      // `{__proto__: x}` в самом JS-исходнике СПЕЦИАЛЬНО обрабатывается
+      // движком и меняет реальный [[Prototype]] объекта (тогда `__proto__`
+      // вообще не появился бы как СВОЙ ключ, и тест проверял бы не то).
+      // JSON.parse так не делает — `__proto__` в JSON-тексте становится
+      // обычным собственным свойством, это и есть реальная форма угрозы.
+      const input = JSON.parse(
+        '{"text":"привет","__proto__":{"evil":true},' +
+        '"nested":{"constructor":"x","ok":1,"deeper":{"prototype":"y","fine":2}},' +
+        '"list":[{"__proto__":"z","keep":3}]}',
+      );
+      const cleaned = stripDangerousKeys(input) as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(cleaned, '__proto__')).toBe(false);
+      expect(cleaned.text).toBe('привет');
+      const nested = cleaned.nested as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(nested, 'constructor')).toBe(false);
+      expect(nested.ok).toBe(1);
+      const deeper = nested.deeper as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(deeper, 'prototype')).toBe(false);
+      expect(deeper.fine).toBe(2);
+      const list = cleaned.list as Array<Record<string, unknown>>;
+      expect(Object.prototype.hasOwnProperty.call(list[0], '__proto__')).toBe(false);
+      expect(list[0].keep).toBe(3);
+    });
+
+    it('через полный конверт: __proto__ в payload не проезжает, text уцелел, реальный прототип объекта не тронут', async () => {
+      const { bob, alice } = await actors();
+      // __proto__ здесь — обычное СВОЁ свойство JSON-объекта (JSON.parse не
+      // трогает [[Prototype]]), а не попытка реально что-то загрязнить в
+      // ЭТОМ тесте — сама суть находки в том, что оно проезжает НЕЗАМЕЧЕННЫМ
+      // дальше как обычное поле, а не в том, что прототип рушится здесь.
+      const raw = '{"text":"привет","__proto__":{"evil":true}}';
+      const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+      const opened = await unpackEnvelope(env, bob);
+      expect(opened).toEqual({ text: 'привет' });
+      expect(Object.prototype.hasOwnProperty.call(opened, '__proto__')).toBe(false);
+      // Настоящий прототип результата — обычный Object.prototype, не подмена.
+      expect(Object.getPrototypeOf(opened)).toBe(Object.prototype);
+    });
   });
 
   it('мелочь ревью: замок на длину запечатанного слота при сборке реально бросает — проверено изолированно, без подмены chatCrypto.ts целиком', () => {
