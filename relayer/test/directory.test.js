@@ -157,7 +157,7 @@ describe('directory.js — форма и хранение', () => {
     const rec = getKeyRecord(ALICE);
     expect(rec.boxKey).toBe(KEY_B);
     expect(rec.updatedAt).toBe(2000);
-    expect(rec.history).toEqual([{ boxKey: KEY_A, replacedAt: 2000 }]);
+    expect(rec.history).toEqual([{ boxKey: KEY_A, replacedAt: 2000, changed: ["boxKey"] }]);
     expect(rec.keyChangeCount).toBe(1);
   });
 
@@ -177,6 +177,29 @@ describe('directory.js — форма и хранение', () => {
     expect(rec.updatedAt).toBe(1000); // НЕ 5000
   });
 
+  // Мелочь (ревью координатора, round 3): байт-в-байт идентичная повторная
+  // регистрация раньше ВСЁ РАВНО переписывала весь файл целиком — 15,5мс
+  // вхолостую при 20 000 адресов (пункт 31 docs/OPEN-ITEMS.md), а клиент
+  // чата будет слать свой ключ при КАЖДОМ запуске сеанса (lib/chatSession.ts,
+  // Задача 4) — усиление пункта 31 обычным пользованием, без единого
+  // нападающего. Тест выше проверяет ТОЛЬКО итог (history/keyChangeCount/
+  // updatedAt не сдвинулись) — итог совпал бы и при полной перезаписи тем
+  // же содержимым. Этот тест проверяет само ДЕЙСТВИЕ: диск не тронут вовсе.
+  it('байт-в-байт идентичная повторная регистрация не пишет на диск вообще', () => {
+    putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 1000);
+
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    const renameSpy = vi.spyOn(fs, 'renameSync');
+    try {
+      putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 5000);
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(renameSpy).not.toHaveBeenCalled();
+    } finally {
+      writeSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+  });
+
   it('signKey необязателен: putKey без него оставляет поле отсутствующим', () => {
     const stored = putKey(ALICE, { boxKey: KEY_A }, 1000);
     expect(stored.signKey).toBeUndefined();
@@ -192,16 +215,45 @@ describe('directory.js — форма и хранение', () => {
     expect(getKeyRecord(ALICE).signKey).toBe(SIGN_A);
   });
 
-  it('смена ТОЛЬКО signKey (boxKey тот же) не создаёт запись в истории, не двигает updatedAt/keyChangeCount', () => {
+  // И-2 (ревью координатора, round 3): раньше история отслеживала ТОЛЬКО
+  // boxKey — эта версия теста запирала потерю как правильное поведение
+  // (координатор, дословно: "тест directory.test.js:195 запирает потерю
+  // как правильное поведение"). Замер координатора: смена signKey трижды
+  // при неизменном boxKey — history пуста, keyChangeCount ноль, признака
+  // обрезки нет, прежний signKey стёрт с диска бесследно. Ровно тот ключ,
+  // ради проверки которого история и заводится — переписано на верное
+  // поведение: смена ЛЮБОГО из двух ключей создаёт звено, и в звене видно,
+  // какой именно сменился (`changed`).
+  it('смена ТОЛЬКО signKey (boxKey тот же) СОЗДАЁТ звено истории, двигает updatedAt/keyChangeCount, звено называет signKey', () => {
     putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 1000);
     putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_B }, 5000);
 
     const rec = getKeyRecord(ALICE);
     expect(rec.signKey).toBe(SIGN_B);
     expect(rec.boxKey).toBe(KEY_A);
-    expect(rec.history).toEqual([]);
-    expect(rec.keyChangeCount).toBe(0);
-    expect(rec.updatedAt).toBe(1000);
+    // Прежний signKey НЕ потерян — уцелел в звене истории.
+    expect(rec.history).toEqual([{ boxKey: KEY_A, signKey: SIGN_A, replacedAt: 5000, changed: ['signKey'] }]);
+    expect(rec.keyChangeCount).toBe(1);
+    expect(rec.updatedAt).toBe(5000);
+  });
+
+  it('смена ОБОИХ ключей одним вызовом — одно звено, changed называет оба', () => {
+    putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B, signKey: SIGN_B }, 5000);
+
+    const rec = getKeyRecord(ALICE);
+    expect(rec.history).toEqual([{ boxKey: KEY_A, signKey: SIGN_A, replacedAt: 5000, changed: ['boxKey', 'signKey'] }]);
+    expect(rec.keyChangeCount).toBe(1); // один вызов — одно событие, не два
+    expect(rec.updatedAt).toBe(5000);
+  });
+
+  it('смена только boxKey — звено называет только boxKey, не signKey (тот не менялся)', () => {
+    putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B, signKey: SIGN_A }, 5000); // signKey тот же, повторно передан
+
+    const rec = getKeyRecord(ALICE);
+    expect(rec.history).toEqual([{ boxKey: KEY_A, signKey: SIGN_A, replacedAt: 5000, changed: ['boxKey'] }]);
+    expect(rec.keyChangeCount).toBe(1);
   });
 
   it.each([
@@ -255,7 +307,7 @@ describe('directory.js — форма и хранение', () => {
 
     const rec = getKeyRecord(ALICE);
     expect(rec.boxKey).toBe(KEY_B);
-    expect(rec.history).toEqual([{ boxKey: KEY_A, replacedAt: 2000 }]);
+    expect(rec.history).toEqual([{ boxKey: KEY_A, replacedAt: 2000, changed: ["boxKey"] }]);
     expect(rec.keyChangeCount).toBe(1);
   });
 
@@ -323,6 +375,22 @@ describe('directory.js — форма и хранение', () => {
 
     const rec = getKeyRecord(ALICE);
     expect(rec.history[0].boxKey).toBe(KEY_A);
+  });
+
+  // Тот же класс дыры на один уровень глубже (И-2, round 3, `changed` —
+  // новое поле, найдено и закрыто самостоятельно, не отдельная находка
+  // ревью): `{...h}` копирует звено, но НЕ содержимое вложенного массива
+  // `changed` — без отдельного клонирования мутация ВЛОЖЕННОГО массива
+  // возвращённого звена тоже портила бы состояние модуля исподтишка.
+  it('деep-копия: вложенный массив changed в звене истории тоже не разделяется с модулем', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B }, 2000);
+
+    const rec = getKeyRecord(ALICE);
+    rec.history[0].changed.push('лишнее');
+
+    const rec2 = getKeyRecord(ALICE);
+    expect(rec2.history[0].changed).toEqual(['boxKey']);
   });
 
   // И-1 (ревью координатора, round 2, вторая половина находки — целиком
@@ -403,6 +471,27 @@ describe('directory.js — форма и хранение', () => {
     expect(rec.history.length).toBe(4);
     expect(rec.keyChangeCount).toBe(9); // счётчик НЕ обрезается никогда
     expect(rec.historyTruncated).toBe(true);
+  });
+
+  // И-2 (round 3): `changed` — новое поле звена, необязательное на загрузке
+  // намеренно (та же вперёд/назад-совместимость, что И-1 уже устанавливает
+  // для формы записи целиком) — звено, записанное ДО этого поля (та же
+  // ветка разработки, до этого самого раунда), не должно отбрасываться как
+  // повреждённое только за его отсутствие.
+  it('звено истории БЕЗ поля changed (более старая запись) загружается нормально, не отбрасывается', () => {
+    fs.mkdirSync(path.dirname(directory.DIRECTORY_FILE), { recursive: true });
+    fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify({
+      [ALICE]: {
+        v: 1, boxKey: KEY_B, updatedAt: 2000, keyChangeCount: 1,
+        history: [{ boxKey: KEY_A, replacedAt: 2000 }], // без changed
+      },
+    }), 'utf8');
+    _loadDirectory();
+
+    expect(isDirectoryHealthy()).toBe(true);
+    const rec = getKeyRecord(ALICE);
+    expect(rec.boxKey).toBe(KEY_B);
+    expect(rec.history).toEqual([{ boxKey: KEY_A, replacedAt: 2000 }]);
   });
 });
 
@@ -669,7 +758,7 @@ describe('POST /keys — правило 3: замена разрешена, ст
     const read = await getKeys(address);
     expect(read.status).toBe(200);
     expect(read.body.boxKey).toBe(KEY_B);
-    expect(read.body.history).toEqual([{ boxKey: KEY_A, replacedAt: expect.any(Number) }]);
+    expect(read.body.history).toEqual([{ boxKey: KEY_A, replacedAt: expect.any(Number), changed: ["boxKey"] }]);
     expect(read.body.keyChangeCount).toBe(1);
     expect(read.body.historyTruncated).toBe(false);
   });

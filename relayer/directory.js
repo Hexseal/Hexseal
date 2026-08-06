@@ -164,11 +164,23 @@ function _isValidKeyHex(v) {
   return typeof v === 'string' && KEY_HEX_RE.test(v) && !ALL_ZERO_KEY_RE.test(v);
 }
 
+// `changed` — И-2 (ревью координатора, round 3): необязательное на ЗАГРУЗКЕ
+// (не гейтится строго) — записи, созданные ДО этого поля (та же ветвь
+// разработки, до этого самого раунда), не отбрасываются как повреждённые
+// только за его отсутствие; то же вперёд/назад-совместимое чтение, что
+// И-1 уже устанавливает для формы записи в целом. Если поле присутствует,
+// форма проверяется: массив из известных имён, не что попало.
+const HISTORY_CHANGED_VALUES = new Set(['boxKey', 'signKey']);
+
 function _isValidHistoryEntry(h) {
   if (!h || typeof h !== 'object' || Array.isArray(h)) return false;
   if (!_isValidKeyHex(h.boxKey)) return false;
   if (typeof h.replacedAt !== 'number' || !Number.isFinite(h.replacedAt)) return false;
   if (h.signKey !== undefined && !_isValidKeyHex(h.signKey)) return false;
+  if (h.changed !== undefined) {
+    if (!Array.isArray(h.changed)) return false;
+    if (!h.changed.every((c) => HISTORY_CHANGED_VALUES.has(c))) return false;
+  }
   return true;
 }
 
@@ -399,9 +411,18 @@ function _assertKeyHexInput(fieldName, value) {
 // getKeyRecord() раньше отдавала history.slice() — новый МАССИВ, но те же
 // ОБЪЕКТЫ-звенья, что лежат в _directory. Вызывающий код, случайно
 // мутировавший одно поле одного звена возвращённой записи, менял бы
-// состояние модуля исподтишка, без единого явного putKey().
+// состояние модуля исподтишка, без единого явного putKey(). `changed`
+// (И-2, round 3) — тот же класс дыры на один уровень глубже: `{...h}`
+// копирует звено, но НЕ содержимое вложенного массива `changed` — без
+// отдельного клонирования вызывающий код, сделавший
+// `record.history[0].changed.push(...)`, менял бы массив, на который
+// module по-прежнему ссылается. Самостоятельно найдено и закрыто здесь же
+// (не отдельная находка ревью) — тот же приём, применённый к новому полю
+// сразу, а не задним числом.
 function _cloneHistoryEntry(h) {
-  return { ...h };
+  const clone = { ...h };
+  if (Array.isArray(h.changed)) clone.changed = [...h.changed];
+  return clone;
 }
 
 // historyTruncated — И-2, третья часть находки: если keyChangeCount больше
@@ -428,22 +449,29 @@ function _cloneRecordForCaller(address, rec) {
  * своих.
  *
  * `keys.boxKey` обязателен. `keys.signKey` необязателен (пока всегда
- * отсутствует — см. докстринг файла) — если передан, сохраняется рядом, но
- * НЕ считается сменой сам по себе: history/keyChangeCount/updatedAt следят
- * только за `boxKey`, потому что именно он определяет, какие сообщения
- * читаются (правило 3 брифа — "переписка станет нечитаемой" относится к
- * запечатыванию, не к подписи). Если у Задачи 5 окажется, что смена
- * signKey тоже должна двигать historyу — это отдельное решение, не взятое
- * здесь по умолчанию.
+ * отсутствует — см. докстринг файла) — если передан, сохраняется рядом.
  *
- * Смена boxKey (новое значение отличается от текущего) уносит СТАРЫЙ в
- * `history` (срез до MAX_KEY_HISTORY последних, правило 3) и увеличивает
- * `keyChangeCount` — этот счётчик НЕ обрезается никогда, переживает любой
- * потолок истории. Повторная отправка ТОГО ЖЕ boxKey — не смена: history и
- * keyChangeCount не растут, `updatedAt` НЕ двигается (И-2, находка
- * координатора: если бы двигался, "с какого момента ключ действует" было
- * бы невосстановимо для адреса, который вообще никогда не менял ключ, —
- * observer видел бы только "недавно", даже если это неправда).
+ * Смена ЛЮБОГО из двух ключей (новое значение отличается от текущего)
+ * уносит СТАРУЮ пару в `history` (срез до MAX_KEY_HISTORY последних,
+ * правило 3) и увеличивает `keyChangeCount` — этот счётчик НЕ обрезается
+ * никогда, переживает любой потолок истории. И-2 (находка координатора,
+ * round 3, дважды): первая версия отслеживала только boxKey — смена
+ * signKey (единственного ключа, РАДИ ПРОВЕРКИ которого история вообще
+ * заводится) стирала предыдущий signKey с диска бесследно: ни звена, ни
+ * признака, ни намёка на обрезку — хуже, чем сама обрезка, у которой хотя
+ * бы есть `historyTruncated`. Звено теперь несёт поле `changed` — массив
+ * из `'boxKey'`/`'signKey'`, называющий явно, какой ключ(и) сменился
+ * именно в ЭТОМ звене (оба сразу, если оба переданы одним вызовом — один
+ * вызов даёт одно звено и один прирост `keyChangeCount`, не два).
+ *
+ * Повторная отправка байт-в-байт ТЕХ ЖЕ значений (оба ключа совпадают с
+ * уже сохранёнными) — не смена вообще: ранний возврат ДО какой-либо
+ * мутации `_directory` и ДО записи на диск (мелочь, найдена ревью, round
+ * 3: клиент чата будет слать это при каждом запуске сеанса —
+ * lib/chatSession.ts, Задача 4 — и без этой короткой цепи каждый такой
+ * визит переписывал бы весь файл справочника заново, усиливая открытый
+ * пункт 31 обычным пользованием, без единого нападающего). `updatedAt` НЕ
+ * двигается на этом пути.
  *
  * @throws {Error} с `.code === 'invalid_key'`, если boxKey/signKey не
  *   32-байтовый нижнерегистровый hex (правило 2) — сюда же попадает "не
@@ -469,20 +497,35 @@ export function putKey(address, keys, nowMs = Date.now()) {
   }
 
   const existing = _directory[address];
-  const previous = existing; // record целиком — откатываем присваиванием, не точечной мутацией полей
 
-  const isRealChange = !existing || existing.boxKey !== boxKey;
+  const boxKeyChanged = !existing || existing.boxKey !== boxKey;
+  const signKeyChanged = signKey !== undefined && (!existing || existing.signKey !== signKey);
+  const isRealChange = boxKeyChanged || signKeyChanged;
+
+  // Мелочь (ревью координатора, round 3): байт-в-байт идентичная повторная
+  // регистрация — ранний возврат, ничего не трогая. `existing` здесь
+  // всегда истинен на этом пути: первая регистрация делает boxKeyChanged
+  // истинным через `!existing`, значит isRealChange тоже истинен, и эта
+  // ветка для неё физически недостижима.
+  if (existing && !isRealChange) {
+    return _cloneRecordForCaller(address, existing);
+  }
 
   let history = existing ? existing.history : [];
   let keyChangeCount = existing ? existing.keyChangeCount : 0;
-  if (existing && isRealChange) {
-    const histEntry = { boxKey: existing.boxKey, replacedAt: nowMs };
+  if (existing) {
+    const changed = [];
+    if (boxKeyChanged) changed.push('boxKey');
+    if (signKeyChanged) changed.push('signKey');
+    const histEntry = { boxKey: existing.boxKey, replacedAt: nowMs, changed };
     if (existing.signKey !== undefined) histEntry.signKey = existing.signKey;
     history = [histEntry, ...history].slice(0, MAX_KEY_HISTORY);
     keyChangeCount += 1;
   }
 
-  const updatedAt = isRealChange ? nowMs : existing.updatedAt;
+  // isRealChange гарантированно true в этой точке — ранний возврат выше
+  // отсёк единственный случай, где это было бы не так.
+  const updatedAt = nowMs;
 
   // spread `...(existing || {})` СНАЧАЛА — то же правило И-1, что и в
   // _loadDirectory: если у existing были поля, которых ЭТА версия кода не
@@ -507,7 +550,7 @@ export function putKey(address, keys, nowMs = Date.now()) {
   try {
     _saveDirectory();
   } catch (e) {
-    if (previous) _directory[address] = previous;
+    if (existing) _directory[address] = existing;
     else delete _directory[address];
     throw e;
   }
