@@ -1252,7 +1252,12 @@ describe('мусор на приёме — вердикт, а не падени�
     const signer = await deriveLinkSigningKeypair(bob.keypair);
     const sodium = (await import('libsodium-wrappers')).default;
     await sodium.ready;
-    const envelope = await packEnvelope({ text: 'далеко' }, alice.keypair.publicKey, bob.keypair.publicKey);
+    // Автор передаётся четвёртым аргументом — как это делает настоящая
+    // отправка (В-1). Без него конверт не расшифруется у получателя, и тест
+    // мерил бы не дыру в номерах, а невозможность прочитать.
+    const envelope = await packEnvelope(
+      { text: 'далеко' }, alice.keypair.publicKey, bob.keypair.publicKey, BOB.toLowerCase() as `0x${string}`,
+    );
     const link: ChainLink = {
       seq: 1000, prevHash: keccak256(stringToBytes('чужое')),
       bodyHash: messageBodyHash(signer.publicKey, envelope),

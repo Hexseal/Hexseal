@@ -261,10 +261,66 @@ export function assertOneTimeKeyLength(bytes: Uint8Array): void {
  * длина) пробрасываются как есть — `sealForRecipient` (chatCrypto.ts) уже
  * бросает `TypeError` на таком входе, оборачивать нечего.
  */
+/** Двадцать байт адреса автора, приписываемые к AAD (см. `envelopeAad`). */
+const AUTHOR_LEN = 20;
+
+const AUTHOR_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/**
+ * Аутентифицируемые данные конверта: заголовок ЦЕЛИКОМ плюс — если автор
+ * назван — двадцать байт его адреса.
+ *
+ * ⚠️ Автор в AAD, а не в заголовке: заголовок уходит на провод, AAD — нет.
+ * Значит раскладка байтов конверта, `HEADER_LEN` (173) и накладные расходы
+ * (189) НЕ МЕНЯЮТСЯ ни на байт — меняется только то, что связано с тегом
+ * аутентификации. Адрес автора и так виден серверу (он свидетельствует
+ * отправителя мешка), передавать его внутри конверта незачем.
+ *
+ * Зачем (находка В-1 враждебной проверки, замерена): запечатывание анонимно —
+ * `crypto_box_seal` намеренно не говорит, КТО запечатал. `bodyHash` в звене
+ * (`chatConversation.ts`) связывает конверт со ЗВЕНОМ, но ничто не связывало
+ * конверт с АВТОРОМ. Поэтому собеседник мог взять ваш конверт (он его
+ * получатель, значит вскрыть может), переложить в СВОЙ кадр и подписать своим
+ * ключом — и вы увидели бы СВОИ слова как сказанные им, при вердикте `ok:true`
+ * и без единой тревоги. С автором в AAD такой конверт просто не
+ * расшифровывается: тег считается над другим набором данных.
+ *
+ * Закрыто ПО ПОСТРОЕНИЮ, а не проверкой: отдельной сверки «автор тот?» нигде
+ * нет, поэтому её негде забыть — есть невозможность.
+ *
+ * `author` необязателен: конверт вне переписки (или сборка, которой автор
+ * неизвестен) собирается как раньше, байт в байт. Но у сборки и разбора он
+ * обязан СОВПАДАТЬ — расхождение (в том числе «одна сторона назвала, другая
+ * забыла») даёт `null`, то есть громкий отказ чтения, а не тихое чужое
+ * сообщение.
+ *
+ * @throws {TypeError} если `author` задан и не похож на адрес — наш мусор на
+ *   входе, то же правило, что у остальных гейтов этого файла.
+ */
+export function envelopeAad(header: Uint8Array, author?: `0x${string}`): Uint8Array {
+  if (author === undefined) return header;
+  if (typeof author !== 'string' || !AUTHOR_RE.test(author)) {
+    throw new TypeError(
+      `envelopeAad: author должен быть адресом 0x + 40 hex-цифр (получено ${typeof author === 'string' ? `«${author}»` : typeof author})`,
+    );
+  }
+  const out = new Uint8Array(header.length + AUTHOR_LEN);
+  out.set(header, 0);
+  // Приведённый к нижнему регистру hex: адрес приходит из кошелька с
+  // контрольной суммой, а с провода — строчными, и одно и то же значение
+  // обязано давать одни и те же байты.
+  const hex = author.slice(2).toLowerCase();
+  for (let i = 0; i < AUTHOR_LEN; i++) {
+    out[header.length + i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
 export async function packEnvelope(
   payload: ChatPayload,
   recipientPub: Uint8Array,
   ownPub: Uint8Array,
+  author?: `0x${string}`,
 ): Promise<Uint8Array> {
   // ДО какой-либо крипто-работы (В-6, ревью координатора): JSON.stringify/
   // TextEncoder — не крипто, дешевле любого альтернативного места проверки.
@@ -298,7 +354,7 @@ export async function packEnvelope(
   const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
   const ciphertext = new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv, additionalData: toArrayBuffer(header) },
+      { name: 'AES-GCM', iv, additionalData: toArrayBuffer(envelopeAad(header, author)) },
       cryptoKey,
       plaintext,
     ),
@@ -318,6 +374,7 @@ export async function packEnvelope(
 export async function unpackEnvelope(
   envelope: Uint8Array,
   ownKeypair: ChatKeypair,
+  author?: `0x${string}`,
 ): Promise<ChatPayload | null> {
   // Проверки типа — ПЕРВЫМИ, безусловно, в фиксированном порядке, той же
   // дисциплиной, что openSealed в chatCrypto.ts: наш мусор на входе не
@@ -396,7 +453,7 @@ export async function unpackEnvelope(
     // (версия, любой из двух слотов, вектор) рвёт проверку тега здесь —
     // ОДИНАКОВО для обеих сторон, независимо от того, чей слот задет.
     const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: toArrayBuffer(header) },
+      { name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: toArrayBuffer(envelopeAad(header, author)) },
       cryptoKey,
       toArrayBuffer(ciphertext),
     );

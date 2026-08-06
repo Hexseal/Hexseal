@@ -799,7 +799,12 @@ export async function sendMessage(
   // собеседник видел бы утаивание там, где человеку просто не дали отправить.
   let envelope: Uint8Array;
   try {
-    envelope = await packEnvelope(payload, peerPub, session.keypair.publicKey);
+    // Четвёртым аргументом — АВТОР (В-1 враждебной проверки). Он входит в
+    // аутентифицируемые данные конверта, поэтому переложить этот конверт в
+    // чужой кадр нельзя: у другого автора тег не сойдётся. Отдельной сверки
+    // «автор тот?» нигде нет и быть не должно — забыть её было бы негде,
+    // потому что это не проверка, а невозможность.
+    envelope = await packEnvelope(payload, peerPub, session.keypair.publicKey, own);
   } catch (err) {
     throw new ChatConversationError(
       'Сообщение слишком длинное — склад такое не примет. Сократите текст или отправьте вложением.',
@@ -1170,7 +1175,10 @@ export async function receiveBags(
     }
 
     for (const item of accepted) {
-      const payload = await unpackEnvelope(item.envelope, session.keypair);
+      // Автор — тот, кого ЗАСВИДЕТЕЛЬСТВОВАЛ СЕРВЕР (`from`), а не тот, кого
+      // назвало содержимое: содержимое ещё не прочитано, и верить ему нечем.
+      // Конверт, собранный другим автором, здесь просто не расшифруется (В-1).
+      const payload = await unpackEnvelope(item.envelope, session.keypair, from);
       if (!payload) {
         // Звено остаётся в цепочке — оно честное и подписанное. Не вскрылось у
         // НАС; выкинув его, мы превратили бы собственную неудачу в дыру, то
