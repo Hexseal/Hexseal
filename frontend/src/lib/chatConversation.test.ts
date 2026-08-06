@@ -734,6 +734,51 @@ describe('подделка звена видна', () => {
     expect(state.messages.map(m => m.seq)).toEqual([0, 2]);
   });
 
+  it('чужой конверт, переложенный в свой кадр, НЕ читается как своё сообщение (В-1)', async () => {
+    // Находка В-1 враждебной проверки. Запечатывание анонимно, `bodyHash`
+    // связывает конверт со ЗВЕНОМ — но ничто не связывало конверт с АВТОРОМ.
+    // Боб брал конверт Алисы, клал в свой кадр, подписывал своим ключом — и
+    // Алиса видела СВОИ слова как сказанные Бобом, при вердикте ok:true и без
+    // единой тревоги.
+    installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+
+    // Алиса пишет Бобу. Конверт запечатан на Боба И на саму Алису (второй
+    // слот) — значит Алиса свой же конверт вскроет, кто бы его ни принёс.
+    const fromAlice = await sendMessage(
+      alice, BOB, bob.keypair.publicKey, { text: 'я согласна доплатить 500 USDC' }, null, { pass: PASS },
+    );
+    const stolen = decodeFrame(fromAlice.frame)!.envelope;
+
+    // Боб перекладывает ЕЁ конверт в СВОЙ кадр и честно подписывает своим
+    // ключом: звено безупречно, отпечаток тела сходится, подпись сходится.
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const sodium = (await import('libsodium-wrappers')).default;
+    await sodium.ready;
+    const link: ChainLink = {
+      seq: 0, prevHash: GENESIS_HASH,
+      bodyHash: messageBodyHash(bobSigner.publicKey, stolen),
+      sender: BOB.toLowerCase() as `0x${string}`, sentAt: 1_754_400_000_000,
+    };
+    const body = encodeFrame({
+      link,
+      signature: sodium.crypto_sign_detached(linkSignaturePreimage(link), bobSigner.privateKey),
+      signerPublicKey: bobSigner.publicKey,
+      envelope: stolen,
+    });
+
+    const state = await receiveBags(alice, [
+      { key: 'подлог', sender: BOB.toLowerCase() as `0x${string}`, uploadedAt: 1, body },
+    ]);
+
+    // Закрыто ПО ПОСТРОЕНИЮ: адрес автора аутентифицирован вместе с конвертом,
+    // поэтому переложенный конверт просто не расшифровывается. Забыть проверку
+    // негде — её нет, есть невозможность.
+    expect(state.messages).toHaveLength(0);
+    expect(state.troubles).toContainEqual(expect.objectContaining({ kind: 'undecryptable', seq: 0 }));
+  });
+
   it('подставленное чужое звено (кадр Кэрол в мешке от Боба) — sender_mismatch', async () => {
     installFetchStub();
     const alice = await makeSession('1c3d', ALICE);
