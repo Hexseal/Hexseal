@@ -30,6 +30,51 @@ import { shortAddr } from "@/lib/utils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Каким способом расшифровывать вложение — РЕШЕНИЕ, вынесенное из обработчика
+ * нажатия наружу.
+ *
+ * ⚠️ ЗДЕСЬ ЖИЛ ДЕФЕКТ, И ОН БЫЛ НЕВИДИМ ОБЕИМ ПОЛОВИНАМ. Признак нарезки и
+ * её параметры терялись по дороге от отправки к сообщению (В-3, Задача 6), а
+ * ветка расшифровки живёт здесь, в панели. Пока поля не доезжали, крупный
+ * файл собирался НЕ ТЕМ способом и приезжал битым — при полностью зелёных
+ * тестах и у отправляющей половины, и у панели: каждая по отдельности делала
+ * своё правильно.
+ *
+ * Решение вынесено в чистую функцию именно поэтому: внутри `onClick` его
+ * нечем проверить без браузера, а сквозной тест
+ * (`lib/__stand__/chatAttachment.test.tsx`) сверяет его с тем, что реально
+ * доехало через настоящий склад.
+ *
+ * Три ветки, и они не взаимозаменяемы:
+ *  - `chunked` — файл нарезан на куски, собирать по счётчику и размеру;
+ *  - `whole`   — один зашифрованный кусок;
+ *  - `plain`   — ключа нет вовсе (наследство), открыть по ссылке.
+ */
+export type AttachmentDecryptPlan =
+  | { mode: 'chunked'; chunkCount: number; chunkSize: number; size: number; mime?: string }
+  | { mode: 'whole'; mime?: string }
+  | { mode: 'plain' };
+
+export function attachmentDecryptPlan(
+  a: { key?: string; iv?: string; chunked?: boolean; chunkCount?: number; chunkSize?: number; size?: number; mime?: string },
+): AttachmentDecryptPlan {
+  if (!a.key || !a.iv) return { mode: 'plain' };
+  // Нарезка требует ВСЕХ трёх чисел. Без любого из них собрать файл нечем, и
+  // честнее пойти обычной веткой (получится ошибка расшифровки, которую
+  // человек увидит), чем звать сборщик с придуманным умолчанием.
+  if (a.chunked && a.chunkCount && a.size) {
+    return {
+      mode: 'chunked',
+      chunkCount: a.chunkCount,
+      chunkSize: a.chunkSize ?? CHUNK_SIZE,
+      size: a.size,
+      ...(a.mime !== undefined ? { mime: a.mime } : {}),
+    };
+  }
+  return { mode: 'whole', ...(a.mime !== undefined ? { mime: a.mime } : {}) };
+}
+
 function formatBytes(b: number): string {
   if (b < 1024) return `${b} B`;
   if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
@@ -163,10 +208,16 @@ function FileCard({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['attachm
     setSaving(true); setFailure(null); setDlProgress(0);
 
     const doDownload = async (url: string) => {
-      if (a.chunked && a.chunkCount && a.size) {
-        await decryptAndSaveChunked(url, a.key!, a.iv!, a.name, a.mime, a.chunkCount, a.chunkSize ?? CHUNK_SIZE, a.size, setDlProgress);
+      const plan = attachmentDecryptPlan(a);
+      if (plan.mode === 'chunked') {
+        await decryptAndSaveChunked(
+          url, a.key!, a.iv!, a.name, plan.mime, plan.chunkCount, plan.chunkSize, plan.size, setDlProgress,
+        );
       } else {
-        await decryptAndSave(url, a.key!, a.iv!, a.name, a.mime);
+        // `plain` сюда не доходит: ветка без ключа отсекается выше, до
+        // `setSaving` (файл открывается по ссылке). Проверка формы — чтобы
+        // компилятор это знал, а не чтобы «на всякий случай».
+        await decryptAndSave(url, a.key!, a.iv!, a.name, plan.mode === 'whole' ? plan.mime : undefined);
       }
     };
 
