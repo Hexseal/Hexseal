@@ -173,7 +173,11 @@ export type ChatSessionErrorCode =
    *  Человеку надо закрыть другие вкладки сайта, а не «повторить». */
   | 'storage_blocked'
   /** Открытие базы не ответило ничем за отведённое время. */
-  | 'storage_open_timeout';
+  | 'storage_open_timeout'
+  /** Адрес не похож на адрес. Без этой проверки пустая строка заводила
+   *  РАБОЧИЙ сеанс под ключом `''` — не «голое системное сообщение», а
+   *  молчаливый мусорный сеанс. */
+  | 'address_malformed';
 
 /** Каждый отказ несёт `.code` ОТДЕЛЬНЫМ полем — та же дисциплина, что в
  *  `chatTransport.ts`: сравнение текста ошибки ломается от первой же правки
@@ -307,7 +311,19 @@ const _codes = new WeakMap<ChatSession, string>();
  *  же адрес присоединяется к первому — одно окно подписи внутри вкладки. */
 const _inFlight = new Map<string, Promise<ChatSession>>();
 
+/** Форма адреса — двадцать байт в hex. Проверяется НА ИСПОЛНЕНИИ, а не
+ *  только типом: `` `0x${string}` `` пропускает и `'0x'`, и пустую строку
+ *  через любое `as`, а адрес сюда приходит из хука, то есть в конечном счёте
+ *  от кошелька. */
+const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+
 function storageKey(address: string): string {
+  if (typeof address !== 'string' || !ADDRESS_RE.test(address.toLowerCase())) {
+    throw new ChatSessionError(
+      `chatSession: адрес не похож на адрес (${typeof address === 'string' ? `«${address}»` : typeof address})`,
+      'address_malformed',
+    );
+  }
   return address.toLowerCase();
 }
 
@@ -927,9 +943,10 @@ export function exportRecoveryCode(session: ChatSession): string {
  *   вернуть «забыто» значило бы соврать: ключ остался на устройстве.
  */
 export async function forgetSession(address: `0x${string}`): Promise<void> {
+  const key = storageKey(address); // форма адреса — до всего остального
   if (!idbFactory()) return; // хранилища нет — забывать нечего
   try {
-    await idbDelete(storageKey(address));
+    await idbDelete(key);
   } catch (err) {
     throw new ChatSessionError(
       'chatSession: не удалось убрать ключ с устройства',
