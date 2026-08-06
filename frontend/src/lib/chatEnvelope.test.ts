@@ -232,6 +232,22 @@ describe('packEnvelope / unpackEnvelope', () => {
       await expect(unpackEnvelope(new Uint8Array(10), bob)).resolves.toBeNull();
     });
 
+    it('И-3 (ревью координатора): обрубленный конверт С ВЕРНЫМ байтом версии — null, не исключение', async () => {
+      // Отличие от теста выше: там `new Uint8Array(10)` нулевой байт версии
+      // (0 ≠ ENVELOPE_VERSION=1), поэтому отказ мог случиться на проверке
+      // ВЕРСИИ, а не на проверке ДЛИНЫ — обе проверки красят один и тот же
+      // тест, замок на проверку длины оставался незапертым по существу.
+      // Найдено ревью координатора: со снятой проверкой длины и ВЕРНЫМ байтом
+      // версии обрубок любой длины даёт исключение вместо null — чужой
+      // битый мешок начинает выглядеть как наш собственный баг. Здесь —
+      // РЕАЛЬНЫЙ конверт, обрезанный до 50 байт (< 173 байт заголовка),
+      // byte[0] честно верный, потому что взят из настоящего packEnvelope.
+      const { bob, alice } = await actors();
+      const real = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey);
+      const truncated = real.subarray(0, 50);
+      await expect(unpackEnvelope(truncated, bob)).resolves.toBeNull();
+    });
+
     it('случайный мусор ровно на границе заголовка — null, не исключение', async () => {
       const { bob } = await actors();
       const junk = crypto.getRandomValues(new Uint8Array(173));
