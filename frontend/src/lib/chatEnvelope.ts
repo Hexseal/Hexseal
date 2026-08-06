@@ -197,6 +197,30 @@ export function assertSealedKeyLength(bytes: Uint8Array, label: string): void {
 }
 
 /**
+ * Мелочь ревью: `unpackEnvelope` ловит ВСЁ подряд вокруг расшифровки
+ * (`catch { return null }`) — в отличие от ядра (`openSealed`), которое
+ * различает «не наш мешок» и «наш собственный мусор». Если `sealForRecipient`/
+ * `openSealed` когда-нибудь начнут отдавать разовый ключ НЕ той длины
+ * (систематически, для ВСЕХ сообщений — не для отдельного повреждённого
+ * мешка: сама раскладка `crypto_box_seal` фиксирует длину открытого текста
+ * жёстко, поэтому это в принципе не может случиться для ОДНОГО конкретного
+ * чужого/повреждённого мешка, только для ВСЕХ разом при смене библиотеки/
+ * алгоритма) — глухой `catch` ниже превратил бы это в ту же тихую пустоту,
+ * что и обычная порча одного сообщения: вся переписка стала бы нечитаемой
+ * без единого сигнала, почему. Проверка — ДО `try`, тем же приёмом, что
+ * `assertSealedKeyLength` выше, и по той же причине выделена отдельной
+ * функцией: проверяема напрямую, без подмены `chatCrypto.ts`.
+ * @throws {Error} если `bytes.length !== ONE_TIME_KEY_LEN`.
+ */
+export function assertOneTimeKeyLength(bytes: Uint8Array): void {
+  if (bytes.length !== ONE_TIME_KEY_LEN) {
+    throw new Error(
+      `unpackEnvelope: unexpected recovered key length (${bytes.length}), expected ${ONE_TIME_KEY_LEN}`,
+    );
+  }
+}
+
+/**
  * Форма `dealId` — см. JSDoc у `ChatPayload.dealId`. Проверяется ТОЛЬКО
  * префикс `0x` (сам тип, `` `0x${string}` ``) — НЕ конкретная длина
  * (сегодняшние 40 hex-символов адреса).
@@ -356,6 +380,10 @@ export async function unpackEnvelope(
     oneTimeKey = await openSealed(ownKeypair, sealedSlotB);
   }
   if (!oneTimeKey) return null;
+  // ДО try — систематическая порча (мелочь ревью, см. докстринг
+  // assertOneTimeKeyLength) обязана быть громкой, а не слиться с обычным
+  // "мешок не наш/повреждён" в catch ниже.
+  assertOneTimeKeyLength(oneTimeKey);
 
   try {
     const cryptoKey = await crypto.subtle.importKey('raw', toArrayBuffer(oneTimeKey), { name: 'AES-GCM' }, false, ['decrypt']);
@@ -371,11 +399,11 @@ export async function unpackEnvelope(
     const parsed: unknown = JSON.parse(new TextDecoder().decode(plaintext));
     return isWellFormedPayload(parsed) ? parsed : null;
   } catch {
-    // Провал аутентификации AES-GCM (подмена байта, чужой разовый ключ),
-    // невалидный JSON, либо ключ неожиданной длины (защита на случай, если
-    // openSealed когда-нибудь начнёт отдавать не 32 байта) — всё это «мешок
-    // испорчен/не наш», а не наша ошибка типов. Тот же принцип, что catch в
-    // openSealed (chatCrypto.ts): сбой не должен выглядеть как исключение.
+    // Провал аутентификации AES-GCM (подмена байта, чужой разовый ключ) или
+    // невалидный JSON — «мешок испорчен/не наш», а не наша ошибка типов.
+    // Тот же принцип, что catch в openSealed (chatCrypto.ts): сбой не
+    // должен выглядеть как исключение. Систематическая порча длины ключа
+    // (мелочь ревью) проверена и брошена ДО этого try — сюда не долетает.
     return null;
   }
 }

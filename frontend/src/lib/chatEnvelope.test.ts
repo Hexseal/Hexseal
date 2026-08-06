@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { getAddress } from 'viem';
 import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCrypto';
-import { packEnvelope, unpackEnvelope, assertSealedKeyLength, MAX_ENVELOPE_BYTES, type ChatPayload } from './chatEnvelope';
+import {
+  packEnvelope, unpackEnvelope, assertSealedKeyLength, assertOneTimeKeyLength, MAX_ENVELOPE_BYTES, type ChatPayload,
+} from './chatEnvelope';
 
 // Подписи разной формы — тот же приём, что в chatCrypto.test.ts (SIG_A/SIG_B):
 // 65-байтная hex-строка, три разных актёра.
@@ -400,5 +402,19 @@ describe('packEnvelope / unpackEnvelope', () => {
     expect(() => assertSealedKeyLength(new Uint8Array(81), 'own'))
       .toThrow(/unexpected own sealed key length \(81\), expected 80/);
     expect(() => assertSealedKeyLength(new Uint8Array(80), 'own')).not.toThrow();
+  });
+
+  it('мелочь ревью: систематическая порча длины разового ключа брошена громко, не слита с обычным null (проверено изолированно)', () => {
+    // unpackEnvelope ловит ВСЁ подряд вокруг расшифровки, в отличие от
+    // openSealed, который различает "не наш мешок" и "наш мусор". Такая
+    // порча в принципе не может случиться для ОДНОГО чужого/повреждённого
+    // мешка (crypto_box_seal фиксирует длину открытого текста жёстко) —
+    // только систематически, для ВСЕХ сообщений разом. Проверено напрямую,
+    // без мокирования chatCrypto.ts (тот же приём, что для sealed-слота выше).
+    expect(() => assertOneTimeKeyLength(new Uint8Array(31)))
+      .toThrow(/unexpected recovered key length \(31\), expected 32/);
+    expect(() => assertOneTimeKeyLength(new Uint8Array(33)))
+      .toThrow(/unexpected recovered key length \(33\), expected 32/);
+    expect(() => assertOneTimeKeyLength(new Uint8Array(32))).not.toThrow();
   });
 });
