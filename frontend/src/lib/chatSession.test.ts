@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { entropyToMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
+import { privateKeyToAccount } from 'viem/accounts';
 import { CHAT_KEY_TYPED_DATA } from './chatCrypto';
 import {
   openSession,
@@ -16,25 +17,24 @@ import {
 
 // ─── Заготовки берут данные в том виде, в каком они приходят из жизни ──────
 //
-// Адреса — С КОНТРОЛЬНОЙ СУММОЙ (заглавные буквы внутри), ровно как отдаёт
-// `useAccount()` из wagmi. Правило куплено находкой, где 650 зелёных тестов
-// означали полностью нерабочий вход: адрес в заготовке был строчными, а
-// кошелёк отдаёт смешанным регистром. Здесь это не украшение — хранилище
-// ключуется приведённым адресом, и тест «тот же адрес в другом регистре —
-// тот же сеанс» ниже держит именно этот класс.
-const ALICE = '0x760F07367888C62f7c2Dfb619A5e534132855ce5' as const;
-const BOB   = '0x268dCfa7ab0DC134d01C5cBcAa7d2834d6dD0f0f' as const;
+// Адреса — С КОНТРОЛЬНОЙ СУММОЙ, ровно как отдаёт `useAccount()` из wagmi.
+//
+// ⚠️ И ПОДПИСИ ЗДЕСЬ НАСТОЯЩИЕ, а не строки нужной длины. Признак рода
+// кошелька спрашивает «эта подпись действительно от этого адреса?» — то есть
+// ВОССТАНАВЛИВАЕТ адрес из подписи. Заготовка из повторяющихся hex-цифр
+// такой проверки не переживёт: каждый «обычный» тест молча уехал бы в
+// контрактную ветку, и файл остался бы зелёным, проверяя не то. Поэтому
+// адреса берутся из настоящих ключей, а подписи — настоящие и
+// детерминированные (RFC 6979), над РОВНО той структурой, которую подписывает
+// живой кошелёк.
+const ALICE_ACCOUNT = privateKeyToAccount(`0x${'01'.repeat(32)}`);
+const BOB_ACCOUNT = privateKeyToAccount(`0x${'02'.repeat(32)}`);
 
-/** Настоящая по форме ECDSA-подпись: 0x + 130 hex-цифр (65 байт r‖s‖v).
- *  `deriveChatKeypair` проверяет форму на исполнении и бросает на всём
- *  остальном — подпись-заглушка вроде '0xdeadbeef' не доехала бы никуда. */
-function signatureOf(marker: string): `0x${string}` {
-  const body = marker.repeat(130).slice(0, 130).replace(/[^0-9a-f]/g, 'a');
-  return `0x${body}` as `0x${string}`;
-}
+const ALICE = ALICE_ACCOUNT.address;
+const BOB = BOB_ACCOUNT.address;
 
-const ALICE_SIG = signatureOf('1c3d');
-const BOB_SIG   = signatureOf('7f2e');
+const ALICE_SIG = await ALICE_ACCOUNT.signTypedData(CHAT_KEY_TYPED_DATA as never);
+const BOB_SIG = await BOB_ACCOUNT.signTypedData(CHAT_KEY_TYPED_DATA as never);
 
 /** Золотой вектор BIP-39 (энтропия 0x7f×16) — детерминированный, чтобы
  *  проверки негодного кода не зависели от случайности. */
@@ -391,8 +391,7 @@ describe('восстановление обычного кошелька — э�
 
   it('другая подпись — другой ключ', async () => {
     const a = await openSession(ALICE, async () => ALICE_SIG);
-    installStorage();
-    const b = await openSession(ALICE, async () => BOB_SIG);
+    const b = await openSession(BOB, async () => BOB_SIG);
     expect(hex(b.keypair.privateKey)).not.toBe(hex(a.keypair.privateKey));
   });
 
@@ -408,7 +407,7 @@ describe('восстановление обычного кошелька — э�
     expect(session.walletKind).toBe('eoa');
     expect(sign).toHaveBeenCalledTimes(1);
     expect(hex(session.keypair.publicKey))
-      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+      .toBe('0e74be3e22e632dd87722ab587bfac399065615ec807f7f886e77a6aebc0790d');
   });
 
   it('включил делегацию, снял делегацию — ключ НЕ меняется (К-1)', async () => {
@@ -440,12 +439,81 @@ describe('род кошелька выясняется подписью', () => 
     expect(exportRecoveryCode(session).split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
   });
 
+  it('Safe 1-of-1 отдаёт РОВНО 65 байт — и это НЕ обычный кошелёк (К-1)', async () => {
+    // Самая обычная настройка Safe: порог 1. Подпись ровно 65 байт, но
+    // сделана ВЛАДЕЛЬЦЕМ, а не самим аккаунтом. Признак «длина 65 → обычный»
+    // звал такой кошелёк обычным и выводил ключ из подписи владельца: сменил
+    // владельца (ради чего смарт-аккаунт и заводят) — другой ключ, вся
+    // переписка нечитаема, и кода восстановления ему не положено.
+    const sign = vi.fn(async () => BOB_SIG); // 65 байт, но подписал не ALICE
+    const session = await openSession(ALICE, sign);
+
+    expect(session.walletKind).toBe('contract');
+    expect(session.origin).toBe('recovery');
+    expect(exportRecoveryCode(session).split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
+  });
+
+  it('смена владельца Safe не рушит переписку: код возвращает тот же ключ', async () => {
+    const before = await openSession(ALICE, async () => BOB_SIG);
+    const code = exportRecoveryCode(before);
+
+    installStorage(); // новое устройство
+    // владелец сменился — подпись теперь совсем другая
+    const other = privateKeyToAccount(`0x${'03'.repeat(32)}`);
+    const otherSig = await other.signTypedData(CHAT_KEY_TYPED_DATA as never);
+    const after = await openSession(ALICE, async () => otherSig);
+    expect(hex(after.keypair.privateKey)).not.toBe(hex(before.keypair.privateKey));
+
+    // но запасной выход есть — его и не было раньше
+    installStorage();
+    const restored = await openSessionFromRecoveryCode(ALICE, code, async () => BOB_SIG);
+    expect(hex(restored.keypair.privateKey)).toBe(hex(before.keypair.privateKey));
+  });
+
+  it('признак спрашивает «эта подпись от ЭТОГО адреса?», а не длину', async () => {
+    // Один и тот же адрес, две подписи одной длины: своя и чужая.
+    const own = await openSession(ALICE, async () => ALICE_SIG);
+    installStorage();
+    const foreign = await openSession(ALICE, async () => BOB_SIG);
+
+    expect(own.walletKind).toBe('eoa');
+    expect(foreign.walletKind).toBe('contract');
+  });
+
+  it('мусор ровно в 65 байт — не обычный кошелёк (восстановление бросает)', async () => {
+    const junk = ('0x' + 'ab'.repeat(65)) as `0x${string}`;
+    const session = await openSession(ALICE, async () => junk);
+    expect(session.walletKind).toBe('contract');
+  });
+
+  it('короче 65 байт — МУСОР, а не контрактная личность (В-1)', async () => {
+    // Пол стоял на нуле: провайдер, вернувший заглушку в один байт,
+    // НЕОБРАТИМО переводил обычного человека на код восстановления —
+    // запись ложилась на диск, и починившийся кошелёк уже не спрашивали.
+    // Настоящая подпись, проверяемая контрактом, короче 65 байт не бывает.
+    for (const short of ['0xab', '0x' + 'ab'.repeat(32), '0x' + 'ab'.repeat(64)]) {
+      await expect(openSession(ALICE, async () => short as `0x${string}`))
+        .rejects.toMatchObject({ code: 'signature_malformed' });
+    }
+    const store = fakeIdb._disk.get('sessions');
+    expect(store === undefined || store.size === 0).toBe(true);
+  });
+
+  it('подпись верхним регистром — тот же обычный кошелёк, а не отказ', async () => {
+    // Без приведения регистра человек остался бы без чата вовсе.
+    const upper = ALICE_SIG.toUpperCase().replace('0X', '0x') as `0x${string}`;
+    const session = await openSession(ALICE, async () => upper);
+    expect(session.walletKind).toBe('eoa');
+    expect(hex(session.keypair.publicKey))
+      .toBe('0e74be3e22e632dd87722ab587bfac399065615ec807f7f886e77a6aebc0790d');
+  });
+
   it('обычная 65-байтовая подпись — обычный кошелёк, ключ выводится', async () => {
     const session = await openSession(ALICE, async () => ALICE_SIG);
     expect(session.walletKind).toBe('eoa');
     expect(session.origin).toBe('signature');
     expect(hex(session.keypair.publicKey))
-      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+      .toBe('0e74be3e22e632dd87722ab587bfac399065615ec807f7f886e77a6aebc0790d');
   });
 
   it('делегированный EIP-7702 лечится сам: подпись обычная — кошелёк обычный', async () => {
@@ -455,19 +523,21 @@ describe('род кошелька выясняется подписью', () => 
     expect(session.walletKind).toBe('eoa');
   });
 
-  it('сжатая подпись 64 байта НЕ даёт молча другой ключ — уходит в контрактную ветку', async () => {
-    // Замер по ядру: deriveChatKeypair такую подпись ОТВЕРГАЕТ (TypeError),
-    // молча другого ключа не выводит. Значит худшее, что бывает, — человек
-    // получает код восстановления вместо выводимого ключа: чат работает,
-    // тихой подмены личности нет.
+  it('сжатая подпись 64 байта — ОТКАЗ, а не догадка и не тихая личность', async () => {
+    // Замерено независимой проверкой: из одних и тех же 64 байт получаются
+    // ТРИ разных ключа (две развёртки признака чётности плюс сырая) — то
+    // есть развернуть её «правильно» нечем, догадка стоила бы ключа из
+    // мусора. Прежде такая подпись уходила в контрактную ветку и заводила
+    // человеку ПОСТОЯННЫЙ код восстановления вместо выводимого ключа; теперь
+    // это громкий отказ, который видно и можно повторить.
     const compact = `0x${'1c3d'.repeat(130).slice(0, 128)}` as `0x${string}`;
     expect((compact.length - 2) / 2).toBe(64);
 
-    const session = await openSession(ALICE, async () => compact);
-    expect(session.walletKind).toBe('contract');
-    expect(hex(session.keypair.publicKey))
-      .not.toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
-    expect(exportRecoveryCode(session).split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
+    await expect(openSession(ALICE, async () => compact))
+      .rejects.toMatchObject({ code: 'signature_malformed' });
+
+    const store = fakeIdb._disk.get('sessions');
+    expect(store === undefined || store.size === 0).toBe(true);
   });
 
   it('сети не касаемся вовсе: цепь не спрашивается ни разу', async () => {
@@ -524,9 +594,9 @@ describe('золотые векторы вывода ключа', () => {
   it('обычный кошелёк: подпись → ровно этот ключ', async () => {
     const session = await openSession(ALICE, async () => ALICE_SIG);
     expect(hex(session.keypair.publicKey))
-      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+      .toBe('0e74be3e22e632dd87722ab587bfac399065615ec807f7f886e77a6aebc0790d');
     expect(hex(session.keypair.privateKey))
-      .toBe('2d7ca08f696a30497580d743da64687362744d309f062c65dc02e4229a2514d9');
+      .toBe('c51774d9eaefde89aae78a81bb2d54bdfd2ad72ca221aa3281f25503a10e9cec');
   });
 
   it('код восстановления: двенадцать слов → ровно этот ключ', async () => {
@@ -703,7 +773,7 @@ describe('род кошелька выясняет сам модуль, а не 
     const session = await openSession(ALICE, sign);
     expect(session.origin).toBe('signature');
     expect(hex(session.keypair.publicKey))
-      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+      .toBe('0e74be3e22e632dd87722ab587bfac399065615ec807f7f886e77a6aebc0790d');
   });
 
   it('умный аккаунт EIP-7702 — тоже обычный, кода не получает', async () => {
@@ -868,7 +938,7 @@ describe('запись прежней/незнакомой версии', () => 
 
     expect(sign).toHaveBeenCalledTimes(1);
     expect(hex(session.keypair.publicKey))
-      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+      .toBe('0e74be3e22e632dd87722ab587bfac399065615ec807f7f886e77a6aebc0790d');
   });
 
   it('мусор без признаков рода — по-прежнему просто отсутствие записи', async () => {
@@ -1572,7 +1642,7 @@ describe('мусор на входе — вердикт, а не падение'
     expect(warn).toHaveBeenCalled();
     // побайтово тот же ключ, что при исправном диске — терять нечего
     expect(hex(session.keypair.publicKey))
-      .toBe('c785965fd58b37a43168ac4b45158f29abd55602e406cb75f8881076b5f00152');
+      .toBe('0e74be3e22e632dd87722ab587bfac399065615ec807f7f886e77a6aebc0790d');
   });
 
   it('ветка 2: сбой чтения + делегированный EIP-7702 — тоже работает', async () => {
