@@ -629,7 +629,17 @@
     "key_not_saved_blocked": "لم يُحفظ مفتاح المحادثة: الموقع مفتوح في تبويب آخر. أغلقه وإلا سيُطلب التوقيع في كل مرة.",
     "chain_unverified": "بعض رسائل محدّثك لم تجتز فحص الأصالة ولم تُعرض.",
     "undecryptable": "بعض الرسائل لا تُفتح بمفتاحك — ربما خُتمت بمفتاح سابق.",
-    "recovery_warning_keep": "دوّنها واحتفظ بها سرًا."
+    "recovery_warning_keep": "دوّنها واحتفظ بها سرًا.",
+    "recovery_written": "دوّنته",
+    "recovery_skip": "تخطي، سأدوّنه لاحقًا",
+    "recovery_where": "يبقى الرمز في قائمة المحفظة ضمن «رمز الاستعادة» ما دامت المحادثات مفعّلة على هذا الجهاز.",
+    "recovery_check_title": "لنتأكد من أنك دوّنته",
+    "recovery_check_hint": "اكتب ثلاث كلمات حسب أرقامها.",
+    "recovery_check_word": "الكلمة {n}",
+    "recovery_check_failed": "الكلمة {n} غير مطابقة",
+    "recovery_check_done": "تم",
+    "recovery_reminder": "لم تدوّن رمز الاستعادة بعد.",
+    "recovery_show": "إظهار"
   },
   "messaging": {
     "enabled_title": "تم تفعيل الرسائل",

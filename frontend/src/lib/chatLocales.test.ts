@@ -30,6 +30,28 @@ const REQUIRED = [
   'chat.key_not_saved_blocked',
 ];
 
+/** Ключи показа кода восстановления (Задача 8). Отдельным списком, а не
+ *  дописью в `REQUIRED`: у них своя причина существовать и свой владелец
+ *  текста — четыре первых утверждены им дословно и меняться не должны. */
+const REQUIRED_RECOVERY = [
+  // Утверждено владельцем — текст плашки.
+  'chat.recovery_warning_title',
+  'chat.recovery_warning_access',
+  'chat.recovery_warning_loss',
+  'chat.recovery_warning_keep',
+  // Проверка «докажи, что записал» и честный выход из неё.
+  'chat.recovery_written',
+  'chat.recovery_skip',
+  'chat.recovery_where',
+  'chat.recovery_check_title',
+  'chat.recovery_check_hint',
+  'chat.recovery_check_word',
+  'chat.recovery_check_failed',
+  'chat.recovery_check_done',
+  'chat.recovery_reminder',
+  'chat.recovery_show',
+];
+
 /** Ключи, которые обязаны исчезнуть: они говорили про XMTP и про журнал
  *  бота, которого больше нет. Оставленный ключ — не мусор, а обещание,
  *  которое кто-нибудь снова выведет на экран. */
@@ -97,6 +119,71 @@ describe('тексты пересадки — 14 локалей', () => {
       .toBe('Переписка зашифрована. Сервер хранит её в нечитаемом виде и не имеет ключей.');
     expect(pick(ru, 'chat.privacy_badge_dispute'))
       .toBe('При споре предъявить переписку арбитру может каждая из сторон — со своего устройства.');
+  });
+
+  it('код восстановления: все четырнадцать ключей есть в каждой локали и не пусты', () => {
+    const missing: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of REQUIRED_RECOVERY) {
+        const value = pick(dict, key);
+        if (typeof value !== 'string' || value.trim().length === 0) missing.push(`${locale}:${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('номер слова подставляется, а не вписан цифрой', () => {
+    // `{n}` обязан доехать до каждой локали: без него человек получит
+    // «Слово» без номера и не поймёт, какое слово вписывать. Общий гейт
+    // (`i18n/messages.test.ts`) сверяет набор аргументов с английским — здесь
+    // сказано ЧИСЛОМ, какой именно аргумент нужен.
+    const bad: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of ['chat.recovery_check_word', 'chat.recovery_check_failed']) {
+        if (!String(pick(dict, key)).includes('{n}')) bad.push(`${locale}:${key}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('⚠️ нигде не сказано «сохраните» — только «запишите»', () => {
+    // Правило владельца, и причина у него неочевидная: «сохраните» люди
+    // читают как «сфотографируйте». Снимок уезжает в галерею, галерея — в
+    // облако, и код оказывается ровно там, где мы просили его не держать.
+    // Обнаружить это мы не можем никак — единственное, что в наших силах,
+    // это не подсказывать такой способ словом.
+    const BANNED: Record<string, RegExp> = {
+      ru: /сохран/i,
+      uk: /збереж|зберіг/i,
+      en: /\bsav(e|ed|ing)\b|\bstore\b/i,
+      de: /speicher/i,
+      fr: /sauvegard|enregistr/i,
+      es: /guard/i,
+      pt: /guard|salv/i,
+      it: /salva/i,
+    };
+    const bad: string[] = [];
+    for (const locale of LOCALES) {
+      const banned = BANNED[locale];
+      if (!banned) continue; // письменности без прямого аналога — гейт не врёт
+      const chat = pick(read(locale), 'chat') as Record<string, string>;
+      for (const [key, value] of Object.entries(chat)) {
+        if (key.startsWith('recovery_') && banned.test(value)) bad.push(`${locale}:${key}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('русское предупреждение — дословно утверждённый владельцем текст', () => {
+    const ru = read('ru');
+    expect(pick(ru, 'chat.recovery_warning_title')).toBe('Код восстановления');
+    expect(pick(ru, 'chat.recovery_warning_access')).toBe(
+      'Это доступ ко всей вашей переписке. Кто получит эти 12 слов — прочитает всё. Отозвать или сменить их нельзя.',
+    );
+    expect(pick(ru, 'chat.recovery_warning_loss')).toBe('Потеряете — переписка не вернётся.');
+    expect(pick(ru, 'chat.recovery_warning_keep')).toBe('Запишите и держите в секрете.');
   });
 
   it('ключи про XMTP и журнал бота удалены во всех локалях', () => {

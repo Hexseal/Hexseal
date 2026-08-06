@@ -629,7 +629,17 @@
     "key_not_saved_blocked": "La clé de discussion n’a pas été enregistrée : le site est ouvert dans un autre onglet. Fermez-le, sinon une signature sera demandée à chaque fois.",
     "chain_unverified": "Certains messages de votre interlocuteur n’ont pas passé la vérification d’authenticité et ne sont pas affichés.",
     "undecryptable": "Certains messages ne s’ouvrent pas avec votre clé — ils sont peut-être scellés sur une clé plus ancienne.",
-    "recovery_warning_keep": "Notez-les et gardez-les secrets."
+    "recovery_warning_keep": "Notez-les et gardez-les secrets.",
+    "recovery_written": "Je l’ai noté",
+    "recovery_skip": "Passer, je le noterai plus tard",
+    "recovery_where": "Le code reste dans le menu du portefeuille, rubrique « Code de récupération », tant que la messagerie est active sur cet appareil.",
+    "recovery_check_title": "Vérifions que vous l’avez noté",
+    "recovery_check_hint": "Saisissez trois mots d’après leur numéro.",
+    "recovery_check_word": "Mot {n}",
+    "recovery_check_failed": "Le mot {n} ne correspond pas",
+    "recovery_check_done": "Terminé",
+    "recovery_reminder": "Code de récupération non noté.",
+    "recovery_show": "Afficher"
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

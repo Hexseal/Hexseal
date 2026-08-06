@@ -629,7 +629,17 @@
     "key_not_saved_blocked": "대화 키가 저장되지 않았습니다: 사이트가 다른 탭에서 열려 있습니다. 닫지 않으면 매번 서명을 요구합니다.",
     "chain_unverified": "상대방 메시지 중 일부가 진위 확인을 통과하지 못해 표시하지 않았습니다.",
     "undecryptable": "일부 메시지는 현재 키로 열 수 없습니다. 이전 키로 봉인되었을 수 있습니다.",
-    "recovery_warning_keep": "적어 두고 비밀로 보관하세요."
+    "recovery_warning_keep": "적어 두고 비밀로 보관하세요.",
+    "recovery_written": "적어 두었습니다",
+    "recovery_skip": "건너뛰기, 나중에 적겠습니다",
+    "recovery_where": "이 기기에서 채팅이 켜져 있는 동안 코드는 지갑 메뉴의 ‘복구 코드’에 남아 있습니다.",
+    "recovery_check_title": "적어 두었는지 확인합니다",
+    "recovery_check_hint": "번호에 맞춰 세 단어를 입력하세요.",
+    "recovery_check_word": "{n}번째 단어",
+    "recovery_check_failed": "{n}번째 단어가 일치하지 않습니다",
+    "recovery_check_done": "완료",
+    "recovery_reminder": "복구 코드를 아직 적지 않았습니다.",
+    "recovery_show": "보기"
   },
   "messaging": {
     "enabled_title": "메시징 활성화됨",

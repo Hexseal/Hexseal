@@ -629,7 +629,17 @@
     "key_not_saved_blocked": "La chiave della chat non è stata salvata: il sito è aperto in un’altra scheda. Chiudila, altrimenti ti verrà chiesta la firma ogni volta.",
     "chain_unverified": "Alcuni messaggi del tuo interlocutore non hanno superato il controllo di autenticità e non vengono mostrati.",
     "undecryptable": "Alcuni messaggi non si aprono con la tua chiave: potrebbero essere sigillati su una precedente.",
-    "recovery_warning_keep": "Annotale e tienile segrete."
+    "recovery_warning_keep": "Annotale e tienile segrete.",
+    "recovery_written": "L’ho annotato",
+    "recovery_skip": "Salta, lo annoterò dopo",
+    "recovery_where": "Il codice resta nel menu del portafoglio, alla voce «Codice di recupero», finché la chat è attiva su questo dispositivo.",
+    "recovery_check_title": "Verifichiamo che l’abbia annotato",
+    "recovery_check_hint": "Inserisca tre parole in base al loro numero.",
+    "recovery_check_word": "Parola {n}",
+    "recovery_check_failed": "La parola {n} non corrisponde",
+    "recovery_check_done": "Fatto",
+    "recovery_reminder": "Codice di recupero non annotato.",
+    "recovery_show": "Mostra"
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

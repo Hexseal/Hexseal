@@ -629,7 +629,17 @@
     "key_not_saved_blocked": "チャットの鍵が保存されませんでした。サイトが別のタブで開いています。閉じないと毎回署名を求められます。",
     "chain_unverified": "相手のメッセージの一部は真正性の検証に通らず、表示していません。",
     "undecryptable": "一部のメッセージはあなたの鍵で開けません。以前の鍵で封をされている可能性があります。",
-    "recovery_warning_keep": "書き留めて、秘密に保管してください。"
+    "recovery_warning_keep": "書き留めて、秘密に保管してください。",
+    "recovery_written": "書き写しました",
+    "recovery_skip": "スキップ（あとで書き写す）",
+    "recovery_where": "このデバイスでチャットが有効な間、コードはウォレットメニューの「リカバリーコード」に残ります。",
+    "recovery_check_title": "書き写せたか確かめます",
+    "recovery_check_hint": "番号どおりに 3 つの単語を入力してください。",
+    "recovery_check_word": "{n} 番目の単語",
+    "recovery_check_failed": "{n} 番目の単語が一致しません",
+    "recovery_check_done": "完了",
+    "recovery_reminder": "リカバリーコードが未記入です。",
+    "recovery_show": "表示"
   },
   "messaging": {
     "enabled_title": "メッセージング有効",

@@ -629,7 +629,17 @@
     "key_not_saved_blocked": "La clave del chat no se guardó: el sitio está abierto en otra pestaña. Ciérrala o te pedirán firmar cada vez.",
     "chain_unverified": "Algunos mensajes de tu interlocutor no pasaron la comprobación de autenticidad y no se muestran.",
     "undecryptable": "Algunos mensajes no se abren con tu clave: puede que estén sellados con una anterior.",
-    "recovery_warning_keep": "Anótalas y guárdalas en secreto."
+    "recovery_warning_keep": "Anótalas y guárdalas en secreto.",
+    "recovery_written": "Lo he anotado",
+    "recovery_skip": "Omitir, lo anotaré después",
+    "recovery_where": "El código permanece en el menú de la cartera, en «Código de recuperación», mientras el chat esté activo en este dispositivo.",
+    "recovery_check_title": "Comprobemos que lo ha anotado",
+    "recovery_check_hint": "Escriba tres palabras según su número.",
+    "recovery_check_word": "Palabra {n}",
+    "recovery_check_failed": "La palabra {n} no coincide",
+    "recovery_check_done": "Listo",
+    "recovery_reminder": "Código de recuperación sin anotar.",
+    "recovery_show": "Mostrar"
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

@@ -629,7 +629,17 @@
     "key_not_saved_blocked": "The chat key was not saved: the site is open in another tab. Close it, or you will be asked to sign every time.",
     "chain_unverified": "Some of your peer’s messages failed the authenticity check and are not shown.",
     "undecryptable": "Some messages cannot be opened with your key — they may be sealed to an older one.",
-    "recovery_warning_keep": "Write them down and keep them secret."
+    "recovery_warning_keep": "Write them down and keep them secret.",
+    "recovery_written": "I wrote it down",
+    "recovery_skip": "Skip, I will write it down later",
+    "recovery_where": "The code stays in the wallet menu under “Recovery code” for as long as chat is on for this device.",
+    "recovery_check_title": "Let us check you wrote it down",
+    "recovery_check_hint": "Type in three words by their numbers.",
+    "recovery_check_word": "Word {n}",
+    "recovery_check_failed": "Word {n} does not match",
+    "recovery_check_done": "Done",
+    "recovery_reminder": "Recovery code not written down.",
+    "recovery_show": "Show"
   },
   "deal_bar": {
     "application_received": "Application received",
