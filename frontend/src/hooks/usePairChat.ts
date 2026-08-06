@@ -51,7 +51,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import {
-  requestBagPass, fetchBag, pollBags,
+  fetchBag, pollBags,
   BagTransportError,
   type BagPollHandle, type BagPollIntervalsMs, type ListBagsResult,
 } from '@/lib/chatTransport';
@@ -62,7 +62,7 @@ import {
 import type { ChatPayload } from '@/lib/chatPayloadForm';
 import type { ChatSession } from '@/lib/chatSession';
 import {
-  useChatSession, fetchPeerChatKeys, publishChatKeys,
+  useChatSession, fetchPeerChatKeys, publishChatKeys, getBagPass,
   ChatDirectoryError, type PeerChatKeys,
 } from './useChatSession';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
@@ -355,10 +355,9 @@ export function usePairChat(peerAddress: string) {
     const engine = startPairChat({
       session,
       peer: peerAddress as `0x${string}`,
-      getPass: async () => (await requestBagPass(
-        (msg) => signMessageAsync({ message: msg }),
-        address,
-      )).pass,
+      // Единственное место подписи во всём чате — и оно под общим мьютексом
+      // кошелька (`getBagPass`, см. его докстринг).
+      getPass: () => getBagPass(address, signMessageAsync),
       isActive: () => activeRef.current,
       onState: (s) => {
         _msgCache.set(pairKey, s.messages);

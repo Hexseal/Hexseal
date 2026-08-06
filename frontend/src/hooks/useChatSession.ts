@@ -71,7 +71,8 @@ import {
 } from '@/lib/chatSession';
 import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
 import { deriveLinkSigningKeypair } from '@/lib/chatConversation';
-import { RELAYER_URL } from '@/lib/chatTransport';
+import { RELAYER_URL, requestBagPass } from '@/lib/chatTransport';
+import { withWalletLock } from '@/lib/walletLock';
 
 /* ────────────────────────── справочник ключей ─────────────────────────── */
 
@@ -213,6 +214,37 @@ export async function fetchPeerChatKeys(
     // Отсутствие — штатный случай (старая запись), мусор — нет.
     signKey: rec.signKey === undefined || rec.signKey === null ? null : fromKeyHex(rec.signKey, 'подписной ключ'),
   };
+}
+
+/* ──────────────────────── пропуск склада ──────────────────────────────── */
+
+/**
+ * Пропуск склада для адреса — ЕДИНСТВЕННОЕ место в чате, где всплывает окно
+ * подписи после заведения сеанса.
+ *
+ * ⚠️ ПОЧЕМУ ЗДЕСЬ, А НЕ В КАЖДОМ ХУКЕ. Первая версия задачи 6 звала
+ * `signMessageAsync` прямо в `usePairChat.ts` И в `usePairConversations.ts`
+ * — два места подписи вместо одного, и НИ ОДНО не брало общий мьютекс
+ * кошелька. Поймано структурным гейтом `lib/signaturePaths.test.ts`, а не
+ * рассуждением. Цена промаха там названа прямо: второй одновременный запрос
+ * прилетает в кошелёк как `-32002`, и в мобильном MetaMask его нечем
+ * отменить — человек заблокирован, пока не закроет кошелёк целиком. А
+ * список чатов и открытая переписка стартуют РЯДОМ, на одной странице: это
+ * не теоретическая гонка.
+ *
+ * `requestBagPass` кэширует пропуск на 12 часов и склеивает одновременные
+ * вызовы одного адреса, так что на живом пропуске подписи нет вовсе —
+ * мьютекс здесь для холодного кэша и для соседства с остальными окнами
+ * приложения (страница сделки, профиль, пуши).
+ */
+export async function getBagPass(
+  address: `0x${string}`,
+  signMessageAsync: (args: { message: string }) => Promise<string>,
+): Promise<string> {
+  return withWalletLock(address, async () => {
+    const pass = await requestBagPass((message) => signMessageAsync({ message }), address);
+    return pass.pass;
+  });
 }
 
 /* ────────────────── «ключ не сохранился» — наверх ─────────────────────── */

@@ -34,10 +34,10 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
-import { requestBagPass, listBags, fetchBag, type BagSummary } from '@/lib/chatTransport';
+import { listBags, fetchBag, type BagSummary } from '@/lib/chatTransport';
 import { receiveBags, type IncomingBag } from '@/lib/chatConversation';
 import type { ChatSession } from '@/lib/chatSession';
-import { useChatSession } from './useChatSession';
+import { useChatSession, getBagPass } from './useChatSession';
 
 /**
  * Строка списка в том виде, в каком её ждёт `app/chat/page.tsx`. Форма
@@ -168,7 +168,7 @@ export function usePairConversations(isEnabled = false) {
     setIsLoading(true);
     setError(null);
     try {
-      const pass = (await requestBagPass((msg) => signMessageAsync({ message: msg }), addr)).pass;
+      const pass = await getBagPass(addr, signMessageAsync);
       const rows = await loadPairConversations(s, pass);
       _convCache.set(addr.toLowerCase(), rows);
       setConversations(rows);
