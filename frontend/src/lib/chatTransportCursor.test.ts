@@ -37,6 +37,14 @@ const BOB = '0xb0b1000000000000000000000000000000005eed' as const;
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  // ⚠️ `restoreAllMocks()` НЕ снимает `stubGlobal` — это разные механизмы, и
+  // подделанный `fetch` пережил бы конец своего теста. Замерено здесь же:
+  // без этой строки замок на живом релеере (последний в файле) висел 30
+  // секунд и падал по таймауту, потому что настоящие запросы к стенду
+  // уходили в подделку предыдущего теста. Ровно тот класс, от которого
+  // `_resetBagPassCacheForTest` стоит строкой ниже — состояние уровня
+  // процесса протекает в соседний тест.
+  vi.unstubAllGlobals();
   _resetBagPassCacheForTest();
 });
 
@@ -209,19 +217,45 @@ describe('курсор опроса двигается за последним �
     expect(run.delivered.map(r => r.inbox.length)).toEqual([1, 0]);
   });
 
-  it('пустой ответ курсор НЕ двигает и НЕ откатывает', async () => {
-    // Что красит: курсор, посчитанный как `max(...[])` (это `-Infinity`) или
-    // сброшенный в undefined на тихом тике — весь ящик приезжал бы снова
-    // после каждой паузы в разговоре.
-    const bags: FakeBag[] = [{ key: 'b/1', sender: BOB, size: 10, uploadedAt: 1000 }];
+  it('ПУСТОЙ ответ курсор НЕ двигает и НЕ откатывает', async () => {
+    // Что красит: курсор, посчитанный как `Math.max(...[])` — это
+    // `-Infinity`, и `?since=-Infinity` уходит на сервер строкой «-Infinity»,
+    // которую он отвергает как негодную (`invalid_since`); либо сброшенный в
+    // undefined — весь ящик приезжал бы заново после каждой паузы.
+    //
+    // ⚠️ Разговор начинается ПУСТЫМ намеренно. Первая версия этого теста
+    // называлась так же, но пустого ответа не видела НИ РАЗУ: сервер отдаёт
+    // `>= since` нестрого, поэтому склад с одним мешком возвращает его на
+    // каждом тике, и «пустой» ответ в тесте был непустым. Мутация «убрать
+    // защиту от пустого массива» проходила его зелёным. Ровно тот класс, что
+    // в этом проекте уже ловили — тест НАЗЫВАЛСЯ «на оба слота», а накрывал
+    // первый.
+    const bags: FakeBag[] = [];
     const { fetchMock, seenSince } = fakeStore(bags);
     vi.stubGlobal('fetch', fetchMock);
 
-    const run = runTicks(3);
-    await run.done;
+    const delivered: ListBagsResult[] = [];
+    const slept: number[] = [];
+    let handle!: BagPollHandle;
+    let resolveDone!: () => void;
+    const done = new Promise<void>(r => { resolveDone = r; });
+    const sleep = async (ms: number) => {
+      slept.push(ms);
+      if (slept.length === 2) bags.push({ key: 'b/1', sender: BOB, size: 10, uploadedAt: 3000 });
+      if (slept.length >= 4) { handle.stop(); resolveDone(); }
+    };
+    handle = pollBags({
+      getPass: () => 'v1.p', isActive: () => true,
+      onBags: (r) => { delivered.push(r); }, sleep,
+    });
+    await done;
 
-    expect(seenSince).toEqual([null, 1000, 1000]);
-    expect(run.delivered.map(r => r.inbox.length)).toEqual([1, 0, 0]);
+    // Два пустых тика подряд — курсор всё ещё «нет курсора», запрос идёт без
+    // since. Третий приносит мешок, четвёртый уже спрашивает от него.
+    expect(seenSince).toEqual([null, null, null, 3000]);
+    expect(delivered.map(r => r.inbox.length)).toEqual([0, 0, 1, 0]);
+    // И ни один тик не был ошибкой: базовый интервал, без отступления.
+    expect(slept).toEqual([5_000, 5_000, 5_000, 5_000]);
   });
 });
 
