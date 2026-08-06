@@ -17,9 +17,11 @@
  *
  * ─── ПРОПУСК ───────────────────────────────────────────────────────────
  *
- * `requestBagPass(signMessage, address)` кэширует результат в памяти модуля
- * (на вкладку — не переживает перезагрузку и не расшарен между вкладками,
- * см. вопрос №3 в отчёте задачи) и на живом непротухшем пропуске НЕ ходит
+ * `requestBagPass(signMessage, address)` кэширует результат ДВУМЯ слоями —
+ * память модуля плюс кладовая браузера (`localStorage`, см. «ГДЕ ЖИВЁТ
+ * ПРОПУСК» ниже): пропуск переживает перезагрузку страницы и общий у всех
+ * вкладок, то есть окно подписи приходит раз в срок годности пропуска, а не
+ * на каждую загрузку страницы. На живом непротухшем пропуске НЕ ходит
  * в сеть и НЕ зовёт `signMessage` — просто отдаёт то, что уже есть. Это не
  * мелочь: именно на этом держится образец повтора ниже — если бы каждый
  * вызов дёргал кошелёк, повторный вызов после ошибки означал бы второе окно
@@ -278,10 +280,77 @@ const DEFAULT_RETRY_AFTER_SEC = 60;
 
 const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
 
-/** На вкладку, в памяти модуля — НЕ localStorage/sessionStorage. Переживает
- *  переходы внутри вкладки, не переживает перезагрузку; две вкладки держат
- *  каждая свой кэш и не видят друг друга (см. вопрос №3 в отчёте задачи). */
+/** Быстрый слой: память модуля. Медленный — кладовая браузера, см. ниже. */
 const _passCache = new Map<string, { pass: string; expiresAt: number }>();
+
+/**
+ * ─── ГДЕ ЖИВЁТ ПРОПУСК И ПОЧЕМУ ИМЕННО ТАМ ───────────────────────────────
+ *
+ * Пропуск переживает перезагрузку страницы и виден всем вкладкам одного
+ * происхождения. До этой правки он жил ТОЛЬКО в памяти модуля — и докстринг
+ * честно это описывал, а вот обещание уровнем выше («окно подписи максимум
+ * дважды в сутки») было неправдой: замерено независимой проверкой (В-6) —
+ * одно окно на КАЖДУЮ загрузку страницы и на КАЖДУЮ вкладку. Двенадцать
+ * часов — срок годности самого пропуска, а не кэша.
+ *
+ * ⚠️ ЧТО ИМЕННО МЫ КЛАДЁМ НА ДИСК И ЧЕМ ЭТО РИСКУЕТ. Пропуск — предъявительский
+ * токен: кто его получил, тот 12 часов читает и пишет мешки этого адреса.
+ * Скрипт, дорвавшийся до `localStorage` нашего происхождения, его прочтёт.
+ *
+ * Почему это всё равно правильный размен, и это НЕ «наверное, обойдётся»:
+ * закрытый ключ переписки уже лежит на этом же устройстве, в `IndexedDB`
+ * того же происхождения (`chatSession.ts`), и он строго ценнее — им читается
+ * ВСЯ история, навсегда, а пропуском — мешки, которые и так зашифрованы этим
+ * ключом, и только 12 часов. Нападающий, добравшийся до хранилищ браузера,
+ * забирает ключ и не нуждается в пропуске вовсе. То есть новой двери мы не
+ * открываем; мы кладём рядом с сейфом ключ от подъезда.
+ *
+ * Чего мы НЕ кладём сюда никогда: ни самого ключа переписки, ни кода
+ * восстановления, ни расшифрованного содержимого.
+ *
+ * Кладовая может отсутствовать (серверный рендер) или отказать (приватный
+ * режим, кончившаяся квота) — тогда всё работает ровно как раньше, на памяти
+ * модуля. Отказ кладовой не должен стоить человеку отправки.
+ */
+const PASS_STORAGE_PREFIX = 'hexseal_bagpass_';
+
+function passStorage(): Storage | null {
+  try {
+    const s = (globalThis as { localStorage?: Storage }).localStorage;
+    return s && typeof s.getItem === 'function' ? s : null;
+  } catch {
+    // Доступ к `localStorage` умеет БРОСАТЬ (сторонний контекст с
+    // запрещёнными куками), а не просто отсутствовать.
+    return null;
+  }
+}
+
+function readStoredPass(addr: string): { pass: string; expiresAt: number } | null {
+  const s = passStorage();
+  if (!s) return null;
+  let raw: string | null;
+  try { raw = s.getItem(PASS_STORAGE_PREFIX + addr); } catch { return null; }
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    // Данные с диска доверия не заслуживают ровно как данные из сети: их мог
+    // записать предыдущий выпуск, их мог испортить сбой.
+    if (isBagPassBody(parsed)) return { pass: parsed.pass, expiresAt: parsed.expiresAt };
+  } catch { /* мусор в кладовой — считаем, что записи нет */ }
+  return null;
+}
+
+function writeStoredPass(addr: string, value: { pass: string; expiresAt: number }): void {
+  const s = passStorage();
+  if (!s) return;
+  try { s.setItem(PASS_STORAGE_PREFIX + addr, JSON.stringify(value)); } catch { /* квота/приватный режим */ }
+}
+
+function deleteStoredPass(addr: string): void {
+  const s = passStorage();
+  if (!s) return;
+  try { s.removeItem(PASS_STORAGE_PREFIX + addr); } catch { /* нечего убирать */ }
+}
 
 /**
  * Выбрасывает кэш конкретного адреса. Публичная — пригодится и потребителю
@@ -291,7 +360,12 @@ const _passCache = new Map<string, { pass: string; expiresAt: number }>();
  * мёртв, и не должен ждать, пока кто-то снаружи додумается его выбросить.
  */
 export function forgetBagPass(address: string): void {
-  _passCache.delete(address.toLowerCase());
+  const addr = address.toLowerCase();
+  _passCache.delete(addr);
+  // ⚠️ И из кладовой ТОЖЕ. Забыть только память значило бы, что мёртвый
+  // пропуск переживает перезагрузку — та же дыра C1 («транспорт отдаёт тот
+  // же мёртвый пропуск навсегда»), только теперь вечная.
+  deleteStoredPass(addr);
 }
 
 /**
@@ -340,8 +414,13 @@ function parseBagPassAddress(pass: string): string | null {
 function forgetBagPassByToken(pass: string): void {
   const addr = parseBagPassAddress(pass);
   if (!addr) return;
-  if (_passCache.get(addr)?.pass === pass) {
+  // Сравнение — с тем, что реально в силе СЕЙЧАС (память, а если её нет —
+  // кладовая): запоздавший 401 по уже вытесненному токену не должен убивать
+  // свежий пропуск того же адреса.
+  const current = _passCache.get(addr) ?? readStoredPass(addr);
+  if (current?.pass === pass) {
     _passCache.delete(addr);
+    deleteStoredPass(addr);
   }
 }
 
@@ -391,9 +470,18 @@ export interface BagPass {
 const PASS_EXPIRY_SKEW_SEC = 30;
 
 function cachedPass(addr: string, nowSec: number): BagPass | null {
-  const entry = _passCache.get(addr);
+  // Память модуля — первой (дешевле), кладовая — вторым слоем: она и есть то,
+  // что переживает перезагрузку страницы и роднит две вкладки.
+  const entry = _passCache.get(addr) ?? readStoredPass(addr);
   if (!entry) return null;
-  if (entry.expiresAt - PASS_EXPIRY_SKEW_SEC <= nowSec) return null;
+  if (entry.expiresAt - PASS_EXPIRY_SKEW_SEC <= nowSec) {
+    // Протух — убираем из ОБОИХ слоёв, иначе следующий заход снова его
+    // прочитает с диска и снова отбросит, каждый раз.
+    _passCache.delete(addr);
+    deleteStoredPass(addr);
+    return null;
+  }
+  _passCache.set(addr, entry);
   return entry;
 }
 
@@ -445,6 +533,7 @@ export async function requestBagPass(
 
     const fresh: BagPass = { pass: body.pass, expiresAt: body.expiresAt };
     _passCache.set(addr, fresh);
+    writeStoredPass(addr, fresh);
     return fresh;
   })();
 
@@ -465,6 +554,18 @@ export async function requestBagPass(
 export function _resetBagPassCacheForTest(): void {
   _passCache.clear();
   _inFlight.clear();
+  // Кладовую тоже — иначе пропуск одного теста прилипал бы к следующему
+  // ровно так же, как раньше прилипал повисший дедуп-промис.
+  const s = passStorage();
+  if (!s) return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const k = s.key(i);
+      if (k && k.startsWith(PASS_STORAGE_PREFIX)) keys.push(k);
+    }
+    for (const k of keys) s.removeItem(k);
+  } catch { /* кладовой нет или она отказала — чистить нечего */ }
 }
 
 /* ────────────────────────────── putBag ──────────────────────────────── */

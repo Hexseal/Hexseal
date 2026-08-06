@@ -732,3 +732,46 @@ describe('вложение доезжает целиком, а не наполо
     });
   }, 40_000);
 });
+
+/* ─── В-3, вторая половина: мусор в новых полях вложения ─── */
+
+describe('гейт формы вложения знает и о новых полях', () => {
+  // Мутация «убрать проверку признака нарезки» на замках выше НЕ КРАСНЕЛА:
+  // те гоняют честно собранный payload, а гейт стоит на РАЗБОРЕ чужих
+  // данных. Форму проверяем там, где она проверяется, — иначе `chunked:
+  // "yes"` из сети повёл бы панель не той веткой расшифровки.
+  const BASE = {
+    url: 'https://relay.example/f', name: 'f.bin', size: 1,
+    keyHex: 'aa'.repeat(32), ivHex: 'bb'.repeat(12),
+  };
+
+  const CASES: Array<[string, Record<string, unknown>]> = [
+    ['chunked строкой',        { chunked: 'yes' }],
+    ['chunkCount строкой',     { chunkCount: '5' }],
+    ['chunkCount дробным',     { chunkCount: 2.5 }],
+    ['chunkCount отрицательным', { chunkCount: -1 }],
+    ['chunkSize строкой',      { chunkSize: '8' }],
+    ['fileKey числом',         { fileKey: 7 }],
+    ['mime объектом',          { mime: {} }],
+  ];
+
+  it.each(CASES)('%s — сообщение отвергается целиком, а не принимается молча', async (_label, bad) => {
+    const { sanitizePayload } = await import('@/lib/chatPayloadForm');
+    expect(sanitizePayload({ file: { ...BASE, ...bad } })).toBeNull();
+  });
+
+  it('годные новые поля проходят и сохраняются', async () => {
+    const { sanitizePayload } = await import('@/lib/chatPayloadForm');
+    const ok = sanitizePayload({
+      file: { ...BASE, fileKey: 'files/x', mime: 'image/png', chunked: true, chunkCount: 3, chunkSize: 8 },
+    });
+    expect(ok?.file).toEqual({
+      ...BASE, fileKey: 'files/x', mime: 'image/png', chunked: true, chunkCount: 3, chunkSize: 8,
+    });
+  });
+
+  it('старое вложение без новых полей по-прежнему годно', async () => {
+    const { sanitizePayload } = await import('@/lib/chatPayloadForm');
+    expect(sanitizePayload({ file: { ...BASE } })?.file).toEqual(BASE);
+  });
+});

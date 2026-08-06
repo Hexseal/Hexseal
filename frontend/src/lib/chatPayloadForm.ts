@@ -22,7 +22,36 @@
 
 export interface ChatPayload {
   text?: string;
-  file?: { url: string; name: string; size: number; keyHex: string; ivHex: string };
+  /**
+   * Вложение. Первые пять полей были с самого начала; остальные добавлены
+   * Задачей 6 (находка В-3 независимой проверки): без них большой файл
+   * приезжал БИТЫМ. Отправка кладёт в конверт только то, что здесь названо,
+   * а прежний путь через XMTP вёз все девять — панель получателя шла не той
+   * веткой расшифровки, теряла превью картинок и не могла обновить
+   * протухший адрес скачивания.
+   *
+   * Все новые поля НЕОБЯЗАТЕЛЬНЫ: сообщение, собранное до этой правки,
+   * обязано читаться как прежде.
+   */
+  file?: {
+    url: string;
+    name: string;
+    size: number;
+    keyHex: string;
+    ivHex: string;
+    /** Ключ файла на складе. Единственное, чем можно обновить протухший
+     *  `url`: сам `url` запечатан в конверте и правке не подлежит. */
+    fileKey?: string;
+    /** Тип содержимого. Без него нет ни превью картинки, ни правильного
+     *  типа при сохранении. */
+    mime?: string;
+    /** Файл загружен нарезанным (больше 20 МБ). Без этого признака панель
+     *  идёт ОБЫЧНОЙ веткой расшифровки, и файл не собирается. */
+    chunked?: boolean;
+    chunkCount?: number;
+    /** Размер куска открытого текста (`CHUNK_SIZE`, 8 МБ). */
+    chunkSize?: number;
+  };
   /** Метка сделки — ВНУТРИ запечатанного, не снаружи (см. докстринг
    *  `chatEnvelope.ts` и тест «метка сделки не встречается в байтах
    *  конверта»). Форма — адрес Agreement-контракта (`0x` + 40 hex-символов),
@@ -139,6 +168,19 @@ export function sanitizePayload(value: unknown): ChatPayload | null {
     ) {
       return null;
     }
+    // Поля нарезки и опознания (Задача 6, В-3). Необязательные, но если
+    // ПРИСУТСТВУЮТ — форма проверяется так же строго, как у пяти старших:
+    // `chunked: "yes"` вместо булева повёл бы панель не той веткой
+    // расшифровки, а `chunkCount: "5"` дал бы NaN в арифметике сборки.
+    // Знакомое поле не той формы — отказ ВСЕМУ сообщению, как и выше: это
+    // не «незнакомое поле из будущего», это испорченное известное.
+    if (f.fileKey !== undefined && typeof f.fileKey !== 'string') return null;
+    if (f.mime !== undefined && typeof f.mime !== 'string') return null;
+    if (f.chunked !== undefined && typeof f.chunked !== 'boolean') return null;
+    if (f.chunkCount !== undefined &&
+        (typeof f.chunkCount !== 'number' || !Number.isSafeInteger(f.chunkCount) || f.chunkCount < 0)) return null;
+    if (f.chunkSize !== undefined &&
+        (typeof f.chunkSize !== 'number' || !Number.isSafeInteger(f.chunkSize) || f.chunkSize < 0)) return null;
   }
 
   if (v.dealId !== undefined && (typeof v.dealId !== 'string' || !DEAL_ID_RE.test(v.dealId))) {

@@ -175,6 +175,18 @@ export interface PairChatEngineOptions {
   onError?: (err: unknown) => void;
   /** Опрос остановлен, пропуск не восстанавливается. */
   onAuthFailed?: () => void;
+  /**
+   * Приехало хотя бы одно НОВОЕ входящее сообщение на этом тике. Зовётся
+   * только тогда, не на каждом тике.
+   *
+   * ⚠️ Существует ради списка переписок. Событие `hexseal-conv-update`
+   * посылали ровно два файла XMTP, и оба снесены Задачей 7 — то есть
+   * мгновенное обновление списка молча выродилось бы в тридцатисекундное
+   * ожидание, и заметил бы это только человек, глядя на экран. Обратный
+   * вызов, а не `window.dispatchEvent` прямо отсюда: движок про DOM не
+   * знает и не должен (иначе его нельзя было бы проверить вне браузера).
+   */
+  onIncoming?: () => void;
   /** Только тесты. Умолчания и есть боевое поведение. */
   sleep?: (ms: number) => Promise<void>;
   intervals?: BagPollIntervalsMs;
@@ -201,6 +213,11 @@ function payloadToMessage(
     isFromMe,
     seq,
     delivered,
+    // Все девять полей, а не пять (В-3): признак нарезки, число и размер
+    // кусков, ключ файла и тип содержимого молча терялись, и файл больше
+    // 20 МБ приезжал битым. Необязательные поля кладутся ТОЛЬКО когда они
+    // есть — иначе `chunked: undefined` отличалось бы от отсутствия ключа
+    // при сравнении формы.
     ...(payload.file
       ? {
         attachment: {
@@ -209,6 +226,11 @@ function payloadToMessage(
           size: payload.file.size,
           key: payload.file.keyHex,
           iv: payload.file.ivHex,
+          ...(payload.file.fileKey !== undefined ? { fileKey: payload.file.fileKey } : {}),
+          ...(payload.file.mime !== undefined ? { mime: payload.file.mime } : {}),
+          ...(payload.file.chunked !== undefined ? { chunked: payload.file.chunked } : {}),
+          ...(payload.file.chunkCount !== undefined ? { chunkCount: payload.file.chunkCount } : {}),
+          ...(payload.file.chunkSize !== undefined ? { chunkSize: payload.file.chunkSize } : {}),
         },
       }
       : {}),
@@ -290,6 +312,7 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
 
   async function handleTick(result: ListBagsResult, pass: string): Promise<void> {
     for (const s of result.sent) if (s.fetched) delivered.add(s.key);
+    let arrived = 0;
 
     for (const summary of result.inbox) {
       if (stopped) return;
@@ -312,6 +335,7 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
             key: summary.key, sender: summary.sender,
             uploadedAt: summary.uploadedAt, body,
           });
+          arrived++;
         }
       } finally {
         downloads--;
@@ -319,6 +343,11 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     }
     if (stopped) return;
     await emit();
+    // ПОСЛЕ выдачи состояния: список переписок пойдёт перечитывать превью, и
+    // делать это раньше, чем сама переписка обновилась, незачем.
+    if (arrived > 0) {
+      try { opts.onIncoming?.(); } catch { /* чужой обработчик не должен ронять тик */ }
+    }
   }
 
   const handle: BagPollHandle = pollBags({
@@ -464,6 +493,13 @@ export function usePairChat(peerAddress: string) {
         setIsLoading(false);
       },
       onAuthFailed: () => { setStreamDead(true); },
+      // Список переписок слушает это событие и перечитывает превью сразу, а
+      // не через тридцать секунд. Его посылали два файла XMTP, снесённые
+      // Задачей 7; движок обязан взять эту обязанность на себя, иначе
+      // отзывчивость теряется молча.
+      onIncoming: () => {
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('hexseal-conv-update'));
+      },
     });
     engineRef.current = engine;
 
@@ -507,6 +543,14 @@ export function usePairChat(peerAddress: string) {
       file: {
         url: result.url, name: file.name, size: file.size,
         keyHex: result.keyHex, ivHex: result.ivHex,
+        // В-3: без этих пяти большой файл приезжает битым, картинка теряет
+        // превью, а протухший адрес нечем обновить. `fileKey` кладём всегда
+        // — он единственный способ обновить `url`, запечатанный в конверте.
+        fileKey: result.fileKey,
+        ...(file.type ? { mime: file.type } : {}),
+        chunked: result.chunked === true,
+        ...(result.chunkCount !== undefined ? { chunkCount: result.chunkCount } : {}),
+        ...(result.chunkSize !== undefined ? { chunkSize: result.chunkSize } : {}),
       },
     });
     notifyPush(peerLc, PUSH_BODY, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);

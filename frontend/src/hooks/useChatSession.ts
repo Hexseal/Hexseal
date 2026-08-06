@@ -246,6 +246,31 @@ export async function fetchPeerChatKeys(
  * заведён: подпись всплывает не по нажатию, а при открытии чата раз в 12
  * часов, и человеку это надо сказать словами (`chat.pass_signature_hint`).
  */
+/**
+ * Подпись типизированных данных, из которой рождается ключ переписки —
+ * ВТОРОЙ и последний путь к окну кошелька в чате, и он тоже под общим
+ * мьютексом.
+ *
+ * ⚠️ ПОЧЕМУ ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ СТРОКА В ЭФФЕКТЕ. Находка В-1
+ * независимой проверки, разбор по дереву импортов: `chatSession.ts` мьютекс
+ * кошелька НЕ ИМПОРТИРУЕТ ВОВСЕ — у открытия сеанса свой межвкладочный замок
+ * с ДРУГИМ именем (`hexseal-chat-session-<адрес>`), и с окном подписи от
+ * подписки на уведомления, от страницы сделки или от гейслесс-действия он не
+ * пересекается никак. То есть «оба пути под общим мьютексом» было неправдой,
+ * пока эта обёртка не появилась. Замок берётся ЗДЕСЬ, снаружи, потому что
+ * `chatSession.ts` трогать нельзя и не нужно: он получает подписывающую
+ * функцию аргументом, а чем она обёрнута — его не касается.
+ *
+ * Замок держится на время самого окна подписи, а не на всё открытие сеанса:
+ * `chatSession` зовёт эту функцию ровно там, где спрашивает кошелёк.
+ */
+export async function signChatKeyLocked(
+  address: `0x${string}`,
+  signTypedDataAsync: (typedData: typeof CHAT_KEY_TYPED_DATA) => Promise<`0x${string}`>,
+): Promise<`0x${string}`> {
+  return withWalletLock(address, () => signTypedDataAsync(CHAT_KEY_TYPED_DATA));
+}
+
 export async function getBagPass(
   address: `0x${string}`,
   signMessageAsync: (args: { message: string }) => Promise<string>,
@@ -363,7 +388,12 @@ export function useChatSession(): UseChatSessionValue {
           if (typedData !== CHAT_KEY_TYPED_DATA) {
             throw new Error('useChatSession: сеанс попросил подписать не свои же данные');
           }
-          return signTypedDataAsync(CHAT_KEY_TYPED_DATA as Parameters<typeof signTypedDataAsync>[0]);
+          // Через `signChatKeyLocked` — общий мьютекс кошелька (В-1). Прямой
+          // вызов здесь означал бы второй путь к окну подписи вне очереди.
+          return signChatKeyLocked(
+            address,
+            (td) => signTypedDataAsync(td as Parameters<typeof signTypedDataAsync>[0]) as Promise<`0x${string}`>,
+          );
         });
         if (dropped || cancelledRef.current) return;
         setSession(opened);
