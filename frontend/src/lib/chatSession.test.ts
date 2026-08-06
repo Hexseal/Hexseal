@@ -606,6 +606,28 @@ describe('негодный код восстановления отказыва�
     expect(store === undefined || store.size === 0).toBe(true);
   });
 
+  it('код полноширинными буквами (восточная раскладка) — работает', async () => {
+    // Ради ЭТОГО в нормализации стоит NFKD. Неразрывный пробел, который
+    // назывался причиной раньше, ловится обычной свёрткой пробелов и без
+    // всякого NFKD — а вот «ｌｅｇａｌ» без него остаётся другим словом, и
+    // человек с восточной раскладкой получал бы «слово не из списка» на
+    // совершенно правильном коде.
+    const wide = GOLD.replace(/[a-z]/g, ch =>
+      String.fromCharCode(ch.charCodeAt(0) - 0x61 + 0xff41)).replace(/ /g, '\u3000');
+    expect(wide).not.toBe(GOLD);
+
+    const session = await openSessionFromRecoveryCode(ALICE, wide, async () => ALICE_CONTRACT_SIG);
+    expect(hex(session.keypair.publicKey))
+      .toBe('377e94d7047bf2f0241998be0c9ab6bae18ac90139edc3f2d2f4bf51f2c53253');
+    expect(exportRecoveryCode(session)).toBe(GOLD);
+  });
+
+  it('неразрывный пробел из PDF — тоже работает', async () => {
+    const nbsp = GOLD.replace(/ /g, '\u00a0');
+    const session = await openSessionFromRecoveryCode(ALICE, nbsp, async () => ALICE_CONTRACT_SIG);
+    expect(exportRecoveryCode(session)).toBe(GOLD);
+  });
+
   it('лишние пробелы и ДРУГОЙ РЕГИСТР — работают: человек перепечатывает с бумажки', async () => {
     const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     const code = exportRecoveryCode(session);
@@ -1463,6 +1485,27 @@ describe('мусор на входе — вердикт, а не падение'
     try { exportRecoveryCode(session); } catch (err) { thrown = err; }
     expect((thrown as ChatSessionError)?.code).toBe('recovery_code_unavailable');
     expect(String((thrown as Error)?.message)).not.toContain('aaa');
+  });
+
+  it('код, лежащий в записи верхним регистром, отдаётся ОПРЯТНЫМ', async () => {
+    // Через запись недостижимо (мы пишем уже нормализованным), но проверка
+    // кода шла по нормализованному, а отдавался он сырым — то есть человек
+    // мог увидеть не тот текст, который мы признали годным.
+    fakeIdb._disk.set('sessions', new Map([[
+      ALICE.toLowerCase(),
+      {
+        v: RECORD_VERSION,
+        address: ALICE.toLowerCase(),
+        origin: 'recovery',
+        walletKind: 'contract',
+        publicKey: new Uint8Array(32).fill(9),
+        privateKey: new Uint8Array(32).fill(8),
+        recoveryCode: `  ${GOLD.toUpperCase().replace(/ /g, '   ')}  `,
+      },
+    ]]));
+
+    const session = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    expect(exportRecoveryCode(session)).toBe(GOLD);
   });
 
   it('в IndexedDB код с несошедшейся контрольной суммой — тоже не выдаётся (В-3)', async () => {
