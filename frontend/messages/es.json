@@ -622,7 +622,11 @@
     "dispute_log_badge": "Se guarda para disputas",
     "dispute_log_hint": "Los mensajes y archivos de este chat se conservan para que un árbitro pueda revisarlos. La plataforma puede leerlos y solo los abre cuando hay una disputa abierta con un árbitro asignado.",
     "file_expired": "El periodo de almacenamiento terminó: pide el archivo de nuevo",
-    "file_expired_image": "El periodo de almacenamiento terminó"
+    "file_expired_image": "El periodo de almacenamiento terminó",
+    "recovery_warning_title": "Anota estas 12 palabras y guárdalas como las llaves de tu casa.",
+    "recovery_warning_access": "Son tu acceso a toda tu conversación. Quien obtenga estas palabras leerá todos tus mensajes, pasados y futuros. No se pueden revocar ni cambiar.",
+    "recovery_warning_where": "No las guardes en chats, en el correo ni en la nube. Solo en papel o en un gestor de contraseñas.",
+    "recovery_warning_loss": "Si las pierdes, pierdes tu conversación. Ni nosotros ni nadie podrá recuperarla."
   },
   "xmtp_error": {
     "tab_busy": "Hexseal ya está abierto en otra pestaña y la mensajería solo puede funcionar en una a la vez. Cierra esa pestaña, o sigue chateando allí. Esta pestaña retomará la mensajería sola en cuanto la otra se cierre.",

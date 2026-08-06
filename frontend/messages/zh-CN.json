@@ -622,7 +622,11 @@
     "dispute_log_badge": "为争议保存",
     "dispute_log_hint": "本对话中的消息和文件会被保存，以便仲裁人查阅。平台能够读取它们，且仅在争议已开启并指派仲裁人时才会打开。",
     "file_expired": "保存期已结束 — 请对方重新发送",
-    "file_expired_image": "保存期已结束"
+    "file_expired_image": "保存期已结束",
+    "recovery_warning_title": "请抄下这 12 个词，像保管家门钥匙一样保管它们。",
+    "recovery_warning_access": "这是你进入全部聊天记录的钥匙。拿到这些词的人，能读到你过去和将来的所有消息。它们无法撤销，也无法更换。",
+    "recovery_warning_where": "不要存放在聊天、邮件或云端。只写在纸上，或存进密码管理器。",
+    "recovery_warning_loss": "丢了它们，就等于丢了聊天记录。我们和任何人都无法帮你找回。"
   },
   "xmtp_error": {
     "tab_busy": "Hexseal 已在另一个标签页中打开，消息功能同时只能在一个标签页运行。请关闭那个标签页，或直接在那里继续聊天。那个标签页关闭后，本页会自动接管消息功能。",

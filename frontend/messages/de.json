@@ -622,7 +622,11 @@
     "dispute_log_badge": "Für Streitfälle gespeichert",
     "dispute_log_hint": "Nachrichten und Dateien in diesem Chat werden gespeichert, damit ein Schiedsrichter sie prüfen kann. Die Plattform kann sie lesen und öffnet sie nur, wenn ein Streitfall offen ist und ein Schiedsrichter zugewiesen wurde.",
     "file_expired": "Aufbewahrungsfrist abgelaufen — bitte die Datei erneut anfordern",
-    "file_expired_image": "Aufbewahrungsfrist abgelaufen"
+    "file_expired_image": "Aufbewahrungsfrist abgelaufen",
+    "recovery_warning_title": "Schreiben Sie diese 12 Wörter auf und bewahren Sie sie wie Ihren Wohnungsschlüssel auf.",
+    "recovery_warning_access": "Sie sind Ihr Zugang zum gesamten Schriftverkehr. Wer diese Wörter erhält, liest alle Ihre Nachrichten – vergangene wie künftige. Sie lassen sich weder widerrufen noch ändern.",
+    "recovery_warning_where": "Bewahren Sie sie nicht im Chat, in E-Mails oder in der Cloud auf. Nur auf Papier oder in einem Passwortmanager.",
+    "recovery_warning_loss": "Verlieren Sie sie, verlieren Sie Ihren Schriftverkehr. Weder wir noch sonst jemand kann ihn wiederherstellen."
   },
   "xmtp_error": {
     "tab_busy": "Hexseal ist bereits in einem anderen Tab geöffnet, und Nachrichten laufen immer nur in einem Tab. Schließe den anderen Tab — oder schreibe einfach dort weiter. Dieser Tab übernimmt die Nachrichten von selbst, sobald der andere geschlossen ist.",

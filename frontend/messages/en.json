@@ -622,7 +622,11 @@
     "dispute_log_badge": "Saved for disputes",
     "dispute_log_hint": "Messages and files in this chat are stored so that an arbiter can review them. The platform can read them, and opens them only when a dispute is open and an arbiter has been assigned.",
     "file_expired": "Storage period ended — ask for the file again",
-    "file_expired_image": "Storage period ended"
+    "file_expired_image": "Storage period ended",
+    "recovery_warning_title": "Write these 12 words down and keep them like the keys to your home.",
+    "recovery_warning_access": "This is your access to all your messages. Anyone who gets these words will read everything you have written and everything you will write. They cannot be revoked or changed.",
+    "recovery_warning_where": "Do not keep them in chats, in email, or in the cloud. Paper or a password manager only.",
+    "recovery_warning_loss": "Lose them and you lose your messages. Neither we nor anyone else can bring them back."
   },
   "xmtp_error": {
     "tab_busy": "Hexseal is already open in another tab, and messaging can only run in one tab at a time. Close that tab — or just keep chatting there. This tab picks messaging up on its own as soon as the other one is gone.",

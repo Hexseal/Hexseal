@@ -622,7 +622,11 @@
     "dispute_log_badge": "Conservé pour les litiges",
     "dispute_log_hint": "Les messages et fichiers de cette conversation sont conservés pour qu’un arbitre puisse les examiner. La plateforme peut les lire et ne les ouvre que lorsqu’un litige est ouvert et un arbitre désigné.",
     "file_expired": "Durée de conservation écoulée — redemandez le fichier",
-    "file_expired_image": "Durée de conservation écoulée"
+    "file_expired_image": "Durée de conservation écoulée",
+    "recovery_warning_title": "Notez ces 12 mots et gardez-les comme les clés de chez vous.",
+    "recovery_warning_access": "C’est votre accès à toute la conversation. Quiconque obtient ces mots lira tous vos messages, passés et à venir. Ils ne peuvent être ni révoqués ni changés.",
+    "recovery_warning_where": "Ne les conservez pas dans une messagerie, dans un e-mail ni dans le cloud. Uniquement sur papier ou dans un gestionnaire de mots de passe.",
+    "recovery_warning_loss": "Si vous les perdez, vous perdez la conversation. Ni nous ni personne ne pourra la restaurer."
   },
   "xmtp_error": {
     "tab_busy": "Hexseal est déjà ouvert dans un autre onglet, et la messagerie ne fonctionne que dans un seul à la fois. Fermez cet onglet — ou continuez d’y discuter. Cet onglet reprendra la messagerie tout seul dès que l’autre sera fermé.",

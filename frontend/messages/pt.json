@@ -622,7 +622,11 @@
     "dispute_log_badge": "Guardado para disputas",
     "dispute_log_hint": "As mensagens e os ficheiros desta conversa são guardados para que um árbitro os possa analisar. A plataforma consegue lê-los e só os abre quando existe uma disputa aberta com um árbitro atribuído.",
     "file_expired": "Prazo de armazenamento terminou — peça o ficheiro novamente",
-    "file_expired_image": "Prazo de armazenamento terminou"
+    "file_expired_image": "Prazo de armazenamento terminou",
+    "recovery_warning_title": "Anote estas 12 palavras e guarde-as como as chaves de casa.",
+    "recovery_warning_access": "É o seu acesso a toda a conversa. Quem obtiver estas palavras lerá todas as suas mensagens, passadas e futuras. Não podem ser revogadas nem alteradas.",
+    "recovery_warning_where": "Não as guarde em conversas, no e-mail nem na nuvem. Apenas em papel ou num gestor de senhas.",
+    "recovery_warning_loss": "Se as perder, perde a conversa. Nem nós nem ninguém conseguirá recuperá-la."
   },
   "xmtp_error": {
     "tab_busy": "O Hexseal já está aberto noutro separador e as mensagens só funcionam num separador de cada vez. Feche esse separador — ou continue a conversar lá. Este separador retoma as mensagens sozinho assim que o outro for fechado.",
