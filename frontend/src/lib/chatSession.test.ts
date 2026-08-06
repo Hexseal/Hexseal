@@ -767,6 +767,37 @@ describe('две вкладки открывают сеанс одновреме
     expect(hex(x.keypair.privateKey)).toBe(hex(y.keypair.privateKey));
   });
 
+  it('без Web Locks (старый Safari, небезопасный контекст) — всё ещё одно окно', async () => {
+    // Замок между вкладками есть не везде. Там, где его нет, защита обязана
+    // остаться хотя бы в пределах вкладки — иначе два параллельных вызова из
+    // двух мест интерфейса (страница сделки и её же чат) откроют два окна
+    // подписи, а второе кошелёк отклонит как -32002.
+    const navDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'test' }, configurable: true, writable: true,
+    });
+    try {
+      expect((globalThis.navigator as { locks?: unknown }).locks).toBeUndefined();
+
+      let resolveSign: (v: `0x${string}`) => void;
+      const gate = new Promise<`0x${string}`>(r => { resolveSign = r; });
+      const sign = vi.fn(() => gate);
+
+      const both = Promise.all([
+        openSession(ALICE, sign, eoaOpts()),
+        openSession(ALICE, sign, eoaOpts()),
+      ]);
+      await new Promise(r => setTimeout(r, 20));
+      resolveSign!(ALICE_SIG);
+      const [x, y] = await both;
+
+      expect(sign).toHaveBeenCalledTimes(1);
+      expect(hex(x.keypair.privateKey)).toBe(hex(y.keypair.privateKey));
+    } finally {
+      if (navDescriptor) Object.defineProperty(globalThis, 'navigator', navDescriptor);
+    }
+  });
+
   it('чужая вкладка держит замок вечно — мы не виснем навсегда', async () => {
     // Захватываем тот же самый межвкладочный замок и не отпускаем.
     let release!: () => void;
