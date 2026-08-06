@@ -675,6 +675,24 @@ describe('вкладку закрыли между подписью и запи�
     expect(warn).toHaveBeenCalled();
   });
 
+  it('кошелёк-контракт при непрошедшей записи получает НОВУЮ личность — и это видно', async () => {
+    // Самое дорогое следствие обрыва, названное вслух: у обычного кошелька
+    // ключ выводится из подписи и после обрыва получится ТОТ ЖЕ; у кошелька-
+    // контракта он случайный, поэтому следующий заход заводит ДРУГОЙ ключ и
+    // ДРУГОЙ код. Показанный до обрыва код становится бесполезным.
+    // Потерять при этом нечего (открытый ключ никуда не публиковался), но
+    // интерфейс обязан не обещать сохранность — для этого persisted.
+    installStorage({ failPut: true });
+
+    const first = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+    const second = await openSession(ALICE, async () => ALICE_SIG, contractOpts());
+
+    expect(first.persisted).toBe(false);
+    expect(second.persisted).toBe(false);
+    expect(exportRecoveryCode(second)).not.toBe(exportRecoveryCode(first));
+    expect(hex(second.keypair.privateKey)).not.toBe(hex(first.keypair.privateKey));
+  });
+
   it('следующий заход читает пустоту, а не мусор', async () => {
     installStorage({ failPut: true });
     const sign = vi.fn(async () => ALICE_SIG);
