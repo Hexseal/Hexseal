@@ -671,11 +671,27 @@ describe('packEnvelope / unpackEnvelope', () => {
       await expect(unpackEnvelope(env, bob)).rejects.toThrow(/unexpected recovered key length \(31\), expected 32/);
     });
 
-    it('assertSealedKeyLength реально вызывается в packEnvelope на оба слота', async () => {
+    it('assertSealedKeyLength реально вызывается на СЛОТ ПОЛУЧАТЕЛЯ (первый вызов sealForRecipient)', async () => {
       const { bob, alice } = await actors();
       vi.spyOn(chatCryptoModule, 'sealForRecipient').mockResolvedValueOnce(new Uint8Array(79)); // не 80, только первый (recipient) вызов
       await expect(packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey))
         .rejects.toThrow(/unexpected recipient sealed key length \(79\), expected 80/);
+    });
+
+    it('assertSealedKeyLength реально вызывается на СВОЙ СЛОТ (второй вызов sealForRecipient) — не только на первом', async () => {
+      // Найдено закрывающим кругом ревью: тест выше (заголовок обещал "на
+      // оба слота") подменял ТОЛЬКО первый вызов sealForRecipient — снятие
+      // проверки ИМЕННО своего слота (assertSealedKeyLength(sealedSlotB,
+      // 'own')) давало 0 красных, никем не запертое. Первый вызов здесь
+      // получает ВЕРНУЮ длину (80, содержимое неважно — assertSealedKeyLength
+      // проверяет только .length), чтобы не спровоцировать провал на первой
+      // проверке раньше времени; второй — короче ожидаемого.
+      const { bob, alice } = await actors();
+      vi.spyOn(chatCryptoModule, 'sealForRecipient')
+        .mockResolvedValueOnce(new Uint8Array(80))  // первый вызов (recipient) — верная длина
+        .mockResolvedValueOnce(new Uint8Array(79)); // второй вызов (own) — короче на байт
+      await expect(packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey))
+        .rejects.toThrow(/unexpected own sealed key length \(79\), expected 80/);
     });
   });
 });
