@@ -597,7 +597,7 @@
     "could_not_connect": "Verbindung fehlgeschlagen",
     "open_conversations": "Gespräche öffnen",
     "search_messages": "Nachrichten suchen",
-    "attach_file_title": "Datei anhängen (verschlüsselt, 7 Tage gespeichert, max. {mb} MB)",
+    "attach_file_title": "Datei anhängen (verschlüsselt, 7 Tage gespeichert, länger solange der Deal offen ist, max. {mb} MB)",
     "files_deal_only": "Dateien nur in aktiven Deals verfügbar",
     "decrypting": "Entschlüsseln…",
     "decrypt_failed_image": "Bild konnte nicht entschlüsselt werden",
@@ -670,7 +670,12 @@
     "off_title": "Nachrichten wurden nicht geöffnet",
     "off_version_unknown": "Auf diesem Gerät liegt ein Eintrag unbekannter Version — die App scheint älter zu sein. Wir rühren ihn nicht an, damit Ihr Schlüssel nicht verloren geht. Laden Sie die Seite später neu.",
     "off_unknown": "Etwas hat das Öffnen der Nachrichten verhindert. Versuchen Sie es erneut.",
-    "off_close_tabs": "Andere Tabs schließen und erneut versuchen"
+    "off_close_tabs": "Andere Tabs schließen und erneut versuchen",
+    "bags_pending": "Nachrichten werden noch aus dem Speicher geholt: {n}.",
+    "bags_failed": "Einige Nachrichten konnten nicht aus dem Speicher geholt werden. Sie sind nicht verloren — versuchen Sie, die Verbindung neu aufzubauen.",
+    "push_no_pass": "Benachrichtigung nicht gesendet: auf diesem Gerät gibt es keine Chat-Sitzung.",
+    "push_rate_limited": "Benachrichtigungen gehen zu häufig raus — diese wurde übersprungen. Warten Sie kurz.",
+    "push_error": "Die Benachrichtigung konnte nicht gesendet werden. Ihre Nachricht wurde zugestellt, die andere Person sieht sie aber erst beim Öffnen des Chats."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

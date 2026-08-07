@@ -597,7 +597,7 @@
     "could_not_connect": "No se pudo conectar",
     "open_conversations": "Abrir conversaciones",
     "search_messages": "Buscar mensajes",
-    "attach_file_title": "Adjuntar archivo (cifrado, se guarda 7 días, máx. {mb} MB)",
+    "attach_file_title": "Adjuntar archivo (cifrado, se guarda 7 días, más si el trato sigue abierto, máx. {mb} MB)",
     "files_deal_only": "Los archivos solo están disponibles en tratos activos",
     "decrypting": "Descifrando…",
     "decrypt_failed_image": "Error al descifrar imagen",
@@ -670,7 +670,12 @@
     "off_title": "Los mensajes no se abrieron",
     "off_version_unknown": "En este dispositivo hay un registro de una versión desconocida: la aplicación parece más antigua. No lo tocamos para no perder su clave. Recargue la página más tarde.",
     "off_unknown": "Algo impidió abrir sus mensajes. Inténtelo de nuevo.",
-    "off_close_tabs": "Cerrar otras pestañas y reintentar"
+    "off_close_tabs": "Cerrar otras pestañas y reintentar",
+    "bags_pending": "Aún recogiendo mensajes del almacén: {n}.",
+    "bags_failed": "Algunos mensajes no se pudieron recoger del almacén. No se han perdido: intente reconectar.",
+    "push_no_pass": "Aviso no enviado: en este dispositivo no hay sesión de chat.",
+    "push_rate_limited": "Los avisos salen demasiado seguido; este se omitió. Espere un momento.",
+    "push_error": "No se pudo enviar el aviso. Su mensaje sí llegó, pero la otra persona no lo verá hasta abrir el chat."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

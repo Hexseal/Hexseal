@@ -17,6 +17,7 @@ import { useChatSession } from '@/hooks/useChatSession';
 import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 import { hasRecoveryCode } from '@/lib/chatRecovery';
 import { offScreenFor } from '@/lib/chatSessionOff';
+import { bagsNoticeFor, pushOutcomeKey } from '@/lib/chatNotices';
 import { RecoveryReminder } from '@/components/RecoveryCodeModal';
 import { useFeeConfig } from '@/hooks/useFeeConfig';
 import { quoteFeeLocal } from '@/lib/fee';
@@ -558,7 +559,14 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     // этих полей не даёт (заготовки соседних замков подменяют хук целиком).
     // Хук их отдаёт всегда — снимком, одной строкой, терять там нечего.
     burnedSeqs = [], ownNumberingReset = false,
+    // ⚠️ Три поля, которые хук считал верно и не читал НИКТО (`grep` по
+    // `components/` не находил ни одного). Умолчания — по той же причине,
+    // что у соседей выше: заготовки замков подменяют хук целиком.
+    pendingBags = 0, bagsFailed = false, pushOutcome = null,
   } = usePairChat(recipientAddress, dealContext?.agreementAddr);
+
+  const bagsNotice = bagsNoticeFor(pendingBags, bagsFailed);
+  const pushNoticeKey = pushOutcomeKey(pushOutcome);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   // Состояние САМОГО сеанса — отдельно от состояния этой переписки. Раньше
   // панель их не различала и на выключенном мессенджере крутила спиннер
@@ -1591,6 +1599,38 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                   ? t("chat.key_not_saved_contract")
                   : t("chat.key_not_saved")}
             </p>
+          </div>
+        )}
+        {/* Невзятое со склада. ДВЕ разные новости, а не одна: очередь за
+            потолком бюджета («ещё качаем», тревожить нечем) и отказ
+            скачивания («не смогли»). Человек, прочитавший «ещё качаем» на
+            отказе, будет ждать вечно. */}
+        {bagsNotice && (
+          <div className={`px-3 py-2 mx-1 mb-1 rounded-[12px] border ${
+            bagsNotice.tone === 'loud'
+              ? 'bg-amber-500/[0.07] border-amber-500/15'
+              : 'bg-white/[0.03] border-white/[0.06]'
+          }`}>
+            <div className="flex items-center justify-between gap-2">
+              <p className={`text-xs ${bagsNotice.tone === 'loud' ? 'text-amber-400/70' : 'text-white/35'}`}>
+                {t(bagsNotice.key as Parameters<typeof t>[0], { n: bagsNotice.count })}
+              </p>
+              {bagsNotice.tone === 'loud' && (
+                <button
+                  onClick={reconnect}
+                  className="flex-shrink-0 text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors"
+                >
+                  {t("chat.reconnect")}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {/* Почему не ушло уведомление. Три исхода — три разных действия:
+            завести сеанс, подождать, ничего из этого. */}
+        {pushNoticeKey && (
+          <div className="px-3 py-2 mx-1 mb-1 rounded-[12px] bg-white/[0.03] border border-white/[0.06]">
+            <p className="text-xs text-white/35">{t(pushNoticeKey as Parameters<typeof t>[0])}</p>
           </div>
         )}
         <RecoveryReminder visible={recoveryReminder.visible} onShow={recoveryReminder.show} />

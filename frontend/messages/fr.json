@@ -597,7 +597,7 @@
     "could_not_connect": "Impossible de se connecter",
     "open_conversations": "Ouvrir les conversations",
     "search_messages": "Rechercher des messages",
-    "attach_file_title": "Joindre un fichier (chiffré, conservé 7 jours, max. {mb} Mo)",
+    "attach_file_title": "Joindre un fichier (chiffré, conservé 7 jours, plus longtemps tant que l'accord est ouvert, max. {mb} Mo)",
     "files_deal_only": "Fichiers disponibles uniquement dans les transactions actives",
     "decrypting": "Déchiffrement…",
     "decrypt_failed_image": "Échec du déchiffrement de l'image",
@@ -670,7 +670,12 @@
     "off_title": "La messagerie ne s’est pas ouverte",
     "off_version_unknown": "Cet appareil contient un enregistrement d’une version inconnue — l’application semble plus ancienne. Nous n’y touchons pas afin de ne pas perdre votre clé. Rechargez la page plus tard.",
     "off_unknown": "Quelque chose a empêché l’ouverture de la messagerie. Réessayez.",
-    "off_close_tabs": "Fermer les autres onglets et réessayer"
+    "off_close_tabs": "Fermer les autres onglets et réessayer",
+    "bags_pending": "Récupération des messages en cours : {n}.",
+    "bags_failed": "Certains messages n’ont pas pu être récupérés du stockage. Ils ne sont pas perdus — essayez de vous reconnecter.",
+    "push_no_pass": "Notification non envoyée : aucune session de messagerie sur cet appareil.",
+    "push_rate_limited": "Les notifications partent trop souvent — celle-ci a été ignorée. Patientez un instant.",
+    "push_error": "La notification n’a pas pu être envoyée. Votre message est bien arrivé, mais l’autre personne ne le verra qu’en ouvrant la messagerie."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

@@ -597,7 +597,7 @@
     "could_not_connect": "Could not connect",
     "open_conversations": "Open conversations",
     "search_messages": "Search messages",
-    "attach_file_title": "Attach file (encrypted, kept 7 days, max {mb} MB)",
+    "attach_file_title": "Attach file (encrypted, kept 7 days, longer while the deal is open, max {mb} MB)",
     "files_deal_only": "Files available only in active deals",
     "decrypting": "Decrypting…",
     "decrypt_failed_image": "Failed to decrypt image",
@@ -670,7 +670,12 @@
     "off_title": "Messages did not open",
     "off_version_unknown": "This device holds a record of an unfamiliar version — the app looks older than it. We are leaving it alone so your key is not lost. Reload the page later.",
     "off_unknown": "Something got in the way of opening your messages. Try again.",
-    "off_close_tabs": "Close other tabs and retry"
+    "off_close_tabs": "Close other tabs and retry",
+    "bags_pending": "Still picking up messages from storage: {n}.",
+    "bags_failed": "Some messages could not be picked up from storage. They are not lost — try reconnecting.",
+    "push_no_pass": "Notification not sent: there is no chat session on this device.",
+    "push_rate_limited": "Notifications are going out too often — this one was skipped. Wait a moment.",
+    "push_error": "The notification could not be sent. Your message was delivered, but the other person will not see it until they open the chat."
   },
   "deal_bar": {
     "application_received": "Application received",

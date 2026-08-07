@@ -115,29 +115,37 @@ describe('надписи есть во всех четырнадцати лок�
 });
 
 describe('три поля наконец читают', () => {
-  it('⚠️ панель берёт pendingBags, bagsFailed и pushOutcome', () => {
+  it('⚠️ панель РАСПАКОВЫВАЕТ три поля из хука, а не просто упоминает их', () => {
     // ГЛАВНЫЙ ЗАМОК. До этого `grep` по `components/` не находил ни одного.
+    //
+    // ⚠️ Сверяется САМА РАСПАКОВКА. Первая версия искала имена где угодно в
+    // файле и осталась зелёной, когда мутация выбросила строку из
+    // деструктуризации: имена остались в вызове `bagsNoticeFor(pendingBags,
+    // …)` ниже (мутация М-52 прошла незамеченной).
     const panel = read('components/ChatPanel.tsx');
+    const unpack = panel.slice(panel.indexOf('} = usePairChat(') - 2000, panel.indexOf('} = usePairChat('));
     for (const field of ['pendingBags', 'bagsFailed', 'pushOutcome']) {
-      expect(panel, field).toContain(field);
+      expect(unpack, `${field} не распакован из usePairChat`).toContain(field);
     }
-    expect(panel).toContain('bagsNoticeFor');
-    expect(panel).toContain('pushOutcomeKey');
+    expect(panel).toMatch(/bagsNoticeFor\(\s*pendingBags\s*,\s*bagsFailed\s*\)/);
+    expect(panel).toMatch(/pushOutcomeKey\(\s*pushOutcome\s*\)/);
   });
 
-  it('⚠️ отказ доставки уведомления кто-то слушает', () => {
+  it('⚠️ отказ доставки уведомления кто-то СЛУШАЕТ, а не только ввозит', () => {
     // `onPushDeliveryFailure` был заведён исполнителем стойкости и не имел
     // НИ ОДНОГО подписчика в боевом коде — только в тесте. Событие общее,
     // поэтому подписка живёт там, где человек нажимает и ждёт: на досках.
-    const boards = ['app/board/page.tsx', 'app/board/executor/page.tsx'];
-    for (const rel of boards) {
-      expect(read(rel), rel).toContain('onPushDeliveryFailure');
+    //
+    // ⚠️ Сверяется ВЫЗОВ. Проверка на упоминание оставалась зелёной, когда
+    // мутация выбросила сам эффект: импорт-то остался (М-53).
+    for (const rel of ['app/board/page.tsx', 'app/board/executor/page.tsx']) {
+      expect(read(rel), rel).toMatch(/onPushDeliveryFailure\(\s*\(/);
     }
   });
 
   it('доски берут слова из той же карты, а не пишут свои', () => {
     for (const rel of ['app/board/page.tsx', 'app/board/executor/page.tsx']) {
-      expect(read(rel), rel).toContain('pushOutcomeKey');
+      expect(read(rel), rel).toMatch(/pushOutcomeKey\(/);
     }
   });
 });

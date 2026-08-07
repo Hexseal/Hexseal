@@ -597,7 +597,7 @@
     "could_not_connect": "无法连接",
     "open_conversations": "打开对话",
     "search_messages": "搜索消息",
-    "attach_file_title": "附加文件（加密，保存 7 天，最大 {mb} MB）",
+    "attach_file_title": "附加文件（加密，保存 7 天，交易进行中可更久，最大 {mb} MB）",
     "files_deal_only": "文件仅在活跃交易中可用",
     "decrypting": "解密中…",
     "decrypt_failed_image": "图片解密失败",
@@ -670,7 +670,12 @@
     "off_title": "聊天没有打开",
     "off_version_unknown": "本设备上有一条未知版本的记录——应用看起来比它旧。为了不丢失你的密钥，我们不去动它。请稍后重新加载页面。",
     "off_unknown": "有什么阻碍了聊天的打开。请再试一次。",
-    "off_close_tabs": "关闭其他标签页并重试"
+    "off_close_tabs": "关闭其他标签页并重试",
+    "bags_pending": "仍在从仓库取回消息：{n} 条。",
+    "bags_failed": "有些消息没能从仓库取回。它们没有丢失——试试重新连接。",
+    "push_no_pass": "未发送通知：本设备上没有聊天会话。",
+    "push_rate_limited": "通知发得太频繁，这条被跳过了。请稍等。",
+    "push_error": "通知没能发出。你的消息已送达，但对方要打开聊天才会看到。"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

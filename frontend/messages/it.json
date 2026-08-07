@@ -597,7 +597,7 @@
     "could_not_connect": "Impossibile connettersi",
     "open_conversations": "Apri conversazioni",
     "search_messages": "Cerca messaggi",
-    "attach_file_title": "Allega file (cifrato, conservato 7 giorni, max {mb} MB)",
+    "attach_file_title": "Allega file (cifrato, conservato 7 giorni, di più finché l'accordo è aperto, max {mb} MB)",
     "files_deal_only": "File disponibili solo nelle trattative attive",
     "decrypting": "Decrittografia…",
     "decrypt_failed_image": "Impossibile decrittografare l'immagine",
@@ -670,7 +670,12 @@
     "off_title": "I messaggi non si sono aperti",
     "off_version_unknown": "Su questo dispositivo c’è un record di versione sconosciuta: l’applicazione sembra più vecchia. Non lo tocchiamo per non perdere la sua chiave. Ricarichi la pagina più tardi.",
     "off_unknown": "Qualcosa ha impedito di aprire i messaggi. Riprovi.",
-    "off_close_tabs": "Chiudi le altre schede e riprova"
+    "off_close_tabs": "Chiudi le altre schede e riprova",
+    "bags_pending": "Stiamo ancora prelevando i messaggi dall’archivio: {n}.",
+    "bags_failed": "Alcuni messaggi non sono stati prelevati dall’archivio. Non sono persi: provi a riconnettersi.",
+    "push_no_pass": "Notifica non inviata: su questo dispositivo non c’è una sessione di chat.",
+    "push_rate_limited": "Le notifiche partono troppo spesso: questa è stata saltata. Attenda un momento.",
+    "push_error": "Non è stato possibile inviare la notifica. Il messaggio è stato consegnato, ma l’altra persona lo vedrà solo aprendo la chat."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",
