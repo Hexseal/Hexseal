@@ -202,9 +202,25 @@ describe('К-1: своя половина переписки', () => {
     const carolSession = await makeSession('ca01', C);
     const ap = await transport.requestBagPass(m => aw.signMessage(m), A);
 
-    await conv.sendMessage(
-      alice, C, carolSession.keypair.publicKey, { text: 'это Кэрол' }, null, { pass: ap.pass },
-    );
+    // ⚠️ НОМЕРА РАЗВЕДЕНЫ НАМЕРЕННО. Первая версия этой заготовки слала Кэрол
+    // ОДНО сообщение, и оно получало номер 0 — тот же, что у первого
+    // сообщения Бобу. Лишнее выбрасывалось как ДУБЛЬ НОМЕРА, а не отбором по
+    // получателю, чьё имя стоит в названии теста: мутация «снять проверку
+    // получателя» выживала, 4 из 4 зелёных. Зонд с несовпадающим номером
+    // показывал чужое сообщение в переписке — то есть свойство в коде было
+    // верным, а замка не было вовсе.
+    //
+    // Шлём столько, чтобы последнее заведомо ушло за пределы номеров
+    // переписки с Бобом, и проверяем ИМЕННО ЕГО.
+    let lastToCarol!: Awaited<ReturnType<typeof conv.sendMessage>>;
+    for (let i = 0; i < 6; i++) {
+      lastToCarol = await conv.sendMessage(
+        alice, C, carolSession.keypair.publicKey, { text: `это Кэрол ${i}` }, null, { pass: ap.pass },
+      );
+    }
+    // Замок на саму заготовку: если номера снова сойдутся, тест обязан
+    // покраснеть ЗДЕСЬ, а не притвориться зелёным ниже.
+    expect(lastToCarol.link.seq).toBeGreaterThanOrEqual(5);
 
     const [, bw] = stand.wallets;
     const seen = await new Promise<{ messages: { text: string }[] }>((resolve, reject) => {
@@ -214,7 +230,11 @@ describe('К-1: своя половина переписки', () => {
         onError: (err) => { e.stop(); reject(err); },
       });
     });
-    expect(seen.messages.map(m => m.text)).not.toContain('это Кэрол');
-    expect(seen.messages.map(m => m.text)).toContain('моё первое');
+    const texts = seen.messages.map(m => m.text);
+    // Ни одного из шести — и особенно последнего, чей номер с перепиской
+    // Боба не пересекается ничем.
+    expect(texts).not.toContain(`это Кэрол ${5}`);
+    expect(texts.filter(t => t.startsWith('это Кэрол'))).toEqual([]);
+    expect(texts).toContain('моё первое');
   }, 120_000);
 });

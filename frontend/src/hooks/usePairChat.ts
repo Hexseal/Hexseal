@@ -59,6 +59,7 @@ import {
   sendMessage, receiveBags,
   type IncomingBag, type SentMessage, type ConversationTrouble,
 } from '@/lib/chatConversation';
+import type { ChainLink } from '@/lib/chatChain';
 import type { ChatPayload } from '@/lib/chatPayloadForm';
 import type { ChatSession } from '@/lib/chatSession';
 import {
@@ -112,7 +113,12 @@ export interface PairChatMessage {
  * привязка к полному типу заставляла бы тест собирать поля, на которые никто
  * не смотрит.
  */
-export interface ConversationTroubleLike { kind: string }
+export interface ConversationTroubleLike {
+  kind: string;
+  /** Чей мешок вызвал претензию, засвидетельствованный складом. `undefined` —
+   *  мешок не разобрался настолько, что автора не установить. */
+  from?: string;
+}
 
 /**
  * Два признака, и они РАЗНЫЕ ПО СМЫСЛУ — смешивать их нельзя.
@@ -135,20 +141,54 @@ export interface TroubleSummary {
   undecryptable: boolean;
 }
 
-/** Роды претензий, означающие «предъявленному верить нельзя». Перечислены
- *  ЯВНО, а не «всё, что не undecryptable»: новый род претензии обязан быть
- *  отнесён руками, иначе он молча попал бы в самую мягкую формулировку. */
-const UNVERIFIED_KINDS: ReadonlySet<string> = new Set([
-  'malformed', 'sender_mismatch', 'body_mismatch', 'bad_signature',
-  'signer_unexpected', 'signer_changed', 'duplicate_seq',
-]);
-
-export function troubleSummary(troubles: readonly ConversationTroubleLike[]): TroubleSummary {
+/**
+ * Оба признака — ТОЛЬКО про мешки собеседника.
+ *
+ * ⚠️ Б-3 финальной проверки. С тех пор как своя половина переписки пошла через
+ * тот же разбор, ЛЮБАЯ претензия к своему мешку поднимала баннер про чужую
+ * подделку. Замерено: четыре претензии, авторы всех четырёх — мы сами,
+ * `chainUnverified: true`. Прежняя правка вырезала РОВНО ОДИН род из семи
+ * (`own_numbering_reset`), то есть чинила случай, а не причину.
+ *
+ * Причина одна: разбор смотрел на РОД претензии и никогда — на её АВТОРА.
+ * Поэтому отсев по автору стоит ПЕРВЫМ и не знает ни одного рода: новый род,
+ * которого сегодня нет, приедет отнесённым правильно сам по себе. Перечисление
+ * родов осталось ниже и решает другой вопрос — «подделка или наша беда», — а
+ * не «чья это беда».
+ *
+ * `ownAddress` необязателен: вызывающий, который своего адреса не знает,
+ * получает прежнее поведение (обвинение по роду) вместо тихого молчания —
+ * молчание здесь было бы хуже ошибки.
+ *
+ * Претензия БЕЗ автора (мешок не разобрался настолько, что отправителя не
+ * установить) считается чужой. Это выбор в пользу громкости: сказать «что-то
+ * не сходится» на своём мусоре — неприятно, промолчать на чужой подделке —
+ * опасно.
+ */
+export function troubleSummary(
+  troubles: readonly ConversationTroubleLike[],
+  ownAddress?: string,
+): TroubleSummary {
+  const own = ownAddress?.toLowerCase();
   let chainUnverified = false;
   let undecryptable = false;
   for (const t of troubles) {
+    // ПЕРВЫМ и без единого упоминания рода — в этом вся правка.
+    if (own !== undefined && t.from !== undefined && t.from.toLowerCase() === own) continue;
+    // Мягкие исходы названы ПОИМЁННО, громкий — по остатку, а не наоборот.
+    // Раньше было наоборот: список «верить нельзя» перечислялся руками, и
+    // род, которого в нём нет, не попадал НИ В ОДИН признак — то есть новый
+    // род означал полное молчание, ещё мягче самой мягкой формулировки.
+    // Комментарий рядом обещал ровно противоположное тому, что делал код.
+    //
+    // `own_numbering_reset` молчит ДАЖЕ БЕЗ адреса владельца: этот род
+    // `chatConversation.ts` выдаёт ТОЛЬКО на свой мешок (`from ===
+    // ownAddress` в самом условии), то есть автора он несёт в собственном
+    // имени. Отсев по автору выше его и так поймает, когда адрес передан;
+    // здесь — тот же вывод для вызывающего, который адреса не знает.
+    if (t.kind === 'own_numbering_reset') continue;
     if (t.kind === 'undecryptable') undecryptable = true;
-    else if (UNVERIFIED_KINDS.has(t.kind)) chainUnverified = true;
+    else chainUnverified = true;
   }
   return { chainUnverified, undecryptable };
 }
@@ -253,6 +293,26 @@ function payloadToMessage(
   };
 }
 
+/**
+ * Из двух голов берётся ТА, ЧТО ДАЛЬШЕ.
+ *
+ * Память вкладки знает про только что отправленное, склад — про отправленное
+ * с прежнего устройства (Б-1). `sendMessage` вдобавок сверяется с диском и
+ * тоже берёт максимум, так что все три источника сходятся к одному правилу:
+ * ВПЕРЁД, НО НЕ НАЗАД. Шаг назад здесь стоит дороже всего — он выдаёт
+ * собеседнику второе звено с тем же номером, то есть обвинение в подделке за
+ * наш собственный сбой.
+ *
+ * Отдельная экспортированная функция, а не строка внутри `send()`: инлайном
+ * правило не проверяемо (мутация «пусть склад просто побеждает» проходила
+ * зелёной, потому что в живом сеансе склад и память сходятся сами).
+ */
+export function furtherLink(a: ChainLink | null, b: ChainLink | null): ChainLink | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a.seq >= b.seq ? a : b;
+}
+
 export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   const own = opts.session.address.toLowerCase();
   const peer = opts.peer.toLowerCase() as `0x${string}`;
@@ -268,6 +328,27 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   const bags = new Map<string, IncomingBag>();
   /** Свои отправленные — чтобы разговор был разговором, а не половиной. */
   const ownSent: SentMessage[] = [];
+  /**
+   * Голова СВОЕЙ цепочки, восстановленная со склада.
+   *
+   * ⚠️ Б-1 финальной проверки, и это самая дорогая из находок. Человек
+   * заходит с чистого браузера ТЕМ ЖЕ обычным кошельком: ключ выводится тот
+   * же (подпись детерминированная), а головы разговора нет — она живёт только
+   * в хранилище браузера. Нумерация начиналась с нуля и сталкивалась со
+   * старой: у собеседника сообщение НЕ ПОКАЗЫВАЛОСЬ ВОВСЕ, а панель говорила
+   * «часть сообщений собеседника не прошла проверку подлинности». Отправитель
+   * при этом не узнавал ничего — свой повтор номера ему же невидим.
+   *
+   * Чинится тем, что своя половина переписки со склада УЖЕ достижима (задача
+   * 7 научила `GET /bags` отдавать обе половины, а скачиванию — пускать
+   * отправителя к своему мешку): разобрав её, мы знаем свой последний номер.
+   *
+   * Это НИЖНЯЯ ГРАНИЦА, а не источник истины: если голова на устройстве есть
+   * и она свежее — побеждает она (`sendMessage` сравнивает сам). Иначе два
+   * сообщения подряд в одном сеансе получили бы один номер, потому что склад
+   * ещё не знает про первое.
+   */
+  let recoveredHead: ChainLink | null = null;
   /** Только пополняется, см. шапку файла. */
   const delivered = new Set<string>();
 
@@ -305,7 +386,11 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   }
 
   async function emit(): Promise<void> {
-    const pinned = peerKeys?.signKey ? { [peer]: peerKeys.signKey } : undefined;
+    // ВСЕ ключи собеседника, а не только нынешний (Б-2): справочник хранит
+    // историю ради того, чтобы честная смена ключа не читалась как подделка.
+    const pinned = peerKeys && peerKeys.signKeyHistory.length > 0
+      ? { [peer]: peerKeys.signKeyHistory }
+      : undefined;
     const state = await receiveBags(opts.session, [...bags.values()], {
       peer,
       ...(pinned ? { peerSigningPublicKeys: pinned } : {}),
@@ -313,6 +398,12 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       deliveredKeys: [...delivered],
     });
     if (stopped) return;
+    // Свой последний номер — по РАЗОБРАННОЙ переписке, а не по памяти вкладки:
+    // на чистом устройстве память пуста, а склад помнит (Б-1).
+    for (const m of state.messages) {
+      if (m.from.toLowerCase() !== own || !m.proof) continue;
+      if (!recoveredHead || m.proof.link.seq > recoveredHead.seq) recoveredHead = m.proof.link;
+    }
     opts.onState({
       messages: state.messages.map(m =>
         payloadToMessage(m.payload, m.from, m.seq, m.sentAt, m.from.toLowerCase() === own, m.delivered)),
@@ -413,7 +504,8 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
           'peer_unknown',
         );
       }
-      const prev = ownSent.length > 0 ? ownSent[ownSent.length - 1].link : null;
+      const fromMemory = ownSent.length > 0 ? ownSent[ownSent.length - 1].link : null;
+      const prev = furtherLink(recoveredHead, fromMemory);
       const sent = await sendMessage(opts.session, peer, keys.boxKey, payload, prev, { pass });
       ownSent.push(sent);
       await emit();
@@ -504,7 +596,7 @@ export function usePairChat(peerAddress: string, dealId?: string) {
         setMessages(s.messages);
         setGapAfterSeq(s.gapAfterSeq);
         setPeerKnown(s.peerKnown);
-        setTroubles(troubleSummary(s.troubles));
+        setTroubles(troubleSummary(s.troubles, address));
         setIsInitialized(true);
         setIsLoading(false);
       },

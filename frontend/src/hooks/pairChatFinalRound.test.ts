@@ -26,7 +26,7 @@ import {
 import { buildLink, type ChainLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
 import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
-import { startPairChat, troubleSummary, type PairChatState } from './usePairChat';
+import { startPairChat, troubleSummary, furtherLink, type PairChatState } from './usePairChat';
 import { fetchPeerChatKeys } from './useChatSession';
 
 const ALICE = '0xA1cE00000000000000000000000000000000CAfE' as const;
@@ -52,18 +52,26 @@ function hexOf(bytes: Uint8Array): string {
 interface StoredBag {
   key: string; sender: string; recipient: string;
   size: number; uploadedAt: number; body: Uint8Array;
+  /** Звено этого мешка — заготовке нужно, чтобы продолжать цепочку. */
+  link: ChainLink;
 }
 
 /** Настоящие мешки: конверт → звено → подпись → кадр. */
 async function buildChain(
   from: ChatSession, sender: `0x${string}`, recipient: `0x${string}`,
   recipientPub: Uint8Array, texts: string[], startAt = 1_700_000_000_000,
+  /** Продолжить уже начатую цепочку. Смена ключа нумерацию НЕ сбрасывает:
+   *  голова разговора живёт на устройстве и переживает смену ключа — сброс
+   *  номера это совсем другой случай (Б-1, чистое хранилище). Первая версия
+   *  этой заготовки начинала с нуля, и «смена ключа» на деле проверяла
+   *  столкновение номеров. */
+  continueFrom: ChainLink | null = null,
 ): Promise<StoredBag[]> {
   const sodium = (await import('libsodium-wrappers')).default;
   await sodium.ready;
   const signer = await deriveLinkSigningKeypair(from.keypair);
   const out: StoredBag[] = [];
-  let prev: ChainLink | null = null;
+  let prev: ChainLink | null = continueFrom;
   for (let i = 0; i < texts.length; i++) {
     const at = startAt + i;
     const envelope = await packEnvelope(
@@ -76,7 +84,7 @@ async function buildChain(
     out.push({
       key: `${recipient.toLowerCase()}/${at}.bin`,
       sender: sender.toLowerCase(), recipient: recipient.toLowerCase(),
-      size: body.length, uploadedAt: at, body,
+      size: body.length, uploadedAt: at, body, link,
     });
     prev = link;
   }
@@ -318,7 +326,12 @@ describe('собеседник честно сменил ключ', () => {
     const newSigner = await deriveLinkSigningKeypair(bobNew.keypair);
 
     const older = await buildChain(bobOld, BOB, ALICE, alice.keypair.publicKey, ['старое раз', 'старое два']);
-    const newer = await buildChain(bobNew, BOB, ALICE, alice.keypair.publicKey, ['новое раз'], 1_700_000_000_500);
+    // Смена ключа нумерацию НЕ сбрасывает — цепочка продолжается со звена 1.
+    const newer = await buildChain(
+      bobNew, BOB, ALICE, alice.keypair.publicKey, ['новое раз'], 1_700_000_000_500,
+      older[older.length - 1].link,
+    );
+    expect(newer[0].link.seq).toBe(2);
     const bags = [...older, ...newer];
 
     vi.stubGlobal('fetch', relayer({
@@ -430,5 +443,74 @@ describe('баннер про подделку поднимается тольк
   it('без адреса владельца разбор ведёт себя как раньше — обвиняет по роду', () => {
     // Обратная совместимость для вызывающего, который своего адреса не знает.
     expect(troubleSummary([{ kind: 'bad_signature', from: OWN }]).chainUnverified).toBe(true);
+  });
+});
+
+/* ───── Б-1, две подпорки, которые мутации нашли пустыми ───── */
+
+describe('выбор головы: вперёд, но не назад', () => {
+  const mk = (seq: number): ChainLink => ({
+    seq, prevHash: `0x${'11'.repeat(32)}`, bodyHash: `0x${'22'.repeat(32)}`,
+    sender: BOB_LC, sentAt: 1,
+  });
+
+  it('склад дальше памяти — берётся склад', () => {
+    expect(furtherLink(mk(5), mk(2))?.seq).toBe(5);
+  });
+
+  it('ПАМЯТЬ дальше склада — берётся память, а не склад', () => {
+    // Ровно та мутация, что проходила зелёной инлайном: «пусть склад просто
+    // побеждает». В живом сеансе склад и память сходятся сами, и разница
+    // видна только здесь — на голых значениях.
+    expect(furtherLink(mk(2), mk(7))?.seq).toBe(7);
+  });
+
+  it('одного из двух нет — берётся второй, а не null', () => {
+    expect(furtherLink(null, mk(3))?.seq).toBe(3);
+    expect(furtherLink(mk(3), null)?.seq).toBe(3);
+    expect(furtherLink(null, null)).toBeNull();
+  });
+});
+
+describe('восстановление головы берёт СВОЮ цепочку, а не чужую', () => {
+  it('ЗАМЕР: у собеседника номера до 4, у нас один — наше следующее получает 1, а не 5', async () => {
+    // Что красит: отбор восстановления без проверки автора. Чужая цепочка
+    // длиннее нашей — обычное дело, — и её номер, взятый за свой, выдал бы
+    // собеседнику дыру в нашей нумерации на ровном месте.
+    const bob = await makeSession(BOB, 'bb');
+    const alice = await makeSession(ALICE, 'a1');
+    const mine = await buildChain(bob, BOB, ALICE, alice.keypair.publicKey, ['моё нулевое']);
+    const theirs = await buildChain(
+      alice, ALICE, BOB, bob.keypair.publicKey,
+      ['их 0', 'их 1', 'их 2', 'их 3', 'их 4'], 1_700_000_000_100,
+    );
+
+    vi.stubGlobal('fetch', relayer({
+      bags: [...mine, ...theirs], me: BOB,
+      keysBody: () => ({ boxKey: hexOf(alice.keypair.publicKey) }),
+    }));
+
+    const states: PairChatState[] = [];
+    const engine = startPairChat({
+      session: bob, peer: ALICE, getPass: async () => 'v1.p', isActive: () => true,
+      onState: (s) => { states.push(s); }, onError: () => {}, sleep: tick,
+    });
+    try {
+      await waitFor(() => states.length > 0 && states[states.length - 1].messages.length === 6);
+      const sent = await engine.send({ text: 'моё первое' });
+      expect(sent.seq).toBe(1);
+    } finally { engine.stop(); }
+  }, 90_000);
+});
+
+describe('own_numbering_reset несёт автора в собственном имени', () => {
+  it('молчит и БЕЗ адреса владельца — этот род бывает только про свой мешок', () => {
+    expect(troubleSummary([{ kind: 'own_numbering_reset' }])).toEqual({
+      chainUnverified: false, undecryptable: false,
+    });
+  });
+
+  it('а чужой повтор номера по-прежнему признак подделки', () => {
+    expect(troubleSummary([{ kind: 'duplicate_seq', from: BOB_LC }], ALICE_LC).chainUnverified).toBe(true);
   });
 });
