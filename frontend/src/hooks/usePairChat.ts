@@ -53,7 +53,7 @@ import { useAccount, useSignMessage } from 'wagmi';
 import {
   fetchBag, pollBags,
   BagTransportError,
-  type BagPollHandle, type BagPollIntervalsMs, type ListBagsResult,
+  type BagPollHandle, type BagPollIntervalsMs, type ListBagsResult, type BagSummary,
 } from '@/lib/chatTransport';
 import {
   sendMessage, receiveBags, listBurnedSeqs,
@@ -338,6 +338,83 @@ export function furtherLink(a: ChainLink | null, b: ChainLink | null): ChainLink
   return a.seq >= b.seq ? a : b;
 }
 
+/* ───────────────── К-1: отбор ДО скачивания и потолок ─────────────────── */
+
+/**
+ * Сколько мешков скачиваем за минуту.
+ *
+ * ⚠️ ЧИСЛО ВЫВЕДЕНО ИЗ ЧУЖОГО, БОЕВОГО, а не выбрано «на глаз». `relayer/app.js`
+ * даёт адресу `BAG_READ_RATE_MAX = 120` чтений в минуту, и этот бюджет ОБЩИЙ у
+ * перечисления (`GET /bags`) и скачивания (`GET /bags/:key`). Опрос при
+ * открытом чате — 12 перечислений в минуту, остаётся 108. Восемьдесят
+ * оставляет запас списку переписок (`usePairConversations.ts`), который ест тот
+ * же адресный бюджет, и на повторы после отказов.
+ *
+ * ⚠️ ЦЕНА НАЗВАНА ВСЛУХ. Переписка, у которой на складе лежит больше
+ * восьмидесяти невзятых мешков (вернулись из отпуска, собеседник писал
+ * длинно), доедет НЕ ЗА ОДИН ТИК: восемьдесят сейчас, остальные следующими
+ * тиками. Человек в это время видит `pendingBags` больше нуля — то есть
+ * знает, что показано не всё. Прежнее поведение доезжало «за один тик» ровно
+ * до первой тысячи мешков, после чего склад отвечал `429` на СОБСТВЕННЫЙ
+ * следующий опрос, и чат вставал целиком.
+ */
+export const BAG_DOWNLOAD_BUDGET_PER_MIN = 80;
+
+/** Окно бюджета. Ровно минута — та же, которой считает склад. */
+const BAG_BUDGET_WINDOW_MS = 60_000;
+
+const KEY_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+
+/**
+ * Получатель мешка — из его КЛЮЧА (`<получатель>/<файл>.bin`, см.
+ * `relayer/bagStore.js` `bagKeyFor`). Имя получателя присвоил СЕРВЕР при
+ * записи, то есть это такое же свидетельство, как `sender`, только с другой
+ * стороны. `null` — ключ не той формы.
+ */
+function recipientOfKey(key: string): string | null {
+  const slash = key.indexOf('/');
+  if (slash <= 0) return null;
+  const addr = key.slice(0, slash).toLowerCase();
+  return KEY_ADDRESS_RE.test(addr) ? addr : null;
+}
+
+/**
+ * Мешок ЭТОЙ переписки — решается ДО скачивания, по одной описи, без единого
+ * байта тела.
+ *
+ * ⚠️ ЗАЧЕМ (К-1 враждебной проверки). Мешок в чужой ящик кладёт КТО УГОДНО, кто
+ * знает адрес, — а адреса в цепи публичны. Раньше движок качал КАЖДЫЙ мешок из
+ * `inbox` и только потом отдавал `receiveBags`, которая уже отбрасывала чужое:
+ * то есть посторонний оплачивал жертве трафик, время и — главное — адресный
+ * бюджет чтения склада. Замер: 300 мешков постороннего = 300 скачиваний, и
+ * сообщение собеседника показывалось 301-м.
+ *
+ * Три случая, и каждый обязан быть здесь, иначе теряется своя же половина:
+ *  1. мешок ОТ собеседника — очевидный;
+ *  2. НАШ мешок, адресованный собеседнику: своя половина переписки, без неё
+ *     после перезагрузки вкладки от собственных сообщений не остаётся ничего
+ *     (Б-1) и нумерация начинается заново;
+ *  3. переписка с самим собой — там обе роли на одном адресе.
+ *
+ * Отбор своих идёт по ПОЛУЧАТЕЛЮ, не по отправителю: отправитель у всех своих
+ * мешков один и тот же (мы сами), и сравнение с собеседником не отсеивало бы
+ * ничего — открытая переписка с Бобом качала бы всё написанное Кэрол.
+ *
+ * Экспортирована намеренно: правило отбора — это ровно то место, где ошибка
+ * означает либо пропавшую половину переписки, либо открытый чужой кран, и
+ * проверяемо оно должно быть прямо, а не через поднятый движок.
+ */
+export function bagBelongsToPair(
+  summary: { key: string; sender: string }, own: string, peer: string,
+): boolean {
+  const sender = summary.sender.toLowerCase();
+  const ownLc = own.toLowerCase();
+  const peerLc = peer.toLowerCase();
+  if (sender === peerLc) return true;
+  if (sender === ownLc) return peerLc === ownLc || recipientOfKey(summary.key) === peerLc;
+  return false;
+}
+
 export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   const own = opts.session.address.toLowerCase();
   const peer = opts.peer.toLowerCase() as `0x${string}`;
@@ -381,6 +458,27 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   let peerKnown = true;
   let keysPublished = false;
   let downloads = 0;
+
+  /**
+   * ОПИСЬ НЕВЗЯТОГО: мешки, которые склад показал в описи, которые относятся к
+   * этой переписке — и которых мы ещё не взяли.
+   *
+   * Живёт ровно затем, чтобы «показано складом» и «взято нами» перестали быть
+   * одним и тем же. Курсор `pollBags` двигается на весь ответ сразу, ещё до
+   * первого скачивания, — значит без этой описи всё, что не взято на своём
+   * тике (потолок бюджета, отказ сети), не приедет больше НИКОГДА.
+   */
+  const pending = new Map<string, BagSummary>();
+
+  /** Моменты НАЧАТЫХ скачиваний — окно бюджета (К-1). */
+  const downloadStamps: number[] = [];
+
+  /** Сколько скачиваний ещё разрешает минутный бюджет. */
+  function budgetLeft(): number {
+    const cutoff = Date.now() - BAG_BUDGET_WINDOW_MS;
+    while (downloadStamps.length > 0 && downloadStamps[0] <= cutoff) downloadStamps.shift();
+    return BAG_DOWNLOAD_BUDGET_PER_MIN - downloadStamps.length;
+  }
 
   /** Ключи собеседника — один раз за жизнь движка, дальше из памяти. */
   async function ensurePeerKeys(): Promise<PeerChatKeys | null> {
@@ -461,8 +559,12 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     for (const s of result.sent) if (s.fetched) delivered.add(s.key);
     let arrived = 0;
 
+    // ─── К-1: ОТБОР ДО СКАЧИВАНИЯ ────────────────────────────────────────
+    // Опись мешка (кто отправитель, кому адресован) приезжает в `inbox` и не
+    // стоит ни байта тела. Всё, что не относится к ЭТОЙ переписке, отсеивается
+    // здесь и не попадает в опись невзятого вовсе: посторонний не должен уметь
+    // занять у жертвы ни скачивания, ни строчки памяти.
     for (const summary of result.inbox) {
-      if (stopped) return;
       // ⚠️ Честно: сегодня эта строка ничего не меняет — `pollBags` уже
       // отдаёт только новое (курсор плюс дедуп на границе миллисекунды), и
       // мутация «убрать её» не красит ни один замок. Оставлена вторым слоем
@@ -471,12 +573,28 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       // страхует от регресса там. Утверждать, что она заперта, было бы
       // неправдой — поэтому сказано прямо.
       if (bags.has(summary.key)) continue;
+      if (!bagBelongsToPair(summary, own, peer)) continue;
+      pending.set(summary.key, summary);
+    }
+
+    // ─── СКАЧИВАНИЕ: СТАРОЕ ВПЕРЁД, В ПРЕДЕЛАХ БЮДЖЕТА ───────────────────
+    // Старое вперёд, а не свежее: цепочка растёт от начала, и показанный
+    // хвост без начала дал бы `gapAfterSeq: [-1]` — то есть значок разрыва и
+    // молчаливое обвинение собеседника в том, что он чего-то не предъявил,
+    // ровно там, где не предъявили МЫ САМИ СЕБЕ.
+    const queue = [...pending.values()].sort((a, b) => a.uploadedAt - b.uploadedAt);
+    for (const summary of queue) {
+      if (stopped) return;
+      if (budgetLeft() <= 0) break;
+      downloadStamps.push(Date.now());
       downloads++;
       try {
         const body = await fetchBag(pass, summary.key, abort.signal);
-        // `null` — мешка нет (истёк, забрали, чужой ключ). Не повод падать и
-        // не повод считать переписку сломанной: его место в цепочке всё равно
-        // окажется дырой, и это честный вердикт.
+        // Взято — из описи невзятого уходит. `null` (мешка нет: истёк,
+        // забрали, чужой ключ) — тоже уходит: повторять запрос за тем, чего у
+        // склада нет, значит долбить его вечно. Место такого мешка в цепочке
+        // всё равно окажется дырой, и это честный вердикт.
+        pending.delete(summary.key);
         if (body) {
           bags.set(summary.key, {
             key: summary.key, sender: summary.sender,
