@@ -110,7 +110,7 @@ export const UNKNOWN_PREVIEW_SLOTS = 8;
  * К-3): при переполнении жертва случайная, а приём изредка, поэтому доля
  * попаданий падает плавно и не обрывается в ноль.
  */
-const _previewCache = new BoundedParseCache<{ text: string; sentAt: number }>(500);
+const _previewCache = new BoundedParseCache<{ text: string; receivedAt: number }>(500);
 
 /** Только тесты: список обязан быть проверяем с холодной памяти. */
 export function _resetPreviewCacheForTest(): void {
@@ -204,7 +204,7 @@ export async function loadPairConversations(
         // Показывается ДАЖЕ ТОМУ, кто сегодня в претенденты не попал: раз оно
         // уже есть, прятать его значило бы, что строка «потеряла» текст.
         lastText = remembered.text;
-        lastAt = remembered.sentAt;
+        lastAt = remembered.receivedAt;
       } else if (budget > 0 && candidates.has(addr)) {
         budget--;
         try {
@@ -218,12 +218,15 @@ export async function loadPairConversations(
             const last = state.messages[state.messages.length - 1];
             if (last) {
               lastText = last.payload.text ?? last.payload.file?.name ?? '';
-              lastAt = last.sentAt;
+              // В-2: время склада, а не слово отправителя. Иначе посторонний
+              // одним мешком с временем «2096 год» встаёт первой строкой
+              // списка НАВСЕГДА — сортировка в конце функции идёт по `lastAt`.
+              lastAt = last.receivedAt;
             }
             // Запоминается И ПУСТОЕ превью (мешок не вскрылся, не разобрался):
             // иначе нечитаемый мешок качался бы заново каждые тридцать секунд
             // вечно — ровно тот случай, ради которого память и заводится.
-            _previewCache.put(cacheKey, { text: lastText, sentAt: lastAt });
+            _previewCache.put(cacheKey, { text: lastText, receivedAt: lastAt });
           }
         } catch (err) {
           // Отмена — не «сломанная строка», а уход со страницы: пробрасываем,

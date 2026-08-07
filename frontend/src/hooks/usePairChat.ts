@@ -590,7 +590,10 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
 
     opts.onState({
       messages: state.messages.map(m =>
-        payloadToMessage(m.payload, m.from, m.seq, m.sentAt, m.from.toLowerCase() === own, m.delivered)),
+        // В-2: на экране — засвидетельствованное складом время, а не то, что
+        // написал отправитель. Своё утверждение отправителя не потеряно, оно
+        // в `ChatMessage.sentAt` и нужно арбитру.
+        payloadToMessage(m.payload, m.from, m.seq, m.receivedAt, m.from.toLowerCase() === own, m.delivered)),
       gapAfterSeq: state.gapAfterSeq,
       troubles: state.troubles,
       burnedSeqs,
