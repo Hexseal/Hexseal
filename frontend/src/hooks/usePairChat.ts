@@ -187,6 +187,22 @@ export interface PairChatEngineOptions {
    * знает и не должен (иначе его нельзя было бы проверить вне браузера).
    */
   onIncoming?: () => void;
+  /**
+   * Сделка, в контексте которой открыта переписка. Ставится меткой ВНУТРЬ
+   * запечатанного на каждое отправленное сообщение (`ChatPayload.dealId`).
+   *
+   * Зачем: переписка пары ОДНА на все их сделки — движок ключуется адресом
+   * собеседника и только им, — а сделок у пары бывает несколько (панель сама
+   * показывает переключатель, когда их больше одной). Без метки предъявить
+   * арбитру «кусок про эту сделку», а не весь тред (§7 общей спеки), не из
+   * чего: разделить поток будет нечем.
+   *
+   * ⚠️ Метка ставится ЗДЕСЬ, в одном месте, а не в обработчиках панели: путей
+   * отправки два (текст и вложение), и станет больше. Одно место нельзя
+   * забыть на новом пути — два можно, и ровно так метка и пропала целиком,
+   * оставив мёртвым весь аппарат проверки её формы.
+   */
+  dealId?: `0x${string}`;
   /** Только тесты. Умолчания и есть боевое поведение. */
   sleep?: (ms: number) => Promise<void>;
   intervals?: BagPollIntervalsMs;
@@ -384,6 +400,11 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     },
     inFlight: () => downloads,
     async send(payload: ChatPayload): Promise<PairChatMessage> {
+      // Метка сделки — ДОБАВЛЯЕТСЯ, а не переписывает: если вызывающий указал
+      // сделку сам (план 4, предъявление), его слово старше.
+      if (opts.dealId !== undefined && payload.dealId === undefined) {
+        payload = { ...payload, dealId: opts.dealId };
+      }
       const pass = await opts.getPass();
       const keys = await ensurePeerKeys();
       if (!keys) {
@@ -432,7 +453,7 @@ const _msgCache = new Map<string, PairChatMessage[]>();
  */
 const PUSH_BODY = 'New message';
 
-export function usePairChat(peerAddress: string) {
+export function usePairChat(peerAddress: string, dealId?: string) {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const { status, session, storageNotice } = useChatSession();
@@ -475,6 +496,9 @@ export function usePairChat(peerAddress: string) {
       // кошелька (`getBagPass`, см. его докстринг).
       getPass: () => getBagPass(address, signMessageAsync, setPassSignaturePending),
       isActive: () => activeRef.current,
+      // Сделка, в контексте которой открыт чат. Метку на каждое сообщение
+      // ставит движок — см. `dealId` в его опциях и почему это одно место.
+      ...(dealId ? { dealId: dealId.toLowerCase() as `0x${string}` } : {}),
       onState: (s) => {
         _msgCache.set(pairKey, s.messages);
         setMessages(s.messages);
@@ -506,7 +530,7 @@ export function usePairChat(peerAddress: string) {
     // Единственная строка уборки — и она же весь смысл того, что движок
     // отдельный: одна отмена, обрывающая и перечисление, и скачивания.
     return () => { engine.stop(); engineRef.current = null; };
-  }, [address, peerAddress, status, session, pairKey, signMessageAsync, retryKey]);
+  }, [address, peerAddress, status, session, pairKey, signMessageAsync, retryKey, dealId]);
 
   // Вкладка ушла в фон — опрос переходит на 30 секунд. Читается на КАЖДОМ
   // тике (`isActive`), поэтому хватает ссылки: перезапускать движок ради
@@ -568,7 +592,10 @@ export function usePairChat(peerAddress: string) {
   //    не получает ничего, а винит связь. Кнопка убрана вместе с функцией.
   //  - `markDealContext` — метка сделки уезжала отдельным сообщением боту;
   //    теперь она едет ВНУТРИ запечатанного каждого сообщения
-  //    (`ChatPayload.dealId`), и звать отдельно нечего.
+  //    (`ChatPayload.dealId`, ставит движок — см. `dealId` в его опциях), и
+  //    звать отдельно нечего. ⚠️ До финальной проверки это было НЕПРАВДОЙ:
+  //    комментарий стоял, а метку не ставил никто, и весь аппарат проверки её
+  //    формы был мёртвым кодом.
   //  - `peerLastReadAt` — «прочитано глазами» серверу неизвестно и не должно
   //    быть известно. Осталась ОДНА галочка, и она в самих сообщениях
   //    (`PairChatMessage.delivered`).

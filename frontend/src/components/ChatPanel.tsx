@@ -505,11 +505,20 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const { address } = useAccount();
   const t = useTranslations();
   const queryClient = useQueryClient();
+  // 0 or 1 active deal: nothing to pick. 2+: user picks which one the action
+  // bar / attach-file gating / header refer to via the selector rendered below.
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const dealContext = useMemo(() => {
+    if (!dealContexts || dealContexts.length === 0) return undefined;
+    if (dealContexts.length === 1) return dealContexts[0];
+    return dealContexts.find(d => d.agreementAddr === selectedDealId) ?? dealContexts[dealContexts.length - 1];
+  }, [dealContexts, selectedDealId]);
+
   const {
     messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress,
     streamDead, reconnect, needsSetup, gapAfterSeq, peerKnown,
     passSignaturePending, storageNotice, chainUnverified, undecryptable,
-  } = usePairChat(recipientAddress);
+  } = usePairChat(recipientAddress, dealContext?.agreementAddr);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   // Состояние САМОГО сеанса — отдельно от состояния этой переписки. Раньше
   // панель их не различала и на выключенном мессенджере крутила спиннер
@@ -520,18 +529,18 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
 
-  // 0 or 1 active deal: nothing to pick. 2+: user picks which one the action
-  // bar / attach-file gating / header refer to via the selector rendered below.
-  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
-  const dealContext = useMemo(() => {
-    if (!dealContexts || dealContexts.length === 0) return undefined;
-    if (dealContexts.length === 1) return dealContexts[0];
-    return dealContexts.find(d => d.agreementAddr === selectedDealId) ?? dealContexts[dealContexts.length - 1];
-  }, [dealContexts, selectedDealId]);
 
-  // Отдельного сообщения «текущая сделка» здесь больше нет: метку сделки
-  // возил боту XMTP, теперь она едет ВНУТРИ запечатанного каждого сообщения
-  // (`ChatPayload.dealId`), и посылать её отдельно нечего и некому.
+  // Отдельного сообщения «текущая сделка» здесь больше нет: метку сделки возил
+  // боту XMTP, теперь она едет ВНУТРИ запечатанного каждого сообщения — её
+  // ставит движок переписки, которому сделка передаётся ниже
+  // (`usePairChat(recipientAddress, dealContext?.agreementAddr)`). Посылать
+  // отдельно нечего и некому.
+  //
+  // ⚠️ До финальной проверки ветки это утверждение было НЕПРАВДОЙ: комментарий
+  // стоял, сделку никто не передавал, метку не ставил ни один путь отправки, и
+  // весь аппарат проверки её формы (`chatPayloadForm.ts`) был мёртвым кодом.
+  // Разошлось написанное с делом ровно там, где проверить это глазами дороже
+  // всего — между панелью и движком.
 
   const [text, setText]             = useState('');
   const [sending, setSending]       = useState(false);
