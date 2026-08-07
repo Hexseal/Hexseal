@@ -3282,13 +3282,52 @@ function resolveDisplayName(addr) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
+// ─── К-2: чем доказывается право послать уведомление ─────────────────────
+//
+// `X-Push-Secret` доказывает «пришло с нашего сервера» — и НИЧЕГО БОЛЬШЕ.
+// Наш собственный `/api/push` подставлял его сам, никого ни о чём не
+// спрашивая, так что посторонний без кошелька и без подписи слал настоящее
+// уведомление от Hexseal любому адресу — с текстом и, что хуже, СО ССЫЛКОЙ
+// по своему выбору. Служебный работник уводил по ней открытую вкладку
+// (замер — test/pushSenderProof.test.js и frontend/src/lib/
+// swNotificationTarget.test.ts).
+//
+// Теперь право доказывается ТЕМ ЖЕ пропуском, что и склад мешков: один
+// способ на две двери, а не второй, изобретённый рядом. Секрет остался —
+// он отвечает на другой вопрос («из интернета или изнутри»), и снимать его
+// незачем.
+//
+// ⚠️ ССЫЛКА, ТЕКСТ, МЕТКА И ЗАГОЛОВОК ИЗ ЗАПРОСА НЕ БЕРУТСЯ ВООБЩЕ. Не
+// «проверяются», не «санируются» — не берутся. Их строит сервер из
+// доказанного отправителя. Проверять пришедшую ссылку по списку разрешённых
+// форм означало бы держать этот список верным вечно; не брать её вовсе
+// нечему протухнуть.
+//
+// Родов ровно два, и оба ведут на НАШ экран:
+//   chat    — «вам написали»: /chat?peer=<отправитель из пропуска>
+//   dispute — «открыт спор» арбитрам: /arbiter?deal=<проверенный адрес>
+//
+// Заголовок и текст — постоянные. Имя отправителя НЕ подставляется, хотя
+// теперь оно доказано и подставить было бы можно: экран чата обещает, что
+// в шторке ОС видно «пришло сообщение» и не видно, от кого и о чём
+// (usePairChat.ts, PUSH_BODY). Доказанность отправителя — не повод нарушить
+// это обещание.
+const PUSH_KINDS = {
+  chat: (sender) => ({
+    title: 'New message',
+    body:  'New message',
+    url:   `/chat?peer=${sender}`,
+  }),
+  dispute: (_sender, { deal }) => ({
+    title: 'A dispute was opened',
+    body:  'A dispute is waiting for an arbiter.',
+    url:   `/arbiter?deal=${deal}`,
+  }),
+};
+
 app.post('/push/send', async (req, res) => {
   try {
-    // Only this server's own Next.js /api/push route is a legitimate caller —
-    // it already sends this header on every request. Without a hard gate here,
-    // anyone could send an arbitrary push notification (any title/body/url) to
-    // any wallet address just by knowing it, since `to` is only ever validated
-    // as a well-formed address, never tied to who's actually asking.
+    // Первый гейт — «изнутри, не из интернета». Он НЕ про то, кто человек.
     if (!PUSH_SECRET || req.headers['x-push-secret'] !== PUSH_SECRET) {
       return res.status(403).json({ error: 'forbidden' });
     }
@@ -3296,24 +3335,35 @@ app.post('/push/send', async (req, res) => {
     if (!checkRateLimit(ip)) {
       return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
     }
-    const { to, title, body, url, from, tag } = req.body || {};
-    if (!to || !body) return res.status(400).json({ error: 'to and body required' });
-    if (!ethers.isAddress(to)) return res.status(400).json({ error: 'Invalid address' });
 
-    // The gate above already proves this request is from our own server, so
-    // `from` is always safe to trust for display-name resolution now.
-    // Fallback is 'New message', NOT 'Hexseal': the OS already shows the app name
-    // ("from Hexseal") as the source, so a 'Hexseal' title read as "Hexseal from Hexseal".
-    const resolvedTitle = from
-      ? (resolveDisplayName(from) ?? title ?? 'New message')
-      : (title ?? 'New message');
+    // Второй гейт — «кто именно». Тот же пропуск, что у мешков.
+    const sender = requireBagPass(req, res);
+    if (!sender) return;
 
-    await sendPush(to.toLowerCase(), {
-      title: resolvedTitle,
-      body:  String(body).slice(0, 200),
-      url:   url || '/chat',
-      tag:   tag || url || '/chat',
-    });
+    const { to, kind = 'chat', deal } = req.body || {};
+    if (!to || !ethers.isAddress(to)) {
+      return res.status(400).json({ error: 'Invalid address', code: 'invalid_address' });
+    }
+    const build = Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : null;
+    if (!build) {
+      // 400, а не тихая подстановка чата: неизвестный род — это рассинхрон
+      // фронта и сервера, и молча слать «вам написали» вместо того, что
+      // просили, значит врать человеку о причине уведомления.
+      return res.status(400).json({ error: 'Unknown notification kind', code: 'unknown_kind' });
+    }
+    if (kind === 'dispute' && (typeof deal !== 'string' || !ETH_ADDR_RE.test(deal.toLowerCase()))) {
+      return res.status(400).json({ error: 'Invalid deal address', code: 'invalid_deal' });
+    }
+
+    const recipient = to.toLowerCase();
+    // Эхо собственной отправки: чат зовёт нас на КАЖДОЕ отправленное
+    // сообщение, и разговор с самим собой (или ошибка на стороне вызывающего)
+    // не должен превращаться в уведомление себе же. Не ошибка — просто нечего
+    // делать.
+    if (recipient === sender) return res.json({ ok: true, skipped: 'self' });
+
+    const payload = build(sender, { deal: deal?.toLowerCase() });
+    await sendPush(recipient, { ...payload, tag: payload.url });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

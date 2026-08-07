@@ -222,23 +222,181 @@ export async function enablePush(
  */
 const ARBITER_FANOUT_CAP = 50;
 
-export function notifyArbitersOfDispute(arbiters: readonly string[], dealAddress: string): void {
+export async function notifyArbitersOfDispute(
+  arbiters: readonly string[],
+  dealAddress: string,
+): Promise<void> {
+  const deal = dealAddress.toLowerCase();
   for (const arbiter of arbiters.slice(0, ARBITER_FANOUT_CAP)) {
-    notifyPush(
-      arbiter,
-      'A dispute was opened',
-      `/arbiter?deal=${dealAddress.toLowerCase()}`,
-      `dispute-${dealAddress.toLowerCase()}`,
-    );
+    // Ссылка больше не строится ЗДЕСЬ и не едет на сервер: она строится
+    // сервером из рода `dispute` и проверенного адреса сделки (К-2).
+    await sendPushRequest(arbiter, { kind: 'dispute', deal });
   }
 }
 
-export function notifyPush(to: string, body: string, url?: string, tag?: string): void {
-  fetch('/api/push', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, body, url, tag }),
-  }).catch(() => {});
+/* ─── К-2/К-3: пропуск на отправку и слышимый отказ ─────────────────────── */
+
+/**
+ * Тот же ключ кладовой, что пишет `lib/chatTransport.ts` (`writeStoredPass`).
+ *
+ * ⚠️ Это ВТОРОЕ место, знающее форму ключа, и знать её оно не хотело бы.
+ * Прямого пути нет: транспорт кэш пропусков наружу не отдаёт, а зовут
+ * `notifyPush` экраны, у которых сеанса чата под рукой нет вовсе (доски,
+ * шапка сделки). Читаем ТОЛЬКО на чтение и никогда не пишем — расхождение
+ * форматов сломает поиск пропуска (уведомление не уйдёт), но не переписку.
+ */
+const PASS_STORAGE_PREFIX = 'hexseal_bagpass_';
+
+/** Запас на дорогу до релеера — тот же приём, что у самого транспорта. */
+const PASS_SKEW_SEC = 30;
+
+function storage(): Storage | null {
+  try {
+    const s = (globalThis as { localStorage?: Storage }).localStorage;
+    return s && typeof s.getItem === 'function' ? s : null;
+  } catch {
+    return null;   // сторонний контекст с запрещёнными куками — доступ БРОСАЕТ
+  }
+}
+
+function readPassAt(s: Storage, key: string, nowSec: number): { pass: string; expiresAt: number } | null {
+  let raw: string | null;
+  try { raw = s.getItem(key); } catch { return null; }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { pass?: unknown; expiresAt?: unknown };
+    if (typeof parsed?.pass !== 'string' || !parsed.pass) return null;
+    if (typeof parsed?.expiresAt !== 'number' || !Number.isFinite(parsed.expiresAt)) return null;
+    if (nowSec + PASS_SKEW_SEC >= parsed.expiresAt) return null;   // мёртвый за живой не считается
+    return { pass: parsed.pass, expiresAt: parsed.expiresAt };
+  } catch {
+    return null;   // мусор в кладовой — считаем, что записи нет
+  }
+}
+
+/**
+ * Живой пропуск отправителя.
+ *
+ * `hint` — адрес отправителя, если он известен. Для чата известен всегда:
+ * `usePairChat` передаёт третьим доводом `/chat?peer=<я>`, то есть экран,
+ * который получателю надо открыть, — а это и есть отправитель. Когда
+ * подсказки нет (оповещение арбитров), берём из кладовой самый долгоживущий
+ * пропуск: на устройстве кошелёк подключён один, а если от прежнего аккаунта
+ * остался протухающий пропуск, у свежего срок дальше.
+ */
+function findPass(hint?: string): string | null {
+  const s = storage();
+  if (!s) return null;
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  if (hint) {
+    const exact = readPassAt(s, PASS_STORAGE_PREFIX + hint.toLowerCase(), nowSec);
+    if (exact) return exact.pass;
+  }
+
+  let best: { pass: string; expiresAt: number } | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const key = s.key(i);
+    if (!key || !key.startsWith(PASS_STORAGE_PREFIX)) continue;
+    const entry = readPassAt(s, key, nowSec);
+    if (entry && (!best || entry.expiresAt > best.expiresAt)) best = entry;
+  }
+  return best?.pass ?? null;
+}
+
+/** Отправитель, зашитый в ссылку `/chat?peer=<я>` — см. `findPass`. */
+function senderFromChatUrl(url?: string): string | undefined {
+  const m = /^\/chat\?peer=(0x[0-9a-fA-F]{40})$/.exec(url ?? '');
+  return m?.[1];
+}
+
+export type PushOutcome = 'ok' | 'no-pass' | 'rate-limited' | 'error';
+
+export interface PushFailure {
+  to: string;
+  outcome: Exclude<PushOutcome, 'ok'>;
+  status?: number;
+}
+
+/**
+ * К-3, вторая половина: РАНЬШЕ ОТКАЗ НЕ ВИДЕЛ НИКТО.
+ *
+ * `fetch(...).catch(() => {})` глушил всё: статус не читался вообще, 429 был
+ * неотличим от 200. Отправитель видел отправленное, получатель не видел
+ * уведомления, сервер молчал. Исход теперь возвращается вызывающему, а те
+ * вызывающие, которым некуда его деть (пожар-и-забыл из хука), всё равно
+ * доводят его сюда — интерфейс подписывается и показывает.
+ */
+type PushFailureListener = (failure: PushFailure) => void;
+const _pushFailureListeners = new Set<PushFailureListener>();
+
+export function onPushDeliveryFailure(listener: PushFailureListener): () => void {
+  _pushFailureListeners.add(listener);
+  return () => { _pushFailureListeners.delete(listener); };
+}
+
+function announceFailure(failure: PushFailure): void {
+  // Один сломанный подписчик не имеет права уронить отправку следующего
+  // уведомления — и уж тем более саму отправку сообщения, из которой сюда
+  // пришли.
+  for (const listener of _pushFailureListeners) {
+    try { listener(failure); } catch { /* его беда, не наша */ }
+  }
+  console.warn(`[push] уведомление для ${failure.to} не ушло: ${failure.outcome}`);
+}
+
+async function sendPushRequest(
+  to: string,
+  payload: { kind?: string; deal?: string },
+  hint?: string,
+): Promise<PushOutcome> {
+  const pass = findPass(hint);
+  if (!pass) {
+    // Не ошибка сети и не отказ сервера: слать нечем, потому что сеанс чата
+    // на этом устройстве не заведён. Запроса не делаем вовсе — он всё равно
+    // вернулся бы 401.
+    const failure: PushFailure = { to, outcome: 'no-pass' };
+    announceFailure(failure);
+    return 'no-pass';
+  }
+
+  let res: Response;
+  try {
+    res = await fetch('/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-bag-pass': pass },
+      // Ни `body`, ни `url`, ни `tag`: сервер их не берёт (К-2), и везти их
+      // значило бы делать вид, что они на что-то влияют.
+      body: JSON.stringify({ to, ...payload }),
+    });
+  } catch {
+    announceFailure({ to, outcome: 'error' });
+    return 'error';
+  }
+
+  if (res.ok) return 'ok';
+
+  const outcome: Exclude<PushOutcome, 'ok'> = res.status === 429 ? 'rate-limited' : 'error';
+  announceFailure({ to, outcome, status: res.status });
+  return outcome;
+}
+
+/**
+ * Сказать человеку, что ему написали.
+ *
+ * Подпись оставлена прежней (`to, body, url, tag`) намеренно: её зовут
+ * `hooks/usePairChat.ts` и два экрана досок, и менять её отсюда нельзя. Но
+ * `body`, `url` и `tag` НА СЕРВЕР БОЛЬШЕ НЕ ЕДУТ — их строит релеер из
+ * доказанного пропуском отправителя (К-2). `url` используется только как
+ * подсказка «кто отправитель», чтобы взять из кладовой ИМЕННО его пропуск.
+ */
+export async function notifyPush(
+  to: string,
+  _body: string,
+  url?: string,
+  _tag?: string,
+): Promise<PushOutcome> {
+  return sendPushRequest(to, {}, senderFromChatUrl(url));
 }
 
 export async function disablePush(

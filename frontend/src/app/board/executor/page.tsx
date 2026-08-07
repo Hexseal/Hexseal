@@ -9,7 +9,6 @@ import { DIAMOND_ABI, USDC_ABI, CONTRACTS } from "@/config/contracts";
 import type { Abi } from "viem";
 import { parseUnits } from "viem";
 import { requestServiceGasless, sendGasless } from "@/lib/relay";
-import { notifyPush } from "@/lib/webpush";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -684,15 +683,13 @@ export default function ExecutorBoardPage() {
       });
 
       toast.success(t("board.services.request_sent"));
-      // Live in-app notifications only fire while the executor happens to have
-      // the site open at that exact moment — a push is the only way this
-      // reaches them if they're away (mirrors the job-board apply push).
-      notifyPush(
-        requestModal.executor,
-        `Someone requested your service: ${requestModal.title || `Service #${requestModal.serviceId}`}`,
-        `/service/${requestModal.serviceId}`,
-        `/service/${requestModal.serviceId}`,
-      );
+      // Пуша отсюда БОЛЬШЕ НЕТ, и это не потеря уведомления (К-2).
+      // Замерено (relayer/test/pushSenderProof.test.js): релеер шлёт
+      // исполнителю ровно это же уведомление САМ, разобрав событие
+      // ServiceRequested в квитанции — «New Service Request», ссылка
+      // /request/<id> (точнее здешней: она вела на /service/<id>, а принимать
+      // запрос надо на /request/<id>). Здешний вызов был ВТОРЫМ и держал
+      // открытым путь для чужих уведомлений с чужими ссылками.
       setRequestModal(null);
       // Блокировка снимается ВНУТРИ отложенного обновления, а не в общем
       // finally. Это та же правка, что в июле получили соседние обработчики

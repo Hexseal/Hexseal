@@ -23,7 +23,6 @@ import { useProfile } from "@/hooks/useProfile";
 import { Sparkles } from "lucide-react";
 import { ContextHint } from "@/components/ContextHint";
 import { shortAddr } from "@/lib/utils";
-import { notifyPush } from "@/lib/webpush";
 import { mergePages } from "@/lib/boardPaging";
 import {
   resolveApplied, withOverride, pruneSettledOverrides,
@@ -149,15 +148,14 @@ function JobCard({
       // раньше он звался сразу после майнинга и цементировал ответ, в котором
       // отклика ещё нет, ещё на полный TTL. См. lib/subgraphSync.
       void refreshAfterTx(publicClient, txHash, { chain: ["jobs"], graph: ["jobs"] });
-      // Live in-app notifications (useNotifications' JobApplied watcher) only fire
-      // while the client happens to have the site open at that exact moment — a
-      // push is the only way this reaches them if they're away.
-      notifyPush(
-        job.client,
-        `Someone applied to your job: ${job.title || `Job #${jobId.toString()}`}`,
-        `/job/${jobId.toString()}`,
-        `/job/${jobId.toString()}`,
-      );
+      // Пуша отсюда БОЛЬШЕ НЕТ, и это не потеря уведомления (К-2).
+      // Замерено (relayer/test/pushSenderProof.test.js): релеер шлёт клиенту
+      // ровно это же уведомление САМ, разобрав событие JobApplied в квитанции
+      // — «New Applicant», ссылка /job/<id>. То есть здешний вызов был
+      // ВТОРЫМ, а не единственным, и держал открытым путь, по которому
+      // посторонний слал любому кошельку что угодно с любой ссылкой.
+      // Живые уведомления в приложении (useNotifications' JobApplied watcher)
+      // работают как работали.
       // Помечаем локально, что отклик подан. Одной блокировки кнопки мало:
       // признак «уже откликнулся» приходит из сабграфа, а тот индексирует
       // событие не мгновенно, и поверх лежит серверный кэш прокси. Всё это

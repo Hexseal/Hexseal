@@ -88,9 +88,7 @@ describe('К-2: переход по уведомлению проверяет и
     await settled();
 
     expect(sw.openWindow).toHaveBeenCalledTimes(1);
-    const target = String(sw.openWindow.mock.calls[0][0]);
-    expect(target.startsWith(ORIGIN) || target.startsWith('/')).toBe(true);
-    expect(target).not.toContain('evil.example');
+    expect(String(sw.openWindow.mock.calls[0][0])).toBe('/');
   });
 
   it('ЗАМЕР ДО ПОЧИНКИ: вкладка открыта → её уводили на чужой сайт', async () => {
@@ -103,8 +101,8 @@ describe('К-2: переход по уведомлению проверяет и
     sw.listeners.notificationclick(event);
     await settled();
 
-    const navigatedTo = tab.navigate.mock.calls.map(c => String(c[0]));
-    expect(navigatedTo.every(u => !u.includes('evil.example'))).toBe(true);
+    expect(tab.navigate).toHaveBeenCalledTimes(1);
+    expect(String(tab.navigate.mock.calls[0][0])).toBe('/');
   });
 
   it.each([
@@ -114,7 +112,7 @@ describe('К-2: переход по уведомлению проверяет и
     ['data:',                     'data:text/html,<script>alert(1)</script>'],
     ['обратный слэш',             '/\\evil.example/drain'],
     ['чужой поддомен нашего',     'https://hexseal.com.evil.example/x'],
-  ])('%s не уводит никуда, кроме нашего происхождения', async (_name, url) => {
+  ])('%s не уводит никуда — ни на чужой сайт, ни на выдуманный путь нашего', async (_name, url) => {
     const sw = loadServiceWorker([]);
     const { event, settled } = makeEvent({
       notification: { close: vi.fn(), data: { url } },
@@ -123,8 +121,15 @@ describe('К-2: переход по уведомлению проверяет и
     sw.listeners.notificationclick(event);
     await settled();
 
-    const target = new URL(String(sw.openWindow.mock.calls[0][0]), ORIGIN);
-    expect(target.origin).toBe(ORIGIN);
+    // Ровно домашняя страница, а не «путь, вынутый из чужого адреса».
+    //
+    // ⚠️ Проверять только `origin === ORIGIN` НЕДОСТАТОЧНО, и это выяснилось
+    // мутацией, а не рассуждением: если снять проверку происхождения и
+    // вернуть `pathname + search + hash`, то "https://evil.example/drain"
+    // превращается в "/drain" — тоже наше происхождение, тест зелёный,
+    // защиты нет. Мутация «снять проверку происхождения» не красила НИ ОДНОГО
+    // теста. Требование точного «/» её ловит.
+    expect(String(sw.openWindow.mock.calls[0][0])).toBe('/');
   });
 
   it('своя ссылка проходит целиком, с путём и запросом', async () => {
@@ -151,7 +156,7 @@ describe('К-2: переход по уведомлению проверяет и
 
     expect(sw.showNotification).toHaveBeenCalledTimes(1);
     const opts = sw.showNotification.mock.calls[0][1] as { data: { url: string } };
-    expect(new URL(opts.data.url, ORIGIN).origin).toBe(ORIGIN);
+    expect(opts.data.url).toBe('/');
   });
 
   it('ссылка не строка вовсе — показ не падает', async () => {
