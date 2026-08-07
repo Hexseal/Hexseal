@@ -250,6 +250,70 @@ export function openRecoveryPrompt(code: unknown, random?: () => number): Recove
   return { words: seen.words, positions: pickCheckPositions({ random }) };
 }
 
+/* ─────────────── восстановление по коду: надписи отказов ──────────────── */
+
+/**
+ * Причина отказа → ключ надписи. КАЖДАЯ причина своя, и это требование, а не
+ * аккуратность.
+ *
+ * ⚠️ ПОЧЕМУ НЕ «код не подошёл» НА ВСЁ. Человек вводит двенадцать слов с
+ * бумажки. «Не подошёл» он читает как «переписка пропала» — и перестаёт
+ * пробовать. А на деле он чаще всего ошибся в ОДНОМ слове, и ему надо
+ * сказать, в каком. Два случая из списка вообще не ошибки: занятый адрес —
+ * защита соседа от затирания, обычный кошелёк — устройство протокола.
+ *
+ * Общая надпись остаётся только для того, чего мы не предвидели: молчание
+ * читается хуже любой надписи.
+ */
+export const RESTORE_ERROR_KEYS: Readonly<Record<string, string>> = {
+  recovery_code_empty:        'chat.restore_err_empty',
+  recovery_code_word_count:   'chat.restore_err_word_count',
+  recovery_code_unknown_word: 'chat.restore_err_unknown_word',
+  recovery_code_checksum:     'chat.restore_err_checksum',
+  session_already_present:    'chat.restore_err_busy',
+  recovery_not_applicable:    'chat.restore_err_not_applicable',
+  storage_write_failed:       'chat.key_not_saved',
+  storage_read_failed:        'chat.restore_err_storage_read',
+  storage_blocked:            'chat.key_not_saved_blocked',
+  storage_open_timeout:       'chat.restore_err_storage_slow',
+  address_malformed:          'chat.restore_err_address',
+  signature_malformed:        'chat.restore_err_signature',
+};
+
+/** Надпись для того, чего мы не предвидели. */
+export const RESTORE_ERROR_FALLBACK = 'chat.restore_err_other';
+
+export function restoreErrorKey(code: string | null | undefined): string {
+  return (code && RESTORE_ERROR_KEYS[code]) || RESTORE_ERROR_FALLBACK;
+}
+
+/**
+ * Номер первого слова не из списка BIP-39, 1-based, или `null`.
+ *
+ * ⚠️ ЭТО НЕ ВТОРАЯ ПРОВЕРКА, А ПОДПИСЬ К ЧУЖОМУ ВЕРДИКТУ. Решает,
+ * восстанавливать или нет, только `chatSession.ts`; сюда обращаются ПОСЛЕ
+ * того, как он уже отказал с `recovery_code_unknown_word`, и только чтобы
+ * назвать человеку номер. Само слово наружу не идёт и в надпись не
+ * подставляется: надпись может уехать в журнал, номер — безобиден, слово —
+ * нет.
+ *
+ * ⚠️ ПОЧЕМУ АСИНХРОННАЯ. Список BIP-39 — это 2048 слов, и статический импорт
+ * положил бы их в общий чанк: `chatRecovery.ts` тянет меню кошелька, которое
+ * стоит в шапке КАЖДОЙ страницы. `chatSession.ts` грузит тот же список
+ * динамически по той же причине; сделать здесь иначе значило бы вернуть в
+ * общий чанк ровно то, что там уже один раз отказались держать. Цена —
+ * `await` в одном месте показа, и он там всё равно есть.
+ */
+export async function unknownWordPosition(code: unknown): Promise<number | null> {
+  if (typeof code !== 'string') return null;
+  const normalized = normalizeRecoveryCode(code);
+  if (normalized === '') return null;
+  const { wordlist } = await import('@scure/bip39/wordlists/english');
+  const known = new Set(wordlist);
+  const at = normalized.split(' ').findIndex(word => !known.has(word));
+  return at === -1 ? null : at + 1;
+}
+
 /** Показывать ли неброскую плашку «код не подтверждён». */
 export function recoveryReminderVisible(
   session: ChatSession | null | undefined,

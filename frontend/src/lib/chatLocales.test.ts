@@ -50,6 +50,27 @@ const REQUIRED_RECOVERY = [
   'chat.recovery_check_done',
   'chat.recovery_reminder',
   'chat.recovery_show',
+  // Вход в восстановление по коду (Задача 8б): без него код показывался, но
+  // ввести его было некуда — половина, которая пугает, без половины, ради
+  // которой всё затевалось.
+  'chat.restore_title',
+  'chat.restore_hint',
+  'chat.restore_placeholder',
+  'chat.restore_submit',
+  'chat.restore_menu',
+  'chat.restore_done',
+  'chat.restore_forget_first',
+  'chat.restore_err_empty',
+  'chat.restore_err_word_count',
+  'chat.restore_err_unknown_word',
+  'chat.restore_err_checksum',
+  'chat.restore_err_busy',
+  'chat.restore_err_not_applicable',
+  'chat.restore_err_storage_read',
+  'chat.restore_err_storage_slow',
+  'chat.restore_err_address',
+  'chat.restore_err_signature',
+  'chat.restore_err_other',
 ];
 
 /** Ключи, которые обязаны исчезнуть: они говорили про XMTP и про журнал
@@ -141,7 +162,10 @@ describe('тексты пересадки — 14 локалей', () => {
     const bad: string[] = [];
     for (const locale of LOCALES) {
       const dict = read(locale);
-      for (const key of ['chat.recovery_check_word', 'chat.recovery_check_failed']) {
+      for (const key of [
+        'chat.recovery_check_word', 'chat.recovery_check_failed',
+        'chat.restore_err_unknown_word',
+      ]) {
         if (!String(pick(dict, key)).includes('{n}')) bad.push(`${locale}:${key}`);
       }
     }
@@ -154,11 +178,16 @@ describe('тексты пересадки — 14 локалей', () => {
     // облако, и код оказывается ровно там, где мы просили его не держать.
     // Обнаружить это мы не можем никак — единственное, что в наших силах,
     // это не подсказывать такой способ словом.
+    // ⚠️ ЗАПРЕЩЕН ГЛАГОЛ, А НЕ КОРЕНЬ. Немецкий поймал это замером: `/speicher/`
+    // краснел на `Gerätespeicher` — «хранилище устройства», существительное в
+    // надписи про отказ диска. Запрет корня сделал бы гейт про слово вообще, а
+    // он про ПРОСЬБУ: «сохраните» человек читает как «сфотографируйте».
+    // Поэтому `\bspeichern\b` (глагол) ловится, `Gerätespeicher` — нет.
     const BANNED: Record<string, RegExp> = {
       ru: /сохран/i,
       uk: /збереж|зберіг/i,
       en: /\bsav(e|ed|ing)\b|\bstore\b/i,
-      de: /speicher/i,
+      de: /\bspeicher(n|e|t|st)\b|abspeichern/i,
       fr: /sauvegard|enregistr/i,
       es: /guard/i,
       pt: /guard|salv/i,
@@ -170,7 +199,11 @@ describe('тексты пересадки — 14 локалей', () => {
       if (!banned) continue; // письменности без прямого аналога — гейт не врёт
       const chat = pick(read(locale), 'chat') as Record<string, string>;
       for (const [key, value] of Object.entries(chat)) {
-        if (key.startsWith('recovery_') && banned.test(value)) bad.push(`${locale}:${key}`);
+        // И показ кода (`recovery_`), И ввод кода (`restore_`): правило про
+        // слово одно на обе половины, иначе оно живёт только там, где его
+        // завели, а нарушается там, где о нём забыли.
+        const covered = key.startsWith('recovery_') || key.startsWith('restore_');
+        if (covered && banned.test(value)) bad.push(`${locale}:${key}`);
       }
     }
     expect(bad).toEqual([]);

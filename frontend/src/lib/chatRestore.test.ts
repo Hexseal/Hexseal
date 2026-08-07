@@ -155,21 +155,28 @@ describe('каждая причина отказа — своя надпись',
 });
 
 describe('номер слова, набранного с ошибкой', () => {
-  it('называет номер первого слова не из списка BIP-39', () => {
+  it('называет номер первого слова не из списка BIP-39', async () => {
     // Красит: надпись «код не подошёл» на всю строку — человек перебирает
     // двенадцать слов вслепую вместо одного.
     const words = 'legal winner thank yeaar wave sausage worth useful legal winner thank yellow';
-    expect(unknownWordPosition(words)).toBe(4);
+    await expect(unknownWordPosition(words)).resolves.toBe(4);
   });
 
-  it('все слова из списка — номера нет', () => {
+  it('регистр и лишние пробелы не сбивают НОМЕР — считается по тем же правилам', async () => {
+    // Красит: подсчёт по сырой строке. Человек вставил из PDF в верхнем
+    // регистре — и ему назвали бы первое слово вместо четвёртого.
+    const messy = '  LEGAL   winner\nthank  YEAAR wave sausage worth useful legal winner thank yellow ';
+    await expect(unknownWordPosition(messy)).resolves.toBe(4);
+  });
+
+  it('все слова из списка — номера нет', async () => {
     const good = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
-    expect(unknownWordPosition(good)).toBeNull();
+    await expect(unknownWordPosition(good)).resolves.toBeNull();
   });
 
   it.each([['пусто', ''], ['не строка', 5], ['ничего', null]])(
-    'мусор («%s») — `null`, а не падение', (_n, junk) => {
-      expect(unknownWordPosition(junk as string)).toBeNull();
+    'мусор («%s») — `null`, а не падение', async (_n, junk) => {
+      await expect(unknownWordPosition(junk as string)).resolves.toBeNull();
     });
 });
 
