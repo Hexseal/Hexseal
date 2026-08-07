@@ -57,6 +57,7 @@ import {
 } from '@/lib/chatTransport';
 import {
   sendMessage, receiveBags, listBurnedSeqs,
+  readConversationArchive, archiveConversationFrames,
   type IncomingBag, type SentMessage, type ConversationTrouble,
 } from '@/lib/chatConversation';
 import type { ChainLink } from '@/lib/chatChain';
@@ -461,6 +462,29 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   const bags = new Map<string, IncomingBag>();
   /** Свои отправленные — чтобы разговор был разговором, а не половиной. */
   const ownSent: SentMessage[] = [];
+
+  /**
+   * СВОЯ КОПИЯ ПЕРЕПИСКИ С УСТРОЙСТВА (В-3).
+   *
+   * Читается один раз при заводе движка и кладётся в тот же набор, что и
+   * скачанное. Без этого архив был бы возможностью, а не поведением: кадры
+   * лежали бы на диске, а на экране их не было бы — ровно та ошибка, на
+   * которой уже поймали `listBurnedSeqs`.
+   *
+   * Отказ чтения не мешает ничему: переписка покажется со склада.
+   */
+  const seeded = (async () => {
+    try {
+      const archived = await readConversationArchive(own as `0x${string}`, peer);
+      for (const f of archived) {
+        if (bags.has(f.key)) continue;
+        bags.set(f.key, { key: f.key, sender: f.from, uploadedAt: f.receivedAt, body: f.frame });
+      }
+      return archived.length;
+    } catch {
+      return 0;
+    }
+  })();
   /**
    * Голова СВОЕЙ цепочки, восстановленная со склада.
    *
@@ -556,6 +580,16 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   }
 
   async function emit(): Promise<void> {
+    // Своя копия обязана доехать ДО первой выдачи состояния: иначе первый
+    // экран показывал бы пустую переписку, а через секунду — полную.
+    //
+    // ⚠️ Честно: эта строка НЕ заперта замером, и мутация «убрать её» проходит
+    // зелёной. Причина не в том, что она лишняя, а в том, что подделка диска в
+    // замерах отвечает микрозадачами и всегда успевает раньше первого ответа
+    // сети. На настоящем устройстве с тысячами кадров чтение архива идёт
+    // дольше сетевого запроса, и порядок перестаёт быть случайностью. Сказано
+    // прямо, а не выдано за проверенное.
+    await seeded;
     // ВСЕ ключи собеседника, а не только нынешний (Б-2): справочник хранит
     // историю ради того, чтобы честная смена ключа не читалась как подделка.
     const pinned = peerKeys && peerKeys.signKeyHistory.length > 0
@@ -678,6 +712,25 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       }
     }
     if (stopped) return;
+
+    // ─── В-3: СВОЯ КОПИЯ ПОПОЛНЯЕТСЯ ТЕМ, ЧТО ПРИЕХАЛО ───────────────────
+    // Кладём ВСЁ, что лежит в наборе, а не только новинки: уже лежащее
+    // отсеется по ключу мешка внутри. Так после перезагрузки вкладки на
+    // диск доедет и то, что приехало ДО заведения архива.
+    //
+    // Кадр архивируется НЕ РАЗБИРАЯСЬ в его подлинности: подлинность
+    // проверяет `receiveBags` на каждом чтении заново, а архив хранит то,
+    // что склад отдал. Отбросив здесь неподписанное, мы потеряли бы ровно то,
+    // что нужно предъявить, когда собеседник прислал подделку.
+    if (arrived > 0) {
+      try {
+        await archiveConversationFrames(own as `0x${string}`, peer, [...bags.values()].map(b => ({
+          key: b.key, from: b.sender, seq: 0,
+          sentAt: b.uploadedAt, receivedAt: b.uploadedAt, frame: b.body,
+        })));
+      } catch { /* архив — страховка, а не условие работы переписки */ }
+    }
+
     await emit();
     // ПОСЛЕ выдачи состояния: список переписок пойдёт перечитывать превью, и
     // делать это раньше, чем сама переписка обновилась, незачем.

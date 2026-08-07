@@ -808,6 +808,313 @@ const _memoryHeads = new Map<string, StoredHead>();
  *  уровня модуля переживает подмену хранилища и протекает в соседний тест. */
 export function _resetConversationMemoryForTest(): void {
   _memoryHeads.clear();
+  _archivedKeys.clear();
+}
+
+/* ────────────── В-3: своя копия переписки на устройстве ───────────────── */
+
+/**
+ * ⚠️ КТО И ЧЕМ УПРАВЛЯЕТ СРОКОМ ЖИЗНИ ДОКАЗАТЕЛЬСТВА (В-3 враждебной проверки).
+ * Разобрано по коду склада, а не по памяти:
+ *
+ *  - `relayer/bagStore.js` (`bagExpiryAt`): мешок ПРОЧИТАННЫЙ живёт
+ *    `firstFetchedAt + BAG_TTL_MS` — семь дней; НЕПРОЧИТАННЫЙ живёт
+ *    `uploadedAt + BAG_UNREAD_TTL_MS` — тридцать.
+ *  - `relayer/app.js` (`GET /bags/:recipient/:filename`): отметка о прочтении
+ *    ставится, когда мешок забирает ПОЛУЧАТЕЛЬ (`marksRead = meta.recipient
+ *    === address`).
+ *
+ * Складываем: собеседник, просто ОТКРЫВ переписку, укорачивает срок жизни
+ * НАШЕГО доказательства с тридцати дней до семи. Кнопка в его руках, цена — на
+ * нас. Сделочная защита у склада есть (`adoptPairBags` продлевает мешки пары до
+ * конца окна спора), но она про мешки, у которых сделка УЖЕ есть, — переписка
+ * ДО сделки под неё не попадает вовсе.
+ *
+ * ⚠️ ЧТО ИЗ ЭТОГО ЧИНИТСЯ ЗДЕСЬ, А ЧТО НЕТ. Само правило срока — код склада, и
+ * трогать его отсюда нечем. Чинится другое, и оно важнее: §5 общей спеки стоит
+ * на том, что «сторона предъявляет СВОЮ КОПИЮ». Своей копии не существовало:
+ * на устройстве лежала только ГОЛОВА разговора (последнее звено и сгоревшие
+ * номера), а кадры — единственное, что доказывает что-либо третьему лицу, — не
+ * хранились нигде, кроме склада. Замерено: после того как склад забыл мешки,
+ * предъявить можно 0 сообщений из 5.
+ *
+ * Теперь кадры ложатся на устройство, и чужое действие на наш срок не влияет
+ * вовсе: со склада мешок может исчезнуть хоть на восьмой день.
+ */
+
+/** Сколько кадров в одной записи хранилища.
+ *
+ *  ⚠️ КУСКАМИ, А НЕ ОДНОЙ ЗАПИСЬЮ НА РАЗГОВОР. Одна запись означала бы, что
+ *  каждое новое сообщение переписывает весь архив: на пяти тысячах кадров это
+ *  мегабайты записи на диск каждые пять секунд. Кусок переписывается только
+ *  последний. */
+export const ARCHIVE_CHUNK_SIZE = 200;
+
+/**
+ * И потолок куска ПО БАЙТАМ.
+ *
+ * ⚠️ БЕЗ НЕГО ПОТОЛОК АРХИВА ПРОБИВАЕТСЯ НА ЦЕЛЫЙ КУСОК, и это замерено на
+ * первой же версии этой правки: вытеснение идёт целыми кусками, значит
+ * последний невытесняемый кусок из двухсот кадров по 200 КБ — это 39 МБ при
+ * потолке архива в 32. Размер кадра задаёт СОБЕСЕДНИК, так что «двести кадров»
+ * и «двести килобайт» — величины разные, и считать надо обе. Мегабайт на
+ * кусок: перезапись последнего куска остаётся дешёвой, а перебор потолка
+ * архива ограничен этим же мегабайтом.
+ */
+export const ARCHIVE_CHUNK_BYTES = 1024 * 1024;
+
+/**
+ * Потолки архива на ОДНУ переписку — по числу кадров и по байтам.
+ *
+ * ⚠️ ОТВЕТ НА «ДОЛБЯТ НАРОЧНО». Кадр приезжает от собеседника, и его размер
+ * задаёт он же (до `MAX_BAG_SIZE` = 256 КБ у склада). Без потолка по БАЙТАМ
+ * пять тысяч кадров это до 1,2 ГБ на одной переписке — то есть заполнение
+ * чужого диска как услуга. Потолок по числу без потолка по размеру не
+ * закрывает ничего.
+ *
+ * ⚠️ ЦЕНА ПОТОЛКА НАЗВАНА: за ним вытесняется САМОЕ СТАРОЕ, то есть самое
+ * старое доказательство. Это плохо и по-другому не бывает — место на
+ * устройстве конечно. Тридцать два мегабайта на переписку — заведомо больше,
+ * чем занимает переписка словами (кадр текстового сообщения это сотни байт), и
+ * заведомо меньше, чем можно потерять незаметно.
+ */
+export const MAX_ARCHIVED_FRAMES_PER_PAIR = 5_000;
+export const MAX_ARCHIVE_BYTES_PER_PAIR = 32 * 1024 * 1024;
+
+/** Версия формата записей архива. Другая — считается отсутствием, как и у
+ *  головы разговора. */
+export const ARCHIVE_RECORD_VERSION = 1;
+
+/** Кадр в том виде, в каком он лежит на устройстве и в каком предъявляется. */
+export interface ArchivedFrame {
+  /** Ключ мешка на складе — он же тождество кадра. */
+  key: string;
+  from: `0x${string}`;
+  seq: number;
+  /** Что написал отправитель (подписано). */
+  sentAt: number;
+  /** Что засвидетельствовал склад. */
+  receivedAt: number;
+  /** Байты мешка целиком, как они лежали на складе. */
+  frame: Uint8Array;
+}
+
+interface ArchiveIndexRecord {
+  v: number;
+  id: string;
+  /** Номер самого старого куска (растёт при вытеснении — куски не
+   *  перенумеровываются, иначе вытеснение переписывало бы весь архив). */
+  first: number;
+  /** Номер, который получит СЛЕДУЮЩИЙ новый кусок. */
+  next: number;
+  count: number;
+  bytes: number;
+}
+
+interface ArchiveChunkRecord {
+  v: number;
+  id: string;
+  frames: ArchivedFrame[];
+}
+
+const archiveIndexKey = (id: string): string => `${id}#i`;
+const archiveChunkKey = (id: string, n: number): string => `${id}#${n}`;
+
+/**
+ * Ключи кадров, уже лежащих на устройстве, — по разговору.
+ *
+ * ⚠️ БЕЗ ЭТОГО АРХИВ РАСТЁТ КОПИЯМИ. `receiveBags` разбирает ВЕСЬ накопленный
+ * набор на каждом тике, и вызывающий не знает, что из этого новое. Без памяти о
+ * том, что уже лежит, каждый тик дописывал бы всю переписку заново.
+ *
+ * Память вкладки, а не диска: набирается при первом чтении архива и пополняется
+ * записью. Две вкладки могут записать один кадр дважды — чтение дедуплицирует
+ * по ключу мешка, так что на предъявляемое это не влияет, только на место.
+ */
+const _archivedKeys = new Map<string, Set<string>>();
+
+function isArchiveIndex(v: unknown, id: string): v is ArchiveIndexRecord {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return r.v === ARCHIVE_RECORD_VERSION && r.id === id
+    && Number.isSafeInteger(r.first) && Number.isSafeInteger(r.next)
+    && Number.isSafeInteger(r.count) && Number.isSafeInteger(r.bytes);
+}
+
+function isArchiveChunk(v: unknown, id: string): v is ArchiveChunkRecord {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return r.v === ARCHIVE_RECORD_VERSION && r.id === id && Array.isArray(r.frames);
+}
+
+/** Кадр, годный к предъявлению: та же дисциплина, что у головы разговора —
+ *  запись с устройства доверия не заслуживает ровно как данные из сети. */
+function isArchivedFrame(v: unknown): v is ArchivedFrame {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.key === 'string'
+    && typeof r.from === 'string' && ADDRESS_RE.test((r.from as string).toLowerCase())
+    && Number.isSafeInteger(r.seq) && Number.isSafeInteger(r.sentAt) && Number.isSafeInteger(r.receivedAt)
+    && r.frame instanceof Uint8Array && (r.frame as Uint8Array).length > 0;
+}
+
+const EMPTY_INDEX = (id: string): ArchiveIndexRecord =>
+  ({ v: ARCHIVE_RECORD_VERSION, id, first: 0, next: 0, count: 0, bytes: 0 });
+
+/**
+ * Своя копия переписки с устройства — всё, что мы можем предъявить, не
+ * спрашивая склад.
+ *
+ * Пустой массив — архива нет или он не читается. НЕ бросает: невозможность
+ * предъявить свою копию не должна мешать показать переписку со склада.
+ */
+export async function readConversationArchive(
+  own: `0x${string}`, peer: `0x${string}`,
+): Promise<ArchivedFrame[]> {
+  const id = conversationId(assertAddress(own, 'свой адрес'), assertAddress(peer, 'адрес собеседника'));
+  const known = _archivedKeys.get(id) ?? new Set<string>();
+  _archivedKeys.set(id, known);
+  if (!idbFactory()) return [];
+
+  let index: ArchiveIndexRecord;
+  try {
+    const raw = await idbGet(archiveIndexKey(id));
+    if (!isArchiveIndex(raw, id)) return [];
+    index = raw;
+  } catch {
+    return [];
+  }
+
+  const out: ArchivedFrame[] = [];
+  const seen = new Set<string>();
+  for (let n = index.first; n < index.next; n++) {
+    let chunk: unknown;
+    try {
+      chunk = await idbGet(archiveChunkKey(id, n));
+    } catch {
+      continue; // один нечитаемый кусок не стоит всего архива
+    }
+    if (!isArchiveChunk(chunk, id)) continue;
+    for (const f of chunk.frames) {
+      // Дедупликация по ключу мешка: две вкладки могли записать один кадр
+      // дважды. Предъявлять одно и то же дважды — то же самое, что показывать
+      // человеку задвоенное сообщение.
+      if (!isArchivedFrame(f) || seen.has(f.key)) continue;
+      seen.add(f.key);
+      known.add(f.key);
+      out.push(f);
+    }
+  }
+  out.sort((a, b) => a.receivedAt - b.receivedAt || (a.key < b.key ? -1 : 1));
+  return out;
+}
+
+/**
+ * Кладёт кадры на устройство. Уже лежащие пропускаются.
+ *
+ * НИКОГДА не бросает: архив это страховка, а не условие работы переписки.
+ * Отказ хранилища (квоты нет, приватный режим, диск кончился) обязан стоить
+ * ровно предупреждения — тот же принцип, что у `writeHeadRecord`.
+ *
+ * @returns сколько кадров легло и сколько старых вытеснено потолком.
+ */
+export async function archiveConversationFrames(
+  own: `0x${string}`, peer: `0x${string}`, frames: readonly ArchivedFrame[],
+): Promise<{ stored: number; evicted: number }> {
+  const id = conversationId(assertAddress(own, 'свой адрес'), assertAddress(peer, 'адрес собеседника'));
+  if (!idbFactory() || frames.length === 0) return { stored: 0, evicted: 0 };
+
+  let known = _archivedKeys.get(id);
+  if (!known) {
+    // Первое обращение в этой вкладке — узнать, что уже лежит. Иначе каждый
+    // тик дописывал бы всю переписку заново.
+    await readConversationArchive(own, peer);
+    known = _archivedKeys.get(id) ?? new Set<string>();
+  }
+
+  const fresh = frames.filter(f => isArchivedFrame(f) && !known.has(f.key));
+  if (fresh.length === 0) return { stored: 0, evicted: 0 };
+
+  let index: ArchiveIndexRecord;
+  try {
+    const raw = await idbGet(archiveIndexKey(id));
+    index = isArchiveIndex(raw, id) ? { ...raw } : EMPTY_INDEX(id);
+  } catch {
+    console.warn('[chatConversation] опись архива не читается — своя копия переписки не пополняется');
+    return { stored: 0, evicted: 0 };
+  }
+
+  let stored = 0;
+  let evicted = 0;
+  try {
+    // Дописываем в ПОСЛЕДНИЙ кусок, пока он не полон, потом заводим новый.
+    let tail: ArchiveChunkRecord | null = null;
+    let tailBytes = 0;
+    if (index.next > index.first) {
+      const raw = await idbGet(archiveChunkKey(id, index.next - 1));
+      if (isArchiveChunk(raw, id)) {
+        const bytes = raw.frames.reduce((n, f) => n + (isArchivedFrame(f) ? f.frame.length : 0), 0);
+        if (raw.frames.length < ARCHIVE_CHUNK_SIZE && bytes < ARCHIVE_CHUNK_BYTES) {
+          tail = raw;
+          tailBytes = bytes;
+        }
+      }
+    }
+    for (const f of fresh) {
+      if (!tail) {
+        tail = { v: ARCHIVE_RECORD_VERSION, id, frames: [] };
+        tailBytes = 0;
+        index.next += 1;
+      }
+      tail.frames.push(f);
+      tailBytes += f.frame.length;
+      index.count += 1;
+      index.bytes += f.frame.length;
+      stored += 1;
+      // Кусок закрывается по ЛЮБОМУ из двух потолков — см. `ARCHIVE_CHUNK_BYTES`.
+      if (tail.frames.length >= ARCHIVE_CHUNK_SIZE || tailBytes >= ARCHIVE_CHUNK_BYTES) {
+        await idbPut(archiveChunkKey(id, index.next - 1), tail as unknown as StoredHead);
+        tail = null;
+      }
+    }
+    if (tail) await idbPut(archiveChunkKey(id, index.next - 1), tail as unknown as StoredHead);
+
+    // Потолки. Вытесняется САМОЕ СТАРОЕ, целыми кусками — перенумерации нет,
+    // растёт только `first`.
+    while (
+      (index.count > MAX_ARCHIVED_FRAMES_PER_PAIR || index.bytes > MAX_ARCHIVE_BYTES_PER_PAIR)
+      && index.next - index.first > 1
+    ) {
+      const raw = await idbGet(archiveChunkKey(id, index.first));
+      if (isArchiveChunk(raw, id)) {
+        for (const f of raw.frames) {
+          if (!isArchivedFrame(f)) continue;
+          index.count -= 1;
+          index.bytes -= f.frame.length;
+          known.delete(f.key);
+          evicted += 1;
+        }
+      }
+      await idbDelete(archiveChunkKey(id, index.first));
+      index.first += 1;
+    }
+
+    await idbPut(archiveIndexKey(id), index as unknown as StoredHead);
+  } catch (err) {
+    // ⚠️ Опись НЕ обновлена — значит записанные куски для чтения не
+    // существуют (чтение идёт строго по описи `first..next`). Это осознанный
+    // выбор: лишний кусок на диске стоит места, а опись, ушедшая вперёд
+    // недописанных кусков, стоила бы дыр в предъявляемом.
+    console.warn(
+      '[chatConversation] своя копия переписки не легла на устройство ' +
+      '(квота, приватный режим, кончилось место): предъявлять придётся то, что даст склад',
+      err,
+    );
+    return { stored: 0, evicted: 0 };
+  }
+
+  for (const f of fresh) known.add(f.key);
+  return { stored, evicted };
 }
 
 /* ────────────────────────── замок между вкладками ─────────────────────── */
@@ -974,7 +1281,7 @@ export async function sendMessage(
   const id = conversationId(own, peerAddr);
   const lockTimeoutMs = opts.lockTimeoutMs ?? CONVERSATION_LOCK_TIMEOUT_MS;
 
-  return withCrossTabLock(`hexseal-chat-conv-${own}-${peerAddr}`, lockTimeoutMs, async () => {
+  const sent = await withCrossTabLock(`hexseal-chat-conv-${own}-${peerAddr}`, lockTimeoutMs, async () => {
     // ПЕРЕЧИТАТЬ под замком — единственное, ради чего замок здесь берётся.
     // Без этой строки вторая вкладка, дождавшись очереди, спокойно выдаст тот
     // же номер: замок будет взят и ничего не запрёт.
@@ -1059,6 +1366,19 @@ export async function sendMessage(
 
     return { link, signature, signerPublicKey: signer.publicKey, frame, key, payload, peer: peerAddr, persisted };
   });
+
+  // В-3: СВОЯ КОПИЯ — сразу, и ПОСЛЕ замка. Внутри замка это была бы лишняя
+  // запись на диск, удерживающая вторую вкладку; здесь — обычная страховка,
+  // которая никого не ждёт. У своего кадра свидетеля со склада ещё нет, стоят
+  // наши часы; когда тот же мешок приедет из описи, кадр уже будет лежать и
+  // повторно не запишется (тождество — ключ мешка).
+  //
+  // Не бросает никогда: не сохранили копию — сообщение всё равно ушло.
+  await archiveConversationFrames(own, peerAddr, [{
+    key: sent.key, from: own, seq: sent.link.seq,
+    sentAt: sent.link.sentAt, receivedAt: sent.link.sentAt, frame: sent.frame,
+  }]);
+  return sent;
 }
 
 /* ──────────────────────────────── приём ───────────────────────────────── */
