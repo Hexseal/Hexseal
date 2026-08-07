@@ -31,7 +31,56 @@ describe('GET /health', () => {
     expect(res.body.relayer).toBe(relayerInfo.relayerAddress);
     expect(res.body.diamond).toBe(relayerInfo.diamondAddr);
     // Сохранность названа явно, а не подразумевается отсутствием жалоб.
-    expect(res.body.storage).toEqual({ indexTrusted: true, lastPersistError: null });
+    expect(res.body.storage.indexTrusted).toBe(true);
+    expect(res.body.storage.lastPersistError).toBeNull();
+    expect(res.body.storage.diskFull).toBe(false);
+  });
+
+  // Сквозная проверка перед слиянием: первая редакция В-1 научила `/health`
+  // режиму недоверия и отказу записи, но НЕ полному диску — а сервер к тому
+  // моменту уже отвечал `507 disk_full` на запись. Надзор при этом видел
+  // `200 ok`: половина работы, и худшая половина — беда УЖЕ наступила и
+  // УЖЕ отражена в отказах человеку, а внешний глаз о ней не знает.
+  it('свободного места меньше запаса — 503 degraded, тем же порогом, каким сервер уже отвечает 507', async () => {
+    const RESERVE = 2 * 1024 * 1024 * 1024;
+    const spy = vi.spyOn(fs, 'statfsSync').mockImplementation(() => ({
+      bavail: Math.floor((RESERVE - 1) / 4096), bsize: 4096,
+    }));
+    try {
+      const res = await request(app).get('/health');
+      expect(res.status).toBe(503);
+      expect(res.body.status).toBe('degraded');
+      expect(res.body.storage.diskFull).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('места хватает — 200, и признак полного диска честно false', async () => {
+    const spy = vi.spyOn(fs, 'statfsSync').mockImplementation(() => ({
+      bavail: Math.floor((50 * 1024 * 1024 * 1024) / 4096), bsize: 4096,
+    }));
+    try {
+      const res = await request(app).get('/health');
+      expect(res.status).toBe(200);
+      expect(res.body.storage.diskFull).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('измерить место не вышло — это НЕ «диск полон»: 200, признак null', async () => {
+    // `statfsSync` может отсутствовать или не работать на файловой системе
+    // (замечено на exFAT). Сломанная мерка — «не знаем», а не «плохо»:
+    // иначе весь надзор встал бы красным на ровном месте.
+    const spy = vi.spyOn(fs, 'statfsSync').mockImplementation(() => { throw new Error('ENOSYS'); });
+    try {
+      const res = await request(app).get('/health');
+      expect(res.status).toBe(200);
+      expect(res.body.storage.diskFull).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('режим недоверия — 503 и degraded: надзор обязан увидеть, что склад не сохраняет', async () => {
