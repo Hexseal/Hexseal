@@ -597,7 +597,7 @@
     "could_not_connect": "No se pudo conectar",
     "open_conversations": "Abrir conversaciones",
     "search_messages": "Buscar mensajes",
-    "attach_file_title": "Adjuntar archivo (cifrado, se guarda 7 días, máx. 5 GB)",
+    "attach_file_title": "Adjuntar archivo (cifrado, se guarda 7 días, máx. {mb} MB)",
     "files_deal_only": "Los archivos solo están disponibles en tratos activos",
     "decrypting": "Descifrando…",
     "decrypt_failed_image": "Error al descifrar imagen",
@@ -665,7 +665,8 @@
     "disable_contract": "La clave del chat se quitará de este dispositivo. En esta cartera la clave es aleatoria y no hay una segunda fuente: sin el código de recuperación sus mensajes se pierden para siempre.",
     "disable_confirm": "Desactivar",
     "disable_show_code_first": "Ver primero el código",
-    "file_too_large": "El archivo es demasiado grande. El límite es {mb} MB."
+    "file_too_large": "El archivo es demasiado grande. El límite es {mb} MB.",
+    "key_not_saved_contract": "La clave del chat no quedó en este dispositivo. En esta cartera es aleatoria: tras recargar se creará otra y los mensajes anteriores no se abrirán. Anote ahora su código de recuperación."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

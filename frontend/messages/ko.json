@@ -597,7 +597,7 @@
     "could_not_connect": "연결할 수 없습니다",
     "open_conversations": "대화 열기",
     "search_messages": "메시지 검색",
-    "attach_file_title": "파일 첨부 (암호화, 7일 보관, 최대 5 GB)",
+    "attach_file_title": "파일 첨부 (암호화, 7일 보관, 최대 {mb} MB)",
     "files_deal_only": "파일은 활성 거래에서만 사용 가능합니다",
     "decrypting": "복호화 중…",
     "decrypt_failed_image": "이미지 복호화 실패",
@@ -665,7 +665,8 @@
     "disable_contract": "채팅 키가 이 기기에서 제거됩니다. 이 지갑의 키는 무작위이며 두 번째 출처가 없습니다. 복구 코드가 없으면 대화는 영원히 사라집니다.",
     "disable_confirm": "끄기",
     "disable_show_code_first": "코드 먼저 보기",
-    "file_too_large": "파일이 너무 큽니다. 한도는 {mb} MB입니다."
+    "file_too_large": "파일이 너무 큽니다. 한도는 {mb} MB입니다.",
+    "key_not_saved_contract": "채팅 키가 이 기기에 남지 않았습니다. 이 지갑의 키는 무작위입니다. 새로 고치면 다른 키가 만들어져 이전 대화는 열리지 않습니다. 지금 복구 코드를 적어 두세요."
   },
   "messaging": {
     "enabled_title": "메시징 활성화됨",

@@ -597,7 +597,7 @@
     "could_not_connect": "无法连接",
     "open_conversations": "打开对话",
     "search_messages": "搜索消息",
-    "attach_file_title": "附加文件（加密，保存 7 天，最大 5 GB）",
+    "attach_file_title": "附加文件（加密，保存 7 天，最大 {mb} MB）",
     "files_deal_only": "文件仅在活跃交易中可用",
     "decrypting": "解密中…",
     "decrypt_failed_image": "图片解密失败",
@@ -665,7 +665,8 @@
     "disable_contract": "聊天密钥会从本设备移除。这个钱包的密钥是随机的，没有第二个来源：没有恢复码，聊天记录将永久丢失。",
     "disable_confirm": "关闭",
     "disable_show_code_first": "先看恢复码",
-    "file_too_large": "文件太大。上限是 {mb} MB。"
+    "file_too_large": "文件太大。上限是 {mb} MB。",
+    "key_not_saved_contract": "聊天密钥没有留在本设备上。这个钱包的密钥是随机的：重新加载后会生成新的，之前的聊天将无法打开。请立刻抄写恢复码。"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

@@ -597,7 +597,7 @@
     "could_not_connect": "Impossible de se connecter",
     "open_conversations": "Ouvrir les conversations",
     "search_messages": "Rechercher des messages",
-    "attach_file_title": "Joindre un fichier (chiffré, conservé 7 jours, max 5 Go)",
+    "attach_file_title": "Joindre un fichier (chiffré, conservé 7 jours, max. {mb} Mo)",
     "files_deal_only": "Fichiers disponibles uniquement dans les transactions actives",
     "decrypting": "Déchiffrement…",
     "decrypt_failed_image": "Échec du déchiffrement de l'image",
@@ -665,7 +665,8 @@
     "disable_contract": "La clé de messagerie sera retirée de cet appareil. Pour ce portefeuille la clé est aléatoire et il n’y a pas de seconde source : sans le code de récupération, vos messages sont perdus définitivement.",
     "disable_confirm": "Désactiver",
     "disable_show_code_first": "Afficher d’abord le code",
-    "file_too_large": "Le fichier est trop volumineux. La limite est de {mb} Mo."
+    "file_too_large": "Le fichier est trop volumineux. La limite est de {mb} Mo.",
+    "key_not_saved_contract": "La clé de messagerie n’a pas été conservée sur cet appareil. Pour ce portefeuille elle est aléatoire : après un rechargement une nouvelle est créée et les anciens messages ne s’ouvriront plus. Notez maintenant votre code de récupération."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

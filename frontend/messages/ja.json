@@ -597,7 +597,7 @@
     "could_not_connect": "接続できませんでした",
     "open_conversations": "会話を開く",
     "search_messages": "メッセージを検索",
-    "attach_file_title": "ファイルを添付（暗号化、保存7日間、最大5 GB）",
+    "attach_file_title": "ファイルを添付（暗号化、7日間保存、最大 {mb} MB）",
     "files_deal_only": "ファイルはアクティブな取引でのみ利用可能",
     "decrypting": "復号化中…",
     "decrypt_failed_image": "画像の復号化に失敗しました",
@@ -665,7 +665,8 @@
     "disable_contract": "チャットの鍵をこのデバイスから削除します。このウォレットの鍵はランダムで、第二の入手先はありません。リカバリーコードがなければメッセージは永久に失われます。",
     "disable_confirm": "無効にする",
     "disable_show_code_first": "先にコードを表示",
-    "file_too_large": "ファイルが大きすぎます。上限は {mb} MB です。"
+    "file_too_large": "ファイルが大きすぎます。上限は {mb} MB です。",
+    "key_not_saved_contract": "チャットの鍵をこのデバイスに保持できませんでした。このウォレットの鍵はランダムです。再読み込みすると新しい鍵が作られ、以前のメッセージは開けなくなります。今すぐリカバリーコードを書き写してください。"
   },
   "messaging": {
     "enabled_title": "メッセージング有効",

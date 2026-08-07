@@ -597,7 +597,7 @@
     "could_not_connect": "Verbindung fehlgeschlagen",
     "open_conversations": "Gespräche öffnen",
     "search_messages": "Nachrichten suchen",
-    "attach_file_title": "Datei anhängen (verschlüsselt, 7 Tage gespeichert, max. 5 GB)",
+    "attach_file_title": "Datei anhängen (verschlüsselt, 7 Tage gespeichert, max. {mb} MB)",
     "files_deal_only": "Dateien nur in aktiven Deals verfügbar",
     "decrypting": "Entschlüsseln…",
     "decrypt_failed_image": "Bild konnte nicht entschlüsselt werden",
@@ -665,7 +665,8 @@
     "disable_contract": "Der Chat-Schlüssel wird von diesem Gerät entfernt. Bei diesem Wallet ist der Schlüssel zufällig, eine zweite Quelle gibt es nicht: ohne Wiederherstellungscode sind Ihre Nachrichten für immer weg.",
     "disable_confirm": "Abschalten",
     "disable_show_code_first": "Zuerst den Code anzeigen",
-    "file_too_large": "Die Datei ist zu groß. Das Limit sind {mb} MB."
+    "file_too_large": "Die Datei ist zu groß. Das Limit sind {mb} MB.",
+    "key_not_saved_contract": "Der Chat-Schlüssel wurde auf diesem Gerät nicht abgelegt. Bei diesem Wallet ist er zufällig: nach einem Neuladen entsteht ein neuer, und die alten Nachrichten lassen sich nicht mehr öffnen. Notieren Sie jetzt Ihren Wiederherstellungscode."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

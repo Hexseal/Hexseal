@@ -597,7 +597,7 @@
     "could_not_connect": "Impossibile connettersi",
     "open_conversations": "Apri conversazioni",
     "search_messages": "Cerca messaggi",
-    "attach_file_title": "Allega file (cifrato, conservato 7 giorni, max 5 GB)",
+    "attach_file_title": "Allega file (cifrato, conservato 7 giorni, max {mb} MB)",
     "files_deal_only": "File disponibili solo nelle trattative attive",
     "decrypting": "Decrittografia…",
     "decrypt_failed_image": "Impossibile decrittografare l'immagine",
@@ -665,7 +665,8 @@
     "disable_contract": "La chiave della chat verrà rimossa da questo dispositivo. Per questo portafoglio la chiave è casuale e non esiste una seconda fonte: senza il codice di recupero i messaggi vanno persi per sempre.",
     "disable_confirm": "Disattiva",
     "disable_show_code_first": "Mostra prima il codice",
-    "file_too_large": "Il file è troppo grande. Il limite è {mb} MB."
+    "file_too_large": "Il file è troppo grande. Il limite è {mb} MB.",
+    "key_not_saved_contract": "La chiave della chat non è rimasta su questo dispositivo. Per questo portafoglio è casuale: dopo un ricaricamento ne nasce una nuova e i messaggi precedenti non si apriranno più. Annoti ora il codice di recupero."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

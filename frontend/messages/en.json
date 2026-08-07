@@ -597,7 +597,7 @@
     "could_not_connect": "Could not connect",
     "open_conversations": "Open conversations",
     "search_messages": "Search messages",
-    "attach_file_title": "Attach file (encrypted, kept 7 days, max 5 GB)",
+    "attach_file_title": "Attach file (encrypted, kept 7 days, max {mb} MB)",
     "files_deal_only": "Files available only in active deals",
     "decrypting": "Decrypting…",
     "decrypt_failed_image": "Failed to decrypt image",
@@ -665,7 +665,8 @@
     "disable_contract": "The chat key will be removed from this device. For this wallet the key is random and there is no second source: without the recovery code your messages are gone for good.",
     "disable_confirm": "Turn off",
     "disable_show_code_first": "Show the code first",
-    "file_too_large": "File is too large. The limit is {mb} MB."
+    "file_too_large": "File is too large. The limit is {mb} MB.",
+    "key_not_saved_contract": "The chat key did not save on this device. For this wallet the key is random: after a reload a new one is created and the old messages will not open. Write down your recovery code now."
   },
   "deal_bar": {
     "application_received": "Application received",

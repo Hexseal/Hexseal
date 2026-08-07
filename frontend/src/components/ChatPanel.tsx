@@ -15,6 +15,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
+import { hasRecoveryCode } from '@/lib/chatRecovery';
 import { RecoveryReminder } from '@/components/RecoveryCodeModal';
 import { useFeeConfig } from '@/hooks/useFeeConfig';
 import { quoteFeeLocal } from '@/lib/fee';
@@ -562,7 +563,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   // панель их не различала и на выключенном мессенджере крутила спиннер
   // «Инициализация…» рядом с надписью «Сообщений пока нет», хотя ничего не
   // инициализировалось и инициализироваться не собиралось.
-  const { status: sessionStatus, retry: retrySession } = useChatSession();
+  const { status: sessionStatus, retry: retrySession, session } = useChatSession();
   // Код выдан, но человек не подтвердил, что записал. Плашка неброская и
   // уходит РОВНО после успешной проверки — не по закрытию окна и не по
   // таймеру (`recoveryReminderVisible`, `lib/chatRecovery.ts`).
@@ -773,8 +774,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     setUploadErr(null);
     // Число берётся ИЗ константы, а не вписано словом рядом: «5 GB» здесь
     // пережило снижение потолка до 200 МБ (К-4) и сообщало бы человеку
-    // неправду, пока сервер молча отказывал.
-    if (file.size > MAX_FILE_SIZE) { setUploadErr(`File too large. Maximum is ${MAX_FILE_SIZE / (1024 * 1024)} MB.`); return; }
+    // неправду, пока сервер молча отказывал. Сама надпись — из словаря:
+    // зашитая по-английски, она ехала мимо всех четырнадцати локалей.
+    if (file.size > MAX_FILE_SIZE) {
+      setUploadErr(t("chat.file_too_large", { mb: MAX_FILE_SIZE / (1024 * 1024) }));
+      return;
+    }
     // Show preview — don't upload yet
     if (file.type.startsWith('image/')) {
       setPendingPreview(URL.createObjectURL(file));
@@ -1551,7 +1556,17 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
         {storageNotice && (
           <div className="px-3 py-2 mx-1 mb-1 rounded-[12px] bg-amber-500/[0.07] border border-amber-500/15">
             <p className="text-xs text-amber-400/70">
-              {storageNotice.actionable ? t("chat.key_not_saved_blocked") : t("chat.key_not_saved")}
+              {/* ⚠️ ТРИ СЛУЧАЯ, А НЕ ДВА. У кошелька-контракта ключ
+                  СЛУЧАЙНЫЙ: несохранённый — значит после перезагрузки
+                  вкладки заведётся другой, и прежняя переписка не
+                  откроется. Общая надпись зовёт это «работает до
+                  перезагрузки» — для него это не неудобство, а потеря
+                  личности, и слова нужны другие. */}
+              {storageNotice.actionable
+                ? t("chat.key_not_saved_blocked")
+                : hasRecoveryCode(session)
+                  ? t("chat.key_not_saved_contract")
+                  : t("chat.key_not_saved")}
             </p>
           </div>
         )}
@@ -1574,7 +1589,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           <button
             onClick={() => { if (!isInitialized || uploading || pendingFile || !dealContext) return; fileRef.current?.click(); }}
             disabled={!isInitialized || uploading || !!pendingFile || !dealContext}
-            title={dealContext ? t("chat.attach_file_title") : t("chat.files_deal_only")}
+            title={dealContext ? t("chat.attach_file_title", { mb: MAX_FILE_SIZE / (1024 * 1024) }) : t("chat.files_deal_only")}
             className="w-9 h-9 rounded-full flex items-center justify-center text-white/30 hover:text-white/65 hover:bg-white/[0.07] disabled:opacity-10 disabled:cursor-not-allowed transition-colors flex-shrink-0 mb-0.5">
             <Paperclip className="w-4 h-4" />
           </button>
