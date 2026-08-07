@@ -36,7 +36,11 @@ import request from 'supertest';
 // оборачиваем настоящий модуль и включаем бросок точечно. Без этого ветки
 // 500 не достижимы настоящим HTTP-входом вовсе, и «код у 500» проверить
 // нечем.
-const bagStoreThrows = vi.hoisted(() => ({ recordBag: false, listBagsFor: false }));
+// В-4: маршрут GET /bags перечисляет обе половины переписки одним вызовом
+// listBagsInvolving(), а не listBagsFor() + listBagsBySender(). Подменяем
+// ИМЕННО ту функцию, которую маршрут действительно зовёт: подмена функции,
+// которую никто не вызывает, дала бы зелёный тест, ничего не проверивший.
+const bagStoreThrows = vi.hoisted(() => ({ recordBag: false, listBags: false }));
 
 vi.mock('../bagStore.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -46,9 +50,9 @@ vi.mock('../bagStore.js', async (importOriginal) => {
       if (bagStoreThrows.recordBag) throw new Error('simulated bagStore failure (test)');
       return actual.recordBag(...args);
     },
-    listBagsFor: (...args) => {
-      if (bagStoreThrows.listBagsFor) throw new Error('simulated bagStore failure (test)');
-      return actual.listBagsFor(...args);
+    listBagsInvolving: (...args) => {
+      if (bagStoreThrows.listBags) throw new Error('simulated bagStore failure (test)');
+      return actual.listBagsInvolving(...args);
     },
   };
 });
@@ -102,7 +106,7 @@ function putBag({ pass, recipient, body, contentType = 'application/octet-stream
 
 afterEach(() => {
   bagStoreThrows.recordBag = false;
-  bagStoreThrows.listBagsFor = false;
+  bagStoreThrows.listBags = false;
 });
 
 describe('коды отказа склада — 400', () => {
@@ -220,7 +224,7 @@ describe('коды отказа склада — 500', () => {
   it('GET /bags, склад бросил на перечислении: 500 + code internal_error', async () => {
     const { wallet } = await newWallet();
     const pass = await issuePassFor(wallet);
-    bagStoreThrows.listBagsFor = true;
+    bagStoreThrows.listBags = true;
 
     const res = await request(app)
       .get('/bags')
