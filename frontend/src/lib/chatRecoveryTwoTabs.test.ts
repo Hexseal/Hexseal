@@ -8,15 +8,14 @@
  * ключ, а тот, у кого `restored === false`. Между «ключ один» и «окно одно»
  * лежит целый признак, и он мог бы врать.
  *
- * Подделка `IndexedDB` здесь нарочно МИНИМАЛЬНАЯ: она моделирует общий диск
- * двух вкладок и атомарную запись, и больше ничего. Все отказы хранилища
- * (квота, блокировка, молчание) замерены в `chatSession.test.ts` своим,
- * куда более придирчивым стендом — задваивать его тут значило бы получить
- * две подделки, расходящиеся со временем.
+ * Подделка диска переехала в `__stand__/fakeChatDisk.ts` и делится с
+ * `chatRestore.test.ts`: две копии одного хранилища расходятся молча, а в
+ * этой же задаче уже был случай, когда числа врал стенд, а не код.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
 import { CHAT_KEY_TYPED_DATA } from './chatCrypto';
+import { installFakeChatDisk } from './__stand__/fakeChatDisk';
 
 const ACCOUNT = privateKeyToAccount(`0x${'03'.repeat(32)}`);
 const ADDRESS = ACCOUNT.address;
@@ -28,67 +27,8 @@ const CONTRACT_SIG = `0x${'ab'.repeat(96)}` as `0x${string}`;
  *  восстанавливается в свой же адрес и даёт род `eoa`. */
 const EOA_SIG = await ACCOUNT.signTypedData(CHAT_KEY_TYPED_DATA as never);
 
-/* ── Общий диск двух вкладок: минимальная подделка IndexedDB ───────────── */
-
-function installSharedDisk() {
-  const disk = new Map<string, unknown>();
-  type Cb = ((ev: unknown) => void) | null;
-
-  class Req { onsuccess: Cb = null; onerror: Cb = null; onupgradeneeded: Cb = null; onblocked: Cb = null; result: unknown; }
-
-  const store = (tx: { done: () => void }) => ({
-    get(key: string) {
-      const r = new Req();
-      queueMicrotask(() => { r.result = structuredClone(disk.get(key)); r.onsuccess?.({}); tx.done(); });
-      return r;
-    },
-    put(value: unknown, key: string) {
-      const r = new Req();
-      queueMicrotask(() => { disk.set(key, structuredClone(value)); r.onsuccess?.({}); tx.done(); });
-      return r;
-    },
-    delete(key: string) {
-      const r = new Req();
-      queueMicrotask(() => { disk.delete(key); r.onsuccess?.({}); tx.done(); });
-      return r;
-    },
-  });
-
-  const db = {
-    objectStoreNames: { contains: () => true },
-    createObjectStore: () => {},
-    close: () => {},
-    transaction() {
-      const tx: { oncomplete: Cb; onerror: Cb; onabort: Cb; done: () => void; objectStore: () => unknown } = {
-        oncomplete: null, onerror: null, onabort: null,
-        done: () => queueMicrotask(() => tx.oncomplete?.({})),
-        objectStore: () => store(tx),
-      };
-      return tx;
-    },
-  };
-
-  vi.stubGlobal('indexedDB', {
-    open() {
-      const r = new Req();
-      queueMicrotask(() => { r.result = db; r.onsuccess?.({}); });
-      return r;
-    },
-  });
-  // ⚠️ ЗАМОК МЕЖДУ ВКЛАДКАМИ НЕ ПОДДЕЛАН. Node 24 отдаёт настоящий
-  // `navigator.locks` (Web Locks), и он общий на процесс — то есть ровно то,
-  // чем он является для двух вкладок одного источника. Замерено:
-  // `typeof globalThis.navigator.locks === 'object'` на node v24.12.0.
-  //
-  // Первая версия этого стенда замок ПОДДЕЛЫВАЛА и подделала неверно:
-  // `request(name, opts, fn)` вместо настоящего `request(name, fn)`. Вызов
-  // падал, `withCrossTabLock` ловил отказ и честно ехал БЕЗ замка — стенд
-  // намерил два окна подписи там, где их одно. Числа врал стенд, а не код.
-  return disk;
-}
-
 describe('обстоятельство 3: две вкладки и код восстановления', () => {
-  beforeEach(() => { installSharedDisk(); });
+  beforeEach(() => { installFakeChatDisk(); });
   afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
   it('⚠️ кошелёк-контракт, две вкладки разом — ОДИН показ и ОДИН код', async () => {
