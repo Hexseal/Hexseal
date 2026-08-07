@@ -27,6 +27,7 @@ const HANDLERS = [
   'lib/chatRecovery.ts',
   'components/RecoveryCodeModal.tsx',
   'components/RecoveryCodeGate.tsx',
+  'components/RecoveryRestoreModal.tsx',
 ];
 
 function read(rel: string): string {
@@ -80,5 +81,16 @@ describe('код восстановления не утекает — осмот
   it.each(HANDLERS)('%s не сериализует код — ни JSON.stringify, ни аналитики', (rel) => {
     const body = stripProse(read(rel));
     expect(body).not.toMatch(/JSON\s*\.\s*stringify/);
+  });
+
+  it.each(HANDLERS)('%s не кладёт код в адрес страницы', (rel) => {
+    // Адрес страницы уезжает в историю браузера, в журнал сервера при любом
+    // переходе по ссылке и в заголовок Referer. Двенадцати словам там не
+    // место, и заметить это по экрану невозможно.
+    const body = stripProse(read(rel));
+    expect(body).not.toMatch(/history\s*\.\s*(push|replace)State/);
+    expect(body).not.toMatch(/location\s*\.\s*(href|search|hash|assign|replace)/);
+    expect(body).not.toMatch(/URLSearchParams/);
+    expect(body).not.toMatch(/useRouter|useSearchParams/);
   });
 });

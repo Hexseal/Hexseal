@@ -341,10 +341,23 @@ describe('вход в восстановление подключён, а не �
   const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
 
-  it('окно ввода существует и его зовёт привратник', () => {
+  it('окно ввода не просто ввезено, а ОТРИСОВАНО привратником', () => {
+    // ⚠️ Сверяется РАЗМЕТКА, а не упоминание. Первая версия теста искала
+    // строку `RecoveryRestoreModal` и была зелёной на привратнике, который
+    // окно импортирует и не рисует — то есть на ровно том дефекте, ради
+    // которого эта задача заведена (мутация М-31 прошла незамеченной).
     const gate = read('components/RecoveryCodeGate.tsx');
-    expect(gate).toContain('RecoveryRestoreModal');
+    expect(gate).toMatch(/<RecoveryRestoreModal\b/);
+    expect(gate).toMatch(/\{\s*restoreModal\s*\}/);
     expect(gate).toContain('openSessionFromRecoveryCode');
+  });
+
+  it('привратник СТИРАЕТ набранное при закрытии — обстоятельство 1', () => {
+    // Двенадцать слов не должны висеть в памяти вкладки после того, как
+    // человек закрыл окно на середине ввода.
+    const gate = read('components/RecoveryCodeGate.tsx');
+    const closer = gate.slice(gate.indexOf('const closeRestore'), gate.indexOf('const runRestore'));
+    expect(closer).toMatch(/setTyped\(''\)/);
   });
 
   it('в меню кошелька есть вход, и он рядом с показом кода', () => {

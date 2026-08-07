@@ -15,7 +15,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, ShieldQuestion, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2, KeyRound } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, ShieldQuestion, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2, KeyRound, RotateCcwKey } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -24,7 +24,7 @@ import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
 import { useChatSession } from "@/hooks/useChatSession";
 import { hasRecoveryCode } from "@/lib/chatRecovery";
-import { SHOW_RECOVERY_EVENT } from "@/components/RecoveryCodeGate";
+import { SHOW_RECOVERY_EVENT, RESTORE_RECOVERY_EVENT } from "@/components/RecoveryCodeGate";
 
 
 interface Props {
@@ -396,6 +396,19 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
             >
               <KeyRound className="w-3.5 h-3.5" />
               {t("chat.recovery_warning_title")}
+            </DropdownMenuItem>
+          )}
+          {/* Вход в восстановление стоит РЯДОМ с показом кода и под тем же
+              признаком: обычному кошельку он не предлагается вовсе — его
+              восстановление это сам кошелёк. Без этого пункта показ кода был
+              обещанием, которое некуда предъявить. */}
+          {hasRecoveryCode(chatSession) && (
+            <DropdownMenuItem
+              onClick={() => window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT))}
+              className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+            >
+              <RotateCcwKey className="w-3.5 h-3.5" />
+              {t("chat.restore_menu")}
             </DropdownMenuItem>
           )}
           {chatStatus === 'ready' && (

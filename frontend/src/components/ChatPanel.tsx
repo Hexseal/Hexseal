@@ -14,7 +14,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
-import { useRecoveryReminder } from '@/components/RecoveryCodeGate';
+import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 import { RecoveryReminder } from '@/components/RecoveryCodeModal';
 import { useFeeConfig } from '@/hooks/useFeeConfig';
 import { quoteFeeLocal } from '@/lib/fee';
@@ -373,6 +373,20 @@ function ChatSetupBar({ explained = false }: { explained?: boolean }) {
         className="flex-shrink-0 text-xs text-white/50 hover:text-white/80 underline underline-offset-2 transition-colors"
       >
         {t("chat.enable_messaging")}
+      </button>
+      {/* ⚠️ ВТОРОЙ ВХОД В ВОССТАНОВЛЕНИЕ — здесь человек и оказывается, когда
+          переписка не открылась: у него на руках двенадцать слов, а идти с
+          ними было некуда. Род кошелька в этом состоянии неизвестен (сеанса
+          нет, а он его и определяет), поэтому вход виден всем — и обычному
+          кошельку тоже. Это не промах: `chatSession` отвечает ему
+          `recovery_not_applicable`, и надпись объясняет, что его
+          восстановление — сам кошелёк. Промолчать здесь стоило бы дороже:
+          владелец кошелька-контракта не нашёл бы вход вовсе. */}
+      <button
+        onClick={() => window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT))}
+        className="flex-shrink-0 text-xs text-white/30 hover:text-white/60 underline underline-offset-2 transition-colors"
+      >
+        {t("chat.restore_menu")}
       </button>
     </div>
   );

@@ -36,10 +36,10 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useSignTypedData } from 'wagmi';
 import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
-import { useChatSession } from '@/hooks/useChatSession';
+import { useChatSession, signChatKeyLocked } from '@/hooks/useChatSession';
 import {
   openRecoveryPrompt,
   checkRecoveryAnswers,
@@ -48,17 +48,26 @@ import {
   forgetRecoveryConfirmed,
   isRecoveryConfirmed,
   recoveryReminderVisible,
+  restoreErrorKey,
+  unknownWordPosition,
 } from '@/lib/chatRecovery';
+import {
+  openSessionFromRecoveryCode, forgetSession, ChatSessionError,
+} from '@/lib/chatSession';
+import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
 import { RecoveryCodeModal } from './RecoveryCodeModal';
+import { RecoveryRestoreModal } from './RecoveryRestoreModal';
 
 /** Просьба показать код. Слушает привратник, шлют меню кошелька и плашка. */
 export const SHOW_RECOVERY_EVENT = 'hexseal:show-recovery-code';
+/** Просьба открыть ВВОД кода. Шлют меню кошелька и экран «чат не открылся». */
+export const RESTORE_RECOVERY_EVENT = 'hexseal:restore-recovery-code';
 /** Код подтверждён — плашке пора исчезнуть. */
 export const RECOVERY_CONFIRMED_EVENT = 'hexseal:recovery-confirmed';
 
 export function RecoveryCodeGate(): React.ReactElement | null {
   const { address } = useAccount();
-  const { session, recoveryCode } = useChatSession();
+  const { session, recoveryCode, retry } = useChatSession();
 
   const [prompt, setPrompt] = useState<{ words: string[]; positions: number[] } | null>(null);
   const [step, setStep] = useState<'show' | 'check'>('show');
@@ -133,9 +142,103 @@ export function RecoveryCodeGate(): React.ReactElement | null {
     window.dispatchEvent(new Event(RECOVERY_CONFIRMED_EVENT));
   }, [prompt, answers, address]);
 
-  if (!prompt) return null;
+  /* ───────────────────── ввод кода: вторая половина ────────────────────── */
+
+  const { signTypedDataAsync } = useSignTypedData();
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreErr, setRestoreErr] = useState<string | null>(null);
+  const [restoreWord, setRestoreWord] = useState<number | null>(null);
+  const [addressBusy, setAddressBusy] = useState(false);
+
+  const closeRestore = useCallback(() => {
+    setRestoreOpen(false);
+    // ⚠️ Набранное СТИРАЕТСЯ при закрытии. Обстоятельство 1: человек закрыл
+    // окно на середине — двенадцать слов не должны остаться висеть в памяти
+    // вкладки до конца сеанса ради удобства, которого он не просил.
+    setTyped('');
+    setRestoreErr(null);
+    setRestoreWord(null);
+    setAddressBusy(false);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      setTyped('');
+      setRestoreErr(null);
+      setRestoreWord(null);
+      setAddressBusy(false);
+      setRestoreOpen(true);
+    };
+    window.addEventListener(RESTORE_RECOVERY_EVENT, handler);
+    return () => window.removeEventListener(RESTORE_RECOVERY_EVENT, handler);
+  }, []);
+
+  const runRestore = useCallback(async (forgetFirst: boolean) => {
+    if (!address || restoreBusy) return;
+    setRestoreBusy(true);
+    setRestoreErr(null);
+    setRestoreWord(null);
+    try {
+      // Забывание — ОТДЕЛЬНОЕ явное действие и только по отдельной кнопке:
+      // `chatSession` намеренно не даёт коду затирать лежащий сеанс, и
+      // обходить это молча значило бы вернуть находку К-2.
+      if (forgetFirst) await forgetSession(address);
+
+      // Значение уходит КАК ЕСТЬ — разбор и прощение форм вставки живут в
+      // `chatSession.ts`, и второй копии этих правил быть не должно.
+      await openSessionFromRecoveryCode(address, typed, (typedData) => {
+        if (typedData !== CHAT_KEY_TYPED_DATA) {
+          throw new Error('RecoveryCodeGate: сеанс попросил подписать не свои же данные');
+        }
+        return signChatKeyLocked(
+          address,
+          (td) => signTypedDataAsync(td as Parameters<typeof signTypedDataAsync>[0]) as Promise<`0x${string}`>,
+        );
+      });
+
+      // Восстановленный код человек уже держит в руках — заново требовать
+      // «докажи, что записал» незачем.
+      markRecoveryConfirmed(address);
+      window.dispatchEvent(new Event(RECOVERY_CONFIRMED_EVENT));
+      toast.success(t('chat.restore_done'));
+      closeRestore();
+      // Хук сам не узнает, что на диске появился ключ: перечитывание сеанса
+      // — единственное, что заставит переписку открыться прямо сейчас.
+      retry();
+    } catch (err) {
+      const code = err instanceof ChatSessionError ? err.code : null;
+      setAddressBusy(code === 'session_already_present');
+      setRestoreErr(restoreErrorKey(code));
+      // Номер ошибочного слова — только для той единственной надписи,
+      // которая его ждёт. Считается ПОСЛЕ вердикта, а не вместо него.
+      setRestoreWord(code === 'recovery_code_unknown_word' ? await unknownWordPosition(typed) : null);
+    } finally {
+      setRestoreBusy(false);
+    }
+  }, [address, typed, restoreBusy, signTypedDataAsync, t, closeRestore, retry]);
+
+  const restoreModal = (
+    <RecoveryRestoreModal
+      open={restoreOpen}
+      value={typed}
+      busy={restoreBusy}
+      errorKey={restoreErr}
+      errorWord={restoreWord}
+      busyAddress={addressBusy}
+      onChange={(next) => { setTyped(next); setRestoreErr(null); setRestoreWord(null); setAddressBusy(false); }}
+      onSubmit={() => { void runRestore(false); }}
+      onForgetAndRestore={() => { void runRestore(true); }}
+      onClose={closeRestore}
+    />
+  );
+
+  if (!prompt) return restoreModal;
 
   return (
+    <>
+    {restoreModal}
     <RecoveryCodeModal
       open
       words={prompt.words}
@@ -156,6 +259,7 @@ export function RecoveryCodeGate(): React.ReactElement | null {
       onConfirm={handleConfirm}
       onSkip={() => setPrompt(null)}
     />
+    </>
   );
 }
 
