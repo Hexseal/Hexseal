@@ -63,7 +63,7 @@ describe('сквозной замер: код открывает прежнюю 
 
     // 3. Устройство потеряло ключ (человек нажал «выключить чат», сменил
     //    браузер, почистил хранилище) — читать нечем.
-    await first.forgetSession(ADDRESS);
+    await first.forgetSession(ADDRESS, { acknowledged: true });
 
     // 4. Новая вкладка. Человек вводит те самые двенадцать слов.
     const later = await freshModule();
@@ -92,7 +92,7 @@ describe('сквозной замер: код открывает прежнюю 
     const foreignCode = first.exportRecoveryCode(other);
     expect(foreignCode).not.toBe(first.exportRecoveryCode(mine));
 
-    await first.forgetSession(ADDRESS);
+    await first.forgetSession(ADDRESS, { acknowledged: true });
     const later = await freshModule();
     const wrong = await later.openSessionFromRecoveryCode(ADDRESS, foreignCode, async () => CONTRACT_SIG);
 
@@ -193,7 +193,7 @@ describe('вставка из буфера — все пять форм', () => 
     const opened = await mod.openSession(ADDRESS, async () => CONTRACT_SIG);
     const code = mod.exportRecoveryCode(opened);
     const expected = [...opened.keypair.publicKey];
-    await mod.forgetSession(ADDRESS);
+    await mod.forgetSession(ADDRESS, { acknowledged: true });
 
     const forms: Array<[string, string]> = [
       ['ВЕРХНИЙ РЕГИСТР', code.toUpperCase()],
@@ -208,7 +208,7 @@ describe('вставка из буфера — все пять форм', () => 
       const tab = await freshModule();
       const restored = await tab.openSessionFromRecoveryCode(ADDRESS, form, async () => CONTRACT_SIG);
       expect([...restored.keypair.publicKey], name).toEqual(expected);
-      await tab.forgetSession(ADDRESS);
+      await tab.forgetSession(ADDRESS, { acknowledged: true });
     }
   });
 });
@@ -251,7 +251,7 @@ describe('обстоятельство 4: мусор в поле — верди�
     const mod = await freshModule();
     const opened = await mod.openSession(ADDRESS, async () => CONTRACT_SIG);
     const code = mod.exportRecoveryCode(opened);
-    await mod.forgetSession(ADDRESS);
+    await mod.forgetSession(ADDRESS, { acknowledged: true });
 
     const sign = vi.fn(async () => CONTRACT_SIG);
     await mod.openSessionFromRecoveryCode(ADDRESS, code, sign);
@@ -271,7 +271,7 @@ describe('обстоятельство 3: две вкладки восстана
     const seed = await freshModule();
     const opened = await seed.openSession(ADDRESS, async () => CONTRACT_SIG);
     const code = seed.exportRecoveryCode(opened);
-    await seed.forgetSession(ADDRESS);
+    await seed.forgetSession(ADDRESS, { acknowledged: true });
 
     const tabOne = await freshModule();
     const tabTwo = await freshModule();

@@ -189,7 +189,7 @@ export function RecoveryCodeGate(): React.ReactElement | null {
       // Забывание — ОТДЕЛЬНОЕ явное действие и только по отдельной кнопке:
       // `chatSession` намеренно не даёт коду затирать лежащий сеанс, и
       // обходить это молча значило бы вернуть находку К-2.
-      if (forgetFirst) await forgetSession(address);
+      if (forgetFirst) await forgetSession(address, { acknowledged: true });
 
       // Значение уходит КАК ЕСТЬ — разбор и прощение форм вставки живут в
       // `chatSession.ts`, и второй копии этих правил быть не должно.
@@ -240,7 +240,7 @@ export function RecoveryCodeGate(): React.ReactElement | null {
       // Род кошелька решает чистая функция, а не привратник на глаз: тот же
       // признак, под которым показывается и сам код.
       losesEverything={hasRecoveryCode(session)}
-      onConfirm={() => { setDisableAsking(false); disable(); }}
+      onConfirm={() => { setDisableAsking(false); disable({ acknowledged: true }); }}
       onShowCode={() => {
         // Не «и то и другое»: показать код и НЕ снимать ключ. Человек пришёл
         // сюда отключать, но выяснилось, что ему есть что терять — пусть

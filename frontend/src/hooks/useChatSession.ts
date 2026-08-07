@@ -373,8 +373,17 @@ export interface UseChatSessionValue {
   /** Бросить начатую попытку и вернуться к «включить». Решение человека НЕ
    *  отменяет — в отличие от `disable()`. */
   cancel: () => void;
-  /** Снять ключ с устройства и выключить чат. Явное действие с явной ценой. */
-  disable: () => void;
+  /**
+   * Снять ключ с устройства и выключить чат.
+   *
+   * ⚠️ БЕЗ `acknowledged` НЕ ДЕЛАЕТ НИЧЕГО, и подтверждение сюда обязано
+   * ПРИЕХАТЬ ОТ ПОДТВЕРЖДЕНИЯ, а не сочиняться здесь. Иначе охрана
+   * возвращается туда, откуда её уже обошли: `onClick={() => disable()}`
+   * снимал ключ одним нажатием, и 1338 тестов молчали.
+   *
+   * @returns сняли или нет — чтобы вызывающий не считал молчание согласием.
+   */
+  disable: (opts?: { acknowledged?: boolean }) => boolean;
 
   /** Готовый сеанс. `null` — пока нет. */
   session: ChatSession | null;
@@ -524,12 +533,25 @@ export function useChatSession(): UseChatSessionValue {
     setError(null);
   }, []);
 
-  const disable = useCallback(() => {
+  const disable = useCallback((opts: { acknowledged?: boolean } = {}) => {
+    // Отказ ЗАКРЫТЫЙ: не сказавший про подтверждение не снимает ничего.
+    // Сама `forgetSession` откажет и так, но экран не должен при этом
+    // делать вид, что чат выключен.
+    if (!opts.acknowledged) return false;
     cancelledRef.current = true;
     setSession(null);
     setRecoveryCode(null);
     setStatus('error');
-    if (address) void forgetSession(address).catch(() => { /* уборка не важнее самого решения */ });
+    // ⚠️ ПОДТВЕРЖДЕНИЕ ПРОБРАСЫВАЕТСЯ, А НЕ СОЧИНЯЕТСЯ ЗДЕСЬ. Замерено:
+    // если хук подставляет `true` сам, то снятие его собственной проверки
+    // выше снова стирает ключ — и ни один тест не краснеет (мутация М-64).
+    // С пробросом нижний слой (`forgetSession`) отказывает всё равно:
+    // охрана держится, даже когда её сняли этажом выше.
+    if (address) {
+      void forgetSession(address, { acknowledged: opts.acknowledged })
+        .catch(() => { /* уборка не важнее самого решения */ });
+    }
+    return true;
   }, [address]);
 
   return {

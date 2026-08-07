@@ -781,7 +781,7 @@ describe('код восстановления поверх живого сеан
 
   it('снять сеанс можно только явно — через forgetSession', async () => {
     const mine = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
-    await forgetSession(ALICE);
+    await forgetSession(ALICE, { acknowledged: true });
 
     const restored = await openSessionFromRecoveryCode(ALICE, GOLD, async () => ALICE_CONTRACT_SIG);
     expect(hex(restored.keypair.privateKey)).not.toBe(hex(mine.keypair.privateKey));
@@ -1109,7 +1109,7 @@ describe('forgetSession', () => {
   it('следующий заход снова просит подпись — замер: 2 вызова', async () => {
     const sign = vi.fn(async () => ALICE_SIG);
     await openSession(ALICE, sign);
-    await forgetSession(ALICE);
+    await forgetSession(ALICE, { acknowledged: true });
     await openSession(ALICE, sign);
 
     expect(sign).toHaveBeenCalledTimes(2);
@@ -1123,7 +1123,7 @@ describe('forgetSession', () => {
     await openSession(ALICE, signA);
     await openSession(BOB, signB);
 
-    await forgetSession(ALICE);
+    await forgetSession(ALICE, { acknowledged: true });
 
     await openSession(BOB, signB);
     expect(signB).toHaveBeenCalledTimes(1); // сеанс BOB не тронут
@@ -1133,12 +1133,26 @@ describe('forgetSession', () => {
     await openSession(ALICE, async () => ALICE_SIG);
     installStorageKeepingDisk({ failDelete: true });
 
-    await expect(forgetSession(ALICE)).rejects.toMatchObject({ code: 'forget_failed' });
+    await expect(forgetSession(ALICE, { acknowledged: true })).rejects.toMatchObject({ code: 'forget_failed' });
   });
 
   it('хранилища нет вовсе — забывать нечего, молча ок', async () => {
+    // `true` — «сняли (или снимать было нечего)». Возврат появился вместе с
+    // охраной подтверждения: вызывающий обязан отличать «сделано» от
+    // «отказано», а не считать молчание согласием.
     delete g.indexedDB;
-    await expect(forgetSession(ALICE)).resolves.toBeUndefined();
+    await expect(forgetSession(ALICE, { acknowledged: true })).resolves.toBe(true);
+  });
+
+  it('⚠️ БЕЗ подтверждения не снимает и не трогает диск', async () => {
+    // Охрана К-1, переехавшая из интерфейса в саму операцию: прежний замок
+    // стоял на написании кнопки и обходился одной строкой (замерено
+    // сквозной проверкой). Поведение заперто отдельно —
+    // `chatDisableGuard.test.ts`; здесь — что и родной стенд это видит.
+    await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    await expect(forgetSession(ALICE)).resolves.toBe(false);
+    const again = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
+    expect(again.restored).toBe(true);
   });
 });
 
