@@ -1259,11 +1259,18 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
             </div>
           )}
 
-          {/* СОСТОЯНИЕ ВТОРОЕ И ПОСЛЕДНЕЕ: нет связи со складом.
+          {/* НЕТ СВЯЗИ СО СКЛАДОМ, А ПОКАЗАТЬ НЕЧЕГО.
               Код отказа (`write_failed`, `payload_too_large`, `rate_limited`…)
               человеку НЕ показывается: это слово для журнала, а не для
-              экрана. Действие у всех этих причин одно — повторить. */}
-          {!isLoading && peerKnown && error && (
+              экрана. Действие у всех этих причин одно — повторить.
+
+              ⚠️ ТОЛЬКО КОГДА СООБЩЕНИЙ НЕТ. Раньше этот экран вставал при
+              ЛЮБОМ отказе и прятал переписку целиком: замерено — три уже
+              расшифрованных сообщения на руках, видно на экране ноль. Цена
+              несимметрична: показать имеющееся стоит ничего, спрятать —
+              стоит всего, а сеть моргает часто. Когда сообщения есть, отказ
+              говорится надписью ПОВЕРХ них (ниже). */}
+          {!isLoading && peerKnown && error && messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
               <div className="w-12 h-12 rounded-[16px] bg-amber-500/8 border border-amber-500/20 flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-amber-400/55" />
@@ -1284,6 +1291,20 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               Две формулировки, не одна: «не заслуживает доверия» и «не
               открывается нашим ключом» — разные события с разной ценой, и
               вторая никого ни в чём не обвиняет. */}
+          {/* Тот же отказ, когда переписка на руках ЕСТЬ: узкая надпись над
+              ней, а не вместо неё. Уходит сама, как только опрос снова прошёл
+              (`transportError` живёт в снимке движка, а не отдельным
+              состоянием хука). */}
+          {!isLoading && peerKnown && error && messages.length > 0 && (
+            <div className="mx-1 mb-2 px-3 py-2 rounded-[12px] bg-amber-500/[0.07] border border-amber-500/15 flex items-center justify-between gap-2">
+              <p className="text-xs text-amber-400/70">{t("chat.could_not_connect")}</p>
+              <button onClick={reconnect}
+                className="flex items-center gap-1.5 shrink-0 px-2 py-1 rounded-[8px] border border-white/[0.08] hover:bg-white/[0.04] transition-colors text-[11px] text-white/50">
+                <RotateCw className="w-3 h-3" />{t("chat.retry")}
+              </button>
+            </div>
+          )}
+
           {!isLoading && chainUnverified && (
             <div className="mx-1 mb-2 px-3 py-2 rounded-[12px] bg-amber-500/[0.07] border border-amber-500/15">
               <p className="text-xs text-amber-400/70">{t("chat.chain_unverified")}</p>
@@ -1332,7 +1353,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
             </div>
           )}
 
-          {!isLoading && !error && searchQuery && visibleMessages.length === 0 && (
+          {!isLoading && searchQuery && visibleMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center gap-1.5">
               <p className="text-white/30 text-sm">{t("chat.no_match")} &ldquo;{searchQuery}&rdquo;</p>
             </div>
@@ -1342,7 +1363,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               что у него есть, ОДНИМ списком — подгружать нечего, и кнопка,
               которая ничего не делает, читается как «связь плохая». */}
 
-          {!isLoading && !error && (() => {
+          {/* ⚠️ БЕЗ `!error`. Сообщения, которые уже вскрыты и лежат в памяти
+              вкладки, показываются НЕЗАВИСИМО от того, отвечает ли склад
+              прямо сейчас. Отказ — надпись выше, а не причина спрятать
+              переписку. */}
+          {!isLoading && (() => {
             const items: React.ReactNode[] = [];
             let lastDay = '';
             let lastGroupEnd = -1;

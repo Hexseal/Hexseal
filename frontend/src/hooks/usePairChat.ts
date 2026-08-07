@@ -244,6 +244,25 @@ export interface PairChatState {
    *  от `pendingBags`: «ещё качаем» и «не смогли скачать» — разные новости, и
    *  сводить их в одно число значило бы пугать очередью или молчать об отказе. */
   bagsFailed: boolean;
+  /**
+   * Код последнего отказа склада; `null` — связь есть.
+   *
+   * ⚠️ ЖИВЁТ В СНИМКЕ, А НЕ ОТДЕЛЬНЫМ СОСТОЯНИЕМ, и это несущее решение.
+   * Раньше признак отказа был вторым состоянием хука и снимался ровно одним
+   * способом — перезаводом движка. Успешный тик его не трогал: один моргнувший
+   * отказ означал экран ошибки НАВСЕГДА, при том что следующий опрос через
+   * пять секунд проходил успешно, а расшифрованные сообщения всё это время
+   * лежали в памяти вкладки и НЕ ПОКАЗЫВАЛИСЬ.
+   *
+   * Причина ровно та, что записана выше про `engineState`: два состояния про
+   * одно и то же расходятся рано или поздно. «Сообщения» и «связь есть» — одно
+   * событие (успешный тик), и разносить их по двум местам значило заводить
+   * шанс обновить одно и забыть другое. Этот шанс и реализовался.
+   *
+   * Код, а не текст: разбор английского запрещён прямым требованием плана.
+   * Показывать код человеку тоже нельзя — действие у всех этих причин одно.
+   */
+  transportError: string | null;
 }
 
 /* ──────────────────────────────── движок ──────────────────────────────── */
@@ -510,6 +529,8 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   /** Только пополняется, см. шапку файла. */
   const delivered = new Set<string>();
 
+  /** Код последнего отказа склада; снимается УСПЕШНЫМ ТИКОМ, а не перезаводом. */
+  let lastError: string | null = null;
   let peerKeys: PeerChatKeys | null = null;
   let peerKnown = true;
   let keysPublished = false;
@@ -637,6 +658,7 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       // выражается здесь, а не остаётся внутри движка.
       pendingBags: pending.size,
       bagsFailed: failures.size > 0,
+      transportError: lastError,
     });
   }
 
@@ -713,6 +735,10 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       }
     }
     if (stopped) return;
+    // Тик дошёл до конца — связь есть. Признак снимается ЗДЕСЬ, а не ждёт
+    // перезавода движка: моргнувшая сеть не должна стоить человеку переписки
+    // до перезагрузки страницы.
+    lastError = null;
 
     // ─── В-3: СВОЯ КОПИЯ ПОПОЛНЯЕТСЯ ТЕМ, ЧТО ПРИЕХАЛО ───────────────────
     // Кладём ВСЁ, что лежит в наборе, а не только новинки: уже лежащее
@@ -740,6 +766,27 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     }
   }
 
+  /**
+   * Отказ склада: запомнить код И ВЫДАТЬ СНИМОК.
+   *
+   * ⚠️ ВЫДАТЬ — ЭТО ПОЛОВИНА ПРАВКИ. Раньше отказ уходил мимо снимка, наверх
+   * шёл только `onError`, и панель узнавала «связи нет», не получая при этом
+   * НИЧЕГО про то, что переписка цела. Снимок несёт и то, и другое сразу:
+   * сообщения, которые уже на руках, и признак отказа рядом с ними.
+   *
+   * Код отказа — отдельным полем, текст только как запасной вариант: разбор
+   * английского запрещён прямым требованием плана.
+   */
+  const noteError = (err: unknown): void => {
+    lastError = err instanceof BagTransportError || err instanceof ChatDirectoryError
+      ? (err.code ?? err.message)
+      : err instanceof Error ? err.message : 'chat_error';
+    try { opts.onError?.(err); } catch { /* чужой обработчик не должен ронять опрос */ }
+    // Снимок выдаётся ПОСЛЕ обработчика и своей же неудачей не считается:
+    // разбор мог не сойтись, но сказать про отказ связи мы обязаны всё равно.
+    void emit().catch(() => { /* нечего показать — но и падать здесь незачем */ });
+  };
+
   const handle: BagPollHandle = pollBags({
     getPass: async () => {
       const pass = await opts.getPass();
@@ -757,10 +804,10 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
         if (stopped) return;
         const pass = await opts.getPass();
         await handleTick(result, pass);
-      }).catch((err) => { if (!stopped) opts.onError?.(err); });
+      }).catch((err) => { if (!stopped) noteError(err); });
     },
-    onError: (err) => { opts.onError?.(err); },
-    onBagsError: (err) => { opts.onError?.(err); },
+    onError: (err) => { if (!stopped) noteError(err); },
+    onBagsError: (err) => { if (!stopped) noteError(err); },
     ...(opts.onAuthFailed ? { onAuthFailed: opts.onAuthFailed } : {}),
     ...(opts.sleep ? { sleep: opts.sleep } : {}),
     ...(opts.intervals ? { intervals: opts.intervals } : {}),
@@ -845,7 +892,6 @@ export function usePairChat(peerAddress: string, dealId?: string) {
 
   const [isLoading, setIsLoading] = useState(() => (_msgCache.get(pairKey) ?? []).length === 0);
   const [isInitialized, setIsInitialized] = useState(() => (_msgCache.get(pairKey) ?? []).length > 0);
-  const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   /**
    * ВСЁ, что движок отдаёт, — ОДНИМ снимком, а не полем на `useState`.
@@ -863,6 +909,7 @@ export function usePairChat(peerAddress: string, dealId?: string) {
   const [engineState, setEngineState] = useState<PairChatState>({
     messages: _msgCache.get(pairKey) ?? [], gapAfterSeq: [], troubles: [],
     burnedSeqs: [], peerKnown: true, pendingBags: 0, bagsFailed: false,
+    transportError: null,
   });
   const [streamDead, setStreamDead] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -874,16 +921,30 @@ export function usePairChat(peerAddress: string, dealId?: string) {
   // состояния про одно и то же расходятся рано или поздно.
   const troubles = troubleSummary(engineState.troubles, address);
 
+  /**
+   * Отказ склада — ОДНО поле и один источник правды: снимок движка.
+   *
+   * ⚠️ Отдельного `useState` здесь БОЛЬШЕ НЕТ, и это не уборка, а сама правка.
+   * Пока признак жил вторым состоянием, снять его мог только перезавод
+   * движка — то есть один моргнувший отказ прятал переписку навсегда. Оставить
+   * его «запасным вариантом» тоже нельзя: после переноса он записывался бы
+   * ровно нулём, то есть был бы кодом, который ничего не решает.
+   */
+  const transportError = engineState.transportError;
+
   const engineRef = useRef<PairChatEngine | null>(null);
   const activeRef = useRef(true);
 
   useEffect(() => {
     if (!address || !peerAddress || status !== 'ready' || !session) {
-      setError(null);
       setIsLoading(false);
       return;
     }
-    setError(null);
+    // Перезавод движка (ручное «повторить», смена собеседника) гасит прежний
+    // отказ СРАЗУ, не дожидаясь первого снимка нового движка: иначе человек,
+    // нажавший «повторить», ещё пять секунд смотрел бы на прежнюю надпись.
+    // Сообщения при этом остаются — они у него на руках.
+    setEngineState(s => (s.transportError === null ? s : { ...s, transportError: null }));
     setStreamDead(false);
     if (!_msgCache.has(pairKey)) setIsLoading(true);
 
@@ -903,12 +964,16 @@ export function usePairChat(peerAddress: string, dealId?: string) {
         setIsInitialized(true);
         setIsLoading(false);
       },
-      onError: (err) => {
-        // Код отказа — отдельным полем, текст только как запасной вариант:
-        // разбор английского запрещён прямым требованием плана.
-        setError(err instanceof BagTransportError || err instanceof ChatDirectoryError
-          ? (err.code ?? err.message)
-          : err instanceof Error ? err.message : 'Chat error');
+      onError: () => {
+        // ⚠️ ПРИЗНАК ОТКАЗА СЮДА БОЛЬШЕ НЕ ПИШЕТСЯ. Он приезжает В СНИМКЕ
+        // (`transportError`) вместе с сообщениями, и снимается успешным тиком
+        // сам. Отдельное состояние здесь означало ровно то, что нашла
+        // сквозная проверка: один моргнувший отказ прятал всю переписку
+        // навсегда, потому что снять его мог только перезавод движка.
+        //
+        // Обработчик оставлен ради одного: погасить ожидание. Первый же тик,
+        // закончившийся отказом, обязан убрать «загружаем» — иначе человек
+        // смотрит на бесконечный спиннер.
         setIsLoading(false);
       },
       onAuthFailed: () => { setStreamDead(true); },
@@ -1037,7 +1102,11 @@ export function usePairChat(peerAddress: string, dealId?: string) {
 
   return {
     messages: engineState.messages, sendMessage: sendMessageText, sendFile,
-    isLoading, isInitialized, error, uploadProgress,
+    isLoading, isInitialized,
+    /** Код последнего отказа склада; `null` — связь есть. Снимается САМ, как
+     *  только опрос снова прошёл: см. `PairChatState.transportError`. */
+    error: transportError,
+    uploadProgress,
     streamDead, reconnect, needsSetup: status !== 'ready',
     /** Разрывы в цепочке собеседника и «собеседник ещё не заходил». */
     gapAfterSeq: engineState.gapAfterSeq, peerKnown: engineState.peerKnown,
