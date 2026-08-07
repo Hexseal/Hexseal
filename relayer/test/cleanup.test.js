@@ -225,6 +225,33 @@ describe('runFileCleanup', () => {
       expect(fs.existsSync(fp)).toBe(false);
     });
 
+    // Верхняя граница накопления. Без неё «не знаем — не сносим» означало бы
+    // «молчащий узел копит мусор без предела», и починка была бы хуже
+    // дефекта: пункт 28.2 открытых вопросов уже замерил, каким потоком
+    // вложений можно завалить диск.
+    //
+    // Потолок в 90 дней остаётся в силе и при отказе узла: он существует
+    // против пометки без доказательства участия, и отказ сети — не повод
+    // его снимать. Значит отложенное ограничено сверху не длительностью
+    // аварии, а 90 днями входящих помеченных вложений, что бы ни случилось
+    // с узлом.
+    it('узел отказал — но 90-дневный потолок держит: слишком старое помеченное всё равно снесено', async () => {
+      const executor = '0x3333333333333333333333333333333333333334';
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getDisputed: () => { throw new Error('network error (simulated node outage)'); },
+        getActive: () => { throw new Error('network error (simulated node outage)'); },
+      });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const fp = await tagFileForPair(executor);
+      touch(fp, Date.now() - 120 * 24 * 60 * 60 * 1000); // за 90-дневным потолком
+
+      await runFileCleanup();
+      errSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(false);
+    });
+
     it('узел отказал — отложенное названо в логе числом, а не тишиной', async () => {
       const executor = '0x1111111111111111111111111111111111111113';
       mockContract(process.env.DIAMOND_ADDRESS, {
