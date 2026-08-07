@@ -225,4 +225,45 @@ describe('К-2: сеть моргнула посреди пачки', () => {
     expect(said.length).toBeGreaterThan(0);
     expect(admitted.length).toBeGreaterThan(0);
   }, 40_000);
+
+  it('ЗАМЕР: мешок, который не отдаётся ВООБЩЕ, не долбят каждый тик', async () => {
+    // Вопрос «долбят нарочно», ответ числом. Повтор невзятого — это хорошо
+    // ровно до тех пор, пока он не превращается в свой собственный источник
+    // нагрузки: мешок, который склад не отдаёт никогда (подбитый диск,
+    // испорченный файл), повторялся бы каждый тик до конца сеанса и ел бы
+    // адресный бюджет чтения за один-единственный мешок.
+    //
+    // Что красит: снятие отступления перед повтором. Тогда счётчик попыток
+    // равен числу тиков — здесь это сотни за две секунды.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const store = await buildBags(bob, BOB, ALICE, alice.keypair.publicKey, ['единственное']);
+
+    const { fetchMock, downloads } = fakeRelayer({
+      store, peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+      failKey: store[0].key, failTimes: 1_000_000,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true });
+    const startedAt = Date.now();
+    try {
+      // Тиков за это время — сотни (пауза опроса в замерах подменена на 1 мс).
+      await new Promise(r => setTimeout(r, 2_000));
+    } finally {
+      run.engine.stop();
+    }
+    const elapsedSec = (Date.now() - startedAt) / 1000;
+    const ticks = run.states.length;
+
+    console.log(
+      `[К-2 замер В] за ${elapsedSec.toFixed(2)} с: тиков ${ticks}, попыток скачать мёртвый мешок ` +
+      `${downloads.length}`,
+    );
+    // Тиков должны быть сотни — иначе замер меряет не то, что обещает.
+    expect(ticks).toBeGreaterThan(50);
+    // Первая попытка плюс, может быть, одна по истечении первого отступления.
+    expect(downloads.length).toBeLessThanOrEqual(2);
+  }, 40_000);
 });

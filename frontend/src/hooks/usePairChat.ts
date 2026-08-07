@@ -225,6 +225,23 @@ export interface PairChatState {
   burnedSeqs: number[];
   /** `false` — собеседник ни разу не заходил, писать ему некуда. */
   peerKnown: boolean;
+  /**
+   * Мешки, которые склад ПОКАЗАЛ в описи и которые относятся к этой переписке,
+   * но которых мы ещё НЕ ВЗЯЛИ: очередь за потолком бюджета плюс те, на
+   * которых скачивание отказало.
+   *
+   * ⚠️ К-2 враждебной проверки. Раньше «показано складом» и «есть у нас» были
+   * для интерфейса одним и тем же, и разница не выражалась НИЧЕМ: замер —
+   * десять мешков, один обрыв сети на третьем, показано два сообщения, выдач
+   * состояния, назвавших пропажу, ноль. Человек с восемью пропавшими
+   * сообщениями видел ровно то же, что человек, у которого не пропало ничего,
+   * — а у собеседника на этом месте наша дыра, неотличимая от утаивания.
+   */
+  pendingBags: number;
+  /** Хотя бы одно скачивание отказало, и мешок так и остался невзятым. Отдельно
+   *  от `pendingBags`: «ещё качаем» и «не смогли скачать» — разные новости, и
+   *  сводить их в одно число значило бы пугать очередью или молчать об отказе. */
+  bagsFailed: boolean;
 }
 
 /* ──────────────────────────────── движок ──────────────────────────────── */
@@ -363,6 +380,20 @@ export const BAG_DOWNLOAD_BUDGET_PER_MIN = 80;
 /** Окно бюджета. Ровно минута — та же, которой считает склад. */
 const BAG_BUDGET_WINDOW_MS = 60_000;
 
+/**
+ * Отступление перед ПОВТОРОМ скачивания одного мешка: 5 с, 10, 20, … но не
+ * дольше пяти минут.
+ *
+ * ⚠️ ЗАЧЕМ ОТСТУПЛЕНИЕ, А НЕ «ПОВТОРЯТЬ КАЖДЫЙ ТИК» (вопрос «долбят нарочно»).
+ * Мешок, который не отдаётся вовсе (склад отвечает 500 на этот файл, диск у
+ * него подбит), повторялся бы каждые пять секунд вечно — 12 запросов в минуту
+ * из адресного бюджета в 120, за один мешок, до конца сеанса. Отступление
+ * превращает это в 12 запросов в ЧАС. База совпадает с интервалом активного
+ * опроса намеренно: быстрее всё равно не спросим.
+ */
+const BAG_RETRY_BASE_MS = 5_000;
+const BAG_RETRY_MAX_MS = 5 * 60 * 1000;
+
 const KEY_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 
 /**
@@ -473,6 +504,22 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   /** Моменты НАЧАТЫХ скачиваний — окно бюджета (К-1). */
   const downloadStamps: number[] = [];
 
+  /**
+   * Мешки, на которых скачивание уже отказывало: сколько раз и когда можно
+   * пробовать снова (К-2). Ключ уходит отсюда, как только мешок взят, — то
+   * есть счётчик считает ПОДРЯД идущие неудачи, а не всю историю.
+   */
+  const failures = new Map<string, { tries: number; nextAt: number }>();
+
+  function noteFailure(key: string): void {
+    const prev = failures.get(key);
+    const tries = (prev?.tries ?? 0) + 1;
+    failures.set(key, {
+      tries,
+      nextAt: Date.now() + Math.min(BAG_RETRY_BASE_MS * 2 ** (tries - 1), BAG_RETRY_MAX_MS),
+    });
+  }
+
   /** Сколько скачиваний ещё разрешает минутный бюджет. */
   function budgetLeft(): number {
     const cutoff = Date.now() - BAG_BUDGET_WINDOW_MS;
@@ -548,6 +595,10 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       troubles: state.troubles,
       burnedSeqs,
       peerKnown,
+      // К-2: «показано складом» и «есть у нас» — разные вещи, и разница
+      // выражается здесь, а не остаётся внутри движка.
+      pendingBags: pending.size,
+      bagsFailed: failures.size > 0,
     });
   }
 
@@ -586,6 +637,10 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     for (const summary of queue) {
       if (stopped) return;
       if (budgetLeft() <= 0) break;
+      // Мешок под отступлением — пропускаем, но из описи НЕ убираем: он
+      // по-прежнему невзят, и человеку об этом по-прежнему говорят.
+      const failed = failures.get(summary.key);
+      if (failed && Date.now() < failed.nextAt) continue;
       downloadStamps.push(Date.now());
       downloads++;
       try {
@@ -595,6 +650,7 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
         // склада нет, значит долбить его вечно. Место такого мешка в цепочке
         // всё равно окажется дырой, и это честный вердикт.
         pending.delete(summary.key);
+        failures.delete(summary.key);
         if (body) {
           bags.set(summary.key, {
             key: summary.key, sender: summary.sender,
@@ -602,6 +658,18 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
           });
           arrived++;
         }
+      } catch (err) {
+        // ⚠️ К-2: ОДИН ОТКАЗ НЕ УНОСИТ ПАЧКУ. Раньше отказ вылетал из тика
+        // целиком: остаток очереди не качался, `emit()` не звался вовсе — то
+        // есть уже приехавшие мешки тоже не показывались, — а курсор опроса
+        // при этом ушёл вперёд всей пачки. Замер: десять мешков, один обрыв на
+        // третьем, показано ДВА сообщения, и больше никогда ничего.
+        //
+        // Уход со страницы — не отказ склада: обрывать себя самому и записывать
+        // это себе в беду значило бы врать про то, что мешок «не отдался».
+        if (stopped) return;
+        if ((err as { name?: string })?.name === 'AbortError') throw err;
+        noteFailure(summary.key);
       } finally {
         downloads--;
       }
@@ -731,7 +799,7 @@ export function usePairChat(peerAddress: string, dealId?: string) {
    */
   const [engineState, setEngineState] = useState<PairChatState>({
     messages: _msgCache.get(pairKey) ?? [], gapAfterSeq: [], troubles: [],
-    burnedSeqs: [], peerKnown: true,
+    burnedSeqs: [], peerKnown: true, pendingBags: 0, bagsFailed: false,
   });
   const [streamDead, setStreamDead] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -885,6 +953,21 @@ export function usePairChat(peerAddress: string, dealId?: string) {
     /** Наши сообщения, не доехавшие до склада. У собеседника на их месте
      *  разрыв, и сказать об этом обязаны мы. */
     burnedSeqs: engineState.burnedSeqs,
+    /**
+     * Мешки, которые склад показал, а мы ещё не взяли, и признак «взять не
+     * вышло» (К-2).
+     *
+     * ⚠️ ЧЕСТНО О ТОМ, ЧТО ИЗ ЭТОГО СБЫЛОСЬ. Движок эти два числа считает и
+     * отдаёт; довести их до экрана — работа слоя интерфейса, и она НЕ сделана
+     * здесь (панель в чужой зоне этого круга). Пока `ChatPanel.tsx` их не
+     * читает, свойство «человек узнаёт о недоехавшем» существует как
+     * ВОЗМОЖНОСТЬ, а не как поведение — ровно то различие, на котором уже
+     * поймали `listBurnedSeqs` (у неё был ноль вызывающих вне тестов, а
+     * докстринг обещал «интерфейс обязан сказать»). Второй раз выдавать
+     * замысел за поведение нельзя.
+     */
+    pendingBags: engineState.pendingBags,
+    bagsFailed: engineState.bagsFailed,
     /** Окно кошелька за пропуском склада открыто прямо сейчас. */
     passSignaturePending,
     /** Ключ переписки не лёг на устройство — см. `sessionStorageNotice`. */
