@@ -153,11 +153,20 @@ describe('отказ подписать помнится, и человека н
 });
 
 describe('чат заводит ключ там, где человек в чат и пришёл', () => {
-  it('⚠️ хук больше не заводит ключ сам собой — он ждёт просьбы', () => {
-    // Красит: возврат безусловного `openSession(address, ...)`.
+  it('⚠️ хук больше не заводит ключ сам собой — он ждёт просьбы И помнит отказ', () => {
+    // Красит: возврат безусловного заведения.
+    //
+    // ⚠️ Сверяется САМО УСЛОВИЕ, а не наличие слов в файле. Первая версия
+    // искала `createIfMissing` и `armChatSession` где угодно и осталась
+    // зелёной, когда мутация подставила `const mayCreate = true` — оба слова
+    // никуда не делись (мутация М-58 прошла незамеченной). Четвёртый случай
+    // этого класса в задаче: проверка на упоминание не проверяет ничего.
     const hook = read('hooks/useChatSession.ts');
-    expect(hook).toContain('createIfMissing');
+    expect(hook).toMatch(/mayCreate\s*=\s*armed\s*&&\s*!isChatDeclined\(address\)/);
+    expect(hook).toMatch(/createIfMissing:\s*mayCreate/);
     expect(hook).toMatch(/export function armChatSession/);
+    // И отказ человека действительно запоминается на пути ошибки.
+    expect(hook).toMatch(/isUserDecline\(err\)\s*&&?\s*\)?\s*rememberChatDecline\(address\)|if \(isUserDecline\(err\)\) rememberChatDecline\(address\)/);
   });
 
   it('обе половины чата просят завести ключ', () => {

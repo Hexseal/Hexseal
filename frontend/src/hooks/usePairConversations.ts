@@ -38,7 +38,9 @@ import { listBags, fetchBag, BagPassError, type BagSummary } from '@/lib/chatTra
 import { receiveBags, type IncomingBag } from '@/lib/chatConversation';
 import { BoundedParseCache } from '@/lib/chatParseCache';
 import type { ChatSession } from '@/lib/chatSession';
-import { useChatSession, getBagPass } from './useChatSession';
+import { useChatSession, getBagPass,
+  armChatSession,
+} from './useChatSession';
 
 /**
  * Строка списка в том виде, в каком её ждёт `app/chat/page.tsx`. Форма
@@ -349,6 +351,12 @@ export function usePairConversations(isEnabled = false) {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const { status, session } = useChatSession();
+
+  // ⚠️ ЗДЕСЬ ЧЕЛОВЕК ПРИШЁЛ В ЧАТ (список разговоров) — значит можно завести ключ,
+  // если его на устройстве нет. До этой просьбы хук только ЧИТАЕТ ключ и
+  // кошелёк не тревожит: раньше он открывал сеанс на любой странице, ведь
+  // живёт в шапке (находка К-3).
+  useEffect(() => { armChatSession(); }, []);
 
   const addrLc = address?.toLowerCase();
   const [conversations, setConversations] = useState<PairConversation[]>(() =>

@@ -73,6 +73,7 @@ import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
 import { deriveLinkSigningKeypair } from '@/lib/chatConversation';
 import { RELAYER_URL, requestBagPass } from '@/lib/chatTransport';
 import { withWalletLock } from '@/lib/walletLock';
+import { isChatDeclined, rememberChatDecline, forgetChatDecline, isUserDecline } from '@/lib/chatDecline';
 
 /* ────────────────────────── справочник ключей ─────────────────────────── */
 
@@ -387,6 +388,43 @@ export interface UseChatSessionValue {
   storageNotice: SessionStorageNotice | null;
 }
 
+/* ─────────────── когда именно заводить ключ (К-3) ─────────────────────── */
+
+/**
+ * Просьба завести ключ чата, если его на устройстве нет.
+ *
+ * ⚠️ ЗАЧЕМ ОНА ЕСТЬ. Хук открывал сеанс, как только появлялся адрес, а живёт
+ * он в шапке — то есть НА КАЖДОЙ СТРАНИЦЕ. Человек заходил посмотреть доску
+ * заказов, и кошелёк просил подписать что-то без объяснений (находка К-3).
+ * Теперь ЧТЕНИЕ ключа происходит везде и молча (оно бесплатно), а ЗАВЕДЕНИЕ —
+ * только после этой просьбы.
+ *
+ * Просьба глобальная, а не своя у каждого экземпляра хука, по той же причине,
+ * по которой глобален привратник кода: `useChatSession()` живёт в нескольких
+ * местах страницы сразу, и они обязаны согласиться. Зовут её обе половины
+ * чата — открытая переписка и список, — то есть ровно те места, попадание в
+ * которые и означает «человек пришёл в чат».
+ *
+ * Взводится ОДИН РАЗ за жизнь вкладки и не снимается: уйдя из чата на доску,
+ * человек не должен терять уже заведённый ключ.
+ */
+let _armed = false;
+const _armListeners = new Set<() => void>();
+
+export function armChatSession(): void {
+  if (_armed) return;
+  _armed = true;
+  for (const listener of _armListeners) {
+    try { listener(); } catch { /* один плохой слушатель не ломает остальных */ }
+  }
+}
+
+/** Только для тестов: вернуть невзведённое состояние. */
+export function _resetChatSessionArm(): void {
+  _armed = false;
+  _armListeners.clear();
+}
+
 export function useChatSession(): UseChatSessionValue {
   const { address } = useAccount();
   const { signTypedDataAsync } = useSignTypedData();
@@ -398,6 +436,16 @@ export function useChatSession(): UseChatSessionValue {
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const cancelledRef = useRef(false);
+  // Взведён ли запрос на заведение ключа. Подписка — чтобы экземпляр,
+  // смонтированный ДО прихода человека в чат (шапка, привратник), узнал о
+  // просьбе и перечитал сеанс, а не остался с `session_absent` навсегда.
+  const [armed, setArmed] = useState(_armed);
+  useEffect(() => {
+    if (_armed) { setArmed(true); return; }
+    const listener = () => setArmed(true);
+    _armListeners.add(listener);
+    return () => { _armListeners.delete(listener); };
+  }, []);
 
   useEffect(() => {
     if (!address) {
@@ -415,6 +463,11 @@ export function useChatSession(): UseChatSessionValue {
 
     (async () => {
       try {
+        // ⚠️ ЗАВОДИТЬ — только когда человек пришёл в чат И не отказывался
+        // раньше. Чтение с устройства идёт всегда: оно бесплатно и молчаливо,
+        // и тот, у кого ключ уже есть, не должен подписывать ничего ни на
+        // одной странице.
+        const mayCreate = armed && !isChatDeclined(address);
         const opened = await openSession(address, (typedData) => {
           // Типизированные данные пробрасываются КАК ЕСТЬ — не собираются
           // заново: иначе появился бы второй источник истины о том, из чего
@@ -428,7 +481,7 @@ export function useChatSession(): UseChatSessionValue {
             address,
             (td) => signTypedDataAsync(td as Parameters<typeof signTypedDataAsync>[0]) as Promise<`0x${string}`>,
           );
-        });
+        }, { createIfMissing: mayCreate });
         if (dropped || cancelledRef.current) return;
         setSession(opened);
         // Код показывается ТОЛЬКО когда он только что заведён: у
@@ -438,6 +491,11 @@ export function useChatSession(): UseChatSessionValue {
         setStatus('ready');
       } catch (err) {
         if (dropped || cancelledRef.current) return;
+        // Отказ ЧЕЛОВЕКА помнится: спрашивать его снова на каждой странице —
+        // это не уважение к выбору, а «оно сломано и лезет». Снимается
+        // явным нажатием «включить» (`retry`). Поломка кошелька или сети
+        // отказом НЕ считается — иначе моргнувшая сеть заперла бы чат.
+        if (isUserDecline(err)) rememberChatDecline(address);
         setStatus('error');
         setErrorCode(err instanceof ChatSessionError ? err.code : null);
         setError(err instanceof Error ? err.message : 'Не удалось открыть переписку');
@@ -445,12 +503,19 @@ export function useChatSession(): UseChatSessionValue {
     })();
 
     return () => { dropped = true; };
-  }, [address, signTypedDataAsync, retryKey]);
+  }, [address, signTypedDataAsync, retryKey, armed]);
 
   const retry = useCallback(() => {
     cancelledRef.current = false;
+    // Нажатие «включить мессенджер» — это и есть просьба завести ключ, и
+    // одновременно снятие прежнего отказа. Без первого нажатие не сделало бы
+    // ничего на странице, где чат ещё не просили; без второго — не сделало бы
+    // ничего у того, кто однажды отказался.
+    forgetChatDecline(address);
+    armChatSession();
+    setArmed(true);
     setRetryKey(k => k + 1);
-  }, []);
+  }, [address]);
 
   const cancel = useCallback(() => {
     cancelledRef.current = true;

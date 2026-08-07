@@ -66,6 +66,7 @@ import type { ChatSession } from '@/lib/chatSession';
 import {
   useChatSession, fetchPeerChatKeys, publishChatKeys, getBagPass,
   ChatDirectoryError, type PeerChatKeys,
+  armChatSession,
 } from './useChatSession';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
 import { notifyPush, type PushOutcome } from '@/lib/webpush';
@@ -831,6 +832,12 @@ export function usePairChat(peerAddress: string, dealId?: string) {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const { status, session, storageNotice } = useChatSession();
+
+  // ⚠️ ЗДЕСЬ ЧЕЛОВЕК ПРИШЁЛ В ЧАТ (открытая переписка) — значит можно завести ключ,
+  // если его на устройстве нет. До этой просьбы хук только ЧИТАЕТ ключ и
+  // кошелёк не тревожит: раньше он открывал сеанс на любой странице, ведь
+  // живёт в шапке (находка К-3).
+  useEffect(() => { armChatSession(); }, []);
 
   const peerLc = peerAddress.toLowerCase();
   const myLc = address?.toLowerCase() ?? '';
