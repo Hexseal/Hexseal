@@ -16,6 +16,7 @@ import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 import { hasRecoveryCode } from '@/lib/chatRecovery';
+import { ChatOffScreen } from '@/components/ChatOffScreen';
 import { offScreenFor } from '@/lib/chatSessionOff';
 import { bagsNoticeFor, pushOutcomeKey } from '@/lib/chatNotices';
 import { RecoveryReminder } from '@/components/RecoveryCodeModal';
@@ -338,7 +339,7 @@ function DateDivider({ ts }: { ts: number }) {
  *  внизу. Текст полосы остаётся, когда центр занят историей переписки и
  *  объяснить состояние больше негде. */
 function ChatSetupBar({ explained = false }: { explained?: boolean }) {
-  const { status, retry, cancel } = useChatSession();
+  const { status, retry, cancel, errorCode: setupErrorCode } = useChatSession();
   const t = useTranslations();
 
   if (status === 'loading') {
@@ -368,7 +369,11 @@ function ChatSetupBar({ explained = false }: { explained?: boolean }) {
     }`}>
       {!explained && (
         <p className="text-xs text-white/40 min-w-0 line-clamp-2">
-          {t("chat.messaging_off")}
+          {/* ⚠️ И ЗДЕСЬ ТОЖЕ ПО ПРИЧИНЕ. Полоса — не центральный экран, но
+              обвиняет теми же словами: «мессенджер выключен» человеку,
+              который ничего не выключал. Заголовок берётся из той же
+              разводки, что у общего экрана. */}
+          {t(offScreenFor(setupErrorCode as Parameters<typeof offScreenFor>[0]).titleKey as Parameters<typeof t>[0])}
         </p>
       )}
       <button
@@ -573,10 +578,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   // «Инициализация…» рядом с надписью «Сообщений пока нет», хотя ничего не
   // инициализировалось и инициализироваться не собиралось.
   const { status: sessionStatus, retry: retrySession, session, errorCode: sessionErrorCode } = useChatSession();
-  // ⚠️ К-2: пять разных бед делили один экран, и надпись на нём была про
-  // ДЕЙСТВИЕ ЧЕЛОВЕКА («мессенджер выключен»), которого он чаще всего не
-  // совершал. Слова и действие выбирает чистая функция по причине отказа.
-  const offScreen = offScreenFor(sessionErrorCode);
+  // ⚠️ К-2: экран «чат не открылся» — ОДИН на панель и на список
+  // (`ChatOffScreen`). Две копии расходятся молча, и уже разошлись: список
+  // рисовал «мессенджер выключен» на все семь причин.
   // Код выдан, но человек не подтвердил, что записал. Плашка неброская и
   // уходит РОВНО после успешной проверки — не по закрытию окна и не по
   // таймеру (`recoveryReminderVisible`, `lib/chatRecovery.ts`).
@@ -1201,40 +1205,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               способами. Своей сети у чата нет — есть склад мешков и ключ на
               устройстве, и отказать они умеют двумя способами, оба ниже. */}
           {!isLoading && needsSetup && messages.length === 0 && sessionStatus !== 'loading' && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3 px-4 text-center">
-              <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
-                <MessageCircle className="w-5 h-5 text-white/[0.15]" />
-              </div>
-              <div>
-                <p className="text-sm text-white/45 mb-1">{t(offScreen.titleKey as Parameters<typeof t>[0])}</p>
-                <p className="text-white/25 text-xs max-w-[240px] leading-relaxed">
-                  {t(offScreen.hintKey as Parameters<typeof t>[0])}
-                </p>
-              </div>
-              {/* Действие — половина дела, и оно РАЗНОЕ. «Повторить» на базе,
-                  занятой соседней вкладкой, не даст ничего, сколько ни жми; у
-                  незнакомой версии записи действия нет вовсе, и рисовать
-                  кнопку значило бы врать. */}
-              {offScreen.action === 'restore' ? (
-                <button onClick={() => window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT))}
-                  className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  {t("chat.restore_menu")}
-                </button>
-              ) : offScreen.action === 'close-tabs' ? (
-                <button onClick={retrySession}
-                  className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  {t("chat.off_close_tabs")}
-                </button>
-              ) : offScreen.action === 'retry' ? (
-                <button onClick={retrySession}
-                  className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  {t("chat.enable_messaging")}
-                </button>
-              ) : null}
-            </div>
+            <ChatOffScreen errorCode={sessionErrorCode} onRetry={retrySession} variant="full" />
           )}
 
           {/* СОСТОЯНИЕ ПЕРВОЕ: собеседник ещё не заходил.

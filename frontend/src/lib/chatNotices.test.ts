@@ -131,21 +131,39 @@ describe('три поля наконец читают', () => {
     expect(panel).toMatch(/pushOutcomeKey\(\s*pushOutcome\s*\)/);
   });
 
-  it('⚠️ отказ доставки уведомления кто-то СЛУШАЕТ, а не только ввозит', () => {
-    // `onPushDeliveryFailure` был заведён исполнителем стойкости и не имел
-    // НИ ОДНОГО подписчика в боевом коде — только в тесте. Событие общее,
-    // поэтому подписка живёт там, где человек нажимает и ждёт: на досках.
+  it('⚠️ подписка стоит ТАМ, КУДА СОБЫТИЕ ПРИХОДИТ, а не где придётся', () => {
+    // ⚠️ ЗАМЕР сквозной проверки: сначала подписка стояла на двух досках, а
+    // уведомления отправляет РОВНО ОДНО место — `notifyPush` из
+    // `usePairChat`. На доски событие не приходило никогда: подписчик был,
+    // события не было. Замок «кто-то слушает» этого не видел, потому что
+    // спрашивал про наличие вызова, а не про то, долетит ли до него хоть
+    // что-нибудь.
     //
-    // ⚠️ Сверяется ВЫЗОВ. Проверка на упоминание оставалась зелёной, когда
-    // мутация выбросила сам эффект: импорт-то остался (М-53).
-    for (const rel of ['app/board/page.tsx', 'app/board/executor/page.tsx']) {
-      expect(read(rel), rel).toMatch(/onPushDeliveryFailure\(\s*\(/);
-    }
+    // Теперь слушает общая обёртка: она на КАЖДОЙ странице и держит
+    // `Toaster`. Не сам чат — отправка «пожар и забыл», и к моменту отказа
+    // вкладка может уже уйти со страницы переписки.
+    const layout = read('app/client-layout.tsx');
+    expect(layout).toMatch(/onPushDeliveryFailure\(\s*\(/);
+    expect(layout).toMatch(/pushOutcomeKey\(/);
   });
 
-  it('доски берут слова из той же карты, а не пишут свои', () => {
+  it('⚠️ отправитель уведомлений ровно один — иначе подписка снова не там', () => {
+    // Красит: появление второго отправителя. Тогда общая обёртка перестанет
+    // быть достаточной, и это надо заметить, а не узнать от человека.
+    const fsx = fs.readdirSync(path.join(SRC, 'hooks'))
+      .filter(f => f.endsWith('.ts') && !f.includes('.test.'));
+    const senders: string[] = [];
+    for (const f of [...fsx.map(f => `hooks/${f}`), 'lib/chatConversation.ts']) {
+      const body = read(f);
+      if (/\bnotifyPush\(/.test(body)) senders.push(f);
+    }
+    expect(senders).toEqual(['hooks/usePairChat.ts']);
+  });
+
+  it('доски НЕ подписаны — событие туда не приходит', () => {
+    // Обратная сторона: подписка там была ложью, и возвращать её нельзя.
     for (const rel of ['app/board/page.tsx', 'app/board/executor/page.tsx']) {
-      expect(read(rel), rel).toMatch(/pushOutcomeKey\(/);
+      expect(read(rel), rel).not.toMatch(/onPushDeliveryFailure/);
     }
   });
 });

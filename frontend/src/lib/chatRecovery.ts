@@ -314,6 +314,27 @@ export async function unknownWordPosition(code: unknown): Promise<number | null>
   return at === -1 ? null : at + 1;
 }
 
+/**
+ * Показывать ли вход «восстановить по коду».
+ *
+ * ⚠️ СЕАНСА НЕТ — ЗНАЧИТ ПОКАЗЫВАТЬ. Прежнее условие было `hasRecoveryCode
+ * (session)`, то есть вход виднелся ТОЛЬКО там, где рабочий сеанс уже
+ * есть, — ровно там, где он не нужен. А приходят с двенадцатью словами в
+ * противоположном состоянии: сменил устройство, почистил хранилище, потерял
+ * ключ. Мы показали код, заставили доказать, что он записан, и спрятали
+ * дверь (находка сквозной проверки).
+ *
+ * Обычному кошельку с РАБОЧИМ сеансом вход по-прежнему не предлагается: у
+ * него кода нет и не должно быть. Когда сеанса нет, род кошелька неизвестен
+ * (его определяет сам сеанс), и промолчать дороже: владелец
+ * кошелька-контракта не нашёл бы входа вовсе, а обычному `chatSession`
+ * ответит `recovery_not_applicable` понятными словами.
+ */
+export function restoreEntryVisible(session: ChatSession | null | undefined): boolean {
+  if (!session) return true;
+  return hasRecoveryCode(session);
+}
+
 /** Показывать ли неброскую плашку «код не подтверждён». */
 export function recoveryReminderVisible(
   session: ChatSession | null | undefined,

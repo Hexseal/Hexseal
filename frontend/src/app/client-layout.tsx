@@ -7,6 +7,10 @@ import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
+import { useTranslations } from "next-intl";
+import { toast } from "react-hot-toast";
+import { onPushDeliveryFailure } from "@/lib/webpush";
+import { pushOutcomeKey } from "@/lib/chatNotices";
 import { RecoveryCodeGate } from "@/components/RecoveryCodeGate";
 
 // Page transition via pure CSS animation (page-enter keyframe in globals.css).
@@ -122,6 +126,21 @@ function ChatLayoutInner({
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const tLayout = useTranslations();
+
+  // ⚠️ ОТКАЗ ДОСТАВКИ УВЕДОМЛЕНИЯ — ЗДЕСЬ, И ЭТО ЗАМЕР, А НЕ ВКУС.
+  // Сначала подписка стояла на двух досках. `grep` показал, что уведомления
+  // отправляет РОВНО ОДНО место — `notifyPush` из `usePairChat`, то есть
+  // чат; на доски событие не приходило никогда. Подписчик был, событие не
+  // приходило — подписка, которая ничего не слушает.
+  //
+  // Почему не в самом чате: отправка — «пожар и забыл», и к моменту отказа
+  // вкладка может уже уйти со страницы переписки (человек отправил и
+  // перешёл). Общая обёртка живёт на КАЖДОЙ странице и держит `Toaster`.
+  useEffect(() => onPushDeliveryFailure((failure) => {
+    const key = pushOutcomeKey(failure.outcome);
+    if (key) toast.error(tLayout(key as Parameters<typeof tLayout>[0]));
+  }), [tLayout]);
   const [onboardingForced, setOnboardingForced] = useState(false);
   useEffect(() => {
     const handler = () => setOnboardingForced(true);

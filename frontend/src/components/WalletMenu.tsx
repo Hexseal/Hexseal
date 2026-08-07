@@ -23,7 +23,7 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
 import { useChatSession } from "@/hooks/useChatSession";
-import { hasRecoveryCode } from "@/lib/chatRecovery";
+import { hasRecoveryCode, restoreEntryVisible } from "@/lib/chatRecovery";
 import { SHOW_RECOVERY_EVENT, RESTORE_RECOVERY_EVENT, DISABLE_CHAT_EVENT } from "@/components/RecoveryCodeGate";
 
 
@@ -402,7 +402,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               признаком: обычному кошельку он не предлагается вовсе — его
               восстановление это сам кошелёк. Без этого пункта показ кода был
               обещанием, которое некуда предъявить. */}
-          {hasRecoveryCode(chatSession) && (
+          {restoreEntryVisible(chatSession) && (
             <DropdownMenuItem
               onClick={() => window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT))}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"

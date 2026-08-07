@@ -169,11 +169,26 @@ describe('чат заводит ключ там, где человек в чат
     expect(hook).toMatch(/isUserDecline\(err\)\s*&&?\s*\)?\s*rememberChatDecline\(address\)|if \(isUserDecline\(err\)\) rememberChatDecline\(address\)/);
   });
 
-  it('обе половины чата просят завести ключ', () => {
+  /** Выкидывает комментарии и строковые литералы: замок про КОД, а не про
+   *  слова в комментариях. Тот же приём, что в `chatRecoveryHygiene.test.ts`. */
+  function stripProse(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  }
+
+  it('⚠️ обе половины чата просят завести ключ — ЖИВЫМ кодом, не комментарием', () => {
     // `usePairChat` — открытая переписка, `usePairConversations` — список.
     // Обе живут только на страницах чата, и обе означают «человек пришёл».
+    //
+    // ⚠️ ЗАМЕРЕНО: прежний замок проходил на ЗАКОММЕНТИРОВАННОМ вызове —
+    // `// useEffect(() => { armChatSession(); }, []);` давал 12 зелёных из
+    // 12. Чистейший вид болезни: код закомментирован, тест доволен.
+    // Комментарии и строки выкидываются до сверки.
     for (const rel of ['hooks/usePairChat.ts', 'hooks/usePairConversations.ts']) {
-      expect(read(rel), rel).toMatch(/armChatSession\(\)/);
+      expect(stripProse(read(rel)), rel).toMatch(/armChatSession\(\)/);
     }
   });
 

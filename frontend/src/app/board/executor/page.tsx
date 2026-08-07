@@ -1,8 +1,6 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { onPushDeliveryFailure } from "@/lib/webpush";
-import { pushOutcomeKey } from "@/lib/chatNotices";
 import { motion } from "framer-motion";
 import { ContextHint } from "@/components/ContextHint";
 import { useAccount, useWalletClient, usePublicClient, useReadContract, useReadContracts } from "wagmi";
@@ -32,16 +30,6 @@ import { useFeeConfig } from "@/hooks/useFeeConfig";
 
 function useTimeAgo() {
   const t = useTranslations();
-  // ⚠️ ОТКАЗ ДОСТАВКИ УВЕДОМЛЕНИЯ СЛУШАЕТ ХОТЬ КТО-ТО.
-  // `onPushDeliveryFailure` был заведён исполнителем стойкости и не имел ни
-  // одного подписчика в боевом коде — только в тесте. Событие общее (его
-  // поднимает и чат, и любая другая отправка), поэтому подписка живёт там,
-  // где человек НАЖАЛ и ЖДЁТ, — на досках. Слова берутся из той же карты,
-  // что в чате: три исхода, три разных действия.
-  useEffect(() => onPushDeliveryFailure((failure) => {
-    const key = pushOutcomeKey(failure.outcome);
-    if (key) toast.error(t(key as Parameters<typeof t>[0]));
-  }), [t]);
   return (ts: bigint): string => {
     const diff = Math.floor(Date.now() / 1000) - Number(ts);
     if (diff < 60) return t("common.just_now");

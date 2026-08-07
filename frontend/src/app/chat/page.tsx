@@ -8,6 +8,7 @@ import type { Abi } from 'viem';
 import { isAddress } from 'viem';
 import { usePairConversations } from '@/hooks/usePairConversations';
 import { useChatSession } from '@/hooks/useChatSession';
+import { ChatOffScreen } from '@/components/ChatOffScreen';
 import { useProfile } from '@/hooks/useProfile';
 import { ChatPanel } from '@/components/ChatPanel';
 import { Button } from '@/components/ui/button';
@@ -218,7 +219,7 @@ function ChatHubPageInner() {
   const searchParams = useSearchParams();
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
-  const { status: sessionStatus, retry: retrySession } = useChatSession();
+  const { status: sessionStatus, retry: retrySession, errorCode: sessionErrorCode } = useChatSession();
   const { conversations, isLoading, error, reload } = usePairConversations(sessionStatus === 'ready');
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
@@ -599,16 +600,11 @@ function ChatHubPageInner() {
               колонку без единого объяснения и без единственного действия,
               которое здесь имеет смысл. */}
           {!isLoading && sessionStatus === 'error' && !error && allConversations.length === 0 && (
-            <div className="px-4 py-10 text-center flex flex-col items-center gap-3">
-              <MessageCircle className="w-8 h-8 text-white/[0.12]" />
-              <div>
-                <p className="text-sm text-white/40">{t("chat.messaging_off")}</p>
-                <p className="text-xs text-white/20 leading-relaxed mt-1">{t("chat.messaging_off_hint")}</p>
-              </div>
-              <Button size="sm" variant="outline" onClick={retrySession} className="border-white/15 text-white/50 text-xs">
-                {t("chat.enable_messaging")}
-              </Button>
-            </div>
+            /* ⚠️ ОДИН экран на список и на панель. Здесь стояла своя копия,
+               рисовавшая «Мессенджер выключен» на ВСЕ семь причин — то есть
+               обвиняющий человека экран, который К-2 убирала из панели, жил
+               нетронутым там, куда попадают чаще всего. */
+            <ChatOffScreen errorCode={sessionErrorCode} onRetry={retrySession} variant="compact" />
           )}
 
           {!isLoading && !error && allConversations.length === 0 && sessionStatus === 'ready' && (
