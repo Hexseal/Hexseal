@@ -2,7 +2,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import request from 'supertest';
+import { ethers } from 'ethers';
 import { app, runFileCleanup, relayerInfo } from '../app.js';
+import { bagPassChallenge } from '../bagPass.js';
+import { issueBagPass } from '../bagPass.js';
 import { mockContract } from './mocks/ethersRegistry.js';
 import { jsonBody } from './helpers/httpBody.js';
 
@@ -60,6 +63,41 @@ afterEach(() => {
   fs.mkdirSync(relayerInfo.dirFiles, { recursive: true });
 });
 
+// Пометить вложение парой можно только через настоящий маршрут выдачи
+// адреса — `_filePairs` живёт внутри app.js и грузится один раз при импорте,
+// так что подложить метку файлом на диске после импорта нельзя. Маршрут
+// требует пропуск (первый участник пары берётся из пропуска, а не из тела),
+// поэтому пропуск честно выпускается тем же путём, что и в боевом клиенте.
+let _ipCounter = 0;
+const freshIp = () => { _ipCounter++; return `10.66.${(_ipCounter >> 8) & 255}.${_ipCounter & 255}`; };
+
+async function issuePassFor(wallet) {
+  const address = (await wallet.getAddress()).toLowerCase();
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = await wallet.signMessage(bagPassChallenge(address, ts));
+  const res = await request(app)
+    .post('/bags/pass')
+    .set('CF-Connecting-IP', freshIp())
+    .set('x-ts', String(ts))
+    .set('x-sig', sig)
+    .send({ address });
+  if (res.status !== 200) throw new Error(`issuePassFor: ${res.status} ${JSON.stringify(res.body)}`);
+  return res.body.pass;
+}
+
+/** Помечает новое вложение парой (владелец пропуска, peerB) и отдаёт путь. */
+async function tagFileForPair(peerB) {
+  const wallet = ethers.Wallet.createRandom();
+  const pass = await issuePassFor(wallet);
+  const presign = await request(app)
+    .post('/files/presign')
+    .set('CF-Connecting-IP', freshIp())
+    .set('x-bag-pass', pass)
+    .send({ peerB });
+  if (presign.status !== 200) throw new Error(`presign: ${presign.status} ${JSON.stringify(presign.body)}`);
+  return path.join(relayerInfo.dirFiles, jsonBody(presign).key);
+}
+
 function touch(filePath, mtimeMs) {
   fs.writeFileSync(filePath, 'x');
   const t = new Date(mtimeMs);
@@ -105,7 +143,11 @@ describe('runFileCleanup', () => {
 
     // Tag the file via a real presign call so _filePairs is populated the same
     // way production traffic populates it, then age the file past the TTL.
-    const presign = await request(app).post('/files/presign').send({ peerA: client, peerB: executor });
+    // К-4: первый участник пары берётся ИЗ ПРОПУСКА, из тела он больше не
+    // принимается — поэтому пропуск выпускается на `client`.
+    const presign = await request(app).post('/files/presign')
+      .set('x-bag-pass', issueBagPass(client).token)
+      .send({ peerB: executor });
     const fp = path.join(relayerInfo.dirFiles, jsonBody(presign).key);
     touch(fp, Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days — past TTL, well within the 90-day ceiling
 
@@ -118,12 +160,95 @@ describe('runFileCleanup', () => {
     const executor = '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD';
     mockContract(process.env.DIAMOND_ADDRESS, { getDisputed: [{ client, executor }] });
 
-    const presign = await request(app).post('/files/presign').send({ peerA: client, peerB: executor });
+    // К-4: первый участник пары берётся ИЗ ПРОПУСКА, из тела он больше не
+    // принимается — поэтому пропуск выпускается на `client`.
+    const presign = await request(app).post('/files/presign')
+      .set('x-bag-pass', issueBagPass(client).token)
+      .send({ peerB: executor });
     const fp = path.join(relayerInfo.dirFiles, jsonBody(presign).key);
     touch(fp, Date.now() - 120 * 24 * 60 * 60 * 1000); // 120 days — past the 90-day ceiling
 
     await runFileCleanup();
     expect(fs.existsSync(fp)).toBe(false);
+  });
+
+  // ─── К-1 (аудит устойчивости, 6 августа) ────────────────────────────────
+  //
+  // Один отказ узла цепи в 03:00 — и уборка сносила доказательства по
+  // ЖИВОМУ спору. fetchDisputedRecords() при отказе сети возвращала пустой
+  // массив с комментарием «fail open on the on-chain read», и защита
+  // вложений читала эту пустоту как «спорных пар нет ни одной».
+  //
+  // Это ровно тот класс, что уже ломал живое в этом проекте: строка «метла
+  // сносила доказательства по живому спору» стоит в docs/PROCESS.md среди
+  // шести случаев, породивших правило про обстоятельства.
+  //
+  // Правило: НЕ ЗНАЕМ — НЕ СНОСИМ. Отказ узла обязан ОТКЛАДЫВАТЬ уборку
+  // помеченных вложений, а не разрешать её.
+  describe('К-1 — узел цепи молчит: «не знаем» не должно значить «спорных пар нет»', () => {
+    it('узел отказал — помеченное вложение переживает ночь, хотя срок вышел', async () => {
+      const executor = '0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF';
+      // Узел цепи не отвечает — единственное отличие от соседнего теста,
+      // где та же пара честно приезжает спорной.
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getDisputed: () => { throw new Error('network error (simulated node outage)'); },
+        getActive: () => { throw new Error('network error (simulated node outage)'); },
+      });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const fp = await tagFileForPair(executor);
+      touch(fp, Date.now() - 30 * 24 * 60 * 60 * 1000); // срок вышел давно, но до 90-дневного потолка далеко
+
+      await runFileCleanup();
+      errSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(true);
+    });
+
+    it('узел отказал — НЕпомеченное вложение всё равно снесено: откладывается только то, про что мы не знаем', async () => {
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getDisputed: () => { throw new Error('network error (simulated node outage)'); },
+        getActive: () => { throw new Error('network error (simulated node outage)'); },
+      });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      // Без пары в описи это вложение не может быть защищено спором НИ ПРИ
+      // КАКОМ ответе цепи — значит знание цепи для решения по нему не нужно,
+      // и откладывать его нечестно: это был бы не «не знаем», а «перестали
+      // убирать вообще».
+      const fp = path.join(relayerInfo.dirFiles, `untagged-outage-${Date.now()}.bin`);
+      touch(fp, Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      await runFileCleanup();
+      errSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(false);
+    });
+
+    it('узел отказал — отложенное названо в логе числом, а не тишиной', async () => {
+      const executor = '0x1111111111111111111111111111111111111113';
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getDisputed: () => { throw new Error('network error (simulated node outage)'); },
+        getActive: () => { throw new Error('network error (simulated node outage)'); },
+      });
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const fp = await tagFileForPair(executor);
+      touch(fp, Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      await runFileCleanup();
+
+      const line = logSpy.mock.calls.map((a) => String(a[0]))
+        .find((m) => m.includes('[files] cleanup: deferred'));
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+
+      // Молчание не годится: ночь, когда уборка отложена отказом сети,
+      // обязана быть отличима от ночи, когда сносить было нечего.
+      expect(line).toBeDefined();
+      expect(line).toMatch(/deferred \d+ tagged file/);
+    });
   });
 
   it('removes an orphaned temp upload dir older than 1 day', async () => {
