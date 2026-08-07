@@ -8,8 +8,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xmtp/node-sdk": "^6.0.0",
-    "@xmtp/xmtp-js": "^12.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "ethers": "^6.9.0",
@@ -18,7 +16,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "vitest": "^2.1.9",
-    "supertest": "^7.1.0"
+    "supertest": "^7.1.0",
+    "vitest": "^2.1.9"
   }
 }
