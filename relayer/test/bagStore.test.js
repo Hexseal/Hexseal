@@ -2153,6 +2153,112 @@ describe('Мелочь — _saveBagMeta создаёт свой каталог �
   });
 });
 
+// ─── К-3 (аудит устойчивости, 6 августа): один PUT не переписывает всю
+// опись ───────────────────────────────────────────────────────────────────
+//
+// Замер до правки (scratchpad/measure-k3.mjs, боевые умолчания, локальный
+// диск, ничего не подменено):
+//
+//   20 000 мешков в описи → ОДИН PUT блокирует цикл событий 24,9 мс,
+//   файл описи 7,8 МБ; путь от пустого склада до 20 000 мешков —
+//   281,6 СЕКУНДЫ совокупной блокировки. 50 000 не уложились в 10 минут.
+//
+// Всё это время сервер не отвечает вообще никому: ни мета-транзакции, ни
+// файлы, ни уведомления. Причина — recordBag()/markFetched() звали
+// _saveBagMeta(), а та делает JSON.stringify ВСЕЙ описи и пишет её целиком
+// на каждую отдельную запись.
+//
+// Два свойства запираются ВМЕСТЕ и намеренно в одном describe: «дёшево» без
+// «переживает перезапуск» достигается тем, что не писать вообще ничего, и
+// такая «починка» прошла бы тест на одну лишь стоимость.
+describe('К-3 — один PUT не переписывает всю опись', () => {
+  // Сколько байт уходит на диск за ОДИН recordBag при `n` мешках уже в
+  // описи. Считаем и writeFileSync, и appendFileSync — какой бы приём ни
+  // выбрала реализация, платим мы байтами.
+  function bytesForOnePutAt(n) {
+    fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true });
+    fs.rmSync(path.join(TMP, 'bag-meta.json'), { force: true });
+    fs.rmSync(path.join(TMP, 'bag-meta.log'), { force: true });
+    _loadBagMeta();
+
+    const now = Date.now();
+    for (let i = 0; i < n; i++) {
+      recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now - i });
+    }
+
+    let bytes = 0;
+    const count = (_fp, data) => { bytes += Buffer.byteLength(typeof data === 'string' ? data : (data ?? '')); };
+    const realWrite = fs.writeFileSync;
+    const realAppend = fs.appendFileSync;
+    const wSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((fp, data, ...rest) => { count(fp, data); return realWrite(fp, data, ...rest); });
+    const aSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation((fp, data, ...rest) => { count(fp, data); return realAppend(fp, data, ...rest); });
+    try {
+      recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now });
+    } finally {
+      wSpy.mockRestore();
+      aSpy.mockRestore();
+    }
+    return bytes;
+  }
+
+  it('цена одного PUT в байтах не растёт вместе с числом мешков в описи', () => {
+    const at200 = bytesForOnePutAt(200);
+    const at2000 = bytesForOnePutAt(2000);
+
+    // Опись из 2000 записей — примерно в десять раз тяжелее описи из 200.
+    // Если PUT по-прежнему переписывает её целиком, вторая цифра будет
+    // примерно вдесятеро больше первой. Порог с большим запасом: требуем
+    // лишь, чтобы десятикратный рост описи не давал даже двукратного роста
+    // цены записи.
+    expect(at2000).toBeLessThan(at200 * 2);
+    // И в абсолюте: один мешок — это сотни байт, не мегабайты.
+    expect(at2000).toBeLessThan(4096);
+  });
+
+  it('записанное этим дешёвым путём переживает перезапуск процесса', () => {
+    const now = Date.now();
+    const keys = [];
+    for (let i = 0; i < 50; i++) {
+      const key = bagKeyFor(ALICE);
+      recordBag({ key, sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now - i });
+      keys.push(key);
+    }
+    // Отметка о прочтении — второй писатель горячего пути, тоже обязана
+    // доехать до диска, а не остаться только в памяти.
+    markFetched(keys[0], now);
+
+    // «Перезапуск»: выбрасываем состояние в памяти и грузим с диска заново.
+    _loadBagMeta();
+
+    for (const key of keys) expect(bagMetaOf(key)).toBeDefined();
+    expect(bagMetaOf(keys[0]).firstFetchedAt).toBe(now);
+  });
+
+  it('перезапуск ПОСРЕДИ работы: оборванная последняя запись не уносит с собой всё остальное', () => {
+    const now = Date.now();
+    const keys = [];
+    for (let i = 0; i < 10; i++) {
+      const key = bagKeyFor(ALICE);
+      recordBag({ key, sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now - i });
+      keys.push(key);
+    }
+
+    // Процесс убит посреди дописывания последней записи: на диске остался
+    // обрезанный хвост. Так выглядит настоящий обрыв, а не выдуманный.
+    const logPath = path.join(TMP, 'bag-meta.log');
+    if (fs.existsSync(logPath)) {
+      const raw = fs.readFileSync(logPath, 'utf8');
+      fs.writeFileSync(logPath, raw + '{"k":"0xaaa', 'utf8');
+    }
+
+    _loadBagMeta();
+
+    // Девять целых записей обязаны уцелеть — обрезок стоит последним и
+    // касается только себя.
+    for (const key of keys) expect(bagMetaOf(key)).toBeDefined();
+  });
+});
+
 // ─── К-2 (аудит устойчивости, 6 августа): когда место кончилось, уборка
 // обязана уметь его освободить ────────────────────────────────────────────
 //
