@@ -639,7 +639,9 @@
     "recovery_check_failed": "La parola {n} non corrisponde",
     "recovery_check_done": "Fatto",
     "recovery_reminder": "Codice di recupero non annotato.",
-    "recovery_show": "Mostra"
+    "recovery_show": "Mostra",
+    "messages_not_sent": "Alcuni tuoi messaggi non hanno mai lasciato questo dispositivo. Il tuo interlocutore vede un vuoto al loro posto.",
+    "numbering_reset": "Questo dispositivo ha ricominciato la numerazione della conversazione. Il tuo interlocutore potrebbe vedere un vuoto: non dipende da lui e non è un falso."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

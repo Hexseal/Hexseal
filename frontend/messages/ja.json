@@ -639,7 +639,9 @@
     "recovery_check_failed": "{n} 番目の単語が一致しません",
     "recovery_check_done": "完了",
     "recovery_reminder": "リカバリーコードが未記入です。",
-    "recovery_show": "表示"
+    "recovery_show": "表示",
+    "messages_not_sent": "あなたのメッセージの一部は、この端末から送信されないままです。相手にはその場所が抜けて見えています。",
+    "numbering_reset": "この端末でやり取りの番号付けが最初からやり直されました。相手には抜けが見えるかもしれません——相手のせいでも、偽造でもありません。"
   },
   "messaging": {
     "enabled_title": "メッセージング有効",

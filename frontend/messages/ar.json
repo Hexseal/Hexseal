@@ -639,7 +639,9 @@
     "recovery_check_failed": "الكلمة {n} غير مطابقة",
     "recovery_check_done": "تم",
     "recovery_reminder": "لم تدوّن رمز الاستعادة بعد.",
-    "recovery_show": "إظهار"
+    "recovery_show": "إظهار",
+    "messages_not_sent": "بعض رسائلك لم تغادر هذا الجهاز أبداً. يرى محدّثك فجوة في مكانها.",
+    "numbering_reset": "بدأ هذا الجهاز ترقيم المحادثة من جديد. قد يرى محدّثك فجوة — وليست من صنعه ولا هي تزوير."
   },
   "messaging": {
     "enabled_title": "تم تفعيل الرسائل",

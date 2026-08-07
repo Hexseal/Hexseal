@@ -639,7 +639,9 @@
     "recovery_check_failed": "La palabra {n} no coincide",
     "recovery_check_done": "Listo",
     "recovery_reminder": "Código de recuperación sin anotar.",
-    "recovery_show": "Mostrar"
+    "recovery_show": "Mostrar",
+    "messages_not_sent": "Algunos de tus mensajes nunca salieron de este dispositivo. Tu contacto ve un hueco en su lugar.",
+    "numbering_reset": "Este dispositivo empezó de nuevo la numeración de la conversación. Tu contacto puede ver un hueco: no es cosa suya ni una falsificación."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

@@ -639,7 +639,9 @@
     "recovery_check_failed": "Le mot {n} ne correspond pas",
     "recovery_check_done": "Terminé",
     "recovery_reminder": "Code de récupération non noté.",
-    "recovery_show": "Afficher"
+    "recovery_show": "Afficher",
+    "messages_not_sent": "Certains de vos messages n’ont jamais quitté cet appareil. Votre interlocuteur voit un trou à leur place.",
+    "numbering_reset": "Cet appareil a recommencé la numérotation de la conversation. Votre interlocuteur peut voir un trou — ce n’est pas de son fait et ce n’est pas une falsification."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

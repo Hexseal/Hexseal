@@ -505,12 +505,81 @@ describe('восстановление головы берёт СВОЮ цепо
 
 describe('own_numbering_reset несёт автора в собственном имени', () => {
   it('молчит и БЕЗ адреса владельца — этот род бывает только про свой мешок', () => {
+    // Обвинением не становится — но и молчанием тоже: третий признак назван
+    // отдельно (пункт «сбитая своя нумерация не показывается»).
     expect(troubleSummary([{ kind: 'own_numbering_reset' }])).toEqual({
-      chainUnverified: false, undecryptable: false,
+      chainUnverified: false, undecryptable: false, ownNumberingReset: true,
     });
   });
 
   it('а чужой повтор номера по-прежнему признак подделки', () => {
     expect(troubleSummary([{ kind: 'duplicate_seq', from: BOB_LC }], ALICE_LC).chainUnverified).toBe(true);
+  });
+});
+
+/* ───── своя беда доезжает от разговора до экрана, а не только до хранилища ───── */
+
+describe('сгоревшие номера доходят до состояния переписки', () => {
+  it('ЗАМЕР: отправка не удалась — номер сгорел и НАЗВАН в состоянии', async () => {
+    // Панельные замки кормят состояние руками; здесь проверяется сама
+    // проводка «разговор → движок → состояние». Без неё список сгоревших
+    // номеров остаётся в хранилище, а человек уверен, что отправил.
+    const bob = await makeSession(BOB, 'bb');
+    const alice = await makeSession(ALICE, 'a1');
+
+    // 500 — «судьба мешка неизвестна»: номер сгорает (не откатывается).
+    let failPut = true;
+    const base = relayer({ bags: [], me: BOB, keysBody: () => ({ boxKey: hexOf(alice.keypair.publicKey) }) });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT' && failPut) {
+        return new Response(JSON.stringify({ error: 'boom', code: 'internal_error' }), { status: 500 });
+      }
+      return base(url, init);
+    }));
+
+    const states: PairChatState[] = [];
+    const engine = startPairChat({
+      session: bob, peer: ALICE, getPass: async () => 'v1.p', isActive: () => true,
+      onState: (s) => { states.push(s); }, onError: () => {}, sleep: tick,
+    });
+    try {
+      await waitFor(() => states.length > 0);
+      await expect(engine.send({ text: 'не доедет' })).rejects.toMatchObject({ code: 'send_failed' });
+      failPut = false;
+      await waitFor(() => states[states.length - 1].burnedSeqs.length > 0);
+      expect(states[states.length - 1].burnedSeqs).toEqual([0]);
+    } finally { engine.stop(); }
+  }, 90_000);
+
+  it('удачная отправка сгоревших номеров не оставляет', async () => {
+    const bob = await makeSession(BOB, 'bb');
+    const alice = await makeSession(ALICE, 'a1');
+    vi.stubGlobal('fetch', relayer({
+      bags: [], me: BOB, keysBody: () => ({ boxKey: hexOf(alice.keypair.publicKey) }),
+    }));
+
+    const states: PairChatState[] = [];
+    const engine = startPairChat({
+      session: bob, peer: ALICE, getPass: async () => 'v1.p', isActive: () => true,
+      onState: (s) => { states.push(s); }, onError: () => {}, sleep: tick,
+    });
+    try {
+      await waitFor(() => states.length > 0);
+      await engine.send({ text: 'доедет' });
+      const mark = states.length;
+      await waitFor(() => states.length > mark + 1);
+      expect(states[states.length - 1].burnedSeqs).toEqual([]);
+    } finally { engine.stop(); }
+  }, 90_000);
+});
+
+describe('своя перенумерация не съедается отсевом по автору', () => {
+  it('претензия с НАШИМ адресом всё равно доносится третьим признаком', () => {
+    // Мутация «переставить отсев по автору вперёд» проглатывала её целиком:
+    // в бою `own_numbering_reset` ВСЕГДА несёт наш адрес, и отсев «это наше,
+    // молчим» убирал ровно то, что надо сказать.
+    const s = troubleSummary([{ kind: 'own_numbering_reset', from: ALICE_LC }], ALICE_LC);
+    expect(s.ownNumberingReset).toBe(true);
+    expect(s.chainUnverified).toBe(false);
   });
 });

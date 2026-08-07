@@ -737,7 +737,15 @@ export async function readConversationHead(
  */
 export async function listBurnedSeqs(own: `0x${string}`, peer: `0x${string}`): Promise<number[]> {
   const id = conversationId(assertAddress(own, 'свой адрес'), assertAddress(peer, 'адрес собеседника'));
-  const rec = await readHeadRecord(id);
+  // ⚠️ Диск, а если его нет или он ничего не дал — ЗАПАСНАЯ ГОЛОВА В ПАМЯТИ,
+  // ровно тот же порядок, что у `sendMessage` при выборе `prev`. Без второй
+  // половины эта функция на устройстве БЕЗ хранилища (приватный режим,
+  // кончившаяся квота, встроенный браузер кошелька) всегда отвечала пусто —
+  // то есть именно там, где номера сгорают чаще всего, человеку не сказали бы
+  // ничего. Найдено мутацией при подключении её к экрану: до этого у функции
+  // не было ни одного вызывающего вне тестов, и расхождение с `sendMessage`
+  // ничем не проявлялось.
+  const rec = (idbFactory() ? await readHeadRecord(id) : null) ?? _memoryHeads.get(id) ?? null;
   return rec ? [...rec.burned] : [];
 }
 

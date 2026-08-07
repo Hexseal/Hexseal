@@ -538,6 +538,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     messages, sendMessage, sendFile, isLoading, isInitialized, error, uploadProgress,
     streamDead, reconnect, needsSetup, gapAfterSeq, peerKnown,
     passSignaturePending, storageNotice, chainUnverified, undecryptable,
+    // Умолчания намеренно: панель обязана собираться и у вызывающего, который
+    // этих полей не даёт (заготовки соседних замков подменяют хук целиком).
+    // Хук их отдаёт всегда — снимком, одной строкой, терять там нечего.
+    burnedSeqs = [], ownNumberingReset = false,
   } = usePairChat(recipientAddress, dealContext?.agreementAddr);
   const { displayName, avatarUrl } = useProfile(recipientAddress);
   // Состояние САМОГО сеанса — отдельно от состояния этой переписки. Раньше
@@ -1235,6 +1239,29 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           {!isLoading && undecryptable && (
             <div className="mx-1 mb-2 px-3 py-2 rounded-[12px] bg-white/[0.04] border border-white/[0.08]">
               <p className="text-xs text-white/45">{t("chat.undecryptable")}</p>
+            </div>
+          )}
+
+          {/* ⚠️ СВОЯ БЕДА НАЗЫВАЕТСЯ ВСЛУХ. Две строки ниже — про НАС, не про
+              собеседника, и обвинения в них нет ни слова.
+              До этой правки у обеих был источник данных и НИ ОДНОГО
+              потребителя: список сгоревших номеров (`listBurnedSeqs`) и
+              претензия `own_numbering_reset` жили в разговоре, в комментариях
+              у обоих было записано «интерфейс обязан сказать», а на экране не
+              появлялось ничего. Человек нажимал отправить, вкладка
+              закрывалась, сообщение не уходило — у собеседника разрыв, у
+              автора уверенность, что он отправил.
+              Оформление намеренно НЕ янтарное: янтарный в этой панели
+              означает «предъявленному верить нельзя», а здесь верить нечему
+              не по чьей-то вине. */}
+          {!isLoading && burnedSeqs.length > 0 && (
+            <div className="mx-1 mb-2 px-3 py-2 rounded-[12px] bg-white/[0.04] border border-white/[0.08]">
+              <p className="text-xs text-white/45">{t("chat.messages_not_sent")}</p>
+            </div>
+          )}
+          {!isLoading && ownNumberingReset && (
+            <div className="mx-1 mb-2 px-3 py-2 rounded-[12px] bg-white/[0.04] border border-white/[0.08]">
+              <p className="text-xs text-white/45">{t("chat.numbering_reset")}</p>
             </div>
           )}
 

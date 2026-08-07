@@ -639,7 +639,9 @@
     "recovery_check_failed": "{n}번째 단어가 일치하지 않습니다",
     "recovery_check_done": "완료",
     "recovery_reminder": "복구 코드를 아직 적지 않았습니다.",
-    "recovery_show": "보기"
+    "recovery_show": "보기",
+    "messages_not_sent": "당신의 메시지 일부는 이 기기를 떠나지 못했습니다. 상대방에게는 그 자리가 비어 보입니다.",
+    "numbering_reset": "이 기기에서 대화 번호가 처음부터 다시 매겨졌습니다. 상대방에게 빈 자리가 보일 수 있습니다 — 상대 잘못도, 위조도 아닙니다."
   },
   "messaging": {
     "enabled_title": "메시징 활성화됨",

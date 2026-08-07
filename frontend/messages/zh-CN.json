@@ -639,7 +639,9 @@
     "recovery_check_failed": "第 {n} 个单词不匹配",
     "recovery_check_done": "完成",
     "recovery_reminder": "恢复码尚未抄写。",
-    "recovery_show": "显示"
+    "recovery_show": "显示",
+    "messages_not_sent": "你的部分消息始终没有离开这台设备。对方在那个位置看到的是一处缺口。",
+    "numbering_reset": "这台设备重新开始了会话编号。对方可能会看到一处缺口——那不是他造成的，也不是伪造。"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

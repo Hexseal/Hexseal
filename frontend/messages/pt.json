@@ -639,7 +639,9 @@
     "recovery_check_failed": "A palavra {n} não confere",
     "recovery_check_done": "Pronto",
     "recovery_reminder": "Código de recuperação não anotado.",
-    "recovery_show": "Mostrar"
+    "recovery_show": "Mostrar",
+    "messages_not_sent": "Algumas das suas mensagens nunca saíram deste dispositivo. O seu contacto vê uma falha no lugar delas.",
+    "numbering_reset": "Este dispositivo recomeçou a numeração da conversa. O seu contacto pode ver uma falha — não é culpa dele nem uma falsificação."
   },
   "messaging": {
     "enabled_title": "Mensagens habilitadas",

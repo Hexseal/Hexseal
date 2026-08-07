@@ -56,7 +56,7 @@ import {
   type BagPollHandle, type BagPollIntervalsMs, type ListBagsResult,
 } from '@/lib/chatTransport';
 import {
-  sendMessage, receiveBags,
+  sendMessage, receiveBags, listBurnedSeqs,
   type IncomingBag, type SentMessage, type ConversationTrouble,
 } from '@/lib/chatConversation';
 import type { ChainLink } from '@/lib/chatChain';
@@ -139,6 +139,16 @@ export interface ConversationTroubleLike {
 export interface TroubleSummary {
   chainUnverified: boolean;
   undecryptable: boolean;
+  /**
+   * НАША вкладка потеряла голову разговора и начала нумерацию заново.
+   *
+   * Третий признак, а не молчание и не обвинение. До этого замок запирал
+   * именно МОЛЧАНИЕ: `own_numbering_reset` не попадал ни в один из двух
+   * признаков, а комментарий рядом с самим родом обещал «показать человеку
+   * надо». Собеседник в этот момент видит разрыв — и если мы не скажем, он
+   * узнает о нём первым, при споре.
+   */
+  ownNumberingReset: boolean;
 }
 
 /**
@@ -172,8 +182,13 @@ export function troubleSummary(
   const own = ownAddress?.toLowerCase();
   let chainUnverified = false;
   let undecryptable = false;
+  let ownNumberingReset = false;
   for (const t of troubles) {
-    // ПЕРВЫМ и без единого упоминания рода — в этом вся правка.
+    // ⚠️ Своя перенумерация — единственное, что снимается ДО отсева по автору:
+    // она про нас по определению, и отсев «это наше, молчим» проглотил бы
+    // ровно то, что надо сказать.
+    if (t.kind === 'own_numbering_reset') { ownNumberingReset = true; continue; }
+    // Дальше — ПЕРВЫМ и без единого упоминания рода, в этом вся правка Б-3.
     if (own !== undefined && t.from !== undefined && t.from.toLowerCase() === own) continue;
     // Мягкие исходы названы ПОИМЁННО, громкий — по остатку, а не наоборот.
     // Раньше было наоборот: список «верить нельзя» перечислялся руками, и
@@ -186,11 +201,10 @@ export function troubleSummary(
     // ownAddress` в самом условии), то есть автора он несёт в собственном
     // имени. Отсев по автору выше его и так поймает, когда адрес передан;
     // здесь — тот же вывод для вызывающего, который адреса не знает.
-    if (t.kind === 'own_numbering_reset') continue;
     if (t.kind === 'undecryptable') undecryptable = true;
     else chainUnverified = true;
   }
-  return { chainUnverified, undecryptable };
+  return { chainUnverified, undecryptable, ownNumberingReset };
 }
 
 export interface PairChatState {
@@ -198,6 +212,17 @@ export interface PairChatState {
   /** Номера, ПОСЛЕ которых чего-то не хватает; `-1` — не предъявлено начало. */
   gapAfterSeq: number[];
   troubles: ConversationTrouble[];
+  /**
+   * Номера, занятые под наши сообщения, которые НЕ ДОЕХАЛИ до склада
+   * (вкладку закрыли посреди отправки, склад отказал по неизвестной причине).
+   *
+   * У собеседника на их месте разрыв, неотличимый от утаивания. У нас — вот
+   * этот список, и он существует ровно затем, чтобы человек узнал о своей
+   * беде от нас, а не от собеседника при споре. До этой правки вызывающих у
+   * `listBurnedSeqs` не было ни одного вне тестов: человек нажимал отправить,
+   * сообщение не уходило, и на экране не появлялось НИЧЕГО.
+   */
+  burnedSeqs: number[];
   /** `false` — собеседник ни разу не заходил, писать ему некуда. */
   peerKnown: boolean;
 }
@@ -404,11 +429,26 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       if (m.from.toLowerCase() !== own || !m.proof) continue;
       if (!recoveredHead || m.proof.link.seq > recoveredHead.seq) recoveredHead = m.proof.link;
     }
+    // Сгоревшие номера — с устройства, на каждой выдаче состояния. Чтение
+    // дешёвое (одна запись в IndexedDB) и обязано быть свежим: номер сгорает
+    // ровно в момент неудачной отправки, а не на следующем заходе. Отказ
+    // чтения не повод молчать обо всём остальном — тогда просто нечего
+    // сказать про эту беду.
+    let burnedSeqs: number[] = [];
+    try {
+      burnedSeqs = await listBurnedSeqs(own as `0x${string}`, peer);
+    } catch {
+      // Хранилище не ответило. Своя беда останется неназванной — но переписка
+      // покажется, а это важнее.
+    }
+    if (stopped) return;
+
     opts.onState({
       messages: state.messages.map(m =>
         payloadToMessage(m.payload, m.from, m.seq, m.sentAt, m.from.toLowerCase() === own, m.delivered)),
       gapAfterSeq: state.gapAfterSeq,
       troubles: state.troubles,
+      burnedSeqs,
       peerKnown,
     });
   }
@@ -554,19 +594,36 @@ export function usePairChat(peerAddress: string, dealId?: string) {
   const myLc = address?.toLowerCase() ?? '';
   const pairKey = `${myLc}:${peerLc}`;
 
-  const [messages, setMessages] = useState<PairChatMessage[]>(() => _msgCache.get(pairKey) ?? []);
   const [isLoading, setIsLoading] = useState(() => (_msgCache.get(pairKey) ?? []).length === 0);
   const [isInitialized, setIsInitialized] = useState(() => (_msgCache.get(pairKey) ?? []).length > 0);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [gapAfterSeq, setGapAfterSeq] = useState<number[]>([]);
-  const [peerKnown, setPeerKnown] = useState(true);
-  const [troubles, setTroubles] = useState<TroubleSummary>({ chainUnverified: false, undecryptable: false });
+  /**
+   * ВСЁ, что движок отдаёт, — ОДНИМ снимком, а не полем на `useState`.
+   *
+   * ⚠️ Это не стиль. Раньше каждое поле состояния переписывалось отдельной
+   * строкой `setX(s.y)`, и мутация «убрать одну такую строку» не красила
+   * ничего: React-обёртку в этом окружении отрисовать нечем (ни jsdom, ни
+   * @testing-library), а замки кормят состояние руками. То есть на каждое
+   * новое поле движка заводился шанс молча его потерять — и этот шанс уже
+   * реализовался бы на `burnedSeqs`, найденный мутацией.
+   *
+   * Один снимок убирает КЛАСС: терять нечего, копирования по полям нет вовсе.
+   * Признаки, которые нужны панели, выводятся ниже из этого же снимка.
+   */
+  const [engineState, setEngineState] = useState<PairChatState>({
+    messages: _msgCache.get(pairKey) ?? [], gapAfterSeq: [], troubles: [],
+    burnedSeqs: [], peerKnown: true,
+  });
   const [streamDead, setStreamDead] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   /** Окно кошелька за пропуском склада открыто ПРЯМО СЕЙЧАС. Ставится из
    *  `getBagPass`, вокруг самого вызова кошелька — см. его докстринг. */
   const [passSignaturePending, setPassSignaturePending] = useState(false);
+
+  // Выводится из того же снимка, а не хранится вторым состоянием: два
+  // состояния про одно и то же расходятся рано или поздно.
+  const troubles = troubleSummary(engineState.troubles, address);
 
   const engineRef = useRef<PairChatEngine | null>(null);
   const activeRef = useRef(true);
@@ -593,10 +650,7 @@ export function usePairChat(peerAddress: string, dealId?: string) {
       ...(dealId ? { dealId: dealId.toLowerCase() as `0x${string}` } : {}),
       onState: (s) => {
         _msgCache.set(pairKey, s.messages);
-        setMessages(s.messages);
-        setGapAfterSeq(s.gapAfterSeq);
-        setPeerKnown(s.peerKnown);
-        setTroubles(troubleSummary(s.troubles, address));
+        setEngineState(s);
         setIsInitialized(true);
         setIsLoading(false);
       },
@@ -699,15 +753,20 @@ export function usePairChat(peerAddress: string, dealId?: string) {
   }, []);
 
   return {
-    messages, sendMessage: sendMessageText, sendFile,
+    messages: engineState.messages, sendMessage: sendMessageText, sendFile,
     isLoading, isInitialized, error, uploadProgress,
     streamDead, reconnect, needsSetup: status !== 'ready',
     /** Разрывы в цепочке собеседника и «собеседник ещё не заходил». */
-    gapAfterSeq, peerKnown,
+    gapAfterSeq: engineState.gapAfterSeq, peerKnown: engineState.peerKnown,
     /** Предъявленному верить нельзя (подпись, отпечаток, ключ, номер). */
     chainUnverified: troubles.chainUnverified,
     /** Честное звено, которое не открывается нашим ключом. */
     undecryptable: troubles.undecryptable,
+    /** НАША вкладка начала нумерацию заново — собеседник увидит разрыв. */
+    ownNumberingReset: troubles.ownNumberingReset,
+    /** Наши сообщения, не доехавшие до склада. У собеседника на их месте
+     *  разрыв, и сказать об этом обязаны мы. */
+    burnedSeqs: engineState.burnedSeqs,
     /** Окно кошелька за пропуском склада открыто прямо сейчас. */
     passSignaturePending,
     /** Ключ переписки не лёг на устройство — см. `sessionStorageNotice`. */

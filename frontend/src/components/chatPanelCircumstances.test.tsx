@@ -108,12 +108,12 @@ describe('разбор претензий движка в то, что можн�
 
   it('претензий нет — оба признака молчат (замок, который горит всегда, — не замок)', () => {
     const s = troubleSummary([]);
-    expect(s).toEqual({ chainUnverified: false, undecryptable: false });
+    expect(s).toEqual({ chainUnverified: false, undecryptable: false, ownNumberingReset: false });
   });
 
   it('оба рода разом — оба признака', () => {
     const s = troubleSummary([trouble('bad_signature', 1), trouble('undecryptable', 2)]);
-    expect(s).toEqual({ chainUnverified: true, undecryptable: true });
+    expect(s).toEqual({ chainUnverified: true, undecryptable: true, ownNumberingReset: false });
   });
 });
 

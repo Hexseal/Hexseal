@@ -639,7 +639,9 @@
     "recovery_check_failed": "Wort {n} stimmt nicht",
     "recovery_check_done": "Fertig",
     "recovery_reminder": "Wiederherstellungscode nicht notiert.",
-    "recovery_show": "Anzeigen"
+    "recovery_show": "Anzeigen",
+    "messages_not_sent": "Einige Ihrer Nachrichten haben dieses Gerät nie verlassen. Ihr Gegenüber sieht an ihrer Stelle eine Lücke.",
+    "numbering_reset": "Dieses Gerät hat die Nummerierung des Gesprächs neu begonnen. Ihr Gegenüber sieht womöglich eine Lücke — das ist nicht sein Fehler und keine Fälschung."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

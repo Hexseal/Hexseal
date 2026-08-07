@@ -639,7 +639,9 @@
     "recovery_check_failed": "Word {n} does not match",
     "recovery_check_done": "Done",
     "recovery_reminder": "Recovery code not written down.",
-    "recovery_show": "Show"
+    "recovery_show": "Show",
+    "messages_not_sent": "Some of your messages never left this device. Your contact sees a gap where they should have been.",
+    "numbering_reset": "This device started numbering the conversation over. Your contact may see a gap — it is not their doing, and not a forgery."
   },
   "deal_bar": {
     "application_received": "Application received",
