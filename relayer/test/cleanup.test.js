@@ -51,7 +51,7 @@ vi.mock('../bagStore.js', async (importOriginal) => {
   };
 });
 
-const { recordBag, bagKeyFor, bagPathFor, bagMetaOf } = await import('../bagStore.js');
+const { recordBag, bagKeyFor, bagPathFor, bagMetaOf, markFetched } = await import('../bagStore.js');
 
 afterEach(() => {
   bagCleanup.throws = false;
@@ -258,6 +258,50 @@ describe('runFileCleanup', () => {
       errSpy.mockRestore();
 
       expect(fs.existsSync(fp)).toBe(false);
+    });
+
+    // Сквозной замок: гейт может быть безупречен внутри cleanupBags(), но
+    // если маршрут зовёт её без признака — он не работает. Ровно так первая
+    // редакция К-1 и накрыла только вложения. Мутация «звать cleanupBags()
+    // без аргумента» красит именно этот тест.
+    it('узел отказал — просроченный МЕШОК тоже переживает ночь, не только вложение', async () => {
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getDisputed: () => { throw new Error('network error (simulated node outage)'); },
+        getActive: () => { throw new Error('network error (simulated node outage)'); },
+      });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      const RECIPIENT = '0x' + '7'.repeat(40);
+      const SENDER    = '0x' + '8'.repeat(40);
+      const now = Date.now();
+      // Прочитан 10 дней назад — просрочен правилом 2 (7 дней от прочтения),
+      // но загружен всего 20 дней назад: до 90-дневного потолка далеко.
+      const { key, fp } = putBag(RECIPIENT, SENDER, now - 20 * 24 * 60 * 60 * 1000);
+      markFetched(key, now - 10 * 24 * 60 * 60 * 1000);
+
+      await runFileCleanup();
+      errSpy.mockRestore(); logSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(true);
+      expect(bagMetaOf(key)).toBeDefined();
+    });
+
+    it('узел ОТВЕТИЛ — тот же мешок снесён: отсрочка снимается, а не залипает', async () => {
+      mockContract(process.env.DIAMOND_ADDRESS, { getDisputed: [], getActive: [] });
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      const RECIPIENT = '0x' + '9'.repeat(40);
+      const SENDER    = '0x' + 'a'.repeat(40);
+      const now = Date.now();
+      const { key, fp } = putBag(RECIPIENT, SENDER, now - 20 * 24 * 60 * 60 * 1000);
+      markFetched(key, now - 10 * 24 * 60 * 60 * 1000);
+
+      await runFileCleanup();
+      logSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(false);
+      expect(bagMetaOf(key)).toBeUndefined();
     });
 
     it('узел отказал — отложенное названо в логе числом, а не тишиной', async () => {
