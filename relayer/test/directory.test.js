@@ -1063,6 +1063,75 @@ async function withFreshDirectoryModule(envOverrides, fn) {
 // которую стирает обычная выкатка, уликой не является. А адрес, целиком
 // пропавший из справочника, — это ещё и человек, которому чат перестал
 // отвечать: его открытый ключ больше негде взять.
+// ─── Тот же дефект, что К-3 сняла со склада мешков (сквозная проверка, 8
+// августа): справочник переписывает ВЕСЬ файл на каждую запись ───────────
+//
+// Замер (scratchpad/measure-dir.mjs, боевые умолчания):
+//
+//   адресов │ регистрация нового адреса │ путь до N
+//   ────────┼───────────────────────────┼───────────
+//     2 000 │  8,87 мс                  │  9,6 с
+//     4 000 │ 22,76 мс                  │ 41,4 с
+//    20 000 │ не уложилось в 10 минут   │ —
+//
+// И моя же правка В-2 (слияние с диском ради защиты от взаимного стирания в
+// окне выкатки) сделала это ВТРОЕ дороже, без замера: до неё те же числа
+// были 2,78 мс и 5,60 мс. Защита была нужна, цена — нет.
+//
+// Регистрация НОВОГО адреса — это и есть путь нападения из пункта 31: сто
+// двадцать записей в минуту дают 172 800 новых адресов в сутки с одного IP,
+// и каждая замораживала релеер на всё это время.
+describe('справочник — регистрация не переписывает весь файл', () => {
+  function bytesForOneWriteAt(n) {
+    fs.rmSync(directory.DIRECTORY_FILE, { force: true });
+    fs.rmSync(directory.DIRECTORY_FILE + '.log', { force: true });
+    _loadDirectory();
+    const addr = (i) => '0x' + i.toString(16).padStart(40, '0');
+    const k = (i) => '0x' + i.toString(16).padStart(64, '0');
+    for (let i = 1; i <= n; i++) putKey(addr(i), { boxKey: k(i) }, 1000 + i);
+
+    let bytes = 0;
+    const count = (_fp, data) => { bytes += Buffer.byteLength(typeof data === 'string' ? data : (data ?? '')); };
+    const rw = fs.writeFileSync, ra = fs.appendFileSync;
+    const w = vi.spyOn(fs, 'writeFileSync').mockImplementation((fp, d, ...r) => { count(fp, d); return rw(fp, d, ...r); });
+    const a = vi.spyOn(fs, 'appendFileSync').mockImplementation((fp, d, ...r) => { count(fp, d); return ra(fp, d, ...r); });
+    try {
+      putKey(addr(n + 1), { boxKey: k(n + 1) }, 9999);
+    } finally { w.mockRestore(); a.mockRestore(); }
+    return bytes;
+  }
+
+  it('цена регистрации в байтах не растёт вместе с числом адресов', () => {
+    const at100 = bytesForOneWriteAt(100);
+    const at1000 = bytesForOneWriteAt(1000);
+    // Справочник из 1000 записей примерно вдесятеро тяжелее справочника из
+    // 100. Если запись по-прежнему переписывает его целиком, вторая цифра
+    // будет примерно вдесятеро больше. Требуем, чтобы десятикратный рост
+    // не давал даже двукратного.
+    expect(at1000).toBeLessThan(at100 * 2);
+    expect(at1000).toBeLessThan(4096);
+  });
+
+  it('записанное дешёвым путём переживает перезапуск', () => {
+    putKey(ALICE, { boxKey: KEY_A, signKey: SIGN_A }, 1000);
+    putKey(BOB, { boxKey: KEY_B }, 2000);
+    _loadDirectory(); // «перезапуск»
+    expect(getKeyRecord(ALICE).boxKey).toBe(KEY_A);
+    expect(getKeyRecord(ALICE).signKey).toBe(SIGN_A);
+    expect(getKeyRecord(BOB).boxKey).toBe(KEY_B);
+  });
+
+  it('оборванная последняя строка не уносит с собой остальные', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(BOB, { boxKey: KEY_B }, 2000);
+    const log = directory.DIRECTORY_FILE + '.log';
+    if (fs.existsSync(log)) fs.appendFileSync(log, '{"a":"0xdead', 'utf8');
+    _loadDirectory();
+    expect(getKeyRecord(ALICE)).not.toBeNull();
+    expect(getKeyRecord(BOB)).not.toBeNull();
+  });
+});
+
 describe('В-2 — окно выкатки: запись другой копии не стирается, счётчик смен не убывает', () => {
   it('адрес, зарегистрированный ДРУГОЙ копией в окне выкатки, переживает нашу запись', () => {
     putKey(ALICE, { boxKey: KEY_A }, 1000);
