@@ -33,7 +33,7 @@ process.env.STORAGE_DIR = TMP;
 // (или через статический import), а не через переменную, деструктуриро-
 // ванную из динамического import() до этого вызова.
 const bagStore = await import('../bagStore.js');
-const { bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, bagMetaOf,
+const { bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, listBagsInvolving, bagMetaOf,
         bagExpiryAt, cleanupBags, _loadBagMeta, _saveBagMeta, _pairIdFromAddresses,
         assertBagStoreReady, bagPathFor } = bagStore;
 
@@ -2212,6 +2212,72 @@ describe('Мелочь — _saveBagMeta создаёт свой каталог �
     } finally {
       fs.rmSync(freshStorageDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── В-4 (аудит устойчивости, 6 августа): тик опроса обходит опись ОДИН
+// раз, а не два ───────────────────────────────────────────────────────────
+//
+// Замер до правки (scratchpad/measure-v4.mjs, боевые умолчания):
+//   200 000 мешков → один тик GET /bags 306,85 мс = 3,3 тика в секунду.
+// Пункт 29.1 открытых вопросов записывал «семь тиков» — это была цена
+// ОДНОГО прохода (listBagsFor). Задача 1 плана «клиент чата» добавила
+// взгляд отправителя (listBagsBySender), и проходов стало два.
+//
+// Один и тот же _bagMeta перебирается дважды подряд, чтобы разложить его на
+// две кучки по двум разным полям одной и той же записи. Это ровно то, что
+// делается за один проход.
+describe('В-4 — тик опроса: один проход по описи вместо двух', () => {
+  it('listBagsInvolving отдаёт ровно то же, что listBagsFor + listBagsBySender', () => {
+    const now = Date.now();
+    const CAROL = '0xca401000000000000000000000000000000beef1';
+    put(ALICE, BOB, now - 3000);   // мне от Боба
+    put(BOB, ALICE, now - 2000);   // от меня Бобу
+    put(ALICE, ALICE, now - 1000); // переписка с самим собой — в обеих кучках
+    put(BOB, CAROL, now);          // чужая переписка целиком
+
+    const combined = listBagsInvolving(ALICE);
+    expect(combined.received).toEqual(listBagsFor(ALICE));
+    expect(combined.sent).toEqual(listBagsBySender(ALICE));
+  });
+
+  it('обходит опись РОВНО ОДИН раз — не два прохода под одним именем', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 1000);
+    put(BOB, ALICE, now);
+
+    // Прямой замок на само свойство, а не на время (время на раннере
+    // шумит и красило бы тест случайно). Оба существующих списка строятся
+    // через Object.entries(_bagMeta) — по разу на каждый; объединённая
+    // версия обязана обойтись одним.
+    const spy = vi.spyOn(Object, 'entries');
+    try {
+      spy.mockClear();
+      listBagsFor(ALICE);
+      listBagsBySender(ALICE);
+      const twoPassCalls = spy.mock.calls.length;
+
+      spy.mockClear();
+      listBagsInvolving(ALICE);
+      const onePassCalls = spy.mock.calls.length;
+
+      expect(twoPassCalls).toBe(2);
+      expect(onePassCalls).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('сортировка по uploadedAt сохраняется в обеих половинах', () => {
+    const now = Date.now();
+    const late = put(ALICE, BOB, now);
+    const early = put(ALICE, BOB, now - 5000);
+    const sentLate = put(BOB, ALICE, now);
+    const sentEarly = put(BOB, ALICE, now - 5000);
+
+    const { received, sent } = listBagsInvolving(ALICE);
+    expect(received.map((b) => b.key)).toEqual([early, late]);
+    expect(sent.map((b) => b.key)).toEqual([sentEarly, sentLate]);
   });
 });
 
