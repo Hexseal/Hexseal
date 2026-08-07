@@ -19,7 +19,13 @@
  * является для двух вкладок одного источника. Замерено:
  * `typeof globalThis.navigator.locks === 'object'` на node v24.12.0.
  */
-import { vi } from 'vitest';
+/*
+ * ⚠️ `vitest` ЗДЕСЬ НЕ ИМПОРТИРУЕТСЯ. Пакет лежит в `../relayer/node_modules`
+ * и `npm run type-check` его не видит вовсе (та же причина и тот же обход
+ * описаны в `chatStand.ts`). Поэтому подделка ставится прямым присваиванием
+ * в `globalThis` и снимается своим же `restore()`, а не `vi.stubGlobal` —
+ * заодно исчезает зависимость общего стенда от раннера.
+ */
 
 type Cb = ((ev: unknown) => void) | null;
 
@@ -37,17 +43,29 @@ export interface FakeDiskControl {
   failPut?: boolean;
 }
 
-/**
- * Ставит подделку `indexedDB` и возвращает сам «диск».
- *
- * Диск — обычная `Map`, живущая в замыкании: два экземпляра модуля
- * (`vi.resetModules()` дважды) видят ОДИН диск, как две вкладки одного
- * браузера.
- */
-export function installFakeChatDisk(control: FakeDiskControl = {}): Map<string, unknown> {
+export interface FakeChatDisk {
+  /** Каталог «устройства». Обычная `Map`: два экземпляра модуля
+   *  (`vi.resetModules()` дважды) видят ОДИН диск, как две вкладки. */
+  disk: Map<string, unknown>;
+  /** Вернуть `globalThis.indexedDB` как было. Звать в `afterEach`. */
+  restore: () => void;
+}
+
+interface FakeTx {
+  oncomplete: Cb;
+  onerror: Cb;
+  onabort: Cb;
+  error: unknown;
+  done: () => void;
+  fail: () => void;
+  objectStore: () => unknown;
+}
+
+/** Ставит подделку `indexedDB` и возвращает диск вместе со способом снять её. */
+export function installFakeChatDisk(control: FakeDiskControl = {}): FakeChatDisk {
   const disk = new Map<string, unknown>();
 
-  const store = (tx: { done: () => void }) => ({
+  const store = (tx: FakeTx) => ({
     get(key: string) {
       const r = new Req();
       queueMicrotask(() => { r.result = structuredClone(disk.get(key)); r.onsuccess?.({}); tx.done(); });
@@ -85,10 +103,7 @@ export function installFakeChatDisk(control: FakeDiskControl = {}): Map<string, 
     createObjectStore: () => {},
     close: () => {},
     transaction() {
-      const tx: {
-        oncomplete: Cb; onerror: Cb; onabort: Cb; error: unknown;
-        done: () => void; fail: () => void; objectStore: () => unknown;
-      } = {
+      const tx: FakeTx = {
         oncomplete: null, onerror: null, onabort: null, error: null,
         done: () => queueMicrotask(() => tx.oncomplete?.({})),
         fail: () => queueMicrotask(() => {
@@ -101,13 +116,23 @@ export function installFakeChatDisk(control: FakeDiskControl = {}): Map<string, 
     },
   };
 
-  vi.stubGlobal('indexedDB', {
+  const host = globalThis as { indexedDB?: unknown };
+  const had = Object.prototype.hasOwnProperty.call(host, 'indexedDB');
+  const previous = host.indexedDB;
+
+  host.indexedDB = {
     open() {
       const r = new Req();
       queueMicrotask(() => { r.result = db; r.onsuccess?.({}); });
       return r;
     },
-  });
+  };
 
-  return disk;
+  return {
+    disk,
+    restore: () => {
+      if (had) host.indexedDB = previous;
+      else delete host.indexedDB;
+    },
+  };
 }

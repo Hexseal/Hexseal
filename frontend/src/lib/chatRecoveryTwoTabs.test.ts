@@ -28,8 +28,9 @@ const CONTRACT_SIG = `0x${'ab'.repeat(96)}` as `0x${string}`;
 const EOA_SIG = await ACCOUNT.signTypedData(CHAT_KEY_TYPED_DATA as never);
 
 describe('обстоятельство 3: две вкладки и код восстановления', () => {
-  beforeEach(() => { installFakeChatDisk(); });
-  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+  let stand: ReturnType<typeof installFakeChatDisk>;
+  beforeEach(() => { stand = installFakeChatDisk(); });
+  afterEach(() => { stand?.restore(); vi.unstubAllGlobals(); vi.resetModules(); });
 
   it('⚠️ кошелёк-контракт, две вкладки разом — ОДИН показ и ОДИН код', async () => {
     vi.resetModules();

@@ -44,8 +44,9 @@ async function freshModule() {
 }
 
 describe('сквозной замер: код открывает прежнюю переписку', () => {
-  beforeEach(() => { installFakeChatDisk(); });
-  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+  let stand: ReturnType<typeof installFakeChatDisk>;
+  beforeEach(() => { stand = installFakeChatDisk(); });
+  afterEach(() => { stand?.restore(); vi.unstubAllGlobals(); vi.resetModules(); });
 
   it('⚠️ ГЛАВНОЕ: показали код → забыли сеанс → ввели код → ПРОЧИТАЛИ прежнее сообщение', async () => {
     const first = await freshModule();
@@ -175,8 +176,9 @@ describe('номер слова, набранного с ошибкой', () => 
 /* ──────────────── пять форм вставки из буфера ─────────────────────────── */
 
 describe('вставка из буфера — все пять форм', () => {
-  beforeEach(() => { installFakeChatDisk(); });
-  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+  let stand: ReturnType<typeof installFakeChatDisk>;
+  beforeEach(() => { stand = installFakeChatDisk(); });
+  afterEach(() => { stand?.restore(); vi.unstubAllGlobals(); vi.resetModules(); });
 
   it('⚠️ регистр, пробелы, перенос строки, неразрывный пробел и полноширинные буквы — все открывают ТОТ ЖЕ ключ', async () => {
     // Свойство 5. Человек вставляет из заметки, из PDF, из мессенджера.
@@ -207,8 +209,9 @@ describe('вставка из буфера — все пять форм', () => 
 /* ─────────────── обстоятельства: числа, а не рассуждения ───────────────── */
 
 describe('обстоятельство 4: мусор в поле — вердикт, а не падение', () => {
-  beforeEach(() => { installFakeChatDisk(); });
-  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+  let stand: ReturnType<typeof installFakeChatDisk>;
+  beforeEach(() => { stand = installFakeChatDisk(); });
+  afterEach(() => { stand?.restore(); vi.unstubAllGlobals(); vi.resetModules(); });
 
   const JUNK: Array<[string, string, string]> = [
     ['пусто', '', 'recovery_code_empty'],
@@ -250,8 +253,9 @@ describe('обстоятельство 4: мусор в поле — верди�
 });
 
 describe('обстоятельство 3: две вкладки восстанавливают разом', () => {
-  beforeEach(() => { installFakeChatDisk(); });
-  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+  let stand: ReturnType<typeof installFakeChatDisk>;
+  beforeEach(() => { stand = installFakeChatDisk(); });
+  afterEach(() => { stand?.restore(); vi.unstubAllGlobals(); vi.resetModules(); });
 
   it('⚠️ второй получает отказ «адрес занят», а не второй сеанс', async () => {
     // Гонка закрывалась в `chatSession.ts` замком; проверяем, что через
@@ -283,27 +287,32 @@ describe('обстоятельство 2: хранилище не пишет (п
   afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
   it('восстановление РАБОТАЕТ, но сеанс честно говорит `persisted: false`', async () => {
-    installFakeChatDisk();
+    const working = installFakeChatDisk();
     const seed = await freshModule();
     const opened = await seed.openSession(ADDRESS, async () => CONTRACT_SIG);
     const code = seed.exportRecoveryCode(opened);
     const expected = [...opened.keypair.publicKey];
-    vi.unstubAllGlobals();
+    working.restore();
 
-    // Тот же диск, но запись молча не проходит.
-    installFakeChatDisk({ failPut: true });
+    // Тот же случай, но запись молча не проходит.
+    const broken = installFakeChatDisk({ failPut: true });
+    try {
     const tab = await freshModule();
     const restored = await tab.openSessionFromRecoveryCode(ADDRESS, code, async () => CONTRACT_SIG);
     expect([...restored.keypair.publicKey]).toEqual(expected);
     // Переписка в этой вкладке работает; человеку об этом обязана сказать
     // та же плашка, что и при обычном заходе (`chat.key_not_saved`).
     expect(restored.persisted).toBe(false);
+    } finally {
+      broken.restore();
+    }
   });
 });
 
 describe('свойство 4: обычному кошельку восстановление не даётся', () => {
-  beforeEach(() => { installFakeChatDisk(); });
-  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+  let stand: ReturnType<typeof installFakeChatDisk>;
+  beforeEach(() => { stand = installFakeChatDisk(); });
+  afterEach(() => { stand?.restore(); vi.unstubAllGlobals(); vi.resetModules(); });
 
   it('обычный кошелёк, даже с настоящим чужим кодом — `recovery_not_applicable`', async () => {
     const seed = await freshModule();
