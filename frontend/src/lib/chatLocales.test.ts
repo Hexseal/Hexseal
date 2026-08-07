@@ -248,3 +248,144 @@ describe('тексты пересадки — 14 локалей', () => {
     expect(pick(zh, 'chat.privacy_badge_title')).toBeUndefined();
   });
 });
+
+/* ─── Правда после сноса XMTP: справка и разрозненные бейджи (аудит текстов,
+ * 2026-08-07). Найдено врождебным аудитом: справка (`faq.q_chat`/`a_chat`,
+ * `faq.q_files`/`a_files`) описывала снесённый мессенджер и утверждала
+ * обратное новому бейджу шапки чата — что платформа состоит в переписке и
+ * читает её. Заодно всплыли два соседних бага: тултип/подпись про вложение
+ * (`chat.attach_file_title`, `chat.e2e_notice`) обещали ровно "7 дней" без
+ * учёта того, что мешок, усыновлённый сделкой, живёт дольше (до 90 дней —
+ * `relayer/bagStore.js`, BAG_MAX_AGE_MS); а баннер обрыва связи
+ * (`chat.stream_dead`) и кнопка рядом (`chat.reconnect`) были переведены
+ * только на два языка из четырнадцати — двенадцать локалей показывали
+ * английский текст человеку, переставшему получать сообщения. */
+describe('справка и бейджи не врут после сноса XMTP (аудит текстов)', () => {
+  /** Ключи `chat.*`, добавленные/тронутые вместе с бейджем "Только вы двое":
+   *  полнота по всему пространству имён, а не только по точечному списку —
+   *  REQUIRED выше ловит регресс конкретных ключей, это ловит вообще любой
+   *  пустой или пропавший `chat.*`. */
+  it('каждый ключ chat.* есть во всех 14 локалях и не пуст (кроме zh — сироты)', () => {
+    const enChat = pick(read('en'), 'chat') as Record<string, unknown>;
+    const chatKeys = Object.keys(enChat);
+    expect(chatKeys.length).toBeGreaterThan(50); // защита от пустого namespace по ошибке чтения
+
+    const missing: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of chatKeys) {
+        const value = pick(dict, `chat.${key}`);
+        if (typeof value !== 'string' || value.trim().length === 0) missing.push(`${locale}:chat.${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('нигде в chat/messaging/faq не осталось слова XMTP — снесённого мессенджера больше нет', () => {
+    const found: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const ns of ['chat', 'messaging', 'faq']) {
+        const node = pick(dict, ns) as Record<string, unknown> | undefined;
+        if (!node) continue;
+        for (const [key, value] of Object.entries(node)) {
+          if (typeof value === 'string' && /xmtp/i.test(value)) found.push(`${locale}:${ns}.${key}`);
+        }
+      }
+    }
+    expect(found).toEqual([]);
+  });
+
+  /** Старые (XMTP-эры) значения — то, что было ДО правки. Тест запирает
+   *  именно регресс к НИМ, а не подгоняется под то, что написано сейчас: если
+   *  кто-то откатит правку буква в букву, тест покраснеет. */
+  const OLD_ENABLED_DESC: Record<string, string> = {
+    ar: 'تشفير كامل عبر XMTP · يمكن للآخرين مراسلتك',
+    de: 'Ende-zu-Ende verschlüsselt via XMTP · Andere können dir Nachrichten senden',
+    en: 'End-to-end encrypted via XMTP · Others can message you',
+    es: 'Cifrado de extremo a extremo vía XMTP · Otros pueden enviarte mensajes',
+    fr: 'Chiffrement de bout en bout via XMTP · Les autres peuvent vous envoyer des messages',
+    hi: 'XMTP के माध्यम से एंड-टू-एंड एन्क्रिप्टेड · अन्य आपको संदेश कर सकते हैं',
+    it: 'Crittografia end-to-end tramite XMTP · Gli altri possono scriverti',
+    ja: 'XMTPによるエンドツーエンド暗号化 · 他のユーザーからメッセージを受信できます',
+    ko: 'XMTP를 통한 엔드투엔드 암호화 · 다른 사용자가 메시지를 보낼 수 있습니다',
+    pt: 'Criptografia de ponta a ponta via XMTP · Outros podem te enviar mensagens',
+    ru: 'Сквозное шифрование через XMTP · Другие пользователи могут писать вам',
+    th: 'เข้ารหัสแบบ end-to-end ผ่าน XMTP · ผู้อื่นสามารถส่งข้อความถึงคุณได้',
+    uk: 'Наскрізне шифрування через XMTP · Інші можуть вам писати',
+    'zh-CN': '通过 XMTP 端对端加密 · 他人可以向您发送消息',
+  };
+
+  it('messaging.enabled_desc больше не зовёт снесённый мессенджер по имени', () => {
+    const regressed: string[] = [];
+    for (const locale of LOCALES) {
+      const value = pick(read(locale), 'messaging.enabled_desc');
+      if (value === OLD_ENABLED_DESC[locale]) regressed.push(locale);
+    }
+    expect(regressed).toEqual([]);
+  });
+
+  /** `attach_file_title` / `e2e_notice`: строка обязана упоминать что-то,
+   *  кроме голых "7 дней" — то есть продление, пока сделка открыта. Ловится
+   *  не regexp'ом по числу (число уже подставляется параметром `{mb}` в
+   *  attach_file_title, и "7" законно присутствует само по себе), а прямым
+   *  сравнением со СТАРЫМ, урезанным текстом, которого больше быть не должно.
+   */
+  const OLD_E2E_NOTICE: Record<string, string> = {
+    ar: 'مشفَّر · يُحفظ 7 أيام · المفتاح لديكما وحدكما',
+    de: 'Verschlüsselt · 7 Tage gespeichert · nur ihr zwei habt den Schlüssel',
+    en: 'Encrypted · kept 7 days · only the two of you hold the key',
+    es: 'Cifrado · guardado 7 días · solo vosotros dos tenéis la clave',
+    fr: 'Chiffré · conservé 7 jours · vous seuls avez la clé',
+    hi: 'एन्क्रिप्टेड · 7 दिन तक रखा · कुंजी सिर्फ़ आप दोनों के पास',
+    it: 'Cifrato · conservato 7 giorni · solo voi due avete la chiave',
+    ja: '暗号化 · 7日間保存 · 鍵はお二人だけ',
+    ko: '암호화 · 7일 보관 · 키는 두 사람만 보유',
+    pt: 'Cifrado · guardado 7 dias · só vocês dois têm a chave',
+    ru: 'Зашифровано · хранится 7 дней · ключ только у вас двоих',
+    th: 'เข้ารหัส · เก็บ 7 วัน · กุญแจอยู่กับคุณสองคนเท่านั้น',
+    uk: 'Зашифровано · зберігається 7 днів · ключ лише у вас двох',
+    'zh-CN': '已加密 · 保存 7 天 · 密钥只在你们两人手中',
+  };
+
+  it('chat.e2e_notice говорит не только "7 дней", но и про продление, пока открыта сделка', () => {
+    const regressed: string[] = [];
+    for (const locale of LOCALES) {
+      const value = pick(read(locale), 'chat.e2e_notice');
+      if (value === OLD_E2E_NOTICE[locale]) regressed.push(locale);
+    }
+    expect(regressed).toEqual([]);
+  });
+
+  it('faq.a_chat и faq.a_files не утверждают, что платформа состоит в переписке и читает её', () => {
+    // "we open them" / "мы открываем их" / их аналоги в старом тексте — прямая
+    // ложь после пересадки на сквозное шифрование. Форма проверки та же, что
+    // выше: сравнение со старым текстом, а не поиск слова — ключевая фраза
+    // формулируется по-разному в каждом языке, а старый текст известен точно.
+    const OLD_A_CHAT_HAS_PLATFORM_READS: Record<string, string> = {
+      en: 'the platform can read them',
+      ru: 'платформа имеет к ним доступ',
+    };
+    for (const [locale, phrase] of Object.entries(OLD_A_CHAT_HAS_PLATFORM_READS)) {
+      const value = String(pick(read(locale), 'faq.a_chat'));
+      expect(value, `${locale}: faq.a_chat`).not.toContain(phrase);
+    }
+  });
+
+  /** Баннер обрыва связи и переведён, и не совпадает с английским нигде,
+   *  кроме самого английского и русского (тот уже был переведён до этой
+   *  правки). До правки 12 локалей из 14 показывали дословно английский
+   *  текст — ровно то, что здесь заперто. */
+  it('chat.stream_dead и chat.reconnect переведены во всех 14 локалях, не только в en/ru', () => {
+    const enStreamDead = pick(read('en'), 'chat.stream_dead');
+    const enReconnect = pick(read('en'), 'chat.reconnect');
+    const untranslated: string[] = [];
+    for (const locale of LOCALES) {
+      if (locale === 'en') continue;
+      const dict = read(locale);
+      if (pick(dict, 'chat.stream_dead') === enStreamDead) untranslated.push(`${locale}:stream_dead`);
+      if (pick(dict, 'chat.reconnect') === enReconnect) untranslated.push(`${locale}:reconnect`);
+    }
+    expect(untranslated).toEqual([]);
+  });
+});
