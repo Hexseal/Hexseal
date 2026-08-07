@@ -57,6 +57,7 @@ const { bagPassChallenge } = await import('../bagPass.js');
 
 const ALICE = '0xa1ce00000000000000000000000000000000cafe';
 const BOB   = '0xb0b1000000000000000000000000000000005eed';
+const CAROL = '0xca401000000000000000000000000000000beef1'; // В-2: «другая копия» релеера
 
 const KEY_A = '0x' + '11'.repeat(32);
 const KEY_B = '0x' + '22'.repeat(32);
@@ -1043,6 +1044,60 @@ async function withFreshDirectoryModule(envOverrides, fn) {
     await import('../directory.js');
   }
 }
+
+// ─── В-2 (аудит устойчивости, 6 августа): окно выкатки, две живые копии ───
+//
+// При обычной выкатке старая и новая копии релеера какое-то время работают
+// одновременно поверх одного STORAGE_DIR. Справочник целиком лежит в памяти
+// каждой из них и перезаписывается ЦЕЛИКОМ при каждой записи — то есть та
+// копия, что записала последней, стирает всё, что успела сделать другая.
+//
+// Замер до правки (scratchpad/measure-v2.mjs):
+//   до выкатки, счётчик смен адреса A: 11
+//   старая копия доработала (ещё одна смена A + регистрация адреса C): 12, C есть
+//   после переключения на новую копию: счётчик A = 12 (а смен было 13),
+//                                      адрес C ИСЧЕЗ ПОЛНОСТЬЮ
+//
+// keyChangeCount объявлен ВЕЧНОЙ УЛИКОЙ против вытеснения неудобного ключа
+// (см. докстринг MAX_KEY_HISTORY) — «этот адрес менял ключ 47 раз». Улика,
+// которую стирает обычная выкатка, уликой не является. А адрес, целиком
+// пропавший из справочника, — это ещё и человек, которому чат перестал
+// отвечать: его открытый ключ больше негде взять.
+describe('В-2 — окно выкатки: запись другой копии не стирается, счётчик смен не убывает', () => {
+  it('адрес, зарегистрированный ДРУГОЙ копией в окне выкатки, переживает нашу запись', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+
+    // «Другая копия» зарегистрировала CAROL, пока мы жили со своим снимком
+    // в памяти. Пишем прямо в файл — ровно это делает её _saveDirectory().
+    const onDisk = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    onDisk[CAROL] = { v: 1, boxKey: KEY_C, updatedAt: 1500, history: [], keyChangeCount: 0 };
+    fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(onDisk), 'utf8');
+
+    // Наша обычная запись — про СОВСЕМ другой адрес.
+    putKey(ALICE, { boxKey: KEY_B }, 2000);
+
+    const after = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    expect(after[CAROL]).toBeDefined();          // не стёрт нашим снимком
+    expect(after[CAROL].boxKey).toBe(KEY_C);
+    expect(after[ALICE].boxKey).toBe(KEY_B);     // и наша запись, конечно, на месте
+  });
+
+  it('счётчик смен не убывает: он берётся из БОЛЬШЕГО — своего или того, что на диске', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    putKey(ALICE, { boxKey: KEY_B }, 2000); // наш счётчик: 1
+
+    // «Другая копия» успела провести ещё несколько смен того же адреса.
+    const onDisk = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    onDisk[ALICE].keyChangeCount = 12;
+    fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(onDisk), 'utf8');
+
+    putKey(ALICE, { boxKey: KEY_C }, 3000);
+
+    const after = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    // 13, а не 2: улику нельзя откатить назад чужим устаревшим снимком.
+    expect(after[ALICE].keyChangeCount).toBe(13);
+  });
+});
 
 describe('assertDirectoryReady — проверка MAX_KEY_HISTORY заперта напрямую (замок 3)', () => {
   it('молчит на годном значении по умолчанию', () => {
