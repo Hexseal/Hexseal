@@ -19,11 +19,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { deriveChatKeypair } from '@/lib/chatCrypto';
 import type { ChatSession } from '@/lib/chatSession';
-import { deriveLinkSigningKeypair, encodeFrame, messageBodyHash, linkSignaturePreimage } from '@/lib/chatConversation';
+import {
+  deriveLinkSigningKeypair, encodeFrame, decodeFrame, messageBodyHash, linkSignaturePreimage,
+  receiveBags, _resetConversationMemoryForTest,
+} from '@/lib/chatConversation';
 import { buildLink, type ChainLink } from '@/lib/chatChain';
-import { packEnvelope } from '@/lib/chatEnvelope';
+import { packEnvelope, unpackEnvelope } from '@/lib/chatEnvelope';
 import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
-import { startPairChat, type PairChatState, type PairChatEngine } from './usePairChat';
+import { startPairChat, troubleSummary, type PairChatState, type PairChatEngine } from './usePairChat';
+import { fetchPeerChatKeys } from './useChatSession';
 
 const ALICE = '0xA1cE00000000000000000000000000000000CAfE' as const;
 const BOB   = '0xB0b1000000000000000000000000000000005eEd' as const;
@@ -774,4 +778,128 @@ describe('гейт формы вложения знает и о новых по�
     const { sanitizePayload } = await import('@/lib/chatPayloadForm');
     expect(sanitizePayload({ file: { ...BASE } })?.file).toEqual(BASE);
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Метка сделки: без неё план 4 не соберёт «кусок про эту сделку»
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('метка сделки едет внутри каждого сообщения', () => {
+  const DEAL = '0x760F07367888C62f7c2Dfb619A5e534132855ce5' as const;
+
+  /**
+   * Читает то, что РЕАЛЬНО уехало в запечатанном, а не то, что подали на вход:
+   * перехватывает тела PUT, разбирает кадр и вскрывает конверт ключом
+   * ПОЛУЧАТЕЛЯ. Наблюдать возвращённый объект было бы слабее — он собран нами
+   * же и о содержимом мешка не свидетельствует.
+   */
+  function recordPuts(fetchMock: typeof fetch) {
+    const bodies: Uint8Array[] = [];
+    const wrapped = (async (input: unknown, init?: RequestInit) => {
+      if (init?.method === 'PUT' && init.body instanceof Uint8Array) bodies.push(init.body);
+      return (fetchMock as unknown as (i: unknown, x?: RequestInit) => Promise<Response>)(input, init);
+    }) as unknown as typeof fetch;
+    return { bodies, wrapped };
+  }
+
+  async function dealIdOnWire(body: Uint8Array, recipient: ChatSession, author: `0x${string}`) {
+    const frame = decodeFrame(body)!;
+    const payload = await unpackEnvelope(frame.envelope, recipient.keypair, author);
+    return payload;
+  }
+
+  it('ЗАМЕР: метка стоит на КАЖДОМ пути отправки — и на тексте, и на вложении', async () => {
+    // Замер финальной проверки: два комментария утверждали, что метка «едет
+    // ВНУТРИ запечатанного каждого сообщения», а НИ ОДИН путь отправки её не
+    // ставил. Весь аппарат проверки формы в `chatPayloadForm.ts` был мёртвым
+    // кодом.
+    //
+    // Метка нужна: переписка пары ОДНА на все их сделки (`usePairChat`
+    // ключуется только адресом собеседника), а панель сама показывает
+    // переключатель, когда сделок больше одной. Значит без метки предъявить
+    // арбитру «кусок про эту сделку» (§7 общей спеки) не из чего.
+    //
+    // Ставится В ДВИЖКЕ, а не в двух обработчиках панели: одно место вместо
+    // двух, и третий путь отправки не сможет её забыть.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const { fetchMock } = fakeRelayer({
+      bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+    });
+    const { bodies, wrapped } = recordPuts(fetchMock);
+    vi.stubGlobal('fetch', wrapped);
+
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      dealId: DEAL,
+      onState: () => {}, onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
+    try {
+      await engine.send({ text: 'по сделке' });
+      await engine.send({ file: { url: 'u', name: 'n', size: 1, keyHex: 'k', ivHex: 'i' } });
+      expect(bodies).toHaveLength(2);
+      const asText = await dealIdOnWire(bodies[0], bob, ALICE.toLowerCase() as `0x${string}`);
+      const asFile = await dealIdOnWire(bodies[1], bob, ALICE.toLowerCase() as `0x${string}`);
+      expect(asText?.dealId?.toLowerCase()).toBe(DEAL.toLowerCase());
+      expect(asFile?.dealId?.toLowerCase()).toBe(DEAL.toLowerCase());
+      // И содержимое при этом не потеряно.
+      expect(asText?.text).toBe('по сделке');
+      expect(asFile?.file?.name).toBe('n');
+    } finally {
+      engine.stop();
+    }
+  }, 30_000);
+
+  it('без сделки поля НЕТ вовсе, а не есть пустым', async () => {
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const { fetchMock } = fakeRelayer({
+      bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+    });
+    const { bodies, wrapped } = recordPuts(fetchMock);
+    vi.stubGlobal('fetch', wrapped);
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: () => {}, onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
+    try {
+      await engine.send({ text: 'болтовня без сделки' });
+      const payload = await dealIdOnWire(bodies[0], bob, ALICE.toLowerCase() as `0x${string}`);
+      expect(payload && 'dealId' in payload).toBe(false);
+    } finally {
+      engine.stop();
+    }
+  }, 30_000);
+
+  it('своя метка не перебивает уже поставленную вызывающим', async () => {
+    // Движок ДОБАВЛЯЕТ метку, а не переписывает: если вызывающий (план 4,
+    // предъявление) собрал payload сам и указал другую сделку — его слово
+    // старше.
+    const alice = await makeSession(ALICE, 'a1');
+    const bob = await makeSession(BOB, 'bb');
+    const bobSigner = await deriveLinkSigningKeypair(bob.keypair);
+    const other = '0x268dCfa7ab0DC134d01C5cBcAa7d2834d6dD0f0f' as const;
+    const { fetchMock } = fakeRelayer({
+      bags: [], peerBoxKey: bob.keypair.publicKey, peerSignKey: bobSigner.publicKey,
+    });
+    const { bodies, wrapped } = recordPuts(fetchMock);
+    vi.stubGlobal('fetch', wrapped);
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      dealId: DEAL,
+      onState: () => {}, onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
+    try {
+      await engine.send({ text: 'по другой', dealId: other });
+      const payload = await dealIdOnWire(bodies[0], bob, ALICE.toLowerCase() as `0x${string}`);
+      expect(payload?.dealId?.toLowerCase()).toBe(other.toLowerCase());
+    } finally {
+      engine.stop();
+    }
+  }, 30_000);
 });
