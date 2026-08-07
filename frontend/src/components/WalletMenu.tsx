@@ -24,7 +24,7 @@ import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
 import { useChatSession } from "@/hooks/useChatSession";
 import { hasRecoveryCode } from "@/lib/chatRecovery";
-import { SHOW_RECOVERY_EVENT, RESTORE_RECOVERY_EVENT } from "@/components/RecoveryCodeGate";
+import { SHOW_RECOVERY_EVENT, RESTORE_RECOVERY_EVENT, DISABLE_CHAT_EVENT } from "@/components/RecoveryCodeGate";
 
 
 interface Props {
@@ -44,7 +44,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
-  const { status: chatStatus, session: chatSession, disable: disableChat, retry: retryChat } = useChatSession();
+  const { status: chatStatus, session: chatSession, retry: retryChat } = useChatSession();
   const { subscribed: pushOn, stale: pushStale, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
@@ -411,9 +411,14 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               {t("chat.restore_menu")}
             </DropdownMenuItem>
           )}
+          {/* ⚠️ НЕ `disable()` НАПРЯМУЮ (находка К-1). Одно нажатие снимало
+              ключ с устройства, а цена нажатия у двух родов кошелька разная:
+              обычному — переподписать, контрактному — потерять всю переписку
+              навсегда, если код не записан. Спрашивает подтверждение
+              привратник, он же знает род кошелька. */}
           {chatStatus === 'ready' && (
             <DropdownMenuItem
-              onClick={disableChat}
+              onClick={() => window.dispatchEvent(new Event(DISABLE_CHAT_EVENT))}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
               <MessageCircleOff className="w-3.5 h-3.5" />

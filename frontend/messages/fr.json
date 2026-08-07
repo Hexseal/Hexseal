@@ -659,7 +659,13 @@
     "restore_err_storage_slow": "Le stockage de l’appareil ne répond pas. Fermez les autres onglets du site et réessayez.",
     "restore_err_address": "Le portefeuille n’est pas connecté.",
     "restore_err_signature": "Le portefeuille n’a pas signé la demande.",
-    "restore_err_other": "La récupération a échoué."
+    "restore_err_other": "La récupération a échoué.",
+    "disable_title": "Désactiver la messagerie ?",
+    "disable_eoa": "La clé de messagerie sera retirée de cet appareil. Pour revenir, signez les mêmes données avec le même portefeuille — vos messages restent.",
+    "disable_contract": "La clé de messagerie sera retirée de cet appareil. Pour ce portefeuille la clé est aléatoire et il n’y a pas de seconde source : sans le code de récupération, vos messages sont perdus définitivement.",
+    "disable_confirm": "Désactiver",
+    "disable_show_code_first": "Afficher d’abord le code",
+    "file_too_large": "Le fichier est trop volumineux. La limite est de {mb} Mo."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

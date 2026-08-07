@@ -659,7 +659,13 @@
     "restore_err_storage_slow": "기기 저장소가 응답하지 않습니다. 이 사이트의 다른 탭을 닫고 다시 시도하세요.",
     "restore_err_address": "지갑이 연결되어 있지 않습니다.",
     "restore_err_signature": "지갑이 요청에 서명하지 않았습니다.",
-    "restore_err_other": "복구하지 못했습니다."
+    "restore_err_other": "복구하지 못했습니다.",
+    "disable_title": "채팅을 끌까요?",
+    "disable_eoa": "채팅 키가 이 기기에서 제거됩니다. 돌아오려면 같은 지갑으로 같은 데이터에 서명하세요 — 대화는 그대로 남습니다.",
+    "disable_contract": "채팅 키가 이 기기에서 제거됩니다. 이 지갑의 키는 무작위이며 두 번째 출처가 없습니다. 복구 코드가 없으면 대화는 영원히 사라집니다.",
+    "disable_confirm": "끄기",
+    "disable_show_code_first": "코드 먼저 보기",
+    "file_too_large": "파일이 너무 큽니다. 한도는 {mb} MB입니다."
   },
   "messaging": {
     "enabled_title": "메시징 활성화됨",

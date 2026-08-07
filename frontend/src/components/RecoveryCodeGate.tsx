@@ -41,6 +41,7 @@ import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
 import { useChatSession, signChatKeyLocked } from '@/hooks/useChatSession';
 import {
+  hasRecoveryCode,
   openRecoveryPrompt,
   checkRecoveryAnswers,
   readRecoveryCode,
@@ -57,17 +58,21 @@ import {
 import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
 import { RecoveryCodeModal } from './RecoveryCodeModal';
 import { RecoveryRestoreModal } from './RecoveryRestoreModal';
+import { DisableChatModal } from './DisableChatModal';
 
 /** Просьба показать код. Слушает привратник, шлют меню кошелька и плашка. */
 export const SHOW_RECOVERY_EVENT = 'hexseal:show-recovery-code';
 /** Просьба открыть ВВОД кода. Шлют меню кошелька и экран «чат не открылся». */
 export const RESTORE_RECOVERY_EVENT = 'hexseal:restore-recovery-code';
+/** Просьба ОТКЛЮЧИТЬ чат. Именно просьба: ключ снимается только после
+ *  подтверждения, и цена нажатия у двух родов кошелька разная (К-1). */
+export const DISABLE_CHAT_EVENT = 'hexseal:disable-chat';
 /** Код подтверждён — плашке пора исчезнуть. */
 export const RECOVERY_CONFIRMED_EVENT = 'hexseal:recovery-confirmed';
 
 export function RecoveryCodeGate(): React.ReactElement | null {
   const { address } = useAccount();
-  const { session, recoveryCode, retry } = useChatSession();
+  const { session, recoveryCode, retry, disable } = useChatSession();
 
   const [prompt, setPrompt] = useState<{ words: string[]; positions: number[] } | null>(null);
   const [step, setStep] = useState<'show' | 'check'>('show');
@@ -219,6 +224,34 @@ export function RecoveryCodeGate(): React.ReactElement | null {
     }
   }, [address, typed, restoreBusy, signTypedDataAsync, t, closeRestore, retry]);
 
+  /* ────────────── отключение чата: подтверждение (К-1) ─────────────────── */
+
+  const [disableAsking, setDisableAsking] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setDisableAsking(true);
+    window.addEventListener(DISABLE_CHAT_EVENT, handler);
+    return () => window.removeEventListener(DISABLE_CHAT_EVENT, handler);
+  }, []);
+
+  const disableModal = (
+    <DisableChatModal
+      open={disableAsking}
+      // Род кошелька решает чистая функция, а не привратник на глаз: тот же
+      // признак, под которым показывается и сам код.
+      losesEverything={hasRecoveryCode(session)}
+      onConfirm={() => { setDisableAsking(false); disable(); }}
+      onShowCode={() => {
+        // Не «и то и другое»: показать код и НЕ снимать ключ. Человек пришёл
+        // сюда отключать, но выяснилось, что ему есть что терять — пусть
+        // сперва запишет, а решение примет потом.
+        setDisableAsking(false);
+        open(readRecoveryCode(session));
+      }}
+      onCancel={() => setDisableAsking(false)}
+    />
+  );
+
   const restoreModal = (
     <RecoveryRestoreModal
       open={restoreOpen}
@@ -234,11 +267,12 @@ export function RecoveryCodeGate(): React.ReactElement | null {
     />
   );
 
-  if (!prompt) return restoreModal;
+  if (!prompt) return <>{restoreModal}{disableModal}</>;
 
   return (
     <>
     {restoreModal}
+    {disableModal}
     <RecoveryCodeModal
       open
       words={prompt.words}

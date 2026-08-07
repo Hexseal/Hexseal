@@ -659,7 +659,13 @@
     "restore_err_storage_slow": "L’archivio del dispositivo non risponde. Chiuda le altre schede del sito e riprovi.",
     "restore_err_address": "Il portafoglio non è collegato.",
     "restore_err_signature": "Il portafoglio non ha firmato la richiesta.",
-    "restore_err_other": "Recupero non riuscito."
+    "restore_err_other": "Recupero non riuscito.",
+    "disable_title": "Disattivare la chat?",
+    "disable_eoa": "La chiave della chat verrà rimossa da questo dispositivo. Per tornare, firmi gli stessi dati con lo stesso portafoglio: i messaggi restano.",
+    "disable_contract": "La chiave della chat verrà rimossa da questo dispositivo. Per questo portafoglio la chiave è casuale e non esiste una seconda fonte: senza il codice di recupero i messaggi vanno persi per sempre.",
+    "disable_confirm": "Disattiva",
+    "disable_show_code_first": "Mostra prima il codice",
+    "file_too_large": "Il file è troppo grande. Il limite è {mb} MB."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

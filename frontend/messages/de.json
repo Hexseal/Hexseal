@@ -659,7 +659,13 @@
     "restore_err_storage_slow": "Der Gerätespeicher antwortet nicht. Schließen Sie andere Tabs dieser Seite und versuchen Sie es erneut.",
     "restore_err_address": "Wallet ist nicht verbunden.",
     "restore_err_signature": "Das Wallet hat die Anfrage nicht signiert.",
-    "restore_err_other": "Wiederherstellung fehlgeschlagen."
+    "restore_err_other": "Wiederherstellung fehlgeschlagen.",
+    "disable_title": "Chat abschalten?",
+    "disable_eoa": "Der Chat-Schlüssel wird von diesem Gerät entfernt. Um zurückzukehren, signieren Sie dieselben Daten mit demselben Wallet — Ihre Nachrichten bleiben.",
+    "disable_contract": "Der Chat-Schlüssel wird von diesem Gerät entfernt. Bei diesem Wallet ist der Schlüssel zufällig, eine zweite Quelle gibt es nicht: ohne Wiederherstellungscode sind Ihre Nachrichten für immer weg.",
+    "disable_confirm": "Abschalten",
+    "disable_show_code_first": "Zuerst den Code anzeigen",
+    "file_too_large": "Die Datei ist zu groß. Das Limit sind {mb} MB."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

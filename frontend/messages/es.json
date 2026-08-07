@@ -659,7 +659,13 @@
     "restore_err_storage_slow": "El almacenamiento del dispositivo no responde. Cierre otras pestañas del sitio e inténtelo de nuevo.",
     "restore_err_address": "La cartera no está conectada.",
     "restore_err_signature": "La cartera no firmó la solicitud.",
-    "restore_err_other": "No se pudo recuperar."
+    "restore_err_other": "No se pudo recuperar.",
+    "disable_title": "¿Desactivar el chat?",
+    "disable_eoa": "La clave del chat se quitará de este dispositivo. Para volver, firme los mismos datos con la misma cartera: sus mensajes se conservan.",
+    "disable_contract": "La clave del chat se quitará de este dispositivo. En esta cartera la clave es aleatoria y no hay una segunda fuente: sin el código de recuperación sus mensajes se pierden para siempre.",
+    "disable_confirm": "Desactivar",
+    "disable_show_code_first": "Ver primero el código",
+    "file_too_large": "El archivo es demasiado grande. El límite es {mb} MB."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

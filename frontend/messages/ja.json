@@ -659,7 +659,13 @@
     "restore_err_storage_slow": "デバイスの保存領域が応答しません。このサイトの他のタブを閉じて、もう一度お試しください。",
     "restore_err_address": "ウォレットが接続されていません。",
     "restore_err_signature": "ウォレットが要求に署名しませんでした。",
-    "restore_err_other": "復元できませんでした。"
+    "restore_err_other": "復元できませんでした。",
+    "disable_title": "チャットを無効にしますか？",
+    "disable_eoa": "チャットの鍵をこのデバイスから削除します。戻るときは同じウォレットで同じデータに署名してください — メッセージは残ります。",
+    "disable_contract": "チャットの鍵をこのデバイスから削除します。このウォレットの鍵はランダムで、第二の入手先はありません。リカバリーコードがなければメッセージは永久に失われます。",
+    "disable_confirm": "無効にする",
+    "disable_show_code_first": "先にコードを表示",
+    "file_too_large": "ファイルが大きすぎます。上限は {mb} MB です。"
   },
   "messaging": {
     "enabled_title": "メッセージング有効",

@@ -659,7 +659,13 @@
     "restore_err_storage_slow": "Device storage is not responding. Close other tabs of this site and try again.",
     "restore_err_address": "Wallet is not connected.",
     "restore_err_signature": "The wallet did not sign the request.",
-    "restore_err_other": "Could not restore."
+    "restore_err_other": "Could not restore.",
+    "disable_title": "Turn off chat?",
+    "disable_eoa": "The chat key will be removed from this device. To come back, sign the same data with the same wallet — your messages stay.",
+    "disable_contract": "The chat key will be removed from this device. For this wallet the key is random and there is no second source: without the recovery code your messages are gone for good.",
+    "disable_confirm": "Turn off",
+    "disable_show_code_first": "Show the code first",
+    "file_too_large": "File is too large. The limit is {mb} MB."
   },
   "deal_bar": {
     "application_received": "Application received",
