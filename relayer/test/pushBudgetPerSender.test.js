@@ -95,6 +95,21 @@ describe('К-3: бюджет уведомлений считается по то
     expect(others).toEqual(Array(10).fill(200));
   });
 
+  it('ключ — ОТПРАВИТЕЛЬ, а не получатель: десять РАЗНЫХ адресатов тоже упираются', async () => {
+    // Без этого теста «по получателю» выглядело бы почти так же зелено:
+    // каждый кейс выше берёт свежего адресата. Здесь адресат каждый раз
+    // новый, а отправитель один — и потолок обязан сработать. Иначе рассылка
+    // одному человеку по всей бирже ничем не ограничена.
+    const spammer = freshSender();
+    const statuses = [];
+    for (let i = 0; i < 12; i++) {
+      const victim = await subscribeReal(ethers.Wallet.createRandom());
+      statuses.push((await send(spammer, { to: victim })).status);
+    }
+    expect(statuses.filter(s => s === 200).length).toBe(10);
+    expect(statuses.slice(10)).toEqual([429, 429]);
+  });
+
   it('отказ называет СЕБЯ — код, а не только 429', async () => {
     const chatty = freshSender();
     const to     = await subscribeReal(ethers.Wallet.createRandom());

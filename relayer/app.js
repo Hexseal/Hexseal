@@ -3312,6 +3312,44 @@ function resolveDisplayName(addr) {
 // в шторке ОС видно «пришло сообщение» и не видно, от кого и о чём
 // (usePairChat.ts, PUSH_BODY). Доказанность отправителя — не повод нарушить
 // это обещание.
+// ─── К-3: чей бюджет тратит уведомление ──────────────────────────────────
+//
+// Здесь стоял `checkRateLimit(clientIp(req))` — бюджет по адресу ИСТОЧНИКА
+// ЗАПРОСА. А источник тут всегда один: наш собственный Next-сервер, потому
+// что гейт `X-Push-Secret` другого вызывающего не пускает вовсе. Значит ключ
+// у всей площадки был один, а потолок — общий десяток (RATE_MAX), который
+// вообще-то рассчитан на одного человека у /relay.
+//
+// Замерено на БОЕВЫХ умолчаниях (test/pushBudgetLiveDefaults.test.js),
+// без единого переопределения:
+//   40 сообщений одной пары                     → 30 отказов
+//   веер по спору на 50 арбитров                → 50 отказов (о споре не
+//                                                 узнавал НИ ОДИН арбитр)
+//   200 подряд от одного, затем посторонний     → посторонний 429
+//
+// TRUST_PROXY этого не лечит и не при чём: сервер-серверный запрос
+// заголовков источника не шлёт, адрес проваливается в адрес контейнера. Это
+// НЕ экземпляр уже признанного хвоста 28.1.
+//
+// Считаем по тому, ЗА КОГО шлём — по адресу из пропуска. Тогда исчерпавший
+// бюджет мешает только себе, и «долбят нарочно» болит нападающему, а не
+// соседу.
+//
+// Почему НЕ по получателю: бюджет получателя означал бы, что чужой человек
+// выключает уведомления жертве, потратив их за неё. Больно должно быть тому,
+// кто шлёт.
+//
+// Два разных бюджета, а не один: полный веер по спору (ARBITER_FANOUT_CAP=50
+// в frontend/src/lib/webpush.ts) — это 50 запросов подряд от одного адреса.
+// В общем бюджете он съедал бы переписку того же человека целиком, и цена
+// открытия спора была бы «минута без уведомлений в чате».
+const PUSH_SEND_RATE_MAX    = readPositiveInt('PUSH_SEND_RATE_MAX',    60);
+const PUSH_DISPUTE_RATE_MAX = readPositiveInt('PUSH_DISPUTE_RATE_MAX', 60);
+
+// Префикс `push-`, как `ip:`/`bag-`/`chain:` выше: ключ одного бюджета не
+// может совпасть с ключом другого по форме, а не по вере в заголовки.
+function pushSendRateKey(kind, address) { return `push-${kind}:${address}`; }
+
 const PUSH_KINDS = {
   chat: (sender) => ({
     title: 'New message',
@@ -3331,10 +3369,10 @@ app.post('/push/send', async (req, res) => {
     if (!PUSH_SECRET || req.headers['x-push-secret'] !== PUSH_SECRET) {
       return res.status(403).json({ error: 'forbidden' });
     }
-    const ip = clientIp(req);
-    if (!checkRateLimit(ip)) {
-      return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
-    }
+    // Бюджета по IP здесь БОЛЬШЕ НЕТ — см. длинный разбор у
+    // PUSH_SEND_RATE_MAX. Он был не строгостью, а неисправностью: ключ у всей
+    // площадки один. Ограничитель переехал ниже, за проверку пропуска, где
+    // впервые известно, ЗА КОГО шлём.
 
     // Второй гейт — «кто именно». Тот же пропуск, что у мешков.
     const sender = requireBagPass(req, res);
@@ -3361,6 +3399,15 @@ app.post('/push/send', async (req, res) => {
     // не должен превращаться в уведомление себе же. Не ошибка — просто нечего
     // делать.
     if (recipient === sender) return res.json({ ok: true, skipped: 'self' });
+
+    // Списывается ПОСЛЕДНИМ — после всех отказов по форме запроса. Иначе
+    // двадцать запросов с опечаткой в роде стоили бы человеку его же
+    // переписки, ничего никому не отправив.
+    const budget = kind === 'dispute' ? PUSH_DISPUTE_RATE_MAX : PUSH_SEND_RATE_MAX;
+    if (!checkRateLimit(pushSendRateKey(kind, sender), budget)) {
+      return res.status(429).set('Retry-After', '60')
+        .json({ error: 'Rate limit exceeded', code: 'rate_limited_push' });
+    }
 
     const payload = build(sender, { deal: deal?.toLowerCase() });
     await sendPush(recipient, { ...payload, tag: payload.url });
