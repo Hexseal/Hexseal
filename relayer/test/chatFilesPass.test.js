@@ -184,8 +184,13 @@ describe('К-4: опись «кто с кем» не растёт от чужи�
     expect(Object.keys(pairs).length).toBe(before + 1);
     // Записана пара С НАМИ, а не та, которую попросили.
     const { pairIdFromAddresses } = await import('../app.js');
-    expect(pairs[res.body.key]).toBe(pairIdFromAddresses(OTHER_FRESH, PEER));
-    expect(pairs[res.body.key]).not.toBe(pairIdFromAddresses(ME, PEER));
+    // В-3 (соседняя правка того же дня): запись описи вложений стала
+    // объектом `{ p: pairId, d: срок }` вместо голой строки — у вложения
+    // теперь есть собственный срок, усыновлённый сделкой. Сама проверка
+    // этого теста не изменилась ни на йоту: записана пара С НАМИ, а не та,
+    // которую попросили; читается только поле пары.
+    expect(pairs[res.body.key].p).toBe(pairIdFromAddresses(OTHER_FRESH, PEER));
+    expect(pairs[res.body.key].p).not.toBe(pairIdFromAddresses(ME, PEER));
   });
 
   it('без собеседника запись не появляется вовсе', async () => {

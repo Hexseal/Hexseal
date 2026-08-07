@@ -470,6 +470,9 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       });
       const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption (creation)', r.agreement, 'creation', result);
+      // В-3: вложения — тем же сроком и в тот же миг, что и сообщения.
+      const files = adoptPairFiles(pairId, dealDeadline, nowMs, funded);
+      if (files) console.log(`[files] adoption (creation): extended ${files} attachment(s) of ${r.agreement}`);
     } catch (e) {
       console.error(`[bags] adoption (creation): failed for active agreement ${r.agreement}, skipping:`, e.message);
     }
@@ -502,6 +505,9 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
       const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);
+      // В-3: вложения — тем же сроком и в тот же миг, что и сообщения.
+      const files = adoptPairFiles(pairId, dealDeadline, nowMs, funded);
+      if (files) console.log(`[files] adoption: extended ${files} attachment(s) of ${r.agreement}`);
     } catch (e) {
       console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);
     }
@@ -976,6 +982,12 @@ const DIR_FILES    = path.join(STORAGE_DIR, 'files');   // encrypted chat files 
 const DIR_PUBLIC   = path.join(STORAGE_DIR, 'public');  // permanent public files (profiles, avatars)
 const DIR_TEMP     = path.join(STORAGE_DIR, 'temp');    // in-progress multipart chunks
 const FILE_TTL_MS  = 7 * 24 * 60 * 60 * 1000;          // 7 days
+// Потолок защиты вложения от чистки. Был локальной константой внутри
+// runFileCleanup(); поднят сюда (В-3), потому что теперь его читает ещё и
+// adoptPairFiles() — две копии одного числа разошлись бы молча.
+// Совпадает с BAG_MAX_AGE_MS склада намеренно: у текста и вложения одного
+// сообщения не должно быть разных потолков.
+const FILE_MAX_PROTECTED_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
 for (const dir of [DIR_FILES, DIR_PUBLIC, DIR_TEMP]) {
   fs.mkdirSync(dir, { recursive: true });
@@ -1140,6 +1152,32 @@ export async function runFileCleanup() {
   const { ok: chainKnown, records: disputedRecords } = await fetchDisputedRecords();
   const disputedPairIds = disputedPairIdsFromRecords(disputedRecords);
 
+  // В-3 (аудит устойчивости, 6 августа): УСЫНОВЛЕНИЕ ИДЁТ ПЕРВЫМ — раньше
+  // обоих циклов удаления, а не между ними.
+  //
+  // Раньше оба этапа усыновления стояли ПОСЛЕ чистки вложений (и только
+  // перед чисткой мешков). Для мешков порядок был верным и объяснён на
+  // месте; для вложений — нет, и это ровно то, что делало В-3
+  // невоспроизводимым «на второй прогон»: файл сносился в этом же прогоне,
+  // за несколько строк до того, как сделка успевала его усыновить, и
+  // усыновлять становилось нечего. Один и тот же аргумент («продлённое в
+  // этом прогоне не должно попасть под нож этого же прогона») теперь
+  // применён к обоим потребителям, а не к одному.
+  //
+  // Отдельные try на каждый этап — прежний принцип изоляции: падение одного
+  // этапа усыновления не останавливает ни другой этап, ни любую из чисток.
+  try {
+    await adoptActivePairBags();
+  } catch (e) {
+    console.error('[bags] adoption (creation) error:', e.stack || e.message);
+  }
+
+  try {
+    await adoptDisputedPairBags(disputedRecords);
+  } catch (e) {
+    console.error('[bags] adoption error:', e.stack || e.message);
+  }
+
   // Expired chat files — skip any still tagged to a currently-disputed pair,
   // but only up to MAX_PROTECTED_AGE_MS. peerA/peerB tagging on /files/presign
   // has no proof-of-participation check — any caller can tag their own upload
@@ -1150,14 +1188,28 @@ export async function runFileCleanup() {
     let removed = 0;
     let protectedCount = 0;
     let deferredCount = 0;
-    const MAX_PROTECTED_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+    let adoptedCount = 0;
     for (const f of fs.readdirSync(DIR_FILES)) {
       const fp = path.join(DIR_FILES, f);
       try {
         const mtimeMs = fs.statSync(fp).mtimeMs;
         if (mtimeMs < cutoff) {
-          const pairId = _filePairs[f];
-          const withinProtectionCeiling = mtimeMs > Date.now() - MAX_PROTECTED_AGE_MS;
+          const pairId = filePairIdOf(f);
+          const withinProtectionCeiling = mtimeMs > Date.now() - FILE_MAX_PROTECTED_AGE_MS;
+          // В-3: усыновлённое сделкой живёт до конца дела — тем же сроком,
+          // что и сообщение, к которому вложение приложено. Проверка стоит
+          // ПЕРЕД спорной: спор — частный случай живого дела, а усыновление
+          // покрывает и то время, когда спора ещё нет (бриф обсуждают ДО
+          // сделки — ровно та дыра, ради которой всё это заведено).
+          // Потолок здесь НЕ применяется повторно: он уже применён в
+          // adoptPairFiles() на момент продления, по статусу именно той
+          // сделки, что его выдала. Применить его ещё раз тут значило бы
+          // обрезать оплаченную сделку, которой он не касается.
+          const adoptedUntil = fileDealDeadlineOf(f);
+          if (adoptedUntil !== null && Date.now() < adoptedUntil) {
+            adoptedCount++;
+            continue;
+          }
           // К-1: НЕ ЗНАЕМ — НЕ СНОСИМ. Узел цепи не ответил, значит про
           // ЛЮБУЮ помеченную пару неизвестно, в споре она или нет. Раньше
           // это неведение приезжало сюда пустым множеством и было
@@ -1208,10 +1260,11 @@ export async function runFileCleanup() {
       }
     } catch { /* каталог не прочёлся — не трогаем опись вообще */ }
 
-    if (removed || protectedCount || orphanPairs || deferredCount) _saveFilePairs();
+    if (removed || protectedCount || orphanPairs || deferredCount || adoptedCount) _saveFilePairs();
     if (orphanPairs) console.log(`[files] cleanup: dropped ${orphanPairs} pair record(s) with no file`);
     if (removed) console.log(`[files] cleanup: removed ${removed} expired file(s)`);
     if (protectedCount) console.log(`[files] cleanup: protected ${protectedCount} file(s) — pair still disputed`);
+    if (adoptedCount) console.log(`[files] cleanup: kept ${adoptedCount} file(s) adopted by a deal — same deadline as the message they belong to`);
     // К-1: отложенное обязано быть НАЗВАНО числом. Ночь, в которую уборка
     // отложена отказом сети, иначе неотличима в логе от ночи, в которую
     // сносить было нечего, — а это разные вещи: первая копит мусор.
@@ -1277,18 +1330,6 @@ export async function runFileCleanup() {
   // adoptActivePairBags()) и disputedRecords (уже полученный выше) отражают
   // непересекающиеся наборы пар в любой момент; порядок ниже — просто по
   // смыслу повествования ("сначала создание, потом спор").
-  try {
-    await adoptActivePairBags();
-  } catch (e) {
-    console.error('[bags] adoption (creation) error:', e.stack || e.message);
-  }
-
-  try {
-    await adoptDisputedPairBags(disputedRecords);
-  } catch (e) {
-    console.error('[bags] adoption error:', e.stack || e.message);
-  }
-
   try {
     const { removed, kept } = cleanupBags();
     // Закрывающий раунд ревью: печатать ВСЕГДА, не только когда removed>0
@@ -2024,7 +2065,9 @@ app.post('/files/presign', (req, res) => {
     // нечем.
     const { peerB } = req.body || {};
     if (typeof peerB === 'string' && ETH_ADDR_RE.test(peerB.toLowerCase())) {
-      _filePairs[key] = pairIdFromAddresses(owner, peerB);
+      // В-3: новая, совместимая форма записи — пара плюс срок (пока пустой,
+      // его проставит первое усыновление сделкой).
+      _filePairs[key] = { p: pairIdFromAddresses(owner, peerB), d: null };
       _saveFilePairs();
     }
 
@@ -3712,6 +3755,60 @@ let _filePairs = (() => {
 })();
 function _saveFilePairs() {
   try { writeFileSync(FILE_PAIRS_FILE, JSON.stringify(_filePairs), 'utf8'); } catch {}
+}
+
+// В-3 (аудит устойчивости, 6 августа): у записи описи вложений появился
+// срок, усыновлённый сделкой — тот же, что уже получает мешок.
+//
+// Форма записи расширена СОВМЕСТИМО: было `key -> "<pairId>"` (строка),
+// стало `key -> { p: "<pairId>", d: <срок|null> }`. Старые строковые записи
+// читаются как есть и живут дальше — file-pairs.json на боевом сервере уже
+// непустой, а миграция «на старте переписать весь файл» — ровно тот класс
+// действий, который в этом проекте уже ломал живое хранилище. Запись
+// обновляется до новой формы естественным путём: при первом усыновлении.
+function filePairIdOf(key) {
+  const rec = _filePairs[key];
+  if (typeof rec === 'string') return rec;          // старая форма
+  return rec && typeof rec === 'object' ? rec.p : undefined;
+}
+
+function fileDealDeadlineOf(key) {
+  const rec = _filePairs[key];
+  return rec && typeof rec === 'object' && typeof rec.d === 'number' ? rec.d : null;
+}
+
+// Усыновление вложений пары — зеркало adoptPairBags() для файлов.
+// Вызывается из тех же двух мест и с теми же числами, что усыновление
+// мешков, чтобы текст и вложение НИКОГДА не расходились в сроке: расхождение
+// и есть тот дефект, ради которого всё это заведено.
+//
+// Потолок — тот же 90-дневный MAX_PROTECTED_AGE_MS, что уже держит защиту по
+// спору, и та же оговорка про оплату, что у мешков: к ОПЛАЧЕННОЙ сделке
+// потолок не применяется (деньги в эскроу — хранение оплачено чужим
+// капиталом), к неоплаченной применяется. Решается на КАЖДОЕ продление
+// отдельно, по статусу именно той сделки, что его выдаёт — не свойство файла
+// навсегда (C1 из отчёта Задачи 5, тот же урок).
+//
+// Отсчёт потолка — от mtime файла: у вложения нет uploadedAt, его «возраст»
+// это и есть mtime, по которому уже считает вся остальная чистка.
+// Math.max с уже сохранённым — усыновление ПРОДЛЕВАЕТ и никогда не
+// обрезает, ровно как у мешков.
+function adoptPairFiles(pairId, dealDeadline, nowMs, funded) {
+  let adopted = 0;
+  for (const key of Object.keys(_filePairs)) {
+    if (filePairIdOf(key) !== pairId) continue;
+    let mtimeMs;
+    try { mtimeMs = fs.statSync(path.join(DIR_FILES, key)).mtimeMs; } catch { continue; }
+    const ceiling = mtimeMs + FILE_MAX_PROTECTED_AGE_MS;
+    const candidate = funded ? dealDeadline : Math.min(dealDeadline, ceiling);
+    const current = fileDealDeadlineOf(key) ?? 0;
+    const next = Math.max(current, candidate);
+    if (next === current) continue;
+    _filePairs[key] = { p: pairId, d: next };
+    adopted++;
+  }
+  if (adopted) _saveFilePairs();
+  return adopted;
 }
 
 app.get('/dispute-reason', (req, res) => {
