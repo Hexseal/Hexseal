@@ -1626,11 +1626,29 @@ export function clientIp(req) {
 // Прежние поля (status/relayer/diamond) на месте — существующие
 // потребители не ломаются, они просто получают ещё и `storage`.
 app.get('/health', (_req, res) => {
+  // Сквозная проверка перед слиянием: первая редакция этой ручки знала про
+  // режим недоверия и отказ записи, но НЕ про полный диск — а сервер к тому
+  // моменту уже отвечал `507 disk_full` на запись. Надзор видел `200 ok`:
+  // беда УЖЕ наступила, УЖЕ отражена в отказах человеку, а внешний глаз о
+  // ней не знал.
+  //
+  // Порог — ТОТ ЖЕ `DISK_RESERVE_BYTES` и та же мерка `freeBytesOnStorage()`,
+  // которыми отвечает 507. Второй, свой порог здесь рано или поздно разошёлся
+  // бы с первым молча, и `/health` начал бы врать в другую сторону.
+  //
+  // `null` — «измерить не вышло» (statfsSync отсутствует или не работает на
+  // этой ФС, замечено на exFAT), и это НЕ «диск полон»: сломанная мерка не
+  // повод красить весь надзор.
+  const freeBytes = freeBytesOnStorage();
+  const diskFull = freeBytes === null ? null : freeBytes < DISK_RESERVE_BYTES;
   const storage = {
     indexTrusted: isBagStoreHealthy(),
     lastPersistError: bagStorePersistError(),
+    diskFull,
+    freeBytes,
+    reserveBytes: DISK_RESERVE_BYTES,
   };
-  const healthy = storage.indexTrusted && storage.lastPersistError === null;
+  const healthy = storage.indexTrusted && storage.lastPersistError === null && diskFull !== true;
   res
     .status(healthy ? 200 : 503)
     .json({

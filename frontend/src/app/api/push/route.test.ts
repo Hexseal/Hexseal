@@ -119,6 +119,53 @@ describe('К-2: /api/push требует доказательства, а ссы
     expect(await res.json()).toHaveProperty('error');
   });
 
+  it('род «спор» пропуска не требует — доказательство там на цепи, а не у человека', async () => {
+    const deal = '0xdea1000000000000000000000000000000000004';
+    const res = await POST(req({ to: VICTIM, kind: 'dispute', deal }));
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(forwarded()).toEqual({ to: VICTIM, kind: 'dispute', deal });
+  });
+
+  it('ЗАМЕР ДО ПОЧИНКИ: посторонний с мусорным пропуском гонял наш сервер к нашему серверу без предела', async () => {
+    // Отказ приходил — но работа делалась: каждый запрос стоил похода на
+    // релеер. Форма пропуска проверяется здесь, до всякой сети.
+    // (Кириллица в заголовке не годится: её отвергает сам http-стек, до
+    // сервера такой запрос не доезжает вовсе — проверяли бы не нас.)
+    const res = await POST(req({ to: VICTIM }, { 'x-bag-pass': 'not-a-pass-at-all' }));
+
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('пропуск верной формы, но чужой — на релеер ходим, а вот бесконечно нет', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: 'Invalid bag pass' }), { status: 401 }));
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      statuses.push((await POST(req({ to: VICTIM }, {
+        'x-bag-pass': PASS,
+        'x-forwarded-for': '203.0.113.7',
+      }))).status);
+    }
+
+    const throttled = statuses.filter((s) => s === 429).length;
+    // Потолок маршрута — 30/мин на источник: походов на релеер должно быть
+    // ровно столько, а не сорок.
+    expect(throttled).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.length).toBe(statuses.length - throttled);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(30);
+  });
+
+  it('исчерпавший потолок мешает только своему источнику', async () => {
+    for (let i = 0; i < 40; i++) {
+      await POST(req({ to: VICTIM }, { 'x-bag-pass': PASS, 'x-forwarded-for': '203.0.113.8' }));
+    }
+    const other = await POST(req({ to: VICTIM }, { 'x-bag-pass': PASS, 'x-forwarded-for': '203.0.113.9' }));
+    expect(other.status).toBe(200);
+  });
+
   it('middleware этот маршрут НЕ покрывает — защита обязана быть в самом маршруте', () => {
     // Не «на всякий случай»: опровергатель проверял именно это, и именно
     // отсутствие /api/push в matcher оставляло маршрут голым. Если кто-то
