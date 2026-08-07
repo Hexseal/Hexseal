@@ -29,7 +29,7 @@ import {
 } from '@/lib/chatConversation';
 import { buildLink, type ChainLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
-import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
+import { _resetBagPassCacheForTest, _resetReadBudgetForTest } from '@/lib/chatTransport';
 import { startPairChat, type PairChatState } from './usePairChat';
 
 /** Поля, которого на момент написания замера в снимке НЕТ — в этом и красный. */
@@ -130,6 +130,9 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   _resetBagPassCacheForTest();
+  // Минутный бюджет чтения живёт на модуле: без сброса он перетекает
+  // между замерами одного файла и душит поздние.
+  _resetReadBudgetForTest();
 });
 
 describe('отказ склада — состояние, а не приговор', () => {
@@ -159,16 +162,26 @@ describe('отказ склада — состояние, а не пригово
       await waitFor(() => states.some(s => s.messages.length === 3));
       const before = states.length;
       failing = true;                       // склад моргнул
-      await waitFor(() => states.length > before && states[states.length - 1].transportError != null);
 
-      const last = states[states.length - 1];
+      // ⚠️ ЖДЁМ СНИМОК, УДОВЛЕТВОРЯЮЩИЙ ВСЕМУ СРАЗУ, а не «последний после
+      // ожидания». Движок тикает и во время проверки, поэтому
+      // `states[states.length - 1]` — движущаяся цель: под нагрузкой полного
+      // прогона между ожиданием и чтением успевает лечь ещё один снимок, и
+      // замок мигал. Свойство от этого не меняется: нужен ФАКТ существования
+      // снимка, где отказ назван И сообщения на месте.
+      const withError = (): StateWithTransport | undefined => states.slice(before).find(
+        s => s.transportError === 'rate_limited' && s.messages.length === 3,
+      );
+      await waitFor(() => withError() !== undefined);
+
+      const found = withError();
       console.log(
         `[блокер замер] при отказе склада: снимков после отказа ${states.length - before}, ` +
-        `сообщений в снимке ${last.messages.length}, признак отказа ${JSON.stringify(last.transportError)}`,
+        `сообщений в снимке ${found?.messages.length ?? 0}, признак отказа ${JSON.stringify(found?.transportError)}`,
       );
       // Снимок выдан, сообщения НЕ потеряны, отказ назван.
-      expect(last.messages.map(m => m.text)).toEqual(['раз', 'два', 'три']);
-      expect(last.transportError).toBe('rate_limited');
+      expect(found?.messages.map(m => m.text)).toEqual(['раз', 'два', 'три']);
+      expect(found?.transportError).toBe('rate_limited');
     } finally {
       engine.stop();
     }
@@ -214,15 +227,20 @@ describe('отказ склада — состояние, а не пригово
 
       const failedAt = states.length;
       failing = false;                      // связь вернулась
-      await waitFor(() => states.length > failedAt && states[states.length - 1].transportError == null);
 
-      const last = states[states.length - 1];
-      console.log(
-        `[блокер замер] после возврата связи: признак отказа ${JSON.stringify(last.transportError)}, ` +
-        `сообщений ${last.messages.length}`,
+      // Тот же приём, что выше: ищем ФАКТ, а не смотрим на движущийся хвост.
+      const recovered = (): StateWithTransport | undefined => states.slice(failedAt).find(
+        s => s.transportError == null && s.messages.length === 1,
       );
-      expect(last.transportError).toBeNull();
-      expect(last.messages.map(m => m.text)).toEqual(['раз']);
+      await waitFor(() => recovered() !== undefined);
+
+      const found = recovered();
+      console.log(
+        `[блокер замер] после возврата связи: признак отказа ${JSON.stringify(found?.transportError ?? null)}, ` +
+        `сообщений ${found?.messages.length ?? 0}`,
+      );
+      expect(found, 'ни один снимок после возврата связи не снял признак отказа').toBeDefined();
+      expect(found?.messages.map(m => m.text)).toEqual(['раз']);
     } finally {
       engine.stop();
     }

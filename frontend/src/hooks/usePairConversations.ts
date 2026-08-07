@@ -34,7 +34,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
-import { listBags, fetchBag, BagPassError, type BagSummary } from '@/lib/chatTransport';
+import { listBags, fetchBag, BagPassError, BagBudgetError, type BagSummary } from '@/lib/chatTransport';
 import { receiveBags, type IncomingBag } from '@/lib/chatConversation';
 import { BoundedParseCache } from '@/lib/chatParseCache';
 import type { ChatSession } from '@/lib/chatSession';
@@ -188,6 +188,10 @@ export async function loadPairConversations(
   }
 
   let budget = PREVIEW_BUDGET_PER_LOAD;
+  // Адресный бюджет чтения кончился на этом заходе (его делят все вкладки и
+  // открытая переписка — см. `BAG_READ_BUDGET_PER_MIN`). Дальше по списку идём
+  // БЕЗ скачиваний: строки и запомненные превью остаются, новых не просим.
+  let outOfReads = false;
   const rows: PairConversation[] = [];
   for (const peer of ordered) {
     const addr = peer.address.toLowerCase();
@@ -207,7 +211,7 @@ export async function loadPairConversations(
         // уже есть, прятать его значило бы, что строка «потеряла» текст.
         lastText = remembered.text;
         lastAt = remembered.receivedAt;
-      } else if (budget > 0 && candidates.has(addr)) {
+      } else if (!outOfReads && budget > 0 && candidates.has(addr)) {
         budget--;
         try {
           const body = await fetchBag(pass, summary.key, signal);
@@ -234,6 +238,10 @@ export async function loadPairConversations(
           // Отмена — не «сломанная строка», а уход со страницы: пробрасываем,
           // чтобы вызывающий не принял оборванную загрузку за пустой список.
           if ((err as { name?: string })?.name === 'AbortError') throw err;
+          // ⚠️ Свой бюджет — не поломка. Открытая переписка важнее превью в
+          // списке, и отнимать у неё чтения ради подписи под строкой незачем.
+          // Молча и без предупреждения: это штатное «сейчас не будем».
+          if (err instanceof BagBudgetError) { outOfReads = true; continue; }
           // Отказ НЕ запоминается: моргнувшая сеть не должна оставить строку
           // без превью навсегда — следующий заход попробует снова.
           console.warn('[usePairConversations] превью переписки не собралось', err);

@@ -26,7 +26,7 @@ import {
 } from '@/lib/chatConversation';
 import { buildLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
-import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
+import { _resetBagPassCacheForTest, _resetReadBudgetForTest } from '@/lib/chatTransport';
 import { loadPairConversations, _resetPreviewCacheForTest } from './usePairConversations';
 
 const ALICE = '0xA1cE00000000000000000000000000000000CAfE' as const;
@@ -76,6 +76,9 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   _resetBagPassCacheForTest();
+  // Минутный бюджет чтения живёт на модуле: без сброса он перетекает
+  // между замерами одного файла и душит поздние.
+  _resetReadBudgetForTest();
   _resetPreviewCacheForTest();
 });
 

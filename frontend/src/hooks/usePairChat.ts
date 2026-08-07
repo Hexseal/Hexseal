@@ -52,7 +52,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import {
   fetchBag, pollBags,
-  BagTransportError,
+  BagTransportError, BagBudgetError,
   type BagPollHandle, type BagPollIntervalsMs, type ListBagsResult, type BagSummary,
 } from '@/lib/chatTransport';
 import {
@@ -379,27 +379,38 @@ export function furtherLink(a: ChainLink | null, b: ChainLink | null): ChainLink
 /* ───────────────── К-1: отбор ДО скачивания и потолок ─────────────────── */
 
 /**
- * Сколько мешков скачиваем за минуту.
+ * ⚠️ СВОЕГО СЧЁТЧИКА СКАЧИВАНИЙ ЗДЕСЬ БОЛЬШЕ НЕТ, И ЭТО ПРАВКА, А НЕ УБОРКА.
  *
- * ⚠️ ЧИСЛО ВЫВЕДЕНО ИЗ ЧУЖОГО, БОЕВОГО, а не выбрано «на глаз». `relayer/app.js`
- * даёт адресу `BAG_READ_RATE_MAX = 120` чтений в минуту, и этот бюджет ОБЩИЙ у
- * перечисления (`GET /bags`) и скачивания (`GET /bags/:key`). Опрос при
- * открытом чате — 12 перечислений в минуту, остаётся 108. Восемьдесят
- * оставляет запас списку переписок (`usePairConversations.ts`), который ест тот
- * же адресный бюджет, и на повторы после отказов.
+ * Здесь стоял `BAG_DOWNLOAD_BUDGET_PER_MIN = 80` со своим окном — счётчик на
+ * хук на вкладку. Бюджет же у склада АДРЕСНЫЙ (`BAG_READ_RATE_MAX = 120` в
+ * минуту, общий у перечисления и скачивания), и замер это подтвердил: две
+ * вкладки одного человека просили 200 чтений, сервер отбивал 80, `pollBags`
+ * уходил в отступление — чат заморожен у того, кто ничего не делал.
  *
- * ⚠️ ЦЕНА НАЗВАНА ВСЛУХ. Переписка, у которой на складе лежит больше
- * восьмидесяти невзятых мешков (вернулись из отпуска, собеседник писал
- * длинно), доедет НЕ ЗА ОДИН ТИК: восемьдесят сейчас, остальные следующими
- * тиками. Человек в это время видит `pendingBags` больше нуля — то есть
- * знает, что показано не всё. Прежнее поведение доезжало «за один тик» ровно
- * до первой тысячи мешков, после чего склад отвечал `429` на СОБСТВЕННЫЙ
- * следующий опрос, и чат вставал целиком.
+ * Счёт переехал в `chatTransport.ts` (`BAG_READ_BUDGET_PER_MIN`), где через
+ * него проходит КАЖДОЕ чтение любой вкладки, и общий он по-настоящему —
+ * через `localStorage` под межвкладочным замком. Здесь остался разбор отказа
+ * (`BagBudgetError` — «подождать», а не «сломалось») и второй потолок, ниже.
  */
-export const BAG_DOWNLOAD_BUDGET_PER_MIN = 80;
 
-/** Окно бюджета. Ровно минута — та же, которой считает склад. */
-const BAG_BUDGET_WINDOW_MS = 60_000;
+/**
+ * Сколько мешков берём за ОДИН ТИК.
+ *
+ * ⚠️ ЭТО ВТОРОЙ ПОТОЛОК, И ОН НЕ ЛИШНИЙ. Минутный бюджет в транспорте считает
+ * по адресу и опирается на разбор пропуска и на общую память вкладок; там, где
+ * пропуск не той формы или хранилища нет, он не считает ничего — и сказано об
+ * этом честно. Этот потолок не опирается ни на что: просто «за один заход не
+ * больше восьмидесяти», и он работает всегда.
+ *
+ * Два потолка про разное. Минутный — про то, сколько СКЛАД разрешает адресу.
+ * Этот — про то, чтобы один тик не выгреб ящик целиком: замер К-1 показал 300
+ * скачиваний подряд, и без него отбор по отправителю спасал только от
+ * постороннего, но не от самого собеседника.
+ *
+ * Цена названа: переписка с бо́льшим числом невзятых мешков доедет не за один
+ * тик, и человек всё это время видит `pendingBags` больше нуля.
+ */
+export const MAX_BAG_DOWNLOADS_PER_TICK = 80;
 
 /**
  * Отступление перед ПОВТОРОМ скачивания одного мешка: 5 с, 10, 20, … но не
@@ -547,9 +558,6 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
    */
   const pending = new Map<string, BagSummary>();
 
-  /** Моменты НАЧАТЫХ скачиваний — окно бюджета (К-1). */
-  const downloadStamps: number[] = [];
-
   /**
    * Мешки, на которых скачивание уже отказывало: сколько раз и когда можно
    * пробовать снова (К-2). Ключ уходит отсюда, как только мешок взят, — то
@@ -564,13 +572,6 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       tries,
       nextAt: Date.now() + Math.min(BAG_RETRY_BASE_MS * 2 ** (tries - 1), BAG_RETRY_MAX_MS),
     });
-  }
-
-  /** Сколько скачиваний ещё разрешает минутный бюджет. */
-  function budgetLeft(): number {
-    const cutoff = Date.now() - BAG_BUDGET_WINDOW_MS;
-    while (downloadStamps.length > 0 && downloadStamps[0] <= cutoff) downloadStamps.shift();
-    return BAG_DOWNLOAD_BUDGET_PER_MIN - downloadStamps.length;
   }
 
   /** Ключи собеседника — один раз за жизнь движка, дальше из памяти. */
@@ -694,15 +695,16 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     // молчаливое обвинение собеседника в том, что он чего-то не предъявил,
     // ровно там, где не предъявили МЫ САМИ СЕБЕ.
     const queue = [...pending.values()].sort((a, b) => a.uploadedAt - b.uploadedAt);
+    let takenThisTick = 0;
     for (const summary of queue) {
       if (stopped) return;
-      if (budgetLeft() <= 0) break;
+      if (takenThisTick >= MAX_BAG_DOWNLOADS_PER_TICK) break;
       // Мешок под отступлением — пропускаем, но из описи НЕ убираем: он
       // по-прежнему невзят, и человеку об этом по-прежнему говорят.
       const failed = failures.get(summary.key);
       if (failed && Date.now() < failed.nextAt) continue;
-      downloadStamps.push(Date.now());
       downloads++;
+      takenThisTick++;
       try {
         const body = await fetchBag(pass, summary.key, abort.signal);
         // Взято — из описи невзятого уходит. `null` (мешка нет: истёк,
@@ -729,6 +731,11 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
         // это себе в беду значило бы врать про то, что мешок «не отдался».
         if (stopped) return;
         if ((err as { name?: string })?.name === 'AbortError') throw err;
+        // ⚠️ СВОЙ БЮДЖЕТ — НЕ ОТКАЗ СКЛАДА. Мешок остаётся в описи невзятого и
+        // будет взят следующим тиком, когда минута отпустит. Записать это
+        // неудачей значило бы завести на него отступление и назвать человеку
+        // «не смогли скачать» там, где мы просто ждём своей очереди.
+        if (err instanceof BagBudgetError) break;
         noteFailure(summary.key);
       } finally {
         downloads--;

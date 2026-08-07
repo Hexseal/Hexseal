@@ -325,6 +325,164 @@ function passStorage(): Storage | null {
   }
 }
 
+/* ─────────────── адресный бюджет чтения, ОБЩИЙ У ВКЛАДОК ──────────────── */
+
+/**
+ * Сколько чтений склада разрешаем себе за минуту на ОДИН АДРЕС.
+ *
+ * ⚠️ ЧИСЛО ВЫВЕДЕНО ИЗ ЧУЖОГО, БОЕВОГО, и оно не «наше усмотрение». Склад
+ * даёт адресу `BAG_READ_RATE_MAX = 120` чтений в минуту (`relayer/app.js`), и
+ * бюджет ОБЩИЙ у перечисления (`GET /bags`) и скачивания (`GET /bags/:key`).
+ * Сто оставляет запас на расхождение часов между вкладками и на то, что
+ * сервер считает своё окно от своего же момента, а не от нашего.
+ *
+ * ⚠️ ПОЧЕМУ СЧЁТ ЗДЕСЬ, А НЕ В ХУКАХ. Замерено: открытая переписка отмеряла
+ * себе 80 скачиваний, список переписок — 24 превью, и КАЖДАЯ ВКЛАДКА считала
+ * это заново. Две вкладки одного человека (чат открыт и рядом сделка — обычное
+ * дело) просили вдвое больше, чем склад разрешает: 200 попыток, 80 отбитых
+ * сервером, отступление `pollBags` до пяти минут. Чат заморожен у того, кто не
+ * сделал ничего.
+ *
+ * Счётчик в хуке — это счётчик на хук на вкладку, то есть заведомо не тот,
+ * который считает сервер. Общая память у вкладок одного источника ровно одна —
+ * `localStorage`; согласованность чтения-записи даёт `navigator.locks`.
+ */
+export const BAG_READ_BUDGET_PER_MIN = 100;
+
+const READ_WINDOW_MS = 60_000;
+const READS_STORAGE_PREFIX = 'hexseal_bagreads_';
+
+/**
+ * Отказ СВОЕГО бюджета, а не сервера.
+ *
+ * Отдельный род намеренно: это не поломка и не «сервер сказал нет», это «мы
+ * сами решили подождать». Вызывающий, принявший его за сетевой отказ, ушёл бы
+ * в отступление — то есть заменил бы одну заморозку другой.
+ */
+export class BagBudgetError extends BagTransportError {
+  constructor(message = 'Local read budget exhausted') {
+    super(message, 'local_read_budget');
+    this.name = 'BagBudgetError';
+  }
+}
+
+/**
+ * Отметки чтений ЭТОЙ вкладки, в памяти.
+ *
+ * ⚠️ ДВА СЛОЯ, А НЕ ОДИН, И ВТОРОЙ ПОЯВИЛСЯ ПОСЛЕ СОБСТВЕННОГО ПРОМАХА.
+ * Первая версия считала только через `localStorage` — и на устройстве БЕЗ него
+ * (приватный режим, сторонний контекст с запрещёнными куками) не считала
+ * НИЧЕГО: замер К-1 тут же показал 300 скачиваний за один тик вместо ста, то
+ * есть правка вернула ровно тот дефект, который до неё закрывал счётчик в
+ * хуке. Своя починка оказалась хуже того, что чинила.
+ *
+ * Поэтому слоя два, и они про разное:
+ *  - память вкладки — работает ВСЕГДА, держит потолок для одной вкладки;
+ *  - общая память вкладок — согласует НЕСКОЛЬКО вкладок одного адреса.
+ * Пропустить чтение должны оба; отсутствие второго не отменяет первый.
+ */
+const _readStamps = new Map<string, number[]>();
+
+function takeFromMemory(addr: string, nowMs: number): boolean {
+  const cutoff = nowMs - READ_WINDOW_MS;
+  const stamps = (_readStamps.get(addr) ?? []).filter(t => t > cutoff && t <= nowMs);
+  if (stamps.length >= BAG_READ_BUDGET_PER_MIN) {
+    _readStamps.set(addr, stamps);
+    return false;
+  }
+  stamps.push(nowMs);
+  _readStamps.set(addr, stamps);
+  return true;
+}
+
+/** Отметки чтений последней минуты, как они лежат в общей памяти вкладок. */
+function readStamps(s: Storage, key: string, nowMs: number): number[] {
+  let raw: string | null;
+  try { raw = s.getItem(key); } catch { return []; }
+  if (!raw) return [];
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  const cutoff = nowMs - READ_WINDOW_MS;
+  // Отметки ИЗ БУДУЩЕГО отбрасываются вместе со старыми: часы на устройстве
+  // умеют прыгать вперёд, и одна такая отметка иначе держала бы бюджет
+  // занятым до тех пор, пока время её не догонит.
+  return parsed.filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > cutoff && n <= nowMs);
+}
+
+/**
+ * Занять одно чтение из адресного бюджета. `false` — бюджет исчерпан.
+ *
+ * НЕ запирает, когда считать нечем: нет `localStorage` (приватный режим,
+ * сторонний контекст с запрещёнными куками) или запись не проходит. Отказать
+ * всем чтениям там, где чат работал, значило бы выключить его ради счётчика.
+ */
+async function reserveBagRead(addr: string, nowMs = Date.now()): Promise<boolean> {
+  // Слой, который работает всегда. Проверяется ПЕРВЫМ: если своя же вкладка
+  // уже выбрала минуту, ходить за замком и в хранилище незачем.
+  if (!takeFromMemory(addr, nowMs)) return false;
+  const s = passStorage();
+  if (!s) return true;
+  const key = READS_STORAGE_PREFIX + addr;
+  const take = (): boolean => {
+    const stamps = readStamps(s, key, nowMs);
+    if (stamps.length >= BAG_READ_BUDGET_PER_MIN) return false;
+    stamps.push(nowMs);
+    try { s.setItem(key, JSON.stringify(stamps)); } catch { return true; }
+    return true;
+  };
+  const locks = (globalThis as { navigator?: Navigator }).navigator?.locks;
+  if (!locks) return take();
+  // ⚠️ Замок обязателен: без него две вкладки читают одно и то же значение,
+  // каждая прибавляет единицу и записывает — то есть два чтения списываются
+  // как одно, и весь счёт врёт ровно в ту сторону, ради которой заведён.
+  let allowed = true;
+  try {
+    await locks.request(key, () => { allowed = take(); });
+  } catch {
+    allowed = take(); // замок недоступен — считаем без него, это лучше, чем не считать
+  }
+  return allowed;
+}
+
+/** Только тесты: начать минуту заново. */
+export function _resetReadBudgetForTest(): void {
+  _readStamps.clear();
+  const s = passStorage();
+  if (!s) return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const k = s.key(i);
+      if (k && k.startsWith(READS_STORAGE_PREFIX)) keys.push(k);
+    }
+    for (const k of keys) s.removeItem(k);
+  } catch { /* нечего чистить */ }
+}
+
+/**
+ * Занять чтение по пропуску.
+ *
+ * ⚠️ ЧЕГО ЭТОТ СЧЁТ НЕ ДЕЛАЕТ, СКАЗАНО ПРЯМО. Пропуск, из которого адрес не
+ * достаётся, НЕ СЧИТАЕТСЯ: считать некому и не за кого. На боевом пути такого
+ * пропуска не бывает — его выдаёт `requestBagPass` в форме `v1.<тело>.<подпись>`
+ * (заперто `chatReadBudget.test.ts` на пропуске настоящей формы), — но если
+ * форма когда-нибудь сменится, счёт тихо перестанет работать, и заметит это
+ * только сервер своим `429`.
+ *
+ * Считать негодный пропуск «в общую корзину» пробовалось и отвергнуто: это
+ * душит одного человека за чужие чтения, а замеры движка (которые гоняют
+ * опрос в сотни раз быстрее боевого) начинают упираться в минутный бюджет и
+ * мерить не то, что обещают. Потолок ПРОТИВ НАГРУЗКИ стоит отдельно и не
+ * зависит ни от пропуска, ни от хранилища — см. `MAX_BAG_DOWNLOADS_PER_TICK`
+ * в `usePairChat.ts`.
+ */
+async function reserveReadForPass(pass: string): Promise<void> {
+  const addr = parseBagPassAddress(pass);
+  if (!addr) return;
+  if (!(await reserveBagRead(addr))) throw new BagBudgetError();
+}
+
 function readStoredPass(addr: string): { pass: string; expiresAt: number } | null {
   const s = passStorage();
   if (!s) return null;
@@ -678,6 +836,10 @@ function isPeerSummary(x: unknown): x is PeerSummary {
  * виден, а не молча прочитан как «пустой список».
  */
 export async function listBags(pass: string, since?: number, signal?: AbortSignal): Promise<ListBagsResult> {
+  // Адресный бюджет, ОБЩИЙ у вкладок и у обоих родов чтения — как на складе.
+  // Стоит ЗДЕСЬ, а не у вызывающего: через эти две функции проходит каждое
+  // чтение любой вкладки, и обойти их нечем.
+  await reserveReadForPass(pass);
   const url = new URL(`${RELAYER_URL}/bags`);
   if (since !== undefined) url.searchParams.set('since', String(since));
 
@@ -719,6 +881,8 @@ export async function listBags(pass: string, since?: number, signal?: AbortSigna
  * дочитанном ответе, relayer/app.js `res.on('finish')`).
  */
 export async function fetchBag(pass: string, key: string, signal?: AbortSignal): Promise<Uint8Array | null> {
+  // Тот же адресный бюджет, что у перечисления, — см. `listBags`.
+  await reserveReadForPass(pass);
   // Мелочь ревью: key уезжал в URL БЕЗ кодирования — сервер сам проверяет
   // его форму, но кодировать надо и на нашей стороне. Ключ — ВСЕГДА два
   // сегмента (recipient/filename, см. bagKeyFor() на сервере), поэтому
@@ -1033,6 +1197,14 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
       } catch (err) {
         if (stopped) return;
         currentAbort = null; // тик закончился (ошибкой) — контроллер больше ничему не соответствует
+        // ⚠️ СВОЙ БЮДЖЕТ — НЕ ОТКАЗ. Мы сами решили подождать: ни счётчик
+        // неудач, ни счётчик неудач ВХОДА это трогать не должны, и отступать
+        // не за чем. Иначе бюджет, заведённый ПРОТИВ заморозки чата, сам бы её
+        // и устраивал — своя починка хуже дефекта, ровно тот случай.
+        if (err instanceof BagBudgetError) {
+          await sleep(waitMs);
+          continue;
+        }
         consecutiveFailures++;
         // Экспоненциально от базового интервала этого тика, с потолком
         // (I3): 1-й отказ подряд — база, 2-й — ×2, 3-й — ×4, и т.д., но не

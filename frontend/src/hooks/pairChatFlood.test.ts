@@ -28,7 +28,7 @@ import {
 } from '@/lib/chatConversation';
 import { buildLink, type ChainLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
-import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
+import { _resetBagPassCacheForTest, _resetReadBudgetForTest } from '@/lib/chatTransport';
 import { startPairChat, type PairChatState } from './usePairChat';
 
 /**
@@ -171,6 +171,9 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   _resetBagPassCacheForTest();
+  // Минутный бюджет чтения живёт на модуле: без сброса он перетекает
+  // между замерами одного файла и душит поздние.
+  _resetReadBudgetForTest();
 });
 
 /* ────────────────────── замер А: сколько скачиваем ────────────────────── */
@@ -239,22 +242,33 @@ describe('К-1: посторонний наполняет ящик', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const run = drive({ session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true });
+    // ⚠️ СЧИТАЕМ РОВНО НА ПЕРВОЙ ВЫДАЧЕ СОСТОЯНИЯ, а не «через 50 мс после».
+    // Выдача состояния — конец тика, и это единственный момент, когда «за один
+    // тик» означает именно один тик. Прежняя версия ждала лишние 50 мс, за
+    // которые в этом стенде (пауза опроса подменена на 1 мс) успевает пройти
+    // ещё несколько тиков: замер показывал 160 при потолке 80 и читался как
+    // «потолок не держится», хотя держался каждый тик.
+    let atFirstState = -1;
+    const states: PairChatState[] = [];
+    const engine = startPairChat({
+      session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
+      onState: (s) => { if (atFirstState < 0) atFirstState = downloads.length; states.push(s); },
+      onError: () => {},
+      sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
+    });
     try {
-      await waitFor(() => run.states.length >= 1);
+      await waitFor(() => states.length >= 1);
     } finally {
-      run.engine.stop();
+      engine.stop();
     }
-    // Дать возможным лишним скачиваниям первого тика долететь.
-    await new Promise(r => setTimeout(r, 50));
 
     console.log(
-      `[К-1 замер А2] мешков собеседника: ${store.length}; скачано за первый тик: ${downloads.length}; ` +
+      `[К-1 замер А2] мешков собеседника: ${store.length}; скачано за ПЕРВЫЙ тик: ${atFirstState}; ` +
       `бюджет склада на минуту: ${SERVER_READ_BUDGET_PER_MIN}`,
     );
-    expect(downloads.length).toBeLessThanOrEqual(SERVER_READ_BUDGET_PER_MIN);
+    expect(atFirstState).toBeLessThanOrEqual(SERVER_READ_BUDGET_PER_MIN);
     // И потолок не должен выродиться в «не качаем вовсе».
-    expect(downloads.length).toBeGreaterThan(0);
+    expect(atFirstState).toBeGreaterThan(0);
   }, 60_000);
 });
 

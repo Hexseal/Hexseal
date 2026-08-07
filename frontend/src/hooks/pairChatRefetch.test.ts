@@ -30,7 +30,7 @@ import {
 } from '@/lib/chatConversation';
 import { buildLink, type ChainLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
-import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
+import { _resetBagPassCacheForTest, _resetReadBudgetForTest } from '@/lib/chatTransport';
 import { startPairChat, type PairChatState } from './usePairChat';
 
 /** Поля, которых на момент написания теста в состоянии НЕТ — в этом и красный.
@@ -152,6 +152,9 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   _resetBagPassCacheForTest();
+  // Минутный бюджет чтения живёт на модуле: без сброса он перетекает
+  // между замерами одного файла и душит поздние.
+  _resetReadBudgetForTest();
 });
 
 describe('К-2: сеть моргнула посреди пачки', () => {
