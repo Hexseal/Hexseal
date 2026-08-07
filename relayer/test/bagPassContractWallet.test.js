@@ -252,6 +252,70 @@ describe('К-1: пропуск склада и четыре рода кошел�
     });
   });
 
+  describe('пришёл мусор — вердикт, а не падение и не поход в цепь', () => {
+    // Кириллица сюда НЕ годится специально: заголовок с не-latin1 символами
+    // отвергает сам Node на стороне клиента ("Invalid character in header
+    // content"), до сервера он не доезжает вообще — такой кейс проверял бы
+    // не нас, а http-стек.
+    it.each([
+      ['не шестнадцатеричная строка', 'not-a-signature'],
+      ['пустая подпись (0x)',         '0x'],
+      ['нечётное число полубайт',     '0xabc'],
+      ['одна буква',                  'x'],
+    ])('%s → 401, и узел цепи не тревожили', async (_name, sig) => {
+      let chainCalls = 0;
+      // Мок нарочно ЩЕДРЫЙ («контракт признал»): если мусор доедет до цепи,
+      // он получит 200, и тест это увидит. Так проверяется именно то, что он
+      // ДО цепи не доезжает, а не то, что цепь его отвергла за нас.
+      mockProviderCall(async () => { chainCalls++; return '0x01'; });
+
+      const res = await postPass({ address: '0x4444444444444444444444444444444444444444', sig });
+
+      expect(res.status).toBe(401);
+      expect(chainCalls).toBe(0);
+    });
+  });
+
+  describe('ЗАМЕР: чего стоит проверка', () => {
+    it('обычный кошелёк — цена местная, обращений к цепи ноль на сто выдач', async () => {
+      let chainCalls = 0;
+      mockProviderCall(async () => { chainCalls++; return '0x01'; });
+
+      const wallets = await Promise.all(
+        Array.from({ length: 20 }, () => ethers.Wallet.createRandom()),
+      );
+
+      const started = Date.now();
+      for (const w of wallets) {
+        const addr = w.address.toLowerCase();
+        const ts   = Math.floor(Date.now() / 1000);
+        const sig  = await w.signMessage(bagPassChallenge(addr, ts));
+        const res  = await postPass({ address: addr, sig, ts });
+        expect(res.status).toBe(200);
+      }
+      const elapsed = Date.now() - started;
+
+      console.log(`[замер К-1] 20 выдач пропуска обычному кошельку: ${elapsed} мс, обращений к цепи ${chainCalls}`);
+      expect(chainCalls).toBe(0);
+    });
+
+    it('контрактный кошелёк — РОВНО одно обращение к цепи на выдачу, не два', async () => {
+      let chainCalls = 0;
+      mockProviderCall(async () => { chainCalls++; return '0x01'; });
+
+      for (let i = 0; i < 5; i++) {
+        const res = await postPass({
+          address: '0x333333333333333333333333333333333333333' + i,
+          sig: safeStyleSignature(),
+        });
+        expect(res.status).toBe(200);
+      }
+
+      console.log(`[замер К-1] 5 выдач контрактному кошельку: обращений к цепи ${chainCalls}`);
+      expect(chainCalls).toBe(5);
+    });
+  });
+
   describe('происхождение байткода валидатора', () => {
     it('совпадает байт в байт с тем, что везёт viem (канонический ERC-6492)', () => {
       const here = path.dirname(fileURLToPath(import.meta.url));
