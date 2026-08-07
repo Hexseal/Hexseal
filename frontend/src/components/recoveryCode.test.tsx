@@ -179,8 +179,13 @@ describe('шаг проверки — докажи, что записал', () =
     const html = await renderModal({ step: 'check', positions: [3, 7, 11] });
     expect(html).toContain(TEXTS.checkTitle);
     expect(html).toContain(TEXTS.checkHint);
-    for (const n of [3, 7, 11]) expect(html).toContain(translate('chat.recovery_check_word', { n }));
-    for (const n of [1, 2, 4]) expect(html).not.toContain(translate('chat.recovery_check_word', { n }));
+    // ⚠️ Подпись сверяется ЦЕЛЫМ УЗЛОМ (`>Слово 3<`), а не вхождением
+    // подстроки: «Слово 1» лежит внутри «Слово 11», и наивная проверка
+    // отсутствия объявила бы спрошенным то, чего не спрашивали. Поймано
+    // этим же тестом на первом прогоне.
+    const label = (n: number) => `>${translate('chat.recovery_check_word', { n })}<`;
+    for (const n of [3, 7, 11]) expect(html).toContain(label(n));
+    for (const n of [1, 2, 4, 12]) expect(html).not.toContain(label(n));
   });
 
   it('ровно три поля ввода — по числу спрошенных слов', async () => {
@@ -195,15 +200,23 @@ describe('шаг проверки — докажи, что записал', () =
     const html = await renderModal({ step: 'check' });
     const inputs = html.match(/<input[^>]*>/g) ?? [];
     expect(inputs).toHaveLength(3);
+    // ⚠️ РЕГИСТР ИМЕНИ АТРИБУТА НЕ ВАЖЕН, и это ЗАМЕРЕНО, а не предположено:
+    // react-dom 19.1 пишет в разметку `autoComplete="off"`, `spellCheck=
+    // "false"` — как названы пропсы, — и лишь часть имён (`tabindex`)
+    // приводит к нижнему регистру. Имена атрибутов HTML разбираются без
+    // учёта регистра, так что браузер видит ровно то, что нужно. Сверять
+    // здесь нижний регистр значило бы держать тест, красный на исправном
+    // окне.
     for (const input of inputs) {
-      expect(input, input).toContain('autocomplete="off"');
-      expect(input, input).toContain('autocorrect="off"');
-      expect(input, input).toContain('autocapitalize="off"');
-      expect(input, input).toContain('spellcheck="false"');
+      const attrs = input.toLowerCase();
+      expect(attrs, input).toContain('autocomplete="off"');
+      expect(attrs, input).toContain('autocorrect="off"');
+      expect(attrs, input).toContain('autocapitalize="off"');
+      expect(attrs, input).toContain('spellcheck="false"');
       // Менеджеры паролей игнорируют autocomplete="off"; у 1Password и
       // LastPass есть свои признаки, и они дешевы.
-      expect(input, input).toContain('data-1p-ignore');
-      expect(input, input).toContain('data-lpignore="true"');
+      expect(attrs, input).toContain('data-1p-ignore');
+      expect(attrs, input).toContain('data-lpignore="true"');
     }
   });
 

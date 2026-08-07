@@ -25,6 +25,7 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Всё, что держит код восстановления в руках. */
 const HANDLERS = [
   'lib/chatRecovery.ts',
+  'components/RecoveryCodeModal.tsx',
 ];
 
 function read(rel: string): string {
