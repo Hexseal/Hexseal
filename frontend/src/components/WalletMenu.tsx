@@ -15,7 +15,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, ShieldQuestion, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, ShieldQuestion, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2, KeyRound } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
@@ -23,6 +23,8 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
 import { useChatSession } from "@/hooks/useChatSession";
+import { hasRecoveryCode } from "@/lib/chatRecovery";
+import { SHOW_RECOVERY_EVENT } from "@/components/RecoveryCodeGate";
 
 
 interface Props {
@@ -42,7 +44,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
-  const { status: chatStatus, disable: disableChat, retry: retryChat } = useChatSession();
+  const { status: chatStatus, session: chatSession, disable: disableChat, retry: retryChat } = useChatSession();
   const { subscribed: pushOn, stale: pushStale, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
@@ -379,6 +381,21 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
             >
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               {t("wallet.connecting_messaging")}
+            </DropdownMenuItem>
+          )}
+          {/* Код восстановления — ЕДИНСТВЕННЫЙ путь увидеть его снова.
+              Показывается только владельцам кошельков-контрактов: у обычного
+              кошелька кода нет и не должно быть, его восстановление — сам
+              кошелёк (разбор в шапке `lib/chatSession.ts`). Пункт нужен,
+              потому что окно закрывается «пропустить, запишу позже», и без
+              этого пункта такое решение было бы окончательным. */}
+          {hasRecoveryCode(chatSession) && (
+            <DropdownMenuItem
+              onClick={() => window.dispatchEvent(new Event(SHOW_RECOVERY_EVENT))}
+              className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              {t("chat.recovery_warning_title")}
             </DropdownMenuItem>
           )}
           {chatStatus === 'ready' && (

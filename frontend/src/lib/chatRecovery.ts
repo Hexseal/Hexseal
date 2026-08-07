@@ -208,6 +208,48 @@ export function markRecoveryConfirmed(address: string | null | undefined): void 
   }
 }
 
+/**
+ * Снимает отметку — зовётся, когда сеанс выдал НОВЫЙ код.
+ *
+ * ⚠️ Без этого возвращается ровно тот дефект, ради которого задача заведена.
+ * Отметка живёт в `localStorage`, а ключ — в `IndexedDB`, и они переживают
+ * разное: чистка хранилища, приватный режим, вкладка на чужом устройстве. Как
+ * только запись ключа потеряна, открытие сеанса заводит новый ключ и новый
+ * код — а отметка всё ещё говорит «записал», и новый код не показался бы
+ * НИКОГДА.
+ */
+export function forgetRecoveryConfirmed(address: string | null | undefined): void {
+  if (!address) return;
+  try {
+    localStorage.removeItem(recoveryConfirmedKey(address));
+  } catch {
+    // То же, что выше: цена — лишнее напоминание, а не потерянный код.
+  }
+}
+
+/* ──────────────────────── подготовка показа ───────────────────────────── */
+
+export interface RecoveryPrompt {
+  words: string[];
+  /** Три номера, выбранные ДЛЯ ЭТОГО показа. Новый показ — новые номера:
+   *  иначе человек, ошибшийся и открывший окно снова, получал бы те же три
+   *  слова, и вторая попытка не была бы попыткой. */
+  positions: number[];
+}
+
+/**
+ * Всё, что нужно окну, за один вызов — или `null`, если показывать нечего.
+ *
+ * `null` вместо исключения намеренно: вход приезжает из записи на устройстве,
+ * которую мог испортить кто угодно. Отказ показать окно стоит окна; падение
+ * стоило бы всего экрана.
+ */
+export function openRecoveryPrompt(code: unknown, random?: () => number): RecoveryPrompt | null {
+  const seen = inspectRecoveryCode(code);
+  if (!seen.ok) return null;
+  return { words: seen.words, positions: pickCheckPositions({ random }) };
+}
+
 /** Показывать ли неброскую плашку «код не подтверждён». */
 export function recoveryReminderVisible(
   session: ChatSession | null | undefined,

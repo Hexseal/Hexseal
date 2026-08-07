@@ -26,6 +26,7 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HANDLERS = [
   'lib/chatRecovery.ts',
   'components/RecoveryCodeModal.tsx',
+  'components/RecoveryCodeGate.tsx',
 ];
 
 function read(rel: string): string {
@@ -56,9 +57,14 @@ describe('код восстановления не утекает — осмот
     // места — `markRecoveryConfirmed`/`isRecoveryConfirmed` в chatRecovery.ts.
     // Красит: `localStorage.setItem(..., code)` где угодно.
     const body = stripProse(read(rel));
+    // Ровно три обращения и ровно из одного файла: прочитать отметку,
+    // поставить её и снять. Список ПОЛНЫЙ, а не «содержит»: четвёртое
+    // обращение — повод прочитать, что именно туда кладут.
     const calls = body.match(/localStorage\s*\.\s*\w+/g) ?? [];
     if (rel === 'lib/chatRecovery.ts') {
-      expect(calls.sort()).toEqual(['localStorage.getItem', 'localStorage.setItem']);
+      expect(calls.sort()).toEqual([
+        'localStorage.getItem', 'localStorage.removeItem', 'localStorage.setItem',
+      ]);
     } else {
       expect(calls).toEqual([]);
     }

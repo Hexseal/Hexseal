@@ -7,6 +7,7 @@ import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
+import { RecoveryCodeGate } from "@/components/RecoveryCodeGate";
 
 // Page transition via pure CSS animation (page-enter keyframe in globals.css).
 // CSS animations run on the compositor thread — independent of JS work — so
@@ -197,6 +198,14 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   return (
     <>
       <Header />
+      {/* Код восстановления — РОВНО ОДИН привратник на приложение. Поднят
+          сюда, к <Header/>, по той же причине: `useChatSession()` живёт в
+          нескольких компонентах сразу и на первом открытии все они получают
+          один и тот же объект сеанса — окно в каждом дало бы три окна
+          поверх друг друга. Плюс он переживает переходы между страницами,
+          то есть «пропустить» не отменяется навигацией.
+          Заперто `lib/chatRecoveryWiring.test.ts`. */}
+      <RecoveryCodeGate />
       {isChatPage ? (
         <Suspense fallback={
           <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
