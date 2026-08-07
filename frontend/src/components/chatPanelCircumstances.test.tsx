@@ -47,6 +47,7 @@ function setState(patch: Record<string, unknown>): void {
     isLoading: false, isInitialized: true, needsSetup: false, streamDead: false,
     passSignaturePending: false, storageNotice: null,
     chainUnverified: false, undecryptable: false,
+    burnedSeqs: [], ownNumberingReset: false,
   }, patch);
 }
 
@@ -178,14 +179,70 @@ describe('К-5: своя половина не обвиняет своего ж�
     expect(html).not.toContain(translate('chat.chain_unverified'));
   });
 
-  it('сбитая своя нумерация НЕ читается как «не прошло проверку подлинности»', () => {
-    // `own_numbering_reset` — своя беда с известной причиной, и в разбор
-    // претензий она попадать не должна ни одним из двух признаков.
+  it('сбитая своя нумерация НЕ читается как «не прошло проверку подлинности», НО и не молчит', () => {
+    // `own_numbering_reset` — своя беда с известной причиной. Обвинением она
+    // быть не должна ни одним из двух признаков — но и молчанием тоже: до
+    // этой правки замок запирал именно МОЛЧАНИЕ, то есть стоял на неверном
+    // поведении. Комментарий рядом с самим родом обещает «показать человеку
+    // надо», и обещание теперь выполняется третьим, отдельным признаком.
     const s = troubleSummary([{ kind: 'own_numbering_reset' } as ConversationTroubleLike]);
-    expect(s).toEqual({ chainUnverified: false, undecryptable: false });
-    // А чужой повтор номера — по-прежнему признак подделки.
+    expect(s).toEqual({ chainUnverified: false, undecryptable: false, ownNumberingReset: true });
+    // А чужой повтор номера — по-прежнему признак подделки и НЕ наша беда.
     const peer = troubleSummary([{ kind: 'duplicate_seq' } as ConversationTroubleLike]);
     expect(peer.chainUnverified).toBe(true);
+    expect(peer.ownNumberingReset).toBe(false);
+  });
+});
+
+/* ───── человеку говорят, что его сообщения не ушли ───── */
+
+describe('своя беда называется вслух, а не оставляется собеседнику', () => {
+  // Два пункта, переданные исполнителем разговора. Оба — про одно и то же
+  // молчание: у разговора ЕСТЬ и список сгоревших номеров (`listBurnedSeqs`),
+  // и претензия `own_numbering_reset`, у обоих в комментариях записано
+  // «интерфейс обязан сказать» — и вызывающих вне тестов было НОЛЬ.
+  //
+  // Как это выглядело для человека: нажал отправить, вкладка закрылась,
+  // сообщение не ушло. У собеседника — дыра в переписке. У автора на экране —
+  // НИЧЕГО. Он уверен, что отправил.
+
+  it('сгоревшие номера показываются человеку, а не остаются в хранилище', async () => {
+    setState({
+      messages: [
+        { id: `${ME.toLowerCase()}-0`, from: ME.toLowerCase(), seq: 0, text: 'дошло',
+          timestamp: Date.UTC(2026, 7, 6, 10), isFromMe: true, delivered: true },
+      ],
+      burnedSeqs: [1, 2],
+    });
+    const html = await renderPanel();
+    expect(html).toContain(translate('chat.messages_not_sent'));
+  });
+
+  it('сгоревших номеров нет — плашки нет, экран не пугает на ровном месте', async () => {
+    setState({ messages: [], burnedSeqs: [] });
+    const html = await renderPanel();
+    expect(html).not.toContain(translate('chat.messages_not_sent'));
+  });
+
+  it('сбитая нумерация показывается отдельной строкой, не обвиняющей собеседника', async () => {
+    setState({ messages: [], ownNumberingReset: true });
+    const html = await renderPanel();
+    expect(html).toContain(translate('chat.numbering_reset'));
+    // И это НЕ обвинение: формулировка про подделку рядом не появляется.
+    expect(html).not.toContain(translate('chat.chain_unverified'));
+  });
+
+  it('нумерация не сбита — строки нет', async () => {
+    setState({ messages: [], ownNumberingReset: false });
+    const html = await renderPanel();
+    expect(html).not.toContain(translate('chat.numbering_reset'));
+  });
+
+  it('обе беды разом — сказаны обе, а не одна вместо другой', async () => {
+    setState({ messages: [], burnedSeqs: [3], ownNumberingReset: true });
+    const html = await renderPanel();
+    expect(html).toContain(translate('chat.messages_not_sent'));
+    expect(html).toContain(translate('chat.numbering_reset'));
   });
 });
 
