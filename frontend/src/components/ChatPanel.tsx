@@ -14,6 +14,8 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
+import { useRecoveryReminder } from '@/components/RecoveryCodeGate';
+import { RecoveryReminder } from '@/components/RecoveryCodeModal';
 import { useFeeConfig } from '@/hooks/useFeeConfig';
 import { quoteFeeLocal } from '@/lib/fee';
 import {
@@ -412,6 +414,24 @@ function ChatOpening() {
  * компонент — единственный способ отрисовать раскрытый вид тем же кодом,
  * которым его видит человек, а не его описанием.
  */
+/**
+ * ⚠️ ЧТО ИЗ ТРЕТЬЕЙ СТРОКИ БЕЙДЖА ПРАВДА СЕГОДНЯ (финальная проверка ветки).
+ *
+ * `chat.privacy_badge_dispute` обещает: «предъявить переписку арбитру может
+ * каждая из сторон — со своего устройства». Половина этого сбылась, половина
+ * нет, и разница важнее, чем кажется:
+ *
+ *  - **Данные есть.** Доказательства (звено, подпись, подписной ключ, байты
+ *    кадра) лежат у ОБЕИХ сторон — и у своей половины переписки тоже, она
+ *    достижима с сервера и переживает перезагрузку вкладки.
+ *  - **Дороги нет.** Эти доказательства сегодня НИКТО НЕ ЧИТАЕТ: предъявления
+ *    арбитру не существует ни кнопкой, ни кодом — это план 4.
+ *
+ * Строку решено оставить (спека прямо запрещает терять эту мысль: уходя от
+ * «платформа всё видит», человек не теряет защиту в споре, а получает её в
+ * свои руки). Но обещание опережает механизм, и здесь это сказано вслух, чтобы
+ * никто не прочитал зелёный чат как готовое предъявление.
+ */
 export function PrivacyNotice({ open }: { open: boolean }) {
   const t = useTranslations();
   if (!open) return null;
@@ -525,6 +545,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   // «Инициализация…» рядом с надписью «Сообщений пока нет», хотя ничего не
   // инициализировалось и инициализироваться не собиралось.
   const { status: sessionStatus, retry: retrySession } = useChatSession();
+  // Код выдан, но человек не подтвердил, что записал. Плашка неброская и
+  // уходит РОВНО после успешной проверки — не по закрытию окна и не по
+  // таймеру (`recoveryReminderVisible`, `lib/chatRecovery.ts`).
+  const recoveryReminder = useRecoveryReminder();
   const [showPrivacy, setShowPrivacy] = useState(false);
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
@@ -1487,6 +1511,7 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
             </p>
           </div>
         )}
+        <RecoveryReminder visible={recoveryReminder.visible} onShow={recoveryReminder.show} />
         {/* Stream dead banner */}
         {streamDead && (
           <div className="flex items-center justify-between gap-2 px-3 py-2 mx-1 mb-1 rounded-[12px] bg-yellow-500/10 border border-yellow-500/20">

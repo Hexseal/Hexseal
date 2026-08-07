@@ -624,7 +624,7 @@
     "privacy_badge_dispute": "En una disputa, cualquiera de las partes puede presentar la conversación al árbitro — desde su propio dispositivo.",
     "chain_gap": "Falta un mensaje aquí — no llegó o no lo entregaron",
     "chain_gap_start": "No se presentó el inicio de esta conversación",
-    "pass_signature_hint": "La cartera pide una firma: demuestra al servidor que estos paquetes son tuyos. Se repite como mucho una vez cada 12 horas y nunca toca tu clave de chat.",
+    "pass_signature_hint": "Tu billetera pide una firma: demuestra al servidor que estos paquetes son tuyos. Normalmente se repite como mucho una vez cada 12 horas; si tu navegador bloquea el almacenamiento (modo privado), una vez por carga de pestaña. Nunca toca tu clave de chat.",
     "key_not_saved": "No se pudo guardar la clave del chat en este dispositivo — el chat funciona, pero solo hasta que recargues la pestaña.",
     "key_not_saved_blocked": "La clave del chat no se guardó: el sitio está abierto en otra pestaña. Ciérrala o te pedirán firmar cada vez.",
     "chain_unverified": "Algunos mensajes de tu interlocutor no pasaron la comprobación de autenticidad y no se muestran.",

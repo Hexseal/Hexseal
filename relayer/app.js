@@ -2929,9 +2929,10 @@ app.post('/keys', (req, res) => {
 
   if (!checkRateLimit(keysWriteRateKey(address), KEYS_WRITE_RATE_MAX)) return bagRateLimited(res, 'rate_limited_write');
 
-  // signKey — И-1 (ревью координатора): поле заведено для Задачи 5 (ключ
-  // проверки подписи звеньев chatChain.ts, которого в проекте пока нет),
-  // необязательное — тело без него по-прежнему кладёт только boxKey.
+  // signKey — ключ проверки подписи звеньев (Ed25519, выводится отдельным
+  // под-ключом в chatConversation.ts). Клиент чата передаёт его ВСЕГДА;
+  // необязательным поле осталось по форме, чтобы старое тело без него
+  // по-прежнему клало только boxKey и не отвергалось.
   const { boxKey, signKey } = req.body || {};
   try {
     const stored = putKey(address, { boxKey, signKey }, Date.now());
