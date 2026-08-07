@@ -66,6 +66,12 @@ vi.mock('ethers', async (importOriginal) => {
   actual.JsonRpcProvider.prototype.getTransactionReceipt = async function (...args) {
     return providerMocks.getTransactionReceipt(...args);
   };
+  // К-1: контрактная подпись (ERC-1271/ERC-6492) проверяется deployless-вызовом
+  // provider.call({ data }) — мимо ethers.Contract, ровно как getBalance/
+  // getTransactionReceipt выше, поэтому и патчится тем же способом.
+  actual.JsonRpcProvider.prototype.call = async function (...args) {
+    return providerMocks.call(...args);
+  };
   class FakeContract {
     constructor(address) {
       const key = String(address).toLowerCase();
