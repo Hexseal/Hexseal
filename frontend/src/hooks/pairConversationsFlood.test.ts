@@ -27,7 +27,7 @@ import {
 import { buildLink } from '@/lib/chatChain';
 import { packEnvelope } from '@/lib/chatEnvelope';
 import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
-import { loadPairConversations } from './usePairConversations';
+import { loadPairConversations, _resetPreviewCacheForTest } from './usePairConversations';
 
 const ALICE = '0xA1cE00000000000000000000000000000000CAfE' as const;
 const BOB   = '0xB0b1000000000000000000000000000000005eEd' as const;
@@ -76,6 +76,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   _resetBagPassCacheForTest();
+  _resetPreviewCacheForTest();
 });
 
 describe('В-1: тысяча посторонних в списке переписок', () => {
@@ -128,53 +129,82 @@ describe('В-1: тысяча посторонних в списке перепи
     expect(secondDownloads).toBe(0);
   }, 120_000);
 
-  it('ЗАМЕР: настоящая переписка получает превью, даже когда посторонних тысяча', async () => {
-    // Потолок превью сам по себе — половина ответа: если тратить его на тех,
-    // кто первым попался, тысяча посторонних просто съест его, и человек
-    // увидит пустое превью у ЕДИНСТВЕННОЙ своей настоящей переписки.
+  it('ЗАМЕР: 60 настоящих переписок получают превью, когда посторонних тысяча', async () => {
+    // Потолок сам по себе — половина ответа. Если тратить его на тех, кто
+    // первым попался, тысяча посторонних просто съест его, и человек увидит
+    // пустые превью у ВСЕХ своих настоящих переписок.
     //
-    // Что красит: возврат к обходу собеседников в порядке, который дал сервер,
-    // без различения «мы ему писали» и «он написал нам».
+    // ⚠️ ШЕСТЬДЕСЯТ, А НЕ ОДНА, И ЭТО НЕ ПРИДИРКА. Первая версия этого замка
+    // ставила ОДНОГО настоящего собеседника — и проходила зелёной на мутации
+    // «претенденты без различения „мы ему писали“»: одного спасала сортировка,
+    // ставящая своих вперёд, и восьми свободных мест хватало. Замок держался
+    // на числе, которого нет в задаче. Настоящих переписок больше восьми —
+    // вот тогда правило «своим мест не считаем» становится единственным, что
+    // их спасает. Заодно этот же замок ловит и потолок за заход: шестьдесят
+    // превью не могут приехать за один раз.
     const alice = await makeSession(ALICE, 'a1');
     const bob = await makeSession(BOB, 'bb');
     const stranger = await makeSession(strangerAddress(1), 'ff');
     const N = 1_000;
+    const KNOWN = 60;
 
     const bags: StoredBag[] = [];
     const peers: { address: string; lastActivityWithMeAt: number }[] = [];
     for (let i = 1; i <= N; i++) {
       const addr = strangerAddress(i);
-      // Посторонние СВЕЖЕЕ настоящей переписки — иначе замок держался бы на
+      // Посторонние СВЕЖЕЕ настоящих переписок — иначе замок держался бы на
       // сортировке по времени, а не на различении «мы ему писали».
       bags.push(await oneBag(stranger, addr, alice.keypair.publicKey, `мусор ${i}`, 1_700_000_100_000 + i));
       peers.push({ address: addr.toLowerCase(), lastActivityWithMeAt: 1_700_000_100_000 + i });
     }
-    const fromBob = await oneBag(bob, BOB, alice.keypair.publicKey, 'привет, это Боб', 1_700_000_001_000);
-    bags.push(fromBob);
-    peers.push({ address: BOB.toLowerCase(), lastActivityWithMeAt: 1_700_000_001_000 });
 
+    // Настоящие: мы им писали. Один кошелёк на всех — важны разные адреса.
+    const sentList: { key: string; recipient: string; uploadedAt: number; fetched: boolean }[] = [];
+    const knownAddrs: string[] = [];
+    for (let i = 0; i < KNOWN; i++) {
+      const addr = (i === 0 ? BOB : strangerAddress(0x9000 + i)).toLowerCase();
+      knownAddrs.push(addr);
+      bags.push(await oneBag(bob, addr as `0x${string}`, alice.keypair.publicKey, `ответ ${i}`, 1_700_000_001_000 + i));
+      peers.push({ address: addr, lastActivityWithMeAt: 1_700_000_001_000 + i });
+      sentList.push({ key: `${addr}/17000000009${i}-a1ce00.bin`, recipient: addr, uploadedAt: 1_700_000_000_900, fetched: true });
+    }
+
+    const downloads: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
       const u = new URL(String(url));
       if (u.pathname === '/bags') {
         return new Response(JSON.stringify({
           inbox: bags.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })),
-          // Мы Бобу писали — и это единственное, чем настоящая переписка
-          // отличается от навязанной.
-          sent: [{ key: `${BOB.toLowerCase()}/1700000000900-a1ce00.bin`, recipient: BOB.toLowerCase(), uploadedAt: 1_700_000_000_900, fetched: true }],
-          peers,
+          sent: sentList, peers,
         }), { status: 200 });
       }
       const key = decodeURIComponent(u.pathname.replace(/^\/bags\//, ''));
+      downloads.push(key);
       const bag = bags.find(b => b.key === key);
       return bag ? new Response(bag.body, { status: 200 }) : new Response('{}', { status: 404 });
     }));
 
-    const rows = await loadPairConversations(alice, 'v1.p');
-    const bobRow = rows.find(r => r.peerAddress === BOB.toLowerCase());
-    console.log(
-      `[В-1 замер В] строк: ${rows.length}; превью Боба: «${bobRow?.lastText ?? '—'}»; ` +
-      `место Боба в списке: ${rows.findIndex(r => r.peerAddress === BOB.toLowerCase())}`,
+    const perLoad: number[] = [];
+    let rows = await loadPairConversations(alice, 'v1.p');
+    perLoad.push(downloads.length);
+    for (let round = 0; round < 3; round++) {
+      downloads.length = 0;
+      rows = await loadPairConversations(alice, 'v1.p');
+      perLoad.push(downloads.length);
+    }
+
+    const withPreview = knownAddrs.filter(
+      a => (rows.find(r => r.peerAddress === a)?.lastText ?? '').startsWith('ответ'),
     );
-    expect(bobRow?.lastText).toBe('привет, это Боб');
+    console.log(
+      `[В-1 замер В] настоящих переписок: ${KNOWN}, посторонних: ${N}; ` +
+      `скачиваний по заходам: ${perLoad.join(', ')}; превью получили: ${withPreview.length} из ${KNOWN}`,
+    );
+
+    // Потолок за заход держится…
+    expect(perLoad[0]).toBeLessThanOrEqual(PREVIEW_BUDGET);
+    // …и при этом ВСЕ настоящие переписки своё превью получают, за несколько
+    // заходов. Тысяча посторонних их не вытесняет.
+    expect(withPreview).toHaveLength(KNOWN);
   }, 120_000);
 });

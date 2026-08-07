@@ -36,6 +36,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { listBags, fetchBag, BagPassError, type BagSummary } from '@/lib/chatTransport';
 import { receiveBags, type IncomingBag } from '@/lib/chatConversation';
+import { BoundedParseCache } from '@/lib/chatParseCache';
 import type { ChatSession } from '@/lib/chatSession';
 import { useChatSession, getBagPass } from './useChatSession';
 
@@ -55,9 +56,84 @@ export interface PairConversation {
   group?: unknown;
 }
 
+/* ─────────────────── В-1: потолок превью и память о них ───────────────── */
+
 /**
- * Собирает список переписок: один запрос списка плюс по одному скачиванию на
- * собеседника ради превью.
+ * Сколько мешков скачиваем ради превью за ОДИН заход.
+ *
+ * ⚠️ ЧИСЛО ВЫВЕДЕНО ИЗ ЧУЖОГО, БОЕВОГО. `relayer/app.js` даёт адресу
+ * `BAG_READ_RATE_MAX = 120` чтений в минуту, ОБЩИХ у перечисления и
+ * скачивания, и этот бюджет делится с открытым чатом: тот берёт 12
+ * перечислений плюс до 80 скачиваний (`BAG_DOWNLOAD_BUDGET_PER_MIN` в
+ * `usePairChat.ts`). Списку остаётся около 28, из них 2 — его собственные
+ * перечисления раз в тридцать секунд.
+ *
+ * ⚠️ ЗАЧЕМ ПОТОЛОК ВООБЩЕ (В-1 враждебной проверки). Мешок в чужой ящик
+ * кладёт кто угодно, кто знает адрес, а адреса в цепи публичны. Замер до
+ * правки: тысяча посторонних адресов = тысяча скачиваний НА КАЖДЫЙ ЗАХОД —
+ * то есть каждые тридцать секунд, при каждом возврате во вкладку и на каждое
+ * новое сообщение в открытом чате. Это гарантированный `429` на собственный
+ * опрос переписки.
+ */
+export const PREVIEW_BUDGET_PER_LOAD = 24;
+
+/**
+ * Сколько собеседников, КОТОРЫМ МЫ НИ РАЗУ НЕ ПИСАЛИ, вообще претендуют на
+ * превью — самые свежие.
+ *
+ * ⚠️ БЕЗ ЭТОГО ЧИСЛА ОДНОГО ПОТОЛКА МАЛО, и это замерено. С одним потолком
+ * тысяча посторонних получала бы по двадцать четыре превью за заход — не
+ * тысячу разом, но всё равно тысячу, просто за сорок два захода, то есть
+ * двадцать минут непрерывного скачивания мусора. Потолок ограничивал темп, а
+ * не работу: очередь оставалась бездонной. Здесь она кончается.
+ *
+ * Тем, кому мы писали, потолок претендентов НЕ СТАВИТСЯ вовсе: настоящих
+ * переписок может быть и сорок, и все они заслуживают превью — просто наберут
+ * его за два-три захода, а не за один.
+ */
+export const UNKNOWN_PREVIEW_SLOTS = 8;
+
+/**
+ * Разобранное превью по ключу мешка.
+ *
+ * ⚠️ ПАМЯТЬ ВАЖНЕЕ ПОТОЛКА. Один потолок без памяти означал бы, что список
+ * вечно ползёт по кругу: двадцать четыре превью за заход, каждый заход
+ * заново, и одни и те же мешки качаются бесконечно. Мешок неизменяем (ключ
+ * содержит uuid), поэтому запомненное превью не устаревает НИКОГДА — новое
+ * сообщение приходит под НОВЫМ ключом.
+ *
+ * Ключ карты — `свой адрес|ключ мешка`: расшифровка зависит от нашей пары
+ * ключей, и без своего адреса кэш отдал бы расшифрованное другому аккаунту на
+ * том же устройстве (та же ловушка, что закрыта в `_msgCache` хука переписки).
+ *
+ * Потолок и правило вытеснения — общие с кэшем разбора (`chatParseCache.ts`,
+ * К-3): при переполнении жертва случайная, а приём изредка, поэтому доля
+ * попаданий падает плавно и не обрывается в ноль.
+ */
+const _previewCache = new BoundedParseCache<{ text: string; sentAt: number }>(500);
+
+/** Только тесты: список обязан быть проверяем с холодной памяти. */
+export function _resetPreviewCacheForTest(): void {
+  _previewCache.clear();
+}
+
+/**
+ * Собирает список переписок: один запрос списка плюс скачивания ради превью —
+ * не больше `PREVIEW_BUDGET_PER_LOAD` за заход и только за тем, чего ещё нет в
+ * памяти.
+ *
+ * ⚠️ ПОРЯДОК, В КОТОРОМ ТРАТИТСЯ БЮДЖЕТ, — ЭТО ПОЛОВИНА ПРАВКИ. Потолок сам по
+ * себе спасает бюджет склада и НЕ спасает человека: тысяча посторонних просто
+ * съела бы двадцать четыре скачивания, и превью не досталось бы единственной
+ * настоящей переписке. Поэтому первыми идут те, КОМУ МЫ САМИ ПИСАЛИ, — это
+ * единственный признак, отличающий переписку от навязанной, и он у нас есть
+ * бесплатно, в поле `sent` того же ответа.
+ *
+ * ⚠️ ЧЕГО ЭТО НЕ ЗАКРЫВАЕТ, СКАЗАНО ПРЯМО. Человек, который пишет впервые (по
+ * настоящему делу, честно), для нас неотличим от постороннего: мы ему не
+ * писали. Под наводнением его превью может не достаться бюджета — он окажется
+ * в списке строкой без текста. Отличить его от шума нечем ни нам, ни серверу;
+ * единственное, что тут можно сделать честно, — не выдавать это за решённое.
  *
  * Ошибки скачивания и разбора ОДНОГО собеседника не роняют весь список:
  * битый мешок не должен стоить человеку всех его переписок.
@@ -68,6 +144,7 @@ export async function loadPairConversations(
   signal?: AbortSignal,
 ): Promise<PairConversation[]> {
   const { inbox, sent, peers } = await listBags(pass, undefined, signal);
+  const own = session.address.toLowerCase();
 
   // Самый свежий ВХОДЯЩИЙ мешок на собеседника — только его и качаем.
   const newestFrom = new Map<string, BagSummary>();
@@ -85,8 +162,32 @@ export async function loadPairConversations(
     if (s.uploadedAt > prev) newestTo.set(to, s.uploadedAt);
   }
 
+  // ─── КОМУ ДОСТАНЕТСЯ БЮДЖЕТ ПРЕВЬЮ ─────────────────────────────────────
+  //
+  // Свежие вперёд — и ВСЁ. Здесь стояло ещё и «своим вперёд», но это правило
+  // оказалось НЕ ПРОВЕРЯЕМЫМ: мутация «убрать его» проходила зелёной, потому
+  // что своих спасает не порядок обхода, а то, что мест им не считают вовсе
+  // (ниже). Порядок показа задаёт итоговая сортировка по времени в конце
+  // функции, а не этот список. Правило, которое ничего не решает и ничем не
+  // заперто, убрано, а не оставлено «на всякий случай».
+  const ordered = [...peers].sort(
+    (a, b) => (b.lastActivityWithMeAt ?? 0) - (a.lastActivityWithMeAt ?? 0),
+  );
+
+  // Кто вообще претендует на превью: все, кому мы писали, плюс несколько самых
+  // свежих из остальных. Очередь посторонних обязана КОНЧАТЬСЯ — иначе потолок
+  // ограничивал бы темп скачивания мусора, а не его количество.
+  const candidates = new Set<string>();
+  let unknownSlots = UNKNOWN_PREVIEW_SLOTS;
+  for (const peer of ordered) {
+    const addr = peer.address.toLowerCase();
+    if (newestTo.has(addr)) { candidates.add(addr); continue; }
+    if (unknownSlots > 0) { unknownSlots--; candidates.add(addr); }
+  }
+
+  let budget = PREVIEW_BUDGET_PER_LOAD;
   const rows: PairConversation[] = [];
-  for (const peer of peers) {
+  for (const peer of ordered) {
     const addr = peer.address.toLowerCase();
     const summary = newestFrom.get(addr);
     let lastText = '';
@@ -94,25 +195,44 @@ export async function loadPairConversations(
     let lastFromMe = false;
 
     if (summary) {
-      try {
-        const body = await fetchBag(pass, summary.key, signal);
-        if (body) {
-          const bag: IncomingBag = {
-            key: summary.key, sender: summary.sender,
-            uploadedAt: summary.uploadedAt, body,
-          };
-          const state = await receiveBags(session, [bag], { peer: addr as `0x${string}` });
-          const last = state.messages[state.messages.length - 1];
-          if (last) {
-            lastText = last.payload.text ?? last.payload.file?.name ?? '';
-            lastAt = last.sentAt;
+      const cacheKey = `${own}|${summary.key}`;
+      const remembered = _previewCache.get(cacheKey);
+      if (remembered) {
+        // Мешок неизменяем — запомненное превью не устаревает. Новое
+        // сообщение приезжает под НОВЫМ ключом и промахнётся само.
+        //
+        // Показывается ДАЖЕ ТОМУ, кто сегодня в претенденты не попал: раз оно
+        // уже есть, прятать его значило бы, что строка «потеряла» текст.
+        lastText = remembered.text;
+        lastAt = remembered.sentAt;
+      } else if (budget > 0 && candidates.has(addr)) {
+        budget--;
+        try {
+          const body = await fetchBag(pass, summary.key, signal);
+          if (body) {
+            const bag: IncomingBag = {
+              key: summary.key, sender: summary.sender,
+              uploadedAt: summary.uploadedAt, body,
+            };
+            const state = await receiveBags(session, [bag], { peer: addr as `0x${string}` });
+            const last = state.messages[state.messages.length - 1];
+            if (last) {
+              lastText = last.payload.text ?? last.payload.file?.name ?? '';
+              lastAt = last.sentAt;
+            }
+            // Запоминается И ПУСТОЕ превью (мешок не вскрылся, не разобрался):
+            // иначе нечитаемый мешок качался бы заново каждые тридцать секунд
+            // вечно — ровно тот случай, ради которого память и заводится.
+            _previewCache.put(cacheKey, { text: lastText, sentAt: lastAt });
           }
+        } catch (err) {
+          // Отмена — не «сломанная строка», а уход со страницы: пробрасываем,
+          // чтобы вызывающий не принял оборванную загрузку за пустой список.
+          if ((err as { name?: string })?.name === 'AbortError') throw err;
+          // Отказ НЕ запоминается: моргнувшая сеть не должна оставить строку
+          // без превью навсегда — следующий заход попробует снова.
+          console.warn('[usePairConversations] превью переписки не собралось', err);
         }
-      } catch (err) {
-        // Отмена — не «сломанная строка», а уход со страницы: пробрасываем,
-        // чтобы вызывающий не принял оборванную загрузку за пустой список.
-        if ((err as { name?: string })?.name === 'AbortError') throw err;
-        console.warn('[usePairConversations] превью переписки не собралось', err);
       }
     }
 
