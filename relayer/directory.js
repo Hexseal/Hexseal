@@ -120,11 +120,19 @@ export let DIRECTORY_FILE;
 // само по себе — недорогая, вечная улика для арбитра ("этот адрес менял
 // ключ 47 раз").
 export let MAX_KEY_HISTORY;
+// Тот же приём, что К-3 применила к складу мешков: снимок плюс журнал
+// дозаписи. Потолок журнала — когда переваливает, снимок пересобирается.
+// 4 МиБ: при ~270 байтах на строку это примерно 15 000 записей между
+// схлопываниями.
+export let DIRECTORY_JOURNAL_MAX_BYTES;
+export let DIRECTORY_JOURNAL_FILE;
 
 function _refreshConfig() {
   STORAGE_DIR = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
   DIRECTORY_FILE = path.join(STORAGE_DIR, 'chat-key-directory.json');
+  DIRECTORY_JOURNAL_FILE = `${DIRECTORY_FILE}.log`;
   MAX_KEY_HISTORY = Number(process.env.MAX_KEY_HISTORY || 200);
+  DIRECTORY_JOURNAL_MAX_BYTES = Number(process.env.DIRECTORY_JOURNAL_MAX_BYTES || 4 * 1024 * 1024);
 }
 _refreshConfig();
 
@@ -143,6 +151,12 @@ export function assertDirectoryReady() {
   _refreshConfig();
   if (!Number.isFinite(MAX_KEY_HISTORY) || MAX_KEY_HISTORY <= 0) {
     fail('assertDirectoryReady', `MAX_KEY_HISTORY=${JSON.stringify(process.env.MAX_KEY_HISTORY)} is not a positive finite number (parsed as ${MAX_KEY_HISTORY})`);
+  }
+  // Тот же урок, что В-5 преподала BAG_JOURNAL_MAX_BYTES: новая ручка,
+  // не проверенная при старте, молча отменяет починку, ради которой
+  // заведена (нулевой/мусорный потолок = схлопывание на каждой записи).
+  if (!Number.isFinite(DIRECTORY_JOURNAL_MAX_BYTES) || DIRECTORY_JOURNAL_MAX_BYTES <= 0) {
+    fail('assertDirectoryReady', `DIRECTORY_JOURNAL_MAX_BYTES=${JSON.stringify(process.env.DIRECTORY_JOURNAL_MAX_BYTES)} is not a positive finite number (parsed as ${DIRECTORY_JOURNAL_MAX_BYTES})`);
   }
   if (DIRECTORY_FILE !== previous) _loadDirectory();
   fs.mkdirSync(STORAGE_DIR, { recursive: true });
@@ -242,9 +256,16 @@ export function isDirectoryHealthy() {
 // оговорки — верно только для порчи, обнаруженной ПРИ загрузке, не для
 // порчи, случившейся уже под живым процессом (найдено ревью).
 export function _loadDirectory() {
-  if (!fs.existsSync(DIRECTORY_FILE)) {
+  const snapshotExists = fs.existsSync(DIRECTORY_FILE);
+  const journalExists = fs.existsSync(DIRECTORY_JOURNAL_FILE);
+  if (!snapshotExists) {
+    // Снимка нет. Если есть журнал — это штатное состояние сервера до
+    // первого схлопывания (тот же урок, что К-3 получила на складе:
+    // проверяй существование ОПИСИ, а не одного её файла, иначе свежий
+    // сервер уходит в недоверие на обычном перезапуске).
     _directory = Object.create(null);
     _directoryLoadOk = true;
+    if (journalExists) _replayDirectoryJournal(_directory);
     return _directory;
   }
 
@@ -350,9 +371,67 @@ export function _loadDirectory() {
     console.error(`[directory] _loadDirectory: dropped ${dropped} corrupt ${dropped === 1 ? 'entry' : 'entries'} out of ${totalCount} from ${DIRECTORY_FILE}`);
   }
 
+  // Журнал дозаписи поверх снимка — всё, что записано после последнего
+  // схлопывания, живёт только здесь.
+  _replayDirectoryJournal(clean);
+
   _directory = clean;
   _directoryLoadOk = true;
   return _directory;
+}
+
+// Доигрывает журнал поверх снимка. Каждая строка проходит ту же проверку
+// формы (_isValidRecord), что и запись из снимка: журнал — такой же файл на
+// диске и такой же кандидат на порчу.
+//
+// Неразобранная строка НЕ роняет справочник в недоверие, в отличие от
+// битого снимка: обрезанный ХВОСТ — ожидаемый след обрыва процесса посреди
+// дозаписи, ради чего строчный формат и выбран.
+//
+// keyChangeCount берётся БОЛЬШИЙ (В-2): счётчик объявлен никогда не
+// убывающим, и строка более старой копии релеера не имеет права откатить
+// его назад.
+function _replayDirectoryJournal(target) {
+  let raw;
+  try { raw = fs.readFileSync(DIRECTORY_JOURNAL_FILE, 'utf8'); } catch { return; }
+  let applied = 0, skipped = 0;
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch { skipped++; continue; } // обрезанный хвост
+    if (!rec || typeof rec !== 'object' || typeof rec.a !== 'string') { skipped++; continue; }
+    if (!ETH_ADDR_RE.test(rec.a) || !_isValidRecord(rec.r)) { skipped++; continue; }
+    const prev = target[rec.a];
+    const merged = { ...rec.r, history: rec.r.history.map((h) => ({ ...h })) };
+    if (prev && typeof prev.keyChangeCount === 'number' && prev.keyChangeCount > merged.keyChangeCount) {
+      merged.keyChangeCount = prev.keyChangeCount;
+    }
+    target[rec.a] = merged;
+    applied++;
+  }
+  if (applied || skipped) {
+    console.log(
+      `[directory] _replayDirectoryJournal: applied ${applied} change(s) from ${DIRECTORY_JOURNAL_FILE}` +
+      (skipped ? ` (skipped ${skipped} unreadable line(s) — the last one is normally a write cut short by a restart)` : '')
+    );
+  }
+}
+
+// Дозапись одной строки — горячий путь. Заменяет перезапись всего файла на
+// каждую регистрацию (замер: 8,87 мс при 2000 адресах, 22,76 мс при 4000,
+// 20 000 не уложились в десять минут).
+function _appendDirectoryJournal(address, record) {
+  try {
+    fs.mkdirSync(path.dirname(DIRECTORY_JOURNAL_FILE), { recursive: true });
+    fs.appendFileSync(DIRECTORY_JOURNAL_FILE, JSON.stringify({ a: address, r: record }) + '\n', 'utf8');
+  } catch (e) {
+    console.error(`[directory] FAILED TO APPEND ${DIRECTORY_JOURNAL_FILE} — in-memory directory and disk directory would have diverged, change rolled back by the caller: ${e.message}`);
+    throw e;
+  }
+  // Журнал не должен расти вечно: чем длиннее, тем дольше разбор при старте.
+  try {
+    if (fs.statSync(DIRECTORY_JOURNAL_FILE).size > DIRECTORY_JOURNAL_MAX_BYTES) _saveDirectory();
+  } catch { /* не смогли измерить — схлопнём в следующий раз */ }
 }
 _loadDirectory(); // начальная загрузка при импорте — перечитывается assertDirectoryReady(), если путь реально сменился
 
@@ -440,7 +519,7 @@ function _mergeWithDisk(memory) {
   return merged;
 }
 
-function _saveDirectory() {
+export function _saveDirectory() {
   const tmpPath = `${DIRECTORY_FILE}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
     fs.mkdirSync(path.dirname(DIRECTORY_FILE), { recursive: true });
@@ -449,6 +528,10 @@ function _saveDirectory() {
     _directory = _mergeWithDisk(_directory);
     fs.writeFileSync(tmpPath, JSON.stringify(_directory), 'utf8');
     fs.renameSync(tmpPath, DIRECTORY_FILE);
+    // Снимок доехал — журнал, накопленный ДО него, целиком в нём учтён.
+    // Порядок «снимок, потом обнуление» — единственный безопасный: обратный
+    // при обрыве между шагами теряет всё, что было в журнале.
+    try { if (fs.existsSync(DIRECTORY_JOURNAL_FILE)) fs.unlinkSync(DIRECTORY_JOURNAL_FILE); } catch {}
   } catch (e) {
     try { fs.unlinkSync(tmpPath); } catch {}
     console.error(`[directory] FAILED TO SAVE ${DIRECTORY_FILE} — in-memory directory and disk directory would have diverged, change rolled back by the caller: ${e.message}`);
@@ -601,10 +684,15 @@ export function putKey(address, keys, nowMs = Date.now()) {
   // В окне выкатки другая живая копия могла увести счётчик вперёд, а наш
   // снимок в памяти застыл на моменте старта; прибавляя к своему, мы бы
   // молча списали её смены. Улика обязана только расти.
-  let keyChangeCount = Math.max(
-    existing ? existing.keyChangeCount : 0,
-    _keyChangeCountOnDisk(address),
-  );
+  // Чтение диска — ТОЛЬКО для уже известного адреса, то есть для настоящей
+  // смены ключа. Событие уровня «потерял устройство», редкое по природе.
+  // Для НОВОГО адреса читать нечего (счётчик начинается с нуля), а именно
+  // регистрация новых адресов — путь нападения из пункта 31: сто двадцать в
+  // минуту, 172 800 в сутки. Лишнее чтение файла на этом пути и было
+  // половиной цены, которую завела В-2.
+  let keyChangeCount = existing
+    ? Math.max(existing.keyChangeCount, _keyChangeCountOnDisk(address))
+    : 0;
   if (existing) {
     const changed = [];
     if (boxKeyChanged) changed.push('boxKey');
@@ -659,7 +747,8 @@ export function putKey(address, keys, nowMs = Date.now()) {
 
   _directory[address] = record;
   try {
-    _saveDirectory();
+    // Одна строка в журнал вместо перезаписи всего справочника.
+    _appendDirectoryJournal(address, record);
   } catch (e) {
     if (existing) _directory[address] = existing;
     else delete _directory[address];

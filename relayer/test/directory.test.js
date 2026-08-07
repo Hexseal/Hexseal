@@ -49,7 +49,7 @@ process.env.KEYS_IP_RATE_MAX    = '10';
 
 const directory = await import('../directory.js');
 const {
-  putKey, getKeyRecord, assertDirectoryReady, isDirectoryHealthy, _loadDirectory,
+  putKey, getKeyRecord, assertDirectoryReady, isDirectoryHealthy, _loadDirectory, _saveDirectory,
 } = directory;
 
 const { app } = await import('../app.js');
@@ -65,8 +65,35 @@ const KEY_C = '0x' + '33'.repeat(32);
 const SIGN_A = '0x' + 'aa'.repeat(32);
 const SIGN_B = '0x' + 'bb'.repeat(32);
 
+// Справочник на диске — снимок ПЛЮС журнал дозаписи. Спрашиваем «что увидит
+// перезапуск», а не «что лежит в одном конкретном файле»: иначе тест
+// запирает выбор файла, а не сохранность.
+function directoryOnDisk() {
+  const out = {};
+  if (fs.existsSync(directory.DIRECTORY_FILE)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) Object.assign(out, parsed);
+    } catch { /* битый снимок */ }
+  }
+  const log = directory.DIRECTORY_FILE + '.log';
+  if (fs.existsSync(log)) {
+    for (const line of fs.readFileSync(log, 'utf8').split('\n')) {
+      if (!line) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      if (r && typeof r.a === 'string') out[r.a] = r.r;
+    }
+  }
+  return out;
+}
+
 beforeEach(() => {
   fs.rmSync(directory.DIRECTORY_FILE, { force: true });
+  // Справочник — ДВА файла: снимок и журнал дозаписи. Журнал обязан
+  // сноситься вместе со снимком, иначе он доигрывается поверх пустого
+  // снимка и воскрешает записи предыдущего теста (поймано ровно так).
+  fs.rmSync(directory.DIRECTORY_FILE + '.log', { force: true });
   _loadDirectory();
 });
 
@@ -314,7 +341,7 @@ describe('directory.js — форма и хранение', () => {
 
   it('запись на диск атомарна: файл всегда валидный JSON, содержит адрес после putKey', () => {
     putKey(ALICE, { boxKey: KEY_A }, 1000);
-    const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    const raw = directoryOnDisk();
     expect(raw[ALICE].boxKey).toBe(KEY_A);
   });
 
@@ -342,7 +369,12 @@ describe('directory.js — форма и хранение', () => {
     // запись другого процесса; метла обязана её не тронуть.
 
     try {
-      putKey(ALICE, { boxKey: KEY_A }, 1000); // успешная запись — триггер метлы
+      // Триггер метлы — успешная запись СНИМКА (схлопывание). Горячий путь
+      // теперь дозаписывает строку в журнал и снимка не трогает, а .tmp-*
+      // осколки только снимок и создаёт — так что мести их при схлопывании
+      // и есть правильное место.
+      putKey(ALICE, { boxKey: KEY_A }, 1000);
+      _saveDirectory();
 
       expect(fs.existsSync(stalePath)).toBe(false);
       expect(fs.existsSync(freshPath)).toBe(true);
@@ -564,9 +596,13 @@ describe('directory.js — громкий отказ при потере/пор�
     putKey(ALICE, { boxKey: KEY_A }, 1000);
     putKey(BOB, { boxKey: KEY_B }, 1000);
 
-    const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    const raw = directoryOnDisk();
     raw[ALICE] = { boxKey: 'не ключ', updatedAt: 'не число', history: 'не массив', keyChangeCount: 'не число' };
     fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(raw), 'utf8');
+    // Портим ХРАНИМОЕ состояние целиком: снимок плюс журнал. Оставить
+    // журнал значило бы, что целая запись из него тут же вернёт ALICE к
+    // жизни, и тест проверял бы не порчу, а восстановление из журнала.
+    fs.rmSync(directory.DIRECTORY_FILE + '.log', { force: true });
     _loadDirectory();
 
     // Мутация: без этого различия порча ОДНОЙ записи вела бы себя как порча
@@ -580,7 +616,7 @@ describe('directory.js — громкий отказ при потере/пор�
   it('запись с all-zero boxKey на диске (обошла putKey рукой) отбрасывается при загрузке как повреждённая', () => {
     putKey(BOB, { boxKey: KEY_B }, 1000);
 
-    const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    const raw = directoryOnDisk();
     raw[ALICE] = { v: 1, boxKey: '0x' + '00'.repeat(32), updatedAt: 1000, history: [], keyChangeCount: 0 };
     fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(raw), 'utf8');
     _loadDirectory();
@@ -693,7 +729,7 @@ describe('directory.js — диск кончился (Q2 отчёта)', () => {
     // ALICE указывающей на KEY_B, которого на диске никогда не было.
     expect(getKeyRecord(ALICE).boxKey).toBe(KEY_A);
     // И на диске лежит то же самое старое значение — ничего не рассинхронилось.
-    const raw = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    const raw = directoryOnDisk();
     expect(raw[ALICE].boxKey).toBe(KEY_A);
   });
 });
@@ -930,8 +966,9 @@ describe('directory.js — атомарность записи заперта н
   // косвенный вывод из отсутствия мусора после успеха.
   it('_saveDirectory пишет во временный путь, не напрямую в DIRECTORY_FILE', () => {
     const mainPath = directory.DIRECTORY_FILE;
-    const writeSpy = vi.spyOn(fs, 'writeFileSync');
     putKey(ALICE, { boxKey: KEY_A }, 1000);
+    const writeSpy = vi.spyOn(fs, 'writeFileSync'); // снимок пишет только схлопывание
+    _saveDirectory();
     expect(writeSpy).toHaveBeenCalled();
     const writtenPaths = writeSpy.mock.calls.map((call) => call[0]);
     expect(writtenPaths.length).toBeGreaterThan(0);
@@ -951,9 +988,10 @@ describe('directory.js — атомарность записи заперта н
   // включая тест выше (copyFileSync тоже пишет не в mainPath напрямую).
   it('публикация идёт через настоящий fs.renameSync(temp, DIRECTORY_FILE) — заперт напрямую', () => {
     const mainPath = directory.DIRECTORY_FILE;
-    const renameSpy = vi.spyOn(fs, 'renameSync');
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    const renameSpy = vi.spyOn(fs, 'renameSync'); // снимок пишет только схлопывание
     try {
-      putKey(ALICE, { boxKey: KEY_A }, 1000);
+      _saveDirectory();
     } finally {
       expect(renameSpy).toHaveBeenCalledTimes(1);
       const [src, dest] = renameSpy.mock.calls[0];
@@ -1121,6 +1159,26 @@ describe('справочник — регистрация не переписы�
     expect(getKeyRecord(BOB).boxKey).toBe(KEY_B);
   });
 
+  // Мутация «не доигрывать журнал» сначала НЕ красила ни одного теста:
+  // снимок в них не появлялся вовсе (его пишет только схлопывание), и все
+  // проверки шли по ветке «снимка нет», где разбор журнала остался. Дыра
+  // ровно в той ветке, что случается на живом сервере: снимок ЕСТЬ (ночное
+  // схлопывание отработало), и поверх него легли новые записи.
+  it('снимок ЕСТЬ, поверх него журнал — перезапуск видит и старое, и новое', () => {
+    putKey(ALICE, { boxKey: KEY_A }, 1000);
+    _saveDirectory();                       // схлопывание: ALICE в снимке, журнал пуст
+    expect(fs.existsSync(directory.DIRECTORY_FILE)).toBe(true);
+
+    putKey(BOB, { boxKey: KEY_B }, 2000);   // легло в журнал ПОВЕРХ снимка
+    putKey(ALICE, { boxKey: KEY_C }, 3000); // и смена ключа уже записанного адреса
+
+    _loadDirectory();                       // «перезапуск»
+
+    expect(getKeyRecord(BOB).boxKey).toBe(KEY_B);   // новое из журнала
+    expect(getKeyRecord(ALICE).boxKey).toBe(KEY_C); // журнал перекрывает снимок
+    expect(getKeyRecord(ALICE).keyChangeCount).toBe(1);
+  });
+
   it('оборванная последняя строка не уносит с собой остальные', () => {
     putKey(ALICE, { boxKey: KEY_A }, 1000);
     putKey(BOB, { boxKey: KEY_B }, 2000);
@@ -1138,14 +1196,18 @@ describe('В-2 — окно выкатки: запись другой копии
 
     // «Другая копия» зарегистрировала CAROL, пока мы жили со своим снимком
     // в памяти. Пишем прямо в файл — ровно это делает её _saveDirectory().
-    const onDisk = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    // Другая копия СХЛОПЫВАЕТ: пишет снимок целиком и обнуляет журнал —
+    // ровно оба действия _saveDirectory(), моделировать только первое было
+    // бы нечестно (тот же урок, что на складе мешков).
+    const onDisk = directoryOnDisk();
     onDisk[CAROL] = { v: 1, boxKey: KEY_C, updatedAt: 1500, history: [], keyChangeCount: 0 };
     fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(onDisk), 'utf8');
+    fs.rmSync(directory.DIRECTORY_FILE + '.log', { force: true });
 
     // Наша обычная запись — про СОВСЕМ другой адрес.
     putKey(ALICE, { boxKey: KEY_B }, 2000);
 
-    const after = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    const after = directoryOnDisk();
     expect(after[CAROL]).toBeDefined();          // не стёрт нашим снимком
     expect(after[CAROL].boxKey).toBe(KEY_C);
     expect(after[ALICE].boxKey).toBe(KEY_B);     // и наша запись, конечно, на месте
@@ -1156,13 +1218,14 @@ describe('В-2 — окно выкатки: запись другой копии
     putKey(ALICE, { boxKey: KEY_B }, 2000); // наш счётчик: 1
 
     // «Другая копия» успела провести ещё несколько смен того же адреса.
-    const onDisk = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    const onDisk = directoryOnDisk();
     onDisk[ALICE].keyChangeCount = 12;
     fs.writeFileSync(directory.DIRECTORY_FILE, JSON.stringify(onDisk), 'utf8');
+    fs.rmSync(directory.DIRECTORY_FILE + '.log', { force: true }); // другая копия схлопнула
 
     putKey(ALICE, { boxKey: KEY_C }, 3000);
 
-    const after = JSON.parse(fs.readFileSync(directory.DIRECTORY_FILE, 'utf8'));
+    const after = directoryOnDisk();
     // 13, а не 2: улику нельзя откатить назад чужим устаревшим снимком.
     expect(after[ALICE].keyChangeCount).toBe(13);
   });
@@ -1210,6 +1273,11 @@ describe('assertDirectoryReady — окружение читается зано�
       // Не только имя пути — реальное поведение: запись после
       // assertDirectoryReady() обязана попасть на НОВЫЙ путь, не на старый.
       fresh.putKey(ALICE, { boxKey: KEY_A }, 1000);
+      // Горячий путь пишет строку в журнал; снимок появляется только при
+      // схлопывании. Проверяем оба имени по НОВОМУ пути — важно ведь, что
+      // запись ушла туда, а не в старый каталог.
+      expect(fs.existsSync(path.join(storageDirAfterDotenv, 'chat-key-directory.json.log'))).toBe(true);
+      fresh._saveDirectory();
       expect(fs.existsSync(path.join(storageDirAfterDotenv, 'chat-key-directory.json'))).toBe(true);
       expect(fs.existsSync(path.join(storageDirAtImport, 'chat-key-directory.json'))).toBe(false);
     } finally {
