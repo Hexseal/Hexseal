@@ -14,8 +14,22 @@ cron.schedule('7 * * * *', runTreasuryKeeper);
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 async function start() {
-  app.listen(relayerInfo.port, () => {
-    console.log(`Relayer running on :${relayerInfo.port}`);
+  // Печатаем адрес УЖЕ ПОДНЯВШЕГОСЯ сервера, а не то, что просили в
+  // окружении (сквозная проверка перед слиянием, 8 августа).
+  //
+  // Причина: `PORT=0` — законное «дай любой свободный порт» (так поднимают
+  // сервер тесты), и Node действительно выдаёт случайный — замерено: 32843.
+  // Прежняя строка рапортовала бы «Relayer running on :0», то есть человек
+  // видел бы номер, по которому сервер найти нельзя. Нечисловое значение
+  // Node вообще понимает как ПУТЬ К UNIX-СОКЕТУ (замерено: PORT=3O01 →
+  // сервер поднялся на сокете с таким именем и был недостижим по TCP); эту
+  // половину закрывает readPort() в app.js, отвергая такое при старте, а
+  // здесь закрыта вторая половина — чтобы журнал не мог соврать про адрес
+  // ни при каком раскладе.
+  const server = app.listen(relayerInfo.port, () => {
+    const addr = server.address();
+    const where = typeof addr === 'string' ? `UNIX-сокет ${addr}` : `:${addr.port}`;
+    console.log(`Relayer running on ${where}`);
     console.log(`Relayer wallet:  ${relayerInfo.relayerAddress}`);
     console.log(`Forwarder:       ${relayerInfo.forwarderAddr}`);
     console.log(`Diamond:         ${relayerInfo.diamondAddr}`);

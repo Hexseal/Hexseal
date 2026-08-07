@@ -58,7 +58,12 @@ describe('RPC_TIMEOUT_MS — нулевое значение выключает 
 });
 
 describe('PORT — опечатка не имеет права поднять сервер на UNIX-сокете', () => {
-  for (const bad of ['3O01', 'port3001', '0', '-1', '99999', '3001.5']) {
+  // 0 в списке НЕТ намеренно: это осмысленное «дай любой свободный порт»,
+  // которым пользуются тесты, а не опечатка. Запрет сломал бы намеренный
+  // приём — поймано ровно так: правка уронила test/noXmtpBoot.test.js,
+  // который поднимает настоящий процесс с PORT=0, чтобы не драться за номер.
+  // Опасность нуля не в значении, а в журнале — закрыто в index.js.
+  for (const bad of ['3O01', 'port3001', '-1', '99999', '3001.5']) {
     it(`PORT=${JSON.stringify(bad)} — громкий отказ, переменная названа`, async () => {
       setEnv({ PORT: bad });
       vi.resetModules();
@@ -71,6 +76,13 @@ describe('PORT — опечатка не имеет права поднять с
     vi.resetModules();
     const fresh = await import('../app.js');
     expect(fresh.relayerInfo.port).toBe(3005);
+  });
+
+  it('0 — законное «любой свободный порт», не отказ', async () => {
+    setEnv({ PORT: '0' });
+    vi.resetModules();
+    const fresh = await import('../app.js');
+    expect(fresh.relayerInfo.port).toBe(0);
   });
 
   it('пустое значение — умолчание 3001', async () => {
