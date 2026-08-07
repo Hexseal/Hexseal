@@ -20,8 +20,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { deriveChatKeypair } from './chatCrypto';
 import {
   sendMessage, receiveBags, forgetConversationHead, decodeFrame, encodeFrame,
+  deriveLinkSigningKeypair, messageBodyHash, linkSignaturePreimage, _resetParseCacheForTest,
   type SentMessage, type IncomingBag,
 } from './chatConversation';
+import { packEnvelope } from './chatEnvelope';
+import { buildLink } from './chatChain';
 import type { ChatSession } from './chatSession';
 import type { ChainLink } from './chatChain';
 
@@ -72,6 +75,49 @@ async function conversation(n: number): Promise<{ alice: ChatSession; bags: Inco
     prev = sent.link;
   }
   return { alice, bags };
+}
+
+/**
+ * Быстрая заготовка переписки: кадр собирается напрямую, минуя `sendMessage`.
+ *
+ * ⚠️ Зачем отдельно от `conversation()` выше. Замеру К-3 нужны ТЫСЯЧИ мешков, а
+ * `sendMessage` на каждый берёт межвкладочный замок, пишет голову и ходит на
+ * склад-заглушку — на пяти тысячах это минуты чистой обвязки, к разбору
+ * отношения не имеющей. Кадр здесь собирается ровно тот же (это проверяется
+ * тем, что `receiveBags` его принимает и отдаёт все сообщения).
+ */
+async function fastConversation(n: number): Promise<{ alice: ChatSession; bags: IncomingBag[] }> {
+  const alice = await makeSession(ALICE, '1c3d');
+  const bob = await makeSession(BOB, '7f2e');
+  const sodium = (await import('libsodium-wrappers')).default;
+  await sodium.ready;
+  const signer = await deriveLinkSigningKeypair(bob.keypair);
+  const bags: IncomingBag[] = [];
+  let prev: ChainLink | null = null;
+  const lc = BOB.toLowerCase() as `0x${string}`;
+  for (let i = 0; i < n; i++) {
+    const env = await packEnvelope({ text: `сообщение ${i}` }, alice.keypair.publicKey, bob.keypair.publicKey, lc);
+    const link = buildLink(prev, messageBodyHash(signer.publicKey, env), lc, 1_700_000_000_000 + i);
+    const signature = sodium.crypto_sign_detached(linkSignaturePreimage(link), signer.privateKey);
+    bags.push({
+      key: `${ALICE.toLowerCase()}/${1_700_000_000_000 + i}-f.bin`,
+      sender: lc, uploadedAt: 1_700_000_000_000 + i,
+      body: encodeFrame({ link, signature, signerPublicKey: signer.publicKey, envelope: env }),
+    });
+    prev = link;
+  }
+  return { alice, bags };
+}
+
+/** Холодный и повторный разбор одного и того же набора, в миллисекундах. */
+async function timeParse(alice: ChatSession, bags: IncomingBag[]): Promise<{ cold: number; warm: number }> {
+  _resetParseCacheForTest();
+  const t0 = Date.now();
+  await receiveBags(alice, bags, { peer: BOB });
+  const cold = Date.now() - t0;
+  const t1 = Date.now();
+  await receiveBags(alice, bags, { peer: BOB });
+  return { cold, warm: Date.now() - t1 };
 }
 
 beforeEach(() => { installPutStub(); });
@@ -215,4 +261,74 @@ describe('К-5: своя половина после истечения стар
     expect(kinds).toContain('own_numbering_reset');
     expect(kinds).not.toContain('duplicate_seq');
   }, 300_000);
+});
+
+/* ───────────── К-3: обрыв кэша разбора ровно на потолке ───────────── */
+
+/**
+ * ⚠️ ЭТО РОВНО ТОТ СЛУЧАЙ, О КОТОРОМ ПРЕДУПРЕЖДАЕТ ПРАВИЛО «СВОЯ ПОЧИНКА ХУЖЕ
+ * ДЕФЕКТА». Кэш заведён ради ускорения; за своим потолком он ускорение ТЕРЯЕТ
+ * ЦЕЛИКОМ и вдобавок берёт плату — то есть механизм превращается в тормоз хуже
+ * исходного, и ровно в тот момент, когда переписка стала длинной.
+ *
+ * Причина — вытеснение САМОГО СТАРОГО при ЦИКЛИЧЕСКОМ обходе. Разбор идёт по
+ * всему накопленному набору, в одном и том же порядке, каждый тик. При наборе
+ * чуть больше потолка первый же мешок вытесняет тот, который понадобится
+ * следующим, и так по кругу: доля попаданий не «немного падает», а становится
+ * РОВНО НУЛЬ. Классическое вырождение FIFO/LRU на кольцевом проходе.
+ *
+ * ЗАМЕР ДО ПРАВКИ (эта машина, боевой потолок 5000):
+ *   4999: холодный 2511 мс, повторный  255 мс  (в 9,8 раза дешевле)
+ *   5000: холодный 2461 мс, повторный  244 мс  (в 10 раз дешевле)
+ *   5001: холодный 2438 мс, повторный 2456 мс  (ДОРОЖЕ холодного)
+ *  20000: холодный 9541 мс, повторный 9709 мс  (ДОРОЖЕ холодного)
+ */
+describe('К-3: потолок кэша разбора', () => {
+  it('ЗАМЕР: 5001 мешок разбирается повторно не дороже, чем 5000', async () => {
+    // Боевой потолок, без подстановки своих чисел: 5000 — это то, что стоит в
+    // модуле, и мерять надо ровно вокруг него.
+    //
+    // Что красит: возврат вытеснения «самого старого». Тогда повторный разбор
+    // 5001 мешка стоит столько же, сколько холодный, — в десять раз дороже,
+    // чем повторный разбор 5000.
+    const { alice, bags } = await fastConversation(5001);
+
+    const atCap = await timeParse(alice, bags.slice(0, 5000));
+    const overCap = await timeParse(alice, bags);
+
+    console.info(
+      `[замер К-3] 5000: холодный ${atCap.cold} мс, повторный ${atCap.warm} мс; ` +
+      `5001: холодный ${overCap.cold} мс, повторный ${overCap.warm} мс`,
+    );
+
+    // 1. За потолком повторный разбор обязан остаться ДЕШЕВЛЕ холодного.
+    //    Порог щедрый — замок ловит «кэша не стало вовсе», а не микросекунды.
+    expect(overCap.warm * 2).toBeLessThan(overCap.cold);
+    // 2. И не должен обрываться относительно того, что было ДО потолка: один
+    //    лишний мешок из пяти тысяч не может стоить кратного удорожания.
+    expect(overCap.warm).toBeLessThan(atCap.warm * 3 + 50);
+  }, 300_000);
+
+  it('ЗАМЕР: 20 000 мешков — повторный разбор всё ещё дешевле холодного', async () => {
+    // Вопрос «что если этого станет очень много», ответ числом. Кэш вчетверо
+    // меньше набора; доля попаданий обязана падать ПЛАВНО (примерно как
+    // потолок/набор), а не обрываться в ноль.
+    //
+    // Что красит: тот же возврат вытеснения «самого старого» — повторный разбор
+    // становится дороже холодного.
+    const { alice, bags } = await fastConversation(20_000);
+    const { cold, warm } = await timeParse(alice, bags);
+    console.info(
+      `[замер К-3] 20000: холодный ${cold} мс, повторный ${warm} мс ` +
+      `(${((1 - warm / cold) * 100).toFixed(0)} % экономии)`,
+    );
+    // ⚠️ ПОРОГ НЕ «ПРОСТО МЕНЬШЕ». Первая версия этого замка писала
+    // `warm < cold` — и проходила ЗЕЛЁНОЙ на сломанном кэше: 9798 против
+    // 10173, разница 4 %, чистый шум замера. Тест, который не может
+    // покраснеть, хуже отсутствующего. Кэш вчетверо меньше набора — доля
+    // попаданий обязана быть около четверти, то есть экономия заметно больше
+    // шума. Пятнадцать процентов — с запасом ниже ожидаемых двадцати с
+    // лишним и заведомо выше разброса.
+    expect(warm * 1.15).toBeLessThan(cold);
+  }, 900_000);
 });
