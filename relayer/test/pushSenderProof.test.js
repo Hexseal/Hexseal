@@ -181,16 +181,21 @@ describe('К-2: право слать уведомление доказывае�
   });
 
   describe('вторая дорога: оповещение арбитров о споре', () => {
+    // ⚠️ У ЭТОЙ ДОРОГИ ДРУГОЕ ДОКАЗАТЕЛЬСТВО — не пропуск, а статус сделки на
+    // цепи. Пропуск здесь требовать нельзя: спор открывает человек, который
+    // мог не заходить в чат ни разу (блокер сквозной проверки, разбор и
+    // замеры — test/pushDisputeChainProof.test.js). Ниже проверяется только
+    // то, что ссылка и текст всё равно НАШИ.
     it('ведёт на экран арбитра по проверенному адресу сделки, текст — наш', async () => {
       const wallet = ethers.Wallet.createRandom();
       const arbiter = await subscribeReal(app, wallet);
-      const { token } = issueBagPass(ALICE);
       const deal = '0xdea1000000000000000000000000000000000004';
+      mockContract(deal, { getDetails: async () => ({ status_: 4n }) });   // DISPUTED
+      webpush.sendNotification.mockClear();
 
       const res = await request(app)
         .post('/push/send')
         .set('X-Push-Secret', PUSH_SECRET)
-        .set('x-bag-pass', token)
         .send({ to: arbiter, kind: 'dispute', deal, url: 'https://evil.example/drain', body: 'жми сюда' });
 
       expect(res.status).toBe(200);
@@ -209,7 +214,7 @@ describe('К-2: право слать уведомление доказывае�
         .post('/push/send')
         .set('X-Push-Secret', PUSH_SECRET)
         .set('x-bag-pass', token)
-        .send({ to: arbiter, kind: 'dispute', deal: '../../evil', body: 'x' });
+        .send({ to: arbiter, kind: 'dispute', deal: '../../evil', body: 'x' });   // форма адреса — до всякой цепи
 
       expect(res.status).toBe(400);
       expect(webpush.sendNotification).not.toHaveBeenCalled();

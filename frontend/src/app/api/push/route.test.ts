@@ -23,7 +23,12 @@ const { POST } = await import('./route');
 const { config: middlewareConfig } = await import('@/middleware');
 
 const VICTIM = '0xc1c1000000000000000000000000000000000003';
-const PASS   = 'v1.YWJj.zzz';   // непрозрачный для фронта — его читает релеер
+// Настоящей ФОРМЫ, а не заглушка: маршрут отсекает мусор по форме ещё до
+// сети, и короткая выдумка вроде 'v1.YWJj.zzz' проверяла бы не то. Тело —
+// base64url("0xaaaa…0001.1893456000"), подпись — 43 символа, как отдаёт
+// base64url от sha256 (relayer/bagPass.js).
+const PASS = 'v1.MHhhYWFhMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxLjE4OTM0NTYwMDA.' +
+  'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE';
 
 let fetchMock: ReturnType<typeof vi.fn>;
 

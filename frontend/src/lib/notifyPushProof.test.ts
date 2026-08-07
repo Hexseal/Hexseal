@@ -107,16 +107,16 @@ describe('К-2: notifyPush везёт пропуск и не везёт ссыл
     const deal = '0xdea1000000000000000000000000000000000004';
     const arbiters = ['0xcccc000000000000000000000000000000000003'];
 
-    // Третьим доводом отправитель НЕ передаётся: у этой дороги подсказки нет,
-    // и пропуск обязан найтись сам — иначе пришлось бы менять подпись
-    // функции, которую зовут два экрана вне этой зоны.
     await notifyArbitersOfDispute(arbiters, deal);
 
     const body = sentBody();
     expect(body.kind).toBe('dispute');
     expect(body.deal).toBe(deal);
     expect(body).not.toHaveProperty('url');
-    expect(sentHeaders()['x-bag-pass']).toBe('v1.mine.mac');
+    // ⚠️ Пропуск здесь НЕ прикладывается, даже когда он есть: доказательство
+    // для этой дороги лежит в цепи, а не у человека. Разбор — блокер
+    // сквозной проверки, lib/disputeFanout.test.ts.
+    expect(sentHeaders()).not.toHaveProperty('x-bag-pass');
   });
 
   it('без подсказки и с двумя пропусками берётся самый долгоживущий', async () => {
@@ -124,7 +124,9 @@ describe('К-2: notifyPush везёт пропуск и не везёт ссыл
     storePass('0x1111111111111111111111111111111111111111', 'v1.old.mac',  now + 60);
     storePass(ME,                                           'v1.fresh.mac', now + 3600);
 
-    await notifyArbitersOfDispute(['0xcccc000000000000000000000000000000000003'], '0xdea1000000000000000000000000000000000004');
+    // Ссылка не той формы — подсказки об отправителе из неё не извлечь,
+    // значит работает запасная дорога поиска.
+    await notifyPush(PEER, 'New message', '/dashboard');
 
     expect(sentHeaders()['x-bag-pass']).toBe('v1.fresh.mac');
   });

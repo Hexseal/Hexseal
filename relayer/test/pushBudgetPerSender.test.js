@@ -27,6 +27,7 @@ process.env.PUSH_DISPUTE_RATE_MAX = '10';
 
 const { app } = await import('../app.js');
 const { issueBagPass } = await import('../bagPass.js');
+const { mockContract } = await import('./mocks/ethersRegistry.js');
 
 const PUSH_SECRET = 'test-push-secret';
 
@@ -124,8 +125,11 @@ describe('К-3: бюджет уведомлений считается по то
   it('оповещение арбитров тратит СВОЙ бюджет, а не бюджет переписки', async () => {
     const me = freshSender();
     const deal = '0xdea1000000000000000000000000000000000004';
+    // Бюджет спора ключуется СДЕЛКОЙ (у этой дороги отправителя нет вовсе —
+    // доказывает цепь), поэтому сделку надо показать спорной.
+    mockContract(deal, { getDetails: async () => ({ status_: 4n }) });
 
-    // Полный веер по спору: десять арбитров — весь бюджет спора.
+    // Полный веер по спору: десять — весь бюджет этой сделки.
     for (let i = 0; i < 10; i++) {
       const arb = await subscribeReal(ethers.Wallet.createRandom());
       expect((await send(me, { to: arb, kind: 'dispute', deal })).status).toBe(200);

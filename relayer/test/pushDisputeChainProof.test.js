@@ -21,7 +21,9 @@ import { ethers } from 'ethers';
 import request from 'supertest';
 import webpush from 'web-push';
 
-process.env.PUSH_DISPUTE_RATE_MAX = '10';
+// Меньше боевых 120, но НЕ меньше полного веера на 50 арбитров: тест
+// «одно чтение цепи на веер» обязан гонять настоящий веер, а не обрезок.
+process.env.PUSH_DISPUTE_RATE_MAX = '60';
 
 const { app } = await import('../app.js');
 const { issueBagPass } = await import('../bagPass.js');
@@ -156,14 +158,14 @@ describe('Блокер: доказательство для веера по сп
     webpush.sendNotification.mockClear();
 
     const statuses = [];
-    for (let i = 0; i < 13; i++) statuses.push((await notifyArbiter(arbiter, deal)).status);
+    for (let i = 0; i < 63; i++) statuses.push((await notifyArbiter(arbiter, deal)).status);
 
-    // PUSH_DISPUTE_RATE_MAX=10 (выставлен выше файла)
-    expect(statuses.filter(s => s === 200).length).toBe(10);
-    expect(statuses.slice(10).every(s => s === 429)).toBe(true);
-    // Каждый из десяти УЖЕ доставил уведомление — то есть «исчерпал бюджет»
+    // PUSH_DISPUTE_RATE_MAX=60 (выставлен выше файла)
+    expect(statuses.filter(s => s === 200).length).toBe(60);
+    expect(statuses.slice(60).every(s => s === 429)).toBe(true);
+    // Каждый из шестидесяти УЖЕ доставил уведомление — то есть «исчерпал бюджет»
     // и «оповестил арбитров» здесь одно и то же действие.
-    expect(webpush.sendNotification).toHaveBeenCalledTimes(10);
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(60);
 
     // Соседняя сделка не задета.
     const other = freshDeal();

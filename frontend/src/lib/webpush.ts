@@ -224,15 +224,58 @@ export async function enablePush(
  */
 const ARBITER_FANOUT_CAP = 50;
 
+/**
+ * ⚠️ ЭТА ДОРОГА НЕ ПРЕДЪЯВЛЯЕТ ПРОПУСК, И ЭТО ГЛАВНОЕ В НЕЙ.
+ *
+ * Я посадил её за пропуск склада вместе с уведомлениями чата — и этим
+ * СЛОМАЛ арбитраж: спор открывает человек, который мог не заходить в чат ни
+ * разу, пропуска у него нет, запрос не уходил вовсе, арбитры о споре не
+ * узнавали. Молча. Замер до починки — 0 запросов из 50.
+ *
+ * Доказательство здесь другое и лежит не у человека, а в цепи: сервер сам
+ * читает статус сделки и шлёт уведомление, только если спор действительно
+ * открыт (`relayer/app.js`, `dealIsDisputed`). Поэтому право звать арбитров
+ * не зависит от того, пользуется ли человек чатом, — как и должно быть.
+ */
 export async function notifyArbitersOfDispute(
   arbiters: readonly string[],
   dealAddress: string,
-): Promise<void> {
+): Promise<{ sent: number; failed: number }> {
   const deal = dealAddress.toLowerCase();
+  let sent = 0;
+  let failed = 0;
+
   for (const arbiter of arbiters.slice(0, ARBITER_FANOUT_CAP)) {
-    // Ссылка больше не строится ЗДЕСЬ и не едет на сервер: она строится
-    // сервером из рода `dispute` и проверенного адреса сделки (К-2).
-    await sendPushRequest(arbiter, { kind: 'dispute', deal });
+    // Ссылка не строится ЗДЕСЬ и не едет на сервер: её строит сервер из рода
+    // `dispute` и ПРОВЕРЕННОГО им адреса сделки (К-2).
+    const outcome = await sendPushRequest(arbiter, { kind: 'dispute', deal }, undefined, { needsPass: false });
+    if (outcome === 'ok') sent++; else failed++;
+  }
+
+  // Молчание здесь означает зависший спор: арбитры не пришли, а человек
+  // уверен, что позвал. Одна надпись на весь веер, не пятьдесят.
+  if (failed > 0) await announceDisputeFanoutFailure(failed, arbiters.length);
+  return { sent, failed };
+}
+
+/**
+ * Доводит отказ веера до места, где его ВИДНО человеку.
+ *
+ * Подписчиков `onPushDeliveryFailure` мало: их надо где-то завести, а экраны
+ * сделки — не моя зона и они этого не делают. Поэтому надпись показывается
+ * отсюда напрямую. Импорт ленивый и в try/catch: `webpush.ts` грузится и там,
+ * где всплывашек нет вовсе (серверный рендер, тесты), и падение показа не
+ * имеет права оборвать веер — он и так уже частично не доехал.
+ */
+async function announceDisputeFanoutFailure(failed: number, total: number): Promise<void> {
+  try {
+    const { default: toast } = await import('react-hot-toast');
+    toast.error(
+      `Не удалось оповестить арбитров о споре (${failed} из ${total}). ` +
+      `Спор открыт, но арбитры могли о нём не узнать — откройте страницу сделки ещё раз.`,
+    );
+  } catch {
+    /* показать нечем — отказ уже ушёл в console.warn и подписчикам */
   }
 }
 
@@ -287,9 +330,13 @@ async function sendPushRequest(
   to: string,
   payload: { kind?: string; deal?: string },
   hint?: string,
+  { needsPass = true }: { needsPass?: boolean } = {},
 ): Promise<PushOutcome> {
-  const pass = findStoredBagPass(hint);
-  if (!pass) {
+  // `needsPass: false` — только веер по спору. Там доказывает цепь, а не
+  // человек, и требовать пропуск значило бы отрезать от арбитража всех, кто
+  // не пользуется чатом (блокер сквозной проверки).
+  const pass = needsPass ? findStoredBagPass(hint) : null;
+  if (needsPass && !pass) {
     // Не ошибка сети и не отказ сервера: слать нечем, потому что сеанс чата
     // на этом устройстве не заведён. Запроса не делаем вовсе — он всё равно
     // вернулся бы 401.
@@ -302,7 +349,10 @@ async function sendPushRequest(
   try {
     res = await fetch('/api/push', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', [BAG_PASS_HEADER]: pass },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(pass ? { [BAG_PASS_HEADER]: pass } : {}),
+      },
       // Ни `body`, ни `url`, ни `tag`: сервер их не берёт (К-2), и везти их
       // значило бы делать вид, что они на что-то влияют.
       body: JSON.stringify({ to, ...payload }),
