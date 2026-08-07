@@ -216,13 +216,27 @@ export const FINALIZE_DELAY_HOURS = 24;
 // в отличие от нулевого TTL/потолка/лукбэка, каждый из которых фактически
 // выключил бы соответствующее правило целиком.
 export let BAG_DEAL_GRACE_MS;
+// К-3 (аудит устойчивости, 6 августа): потолок журнала дозаписи. Журнал
+// растёт по одной строке на запись и схлопывается в снимок (BAG_META_PATH),
+// когда переваливает этот размер — амортизация O(N)-записи вместо O(N) на
+// КАЖДЫЙ PUT. Умолчание — 16 МиБ: при ~390 байтах на строку это примерно
+// 43 000 записей между схлопываниями, то есть один дорогой проход вместо
+// сорока трёх тысяч. Больше значение — реже дорогой проход, но дольше
+// разбор журнала при старте; меньше — наоборот.
+export let BAG_JOURNAL_MAX_BYTES;
 let STORAGE_DIR;
 let BAG_META_PATH;
+let BAG_JOURNAL_PATH;
 
 function _refreshConfig() {
   STORAGE_DIR   = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
   DIR_BAGS      = path.join(STORAGE_DIR, 'bags');
   BAG_META_PATH = path.join(STORAGE_DIR, 'bag-meta.json');
+  // К-3: журнал дозаписи рядом со снимком, в том же каталоге и на том же
+  // томе — переименование снимка при схлопывании обязано быть атомарным,
+  // а это гарантировано только в пределах одной файловой системы.
+  BAG_JOURNAL_PATH = path.join(STORAGE_DIR, 'bag-meta.log');
+  BAG_JOURNAL_MAX_BYTES = Number(process.env.BAG_JOURNAL_MAX_BYTES || 16 * 1024 * 1024);
 
   BAG_TTL_MS        = Number(process.env.BAG_TTL_MS        ||  7 * 24 * 60 * 60 * 1000);
   BAG_UNREAD_TTL_MS = Number(process.env.BAG_UNREAD_TTL_MS || 30 * 24 * 60 * 60 * 1000);
@@ -706,7 +720,19 @@ export function _loadBagMeta() {
   // нет → легитимно пусто, indexOk остаётся true; файл есть, но не JSON,
   // или JSON, но не индекс (null/массив/примитив) → потеря доверия, громко.
   let indexOk = true;
-  const indexExists = fs.existsSync(BAG_META_PATH);
+  // К-3: «опись» — это теперь ДВА файла, снимок и журнал дозаписи, и
+  // существованием описи считается наличие ЛЮБОГО из них.
+  //
+  // Иначе — не мелочь, а поломка нормальной работы. Снимок пишет только
+  // схлопывание (ночная cleanupBags или переполненный журнал), поэтому у
+  // свежего сервера, принявшего первую сотню сообщений и перезапущенного
+  // до первой ночи, снимка НЕТ ВОВСЕ, а мешки на диске ЕСТЬ. Проверяй мы
+  // существование одного снимка — такой сервер уходил бы в режим недоверия
+  // на совершенно штатном перезапуске и переставал бы и удалять, и
+  // сохранять. Поймано ровно так, живым прогоном.
+  const snapshotExists = fs.existsSync(BAG_META_PATH);
+  const journalExists = fs.existsSync(BAG_JOURNAL_PATH);
+  const indexExists = snapshotExists || journalExists;
   // Считается только когда индекса нет — см. ветку else ниже. Отдельная
   // переменная (не пересчитывать в теле console.error) — нужна и для
   // решения "доверять ли", и для числа в громкой строке лога.
@@ -719,7 +745,7 @@ export function _loadBagMeta() {
   // 60 000 мешков).
   let precomputedScan = null;
 
-  if (indexExists) {
+  if (snapshotExists) {
     try {
       const parsed = JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8'));
       // И-2 (пятый раунд): JSON.parse('null') УСПЕШНО возвращает null — не
@@ -739,6 +765,11 @@ export function _loadBagMeta() {
       // между writeFileSync и renameSync temp-файла в _saveBagMeta()).
       indexOk = false;
     }
+  } else if (journalExists) {
+    // К-3: снимка ещё нет, но журнал есть — штатное состояние сервера до
+    // первого схлопывания. Начинаем с пустого снимка; всё содержимое
+    // приедет разбором журнала ниже.
+    raw = {};
   } else {
     // Продолжение третьего тура (координатор): отсутствие описи —
     // легитимная пустота ТОЛЬКО когда склад тоже пуст или отсутствует.
@@ -779,7 +810,8 @@ export function _loadBagMeta() {
       );
     } else if (!indexOk && !indexExists) {
       reasons.push(
-        `index at ${BAG_META_PATH} is MISSING, but the store at ${DIR_BAGS} is not empty (${diskBagCount} file(s) found) — ` +
+        `index is MISSING — NEITHER the snapshot at ${BAG_META_PATH} nor the append journal at ` +
+        `${BAG_JOURNAL_PATH} exists — but the store at ${DIR_BAGS} is not empty (${diskBagCount} file(s) found) — ` +
         `this cannot be a fresh install. Either the index was removed by hand or it never reached disk. ` +
         `To start clean, ALSO remove the bag files on disk; to recover, restore the index file.`
       );
@@ -805,8 +837,10 @@ export function _loadBagMeta() {
       `to the file) — a syntactically valid index that does not match what is really on disk is JUST AS ` +
       `DESTRUCTIVE as no index at all: every bag on disk becomes invisible to it and gets swept as an orphan ` +
       `by mtime alone, regardless of read state or deal adoption. Safe options: restore the REAL index from a ` +
-      `backup, or — only if starting genuinely clean — remove BOTH the index file and every bag file on disk ` +
-      `together.`
+      `backup, or — only if starting genuinely clean — remove the snapshot (${BAG_META_PATH}), the append ` +
+      `journal (${BAG_JOURNAL_PATH}) AND every bag file on disk, all three together. Removing only some of ` +
+      `them leaves the store lying about itself: a leftover journal replays its entries on top of whatever ` +
+      `snapshot it finds, including an empty one.`
     );
     // Один обход на всю функцию: если решение "недоверие" пришло из ветки
     // "индекса нет" выше, обход уже сделан (precomputedScan) — переиспользуем
@@ -850,9 +884,57 @@ export function _loadBagMeta() {
     console.error(`[bags] _loadBagMeta: dropped ${dropped} corrupt ${dropped === 1 ? 'entry' : 'entries'} out of ${Object.keys(raw).length} from ${BAG_META_PATH}`);
   }
 
+  // К-3: снимок прочитан — доигрываем поверх него журнал дозаписи. Всё,
+  // что было записано горячим путём после последнего схлопывания, живёт
+  // только здесь.
+  _replayJournal(clean);
+
   _bagMetaLoadOk = true;
   _bagMeta = clean;
   return _bagMeta;
+}
+
+// К-3: доигрывает журнал дозаписи поверх снимка. Вызывается ТОЛЬКО из
+// _loadBagMeta(), после того как снимок признан здоровым.
+//
+// Каждая строка проходит РОВНО ТУ ЖЕ проверку формы (isValidBagMetaEntry),
+// что и запись из снимка: журнал — такой же файл на диске, как и снимок, и
+// такой же кандидат на порчу. Единственный путь в индекс мимо recordBag()
+// не должен быть и путём мимо его проверок.
+//
+// Неразобранная строка НЕ переводит склад в режим недоверия, в отличие от
+// битого снимка, и это осознанная разница. Обрезанный ХВОСТ журнала —
+// нормальный, ожидаемый след обрыва процесса посреди дозаписи (ровно тот
+// случай, ради которого выбран строчный формат), а не признак того, что
+// данным нельзя верить. Битый снимок — другое дело: он не может стать
+// битым «штатно».
+function _replayJournal(target) {
+  let raw;
+  try { raw = fs.readFileSync(BAG_JOURNAL_PATH, 'utf8'); } catch { return; }
+
+  const lines = raw.split('\n');
+  let applied = 0;
+  let skipped = 0;
+  for (const line of lines) {
+    if (!line) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch { skipped++; continue; } // обрезанный хвост живёт здесь
+    if (!rec || typeof rec !== 'object' || typeof rec.k !== 'string') { skipped++; continue; }
+    if (rec.d) {
+      delete target[rec.k];
+      applied++;
+      continue;
+    }
+    if (!isValidBagMetaEntry(rec.k, rec.m)) { skipped++; continue; }
+    target[rec.k] = rec.m;
+    applied++;
+  }
+  if (applied || skipped) {
+    console.log(
+      `[bags] _replayJournal: applied ${applied} change(s) from ${BAG_JOURNAL_PATH}` +
+      (skipped ? ` (skipped ${skipped} unreadable line(s) — the last one is normally a write cut short by a restart)` : '')
+    );
+  }
 }
 
 // I2: раньше писала напрямую поверх BAG_META_PATH, оба catch были немые.
@@ -873,6 +955,19 @@ export function _loadBagMeta() {
 // остальных assert*-хелперах этого файла (в отличие от более старого,
 // снисходительного savePushSubs() в app.js: там цена ошибки — пережить
 // рестарт без пуша, здесь — тихо потерять чужую переписку, ставки другие).
+// К-3: ЭТО ТЕПЕРЬ СХЛОПЫВАНИЕ, а не «сохранение на каждую запись». Пишет
+// полный снимок и обнуляет журнал дозаписи. Горячий путь (recordBag/
+// markFetched/adoptPairBags) сюда больше не заходит — он дописывает одну
+// строку в журнал (_appendJournal ниже). Остаются два вызывающих: ночная
+// cleanupBags() (она и так O(N)) и порог размера журнала.
+//
+// Порядок «снимок, потом обнуление журнала» — не стилистика, а
+// единственный безопасный. Обратный порядок при обрыве между шагами теряет
+// всё, что было в журнале и не успело попасть в снимок. В этом порядке
+// худший случай — журнал, часть которого уже учтена в снимке: разбор при
+// загрузке применяет такую строку повторно, а повтор безвреден (ключи
+// уникальны по построению, см. I5 в recordBag; вставка того же значения и
+// удаление уже отсутствующего — обе идемпотентны).
 export function _saveBagMeta() {
   const tmpPath = `${BAG_META_PATH}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
@@ -889,6 +984,57 @@ export function _saveBagMeta() {
     console.error(`[bags] FAILED TO SAVE ${BAG_META_PATH} — in-memory index and disk index have diverged: ${e.message}`);
     throw e;
   }
+  // Снимок доехал — журнал, накопленный ДО него, полностью в нём учтён и
+  // больше не нужен. Ошибка обнуления не откатывает уже сохранённый снимок
+  // и не бросается вызывающему: состояние на диске корректно и без этого
+  // (лишний журнал просто переиграется поверх снимка при загрузке), а вот
+  // превращать успешное сохранение в исключение — значит заставить
+  // вызывающего откатывать память, которая на самом деле уже на диске.
+  try {
+    if (fs.existsSync(BAG_JOURNAL_PATH)) fs.unlinkSync(BAG_JOURNAL_PATH);
+  } catch (e) {
+    console.error(`[bags] snapshot saved, but journal ${BAG_JOURNAL_PATH} could not be cleared (it will simply be replayed on top of the snapshot at load, which is harmless): ${e.message}`);
+  }
+}
+
+// К-3: горячий путь. Одна строка на изменение вместо всей описи.
+//
+// Замер до/после (scratchpad/measure-k3.mjs, боевые умолчания, локальный
+// диск): при 20 000 мешках в описи ОДИН PUT стоил 24,9 мс и переписывал
+// 7,8 МБ; путь от пустого склада до 20 000 мешков — 281,6 с совокупной
+// блокировки цикла событий.
+//
+// Формат — по строке JSON на изменение, ровно два вида:
+//   {"k":"<ключ>","m":{...}}  — запись/обновление
+//   {"k":"<ключ>","d":1}      — удаление
+// Разбор при загрузке (_replayJournal) применяет их поверх снимка по
+// порядку. Обрыв процесса посреди дозаписи оставляет неполную ПОСЛЕДНЮЮ
+// строку — она не разберётся и будет пропущена, а всё, что дописано до
+// неё, целыми строками уже на диске. Это и есть причина строчного формата:
+// у него есть однозначная граница записи, у одного большого JSON её нет.
+function _appendJournal(records) {
+  const payload = records.map((r) => JSON.stringify(r)).join('\n') + '\n';
+  try {
+    fs.mkdirSync(path.dirname(BAG_JOURNAL_PATH), { recursive: true });
+    fs.appendFileSync(BAG_JOURNAL_PATH, payload, 'utf8');
+  } catch (e) {
+    console.error(`[bags] FAILED TO APPEND ${BAG_JOURNAL_PATH} — in-memory index and disk index have diverged: ${e.message}`);
+    throw e;
+  }
+}
+
+// Журнал не должен расти вечно: чем он длиннее, тем дольше разбор при
+// старте. Переваливший потолок схлопывается в снимок — один дорогой проход
+// на много тысяч дешёвых записей вместо дорогого прохода на каждую.
+// Проверяем размер по факту на диске, а не по счётчику в памяти: счётчик
+// врал бы после перезапуска, когда журнал на диске уже длинный, а процесс
+// только что поднялся и «ничего ещё не писал».
+function _compactJournalIfOversized() {
+  let size = 0;
+  try { size = fs.statSync(BAG_JOURNAL_PATH).size; } catch { return; }
+  if (size <= BAG_JOURNAL_MAX_BYTES) return;
+  console.log(`[bags] journal ${BAG_JOURNAL_PATH} reached ${size} bytes (cap ${BAG_JOURNAL_MAX_BYTES}) — folding it into a fresh snapshot`);
+  _saveBagMeta();
 }
 
 // Третий тур закрывающего ревью Задачи 4: recordBag()/markFetched() persist
@@ -901,9 +1047,19 @@ export function _saveBagMeta() {
 // reconstruction's. Not an error for the caller: the upload/read-receipt
 // still succeeds from the client's point of view, it just doesn't survive
 // a restart until a human fixes the index.
-function _persistUnlessDistrusted(fn) {
+//
+// К-3: гейт недоверия ОБЯЗАН стоять и на журнале тоже, не только на
+// снимке. Дозапись в журнал — такая же запись на диск: пропусти её мимо
+// гейта, и первая же строка после потерянной описи начала бы достраивать
+// то, чему мы решили не верить.
+function _persistUnlessDistrusted(fn, records) {
   if (!_bagMetaLoadOk) {
     console.error(`[bags] ${fn}: DISTRUST MODE — change kept in memory only, NOT written to ${BAG_META_PATH}. Fix or remove the index file and restart to resume persisting.`);
+    return;
+  }
+  if (records && records.length) {
+    _appendJournal(records);
+    _compactJournalIfOversized();
     return;
   }
   _saveBagMeta();
@@ -1023,7 +1179,8 @@ export function recordBag(meta, nowMs = Date.now()) {
   };
   _bagMeta[key] = stored;
   try {
-    _persistUnlessDistrusted('recordBag');
+    // К-3: одна строка в журнал вместо всей описи.
+    _persistUnlessDistrusted('recordBag', [{ k: key, m: stored }]);
   } catch (e) {
     // I2: не оставлять память впереди диска — если персист не удался,
     // запись не должна продолжать "существовать" только в этом процессе.
@@ -1051,7 +1208,11 @@ export function markFetched(key, nowMs = Date.now()) {
     assertFetchNotBeforeUpload('markFetched', meta.uploadedAt, nowMs);
     meta.firstFetchedAt = nowMs;
     try {
-      _persistUnlessDistrusted('markFetched');
+      // К-3: одна строка в журнал вместо всей описи. Пишем ВСЮ запись, а не
+      // одно изменившееся поле: разбор при загрузке кладёт значение целиком,
+      // и частичная строка означала бы, что журнал нельзя применить к
+      // снимку, в котором этого ключа ещё нет.
+      _persistUnlessDistrusted('markFetched', [{ k: key, m: { ...meta } }]);
     } catch (e) {
       // I2: тот же откат, что в recordBag — если запись не доехала до
       // диска, отметка о прочтении не должна продолжать жить только в
@@ -1493,11 +1654,15 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
   assertSafeInt('adoptPairBags', 'nowMs', nowMs);
 
   const rollback = []; // [meta, previousDealDeadline] — только записи, реально изменённые этим вызовом
+  // К-3: ключи изменённых записей — для журнала дозаписи. Усыновление зовут
+  // по разу на КАЖДУЮ активную/спорную сделку за ночной прогон, и каждый
+  // такой вызов раньше переписывал опись целиком.
+  const changedKeys = [];
   let adopted = 0;
   let minEffectiveExpiry = null;
   let cappedCount = 0;
 
-  for (const meta of Object.values(_bagMeta)) {
+  for (const [key, meta] of Object.entries(_bagMeta)) {
     if (meta.pairId !== pairId) continue;
     // И-2: гейт первого усыновления — "жив ли мешок ПРЯМО СЕЙЧАС", не
     // "молодой ли он". Уже усыновлённая запись (dealDeadline != null)
@@ -1518,6 +1683,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
 
     rollback.push([meta, meta.dealDeadline]);
     meta.dealDeadline = next;
+    changedKeys.push(key);
     adopted++;
 
     // C-1 (было — С-1 раунда логирования): РЕАЛЬНЫЙ срок этой конкретной
@@ -1534,7 +1700,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
 
   if (adopted) {
     try {
-      _persistUnlessDistrusted('adoptPairBags');
+      _persistUnlessDistrusted('adoptPairBags', changedKeys.map((k) => ({ k, m: { ..._bagMeta[k] } })));
     } catch (e) {
       // I2, тот же приём, что у recordBag()/markFetched(): не оставлять
       // память впереди диска. Откатываем РОВНО те записи, что изменил этот
@@ -1705,6 +1871,9 @@ export function cleanupBags(nowMs = Date.now()) {
   // трогаются немедленно — см. ниже, почему удаление файла идёт ПОСЛЕ
   // сохранения индекса, а не до.
   const keysToDeleteFiles = [];
+  // К-3: ключи ВСЕХ снятых записей — и просроченных, и «мелочи g». Уходят в
+  // журнал строками удаления ДО снимка (см. ниже, зачем).
+  const removedKeys = [];
   // К-2: накопитель removedEntries (для отката при падении сохранения) убран
   // как мёртвый вес, а не оставлен неиспользуемым — тем же правилом, что
   // сняло protectedKeys у sweepOrphanFiles() шестым раундом. Откатывать
@@ -1716,6 +1885,7 @@ export function cleanupBags(nowMs = Date.now()) {
     if (bagExpiryAt(meta, nowMs) <= nowMs) {
       delete _bagMeta[key];
       keysToDeleteFiles.push(key);
+      removedKeys.push(key);
       removed++;
       continue;
     }
@@ -1730,6 +1900,7 @@ export function cleanupBags(nowMs = Date.now()) {
     if (!fileExists) {
       console.error(`[bags] cleanupBags: index entry ${JSON.stringify(key)} has no file on disk — dropping from index`);
       delete _bagMeta[key];
+      removedKeys.push(key);
       removed++;
       continue;
     }
@@ -1767,7 +1938,24 @@ export function cleanupBags(nowMs = Date.now()) {
     for (const key of keysToDeleteFiles) {
       try { fs.unlinkSync(bagPathFor(key)); } catch {}
     }
-    if (removed) _saveBagMeta();
+    if (removed) {
+      // К-3, ВАЖНО: строки удаления уходят в журнал ПЕРЕД снимком, а не
+      // вместо него. Без этого шага чистка была бы ЕДИНСТВЕННОЙ мутацией
+      // склада, которой нет в журнале — и любой обрыв в окне между «снимок
+      // записан» и «журнал обнулён» ВОСКРЕШАЛ БЫ снесённое: разбор при
+      // старте доиграл бы поверх свежего снимка старую строку записи того
+      // самого ключа, который снимок уже не содержит. Поймано живым
+      // прогоном при реализации К-3, а не рассуждением.
+      //
+      // Отсюда общее правило склада, на которое опирается вся конструкция:
+      // ЛЮБАЯ мутация сначала попадает в журнал; снимок — только свёртка
+      // журнала, никогда не самостоятельный источник изменений. Тогда
+      // «журнал старше снимка» безвреден по построению: журнал полон и
+      // упорядочен, снимок — его префикс, доигрывание хвоста всегда даёт
+      // верный итог.
+      _appendJournal(removedKeys.map((k) => ({ k, d: 1 })));
+      _saveBagMeta();
+    }
   } catch (e) {
     // К-2: отката БОЛЬШЕ НЕТ, и это не упущение, а следствие нового
     // порядка. Прежний откат (пятый раунд, дисциплина I2 из recordBag()/
