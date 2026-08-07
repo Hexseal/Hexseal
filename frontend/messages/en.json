@@ -604,7 +604,7 @@
     "decrypt_failed": "Decryption failed",
     "click_to_save": "Encrypted · click to save",
     "click_to_open": "Click to open",
-    "e2e_notice": "Encrypted · kept 7 days · only the two of you hold the key",
+    "e2e_notice": "Encrypted · kept 7 days, longer while the deal is open · only the two of you hold the key",
     "cancel_upload": "Cancel upload",
     "remove_file": "Remove file",
     "stream_dead": "Connection lost — new messages not arriving",
@@ -666,7 +666,11 @@
     "disable_confirm": "Turn off",
     "disable_show_code_first": "Show the code first",
     "file_too_large": "File is too large. The limit is {mb} MB.",
-    "key_not_saved_contract": "The chat key did not save on this device. For this wallet the key is random: after a reload a new one is created and the old messages will not open. Write down your recovery code now."
+    "key_not_saved_contract": "The chat key did not save on this device. For this wallet the key is random: after a reload a new one is created and the old messages will not open. Write down your recovery code now.",
+    "off_title": "Messages did not open",
+    "off_version_unknown": "This device holds a record of an unfamiliar version — the app looks older than it. We are leaving it alone so your key is not lost. Reload the page later.",
+    "off_unknown": "Something got in the way of opening your messages. Try again.",
+    "off_close_tabs": "Close other tabs and retry"
   },
   "deal_bar": {
     "application_received": "Application received",
@@ -711,7 +715,7 @@
   },
   "messaging": {
     "enabled_title": "Messaging enabled",
-    "enabled_desc": "End-to-end encrypted via XMTP · Others can message you",
+    "enabled_desc": "End-to-end encrypted · Others can message you",
     "enable_title": "Enable Messaging",
     "enable_desc": "One-time wallet signature to set up end-to-end encrypted messaging. Clients, executors and arbiters will be able to reach you directly.",
     "signing": "Signing…"
@@ -921,9 +925,9 @@
     "q_nft": "What are Job Receipt NFTs?",
     "a_nft": "When a deal is successfully completed, the executor receives a soulbound NFT (non-transferable) as verifiable proof of the work. These build on-chain reputation over time.",
     "q_chat": "Is the chat private?",
-    "a_chat": "Messages travel encrypted over XMTP, but the chat is not private from the platform. The relayer bot is a member of every conversation, so the history and attachments are stored for dispute resolution and the platform can read them. We open them only when a dispute is open and an arbiter has been assigned — that is a rule we follow, not something the server is technically unable to do.",
+    "a_chat": "Yes. Messages are encrypted end-to-end on your own devices — the server only stores unreadable data and holds no keys to it. There's no third-party messenger anymore, and no bot sitting inside your conversation. In a dispute, either side can present the conversation to the arbiter — from their own device; the platform can't hand it over from its own storage, because it can't read it either.",
     "q_files": "Are files shared in chat private?",
-    "a_files": "Files are AES-256-GCM encrypted in your browser before upload, but the key travels inside the chat message itself — and the platform is in that chat, so it holds both the file and the key. Files are stored on the server for 7 days and then permanently deleted. The encryption protects them from anyone who only reaches the file storage; it does not hide them from the platform. We open them only when a dispute is open and an arbiter has been assigned.",
+    "a_files": "Files are AES-256-GCM encrypted in your browser before upload, and the key stays inside the end-to-end encrypted conversation — the platform never holds it and can't decrypt the file. The server keeps the encrypted data only for a while: about 7 days once read, longer while the deal stays open, capped at 90 days from upload — then it's deleted for good. In a dispute, you present the file yourself, from your own device; the platform has no readable copy to hand over.",
     "q_funds_safe": "Can the platform take my funds?",
     "a_funds_safe": "No. Smart contracts are immutable once deployed. The platform owner can upgrade protocol facets but cannot touch funds in individual Agreement contracts — those are standalone escrow contracts.",
     "q_audited": "Are the contracts audited?",

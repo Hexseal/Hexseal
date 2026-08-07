@@ -16,6 +16,7 @@ import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 import { hasRecoveryCode } from '@/lib/chatRecovery';
+import { offScreenFor } from '@/lib/chatSessionOff';
 import { RecoveryReminder } from '@/components/RecoveryCodeModal';
 import { useFeeConfig } from '@/hooks/useFeeConfig';
 import { quoteFeeLocal } from '@/lib/fee';
@@ -563,7 +564,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   // панель их не различала и на выключенном мессенджере крутила спиннер
   // «Инициализация…» рядом с надписью «Сообщений пока нет», хотя ничего не
   // инициализировалось и инициализироваться не собиралось.
-  const { status: sessionStatus, retry: retrySession, session } = useChatSession();
+  const { status: sessionStatus, retry: retrySession, session, errorCode: sessionErrorCode } = useChatSession();
+  // ⚠️ К-2: пять разных бед делили один экран, и надпись на нём была про
+  // ДЕЙСТВИЕ ЧЕЛОВЕКА («мессенджер выключен»), которого он чаще всего не
+  // совершал. Слова и действие выбирает чистая функция по причине отказа.
+  const offScreen = offScreenFor(sessionErrorCode);
   // Код выдан, но человек не подтвердил, что записал. Плашка неброская и
   // уходит РОВНО после успешной проверки — не по закрытию окна и не по
   // таймеру (`recoveryReminderVisible`, `lib/chatRecovery.ts`).
@@ -1193,16 +1198,34 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                 <MessageCircle className="w-5 h-5 text-white/[0.15]" />
               </div>
               <div>
-                <p className="text-sm text-white/45 mb-1">{t("chat.messaging_off")}</p>
+                <p className="text-sm text-white/45 mb-1">{t(offScreen.titleKey as Parameters<typeof t>[0])}</p>
                 <p className="text-white/25 text-xs max-w-[240px] leading-relaxed">
-                  {t("chat.messaging_off_hint")}
+                  {t(offScreen.hintKey as Parameters<typeof t>[0])}
                 </p>
               </div>
-              <button onClick={retrySession}
-                className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
-                <MessageCircle className="w-3.5 h-3.5" />
-                {t("chat.enable_messaging")}
-              </button>
+              {/* Действие — половина дела, и оно РАЗНОЕ. «Повторить» на базе,
+                  занятой соседней вкладкой, не даст ничего, сколько ни жми; у
+                  незнакомой версии записи действия нет вовсе, и рисовать
+                  кнопку значило бы врать. */}
+              {offScreen.action === 'restore' ? (
+                <button onClick={() => window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT))}
+                  className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  {t("chat.restore_menu")}
+                </button>
+              ) : offScreen.action === 'close-tabs' ? (
+                <button onClick={retrySession}
+                  className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  {t("chat.off_close_tabs")}
+                </button>
+              ) : offScreen.action === 'retry' ? (
+                <button onClick={retrySession}
+                  className="flex items-center gap-2 px-4 py-2 rounded-[12px] border border-white/[0.08] bg-[#0d0d0f] hover:bg-[#111113] transition-colors text-xs text-white/50">
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  {t("chat.enable_messaging")}
+                </button>
+              ) : null}
             </div>
           )}
 
