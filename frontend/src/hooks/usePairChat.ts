@@ -68,7 +68,7 @@ import {
   ChatDirectoryError, type PeerChatKeys,
 } from './useChatSession';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
-import { notifyPush } from '@/lib/webpush';
+import { notifyPush, type PushOutcome } from '@/lib/webpush';
 
 /* ─────────────────────────── наружная форма ───────────────────────────── */
 
@@ -930,12 +930,46 @@ export function usePairChat(peerAddress: string, dealId?: string) {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
+  /**
+   * Исход ПОСЛЕДНЕГО уведомления собеседнику. `null` — с открытия чата ещё
+   * ничего не отправляли.
+   *
+   * ⚠️ ЗАЧЕМ ЭТО ВООБЩЕ ПОЯВИЛОСЬ. С тех пор как уведомления требуют пропуск
+   * склада, человек БЕЗ заведённого сеанса чата уведомление отправить не
+   * может: `notifyPush` возвращает `no-pass`, не делая запроса вовсе. Исход
+   * возвращался и ВЫБРАСЫВАЛСЯ обоими путями отправки — то есть сообщение
+   * уходило, собеседнику о нём не сообщали, и отправитель об этом не узнавал
+   * ничего. Ровно вопрос «если это сломается — он узнает?» с ответом «нет».
+   *
+   * Хранится исход, а не булево «не вышло»: `no-pass` — это «заведите сеанс
+   * чата», `rate-limited` — «слишком часто», `error` — «сеть». Свести их в
+   * одно значило бы показать человеку одну надпись на три разные причины и
+   * три разных действия.
+   */
+  const [pushOutcome, setPushOutcome] = useState<PushOutcome | null>(null);
+
+  /**
+   * Уведомить собеседника и ЗАПОМНИТЬ исход.
+   *
+   * ⚠️ ОДНО МЕСТО НА ВСЕ ПУТИ ОТПРАВКИ, и это та же причина, что у метки
+   * сделки (см. `dealId` в опциях движка): путей отправки два (текст и
+   * вложение), и станет больше. Одно место нельзя забыть на новом пути — два
+   * можно, и ровно так метка сделки однажды пропала целиком.
+   *
+   * Не `await`: отправка сообщения не должна ждать уведомления. Человеку
+   * важно, что сообщение ушло; про уведомление он узнает мгновением позже.
+   */
+  const notifyPeer = useCallback(() => {
+    void notifyPush(peerLc, PUSH_BODY, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`)
+      .then(setPushOutcome, () => setPushOutcome('error'));
+  }, [peerLc, myLc]);
+
   const sendMessageText = useCallback(async (text: string) => {
     const engine = engineRef.current;
     if (!engine || !text.trim()) return;
     await engine.send({ text: text.trim() });
-    notifyPush(peerLc, PUSH_BODY, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
-  }, [peerLc, myLc]);
+    notifyPeer();
+  }, [notifyPeer]);
 
   const sendFile = useCallback(async (file: File, signal?: AbortSignal) => {
     const engine = engineRef.current;
@@ -965,8 +999,8 @@ export function usePairChat(peerAddress: string, dealId?: string) {
         ...(result.chunkSize !== undefined ? { chunkSize: result.chunkSize } : {}),
       },
     });
-    notifyPush(peerLc, PUSH_BODY, `/chat?peer=${myLc}`, `/chat?peer=${peerLc}`);
-  }, [address, peerAddress, peerLc, myLc]);
+    notifyPeer();
+  }, [address, peerAddress, notifyPeer]);
 
   // ─── ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ И ПОЧЕМУ ───────────────────────────────────
   //
@@ -1028,5 +1062,19 @@ export function usePairChat(peerAddress: string, dealId?: string) {
     passSignaturePending,
     /** Ключ переписки не лёг на устройство — см. `sessionStorageNotice`. */
     storageNotice,
+    /**
+     * Исход последнего уведомления собеседнику: `ok`, `no-pass` (сеанс чата на
+     * этом устройстве не заведён — уведомление даже не пытались отправить),
+     * `rate-limited`, `error`. `null` — ещё ничего не отправляли.
+     *
+     * ⚠️ ЧЕСТНО О ТОМ, ЧТО ИЗ ЭТОГО СБЫЛОСЬ. Хук исход считает и отдаёт;
+     * ПОКАЗАТЬ его — работа панели, и она НЕ сделана здесь (чужая зона круга).
+     * Пока `ChatPanel.tsx` это поле не читает, «человек узнаёт, что
+     * уведомление не ушло» — возможность, а не поведение. Второй раз в этой же
+     * ветке выдавать замысел за поведение нельзя (`listBurnedSeqs` уже так
+     * попался: докстринг обещал «интерфейс обязан сказать», вызывающих было
+     * ноль).
+     */
+    pushOutcome,
   };
 }
