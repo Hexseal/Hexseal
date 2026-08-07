@@ -87,7 +87,15 @@ async function issuePassFor(wallet) {
 
 /** Помечает новое вложение парой (владелец пропуска, peerB) и отдаёт путь. */
 async function tagFileForPair(peerB) {
+  return (await tagFileForPairReturningOwner(peerB)).fp;
+}
+
+/** То же, но отдаёт и адрес владельца пропуска: он — ВТОРОЙ участник пары,
+ *  и сделку в тестах усыновления надо заводить именно на него, а не на
+ *  выдуманный адрес. */
+async function tagFileForPairReturningOwner(peerB) {
   const wallet = ethers.Wallet.createRandom();
+  const owner = (await wallet.getAddress()).toLowerCase();
   const pass = await issuePassFor(wallet);
   const presign = await request(app)
     .post('/files/presign')
@@ -95,7 +103,7 @@ async function tagFileForPair(peerB) {
     .set('x-bag-pass', pass)
     .send({ peerB });
   if (presign.status !== 200) throw new Error(`presign: ${presign.status} ${JSON.stringify(presign.body)}`);
-  return path.join(relayerInfo.dirFiles, jsonBody(presign).key);
+  return { fp: path.join(relayerInfo.dirFiles, jsonBody(presign).key), owner };
 }
 
 function touch(filePath, mtimeMs) {
@@ -275,6 +283,77 @@ describe('runFileCleanup', () => {
       // обязана быть отличима от ночи, когда сносить было нечего.
       expect(line).toBeDefined();
       expect(line).toMatch(/deferred \d+ tagged file/);
+    });
+  });
+
+  // ─── В-3 (аудит устойчивости, 6 августа) ────────────────────────────────
+  //
+  // Сообщение живёт до конца дела (усыновление сделкой, Задача 5 плана
+  // «транспорт и хранение»), а ФАЙЛ ВНУТРИ НЕГО умирает на восьмой день:
+  // вложения усыновления не знали вовсе. Их щадила только открытая ПРЯМО
+  // СЕЙЧАС спорность пары — а бриф обсуждают ДО сделки, и до спора вложение
+  // не доживает.
+  //
+  // Итог: в споре предъявляется текст без вложения, ради которого спор чаще
+  // всего и заводится. Это ровно то, что §6 общей спеки обещает не
+  // допускать — обещание держалось для мешков и не держалось для файлов.
+  describe('В-3 — вложение усыновляется сделкой так же, как сообщение', () => {
+    const AGREEMENT = '0x9999999999999999999999999999999999999991';
+    const CLIENT = '0x9999999999999999999999999999999999999992';
+
+    function mockActiveDeal({ client, executor, fundedAt = 0n, deadlineDays = 30n }) {
+      const createdAtSec = Math.floor(Date.now() / 1000);
+      mockContract(process.env.DIAMOND_ADDRESS, {
+        getActive: [{
+          agreement: AGREEMENT, client, executor, amount: 0n, status: 0,
+          createdAt: BigInt(createdAtSec), resolvedAt: 0n,
+        }],
+        getDisputed: [],
+      });
+      mockContract(AGREEMENT, {
+        getDetails: async () => ({ deadlineDays_: deadlineDays, fundedAt_: fundedAt, activatedAt_: 0n, disputedAt_: 0n }),
+        DISPUTE_WINDOW: async () => 4n * 24n * 60n * 60n,
+        DEADLINE_GRACE: async () => 0n,
+        AUTO_APPROVE_WINDOW: async () => 0n,
+      });
+    }
+
+    it('у пары есть живая сделка — вложение переживает свой семидневный срок', async () => {
+      const { fp, owner } = await tagFileForPairReturningOwner(CLIENT);
+      mockActiveDeal({ client: CLIENT, executor: owner });
+      touch(fp, Date.now() - 30 * 24 * 60 * 60 * 1000); // срок вышел три недели назад
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await runFileCleanup();
+      errSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(true);
+    });
+
+    it('сделки у пары нет — вложение по-прежнему сносится: усыновление не превращается в «храним всё вечно»', async () => {
+      const { fp } = await tagFileForPairReturningOwner(CLIENT);
+      mockContract(process.env.DIAMOND_ADDRESS, { getActive: [], getDisputed: [] });
+      touch(fp, Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await runFileCleanup();
+      errSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(false);
+    });
+
+    it('сделка НЕ оплачена — 90-дневный потолок режет срок так же, как у мешка', async () => {
+      const { fp, owner } = await tagFileForPairReturningOwner(CLIENT);
+      // deadlineDays огромный, но денег в эскроу нет — потолок обязан
+      // обрезать усыновление, ровно как он делает это для мешков.
+      mockActiveDeal({ client: CLIENT, executor: owner, fundedAt: 0n, deadlineDays: 3650n });
+      touch(fp, Date.now() - 120 * 24 * 60 * 60 * 1000); // старше 90 дней от загрузки
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await runFileCleanup();
+      errSpy.mockRestore();
+
+      expect(fs.existsSync(fp)).toBe(false);
     });
   });
 
