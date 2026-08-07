@@ -1933,7 +1933,26 @@ function sweepStaleTmpFiles(nowMs) {
   return removed;
 }
 
-export function cleanupBags(nowMs = Date.now()) {
+// `chainKnown` — ответила ли цепь в ЭТОМ прогоне (К-1 для мешков, сквозная
+// проверка перед слиянием, 8 августа).
+//
+// Первая редакция К-1 накрыла вложения и не накрыла мешки: эта функция
+// звалась вообще без признака, и правило «не знаем — не сносим» до неё не
+// доходило. Молчащий узел не даёт усыновлению проставить dealDeadline, мешок
+// доживает по обычному правилу 2/3 и сносится безвозвратно задолго до конца
+// дела. Замер (сделка активная и неоплаченная, потолок 90 дней):
+//
+//   узел отвечает всегда, прочитан на день 10 → снесён в ночь №90 (штатно)
+//   узел молчит с ночи 1,  прочитан на день 10 → снесён в ночь №17
+//   узел отвечает всегда, не прочитан          → ночь №90 (штатно)
+//   узел молчит с ночи 1,  не прочитан         → ночь №30
+//
+// Умолчание `true` — намеренно, ради существующих вызывающих и тестов,
+// которые про цепь ничего не знают и не должны. Настоящая защита не здесь,
+// а в СКВОЗНОМ тесте: он проверяет, что runFileCleanup() передаёт реальное
+// значение, а не забывает аргумент — ровно та ошибка, которой эта правка и
+// вызвана. Мутация «звать без аргумента» его красит.
+export function cleanupBags(nowMs = Date.now(), { chainKnown = true } = {}) {
   assertSafeInt('cleanupBags', 'nowMs', nowMs);
 
   // Третий тур закрывающего ревью Задачи 4: ЕДИНЫЙ гейт в начале функции,
@@ -1955,6 +1974,10 @@ export function cleanupBags(nowMs = Date.now()) {
 
   let removed = 0;
   let kept = 0;
+  // К-1 для мешков: сколько сносов отложено незнанием цепи. Отдельным
+  // числом, не растворено в kept — ночь, в которую снос отложен аварией,
+  // обязана быть отличима от ночи, в которую сносить было нечего.
+  let deferred = 0;
   // Мелочь (порядок): файлы удаляемых мешков собираются здесь, но не
   // трогаются немедленно — см. ниже, почему удаление файла идёт ПОСЛЕ
   // сохранения индекса, а не до.
@@ -1971,6 +1994,22 @@ export function cleanupBags(nowMs = Date.now()) {
 
   for (const [key, meta] of Object.entries(_bagMeta)) {
     if (bagExpiryAt(meta, nowMs) <= nowMs) {
+      // К-1 для мешков: НЕ ЗНАЕМ — НЕ СНОСИМ. Цепь не ответила, значит про
+      // ЛЮБУЮ пару неизвестно, есть ли у неё живое дело, которое продлило
+      // бы этот мешок усыновлением. Откладываем — но НЕ ДОЛЬШЕ того же
+      // 90-дневного потолка (BAG_MAX_AGE_MS от загрузки), что и так
+      // ограничивает усыновление неоплаченной сделкой. Иначе авария
+      // превратилась бы в «храним вечно», а пункт 28.2 уже замерил, каким
+      // потоком мешков можно завалить диск.
+      //
+      // Тот же потолок, что у отсрочки вложений в app.js, и по той же
+      // причине: у текста и вложения одного сообщения не должно быть разных
+      // правил выживания.
+      if (!chainKnown && nowMs < meta.uploadedAt + BAG_MAX_AGE_MS) {
+        deferred++;
+        kept++;
+        continue;
+      }
       delete _bagMeta[key];
       keysToDeleteFiles.push(key);
       removedKeys.push(key);
@@ -2078,5 +2117,12 @@ export function cleanupBags(nowMs = Date.now()) {
     sweepStaleTmpFiles(nowMs);
   }
 
-  return { removed, kept };
+  if (deferred) {
+    console.log(
+      `[bags] cleanupBags: deferred ${deferred} expired bag(s) — the chain node did not answer, so it is unknown ` +
+      `which pairs have a live deal that would have adopted them. They will be reconsidered on the next run that ` +
+      `reaches the chain; the ${BAG_MAX_AGE_MS}ms ceiling from upload still applies and is not deferred.`
+    );
+  }
+  return { removed, kept, deferred };
 }

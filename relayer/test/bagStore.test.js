@@ -435,7 +435,7 @@ describe('склад — счётчики и поведение чистки з�
     put(ALICE, BOB, now - 40 * DAY);                     // просрочен
     put(ALICE, BOB, now, { firstFetchedAt: now });        // жив
     put(ALICE, BOB, now);                                 // жив (не прочитан, свежий)
-    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 2 });
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 2, deferred: 0 });
   });
 
   it('чистка сносит с диска старый файл-сирота, которого нет в индексе (не просто «не падает»)', () => {
@@ -2141,7 +2141,7 @@ describe('Мелочь (f) — removed считает и снесённых си
     const old = new Date(now - 40 * DAY);
     fs.utimesSync(orphan, old, old);
 
-    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0 });
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0, deferred: 0 });
   });
 
   it('removed складывает записи из индекса и сирот с диска вместе', () => {
@@ -2155,7 +2155,7 @@ describe('Мелочь (f) — removed считает и снесённых си
     const old = new Date(now - 40 * DAY);
     fs.utimesSync(orphan, old, old);
 
-    expect(cleanupBags(now)).toEqual({ removed: 2, kept: 0 });
+    expect(cleanupBags(now)).toEqual({ removed: 2, kept: 0, deferred: 0 });
   });
 });
 
@@ -2172,7 +2172,7 @@ describe('Мелочь (g) — запись без файла отбрасыва
     const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // жив ещё 7 дней
     fs.unlinkSync(path.join(bagStore.DIR_BAGS, key)); // файл пропал, запись в индексе осталась
 
-    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0 });
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0, deferred: 0 });
     expect(bagMetaOf(key)).toBeUndefined();
     expect(listBagsFor(ALICE)).toHaveLength(0);
   });
@@ -2181,7 +2181,7 @@ describe('Мелочь (g) — запись без файла отбрасыва
     const now = Date.now();
     const key = put(ALICE, BOB, now, { firstFetchedAt: now });
 
-    expect(cleanupBags(now)).toEqual({ removed: 0, kept: 1 });
+    expect(cleanupBags(now)).toEqual({ removed: 0, kept: 1, deferred: 0 });
     expect(bagMetaOf(key)).toBeDefined();
   });
 });
