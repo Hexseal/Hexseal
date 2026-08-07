@@ -28,6 +28,7 @@ dotenv.config({ path: '.env.relayer' });
 import {
   bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, listBagsInvolving, bagMetaOf, bagPathFor,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
+  isBagStoreHealthy, bagStorePersistError,
   adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
   assertNotFromFuture,
 } from './bagStore.js';
@@ -1564,8 +1565,35 @@ export function clientIp(req) {
 
 // ─── Core routes ──────────────────────────────────────────────────────────────
 
+// В-1 (аудит устойчивости, 6 августа): здоровье обязано включать то, от
+// чего зависит СОХРАННОСТЬ, а не только то, что процесс жив и отвечает.
+//
+// Раньше здесь стоял безусловный {status:'ok'}. Две беды из одного корня:
+// отправитель получал 200 на сообщение, которое не переживёт перезапуск (в
+// режиме недоверия склад держит запись только в памяти), а внешний надзор
+// видел «жив» на сервере, который уже ничего не сохраняет — то есть беда
+// не была бы замечена ровно тем механизмом, который для этого и поставлен.
+//
+// 503, а не 200 с полем: надзор смотрит на КОД. Поле, которое надо ещё
+// разобрать и на которое надо ещё догадаться настроить проверку, — это то
+// же самое молчание, только длиннее.
+//
+// Прежние поля (status/relayer/diamond) на месте — существующие
+// потребители не ломаются, они просто получают ещё и `storage`.
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', relayer: relayer.address, diamond: DIAMOND_ADDR });
+  const storage = {
+    indexTrusted: isBagStoreHealthy(),
+    lastPersistError: bagStorePersistError(),
+  };
+  const healthy = storage.indexTrusted && storage.lastPersistError === null;
+  res
+    .status(healthy ? 200 : 503)
+    .json({
+      status: healthy ? 'ok' : 'degraded',
+      relayer: relayer.address,
+      diamond: DIAMOND_ADDR,
+      storage,
+    });
 });
 
 app.get('/nonce/:address', async (req, res) => {

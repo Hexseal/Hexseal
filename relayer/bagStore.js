@@ -597,6 +597,39 @@ function isValidBagMetaEntry(key, meta) {
 //     индекс. Никакой автоматики через запись, время или счётчик попыток.
 let _bagMetaLoadOk = true;
 
+// В-1 (аудит устойчивости, 6 августа): последняя ошибка сохранения. Нужна
+// не складу — он про свои отказы и так узнаёт броском — а `/health`:
+// внешний надзор обязан отличать «жив и сохраняет» от «жив, отвечает 200,
+// но ничего не сохраняет». Хранится ТЕКСТ последней ошибки, а не булево:
+// «ENOSPC» и «EACCES» требуют разных действий от человека, и лишать его
+// этой разницы значит заставить лезть в логи ради того, что уже известно.
+//
+// Снимается ПЕРВОЙ ЖЕ удачной записью — иначе один давний сбой держал бы
+// сервер «больным» до перезапуска, и надзор привык бы к красному.
+let _lastPersistError = null;
+
+// В-1: «сохранности» ровно два врага, и оба отражены здесь.
+//   indexTrusted    — склад в режиме недоверия НИЧЕГО не пишет на диск
+//                     (см. _loadBagMeta/_persistUnlessDistrusted), то есть
+//                     всякий успешный приём мешка — обещание, которое не
+//                     переживёт перезапуск;
+//   lastPersistError — последняя попытка записи упала (полный диск, права,
+//                     отвалившийся том).
+// Ни одно из двух не видно снаружи иначе, чем через это.
+export function isBagStoreHealthy() {
+  return _bagMetaLoadOk;
+}
+
+export function bagStorePersistError() {
+  return _lastPersistError;
+}
+
+// Только для тестов: вернуть отметку об отказе в исходное. Боевой код
+// снимает её удачной записью и никогда — вызовом «забудь».
+export function _resetPersistHealthForTests() {
+  _lastPersistError = null;
+}
+
 // Диск (DIR_BAGS) отдельно от описи — независимая причина войти в режим
 // недоверия, даже если сама опись прочиталась штатно. «Пустой» (readdirSync
 // вернул []) — не то же самое, что «нечитаемый» (readdirSync бросил): первое
@@ -981,9 +1014,11 @@ export function _saveBagMeta() {
     fs.renameSync(tmpPath, BAG_META_PATH);
   } catch (e) {
     try { fs.unlinkSync(tmpPath); } catch {}
+    _lastPersistError = e.message; // В-1: чтобы `/health` знал, а не только лог
     console.error(`[bags] FAILED TO SAVE ${BAG_META_PATH} — in-memory index and disk index have diverged: ${e.message}`);
     throw e;
   }
+  _lastPersistError = null; // снимок доехал — прошлые отказы больше не описывают текущее состояние
   // Снимок доехал — журнал, накопленный ДО него, полностью в нём учтён и
   // больше не нужен. Ошибка обнуления не откатывает уже сохранённый снимок
   // и не бросается вызывающему: состояние на диске корректно и без этого
@@ -1018,9 +1053,11 @@ function _appendJournal(records) {
     fs.mkdirSync(path.dirname(BAG_JOURNAL_PATH), { recursive: true });
     fs.appendFileSync(BAG_JOURNAL_PATH, payload, 'utf8');
   } catch (e) {
+    _lastPersistError = e.message; // В-1: чтобы `/health` знал, а не только лог
     console.error(`[bags] FAILED TO APPEND ${BAG_JOURNAL_PATH} — in-memory index and disk index have diverged: ${e.message}`);
     throw e;
   }
+  _lastPersistError = null; // дозапись прошла — прошлые отказы больше не описывают текущее состояние
 }
 
 // Журнал не должен расти вечно: чем он длиннее, тем дольше разбор при
