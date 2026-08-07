@@ -294,9 +294,21 @@ export function _loadDirectory() {
       // смене — иначе длинная история, унаследованная с диска при понижении
       // MAX_KEY_HISTORY окружением, жила бы до следующей смены ключа), плюс
       // свежие объекты-звенья вместо алиасов на то, что вернул JSON.parse.
+      // В-5 (аудит устойчивости, 6 августа): потолок здесь БОЛЬШЕ НЕ
+      // ПРИМЕНЯЕТСЯ. Раньше стоял `.slice(0, MAX_KEY_HISTORY)` (И-2), и это
+      // была ошибка того самого класса, против которого история заведена.
+      //
+      // Замер: 30 честных смен ключа, затем законная опечатка в окружении
+      // (хотели MAX_KEY_HISTORY=200, набрали 2) — 29 звеньев на диске
+      // превращались в 2 при первой же обычной смене ключа, и исправление
+      // опечатки их НЕ ВОЗВРАЩАЛО. Ключ, которым подписано неудобное
+      // сообщение, исчезал, и проверить подпись под ним становилось нечем.
+      //
+      // Потолок ограничивает РОСТ (см. putKey ниже), а не задним числом уже
+      // записанное. Прочитанное с диска отдаётся как есть.
       clean[addr] = {
         ...rec,
-        history: rec.history.map((h) => ({ ...h })).slice(0, MAX_KEY_HISTORY),
+        history: rec.history.map((h) => ({ ...h })),
       };
     } else {
       dropped++;
@@ -381,10 +393,60 @@ function _sweepStaleTmpFiles(nowMs) {
 // новое, никогда наполовину записанное. Ошибка не глотается: throw после
 // логирования — вызывающий (putKey) обязан откатить свою in-memory мутацию,
 // иначе память забежит вперёд диска.
+// В-2 (аудит устойчивости, 6 августа): читает то, что СЕЙЧАС на диске, и
+// подмешивает в него нашу память — вместо того чтобы затирать диск снимком
+// целиком.
+//
+// При обычной выкатке старая и новая копии релеера какое-то время работают
+// одновременно поверх одного STORAGE_DIR. Замер до правки: адрес,
+// зарегистрированный старой копией в этом окне, ИСЧЕЗАЛ полностью, как
+// только новая копия что-нибудь записывала, а keyChangeCount адреса —
+// «вечная улика» против вытеснения неудобного ключа — недосчитывался.
+//
+// Правило слияния, ровно два:
+//   • адрес, который есть на диске и которого нет у нас в памяти, остаётся
+//     как есть (его завела другая копия — не нам его стирать);
+//   • keyChangeCount адреса берётся БОЛЬШИЙ из двух: он объявлен никогда не
+//     убывающим, и чужой устаревший снимок не имеет права его откатить.
+// Всё остальное в записи — наше: мы именно сейчас её и меняем.
+//
+// Чего это НЕ делает: настоящей межпроцессной блокировки здесь по-прежнему
+// нет (пункт 28.3 открытых вопросов). Две копии, записавшие в один и тот же
+// миг, всё ещё могут потерять работу друг друга — окно сузилось до одного
+// чтения-записи, но не закрылось. Настоящее решение — файловая блокировка
+// или один-единственный писатель, и это отдельная задача.
+function _mergeWithDisk(memory) {
+  let onDisk;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(DIRECTORY_FILE, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return memory;
+    onDisk = parsed;
+  } catch {
+    return memory; // файла нет или он нечитаем — писать нашу память как есть
+  }
+
+  const merged = Object.create(null);
+  for (const [addr, rec] of Object.entries(onDisk)) {
+    if (ETH_ADDR_RE.test(addr) && _isValidRecord(rec)) merged[addr] = rec;
+  }
+  for (const [addr, rec] of Object.entries(memory)) {
+    const diskRec = merged[addr];
+    if (diskRec && typeof diskRec.keyChangeCount === 'number' && diskRec.keyChangeCount > rec.keyChangeCount) {
+      merged[addr] = { ...rec, keyChangeCount: diskRec.keyChangeCount };
+    } else {
+      merged[addr] = rec;
+    }
+  }
+  return merged;
+}
+
 function _saveDirectory() {
   const tmpPath = `${DIRECTORY_FILE}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
     fs.mkdirSync(path.dirname(DIRECTORY_FILE), { recursive: true });
+    // В-2: сливаем с диском ПЕРЕД записью, и результат слияния становится
+    // нашей памятью — иначе следующая же запись снова затрёт чужое.
+    _directory = _mergeWithDisk(_directory);
     fs.writeFileSync(tmpPath, JSON.stringify(_directory), 'utf8');
     fs.renameSync(tmpPath, DIRECTORY_FILE);
   } catch (e) {
@@ -399,6 +461,21 @@ function _saveDirectory() {
 
 function assertReady() {
   if (!_directoryLoadOk) throw new DirectoryUnavailableError();
+}
+
+// В-2: сколько смен ключа у этого адреса числится НА ДИСКЕ прямо сейчас.
+// Читается по одному адресу и только на пути настоящей смены ключа —
+// повторная регистрация тех же байт до сюда не доходит (ранний возврат в
+// putKey), так что лишнего чтения файла на каждый заход клиента нет.
+function _keyChangeCountOnDisk(address) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(DIRECTORY_FILE, 'utf8'));
+    const rec = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed[address] : null;
+    const n = rec && typeof rec.keyChangeCount === 'number' ? rec.keyChangeCount : 0;
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function _assertKeyHexInput(fieldName, value) {
@@ -520,14 +597,33 @@ export function putKey(address, keys, nowMs = Date.now()) {
   }
 
   let history = existing ? existing.history : [];
-  let keyChangeCount = existing ? existing.keyChangeCount : 0;
+  // В-2: основание счётчика — БОЛЬШЕЕ из своего и того, что лежит на диске.
+  // В окне выкатки другая живая копия могла увести счётчик вперёд, а наш
+  // снимок в памяти застыл на моменте старта; прибавляя к своему, мы бы
+  // молча списали её смены. Улика обязана только расти.
+  let keyChangeCount = Math.max(
+    existing ? existing.keyChangeCount : 0,
+    _keyChangeCountOnDisk(address),
+  );
   if (existing) {
     const changed = [];
     if (boxKeyChanged) changed.push('boxKey');
     if (signKeyChanged) changed.push('signKey');
     const histEntry = { boxKey: existing.boxKey, replacedAt: nowMs, changed };
     if (existing.signKey !== undefined) histEntry.signKey = existing.signKey;
-    history = [histEntry, ...history].slice(0, MAX_KEY_HISTORY);
+    // В-5: режем до max(потолок, сколько уже есть) — а не до потолка.
+    //
+    // Смысл: потолок останавливает РОСТ истории, но НИКОГДА не отнимает
+    // того, что уже сохранено. Если история уже длиннее потолка (потолок
+    // понизили — намеренно или опечаткой), она перестаёт расти и живёт на
+    // своей текущей длине: новое звено встаёт впереди, самое старое
+    // вытесняется, длина не меняется. Если короче — растёт до потолка, как
+    // и раньше.
+    //
+    // Так негодное значение ручки перестаёт быть НЕОБРАТИМЫМ: опечатку
+    // видно (история не растёт), её можно исправить, и ничего при этом не
+    // потеряно. Прежнее поведение теряло звенья навсегда и молча.
+    history = [histEntry, ...history].slice(0, Math.max(MAX_KEY_HISTORY, history.length));
     keyChangeCount += 1;
   }
 

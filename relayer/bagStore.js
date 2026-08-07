@@ -325,6 +325,17 @@ export function assertBagStoreReady() {
   // исходника, который проверяет гейт script/check-appeal-window.sh на
   // этапе CI, не рантайм.
   assertNonNegativeFiniteNumber('BAG_DEAL_GRACE_MS', BAG_DEAL_GRACE_MS);
+  // В-5 (аудит устойчивости): без этой строки ручка, заведённая правкой К-3
+  // несколькими часами раньше, принимала 0, -1 и любой мусор МОЛЧА — и
+  // молча же отменяла саму К-3. `size <= NaN` всегда ложь, значит журнал
+  // схлопывался в полный снимок на КАЖДОЙ записи. Замер: 0,017 мс на PUT
+  // против 5,283 мс при BAG_JOURNAL_MAX_BYTES=abc — в 311 раз хуже, без
+  // единой строки в логе.
+  //
+  // Позитивность, не неотрицательность: 0 здесь не «без потолка», а
+  // «схлопывать всегда» — то есть выключение журнала как приёма, а не
+  // настройка. Ровно как у четырёх TTL/размера выше.
+  assertPositiveFiniteNumber('BAG_JOURNAL_MAX_BYTES', BAG_JOURNAL_MAX_BYTES);
   _warnIfBagMaxAgeTooSmallForAppeal();
   fs.mkdirSync(DIR_BAGS, { recursive: true });
 }
