@@ -24,6 +24,7 @@ import {
   type SentMessage, type IncomingBag,
 } from './chatConversation';
 import { packEnvelope } from './chatEnvelope';
+import { BoundedParseCache, PARSE_CACHE_MAX } from './chatParseCache';
 import { buildLink } from './chatChain';
 import type { ChatSession } from './chatSession';
 import type { ChainLink } from './chatChain';
@@ -109,15 +110,38 @@ async function fastConversation(n: number): Promise<{ alice: ChatSession; bags: 
   return { alice, bags };
 }
 
-/** Холодный и повторный разбор одного и того же набора, в миллисекундах. */
-async function timeParse(alice: ChatSession, bags: IncomingBag[]): Promise<{ cold: number; warm: number }> {
+/**
+ * Холодный и повторный разбор одного набора: время И ЧИСЛО ПРОВЕРОК ПОДПИСИ.
+ *
+ * ⚠️ ЧИСЛО, А НЕ ТОЛЬКО ВРЕМЯ, и это не педантизм. Время повторного разбора
+ * отличается от холодного на столько, какую долю разбора занимает кэшируемое,
+ * — на больших наборах это десять процентов, а разброс замера бывает четыре.
+ * Порог по времени в этой зоне ничего не сторожит (первая версия замка на
+ * 20 000 проходила зелёной на СЛОМАННОМ кэше). Число проверок подписи —
+ * величина точная: сколько мешков кэш не узнал, столько раз и позвали
+ * libsodium.
+ */
+async function timeParse(
+  alice: ChatSession, bags: IncomingBag[],
+): Promise<{ cold: number; warm: number; coldVerifies: number; warmVerifies: number }> {
+  const sodium = (await import('libsodium-wrappers')).default;
+  await sodium.ready;
   _resetParseCacheForTest();
+  const spy = vi.spyOn(sodium, 'crypto_sign_verify_detached');
+
   const t0 = Date.now();
   await receiveBags(alice, bags, { peer: BOB });
   const cold = Date.now() - t0;
+  const coldVerifies = spy.mock.calls.length;
+
+  spy.mockClear();
   const t1 = Date.now();
   await receiveBags(alice, bags, { peer: BOB });
-  return { cold, warm: Date.now() - t1 };
+  const warm = Date.now() - t1;
+  const warmVerifies = spy.mock.calls.length;
+
+  spy.mockRestore();
+  return { cold, warm, coldVerifies, warmVerifies };
 }
 
 beforeEach(() => { installPutStub(); });
@@ -289,46 +313,128 @@ describe('К-3: потолок кэша разбора', () => {
     // модуле, и мерять надо ровно вокруг него.
     //
     // Что красит: возврат вытеснения «самого старого». Тогда повторный разбор
-    // 5001 мешка стоит столько же, сколько холодный, — в десять раз дороже,
-    // чем повторный разбор 5000.
+    // 5001 мешка требует 5001 проверки подписи вместо одной, и стоит столько
+    // же, сколько холодный, — в десять раз дороже, чем повторный разбор 5000.
     const { alice, bags } = await fastConversation(5001);
 
     const atCap = await timeParse(alice, bags.slice(0, 5000));
     const overCap = await timeParse(alice, bags);
 
     console.info(
-      `[замер К-3] 5000: холодный ${atCap.cold} мс, повторный ${atCap.warm} мс; ` +
-      `5001: холодный ${overCap.cold} мс, повторный ${overCap.warm} мс`,
+      `[замер К-3] 5000: холодный ${atCap.cold} мс / ${atCap.coldVerifies} проверок подписи, ` +
+      `повторный ${atCap.warm} мс / ${atCap.warmVerifies}; ` +
+      `5001: холодный ${overCap.cold} мс / ${overCap.coldVerifies}, ` +
+      `повторный ${overCap.warm} мс / ${overCap.warmVerifies}`,
     );
 
-    // 1. За потолком повторный разбор обязан остаться ДЕШЕВЛЕ холодного.
-    //    Порог щедрый — замок ловит «кэша не стало вовсе», а не микросекунды.
+    // 1. ТОЧНОЕ ЧИСЛО. Один лишний мешок сверх потолка обязан стоить повторно
+    //    ОДНОЙ непопавшей проверки, а не пяти тысяч. Порог с большим запасом —
+    //    он ловит обрыв, а не единицы.
+    expect(atCap.warmVerifies).toBe(0);
+    expect(overCap.warmVerifies).toBeLessThan(50);
+    // 2. И время: повторный разбор за потолком остаётся кратно дешевле
+    //    холодного. Порог щедрый — замок ловит «кэша не стало вовсе».
     expect(overCap.warm * 2).toBeLessThan(overCap.cold);
-    // 2. И не должен обрываться относительно того, что было ДО потолка: один
-    //    лишний мешок из пяти тысяч не может стоить кратного удорожания.
-    expect(overCap.warm).toBeLessThan(atCap.warm * 3 + 50);
   }, 300_000);
 
-  it('ЗАМЕР: 20 000 мешков — повторный разбор всё ещё дешевле холодного', async () => {
+  it('ЗАМЕР: 20 000 мешков при потолке 5000 — попаданий примерно четверть, а не ноль', async () => {
     // Вопрос «что если этого станет очень много», ответ числом. Кэш вчетверо
     // меньше набора; доля попаданий обязана падать ПЛАВНО (примерно как
     // потолок/набор), а не обрываться в ноль.
     //
-    // Что красит: тот же возврат вытеснения «самого старого» — повторный разбор
-    // становится дороже холодного.
+    // ⚠️ ЗАМОК — ПО ЧИСЛУ ПРОВЕРОК, А НЕ ПО ВРЕМЕНИ, и это исправление
+    // собственной ошибки. Первая версия писала «повторный дешевле холодного» и
+    // проходила ЗЕЛЁНОЙ на СЛОМАННОМ кэше: 9798 мс против 10173, разница 4 % —
+    // чистый шум замера. Кэшируемое (подпись и расшифровка) занимает лишь часть
+    // разбора, поэтому четверть попаданий даёт около десяти процентов времени —
+    // то есть по времени этот случай в принципе неотличим от шума на этой
+    // машине. Число вызовов libsodium от машины не зависит вовсе.
+    //
+    // Что красит: возврат вытеснения «самого старого» — повторный разбор
+    // требует ВСЕ 20 000 проверок, попаданий ноль.
     const { alice, bags } = await fastConversation(20_000);
-    const { cold, warm } = await timeParse(alice, bags);
+    const { cold, warm, coldVerifies, warmVerifies } = await timeParse(alice, bags);
+    const hitRate = 1 - warmVerifies / coldVerifies;
     console.info(
-      `[замер К-3] 20000: холодный ${cold} мс, повторный ${warm} мс ` +
-      `(${((1 - warm / cold) * 100).toFixed(0)} % экономии)`,
+      `[замер К-3] 20000: холодный ${cold} мс / ${coldVerifies} проверок подписи, ` +
+      `повторный ${warm} мс / ${warmVerifies} — попаданий ${(hitRate * 100).toFixed(1)} %, ` +
+      `экономия времени ${((1 - warm / cold) * 100).toFixed(0)} %`,
     );
-    // ⚠️ ПОРОГ НЕ «ПРОСТО МЕНЬШЕ». Первая версия этого замка писала
-    // `warm < cold` — и проходила ЗЕЛЁНОЙ на сломанном кэше: 9798 против
-    // 10173, разница 4 %, чистый шум замера. Тест, который не может
-    // покраснеть, хуже отсутствующего. Кэш вчетверо меньше набора — доля
-    // попаданий обязана быть около четверти, то есть экономия заметно больше
-    // шума. Пятнадцать процентов — с запасом ниже ожидаемых двадцати с
-    // лишним и заведомо выше разброса.
-    expect(warm * 1.15).toBeLessThan(cold);
+    expect(coldVerifies).toBe(20_000);
+    // Ожидается около потолок/набор = 25 %. Порог 20 % — с запасом ниже
+    // ожидаемого и заведомо выше нуля, в который вырождалось прежнее правило.
+    expect(hitRate).toBeGreaterThan(0.2);
   }, 900_000);
+});
+
+/* ─────────── К-3: сам механизм вытеснения, без пяти тысяч мешков ────────── */
+
+describe('BoundedParseCache: правило вытеснения', () => {
+  /** Доля попаданий при кольцевом обходе набора `set` кэшем на `cap` записей,
+   *  за `rounds` проходов. Ровно то, что делает `receiveBags` каждый тик. */
+  function hitRateOnCycle(cap: number, set: number, rounds: number): number {
+    const cache = new BoundedParseCache<number>(cap);
+    let hits = 0;
+    let looks = 0;
+    for (let r = 0; r < rounds; r++) {
+      for (let i = 0; i < set; i++) {
+        const key = `k${i}`;
+        looks++;
+        if (cache.get(key) !== undefined) hits++;
+        else cache.put(key, i);
+      }
+    }
+    // Первый проход весь холодный по определению — он в долю не входит.
+    return hits / (looks - set);
+  }
+
+  it('ЗАМЕР: доля попаданий падает ПЛАВНО, а не обрывом на потолке', () => {
+    // Что красит: возврат вытеснения «самого старого» (`cache.keys().next()`).
+    // Тогда 5001 даёт РОВНО ноль вместо почти единицы.
+    const rows = [4999, 5000, 5001, 20_000].map(set => ({
+      set, rate: hitRateOnCycle(PARSE_CACHE_MAX, set, 6),
+    }));
+    console.info(
+      '[замер К-3, механизм] потолок 5000 → ' +
+      rows.map(r => `${r.set}: ${(r.rate * 100).toFixed(1)} %`).join('; '),
+    );
+
+    expect(rows[0].rate).toBe(1);          // 4999 — всё помещается
+    expect(rows[1].rate).toBe(1);          // 5000 — ровно потолок
+    expect(rows[2].rate).toBeGreaterThan(0.99);  // 5001 — обрыва НЕТ
+    // 20 000: верхний предел — потолок/набор = 25 %. Порог 18 % с запасом.
+    expect(rows[3].rate).toBeGreaterThan(0.18);
+  });
+
+  it('потолок 5000 записан руками и совпадает с модулем', () => {
+    // Правило проекта: величина, взятая из проверяемого модуля, доказывает
+    // только «какая-то есть». Здесь она сверена с написанным числом.
+    expect(PARSE_CACHE_MAX).toBe(5_000);
+  });
+
+  it('НЕПРИНЯТАЯ запись всё равно возвращает значение', () => {
+    // ⚠️ Самая дорогая ловушка «приёма не всегда», и она не про скорость.
+    // Вызывающий читает результат сразу: `_signatureCache.put(...).ok`. Верни
+    // `put` что-нибудь другое, когда запись не принята, — и `ok` стал бы
+    // `undefined`, то есть КАЖДЫЙ мешок сверх потолка получил бы вердикт
+    // «подпись не сходится». Обвинение в подделке за переполненный кэш.
+    const cache = new BoundedParseCache<{ ok: boolean }>(2);
+    cache.put('a', { ok: true });
+    cache.put('b', { ok: true });
+    let admitted = 0;
+    for (let i = 0; i < 200; i++) {
+      const back = cache.put(`n${i}`, { ok: true });
+      expect(back.ok).toBe(true);          // значение вернулось в любом случае
+      if (cache.get(`n${i}`) !== undefined) admitted++;
+    }
+    expect(cache.size).toBe(2);            // потолок держится
+    expect(admitted).toBeGreaterThan(0);   // и приём не выродился в «никогда»
+    expect(admitted).toBeLessThan(200);    // и не в «всегда»
+  });
+
+  it('потолок меньше единицы — отказ, а не тихий кэш из воздуха', () => {
+    expect(() => new BoundedParseCache(0)).toThrow(TypeError);
+    expect(() => new BoundedParseCache(-1)).toThrow(TypeError);
+    expect(() => new BoundedParseCache(1.5)).toThrow(TypeError);
+  });
 });

@@ -212,6 +212,7 @@ import {
 } from './chatChain';
 import { packEnvelope, unpackEnvelope, type ChatPayload } from './chatEnvelope';
 import { putBag, BagTransportError } from './chatTransport';
+import { BoundedParseCache } from './chatParseCache';
 import type { ChatSession } from './chatSession';
 
 /* ─────────────────────────── константы формата ────────────────────────── */
@@ -1264,22 +1265,17 @@ function mergeSides(messages: ChatMessage[]): ChatMessage[] {
 // Цена ошибки, если опору ослабить до ключа: подделанный мешок прошёл бы по
 // вердикту предыдущего. Заперто отдельно (`chatParseCache.test.ts`).
 
-/** Потолок записей. Кэш живёт на модуле, то есть на вкладку; без потолка
- *  длинная переписка держала бы в памяти всё, что когда-либо разбиралось. */
-const PARSE_CACHE_MAX = 5_000;
+// ⚠️ К-3: ПОТОЛОК И ПРАВИЛО ВЫТЕСНЕНИЯ ЖИВУТ В `chatParseCache.ts`.
+//
+// Здесь стояло вытеснение «самого старого» (`cache.keys().next()`), и на
+// кольцевом обходе — а разбор всего накопленного набора каждый тик это ровно
+// кольцевой обход — оно вырождалось ПОЛНОСТЬЮ и ОБРЫВОМ: набор 5000 при
+// потолке 5000 давал 100 % попаданий, набор 5001 — ровно ноль, то есть
+// повторный разбор становился ДОРОЖЕ холодного. Разбор причины, замеры и
+// почему поднять потолок было бы не починкой — в шапке `chatParseCache.ts`.
 
-function cachePut<V>(cache: Map<string, V>, key: string, value: V): V {
-  if (cache.size >= PARSE_CACHE_MAX) {
-    // Map хранит порядок вставки — выбывает самое старое.
-    const oldest = cache.keys().next();
-    if (!oldest.done) cache.delete(oldest.value);
-  }
-  cache.set(key, value);
-  return value;
-}
-
-const _signatureCache = new Map<string, { body: Uint8Array; ok: boolean }>();
-const _payloadCache = new Map<string, { body: Uint8Array; ownPub: Uint8Array; payload: ChatPayload | null }>();
+const _signatureCache = new BoundedParseCache<{ body: Uint8Array; ok: boolean }>();
+const _payloadCache = new BoundedParseCache<{ body: Uint8Array; ownPub: Uint8Array; payload: ChatPayload | null }>();
 
 /** Только тесты: разбор обязан быть проверяем с холодного кэша. */
 export function _resetParseCacheForTest(): void {
@@ -1431,7 +1427,7 @@ export async function receiveBags(
       // К-2: те же байты уже проверялись — самая дорогая половина разбора.
       signatureOk = sigHit.ok;
     } else try {
-      signatureOk = cachePut(_signatureCache, bag.key, {
+      signatureOk = _signatureCache.put(bag.key, {
         body: bag.body,
         ok: sodium.crypto_sign_verify_detached(
           frame.signature, linkSignaturePreimage(frame.link), frame.signerPublicKey,
@@ -1539,7 +1535,7 @@ export async function receiveBags(
       const decHit = _payloadCache.get(item.key);
       const payload = (decHit && decHit.body === item.frame && sameBytes(decHit.ownPub, session.keypair.publicKey))
         ? decHit.payload
-        : cachePut(_payloadCache, item.key, {
+        : _payloadCache.put(item.key, {
           body: item.frame,
           ownPub: session.keypair.publicKey,
           payload: await unpackEnvelope(item.envelope, session.keypair, from),
