@@ -771,7 +771,10 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     if (!file) return;
     e.target.value = '';
     setUploadErr(null);
-    if (file.size > MAX_FILE_SIZE) { setUploadErr('File too large. Maximum is 5 GB.'); return; }
+    // Число берётся ИЗ константы, а не вписано словом рядом: «5 GB» здесь
+    // пережило снижение потолка до 200 МБ (К-4) и сообщало бы человеку
+    // неправду, пока сервер молча отказывал.
+    if (file.size > MAX_FILE_SIZE) { setUploadErr(`File too large. Maximum is ${MAX_FILE_SIZE / (1024 * 1024)} MB.`); return; }
     // Show preview — don't upload yet
     if (file.type.startsWith('image/')) {
       setPendingPreview(URL.createObjectURL(file));

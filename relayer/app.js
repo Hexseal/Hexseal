@@ -253,7 +253,7 @@ const SERVICE_MINI_ABI = [
 async function fetchDisputedRecords() {
   try {
     const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
-    return await registry.getDisputed();
+    return { ok: true, records: await registry.getDisputed() };
   } catch (e) {
     // I-C (третий закрывающий раунд ревью, находка координатора): слив
     // двух вызовов getDisputed() в один (мелочь эффективности, коммит
@@ -265,9 +265,17 @@ async function fetchDisputedRecords() {
     // получают СВОЙ узнаваемый префикс — иначе человек, ищущий в логе
     // "усыновление", не найдёт вообще ничего и решит, что оно просто ни
     // разу не сработало этой ночью, а не что причина известна и одна.
-    console.error('[files] getDisputed lookup failed, skipping TTL protection this run:', e.message);
+    // К-1 (аудит устойчивости, 6 августа): «пропускаем защиту в этом
+    // прогоне» — это и был дефект, а не смягчение. Пустой массив
+    // неотличим от честного «спорных пар сейчас нет», и защита вложений
+    // читала отказ сети именно так: один отказ узла в 03:00 сносил
+    // вложение пары, которая прямо сейчас в споре.
+    console.error('[files] getDisputed lookup failed — DEFERRING cleanup of tagged attachments this run (we do not know which pairs are disputed, and "unknown" must never be read as "none"):', e.message);
     console.error('[bags] adoption: getDisputed lookup failed, skipping this run:', e.message);
-    return []; // fail open on the on-chain read — never block cleanup entirely
+    // Отказ теперь ЯВНЫЙ, а не закодированный пустотой. Вызывающий обязан
+    // различать «спорных пар нет» и «мы не знаем» — типом, а не догадкой по
+    // длине массива.
+    return { ok: false, records: [] };
   }
 }
 
@@ -1128,7 +1136,7 @@ export async function runFileCleanup() {
   // Один вызов getDisputed() на весь прогон (мелочь эффективности, находка
   // координатора) — используется и защитой вложений (disputedPairIds ниже),
   // и усыновлением по спору (adoptDisputedPairBags() дальше по функции).
-  const disputedRecords = await fetchDisputedRecords();
+  const { ok: chainKnown, records: disputedRecords } = await fetchDisputedRecords();
   const disputedPairIds = disputedPairIdsFromRecords(disputedRecords);
 
   // Expired chat files — skip any still tagged to a currently-disputed pair,
@@ -1140,6 +1148,7 @@ export async function runFileCleanup() {
   try {
     let removed = 0;
     let protectedCount = 0;
+    let deferredCount = 0;
     const MAX_PROTECTED_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
     for (const f of fs.readdirSync(DIR_FILES)) {
       const fp = path.join(DIR_FILES, f);
@@ -1148,6 +1157,23 @@ export async function runFileCleanup() {
         if (mtimeMs < cutoff) {
           const pairId = _filePairs[f];
           const withinProtectionCeiling = mtimeMs > Date.now() - MAX_PROTECTED_AGE_MS;
+          // К-1: НЕ ЗНАЕМ — НЕ СНОСИМ. Узел цепи не ответил, значит про
+          // ЛЮБУЮ помеченную пару неизвестно, в споре она или нет. Раньше
+          // это неведение приезжало сюда пустым множеством и было
+          // неотличимо от честного «спорных пар нет» — то есть отказ сети
+          // РАЗРЕШАЛ снос вместо того, чтобы его откладывать.
+          //
+          // Откладываем ровно то, про что не знаем: помеченные вложения в
+          // пределах 90-дневного потолка. НЕпомеченное сносится как
+          // обычно — оно не могло бы быть защищено спором ни при каком
+          // ответе цепи, и знание цепи для решения по нему не нужно.
+          // Потолок сохраняется и здесь: он существует против пометки без
+          // доказательства участия, а отказ узла не повод этот потолок
+          // снимать.
+          if (!chainKnown && pairId && withinProtectionCeiling) {
+            deferredCount++;
+            continue;
+          }
           if (pairId && disputedPairIds.has(pairId) && withinProtectionCeiling) {
             protectedCount++;
             continue;
@@ -1160,9 +1186,40 @@ export async function runFileCleanup() {
         }
       } catch {}
     }
-    if (removed || protectedCount) _saveFilePairs();
+    // К-4: записи описи, за которыми файла НЕТ ВОВСЕ.
+    //
+    // Цикл выше ходит по ФАЙЛАМ на диске, а запись описи появляется раньше
+    // всякого файла — на выдаче адреса. Человек, закрывший вкладку между
+    // выдачей и заливкой (а до этой правки — и любой посторонний, который
+    // просто дёргал выдачу), оставлял запись «кто с кем» НАВСЕГДА: удалять её
+    // было некому, потому что файла, за которым бы пришли, не существовало.
+    // Это и была «вечная опись», и она же — причина замедления, когда её
+    // становится много.
+    //
+    // Считаем один раз по каталогу, а не `existsSync` на каждую запись: описи
+    // и файлов могут быть десятки тысяч, и проверка по одному превратила бы
+    // ночную чистку в десятки тысяч обращений к диску.
+    let orphanPairs = 0;
+    try {
+      const present = new Set(fs.readdirSync(DIR_FILES));
+      for (const key of Object.keys(_filePairs)) {
+        if (!present.has(key)) { delete _filePairs[key]; orphanPairs++; }
+      }
+    } catch { /* каталог не прочёлся — не трогаем опись вообще */ }
+
+    if (removed || protectedCount || orphanPairs || deferredCount) _saveFilePairs();
+    if (orphanPairs) console.log(`[files] cleanup: dropped ${orphanPairs} pair record(s) with no file`);
     if (removed) console.log(`[files] cleanup: removed ${removed} expired file(s)`);
     if (protectedCount) console.log(`[files] cleanup: protected ${protectedCount} file(s) — pair still disputed`);
+    // К-1: отложенное обязано быть НАЗВАНО числом. Ночь, в которую уборка
+    // отложена отказом сети, иначе неотличима в логе от ночи, в которую
+    // сносить было нечего, — а это разные вещи: первая копит мусор.
+    if (deferredCount) {
+      console.log(
+        `[files] cleanup: deferred ${deferredCount} tagged file(s) — the chain node did not answer, so it is ` +
+        `unknown which pairs are disputed. They will be reconsidered on the next run that reaches the chain.`
+      );
+    }
   } catch (e) {
     console.error('[files] cleanup error:', e.message);
   }
@@ -1831,22 +1888,115 @@ app.post('/relay', async (req, res) => {
 //   GET  /files/:key              → express.static(DIR_FILES)
 //   GET  /public/:key             → express.static(DIR_PUBLIC)
 
+// ─── К-4: вход на файловый сервер чата ───────────────────────────────────
+//
+// ЧТО ЗДЕСЬ БЫЛО. `POST /files/presign` и вся многокусочная дорога рядом:
+// без пропуска, без ограничителя, до 5 ГБ на файл. Готовый способ забить
+// диск дешёвого VPS — и заодно анонимная запись в опись «кто с кем».
+//
+// ⚠️ ГРАНИЦА, КОТОРУЮ НЕЛЬЗЯ ПЕРЕЙТИ. Этими маршрутами пользуется НЕ ТОЛЬКО
+// чат. Замерено (test/chatFilesPass.test.js, последний блок): рядом живут
+// профили и аватары — `/files/public/presign` и `/files/public-put`, — и
+// зовёт их СЕРВЕРНЫЙ маршрут `frontend/src/app/api/ipfs/upload/route.ts`, у
+// которого кошелька нет и пропуска взять неоткуда. Пропуск требуется только
+// от чат-семьи маршрутов; публичная семья остаётся как была.
+//
+// Скачивание чат-файла (`GET /files/:key`) тоже остаётся открытым, и это не
+// упущение: ключ — случайный UUID, который знают только собеседники, а
+// содержимое зашифровано на устройстве. Пропуск на скачивание не добавил бы
+// секретности, зато сломал бы уже разосланные ссылки.
+const CHAT_FILE_RATE_MAX    = readPositiveInt('CHAT_FILE_RATE_MAX',     40);
+const CHAT_FILE_IP_RATE_MAX = readPositiveInt('CHAT_FILE_IP_RATE_MAX', 200);
+
+function chatFileRateKey(address) { return `chatfile:${address}`; }
+function chatFileIpRateKey(ip)    { return `chatfile-ip:${ip}`;    }
+
+// Потолок на файл. Пять гигабайт были не щедростью, а необеспеченным
+// обещанием: столько на дешёвом VPS просто нет, и первый же такой файл
+// положил бы вместе с собой ВСЁ — мешки, опись, журналы споров, мета-
+// транзакции. Двести мегабайт — вдесятеро больше порога многокусочной
+// заливки (20 МБ), то есть чат работает как работал, но один файл больше не
+// способен занять заметную долю диска. Фронт обещает ровно это же число
+// (`frontend/src/lib/fileStorage.ts`), и на совпадение есть тест — иначе
+// человек узнавал бы о потолке от сервера, уже залив полфайла.
+const MAX_CHAT_FILE_SIZE = readPositiveInt('MAX_CHAT_FILE_SIZE', 200 * 1024 * 1024);
+export { MAX_CHAT_FILE_SIZE };
+
+// Сколько места обязано остаться свободным, чтобы принимать чат-файлы.
+// Отвечает на вопрос «диск кончился — вернули ошибку или упали целиком?»:
+// чат-файлы отказывают первыми и в одиночку, а мешкам, описи и журналам
+// споров остаётся запас. Без этого правила порядок отказа определялся тем,
+// кто первым не смог записать.
+const DISK_RESERVE_BYTES = readPositiveInt('DISK_RESERVE_BYTES', 2 * 1024 * 1024 * 1024);
+
+/** Свободно ли на томе хранилища больше запаса. `null` — измерить не вышло. */
+function freeBytesOnStorage() {
+  try {
+    const st = fs.statfsSync(STORAGE_DIR);
+    return Number(st.bavail) * Number(st.bsize);
+  } catch {
+    // `statfsSync` может отсутствовать или не работать на файловой системе
+    // (замечено на exFAT). Сломанная мерка — не повод отказать человеку:
+    // без неё мы ровно там же, где были до этой правки, а ENOSPC ниже по
+    // потоку по-прежнему обработан.
+    return null;
+  }
+}
+
+/**
+ * Общий вход для всей чат-семьи файловых маршрутов. Порядок — от дешёвого к
+ * дорогому, тот же, что у мешков: бюджет выхода → пропуск → бюджет адреса.
+ * `needsDisk` — только для тех маршрутов, что реально пишут байты.
+ *
+ * Возвращает адрес владельца пропуска или `null`, уже ответив клиенту.
+ */
+function requireChatFileAccess(req, res, { needsDisk = false } = {}) {
+  if (!checkRateLimit(chatFileIpRateKey(clientIp(req)), CHAT_FILE_IP_RATE_MAX)) {
+    bagRateLimited(res, 'rate_limited_ip');
+    return null;
+  }
+  const address = requireBagPass(req, res);
+  if (!address) return null;
+
+  if (!checkRateLimit(chatFileRateKey(address), CHAT_FILE_RATE_MAX)) {
+    bagRateLimited(res, 'rate_limited_files');
+    return null;
+  }
+
+  if (needsDisk) {
+    const free = freeBytesOnStorage();
+    if (free !== null && free < DISK_RESERVE_BYTES) {
+      res.status(507).json({ error: 'Storage is full', code: 'disk_full' });
+      return null;
+    }
+  }
+  return address;
+}
+
 // ── Small encrypted file presign ──────────────────────────────────────────────
 
 app.post('/files/presign', (req, res) => {
+  const owner = requireChatFileAccess(req, res, { needsDisk: true });
+  if (!owner) return;
   try {
     // Chat files are always encrypted binary blobs — extension is cosmetic only.
     // We ignore whatever ext the client sends and always use .bin so that
     // express.static never serves them with a text/html or image MIME type.
     const key = `${Date.now()}-${randomUUID()}.bin`;
 
-    // Optional: tag this file with the chat pair it belongs to, so the nightly
-    // cleanup job can protect it while that pair has a disputed agreement.
-    // Best-effort only — an invalid/missing pair just skips tagging, it never
-    // blocks the upload itself.
-    const { peerA, peerB } = req.body || {};
-    if (peerA && peerB && ETH_ADDR_RE.test(peerA) && ETH_ADDR_RE.test(peerB)) {
-      _filePairs[key] = pairIdFromAddresses(peerA, peerB);
+    // Метка пары, чтобы ночная чистка щадила вложения, пока у пары открыт
+    // спор.
+    //
+    // ⚠️ ПЕРВЫЙ УЧАСТНИК ПАРЫ БОЛЬШЕ НЕ БЕРЁТСЯ ИЗ ТЕЛА. Раньше брались оба
+    // (`peerA`, `peerB`), без всякого доказательства, что зовущий имеет к
+    // ним отношение — то есть кто угодно писал в вечную опись «кто с кем»
+    // произвольную пару чужих адресов (они публичны в цепи), да ещё и
+    // получал этим защиту своего файла от чистки на всё время чужого спора.
+    // Теперь первый участник — владелец пропуска, и соврать про него
+    // нечем.
+    const { peerB } = req.body || {};
+    if (typeof peerB === 'string' && ETH_ADDR_RE.test(peerB.toLowerCase())) {
+      _filePairs[key] = pairIdFromAddresses(owner, peerB);
       _saveFilePairs();
     }
 
@@ -1855,6 +2005,7 @@ app.post('/files/presign', (req, res) => {
       downloadUrl: `${BASE_URL}/files/${key}`,
       key,
       expiresIn: '7 days',
+      maxSize: MAX_CHAT_FILE_SIZE,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1863,7 +2014,6 @@ app.post('/files/presign', (req, res) => {
 
 // ── Small encrypted file upload (streaming, size-limited) ────────────────────
 
-const MAX_FILE_SIZE   = 5 * 1024 * 1024 * 1024; // 5 GB — encrypted chat files
 const MAX_PUBLIC_SIZE =           5 * 1024 * 1024; // 5 MB — avatars, profiles
 const MAX_PART_SIZE   =          50 * 1024 * 1024; // 50 MB — per multipart chunk
 
@@ -1958,14 +2108,19 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
 }
 
 app.put('/files/upload-put/:key', (req, res) => {
+  // Без этого адрес заливки был предъявительским: кто угодно, угадав или
+  // подсмотрев ключ, писал байты — и, что важнее, выдача ключа сама по себе
+  // ничего не стоила, так что угадывать было незачем.
+  if (!requireChatFileAccess(req, res, { needsDisk: true })) return;
   const key = safeKey(req.params.key);
   if (!key) return res.status(400).json({ error: 'Invalid key' });
-  streamWithSizeLimit(req, res, path.join(DIR_FILES, key), MAX_FILE_SIZE);
+  streamWithSizeLimit(req, res, path.join(DIR_FILES, key), MAX_CHAT_FILE_SIZE);
 });
 
 // ── URL refresh (local files don't expire by URL, only by TTL cleanup) ────────
 
 app.post('/files/refresh-url', (req, res) => {
+  if (!requireChatFileAccess(req, res)) return;
   try {
     const { key } = req.body || {};
     if (!key || typeof key !== 'string') return res.status(400).json({ error: 'Invalid key' });
@@ -2110,6 +2265,7 @@ app.put('/files/public-put/:key', async (req, res) => {
 // ── Multipart create ──────────────────────────────────────────────────────────
 
 app.post('/files/multipart/create', (req, res) => {
+  if (!requireChatFileAccess(req, res, { needsDisk: true })) return;
   try {
     const { ext = '', chunkCount } = req.body || {};
     if (!chunkCount || chunkCount < 1 || chunkCount > 10000) {
@@ -2134,6 +2290,7 @@ app.post('/files/multipart/create', (req, res) => {
 // ── Multipart part upload (streaming, one chunk per request) ──────────────────
 
 app.put('/files/part/:uploadId/:partNum', (req, res) => {
+  if (!requireChatFileAccess(req, res, { needsDisk: true })) return;
   const uploadId = safeKey(req.params.uploadId);
   const partNum  = parseInt(req.params.partNum, 10);
   if (!uploadId || isNaN(partNum) || partNum < 1 || partNum > 10000) {
@@ -2149,6 +2306,7 @@ app.put('/files/part/:uploadId/:partNum', (req, res) => {
 // ── Multipart complete — concatenate chunks ───────────────────────────────────
 
 app.post('/files/multipart/complete', async (req, res) => {
+  if (!requireChatFileAccess(req, res, { needsDisk: true })) return;
   try {
     const { uploadId, key } = req.body || {};
     if (!uploadId || !key) return res.status(400).json({ error: 'uploadId and key required' });
@@ -2190,6 +2348,7 @@ app.post('/files/multipart/complete', async (req, res) => {
 // ── Multipart abort ───────────────────────────────────────────────────────────
 
 app.post('/files/multipart/abort', (req, res) => {
+  if (!requireChatFileAccess(req, res)) return;
   try {
     const { uploadId } = req.body || {};
     if (!uploadId) return res.status(400).json({ error: 'uploadId required' });

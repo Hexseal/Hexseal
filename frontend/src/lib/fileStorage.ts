@@ -12,11 +12,50 @@
  */
 
 import { encryptFile, encryptFileChunked, CHUNK_SIZE } from '@/lib/fileCrypto';
+import { findStoredBagPass, BAG_PASS_HEADER } from '@/lib/storedBagPass';
+
+/**
+ * К-4: файловый сервер чата больше не открыт настежь.
+ *
+ * До 7 августа 2026 выдача адреса заливки и сама заливка не проверяли ничего:
+ * ни пропуска, ни ограничителя, до 5 ГБ на файл — готовый способ забить диск
+ * дешёвого VPS, и заодно анонимная запись в вечную опись «кто с кем».
+ * Теперь эта семья маршрутов живёт за тем же пропуском, что и мешки.
+ *
+ * `hint` — адрес владельца, когда он известен (`peerContext.self`). Окна
+ * кошелька здесь не бывает: пропуск уже заведён сеансом чата, мы только
+ * читаем его из кладовой.
+ */
+class NoChatPassError extends Error {
+  constructor() {
+    super('Chat session is not ready — reopen the chat and try again');
+    this.name = 'NoChatPassError';
+  }
+}
+
+function passHeaders(hint?: string): Record<string, string> {
+  const pass = findStoredBagPass(hint);
+  if (!pass) throw new NoChatPassError();
+  return { [BAG_PASS_HEADER]: pass };
+}
 
 const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 
-/** Maximum allowed file size (5 GB). */
-export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;
+/**
+ * Потолок на один файл — 200 МБ.
+ *
+ * ⚠️ ЭТО ЧИСЛО ОБЯЗАНО СОВПАДАТЬ С СЕРВЕРНЫМ (`MAX_CHAT_FILE_SIZE` в
+ * `relayer/app.js`), и на совпадение есть тест: `relayer/test/
+ * chatFilesPass.test.js` читает эту строку и сверяет. Разойдутся — человек
+ * узнает о потолке от сервера, уже залив полфайла.
+ *
+ * Было 5 ГБ. Это не щедрость, а необеспеченное обещание (К-4): столько на
+ * дешёвом VPS просто нет, и первый же такой файл положил бы вместе с собой
+ * ВСЁ — мешки, опись, журналы споров, мета-транзакции. Двести мегабайт —
+ * вдесятеро больше порога многокусочной заливки, так что чат работает как
+ * работал.
+ */
+export const MAX_FILE_SIZE = 200 * 1024 * 1024;
 
 /** Files larger than this use multipart upload + chunked encryption. */
 const MULTIPART_THRESHOLD = 20 * 1024 * 1024; // 20 MB
@@ -34,14 +73,14 @@ export async function uploadEncryptedFile(
 ): Promise<{ url: string; fileKey: string }> {
   const ext = originalName.includes('.') ? `.${originalName.split('.').pop()!.slice(0, 10)}` : '';
 
+  const headers = passHeaders(peerContext?.self);
+
   const presignRes = await fetch(`${RELAYER_URL}/files/presign`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(
-      peerContext
-        ? { ext, peerA: peerContext.self, peerB: peerContext.peer }
-        : { ext },
-    ),
+    headers: { 'Content-Type': 'application/json', ...headers },
+    // `peerA` больше не шлём: сервер берёт первого участника пары ИЗ
+    // ПРОПУСКА и на слово о нём больше не верит (К-4).
+    body: JSON.stringify(peerContext ? { ext, peerB: peerContext.peer } : { ext }),
     signal,
   });
   if (!presignRes.ok) {
@@ -63,6 +102,7 @@ export async function uploadEncryptedFile(
     signal?.addEventListener('abort', () => xhr.abort(), { once: true });
     xhr.open('PUT', uploadUrl);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
     xhr.send(encryptedBlob);
   });
 
@@ -81,14 +121,17 @@ async function uploadEncryptedFileMultipart(
   originalName: string,
   onProgress?: (pct: number) => void,
   signal?: AbortSignal,
+  selfAddress?: string,
 ): Promise<{ url: string; fileKey: string; keyHex: string; ivHex: string; chunkCount: number }> {
   const ext        = originalName.includes('.') ? `.${originalName.split('.').pop()!.slice(0, 10)}` : '';
   const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
 
   // 1. Create multipart upload + get presigned URLs for all parts at once
+  const headers = passHeaders(selfAddress);
+
   const createRes = await fetch(`${RELAYER_URL}/files/multipart/create`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ ext, chunkCount }),
     signal,
   });
@@ -109,7 +152,7 @@ async function uploadEncryptedFileMultipart(
       const res = await fetch(partUrls[index], {
         method: 'PUT',
         body: chunk,
-        headers: { 'Content-Type': 'application/octet-stream' },
+        headers: { 'Content-Type': 'application/octet-stream', ...headers },
         signal,
       });
       if (!res.ok) throw new Error(`Part ${index + 1} upload failed (${res.status})`);
@@ -119,7 +162,7 @@ async function uploadEncryptedFileMultipart(
     // 3. Complete — relayer reads ETags via ListParts to avoid CORS ETag header issues
     const completeRes = await fetch(`${RELAYER_URL}/files/multipart/complete`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify({ uploadId, key: fileKey }),
       signal,
     });
@@ -136,7 +179,7 @@ async function uploadEncryptedFileMultipart(
     // Best-effort abort to free relayer storage
     fetch(`${RELAYER_URL}/files/multipart/abort`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify({ uploadId, key: fileKey }),
     }).catch(() => {});
     throw err;
@@ -164,8 +207,10 @@ export async function uploadFileWithEncryption(
   peerContext?: PeerContext,
 ): Promise<UploadResult> {
   if (file.size > MAX_FILE_SIZE) {
-    const mb = MAX_FILE_SIZE / (1024 * 1024 * 1024);
-    throw new Error(`File too large. Maximum size is ${mb} GB.`);
+    // Единицы считаются из самой константы, а не вписаны рядом словом:
+    // прежняя надпись говорила «GB», и после снижения потолка до 200 МБ она
+    // сообщала бы «Maximum size is 0.1953125 GB».
+    throw new Error(`File too large. Maximum size is ${MAX_FILE_SIZE / (1024 * 1024)} MB.`);
   }
 
   if (file.size <= MULTIPART_THRESHOLD) {
@@ -178,6 +223,6 @@ export async function uploadFileWithEncryption(
 
   // Multipart (>20 MB) uploads are not tagged with a pairId — see plan/spec for why
   // (evidence-TTL protection is scoped to the common small-file case only).
-  const { url, fileKey, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress, signal);
+  const { url, fileKey, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress, signal, peerContext?.self);
   return { url, fileKey, keyHex, ivHex, chunked: true, chunkCount, chunkSize: CHUNK_SIZE };
 }

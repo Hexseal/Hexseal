@@ -1,5 +1,7 @@
 'use client';
 
+import { findStoredBagPass, BAG_PASS_HEADER } from '@/lib/storedBagPass';
+
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '';
 const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 
@@ -236,75 +238,11 @@ export async function notifyArbitersOfDispute(
 
 /* ─── К-2/К-3: пропуск на отправку и слышимый отказ ─────────────────────── */
 
-/**
- * Тот же ключ кладовой, что пишет `lib/chatTransport.ts` (`writeStoredPass`).
- *
- * ⚠️ Это ВТОРОЕ место, знающее форму ключа, и знать её оно не хотело бы.
- * Прямого пути нет: транспорт кэш пропусков наружу не отдаёт, а зовут
- * `notifyPush` экраны, у которых сеанса чата под рукой нет вовсе (доски,
- * шапка сделки). Читаем ТОЛЬКО на чтение и никогда не пишем — расхождение
- * форматов сломает поиск пропуска (уведомление не уйдёт), но не переписку.
- */
-const PASS_STORAGE_PREFIX = 'hexseal_bagpass_';
+// Поиск живого пропуска в кладовой вынесен в `lib/storedBagPass.ts`: то же
+// самое нужно заливке вложений чата (К-4), и две копии правила «какой
+// пропуск считать живым» разошлись бы молча.
 
-/** Запас на дорогу до релеера — тот же приём, что у самого транспорта. */
-const PASS_SKEW_SEC = 30;
-
-function storage(): Storage | null {
-  try {
-    const s = (globalThis as { localStorage?: Storage }).localStorage;
-    return s && typeof s.getItem === 'function' ? s : null;
-  } catch {
-    return null;   // сторонний контекст с запрещёнными куками — доступ БРОСАЕТ
-  }
-}
-
-function readPassAt(s: Storage, key: string, nowSec: number): { pass: string; expiresAt: number } | null {
-  let raw: string | null;
-  try { raw = s.getItem(key); } catch { return null; }
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as { pass?: unknown; expiresAt?: unknown };
-    if (typeof parsed?.pass !== 'string' || !parsed.pass) return null;
-    if (typeof parsed?.expiresAt !== 'number' || !Number.isFinite(parsed.expiresAt)) return null;
-    if (nowSec + PASS_SKEW_SEC >= parsed.expiresAt) return null;   // мёртвый за живой не считается
-    return { pass: parsed.pass, expiresAt: parsed.expiresAt };
-  } catch {
-    return null;   // мусор в кладовой — считаем, что записи нет
-  }
-}
-
-/**
- * Живой пропуск отправителя.
- *
- * `hint` — адрес отправителя, если он известен. Для чата известен всегда:
- * `usePairChat` передаёт третьим доводом `/chat?peer=<я>`, то есть экран,
- * который получателю надо открыть, — а это и есть отправитель. Когда
- * подсказки нет (оповещение арбитров), берём из кладовой самый долгоживущий
- * пропуск: на устройстве кошелёк подключён один, а если от прежнего аккаунта
- * остался протухающий пропуск, у свежего срок дальше.
- */
-function findPass(hint?: string): string | null {
-  const s = storage();
-  if (!s) return null;
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  if (hint) {
-    const exact = readPassAt(s, PASS_STORAGE_PREFIX + hint.toLowerCase(), nowSec);
-    if (exact) return exact.pass;
-  }
-
-  let best: { pass: string; expiresAt: number } | null = null;
-  for (let i = 0; i < s.length; i++) {
-    const key = s.key(i);
-    if (!key || !key.startsWith(PASS_STORAGE_PREFIX)) continue;
-    const entry = readPassAt(s, key, nowSec);
-    if (entry && (!best || entry.expiresAt > best.expiresAt)) best = entry;
-  }
-  return best?.pass ?? null;
-}
-
-/** Отправитель, зашитый в ссылку `/chat?peer=<я>` — см. `findPass`. */
+/** Отправитель, зашитый в ссылку `/chat?peer=<я>` — см. `findStoredBagPass`. */
 function senderFromChatUrl(url?: string): string | undefined {
   const m = /^\/chat\?peer=(0x[0-9a-fA-F]{40})$/.exec(url ?? '');
   return m?.[1];
@@ -350,7 +288,7 @@ async function sendPushRequest(
   payload: { kind?: string; deal?: string },
   hint?: string,
 ): Promise<PushOutcome> {
-  const pass = findPass(hint);
+  const pass = findStoredBagPass(hint);
   if (!pass) {
     // Не ошибка сети и не отказ сервера: слать нечем, потому что сеанс чата
     // на этом устройстве не заведён. Запроса не делаем вовсе — он всё равно
@@ -364,7 +302,7 @@ async function sendPushRequest(
   try {
     res = await fetch('/api/push', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-bag-pass': pass },
+      headers: { 'Content-Type': 'application/json', [BAG_PASS_HEADER]: pass },
       // Ни `body`, ни `url`, ни `tag`: сервер их не берёт (К-2), и везти их
       // значило бы делать вид, что они на что-то влияют.
       body: JSON.stringify({ to, ...payload }),

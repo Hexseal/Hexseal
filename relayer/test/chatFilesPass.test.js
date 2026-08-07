@@ -32,7 +32,12 @@ const OTHER = '0xcccc000000000000000000000000000000000003';
 let _ip = 0;
 function freshIp() { _ip++; return `192.168.${(_ip >> 8) & 255}.${_ip & 255}`; }
 
-function pass(addr = ME) { return issueBagPass(addr).token; }
+// По умолчанию — СВЕЖИЙ адрес на каждый вызов: бюджеты здесь маленькие
+// (CHAT_FILE_RATE_MAX=5), и общий адрес на все кейсы означал бы, чточасть кейсов
+// падает от чужого исчерпания, а не от того, что проверяет тест.
+let _addr = 0;
+function freshAddr() { _addr++; return '0x' + String(_addr).padStart(40, '9'); }
+function pass(addr) { return issueBagPass(addr ?? freshAddr()).token; }
 
 function presign(opts = {}) {
   const r = request(app).post('/files/presign').set('CF-Connecting-IP', opts.ip ?? freshIp());
@@ -166,10 +171,11 @@ describe('К-4: опись «кто с кем» не растёт от чужи�
   };
 
   it('ЗАМЕР ДО ПОЧИНКИ: любой мог записать ЧУЖУЮ пару, себя в ней не упоминая', async () => {
+    const OTHER_FRESH = freshAddr();
     const before = Object.keys(readPairs()).length;
 
     const res = await presign({
-      pass: pass(OTHER),                       // мы — OTHER
+      pass: pass(OTHER_FRESH),                 // мы — OTHER_FRESH
       body: { peerA: ME, peerB: PEER },        // а пишем про ME и PEER
     });
     expect(res.status).toBe(200);
@@ -178,7 +184,7 @@ describe('К-4: опись «кто с кем» не растёт от чужи�
     expect(Object.keys(pairs).length).toBe(before + 1);
     // Записана пара С НАМИ, а не та, которую попросили.
     const { pairIdFromAddresses } = await import('../app.js');
-    expect(pairs[res.body.key]).toBe(pairIdFromAddresses(OTHER, PEER));
+    expect(pairs[res.body.key]).toBe(pairIdFromAddresses(OTHER_FRESH, PEER));
     expect(pairs[res.body.key]).not.toBe(pairIdFromAddresses(ME, PEER));
   });
 
