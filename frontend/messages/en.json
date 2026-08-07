@@ -942,7 +942,7 @@
     "q_source": "Where is the source code?",
     "a_source": "Available on GitHub — see the link on the page.",
     "q_verify": "How do I verify the deployed contracts?",
-    "a_verify": "Inspect all contracts on BaseScan. Diamond address: 0xF00CC71878c226E0b64253Fb71dD802aF12165D0",
+    "a_verify": "Inspect all contracts on BaseScan. Diamond address: {address}",
     "q_become_arbiter": "Can I become an arbiter?",
     "a_become_arbiter": "Not for now. At launch the arbiter roster is picked by hand, and on-chain self-registration is switched off — applyAsArbiter() reverts for everyone, so the app does not offer you the button. Open entry is a later step and has no date. If you want to be considered, open an issue on GitHub."
   },

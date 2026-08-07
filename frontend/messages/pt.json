@@ -883,7 +883,7 @@
     "q_source": "Onde está o código-fonte?",
     "a_source": "Disponível no GitHub — veja o link na página.",
     "q_verify": "Como verifico os contratos implantados?",
-    "a_verify": "Inspecione todos os contratos no BaseScan. Endereço Diamond: 0xF00CC71878c226E0b64253Fb71dD802aF12165D0",
+    "a_verify": "Inspecione todos os contratos no BaseScan. Endereço Diamond: {address}",
     "a_get_usdc": "Use the Circle faucet at faucet.circle.com — select Base Sepolia and paste your wallet address. You'll receive test USDC within seconds. This is testnet only; no real money involved.",
     "q_get_usdc": "How do I get test USDC?",
     "q_become_arbiter": "Posso me tornar árbitro?",

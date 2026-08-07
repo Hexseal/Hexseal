@@ -883,7 +883,7 @@
     "q_source": "소스 코드는 어디에 있나요?",
     "a_source": "GitHub에서 사용 가능 — 페이지의 링크를 참조하세요.",
     "q_verify": "배포된 컨트랙트를 어떻게 확인하나요?",
-    "a_verify": "BaseScan에서 모든 컨트랙트를 확인하세요. Diamond 주소: 0xF00CC71878c226E0b64253Fb71dD802aF12165D0",
+    "a_verify": "BaseScan에서 모든 컨트랙트를 확인하세요. Diamond 주소: {address}",
     "a_get_usdc": "Use the Circle faucet at faucet.circle.com — select Base Sepolia and paste your wallet address. You'll receive test USDC within seconds. This is testnet only; no real money involved.",
     "q_get_usdc": "How do I get test USDC?",
     "q_become_arbiter": "중재자가 될 수 있나요?",

@@ -389,3 +389,48 @@ describe('справка и бейджи не врут после сноса XMT
     expect(untranslated).toEqual([]);
   });
 });
+
+// ── Адрес контракта не живёт в переводах ────────────────────────────────────
+//
+// Найдено 7 августа 2026 при аудите текстов. `faq.a_verify` во всех 14 локалях
+// предлагал «проверить контракты» и называл адрес `0xF00CC718…`, вписанный
+// руками. Замер на цепи: у этого адреса 10 фасетов и он до сих пор отдаёт
+// СТАРЫЕ заказы — то есть выглядит настоящим; у живого диамонда 11 фасетов и
+// рабочая доска. Человек, пришедший проверить контракты перед сделкой, смотрел
+// бы на брошенное развёртывание.
+//
+// Причина не в опечатке, а в месте: адрес, вписанный в перевод, обновляется
+// вручную четырнадцать раз и потому не обновляется никогда. Теперь он
+// подставляется из `CONTRACTS.diamond` — из того же места, что и весь код.
+//
+// Этот замок стоит на самой возможности вернуться к прежнему: любой
+// шестнадцатеричный адрес, вписанный в справку руками, красит тест.
+describe('адрес контракта не вписан в переводы руками', () => {
+  const HEX_ADDRESS = /0x[a-fA-F0-9]{40}/;
+
+  it.each(LOCALES)('%s: faq.a_verify подставляет адрес, а не называет его', (locale) => {
+    const dict = JSON.parse(
+      fs.readFileSync(path.join(MESSAGES_DIR, `${locale}.json`), 'utf8')
+    );
+    const text = dict?.faq?.a_verify;
+    expect(typeof text, `${locale}: нет ключа faq.a_verify`).toBe('string');
+    expect(text, `${locale}: адрес вписан руками — он устареет и уведёт человека не туда`)
+      .not.toMatch(HEX_ADDRESS);
+    expect(text, `${locale}: нет подстановки {address}`).toContain('{address}');
+  });
+
+  it('ни один текст справки не называет адрес руками', () => {
+    const guilty: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = JSON.parse(
+        fs.readFileSync(path.join(MESSAGES_DIR, `${locale}.json`), 'utf8')
+      );
+      for (const [key, value] of Object.entries(dict?.faq ?? {})) {
+        if (typeof value === 'string' && HEX_ADDRESS.test(value)) {
+          guilty.push(`${locale}:faq.${key}`);
+        }
+      }
+    }
+    expect(guilty).toEqual([]);
+  });
+});
