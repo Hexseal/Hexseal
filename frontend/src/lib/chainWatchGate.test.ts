@@ -497,6 +497,38 @@ describe('обстоятельства', () => {
     expect(c.calls, 'после снятия к цепи ходить не должны').toEqual(before);
   });
 
+  it('ДВЕ ВКЛАДКИ: догон общий (курсор один), опрос — свой у каждой видимой', async () => {
+    // Курсор лежит в localStorage, то есть один на все вкладки. Вторая вкладка не
+    // платит за уже добранный пропуск повторно — ей остаётся один запрос головы.
+    const shared = memCursor(BigInt(900));
+    const c1 = fakeChain({ head: BigInt(1000) });
+    const c2 = fakeChain({ head: BigInt(1000) });
+    const v1 = fakeDoc('visible');
+    const v2 = fakeDoc('visible');
+
+    const stop1 = runChainWatch({ io: c1.io, cursor: shared, doc: v1.doc, hideGraceMs: 0, onLogs: vi.fn() });
+    for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+    const stop2 = runChainWatch({ io: c2.io, cursor: shared, doc: v2.doc, hideGraceMs: 0, onLogs: vi.fn() });
+    for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+
+    expect(c1.calls.getLogs, 'первая вкладка добирает пропуск').toBe(1);
+    expect(c2.calls.getLogs, 'вторая вкладка добирает то же самое ВТОРОЙ раз').toBe(0);
+    expect(c2.calls.blockNumber, 'второй вкладке хватает одной головы').toBe(1);
+
+    // А вот такт опроса у каждой видимой вкладки свой — это не складывается в
+    // общий, и честное число для двух ОДНОВРЕМЕННО видимых окон вдвое больше.
+    c1.tick(3); c2.tick(3);
+    expect(c1.calls.getFilterChanges + c2.calls.getFilterChanges).toBe(6);
+
+    // Свёрнутая вкладка перестаёт платить, и остаётся расход одной.
+    v2.set('hidden');
+    await new Promise((r) => setTimeout(r, 0));
+    const before = c1.calls.getFilterChanges + c2.calls.getFilterChanges;
+    c1.tick(5); c2.tick(5);
+    expect(c1.calls.getFilterChanges + c2.calls.getFilterChanges - before).toBe(5);
+    stop1(); stop2();
+  });
+
   it('ДОЛБЯТ НАРОЧНО: сто переключений видимости не дают сотни догонов', async () => {
     const v = fakeDoc('visible');
     const c = fakeChain({ head: BigInt(1000) });
