@@ -40,6 +40,7 @@ import { PushProvider } from "@/contexts/PushContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import { buildWalletGroups, isMobileClient } from "@/lib/walletList";
 import { QueryRefreshBridge } from "@/components/QueryRefreshBridge";
+import { sweepLegacyStorage } from "@/lib/staleStorage";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -68,6 +69,10 @@ function dbgCrumb(step: string): void {
 // crumbs. Snapshots the previous load's trail to "-prev" (survives a crash), then
 // starts this load's trail with a fresh random id.
 if (typeof window !== "undefined") {
+  // Мусор снесённого мессенджера: `hexseal-xmtp-crumb` и `-prev` не читает
+  // ничто с 6 августа, а на устройствах они лежат (замер с живого телефона,
+  // 9 августа). Отбор и замок «наши ключи не трогать» — `lib/staleStorage.ts`.
+  try { sweepLegacyStorage(window.localStorage); } catch { /* уборка не важнее работы */ }
   try {
     const live = localStorage.getItem(WALLET_CRUMB_KEY);
     if (live) localStorage.setItem(`${WALLET_CRUMB_KEY}-prev`, live);

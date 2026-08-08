@@ -28,6 +28,7 @@
  */
 
 import { pollForFact } from '@/lib/pollForFact';
+import { noteWalletAsk, noteWalletAnswer } from '@/lib/walletReach';
 
 // Каждый гейслесс-вызов для кошелька читает nonce (getNonce у форвардера
 // и/или permit-nonce у USDC) и подписывается против него — но два вызова для
@@ -111,11 +112,28 @@ export async function acquireWalletLock(address: string): Promise<() => void> {
  *  время `fn` — включая её собственные await'ы. */
 export async function withWalletLock<T>(address: string, fn: () => Promise<T>): Promise<T> {
   const release = await acquireWalletLock(address);
+  // ⚠️ НАБЛЮДЕНИЕ «ДОХОДЯТ ЛИ ЗАПРОСЫ ДО КОШЕЛЬКА» СТОИТ ЗДЕСЬ, И ЭТО
+  // ЕДИНСТВЕННОЕ МЕСТО. Через этот мьютекс проходят ВСЕ семь мест, где
+  // приложение открывает окно кошелька (чат, сделка, профиль, арбитр, пуши), —
+  // значит протухший сеанс WalletConnect опознаётся один раз для всего
+  // приложения, а не отдельно в каждом. Замер и журнал живого телефона — в
+  // шапке `lib/walletReach.ts`.
+  noteWalletAsk();
   try {
-    return await fn();
+    const out = await fn();
+    noteWalletAnswer();
+    return out;
+  } catch (err) {
+    noteWalletAnswer(err);
+    throw err;
   } finally {
     release();
   }
+}
+
+/** Только для замеров: снять очередь вместе с подделанными глобалами. */
+export function _resetWalletLockForTest(): void {
+  _walletLocks.clear();
 }
 
 // ─── Память о израсходованном nonce форвардера ────────────────────────────────
