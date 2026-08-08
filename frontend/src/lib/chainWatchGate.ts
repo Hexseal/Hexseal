@@ -31,13 +31,26 @@
  * видимость — подаётся снаружи, поэтому весь модуль замеряется без браузера.
  */
 
-/** Потолок догона в блоках. Base — 2 секунды на блок, то есть примерно два часа.
+/**
+ * Сколько блоков берётся ОДНИМ `eth_getLogs`. Провайдеры ограничивают диапазон, и
+ * запрос «от блока годичной давности» вернёт отказ, а не логи. 3600 блоков — это
+ * примерно два часа при блоке Base в две секунды, с запасом внутри типичных
+ * ограничений.
+ */
+export const CATCHUP_CHUNK_BLOCKS = BigInt(3_600);
+
+/**
+ * Потолок догона целиком — примерно сутки. Пропуск длиннее одного куска
+ * добирается НЕСКОЛЬКИМИ запросами подряд, а не урезается: вкладка, свёрнутая на
+ * ночь, иначе теряла бы всё, кроме последних двух часов. Сутки стоят двенадцать
+ * запросов — против 187 200, которые то же время стоило круглосуточное слежение.
  *
- * Почему потолок вообще нужен: `eth_getLogs` у провайдеров ограничен по
- * диапазону, и запрос «от блока годичной давности» вернёт отказ, а не логи —
- * то есть без потолка длинный пропуск не догонялся бы ВОВСЕ. Урезание не молчит:
- * зовётся `onTruncated`. */
-export const CATCHUP_MAX_BLOCKS = BigInt(3_600);
+ * Что дальше суток: урезается, и это не молчит (`onTruncated`). Состояние своих
+ * сделок при этом всё равно достраивается из реестра на холодном старте
+ * (`useNotifications`), так что теряются только извещения о чужих нажатиях
+ * давностью больше суток.
+ */
+export const CATCHUP_MAX_BLOCKS = CATCHUP_CHUNK_BLOCKS * BigInt(12);
 
 /**
  * Отсрочка снятия слежения после сворачивания. Один такт опроса уведомлений:
@@ -65,29 +78,49 @@ export interface ChainWatchCursor {
   write(block: bigint): void;
 }
 
-export interface CatchUpPlan {
+export interface CatchUpChunk {
   fromBlock: bigint;
   toBlock: bigint;
-  /** Пропуск был длиннее потолка и урезан. */
+}
+
+export interface CatchUpPlan {
+  /** Куски по порядку, от старых блоков к новым. Без дыр и без нахлёста. */
+  chunks: CatchUpChunk[];
+  /** Пропуск был длиннее потолка, часть событий не добирается. */
   truncated: boolean;
 }
 
 /**
- * Какой диапазон добирать. `null` — добирать нечего (курсора нет, голова не
+ * Какие диапазоны добирать. `null` — добирать нечего (курсора нет, голова не
  * ушла, либо на входе мусор).
+ *
+ * Куски идут от СТАРЫХ к новым: так уведомления попадают в колокольчик в том же
+ * порядке, в каком случились, и курсор можно двигать после каждого удавшегося
+ * куска, не теряя прогресс на отказе следующего.
  */
 export function planCatchUp(
   cursor: bigint | null,
   head: bigint,
   maxBlocks: bigint = CATCHUP_MAX_BLOCKS,
+  chunkBlocks: bigint = CATCHUP_CHUNK_BLOCKS,
 ): CatchUpPlan | null {
   if (typeof cursor !== 'bigint' || typeof head !== 'bigint') return null;
   if (cursor < BigInt(0) || head <= BigInt(0)) return null;
   if (head <= cursor) return null;
+  if (chunkBlocks <= BigInt(0) || maxBlocks <= BigInt(0)) return null;
+
   const wanted = head - cursor;
   const truncated = wanted > maxBlocks;
-  const fromBlock = truncated ? head - maxBlocks + BigInt(1) : cursor + BigInt(1);
-  return { fromBlock, toBlock: head, truncated };
+  const first = truncated ? head - maxBlocks + BigInt(1) : cursor + BigInt(1);
+
+  const chunks: CatchUpChunk[] = [];
+  let from = first;
+  while (from <= head) {
+    const to = from + chunkBlocks - BigInt(1);
+    chunks.push({ fromBlock: from, toBlock: to > head ? head : to });
+    from = to + BigInt(1);
+  }
+  return { chunks, truncated };
 }
 
 export type WatchPhase = 'watch' | 'catchup';
@@ -168,18 +201,23 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
     }
     if (plan.truncated) onTruncated?.(plan);
 
-    let logs: unknown[];
-    try {
-      const got = await io.getLogs(plan.fromBlock, plan.toBlock);
-      if (!Array.isArray(got)) throw new Error('узел отдал не массив логов');
-      logs = got;
-    } catch (e) {
-      onError?.(e, 'catchup');
-      return; // курсор НЕ двигаем
+    // Куски идут по порядку, и курсор двигается ПОСЛЕ КАЖДОГО удавшегося. Отказ
+    // на середине оставляет добранное добранным: следующая попытка продолжит с
+    // места обрыва, а не потянет всё заново и не отчитается «догнали».
+    for (const chunk of plan.chunks) {
+      if (stopped) return;
+      let logs: unknown[];
+      try {
+        const got = await io.getLogs(chunk.fromBlock, chunk.toBlock);
+        if (!Array.isArray(got)) throw new Error('узел отдал не массив логов');
+        logs = got;
+      } catch (e) {
+        onError?.(e, 'catchup');
+        return; // курсор остаётся на конце последнего удавшегося куска
+      }
+      cursor.write(chunk.toBlock);
+      if (logs.length > 0 && !stopped) await onLogs(logs, 'catchup');
     }
-
-    cursor.write(plan.toBlock);
-    if (logs.length > 0 && !stopped) await onLogs(logs, 'catchup');
   };
 
   const activate = () => {

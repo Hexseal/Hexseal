@@ -380,7 +380,8 @@ export function useNotifications() {
       },
       onTruncated: (plan) => {
         console.warn(
-          `[hexseal] пропуск длиннее потолка догона: добраны блоки ${plan.fromBlock}–${plan.toBlock}, ` +
+          `[hexseal] пропуск длиннее потолка догона: добраны блоки ` +
+          `${plan.chunks[0]?.fromBlock}–${plan.chunks[plan.chunks.length - 1]?.toBlock}, ` +
           `более старые события в колокольчик не попадут`,
         );
       },
