@@ -20,6 +20,7 @@ import {
   runChainWatch,
   planCatchUp,
   CATCHUP_MAX_BLOCKS,
+  CATCHUP_CHUNK_BLOCKS,
   type ChainWatchIO,
   type VisibilityDoc,
 } from './chainWatchGate';
@@ -103,7 +104,7 @@ function memCursor(initial: bigint | null = null) {
 
 // ── planCatchUp: чистая арифметика диапазона ─────────────────────────────────
 
-describe('planCatchUp — какой диапазон догонять', () => {
+describe('planCatchUp — какой диапазон догонять и сколькими запросами', () => {
   it('курсора нет (первый запуск) → догонять нечего, историей не заливаем', () => {
     expect(planCatchUp(null, BigInt(1000))).toBeNull();
   });
@@ -113,17 +114,49 @@ describe('planCatchUp — какой диапазон догонять', () => {
     expect(planCatchUp(BigInt(1000), BigInt(999))).toBeNull();
   });
 
-  it('обычный разрыв → от следующего за курсором до головы', () => {
-    expect(planCatchUp(BigInt(1000), BigInt(1050))).toEqual({
-      fromBlock: BigInt(1001), toBlock: BigInt(1050), truncated: false,
-    });
+  it('короткий разрыв → ОДИН кусок, от следующего за курсором до головы', () => {
+    const plan = planCatchUp(BigInt(1000), BigInt(1050))!;
+    expect(plan.chunks).toEqual([{ fromBlock: BigInt(1001), toBlock: BigInt(1050) }]);
+    expect(plan.truncated).toBe(false);
+  });
+
+  it('разрыв длиннее одного запроса → НЕСКОЛЬКО кусков, без дыр и без нахлёста', () => {
+    // Провайдеры ограничивают диапазон `eth_getLogs`, поэтому длинный пропуск
+    // добирается не одним запросом, а несколькими подряд. Раньше он просто
+    // урезался — то есть вкладка, свёрнутая на ночь, теряла всё, кроме последних
+    // двух часов.
+    const cursor = BigInt(1000);
+    const head = cursor + CATCHUP_CHUNK_BLOCKS * BigInt(3) + BigInt(7);
+    const plan = planCatchUp(cursor, head)!;
+    expect(plan.chunks.length).toBe(4);
+    expect(plan.chunks[0].fromBlock).toBe(cursor + BigInt(1));
+    expect(plan.chunks[plan.chunks.length - 1].toBlock).toBe(head);
+    for (let i = 1; i < plan.chunks.length; i++) {
+      expect(plan.chunks[i].fromBlock, 'между куском и предыдущим дыра или нахлёст')
+        .toBe(plan.chunks[i - 1].toBlock + BigInt(1));
+    }
+    for (const c of plan.chunks) {
+      expect(c.toBlock - c.fromBlock + BigInt(1)).toBeLessThanOrEqual(CATCHUP_CHUNK_BLOCKS);
+    }
+    expect(plan.truncated).toBe(false);
+  });
+
+  it('сутки отсутствия добираются целиком, и это считанное число запросов', () => {
+    const head = BigInt(1_000_000);
+    const dayOfBlocks = CATCHUP_MAX_BLOCKS; // ~сутки при блоке в 2 секунды
+    const plan = planCatchUp(head - dayOfBlocks, head)!;
+    expect(plan.truncated, 'сутки не должны урезаться').toBe(false);
+    const total = plan.chunks.reduce((n, c) => n + (c.toBlock - c.fromBlock + BigInt(1)), BigInt(0));
+    expect(total).toBe(dayOfBlocks);
+    expect(plan.chunks.length, `запросов на сутки: ${plan.chunks.length}`).toBeLessThanOrEqual(12);
   });
 
   it('разрыв больше потолка → урезается, и об этом СКАЗАНО', () => {
-    const head = BigInt(1_000_000);
+    const head = BigInt(10_000_000);
     const plan = planCatchUp(BigInt(1), head)!;
-    expect(plan.toBlock).toBe(head);
-    expect(plan.toBlock - plan.fromBlock + BigInt(1)).toBe(CATCHUP_MAX_BLOCKS);
+    expect(plan.chunks[plan.chunks.length - 1].toBlock).toBe(head);
+    const total = plan.chunks.reduce((n, c) => n + (c.toBlock - c.fromBlock + BigInt(1)), BigInt(0));
+    expect(total).toBe(CATCHUP_MAX_BLOCKS);
     // Молча урезать значит соврать «догнали». Флаг обязан быть.
     expect(plan.truncated).toBe(true);
   });
@@ -332,6 +365,61 @@ describe('без курсора — только заглушка видимос
     await new Promise((r) => setTimeout(r, 0));
     c.emit({ eventName: 'Activated' });
     expect(seen).toHaveLength(1);
+    stop();
+  });
+});
+
+describe('длинное отсутствие добирается кусками, прогресс не теряется', () => {
+  it('вкладку свернули на «ночь» — события из НАЧАЛА пропуска тоже доехали', async () => {
+    const v = fakeDoc('hidden');
+    const start = BigInt(100_000);
+    const c = fakeChain({ head: start });
+    // Пропуск в три с лишним куска; событие в самом начале — то, что раньше терялось.
+    c.seed({ eventName: 'JobApplied', mark: 'в начале пропуска' }, start + BigInt(5));
+    c.seed({ eventName: 'JobApplied', mark: 'в конце пропуска' }, start + CATCHUP_CHUNK_BLOCKS * BigInt(3));
+    c.advance(CATCHUP_CHUNK_BLOCKS * BigInt(3) + BigInt(10));
+
+    const seen: unknown[] = [];
+    const cursor = memCursor(start);
+    const stop = runChainWatch({ io: c.io, cursor, doc: v.doc, hideGraceMs: 0, onLogs: (l) => seen.push(...l) });
+    await new Promise((r) => setTimeout(r, 0));
+    v.set('visible');
+    for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0));
+
+    expect(seen.map((l) => (l as { mark: string }).mark).sort())
+      .toEqual(['в конце пропуска', 'в начале пропуска']);
+    expect(c.calls.getLogs, `запросов на догон: ${c.calls.getLogs}`).toBe(4);
+    expect(cursor.peek()).toBe(c.head());
+    stop();
+  });
+
+  it('узел отказал на ТРЕТЬЕМ куске: прогресс двух первых сохранён', async () => {
+    const v = fakeDoc('hidden');
+    const start = BigInt(200_000);
+    let calls = 0;
+    const ranges: [bigint, bigint][] = [];
+    const io: ChainWatchIO = {
+      watch: () => () => {},
+      blockNumber: async () => start + CATCHUP_CHUNK_BLOCKS * BigInt(4),
+      getLogs: async (from, to) => {
+        calls++;
+        ranges.push([from, to]);
+        if (calls === 3) throw new Error('узел отказал на третьем куске');
+        return [];
+      },
+    };
+    const cursor = memCursor(start);
+    const onError = vi.fn();
+    const stop = runChainWatch({ io, cursor, doc: v.doc, hideGraceMs: 0, onLogs: vi.fn(), onError });
+    await new Promise((r) => setTimeout(r, 0));
+    v.set('visible');
+    for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0));
+
+    expect(onError).toHaveBeenCalled();
+    expect(calls, 'после отказа догон обязан остановиться, а не долбить дальше').toBe(3);
+    // Курсор стоит на конце ВТОРОГО куска: два первых добраны, и заново их
+    // тянуть не надо; третий добёрётся следующей попыткой.
+    expect(cursor.peek()).toBe(ranges[1][1]);
     stop();
   });
 });
