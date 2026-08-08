@@ -1146,7 +1146,9 @@ export function usePairChat(peerAddress: string, dealId?: string) {
       peer: peerAddress as `0x${string}`,
       // Единственное место подписи во всём чате — и оно под общим мьютексом
       // кошелька (`getBagPass`, см. его докстринг).
-      getPass: () => getBagPass(address, signMessageAsync, setPassSignaturePending),
+      // Сеанс уезжает четвёртым: пока ключ переписки на устройстве, пропуск
+      // подписывается ИМ, и окно кошелька не открывается вовсе (см. `getBagPass`).
+      getPass: () => getBagPass(address, signMessageAsync, setPassSignaturePending, session),
       isActive: () => activeRef.current,
       // Сделка, в контексте которой открыт чат. Метку на каждое сообщение
       // ставит движок — см. `dealId` в его опциях и почему это одно место.

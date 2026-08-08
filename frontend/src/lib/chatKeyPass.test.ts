@@ -43,6 +43,8 @@ interface Server {
   walletPrompts: number;
   /** Ключ объявлен в справочнике — сервер принимает ключевую подпись. */
   enrolled: boolean;
+  /** Ответ на ключевую дорогу вместо нормального: {status, body}. */
+  keyPathFailure?: { status: number; body: Record<string, unknown> };
 }
 
 let server: Server;
@@ -64,6 +66,9 @@ function stubServer(): void {
         JSON.stringify({ pass: 'v1.by-wallet.mac', expiresAt: Math.floor(Date.now() / 1000) + 43_200 }),
         { status: 200 },
       );
+    }
+    if (server.keyPathFailure) {
+      return new Response(JSON.stringify(server.keyPathFailure.body), { status: server.keyPathFailure.status });
     }
     if (!server.enrolled) {
       return new Response(
@@ -127,6 +132,30 @@ describe('ЗАМЕР: окон кошелька за заход', () => {
     expect(server.calls[1].walletSig).toBeDefined();
   });
 
+  it('отказ ключевой дороги НЕ по «ключа нет» — кошелёк не открывается', async () => {
+    // ⚠️ ЭТУ ДЫРУ НАШЛА МУТАЦИЯ, а не рассуждение: «откатываться на любой отказ»
+    // проходило зелёным на 94 тестах. Цена — своя починка хуже дефекта: моргнула
+    // сеть, сервер ответил 429 или 500 — и человек получает окно кошелька по
+    // случайному поводу, ровно от чего эта правка уходит. Кошелёк нужен ТОЛЬКО
+    // когда сервер сказал «ключа за этим адресом нет».
+    for (const failure of [
+      { status: 429, body: { error: 'Rate limit exceeded', code: 'rate_limited_pass' } },
+      { status: 500, body: { error: 'boom', code: 'internal_error' } },
+      { status: 401, body: { error: 'Invalid signature', code: 'invalid_signature' } },
+      { status: 503, body: { error: 'directory down', code: 'directory_unavailable' } },
+    ]) {
+      _resetBagPassCacheForTest();
+      server.calls = [];
+      server.walletPrompts = 0;
+      server.keyPathFailure = failure;
+      await expect(requestBagPass(walletSigner(), ALICE, { signWithChatKey: chatKeySigner() }))
+        .rejects.toThrow();
+      expect(server.walletPrompts, `status ${failure.status}`).toBe(0);
+      expect(server.calls, `status ${failure.status}`).toHaveLength(1);
+    }
+    server.keyPathFailure = undefined;
+  });
+
   it('ключа на устройстве нет — кошельковая дорога, ключевую даже не пробуем', async () => {
     const pass = await requestBagPass(walletSigner(), ALICE);
     expect(server.walletPrompts).toBe(1);
@@ -187,5 +216,34 @@ describe('подписывается ровно то, что проверит с
     const challengePrefix = 'hexseal:chat-bags:';
     expect(LINK_SIGNATURE_DOMAIN.startsWith(challengePrefix)).toBe(false);
     expect(challengePrefix.startsWith(LINK_SIGNATURE_DOMAIN)).toBe(false);
+  });
+});
+
+
+/* ─────────── проводка: сеанс реально доезжает до транспорта ─────────── */
+
+describe('getBagPass: сеанс доезжает до транспорта, а не остаётся возможностью', () => {
+  it('с сеансом — ноль окон кошелька; без сеанса — одно', async () => {
+    // ⚠️ ЗАЧЕМ ОТДЕЛЬНО ОТ ЗАМЕРОВ ВЫШЕ. Те мерят `requestBagPass`, то есть
+    // умение. Здесь мерится УПОТРЕБЛЕНИЕ: `getBagPass` — единственное место
+    // чата, откуда берётся пропуск, и если сеанс до него не доедет, ключевая
+    // дорога останется мёртвым кодом при зелёных тестах. Ровно тот класс
+    // промаха, который в этом проекте назван «правка, которая не может
+    // подействовать».
+    const { getBagPass } = await import('@/hooks/useChatSession');
+
+    const withSession = await getBagPass(
+      ALICE, async () => { server.walletPrompts++; return sig('b'); }, undefined, session,
+    );
+    expect(server.walletPrompts).toBe(0);
+    expect(withSession).toBe('v1.by-key.mac');
+
+    _resetBagPassCacheForTest();
+    server.calls = [];
+    const withoutSession = await getBagPass(
+      ALICE, async () => { server.walletPrompts++; return sig('b'); }, undefined, null,
+    );
+    expect(server.walletPrompts).toBe(1);
+    expect(withoutSession).toBe('v1.by-wallet.mac');
   });
 });

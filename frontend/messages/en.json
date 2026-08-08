@@ -624,7 +624,7 @@
     "privacy_badge_dispute": "In a dispute, either side can present the conversation to an arbiter — from their own device.",
     "chain_gap": "A message is missing here — it never arrived, or it was not handed over",
     "chain_gap_start": "The beginning of this conversation was not presented",
-    "pass_signature_hint": "Your wallet is asking for a signature: it proves to the server that these bags are yours. Normally it repeats at most once every 12 hours; if your browser blocks storage (private mode), once per tab load. It never touches your chat key.",
+    "pass_signature_hint": "Your wallet is asking for a signature: it proves to the server that these bags are yours. It is asked once per chat key — when that key first reaches the directory; after that the pass is signed by the key itself, with no prompts. It never touches the chat key.",
     "signature_wanted": "Confirm the signature in your wallet",
     "signature_wanted_pass": "It proves to the server that these bags are yours. Your conversation is already open — the signature is only needed to fetch new messages.",
     "signature_wanted_key": "Your chat key is derived from it: once per device, silently after that.",

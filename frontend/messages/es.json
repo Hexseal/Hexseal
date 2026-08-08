@@ -624,7 +624,7 @@
     "privacy_badge_dispute": "En una disputa, cualquiera de las partes puede presentar la conversación al árbitro — desde su propio dispositivo.",
     "chain_gap": "Falta un mensaje aquí — no llegó o no lo entregaron",
     "chain_gap_start": "No se presentó el inicio de esta conversación",
-    "pass_signature_hint": "Tu billetera pide una firma: demuestra al servidor que estos paquetes son tuyos. Normalmente se repite como mucho una vez cada 12 horas; si tu navegador bloquea el almacenamiento (modo privado), una vez por carga de pestaña. Nunca toca tu clave de chat.",
+    "pass_signature_hint": "Tu monedero pide una firma: demuestra al servidor que estos paquetes son tuyos. Se pide una vez por clave de chat, cuando esa clave llega al directorio por primera vez; después el pase lo firma la propia clave, sin ventanas. Esta firma no toca la clave en sí.",
     "signature_wanted": "Confirma la firma en tu monedero",
     "signature_wanted_pass": "Demuestra al servidor que estos paquetes son tuyos. Tu conversación ya está abierta: la firma solo hace falta para recibir mensajes nuevos.",
     "signature_wanted_key": "De ella se deriva tu clave de chat: una vez por dispositivo, después en silencio.",

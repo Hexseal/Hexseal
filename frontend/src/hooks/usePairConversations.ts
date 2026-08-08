@@ -399,7 +399,12 @@ export function usePairConversations(isEnabled = false) {
     if (!addr || !s) return;
     if (!loaderRef.current) {
       loaderRef.current = createConversationLoader({
-        getPass: () => getBagPass(addressRef.current as `0x${string}`, signMessageAsync),
+        // Сеанс уезжает третьим (см. `getBagPass`): список переписок стартует
+        // РЯДОМ с открытой перепиской, и лишнее окно кошелька здесь — это
+        // второй одновременный запрос в кошелёк, то есть `-32002`.
+        getPass: () => getBagPass(
+          addressRef.current as `0x${string}`, signMessageAsync, undefined, sessionRef.current,
+        ),
         loadWithPass: (pass) => loadPairConversations(sessionRef.current as ChatSession, pass),
         onRows: (rows) => {
           const a = addressRef.current;

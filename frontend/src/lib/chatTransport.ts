@@ -658,9 +658,28 @@ function isBagPassBody(x: unknown): x is BagPass {
  *  того же адреса просто ждёт тот же промис, не начиная свой. */
 const _inFlight = new Map<string, Promise<BagPass>>();
 
+/**
+ * Подпись КЛЮЧОМ ПЕРЕПИСКИ вместо подписи кошелька — дорога без единого окна.
+ *
+ * ⚠️ ЗАЧЕМ (живая выкатка 8 августа, пункт 35 `docs/OPEN-ITEMS.md`). Дословно от
+ * владельца: «оба просят вечное подключение/подпись». Подписей было две — одна
+ * выводит ключ переписки (необходима, из неё восстановление истории), вторая
+ * доказывала серверу, что адрес твой. Вторая не нужна: как только адрес объявил
+ * открытую половину подписного ключа в справочнике, сервер знает связку «адрес →
+ * ключ», и та же фраза подписывается самим ключом, молча. В установленном
+ * приложении каждое окно кошелька — круг на минуты.
+ *
+ * `undefined` — ключа на устройстве нет (сеанс не открыт); тогда остаётся только
+ * кошелёк, и пробовать ключевую дорогу незачем.
+ */
+export interface BagPassOptions {
+  signWithChatKey?: (message: string) => Promise<string>;
+}
+
 export async function requestBagPass(
   signMessage: (msg: string) => Promise<string>,
   address: `0x${string}`,
+  opts?: BagPassOptions,
 ): Promise<BagPass> {
   const addr = address.toLowerCase();
   const nowSec = Math.floor(Date.now() / 1000);
@@ -677,6 +696,40 @@ export async function requestBagPass(
     // (relayer/bagPass.js) — менять что-либо здесь без синхронной правки там
     // означает подписывать фразу, которую сервер не восстановит.
     const message = `hexseal:chat-bags:${addr}:${ts}`;
+
+    // ─── ДОРОГА БЕЗ КОШЕЛЬКА, И ОНА ПЕРВАЯ ────────────────────────────────
+    //
+    // Порядок именно такой: сначала молча, кошелёк — только если сервер
+    // сказал, что этому адресу другой дороги нет. Обратный порядок означал бы
+    // окно кошелька у КАЖДОГО, включая тех, у кого ключ давно объявлен, — то
+    // есть правку, которая не подействовала.
+    if (opts?.signWithChatKey) {
+      const keySig = await opts.signWithChatKey(message);
+      const keyRes = await fetch(`${RELAYER_URL}/bags/pass`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ts': ts, 'x-key-sig': keySig },
+        body: JSON.stringify({ address: addr }),
+      });
+      if (keyRes.ok) {
+        const body: unknown = await keyRes.json();
+        if (!isBagPassBody(body)) throw new BagTransportError('Malformed response from POST /bags/pass');
+        const fresh: BagPass = { pass: body.pass, expiresAt: body.expiresAt };
+        _passCache.set(addr, fresh);
+        writeStoredPass(addr, fresh);
+        return fresh;
+      }
+      // ⚠️ ОТКАТ ТОЛЬКО НА ОДИН НАЗВАННЫЙ КОД. `key_not_enrolled` — это «ключа
+      // за этим адресом в справочнике нет», единственный ответ, при котором
+      // кошелёк реально нужен (первый вход в жизни адреса). Откатываться на
+      // ЛЮБОЙ отказ значило бы открывать окно кошелька на моргнувшей сети и на
+      // испорченной подписи — то есть вернуть человеку ровно то, от чего эта
+      // правка уходит, только теперь ещё и по случайному поводу.
+      const err = await parseErrorBody(keyRes);
+      if (keyRes.status !== 401 || err.code !== 'key_not_enrolled') {
+        await throwForFailedResponse(keyRes, 'Failed to obtain bag pass');
+      }
+    }
+
     const sig = await signMessage(message);
 
     const res = await fetch(`${RELAYER_URL}/bags/pass`, {

@@ -624,7 +624,7 @@
     "privacy_badge_dispute": "Numa disputa, qualquer das partes pode apresentar a conversa ao árbitro — a partir do seu próprio dispositivo.",
     "chain_gap": "Falta uma mensagem aqui — não chegou ou não foi entregue",
     "chain_gap_start": "O início desta conversa não foi apresentado",
-    "pass_signature_hint": "A sua carteira pede uma assinatura: ela prova ao servidor que estes pacotes são seus. Normalmente repete-se no máximo uma vez a cada 12 horas; se o navegador bloquear o armazenamento (modo privado), uma vez por carregamento da aba. Nunca toca na sua chave de conversa.",
+    "pass_signature_hint": "Sua carteira pede uma assinatura: ela prova ao servidor que estes pacotes são seus. É pedida uma vez por chave de conversa — quando essa chave chega ao diretório pela primeira vez; depois o passe é assinado pela própria chave, sem janelas. Esta assinatura não toca na chave.",
     "signature_wanted": "Confirme a assinatura na sua carteira",
     "signature_wanted_pass": "Ela prova ao servidor que estes pacotes são seus. A conversa já está aberta — a assinatura só é necessária para buscar novas mensagens.",
     "signature_wanted_key": "Dela é derivada a sua chave de conversa: uma vez por dispositivo, depois em silêncio.",

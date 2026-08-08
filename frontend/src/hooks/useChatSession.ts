@@ -70,7 +70,7 @@ import {
   type ChatSession, type ChatSessionErrorCode,
 } from '@/lib/chatSession';
 import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
-import { deriveLinkSigningKeypair } from '@/lib/chatConversation';
+import { deriveLinkSigningKeypair, signChallengeWithLinkKey } from '@/lib/chatConversation';
 import { RELAYER_URL, requestBagPass } from '@/lib/chatTransport';
 import { withWalletLock } from '@/lib/walletLock';
 import { isChatDeclined, rememberChatDecline, forgetChatDecline, isUserDecline } from '@/lib/chatDecline';
@@ -327,7 +327,14 @@ export async function signChatKeyLocked(
 export async function getBagPass(
   address: `0x${string}`,
   signMessageAsync: (args: { message: string }) => Promise<string>,
-  onSigning?: (busy: boolean) => void,
+  onSigning: ((busy: boolean) => void) | undefined,
+  // ⚠️ ОБЯЗАТЕЛЬНЫЙ, ХОТЬ И ДОПУСКАЮЩИЙ `null`, и это не придирка к стилю.
+  // Забытый четвёртый аргумент — это молча вернувшееся окно кошелька на каждый
+  // холодный кэш: поведение прежнее, тесты зелёные, никто не заметил. В этом
+  // проекте такой класс промаха назван прямо («правка, которая не может
+  // подействовать»). Обязательность делает пропуск ОШИБКОЙ ТИПОВ, то есть
+  // `npm run type-check` краснеет там, где ни один замок не покраснел бы.
+  session: ChatSession | null,
 ): Promise<string> {
   return withWalletLock(address, async () => {
     const pass = await requestBagPass(async (message) => {
@@ -337,7 +344,18 @@ export async function getBagPass(
       } finally {
         onSigning?.(false);
       }
-    }, address);
+    }, address, session
+      // ⚠️ СЕАНС ЗДЕСЬ — ЭТО ОТСУТСТВИЕ ОКНА КОШЕЛЬКА, а не удобство. Пока
+      // ключ переписки лежит на устройстве, пропуск подписывается им, и
+      // `onSigning` не зовётся ВООБЩЕ: человеку нечего подтверждать. Кошелёк
+      // остаётся только на первый вход в жизни адреса, когда справочник о нём
+      // ещё не знает (`key_not_enrolled` — единственный код, на котором
+      // `requestBagPass` откатывается назад).
+      //
+      // Необязателен намеренно: вызывающий, у которого сеанса нет (ключ не
+      // заведён, приватный режим), получает прежнее поведение вместо отказа.
+      ? { signWithChatKey: (message) => signChallengeWithLinkKey(session.keypair, message) }
+      : undefined);
     return pass.pass;
   });
 }

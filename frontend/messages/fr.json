@@ -624,7 +624,7 @@
     "privacy_badge_dispute": "En cas de litige, chaque partie peut présenter la conversation à l’arbitre — depuis son propre appareil.",
     "chain_gap": "Il manque un message ici — il n’est jamais arrivé, ou il n’a pas été remis",
     "chain_gap_start": "Le début de cette conversation n’a pas été présenté",
-    "pass_signature_hint": "Votre portefeuille demande une signature : elle prouve au serveur que ces paquets sont les vôtres. Normalement au plus une fois toutes les 12 heures ; si votre navigateur bloque le stockage (mode privé), une fois par chargement d'onglet. Elle ne touche jamais votre clé de discussion.",
+    "pass_signature_hint": "Votre portefeuille demande une signature : elle prouve au serveur que ces paquets sont les vôtres. Elle est demandée une fois par clé de discussion — la première fois que cette clé arrive dans l'annuaire ; ensuite le laissez-passer est signé par la clé elle-même, sans fenêtre. Cette signature ne touche pas la clé.",
     "signature_wanted": "Confirmez la signature dans votre portefeuille",
     "signature_wanted_pass": "Elle prouve au serveur que ces paquets sont les vôtres. Votre conversation est déjà ouverte — la signature ne sert qu'à récupérer les nouveaux messages.",
     "signature_wanted_key": "Votre clé de discussion en est dérivée : une fois par appareil, puis en silence.",
