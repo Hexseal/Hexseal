@@ -684,7 +684,13 @@
     "key_unannounced_body": "Votre clé est créée, mais personne ne la connaît encore.",
     "key_unannounced_call": "Confirmez dans votre portefeuille — et on vous trouvera.",
     "key_unannounced_action": "Confirmer",
-    "key_unannounced_confirming": "Confirmation…"
+    "key_unannounced_confirming": "Confirmation…",
+    "key_elsewhere_title": "Vos messages arrivent sur un autre appareil",
+    "key_elsewhere_body": "Ce portefeuille est déjà configuré ailleurs, et on vous y écrit.",
+    "key_elsewhere_restore": "Si vous avez un code de récupération, saisissez-le — les mêmes conversations s'ouvriront ici.",
+    "key_elsewhere_restore_action": "Saisir le code de récupération",
+    "key_elsewhere_switch_warning": "Sans le code, vous pouvez recevoir ici à la place. Les nouveaux messages n'arriveront alors plus sur cet appareil, et les précédents y resteront seulement.",
+    "key_elsewhere_switch_action": "Recevoir ici"
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

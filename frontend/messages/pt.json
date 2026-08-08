@@ -684,7 +684,13 @@
     "key_unannounced_body": "Sua chave foi criada, mas ninguém sabe dela ainda.",
     "key_unannounced_call": "Confirme na sua carteira — e vão te encontrar.",
     "key_unannounced_action": "Confirmar",
-    "key_unannounced_confirming": "Confirmando…"
+    "key_unannounced_confirming": "Confirmando…",
+    "key_elsewhere_title": "Suas mensagens estão indo para outro dispositivo",
+    "key_elsewhere_body": "Esta carteira já está configurada em outro lugar, e escrevem para você lá.",
+    "key_elsewhere_restore": "Se você tem um código de recuperação, insira-o — as mesmas conversas vão abrir aqui.",
+    "key_elsewhere_restore_action": "Inserir código de recuperação",
+    "key_elsewhere_switch_warning": "Sem o código você pode passar a receber aqui. Aí as mensagens novas deixarão de chegar naquele dispositivo, e as anteriores ficarão só lá.",
+    "key_elsewhere_switch_action": "Receber aqui"
   },
   "messaging": {
     "enabled_title": "Mensagens habilitadas",

@@ -14,6 +14,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
+import { useKeyAnnouncement } from '@/hooks/useKeyAnnouncement';
 import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 import { hasRecoveryCode } from '@/lib/chatRecovery';
 import { ChatOffScreen } from '@/components/ChatOffScreen';
@@ -498,9 +499,85 @@ export function ChatSignatureWanted(
  * объявление проходит само (`lib/chatAnnounce.ts`).
  */
 export function ChatKeyNotAnnounced(
-  { variant, busy, onConfirm }: { variant: 'full' | 'inline'; busy: boolean; onConfirm: () => void },
+  { variant, busy, standing, onConfirm, onRestore }: {
+    variant: 'full' | 'inline';
+    busy: boolean;
+    /** `absent` — записи нет вовсе; `other_key` — лежит ключ ДРУГОГО устройства. */
+    standing: 'absent' | 'other_key';
+    onConfirm: () => void;
+    onRestore: () => void;
+  },
 ) {
   const t = useTranslations();
+  /**
+   * ⚠️ ЧУЖОЙ КЛЮЧ — ДРУГОЙ ЭКРАН, А НЕ ТОТ ЖЕ С ДРУГИМ ОТТЕНКОМ.
+   *
+   * Ловушка с потерей данных, найденная ревью координатора. У кошелька-контракта
+   * ключ случайный и живёт только на устройстве. Если в справочнике лежит ключ
+   * ДРУГОГО устройства, то нажатие «Подтвердить» ЗАМЕНИТ его: собеседники начнут
+   * запечатывать сюда, там новое приходить перестанет, а прежние мешки останутся
+   * читаемыми только там.
+   *
+   * И самое коварное: текст «Вам пока не могут писать» в этом состоянии
+   * ФОРМАЛЬНО ПРАВДИВ — писать на ЭТО устройство действительно нельзя, — поэтому
+   * подозрений он не вызывает. То есть мы предлагали нажать кнопку, которая молча
+   * ломает переписку, и называли это починкой.
+   *
+   * Здесь главное предложение — КОД ВОССТАНОВЛЕНИЯ: он даёт тот же ключ, ничего
+   * не заменяя. Замена — второй, явный и предупреждённый выбор. Вход по коду уже
+   * существует (`RESTORE_RECOVERY_EVENT`, привратник в `RecoveryCodeGate`), сюда
+   * только приведён.
+   */
+  if (standing === 'other_key') {
+    const body = (
+      <>
+        <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_elsewhere_body")}</p>
+        <p className="text-white/45 text-sm max-w-sm leading-relaxed mt-1.5">{t("chat.key_elsewhere_restore")}</p>
+        <button
+          type="button"
+          onClick={onRestore}
+          className="mt-3 px-4 py-2 rounded-[12px] bg-primary/20 border border-primary/40 text-sm font-medium text-white/85 hover:bg-primary/30 transition-colors"
+        >
+          {t("chat.key_elsewhere_restore_action")}
+        </button>
+        {/* ⚠️ ПРЕДУПРЕЖДЕНИЕ СТОИТ НАД ЗАМЕНОЙ, а не под ней и не в другом месте
+            экрана: цена должна быть прочитана ДО нажатия, а не после. */}
+        <p className="text-amber-300/50 text-xs max-w-sm leading-relaxed mt-4">
+          {t("chat.key_elsewhere_switch_warning")}
+        </p>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy}
+          className="mt-2 text-xs text-white/40 hover:text-white/70 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {busy ? t("chat.key_unannounced_confirming") : t("chat.key_elsewhere_switch_action")}
+        </button>
+      </>
+    );
+    if (variant === 'inline') {
+      return (
+        <div className="mx-1 mb-2 px-3 py-2.5 rounded-[12px] bg-primary/[0.07] border border-primary/20 flex items-start gap-2">
+          <KeyRound className="w-4 h-4 text-primary/70 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-white/75 font-medium">{t("chat.key_elsewhere_title")}</p>
+            {body}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+        <div className="w-12 h-12 rounded-[16px] bg-primary/10 border border-primary/25 flex items-center justify-center">
+          <KeyRound className="w-5 h-5 text-primary/80" />
+        </div>
+        <div>
+          <p className="text-white/80 text-base font-semibold mb-1.5">{t("chat.key_elsewhere_title")}</p>
+          {body}
+        </div>
+      </div>
+    );
+  }
   const button = (
     <button
       type="button"
@@ -713,9 +790,6 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     // `components/` не находил ни одного). Умолчания — по той же причине,
     // что у соседей выше: заготовки замков подменяют хук целиком.
     pendingBags = 0, bagsFailed = false, pushOutcome = null,
-    // «Ключ есть, но не объявлен» — тихая поломка до 8 августа. Умолчания по той
-    // же причине, что у соседей: заготовки замков подменяют хук целиком.
-    keyNotAnnounced = false, announcing = false, announceKey = () => {},
     // ⚠️ «Склад уже отвечал». Без этого признака «Сообщений пока нет»
     // говорилось бы в первое мгновение каждого открытия — то есть врало бы
     // всем и всегда, ровно один раз. Умолчание `true` намеренно: заготовки
@@ -735,6 +809,21 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     status: sessionStatus, retry: retrySession, session, errorCode: sessionErrorCode,
     keySignaturePending = false,
   } = useChatSession();
+  /**
+   * Объявлен ли НАШ ключ — прямо из своего источника, а не пробросом через
+   * `usePairChat`.
+   *
+   * ⚠️ ПРОБРОС ЗДЕСЬ БЫЛ, И ЕГО УБРАЛИ ПО ЗАМЕРУ. Мутация «пробрасывать всегда
+   * `absent`» проходила зелёной на 77 замерах: вторая проводка того же состояния
+   * внутри хука не сторожится ничем. При чужом ключе в справочнике цена промаха —
+   * экран, предлагающий нажать кнопку, которая молча ломает переписку на другом
+   * устройстве. Один источник, ровно как в списке переписок.
+   */
+  const {
+    needsPress: keyNotAnnounced, busy: announcing, announce: announceKey,
+    standing: keyStandingRaw, restoreFromCode,
+  } = useKeyAnnouncement();
+  const keyStanding = keyStandingRaw === 'other_key' ? ('other_key' as const) : ('absent' as const);
   // Окно кошелька открыто ПРЯМО СЕЙЧАС — по любой из двух причин. Причина
   // нужна дальше: слова у пропуска и у ключа разные (см. `ChatSignatureWanted`).
   // Ключ старше пропуска: если ждут обе подписи, человек ждёт первую.
@@ -1376,10 +1465,16 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               значило бы дать ему разъехаться между панелью и списком, что в этом
               проекте уже случалось (находка К-2). */}
           {!signatureReason && keyNotAnnounced && messages.length > 0 && (
-            <ChatKeyNotAnnounced variant="inline" busy={announcing} onConfirm={announceKey} />
+            <ChatKeyNotAnnounced
+              variant="inline" busy={announcing} standing={keyStanding}
+              onConfirm={announceKey} onRestore={restoreFromCode}
+            />
           )}
           {!signatureReason && keyNotAnnounced && messages.length === 0 && (
-            <ChatKeyNotAnnounced variant="full" busy={announcing} onConfirm={announceKey} />
+            <ChatKeyNotAnnounced
+              variant="full" busy={announcing} standing={keyStanding}
+              onConfirm={announceKey} onRestore={restoreFromCode}
+            />
           )}
 
           {/* Блоки ниже — состояния ПУСТОГО экрана: если история уже

@@ -237,7 +237,13 @@ function ChatHubPageInner() {
   // там, где её встретят первой. Урок оплачен 8 августа: разводка причин отказа
   // доехала до панели и НЕ доехала до списка (находка К-2), и заметили это
   // только рендером.
-  const { needsPress: keyNotAnnounced, busy: announcing, announce: announceKey } = useKeyAnnouncement();
+  const {
+    needsPress: keyNotAnnounced, busy: announcing, announce: announceKey,
+    standing: keyStandingRaw, restoreFromCode,
+  } = useKeyAnnouncement();
+  // Экраны у `absent` и `other_key` разные: при чужом ключе нажатие заменяет ключ
+  // и ломает переписку на том устройстве (разбор — `ChatKeyNotAnnounced`).
+  const keyStanding = keyStandingRaw === 'other_key' ? 'other_key' as const : 'absent' as const;
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
@@ -597,7 +603,10 @@ function ChatHubPageInner() {
               (условие ниже читает тот же признак): они говорят «сейчас будет», а
               тут ждут не сеть, а человека. */}
           {!signatureReason && keyNotAnnounced && conversations.length === 0 && (
-            <ChatKeyNotAnnounced variant="full" busy={announcing} onConfirm={announceKey} />
+            <ChatKeyNotAnnounced
+              variant="full" busy={announcing} standing={keyStanding}
+              onConfirm={announceKey} onRestore={restoreFromCode}
+            />
           )}
 
           {!signatureReason && !keyNotAnnounced && (isLoading || sessionStatus === 'loading') && conversations.length === 0 && (

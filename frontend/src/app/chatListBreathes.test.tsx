@@ -89,7 +89,7 @@ function setAnn(patch: Record<string, unknown>): void {
   for (const k of Object.keys(ann)) delete ann[k];
   Object.assign(ann, {
     standing: 'mine', attempt: 'none', needsPress: false, busy: false,
-    announce: () => {}, errorCode: null,
+    announce: () => {}, restoreFromCode: () => {}, errorCode: null,
   }, patch);
 }
 vi.mock('@/hooks/useKeyAnnouncement', async (importOriginal) => {
@@ -174,5 +174,32 @@ describe('список: «ключ есть, но не объявлен» наз
     const html = await renderList();
     expect(html).toContain(translate('chat.signature_wanted'));
     expect(html, 'две просьбы об одном на одном экране').not.toContain(translate('chat.key_unannounced_title'));
+  });
+});
+
+describe('список: чужой ключ — свой текст и вход по коду', () => {
+  // ⚠️ Тот же класс К-2: разводка доехала до панели и обязана доехать до списка.
+  // Без этого замка ловушка с потерей данных осталась бы на экране, куда попадают
+  // первым делом.
+  it('показан текст про другое устройство, а не «вам пока не могут писать»', async () => {
+    setAnn({ standing: 'other_key', needsPress: true });
+    setConv({ isLoading: true, conversations: [] });
+    const html = await renderList();
+    expect(html, 'до списка состояние чужого ключа не доехало')
+      .toContain(translate('chat.key_elsewhere_title'));
+    expect(html, 'в списке показан текст состояния «ключа нет»')
+      .not.toContain(translate('chat.key_unannounced_title'));
+  });
+
+  it('код восстановления предложен, и предупреждение о цене замены на месте', async () => {
+    setAnn({ standing: 'other_key', needsPress: true });
+    setConv({ isLoading: true, conversations: [] });
+    const html = await renderList();
+    expect(html).toContain(translate('chat.key_elsewhere_restore_action'));
+    expect(html, 'в списке о цене замены не предупредили')
+      .toContain(translate('chat.key_elsewhere_switch_warning'));
+    const restore = html.indexOf(translate('chat.key_elsewhere_restore_action'));
+    const swap = html.indexOf(translate('chat.key_elsewhere_switch_action'));
+    expect(restore).toBeLessThan(swap);
   });
 });

@@ -66,9 +66,48 @@ export interface AnnounceInput {
   gate: SignatureGateVerdict;
 }
 
-/** Только эти два стояния означают «нам нельзя написать». Отдельным множеством,
- *  а не двумя сравнениями по месту: список обязан жить рядом со своим смыслом. */
-const UNREACHABLE_BY_PEER: ReadonlySet<KeyStanding> = new Set<KeyStanding>(['absent', 'other_key']);
+/**
+ * Три РАЗНЫХ множества, а не одно. Слипшись, они дали две живых потери данных —
+ * разбор ниже, у каждой функции.
+ *
+ * ⚠️ ИСТОРИЯ ОШИБКИ, чтобы её не повторили. Сначала здесь было одно множество
+ * `{absent, other_key}` на все три вопроса. Общее у этих двух стояний ровно одно:
+ * на ЭТО устройство собеседник написать не может. Всё остальное у них разное, и
+ * разница дорогая:
+ *
+ *   - при `absent` записи в справочнике НЕ БЫЛО НИКОГДА, значит запечатать нам
+ *     было нечем и мешков для нас на складе быть не может. Терять нечего;
+ *   - при `other_key` запись ЕСТЬ, просто ключ другого устройства. Объявив свой,
+ *     мы ЗАМЕНИМ чужой — а на складе при этом могут лежать мешки, запечатанные
+ *     на наш прежний ключ, и здесь они открываются.
+ */
+
+/** Собеседник не может написать на ЭТО устройство — значит человеку надо сказать. */
+const CANNOT_REACH_THIS_DEVICE: ReadonlySet<KeyStanding> = new Set<KeyStanding>(['absent', 'other_key']);
+
+/**
+ * Объявить свой ключ можно молча, ничего не потеряв.
+ *
+ * ⚠️ ТОЛЬКО `absent`. При `other_key` объявление ЗАМЕНЯЕТ ключ другого
+ * устройства: собеседники начнут запечатывать сюда, там новое приходить
+ * перестанет, а прежние мешки останутся читаемыми только там. Это выбор человека
+ * с предупреждением, а не «починка», и уж точно не то, что делают сами.
+ *
+ * Это был живой дефект, а не недостающая осторожность: на десктопе (порог `go`)
+ * автоматика заменяла чужой ключ, и человек не видел даже кнопки.
+ */
+const SAFE_TO_ANNOUNCE_SILENTLY: ReadonlySet<KeyStanding> = new Set<KeyStanding>(['absent']);
+
+/**
+ * Мешков для нас на складе быть НЕ МОЖЕТ — опрос ящика бессмысленен.
+ *
+ * ⚠️ ТОЛЬКО `absent`, и только потому, что записи не было никогда. При
+ * `other_key` мешки могут лежать и открываться здесь: мешок запечатывается на
+ * тот ключ, который был в справочнике на момент отправки, а забирается ПО АДРЕСУ.
+ * Заблокировав опрос, мы спрятали бы от человека переписку, которую он может
+ * прочесть.
+ */
+const NOTHING_CAN_EXIST_FOR_US: ReadonlySet<KeyStanding> = new Set<KeyStanding>(['absent']);
 
 /**
  * Наше стояние в справочнике по его ответу.
@@ -113,7 +152,7 @@ function sameKey(a: Uint8Array, b: Uint8Array): boolean {
  */
 export function announceNeedsPress(input: AnnounceInput): boolean {
   if (!input.keyOnDevice) return false;
-  if (!UNREACHABLE_BY_PEER.has(input.standing)) return false;
+  if (!CANNOT_REACH_THIS_DEVICE.has(input.standing)) return false;
   if (input.attempt === 'busy') return false;
   // Страница скрыта — показывать некому. Заодно это не даёт признаку взвестись
   // у свёрнутого приложения и остаться взведённым при возврате.
@@ -122,6 +161,11 @@ export function announceNeedsPress(input: AnnounceInput): boolean {
   // автоматика уже отработала и сама не повторится (см. `announceMayAuto`), и
   // без кнопки человек остался бы вовсе без выхода.
   if (input.attempt === 'failed') return true;
+  // ⚠️ ЧУЖОЙ КЛЮЧ — ВСЕГДА, а не только после ухода к кошельку. Автоматики здесь
+  // нет по построению (замена не делается молча), значит без этой строки
+  // состояние стало бы невылечиваемым на десктопе: сами не делаем и выбора не
+  // предлагаем. И выбор тут настоящий — код восстановления против замены.
+  if (!SAFE_TO_ANNOUNCE_SILENTLY.has(input.standing)) return true;
   return input.gate !== 'go';
 }
 
@@ -135,7 +179,8 @@ export function announceNeedsPress(input: AnnounceInput): boolean {
  */
 export function announceMayAuto(input: AnnounceInput): boolean {
   if (!input.keyOnDevice) return false;
-  if (!UNREACHABLE_BY_PEER.has(input.standing)) return false;
+  // Молча — только там, где терять нечего. Разбор — у `SAFE_TO_ANNOUNCE_SILENTLY`.
+  if (!SAFE_TO_ANNOUNCE_SILENTLY.has(input.standing)) return false;
   // Только первая попытка идёт сама. Повтор — по нажатию: иначе отказ
   // `POST /keys` крутился бы каждый тик, и «долбят нарочно» устраивали бы мы
   // сами себе, своему же серверу и своему же кошельку.
@@ -164,7 +209,7 @@ export function announceMayAuto(input: AnnounceInput): boolean {
  */
 export function mailboxWorthPolling(standing: KeyStanding): boolean {
   if (standing === 'unknown') return false;
-  return !UNREACHABLE_BY_PEER.has(standing);
+  return !NOTHING_CAN_EXIST_FOR_US.has(standing);
 }
 
 /**

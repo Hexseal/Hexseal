@@ -684,7 +684,13 @@
     "key_unannounced_body": "La tua chiave è creata, ma nessuno la conosce ancora.",
     "key_unannounced_call": "Conferma nel tuo wallet e ti troveranno.",
     "key_unannounced_action": "Conferma",
-    "key_unannounced_confirming": "Conferma in corso…"
+    "key_unannounced_confirming": "Conferma in corso…",
+    "key_elsewhere_title": "I tuoi messaggi arrivano su un altro dispositivo",
+    "key_elsewhere_body": "Questo portafoglio è già configurato altrove, e ti scrivono lì.",
+    "key_elsewhere_restore": "Se hai un codice di recupero, inseriscilo: qui si apriranno le stesse conversazioni.",
+    "key_elsewhere_restore_action": "Inserire il codice di recupero",
+    "key_elsewhere_switch_warning": "Senza il codice puoi iniziare a ricevere qui. Allora su quel dispositivo i nuovi messaggi non arriveranno più, e i precedenti resteranno solo lì.",
+    "key_elsewhere_switch_action": "Ricevere qui"
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

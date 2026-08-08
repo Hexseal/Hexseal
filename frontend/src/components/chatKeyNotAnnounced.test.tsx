@@ -56,8 +56,9 @@ function setState(patch: Record<string, unknown>): void {
     chainUnverified: false, undecryptable: false,
     burnedSeqs: [], ownNumberingReset: false,
     pendingBags: 0, bagsFailed: false, pushOutcome: null,
-    keyNotAnnounced: false, announcing: false, announceKey: () => {},
-    keyStanding: 'absent', restoreFromCode: () => {},
+    // ⚠️ Полей объявления в `usePairChat` БОЛЬШЕ НЕТ — панель зовёт
+    // `useKeyAnnouncement()` сама (разбор в её докстринге). Здесь их не
+    // подставляем: подставив, замок мерил бы то, чего в дороге нет.
   }, patch);
 }
 
@@ -128,7 +129,8 @@ beforeEach(() => { setState({}); setAnnouncement({}); });
 
 describe('панель: состояние названо и вылечиваемо', () => {
   it('текст утверждённый — все три строки и кнопка', async () => {
-    setState({ keyNotAnnounced: true, messages: [], synced: false });
+    setAnnouncement({ standing: 'absent', needsPress: true });
+    setState({ messages: [], synced: false });
     const html = await renderPanel();
     expect(html, 'заголовок пропал').toContain(TITLE());
     expect(html, 'первая строка пропала').toContain(BODY());
@@ -138,7 +140,8 @@ describe('панель: состояние названо и вылечивае�
 
   it('ключ объявлен — НИ ОДНОЙ из этих надписей на экране нет', async () => {
     // Замок, который горит всегда, — не замок.
-    setState({ keyNotAnnounced: false, messages: [], synced: true });
+    setAnnouncement({ standing: 'mine', needsPress: false });
+    setState({ messages: [], synced: true });
     const html = await renderPanel();
     expect(html).not.toContain(TITLE());
     expect(html).not.toContain(ACTION());
@@ -151,7 +154,8 @@ describe('панель: состояние названо и вылечивае�
       id: `${PEER.toLowerCase()}-${seq}`, from: PEER.toLowerCase(), seq, text,
       timestamp: Date.UTC(2026, 7, 8, 10, seq), isFromMe: false, delivered: true,
     }));
-    setState({ keyNotAnnounced: true, messages: three });
+    setAnnouncement({ standing: 'absent', needsPress: true });
+    setState({ messages: three });
     const html = await renderPanel();
     for (const m of three) expect(html, 'переписка спряталась за надписью').toContain(m.text);
     expect(html).toContain(TITLE());
@@ -161,7 +165,8 @@ describe('панель: состояние названо и вылечивае�
     // Иначе человек одновременно видит «подтвердите подпись в кошельке» и
     // «нажмите, чтобы подтвердить» — две просьбы об одном, и непонятно, чего
     // от него хотят.
-    setState({ keyNotAnnounced: true, passSignaturePending: true, messages: [], synced: false });
+    setAnnouncement({ standing: 'absent', needsPress: true });
+    setState({ passSignaturePending: true, messages: [], synced: false });
     const html = await renderPanel();
     expect(html).toContain(translate('chat.signature_wanted'));
     expect(html, 'две просьбы об одном на одном экране').not.toContain(TITLE());
@@ -191,7 +196,8 @@ describe('место надписи — внутри центральной ка
   });
 
   it('карточка стоит ВЫШЕ поля ввода', async () => {
-    setState({ keyNotAnnounced: true, messages: [], synced: false });
+    setAnnouncement({ standing: 'absent', needsPress: true });
+    setState({ messages: [], synced: false });
     const html = await renderPanel();
     const notice = html.indexOf(TITLE());
     const input = html.indexOf('<textarea');
@@ -421,7 +427,7 @@ describe('чужой ключ в справочнике: ловушка с по�
   });
 
   it('панель показывает состояние чужого ключа, а не текст «ключа нет»', async () => {
-    setState({ keyNotAnnounced: true, keyStanding: 'other_key', messages: [], synced: false });
+    setState({ messages: [], synced: false });
     setAnnouncement({ standing: 'other_key', needsPress: true });
     const html = await renderPanel();
     expect(html, 'до панели состояние чужого ключа не доехало').toContain(EL_TITLE());

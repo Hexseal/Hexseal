@@ -684,7 +684,13 @@
     "key_unannounced_body": "密钥已创建，但还没人知道它。",
     "key_unannounced_call": "在钱包中确认，别人就能找到你。",
     "key_unannounced_action": "确认",
-    "key_unannounced_confirming": "确认中…"
+    "key_unannounced_confirming": "确认中…",
+    "key_elsewhere_title": "消息正发往另一台设备",
+    "key_elsewhere_body": "这个钱包已在别处设置好了，别人正把消息发到那里。",
+    "key_elsewhere_restore": "如果你有恢复码，请输入，这里会打开同样的对话。",
+    "key_elsewhere_restore_action": "输入恢复码",
+    "key_elsewhere_switch_warning": "没有恢复码也可以改成在这里接收。那样一来，那台设备就收不到新消息了，之前的消息只留在那里。",
+    "key_elsewhere_switch_action": "在这里接收"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

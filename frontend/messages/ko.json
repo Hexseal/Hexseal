@@ -684,7 +684,13 @@
     "key_unannounced_body": "키는 만들어졌지만 아직 아무도 모릅니다.",
     "key_unannounced_call": "지갑에서 승인하면 상대가 찾을 수 있습니다.",
     "key_unannounced_action": "승인",
-    "key_unannounced_confirming": "승인 중…"
+    "key_unannounced_confirming": "승인 중…",
+    "key_elsewhere_title": "메시지가 다른 기기로 가고 있습니다",
+    "key_elsewhere_body": "이 지갑은 이미 다른 곳에 설정되어 있고, 상대는 그쪽으로 보내고 있습니다.",
+    "key_elsewhere_restore": "복구 코드가 있으면 입력하세요. 여기서도 같은 대화가 열립니다.",
+    "key_elsewhere_restore_action": "복구 코드 입력",
+    "key_elsewhere_switch_warning": "코드가 없어도 여기서 받도록 바꿀 수 있습니다. 그러면 그 기기로는 새 메시지가 오지 않고, 이전 메시지는 그곳에만 남습니다.",
+    "key_elsewhere_switch_action": "여기서 받기"
   },
   "messaging": {
     "enabled_title": "메시징 활성화됨",

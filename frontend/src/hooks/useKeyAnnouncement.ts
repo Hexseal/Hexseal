@@ -41,6 +41,7 @@ import { checkSignatureGate, clearWalletHandoff } from '@/lib/chatSignatureGate'
 import { useChatSession, fetchPeerChatKeys, publishChatKeys, getBagPass } from '@/hooks/useChatSession';
 import type { ChatSession } from '@/lib/chatSession';
 import type { KeyStanding, AnnounceAttempt } from '@/lib/chatAnnounce';
+import { RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 
 /* Склад переехал в `@/lib/chatAnnounceStore` — он обязан быть без React, иначе
  * порог пропуска в `getBagPass` замыкает кольцо импортов. Здесь переэкспорт для
@@ -78,6 +79,15 @@ export interface KeyAnnouncementValue {
   busy: boolean;
   /** Нажатие человека. Только отсюда объявление проходит порог. */
   announce: () => void;
+  /**
+   * Позвать вход по коду восстановления.
+   *
+   * ⚠️ ЕДИНСТВЕННЫЙ ВЫХОД ПРИ ЧУЖОМ КЛЮЧЕ, КОТОРЫЙ НИЧЕГО НЕ ЛОМАЕТ. Код даёт тот
+   * же ключ, что на другом устройстве, — значит справочник менять не надо вовсе.
+   * Привратник (`RecoveryCodeGate`) уже слушает это событие и уже смонтирован
+   * ровно один раз на приложение; здесь только зов, своей модалки не заводим.
+   */
+  restoreFromCode: () => void;
   errorCode: string | null;
 }
 
@@ -122,6 +132,11 @@ export function useKeyAnnouncement(): KeyAnnouncementValue {
       announceDeps(address as `0x${string}`, signMessageAsync));
   }, [address, session, st.standing, st.attempt, gate, signMessageAsync]);
 
+  const restoreFromCode = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT));
+  }, []);
+
   const announce = useCallback(() => {
     if (!address || !session) return;
     // Нажатие обнуляет память об уходе к кошельку: иначе второе нажатие после
@@ -136,6 +151,7 @@ export function useKeyAnnouncement(): KeyAnnouncementValue {
     needsPress: announceNeedsPress(input),
     busy: st.attempt === 'busy',
     announce,
+    restoreFromCode,
     errorCode: st.errorCode,
   };
 }

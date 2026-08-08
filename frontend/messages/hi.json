@@ -684,7 +684,13 @@
     "key_unannounced_body": "आपकी कुंजी बन गई है, लेकिन अभी किसी को इसकी जानकारी नहीं है।",
     "key_unannounced_call": "अपने वॉलेट में पुष्टि करें — और लोग आपको ढूंढ़ पाएंगे।",
     "key_unannounced_action": "पुष्टि करें",
-    "key_unannounced_confirming": "पुष्टि हो रही है…"
+    "key_unannounced_confirming": "पुष्टि हो रही है…",
+    "key_elsewhere_title": "आपके संदेश दूसरे डिवाइस पर जा रहे हैं",
+    "key_elsewhere_body": "यह वॉलेट कहीं और पहले से सेट है, और लोग वहीं लिख रहे हैं।",
+    "key_elsewhere_restore": "अगर आपके पास रिकवरी कोड है, उसे डालें — यहाँ भी वही बातचीत खुल जाएगी।",
+    "key_elsewhere_restore_action": "रिकवरी कोड डालें",
+    "key_elsewhere_switch_warning": "कोड के बिना आप यहाँ पाना शुरू कर सकते हैं। तब उस डिवाइस पर नए संदेश आना बंद हो जाएंगे, और पुराने सिर्फ वहीं रह जाएंगे।",
+    "key_elsewhere_switch_action": "यहाँ पाएँ"
   },
   "messaging": {
     "enabled_title": "मैसेजिंग सक्षम",
