@@ -168,13 +168,18 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
   let catchingUp: Promise<void> | null = null;
   let stopped = false;
 
-  const bumpCursor = (logs: readonly unknown[]) => {
-    if (!cursor) return;
-    const b = maxBlock(logs);
-    if (b !== undefined) {
-      const cur = cursor.read();
-      if (cur === null || b > cur) cursor.write(b);
-    }
+  /**
+   * Курсор двигается ТОЛЬКО вперёд.
+   *
+   * Слежение взводится раньше догона (иначе события, случившиеся во время
+   * выборки, падают в щель между её концом и взводом фильтра), поэтому живой лог
+   * может продвинуть курсор дальше, чем добрал догон. Безусловная запись
+   * откатывала бы курсор назад, и следующий догон тянул бы уже виденное заново.
+   */
+  const advanceCursor = (block: bigint | undefined) => {
+    if (!cursor || block === undefined) return;
+    const cur = cursor.read();
+    if (cur === null || block > cur) cursor.write(block);
   };
 
   /**
@@ -196,7 +201,7 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
     if (plan === null) {
       // Догонять нечего. Курсор всё равно ставим на голову: без этого первый в
       // жизни запуск оставил бы его пустым, и следующий догон потянул бы всё.
-      if (cursor.read() === null) cursor.write(head);
+      if (cursor.read() === null) advanceCursor(head);
       return;
     }
     if (plan.truncated) onTruncated?.(plan);
@@ -215,7 +220,7 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
         onError?.(e, 'catchup');
         return; // курсор остаётся на конце последнего удавшегося куска
       }
-      cursor.write(chunk.toBlock);
+      advanceCursor(chunk.toBlock);
       if (logs.length > 0 && !stopped) await onLogs(logs, 'catchup');
     }
   };
@@ -231,7 +236,7 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
     unwatch = io.watch(
       (logs) => {
         if (stopped) return;
-        bumpCursor(logs);
+        advanceCursor(maxBlock(logs));
         void onLogs(logs, 'live');
       },
       (e) => onError?.(e, 'watch'),

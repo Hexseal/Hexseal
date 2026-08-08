@@ -510,6 +510,31 @@ describe('обстоятельства', () => {
     stop();
   });
 
+  it('курсор НЕ едет назад: догон и живое слежение идут одновременно', async () => {
+    // Слежение взводится раньше догона (иначе события во время выборки падают в
+    // щель), поэтому живой лог может продвинуть курсор ДАЛЬШЕ, чем добрал догон.
+    // Безусловная запись откатила бы курсор назад, и следующий догон тянул бы уже
+    // виденное заново.
+    const cursor = memCursor(BigInt(900));
+    let deliverLive: ((logs: unknown[]) => void) | null = null;
+    const io: ChainWatchIO = {
+      watch: (deliver) => { deliverLive = deliver; return () => {}; },
+      blockNumber: async () => BigInt(1000),
+      getLogs: async () => {
+        // Пока выборка «в полёте», приходит живой лог из блока далеко впереди —
+        // ровно то чередование, при котором безусловная запись едет назад.
+        deliverLive?.([{ eventName: 'JobApplied', blockNumber: BigInt(2000) }]);
+        await new Promise((r) => setTimeout(r, 0));
+        return [];
+      },
+    };
+    const v = fakeDoc('visible');
+    const stop = runChainWatch({ io, cursor, doc: v.doc, hideGraceMs: 0, onLogs: vi.fn() });
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(cursor.peek(), 'курсор откатился назад').toBe(BigInt(2000));
+    stop();
+  });
+
   it('два догона разом не наслаиваются: второй ждёт первого', async () => {
     const v = fakeDoc('hidden');
     const c = fakeChain({ head: BigInt(1000) });
