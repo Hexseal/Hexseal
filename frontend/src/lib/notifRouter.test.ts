@@ -17,8 +17,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { routeNotifLogs, makeViewer, type Viewer } from './notifRouter';
 
-const ME = '0x1111111111111111111111111111111111111111';
-const OTHER = '0x2222222222222222222222222222222222222222';
+// ⚠️ В адресах ОБЯЗАТЕЛЬНЫ буквы. С `0x1111…` замер на регистр вырождался в
+// сравнение строки с собой (у неё нет букв — регистр менять нечему) и оставался
+// зелёным даже когда приведение регистра снимали. Замерено мутацией.
+const ME = '0xAbCdEf1111111111111111111111111111111111';
+const OTHER = '0xFeDcBa2222222222222222222222222222222222';
 const DEAL = '0xDEA1000000000000000000000000000000000001';
 const TX = '0xabc0000000000000000000000000000000000000000000000000000000000001';
 
@@ -248,12 +251,20 @@ describe('обстоятельства', () => {
     expect(r.notifs).toEqual([]);
   });
 
-  it('регистр адреса не влияет: цепь отдаёт checksum, кошелёк — как хочет', async () => {
-    const r = await route(
+  it('регистр адреса не влияет — в обе стороны', async () => {
+    // wagmi отдаёт `address` в checksum-регистре, узел логи — как придётся.
+    // Приведение регистра обязано стоять на ОБЕИХ сторонах сравнения.
+    const lowerLog = await route(
+      [log('AgreementRegistered', { client: ME.toLowerCase(), executor: OTHER, agreement: DEAL, amount: USDC(1) })],
+      makeViewer(ME), // кошелёк в checksum
+    );
+    expect(lowerLog.notifs, 'checksum-кошелёк не узнал себя в логе нижнего регистра').toHaveLength(1);
+
+    const upperLog = await route(
       [log('AgreementRegistered', { client: ME.toUpperCase().replace('0X', '0x'), executor: OTHER, agreement: DEAL, amount: USDC(1) })],
       makeViewer(ME.toLowerCase()),
     );
-    expect(r.notifs).toHaveLength(1);
+    expect(upperLog.notifs, 'кошелёк нижнего регистра не узнал себя в логе верхнего').toHaveLength(1);
   });
 
   it('курсор догона — самый поздний блок пачки', async () => {
