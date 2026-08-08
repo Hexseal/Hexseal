@@ -17,6 +17,7 @@ import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { cn, shortAddr } from '@/lib/utils';
+import { listPhase, listNotice } from '@/lib/chatListPhase';
 import { useTranslations } from 'next-intl';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -300,6 +301,14 @@ function ChatHubPageInner() {
     pullStartY.current = 0;
   }, [pullDist, reload]);
 
+  // Обновление ПО НАЖАТИЮ — своё состояние, отдельно от фонового захода. Иначе
+  // значок крутится сам по себе каждые тридцать секунд (см. кнопку ниже).
+  const [manualRefresh, setManualRefresh] = useState(false);
+  const handleManualRefresh = useCallback(async () => {
+    setManualRefresh(true);
+    try { await reload(); } finally { setManualRefresh(false); }
+  }, [reload]);
+
   const handleConvoClick = useCallback((addr: string) => {
     const lc = addr.toLowerCase();
     setSeenConvos(prev => new Set([...prev, lc]));
@@ -484,6 +493,30 @@ function ChatHubPageInner() {
     (dealDetailContracts.length > 0 && dealDetailResults === undefined)
   );
 
+  /**
+   * ЧТО ПОКАЗЫВАЕТ КОЛОНКА — одним решением, вынесенным из разметки.
+   *
+   * ⚠️ ЗДЕСЬ ЖИЛО ШЕСТЬ НЕЗАВИСИМЫХ УСЛОВИЙ, и они пересекались. Замер до
+   * правки: заготовки строк рисовались ПОВЕРХ настоящих строк 10 раз из 10
+   * тиков, а один отказ склада убирал список целиком. Разбор — шапка
+   * `lib/chatListPhase.ts`.
+   *
+   * ⚠️ `hasRows` СЧИТАЕТ И СТРОКУ ИЗ АДРЕСА, и строки из цепи: показать нечего —
+   * это когда в колонке НЕ БУДЕТ НИ ОДНОЙ строки, а не когда пуст ответ склада.
+   * Ровно на этой разнице и жило мигание.
+   */
+  const phaseInput = {
+    hasRows: allConversations.length > 0
+      || (!!selected && !allConversations.some(c => c.peerAddress === selected)),
+    loading: isLoading,
+    signatureReason,
+    keyNotAnnounced,
+    sessionStatus,
+    error,
+  };
+  const phase  = listPhase(phaseInput);
+  const notice = listNotice(phaseInput);
+
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden justify-center">
       <div className="flex w-full max-w-6xl min-h-0 overflow-hidden border-x border-white/[0.04]">
@@ -503,9 +536,15 @@ function ChatHubPageInner() {
             <h2 className="text-sm font-semibold text-white/70">{t("chat.title")}</h2>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={reload} disabled={isLoading} title={t("common.refresh")}
+            {/* ⚠️ КРУТИТСЯ ТОЛЬКО ПО НАЖАТИЮ. Раньше значок вращался и кнопка
+                запиралась на КАЖДОМ фоновом заходе — то есть раз в тридцать
+                секунд, плюс на каждое новое сообщение. Замер: десять тиков без
+                изменений давали 2 разных разметки вместо 1, и обе разницы были
+                здесь. Фоновая работа не обязана мелькать; человек попросил
+                обновить — вот тогда обязана. */}
+            <button onClick={handleManualRefresh} disabled={manualRefresh} title={t("common.refresh")}
               className="p-2 rounded-[12px] text-white/25 hover:text-white/55 hover:bg-white/[0.06] transition-colors disabled:opacity-30">
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${manualRefresh ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={() => { setShowNewChat(v => !v); setNewChatAddr(''); setNewChatError(null); }}
@@ -589,27 +628,57 @@ function ChatHubPageInner() {
             </div>
           )}
 
+          {/* ⚠️ ПОЛОСА НАД СПИСКОМ, А НЕ ВМЕСТО НЕГО. Пока эта новость умела
+              приходить только целым экраном, она показывалась при пустом
+              списке — то есть человеку, у которого есть хоть одна строка
+              (собеседник по сделке из цепи), кнопки не доставалось ВОВСЕ, хотя
+              состояние у него ровно то же: писать ему не может никто. Разбор —
+              `listNotice` в `lib/chatListPhase.ts`. */}
+          {notice === 'signature' && signatureReason && (
+            <ChatSignatureWanted reason={signatureReason} variant="inline" />
+          )}
+          {notice === 'announce' && (
+            <ChatKeyNotAnnounced
+              variant="inline" busy={announcing} standing={keyStanding}
+              onConfirm={announceKey} onRestore={restoreFromCode}
+            />
+          )}
+          {/* Отказ ПРИ НЕПУСТОМ списке — одна строка рядом, и список остаётся на
+              экране. Раньше строки рисовались под условием `!error`, то есть один
+              `rate_limited` убирал ВСЕ переписки и возвращал их через полминуты:
+              «ресет до скелетона и обратно» дословно. Тот же класс уже чинили в
+              панели («один моргнувший отказ прятал всю переписку»), и до списка
+              починка не доехала. */}
+          {notice === 'stale' && (
+            <button
+              onClick={reload}
+              className="w-full mx-1 mb-1 px-3 py-2 rounded-[12px] bg-white/[0.03] border border-white/[0.06] text-left"
+            >
+              <span className="text-[11px] text-white/40 leading-snug">{t("chat.list_stale")}</span>
+            </button>
+          )}
+
           {/* ⚠️ ЖДЁМ ПОДПИСЬ — ВМЕСТО ЗАГОТОВОК СТРОК, и это правка, а не оформление.
               Заготовки говорят «сейчас будет», и это правда, только если ждут
               сеть. Когда ждут ЧЕЛОВЕКА, они врут: он смотрит на пульсирующие
               полоски минутами (круг через приложение кошелька) и уходит. Живая
               выкатка 8 августа — дословно так и произошло. */}
-          {signatureReason && conversations.length === 0 && (
+          {phase === 'signature' && signatureReason && (
             <ChatSignatureWanted reason={signatureReason} variant="full" />
           )}
 
           {/* Та же новость и те же слова, что в панели, — см. комментарий у
               `useKeyAnnouncement()` выше. Заготовки строк при этом НЕ рисуются
-              (условие ниже читает тот же признак): они говорят «сейчас будет», а
+              (исход один на всю колонку): они говорят «сейчас будет», а
               тут ждут не сеть, а человека. */}
-          {!signatureReason && keyNotAnnounced && conversations.length === 0 && (
+          {phase === 'announce' && (
             <ChatKeyNotAnnounced
               variant="full" busy={announcing} standing={keyStanding}
               onConfirm={announceKey} onRestore={restoreFromCode}
             />
           )}
 
-          {!signatureReason && !keyNotAnnounced && (isLoading || sessionStatus === 'loading') && conversations.length === 0 && (
+          {phase === 'skeleton' && (
             <div className="space-y-2">
               {[1, 2, 3].map(i => (
                 <div key={i} className="flex items-center gap-3.5 px-3 py-2.5 rounded-[16px] border border-white/[0.04] bg-white/[0.02]">
@@ -627,7 +696,7 @@ function ChatHubPageInner() {
           {/* Код отказа склада (`write_failed`, `rate_limited`, …) человеку не
               показывается — это слово для журнала. Действие у всех этих
               причин одно: повторить. */}
-          {!isLoading && sessionStatus !== 'loading' && error && (
+          {phase === 'error' && (
             <div className="px-4 py-8 text-center space-y-3">
               <p className="text-xs text-red-400/60 leading-relaxed">{t("chat.could_not_connect")}</p>
               <div>
@@ -642,7 +711,7 @@ function ChatHubPageInner() {
               ошибки, которого у молчаливого отказа нет. Человек видел пустую
               колонку без единого объяснения и без единственного действия,
               которое здесь имеет смысл. */}
-          {!isLoading && sessionStatus === 'error' && !error && allConversations.length === 0 && (
+          {phase === 'off' && (
             /* ⚠️ ОДИН экран на список и на панель. Здесь стояла своя копия,
                рисовавшая «Мессенджер выключен» на ВСЕ семь причин — то есть
                обвиняющий человека экран, который К-2 убирала из панели, жил
@@ -650,7 +719,7 @@ function ChatHubPageInner() {
             <ChatOffScreen errorCode={sessionErrorCode} onRetry={retrySession} variant="compact" />
           )}
 
-          {!isLoading && !error && allConversations.length === 0 && sessionStatus === 'ready' && (
+          {phase === 'empty' && (
             <div className="flex flex-col items-center justify-center py-16 text-center px-4">
               <MessageCircle className="w-8 h-8 text-white/[0.12] mb-3" />
               <p className="text-sm text-white/35 mb-1">{t("chat.no_conversations")}</p>
@@ -675,7 +744,10 @@ function ChatHubPageInner() {
             />
           )}
 
-          {!error && allConversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
+          {/* ⚠️ БЕЗ `!error`. Строки рисуются ВСЕГДА, когда они есть: моргнувший
+              отказ склада не имеет права уносить с экрана то, что человек уже
+              читает. Про отказ говорит полоса выше. */}
+          {allConversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
             <ConvoItem
               key={peerAddress}
               peerAddress={peerAddress}

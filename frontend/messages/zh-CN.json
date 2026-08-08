@@ -595,6 +595,7 @@
     "recipient_no_messaging": "对方未启用消息功能",
     "share_invite_hint": "分享您的聊天链接 — 当他们打开并连接时，消息功能将激活。",
     "could_not_connect": "无法连接",
+    "list_stale": "此列表可能不是最新的，点击刷新",
     "open_conversations": "打开对话",
     "search_messages": "搜索消息",
     "attach_file_title": "附加文件（加密，保存 7 天，交易进行中可更久，最大 {mb} MB）",

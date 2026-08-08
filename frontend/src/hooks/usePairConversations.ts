@@ -37,6 +37,7 @@ import { useAccount, useSignMessage } from 'wagmi';
 import { listBags, fetchBag, BagPassError, BagBudgetError, type BagSummary } from '@/lib/chatTransport';
 import { receiveBags, type IncomingBag } from '@/lib/chatConversation';
 import { BoundedParseCache } from '@/lib/chatParseCache';
+import { mergeConversationRows } from '@/lib/chatListRows';
 import type { ChatSession } from '@/lib/chatSession';
 import { useChatSession, getBagPass,
   armChatSession,
@@ -362,6 +363,87 @@ export function createConversationLoader(opts: ConversationLoaderOptions): Conve
   };
 }
 
+/* ─────────────── состояние списка ОДНИМ объектом (мигание) ─────────────── */
+
+/**
+ * Всё, что список знает о себе. ОДНИМ объектом, а не четырьмя отдельными
+ * состояниями, и это правка, а не уборка.
+ *
+ * ⚠️ ЧТО БЫЛО. `setIsLoading(true)` → загрузка → `setConversations(новые)` →
+ * `setIsLoading(false)`: три обновления состояния на КАЖДЫЙ фоновый заход, из
+ * них два — с признаком «загружаем», который разметка читала как «рисуй
+ * заготовки строк». Владелец, дословно: «постоянно сам обновляет скидывая весь
+ * фронт до скелетона… с такими прыжками надо дисклеймер вещать о эпелепсии».
+ *
+ * ⚠️ ЧТО СТАЛО И ПОЧЕМУ ИМЕННО ТАК. Переходы ниже возвращают ТОТ ЖЕ объект,
+ * если ничего не изменилось, — а `setState` с тем же объектом React гасит сам
+ * (`Object.is`, его собственное правило). То есть «ноль перерисовок на тике без
+ * изменений» — это не бережность разметки, а отсутствие самого обновления.
+ *
+ * И признак «загружаем» больше не может подняться при непустом списке ПО
+ * ПОСТРОЕНИЮ (см. `listStarted`): не «мы стараемся так не делать», а «сделать
+ * иначе нечем».
+ */
+export interface ConversationListState {
+  rows: PairConversation[];
+  /** Первый заход: показывать нечего И ждём сеть. Только это — заготовки строк. */
+  loading: boolean;
+  /** Код отказа последнего захода. Снимается успехом, а не началом следующего. */
+  error: string | null;
+}
+
+export const EMPTY_LIST_STATE: ConversationListState = {
+  rows: [], loading: false, error: null,
+};
+
+/**
+ * Заход начался.
+ *
+ * ⚠️ ПРИЗНАКА «ФОНОВЫЙ ЗАХОД В ПОЛЁТЕ» ЗДЕСЬ НЕТ НАРОЧНО. Он был, и он один
+ * стоил бы обновления состояния на каждом тике — то есть перерисовки страницы
+ * ради вращения значка, которого никто не просил. Крутить значок обязано ТОЛЬКО
+ * нажатие человека, а его помнит сама страница.
+ */
+export function listStarted(prev: ConversationListState): ConversationListState {
+  // ⚠️ ЗДЕСЬ ВСЁ РЕШЕНИЕ: при непустом списке «загружаем» не поднимается
+  // НИКОГДА. Прежний код ставил его безусловно, и разметка честно рисовала
+  // заготовки поверх готовых строк.
+  const loading = prev.rows.length === 0;
+  if (prev.loading === loading) return prev;
+  return { ...prev, loading };
+}
+
+/** Заход принёс строки. */
+export function listRows(
+  prev: ConversationListState,
+  rows: readonly PairConversation[],
+): ConversationListState {
+  const merged = mergeConversationRows(prev.rows, rows);
+  // Успех снимает отказ — и только успех. Начало захода его больше не трогает:
+  // моргавший туда-сюда отказ и был половиной мигания.
+  if (merged === prev.rows && prev.error === null) return prev;
+  return { ...prev, rows: merged, error: null };
+}
+
+/** Заход отказал. Строки остаются: их отсутствие — не новость об отказе. */
+export function listFailed(prev: ConversationListState, code: string): ConversationListState {
+  if (prev.error === code) return prev;
+  return { ...prev, error: code };
+}
+
+/** Заход кончился, чем бы ни кончился. */
+export function listSettled(prev: ConversationListState): ConversationListState {
+  if (!prev.loading) return prev;
+  return { ...prev, loading: false };
+}
+
+/** Сменился адрес: список гасится в тот же миг, чужие переписки не показываем. */
+export function listForAddress(
+  cached: PairConversation[] | undefined,
+): ConversationListState {
+  return { ...EMPTY_LIST_STATE, rows: cached ?? [] };
+}
+
 /* ──────────────────────────────── хук ─────────────────────────────────── */
 
 const _convCache = new Map<string, PairConversation[]>();
@@ -378,10 +460,18 @@ export function usePairConversations(isEnabled = false) {
   useEffect(() => { armChatSession(); }, []);
 
   const addrLc = address?.toLowerCase();
-  const [conversations, setConversations] = useState<PairConversation[]>(() =>
-    addrLc ? (_convCache.get(addrLc) ?? []) : []
+  /**
+   * ОДНО состояние на весь список — строки, «загружаем» и код отказа вместе.
+   *
+   * ⚠️ ТРИ ОТДЕЛЬНЫХ СОСТОЯНИЯ И БЫЛИ МИГАНИЕМ. Каждое обновлялось само, и на
+   * каждый фоновый заход приходилось три перерисовки, из них две — с поднятым
+   * «загружаем». Здесь переход возвращает ТОТ ЖЕ объект, если ничего не
+   * изменилось, и React гасит обновление сам: тик, который ничего не принёс,
+   * стоит НОЛЬ перерисовок (замер — `hooks/pairConversationsNoFlicker.test.ts`).
+   */
+  const [list, setList] = useState<ConversationListState>(() =>
+    listForAddress(addrLc ? _convCache.get(addrLc) : undefined)
   );
-  const [isLoading, setIsLoading] = useState(false);
   /**
    * Окно кошелька за пропуском склада открыто ПРЯМО СЕЙЧАС.
    *
@@ -392,7 +482,6 @@ export function usePairConversations(isEnabled = false) {
    * приложении круг через кошелёк идёт минутами) и уходил.
    */
   const [passSignaturePending, setPassSignaturePending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
   const addressRef = useRef(address);
@@ -405,7 +494,7 @@ export function usePairConversations(isEnabled = false) {
   useEffect(() => {
     if (prevAddrRef.current === addrLc) return;
     prevAddrRef.current = addrLc;
-    setConversations(addrLc ? (_convCache.get(addrLc) ?? []) : []);
+    setList(listForAddress(addrLc ? _convCache.get(addrLc) : undefined));
   }, [addrLc]);
 
   // Загрузчик со счётчиком неудач входа. Живёт в ref, а не пересоздаётся на
@@ -433,26 +522,33 @@ export function usePairConversations(isEnabled = false) {
         ),
         loadWithPass: (pass) => loadPairConversations(sessionRef.current as ChatSession, pass),
         onRows: (rows) => {
-          const a = addressRef.current;
-          if (a) _convCache.set(a.toLowerCase(), rows);
-          setConversations(rows);
+          setList((prev) => {
+            const next = listRows(prev, rows);
+            // В памяти — то, что СШИТО, а не то, что приехало: иначе следующее
+            // открытие списка получило бы из кэша новые ссылки на те же строки
+            // и перерисовало бы их все.
+            const a = addressRef.current;
+            if (a) _convCache.set(a.toLowerCase(), next.rows);
+            return next;
+          });
         },
         onError: (err) => {
           // Код отдельным полем, текст запасным: разбор английского запрещён.
-          setError((err as { code?: string })?.code ?? (err instanceof Error ? err.message : 'Failed to load conversations'));
+          setList((prev) => listFailed(prev,
+            (err as { code?: string })?.code
+            ?? (err instanceof Error ? err.message : 'Failed to load conversations')));
         },
         onAuthFailed: () => { setAuthFailed(true); },
       });
     }
-    setIsLoading(true);
-    setError(null);
+    setList(listStarted);
     try {
       await loaderRef.current.run();
     } finally {
       // ОБЯЗАТЕЛЬНО в `finally`: успешная загрузка, вернувшая ПУСТОЙ список,
       // иначе оставляла бы скелетон навсегда — исправная работа притворялась
       // бы поломкой. Урок прежней версии этого файла, не повторяем.
-      setIsLoading(false);
+      setList(listSettled);
     }
   }, [signMessageAsync]);
 
@@ -490,7 +586,12 @@ export function usePairConversations(isEnabled = false) {
   }, [ready, load]);
 
   return {
-    conversations, isLoading, error, reload: load,
+    conversations: list.rows,
+    /** Заготовки строк. Поднимается ТОЛЬКО когда показывать нечего — разбор в
+     *  докстринге `listStarted`. */
+    isLoading: list.loading,
+    error: list.error,
+    reload: load,
     /** Окно кошелька за пропуском открыто прямо сейчас — экран обязан сказать,
      *  чего ждут, а не крутить заготовки строк. */
     passSignaturePending,

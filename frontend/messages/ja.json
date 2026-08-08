@@ -595,6 +595,7 @@
     "recipient_no_messaging": "受信者はメッセージ機能を有効にしていません",
     "share_invite_hint": "チャットリンクを共有してください — 相手が開いて接続するとメッセージが有効になります。",
     "could_not_connect": "接続できませんでした",
+    "list_stale": "この一覧は古い可能性があります。更新する",
     "open_conversations": "会話を開く",
     "search_messages": "メッセージを検索",
     "attach_file_title": "ファイルを添付（暗号化、7日間保存、契約が続いている間はより長く、最大 {mb} MB）",

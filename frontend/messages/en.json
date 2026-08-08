@@ -595,6 +595,7 @@
     "recipient_no_messaging": "Recipient hasn't enabled messaging",
     "share_invite_hint": "Share your chat link — when they open it and connect, messaging activates.",
     "could_not_connect": "Could not connect",
+    "list_stale": "This list may be out of date. Refresh",
     "open_conversations": "Open conversations",
     "search_messages": "Search messages",
     "attach_file_title": "Attach file (encrypted, kept 7 days, longer while the deal is open, max {mb} MB)",

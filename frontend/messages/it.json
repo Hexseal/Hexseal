@@ -595,6 +595,7 @@
     "recipient_no_messaging": "Il destinatario non ha abilitato la messaggistica",
     "share_invite_hint": "Condividi il tuo link chat — quando lo aprono e si connettono, la messaggistica si attiva.",
     "could_not_connect": "Impossibile connettersi",
+    "list_stale": "Questo elenco potrebbe non essere aggiornato. Aggiorna",
     "open_conversations": "Apri conversazioni",
     "search_messages": "Cerca messaggi",
     "attach_file_title": "Allega file (cifrato, conservato 7 giorni, di più finché l'accordo è aperto, max {mb} MB)",

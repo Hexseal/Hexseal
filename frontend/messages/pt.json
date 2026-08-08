@@ -595,6 +595,7 @@
     "recipient_no_messaging": "O destinatário não habilitou mensagens",
     "share_invite_hint": "Compartilhe seu link de chat — quando eles abrirem e conectarem, as mensagens serão ativadas.",
     "could_not_connect": "Não foi possível conectar",
+    "list_stale": "Esta lista pode estar desatualizada. Atualizar",
     "open_conversations": "Abrir conversas",
     "search_messages": "Pesquisar mensagens",
     "attach_file_title": "Anexar ficheiro (encriptado, guardado 7 dias, mais tempo enquanto o acordo estiver aberto, máx. {mb} MB)",

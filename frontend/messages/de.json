@@ -595,6 +595,7 @@
     "recipient_no_messaging": "Empfänger hat Nachrichten nicht aktiviert",
     "share_invite_hint": "Teile deinen Chat-Link — wenn sie ihn öffnen und verbinden, wird das Messaging aktiviert.",
     "could_not_connect": "Verbindung fehlgeschlagen",
+    "list_stale": "Diese Liste ist möglicherweise veraltet. Aktualisieren",
     "open_conversations": "Gespräche öffnen",
     "search_messages": "Nachrichten suchen",
     "attach_file_title": "Datei anhängen (verschlüsselt, 7 Tage gespeichert, länger solange der Deal offen ist, max. {mb} MB)",
