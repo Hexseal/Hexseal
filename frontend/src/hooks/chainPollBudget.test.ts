@@ -136,6 +136,8 @@ export interface PollLoop {
   ownInterval: boolean;
   /** Есть ли у цикла выключатель (`enabled`) вообще. */
   hasEnabled: boolean;
+  /** Заведён ли цикл под `runChainWatch` — единственным замеренным остановом. */
+  underGate: boolean;
 }
 
 /**
@@ -171,14 +173,18 @@ function findPollLoops(): PollLoop[] {
           expect(ownInterval, `не удалось развернуть pollingInterval: ${own[1]} в ${f.path}`).toBe(true);
         }
       }
+      // Чем этот цикл можно остановить. У хука wagmi это `enabled` (и `enabled: x`,
+      // и сокращённая запись `enabled,`). У прямого вызова viem такого поля нет
+      // вовсе — там останов делает `runChainWatch`, и признак этого — что вызов
+      // стоит в свойстве `watch:` его же ввода-вывода.
+      const before = code.slice(Math.max(0, m.index! - 200), m.index!);
       loops.push({
         file: f.path,
         via: m[1],
         intervalMs,
         ownInterval,
-        // И `enabled: x`, и сокращённая запись `enabled,` — вторая живёт в
-        // `useDealLiveRefresh.ts`, и без неё замер соврал бы «выключателя нет».
         hasEnabled: /\benabled\s*[,:}]/.test(arg),
+        underGate: /\bwatch:\s*\(/.test(before) && /\brunChainWatch\s*\(/.test(code),
       });
     }
   }
@@ -191,12 +197,18 @@ function requestsPerMinute(loops: PollLoop[]): number {
 }
 
 /**
- * Потолок. Прибор показал 135 в минуту; целимся в РАЗЫ, а не проценты, поэтому
- * потолок — единицы запросов, а не десятки. 6 в минуту это интервал 10 секунд у
- * одного цикла либо 20 секунд у двух (страница сделки: уведомления + живое
- * обновление самой сделки).
+ * ТРИ ПРАВИЛА, ВЫВЕДЕННЫЕ ИЗ ЗАМЫСЛА, А НЕ ИЗ ПОЛУЧЕННОГО ЧИСЛА.
+ *
+ *  - циклов на страницу не больше двух: общий колокольчик плюс один живой экран
+ *    самой страницы. Третий цикл означает, что кто-то снова завёл слежение
+ *    рядом, вместо того чтобы добавить род события в общий набор;
+ *  - такт не чаще десяти секунд: быстрее человеку незаметно, а платит владелец;
+ *  - и РАТЧЕТ: не хуже уже добытого. 8 в минуту — замер на этой ветке (было 140).
+ *    Это не цель, а храповик: любое ухудшение краснеет.
  */
-const BUDGET_PER_MINUTE = 6;
+const MAX_LOOPS = 2;
+const MIN_INTERVAL_MS = 10_000;
+const BUDGET_PER_MINUTE = 8;
 
 describe('расход на опрос цепи — замер по боевым исходникам', () => {
   it('циклы опроса найдены и интервал у каждого известен', () => {
@@ -207,7 +219,16 @@ describe('расход на опрос цепи — замер по боевым
     for (const l of loops) expect(l.intervalMs).toBeGreaterThan(0);
   });
 
-  it('простаивающая страница просит у цепи не больше 6 раз в минуту', () => {
+  it('циклов опроса не больше двух и такт не чаще десяти секунд', () => {
+    const loops = findPollLoops();
+    const detail = loops.map((l) => `${l.file} (${l.via}, ${l.intervalMs} мс)`).join('\n  ');
+    expect(loops.length, `циклов: ${loops.length}\n  ${detail}`).toBeLessThanOrEqual(MAX_LOOPS);
+    const tooFast = loops.filter((l) => l.intervalMs < MIN_INTERVAL_MS)
+      .map((l) => `${l.file}: ${l.intervalMs} мс`);
+    expect(tooFast, 'такт чаще десяти секунд').toEqual([]);
+  });
+
+  it('простаивающая страница просит у цепи не больше 8 раз в минуту (было 140)', () => {
     const loops = findPollLoops();
     const perMin = requestsPerMinute(loops);
     const detail = loops
@@ -219,8 +240,28 @@ describe('расход на опрос цепи — замер по боевым
     ).toBeLessThanOrEqual(BUDGET_PER_MINUTE);
   });
 
-  it('у каждого цикла есть выключатель — иначе скрытую страницу нечем заглушить', () => {
-    const without = findPollLoops().filter((l) => !l.hasEnabled).map((l) => `${l.file} (${l.via})`);
-    expect(without, 'цикл опроса без `enabled` невозможно остановить на скрытой странице').toEqual([]);
+  it('каждый цикл заглушается на скрытой странице — своим `enabled` или воротами', () => {
+    // ⚠️ ЧТО ЭТОТ ЗАМОК ДОКАЗЫВАЕТ, А ЧТО НЕТ. Он доказывает, что цикл опроса
+    // ЗАВЕДЁН под механизмом, у которого останов есть. Что этот останов
+    // действительно даёт ноль запросов на скрытой странице — доказано отдельно и
+    // поведением: `lib/chainWatchGate.test.ts` считает запросы до и после
+    // сворачивания. Один без другого бессмыслен: этот замок зелен и при
+    // сломанных воротах, а тот — при цикле, заведённом рядом с воротами.
+    const orphans = findPollLoops()
+      .filter((l) => !l.hasEnabled && !l.underGate)
+      .map((l) => `${l.file} (${l.via})`);
+    expect(orphans, 'цикл опроса нечем остановить на скрытой странице').toEqual([]);
+  });
+
+  it('слежение за цепью заводится ТОЛЬКО через ворота видимости', () => {
+    // `useWatchContractEvent` идёт мимо ворот: его `enabled` пришлось бы
+    // связывать с видимостью в каждом месте заново, и один пропущенный вызов
+    // возвращал бы круглосуточный опрос целиком. Тринадцать таких вызовов и дали
+    // 140 запросов в минуту.
+    const viaWagmiHook = findPollLoops().filter((l) => l.via === 'useWatchContractEvent');
+    expect(viaWagmiHook.map((l) => l.file), 'слежение мимо ворот видимости').toEqual([]);
+
+    const outsideGate = findPollLoops().filter((l) => !l.underGate).map((l) => l.file);
+    expect(outsideGate, 'цикл опроса не под runChainWatch').toEqual([]);
   });
 });

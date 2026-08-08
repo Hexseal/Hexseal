@@ -292,6 +292,50 @@ describe('возврат к вкладке догоняет пропущенно
   });
 });
 
+describe('без курсора — только заглушка видимости, без догона', () => {
+  // Страница сделки уже перечитывает всё при возврате во вкладку
+  // (`VisibilityRefresher` в app/providers.tsx звёт `invalidateQueries()`), и
+  // второй догон там был бы двумя запросами впустую.
+  it('курсор не передан → ни blockNumber, ни getLogs, но слежение идёт', async () => {
+    const v = fakeDoc('visible');
+    const c = fakeChain({ head: BigInt(1000) });
+    c.seed({ eventName: 'Funded' }, BigInt(999));
+    const seen: unknown[] = [];
+    const stop = runChainWatch({ io: c.io, doc: v.doc, hideGraceMs: 0, onLogs: (l) => seen.push(...l) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(c.calls.newFilter, 'слежение обязано идти и без курсора').toBe(1);
+    expect(c.calls.blockNumber).toBe(0);
+    expect(c.calls.getLogs).toBe(0);
+    expect(seen, 'без курсора история доезжать не должна').toEqual([]);
+    stop();
+  });
+
+  it('без курсора скрытая страница всё равно молчит', async () => {
+    const v = fakeDoc('visible');
+    const c = fakeChain();
+    const stop = runChainWatch({ io: c.io, doc: v.doc, hideGraceMs: 0, onLogs: vi.fn() });
+    await new Promise((r) => setTimeout(r, 0));
+    c.tick(5);
+    expect(c.calls.getFilterChanges).toBe(5);
+    v.set('hidden');
+    await new Promise((r) => setTimeout(r, 0));
+    c.tick(500);
+    expect(c.calls.getFilterChanges, 'скрытая страница без курсора опрашивает').toBe(5);
+    stop();
+  });
+
+  it('без курсора живые логи доезжают как обычно', async () => {
+    const v = fakeDoc('visible');
+    const c = fakeChain();
+    const seen: unknown[] = [];
+    const stop = runChainWatch({ io: c.io, doc: v.doc, hideGraceMs: 0, onLogs: (l) => seen.push(...l) });
+    await new Promise((r) => setTimeout(r, 0));
+    c.emit({ eventName: 'Activated' });
+    expect(seen).toHaveLength(1);
+    stop();
+  });
+});
+
 // ── обстоятельства ───────────────────────────────────────────────────────────
 
 describe('обстоятельства', () => {

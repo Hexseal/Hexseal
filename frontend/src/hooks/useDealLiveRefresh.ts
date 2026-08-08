@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback } from 'react';
-import { isAddress, parseAbi } from 'viem';
-import { useWatchContractEvent } from 'wagmi';
+import { useCallback, useEffect } from 'react';
+import { isAddress, parseAbi, type AbiEvent } from 'viem';
+import { usePublicClient } from 'wagmi';
 import { refreshFromLogs } from '@/lib/subgraphSync';
+import { runChainWatch, type ChainWatchIO } from '@/lib/chainWatchGate';
 
 /**
  * Живое обновление страницы сделки по событиям САМОГО клона.
@@ -16,16 +17,35 @@ import { refreshFromLogs } from '@/lib/subgraphSync';
  * их не видно вовсе, и до этой правки экран сделки узнавал о них только по
  * `refetchInterval` в 15 секунд или по возвращению во вкладку.
  *
- * ОДИН НАБЛЮДАТЕЛЬ, А НЕ ПЯТНАДЦАТЬ. `eventName` не указан намеренно: viem
- * строит фильтр по topic0 ВСЕХ событий переданного ABI, то есть один опрос
- * покрывает весь список ниже. Адрес — конкретный клон, так что посторонних
- * логов сюда физически не попадает и фильтровать по пользователю не нужно:
- * любое событие этой сделки касается того, кто на неё смотрит.
+ * ОДИН НАБЛЮДАТЕЛЬ, А НЕ ПЯТНАДЦАТЬ. Фильтр строится по НАБОРУ событий
+ * (`events`), то есть `topics[0]` уходит на узел массивом и один опрос покрывает
+ * весь список ниже. Адрес — конкретный клон, так что посторонних логов сюда
+ * физически не попадает и фильтровать по пользователю не нужно: любое событие
+ * этой сделки касается того, кто на неё смотрит.
+ *
+ * ⚠️ ТАКТ И ВИДИМОСТЬ (правка от 9 августа 2026, пункт 38). Опрос шёл раз в
+ * шесть секунд круглые сутки, в том числе на свёрнутой вкладке — это десять
+ * запросов в минуту к платному узлу за экран, на который никто не смотрит.
+ * Теперь такт `DEAL_POLL_MS`, и слежение идёт только пока страница видима
+ * (`lib/chainWatchGate`).
+ *
+ * ДОГОНА ЗДЕСЬ НАМЕРЕННО НЕТ — курсор в `runChainWatch` не передаётся. При
+ * возврате во вкладку `VisibilityRefresher` (app/providers.tsx) и так сбрасывает
+ * ВСЕ запросы разом, то есть экран сделки перечитывается целиком; второй догон
+ * стоил бы двух запросов ради того, что уже сделано.
  *
  * ERC-721 события (`Transfer`, `Approval`) в ABI не входят и в фильтр не
  * попадают: чек минтится в `fund()`, то есть в одной транзакции с `Funded`, и
  * отдельного повода перечитывать не даёт.
  */
+/**
+ * Такт опроса живого экрана сделки. Чаще, чем у колокольчика (двадцать секунд):
+ * здесь человек смотрит на состояние сделки и ждёт, когда контрагент нажмёт.
+ * Двенадцать вместо шести — вдвое дешевле при задержке, которой на глаз не
+ * видно; при этом своё нажатие обновляет экран сразу, из обработчика кнопки.
+ */
+export const DEAL_POLL_MS = 12_000;
+
 const AGREEMENT_STATE_EVENTS = parseAbi([
   'event Funded(address indexed client, uint256 amount)',
   'event Activated(address indexed executor)',
@@ -66,6 +86,7 @@ const GRAPH_INDEXED_EVENTS = new Set([
 
 export function useDealLiveRefresh(dealAddress: string | undefined): void {
   const enabled = !!dealAddress && isAddress(dealAddress);
+  const publicClient = usePublicClient();
 
   const onLogs = useCallback((logs: unknown[]) => {
     // Цепные чтения несвежи от любого события сделки; деньги двигают только
@@ -78,10 +99,32 @@ export function useDealLiveRefresh(dealAddress: string | undefined): void {
     refreshFromLogs(indexed, { graph: ['deals'] });
   }, []);
 
-  useWatchContractEvent({
-    address: enabled ? (dealAddress as `0x${string}`) : undefined,
-    abi: AGREEMENT_STATE_EVENTS,
-    enabled,
-    onLogs,
-  });
+  useEffect(() => {
+    if (!enabled || !publicClient) return;
+    if (typeof document === 'undefined') return;
+    const address = dealAddress as `0x${string}`;
+
+    const io: ChainWatchIO = {
+      watch: (deliver, onError) =>
+        publicClient.watchEvent({
+          address,
+          events: AGREEMENT_STATE_EVENTS as unknown as AbiEvent[],
+          pollingInterval: DEAL_POLL_MS,
+          onLogs: (logs) => deliver(logs as unknown[]),
+          onError,
+        }),
+      // Без курсора эти двое не зовутся ни разу — догона здесь нет, см. шапку.
+      blockNumber: () => publicClient.getBlockNumber(),
+      getLogs: async () => [],
+    };
+
+    return runChainWatch({
+      io,
+      doc: document,
+      onLogs,
+      onError: (error, phase) => {
+        console.warn(`[hexseal] живое обновление сделки (${phase}) не удалось:`, error);
+      },
+    });
+  }, [enabled, dealAddress, publicClient, onLogs]);
 }

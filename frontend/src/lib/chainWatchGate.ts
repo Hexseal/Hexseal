@@ -94,7 +94,13 @@ export type WatchPhase = 'watch' | 'catchup';
 
 export interface RunChainWatchOptions {
   io: ChainWatchIO;
-  cursor: ChainWatchCursor;
+  /**
+   * Курсор догона. НЕ передан — догона нет вовсе: ни `blockNumber`, ни
+   * `getLogs`, только заглушка видимости. Так работает страница сделки: она уже
+   * перечитывает всё при возврате во вкладку (`VisibilityRefresher`), и второй
+   * догон был бы двумя запросами впустую.
+   */
+  cursor?: ChainWatchCursor;
   doc: VisibilityDoc;
   /** Логи доехали: `live` — живьём, `catchup` — добраны за пропуск. */
   onLogs: (logs: unknown[], reason: 'live' | 'catchup') => void | Promise<void>;
@@ -130,6 +136,7 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
   let stopped = false;
 
   const bumpCursor = (logs: readonly unknown[]) => {
+    if (!cursor) return;
     const b = maxBlock(logs);
     if (b !== undefined) {
       const cur = cursor.read();
@@ -142,6 +149,7 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
    * позади, и следующий догон добирает тот же пропуск.
    */
   const catchUp = async (): Promise<void> => {
+    if (!cursor) return;
     let head: bigint;
     try {
       head = await io.blockNumber();
@@ -192,7 +200,7 @@ export function runChainWatch(opts: RunChainWatchOptions): () => void {
     );
 
     // Один догон за раз: два быстрых возврата не должны идти в цепь параллельно.
-    if (catchingUp === null) {
+    if (cursor && catchingUp === null) {
       const run = catchUp().finally(() => { if (catchingUp === run) catchingUp = null; });
       catchingUp = run;
     }
