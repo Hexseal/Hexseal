@@ -1,6 +1,24 @@
 import type { NextConfig } from "next";
 
+/**
+ * Номер этой сборки. Считается ОДИН РАЗ на сборку и подставляется В КОД (поле
+ * `env` ниже) — и в страницу, и в обработчик `/api/version`. Оба читают одну и ту
+ * же вкомпилированную строку, поэтому перезапуск сервера её не меняет.
+ *
+ * ⚠️ ЭТО ГЛАВНОЕ ТРЕБОВАНИЕ К НЕЙ. Если номер на сервере начнёт считаться заново
+ * при каждом запуске, он разойдётся с номером страницы у ВСЕХ, страница увидит
+ * разницу и пойдёт перезагружаться — получится не «работает старый код», а «не
+ * работает ничего». Вторая защита от петли (одна попытка на версию) —
+ * `src/lib/appVersion.ts`.
+ *
+ * `BUILD_ID` из окружения — чтобы развёртывание могло подставить хеш коммита;
+ * иначе время сборки, которое тоже уникально на сборку.
+ */
+const BUILD_ID = process.env.BUILD_ID || `b${Date.now().toString(36)}`;
+
 const nextConfig: NextConfig = {
+  generateBuildId: () => BUILD_ID,
+
   reactStrictMode: true,
 
   // pino (WalletConnect dep) dynamically requires pino-pretty — don't bundle it
@@ -58,6 +76,9 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_HEXSEAL_ADDRESS: process.env.NEXT_PUBLIC_HEXSEAL_ADDRESS,
     NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID,
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+    // Один и тот же номер уезжает и в страницу, и в `/api/version` — см. врезку
+    // у `BUILD_ID` выше.
+    NEXT_PUBLIC_BUILD_ID: BUILD_ID,
   },
 
   productionBrowserSourceMaps: false,

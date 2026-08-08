@@ -12,6 +12,10 @@ import { toast } from "react-hot-toast";
 import { onPushDeliveryFailure } from "@/lib/webpush";
 import { pushOutcomeKey } from "@/lib/chatNotices";
 import { RecoveryCodeGate } from "@/components/RecoveryCodeGate";
+import {
+  APP_BUILD_ID, fetchServedVersion, shouldReloadForVersion,
+  reloadAlreadyTried, rememberReloadAttempt, versionCheckDue,
+} from '@/lib/appVersion';
 
 // Page transition via pure CSS animation (page-enter keyframe in globals.css).
 // CSS animations run on the compositor thread — independent of JS work — so
@@ -159,6 +163,46 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     document.addEventListener('visibilitychange', clear);
     clear();
     return () => document.removeEventListener('visibilitychange', clear);
+  }, []);
+
+  /**
+   * НОВАЯ ВЕРСИЯ ВЫКАЧЕНА — узнать и перезагрузиться, один раз.
+   *
+   * ⚠️ ЗАЧЕМ ЗДЕСЬ, А НЕ В ЧАТЕ. В манифесте `launch_handler: focus-existing`:
+   * открытие ярлыка возвращает существующее окно, а не перезагружает страницу.
+   * Значит установленное приложение крутит прежний код сколько угодно — 8 августа
+   * это стоило нам часов, потому что правки были выкачены, а телефон работал
+   * по-старому и выглядел непочиненным. Беда общая для всего приложения, значит и
+   * проверка общая.
+   *
+   * ⚠️ ЗАЩИТА ОТ ПЕТЛИ — ГЛАВНОЕ ЗДЕСЬ, а не сама перезагрузка. Правило и обе
+   * меры (номер из одного вкомпилированного места; одна попытка на версию) — в
+   * `lib/appVersion.ts`. Ложное «перезагрузиться» ломает приложение целиком;
+   * ложное «не надо» всего лишь оставляет старый код.
+   *
+   * Спрашиваем на ВОЗВРАЩЕНИИ страницы в глаза, не по таймеру: именно тогда
+   * человек смотрит на экран, и именно тогда приложение вернулось из кошелька.
+   */
+  const lastVersionCheck = useRef(0);
+  useEffect(() => {
+    const check = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (!versionCheckDue(lastVersionCheck.current, now)) return;
+      lastVersionCheck.current = now;
+      const served = await fetchServedVersion();
+      if (!served) return;
+      if (!shouldReloadForVersion({
+        current: APP_BUILD_ID, served, alreadyTried: reloadAlreadyTried(served),
+      })) return;
+      // Отметка ставится ДО перезагрузки: поставив её после, мы бы не поставили
+      // её никогда — страница уже уехала.
+      rememberReloadAttempt(served);
+      window.location.reload();
+    };
+    void check();
+    document.addEventListener('visibilitychange', check);
+    return () => document.removeEventListener('visibilitychange', check);
   }, []);
 
   // Dynamically measure the real header bottom edge and write --chat-top-offset.
