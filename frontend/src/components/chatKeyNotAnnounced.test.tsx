@@ -57,6 +57,7 @@ function setState(patch: Record<string, unknown>): void {
     burnedSeqs: [], ownNumberingReset: false,
     pendingBags: 0, bagsFailed: false, pushOutcome: null,
     keyNotAnnounced: false, announcing: false, announceKey: () => {},
+    keyStanding: 'absent', restoreFromCode: () => {},
   }, patch);
 }
 
@@ -178,7 +179,8 @@ describe('место надписи — внутри центральной ка
     const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
     const card = renderToStaticMarkup(
       React.createElement(ChatKeyNotAnnounced, {
-        variant: 'full' as const, busy: false, onConfirm: () => {},
+        variant: 'full' as const, busy: false, standing: 'absent' as const,
+        onConfirm: () => {}, onRestore: () => {},
       }),
     );
     expect(card, 'заголовок ушёл из карточки').toContain(TITLE());
@@ -273,7 +275,8 @@ describe('кнопка делает дело, а не украшает экра�
     const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
     let calls = 0;
     const el = React.createElement(ChatKeyNotAnnounced, {
-      variant: 'full' as const, busy: false, onConfirm: () => { calls++; },
+      variant: 'full' as const, busy: false, standing: 'absent' as const,
+      onConfirm: () => { calls++; }, onRestore: () => {},
     });
     // `renderToStaticMarkup` обработчики выбрасывает — нажать нечем. Достаём
     // сам обработчик из дерева элементов: это и есть проводка, которую надо
@@ -291,7 +294,8 @@ describe('кнопка делает дело, а не украшает экра�
     // Ответ на вопрос «долбят нарочно»: нажать десять раз подряд нельзя.
     const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
     const el = React.createElement(ChatKeyNotAnnounced, {
-      variant: 'full' as const, busy: true, onConfirm: () => {},
+      variant: 'full' as const, busy: true, standing: 'absent' as const,
+      onConfirm: () => {}, onRestore: () => {},
     });
     const rendered = (el.type as (p: Record<string, unknown>) => React.ReactElement)(
       el.props as Record<string, unknown>,
@@ -316,4 +320,122 @@ function findButton(node: unknown): React.ReactElement | null {
     if (hit) return hit;
   }
   return null;
+}
+
+/* ══════════ «ключ с ДРУГОГО устройства» — свой текст и своё действие ═════════ */
+
+const EL_TITLE = () => translate('chat.key_elsewhere_title');
+const EL_BODY = () => translate('chat.key_elsewhere_body');
+const EL_RESTORE = () => translate('chat.key_elsewhere_restore');
+const EL_RESTORE_ACTION = () => translate('chat.key_elsewhere_restore_action');
+const EL_WARN = () => translate('chat.key_elsewhere_switch_warning');
+const EL_SWITCH = () => translate('chat.key_elsewhere_switch_action');
+
+describe('чужой ключ в справочнике: ловушка с потерей данных закрыта', () => {
+  // ⚠️ ЗАЧЕМ ЭТИ ЗАМКИ. Ревью координатора по моему же сомнению. При чужом ключе
+  // текст «Вам пока не могут писать» формально ПРАВДИВ — и именно поэтому не
+  // вызывает подозрений. А кнопка под ним заменяет ключ другого устройства:
+  // собеседники начнут запечатывать сюда, там новое приходить перестанет, а
+  // прежние мешки останутся читаемыми только там. То есть мы предлагали нажать
+  // кнопку, которая молча ломает переписку, и называли это починкой.
+
+  it('текст ДРУГОЙ, не тот же самый', async () => {
+    // ⚠️ ГЛАВНЫЙ ЗАМОК. Мутация «показывать тот же текст» красит именно его.
+    const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
+    const other = renderToStaticMarkup(React.createElement(ChatKeyNotAnnounced, {
+      variant: 'full' as const, busy: false, standing: 'other_key' as const,
+      onConfirm: () => {}, onRestore: () => {},
+    }));
+    const absent = renderToStaticMarkup(React.createElement(ChatKeyNotAnnounced, {
+      variant: 'full' as const, busy: false, standing: 'absent' as const,
+      onConfirm: () => {}, onRestore: () => {},
+    }));
+
+    expect(other, 'при чужом ключе показан текст состояния «ключа нет»').not.toContain(TITLE());
+    expect(other).toContain(EL_TITLE());
+    expect(absent, 'при отсутствии ключа показан текст про другое устройство').not.toContain(EL_TITLE());
+    expect(absent).toContain(TITLE());
+  });
+
+  it('ПРЕДУПРЕЖДЕНИЕ о цене замены на экране, рядом с действием', async () => {
+    const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
+    const html = renderToStaticMarkup(React.createElement(ChatKeyNotAnnounced, {
+      variant: 'full' as const, busy: false, standing: 'other_key' as const,
+      onConfirm: () => {}, onRestore: () => {},
+    }));
+    expect(html, 'человека не предупредили о цене замены').toContain(EL_WARN());
+    expect(html).toContain(EL_BODY());
+  });
+
+  it('код восстановления предложен ПЕРВЫМ, замена — вторым', async () => {
+    // Требование координатора дословно: «в этом состоянии главное предложение —
+    // не Подтвердить, а Ввести код восстановления». Мерится порядок ОБОИХ
+    // действий внутри одной карточки (что они в одной карточке — замок ниже).
+    const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
+    const html = renderToStaticMarkup(React.createElement(ChatKeyNotAnnounced, {
+      variant: 'full' as const, busy: false, standing: 'other_key' as const,
+      onConfirm: () => {}, onRestore: () => {},
+    }));
+    const restore = html.indexOf(EL_RESTORE_ACTION());
+    const swap = html.indexOf(EL_SWITCH());
+    expect(restore, 'входа по коду восстановления нет вовсе').toBeGreaterThanOrEqual(0);
+    expect(swap, 'замены нет вовсе — состояние невылечимо без кода').toBeGreaterThanOrEqual(0);
+    expect(restore, 'замена предложена раньше кода восстановления').toBeLessThan(swap);
+    expect(html).toContain(EL_RESTORE());
+  });
+
+  it('оба действия ведут КУДА НАДО и не путаются местами', async () => {
+    // Мерится употребление: кнопка без обработчика или перепутанные обработчики
+    // прошли бы все замки выше.
+    const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
+    let confirms = 0;
+    let restores = 0;
+    const el = React.createElement(ChatKeyNotAnnounced, {
+      variant: 'full' as const, busy: false, standing: 'other_key' as const,
+      onConfirm: () => { confirms++; }, onRestore: () => { restores++; },
+    });
+    const rendered = (el.type as (p: Record<string, unknown>) => React.ReactElement)(
+      el.props as Record<string, unknown>,
+    );
+    const buttons = findAllButtons(rendered);
+    expect(buttons, 'кнопок не две').toHaveLength(2);
+
+    // Первая — код восстановления, вторая — замена. Порядок заперт замком выше.
+    (buttons[0].props as { onClick?: () => void }).onClick?.();
+    expect(restores, 'первая кнопка не ведёт в восстановление').toBe(1);
+    expect(confirms, 'первая кнопка заменяет ключ — ровно то, чего нельзя').toBe(0);
+
+    (buttons[1].props as { onClick?: () => void }).onClick?.();
+    expect(confirms, 'вторая кнопка не заменяет ключ').toBe(1);
+  });
+
+  it('при чужом ключе на экране НЕТ слова «Подтвердить» из состояния «ключа нет»', async () => {
+    // Иначе два разных смысла носят одно имя, и человек решит, что это та же
+    // безобидная кнопка, которую он видел раньше.
+    const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
+    const html = renderToStaticMarkup(React.createElement(ChatKeyNotAnnounced, {
+      variant: 'full' as const, busy: false, standing: 'other_key' as const,
+      onConfirm: () => {}, onRestore: () => {},
+    }));
+    expect(html).not.toContain(ACTION());
+  });
+
+  it('панель показывает состояние чужого ключа, а не текст «ключа нет»', async () => {
+    setState({ keyNotAnnounced: true, keyStanding: 'other_key', messages: [], synced: false });
+    setAnnouncement({ standing: 'other_key', needsPress: true });
+    const html = await renderPanel();
+    expect(html, 'до панели состояние чужого ключа не доехало').toContain(EL_TITLE());
+    expect(html).not.toContain(TITLE());
+  });
+});
+
+/** Все `<button>` в дереве элементов, в порядке обхода. */
+function findAllButtons(node: unknown, out: React.ReactElement[] = []): React.ReactElement[] {
+  if (!node || typeof node !== 'object') return out;
+  const el = node as React.ReactElement<{ children?: unknown }>;
+  if (el.type === 'button') out.push(el);
+  const kids = el.props?.children;
+  const list = Array.isArray(kids) ? kids : [kids];
+  for (const kid of list) findAllButtons(kid, out);
+  return out;
 }
