@@ -48,7 +48,14 @@ const VALID_GOLDEN_TOKEN =
   'v1.MHhhMWNlMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjYWZlLjE3MDAwNDMyMDA.9AzPuOnO3ch-s7H4H_r2Xrs87KgTAOX1qPvOMdcDRig';
 
 function expectGoldenTokensStillValid() {
-  expect(verifyBagPass(VALID_GOLDEN_TOKEN, 1_700_000_010)).toEqual({ address: ALICE.toLowerCase() });
+  // ⚠️ Тело этого токена — ДВУХПОЛЕВОЕ ('<адрес>.<срок>'), то есть форма, которая
+  // была до появления сортов пропуска. Заморозка теперь запирает и
+  // совместимость: пропуска на двенадцать часов лежат у людей в браузере прямо
+  // сейчас, и выкатка сортов обязана их принять — и принять именно как
+  // кошельковые, иначе живой человек потерял бы право сменить свой ключ до
+  // истечения своего же пропуска.
+  expect(verifyBagPass(VALID_GOLDEN_TOKEN, 1_700_000_010))
+    .toEqual({ address: ALICE.toLowerCase(), grade: 'wallet' });
 }
 
 describe('bagPass', () => {
@@ -75,7 +82,7 @@ describe('bagPass', () => {
 
   it('выпущенный пропуск проверяется и возвращает адрес в нижнем регистре', () => {
     const { token } = issueBagPass(ALICE);
-    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase() });
+    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase(), grade: 'wallet' });
   });
 
   it('протухший пропуск отличим от негодного', () => {
@@ -103,7 +110,7 @@ describe('bagPass', () => {
 
   it('верный токен идёт через timingSafeEqual ровно один раз', () => {
     const { token } = issueBagPass(ALICE);
-    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase() });
+    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase(), grade: 'wallet' });
     expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -126,7 +133,7 @@ describe('bagPass', () => {
     const now = 1_800_000_000;
     const { token, expiresAt } = issueBagPass(ALICE, now);
     // За секунду до границы — ещё годен.
-    expect(verifyBagPass(token, expiresAt - 1)).toEqual({ address: ALICE.toLowerCase() });
+    expect(verifyBagPass(token, expiresAt - 1)).toEqual({ address: ALICE.toLowerCase(), grade: 'wallet' });
     // Ровно на границе — уже протух. Ловит off-by-one вида `>` вместо `>=`,
     // который существующий тест на TTL+1 не видит: там nowSec на секунду
     // дальше границы, и оба оператора уже согласны, что пропуск мёртв.
@@ -263,7 +270,7 @@ describe('bagPass', () => {
       expect(verifyBagPass(`${prefix}.${variant}.${mac}`).code).toBe('pass_invalid');
     }
     // Канонический вид сам по себе остаётся годным.
-    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase() });
+    expect(verifyBagPass(token)).toEqual({ address: ALICE.toLowerCase(), grade: 'wallet' });
   });
 
   it('мусор на входе даёт вердикт, а не исключение', () => {

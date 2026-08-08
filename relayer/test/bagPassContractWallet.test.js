@@ -87,7 +87,7 @@ describe('К-1: пропуск склада и четыре рода кошел�
       const res = await postPass({ address: addr, sig, ts });
 
       expect(res.status).toBe(200);
-      expect(verifyBagPass(res.body.pass)).toEqual({ address: addr });
+      expect(verifyBagPass(res.body.pass)).toEqual({ address: addr, grade: 'wallet' });
       // ЗАМЕР: ноль. Отказ узла цепи не имеет права стоить обычному кошельку чата.
       expect(calls.length).toBe(0);
     });
@@ -113,7 +113,7 @@ describe('К-1: пропуск склада и четыре рода кошел�
       const res = await postPass({ address: addr, sig: safeStyleSignature() });
 
       expect(res.status).toBe(200);
-      expect(verifyBagPass(res.body.pass)).toEqual({ address: addr });
+      expect(verifyBagPass(res.body.pass)).toEqual({ address: addr, grade: 'wallet' });
     });
 
     it('проверку делает СВОЙ валидатор по СВОЕЙ фразе — адрес, хеш и подпись доехали', async () => {
@@ -161,7 +161,7 @@ describe('К-1: пропуск склада и четыре рода кошел�
 
       const res = await postPass({ address: addr, sig });
       expect(res.status).toBe(200);
-      expect(verifyBagPass(res.body.pass)).toEqual({ address: addr });
+      expect(verifyBagPass(res.body.pass)).toEqual({ address: addr, grade: 'wallet' });
     });
 
     it('обёртка доезжает до валидатора ЦЕЛИКОМ (её разбирает он, не мы)', async () => {

@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
-import { randomUUID, createCipheriv, createDecipheriv, randomBytes, createHmac, timingSafeEqual } from 'crypto';
+import { randomUUID, createCipheriv, createDecipheriv, randomBytes, createHmac, timingSafeEqual, createPublicKey, verify as verifySignature } from 'crypto';
 import webpush from 'web-push';
 import fs, { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
@@ -2715,6 +2715,17 @@ function requireBagPass(req, res) {
   return verified.address;
 }
 
+// Сорт пропуска — только для POST /keys, единственного маршрута, которому не
+// всё равно, ЧЕМ доказано владение адресом. Отдельной функцией, а не вторым
+// возвращаемым значением у requireBagPass: три маршрута мешков сорт не
+// спрашивают и спрашивать не должны, а «вернуть пару и в двух местах из четырёх
+// её проигнорировать» — приглашение однажды проигнорировать её в четвёртом.
+// `null` — пропуск негодный (ответ уже отправлен вызовом выше).
+function bagPassGrade(req) {
+  const verified = verifyBagPass(req.headers[BAG_PASS_HEADER]);
+  return verified.error ? null : verified.grade;
+}
+
 // ─── К-1: подпись любого из ЧЕТЫРЁХ родов кошелька ────────────────────────
 //
 // Родов на Base четыре, а не два (замерено 6 августа 2026, три независимых
@@ -2857,6 +2868,112 @@ export async function verifyWalletSignature(address, message, sig, onChainAttemp
 
 export { UNIVERSAL_SIG_VALIDATOR_BYTECODE };
 
+// ─── Подпись КЛЮЧОМ ПЕРЕПИСКИ вместо подписи кошелька ─────────────────────
+//
+// Живая выкатка 8 августа (пункт 35 docs/OPEN-ITEMS.md): подписей было две, и
+// одна лишняя. Первая выводит ключ переписки — без неё нет ни шифрования, ни
+// восстановления истории на новом устройстве. Вторая доказывала серверу, что
+// адрес твой, чтобы получить пропуск к складу. Но как только адрес ОБЪЯВИЛ свою
+// открытую половину подписного ключа в справочнике (`POST /keys`, адрес взят из
+// кошелькового пропуска), сервер знает связку «адрес → ключ подписи» — и
+// доказать владение адресом можно этим ключом, молча, без окна кошелька.
+//
+// Цена окна кошелька названа замером владельца: в установленном приложении (PWA)
+// это круг через приложение кошелька на МИНУТЫ. Человек ушёл, не дождавшись.
+//
+// ⚠️ ЧТО ИМЕННО ЭТО НЕ ОСЛАБЛЯЕТ, и почему.
+//
+// Закрытая половина подписного ключа никогда не покидает устройство: в
+// справочнике лежит только открытая (32 байта). Значит подделать такую подпись
+// может лишь тот, у кого уже есть ключ переписки, — а он и так читает всё, что
+// уже скачано. Посторонний, знающий один только адрес (адреса в цепи публичны),
+// не получает ничего нового.
+//
+// ⚠️ ЧТО ЭТО ВСЁ-ТАКИ МЕНЯЕТ, СКАЗАНО ПРЯМО. Спека §4 предупреждает: «иначе
+// фишинг одной подписью открывает всю переписку без всякого доступа к
+// устройству». Разница честная: раньше выманенный ключ переписки давал чтение
+// уже скачанного, а забрать НОВОЕ со склада требовало второй подписи, и
+// выманенный пропуск умирал через двенадцать часов. Теперь ключ переписки
+// означает и доступ к складу — постоянный, пока ключ не сменён.
+//
+// Почему это принято: сам bagPass.js (комментарий у BAG_PASS_TTL_SEC) уже
+// записал, что «пропуск не защищает от фишинга — сайт, выманивший подпись ключа,
+// в том же визите выманит и эту». То есть двенадцать часов были не барьером, а
+// задержкой, и платили за неё все и каждые двенадцать часов, а выигрывал от неё
+// только тот случай, когда фишер пришёл один раз и не смог прийти второй.
+//
+// ⚠️ И ЧТО ОСТАЛОСЬ ЗАПРЕЩЕНО НАМЕРЕННО: ключевым пропуском НЕЛЬЗЯ сменить ключ
+// в справочнике (см. POST /keys ниже). Иначе выходил бы замкнутый круг —
+// украденный на двенадцать часов пропуск позволял бы записать свой signKey и
+// выдавать себе пропуска вечно. Корень доверия остаётся в кошельке.
+
+/** Открытая половина подписного ключа: `0x` + 64 нижнерегистровых hex-цифры. */
+const CHAT_KEY_HEX_RE = /^0x[0-9a-f]{64}$/;
+/** Ed25519-подпись — ровно 64 байта. */
+const CHAT_SIG_HEX_RE = /^0x[0-9a-f]{128}$/;
+
+// Ed25519 из 32 сырых байт: Node принимает JWK-форму OKP, и это единственный
+// способ собрать KeyObject из голой открытой половины без ручной сборки SPKI.
+function chatSigningKeyObject(publicKeyHex) {
+  const raw = Buffer.from(publicKeyHex.slice(2), 'hex');
+  return createPublicKey({
+    key: { kty: 'OKP', crv: 'Ed25519', x: raw.toString('base64url') },
+    format: 'jwk',
+  });
+}
+
+/**
+ * Признана ли подпись `sigHex` подписным ключом, который САМ ЭТОТ АДРЕС положил
+ * в справочник.
+ *
+ * @returns {{ ok: true } | { ok: false, reason: 'not_enrolled' | 'bad_signature' }}
+ *   `not_enrolled` и `bad_signature` разведены намеренно: первое означает «этому
+ *   адресу нужна подпись кошелька, других дорог нет» (первый вход в жизни), а
+ *   второе — «подпись не та». Один код на оба заставил бы клиента гадать, надо
+ *   ли открывать кошелёк.
+ */
+function verifyChatKeySignature(address, message, sigHex) {
+  if (typeof sigHex !== 'string' || !CHAT_SIG_HEX_RE.test(sigHex.toLowerCase())) {
+    return { ok: false, reason: 'bad_signature' };
+  }
+  let record;
+  try {
+    record = getKeyRecord(address);
+  } catch (e) {
+    // Справочник в режиме недоверия — вердикта нет. Осторожная сторона: не
+    // выдать пропуск. Ошибиться сюда — лишний повтор; ошибиться в другую
+    // сторону — выдать пропуск по ключу, которого мы не читали.
+    if (e.code === 'directory_unavailable') return { ok: false, reason: 'not_enrolled' };
+    throw e;
+  }
+  // Только НЫНЕШНИЙ ключ, никогда история: смысл смены ключа в том, что прежний
+  // перестаёт что-либо открывать. Пустить историю сюда значило бы оставить
+  // потерянному устройству вечный вход.
+  if (!record || typeof record.signKey !== 'string' || !CHAT_KEY_HEX_RE.test(record.signKey)) {
+    return { ok: false, reason: 'not_enrolled' };
+  }
+  let keyObject;
+  try {
+    keyObject = chatSigningKeyObject(record.signKey);
+  } catch {
+    // Ключ в справочнике формы не той, что мы умеем читать. Не падаем: это
+    // «нужен кошелёк», а не пятисотка.
+    return { ok: false, reason: 'not_enrolled' };
+  }
+  let ok = false;
+  try {
+    ok = verifySignature(
+      null,
+      Buffer.from(message, 'utf8'),
+      keyObject,
+      Buffer.from(sigHex.slice(2), 'hex'),
+    );
+  } catch {
+    ok = false;
+  }
+  return ok ? { ok: true } : { ok: false, reason: 'bad_signature' };
+}
+
 // POST /bags/pass — mints a bag pass from a wallet signature.
 //
 // Unlike GET /dispute-log/:dealId (app.js:1237-1258, the pattern this route
@@ -2904,13 +3021,20 @@ app.post('/bags/pass', async (req, res) => {
 
   const ts  = req.headers['x-ts'];
   const sig = req.headers['x-sig'];
-  if (!ts || !sig) {
+  // Вторая дорога — подпись КЛЮЧОМ ПЕРЕПИСКИ, без окна кошелька. Разбор,
+  // почему это не ослабляет выдачу мешков и что всё-таки меняет, — у
+  // `verifyChatKeySignature` выше. Кошельковая подпись СТАРШЕ: если пришли обе,
+  // берётся она (она и есть корень доверия).
+  const keySig = req.headers['x-key-sig'];
+  if (!ts || (!sig && !keySig)) {
     // Distinct code from ts_out_of_window (ревью, "слепота статуса"):
     // without it, removing this presence check entirely still answers 401 —
     // just via the window check a few lines down, since Number(undefined)
     // is NaN and !Number.isFinite(NaN) is true. Same status, different
     // cause; the code is what actually distinguishes them.
-    return res.status(401).json({ error: 'Missing x-ts or x-sig header', code: 'missing_credentials' });
+    return res.status(401).json({
+      error: 'Missing x-ts, or both x-sig and x-key-sig', code: 'missing_credentials',
+    });
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -2954,6 +3078,34 @@ app.post('/bags/pass', async (req, res) => {
     return res.status(401).json({ error: 'Invalid signature', code: 'invalid_signature' });
   }
 
+  // ─── Дорога БЕЗ КОШЕЛЬКА: подпись ключом переписки ────────────────────
+  //
+  // Стоит ПЕРВОЙ по стоимости: одна проверка Ed25519 и чтение справочника из
+  // памяти, ни одного обращения к цепи. Сорт выданного пропуска — 'key', и он
+  // намеренно слабее кошелькового: сменить ключ в справочнике им нельзя (см.
+  // POST /keys).
+  if (!sig) {
+    const keyVerdict = verifyChatKeySignature(addr, message, String(keySig));
+    if (!keyVerdict.ok) {
+      if (keyVerdict.reason === 'not_enrolled') {
+        // Отдельный код, а не 'invalid_signature': это «нужна подпись
+        // кошелька, других дорог для тебя пока нет» — единственный ответ, по
+        // которому клиент вправе открыть окно кошелька. Свести их значило бы
+        // либо открывать окно на каждую испорченную подпись, либо не открывать
+        // его никогда.
+        return res.status(401).json({
+          error: 'No chat signing key on file for this address', code: 'key_not_enrolled',
+        });
+      }
+      return res.status(401).json({ error: 'Invalid signature', code: 'invalid_signature' });
+    }
+    if (!checkRateLimit(bagPassRateKey(addr), BAG_PASS_RATE_MAX)) {
+      return bagRateLimited(res, 'rate_limited_pass');
+    }
+    const minted = issueBagPass(addr, nowSec, 'key');
+    return res.json({ pass: minted.token, expiresAt: minted.expiresAt });
+  }
+
   // К-1: не голый ecrecover, а все четыре рода кошелька (см. длинный
   // комментарий у verifyWalletSignature выше). Обычный кошелёк проходит
   // МЕСТНО и `onChainAttempt` даже не зовётся — значит ни бюджет обращений
@@ -2989,7 +3141,7 @@ app.post('/bags/pass', async (req, res) => {
   // ТОЛЬКО доказанного адреса, никогда заявленного (С1).
   if (!checkRateLimit(bagPassRateKey(addr), BAG_PASS_RATE_MAX)) return bagRateLimited(res, 'rate_limited_pass');
 
-  const { token, expiresAt } = issueBagPass(addr, nowSec);
+  const { token, expiresAt } = issueBagPass(addr, nowSec, 'wallet');
   res.json({ pass: token, expiresAt });
 });
 
@@ -3467,6 +3619,47 @@ app.post('/keys', (req, res) => {
   // необязательным поле осталось по форме, чтобы старое тело без него
   // по-прежнему клало только boxKey и не отвергалось.
   const { boxKey, signKey } = req.body || {};
+
+  // ⚠️ СМЕНА КЛЮЧА — ТОЛЬКО КОШЕЛЬКОВЫМ ПРОПУСКОМ, и это несущее решение, а не
+  // строгость на всякий случай.
+  //
+  // С тех пор как пропуск можно получить подписью САМОГО ключа переписки (см.
+  // POST /bags/pass), без этой проверки выходил бы замкнутый круг: пропуск,
+  // добытый ключом, позволял бы записать в справочник ДРУГОЙ ключ, а тот —
+  // выдавать себе пропуска вечно. Украденный на двенадцать часов пропуск
+  // превращался бы в постоянный доступ, и кошелёк жертвы больше не был бы нужен
+  // НИКОГДА. Корень доверия обязан остаться там, где он был, — в кошельке.
+  //
+  // ⚠️ ПОВТОР БАЙТ-В-БАЙТ ПРОПУСКАЕТСЯ, и без этого правка отменила бы саму
+  // себя: клиент зовёт этот маршрут при каждом открытии сеанса (устройство, где
+  // ключ уже лежал, обязано убедиться, что справочник о нём знает), и запрет
+  // «любого POST /keys без кошелька» вернул бы окно кошелька на каждый заход —
+  // ровно то, от чего уходим. Повтор теми же значениями ничего не меняет:
+  // `putKey` на нём делает ранний возврат, не трогая ни память, ни диск.
+  if (bagPassGrade(req) !== 'wallet') {
+    let current = null;
+    try {
+      current = getKeyRecord(address);
+    } catch (e) {
+      if (e.code === 'directory_unavailable') {
+        return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
+      }
+      throw e;
+    }
+    // Сравнение — со СТРОКАМИ как они лежат; форму тела всё равно проверит
+    // `putKey` ниже, и делать это здесь вторым местом значило бы завести второе
+    // определение «годного ключа», расходящееся с первым.
+    const same = current
+      && current.boxKey === boxKey
+      && (signKey === undefined || current.signKey === signKey);
+    if (!same) {
+      return res.status(401).json({
+        error: 'Changing chat keys requires a wallet-signed bag pass',
+        code: 'wallet_pass_required',
+      });
+    }
+  }
+
   try {
     const stored = putKey(address, { boxKey, signKey }, Date.now());
     res.json(stored);
