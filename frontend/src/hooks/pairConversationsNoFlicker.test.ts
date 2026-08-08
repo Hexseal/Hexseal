@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   EMPTY_LIST_STATE, listStarted, listRows, listFailed, listSettled, listForAddress,
+  listForKnownAddress,
   type ConversationListState, type PairConversation,
 } from '@/hooks/usePairConversations';
 
@@ -132,6 +133,53 @@ describe('отказ склада не уносит строки', () => {
       changes += r.changes;
     }
     expect(changes, 'лежащий склад перерисовывает список каждые полминуты').toBe(0);
+  });
+});
+
+describe('кошелёк моргнул: адрес ПРОПАЛ, а не сменился', () => {
+  // ⚠️ ЭТО ТРЕТЬЯ ДОРОГА К «РЕСЕТУ ДО СКЕЛЕТОНА», и она самая незаметная.
+  // Кошелёк на телефоне переподключается сам — возврат в приложение, смена
+  // сети, пробуждение вкладки, — и на миг `useAccount()` отдаёт адрес
+  // `undefined`. Список гасился на любую смену адреса, включая эту: строки
+  // исчезали, признак загрузки поднимался (показывать-то нечего), человек
+  // видел заготовки, потом адрес возвращался и строки приезжали обратно.
+  //
+  // «Адрес пропал» и «адрес сменился» — разные вещи. Гасить надо на вторую:
+  // она про то, чтобы не показать ЧУЖИЕ переписки. Пропажа своего адреса
+  // чужих переписок не создаёт.
+  it('адрес пропал и вернулся тот же — строки не дрогнули', () => {
+    // Список принадлежит адресу A и уже загружен.
+    let state = listRows(listForAddress(undefined, A), fromServer());
+    const before = state.rows;
+    let changes = 0;
+    const step = (next: ConversationListState) => { if (next !== state) { changes++; state = next; } };
+
+    // Кошелёк моргнул: адреса нет.
+    step(listForKnownAddress(state, undefined, () => undefined));
+    // …и вернулся тот же самый.
+    step(listForKnownAddress(state, A, () => fromServer()));
+
+    expect(changes, 'моргнувший кошелёк перерисовал список').toBe(0);
+    expect(state.rows, 'моргнувший кошелёк унёс строки с экрана').toBe(before);
+    expect(state.loading, 'заготовки строк из-за моргнувшего кошелька').toBe(false);
+  });
+
+  it('адрес сменился на ДРУГОЙ — чужих переписок на экране не остаётся', () => {
+    // Обратная сторона: замок, который не краснеет на настоящей смене
+    // аккаунта, охраняет чужую переписку только на словах.
+    const state = listRows(listForAddress(undefined, A), fromServer());
+    const next = listForKnownAddress(state, B, () => undefined);
+    expect(next, 'смена аккаунта не погасила список').not.toBe(state);
+    expect(next.rows, 'на экране остались переписки прежнего аккаунта').toEqual([]);
+  });
+
+  it('пропал, а вернулся ДРУГОЙ — тоже гасим', () => {
+    // Пропажа не должна становиться лазейкой: если после неё пришёл другой
+    // адрес, это всё та же смена аккаунта.
+    let state = listRows(listForAddress(undefined, A), fromServer());
+    state = listForKnownAddress(state, undefined, () => undefined);
+    const next = listForKnownAddress(state, B, () => undefined);
+    expect(next.rows).toEqual([]);
   });
 });
 

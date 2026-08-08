@@ -456,6 +456,12 @@ export function createConversationLoader(opts: ConversationLoaderOptions): Conve
  * иначе нечем».
  */
 export interface ConversationListState {
+  /**
+   * Чьи это строки. Хранится В СОСТОЯНИИ, а не в отдельной ссылке рядом:
+   * решение «гасить или нет» обязано быть чистой функцией от того, что уже
+   * лежит, — иначе его не замерить (см. `listForKnownAddress`).
+   */
+  address: string | null;
   rows: PairConversation[];
   /** Первый заход: показывать нечего И ждём сеть. Только это — заготовки строк. */
   loading: boolean;
@@ -464,7 +470,7 @@ export interface ConversationListState {
 }
 
 export const EMPTY_LIST_STATE: ConversationListState = {
-  rows: [], loading: false, error: null,
+  address: null, rows: [], loading: false, error: null,
 };
 
 /**
@@ -508,11 +514,39 @@ export function listSettled(prev: ConversationListState): ConversationListState 
   return { ...prev, loading: false };
 }
 
-/** Сменился адрес: список гасится в тот же миг, чужие переписки не показываем. */
+/** Начальное состояние для адреса: что есть в памяти, то и показываем сразу. */
 export function listForAddress(
   cached: PairConversation[] | undefined,
+  address?: string,
 ): ConversationListState {
-  return { ...EMPTY_LIST_STATE, rows: cached ?? [] };
+  return { ...EMPTY_LIST_STATE, address: address ?? null, rows: cached ?? [] };
+}
+
+/**
+ * Адрес кошелька изменился — гасить список или нет.
+ *
+ * ⚠️ «ПРОПАЛ» И «СМЕНИЛСЯ» — РАЗНЫЕ ВЕЩИ, И ЭТО ТРЕТЬЯ ДОРОГА К «РЕСЕТУ ДО
+ * СКЕЛЕТОНА». Кошелёк на телефоне переподключается сам: возврат в приложение,
+ * смена сети, пробуждение вкладки — и на миг `useAccount()` отдаёт `undefined`.
+ * Прежний код гасил список на ЛЮБУЮ смену, включая эту: строки исчезали,
+ * показывать становилось нечего, поднимались заготовки, потом адрес возвращался
+ * и строки приезжали обратно. Ровно то мигание, про которое сказано «с такими
+ * прыжками надо дисклеймер вещать о эпелепсии».
+ *
+ * Гасить надо на СМЕНУ АККАУНТА, и причина у этого одна: не показать человеку
+ * ЧУЖИЕ переписки. Пропажа своего адреса чужих переписок не создаёт — значит и
+ * гасить нечего. А если после пропажи пришёл ДРУГОЙ адрес, это всё та же смена
+ * аккаунта, и она гасит: адрес прежних строк лежит в самом состоянии, лазейки
+ * «через пропажу» нет.
+ */
+export function listForKnownAddress(
+  prev: ConversationListState,
+  addrLc: string | undefined,
+  cached: (addr: string) => PairConversation[] | undefined,
+): ConversationListState {
+  if (!addrLc) return prev;
+  if (prev.address === addrLc) return prev;
+  return listForAddress(cached(addrLc), addrLc);
 }
 
 /* ──────────────────────────────── хук ─────────────────────────────────── */
@@ -541,7 +575,7 @@ export function usePairConversations(isEnabled = false) {
    * стоит НОЛЬ перерисовок (замер — `hooks/pairConversationsNoFlicker.test.ts`).
    */
   const [list, setList] = useState<ConversationListState>(() =>
-    listForAddress(addrLc ? _convCache.get(addrLc) : undefined)
+    listForAddress(addrLc ? _convCache.get(addrLc) : undefined, addrLc)
   );
   /**
    * Окно кошелька за пропуском склада открыто ПРЯМО СЕЙЧАС.
@@ -561,11 +595,12 @@ export function usePairConversations(isEnabled = false) {
   // Список гасится в тот же миг, когда сменился адрес — не после того, как
   // загрузка доедет. Иначе после смены аккаунта на том же устройстве человек
   // видел бы ЧУЖИЕ переписки, пока не разрешится запрос.
-  const prevAddrRef = useRef(addrLc);
+  //
+  // ⚠️ НО ТОЛЬКО НА СМЕНУ, А НЕ НА ПРОПАЖУ. Разбор и замер — в
+  // `listForKnownAddress`: моргнувший кошелёк уносил список с экрана и
+  // возвращал его через миг.
   useEffect(() => {
-    if (prevAddrRef.current === addrLc) return;
-    prevAddrRef.current = addrLc;
-    setList(listForAddress(addrLc ? _convCache.get(addrLc) : undefined));
+    setList(prev => listForKnownAddress(prev, addrLc, (a) => _convCache.get(a)));
   }, [addrLc]);
 
   // Загрузчик со счётчиком неудач входа. Живёт в ref, а не пересоздаётся на
