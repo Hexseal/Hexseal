@@ -679,7 +679,18 @@
     "bags_failed": "Some messages could not be picked up from storage. They are not lost — try reconnecting.",
     "push_no_pass": "Notification not sent: there is no chat session on this device.",
     "push_rate_limited": "Notifications are going out too often — this one was skipped. Wait a moment.",
-    "push_error": "The notification could not be sent. Your message was delivered, but the other person will not see it until they open the chat."
+    "push_error": "The notification could not be sent. Your message was delivered, but the other person will not see it until they open the chat.",
+    "key_unannounced_title": "No one can message you yet",
+    "key_unannounced_body": "Your key is created, but nobody knows about it yet.",
+    "key_unannounced_call": "Confirm in your wallet — and people will find you.",
+    "key_unannounced_action": "Confirm",
+    "key_unannounced_confirming": "Confirming…",
+    "key_elsewhere_title": "Your chat is already on another device",
+    "key_elsewhere_body": "Messages are arriving there.",
+    "key_elsewhere_restore_action": "Enter recovery code",
+    "key_elsewhere_switch_action": "Receive here",
+    "key_elsewhere_restore_note": "Restore your messages.",
+    "key_elsewhere_switch_note": "Earlier conversations will not open here."
   },
   "deal_bar": {
     "application_received": "Application received",

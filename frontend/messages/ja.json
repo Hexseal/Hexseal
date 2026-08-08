@@ -679,7 +679,18 @@
     "bags_failed": "一部のメッセージを保管庫から取得できませんでした。失われてはいません — 再接続してみてください。",
     "push_no_pass": "通知は送信されませんでした。このデバイスにチャットのセッションがありません。",
     "push_rate_limited": "通知の頻度が高すぎるため、今回は見送られました。少しお待ちください。",
-    "push_error": "通知を送信できませんでした。メッセージは届いていますが、相手はチャットを開くまで気づきません。"
+    "push_error": "通知を送信できませんでした。メッセージは届いていますが、相手はチャットを開くまで気づきません。",
+    "key_unannounced_title": "まだあなたにメッセージを送れません",
+    "key_unannounced_body": "キーは作成済みですが、まだ誰も知りません。",
+    "key_unannounced_call": "ウォレットで承認すれば、見つけてもらえます。",
+    "key_unannounced_action": "承認する",
+    "key_unannounced_confirming": "承認中…",
+    "key_elsewhere_title": "チャットはすでに別の端末にあります",
+    "key_elsewhere_body": "メッセージはそちらに届いています。",
+    "key_elsewhere_restore_action": "復元コードを入力",
+    "key_elsewhere_switch_action": "ここで受け取る",
+    "key_elsewhere_restore_note": "メッセージを復元します。",
+    "key_elsewhere_switch_note": "これまでの会話はここでは開きません。"
   },
   "messaging": {
     "enabled_title": "メッセージング有効",

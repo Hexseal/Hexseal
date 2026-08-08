@@ -14,6 +14,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
+import { useKeyAnnouncement } from '@/hooks/useKeyAnnouncement';
 import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 import { hasRecoveryCode } from '@/lib/chatRecovery';
 import { ChatOffScreen } from '@/components/ChatOffScreen';
@@ -25,7 +26,7 @@ import { quoteFeeLocal } from '@/lib/fee';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, Paperclip, FileText, ExternalLink, Lock,
-  ChevronDown, Download, Search, X, Clock, RotateCw, ShieldCheck, Scissors, PenLine,
+  ChevronDown, Download, Search, X, Clock, RotateCw, ShieldCheck, Scissors, PenLine, KeyRound,
 } from 'lucide-react';
 import { classifyAttachmentFailure, type AttachmentFailure } from '@/lib/attachmentFailure';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE, isTrustedAttachmentUrl } from '@/lib/fileCrypto';
@@ -462,6 +463,205 @@ export function ChatSignatureWanted(
   );
 }
 
+/**
+ * ВАМ ПОКА НЕ МОГУТ ПИСАТЬ — ключ есть, а в справочнике его нет.
+ *
+ * ─── ТЕКСТ УТВЕРЖДЁН ВЛАДЕЛЬЦЕМ ДОСЛОВНО ────────────────────────────────────
+ *
+ *     Вам пока не могут писать
+ *     Ключ создан, но о нём ещё никто не знает.
+ *     Подтвердите в кошельке — и вас найдут.
+ *                                     [ Подтвердить ]
+ *
+ * Три решения владельца, которые за этим стоят. Их нельзя «улучшить» правкой
+ * текста, не спросив:
+ *
+ *  1. **Слова «включить» быть не должно.** Дословно: «я ж при подписи его и так
+ *     включил — мысли юзера». Человек считает, что первой подписью чат уже
+ *     включил, И ОН ПРАВ: ключ создан. Не спорим с ним, говорим про другое — что
+ *     его не видно собеседникам.
+ *  2. **Заголовок — от последствия, а не от механики.** Не «настройка не
+ *     завершена», а «вам пока не могут писать»: человека волнует, что не
+ *     работает, а не какой у нас шаг по счёту.
+ *  3. **На кнопке нет слова «ключ».** «Объявить мой ключ» забраковано с точной
+ *     причиной: звучит как «показать сам ключ». Кнопка повторяет текст выше —
+ *     «Подтвердите в кошельке» → «Подтвердить».
+ *
+ * ⚠️ ТО ЖЕ САМОЕ СООБЩЕНИЕ показывается и при следующем открытии чата, если ключ
+ * так и не объявлен. Намеренно те же слова: иначе человек решит, что это про
+ * что-то новое.
+ *
+ * ⚠️ ПОЧЕМУ ЗДЕСЬ КНОПКА, А НЕ АВТОМАТИКА. На телефоне кошелёк — отдельное
+ * приложение, и переключение на него замораживает страницу. Вторая подпись,
+ * запущенная нами самими, уходит в спящую страницу и теряется — ровно это
+ * замерено 8 августа (`castW2`: ключа нет). Нажатие означает, что страница жива
+ * и на переднем плане. На десктопе этот блок не показывается вовсе: там
+ * объявление проходит само (`lib/chatAnnounce.ts`).
+ */
+export function ChatKeyNotAnnounced(
+  { variant, busy, standing, onConfirm, onRestore }: {
+    variant: 'full' | 'inline';
+    busy: boolean;
+    /** `absent` — записи нет вовсе; `other_key` — лежит ключ ДРУГОГО устройства. */
+    standing: 'absent' | 'other_key';
+    onConfirm: () => void;
+    onRestore: () => void;
+  },
+) {
+  const t = useTranslations();
+  /**
+   * ⚠️ ЧУЖОЙ КЛЮЧ — ДРУГОЙ ЭКРАН, А НЕ ТОТ ЖЕ С ДРУГИМ ОТТЕНКОМ.
+   *
+   * Ловушка с потерей данных, найденная ревью координатора. У кошелька-контракта
+   * ключ случайный и живёт только на устройстве. Если в справочнике лежит ключ
+   * ДРУГОГО устройства, то нажатие «Подтвердить» ЗАМЕНИТ его: собеседники начнут
+   * запечатывать сюда, там новое приходить перестанет, а прежние мешки останутся
+   * читаемыми только там.
+   *
+   * И самое коварное: текст «Вам пока не могут писать» в этом состоянии
+   * ФОРМАЛЬНО ПРАВДИВ — писать на ЭТО устройство действительно нельзя, — поэтому
+   * подозрений он не вызывает. То есть мы предлагали нажать кнопку, которая молча
+   * ломает переписку, и называли это починкой.
+   *
+   * Здесь главное предложение — КОД ВОССТАНОВЛЕНИЯ: он даёт тот же ключ, ничего
+   * не заменяя. Замена — второй, явный и предупреждённый выбор. Вход по коду уже
+   * существует (`RESTORE_RECOVERY_EVENT`, привратник в `RecoveryCodeGate`), сюда
+   * только приведён.
+   */
+  if (standing === 'other_key') {
+    /**
+     * ⚠️ ТЕКСТ УТВЕРЖДЁН ВЛАДЕЛЬЦЕМ ДОСЛОВНО, И ЭТО ВТОРАЯ РЕДАКЦИЯ. Первую он
+     * забраковал по существу: она ПЕРЕСКАЗЫВАЛА УСТРОЙСТВО вместо того, чтобы
+     * назвать выбор («этот кошелёк уже настроен где-то ещё»), а цена была спрятана
+     * в длинную фразу с «можно… тогда… а прежние…» — три оговорки в одном
+     * предложении читаются как размышление вслух, а не как выбор.
+     *
+     *     Ваш чат уже на другом устройстве
+     *     Сообщения приходят туда.
+     *
+     *         [ Ввести код восстановления ]
+     *         Восстановить сообщения.
+     *
+     *         [ Получать здесь ]
+     *         Прежняя переписка здесь не откроется.
+     *
+     * Три решения владельца, которые нельзя «улучшить» правкой текста:
+     *
+     *  1. **Заголовок называет ФАКТ, а не настройку.** «Ваш чат уже на другом
+     *     устройстве» — факт; «этот кошелёк уже настроен где-то ещё» — пересказ
+     *     механики.
+     *  2. **Цена — ОДНА СТРОКА ПОД КНОПКОЙ, не абзац**, и сказана с той стороны,
+     *     где стоит человек: он на ЭТОМ устройстве, и его волнует «увижу ли я тут
+     *     свою переписку». Про то, что второе устройство перестанет получать
+     *     новые, убрано совсем — правда, но не его забота в этот момент, и именно
+     *     эта половина делала фразу мутной.
+     *  3. **Никаких «можно», «есть», «тогда»** — от них текст звучит неуверенно.
+     *
+     * ⚠️ ПОЧЕМУ КОД ВОССТАНОВЛЕНИЯ ПЕРВЫМ. Здесь нажатие «Получать здесь»
+     * ЗАМЕНЯЕТ ключ другого устройства, и прежняя переписка на этом устройстве не
+     * откроется никогда. Код даёт ТОТ ЖЕ ключ, ничего не заменяя, — значит он и
+     * есть главное предложение, а замена второй, явный и предупреждённый выбор.
+     * Вход по коду уже существовал (`RESTORE_RECOVERY_EVENT`, привратник в
+     * `RecoveryCodeGate`), сюда только приведён.
+     */
+    const choices = (
+      <>
+        <button
+          type="button"
+          onClick={onRestore}
+          className="mt-3 px-4 py-2 rounded-[12px] bg-primary/20 border border-primary/40 text-sm font-medium text-white/85 hover:bg-primary/30 transition-colors"
+        >
+          {t("chat.key_elsewhere_restore_action")}
+        </button>
+        <p className="text-white/35 text-xs leading-relaxed mt-1.5">
+          {t("chat.key_elsewhere_restore_note")}
+        </p>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy}
+          className="mt-5 text-sm text-white/50 hover:text-white/80 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {busy ? t("chat.key_unannounced_confirming") : t("chat.key_elsewhere_switch_action")}
+        </button>
+        {/* ⚠️ Цена — ПОД своей кнопкой и одной строкой. Не над ней и не в другом
+            месте экрана: она относится к этому выбору, а не ко всему состоянию. */}
+        <p className="text-white/35 text-xs leading-relaxed mt-1.5">
+          {t("chat.key_elsewhere_switch_note")}
+        </p>
+      </>
+    );
+    if (variant === 'inline') {
+      return (
+        <div className="mx-1 mb-2 px-3 py-2.5 rounded-[12px] bg-primary/[0.07] border border-primary/20 flex items-start gap-2">
+          <KeyRound className="w-4 h-4 text-primary/70 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-white/75 font-medium">{t("chat.key_elsewhere_title")}</p>
+            <p className="text-xs text-white/45 leading-relaxed mt-0.5">{t("chat.key_elsewhere_body")}</p>
+            {choices}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+        <div className="w-12 h-12 rounded-[16px] bg-primary/10 border border-primary/25 flex items-center justify-center">
+          <KeyRound className="w-5 h-5 text-primary/80" />
+        </div>
+        {/* Весь текст и оба выбора — ВНУТРИ этого блока; замок мерит вложенность,
+            а не порядок в разметке (урок 7 августа). */}
+        <div>
+          <p className="text-white/80 text-base font-semibold mb-1.5">{t("chat.key_elsewhere_title")}</p>
+          <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_elsewhere_body")}</p>
+          {choices}
+        </div>
+      </div>
+    );
+  }
+  const button = (
+    <button
+      type="button"
+      onClick={onConfirm}
+      disabled={busy}
+      className="mt-3 px-4 py-2 rounded-[12px] bg-primary/20 border border-primary/40 text-sm font-medium text-white/85 hover:bg-primary/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    >
+      {busy ? t("chat.key_unannounced_confirming") : t("chat.key_unannounced_action")}
+    </button>
+  );
+  if (variant === 'inline') {
+    return (
+      <div className="mx-1 mb-2 px-3 py-2.5 rounded-[12px] bg-primary/[0.07] border border-primary/20 flex items-start gap-2">
+        <KeyRound className="w-4 h-4 text-primary/70 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm text-white/75 font-medium">{t("chat.key_unannounced_title")}</p>
+          <p className="text-xs text-white/45 leading-relaxed mt-0.5">{t("chat.key_unannounced_body")}</p>
+          <p className="text-xs text-white/45 leading-relaxed">{t("chat.key_unannounced_call")}</p>
+          {button}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+      <div className="w-12 h-12 rounded-[16px] bg-primary/10 border border-primary/25 flex items-center justify-center">
+        <KeyRound className="w-5 h-5 text-primary/80" />
+      </div>
+      {/* ⚠️ ВЕСЬ ТЕКСТ И КНОПКА — ВНУТРИ ЭТОГО БЛОКА, и замок мерит именно
+          ВЛОЖЕННОСТЬ, а не порядок в разметке. Урок оплачен 7 августа: замок,
+          сравнивавший индексы («текст раньше поля ввода»), остался зелёным на
+          мутации, которая вернула текст в полосу под перепиской, — полоса тоже
+          стоит раньше поля ввода. Он пропускал ровно тот дефект, ради которого
+          заводился. */}
+      <div>
+        <p className="text-white/80 text-base font-semibold mb-1.5">{t("chat.key_unannounced_title")}</p>
+        <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_unannounced_body")}</p>
+        <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_unannounced_call")}</p>
+        {button}
+      </div>
+    </div>
+  );
+}
+
 function ChatOpening() {
   const t = useTranslations();
   return (
@@ -649,6 +849,21 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     status: sessionStatus, retry: retrySession, session, errorCode: sessionErrorCode,
     keySignaturePending = false,
   } = useChatSession();
+  /**
+   * Объявлен ли НАШ ключ — прямо из своего источника, а не пробросом через
+   * `usePairChat`.
+   *
+   * ⚠️ ПРОБРОС ЗДЕСЬ БЫЛ, И ЕГО УБРАЛИ ПО ЗАМЕРУ. Мутация «пробрасывать всегда
+   * `absent`» проходила зелёной на 77 замерах: вторая проводка того же состояния
+   * внутри хука не сторожится ничем. При чужом ключе в справочнике цена промаха —
+   * экран, предлагающий нажать кнопку, которая молча ломает переписку на другом
+   * устройстве. Один источник, ровно как в списке переписок.
+   */
+  const {
+    needsPress: keyNotAnnounced, busy: announcing, announce: announceKey,
+    standing: keyStandingRaw, restoreFromCode,
+  } = useKeyAnnouncement();
+  const keyStanding = keyStandingRaw === 'other_key' ? ('other_key' as const) : ('absent' as const);
   // Окно кошелька открыто ПРЯМО СЕЙЧАС — по любой из двух причин. Причина
   // нужна дальше: слова у пропуска и у ключа разные (см. `ChatSignatureWanted`).
   // Ключ старше пропуска: если ждут обе подписи, человек ждёт первую.
@@ -1276,6 +1491,30 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           )}
           {signatureReason && messages.length === 0 && (
             <ChatSignatureWanted reason={signatureReason} variant="full" />
+          )}
+
+          {/* ⚠️ «ВАМ ПОКА НЕ МОГУТ ПИСАТЬ» — РЯДОМ С ОЖИДАНИЕМ ПОДПИСИ И ВЫШЕ
+              ПОЛЯ ВВОДА, по той же причине: человек смотрит в центр. Разбор
+              текста и трёх решений владельца — в докстринге
+              `ChatKeyNotAnnounced`.
+
+              Ниже ожидания подписи по порядку и НЕ одновременно с ним: пока окно
+              кошелька открыто, ждут именно его, и вторая просьба нажать кнопку в
+              этот момент — лишний шум. Признак приходит уже готовым решением
+              (`keyNotAnnounced`), а не собирается здесь: собирать его в разметке
+              значило бы дать ему разъехаться между панелью и списком, что в этом
+              проекте уже случалось (находка К-2). */}
+          {!signatureReason && keyNotAnnounced && messages.length > 0 && (
+            <ChatKeyNotAnnounced
+              variant="inline" busy={announcing} standing={keyStanding}
+              onConfirm={announceKey} onRestore={restoreFromCode}
+            />
+          )}
+          {!signatureReason && keyNotAnnounced && messages.length === 0 && (
+            <ChatKeyNotAnnounced
+              variant="full" busy={announcing} standing={keyStanding}
+              onConfirm={announceKey} onRestore={restoreFromCode}
+            />
           )}
 
           {/* Блоки ниже — состояния ПУСТОГО экрана: если история уже

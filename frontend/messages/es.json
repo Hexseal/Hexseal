@@ -679,7 +679,18 @@
     "bags_failed": "Algunos mensajes no se pudieron recoger del almacén. No se han perdido: intente reconectar.",
     "push_no_pass": "Aviso no enviado: en este dispositivo no hay sesión de chat.",
     "push_rate_limited": "Los avisos salen demasiado seguido; este se omitió. Espere un momento.",
-    "push_error": "No se pudo enviar el aviso. Su mensaje sí llegó, pero la otra persona no lo verá hasta abrir el chat."
+    "push_error": "No se pudo enviar el aviso. Su mensaje sí llegó, pero la otra persona no lo verá hasta abrir el chat.",
+    "key_unannounced_title": "Todavía nadie puede escribirte",
+    "key_unannounced_body": "Tu clave está creada, pero aún nadie la conoce.",
+    "key_unannounced_call": "Confirma en tu cartera y te encontrarán.",
+    "key_unannounced_action": "Confirmar",
+    "key_unannounced_confirming": "Confirmando…",
+    "key_elsewhere_title": "Tu chat ya está en otro dispositivo",
+    "key_elsewhere_body": "Los mensajes llegan allí.",
+    "key_elsewhere_restore_action": "Introducir código de recuperación",
+    "key_elsewhere_switch_action": "Recibir aquí",
+    "key_elsewhere_restore_note": "Restaurar tus mensajes.",
+    "key_elsewhere_switch_note": "Las conversaciones anteriores no se abrirán aquí."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

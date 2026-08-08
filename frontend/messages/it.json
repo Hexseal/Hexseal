@@ -679,7 +679,18 @@
     "bags_failed": "Alcuni messaggi non sono stati prelevati dall’archivio. Non sono persi: provi a riconnettersi.",
     "push_no_pass": "Notifica non inviata: su questo dispositivo non c’è una sessione di chat.",
     "push_rate_limited": "Le notifiche partono troppo spesso: questa è stata saltata. Attenda un momento.",
-    "push_error": "Non è stato possibile inviare la notifica. Il messaggio è stato consegnato, ma l’altra persona lo vedrà solo aprendo la chat."
+    "push_error": "Non è stato possibile inviare la notifica. Il messaggio è stato consegnato, ma l’altra persona lo vedrà solo aprendo la chat.",
+    "key_unannounced_title": "Nessuno può ancora scriverti",
+    "key_unannounced_body": "La tua chiave è creata, ma nessuno la conosce ancora.",
+    "key_unannounced_call": "Conferma nel tuo wallet e ti troveranno.",
+    "key_unannounced_action": "Conferma",
+    "key_unannounced_confirming": "Conferma in corso…",
+    "key_elsewhere_title": "La tua chat è già su un altro dispositivo",
+    "key_elsewhere_body": "I messaggi arrivano lì.",
+    "key_elsewhere_restore_action": "Inserire il codice di recupero",
+    "key_elsewhere_switch_action": "Ricevere qui",
+    "key_elsewhere_restore_note": "Ripristinare i messaggi.",
+    "key_elsewhere_switch_note": "Le conversazioni precedenti non si apriranno qui."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

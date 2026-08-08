@@ -8,9 +8,10 @@ import type { Abi } from 'viem';
 import { isAddress } from 'viem';
 import { usePairConversations } from '@/hooks/usePairConversations';
 import { useChatSession } from '@/hooks/useChatSession';
+import { useKeyAnnouncement } from '@/hooks/useKeyAnnouncement';
 import { ChatOffScreen } from '@/components/ChatOffScreen';
 import { useProfile } from '@/hooks/useProfile';
-import { ChatPanel, ChatSignatureWanted } from '@/components/ChatPanel';
+import { ChatPanel, ChatSignatureWanted, ChatKeyNotAnnounced } from '@/components/ChatPanel';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
@@ -231,6 +232,18 @@ function ChatHubPageInner() {
   // обе подписи, человек ждёт первую.
   const signatureReason: 'pass' | 'key' | null =
     keySignaturePending ? 'key' : passSignaturePending ? 'pass' : null;
+  // ⚠️ ТА ЖЕ НОВОСТЬ, ЧТО В ПАНЕЛИ, И ТЕМИ ЖЕ СЛОВАМИ. Список — то место, куда
+  // попадают чаще всего, и молчать здесь значило бы оставить тихую поломку ровно
+  // там, где её встретят первой. Урок оплачен 8 августа: разводка причин отказа
+  // доехала до панели и НЕ доехала до списка (находка К-2), и заметили это
+  // только рендером.
+  const {
+    needsPress: keyNotAnnounced, busy: announcing, announce: announceKey,
+    standing: keyStandingRaw, restoreFromCode,
+  } = useKeyAnnouncement();
+  // Экраны у `absent` и `other_key` разные: при чужом ключе нажатие заменяет ключ
+  // и ломает переписку на том устройстве (разбор — `ChatKeyNotAnnounced`).
+  const keyStanding = keyStandingRaw === 'other_key' ? 'other_key' as const : 'absent' as const;
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
@@ -585,7 +598,18 @@ function ChatHubPageInner() {
             <ChatSignatureWanted reason={signatureReason} variant="full" />
           )}
 
-          {!signatureReason && (isLoading || sessionStatus === 'loading') && conversations.length === 0 && (
+          {/* Та же новость и те же слова, что в панели, — см. комментарий у
+              `useKeyAnnouncement()` выше. Заготовки строк при этом НЕ рисуются
+              (условие ниже читает тот же признак): они говорят «сейчас будет», а
+              тут ждут не сеть, а человека. */}
+          {!signatureReason && keyNotAnnounced && conversations.length === 0 && (
+            <ChatKeyNotAnnounced
+              variant="full" busy={announcing} standing={keyStanding}
+              onConfirm={announceKey} onRestore={restoreFromCode}
+            />
+          )}
+
+          {!signatureReason && !keyNotAnnounced && (isLoading || sessionStatus === 'loading') && conversations.length === 0 && (
             <div className="space-y-2">
               {[1, 2, 3].map(i => (
                 <div key={i} className="flex items-center gap-3.5 px-3 py-2.5 rounded-[16px] border border-white/[0.04] bg-white/[0.02]">

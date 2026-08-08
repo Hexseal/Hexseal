@@ -177,6 +177,15 @@ describe('подписывается ровно то, что проверит с
 
 /* ─────────── проводка: getBagPass открывает окно и говорит об этом ─────────── */
 
+/* ⚠️ ВЕЗДЕ НИЖЕ `purpose: 'announce'`, И ЭТО НЕ ОСЛАБЛЕНИЕ ЗАМКА.
+ * У пропуска два назначения. Пропуск РАДИ ЯЩИКА `getBagPass` теперь отказывает
+ * сама, пока свой ключ не объявлен в справочнике: запечатать нам нельзя ничего,
+ * значит на складе для нас нет ни одного мешка и подписывать нечего (требование
+ * «ноль запросов пропуска», замер — `hooks/chatAnnounceStore.test.ts`).
+ * Пропуск РАДИ ОБЪЯВЛЕНИЯ этим порогом не отсекается — иначе вышло бы кольцо.
+ * Замки ниже про ОКНО КОШЕЛЬКА и про мьютекс, а до окна доходит именно этот
+ * вызов; оставив умолчание, они мерили бы отказ порога, а не то, ради чего
+ * заведены. */
 describe('getBagPass: единственное место подписи в чате', () => {
   it('окно кошелька открывается, и наверх об этом сообщают', async () => {
     // `onSigning` — единственный честный способ для отображения узнать, что
@@ -190,6 +199,7 @@ describe('getBagPass: единственное место подписи в ча
       ALICE,
       async () => { server.walletPrompts++; return sig('b'); },
       (b) => { busy.push(b); },
+      { purpose: 'announce' },
     );
     expect(pass).toBe('v1.by-wallet.mac');
     expect(server.walletPrompts).toBe(1);
@@ -208,8 +218,12 @@ describe('getBagPass: единственное место подписи в ча
       session?: unknown,
     ) => Promise<string>;
 
+    // ⚠️ Сеанс подсовывается ЧЕТВЁРТЫМ аргументом — там же, где теперь живут
+    // `humanAsked`/`purpose`. Поэтому назначение уезжает вместе с ним: замок
+    // продолжает мерить, что окно кошелька всё равно открывается.
     const pass = await forced(
-      ALICE, async () => { server.walletPrompts++; return sig('b'); }, undefined, session,
+      ALICE, async () => { server.walletPrompts++; return sig('b'); }, undefined,
+      { purpose: 'announce', session } as unknown,
     );
     expect(server.walletPrompts, 'сеанс снова отменяет окно кошелька').toBe(1);
     expect(pass).toBe('v1.by-wallet.mac');
@@ -218,9 +232,9 @@ describe('getBagPass: единственное место подписи в ча
 
   it('на живом пропуске окно не открывается и признак не взводится', async () => {
     const { getBagPass } = await import('@/hooks/useChatSession');
-    await getBagPass(ALICE, async () => { server.walletPrompts++; return sig('b'); }, undefined);
+    await getBagPass(ALICE, async () => { server.walletPrompts++; return sig('b'); }, undefined, { purpose: 'announce' });
     const busy: boolean[] = [];
-    await getBagPass(ALICE, async () => { server.walletPrompts++; return sig('b'); }, (b) => busy.push(b));
+    await getBagPass(ALICE, async () => { server.walletPrompts++; return sig('b'); }, (b) => busy.push(b), { purpose: 'announce' });
     expect(server.walletPrompts).toBe(1);
     expect(busy).toEqual([]);
   });

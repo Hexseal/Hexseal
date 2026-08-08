@@ -679,7 +679,18 @@
     "bags_failed": "有些消息没能从仓库取回。它们没有丢失——试试重新连接。",
     "push_no_pass": "未发送通知：本设备上没有聊天会话。",
     "push_rate_limited": "通知发得太频繁，这条被跳过了。请稍等。",
-    "push_error": "通知没能发出。你的消息已送达，但对方要打开聊天才会看到。"
+    "push_error": "通知没能发出。你的消息已送达，但对方要打开聊天才会看到。",
+    "key_unannounced_title": "目前还没人能给你发消息",
+    "key_unannounced_body": "密钥已创建，但还没人知道它。",
+    "key_unannounced_call": "在钱包中确认，别人就能找到你。",
+    "key_unannounced_action": "确认",
+    "key_unannounced_confirming": "确认中…",
+    "key_elsewhere_title": "你的聊天已在另一台设备上",
+    "key_elsewhere_body": "消息发到那里。",
+    "key_elsewhere_restore_action": "输入恢复码",
+    "key_elsewhere_switch_action": "在这里接收",
+    "key_elsewhere_restore_note": "恢复你的消息。",
+    "key_elsewhere_switch_note": "以前的对话在这里打不开。"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

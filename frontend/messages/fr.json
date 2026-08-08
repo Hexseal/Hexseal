@@ -679,7 +679,18 @@
     "bags_failed": "Certains messages n’ont pas pu être récupérés du stockage. Ils ne sont pas perdus — essayez de vous reconnecter.",
     "push_no_pass": "Notification non envoyée : aucune session de messagerie sur cet appareil.",
     "push_rate_limited": "Les notifications partent trop souvent — celle-ci a été ignorée. Patientez un instant.",
-    "push_error": "La notification n’a pas pu être envoyée. Votre message est bien arrivé, mais l’autre personne ne le verra qu’en ouvrant la messagerie."
+    "push_error": "La notification n’a pas pu être envoyée. Votre message est bien arrivé, mais l’autre personne ne le verra qu’en ouvrant la messagerie.",
+    "key_unannounced_title": "Personne ne peut encore vous écrire",
+    "key_unannounced_body": "Votre clé est créée, mais personne ne la connaît encore.",
+    "key_unannounced_call": "Confirmez dans votre portefeuille — et on vous trouvera.",
+    "key_unannounced_action": "Confirmer",
+    "key_unannounced_confirming": "Confirmation…",
+    "key_elsewhere_title": "Votre discussion est déjà sur un autre appareil",
+    "key_elsewhere_body": "Les messages y arrivent.",
+    "key_elsewhere_restore_action": "Saisir le code de récupération",
+    "key_elsewhere_switch_action": "Recevoir ici",
+    "key_elsewhere_restore_note": "Restaurer vos messages.",
+    "key_elsewhere_switch_note": "Les conversations précédentes ne s'ouvriront pas ici."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",
