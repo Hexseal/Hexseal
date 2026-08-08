@@ -73,6 +73,7 @@ import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
 import { deriveLinkSigningKeypair } from '@/lib/chatConversation';
 import { RELAYER_URL, requestBagPass } from '@/lib/chatTransport';
 import { withWalletLock } from '@/lib/walletLock';
+import { noteWalletHandoff, requireSignatureGate } from '@/lib/chatSignatureGate';
 import { isChatDeclined, rememberChatDecline, forgetChatDecline, isUserDecline } from '@/lib/chatDecline';
 
 /* ────────────────────────── справочник ключей ─────────────────────────── */
@@ -303,6 +304,7 @@ export async function signChatKeyLocked(
   address: `0x${string}`,
   signTypedDataAsync: (typedData: typeof CHAT_KEY_TYPED_DATA) => Promise<`0x${string}`>,
   onSigning?: (busy: boolean) => void,
+  humanAsked = false,
 ): Promise<`0x${string}`> {
   return withWalletLock(address, async () => {
     // ⚠️ `onSigning` — ровно вокруг вызова кошелька, как у `getBagPass` ниже, и
@@ -315,6 +317,11 @@ export async function signChatKeyLocked(
     //
     // `false` ставится в `finally`, чтобы отказ человека подписать не оставил
     // экран с вечным «подпишите».
+    // ⚠️ ПОРОГ СТОИТ ВНУТРИ ЗАМКА, а не перед ним. Пока мы ждём своей очереди у
+    // кошелька (страница сделки, профиль, пуши), приложение успевает свернуться
+    // — и решение, принятое до ожидания, к этому моменту устарело бы.
+    requireSignatureGate(humanAsked);
+    noteWalletHandoff();
     onSigning?.(true);
     try {
       return await signTypedDataAsync(CHAT_KEY_TYPED_DATA);
@@ -324,13 +331,28 @@ export async function signChatKeyLocked(
   });
 }
 
+/**
+ * @param opts.humanAsked человек нажал кнопку. Прямое действие проходит порог:
+ *   нажать по невидимой кнопке нельзя, значит страница жива и на переднем плане.
+ *   ⚠️ Сюда обязано приезжать НАСТОЯЩЕЕ нажатие, а не `true` «чтобы работало»:
+ *   подставив его из автоматики, мы вернём подпись в спящую страницу и замеры
+ *   `chatPhoneSignature.test.ts` покраснеют.
+ */
 export async function getBagPass(
   address: `0x${string}`,
   signMessageAsync: (args: { message: string }) => Promise<string>,
   onSigning?: (busy: boolean) => void,
+  opts: { humanAsked?: boolean } = {},
 ): Promise<string> {
   return withWalletLock(address, async () => {
     const pass = await requestBagPass(async (message) => {
+      // ⚠️ ПОРОГ ЗДЕСЬ, ВНУТРИ КОЛБЭКА, — И ЭТО ГЛАВНОЕ РЕШЕНИЕ ФАЙЛА.
+      // `requestBagPass` зовёт этот колбэк ТОЛЬКО когда пропуска нет и его
+      // правда надо подписывать. Поставив порог этажом выше, мы отказали бы и
+      // тем, у кого пропуск живой (12 часов в `localStorage`) — то есть
+      // большинству заходов, где никакого окна кошелька и не намечалось.
+      requireSignatureGate(opts.humanAsked);
+      noteWalletHandoff();
       onSigning?.(true);
       try {
         return await signMessageAsync({ message });

@@ -36,8 +36,9 @@
  * кошелёк и склад.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { requestBagPass, _resetBagPassCacheForTest } from '@/lib/chatTransport';
+import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
 import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
+import { _resetSignatureGateForTest } from '@/lib/chatSignatureGate';
 
 const ALICE = '0xa1ce00000000000000000000000000000000cafe' as const;
 
@@ -120,10 +121,19 @@ beforeEach(() => {
   page = fakePage();
   vi.stubGlobal('document', page);
   vi.stubGlobal('localStorage', undefined);
+  // ⚠️ Порог помнит уход к кошельку между вызовами — на то он и заведён. Между
+  // ЗАМЕРАМИ эта память обязана обнуляться, иначе первый же замер, уводящий
+  // страницу, красил бы все следующие, и файл мерил бы порядок тестов, а не код.
+  _resetSignatureGateForTest();
   stubServer();
 });
 
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => {
+  // Снимаем наблюдение ДО того, как исчезнет подделанная страница: иначе
+  // слушатель остаётся висеть на выброшенном объекте.
+  _resetSignatureGateForTest();
+  vi.unstubAllGlobals();
+});
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 
