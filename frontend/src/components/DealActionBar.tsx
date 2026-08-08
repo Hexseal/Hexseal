@@ -13,7 +13,7 @@ import { AGREEMENT_ABI, CONTRACTS, DIAMOND_ABI } from '@/config/contracts';
 import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
 import { ACTIVATION_WINDOW, AUTO_APPROVE_WINDOW } from '@/config/constants';
 import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless } from '@/lib/relay';
-import { getXmtpClientIfCached, notifyArbiters } from '@/lib/xmtp';
+import { notifyArbitersOfDispute } from '@/lib/webpush';
 import { DisputeCostNotice } from '@/components/DisputeCostNotice';
 import { useArbiterTimeoutOutcome } from '@/hooks/useArbiterTimeoutOutcome';
 import { useTranslations } from 'next-intl';
@@ -235,11 +235,10 @@ export function DealActionBar({ agreementAddr }: Props) {
             abi: ARBITER_REGISTRY_ABI as Abi,
             functionName: 'getArbiters',
           }) as string[];
-          if (arbiters.length > 0) {
-            // Use cached client only — never trigger a new wallet signature here.
-            const xmtp = getXmtpClientIfCached(address!);
-            if (xmtp) await notifyArbiters(xmtp, agreementAddr, arbiters);
-          }
+          // Пуш-уведомление, а не личка XMTP: канал сменился вместе с
+          // выключением XMTP, обещание осталось прежним — лучшим усилием,
+          // и ни одной подписи кошелька по дороге.
+          if (arbiters.length > 0) notifyArbitersOfDispute(arbiters, agreementAddr);
         } catch { /* non-critical */ }
       }
       // Keep `busy` set until this delayed refetch actually lands, instead of

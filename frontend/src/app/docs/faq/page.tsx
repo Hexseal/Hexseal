@@ -8,6 +8,7 @@ import {
   ACTIVATION_WINDOW_DAYS,
   AUTO_APPROVE_WINDOW_DAYS,
 } from "@/config/constants";
+import { CONTRACTS } from "@/config/contracts";
 
 interface FAQItem {
   q: string;
@@ -129,7 +130,15 @@ export default function FAQPage() {
             </a>
           ),
         },
-        { q: t("faq.q_verify"), a: t("faq.a_verify") },
+        // Адрес берётся из того же места, что и весь остальной код (CONTRACTS.diamond
+        // ← NEXT_PUBLIC_DIAMOND_ADDRESS), а НЕ вписывается в переводы руками.
+        // Причина: вписанный руками адрес указывал на 0xF00CC718… — брошенное
+        // развёртывание, которое до сих пор живо на цепи и отдаёт СТАРЫЕ заказы,
+        // то есть выглядит настоящим. Человек, пришедший «проверить контракты»
+        // перед сделкой, смотрел бы не туда. Проверено на цепи 7 августа 2026:
+        // живой диамонд — 11 фасетов и рабочая доска; тот, что был в справке —
+        // 10 фасетов и заказы из прошлой жизни.
+        { q: t("faq.q_verify"), a: t("faq.a_verify", { address: CONTRACTS.diamond }) },
       ],
     },
   ];

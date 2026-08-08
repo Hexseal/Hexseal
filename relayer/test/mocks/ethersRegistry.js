@@ -35,6 +35,13 @@ export function resetContractMocks() {
 const providerMockDefaults = {
   getBalance: async () => 1_000000000000000000n, // 1 ETH — fixed; no test asserts a specific value
   getTransactionReceipt: async () => null,
+  // К-1: deployless-проверка контрактной подписи (ERC-1271/ERC-6492) идёт через
+  // provider.call() — единственный способ релеера обратиться к цепи мимо
+  // ethers.Contract, поэтому мокается здесь же, рядом с двумя другими такими.
+  // Умолчание — «подпись не признана»: тест, который ХОЧЕТ признания, обязан
+  // сказать это вслух через mockProviderCall(), иначе успех выглядел бы
+  // случайным.
+  call: async () => '0x00',
 };
 
 // Backs the JsonRpcProvider.prototype patch in test/setup.js — that patch
@@ -50,6 +57,10 @@ export function mockProviderBalance(value) {
 
 export function mockProviderReceipt(value) {
   providerMocks.getTransactionReceipt = typeof value === 'function' ? value : async () => value;
+}
+
+export function mockProviderCall(value) {
+  providerMocks.call = typeof value === 'function' ? value : async () => value;
 }
 
 export function resetProviderMocks() {

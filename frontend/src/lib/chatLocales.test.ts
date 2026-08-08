@@ -1,0 +1,436 @@
+/**
+ * chatLocales.test.ts — тексты пересадки во всех локалях (Задача 7).
+ *
+ * `zh.json` НЕ ТРОГАЕТСЯ и здесь не проверяется: он сирота — в списке локалей
+ * приложения его нет (`i18n/routing`, `zh-CN` — китайская локаль проекта).
+ * Правило записано в плане прямым текстом; тест повторяет его числом, а не
+ * доверием: список локалей задан здесь явно, и `zh.json` в нём отсутствует.
+ */
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const MESSAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../messages');
+
+/** Четырнадцать локалей приложения. `zh.json` — сирота, вне списка. */
+const LOCALES = [
+  'ar', 'de', 'en', 'es', 'fr', 'hi', 'it', 'ja', 'ko', 'pt', 'ru', 'th', 'uk', 'zh-CN',
+];
+
+/** Ключи, появившиеся вместе с пересадкой. */
+const REQUIRED = [
+  'chat.privacy_badge_title',
+  'chat.privacy_badge_storage',
+  'chat.privacy_badge_dispute',
+  'chat.chain_gap',
+  'chat.chain_gap_start',
+  'chat.pass_signature_hint',
+  'chat.key_not_saved',
+  'chat.key_not_saved_blocked',
+];
+
+/** Ключи показа кода восстановления (Задача 8). Отдельным списком, а не
+ *  дописью в `REQUIRED`: у них своя причина существовать и свой владелец
+ *  текста — четыре первых утверждены им дословно и меняться не должны. */
+const REQUIRED_RECOVERY = [
+  // Утверждено владельцем — текст плашки.
+  'chat.recovery_warning_title',
+  'chat.recovery_warning_access',
+  'chat.recovery_warning_loss',
+  'chat.recovery_warning_keep',
+  // Проверка «докажи, что записал» и честный выход из неё.
+  'chat.recovery_written',
+  'chat.recovery_skip',
+  'chat.recovery_where',
+  'chat.recovery_check_title',
+  'chat.recovery_check_hint',
+  'chat.recovery_check_word',
+  'chat.recovery_check_failed',
+  'chat.recovery_check_done',
+  'chat.recovery_reminder',
+  'chat.recovery_show',
+  // Вход в восстановление по коду (Задача 8б): без него код показывался, но
+  // ввести его было некуда — половина, которая пугает, без половины, ради
+  // которой всё затевалось.
+  'chat.restore_title',
+  'chat.restore_hint',
+  'chat.restore_placeholder',
+  'chat.restore_submit',
+  'chat.restore_menu',
+  'chat.restore_done',
+  'chat.restore_forget_first',
+  'chat.restore_err_empty',
+  'chat.restore_err_word_count',
+  'chat.restore_err_unknown_word',
+  'chat.restore_err_checksum',
+  'chat.restore_err_busy',
+  'chat.restore_err_not_applicable',
+  'chat.restore_err_storage_read',
+  'chat.restore_err_storage_slow',
+  'chat.restore_err_address',
+  'chat.restore_err_signature',
+  'chat.restore_err_other',
+];
+
+/** Ключи, которые обязаны исчезнуть: они говорили про XMTP и про журнал
+ *  бота, которого больше нет. Оставленный ключ — не мусор, а обещание,
+ *  которое кто-нибудь снова выведет на экран. */
+const REMOVED = [
+  'chat.dispute_log_badge',
+  'chat.dispute_log_hint',
+  'chat.log_incomplete',
+  'chat.load_older',
+  'chat.search_history_hint',
+  'chat.open_xmtp',
+  'chat.connecting_messenger',
+  'notifications.enable_messaging_hint',
+];
+
+function read(locale: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.join(MESSAGES_DIR, `${locale}.json`), 'utf8'));
+}
+
+function pick(dict: Record<string, unknown>, key: string): unknown {
+  return key.split('.').reduce<unknown>(
+    (acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined),
+    dict,
+  );
+}
+
+describe('тексты пересадки — 14 локалей', () => {
+  it('в каждой локали есть все новые ключи, и ни один не пустой', () => {
+    const missing: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of REQUIRED) {
+        const value = pick(dict, key);
+        if (typeof value !== 'string' || value.trim().length === 0) missing.push(`${locale}:${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('третья строка бейджа — настоящее предложение, а не заглушка', () => {
+    // Смысл проверить нечем, длину и несовпадение — можно. Заглушка вида
+    // "TODO" или копия соседней строки этот замок красит.
+    //
+    // Порог разный: иероглифическое письмо укладывает то же предложение
+    // втрое короче по символам (ja/zh-CN — 36–37 знаков против 88 у ru), и
+    // единый латинский порог красил бы честный перевод. Числа записаны
+    // руками по факту, а не выведены формулой.
+    const MIN_LEN: Record<string, number> = { ja: 20, ko: 20, 'zh-CN': 18, th: 30 };
+    const bad: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      const dispute = pick(dict, 'chat.privacy_badge_dispute');
+      const storage = pick(dict, 'chat.privacy_badge_storage');
+      const title = pick(dict, 'chat.privacy_badge_title');
+      const min = MIN_LEN[locale] ?? 40;
+      if (typeof dispute !== 'string' || dispute.length < min) bad.push(`${locale}: короткая`);
+      if (dispute === storage || dispute === title) bad.push(`${locale}: копия соседней`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('русский бейдж — дословно утверждённый владельцем текст', () => {
+    const ru = read('ru');
+    expect(pick(ru, 'chat.privacy_badge_title')).toBe('Только вы двое');
+    expect(pick(ru, 'chat.privacy_badge_storage'))
+      .toBe('Переписка зашифрована. Сервер хранит её в нечитаемом виде и не имеет ключей.');
+    expect(pick(ru, 'chat.privacy_badge_dispute'))
+      .toBe('При споре предъявить переписку арбитру может каждая из сторон — со своего устройства.');
+  });
+
+  it('код восстановления: все четырнадцать ключей есть в каждой локали и не пусты', () => {
+    const missing: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of REQUIRED_RECOVERY) {
+        const value = pick(dict, key);
+        if (typeof value !== 'string' || value.trim().length === 0) missing.push(`${locale}:${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('номер слова подставляется, а не вписан цифрой', () => {
+    // `{n}` обязан доехать до каждой локали: без него человек получит
+    // «Слово» без номера и не поймёт, какое слово вписывать. Общий гейт
+    // (`i18n/messages.test.ts`) сверяет набор аргументов с английским — здесь
+    // сказано ЧИСЛОМ, какой именно аргумент нужен.
+    const bad: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of [
+        'chat.recovery_check_word', 'chat.recovery_check_failed',
+        'chat.restore_err_unknown_word',
+      ]) {
+        if (!String(pick(dict, key)).includes('{n}')) bad.push(`${locale}:${key}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('⚠️ нигде не сказано «сохраните» — только «запишите»', () => {
+    // Правило владельца, и причина у него неочевидная: «сохраните» люди
+    // читают как «сфотографируйте». Снимок уезжает в галерею, галерея — в
+    // облако, и код оказывается ровно там, где мы просили его не держать.
+    // Обнаружить это мы не можем никак — единственное, что в наших силах,
+    // это не подсказывать такой способ словом.
+    // ⚠️ ЗАПРЕЩЕН ГЛАГОЛ, А НЕ КОРЕНЬ. Немецкий поймал это замером: `/speicher/`
+    // краснел на `Gerätespeicher` — «хранилище устройства», существительное в
+    // надписи про отказ диска. Запрет корня сделал бы гейт про слово вообще, а
+    // он про ПРОСЬБУ: «сохраните» человек читает как «сфотографируйте».
+    // Поэтому `\bspeichern\b` (глагол) ловится, `Gerätespeicher` — нет.
+    const BANNED: Record<string, RegExp> = {
+      ru: /сохран/i,
+      uk: /збереж|зберіг/i,
+      en: /\bsav(e|ed|ing)\b|\bstore\b/i,
+      de: /\bspeicher(n|e|t|st)\b|abspeichern/i,
+      fr: /sauvegard|enregistr/i,
+      es: /guard/i,
+      pt: /guard|salv/i,
+      it: /salva/i,
+    };
+    const bad: string[] = [];
+    for (const locale of LOCALES) {
+      const banned = BANNED[locale];
+      if (!banned) continue; // письменности без прямого аналога — гейт не врёт
+      const chat = pick(read(locale), 'chat') as Record<string, string>;
+      for (const [key, value] of Object.entries(chat)) {
+        // И показ кода (`recovery_`), И ввод кода (`restore_`): правило про
+        // слово одно на обе половины, иначе оно живёт только там, где его
+        // завели, а нарушается там, где о нём забыли.
+        const covered = key.startsWith('recovery_') || key.startsWith('restore_');
+        if (covered && banned.test(value)) bad.push(`${locale}:${key}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('русское предупреждение — дословно утверждённый владельцем текст', () => {
+    const ru = read('ru');
+    expect(pick(ru, 'chat.recovery_warning_title')).toBe('Код восстановления');
+    expect(pick(ru, 'chat.recovery_warning_access')).toBe(
+      'Это доступ ко всей вашей переписке. Кто получит эти 12 слов — прочитает всё. Отозвать или сменить их нельзя.',
+    );
+    expect(pick(ru, 'chat.recovery_warning_loss')).toBe('Потеряете — переписка не вернётся.');
+    expect(pick(ru, 'chat.recovery_warning_keep')).toBe('Запишите и держите в секрете.');
+  });
+
+  it('ключи про XMTP и журнал бота удалены во всех локалях', () => {
+    const alive: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      if (pick(dict, 'xmtp_error') !== undefined) alive.push(`${locale}:xmtp_error`);
+      for (const key of REMOVED) {
+        if (pick(dict, key) !== undefined) alive.push(`${locale}:${key}`);
+      }
+    }
+    expect(alive).toEqual([]);
+  });
+
+  it('обещание «платформа читает переписку» убрано из оставшихся текстов', () => {
+    // Прямая ложь после пересадки: сервер ключей не имеет. Ловится по двум
+    // текстам, которые её несли (ru), — остальные локали закрыты тем, что
+    // ключи `dispute_log_*` удалены целиком (проверка выше).
+    const ru = read('ru');
+    expect(String(pick(ru, 'chat.e2e_notice'))).not.toContain('спор');
+    expect(String(pick(ru, 'chat.encrypted'))).not.toContain('спор');
+  });
+
+  it('zh.json — сирота: в списке локалей его нет, и он не тронут', () => {
+    expect(LOCALES).not.toContain('zh');
+    const zh = read('zh');
+    // Ровно то, что там было до пересадки: старые ключи на месте, новых нет.
+    expect(pick(zh, 'chat.open_xmtp')).toBeTypeOf('string');
+    expect(pick(zh, 'chat.privacy_badge_title')).toBeUndefined();
+  });
+});
+
+/* ─── Правда после сноса XMTP: справка и разрозненные бейджи (аудит текстов,
+ * 2026-08-07). Найдено врождебным аудитом: справка (`faq.q_chat`/`a_chat`,
+ * `faq.q_files`/`a_files`) описывала снесённый мессенджер и утверждала
+ * обратное новому бейджу шапки чата — что платформа состоит в переписке и
+ * читает её. Заодно всплыли два соседних бага: тултип/подпись про вложение
+ * (`chat.attach_file_title`, `chat.e2e_notice`) обещали ровно "7 дней" без
+ * учёта того, что мешок, усыновлённый сделкой, живёт дольше (до 90 дней —
+ * `relayer/bagStore.js`, BAG_MAX_AGE_MS); а баннер обрыва связи
+ * (`chat.stream_dead`) и кнопка рядом (`chat.reconnect`) были переведены
+ * только на два языка из четырнадцати — двенадцать локалей показывали
+ * английский текст человеку, переставшему получать сообщения. */
+describe('справка и бейджи не врут после сноса XMTP (аудит текстов)', () => {
+  /** Ключи `chat.*`, добавленные/тронутые вместе с бейджем "Только вы двое":
+   *  полнота по всему пространству имён, а не только по точечному списку —
+   *  REQUIRED выше ловит регресс конкретных ключей, это ловит вообще любой
+   *  пустой или пропавший `chat.*`. */
+  it('каждый ключ chat.* есть во всех 14 локалях и не пуст (кроме zh — сироты)', () => {
+    const enChat = pick(read('en'), 'chat') as Record<string, unknown>;
+    const chatKeys = Object.keys(enChat);
+    expect(chatKeys.length).toBeGreaterThan(50); // защита от пустого namespace по ошибке чтения
+
+    const missing: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of chatKeys) {
+        const value = pick(dict, `chat.${key}`);
+        if (typeof value !== 'string' || value.trim().length === 0) missing.push(`${locale}:chat.${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('нигде в chat/messaging/faq не осталось слова XMTP — снесённого мессенджера больше нет', () => {
+    const found: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const ns of ['chat', 'messaging', 'faq']) {
+        const node = pick(dict, ns) as Record<string, unknown> | undefined;
+        if (!node) continue;
+        for (const [key, value] of Object.entries(node)) {
+          if (typeof value === 'string' && /xmtp/i.test(value)) found.push(`${locale}:${ns}.${key}`);
+        }
+      }
+    }
+    expect(found).toEqual([]);
+  });
+
+  /** Старые (XMTP-эры) значения — то, что было ДО правки. Тест запирает
+   *  именно регресс к НИМ, а не подгоняется под то, что написано сейчас: если
+   *  кто-то откатит правку буква в букву, тест покраснеет. */
+  const OLD_ENABLED_DESC: Record<string, string> = {
+    ar: 'تشفير كامل عبر XMTP · يمكن للآخرين مراسلتك',
+    de: 'Ende-zu-Ende verschlüsselt via XMTP · Andere können dir Nachrichten senden',
+    en: 'End-to-end encrypted via XMTP · Others can message you',
+    es: 'Cifrado de extremo a extremo vía XMTP · Otros pueden enviarte mensajes',
+    fr: 'Chiffrement de bout en bout via XMTP · Les autres peuvent vous envoyer des messages',
+    hi: 'XMTP के माध्यम से एंड-टू-एंड एन्क्रिप्टेड · अन्य आपको संदेश कर सकते हैं',
+    it: 'Crittografia end-to-end tramite XMTP · Gli altri possono scriverti',
+    ja: 'XMTPによるエンドツーエンド暗号化 · 他のユーザーからメッセージを受信できます',
+    ko: 'XMTP를 통한 엔드투엔드 암호화 · 다른 사용자가 메시지를 보낼 수 있습니다',
+    pt: 'Criptografia de ponta a ponta via XMTP · Outros podem te enviar mensagens',
+    ru: 'Сквозное шифрование через XMTP · Другие пользователи могут писать вам',
+    th: 'เข้ารหัสแบบ end-to-end ผ่าน XMTP · ผู้อื่นสามารถส่งข้อความถึงคุณได้',
+    uk: 'Наскрізне шифрування через XMTP · Інші можуть вам писати',
+    'zh-CN': '通过 XMTP 端对端加密 · 他人可以向您发送消息',
+  };
+
+  it('messaging.enabled_desc больше не зовёт снесённый мессенджер по имени', () => {
+    const regressed: string[] = [];
+    for (const locale of LOCALES) {
+      const value = pick(read(locale), 'messaging.enabled_desc');
+      if (value === OLD_ENABLED_DESC[locale]) regressed.push(locale);
+    }
+    expect(regressed).toEqual([]);
+  });
+
+  /** `attach_file_title` / `e2e_notice`: строка обязана упоминать что-то,
+   *  кроме голых "7 дней" — то есть продление, пока сделка открыта. Ловится
+   *  не regexp'ом по числу (число уже подставляется параметром `{mb}` в
+   *  attach_file_title, и "7" законно присутствует само по себе), а прямым
+   *  сравнением со СТАРЫМ, урезанным текстом, которого больше быть не должно.
+   */
+  const OLD_E2E_NOTICE: Record<string, string> = {
+    ar: 'مشفَّر · يُحفظ 7 أيام · المفتاح لديكما وحدكما',
+    de: 'Verschlüsselt · 7 Tage gespeichert · nur ihr zwei habt den Schlüssel',
+    en: 'Encrypted · kept 7 days · only the two of you hold the key',
+    es: 'Cifrado · guardado 7 días · solo vosotros dos tenéis la clave',
+    fr: 'Chiffré · conservé 7 jours · vous seuls avez la clé',
+    hi: 'एन्क्रिप्टेड · 7 दिन तक रखा · कुंजी सिर्फ़ आप दोनों के पास',
+    it: 'Cifrato · conservato 7 giorni · solo voi due avete la chiave',
+    ja: '暗号化 · 7日間保存 · 鍵はお二人だけ',
+    ko: '암호화 · 7일 보관 · 키는 두 사람만 보유',
+    pt: 'Cifrado · guardado 7 dias · só vocês dois têm a chave',
+    ru: 'Зашифровано · хранится 7 дней · ключ только у вас двоих',
+    th: 'เข้ารหัส · เก็บ 7 วัน · กุญแจอยู่กับคุณสองคนเท่านั้น',
+    uk: 'Зашифровано · зберігається 7 днів · ключ лише у вас двох',
+    'zh-CN': '已加密 · 保存 7 天 · 密钥只在你们两人手中',
+  };
+
+  it('chat.e2e_notice говорит не только "7 дней", но и про продление, пока открыта сделка', () => {
+    const regressed: string[] = [];
+    for (const locale of LOCALES) {
+      const value = pick(read(locale), 'chat.e2e_notice');
+      if (value === OLD_E2E_NOTICE[locale]) regressed.push(locale);
+    }
+    expect(regressed).toEqual([]);
+  });
+
+  it('faq.a_chat и faq.a_files не утверждают, что платформа состоит в переписке и читает её', () => {
+    // "we open them" / "мы открываем их" / их аналоги в старом тексте — прямая
+    // ложь после пересадки на сквозное шифрование. Форма проверки та же, что
+    // выше: сравнение со старым текстом, а не поиск слова — ключевая фраза
+    // формулируется по-разному в каждом языке, а старый текст известен точно.
+    const OLD_A_CHAT_HAS_PLATFORM_READS: Record<string, string> = {
+      en: 'the platform can read them',
+      ru: 'платформа имеет к ним доступ',
+    };
+    for (const [locale, phrase] of Object.entries(OLD_A_CHAT_HAS_PLATFORM_READS)) {
+      const value = String(pick(read(locale), 'faq.a_chat'));
+      expect(value, `${locale}: faq.a_chat`).not.toContain(phrase);
+    }
+  });
+
+  /** Баннер обрыва связи и переведён, и не совпадает с английским нигде,
+   *  кроме самого английского и русского (тот уже был переведён до этой
+   *  правки). До правки 12 локалей из 14 показывали дословно английский
+   *  текст — ровно то, что здесь заперто. */
+  it('chat.stream_dead и chat.reconnect переведены во всех 14 локалях, не только в en/ru', () => {
+    const enStreamDead = pick(read('en'), 'chat.stream_dead');
+    const enReconnect = pick(read('en'), 'chat.reconnect');
+    const untranslated: string[] = [];
+    for (const locale of LOCALES) {
+      if (locale === 'en') continue;
+      const dict = read(locale);
+      if (pick(dict, 'chat.stream_dead') === enStreamDead) untranslated.push(`${locale}:stream_dead`);
+      if (pick(dict, 'chat.reconnect') === enReconnect) untranslated.push(`${locale}:reconnect`);
+    }
+    expect(untranslated).toEqual([]);
+  });
+});
+
+// ── Адрес контракта не живёт в переводах ────────────────────────────────────
+//
+// Найдено 7 августа 2026 при аудите текстов. `faq.a_verify` во всех 14 локалях
+// предлагал «проверить контракты» и называл адрес `0xF00CC718…`, вписанный
+// руками. Замер на цепи: у этого адреса 10 фасетов и он до сих пор отдаёт
+// СТАРЫЕ заказы — то есть выглядит настоящим; у живого диамонда 11 фасетов и
+// рабочая доска. Человек, пришедший проверить контракты перед сделкой, смотрел
+// бы на брошенное развёртывание.
+//
+// Причина не в опечатке, а в месте: адрес, вписанный в перевод, обновляется
+// вручную четырнадцать раз и потому не обновляется никогда. Теперь он
+// подставляется из `CONTRACTS.diamond` — из того же места, что и весь код.
+//
+// Этот замок стоит на самой возможности вернуться к прежнему: любой
+// шестнадцатеричный адрес, вписанный в справку руками, красит тест.
+describe('адрес контракта не вписан в переводы руками', () => {
+  const HEX_ADDRESS = /0x[a-fA-F0-9]{40}/;
+
+  it.each(LOCALES)('%s: faq.a_verify подставляет адрес, а не называет его', (locale) => {
+    const dict = JSON.parse(
+      fs.readFileSync(path.join(MESSAGES_DIR, `${locale}.json`), 'utf8')
+    );
+    const text = dict?.faq?.a_verify;
+    expect(typeof text, `${locale}: нет ключа faq.a_verify`).toBe('string');
+    expect(text, `${locale}: адрес вписан руками — он устареет и уведёт человека не туда`)
+      .not.toMatch(HEX_ADDRESS);
+    expect(text, `${locale}: нет подстановки {address}`).toContain('{address}');
+  });
+
+  it('ни один текст справки не называет адрес руками', () => {
+    const guilty: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = JSON.parse(
+        fs.readFileSync(path.join(MESSAGES_DIR, `${locale}.json`), 'utf8')
+      );
+      for (const [key, value] of Object.entries(dict?.faq ?? {})) {
+        if (typeof value === 'string' && HEX_ADDRESS.test(value)) {
+          guilty.push(`${locale}:faq.${key}`);
+        }
+      }
+    }
+    expect(guilty).toEqual([]);
+  });
+});

@@ -7,10 +7,9 @@ import { useSearchParams } from 'next/navigation';
 import type { Abi } from 'viem';
 import { isAddress } from 'viem';
 import { usePairConversations } from '@/hooks/usePairConversations';
-import { useXmtp } from '@/contexts/XmtpContext';
-import { useXmtpFailureText } from '@/hooks/useXmtpFailureText';
+import { useChatSession } from '@/hooks/useChatSession';
+import { ChatOffScreen } from '@/components/ChatOffScreen';
 import { useProfile } from '@/hooks/useProfile';
-import { getXmtpClientIfCached, toIdentifier } from '@/lib/xmtp';
 import { ChatPanel } from '@/components/ChatPanel';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
@@ -220,9 +219,8 @@ function ChatHubPageInner() {
   const searchParams = useSearchParams();
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
-  const { status: xmtpStatus, retry: retryXmtp } = useXmtp();
-  const xmtpFailureText = useXmtpFailureText();
-  const { conversations, isLoading, error, reload } = usePairConversations(xmtpStatus === 'ready');
+  const { status: sessionStatus, retry: retrySession, errorCode: sessionErrorCode } = useChatSession();
+  const { conversations, isLoading, error, reload } = usePairConversations(sessionStatus === 'ready');
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
@@ -410,10 +408,10 @@ function ChatHubPageInner() {
     const addr = newChatAddr.trim().toLowerCase();
     if (!isAddress(addr) || newChatChecking) return;
 
-    // No reachability gate here any more. Opening a chat is free — the conversation
-    // is only created on the first send (see usePairChat.sendMessage). If the peer
-    // never enabled XMTP, sending is what surfaces it, and ChatPanel then shows the
-    // "share an invite" UI right inside the thread instead of blocking entry here.
+    // Проверки достижимости здесь нет. Открыть переписку бесплатно: мешок
+    // появляется только на первой отправке. Если собеседник ни разу не
+    // заходил, это скажет сама панель («собеседник ещё не заходил» +
+    // приглашение), а не запрет на вход сюда.
     setShowNewChat(false);
     setNewChatAddr('');
     setNewChatError(null);
@@ -568,7 +566,7 @@ function ChatHubPageInner() {
             </div>
           )}
 
-          {(isLoading || xmtpStatus === 'loading') && conversations.length === 0 && (
+          {(isLoading || sessionStatus === 'loading') && conversations.length === 0 && (
             <div className="space-y-2">
               {[1, 2, 3].map(i => (
                 <div key={i} className="flex items-center gap-3.5 px-3 py-2.5 rounded-[16px] border border-white/[0.04] bg-white/[0.02]">
@@ -583,47 +581,33 @@ function ChatHubPageInner() {
             </div>
           )}
 
-          {!isLoading && xmtpStatus !== 'loading' && error && (
+          {/* Код отказа склада (`write_failed`, `rate_limited`, …) человеку не
+              показывается — это слово для журнала. Действие у всех этих
+              причин одно: повторить. */}
+          {!isLoading && sessionStatus !== 'loading' && error && (
             <div className="px-4 py-8 text-center space-y-3">
-              <p className="text-xs text-red-400/60 leading-relaxed">{error}</p>
-              {error.includes('xmtp.chat') && (
-                <a
-                  href="https://xmtp.chat"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors"
-                >
-                  {t("chat.open_xmtp")} <ArrowRight className="w-3 h-3" />
-                </a>
-              )}
+              <p className="text-xs text-red-400/60 leading-relaxed">{t("chat.could_not_connect")}</p>
               <div>
                 <Button size="sm" variant="outline" onClick={reload} className="border-white/15 text-white/50 text-xs">{t("chat.retry")}</Button>
               </div>
             </div>
           )}
 
-          {/* Мессенджер выключен или не поднялся.
+          {/* Чат выключен или сеанс не открылся.
               Раньше на этом состоянии не рисовалось НИЧЕГО: скелетон требовал
               'loading', пустое состояние — 'ready', а ветка ошибки — текста
               ошибки, которого у молчаливого отказа нет. Человек видел пустую
               колонку без единого объяснения и без единственного действия,
-              которое здесь имеет смысл, — включить мессенджер. */}
-          {!isLoading && xmtpStatus === 'error' && !error && allConversations.length === 0 && (
-            <div className="px-4 py-10 text-center flex flex-col items-center gap-3">
-              <MessageCircle className="w-8 h-8 text-white/[0.12]" />
-              <div>
-                <p className="text-sm text-white/40">{xmtpFailureText ?? t("chat.messaging_off")}</p>
-                {!xmtpFailureText && (
-                  <p className="text-xs text-white/20 leading-relaxed mt-1">{t("chat.messaging_off_hint")}</p>
-                )}
-              </div>
-              <Button size="sm" variant="outline" onClick={retryXmtp} className="border-white/15 text-white/50 text-xs">
-                {xmtpFailureText ? t("chat.retry") : t("chat.enable_messaging")}
-              </Button>
-            </div>
+              которое здесь имеет смысл. */}
+          {!isLoading && sessionStatus === 'error' && !error && allConversations.length === 0 && (
+            /* ⚠️ ОДИН экран на список и на панель. Здесь стояла своя копия,
+               рисовавшая «Мессенджер выключен» на ВСЕ семь причин — то есть
+               обвиняющий человека экран, который К-2 убирала из панели, жил
+               нетронутым там, куда попадают чаще всего. */
+            <ChatOffScreen errorCode={sessionErrorCode} onRetry={retrySession} variant="compact" />
           )}
 
-          {!isLoading && xmtpStatus !== 'loading' && !error && allConversations.length === 0 && xmtpStatus === 'ready' && (
+          {!isLoading && !error && allConversations.length === 0 && sessionStatus === 'ready' && (
             <div className="flex flex-col items-center justify-center py-16 text-center px-4">
               <MessageCircle className="w-8 h-8 text-white/[0.12] mb-3" />
               <p className="text-sm text-white/35 mb-1">{t("chat.no_conversations")}</p>

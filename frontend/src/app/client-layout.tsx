@@ -7,8 +7,11 @@ import Footer from "@/components/Footer";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import Toaster from '@/components/Toaster/ToasterClient';
 import OnboardingModal from "@/components/OnboardingModal";
-import { XmtpProvider } from "@/contexts/XmtpContext";
-import { XmtpNotificationsMount } from "./providers";
+import { useTranslations } from "next-intl";
+import { toast } from "react-hot-toast";
+import { onPushDeliveryFailure } from "@/lib/webpush";
+import { pushOutcomeKey } from "@/lib/chatNotices";
+import { RecoveryCodeGate } from "@/components/RecoveryCodeGate";
 
 // Page transition via pure CSS animation (page-enter keyframe in globals.css).
 // CSS animations run on the compositor thread — independent of JS work — so
@@ -123,6 +126,21 @@ function ChatLayoutInner({
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const tLayout = useTranslations();
+
+  // ⚠️ ОТКАЗ ДОСТАВКИ УВЕДОМЛЕНИЯ — ЗДЕСЬ, И ЭТО ЗАМЕР, А НЕ ВКУС.
+  // Сначала подписка стояла на двух досках. `grep` показал, что уведомления
+  // отправляет РОВНО ОДНО место — `notifyPush` из `usePairChat`, то есть
+  // чат; на доски событие не приходило никогда. Подписчик был, событие не
+  // приходило — подписка, которая ничего не слушает.
+  //
+  // Почему не в самом чате: отправка — «пожар и забыл», и к моменту отказа
+  // вкладка может уже уйти со страницы переписки (человек отправил и
+  // перешёл). Общая обёртка живёт на КАЖДОЙ странице и держит `Toaster`.
+  useEffect(() => onPushDeliveryFailure((failure) => {
+    const key = pushOutcomeKey(failure.outcome);
+    if (key) toast.error(tLayout(key as Parameters<typeof tLayout>[0]));
+  }), [tLayout]);
   const [onboardingForced, setOnboardingForced] = useState(false);
   useEffect(() => {
     const handler = () => setOnboardingForced(true);
@@ -190,23 +208,23 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const isChatPage = pathname?.startsWith('/chat');
   const isHome = pathname === '/';
 
-  // Single XmtpProvider wraps all layout branches so it survives route changes.
-  // Three separate <XmtpProvider> wrappers (one per branch) would remount on every
-  // chat ↔ home ↔ other navigation, resetting the init state and triedRef.
-  //
-  // <Header/> is hoisted above the branches for the same reason: it used to be
+  // <Header/> is hoisted above the branches so it isn't remounted on navigation: it used to be
   // rendered separately inside each branch (plus a 4th copy in the chat Suspense
   // fallback), so React treated it as a brand-new subtree on every chat ↔ home ↔
   // other navigation and remounted it — resetting WalletMenu's local state and
   // re-firing every account/profile/contract read it holds. One instance here
   // survives all of that; only the content below it changes per branch.
   return (
-    <XmtpProvider>
-      {/* Mounted HERE (under XmtpProvider) — not in providers.tsx — so useXmtpNotifications
-          sees the real XMTP status and its effect re-runs on ready. Single instance above
-          the route branches, so it survives navigation like <Header/>. */}
-      <XmtpNotificationsMount />
+    <>
       <Header />
+      {/* Код восстановления — РОВНО ОДИН привратник на приложение. Поднят
+          сюда, к <Header/>, по той же причине: `useChatSession()` живёт в
+          нескольких компонентах сразу и на первом открытии все они получают
+          один и тот же объект сеанса — окно в каждом дало бы три окна
+          поверх друг друга. Плюс он переживает переходы между страницами,
+          то есть «пропустить» не отменяется навигацией.
+          Заперто `lib/chatRecoveryWiring.test.ts`. */}
+      <RecoveryCodeGate />
       {isChatPage ? (
         <Suspense fallback={
           <main className="flex-1" style={{ paddingTop: 'var(--content-top-offset)' }}>
@@ -241,6 +259,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <Toaster />
         </>
       )}
-    </XmtpProvider>
+    </>
   );
 }

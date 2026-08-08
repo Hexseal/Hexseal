@@ -216,13 +216,27 @@ export const FINALIZE_DELAY_HOURS = 24;
 // в отличие от нулевого TTL/потолка/лукбэка, каждый из которых фактически
 // выключил бы соответствующее правило целиком.
 export let BAG_DEAL_GRACE_MS;
+// К-3 (аудит устойчивости, 6 августа): потолок журнала дозаписи. Журнал
+// растёт по одной строке на запись и схлопывается в снимок (BAG_META_PATH),
+// когда переваливает этот размер — амортизация O(N)-записи вместо O(N) на
+// КАЖДЫЙ PUT. Умолчание — 16 МиБ: при ~390 байтах на строку это примерно
+// 43 000 записей между схлопываниями, то есть один дорогой проход вместо
+// сорока трёх тысяч. Больше значение — реже дорогой проход, но дольше
+// разбор журнала при старте; меньше — наоборот.
+export let BAG_JOURNAL_MAX_BYTES;
 let STORAGE_DIR;
 let BAG_META_PATH;
+let BAG_JOURNAL_PATH;
 
 function _refreshConfig() {
   STORAGE_DIR   = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
   DIR_BAGS      = path.join(STORAGE_DIR, 'bags');
   BAG_META_PATH = path.join(STORAGE_DIR, 'bag-meta.json');
+  // К-3: журнал дозаписи рядом со снимком, в том же каталоге и на том же
+  // томе — переименование снимка при схлопывании обязано быть атомарным,
+  // а это гарантировано только в пределах одной файловой системы.
+  BAG_JOURNAL_PATH = path.join(STORAGE_DIR, 'bag-meta.log');
+  BAG_JOURNAL_MAX_BYTES = Number(process.env.BAG_JOURNAL_MAX_BYTES || 16 * 1024 * 1024);
 
   BAG_TTL_MS        = Number(process.env.BAG_TTL_MS        ||  7 * 24 * 60 * 60 * 1000);
   BAG_UNREAD_TTL_MS = Number(process.env.BAG_UNREAD_TTL_MS || 30 * 24 * 60 * 60 * 1000);
@@ -311,6 +325,17 @@ export function assertBagStoreReady() {
   // исходника, который проверяет гейт script/check-appeal-window.sh на
   // этапе CI, не рантайм.
   assertNonNegativeFiniteNumber('BAG_DEAL_GRACE_MS', BAG_DEAL_GRACE_MS);
+  // В-5 (аудит устойчивости): без этой строки ручка, заведённая правкой К-3
+  // несколькими часами раньше, принимала 0, -1 и любой мусор МОЛЧА — и
+  // молча же отменяла саму К-3. `size <= NaN` всегда ложь, значит журнал
+  // схлопывался в полный снимок на КАЖДОЙ записи. Замер: 0,017 мс на PUT
+  // против 5,283 мс при BAG_JOURNAL_MAX_BYTES=abc — в 311 раз хуже, без
+  // единой строки в логе.
+  //
+  // Позитивность, не неотрицательность: 0 здесь не «без потолка», а
+  // «схлопывать всегда» — то есть выключение журнала как приёма, а не
+  // настройка. Ровно как у четырёх TTL/размера выше.
+  assertPositiveFiniteNumber('BAG_JOURNAL_MAX_BYTES', BAG_JOURNAL_MAX_BYTES);
   _warnIfBagMaxAgeTooSmallForAppeal();
   fs.mkdirSync(DIR_BAGS, { recursive: true });
 }
@@ -583,6 +608,39 @@ function isValidBagMetaEntry(key, meta) {
 //     индекс. Никакой автоматики через запись, время или счётчик попыток.
 let _bagMetaLoadOk = true;
 
+// В-1 (аудит устойчивости, 6 августа): последняя ошибка сохранения. Нужна
+// не складу — он про свои отказы и так узнаёт броском — а `/health`:
+// внешний надзор обязан отличать «жив и сохраняет» от «жив, отвечает 200,
+// но ничего не сохраняет». Хранится ТЕКСТ последней ошибки, а не булево:
+// «ENOSPC» и «EACCES» требуют разных действий от человека, и лишать его
+// этой разницы значит заставить лезть в логи ради того, что уже известно.
+//
+// Снимается ПЕРВОЙ ЖЕ удачной записью — иначе один давний сбой держал бы
+// сервер «больным» до перезапуска, и надзор привык бы к красному.
+let _lastPersistError = null;
+
+// В-1: «сохранности» ровно два врага, и оба отражены здесь.
+//   indexTrusted    — склад в режиме недоверия НИЧЕГО не пишет на диск
+//                     (см. _loadBagMeta/_persistUnlessDistrusted), то есть
+//                     всякий успешный приём мешка — обещание, которое не
+//                     переживёт перезапуск;
+//   lastPersistError — последняя попытка записи упала (полный диск, права,
+//                     отвалившийся том).
+// Ни одно из двух не видно снаружи иначе, чем через это.
+export function isBagStoreHealthy() {
+  return _bagMetaLoadOk;
+}
+
+export function bagStorePersistError() {
+  return _lastPersistError;
+}
+
+// Только для тестов: вернуть отметку об отказе в исходное. Боевой код
+// снимает её удачной записью и никогда — вызовом «забудь».
+export function _resetPersistHealthForTests() {
+  _lastPersistError = null;
+}
+
 // Диск (DIR_BAGS) отдельно от описи — независимая причина войти в режим
 // недоверия, даже если сама опись прочиталась штатно. «Пустой» (readdirSync
 // вернул []) — не то же самое, что «нечитаемый» (readdirSync бросил): первое
@@ -706,7 +764,19 @@ export function _loadBagMeta() {
   // нет → легитимно пусто, indexOk остаётся true; файл есть, но не JSON,
   // или JSON, но не индекс (null/массив/примитив) → потеря доверия, громко.
   let indexOk = true;
-  const indexExists = fs.existsSync(BAG_META_PATH);
+  // К-3: «опись» — это теперь ДВА файла, снимок и журнал дозаписи, и
+  // существованием описи считается наличие ЛЮБОГО из них.
+  //
+  // Иначе — не мелочь, а поломка нормальной работы. Снимок пишет только
+  // схлопывание (ночная cleanupBags или переполненный журнал), поэтому у
+  // свежего сервера, принявшего первую сотню сообщений и перезапущенного
+  // до первой ночи, снимка НЕТ ВОВСЕ, а мешки на диске ЕСТЬ. Проверяй мы
+  // существование одного снимка — такой сервер уходил бы в режим недоверия
+  // на совершенно штатном перезапуске и переставал бы и удалять, и
+  // сохранять. Поймано ровно так, живым прогоном.
+  const snapshotExists = fs.existsSync(BAG_META_PATH);
+  const journalExists = fs.existsSync(BAG_JOURNAL_PATH);
+  const indexExists = snapshotExists || journalExists;
   // Считается только когда индекса нет — см. ветку else ниже. Отдельная
   // переменная (не пересчитывать в теле console.error) — нужна и для
   // решения "доверять ли", и для числа в громкой строке лога.
@@ -719,7 +789,7 @@ export function _loadBagMeta() {
   // 60 000 мешков).
   let precomputedScan = null;
 
-  if (indexExists) {
+  if (snapshotExists) {
     try {
       const parsed = JSON.parse(fs.readFileSync(BAG_META_PATH, 'utf8'));
       // И-2 (пятый раунд): JSON.parse('null') УСПЕШНО возвращает null — не
@@ -739,6 +809,11 @@ export function _loadBagMeta() {
       // между writeFileSync и renameSync temp-файла в _saveBagMeta()).
       indexOk = false;
     }
+  } else if (journalExists) {
+    // К-3: снимка ещё нет, но журнал есть — штатное состояние сервера до
+    // первого схлопывания. Начинаем с пустого снимка; всё содержимое
+    // приедет разбором журнала ниже.
+    raw = {};
   } else {
     // Продолжение третьего тура (координатор): отсутствие описи —
     // легитимная пустота ТОЛЬКО когда склад тоже пуст или отсутствует.
@@ -779,7 +854,8 @@ export function _loadBagMeta() {
       );
     } else if (!indexOk && !indexExists) {
       reasons.push(
-        `index at ${BAG_META_PATH} is MISSING, but the store at ${DIR_BAGS} is not empty (${diskBagCount} file(s) found) — ` +
+        `index is MISSING — NEITHER the snapshot at ${BAG_META_PATH} nor the append journal at ` +
+        `${BAG_JOURNAL_PATH} exists — but the store at ${DIR_BAGS} is not empty (${diskBagCount} file(s) found) — ` +
         `this cannot be a fresh install. Either the index was removed by hand or it never reached disk. ` +
         `To start clean, ALSO remove the bag files on disk; to recover, restore the index file.`
       );
@@ -805,8 +881,10 @@ export function _loadBagMeta() {
       `to the file) — a syntactically valid index that does not match what is really on disk is JUST AS ` +
       `DESTRUCTIVE as no index at all: every bag on disk becomes invisible to it and gets swept as an orphan ` +
       `by mtime alone, regardless of read state or deal adoption. Safe options: restore the REAL index from a ` +
-      `backup, or — only if starting genuinely clean — remove BOTH the index file and every bag file on disk ` +
-      `together.`
+      `backup, or — only if starting genuinely clean — remove the snapshot (${BAG_META_PATH}), the append ` +
+      `journal (${BAG_JOURNAL_PATH}) AND every bag file on disk, all three together. Removing only some of ` +
+      `them leaves the store lying about itself: a leftover journal replays its entries on top of whatever ` +
+      `snapshot it finds, including an empty one.`
     );
     // Один обход на всю функцию: если решение "недоверие" пришло из ветки
     // "индекса нет" выше, обход уже сделан (precomputedScan) — переиспользуем
@@ -850,9 +928,57 @@ export function _loadBagMeta() {
     console.error(`[bags] _loadBagMeta: dropped ${dropped} corrupt ${dropped === 1 ? 'entry' : 'entries'} out of ${Object.keys(raw).length} from ${BAG_META_PATH}`);
   }
 
+  // К-3: снимок прочитан — доигрываем поверх него журнал дозаписи. Всё,
+  // что было записано горячим путём после последнего схлопывания, живёт
+  // только здесь.
+  _replayJournal(clean);
+
   _bagMetaLoadOk = true;
   _bagMeta = clean;
   return _bagMeta;
+}
+
+// К-3: доигрывает журнал дозаписи поверх снимка. Вызывается ТОЛЬКО из
+// _loadBagMeta(), после того как снимок признан здоровым.
+//
+// Каждая строка проходит РОВНО ТУ ЖЕ проверку формы (isValidBagMetaEntry),
+// что и запись из снимка: журнал — такой же файл на диске, как и снимок, и
+// такой же кандидат на порчу. Единственный путь в индекс мимо recordBag()
+// не должен быть и путём мимо его проверок.
+//
+// Неразобранная строка НЕ переводит склад в режим недоверия, в отличие от
+// битого снимка, и это осознанная разница. Обрезанный ХВОСТ журнала —
+// нормальный, ожидаемый след обрыва процесса посреди дозаписи (ровно тот
+// случай, ради которого выбран строчный формат), а не признак того, что
+// данным нельзя верить. Битый снимок — другое дело: он не может стать
+// битым «штатно».
+function _replayJournal(target) {
+  let raw;
+  try { raw = fs.readFileSync(BAG_JOURNAL_PATH, 'utf8'); } catch { return; }
+
+  const lines = raw.split('\n');
+  let applied = 0;
+  let skipped = 0;
+  for (const line of lines) {
+    if (!line) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch { skipped++; continue; } // обрезанный хвост живёт здесь
+    if (!rec || typeof rec !== 'object' || typeof rec.k !== 'string') { skipped++; continue; }
+    if (rec.d) {
+      delete target[rec.k];
+      applied++;
+      continue;
+    }
+    if (!isValidBagMetaEntry(rec.k, rec.m)) { skipped++; continue; }
+    target[rec.k] = rec.m;
+    applied++;
+  }
+  if (applied || skipped) {
+    console.log(
+      `[bags] _replayJournal: applied ${applied} change(s) from ${BAG_JOURNAL_PATH}` +
+      (skipped ? ` (skipped ${skipped} unreadable line(s) — the last one is normally a write cut short by a restart)` : '')
+    );
+  }
 }
 
 // I2: раньше писала напрямую поверх BAG_META_PATH, оба catch были немые.
@@ -873,6 +999,19 @@ export function _loadBagMeta() {
 // остальных assert*-хелперах этого файла (в отличие от более старого,
 // снисходительного savePushSubs() в app.js: там цена ошибки — пережить
 // рестарт без пуша, здесь — тихо потерять чужую переписку, ставки другие).
+// К-3: ЭТО ТЕПЕРЬ СХЛОПЫВАНИЕ, а не «сохранение на каждую запись». Пишет
+// полный снимок и обнуляет журнал дозаписи. Горячий путь (recordBag/
+// markFetched/adoptPairBags) сюда больше не заходит — он дописывает одну
+// строку в журнал (_appendJournal ниже). Остаются два вызывающих: ночная
+// cleanupBags() (она и так O(N)) и порог размера журнала.
+//
+// Порядок «снимок, потом обнуление журнала» — не стилистика, а
+// единственный безопасный. Обратный порядок при обрыве между шагами теряет
+// всё, что было в журнале и не успело попасть в снимок. В этом порядке
+// худший случай — журнал, часть которого уже учтена в снимке: разбор при
+// загрузке применяет такую строку повторно, а повтор безвреден (ключи
+// уникальны по построению, см. I5 в recordBag; вставка того же значения и
+// удаление уже отсутствующего — обе идемпотентны).
 export function _saveBagMeta() {
   const tmpPath = `${BAG_META_PATH}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
@@ -886,9 +1025,64 @@ export function _saveBagMeta() {
     fs.renameSync(tmpPath, BAG_META_PATH);
   } catch (e) {
     try { fs.unlinkSync(tmpPath); } catch {}
+    _lastPersistError = e.message; // В-1: чтобы `/health` знал, а не только лог
     console.error(`[bags] FAILED TO SAVE ${BAG_META_PATH} — in-memory index and disk index have diverged: ${e.message}`);
     throw e;
   }
+  _lastPersistError = null; // снимок доехал — прошлые отказы больше не описывают текущее состояние
+  // Снимок доехал — журнал, накопленный ДО него, полностью в нём учтён и
+  // больше не нужен. Ошибка обнуления не откатывает уже сохранённый снимок
+  // и не бросается вызывающему: состояние на диске корректно и без этого
+  // (лишний журнал просто переиграется поверх снимка при загрузке), а вот
+  // превращать успешное сохранение в исключение — значит заставить
+  // вызывающего откатывать память, которая на самом деле уже на диске.
+  try {
+    if (fs.existsSync(BAG_JOURNAL_PATH)) fs.unlinkSync(BAG_JOURNAL_PATH);
+  } catch (e) {
+    console.error(`[bags] snapshot saved, but journal ${BAG_JOURNAL_PATH} could not be cleared (it will simply be replayed on top of the snapshot at load, which is harmless): ${e.message}`);
+  }
+}
+
+// К-3: горячий путь. Одна строка на изменение вместо всей описи.
+//
+// Замер до/после (scratchpad/measure-k3.mjs, боевые умолчания, локальный
+// диск): при 20 000 мешках в описи ОДИН PUT стоил 24,9 мс и переписывал
+// 7,8 МБ; путь от пустого склада до 20 000 мешков — 281,6 с совокупной
+// блокировки цикла событий.
+//
+// Формат — по строке JSON на изменение, ровно два вида:
+//   {"k":"<ключ>","m":{...}}  — запись/обновление
+//   {"k":"<ключ>","d":1}      — удаление
+// Разбор при загрузке (_replayJournal) применяет их поверх снимка по
+// порядку. Обрыв процесса посреди дозаписи оставляет неполную ПОСЛЕДНЮЮ
+// строку — она не разберётся и будет пропущена, а всё, что дописано до
+// неё, целыми строками уже на диске. Это и есть причина строчного формата:
+// у него есть однозначная граница записи, у одного большого JSON её нет.
+function _appendJournal(records) {
+  const payload = records.map((r) => JSON.stringify(r)).join('\n') + '\n';
+  try {
+    fs.mkdirSync(path.dirname(BAG_JOURNAL_PATH), { recursive: true });
+    fs.appendFileSync(BAG_JOURNAL_PATH, payload, 'utf8');
+  } catch (e) {
+    _lastPersistError = e.message; // В-1: чтобы `/health` знал, а не только лог
+    console.error(`[bags] FAILED TO APPEND ${BAG_JOURNAL_PATH} — in-memory index and disk index have diverged: ${e.message}`);
+    throw e;
+  }
+  _lastPersistError = null; // дозапись прошла — прошлые отказы больше не описывают текущее состояние
+}
+
+// Журнал не должен расти вечно: чем он длиннее, тем дольше разбор при
+// старте. Переваливший потолок схлопывается в снимок — один дорогой проход
+// на много тысяч дешёвых записей вместо дорогого прохода на каждую.
+// Проверяем размер по факту на диске, а не по счётчику в памяти: счётчик
+// врал бы после перезапуска, когда журнал на диске уже длинный, а процесс
+// только что поднялся и «ничего ещё не писал».
+function _compactJournalIfOversized() {
+  let size = 0;
+  try { size = fs.statSync(BAG_JOURNAL_PATH).size; } catch { return; }
+  if (size <= BAG_JOURNAL_MAX_BYTES) return;
+  console.log(`[bags] journal ${BAG_JOURNAL_PATH} reached ${size} bytes (cap ${BAG_JOURNAL_MAX_BYTES}) — folding it into a fresh snapshot`);
+  _saveBagMeta();
 }
 
 // Третий тур закрывающего ревью Задачи 4: recordBag()/markFetched() persist
@@ -901,9 +1095,19 @@ export function _saveBagMeta() {
 // reconstruction's. Not an error for the caller: the upload/read-receipt
 // still succeeds from the client's point of view, it just doesn't survive
 // a restart until a human fixes the index.
-function _persistUnlessDistrusted(fn) {
+//
+// К-3: гейт недоверия ОБЯЗАН стоять и на журнале тоже, не только на
+// снимке. Дозапись в журнал — такая же запись на диск: пропусти её мимо
+// гейта, и первая же строка после потерянной описи начала бы достраивать
+// то, чему мы решили не верить.
+function _persistUnlessDistrusted(fn, records) {
   if (!_bagMetaLoadOk) {
     console.error(`[bags] ${fn}: DISTRUST MODE — change kept in memory only, NOT written to ${BAG_META_PATH}. Fix or remove the index file and restart to resume persisting.`);
+    return;
+  }
+  if (records && records.length) {
+    _appendJournal(records);
+    _compactJournalIfOversized();
     return;
   }
   _saveBagMeta();
@@ -1023,7 +1227,8 @@ export function recordBag(meta, nowMs = Date.now()) {
   };
   _bagMeta[key] = stored;
   try {
-    _persistUnlessDistrusted('recordBag');
+    // К-3: одна строка в журнал вместо всей описи.
+    _persistUnlessDistrusted('recordBag', [{ k: key, m: stored }]);
   } catch (e) {
     // I2: не оставлять память впереди диска — если персист не удался,
     // запись не должна продолжать "существовать" только в этом процессе.
@@ -1051,7 +1256,11 @@ export function markFetched(key, nowMs = Date.now()) {
     assertFetchNotBeforeUpload('markFetched', meta.uploadedAt, nowMs);
     meta.firstFetchedAt = nowMs;
     try {
-      _persistUnlessDistrusted('markFetched');
+      // К-3: одна строка в журнал вместо всей описи. Пишем ВСЮ запись, а не
+      // одно изменившееся поле: разбор при загрузке кладёт значение целиком,
+      // и частичная строка означала бы, что журнал нельзя применить к
+      // снимку, в котором этого ключа ещё нет.
+      _persistUnlessDistrusted('markFetched', [{ k: key, m: { ...meta } }]);
     } catch (e) {
       // I2: тот же откат, что в recordBag — если запись не доехала до
       // диска, отметка о прочтении не должна продолжать жить только в
@@ -1070,6 +1279,78 @@ export function listBagsFor(recipient) {
     .filter(([, meta]) => meta.recipient === addr)
     .map(([key, meta]) => ({ key, ...meta }))
     .sort((a, b) => a.uploadedAt - b.uploadedAt);
+}
+
+// Задача 1 (chat-client) — зеркало listBagsFor() выше, фильтр по meta.sender
+// вместо meta.recipient. Тот же живой _bagMeta, тот же единственный O(n)
+// обход, ни одного обращения к диску (координатор отдельно отверг чтение
+// через _loadBagMeta() на каждый вызов — тот делает полный дисковый
+// JSON.parse каждый раз, а этот путь опрашивается раз в 5с на человека).
+// Ничего не пишет и не меняет существующее поведение — чистое добавление.
+//
+// GET /bags до этой задачи отвечал только про то, что адресовано владельцу
+// пропуска: отправитель не мог узнать судьбу собственных мешков (docs/
+// superpowers/specs/2026-08-06-chat-client-design.md, §3.3/3.4). app.js
+// строит на этой функции поля `sent` и `peers`.
+//
+// Режим недоверия (см. _bagMetaLoadOk/_loadBagMeta выше): у записи,
+// реконструированной ТОЛЬКО из имени файла на диске, meta.sender === ''
+// (recipient и uploadedAt несёт само имя файла, отправителя — нет, это
+// знание живёт исключительно в описи, а её как раз нет). `addr` здесь
+// всегда настоящий адрес (assertAddress бросает на любом другом виде
+// входа), так что '' никогда ни с одним `addr` не совпадёт — реконструиро-
+// ванная запись автоматически, безо всякой отдельной ветки на "а если
+// недоверие", никогда никому не приписывается как отправленная. Заперто
+// test/bagStore.test.js (в частности — что НОВЫЙ, честно записанный ЖИВЫМ
+// recordBag() мешок виден сразу же, даже во время недоверия: недоверие
+// прячет только записи с неизвестным отправителем, а не отключает функцию
+// целиком).
+export function listBagsBySender(sender) {
+  const addr = assertAddress('listBagsBySender', sender);
+  return Object.entries(_bagMeta)
+    .filter(([, meta]) => meta.sender === addr)
+    .map(([key, meta]) => ({ key, ...meta }))
+    .sort((a, b) => a.uploadedAt - b.uploadedAt);
+}
+
+// В-4 (аудит устойчивости, 6 августа): обе половины переписки за ОДИН
+// обход описи. Ровно то же, что listBagsFor(addr) и listBagsBySender(addr)
+// по отдельности (заперто тестом на буквальное равенство), но опись
+// перебирается один раз, а не два.
+//
+// Замер до/после (scratchpad/measure-v4.mjs, боевые умолчания, 200 000
+// мешков в описи, ОДИН И ТОТ ЖЕ прогон, чтобы не сравнивать числа с разных
+// запусков): 347,53 мс на тик (2,9 тика в секунду) → 190,16 мс (5,3 тика в
+// секунду). Пункт 29.1 открытых вопросов записывал «семь тиков» —
+// это была цена ОДНОГО прохода, до того как Задача 1 плана «клиент чата»
+// добавила взгляд отправителя вторым.
+//
+// Половинчатость этой правки надо назвать вслух: она возвращает цену тика
+// к той, что была ДО появления второй половины, и не делает её меньше.
+// Настоящая цена — сам обход всей описи ради одного адреса — остаётся, и
+// закрывается только тем, что записано в пункте 29.1: опись по получателю
+// вместо одной общей, либо квота на ящик (пункт 28.2). Здесь снята ровно
+// та надбавка, которую завела предыдущая задача, не больше.
+//
+// Обе половины намеренно НЕ дедуплицируются между собой: переписка с самим
+// собой законно стоит в обеих (маршрут GET /bags склеивает их сам и
+// дедуплицирует по ключу — см. app.js). Разойдись эта функция с
+// listBagsFor/listBagsBySender хоть в этом, тест на буквальное равенство
+// покраснеет.
+export function listBagsInvolving(address) {
+  const addr = assertAddress('listBagsInvolving', address);
+  const received = [];
+  const sent = [];
+  for (const [key, meta] of Object.entries(_bagMeta)) {
+    // Один и тот же объект-копия не переиспользуется между кучками: у
+    // переписки с самим собой запись попадает в обе, и общий объект дал бы
+    // вызывающему два имени одной и той же ссылки.
+    if (meta.recipient === addr) received.push({ key, ...meta });
+    if (meta.sender === addr) sent.push({ key, ...meta });
+  }
+  received.sort((a, b) => a.uploadedAt - b.uploadedAt);
+  sent.sort((a, b) => a.uploadedAt - b.uploadedAt);
+  return { received, sent };
 }
 
 // I3: раньше отдавала `_bagMeta[key]` напрямую — тот же объект, что живёт в
@@ -1397,8 +1678,12 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
 // Персист — ОДИН раз на весь вызов (после цикла по всем подходящим записям),
 // не по одной записи за раз: либо весь вызов целиком лёг на диск, либо (при
 // ошибке записи) НИ ОДНА мутация этого вызова не осталась в памяти дольше
-// самого вызова — тот же приём отката, что у recordBag()/markFetched() (I2)
-// и у cleanupBags() (removedEntries). Режим недоверия (_bagMetaLoadOk) через
+// самого вызова — тот же приём отката, что у recordBag()/markFetched() (I2).
+// (cleanupBags() своего отката больше не держит — К-2 сняла его вместе со
+// сменой порядка «сначала снести, потом записать»: там к моменту ошибки
+// файлы уже физически удалены, и откат в память стал бы враньём. Здесь
+// ничего физически не удаляется, так что откат остаётся честным.)
+// Режим недоверия (_bagMetaLoadOk) через
 // _persistUnlessDistrusted() — та же дисциплина, что и у остальных писателей
 // этого файла: мутация применяется к памяти, на диск не уходит, пока индекс
 // не заслужит доверие заново честной загрузкой.
@@ -1457,11 +1742,15 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
   assertSafeInt('adoptPairBags', 'nowMs', nowMs);
 
   const rollback = []; // [meta, previousDealDeadline] — только записи, реально изменённые этим вызовом
+  // К-3: ключи изменённых записей — для журнала дозаписи. Усыновление зовут
+  // по разу на КАЖДУЮ активную/спорную сделку за ночной прогон, и каждый
+  // такой вызов раньше переписывал опись целиком.
+  const changedKeys = [];
   let adopted = 0;
   let minEffectiveExpiry = null;
   let cappedCount = 0;
 
-  for (const meta of Object.values(_bagMeta)) {
+  for (const [key, meta] of Object.entries(_bagMeta)) {
     if (meta.pairId !== pairId) continue;
     // И-2: гейт первого усыновления — "жив ли мешок ПРЯМО СЕЙЧАС", не
     // "молодой ли он". Уже усыновлённая запись (dealDeadline != null)
@@ -1482,6 +1771,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
 
     rollback.push([meta, meta.dealDeadline]);
     meta.dealDeadline = next;
+    changedKeys.push(key);
     adopted++;
 
     // C-1 (было — С-1 раунда логирования): РЕАЛЬНЫЙ срок этой конкретной
@@ -1498,7 +1788,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
 
   if (adopted) {
     try {
-      _persistUnlessDistrusted('adoptPairBags');
+      _persistUnlessDistrusted('adoptPairBags', changedKeys.map((k) => ({ k, m: { ..._bagMeta[k] } })));
     } catch (e) {
       // I2, тот же приём, что у recordBag()/markFetched(): не оставлять
       // память впереди диска. Откатываем РОВНО те записи, что изменил этот
@@ -1643,7 +1933,26 @@ function sweepStaleTmpFiles(nowMs) {
   return removed;
 }
 
-export function cleanupBags(nowMs = Date.now()) {
+// `chainKnown` — ответила ли цепь в ЭТОМ прогоне (К-1 для мешков, сквозная
+// проверка перед слиянием, 8 августа).
+//
+// Первая редакция К-1 накрыла вложения и не накрыла мешки: эта функция
+// звалась вообще без признака, и правило «не знаем — не сносим» до неё не
+// доходило. Молчащий узел не даёт усыновлению проставить dealDeadline, мешок
+// доживает по обычному правилу 2/3 и сносится безвозвратно задолго до конца
+// дела. Замер (сделка активная и неоплаченная, потолок 90 дней):
+//
+//   узел отвечает всегда, прочитан на день 10 → снесён в ночь №90 (штатно)
+//   узел молчит с ночи 1,  прочитан на день 10 → снесён в ночь №17
+//   узел отвечает всегда, не прочитан          → ночь №90 (штатно)
+//   узел молчит с ночи 1,  не прочитан         → ночь №30
+//
+// Умолчание `true` — намеренно, ради существующих вызывающих и тестов,
+// которые про цепь ничего не знают и не должны. Настоящая защита не здесь,
+// а в СКВОЗНОМ тесте: он проверяет, что runFileCleanup() передаёт реальное
+// значение, а не забывает аргумент — ровно та ошибка, которой эта правка и
+// вызвана. Мутация «звать без аргумента» его красит.
+export function cleanupBags(nowMs = Date.now(), { chainKnown = true } = {}) {
   assertSafeInt('cleanupBags', 'nowMs', nowMs);
 
   // Третий тур закрывающего ревью Задачи 4: ЕДИНЫЙ гейт в начале функции,
@@ -1665,21 +1974,45 @@ export function cleanupBags(nowMs = Date.now()) {
 
   let removed = 0;
   let kept = 0;
+  // К-1 для мешков: сколько сносов отложено незнанием цепи. Отдельным
+  // числом, не растворено в kept — ночь, в которую снос отложен аварией,
+  // обязана быть отличима от ночи, в которую сносить было нечего.
+  let deferred = 0;
   // Мелочь (порядок): файлы удаляемых мешков собираются здесь, но не
   // трогаются немедленно — см. ниже, почему удаление файла идёт ПОСЛЕ
   // сохранения индекса, а не до.
   const keysToDeleteFiles = [];
-  // Мелочь (откат, пятый раунд): [key, meta] всех записей, снятых из
-  // _bagMeta в ЭТОМ проходе (и просроченных, и "мелочь g" — обе
-  // категории), нужны, чтобы вернуть их назад, если сохранение индекса не
-  // удастся — см. catch ниже.
-  const removedEntries = [];
+  // К-3: ключи ВСЕХ снятых записей — и просроченных, и «мелочи g». Уходят в
+  // журнал строками удаления ДО снимка (см. ниже, зачем).
+  const removedKeys = [];
+  // К-2: накопитель removedEntries (для отката при падении сохранения) убран
+  // как мёртвый вес, а не оставлен неиспользуемым — тем же правилом, что
+  // сняло protectedKeys у sweepOrphanFiles() шестым раундом. Откатывать
+  // больше нечего и незачем: файлы к моменту catch уже физически снесены
+  // (см. комментарий в try/catch ниже), вернуть их в память означало бы
+  // обещать несуществующее.
 
   for (const [key, meta] of Object.entries(_bagMeta)) {
     if (bagExpiryAt(meta, nowMs) <= nowMs) {
+      // К-1 для мешков: НЕ ЗНАЕМ — НЕ СНОСИМ. Цепь не ответила, значит про
+      // ЛЮБУЮ пару неизвестно, есть ли у неё живое дело, которое продлило
+      // бы этот мешок усыновлением. Откладываем — но НЕ ДОЛЬШЕ того же
+      // 90-дневного потолка (BAG_MAX_AGE_MS от загрузки), что и так
+      // ограничивает усыновление неоплаченной сделкой. Иначе авария
+      // превратилась бы в «храним вечно», а пункт 28.2 уже замерил, каким
+      // потоком мешков можно завалить диск.
+      //
+      // Тот же потолок, что у отсрочки вложений в app.js, и по той же
+      // причине: у текста и вложения одного сообщения не должно быть разных
+      // правил выживания.
+      if (!chainKnown && nowMs < meta.uploadedAt + BAG_MAX_AGE_MS) {
+        deferred++;
+        kept++;
+        continue;
+      }
       delete _bagMeta[key];
-      removedEntries.push([key, meta]);
       keysToDeleteFiles.push(key);
+      removedKeys.push(key);
       removed++;
       continue;
     }
@@ -1694,7 +2027,7 @@ export function cleanupBags(nowMs = Date.now()) {
     if (!fileExists) {
       console.error(`[bags] cleanupBags: index entry ${JSON.stringify(key)} has no file on disk — dropping from index`);
       delete _bagMeta[key];
-      removedEntries.push([key, meta]);
+      removedKeys.push(key);
       removed++;
       continue;
     }
@@ -1703,33 +2036,69 @@ export function cleanupBags(nowMs = Date.now()) {
   }
 
   try {
-    // Мелочь (порядок): индекс сохраняется ДО удаления файлов, не после.
-    // Раньше файл удалялся первым — если сохранение индекса падало ПОСЛЕ
-    // (I2 теперь бросает вместо молчаливого catch{}), на диске оставался
-    // индекс, продолжающий обещать файл, которого уже нет. Если вместо
-    // этого сначала сохранить индекс (запись уже убрана) и только потом
-    // удалять файл, худший случай при падении на любом из шагов —
-    // осиротевший файл, который подберёт обычная метла сирот по mtime, а
-    // не индекс, врущий про существование.
-    if (removed) _saveBagMeta();
+    // К-2 (аудит устойчивости, 6 августа): СНАЧАЛА сносим файлы, ПОТОМ
+    // пишем опись. Порядок был обратным, и ровно он делал уборку
+    // бесполезной на полном диске — том единственном случае, ради которого
+    // уборка и существует.
+    //
+    // Замер до правки (scratchpad/measure-k2.mjs, боевые умолчания,
+    // единственная подмена — writeFileSync бросает ENOSPC, как настоящая
+    // полная ФС): 500 просроченных мешков по 1 КиБ → освобождено 0 файлов,
+    // 0 байт. _saveBagMeta() падала первой, catch откатывал всё, и до
+    // строки удаления файлов управление не доходило НИКОГДА. После правки —
+    // 500 из 500, 512 000 байт.
+    //
+    // Чем платим и почему это дешевле. Прежний порядок покупал одно
+    // свойство: при обрыве между шагами на диске остаётся осиротевший файл
+    // (его подберёт метла сирот по mtime), а не опись, обещающая
+    // несуществующий файл. Новый порядок меняет знак: худший случай —
+    // опись, пережившая снос своих файлов. Это НЕ потеря данных и не
+    // тупик — ветка «мелочь g» чуть выше в этой же функции штатно ловит
+    // ровно такую запись (жива по сроку, файла нет) и убирает её из описи
+    // на следующем же прогоне. То есть цена нового порядка — одна лишняя
+    // строка в логе на следующую ночь; цена старого — сервер, который
+    // физически не может освободить место и не освободит его никогда.
+    //
+    // И удаление файлов — единственное, что вообще может дать записи описи
+    // шанс пройти В ЭТОМ ЖЕ прогоне: место, освобождённое строкой выше, —
+    // то самое место, которого не хватало строке ниже.
     for (const key of keysToDeleteFiles) {
       try { fs.unlinkSync(bagPathFor(key)); } catch {}
     }
-  } catch (e) {
-    // Мелочь (откат, пятый раунд): та же дисциплина, что у recordBag()/
-    // markFetched() (I2) — если персист не удался, память не должна
-    // продолжать "видеть" удаление, которого не подтвердил диск.
-    // Восстанавливаем всё, что этот проход только что убрал из _bagMeta
-    // (файлы к этому моменту точно не тронуты — цикл их удаления идёт
-    // ПОСЛЕ _saveBagMeta() в том же try и не успел выполниться). Это же
-    // восстановление — единственная защита, которая нужна метле ниже: к
-    // моменту, когда finally позовёт sweepOrphanFiles(), ключ уже снова в
-    // _bagMeta, и её собственный hasOwnProperty его защищает (находка И-1,
-    // пятый раунд, снята отдельным параметром protectedKeys — оказался
-    // мёртвым весом именно из-за этого отката, убран).
-    for (const [key, meta] of removedEntries) {
-      _bagMeta[key] = meta;
+    if (removed) {
+      // К-3, ВАЖНО: строки удаления уходят в журнал ПЕРЕД снимком, а не
+      // вместо него. Без этого шага чистка была бы ЕДИНСТВЕННОЙ мутацией
+      // склада, которой нет в журнале — и любой обрыв в окне между «снимок
+      // записан» и «журнал обнулён» ВОСКРЕШАЛ БЫ снесённое: разбор при
+      // старте доиграл бы поверх свежего снимка старую строку записи того
+      // самого ключа, который снимок уже не содержит. Поймано живым
+      // прогоном при реализации К-3, а не рассуждением.
+      //
+      // Отсюда общее правило склада, на которое опирается вся конструкция:
+      // ЛЮБАЯ мутация сначала попадает в журнал; снимок — только свёртка
+      // журнала, никогда не самостоятельный источник изменений. Тогда
+      // «журнал старше снимка» безвреден по построению: журнал полон и
+      // упорядочен, снимок — его префикс, доигрывание хвоста всегда даёт
+      // верный итог.
+      _appendJournal(removedKeys.map((k) => ({ k, d: 1 })));
+      _saveBagMeta();
     }
+  } catch (e) {
+    // К-2: отката БОЛЬШЕ НЕТ, и это не упущение, а следствие нового
+    // порядка. Прежний откат (пятый раунд, дисциплина I2 из recordBag()/
+    // markFetched()) был честен ровно потому, что файлы к моменту catch
+    // гарантированно не были тронуты. Теперь они тронуты — снесены
+    // физически и безвозвратно. Вернуть запись в _bagMeta означало бы
+    // утверждать существование файла, которого нет: listBagsFor() снова
+    // отдавал бы мешок, GET /bags/:key отвечал бы ошибкой чтения вместо
+    // честного «мешка больше нет», а метла сирот (finally ниже) обходила
+    // бы стороной ключ, для которого и обходить уже нечего.
+    //
+    // Память остаётся в том состоянии, которое соответствует диску:
+    // мешков нет. Разошлась с диском только ОПИСЬ — и её расхождение
+    // самолечится «мелочью g» на следующем прогоне. Бросок остаётся
+    // (вызывающий обязан узнать, что опись не сохранилась), меняется
+    // только то, что мы при этом НЕ врём себе в память.
     throw e;
   } finally {
     // Мелочь (независимость): sweepOrphanFiles/removeEmptyRecipientDirs
@@ -1748,5 +2117,12 @@ export function cleanupBags(nowMs = Date.now()) {
     sweepStaleTmpFiles(nowMs);
   }
 
-  return { removed, kept };
+  if (deferred) {
+    console.log(
+      `[bags] cleanupBags: deferred ${deferred} expired bag(s) — the chain node did not answer, so it is unknown ` +
+      `which pairs have a live deal that would have adopted them. They will be reconsidered on the next run that ` +
+      `reaches the chain; the ${BAG_MAX_AGE_MS}ms ceiling from upload still applies and is not deferred.`
+    );
+  }
+  return { removed, kept, deferred };
 }

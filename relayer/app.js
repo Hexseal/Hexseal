@@ -26,12 +26,20 @@ dotenv.config({ path: '.env.relayer' });
 // повторно вызываемая из assertBagStoreReady()) — но текстовый порядок здесь
 // дешевле и надёжнее как сигнал для читателя, поэтому он такой.
 import {
-  bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf, bagPathFor,
+  bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, listBagsInvolving, bagMetaOf, bagPathFor,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
+  isBagStoreHealthy, bagStorePersistError,
   adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
   assertNotFromFuture,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
+// Задача 2 (chat-client): справочник открытых ключей чата. Тот же порядок
+// комментария, что у bagStore.js/bagPass.js двумя строками выше — текстуально
+// после dotenv.config(), но ESM всё равно вычисляет импорт раньше тела этого
+// модуля; assertDirectoryReady() ниже (рядом с assertBagStoreReady()/
+// assertBagPassReady()) — то место, где directory.js реально перечитывает
+// process.env ПОСЛЕ dotenv.
+import { putKey, getKeyRecord, assertDirectoryReady } from './directory.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -246,7 +254,7 @@ const SERVICE_MINI_ABI = [
 async function fetchDisputedRecords() {
   try {
     const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
-    return await registry.getDisputed();
+    return { ok: true, records: await registry.getDisputed() };
   } catch (e) {
     // I-C (третий закрывающий раунд ревью, находка координатора): слив
     // двух вызовов getDisputed() в один (мелочь эффективности, коммит
@@ -258,9 +266,17 @@ async function fetchDisputedRecords() {
     // получают СВОЙ узнаваемый префикс — иначе человек, ищущий в логе
     // "усыновление", не найдёт вообще ничего и решит, что оно просто ни
     // разу не сработало этой ночью, а не что причина известна и одна.
-    console.error('[files] getDisputed lookup failed, skipping TTL protection this run:', e.message);
+    // К-1 (аудит устойчивости, 6 августа): «пропускаем защиту в этом
+    // прогоне» — это и был дефект, а не смягчение. Пустой массив
+    // неотличим от честного «спорных пар сейчас нет», и защита вложений
+    // читала отказ сети именно так: один отказ узла в 03:00 сносил
+    // вложение пары, которая прямо сейчас в споре.
+    console.error('[files] getDisputed lookup failed — DEFERRING cleanup of tagged attachments this run (we do not know which pairs are disputed, and "unknown" must never be read as "none"):', e.message);
     console.error('[bags] adoption: getDisputed lookup failed, skipping this run:', e.message);
-    return []; // fail open on the on-chain read — never block cleanup entirely
+    // Отказ теперь ЯВНЫЙ, а не закодированный пустотой. Вызывающий обязан
+    // различать «спорных пар нет» и «мы не знаем» — типом, а не догадкой по
+    // длине массива.
+    return { ok: false, records: [] };
   }
 }
 
@@ -454,6 +470,9 @@ async function adoptActivePairBags(nowMs = Date.now()) {
       });
       const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption (creation)', r.agreement, 'creation', result);
+      // В-3: вложения — тем же сроком и в тот же миг, что и сообщения.
+      const files = adoptPairFiles(pairId, dealDeadline, nowMs, funded);
+      if (files) console.log(`[files] adoption (creation): extended ${files} attachment(s) of ${r.agreement}`);
     } catch (e) {
       console.error(`[bags] adoption (creation): failed for active agreement ${r.agreement}, skipping:`, e.message);
     }
@@ -486,6 +505,9 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
       const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);
+      // В-3: вложения — тем же сроком и в тот же миг, что и сообщения.
+      const files = adoptPairFiles(pairId, dealDeadline, nowMs, funded);
+      if (files) console.log(`[files] adoption: extended ${files} attachment(s) of ${r.agreement}`);
     } catch (e) {
       console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);
     }
@@ -953,13 +975,30 @@ async function pushAfterRelay(receipt, agreementAddress, calldata) {
 
 // ─── Local file storage ───────────────────────────────────────────────────────
 
-const PORT         = process.env.PORT || 3001;
+// Сквозная проверка перед слиянием (8 августа): `process.env.PORT || 3001`
+// отдавал СТРОКУ, а Node понимает нечисловую строку в listen() как ПУТЬ К
+// UNIX-СОКЕТУ. Замер на обычной ФС: PORT=3O01 (буква O вместо нуля) —
+// сервер поднимается, обратный вызов listen срабатывает, в журнале
+// «Relayer running on :3O01», а снаружи по TCP его нет вовсе. Человек видит
+// зелёный старт и мёртвый сервер — худший вид отказа из всех возможных.
+// PORT=0 — свой сорт того же: Node выдаёт СЛУЧАЙНЫЙ свободный порт
+// (замерено: 32843), куда обратный прокси не попадёт никогда.
+//
+// Отдельная функция, а не readPositiveInt(): у порта есть верхняя граница и
+// требование целости, которых у прочих чисел нет.
+const PORT         = readPort('PORT', 3001);
 const BASE_URL     = (process.env.RELAYER_PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const STORAGE_DIR  = process.env.STORAGE_DIR || path.join(__dirname, 'storage');
 const DIR_FILES    = path.join(STORAGE_DIR, 'files');   // encrypted chat files — 7d TTL
 const DIR_PUBLIC   = path.join(STORAGE_DIR, 'public');  // permanent public files (profiles, avatars)
 const DIR_TEMP     = path.join(STORAGE_DIR, 'temp');    // in-progress multipart chunks
 const FILE_TTL_MS  = 7 * 24 * 60 * 60 * 1000;          // 7 days
+// Потолок защиты вложения от чистки. Был локальной константой внутри
+// runFileCleanup(); поднят сюда (В-3), потому что теперь его читает ещё и
+// adoptPairFiles() — две копии одного числа разошлись бы молча.
+// Совпадает с BAG_MAX_AGE_MS склада намеренно: у текста и вложения одного
+// сообщения не должно быть разных потолков.
+const FILE_MAX_PROTECTED_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
 for (const dir of [DIR_FILES, DIR_PUBLIC, DIR_TEMP]) {
   fs.mkdirSync(dir, { recursive: true });
@@ -978,23 +1017,15 @@ if (!SERVER_SECRET) throw new Error('SERVER_SECRET is not set');
 // запрос к /bags/*.
 assertBagPassReady();
 assertBagStoreReady();
+assertDirectoryReady();
 
-// Single deterministic bot wallet — keccak256(SERVER_SECRET) as private key
-const BOT_PRIVATE_KEY = ethers.keccak256(ethers.toUtf8Bytes(SERVER_SECRET));
-const botWallet = new ethers.Wallet(BOT_PRIVATE_KEY);
-
-// XMTP signer for node-sdk (same shape as browser-sdk signer)
-const botSigner = {
-  type: 'EOA',
-  getIdentifier: () => ({
-    identifier: botWallet.address.toLowerCase(),
-    identifierKind: 0, // IdentifierKind.Ethereum
-  }),
-  signMessage: async (message) => {
-    const sig = await botWallet.signMessage(message);
-    return ethers.getBytes(sig);
-  },
-};
+// Бот-кошелька и его XMTP-сайнера здесь больше нет: 6 августа 2026 бот
+// выключен целиком (разбор — хвост `index.js`). Он существовал ровно затем,
+// чтобы состоять в парных группах XMTP и писать переписку в журнал спора
+// открытым текстом; ни для чего другого его подпись не использовалась.
+//
+// Вместе с ним ушёл и `GET /bot-address` — маршрут отдавал адрес бота фронту,
+// чтобы тот добавлял его в группу. Добавлять больше некого и некуда.
 
 // ─── Log encryption ───────────────────────────────────────────────────────────
 
@@ -1078,6 +1109,18 @@ export function safeLogPath(pairId) {
   return logPath;
 }
 
+/**
+ * ⚠️ ПИСАТЕЛЯ У ЖУРНАЛА СЕЙЧАС НЕТ. Единственным был бот XMTP (`botLog.js`),
+ * выключенный 6 августа 2026 вместе со всей XMTP-обвязкой: он держал ключи от
+ * переписки, а экран теперь обещает обратное. Функция оставлена не «на
+ * всякий случай», а как место, куда придёт предъявление сторон (отдельный
+ * план): у обеих половин разговора лежат самодостаточные доказательства
+ * (`chatConversation.MessageProof`), и класть их сюда — та же запись.
+ *
+ * Пока писателя нет, `GET /dispute-log/:dealId` отдаёт то, что бот успел
+ * записать до выключения, и НИЧЕГО НОВОГО. Арбитру это сказано словами —
+ * `arbiter.no_history_log` в локалях больше не пишет «сообщений пока нет».
+ */
 export function appendLogEntry(pairId, entry) {
   const key = deriveLogKey(pairId);
   const encrypted = encryptEntry(key, entry);
@@ -1085,10 +1128,9 @@ export function appendLogEntry(pairId, entry) {
   fs.appendFileSync(safeLogPath(pairId), line);
 }
 
-// Экспортирован: `botLog.js` читает журнал ПЕРЕД дочитыванием истории, чтобы
-// знать, какие сообщения уже записаны (дедупликация) и на какой глубине
-// остановиться. До этого журнал только дописывался и никогда не перечитывался
-// ботом — отсюда и брались дыры.
+// Читает журнал. Прежний потребитель (`botLog.js`, дедупликация при
+// дочитывании истории) удалён вместе с ботом; остался `GET
+// /dispute-log/:dealId` — им пользуется арбитр.
 export function readLog(pairId) {
   const logPath = safeLogPath(pairId);
   if (!fs.existsSync(logPath)) return [];
@@ -1118,8 +1160,34 @@ export async function runFileCleanup() {
   // Один вызов getDisputed() на весь прогон (мелочь эффективности, находка
   // координатора) — используется и защитой вложений (disputedPairIds ниже),
   // и усыновлением по спору (adoptDisputedPairBags() дальше по функции).
-  const disputedRecords = await fetchDisputedRecords();
+  const { ok: chainKnown, records: disputedRecords } = await fetchDisputedRecords();
   const disputedPairIds = disputedPairIdsFromRecords(disputedRecords);
+
+  // В-3 (аудит устойчивости, 6 августа): УСЫНОВЛЕНИЕ ИДЁТ ПЕРВЫМ — раньше
+  // обоих циклов удаления, а не между ними.
+  //
+  // Раньше оба этапа усыновления стояли ПОСЛЕ чистки вложений (и только
+  // перед чисткой мешков). Для мешков порядок был верным и объяснён на
+  // месте; для вложений — нет, и это ровно то, что делало В-3
+  // невоспроизводимым «на второй прогон»: файл сносился в этом же прогоне,
+  // за несколько строк до того, как сделка успевала его усыновить, и
+  // усыновлять становилось нечего. Один и тот же аргумент («продлённое в
+  // этом прогоне не должно попасть под нож этого же прогона») теперь
+  // применён к обоим потребителям, а не к одному.
+  //
+  // Отдельные try на каждый этап — прежний принцип изоляции: падение одного
+  // этапа усыновления не останавливает ни другой этап, ни любую из чисток.
+  try {
+    await adoptActivePairBags();
+  } catch (e) {
+    console.error('[bags] adoption (creation) error:', e.stack || e.message);
+  }
+
+  try {
+    await adoptDisputedPairBags(disputedRecords);
+  } catch (e) {
+    console.error('[bags] adoption error:', e.stack || e.message);
+  }
 
   // Expired chat files — skip any still tagged to a currently-disputed pair,
   // but only up to MAX_PROTECTED_AGE_MS. peerA/peerB tagging on /files/presign
@@ -1130,14 +1198,46 @@ export async function runFileCleanup() {
   try {
     let removed = 0;
     let protectedCount = 0;
-    const MAX_PROTECTED_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+    let deferredCount = 0;
+    let adoptedCount = 0;
     for (const f of fs.readdirSync(DIR_FILES)) {
       const fp = path.join(DIR_FILES, f);
       try {
         const mtimeMs = fs.statSync(fp).mtimeMs;
         if (mtimeMs < cutoff) {
-          const pairId = _filePairs[f];
-          const withinProtectionCeiling = mtimeMs > Date.now() - MAX_PROTECTED_AGE_MS;
+          const pairId = filePairIdOf(f);
+          const withinProtectionCeiling = mtimeMs > Date.now() - FILE_MAX_PROTECTED_AGE_MS;
+          // В-3: усыновлённое сделкой живёт до конца дела — тем же сроком,
+          // что и сообщение, к которому вложение приложено. Проверка стоит
+          // ПЕРЕД спорной: спор — частный случай живого дела, а усыновление
+          // покрывает и то время, когда спора ещё нет (бриф обсуждают ДО
+          // сделки — ровно та дыра, ради которой всё это заведено).
+          // Потолок здесь НЕ применяется повторно: он уже применён в
+          // adoptPairFiles() на момент продления, по статусу именно той
+          // сделки, что его выдала. Применить его ещё раз тут значило бы
+          // обрезать оплаченную сделку, которой он не касается.
+          const adoptedUntil = fileDealDeadlineOf(f);
+          if (adoptedUntil !== null && Date.now() < adoptedUntil) {
+            adoptedCount++;
+            continue;
+          }
+          // К-1: НЕ ЗНАЕМ — НЕ СНОСИМ. Узел цепи не ответил, значит про
+          // ЛЮБУЮ помеченную пару неизвестно, в споре она или нет. Раньше
+          // это неведение приезжало сюда пустым множеством и было
+          // неотличимо от честного «спорных пар нет» — то есть отказ сети
+          // РАЗРЕШАЛ снос вместо того, чтобы его откладывать.
+          //
+          // Откладываем ровно то, про что не знаем: помеченные вложения в
+          // пределах 90-дневного потолка. НЕпомеченное сносится как
+          // обычно — оно не могло бы быть защищено спором ни при каком
+          // ответе цепи, и знание цепи для решения по нему не нужно.
+          // Потолок сохраняется и здесь: он существует против пометки без
+          // доказательства участия, а отказ узла не повод этот потолок
+          // снимать.
+          if (!chainKnown && pairId && withinProtectionCeiling) {
+            deferredCount++;
+            continue;
+          }
           if (pairId && disputedPairIds.has(pairId) && withinProtectionCeiling) {
             protectedCount++;
             continue;
@@ -1150,9 +1250,41 @@ export async function runFileCleanup() {
         }
       } catch {}
     }
-    if (removed || protectedCount) _saveFilePairs();
+    // К-4: записи описи, за которыми файла НЕТ ВОВСЕ.
+    //
+    // Цикл выше ходит по ФАЙЛАМ на диске, а запись описи появляется раньше
+    // всякого файла — на выдаче адреса. Человек, закрывший вкладку между
+    // выдачей и заливкой (а до этой правки — и любой посторонний, который
+    // просто дёргал выдачу), оставлял запись «кто с кем» НАВСЕГДА: удалять её
+    // было некому, потому что файла, за которым бы пришли, не существовало.
+    // Это и была «вечная опись», и она же — причина замедления, когда её
+    // становится много.
+    //
+    // Считаем один раз по каталогу, а не `existsSync` на каждую запись: описи
+    // и файлов могут быть десятки тысяч, и проверка по одному превратила бы
+    // ночную чистку в десятки тысяч обращений к диску.
+    let orphanPairs = 0;
+    try {
+      const present = new Set(fs.readdirSync(DIR_FILES));
+      for (const key of Object.keys(_filePairs)) {
+        if (!present.has(key)) { delete _filePairs[key]; orphanPairs++; }
+      }
+    } catch { /* каталог не прочёлся — не трогаем опись вообще */ }
+
+    if (removed || protectedCount || orphanPairs || deferredCount || adoptedCount) _saveFilePairs();
+    if (orphanPairs) console.log(`[files] cleanup: dropped ${orphanPairs} pair record(s) with no file`);
     if (removed) console.log(`[files] cleanup: removed ${removed} expired file(s)`);
     if (protectedCount) console.log(`[files] cleanup: protected ${protectedCount} file(s) — pair still disputed`);
+    if (adoptedCount) console.log(`[files] cleanup: kept ${adoptedCount} file(s) adopted by a deal — same deadline as the message they belong to`);
+    // К-1: отложенное обязано быть НАЗВАНО числом. Ночь, в которую уборка
+    // отложена отказом сети, иначе неотличима в логе от ночи, в которую
+    // сносить было нечего, — а это разные вещи: первая копит мусор.
+    if (deferredCount) {
+      console.log(
+        `[files] cleanup: deferred ${deferredCount} tagged file(s) — the chain node did not answer, so it is ` +
+        `unknown which pairs are disputed. They will be reconsidered on the next run that reaches the chain.`
+      );
+    }
   } catch (e) {
     console.error('[files] cleanup error:', e.message);
   }
@@ -1210,25 +1342,17 @@ export async function runFileCleanup() {
   // непересекающиеся наборы пар в любой момент; порядок ниже — просто по
   // смыслу повествования ("сначала создание, потом спор").
   try {
-    await adoptActivePairBags();
-  } catch (e) {
-    console.error('[bags] adoption (creation) error:', e.stack || e.message);
-  }
-
-  try {
-    await adoptDisputedPairBags(disputedRecords);
-  } catch (e) {
-    console.error('[bags] adoption error:', e.stack || e.message);
-  }
-
-  try {
-    const { removed, kept } = cleanupBags();
+    // К-1 для мешков: тот же признак «цепь ответила», что уже правит
+    // отсрочкой вложений выше. Без него гейт внутри cleanupBags() не
+    // достигается вовсе — именно так первая редакция К-1 накрыла вложения
+    // и оставила снаружи сами слова переписки.
+    const { removed, kept, deferred } = cleanupBags(Date.now(), { chainKnown });
     // Закрывающий раунд ревью: печатать ВСЕГДА, не только когда removed>0
     // — иначе ночь без единого удаления и ночь, когда расписание вообще не
     // сработало (крон не выстрелил, процесс не поднялся), выглядят в логе
     // одинаково — тишиной. Явная строка с обоими числами превращает
     // "ничего не залогировано" в однозначный сигнал "чистка не отработала".
-    console.log(`[bags] cleanup: removed ${removed}, kept ${kept}`);
+    console.log(`[bags] cleanup: removed ${removed}, kept ${kept}${deferred ? `, deferred ${deferred} (chain node unreachable)` : ''}`);
   } catch (e) {
     // Стек, не только e.message — собственный узнаваемый префикс
     // "[bags] cleanup error" не должен проигрывать в информативности тому,
@@ -1252,7 +1376,15 @@ const RPC_URL        = process.env.RPC_URL || process.env.BASE_SEPOLIA_RPC_URL |
 // чистку, дольше, чем есть смысл ждать один battle-тестed узел. Раньше эта
 // проблема уже существовала (мета-транзакции/пуши), новые вызовы этой задачи
 // только повышают частоту, с которой она может сработать — не вводят её.
-const RPC_TIMEOUT_MS = Number(process.env.RPC_TIMEOUT_MS || 20_000);
+// Сквозная проверка перед слиянием (8 августа): RPC_TIMEOUT_MS=0
+// принимался молча, а ethers понимает нулевой таймаут как «ждать без
+// конца» (проверено: fr.timeout = 0 присваивается без возражений). То есть
+// ручка, заведённая ровно против зависшего узла, при 0 отменяла собственное
+// лекарство: один повисший вызов вешал весь ночной прогон целиком.
+// readPositiveInt() отвергает 0, отрицательное и мусор при старте, называя
+// переменную — ethers на 'abc' ругался и сам, но своим текстом, из которого
+// не видно, какую переменную чинить.
+const RPC_TIMEOUT_MS = readPositiveInt('RPC_TIMEOUT_MS', 20_000);
 const RELAYER_KEY    = process.env.RELAYER_PRIVATE_KEY;
 const FORWARDER_ADDR = process.env.TRUSTED_FORWARDER;
 const DIAMOND_ADDR   = process.env.DIAMOND_ADDRESS;
@@ -1497,8 +1629,53 @@ export function clientIp(req) {
 
 // ─── Core routes ──────────────────────────────────────────────────────────────
 
+// В-1 (аудит устойчивости, 6 августа): здоровье обязано включать то, от
+// чего зависит СОХРАННОСТЬ, а не только то, что процесс жив и отвечает.
+//
+// Раньше здесь стоял безусловный {status:'ok'}. Две беды из одного корня:
+// отправитель получал 200 на сообщение, которое не переживёт перезапуск (в
+// режиме недоверия склад держит запись только в памяти), а внешний надзор
+// видел «жив» на сервере, который уже ничего не сохраняет — то есть беда
+// не была бы замечена ровно тем механизмом, который для этого и поставлен.
+//
+// 503, а не 200 с полем: надзор смотрит на КОД. Поле, которое надо ещё
+// разобрать и на которое надо ещё догадаться настроить проверку, — это то
+// же самое молчание, только длиннее.
+//
+// Прежние поля (status/relayer/diamond) на месте — существующие
+// потребители не ломаются, они просто получают ещё и `storage`.
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', relayer: relayer.address, diamond: DIAMOND_ADDR });
+  // Сквозная проверка перед слиянием: первая редакция этой ручки знала про
+  // режим недоверия и отказ записи, но НЕ про полный диск — а сервер к тому
+  // моменту уже отвечал `507 disk_full` на запись. Надзор видел `200 ok`:
+  // беда УЖЕ наступила, УЖЕ отражена в отказах человеку, а внешний глаз о
+  // ней не знал.
+  //
+  // Порог — ТОТ ЖЕ `DISK_RESERVE_BYTES` и та же мерка `freeBytesOnStorage()`,
+  // которыми отвечает 507. Второй, свой порог здесь рано или поздно разошёлся
+  // бы с первым молча, и `/health` начал бы врать в другую сторону.
+  //
+  // `null` — «измерить не вышло» (statfsSync отсутствует или не работает на
+  // этой ФС, замечено на exFAT), и это НЕ «диск полон»: сломанная мерка не
+  // повод красить весь надзор.
+  const freeBytes = freeBytesOnStorage();
+  const diskFull = freeBytes === null ? null : freeBytes < DISK_RESERVE_BYTES;
+  const storage = {
+    indexTrusted: isBagStoreHealthy(),
+    lastPersistError: bagStorePersistError(),
+    diskFull,
+    freeBytes,
+    reserveBytes: DISK_RESERVE_BYTES,
+  };
+  const healthy = storage.indexTrusted && storage.lastPersistError === null && diskFull !== true;
+  res
+    .status(healthy ? 200 : 503)
+    .json({
+      status: healthy ? 'ok' : 'degraded',
+      relayer: relayer.address,
+      diamond: DIAMOND_ADDR,
+      storage,
+    });
 });
 
 app.get('/nonce/:address', async (req, res) => {
@@ -1517,11 +1694,6 @@ app.get('/balance', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-
-// Returns the relay bot's XMTP address so the frontend knows who to invite.
-app.get('/bot-address', (_req, res) => {
-  res.json({ address: botWallet.address.toLowerCase() });
 });
 
 // ─── Dispute-log session pass ────────────────────────────────────────────────
@@ -1826,22 +1998,140 @@ app.post('/relay', async (req, res) => {
 //   GET  /files/:key              → express.static(DIR_FILES)
 //   GET  /public/:key             → express.static(DIR_PUBLIC)
 
+// ─── К-4: вход на файловый сервер чата ───────────────────────────────────
+//
+// ЧТО ЗДЕСЬ БЫЛО. `POST /files/presign` и вся многокусочная дорога рядом:
+// без пропуска, без ограничителя, до 5 ГБ на файл. Готовый способ забить
+// диск дешёвого VPS — и заодно анонимная запись в опись «кто с кем».
+//
+// ⚠️ ГРАНИЦА, КОТОРУЮ НЕЛЬЗЯ ПЕРЕЙТИ. Этими маршрутами пользуется НЕ ТОЛЬКО
+// чат. Замерено (test/chatFilesPass.test.js, последний блок): рядом живут
+// профили и аватары — `/files/public/presign` и `/files/public-put`, — и
+// зовёт их СЕРВЕРНЫЙ маршрут `frontend/src/app/api/ipfs/upload/route.ts`, у
+// которого кошелька нет и пропуска взять неоткуда. Пропуск требуется только
+// от чат-семьи маршрутов; публичная семья остаётся как была.
+//
+// Скачивание чат-файла (`GET /files/:key`) тоже остаётся открытым, и это не
+// упущение: ключ — случайный UUID, который знают только собеседники, а
+// содержимое зашифровано на устройстве. Пропуск на скачивание не добавил бы
+// секретности, зато сломал бы уже разосланные ссылки.
+const CHAT_FILE_RATE_MAX    = readPositiveInt('CHAT_FILE_RATE_MAX',     40);
+const CHAT_FILE_IP_RATE_MAX = readPositiveInt('CHAT_FILE_IP_RATE_MAX', 200);
+
+// Куски многокусочной заливки — СВОЙ бюджет, отдельный от выдач.
+//
+// Замерено (test/chatFileBytes.test.js): два вложения по 200 МБ — это
+// 2 × (1 создание + 25 кусков по 8 МБ + 1 сборка) = 54 запроса, а бюджет
+// адреса был 40 на всё. Из 54 запросов 14 получали 429, то есть **второе
+// вложение умирало на середине заливки**. Это не нападение, а самый обычный
+// день: человек отправил два больших файла подряд.
+//
+// Считать куски вместе с выдачами было ошибкой: у них разная природа. Выдача
+// заводит сеанс и стоит дёшево, поэтому её скупость осмысленна; кусок несёт
+// байты, и его уже держат ДВА других предела — размер куска и сумма кусков
+// при сборке. Ограничивать его ещё и счётчиком запросов значит ограничивать
+// одно и то же трижды, причём самым грубым из трёх способов.
+//
+// 600 в минуту: 24 полных вложения по 200 МБ, то есть заведомо больше, чем
+// пропустит потолок байтов и запас диска.
+const CHAT_FILE_PART_RATE_MAX = readPositiveInt('CHAT_FILE_PART_RATE_MAX', 600);
+
+function chatFileRateKey(address) { return `chatfile:${address}`; }
+function chatFilePartRateKey(address) { return `chatfile-part:${address}`; }
+function chatFileIpRateKey(ip)    { return `chatfile-ip:${ip}`;    }
+
+// Потолок на файл. Пять гигабайт были не щедростью, а необеспеченным
+// обещанием: столько на дешёвом VPS просто нет, и первый же такой файл
+// положил бы вместе с собой ВСЁ — мешки, опись, журналы споров, мета-
+// транзакции. Двести мегабайт — вдесятеро больше порога многокусочной
+// заливки (20 МБ), то есть чат работает как работал, но один файл больше не
+// способен занять заметную долю диска. Фронт обещает ровно это же число
+// (`frontend/src/lib/fileStorage.ts`), и на совпадение есть тест — иначе
+// человек узнавал бы о потолке от сервера, уже залив полфайла.
+const MAX_CHAT_FILE_SIZE = readPositiveInt('MAX_CHAT_FILE_SIZE', 200 * 1024 * 1024);
+export { MAX_CHAT_FILE_SIZE };
+
+// Сколько места обязано остаться свободным, чтобы принимать чат-файлы.
+// Отвечает на вопрос «диск кончился — вернули ошибку или упали целиком?»:
+// чат-файлы отказывают первыми и в одиночку, а мешкам, описи и журналам
+// споров остаётся запас. Без этого правила порядок отказа определялся тем,
+// кто первым не смог записать.
+const DISK_RESERVE_BYTES = readPositiveInt('DISK_RESERVE_BYTES', 2 * 1024 * 1024 * 1024);
+
+/** Свободно ли на томе хранилища больше запаса. `null` — измерить не вышло. */
+function freeBytesOnStorage() {
+  try {
+    const st = fs.statfsSync(STORAGE_DIR);
+    return Number(st.bavail) * Number(st.bsize);
+  } catch {
+    // `statfsSync` может отсутствовать или не работать на файловой системе
+    // (замечено на exFAT). Сломанная мерка — не повод отказать человеку:
+    // без неё мы ровно там же, где были до этой правки, а ENOSPC ниже по
+    // потоку по-прежнему обработан.
+    return null;
+  }
+}
+
+/**
+ * Общий вход для всей чат-семьи файловых маршрутов. Порядок — от дешёвого к
+ * дорогому, тот же, что у мешков: бюджет выхода → пропуск → бюджет адреса.
+ * `needsDisk` — только для тех маршрутов, что реально пишут байты.
+ * `part: true` — заливка куска: свой, щедрый бюджет (см. CHAT_FILE_PART_RATE_MAX).
+ *
+ * Возвращает адрес владельца пропуска или `null`, уже ответив клиенту.
+ */
+function requireChatFileAccess(req, res, { needsDisk = false, part = false } = {}) {
+  if (!checkRateLimit(chatFileIpRateKey(clientIp(req)), CHAT_FILE_IP_RATE_MAX)) {
+    bagRateLimited(res, 'rate_limited_ip');
+    return null;
+  }
+  const address = requireBagPass(req, res);
+  if (!address) return null;
+
+  const [key, max] = part
+    ? [chatFilePartRateKey(address), CHAT_FILE_PART_RATE_MAX]
+    : [chatFileRateKey(address),     CHAT_FILE_RATE_MAX];
+  if (!checkRateLimit(key, max)) {
+    bagRateLimited(res, 'rate_limited_files');
+    return null;
+  }
+
+  if (needsDisk) {
+    const free = freeBytesOnStorage();
+    if (free !== null && free < DISK_RESERVE_BYTES) {
+      res.status(507).json({ error: 'Storage is full', code: 'disk_full' });
+      return null;
+    }
+  }
+  return address;
+}
+
 // ── Small encrypted file presign ──────────────────────────────────────────────
 
 app.post('/files/presign', (req, res) => {
+  const owner = requireChatFileAccess(req, res, { needsDisk: true });
+  if (!owner) return;
   try {
     // Chat files are always encrypted binary blobs — extension is cosmetic only.
     // We ignore whatever ext the client sends and always use .bin so that
     // express.static never serves them with a text/html or image MIME type.
     const key = `${Date.now()}-${randomUUID()}.bin`;
 
-    // Optional: tag this file with the chat pair it belongs to, so the nightly
-    // cleanup job can protect it while that pair has a disputed agreement.
-    // Best-effort only — an invalid/missing pair just skips tagging, it never
-    // blocks the upload itself.
-    const { peerA, peerB } = req.body || {};
-    if (peerA && peerB && ETH_ADDR_RE.test(peerA) && ETH_ADDR_RE.test(peerB)) {
-      _filePairs[key] = pairIdFromAddresses(peerA, peerB);
+    // Метка пары, чтобы ночная чистка щадила вложения, пока у пары открыт
+    // спор.
+    //
+    // ⚠️ ПЕРВЫЙ УЧАСТНИК ПАРЫ БОЛЬШЕ НЕ БЕРЁТСЯ ИЗ ТЕЛА. Раньше брались оба
+    // (`peerA`, `peerB`), без всякого доказательства, что зовущий имеет к
+    // ним отношение — то есть кто угодно писал в вечную опись «кто с кем»
+    // произвольную пару чужих адресов (они публичны в цепи), да ещё и
+    // получал этим защиту своего файла от чистки на всё время чужого спора.
+    // Теперь первый участник — владелец пропуска, и соврать про него
+    // нечем.
+    const { peerB } = req.body || {};
+    if (typeof peerB === 'string' && ETH_ADDR_RE.test(peerB.toLowerCase())) {
+      // В-3: новая, совместимая форма записи — пара плюс срок (пока пустой,
+      // его проставит первое усыновление сделкой).
+      _filePairs[key] = { p: pairIdFromAddresses(owner, peerB), d: null };
       _saveFilePairs();
     }
 
@@ -1850,6 +2140,7 @@ app.post('/files/presign', (req, res) => {
       downloadUrl: `${BASE_URL}/files/${key}`,
       key,
       expiresIn: '7 days',
+      maxSize: MAX_CHAT_FILE_SIZE,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1858,7 +2149,6 @@ app.post('/files/presign', (req, res) => {
 
 // ── Small encrypted file upload (streaming, size-limited) ────────────────────
 
-const MAX_FILE_SIZE   = 5 * 1024 * 1024 * 1024; // 5 GB — encrypted chat files
 const MAX_PUBLIC_SIZE =           5 * 1024 * 1024; // 5 MB — avatars, profiles
 const MAX_PART_SIZE   =          50 * 1024 * 1024; // 50 MB — per multipart chunk
 
@@ -1902,7 +2192,13 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
       aborted = true;
       ws.destroy();
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${formatMaxSize(maxBytes)})` });
+      // `code` (Задача 6, план «Клиент чата»): у 401/404/429 машинный признак
+      // был с самого начала, у 413 — нет, и клиенту оставалось разбирать
+      // английский текст, чтобы отличить «слишком большой файл» от «негодный
+      // адрес» (оба 4xx). То же значение, что уже отдаёт обработчик
+      // `entity.too.large` ниже — одна причина, один код, независимо от того,
+      // поймал её парсер тела или этот поток.
+      if (!res.headersSent) res.status(413).json({ error: `File too large (max ${formatMaxSize(maxBytes)})`, code: 'payload_too_large' });
       req.destroy();
     }
   });
@@ -1923,7 +2219,11 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
   ws.on('error', (err) => {
     aborted = true;
     unlinkQuietSync(filePath);
-    if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error' }); }
+    // `write_failed`, а не `internal_error`: это НЕ «сервер сломался», это
+    // «кончилось место на диске» — единственный отказ загрузки, о котором
+    // человеку стоит сказать другими словами («попробуйте позже», а не
+    // «сократите файл»). Различить их клиент обязан кодом.
+    if (!res.headersSent) { console.error('[upload]', err.message); res.status(500).json({ error: 'Write error', code: 'write_failed' }); }
   });
   // И-2 (ревью): a dropped connection mid-upload (client closes the socket,
   // network drop) used to only stop the write — whatever had already landed
@@ -1943,14 +2243,19 @@ function streamWithSizeLimit(req, res, filePath, maxBytes, onFinish) {
 }
 
 app.put('/files/upload-put/:key', (req, res) => {
+  // Без этого адрес заливки был предъявительским: кто угодно, угадав или
+  // подсмотрев ключ, писал байты — и, что важнее, выдача ключа сама по себе
+  // ничего не стоила, так что угадывать было незачем.
+  if (!requireChatFileAccess(req, res, { needsDisk: true })) return;
   const key = safeKey(req.params.key);
   if (!key) return res.status(400).json({ error: 'Invalid key' });
-  streamWithSizeLimit(req, res, path.join(DIR_FILES, key), MAX_FILE_SIZE);
+  streamWithSizeLimit(req, res, path.join(DIR_FILES, key), MAX_CHAT_FILE_SIZE);
 });
 
 // ── URL refresh (local files don't expire by URL, only by TTL cleanup) ────────
 
 app.post('/files/refresh-url', (req, res) => {
+  if (!requireChatFileAccess(req, res)) return;
   try {
     const { key } = req.body || {};
     if (!key || typeof key !== 'string') return res.status(400).json({ error: 'Invalid key' });
@@ -2095,6 +2400,7 @@ app.put('/files/public-put/:key', async (req, res) => {
 // ── Multipart create ──────────────────────────────────────────────────────────
 
 app.post('/files/multipart/create', (req, res) => {
+  if (!requireChatFileAccess(req, res, { needsDisk: true })) return;
   try {
     const { ext = '', chunkCount } = req.body || {};
     if (!chunkCount || chunkCount < 1 || chunkCount > 10000) {
@@ -2119,6 +2425,10 @@ app.post('/files/multipart/create', (req, res) => {
 // ── Multipart part upload (streaming, one chunk per request) ──────────────────
 
 app.put('/files/part/:uploadId/:partNum', (req, res) => {
+  // `part: true` — свой бюджет: считать куски вместе с выдачами убивало
+  // ВТОРОЕ крупное вложение в минуту на середине заливки (замер в
+  // test/chatFileBytes.test.js).
+  if (!requireChatFileAccess(req, res, { needsDisk: true, part: true })) return;
   const uploadId = safeKey(req.params.uploadId);
   const partNum  = parseInt(req.params.partNum, 10);
   if (!uploadId || isNaN(partNum) || partNum < 1 || partNum > 10000) {
@@ -2128,12 +2438,16 @@ app.put('/files/part/:uploadId/:partNum', (req, res) => {
   if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Upload session not found' });
 
   const filename = String(partNum).padStart(6, '0');
-  streamWithSizeLimit(req, res, path.join(dir, filename), MAX_PART_SIZE);
+  // Кусок не может быть больше файла целиком: MAX_PART_SIZE (50 МБ) — предел
+  // ОДНОГО куска, а не разрешение превысить им весь потолок. При потолке
+  // меньше 50 МБ побеждает потолок.
+  streamWithSizeLimit(req, res, path.join(dir, filename), Math.min(MAX_PART_SIZE, MAX_CHAT_FILE_SIZE));
 });
 
 // ── Multipart complete — concatenate chunks ───────────────────────────────────
 
 app.post('/files/multipart/complete', async (req, res) => {
+  if (!requireChatFileAccess(req, res, { needsDisk: true })) return;
   try {
     const { uploadId, key } = req.body || {};
     if (!uploadId || !key) return res.status(400).json({ error: 'uploadId and key required' });
@@ -2147,6 +2461,28 @@ app.post('/files/multipart/complete', async (req, res) => {
 
     const parts = fs.readdirSync(tempDir).sort();
     if (!parts.length) return res.status(400).json({ error: 'No parts found' });
+
+    // ⚠️ ПОТОЛОК ФАЙЛА ДЕЙСТВУЕТ И ЗДЕСЬ. До этой строки его держала только
+    // одиночная дорога: у кусков был свой предел (50 МБ), а СЛОЖЕНИЯ не
+    // делал никто — замерено, 250 МБ в одном файле при потолке 200 МБ.
+    //
+    // Диском это не грозило (законная одиночная дорога пропускает вдвое
+    // больше байт в минуту, и запас диска держит оба пути) — вред был в том,
+    // что обещание не исполнялось: и в шапке потолка, и в договоре фронта с
+    // сервером. Поэтому починка ровно одна: сложить и отказать.
+    //
+    // Считаем РЕАЛЬНЫЕ байты на диске, а не то, что клиент объявил в
+    // chunkCount: объявить можно что угодно.
+    let totalBytes = 0;
+    for (const part of parts) totalBytes += fs.statSync(path.join(tempDir, part)).size;
+    if (totalBytes > MAX_CHAT_FILE_SIZE) {
+      // Обрезки не оставляем: сеанс закончен отказом, собирать больше нечего.
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      return res.status(413).json({
+        error: `File too large (max ${formatMaxSize(MAX_CHAT_FILE_SIZE)})`,
+        code:  'payload_too_large',
+      });
+    }
 
     const ws = fs.createWriteStream(destPath);
     for (const part of parts) {
@@ -2175,6 +2511,7 @@ app.post('/files/multipart/complete', async (req, res) => {
 // ── Multipart abort ───────────────────────────────────────────────────────────
 
 app.post('/files/multipart/abort', (req, res) => {
+  if (!requireChatFileAccess(req, res)) return;
   try {
     const { uploadId } = req.body || {};
     if (!uploadId) return res.status(400).json({ error: 'uploadId required' });
@@ -2251,6 +2588,30 @@ const BAG_NOT_FOUND   = { error: 'Bag not found', code: 'bag_not_found' };
 //   - запись — всплеск быстрой печати/отправки короткими сообщениями.
 // Через окружение, с явными умолчаниями — то же правило, что уже применено
 // к MAX_BAG_SIZE и срокам жизни в bagStore.js.
+// Порт — целое в 1..65535. Пустое значение — законное «пользуйся
+// умолчанием», всё остальное негодное отвергается ГРОМКО и при старте:
+// см. комментарий у объявления PORT, почему тихий отказ здесь особенно
+// дорог (сервер поднимается на UNIX-сокете и рапортует успех).
+function readPort(envVar, defaultValue) {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === '') return defaultValue;
+  const n = Number(raw);
+  // 0 — НЕ опечатка, а осмысленное «дай любой свободный порт» (так поднимают
+  // сервер тесты, чтобы не драться за один и тот же номер). Оставляем
+  // законным: запрещать его значило бы придумать себе требование и сломать
+  // намеренный приём. Опасность 0 не в самом значении, а в том, что журнал
+  // рапортовал бы «:0» вместо настоящего порта — это чинится в index.js,
+  // который печатает адрес УЖЕ ПОДНЯВШЕГОСЯ сервера, а не то, что просили.
+  if (!Number.isInteger(n) || n < 0 || n > 65535) {
+    throw new Error(
+      `${envVar}=${JSON.stringify(raw)} is not a valid TCP port (expected an integer 0..65535, where 0 means ` +
+      `"any free port"). Node treats a NON-NUMERIC value as a UNIX socket PATH: it would start "successfully", ` +
+      `log that it is running, and be unreachable over TCP.`
+    );
+  }
+  return n;
+}
+
 function readPositiveInt(envVar, defaultValue) {
   const raw = process.env[envVar];
   if (raw === undefined || raw === '') return defaultValue;
@@ -2290,6 +2651,24 @@ const BAG_WRITE_RATE_MAX = readPositiveInt('BAG_WRITE_RATE_MAX', 60);
 // последнее уже решено адресными бюджетами выше.
 const BAG_IP_RATE_MAX = readPositiveInt('BAG_IP_RATE_MAX', 300);
 
+// К-1: отдельный, НАМЕРЕННО СКУПОЙ бюджет на обращения к цепи при проверке
+// контрактной подписи. Он не про «сколько запросов вынесет релеер» (это
+// BAG_IP_RATE_MAX выше), а про «сколько чужого узла мы готовы сжечь на
+// проверку подписей, которые никто не обязан был подписывать честно».
+//
+// Почему по IP, а не по заявленному адресу: списывать бюджет заявленным
+// (непроверенным) адресом — это ровно С1, критическая находка предыдущего
+// раунда (см. длинный комментарий в /bags/pass ниже). Нападающий, ни разу
+// не подписавшись как жертва, разряжал бы бюджет чужого адреса и держал
+// владельца Safe отрезанным от собственного чата. По IP — больно тому, кто
+// долбит, а не соседу.
+//
+// Двенадцать в минуту с одного выхода: пропуск живёт 12 часов, то есть
+// ЧЕСТНОМУ владельцу контрактного кошелька нужно ДВА обращения к цепи в
+// сутки, не двенадцать в минуту. Запас здесь для человека, который
+// переподключает кошелёк, а не для нагрузки.
+const BAG_PASS_CHAIN_RATE_MAX = readPositiveInt('BAG_PASS_CHAIN_RATE_MAX', 12);
+
 // Находка ревью (Important): bag-read:<адрес> и сырая строка из clientIp()
 // жили в одном и том же _rateMap. При TRUST_PROXY=true clientIp() отдаёт
 // заголовок CF-Connecting-IP дословно, без проверки, что это вообще похоже
@@ -2307,6 +2686,9 @@ function bagIpRateKey(ip)         { return `ip:${ip}`;             }
 function bagPassRateKey(address)  { return `bag-pass:${address}`;  }
 function bagReadRateKey(address)  { return `bag-read:${address}`;  }
 function bagWriteRateKey(address) { return `bag-write:${address}`; }
+// Тот же приём защиты от подмены ключа заголовком, что у `ip:` выше: префикс
+// `chain:` не может встретиться ни в одном адресном ключе (они на `bag-`).
+function bagChainRateKey(ip)      { return `chain:${ip}`;          }
 
 // Свойство 3 (ревью, второй раунд): раньше все восемь мест лимитера отвечали
 // БУКВАЛЬНО одним и тем же телом — { error: 'Rate limit exceeded' }, без
@@ -2332,6 +2714,148 @@ function requireBagPass(req, res) {
   }
   return verified.address;
 }
+
+// ─── К-1: подпись любого из ЧЕТЫРЁХ родов кошелька ────────────────────────
+//
+// Родов на Base четыре, а не два (замерено 6 августа 2026, три независимых
+// замера — docs/superpowers/specs/2026-08-02-e2e-chat-design.md §4):
+//
+//   1. Обычный (EOA)                     — 65 байт, ecrecover
+//   2. Делегированный EIP-7702           — 65 байт, ecrecover (код на цепи ЕСТЬ)
+//   3. Развёрнутый контракт (Safe)       — переменная длина, ERC-1271
+//   4. Счётный (Coinbase до первой tx)   — переменная длина, обёртка ERC-6492
+//
+// До этой правки здесь стоял ГОЛЫЙ `ethers.verifyMessage`, то есть только
+// ecrecover. Роды 3 и 4 не получали пропуск НИКОГДА: сеанс заводился, ключ
+// выводился, мешок шифровался — и не мог быть ни выложен, ни скачан. Дыра
+// была не в чате, а в его обвязке.
+//
+// ⚠️ ПОРЯДОК ВАЖЕН И ОН НЕ КОСМЕТИЧЕСКИЙ. Сначала — местный ecrecover, БЕЗ
+// СЕТИ ВООБЩЕ. Роды 1 и 2 (то есть почти все люди) не платят за эту правку
+// ни миллисекунды задержки и, главное, не становятся заложниками узла цепи:
+// упавший RPC не имеет права выключить чат обычному кошельку. Замер —
+// test/bagPassContractWallet.test.js, «ноль обращений к цепи».
+//
+// В сеть уходим ТОЛЬКО когда местная проверка не сошлась. Это покрывает и
+// неочевидный случай: Safe с одним владельцем умеет отдать ровно 65 байт,
+// которые ecrecover развернёт в АДРЕС ВЛАДЕЛЬЦА, а не в адрес самого Safe.
+// Поэтому «не 65 байт» — не условие похода в цепь; условие — «местно не
+// сошлось», чем бы подпись ни выглядела.
+const ERC6492_SUFFIX = '6492649264926492649264926492649264926492649264926492649264926492';
+
+// Канонический байткод `UniversalSigValidator` из ERC-6492. Не наш и не
+// переписанный своими руками намеренно: это ровно та же строка, которую
+// возит viem (`viem/_esm/constants/contracts.js`, версия 2.34.0, уже лежит в
+// `frontend/node_modules`), и происхождение заперто тестом — сверкой байт в
+// байт с файлом viem.
+//
+// Что он делает за один `eth_call` без единого развёрнутого контракта
+// (deployless: `to` пуст, вызов исполняет КОНСТРУКТОР и возвращает 1 байт):
+// снимает обёртку ERC-6492 и при необходимости разворачивает счётный
+// кошелёк ВНУТРИ симуляции → пробует ERC-1271, если по адресу есть код →
+// иначе ecrecover. То есть роды 3 и 4 закрыты одним обращением, а не двумя,
+// и разбор обёртки делаем не мы (нам нечего перепутать).
+const UNIVERSAL_SIG_VALIDATOR_BYTECODE = '0x608060405234801561001057600080fd5b5060405161069438038061069483398101604081905261002f9161051e565b600061003c848484610048565b9050806000526001601ff35b60007f64926492649264926492649264926492649264926492649264926492649264926100748361040c565b036101e7576000606080848060200190518101906100929190610577565b60405192955090935091506000906001600160a01b038516906100b69085906105dd565b6000604051808303816000865af19150503d80600081146100f3576040519150601f19603f3d011682016040523d82523d6000602084013e6100f8565b606091505b50509050876001600160a01b03163b60000361016057806101605760405162461bcd60e51b815260206004820152601e60248201527f5369676e617475726556616c696461746f723a206465706c6f796d656e74000060448201526064015b60405180910390fd5b604051630b135d3f60e11b808252906001600160a01b038a1690631626ba7e90610190908b9087906004016105f9565b602060405180830381865afa1580156101ad573d6000803e3d6000fd5b505050506040513d601f19601f820116820180604052508101906101d19190610633565b6001600160e01b03191614945050505050610405565b6001600160a01b0384163b1561027a57604051630b135d3f60e11b808252906001600160a01b03861690631626ba7e9061022790879087906004016105f9565b602060405180830381865afa158015610244573d6000803e3d6000fd5b505050506040513d601f19601f820116820180604052508101906102689190610633565b6001600160e01b031916149050610405565b81516041146102df5760405162461bcd60e51b815260206004820152603a602482015260008051602061067483398151915260448201527f3a20696e76616c6964207369676e6174757265206c656e6774680000000000006064820152608401610157565b6102e7610425565b5060208201516040808401518451859392600091859190811061030c5761030c61065d565b016020015160f81c9050601b811480159061032b57508060ff16601c14155b1561038c5760405162461bcd60e51b815260206004820152603b602482015260008051602061067483398151915260448201527f3a20696e76616c6964207369676e617475726520762076616c756500000000006064820152608401610157565b60408051600081526020810180835289905260ff83169181019190915260608101849052608081018390526001600160a01b0389169060019060a0016020604051602081039080840390855afa1580156103ea573d6000803e3d6000fd5b505050602060405103516001600160a01b0316149450505050505b9392505050565b600060208251101561041d57600080fd5b508051015190565b60405180606001604052806003906020820280368337509192915050565b6001600160a01b038116811461045857600080fd5b50565b634e487b7160e01b600052604160045260246000fd5b60005b8381101561048c578181015183820152602001610474565b50506000910152565b600082601f8301126104a657600080fd5b81516001600160401b038111156104bf576104bf61045b565b604051601f8201601f19908116603f011681016001600160401b03811182821017156104ed576104ed61045b565b60405281815283820160200185101561050557600080fd5b610516826020830160208701610471565b949350505050565b60008060006060848603121561053357600080fd5b835161053e81610443565b6020850151604086015191945092506001600160401b0381111561056157600080fd5b61056d86828701610495565b9150509250925092565b60008060006060848603121561058c57600080fd5b835161059781610443565b60208501519093506001600160401b038111156105b357600080fd5b6105bf86828701610495565b604086015190935090506001600160401b0381111561056157600080fd5b600082516105ef818460208701610471565b9190910192915050565b828152604060208201526000825180604084015261061e816060850160208701610471565b601f01601f1916919091016060019392505050565b60006020828403121561064557600080fd5b81516001600160e01b03198116811461040557600080fd5b634e487b7160e01b600052603260045260246000fdfe5369676e617475726556616c696461746f72237265636f7665725369676e6572';
+
+// Терпение на ОДНУ проверку контрактной подписи. Отдельно от RPC_TIMEOUT_MS
+// (20 с) намеренно: двадцать секунд — потолок для фоновой работы вроде
+// опроса квитанции, а здесь человек стоит перед окном кошелька и ждёт
+// ответа. Лучше честное «узел недоступен, попробуйте ещё раз» через пять
+// секунд, чем двадцать секунд тишины, которые он прочтёт как «сломалось».
+const CONTRACT_SIG_TIMEOUT_MS = readPositiveInt('CONTRACT_SIG_TIMEOUT_MS', 5_000);
+
+/**
+ * Проверяет подпись `sig` над `message` от имени `address` — любым из
+ * четырёх родов кошелька.
+ *
+ * Возвращает:
+ *   { ok: true,  local: true|false }  — подпись принята (local: сети не было)
+ *   { ok: false, reason: 'mismatch' } — подпись не признана ни ecrecover, ни контрактом
+ *   { ok: false, reason: 'address_mismatch' } — то же, но ecrecover развернул
+ *       её в ЧУЖОЙ адрес: подпись настоящая, прислали не за того. Отдельная
+ *       причина, потому что человеку тут говорят другое («вы прислали чужой
+ *       адрес», а не «подпишите заново»). Ставится только когда контрактная
+ *       дорога тоже не признала — Safe с одним владельцем отдаёт ровно 65
+ *       байт, разворачивающихся в адрес ВЛАДЕЛЬЦА, и это законная подпись.
+ *   { ok: false, reason: 'chain_unavailable' } — цепь не ответила; ВЕРДИКТА НЕТ
+ *
+ * Третий исход обязан отличаться от второго: «переподпишись» и «попробуй
+ * позже» — разные советы человеку, и путать их значит гонять владельца Safe
+ * по кругу подписаний, пока лежит чужой узел.
+ *
+ * `onChainAttempt` — вызывается ПЕРЕД обращением к цепи и может его
+ * запретить (вернув false): так бюджет обращений тратится ровно тогда,
+ * когда обращение действительно случается, а не на каждый вызов функции.
+ */
+export async function verifyWalletSignature(address, message, sig, onChainAttempt) {
+  const addr = String(address).toLowerCase();
+
+  // 1. Местная дорога. Роды 1 и 2 заканчиваются здесь, не касаясь сети.
+  let recoveredOther = false;
+  try {
+    if (ethers.verifyMessage(message, sig).toLowerCase() === addr) {
+      return { ok: true, local: true };
+    }
+    // Развернулась, но в другой адрес. Само по себе ещё не отказ (см.
+    // оговорку про Safe с одним владельцем в докстринге), но если и цепь
+    // не признает — причина назовётся именно так.
+    recoveredOther = true;
+  } catch { /* не 65 байт / мусор — это ещё не отказ, дальше цепь */ }
+
+  const noVerdict = () => ({ ok: false, reason: recoveredOther ? 'address_mismatch' : 'mismatch' });
+
+  // Пустая подпись — единственный мусор, который проходит кодировщик
+  // аргументов ниже (`0x` это законные нулевые байты) и потому доехал бы до
+  // цепи. Ни один кошелёк ни одного из четырёх родов пустой подписи не
+  // выдаёт, а обращение к чужому узлу за таким ответом мы платим зря —
+  // отсекаем здесь, местно. Замерено: без этой строки `x-sig: 0x` тратил
+  // обращение к цепи на каждый запрос.
+  if (/^0x$/i.test(String(sig).trim())) return noVerdict();
+
+  // 2. Дорога через цепь. Платная — сначала спрашиваем разрешение.
+  if (onChainAttempt && !onChainAttempt()) return { ok: false, reason: 'rate_limited' };
+
+  let data;
+  try {
+    data = ethers.concat([
+      UNIVERSAL_SIG_VALIDATOR_BYTECODE,
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ['address', 'bytes32', 'bytes'],
+        [addr, ethers.hashMessage(message), sig],
+      ),
+    ]);
+  } catch {
+    // Подпись — не шестнадцатеричная строка вовсе. Это негодный ввод, а не
+    // недоступная цепь: узел тут ни при чём, и звать его незачем.
+    return noVerdict();
+  }
+
+  let result;
+  try {
+    // Гонка с собственным терпением: `provider.call` унаследует таймаут
+    // соединения (20 с), а зависший узел не должен держать человека столько.
+    result = await Promise.race([
+      provider.call({ data }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('contract signature check timed out')), CONTRACT_SIG_TIMEOUT_MS).unref?.(),
+      ),
+    ]);
+  } catch (e) {
+    // Валидатор РЕВЕРТИТ на негодной подписи (например, обёртка ERC-6492
+    // указывает на фабрику, которая не развернула кошелёк) — и это
+    // неотличимо по типу ошибки от «узел не ответил». Разделять их нечем,
+    // и мы выбираем осторожную сторону: сказать «цепь недоступна» и НЕ
+    // выдать пропуск. Ошибиться в эту сторону — лишний повтор; ошибиться в
+    // другую — выдать пропуск по подписи, которой не было.
+    console.error('[bags] contract signature check failed:', e.message);
+    return { ok: false, reason: 'chain_unavailable' };
+  }
+
+  // Конструктор возвращает ровно один байт: 0x01 — признана, 0x00 — нет.
+  return /^0x0*1$/.test(String(result)) ? { ok: true, local: false } : noVerdict();
+}
+
+export { UNIVERSAL_SIG_VALIDATOR_BYTECODE };
 
 // POST /bags/pass — mints a bag pass from a wallet signature.
 //
@@ -2364,7 +2888,7 @@ function requireBagPass(req, res) {
 // caller's address by already having verified a pass — this route is handed
 // an address up front, so a flood of garbage signatures against one address
 // hits the limiter before paying for a single recovery.
-app.post('/bags/pass', (req, res) => {
+app.post('/bags/pass', async (req, res) => {
   const ip = clientIp(req);
   // Not the app-wide checkRateLimit(ip) (RATE_MAX=10, sized for /relay's
   // meta-transactions) — see the long comment at BAG_IP_RATE_MAX above for
@@ -2374,7 +2898,7 @@ app.post('/bags/pass', (req, res) => {
 
   const { address } = req.body || {};
   if (typeof address !== 'string' || !ETH_ADDR_RE.test(address)) {
-    return res.status(400).json({ error: 'Invalid address' });
+    return res.status(400).json({ error: 'Invalid address', code: 'invalid_address' });
   }
   const addr = address.toLowerCase();
 
@@ -2423,30 +2947,49 @@ app.post('/bags/pass', (req, res) => {
   // адреса») — выбран первый, более простой: заводить третье пространство
   // имён ради ограничения объёма чистого ecdsa-восстановления (микросекунды
   // на попытку) не стоит сложности, которую оно добавляет.
-  let recovered;
+  let message;
   try {
-    const message = bagPassChallenge(addr, tsNum);
-    recovered = ethers.verifyMessage(message, sig).toLowerCase();
+    message = bagPassChallenge(addr, tsNum);
   } catch {
     return res.status(401).json({ error: 'Invalid signature', code: 'invalid_signature' });
   }
-  if (recovered !== addr) {
-    // Distinct from both pass_expired (this route doesn't consume an
-    // existing pass) and invalid_signature (the signature itself parsed and
-    // recovered fine — it just isn't for the address the caller claimed) —
-    // Задача 6 tells "re-sign" and "you sent someone else's address" apart
-    // by this code.
-    return res.status(401).json({ error: 'Signature does not match claimed address', code: 'address_mismatch' });
+
+  // К-1: не голый ecrecover, а все четыре рода кошелька (см. длинный
+  // комментарий у verifyWalletSignature выше). Обычный кошелёк проходит
+  // МЕСТНО и `onChainAttempt` даже не зовётся — значит ни бюджет обращений
+  // к цепи, ни доступность узла его не касаются.
+  //
+  // Бюджет обращений к цепи ключуется IP, а не заявленным адресом — иначе
+  // это была бы буквально С1 (см. ниже) в новой одежде: нападающий разряжал
+  // бы чужой бюджет, ни разу не подписавшись как жертва.
+  const verdict = await verifyWalletSignature(addr, message, sig, () =>
+    checkRateLimit(bagChainRateKey(ip), BAG_PASS_CHAIN_RATE_MAX),
+  );
+
+  if (!verdict.ok) {
+    if (verdict.reason === 'rate_limited') return bagRateLimited(res, 'rate_limited_chain');
+    if (verdict.reason === 'chain_unavailable') {
+      // 503, НЕ 401. Переподписывать нечего: подпись, возможно, безупречна,
+      // а вердикта нет потому, что молчит узел цепи. 401 отправил бы
+      // владельца Safe по кругу окон кошелька, каждое из которых
+      // бессмысленно.
+      return res.status(503).set('Retry-After', '5')
+        .json({ error: 'Signature could not be verified on-chain right now', code: 'chain_unavailable' });
+    }
+    // Различие сохранено с прежней версии: «подпись разобралась, но она
+    // чужая» и «подпись не разобралась» — разные советы человеку.
+    if (verdict.reason === 'address_mismatch') {
+      return res.status(401).json({ error: 'Signature does not match claimed address', code: 'address_mismatch' });
+    }
+    return res.status(401).json({ error: 'Invalid signature', code: 'invalid_signature' });
   }
 
   // Бюджет адреса тратится только ЗДЕСЬ — после того, как подпись реально
-  // восстановлена И совпала с заявленным адресом. `recovered` и `addr`
-  // равны в этой точке (проверено строкой выше), но ключом идёт именно
-  // `recovered` — не по привычке, а как утверждение: списывается бюджет
+  // признана владельцем `addr` (местно или контрактом). Списывается бюджет
   // ТОЛЬКО доказанного адреса, никогда заявленного (С1).
-  if (!checkRateLimit(bagPassRateKey(recovered), BAG_PASS_RATE_MAX)) return bagRateLimited(res, 'rate_limited_pass');
+  if (!checkRateLimit(bagPassRateKey(addr), BAG_PASS_RATE_MAX)) return bagRateLimited(res, 'rate_limited_pass');
 
-  const { token, expiresAt } = issueBagPass(recovered, nowSec);
+  const { token, expiresAt } = issueBagPass(addr, nowSec);
   res.json({ pass: token, expiresAt });
 });
 
@@ -2475,11 +3018,16 @@ app.put('/bags/:recipient', (req, res) => {
   // explicitly instead of silently "succeeding" with nothing on disk.
   const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
   if (contentType === 'application/json') {
-    return res.status(400).json({ error: 'Bag upload must not use Content-Type: application/json (body already consumed upstream)' });
+    return res.status(400).json({ error: 'Bag upload must not use Content-Type: application/json (body already consumed upstream)', code: 'bag_content_type' });
   }
 
   const recipient = String(req.params.recipient || '').toLowerCase();
-  if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient' });
+  // Отдельный код от `bag_content_type` и `empty_bag` (Задача 6): все три
+  // отвечают 400, и статус про причину не говорит ничего. Съеденное
+  // json-парсером тело приезжает сюда пустым — то есть ветка «пустой мешок»
+  // ниже перехватывает ТОТ ЖЕ случай своим 400, и без разных кодов клиент
+  // не отличил бы «вы прислали не тот content-type» от «вы прислали ноль байт».
+  if (!ETH_ADDR_RE.test(recipient)) return res.status(400).json({ error: 'Invalid recipient', code: 'invalid_recipient' });
 
   // Neither assertBagStoreReady() nor bagPathFor() creates the recipient's
   // own subdirectory — only the storage root (DIR_BAGS) exists at boot. This
@@ -2492,7 +3040,7 @@ app.put('/bags/:recipient', (req, res) => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
   } catch (e) {
     console.error('[bags] PUT setup failed:', e.message);
-    return res.status(500).json({ error: 'Failed to prepare bag storage' });
+    return res.status(500).json({ error: 'Failed to prepare bag storage', code: 'internal_error' });
   }
 
   streamWithSizeLimit(req, res, filePath, MAX_BAG_SIZE, () => {
@@ -2510,7 +3058,7 @@ app.put('/bags/:recipient', (req, res) => {
     } catch (e) {
       console.error('[bags] PUT stat-after-write failed:', e.message);
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag', code: 'internal_error' });
       return;
     }
     // Мелочь (ревью): пустое тело раньше принималось и хранилось до
@@ -2520,7 +3068,7 @@ app.put('/bags/:recipient', (req, res) => {
     // до единого байта, пустой Buffer от неисправного клиента и т.п.).
     if (size === 0) {
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(400).json({ error: 'Empty bag' });
+      if (!res.headersSent) res.status(400).json({ error: 'Empty bag', code: 'empty_bag' });
       return;
     }
     try {
@@ -2534,14 +3082,115 @@ app.put('/bags/:recipient', (req, res) => {
       // request.
       console.error('[bags] recordBag failed:', e.message);
       unlinkQuietSync(filePath);
-      if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag', code: 'internal_error' });
     }
   });
 });
 
-// GET /bags?since=<ms> — bags addressed to the pass's own address, oldest
-// first (listBagsFor's own order). Only the four fields Задача 3's spec
-// names ship back — not pairId, not firstFetchedAt, not dealDeadline.
+// ─── sent / peers (Задача 1, chat-client) ──────────────────────────────────
+//
+// docs/superpowers/specs/2026-08-06-chat-client-design.md, §3.3/3.4:
+// отправитель до сих пор не мог узнать судьбу собственных мешков ("забрали
+// ли"), и заодно решено бесплатно отдать "когда собеседник последний раз
+// тронул что-то моё" — обе вещи из ТЕХ ЖЕ данных, что GET /bags и так уже
+// читает каждый опрос (раз в 5с), без единого лишнего обращения к складу.
+//
+// Координатор, при сверке плана — четыре правила, каждое заперто тестом
+// (relayer/test/bagSenderView.test.js):
+//   - sent — только мешки ВЛАДЕЛЬЦА ПРОПУСКА (listBagsBySender(address), не
+//     чужой список).
+//   - fetched — булево (firstFetchedAt != null), НЕ временная метка: точное
+//     время забора — метаданные собеседника, отправителю знать незачем.
+//   - peers — только адреса, с которыми есть переписка хоть в одну сторону.
+//   - lastActivityWithMeAt — округлён ВНИЗ до минуты (roundDownToMinute) —
+//     секундная точность рисует слишком подробную картину чужого дня.
+// Ни одно поле не читает содержимое мешка — только то, что уже даёт
+// listBagsFor()/listBagsBySender() (адреса, размеры, время).
+//
+// ⚠️ Переименовано 6 августа (ревью Задачи 1, координатор — уточнено у
+// владельца): поле называлось `lastSeenAt` и спека §3.4 обещала «когда
+// адрес последний раз ОБРАЩАЛСЯ К СЕРВЕРУ» — а реализовано было и остаётся
+// «когда собеседник последний раз ТРОНУЛ ЧТО-ТО МОЁ» (см. buildPeerView()
+// ниже — единственные два источника: он забрал мой мешок, или он прислал
+// свой). Это НЕ то же самое, что «был в сети», и разница не мелочь: человек
+// час сидит в открытом чате, ничего из МОЕГО не трогал — поле честно
+// покажет «час назад», а не «прямо сейчас». Решение владельца: поведение
+// ЛУЧШЕ обещанного (не рассказывает про весь чужой день, только про то, что
+// касается вас двоих) и остаётся как есть; враньём было ИМЯ и обещание в
+// спеке, не код — оба поправлены, код — нет.
+
+const MINUTE_MS = 60 * 1000;
+
+/**
+ * "Тронул не позже этого момента" — округление ВНИЗ, не к ближайшей минуте:
+ * округление вверх нарисовало бы активность раньше, чем она случилась.
+ */
+function roundDownToMinute(ms) {
+  return Math.floor(ms / MINUTE_MS) * MINUTE_MS;
+}
+
+/**
+ * peers из уже полученных `received`/`sent` (никакого отдельного чтения
+ * склада) — те же два сигнала, что уже дают галочку fetched:
+ *   - собеседник САМ прислал мешок → uploadedAt этого мешка — прямое
+ *     доказательство, что он в этот момент что-то делал СО МНОЙ;
+ *   - собеседник забрал мешок, присланный ему, → firstFetchedAt — тоже
+ *     прямое доказательство того же самого.
+ * Без доказательства ни в одну сторону peer всё равно попадает в список
+ * (переписка есть — хоть один мешок в любую сторону, только его прочитать
+ * ещё не забрали и он ничего не присылал сам) с lastActivityWithMeAt: null
+ * — честное "неизвестно", не выдуманная метка.
+ *
+ * ETH_ADDR_RE-проверка на `b.sender` из `received` — единственная защита от
+ * режима недоверия bagStore.js (test/bagStore.test.js, describe про
+ * listBagsBySender): реконструированная с диска запись несёт
+ * meta.sender === '' (имя файла не хранит отправителя). listBagsBySender()
+ * уже сама никогда не отдаёт такие записи ни для одного настоящего адреса
+ * (assertAddress требует валидную форму), так что `sent` в этой защите не
+ * нуждается — только `received`, где sender берётся из ЧУЖОЙ записи и мог
+ * бы быть этим самым ''.
+ */
+function buildPeerView(received, sent) {
+  const lastActivity = new Map(); // адрес -> последняя ЧЕСТНАЯ метка (до округления)
+  const noteEvidence = (addr, ts) => {
+    const prev = lastActivity.get(addr);
+    if (prev === undefined || ts > prev) lastActivity.set(addr, ts);
+  };
+
+  const peers = new Set();
+  for (const b of received) {
+    if (!ETH_ADDR_RE.test(b.sender)) continue; // '' в режиме недоверия — не адрес, не собеседник
+    peers.add(b.sender);
+    noteEvidence(b.sender, b.uploadedAt);
+  }
+  for (const b of sent) {
+    peers.add(b.recipient); // recipient всегда настоящий адрес — форма проверена recordBag()/PUT
+    if (b.firstFetchedAt != null) noteEvidence(b.recipient, b.firstFetchedAt);
+  }
+
+  return [...peers].map((address) => {
+    const ts = lastActivity.get(address);
+    return { address, lastActivityWithMeAt: ts === undefined ? null : roundDownToMinute(ts) };
+  });
+}
+
+// GET /bags?since=<ms> — {inbox, sent, peers} для адреса из пропуска.
+// Раньше отдавал голый массив (только inbox) — форма сменилась объектом
+// решением координатора при сверке плана (docs/superpowers/plans/2026-08-
+// 06-chat-client.md, §"Сверка плана"): добавить sent/peers в ТОТ ЖЕ ответ
+// вместо отдельного запроса, раз опрос и так идёт каждые 5с.
+//
+// `since` применяется к inbox И к sent (правка ревью, находка координатора
+// — см. sentList ниже: до правки sent ехал целиком на каждом тике; замерено
+// честно, JSON.stringify реальной формы записи — ~207 байт на элемент, то
+// есть ~12,16МБ на пустом тике у адреса с 60 000 СОБСТВЕННЫХ отправленных
+// — не 60 000 мешков в СКЛАДЕ вообще, это разные числа, см. отчёт задачи).
+// `peers` — единственное поле, которое остаётся НЕфильтрованным всегда:
+// список собеседников и их lastActivityWithMeAt обязаны отражать всю
+// историю, а не только окно
+// текущего опроса (иначе на любом "тихом" тике, где since отфильтровал бы
+// все недавние события, peers схлопнулся бы в пустой список — заперто
+// test/bagSenderView.test.js).
 app.get('/bags', (req, res) => {
   const ip = clientIp(req);
   if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
@@ -2558,16 +3207,40 @@ app.get('/bags', (req, res) => {
   let since = null;
   if (req.query.since !== undefined) {
     since = Number(req.query.since);
-    if (!Number.isFinite(since)) return res.status(400).json({ error: 'Invalid since' });
+    if (!Number.isFinite(since)) return res.status(400).json({ error: 'Invalid since', code: 'invalid_since' });
   }
 
-  let list;
+  let received, sentRaw;
   try {
-    list = listBagsFor(address);
+    // В-4 (аудит устойчивости, 6 августа): ОДИН обход описи на тик вместо
+    // двух. Раньше здесь стояли listBagsFor() и listBagsBySender() подряд —
+    // два полных прохода по одному и тому же _bagMeta, чтобы разложить его
+    // по двум полям одной и той же записи. Замер (один и тот же прогон,
+    // 200 000 мешков): 347,53 мс на тик (2,9 тика в секунду) → 190,16 мс
+    // (5,3 тика в секунду).
+    ({ received, sent: sentRaw } = listBagsInvolving(address));
   } catch (e) {
     console.error('[bags] GET /bags failed:', e.message);
-    return res.status(500).json({ error: 'Failed to list bags' });
+    return res.status(500).json({ error: 'Failed to list bags', code: 'internal_error' });
   }
+
+  // `peers` считается на ИСХОДНЫХ списках, до объединения ниже: иначе в
+  // собеседниках у человека появился бы он сам.
+  const peers = buildPeerView(received, sentRaw);
+
+  // К-1: читаемое владельцем пропуска — это обе половины переписки, а не
+  // только адресованная ему. Своя половина иначе недостижима: ключи мешков
+  // человек видит в `sent`, но скачать их не мог, и после перезагрузки
+  // вкладки от собственных сообщений не оставалось ничего.
+  //
+  // Дедупликация по ключу обязательна: переписка с самим собой — тот
+  // единственный случай, где один и тот же мешок стоит в обоих списках, и
+  // без неё он приехал бы дважды, дав `duplicate_seq` на разборе цепочки.
+  const readable = [];
+  const seenKeys = new Set();
+  for (const b of received) { seenKeys.add(b.key); readable.push(b); }
+  for (const b of sentRaw) { if (!seenKeys.has(b.key)) readable.push(b); }
+  readable.sort((a, b) => a.uploadedAt - b.uploadedAt);
 
   // И-3 (ревью): nonstrict `>=`, not `>`. Two bags landing in the same
   // millisecond is a real race, not a theoretical one (measured live by the
@@ -2578,9 +3251,34 @@ app.get('/bags', (req, res) => {
   // from now on. `>=` re-sends the already-seen bag alongside it — a client
   // dedupes by key, so a repeat is a no-op, not a data-loss risk the way
   // silently dropping a message forever is.
-  if (since !== null) list = list.filter((b) => b.uploadedAt >= since);
+  const inboxList = since !== null ? readable.filter((b) => b.uploadedAt >= since) : readable;
 
-  res.json(list.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })));
+  // Находка ревью (координатор): `since` фильтровал только inbox — sent
+  // ехал ЦЕЛИКОМ на каждом тике, даже когда в нём ничего не изменилось.
+  // Замерено честно (JSON.stringify реальной формы записи): ~207 байт на
+  // элемент — ~243КБ у адреса с 1 200 собственными отправленными, ~12,16МБ
+  // у адреса с 60 000 (не 60 000 мешков в складе вообще — именно у СЕБЯ
+  // отправленных; первая версия этого числа в отчёте задачи спутала эти
+  // два счётчика и занизила итог примерно в 50 раз). Каждые пять секунд,
+  // каждому. Фильтр — по ЛЮБОМУ из двух событий, не только по
+  // uploadedAt (зеркалом inbox): мешок, отправленный ДО cutoff, но
+  // забранный ПОСЛЕ него, обязан остаться в ответе — иначе отправитель
+  // никогда не узнал бы о собственной галочке, появившейся уже после того,
+  // как мешок стал "старым" по времени загрузки. `peers` — ИЗ уже
+  // посчитанного выше `buildPeerView(received, sentRaw)`, на НЕфильтрованных
+  // списках: lastActivityWithMeAt обязано отражать всю историю, а не только
+  // то, что попало в окно этого конкретного опроса.
+  const sentList = since !== null
+    ? sentRaw.filter((b) => b.uploadedAt >= since || (b.firstFetchedAt != null && b.firstFetchedAt >= since))
+    : sentRaw;
+
+  res.json({
+    inbox: inboxList.map(({ key, sender, size, uploadedAt }) => ({ key, sender, size, uploadedAt })),
+    sent: sentList.map(({ key, recipient, uploadedAt, firstFetchedAt }) => ({
+      key, recipient, uploadedAt, fetched: firstFetchedAt != null,
+    })),
+    peers,
+  });
 });
 
 // GET /bags/:recipient/:filename — download. bagKeyFor() always produces a
@@ -2609,7 +3307,19 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   } catch {
     return res.status(404).json(BAG_NOT_FOUND);
   }
-  if (!meta || meta.recipient !== address) {
+  // К-1: читать мешок вправе тот, кто в нём НАЗВАН — получатель ИЛИ
+  // отправитель. До этого стояло только `meta.recipient !== address`, и
+  // собственных отправленных человек не мог забрать НИКОГДА: ни после
+  // перезагрузки вкладки, ни на новом устройстве. Конверт при этом
+  // запечатан двумя слотами, второй — на себя, ровно ради собственного
+  // архива (план «Клиент чата», Задача 3): слот был, доставать нечем.
+  //
+  // Утечки здесь нет и взяться ей неоткуда: `meta.sender` пишет СЕРВЕР из
+  // пропуска на PUT, а не клиент из тела (см. PUT /bags/:recipient). То
+  // есть «я отправитель» означает «я это и загрузил» — человек получает
+  // свои же байты, которые сам же сюда и положил.
+  const owner = meta && (meta.recipient === address || meta.sender === address);
+  if (!owner) {
     return res.status(404).json(BAG_NOT_FOUND);
   }
 
@@ -2661,7 +3371,7 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   const rs = fs.createReadStream(filePath);
   rs.on('error', (e) => {
     console.error('[bags] read failed:', e.message);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag', code: 'internal_error' });
   });
   // Мелочь (ревью): marking happens on res 'finish' — fired only once the
   // response has finished being handed to the socket — not before streaming
@@ -2694,7 +3404,15 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   // streaming, so a throw can still become a 500) is what caused this
   // finding in the first place, and getting the message to its recipient
   // matters more than the read receipt.
+  // ⚠️ ОТМЕТКА — ТОЛЬКО НА ЧТЕНИИ ПОЛУЧАТЕЛЕМ (К-1). Отправитель теперь тоже
+  // вправе скачать свой мешок, и если бы его чтение поднимало `fetched`,
+  // человек, открывший собственную переписку, САМ СЕБЕ зажигал бы галочку
+  // «доставлено» — она начала бы врать, причём в сторону, которую невозможно
+  // заметить. Заодно поехал бы и срок жизни: 7 дней «прочитан» вместо 30
+  // «не прочитан», у мешка, которого получатель ещё в глаза не видел.
+  const marksRead = meta.recipient === address;
   res.on('finish', () => {
+    if (!marksRead) return;
     try {
       markFetched(key, Date.now());
     } catch (e) {
@@ -2703,6 +3421,135 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   });
   rs.pipe(res);
 });
+
+// ─── Справочник открытых ключей чата (Задача 2, chat-client) ───────────────
+//
+// POST /keys — положить свой открытый ключ. Требует пропуск (правило 1
+// брифа: адрес берётся ИЗ пропуска через requireBagPass(), не из тела —
+// тело может утверждать что угодно про `address`, это поле просто никогда
+// не читается). GET /keys/:address — прочитать чужой, БЕЗ пропуска
+// (правило 4: открытый ключ на то и открытый; требовать пропуск на чтение
+// значило бы выдавать список того, кто кем интересуется).
+//
+// Свои собственные бюджеты лимитера, не переиспользуют BAG_*_RATE_MAX —
+// справочник и мешки логически разные ресурсы (регистрация ключа — редкое
+// событие, на порядок реже, чем опрос списка мешков), общий счётчик заставил
+// бы всплеск одного голодать другой без единого нападающего, тот же урок,
+// что И-4 (ревью Задачи 3, см. комментарий у BAG_PASS_RATE_MAX и соседей)
+// уже поймал для трёх видов бюджетов мешков.
+const KEYS_WRITE_RATE_MAX = readPositiveInt('KEYS_WRITE_RATE_MAX', 20);
+// Один общий IP-бюджет на оба маршрута справочника (не разбит по
+// чтение/запись, как адресный) — то же обоснование, что у BAG_IP_RATE_MAX:
+// грубая сетевая защита "не заваливай нас отсюда", GET не имеет
+// авторизованного адреса вызывающего вообще (правило 4), так что адресный
+// бюджет для него физически нечем ключевать.
+const KEYS_IP_RATE_MAX = readPositiveInt('KEYS_IP_RATE_MAX', 120);
+
+function keysWriteRateKey(address) { return `keys-write:${address}`; }
+function keysIpRateKey(ip)         { return `keys-ip:${ip}`;         }
+
+const KEY_NOT_FOUND = { error: 'No chat key on file for this address', code: 'key_not_found' };
+
+// bagRateLimited() (объявлена выше, у маршрутов мешков) — форма ответа
+// generic ({error, code} на 429 с Retry-After), не специфична для мешков
+// несмотря на имя; переиспользуется здесь буквально, а не копируется.
+app.post('/keys', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(keysIpRateKey(ip), KEYS_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  if (!checkRateLimit(keysWriteRateKey(address), KEYS_WRITE_RATE_MAX)) return bagRateLimited(res, 'rate_limited_write');
+
+  // signKey — ключ проверки подписи звеньев (Ed25519, выводится отдельным
+  // под-ключом в chatConversation.ts). Клиент чата передаёт его ВСЕГДА;
+  // необязательным поле осталось по форме, чтобы старое тело без него
+  // по-прежнему клало только boxKey и не отвергалось.
+  const { boxKey, signKey } = req.body || {};
+  try {
+    const stored = putKey(address, { boxKey, signKey }, Date.now());
+    res.json(stored);
+  } catch (e) {
+    if (e.code === 'invalid_key') {
+      return res.status(400).json({ error: e.message, code: 'invalid_key' });
+    }
+    if (e.code === 'directory_unavailable') {
+      return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
+    }
+    console.error('[keys] POST /keys failed:', e.message);
+    return res.status(500).json({ error: 'Failed to store chat key', code: 'internal_error' });
+  }
+});
+
+app.get('/keys/:address', (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(keysIpRateKey(ip), KEYS_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  // Тот же приём, что PUT /bags/:recipient уже применяет к req.params.recipient
+  // (app.js, выше) — сырой URL-параметр приходит из жизни как угодно
+  // (кошелёк отдаёт чексуммированный, смешанного регистра, адрес), лоуэркейс
+  // до проверки формы, а не отдельная ветка "не нашли, потому что не тот регистр".
+  const address = String(req.params.address || '').toLowerCase();
+  if (!ETH_ADDR_RE.test(address)) {
+    return res.status(400).json({ error: 'Invalid address', code: 'invalid_address' });
+  }
+
+  let record;
+  try {
+    record = getKeyRecord(address);
+  } catch (e) {
+    if (e.code === 'directory_unavailable') {
+      return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
+    }
+    console.error('[keys] GET /keys failed:', e.message);
+    return res.status(500).json({ error: 'Failed to read chat key', code: 'internal_error' });
+  }
+
+  // Правило 5: незнакомый адрес — 404 с кодом, не пустой 200. "Не заходил"
+  // и "что-то сломалось" не должны выглядеть одинаково — заявленная порча
+  // всего справочника (ветка выше) уже отдельно отвечает 503, так что 404
+  // здесь однозначно означает именно "этот адрес никогда не регистрировал
+  // ключ", а не "искали и не нашли по неизвестной причине".
+  if (!record) return res.status(404).json(KEY_NOT_FOUND);
+
+  res.json(record);
+});
+
+// Мелочь (ревью координатора, round 3): "413 — единственный ответ этих
+// маршрутов без кода. Раунд закрыл 500, соседа пропустил." Тело сверх
+// express.json({limit:'64kb'}) (app.js, глобально, у самого верха файла)
+// бросает ДО того, как управление доходит до тела маршрута — Express без
+// собственного обработчика ошибок отвечает HTML-страницей со стеком
+// вызовов, не JSON, что нарушает то же правило, которому подчиняются
+// 400/401/404/503/500 этого маршрута ("каждый замок сверяет код, не
+// только статус"). Путь-скоупнутый error-handling middleware (4 аргумента
+// — Express распознаёт это как обработчик ошибок только по арности
+// функции, не по имени) — ловит ТОЛЬКО ошибки, всплывшие при обработке
+// запроса на /keys*, не трогает остальные маршруты (у которых своя,
+// общепроектная договорённость про эту дыру — не эта задача).
+// Задача 6 (план «Клиент чата»): тот же обработчик теперь стоит и на /bags,
+// и знает вторую ошибку тела — `entity.parse.failed` (битый JSON). Обе
+// уходили в дефолтный обработчик Express, то есть приезжали клиенту HTML-
+// страницей со стеком: `parseErrorBody()` в frontend/src/lib/chatTransport.ts
+// не находит в такой странице ни `error`, ни `code`, и отказ становится
+// БЕЗЫМЯННЫМ ровно там, где вся задача про имена отказов. Вопрос «пришёл
+// мусор — вердикт или падение»: теперь вердикт с кодом.
+//
+// Скоуп по-прежнему путевой (`/keys`, `/bags`), не глобальный: у остальных
+// маршрутов проекта своя договорённость про эту дыру, и менять её здесь
+// значило бы тронуть /relay, /files и /push заодно — не эта задача.
+function bodyParserErrorHandler(err, req, res, next) {
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body too large (max 64kb)', code: 'payload_too_large' });
+  }
+  if (err && (err.type === 'entity.parse.failed' || err.type === 'encoding.unsupported')) {
+    return res.status(400).json({ error: 'Malformed JSON body', code: 'malformed_json' });
+  }
+  next(err);
+}
+app.use('/keys', bodyParserErrorHandler);
+app.use('/bags', bodyParserErrorHandler);
 
 // ─── Push notification endpoints ──────────────────────────────────────────────
 
@@ -2786,38 +3633,380 @@ function resolveDisplayName(addr) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
+// ─── К-2: чем доказывается право послать уведомление ─────────────────────
+//
+// `X-Push-Secret` доказывает «пришло с нашего сервера» — и НИЧЕГО БОЛЬШЕ.
+// Наш собственный `/api/push` подставлял его сам, никого ни о чём не
+// спрашивая, так что посторонний без кошелька и без подписи слал настоящее
+// уведомление от Hexseal любому адресу — с текстом и, что хуже, СО ССЫЛКОЙ
+// по своему выбору. Служебный работник уводил по ней открытую вкладку
+// (замер — test/pushSenderProof.test.js и frontend/src/lib/
+// swNotificationTarget.test.ts).
+//
+// Теперь право доказывается ТЕМ ЖЕ пропуском, что и склад мешков: один
+// способ на две двери, а не второй, изобретённый рядом. Секрет остался —
+// он отвечает на другой вопрос («из интернета или изнутри»), и снимать его
+// незачем.
+//
+// ⚠️ ССЫЛКА, ТЕКСТ, МЕТКА И ЗАГОЛОВОК ИЗ ЗАПРОСА НЕ БЕРУТСЯ ВООБЩЕ. Не
+// «проверяются», не «санируются» — не берутся. Их строит сервер из
+// доказанного отправителя. Проверять пришедшую ссылку по списку разрешённых
+// форм означало бы держать этот список верным вечно; не брать её вовсе
+// нечему протухнуть.
+//
+// Родов ровно два, и оба ведут на НАШ экран:
+//   chat    — «вам написали»: /chat?peer=<отправитель из пропуска>
+//   dispute — «открыт спор» арбитрам: /arbiter?deal=<проверенный адрес>
+//
+// Заголовок и текст — постоянные. Имя отправителя НЕ подставляется, хотя
+// теперь оно доказано и подставить было бы можно: экран чата обещает, что
+// в шторке ОС видно «пришло сообщение» и не видно, от кого и о чём
+// (usePairChat.ts, PUSH_BODY). Доказанность отправителя — не повод нарушить
+// это обещание.
+// ─── К-3: чей бюджет тратит уведомление ──────────────────────────────────
+//
+// Здесь стоял `checkRateLimit(clientIp(req))` — бюджет по адресу ИСТОЧНИКА
+// ЗАПРОСА. А источник тут всегда один: наш собственный Next-сервер, потому
+// что гейт `X-Push-Secret` другого вызывающего не пускает вовсе. Значит ключ
+// у всей площадки был один, а потолок — общий десяток (RATE_MAX), который
+// вообще-то рассчитан на одного человека у /relay.
+//
+// Замерено на БОЕВЫХ умолчаниях (test/pushBudgetLiveDefaults.test.js),
+// без единого переопределения:
+//   40 сообщений одной пары                     → 30 отказов
+//   веер по спору на 50 арбитров                → 50 отказов (о споре не
+//                                                 узнавал НИ ОДИН арбитр)
+//   200 подряд от одного, затем посторонний     → посторонний 429
+//
+// TRUST_PROXY этого не лечит и не при чём: сервер-серверный запрос
+// заголовков источника не шлёт, адрес проваливается в адрес контейнера. Это
+// НЕ экземпляр уже признанного хвоста 28.1.
+//
+// Считаем по тому, ЗА КОГО шлём — по адресу из пропуска. Тогда исчерпавший
+// бюджет мешает только себе, и «долбят нарочно» болит нападающему, а не
+// соседу.
+//
+// Почему НЕ по получателю: бюджет получателя означал бы, что чужой человек
+// выключает уведомления жертве, потратив их за неё. Больно должно быть тому,
+// кто шлёт.
+//
+// Два разных бюджета, а не один: полный веер по спору (ARBITER_FANOUT_CAP=50
+// в frontend/src/lib/webpush.ts) — это 50 запросов подряд от одного адреса.
+// В общем бюджете он съедал бы переписку того же человека целиком, и цена
+// открытия спора была бы «минута без уведомлений в чате».
+const PUSH_SEND_RATE_MAX    = readPositiveInt('PUSH_SEND_RATE_MAX',    60);
+// Бюджет веера по спору ключуется СДЕЛКОЙ, не отправителем (см. ниже, у
+// dealIsDisputed): у этой дороги отправителя нет вовсе. 120 — два полных
+// веера на 50 арбитров в минуту.
+const PUSH_DISPUTE_RATE_MAX = readPositiveInt('PUSH_DISPUTE_RATE_MAX', 120);
+
+// ─── Блокер сквозной проверки: чем доказывается право звать арбитров ─────
+//
+// ЧТО Я СЛОМАЛ СВОЕЙ ЖЕ ПРАВКОЙ. Веер по спору я посадил за пропуск склада
+// вместе с уведомлениями чата. Для чата это верно — там отправитель по
+// определению участник переписки. Для СПОРА неверно, и цена не «неудобно»:
+// спор открывает человек, который мог не заходить в чат ни разу, пропуска у
+// него нет, запрос не уходит, и арбитры о споре НЕ УЗНАЮТ. Молча. Замер —
+// test/pushDisputeChainProof.test.js: 401 и ноль отправленных.
+//
+// Правильное доказательство для этой дороги — не «кто ты», а «спор
+// действительно есть». Оно лежит в цепи и не зависит от того, пользуется ли
+// человек чатом.
+//
+// Почему этого ДОСТАТОЧНО, а не «дыра поменьше»: единственное, чего добьётся
+// посторонний, дёргая эту дорогу, — арбитры узнают о НАСТОЯЩЕМ споре, то
+// есть ровно то, что и должно произойти. Текст постоянный, ссылка ведёт на
+// наш экран арбитра, метка одна на сделку (повторы ЗАМЕЩАЮТ друг друга в
+// шторке, а не копятся). Исчерпать бюджет сделки можно только реально
+// разослав эти уведомления — «злоупотребление» и «желаемое поведение» тут
+// буквально одно действие.
+//
+// Кэш нужен не для скорости, а чтобы веер на 50 арбитров стоил ОДНО чтение
+// цепи, а не пятьдесят: пятьдесят чтений на каждый спор — это сам по себе
+// способ выжечь наш узел.
+const DISPUTE_PROOF_TTL_MS = Number(process.env.DISPUTE_PROOF_TTL_MS || 60_000);
+const DISPUTE_PROOF_MAX_ENTRIES = 500;
+const _disputeProof = new Map();   // deal → { disputed, at }
+
+// ─── Усиление обращений к узлу: замер, а не рассуждение ──────────────────
+//
+// Кэш выше держит ОТВЕТ («спор есть» / «спора нет»), и только его. Неудачное
+// чтение ответом не становится и в кэш не попадает — намеренно: «узел
+// молчит» и «по адресу нет агримента» неразличимы, и, закэшировав молчание
+// узла, мы на весь TTL закрыли бы дорогу настоящему спору.
+//
+// ⚠️ ЦЕНА ЭТОГО РЕШЕНИЯ ЗАМЕРЕНА (test/disputeProofChainLoad.test.js), и она
+// оказалась ровно такой, как предположил координатор:
+//
+//   50 РАЗНЫХ выдуманных адресов        → 50 обращений к узлу   (1:1)
+//   ОДИН выдуманный адрес ×50           → 50 обращений          (кэша нет)
+//   настоящий неспорный адрес ×50       → 1  обращение          (кэш работает)
+//   400 запросов разными адресами       → 400 обращений         (без границы)
+//
+// По выдуманному адресу вызов агримента ревертит — то есть попадает в ветку
+// неудачи, мимо кэша. А бюджет ключевался СДЕЛКОЙ, и у выдуманных адресов
+// ключи всегда новые, поэтому он не срабатывал НИ РАЗУ. Единственной
+// границей был потолок Next-прокси (120/мин с источника), а он снимается
+// набором источников.
+//
+// Границы теперь две, и ни одна из них не кэширует неудачу как ответ:
+//
+// 1. ОБЩИЙ потолок обращений к цепи по этой дороге — один на всех. Законная
+//    нагрузка тут крошечная: спор — событие штучное, а веер на 50 арбитров
+//    стоит ОДНОГО чтения (дальше отвечает кэш). Поэтому щедрый общий потолок
+//    не режет ничего живого, но ограничивает расход независимо от того,
+//    сколько РАЗНЫХ адресов спросили.
+//
+//    Да, общий потолок — это форма того самого «один на всю площадку», за
+//    который я чинил К-3. Разница в том, ЧТО он ограничивает: там это был
+//    бюджет полезного действия (уведомления людям), здесь — бюджет ЗАПРОСОВ К
+//    ЧУЖОМУ УЗЛУ, у которого и так один общий кран на всех. Ограничивать
+//    общий ресурс общим потолком — не та же ошибка.
+//
+// 2. Придержка ПО АДРЕСУ, который только что не прочитался. Это не кэш
+//    ответа: ответа мы не запоминаем и на следующем запросе снова пойдём в
+//    цепь — просто не чаще, чем раз в DISPUTE_RETRY_COOLDOWN_MS. Настоящая
+//    сделка, чтение которой сорвалось из-за узла, повторится через несколько
+//    секунд, а не будет закрыта на минуту.
+const DISPUTE_PROOF_CHAIN_MAX  = readPositiveInt('DISPUTE_PROOF_CHAIN_MAX', 120);
+const DISPUTE_RETRY_COOLDOWN_MS = readPositiveInt('DISPUTE_RETRY_COOLDOWN_MS', 10_000);
+const _disputeReadFailedAt = new Map();   // deal → момент последней неудачи
+
+function disputeChainRateKey() { return 'dispute-proof-chain'; }
+
+// Запасная дорога на случай исчерпанного потолка: список ВСЕХ спорных сделок
+// разом. Одно обращение отвечает про любое число адресов, поэтому поток
+// мусора её не выест — но и свежесть у неё хуже, чем у чтения одной сделки
+// (спор, поднятый секунду назад, попадёт в список на следующем обновлении).
+// Отсюда короткий срок годности: 15 секунд, а не минута.
+const DISPUTE_SET_TTL_MS = readPositiveInt('DISPUTE_SET_TTL_MS', 15_000);
+let _disputedSet = { addresses: null, at: 0 };
+
+/** `Set` адресов спорных сделок, или `null` — если и это прочитать не вышло. */
+async function disputedSetSnapshot() {
+  const now = Date.now();
+  if (_disputedSet.addresses && now - _disputedSet.at < DISPUTE_SET_TTL_MS) {
+    return _disputedSet.addresses;
+  }
+  // fetchDisputedRecords() уже есть в этом файле (ею живёт ночная чистка) и
+  // сама глушит отказ, возвращая пустой массив. Пустой массив здесь принять
+  // за «спорных нет» нельзя — это ровно та ошибка «не знаем значит нет»,
+  // которую в чистке уже чинили. Поэтому читаем реестр здесь напрямую и
+  // отличаем отказ от пустоты.
+  try {
+    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
+    const records = await registry.getDisputed();
+    const addresses = new Set(
+      (records ?? []).map(r => String(r.agreement ?? r[0] ?? '').toLowerCase()).filter(Boolean),
+    );
+    _disputedSet = { addresses, at: now };
+    return addresses;
+  } catch (e) {
+    console.error('[push] dispute proof: registry fallback failed -', e.message);
+    return null;
+  }
+}
+
+/** Только для тестов. */
+export function _resetDisputedSetCache() { _disputedSet = { addresses: null, at: 0 }; }
+
+const AGREEMENT_STATUS_DISPUTED = 4;   // src/Agreement.sol, enum Status
+
+/**
+ * Правда ли, что по `deal` открыт спор.
+ *
+ * `true` / `false` — вердикт цепи; `null` — вердикта НЕТ.
+ *
+ * Третий исход обязан отличаться от второго ровно по той же причине, что и у
+ * подписи контрактного кошелька: «спора нет» и «мы не смогли посмотреть» —
+ * разные вещи, и молчаливо считать второе первым значит терять оповещение
+ * о настоящем споре при первом же чихе узла.
+ *
+ * ⚠️ ЧТО ИМЕННО КЭШИРУЕТСЯ (докстринг раньше обещал больше, чем делал).
+ * Кэшируется ТОЛЬКО вердикт — «есть» и «нет». Неудача не кэшируется никогда:
+ * ни как «нет», ни как «есть». Вместо этого у адреса, чтение которого
+ * сорвалось, заводится ПРИДЕРЖКА: следующий поход в цепь по нему возможен, но
+ * не раньше чем через DISPUTE_RETRY_COOLDOWN_MS. Это не ответ и не память об
+ * ответе — это только частота повторов.
+ *
+ * `null` возвращается в трёх случаях, и вызывающий не обязан их различать:
+ * чтение сорвалось; по адресу недавно уже срывалось (придержка); общий
+ * потолок обращений к цепи на эту минуту исчерпан.
+ */
+async function dealIsDisputed(deal) {
+  const key = deal.toLowerCase();
+  const now = Date.now();
+
+  const hit = _disputeProof.get(key);
+  if (hit && now - hit.at < DISPUTE_PROOF_TTL_MS) return hit.disputed;
+
+  // Придержка по адресу, который только что не прочитался. Замер до неё:
+  // один выдуманный адрес ×50 стоил 50 обращений к узлу.
+  const failedAt = _disputeReadFailedAt.get(key);
+  if (failedAt !== undefined && now - failedAt < DISPUTE_RETRY_COOLDOWN_MS) return null;
+
+  // Общий потолок — один на всех. Он тратится ТОЛЬКО когда мы собираемся
+  // реально пойти в цепь: ответ из кэша и отказ по придержке (обе ветки выше)
+  // ничего не стоят, поэтому веер на 50 арбитров по уже проверенному спору
+  // расходует ровно единицу, а не пятьдесят.
+  if (!checkRateLimit(disputeChainRateKey(), DISPUTE_PROOF_CHAIN_MAX)) {
+    console.warn('[push] dispute proof: global chain-read budget exhausted for', key, '- falling back to the registry set');
+    // ⚠️ БЕЗ ЭТОЙ ВЕТКИ ПОТОЛОК БЫЛ БЫ ПОЧИНКОЙ ХУЖЕ ДЕФЕКТА, и это замерено,
+    // а не предположено: с одним лишь потолком веер на 50 арбитров по
+    // НАСТОЯЩЕМУ спору, поданный после мусорного потока, доставлял 0 из 50.
+    // То есть нападающий выключал арбитраж целиком — ровно то молчание, ради
+    // которого чинился блокер.
+    //
+    // Запасная дорога спрашивает не про ОДНУ сделку, а сразу про ВСЕ спорные
+    // (реестр, `getDisputed()` — та же функция, которой пользуется ночная
+    // чистка, второго способа не заводим). Стоит она одного обращения на
+    // весь список, поэтому её собственный запас поток мусора выесть не может:
+    // сколько бы разных адресов ни спросили, список читается не чаще раза в
+    // DISPUTE_SET_TTL_MS.
+    //
+    // Зовём её ТОЛЬКО когда основной потолок исчерпан, то есть фактически
+    // только под нападением: в обычный день это ноль лишних обращений.
+    // `getDisputed()` дважды проходит по истории ВСЕХ когда-либо созданных
+    // сделок (RegistryFacet.sol) — вызов не из дешёвых, и звать его на каждый
+    // запрос было бы заменой одного усиления другим.
+    const set = await disputedSetSnapshot();
+    if (set) return set.has(key);
+    return null;
+  }
+
+  let disputed;
+  try {
+    const agr = new ethers.Contract(deal, AGREEMENT_MINI_ABI, provider);
+    const details = await agr.getDetails();
+    disputed = Number(details.status_) === AGREEMENT_STATUS_DISPUTED;
+  } catch (e) {
+    // Сюда попадает и «узел молчит», и «по этому адресу нет агримента»
+    // (вызов ревертит). Разделить их нечем, и обе — «вердикта нет»:
+    // уведомление не уходит, но и «спора нет» мы не утверждаем.
+    console.error('[push] dispute proof read failed for', key, '-', e.message);
+    if (_disputeReadFailedAt.size >= DISPUTE_PROOF_MAX_ENTRIES) {
+      const oldest = [..._disputeReadFailedAt.entries()].sort((a, b) => a[1] - b[1])[0];
+      if (oldest) _disputeReadFailedAt.delete(oldest[0]);
+    }
+    _disputeReadFailedAt.set(key, now);
+    return null;
+  }
+
+  // Чтение удалось — прежняя неудача по этому адресу больше не актуальна.
+  _disputeReadFailedAt.delete(key);
+
+  // Отрицательный ответ кэшируется наравне с положительным: иначе поток
+  // запросов по неспорной сделке жёг бы узел на каждом.
+  if (_disputeProof.size >= DISPUTE_PROOF_MAX_ENTRIES) {
+    // Простейшее вытеснение — самая старая запись. Карта нужна маленькой:
+    // одновременно спорных сделок на площадке единицы, а пятьсот — это уже
+    // след нападения, а не работы.
+    const oldest = [..._disputeProof.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) _disputeProof.delete(oldest[0]);
+  }
+  _disputeProof.set(key, { disputed, at: now });
+  return disputed;
+}
+
+/** Только для тестов: забыть доказательства между кейсами. */
+export function _resetDisputeProofCache() { _disputeProof.clear(); _disputeReadFailedAt.clear(); }
+
+// Префикс `push-`, как `ip:`/`bag-`/`chain:` выше: ключ одного бюджета не
+// может совпасть с ключом другого по форме, а не по вере в заголовки.
+function pushSendRateKey(kind, address) { return `push-${kind}:${address}`; }
+
+const PUSH_KINDS = {
+  chat: (sender) => ({
+    title: 'New message',
+    body:  'New message',
+    url:   `/chat?peer=${sender}`,
+  }),
+  dispute: (_sender, { deal }) => ({
+    title: 'A dispute was opened',
+    body:  'A dispute is waiting for an arbiter.',
+    url:   `/arbiter?deal=${deal}`,
+  }),
+};
+
 app.post('/push/send', async (req, res) => {
   try {
-    // Only this server's own Next.js /api/push route is a legitimate caller —
-    // it already sends this header on every request. Without a hard gate here,
-    // anyone could send an arbitrary push notification (any title/body/url) to
-    // any wallet address just by knowing it, since `to` is only ever validated
-    // as a well-formed address, never tied to who's actually asking.
+    // Первый гейт — «изнутри, не из интернета». Он НЕ про то, кто человек.
     if (!PUSH_SECRET || req.headers['x-push-secret'] !== PUSH_SECRET) {
       return res.status(403).json({ error: 'forbidden' });
     }
-    const ip = clientIp(req);
-    if (!checkRateLimit(ip)) {
-      return res.status(429).set('Retry-After', '60').json({ error: 'Rate limit exceeded' });
+    // Бюджета по IP здесь БОЛЬШЕ НЕТ — см. длинный разбор у
+    // PUSH_SEND_RATE_MAX. Он был не строгостью, а неисправностью: ключ у всей
+    // площадки один. Ограничитель переехал ниже, за проверку пропуска, где
+    // впервые известно, ЗА КОГО шлём.
+
+    const { to, kind = 'chat', deal } = req.body || {};
+    if (!to || !ethers.isAddress(to)) {
+      return res.status(400).json({ error: 'Invalid address', code: 'invalid_address' });
     }
-    const { to, title, body, url, from, tag } = req.body || {};
-    if (!to || !body) return res.status(400).json({ error: 'to and body required' });
-    if (!ethers.isAddress(to)) return res.status(400).json({ error: 'Invalid address' });
+    const build = Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : null;
+    if (!build) {
+      // 400, а не тихая подстановка чата: неизвестный род — это рассинхрон
+      // фронта и сервера, и молча слать «вам написали» вместо того, что
+      // просили, значит врать человеку о причине уведомления.
+      return res.status(400).json({ error: 'Unknown notification kind', code: 'unknown_kind' });
+    }
+    const recipient = to.toLowerCase();
 
-    // The gate above already proves this request is from our own server, so
-    // `from` is always safe to trust for display-name resolution now.
-    // Fallback is 'New message', NOT 'Hexseal': the OS already shows the app name
-    // ("from Hexseal") as the source, so a 'Hexseal' title read as "Hexseal from Hexseal".
-    const resolvedTitle = from
-      ? (resolveDisplayName(from) ?? title ?? 'New message')
-      : (title ?? 'New message');
+    // ── Веер по спору: доказывает ЦЕПЬ, а не человек ────────────────────
+    //
+    // Пропуска здесь нет и не требуется — иначе спор, открытый человеком без
+    // сеанса чата, не доехал бы до арбитров вообще (блокер сквозной
+    // проверки, разбор у dealIsDisputed выше).
+    if (kind === 'dispute') {
+      if (typeof deal !== 'string' || !ETH_ADDR_RE.test(deal.toLowerCase())) {
+        return res.status(400).json({ error: 'Invalid deal address', code: 'invalid_deal' });
+      }
+      const dealLc = deal.toLowerCase();
 
-    await sendPush(to.toLowerCase(), {
-      title: resolvedTitle,
-      body:  String(body).slice(0, 200),
-      url:   url || '/chat',
-      tag:   tag || url || '/chat',
-    });
+      // Бюджет — ПЕРЕД чтением цепи: он ограничивает именно чтения. Ключ —
+      // сделка: отправителя у этой дороги нет, а исчерпать бюджет сделки
+      // можно только реально разослав по ней уведомления.
+      if (!checkRateLimit(pushSendRateKey('dispute', dealLc), PUSH_DISPUTE_RATE_MAX)) {
+        return res.status(429).set('Retry-After', '60')
+          .json({ error: 'Rate limit exceeded', code: 'rate_limited_push' });
+      }
+
+      const disputed = await dealIsDisputed(dealLc);
+      if (disputed === null) {
+        // Не «спора нет», а «не смогли посмотреть». Разные ответы, потому
+        // что молчание здесь означает зависший спор.
+        return res.status(503).set('Retry-After', '5')
+          .json({ error: 'Could not verify the dispute on-chain right now', code: 'chain_unavailable' });
+      }
+      if (!disputed) {
+        return res.status(403).json({ error: 'No open dispute for this deal', code: 'not_disputed' });
+      }
+
+      const payload = build(null, { deal: dealLc });
+      await sendPush(recipient, { ...payload, tag: payload.url });
+      return res.json({ ok: true });
+    }
+
+    // ── Переписка: доказывает пропуск ───────────────────────────────────
+    const sender = requireBagPass(req, res);
+    if (!sender) return;
+
+    // Эхо собственной отправки: чат зовёт нас на КАЖДОЕ отправленное
+    // сообщение, и разговор с самим собой (или ошибка на стороне вызывающего)
+    // не должен превращаться в уведомление себе же. Не ошибка — просто нечего
+    // делать.
+    if (recipient === sender) return res.json({ ok: true, skipped: 'self' });
+
+    // Списывается ПОСЛЕДНИМ — после всех отказов по форме запроса. Иначе
+    // двадцать запросов с опечаткой в роде стоили бы человеку его же
+    // переписки, ничего никому не отправив.
+    if (!checkRateLimit(pushSendRateKey('chat', sender), PUSH_SEND_RATE_MAX)) {
+      return res.status(429).set('Retry-After', '60')
+        .json({ error: 'Rate limit exceeded', code: 'rate_limited_push' });
+    }
+
+    const payload = build(sender, {});
+    await sendPush(recipient, { ...payload, tag: payload.url });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2929,6 +4118,60 @@ function _saveFilePairs() {
   try { writeFileSync(FILE_PAIRS_FILE, JSON.stringify(_filePairs), 'utf8'); } catch {}
 }
 
+// В-3 (аудит устойчивости, 6 августа): у записи описи вложений появился
+// срок, усыновлённый сделкой — тот же, что уже получает мешок.
+//
+// Форма записи расширена СОВМЕСТИМО: было `key -> "<pairId>"` (строка),
+// стало `key -> { p: "<pairId>", d: <срок|null> }`. Старые строковые записи
+// читаются как есть и живут дальше — file-pairs.json на боевом сервере уже
+// непустой, а миграция «на старте переписать весь файл» — ровно тот класс
+// действий, который в этом проекте уже ломал живое хранилище. Запись
+// обновляется до новой формы естественным путём: при первом усыновлении.
+function filePairIdOf(key) {
+  const rec = _filePairs[key];
+  if (typeof rec === 'string') return rec;          // старая форма
+  return rec && typeof rec === 'object' ? rec.p : undefined;
+}
+
+function fileDealDeadlineOf(key) {
+  const rec = _filePairs[key];
+  return rec && typeof rec === 'object' && typeof rec.d === 'number' ? rec.d : null;
+}
+
+// Усыновление вложений пары — зеркало adoptPairBags() для файлов.
+// Вызывается из тех же двух мест и с теми же числами, что усыновление
+// мешков, чтобы текст и вложение НИКОГДА не расходились в сроке: расхождение
+// и есть тот дефект, ради которого всё это заведено.
+//
+// Потолок — тот же 90-дневный MAX_PROTECTED_AGE_MS, что уже держит защиту по
+// спору, и та же оговорка про оплату, что у мешков: к ОПЛАЧЕННОЙ сделке
+// потолок не применяется (деньги в эскроу — хранение оплачено чужим
+// капиталом), к неоплаченной применяется. Решается на КАЖДОЕ продление
+// отдельно, по статусу именно той сделки, что его выдаёт — не свойство файла
+// навсегда (C1 из отчёта Задачи 5, тот же урок).
+//
+// Отсчёт потолка — от mtime файла: у вложения нет uploadedAt, его «возраст»
+// это и есть mtime, по которому уже считает вся остальная чистка.
+// Math.max с уже сохранённым — усыновление ПРОДЛЕВАЕТ и никогда не
+// обрезает, ровно как у мешков.
+function adoptPairFiles(pairId, dealDeadline, nowMs, funded) {
+  let adopted = 0;
+  for (const key of Object.keys(_filePairs)) {
+    if (filePairIdOf(key) !== pairId) continue;
+    let mtimeMs;
+    try { mtimeMs = fs.statSync(path.join(DIR_FILES, key)).mtimeMs; } catch { continue; }
+    const ceiling = mtimeMs + FILE_MAX_PROTECTED_AGE_MS;
+    const candidate = funded ? dealDeadline : Math.min(dealDeadline, ceiling);
+    const current = fileDealDeadlineOf(key) ?? 0;
+    const next = Math.max(current, candidate);
+    if (next === current) continue;
+    _filePairs[key] = { p: pairId, d: next };
+    adopted++;
+  }
+  if (adopted) _saveFilePairs();
+  return adopted;
+}
+
 app.get('/dispute-reason', (req, res) => {
   const agreement = String(req.query.agreement || '').toLowerCase();
   if (!/^0x[0-9a-f]{40}$/i.test(agreement)) return res.status(400).json({ error: 'Invalid agreement address' });
@@ -2997,6 +4240,9 @@ export const relayerInfo = {
   storageDir:     STORAGE_DIR,
   dirFiles:       DIR_FILES,
   dirPublic:      DIR_PUBLIC,
+  // Каталог незавершённых многокусочных заливок — тестам нужно смотреть
+  // на РЕАЛЬНЫЕ байты кусков, а не на то, что мы о них думаем.
+  dirTemp:        DIR_TEMP,
   port:           PORT,
   // Задача 5, мелочь (таймаут RPC): provider — для проверки, что таймаут
   // реально дошёл до объекта, которым пользуется ethers
@@ -3006,7 +4252,7 @@ export const relayerInfo = {
   rpcTimeoutMs:   RPC_TIMEOUT_MS,
 };
 
-export { app, botSigner, botWallet };
+export { app };
 
 // ─── Treasury keeper ──────────────────────────────────────────────────────────
 //

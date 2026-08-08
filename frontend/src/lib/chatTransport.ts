@@ -17,9 +17,11 @@
  *
  * ─── ПРОПУСК ───────────────────────────────────────────────────────────
  *
- * `requestBagPass(signMessage, address)` кэширует результат в памяти модуля
- * (на вкладку — не переживает перезагрузку и не расшарен между вкладками,
- * см. вопрос №3 в отчёте задачи) и на живом непротухшем пропуске НЕ ходит
+ * `requestBagPass(signMessage, address)` кэширует результат ДВУМЯ слоями —
+ * память модуля плюс кладовая браузера (`localStorage`, см. «ГДЕ ЖИВЁТ
+ * ПРОПУСК» ниже): пропуск переживает перезагрузку страницы и общий у всех
+ * вкладок, то есть окно подписи приходит раз в срок годности пропуска, а не
+ * на каждую загрузку страницы. На живом непротухшем пропуске НЕ ходит
  * в сеть и НЕ зовёт `signMessage` — просто отдаёт то, что уже есть. Это не
  * мелочь: именно на этом держится образец повтора ниже — если бы каждый
  * вызов дёргал кошелёк, повторный вызов после ошибки означал бы второе окно
@@ -121,6 +123,27 @@
  * тот же принцип, что `lib/rpcProxy.ts` уже применяет к приватному узлу
  * («429 — это ограничение по частоте, повтор в лоб превращается в шторм
  * повторов ровно по тому лимиту, который уже превышен»).
+ *
+ * ─── КУРСОР (Задача 6 плана «Клиент чата») ──────────────────────────────
+ *
+ * `pollBags` ДВИГАЕТ точку отсчёта сама, за последним полученным мешком.
+ * До этой задачи в каждый запрос уезжал неподвижный `opts.since`, и на
+ * каждом тике приезжал весь ящик: разговор на тысячу сообщений означал
+ * тысячу сводок каждые пять секунд, каждому участнику, вечно. `opts.since`
+ * теперь — только НАЧАЛЬНОЕ значение.
+ *
+ * Курсор ВКЛЮЧАЮЩИЙ: сервер фильтрует нестрого (`uploadedAt >= since`),
+ * потому что два мешка в одну миллисекунду — замеренная гонка, а не
+ * теоретическая. Клиент просит с `max` включительно и сам выбрасывает то,
+ * что уже отдал наверх (ключи РОВНО последней миллисекунды — множество не
+ * растёт с длиной переписки). Повтор мешка стоит ничего; строгий курсор
+ * стоил бы соседа по миллисекунде НАВСЕГДА.
+ *
+ * ⚠️ Курсор живёт в памяти вызова `pollBags` и НЕ переживает уход со
+ * страницы. Это намеренно и это же — страховка: следующий заход начинает
+ * без `since`, то есть за всей перепиской. Значит любой мешок, который
+ * курсор проскочил бы (сервер перевёл часы назад), всё равно приедет на
+ * следующем открытии чата.
  */
 
 // Хвостовой слэш срезан — та же дисциплина, что уже применена в шести
@@ -129,7 +152,11 @@
 // app/api/dispute-reason/route.ts): без среза "http://host/" даёт
 // "http://host//bags/pass" — двойной слэш, который не всякий сервер
 // нормализует сам.
-const RELAYER_URL = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+// Экспортирована (Задача 6): справочник ключей (`hooks/useChatSession.ts`)
+// ходит на тот же релеер, и второй экземпляр этой же строки означал бы два
+// источника истины об адресе сервера — расхождение вылезло бы не сразу и
+// молча (у одного модуля хвостовой слэш срезан, у другого нет).
+export const RELAYER_URL = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
 const BAG_PASS_HEADER = 'x-bag-pass';
 
@@ -163,6 +190,46 @@ export interface BagSummary {
   sender: `0x${string}`;
   size: number;
   uploadedAt: number;
+}
+
+/**
+ * Задача 1 плана «Клиент чата» (docs/superpowers/plans/2026-08-06-chat-
+ * client.md): взгляд отправителя на СОБСТВЕННЫЕ мешки — только те, что
+ * отправил владелец пропуска. `fetched` — булево ("дошло ли до устройства
+ * собеседника"), НЕ отметка времени: точное время забора — метаданные
+ * собеседника, отправителю знать незачем (relayer/app.js, GET /bags).
+ */
+export interface SentBagSummary {
+  key: string;
+  recipient: `0x${string}`;
+  uploadedAt: number;
+  fetched: boolean;
+}
+
+/**
+ * Собеседник, с которым есть переписка (хоть один мешок в любую сторону —
+ * посторонний по публичному адресу сюда не попадает).
+ *
+ * ⚠️ `lastActivityWithMeAt` — НЕ «онлайн-статус». Переименовано 6 августа
+ * (ревью Задачи 1): поле называлось `lastSeenAt`, а спека обещала «когда
+ * адрес последний раз обращался к серверу» — реализовано и осталось иначе:
+ * «когда собеседник последний раз тронул что-то МОЁ» (забрал мой мешок или
+ * прислал свой). Это не то же самое, что присутствие: человек может час
+ * сидеть в открытом чате, ничего из вашего не трогать — поле честно покажет
+ * «час назад», а не «прямо сейчас». Округлено сервером до минуты. `null` —
+ * переписка есть, но ни одного такого сигнала ещё не было (никто ничего не
+ * забирал и не присылал заново).
+ */
+export interface PeerSummary {
+  address: `0x${string}`;
+  lastActivityWithMeAt: number | null;
+}
+
+/** Форма ответа `GET /bags` целиком — см. `listBags()` ниже. */
+export interface ListBagsResult {
+  inbox: BagSummary[];
+  sent: SentBagSummary[];
+  peers: PeerSummary[];
 }
 
 /* ───────────────────────────── ошибки ───────────────────────────────── */
@@ -213,10 +280,235 @@ const DEFAULT_RETRY_AFTER_SEC = 60;
 
 const ETH_ADDR_RE = /^0x[0-9a-f]{40}$/;
 
-/** На вкладку, в памяти модуля — НЕ localStorage/sessionStorage. Переживает
- *  переходы внутри вкладки, не переживает перезагрузку; две вкладки держат
- *  каждая свой кэш и не видят друг друга (см. вопрос №3 в отчёте задачи). */
+/** Быстрый слой: память модуля. Медленный — кладовая браузера, см. ниже. */
 const _passCache = new Map<string, { pass: string; expiresAt: number }>();
+
+/**
+ * ─── ГДЕ ЖИВЁТ ПРОПУСК И ПОЧЕМУ ИМЕННО ТАМ ───────────────────────────────
+ *
+ * Пропуск переживает перезагрузку страницы и виден всем вкладкам одного
+ * происхождения. До этой правки он жил ТОЛЬКО в памяти модуля — и докстринг
+ * честно это описывал, а вот обещание уровнем выше («окно подписи максимум
+ * дважды в сутки») было неправдой: замерено независимой проверкой (В-6) —
+ * одно окно на КАЖДУЮ загрузку страницы и на КАЖДУЮ вкладку. Двенадцать
+ * часов — срок годности самого пропуска, а не кэша.
+ *
+ * ⚠️ ЧТО ИМЕННО МЫ КЛАДЁМ НА ДИСК И ЧЕМ ЭТО РИСКУЕТ. Пропуск — предъявительский
+ * токен: кто его получил, тот 12 часов читает и пишет мешки этого адреса.
+ * Скрипт, дорвавшийся до `localStorage` нашего происхождения, его прочтёт.
+ *
+ * Почему это всё равно правильный размен, и это НЕ «наверное, обойдётся»:
+ * закрытый ключ переписки уже лежит на этом же устройстве, в `IndexedDB`
+ * того же происхождения (`chatSession.ts`), и он строго ценнее — им читается
+ * ВСЯ история, навсегда, а пропуском — мешки, которые и так зашифрованы этим
+ * ключом, и только 12 часов. Нападающий, добравшийся до хранилищ браузера,
+ * забирает ключ и не нуждается в пропуске вовсе. То есть новой двери мы не
+ * открываем; мы кладём рядом с сейфом ключ от подъезда.
+ *
+ * Чего мы НЕ кладём сюда никогда: ни самого ключа переписки, ни кода
+ * восстановления, ни расшифрованного содержимого.
+ *
+ * Кладовая может отсутствовать (серверный рендер) или отказать (приватный
+ * режим, кончившаяся квота) — тогда всё работает ровно как раньше, на памяти
+ * модуля. Отказ кладовой не должен стоить человеку отправки.
+ */
+const PASS_STORAGE_PREFIX = 'hexseal_bagpass_';
+
+function passStorage(): Storage | null {
+  try {
+    const s = (globalThis as { localStorage?: Storage }).localStorage;
+    return s && typeof s.getItem === 'function' ? s : null;
+  } catch {
+    // Доступ к `localStorage` умеет БРОСАТЬ (сторонний контекст с
+    // запрещёнными куками), а не просто отсутствовать.
+    return null;
+  }
+}
+
+/* ─────────────── адресный бюджет чтения, ОБЩИЙ У ВКЛАДОК ──────────────── */
+
+/**
+ * Сколько чтений склада разрешаем себе за минуту на ОДИН АДРЕС.
+ *
+ * ⚠️ ЧИСЛО ВЫВЕДЕНО ИЗ ЧУЖОГО, БОЕВОГО, и оно не «наше усмотрение». Склад
+ * даёт адресу `BAG_READ_RATE_MAX = 120` чтений в минуту (`relayer/app.js`), и
+ * бюджет ОБЩИЙ у перечисления (`GET /bags`) и скачивания (`GET /bags/:key`).
+ * Сто оставляет запас на расхождение часов между вкладками и на то, что
+ * сервер считает своё окно от своего же момента, а не от нашего.
+ *
+ * ⚠️ ПОЧЕМУ СЧЁТ ЗДЕСЬ, А НЕ В ХУКАХ. Замерено: открытая переписка отмеряла
+ * себе 80 скачиваний, список переписок — 24 превью, и КАЖДАЯ ВКЛАДКА считала
+ * это заново. Две вкладки одного человека (чат открыт и рядом сделка — обычное
+ * дело) просили вдвое больше, чем склад разрешает: 200 попыток, 80 отбитых
+ * сервером, отступление `pollBags` до пяти минут. Чат заморожен у того, кто не
+ * сделал ничего.
+ *
+ * Счётчик в хуке — это счётчик на хук на вкладку, то есть заведомо не тот,
+ * который считает сервер. Общая память у вкладок одного источника ровно одна —
+ * `localStorage`; согласованность чтения-записи даёт `navigator.locks`.
+ */
+export const BAG_READ_BUDGET_PER_MIN = 100;
+
+const READ_WINDOW_MS = 60_000;
+const READS_STORAGE_PREFIX = 'hexseal_bagreads_';
+
+/**
+ * Отказ СВОЕГО бюджета, а не сервера.
+ *
+ * Отдельный род намеренно: это не поломка и не «сервер сказал нет», это «мы
+ * сами решили подождать». Вызывающий, принявший его за сетевой отказ, ушёл бы
+ * в отступление — то есть заменил бы одну заморозку другой.
+ */
+export class BagBudgetError extends BagTransportError {
+  constructor(message = 'Local read budget exhausted') {
+    super(message, 'local_read_budget');
+    this.name = 'BagBudgetError';
+  }
+}
+
+/**
+ * Отметки чтений ЭТОЙ вкладки, в памяти.
+ *
+ * ⚠️ ДВА СЛОЯ, А НЕ ОДИН, И ВТОРОЙ ПОЯВИЛСЯ ПОСЛЕ СОБСТВЕННОГО ПРОМАХА.
+ * Первая версия считала только через `localStorage` — и на устройстве БЕЗ него
+ * (приватный режим, сторонний контекст с запрещёнными куками) не считала
+ * НИЧЕГО: замер К-1 тут же показал 300 скачиваний за один тик вместо ста, то
+ * есть правка вернула ровно тот дефект, который до неё закрывал счётчик в
+ * хуке. Своя починка оказалась хуже того, что чинила.
+ *
+ * Поэтому слоя два, и они про разное:
+ *  - память вкладки — работает ВСЕГДА, держит потолок для одной вкладки;
+ *  - общая память вкладок — согласует НЕСКОЛЬКО вкладок одного адреса.
+ * Пропустить чтение должны оба; отсутствие второго не отменяет первый.
+ */
+const _readStamps = new Map<string, number[]>();
+
+function takeFromMemory(addr: string, nowMs: number): boolean {
+  const cutoff = nowMs - READ_WINDOW_MS;
+  const stamps = (_readStamps.get(addr) ?? []).filter(t => t > cutoff && t <= nowMs);
+  if (stamps.length >= BAG_READ_BUDGET_PER_MIN) {
+    _readStamps.set(addr, stamps);
+    return false;
+  }
+  stamps.push(nowMs);
+  _readStamps.set(addr, stamps);
+  return true;
+}
+
+/** Отметки чтений последней минуты, как они лежат в общей памяти вкладок. */
+function readStamps(s: Storage, key: string, nowMs: number): number[] {
+  let raw: string | null;
+  try { raw = s.getItem(key); } catch { return []; }
+  if (!raw) return [];
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  const cutoff = nowMs - READ_WINDOW_MS;
+  // Отметки ИЗ БУДУЩЕГО отбрасываются вместе со старыми: часы на устройстве
+  // умеют прыгать вперёд, и одна такая отметка иначе держала бы бюджет
+  // занятым до тех пор, пока время её не догонит.
+  return parsed.filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > cutoff && n <= nowMs);
+}
+
+/**
+ * Занять одно чтение из адресного бюджета. `false` — бюджет исчерпан.
+ *
+ * НЕ запирает, когда считать нечем: нет `localStorage` (приватный режим,
+ * сторонний контекст с запрещёнными куками) или запись не проходит. Отказать
+ * всем чтениям там, где чат работал, значило бы выключить его ради счётчика.
+ */
+async function reserveBagRead(addr: string, nowMs = Date.now()): Promise<boolean> {
+  // Слой, который работает всегда. Проверяется ПЕРВЫМ: если своя же вкладка
+  // уже выбрала минуту, ходить за замком и в хранилище незачем.
+  if (!takeFromMemory(addr, nowMs)) return false;
+  const s = passStorage();
+  if (!s) return true;
+  const key = READS_STORAGE_PREFIX + addr;
+  const take = (): boolean => {
+    const stamps = readStamps(s, key, nowMs);
+    if (stamps.length >= BAG_READ_BUDGET_PER_MIN) return false;
+    stamps.push(nowMs);
+    try { s.setItem(key, JSON.stringify(stamps)); } catch { return true; }
+    return true;
+  };
+  const locks = (globalThis as { navigator?: Navigator }).navigator?.locks;
+  if (!locks) return take();
+  // ⚠️ Замок обязателен: без него две вкладки читают одно и то же значение,
+  // каждая прибавляет единицу и записывает — то есть два чтения списываются
+  // как одно, и весь счёт врёт ровно в ту сторону, ради которой заведён.
+  let allowed = true;
+  try {
+    await locks.request(key, () => { allowed = take(); });
+  } catch {
+    allowed = take(); // замок недоступен — считаем без него, это лучше, чем не считать
+  }
+  return allowed;
+}
+
+/** Только тесты: начать минуту заново. */
+export function _resetReadBudgetForTest(): void {
+  _readStamps.clear();
+  const s = passStorage();
+  if (!s) return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const k = s.key(i);
+      if (k && k.startsWith(READS_STORAGE_PREFIX)) keys.push(k);
+    }
+    for (const k of keys) s.removeItem(k);
+  } catch { /* нечего чистить */ }
+}
+
+/**
+ * Занять чтение по пропуску.
+ *
+ * ⚠️ ЧЕГО ЭТОТ СЧЁТ НЕ ДЕЛАЕТ, СКАЗАНО ПРЯМО. Пропуск, из которого адрес не
+ * достаётся, НЕ СЧИТАЕТСЯ: считать некому и не за кого. На боевом пути такого
+ * пропуска не бывает — его выдаёт `requestBagPass` в форме `v1.<тело>.<подпись>`
+ * (заперто `chatReadBudget.test.ts` на пропуске настоящей формы), — но если
+ * форма когда-нибудь сменится, счёт тихо перестанет работать, и заметит это
+ * только сервер своим `429`.
+ *
+ * Считать негодный пропуск «в общую корзину» пробовалось и отвергнуто: это
+ * душит одного человека за чужие чтения, а замеры движка (которые гоняют
+ * опрос в сотни раз быстрее боевого) начинают упираться в минутный бюджет и
+ * мерить не то, что обещают. Потолок ПРОТИВ НАГРУЗКИ стоит отдельно и не
+ * зависит ни от пропуска, ни от хранилища — см. `MAX_BAG_DOWNLOADS_PER_TICK`
+ * в `usePairChat.ts`.
+ */
+async function reserveReadForPass(pass: string): Promise<void> {
+  const addr = parseBagPassAddress(pass);
+  if (!addr) return;
+  if (!(await reserveBagRead(addr))) throw new BagBudgetError();
+}
+
+function readStoredPass(addr: string): { pass: string; expiresAt: number } | null {
+  const s = passStorage();
+  if (!s) return null;
+  let raw: string | null;
+  try { raw = s.getItem(PASS_STORAGE_PREFIX + addr); } catch { return null; }
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    // Данные с диска доверия не заслуживают ровно как данные из сети: их мог
+    // записать предыдущий выпуск, их мог испортить сбой.
+    if (isBagPassBody(parsed)) return { pass: parsed.pass, expiresAt: parsed.expiresAt };
+  } catch { /* мусор в кладовой — считаем, что записи нет */ }
+  return null;
+}
+
+function writeStoredPass(addr: string, value: { pass: string; expiresAt: number }): void {
+  const s = passStorage();
+  if (!s) return;
+  try { s.setItem(PASS_STORAGE_PREFIX + addr, JSON.stringify(value)); } catch { /* квота/приватный режим */ }
+}
+
+function deleteStoredPass(addr: string): void {
+  const s = passStorage();
+  if (!s) return;
+  try { s.removeItem(PASS_STORAGE_PREFIX + addr); } catch { /* нечего убирать */ }
+}
 
 /**
  * Выбрасывает кэш конкретного адреса. Публичная — пригодится и потребителю
@@ -226,7 +518,12 @@ const _passCache = new Map<string, { pass: string; expiresAt: number }>();
  * мёртв, и не должен ждать, пока кто-то снаружи додумается его выбросить.
  */
 export function forgetBagPass(address: string): void {
-  _passCache.delete(address.toLowerCase());
+  const addr = address.toLowerCase();
+  _passCache.delete(addr);
+  // ⚠️ И из кладовой ТОЖЕ. Забыть только память значило бы, что мёртвый
+  // пропуск переживает перезагрузку — та же дыра C1 («транспорт отдаёт тот
+  // же мёртвый пропуск навсегда»), только теперь вечная.
+  deleteStoredPass(addr);
 }
 
 /**
@@ -275,8 +572,13 @@ function parseBagPassAddress(pass: string): string | null {
 function forgetBagPassByToken(pass: string): void {
   const addr = parseBagPassAddress(pass);
   if (!addr) return;
-  if (_passCache.get(addr)?.pass === pass) {
+  // Сравнение — с тем, что реально в силе СЕЙЧАС (память, а если её нет —
+  // кладовая): запоздавший 401 по уже вытесненному токену не должен убивать
+  // свежий пропуск того же адреса.
+  const current = _passCache.get(addr) ?? readStoredPass(addr);
+  if (current?.pass === pass) {
     _passCache.delete(addr);
+    deleteStoredPass(addr);
   }
 }
 
@@ -326,9 +628,18 @@ export interface BagPass {
 const PASS_EXPIRY_SKEW_SEC = 30;
 
 function cachedPass(addr: string, nowSec: number): BagPass | null {
-  const entry = _passCache.get(addr);
+  // Память модуля — первой (дешевле), кладовая — вторым слоем: она и есть то,
+  // что переживает перезагрузку страницы и роднит две вкладки.
+  const entry = _passCache.get(addr) ?? readStoredPass(addr);
   if (!entry) return null;
-  if (entry.expiresAt - PASS_EXPIRY_SKEW_SEC <= nowSec) return null;
+  if (entry.expiresAt - PASS_EXPIRY_SKEW_SEC <= nowSec) {
+    // Протух — убираем из ОБОИХ слоёв, иначе следующий заход снова его
+    // прочитает с диска и снова отбросит, каждый раз.
+    _passCache.delete(addr);
+    deleteStoredPass(addr);
+    return null;
+  }
+  _passCache.set(addr, entry);
   return entry;
 }
 
@@ -380,6 +691,7 @@ export async function requestBagPass(
 
     const fresh: BagPass = { pass: body.pass, expiresAt: body.expiresAt };
     _passCache.set(addr, fresh);
+    writeStoredPass(addr, fresh);
     return fresh;
   })();
 
@@ -400,6 +712,18 @@ export async function requestBagPass(
 export function _resetBagPassCacheForTest(): void {
   _passCache.clear();
   _inFlight.clear();
+  // Кладовую тоже — иначе пропуск одного теста прилипал бы к следующему
+  // ровно так же, как раньше прилипал повисший дедуп-промис.
+  const s = passStorage();
+  if (!s) return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const k = s.key(i);
+      if (k && k.startsWith(PASS_STORAGE_PREFIX)) keys.push(k);
+    }
+    for (const k of keys) s.removeItem(k);
+  } catch { /* кладовой нет или она отказала — чистить нечего */ }
 }
 
 /* ────────────────────────────── putBag ──────────────────────────────── */
@@ -409,10 +733,25 @@ function isPutBagBody(x: unknown): x is { key: string } {
     (x as { key: string }).key.length > 0;
 }
 
+/**
+ * `signal` — необязательный, четвёртый параметр (Задача 6 плана «Клиент
+ * чата», место 2 из четырёх: отмена касалась только списка). Обратно
+ * совместим: ни один существующий трёхаргументный вызов не меняет поведения.
+ *
+ * ⚠️ ЧЕСТНО О ТОМ, КОМУ ЭТО НУЖНО. Хук чата этот сигнал на отправке
+ * НАМЕРЕННО не использует: `chatConversation.sendMessage` резервирует номер
+ * звена на диске ДО похода на склад, и оборванная посреди отправка оставляет
+ * сгоревший номер — то есть дыру в нумерации, которую собеседник видит как
+ * утаивание. Обрывать её из-за перехода на другую страницу значило бы менять
+ * «сообщение ушло» на «сообщение не ушло и в переписке теперь дыра» ради
+ * экономии одного запроса. Параметр существует для вызывающих, у которых
+ * такой цены нет (загрузка, которую человек отменил кнопкой).
+ */
 export async function putBag(
   pass: string,
   recipient: `0x${string}`,
   sealed: Uint8Array,
+  signal?: AbortSignal,
 ): Promise<{ key: string }> {
   // Мелочь ревью: recipient уезжал в URL БЕЗ кодирования — сервер проверяет
   // его форму сам (ETH_ADDR_RE), но кодировать надо и на нашей стороне
@@ -434,6 +773,7 @@ export async function putBag(
     // чисто по типам (известная нестыковка версий, не связанная с рантаймом:
     // `fetch` реально принимает `Uint8Array` как тело — это ArrayBufferView).
     body: sealed as BodyInit,
+    signal,
   });
   if (!res.ok) await throwForFailedResponse(res, 'Failed to store bag', pass);
 
@@ -457,14 +797,49 @@ function isBagSummary(x: unknown): x is BagSummary {
   );
 }
 
+/** Тот же уровень паранойи, что у `isBagSummary` выше — сервер обещает
+ *  булево `fetched` (не отметку времени), но клиент не обязан верить
+ *  обещанию молча: `typeof o.fetched === 'boolean'`, а не «поле есть». */
+function isSentBagSummary(x: unknown): x is SentBagSummary {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.key === 'string' && o.key.length > 0 &&
+    typeof o.recipient === 'string' && SENDER_RE.test(o.recipient) &&
+    typeof o.uploadedAt === 'number' && Number.isFinite(o.uploadedAt) &&
+    typeof o.fetched === 'boolean'
+  );
+}
+
+/** `lastActivityWithMeAt` — `null` («неизвестно») ИЛИ конечное число, ничего третьего. */
+function isPeerSummary(x: unknown): x is PeerSummary {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  if (typeof o.address !== 'string' || !SENDER_RE.test(o.address)) return false;
+  return o.lastActivityWithMeAt === null ||
+    (typeof o.lastActivityWithMeAt === 'number' && Number.isFinite(o.lastActivityWithMeAt));
+}
+
 /**
  * `signal` — необязательный, третий параметр (не часть исходного интерфейса
  * задачи `listBags(pass, since?)`, но обратно совместимый: ни один
  * существующий двухаргументный вызов не меняет поведения). Даёт
  * `pollBags` возможность реально ПРЕРВАТЬ запрос в полёте на `stop()`
  * (мелочь ревью), а не просто дождаться и отбросить результат.
+ *
+ * Задача 1 (chat-client): `GET /bags` теперь отдаёт объект
+ * `{inbox, sent, peers}`, не голый массив (решение координатора при сверке
+ * плана — тот же самый опрос раз в 5с несёт и то, что нужно отправителю про
+ * исходящие, и список собеседников, без отдельного запроса). Старая форма
+ * (голый массив — доездоровившийся сервер, версия до этой задачи) отвергается
+ * так же громко, как и любой другой мусор: рассинхрон версий обязан быть
+ * виден, а не молча прочитан как «пустой список».
  */
-export async function listBags(pass: string, since?: number, signal?: AbortSignal): Promise<BagSummary[]> {
+export async function listBags(pass: string, since?: number, signal?: AbortSignal): Promise<ListBagsResult> {
+  // Адресный бюджет, ОБЩИЙ у вкладок и у обоих родов чтения — как на складе.
+  // Стоит ЗДЕСЬ, а не у вызывающего: через эти две функции проходит каждое
+  // чтение любой вкладки, и обойти их нечем.
+  await reserveReadForPass(pass);
   const url = new URL(`${RELAYER_URL}/bags`);
   if (since !== undefined) url.searchParams.set('since', String(since));
 
@@ -472,16 +847,42 @@ export async function listBags(pass: string, since?: number, signal?: AbortSigna
   if (!res.ok) await throwForFailedResponse(res, 'Failed to list bags', pass);
 
   const body: unknown = await res.json();
-  if (!Array.isArray(body)) throw new BagTransportError('Malformed response from GET /bags: not an array');
-  for (const item of body) {
+  if (!body || typeof body !== 'object') {
+    throw new BagTransportError('Malformed response from GET /bags: not an object');
+  }
+  const { inbox, sent, peers } = body as Record<string, unknown>;
+
+  if (!Array.isArray(inbox)) throw new BagTransportError('Malformed response from GET /bags: inbox is not an array');
+  for (const item of inbox) {
     if (!isBagSummary(item)) throw new BagTransportError('Malformed bag entry in GET /bags response');
   }
-  return body as BagSummary[];
+
+  if (!Array.isArray(sent)) throw new BagTransportError('Malformed response from GET /bags: sent is not an array');
+  for (const item of sent) {
+    if (!isSentBagSummary(item)) throw new BagTransportError('Malformed sent entry in GET /bags response');
+  }
+
+  if (!Array.isArray(peers)) throw new BagTransportError('Malformed response from GET /bags: peers is not an array');
+  for (const item of peers) {
+    if (!isPeerSummary(item)) throw new BagTransportError('Malformed peer entry in GET /bags response');
+  }
+
+  return { inbox: inbox as BagSummary[], sent: sent as SentBagSummary[], peers: peers as PeerSummary[] };
 }
 
 /* ────────────────────────────── fetchBag ─────────────────────────────── */
 
-export async function fetchBag(pass: string, key: string): Promise<Uint8Array | null> {
+/**
+ * `signal` — необязательный, третий параметр (Задача 6, место 2 из четырёх).
+ * В отличие от `putBag`, здесь хук его РЕАЛЬНО использует: скачивание ничего
+ * не резервирует и не меняет состояния ни у нас, ни у собеседника —
+ * оборванное на середине, оно просто не состоялось, и следующий тик заберёт
+ * тот же мешок заново (сервер отмечает «забрали» только на успешно
+ * дочитанном ответе, relayer/app.js `res.on('finish')`).
+ */
+export async function fetchBag(pass: string, key: string, signal?: AbortSignal): Promise<Uint8Array | null> {
+  // Тот же адресный бюджет, что у перечисления, — см. `listBags`.
+  await reserveReadForPass(pass);
   // Мелочь ревью: key уезжал в URL БЕЗ кодирования — сервер сам проверяет
   // его форму, но кодировать надо и на нашей стороне. Ключ — ВСЕГДА два
   // сегмента (recipient/filename, см. bagKeyFor() на сервере), поэтому
@@ -491,7 +892,7 @@ export async function fetchBag(pass: string, key: string): Promise<Uint8Array | 
   const urlKey = slashIdx === -1
     ? encodePathSegment(key)
     : `${encodePathSegment(key.slice(0, slashIdx))}/${encodePathSegment(key.slice(slashIdx + 1))}`;
-  const res = await fetch(`${RELAYER_URL}/bags/${urlKey}`, { headers: { [BAG_PASS_HEADER]: pass } });
+  const res = await fetch(`${RELAYER_URL}/bags/${urlKey}`, { headers: { [BAG_PASS_HEADER]: pass }, signal });
 
   // Чужой ключ и несуществующий отвечают одинаковым 404 (see relayer/app.js) —
   // намеренно не парсим тело здесь: сервер на эту ветку тела может не дать.
@@ -581,10 +982,43 @@ export interface BagPollOptions {
    * для него и есть.
    */
   getPass: () => string | Promise<string>;
+  /**
+   * НАЧАЛЬНАЯ точка отсчёта, и только она. Дальше курсор ведёт себя сам —
+   * см. «КУРСОР» в шапке модуля. До Задачи 6 это значение уезжало в КАЖДЫЙ
+   * запрос неизменным, то есть на каждом тике приезжал весь ящик.
+   *
+   * `undefined` (обычный случай для хука) — первый тик идёт без `since`,
+   * то есть за всей перепиской: сообщения, пришедшие до открытия вкладки,
+   * обязаны показаться, а не «начаться с этого момента».
+   */
   since?: number;
   /** true — чат/вкладка активны (используется `activeMs`), false — фон. */
   isActive: () => boolean;
-  onBags: (bags: BagSummary[]) => void;
+  /**
+   * Успешный тик. Отдаётся ВЕСЬ ответ склада, а не одна треть: `inbox` —
+   * только НОВОЕ с прошлого тика (курсор плюс дедуп на границе), `sent` и
+   * `peers` — как их отдал сервер.
+   *
+   * ⚠️ Форма сверена с настоящим потребителем (Задача 6, место 3 из четырёх
+   * — «`BagPollOptions` за три раунда обросла тремя обработчиками, свести к
+   * тому, что хуку нужно»). Результат сверки, по полю:
+   *   - `onBags` — раньше отдавала голый `BagSummary[]`, а `sent`/`peers` из
+   *     ТОГО ЖЕ ответа молча выбрасывала. Хуку нужны все три: `inbox` —
+   *     сообщения, `sent[].fetched` — галочка «дошло», `peers` — список
+   *     переписок. Второго запроса за ними не существует, и заводить его
+   *     ради уже полученных данных было бы платой на ровном месте.
+   *   - `onError` — нужен: «нет сети» в интерфейсе.
+   *   - `onBagsError` — нужен: опрос ПОСЛЕ него останавливается, и человеку
+   *     надо сказать «обновите страницу». Отдельно от `onError` намеренно,
+   *     это другой класс (баг отрисовки, не транспорта).
+   *   - `onAuthFailed` — нужен: «войдите заново», опрос остановлен.
+   *   - `intervals` — нужен: активный чат против фона.
+   *   - `authFailureLimit`, `sleep` — только тесты; хук их не передаёт и не
+   *     должен, умолчания и есть боевое поведение.
+   * Ни одно поле не осталось «на всякий случай»: каждое названо здесь с
+   * именем потребителя.
+   */
+  onBags: (result: ListBagsResult) => void;
   onError?: (err: unknown) => void;
   /**
    * Зовётся, если сам `onBags` бросил (баг колбэка потребителя —
@@ -674,6 +1108,56 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
   // недоделка.
   let currentAbort: AbortController | null = null;
 
+  // ─── КУРСОР (Задача 6, место 1 из четырёх) ───────────────────────────────
+  //
+  // Раньше в каждый запрос уезжал неподвижный `opts.since`, поэтому КАЖДЫЙ
+  // тик приносил весь ящик заново. При активной переписке это и есть модель
+  // нагрузки: разговор на тысячу сообщений — тысяча сводок каждые пять
+  // секунд, каждому участнику, вечно.
+  //
+  // ⚠️ КУРСОР ВКЛЮЧАЮЩИЙ, А НЕ ИСКЛЮЧАЮЩИЙ, и это не описка. Сервер
+  // фильтрует НЕСТРОГО (`uploadedAt >= since`, relayer/app.js, И-3) именно
+  // потому, что два мешка в одну миллисекунду — настоящая гонка, замеренная
+  // вживую. Клиент, решивший «попрошу с max+1», потерял бы соседа по
+  // миллисекунде НАВСЕГДА: его `uploadedAt` уже никогда не станет больше
+  // того `since`, который клиент будет слать с этого момента. Поэтому
+  // просим с `max` включительно и сами выбрасываем то, что уже отдали, —
+  // повтор мешка это ничего, потеря мешка это молча пропавшее сообщение.
+  //
+  // Помнить достаточно ключи РОВНО последней миллисекунды: всё, что старше,
+  // сервер уже не пришлёт. Множество не растёт с длиной переписки — иначе
+  // разговор на тысячу сообщений держал бы тысячу ключей до конца сеанса.
+  let cursor: number | undefined = opts.since;
+  let boundaryKeys = new Set<string>();
+
+  /** Что из этого ответа ДЕЙСТВИТЕЛЬНО новое, и куда после этого встаёт
+   *  курсор. Чистая функция состояния — вся арифметика границы здесь, а не
+   *  размазана по циклу. */
+  const takeFresh = (inbox: BagSummary[]): BagSummary[] => {
+    const fresh = inbox.filter(b => !boundaryKeys.has(b.key));
+    // Тихий тик курсор НЕ двигает и НЕ откатывает: `Math.max()` на пустом
+    // массиве это `-Infinity`, и присвоив его, мы бы просили весь ящик
+    // заново после каждой паузы в разговоре.
+    if (inbox.length === 0) return fresh;
+    let maxUploadedAt = inbox[0].uploadedAt;
+    for (const b of inbox) if (b.uploadedAt > maxUploadedAt) maxUploadedAt = b.uploadedAt;
+    if (cursor === undefined || maxUploadedAt > cursor) {
+      cursor = maxUploadedAt;
+      boundaryKeys = new Set(inbox.filter(b => b.uploadedAt === maxUploadedAt).map(b => b.key));
+    } else if (maxUploadedAt === cursor) {
+      // Та же миллисекунда, что и в прошлый раз — граница ПОПОЛНЯЕТСЯ.
+      //
+      // ⚠️ Честно: под нынешним сервером замена дала бы то же самое — он
+      // отдаёт ВСЁ, что `>= since`, значит в этом ответе уже лежат и прежние
+      // жильцы границы. Отдельным тестом это не заперто, потому что запирать
+      // нечего: разницы на настоящем сервере нет. Слияние выбрано на случай,
+      // если выдача когда-нибудь станет постраничной — лишний ключ в памяти
+      // стоит ничего, потерянный жилец границы стоит пропавшего сообщения.
+      for (const b of inbox) if (b.uploadedAt === maxUploadedAt) boundaryKeys.add(b.key);
+    }
+    return fresh;
+  };
+
   const loop = async () => {
     // Цикл последовательный: следующая итерация начинается только после
     // того, как `await` предыдущей полностью разрешился — структурно
@@ -683,7 +1167,7 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
       let waitMs = intervals.activeMs; // безопасное умолчание на случай, если isActive() бросит ниже
       // `null` — тик закончился ошибкой (транспортной ИЛИ isActive()), нечего
       // отдавать потребителю; не null — успех, вот список для onBags.
-      let bags: BagSummary[] | null = null;
+      let tick: ListBagsResult | null = null;
       // Где именно случился отказ — решает, считается ли он за отказ ВХОДА
       // (C1-R2, см. докстринг consecutiveAuthFailures выше): любой отказ
       // самого `getPass()`, либо `BagPassError` от `listBags` (пропуск
@@ -697,14 +1181,30 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
         if (stopped) return;
         stage = 'listBags';
         currentAbort = new AbortController();
-        bags = await listBags(pass, opts.since, currentAbort.signal);
+        // Задача 6 (chat-client): в запрос уезжает ДВИЖУЩИЙСЯ курсор, а не
+        // неподвижный `opts.since`; наверх уходит весь ответ, а не одна
+        // треть (`sent`/`peers` до этой задачи молча выбрасывались здесь).
+        const result = await listBags(pass, cursor, currentAbort.signal);
         currentAbort = null;
         if (stopped) return;
+        // Курсор двигается ТОЛЬКО после `stopped`-проверки: тик, результат
+        // которого никому не отдадут, не имеет права съесть мешки — иначе
+        // остановка посреди ответа означала бы, что при следующем запуске
+        // опроса эти сообщения уже «пройдены».
+        tick = { inbox: takeFresh(result.inbox), sent: result.sent, peers: result.peers };
         consecutiveFailures = 0;
         consecutiveAuthFailures = 0;
       } catch (err) {
         if (stopped) return;
         currentAbort = null; // тик закончился (ошибкой) — контроллер больше ничему не соответствует
+        // ⚠️ СВОЙ БЮДЖЕТ — НЕ ОТКАЗ. Мы сами решили подождать: ни счётчик
+        // неудач, ни счётчик неудач ВХОДА это трогать не должны, и отступать
+        // не за чем. Иначе бюджет, заведённый ПРОТИВ заморозки чата, сам бы её
+        // и устраивал — своя починка хуже дефекта, ровно тот случай.
+        if (err instanceof BagBudgetError) {
+          await sleep(waitMs);
+          continue;
+        }
         consecutiveFailures++;
         // Экспоненциально от базового интервала этого тика, с потолком
         // (I3): 1-й отказ подряд — база, 2-й — ×2, 3-й — ×4, и т.д., но не
@@ -749,9 +1249,9 @@ export function pollBags(opts: BagPollOptions): BagPollHandle {
       }
       if (stopped) return;
 
-      if (bags !== null) {
+      if (tick !== null) {
         try {
-          opts.onBags(bags);
+          opts.onBags(tick);
         } catch (err) {
           // Ошибка ЗДЕСЬ — баг колбэка потребителя (например, отрисовки), а
           // НЕ транспорта: специально ВНЕ try/catch выше, чтобы не копилась

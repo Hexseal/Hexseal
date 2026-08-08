@@ -30,6 +30,30 @@ const ALICE = '0xa1ce00000000000000000000000000000000cafe';
 const BOB   = '0xb0b1000000000000000000000000000000005eed';
 const CAROL = '0xca401000000000000000000000000000000005ee';
 const DAY   = 24 * 60 * 60 * 1000;
+
+// К-3: опись на диске — снимок ПЛЮС журнал дозаписи. Спрашиваем «что
+// увидит перезапуск», а не «что лежит в одном конкретном файле».
+function indexOnDisk() {
+  const out = {};
+  const snap = path.join(TMP, 'bag-meta.json');
+  if (fs.existsSync(snap)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(snap, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) Object.assign(out, parsed);
+    } catch { /* битый снимок */ }
+  }
+  const log = path.join(TMP, 'bag-meta.log');
+  if (fs.existsSync(log)) {
+    for (const line of fs.readFileSync(log, 'utf8').split('\n')) {
+      if (!line) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      if (r.d) delete out[r.k];
+      else out[r.k] = r.m;
+    }
+  }
+  return out;
+}
 const HOUR  = 60 * 60 * 1000;
 
 // Детерминированный, но РАЗЛИЧНЫЙ на каждый (seed, tag) валидный адрес —
@@ -55,6 +79,7 @@ function put(recipient, sender, uploadedAt, extra = {}) {
 beforeEach(() => {
   fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true });
   fs.rmSync(path.join(TMP, 'bag-meta.json'), { force: true });
+  fs.rmSync(path.join(TMP, 'bag-meta.log'), { force: true }); // К-3: журнал сносится вместе со снимком
   _loadBagMeta();
 });
 
@@ -732,19 +757,21 @@ describe('adoptPairBags — устойчивость к сбоям', () => {
     const now = Date.now();
     const key = put(ALICE, BOB, now - 5 * DAY);
     const pairId = _pairIdFromAddresses(ALICE, BOB);
-    const before = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
+    // К-3: «на диске» — это снимок ПЛЮС журнал дозаписи; усыновление пишет
+    // теперь дозаписью, поэтому и валим её, и сверяем обе части.
+    const before = JSON.stringify(indexOnDisk());
 
-    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+    const appendSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
       throw new Error('ENOSPC: no space left on device');
     });
     try {
       expect(() => adoptPairBags(pairId, now + 50 * DAY, now)).toThrow(/ENOSPC/);
     } finally {
-      writeSpy.mockRestore();
+      appendSpy.mockRestore();
     }
 
     expect(bagMetaOf(key).dealDeadline).toBeNull(); // откат в памяти
-    expect(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8')).toBe(before); // диск не тронут
+    expect(JSON.stringify(indexOnDisk())).toBe(before); // диск не тронут
   });
 
   it('перезапустили ПОСРЕДИ ОДНОГО вызова adoptPairBags (несколько мешков той же пары): персист один на весь вызов — либо все, либо ни одного, не "часть"', () => {
@@ -754,8 +781,8 @@ describe('adoptPairBags — устойчивость к сбоям', () => {
     const key3 = put(ALICE, BOB, now - 7 * DAY);
     const pairId = _pairIdFromAddresses(ALICE, BOB);
 
-    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
-      throw new Error('симулированный обрыв записи (ENOSPC)');
+    const writeSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
+      throw new Error('симулированный обрыв записи (ENOSPC)'); // К-3: усыновление пишет дозаписью
     });
     try {
       expect(() => adoptPairBags(pairId, now + 50 * DAY, now)).toThrow();
@@ -833,12 +860,15 @@ describe('adoptPairBags — конкурентность', () => {
 
     // Снимок диска, с которым стартовал бы независимый "процесс B" — ДО
     // того, как "процесс A" (этот инстанс) вообще усыновил что-либо.
-    const snapshotBeforeB = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
+    // К-3: у процесса B нет своего доступа к чужой памяти — он видит ровно
+    // то, что лежит на диске: снимок ПЛЮС журнал. Снимка может ещё не быть
+    // вовсе (его пишет только схлопывание), поэтому собираем картину так же,
+    // как её собрал бы разбор при старте.
+    const snapshotBeforeB = JSON.stringify(indexOnDisk());
 
     // "Процесс A" усыновляет пару AB и персистит нормально.
     adoptPairBags(pairAB, now + 40 * DAY, now);
-    expect(JSON.parse(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8'))[keyA].dealDeadline)
-      .toBe(now + 40 * DAY);
+    expect(indexOnDisk()[keyA].dealDeadline).toBe(now + 40 * DAY);
 
     // "Процесс B" — независимый снимок _bagMeta, загруженный ДО записи A
     // (snapshotBeforeB), усыновляет ДРУГУЮ пару (BOB-CAROL) и сохраняет
@@ -847,12 +877,25 @@ describe('adoptPairBags — конкурентность', () => {
     const rawB = JSON.parse(snapshotBeforeB);
     rawB[keyC].dealDeadline = now + 40 * DAY;
     fs.writeFileSync(path.join(TMP, 'bag-meta.json'), JSON.stringify(rawB), 'utf8');
+    // К-3: схлопывание — это ДВА действия, снимок И обнуление журнала
+    // (_saveBagMeta делает оба). Моделировать только первое было бы
+    // нечестно: получилась бы картина, в которой процесс B пишет снимок, но
+    // почему-то оставляет чужой журнал нетронутым — такого поведения у
+    // кода нет ни на одном пути. Первая версия этой правки именно так и
+    // ошиблась и «показала», что ограничение 28.3 будто бы исчезло.
+    fs.rmSync(path.join(TMP, 'bag-meta.log'), { force: true });
 
     // Третий "процесс" (или перезапуск) читает то, что реально осталось.
     _loadBagMeta();
 
     expect(bagMetaOf(keyC).dealDeadline).toBe(now + 40 * DAY); // усыновление B выжило
-    expect(bagMetaOf(keyA).dealDeadline).toBeNull(); // а усыновление A — потеряно: B переписал файл своим снимком
+    // Усыновление A потеряно: B схлопнул склад своим снимком и обнулил
+    // журнал, в котором жила запись A. К-3 этого ограничения НЕ трогает —
+    // пункт 28.3 открытых вопросов остаётся открытым как был. (Окно
+    // сузилось: пока оба процесса только дописывают в журнал и не
+    // схлопывают, работа обоих цела — но схлопывание случается каждую ночь
+    // и на переполнении журнала, так что полагаться на это нельзя.)
+    expect(bagMetaOf(keyA).dealDeadline).toBeNull();
   });
 });
 

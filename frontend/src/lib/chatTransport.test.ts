@@ -4,7 +4,7 @@ import {
   BagTransportError, BagPassError, BagRateLimitError,
   DEFAULT_BAG_POLL_INTERVALS,
   _resetBagPassCacheForTest,
-  type BagSummary, type BagPollHandle,
+  type BagSummary, type SentBagSummary, type PeerSummary, type ListBagsResult, type BagPollHandle,
 } from './chatTransport';
 
 const ALICE = '0xa1ce00000000000000000000000000000000cafe' as const;
@@ -415,7 +415,7 @@ describe('putBag', () => {
 
 describe('listBags', () => {
   it('шлёт x-bag-pass и добавляет ?since= только если передан', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) });
     vi.stubGlobal('fetch', fetchMock);
 
     await listBags('v1.p');
@@ -426,21 +426,41 @@ describe('listBags', () => {
     expect(String(fetchMock.mock.calls[1][0])).toBe('http://localhost:3001/bags?since=1234');
   });
 
-  it('пустой список — обычное значение, а не ошибка', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
-    await expect(listBags('v1.p')).resolves.toEqual([]);
+  // Задача 1 (chat-client): GET /bags больше не отдаёт голый массив — форма
+  // ответа стала объектом {inbox, sent, peers} (решение координатора при
+  // сверке плана — тот же самый опрос раз в 5с несёт теперь и то, что нужно
+  // отправителю про исходящие, и список собеседников, без отдельного
+  // запроса). listBags() обновлена в этой же задаче.
+  it('пустой ответ — {inbox: [], sent: [], peers: []}, обычное значение, а не ошибка', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) }));
+    await expect(listBags('v1.p')).resolves.toEqual({ inbox: [], sent: [], peers: [] });
   });
 
-  it('корректный список проходит как есть', async () => {
+  it('корректные inbox/sent/peers проходят как есть', async () => {
     const item: BagSummary = { key: 'a/1.bin', sender: ALICE, size: 42, uploadedAt: 1000 };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([item]) }));
-    await expect(listBags('v1.p')).resolves.toEqual([item]);
+    const sentItem: SentBagSummary = { key: 'b/1.bin', recipient: ALICE, uploadedAt: 2000, fetched: true };
+    const peer: PeerSummary = { address: ALICE, lastActivityWithMeAt: 1740000 };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [item], sent: [sentItem], peers: [peer] }),
+    }));
+    await expect(listBags('v1.p')).resolves.toEqual({ inbox: [item], sent: [sentItem], peers: [peer] });
   });
 
-  it('мусор в списке — элемент без key и с нечисловым size — не проходит за данные', async () => {
+  // §3.4 плана: собеседник, о котором есть переписка, но ни одного сигнала
+  // присутствия (ни он не писал сам, ни забирал присланное) — lastActivityWithMeAt:
+  // null ("неизвестно"), не ошибка формы и не выдуманное число.
+  it('peers.lastActivityWithMeAt может быть null — «неизвестно», не ошибка формы', async () => {
+    const peer: PeerSummary = { address: ALICE, lastActivityWithMeAt: null };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [], peers: [peer] }),
+    }));
+    await expect(listBags('v1.p')).resolves.toEqual({ inbox: [], sent: [], peers: [peer] });
+  });
+
+  it('мусор в inbox — элемент без key и с нечисловым size — не проходит за данные', async () => {
     const ALICE_ADDR: `0x${string}` = ALICE;
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ([{ sender: ALICE_ADDR }]), // нет key и size
+      ok: true, json: async () => ({ inbox: [{ sender: ALICE_ADDR }], sent: [], peers: [] }), // нет key и size
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });
@@ -451,23 +471,23 @@ describe('listBags', () => {
   // прошла бы мимо теста выше. Мутация: убрать проверку size в реализации —
   // без разделения тест "мусор в списке" остаётся зелёным (key всё равно
   // отсутствует), с разделением "size не число" красный ровно от неё.
-  it('элемент с валидным key, но size не число — не проходит', async () => {
+  it('inbox: элемент с валидным key, но size не число — не проходит', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ([{ key: 'a/1.bin', sender: ALICE, size: 'lots', uploadedAt: 1000 }]),
+      ok: true, json: async () => ({ inbox: [{ key: 'a/1.bin', sender: ALICE, size: 'lots', uploadedAt: 1000 }], sent: [], peers: [] }),
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });
 
-  it('элемент без key, но с валидным size — тоже не проходит', async () => {
+  it('inbox: элемент без key, но с валидным size — тоже не проходит', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ([{ sender: ALICE, size: 42, uploadedAt: 1000 }]),
+      ok: true, json: async () => ({ inbox: [{ sender: ALICE, size: 42, uploadedAt: 1000 }], sent: [], peers: [] }),
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });
 
-  it('элемент с валидными key/size, но uploadedAt не число — тоже не проходит', async () => {
+  it('inbox: элемент с валидными key/size, но uploadedAt не число — тоже не проходит', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ([{ key: 'a/1.bin', sender: ALICE, size: 42, uploadedAt: 'скоро' }]),
+      ok: true, json: async () => ({ inbox: [{ key: 'a/1.bin', sender: ALICE, size: 42, uploadedAt: 'скоро' }], sent: [], peers: [] }),
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });
@@ -476,25 +496,94 @@ describe('listBags', () => {
   // все существующие фикстуры со всем ОСТАЛЬНЫМ валидным брали настоящий
   // ALICE. Проверено вживую до фикса: снять регулярку SENDER_RE целиком
   // (оставить только typeof === 'string') оставляло весь набор зелёным.
-  it('элемент с валидными key/size/uploadedAt, но sender не похож на адрес — не проходит', async () => {
+  it('inbox: элемент с валидными key/size/uploadedAt, но sender не похож на адрес — не проходит', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, json: async () => ([{ key: 'a/1.bin', sender: 'не-адрес', size: 42, uploadedAt: 1000 }]),
+      ok: true, json: async () => ({ inbox: [{ key: 'a/1.bin', sender: 'не-адрес', size: 42, uploadedAt: 1000 }], sent: [], peers: [] }),
+    }));
+    await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  // sent — тот же уровень паранойи, что и inbox выше: сервер обещает
+  // булево fetched (не время, docs/superpowers/plans/2026-08-06-chat-
+  // client.md §"Задача 1"), но клиент не обязан доверять обещанию молча —
+  // защита от собственного бага сервера или от прокси/кэша, отдавшего
+  // устаревшую/чужую форму.
+  it('sent: элемент без key — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [{ recipient: ALICE, uploadedAt: 1000, fetched: false }], peers: [] }),
+    }));
+    await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  it('sent: recipient не похож на адрес — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [{ key: 'a/1.bin', recipient: 'не-адрес', uploadedAt: 1000, fetched: false }], peers: [] }),
+    }));
+    await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  // Ключевой замок этой задачи: fetched — ЧИСЛО (например, отметка времени,
+  // которую сервер по ошибке отдал бы вместо булева) не проходит как
+  // "правдоподобно true/false". Мутация "typeof o.fetched === 'boolean'" →
+  // "o.fetched !== undefined" красит именно этот тест.
+  it('sent: fetched — число (например, отметка времени), а не булево — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [{ key: 'a/1.bin', recipient: ALICE, uploadedAt: 1000, fetched: 1700000000000 }], peers: [] }),
+    }));
+    await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  it('sent: uploadedAt не число — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [{ key: 'a/1.bin', recipient: ALICE, uploadedAt: 'скоро', fetched: false }], peers: [] }),
+    }));
+    await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  it('peers: элемент без address — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ lastActivityWithMeAt: 1000 }] }),
+    }));
+    await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  it('peers: address не похож на адрес — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ address: 'не-адрес', lastActivityWithMeAt: 1000 }] }),
+    }));
+    await expect(listBags('v1.p')).rejects.toThrow();
+  });
+
+  it('peers: lastActivityWithMeAt — не null и не число (например, строка) — не проходит', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ inbox: [], sent: [], peers: [{ address: ALICE, lastActivityWithMeAt: 'недавно' }] }),
     }));
     await expect(listBags('v1.p')).rejects.toThrow();
   });
 
   // Мелочь (ревью-координатор): `.rejects.toThrow()` голым текстом здесь
-  // ничего не запирало — не-массив, отданный в `for...of` БЕЗ явной
-  // Array.isArray-проверки, и так бросает свой собственный TypeError
-  // ("is not iterable"), так что мутация "убрать проверку целиком" тоже
-  // проходила бы этот тест. `toBeInstanceOf(BagTransportError)` различает
-  // "наша проверка сработала" от "JS сам споткнулся об это по случайности".
-  it('ответ не массивом — тоже мусор, не тихая пустота (и не случайный TypeError от for-of)', async () => {
+  // ничего не запирало — не-объект, у которого читают `.inbox`, и так
+  // бросает свой собственный TypeError, так что мутация "убрать проверку
+  // целиком" тоже проходила бы этот тест. `toBeInstanceOf(BagTransportError)`
+  // различает "наша проверка сработала" от "JS сам споткнулся об это по
+  // случайности".
+  it('ответ без inbox (например, старая форма — голый массив) — тоже мусор, не тихая пустота', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ bags: [] }) }));
     let caught: unknown;
     try { await listBags('v1.p'); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(BagTransportError);
     expect((caught as Error).message).toMatch(/not an array/i);
+  });
+
+  // Явно тот сценарий, который эта задача заменяет: сервер (старая версия,
+  // не обновившаяся вместе с фронтом) всё ещё отдаёт голый массив вместо
+  // {inbox, sent, peers}. Обязано провалиться громко, а не молча прочитать
+  // это как «пустой список» — рассинхрон версий должен быть виден.
+  it('старая форма ответа (голый массив, до этой задачи) отвергается, а не молча читается как пустой список', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
+    let caught: unknown;
+    try { await listBags('v1.p'); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(BagTransportError);
   });
 
   it('битый JSON в успешном ответе пробрасывается, а не превращается в пустой список', async () => {
@@ -504,9 +593,9 @@ describe('listBags', () => {
     await expect(listBags('v1.p')).rejects.toThrow();
   });
 
-  it('пустой список и отказ доступа — РАЗНЫЕ результаты, не «тихо, будто пусто»', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
-    await expect(listBags('v1.p')).resolves.toEqual([]);
+  it('пустой ответ и отказ доступа — РАЗНЫЕ результаты, не «тихо, будто пусто»', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) }));
+    await expect(listBags('v1.p')).resolves.toEqual({ inbox: [], sent: [], peers: [] });
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false, status: 401, json: async () => ({ code: 'pass_invalid' }),
@@ -642,10 +731,10 @@ describe('образец повтора (из документации моду�
       // 2) requestBagPass -> новый пропуск (дёшево не бывает при первом вызове — подписи ещё не было)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: 'v1.new', expiresAt: nowSec() + 3600 }) })
       // 3) повтор listBags с новым пропуском -> список
-      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    let bags: BagSummary[];
+    let bags: ListBagsResult;
     try {
       bags = await listBags('v1.old');
     } catch (e) {
@@ -654,7 +743,7 @@ describe('образец повтора (из документации моду�
       bags = await listBags(fresh.pass);
     }
 
-    expect(bags).toEqual([]);
+    expect(bags).toEqual({ inbox: [], sent: [], peers: [] });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(sign).toHaveBeenCalledTimes(1);
   });
@@ -680,13 +769,13 @@ describe('образец повтора (из документации моду�
       //    раз кэш выброшен транспортом, а не тихо отдать stalePass снова
       .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: freshPass, expiresAt: nowSec() + 3600 }) })
       // 4) повтор listBags новым пропуском -> успех
-      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) });
     vi.stubGlobal('fetch', fetchMock);
 
     const first = await requestBagPass(sign, ALICE);
     expect(first.pass).toBe(stalePass);
 
-    let bags: BagSummary[];
+    let bags: ListBagsResult;
     try {
       bags = await listBags(first.pass);
     } catch (e) {
@@ -695,7 +784,7 @@ describe('образец повтора (из документации моду�
       bags = await listBags(fresh.pass);
     }
 
-    expect(bags).toEqual([]);
+    expect(bags).toEqual({ inbox: [], sent: [], peers: [] });
     // Была дыра: без выброса кэша это осталось бы 1 — requestBagPass отдавал
     // бы тот же stalePass из кэша навсегда, и повтор падал бы тем же 401.
     expect(sign).toHaveBeenCalledTimes(2);
@@ -857,7 +946,7 @@ describe('pollBags', () => {
     expect(DEFAULT_BAG_POLL_INTERVALS).toEqual({ activeMs: 5_000, backgroundMs: 30_000, maxBackoffMs: 300_000 });
 
     let activeFlag = true;
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) }));
 
     const slept: number[] = [];
     let handle: BagPollHandle;
@@ -880,7 +969,7 @@ describe('pollBags', () => {
     const first = new Promise((r) => { resolveFirst = r; });
     const fetchMock = vi.fn()
       .mockImplementationOnce(() => first)
-      .mockResolvedValue({ ok: true, json: async () => ([]) });
+      .mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) });
     vi.stubGlobal('fetch', fetchMock);
 
     let handle: BagPollHandle;
@@ -893,7 +982,7 @@ describe('pollBags', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
 
-    resolveFirst({ ok: true, json: async () => ([]) });
+    resolveFirst({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) });
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1); // второй тик ещё не стартовал — мы уже остановили цикл
@@ -984,7 +1073,7 @@ describe('pollBags', () => {
     // pollBags(...) ниже, так что handle внутри первого sleep() ещё не
     // присвоен. isActive throws РОВНО один раз (флагом), второй тик проходит
     // штатно и его sleep() — уже безопасное место звать handle.stop().
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) }));
     const errors: unknown[] = [];
     let isActiveCalls = 0;
     const isActive = (): boolean => {
@@ -1034,7 +1123,7 @@ describe('pollBags', () => {
   });
 
   it('мелочь: ошибка в onBags (баг отрисовки у потребителя) не считается транспортной — не идёт в onError, не копит backoff', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) }));
     const errors: unknown[] = [];
     const bagsErrors: unknown[] = [];
     const sleep = vi.fn(async () => {});
@@ -1165,7 +1254,7 @@ describe('pollBags', () => {
     const fetchMock = vi.fn().mockImplementation(async () => {
       call++;
       if (call <= 2) throw new TypeError('Failed to fetch');       // тики 1-2: отказ (нарастание)
-      if (call === 3) return { ok: true, json: async () => ([]) }; // тик 3: успех (сброс)
+      if (call === 3) return { ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) }; // тик 3: успех (сброс)
       throw new TypeError('Failed to fetch');                       // тик 4: отказ СРАЗУ после успеха
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1194,7 +1283,7 @@ describe('pollBags', () => {
   });
 
   it('stop() останавливает опрос — после него новых запросов не бывает', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) });
     vi.stubGlobal('fetch', fetchMock);
 
     const sleep = async () => {};
@@ -1312,7 +1401,7 @@ describe('pollBags', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ pass: 'v1.a', expiresAt: nowSec() + 3600 }) }) // POST — один раз
       .mockResolvedValueOnce(fail401) // тик1 — отказ #1
       .mockResolvedValueOnce(fail401) // тик2 — отказ #2 (ещё не 3)
-      .mockResolvedValueOnce({ ok: true, json: async () => ([]) }) // тик3 — успех, счётчик в ноль
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ inbox: [], sent: [], peers: [] }) }) // тик3 — успех, счётчик в ноль
       .mockResolvedValueOnce(fail401) // тик4 — отказ #1 (НЕ #3 — доказывает, что сброс сработал)
       .mockResolvedValueOnce(fail401); // тик5 — отказ #2
     vi.stubGlobal('fetch', fetchMock);

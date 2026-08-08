@@ -33,7 +33,7 @@ process.env.STORAGE_DIR = TMP;
 // (или через статический import), а не через переменную, деструктуриро-
 // ванную из динамического import() до этого вызова.
 const bagStore = await import('../bagStore.js');
-const { bagKeyFor, recordBag, markFetched, listBagsFor, bagMetaOf,
+const { bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, listBagsInvolving, bagMetaOf,
         bagExpiryAt, cleanupBags, _loadBagMeta, _saveBagMeta, _pairIdFromAddresses,
         assertBagStoreReady, bagPathFor } = bagStore;
 
@@ -65,9 +65,41 @@ function put(recipient, sender, uploadedAt, extra = {}) {
   return key;
 }
 
+// К-3: опись на диске — это ДВА файла: снимок (bag-meta.json) и журнал
+// дозаписи (bag-meta.log). Тест обязан спрашивать «что увидит перезапуск»,
+// а не «что лежит в конкретном файле»: иначе он запирает выбор файла, а не
+// сохранность, и любая смена приёма хранения красит его на пустом месте.
+function indexOnDiskAt(dir) {
+  const out = {};
+  const snap = path.join(dir, 'bag-meta.json');
+  if (fs.existsSync(snap)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(snap, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) Object.assign(out, parsed);
+    } catch { /* битый снимок — на диске от него ничего не читается */ }
+  }
+  const log = path.join(dir, 'bag-meta.log');
+  if (fs.existsSync(log)) {
+    for (const line of fs.readFileSync(log, 'utf8').split('\n')) {
+      if (!line) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; } // обрезанный хвост
+      if (r.d) delete out[r.k];
+      else out[r.k] = r.m;
+    }
+  }
+  return out;
+}
+const indexOnDisk = () => indexOnDiskAt(TMP);
+
 beforeEach(() => {
   fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true });
   fs.rmSync(path.join(TMP, 'bag-meta.json'), { force: true });
+  // К-3: опись — это ДВА файла. Журнал дозаписи обязан сноситься вместе со
+  // снимком: оставленный от предыдущего теста, он переигрывается поверх
+  // пустого снимка и воскрешает чужие записи (поймано ровно так — 17
+  // падений в тестах, ни один из которых журнала не касался).
+  fs.rmSync(path.join(TMP, 'bag-meta.log'), { force: true });
   _loadBagMeta();
 });
 
@@ -284,6 +316,111 @@ describe('склад', () => {
   });
 });
 
+// ─── listBagsBySender — Задача 1 плана «Клиент чата» ──────────────────────
+//
+// Зеркало listBagsFor() выше: та же самая живая _bagMeta, тот же O(n) обход
+// без единого обращения к диску, но фильтр по meta.sender вместо
+// meta.recipient. Понадобилась, потому что GET /bags до сих пор отвечал
+// только про то, что адресовано владельцу пропуска, — отправитель не мог
+// узнать судьбу собственных мешков (docs/superpowers/specs/2026-08-06-chat-
+// client-design.md, §3.3/3.4). app.js строит на ней поля `sent` и `peers`.
+describe('listBagsBySender — зеркало listBagsFor, взгляд отправителя (Задача 1 плана «Клиент чата»)', () => {
+  it('отдаёт только мешки, отправленные ЭТИМ адресом', () => {
+    put(ALICE, BOB, Date.now());   // BOB -> ALICE
+    put(BOB, ALICE, Date.now());   // ALICE -> BOB
+    expect(listBagsBySender(BOB)).toHaveLength(1);
+    expect(listBagsBySender(BOB)[0].recipient).toBe(ALICE);
+    expect(listBagsBySender(ALICE)).toHaveLength(1);
+    expect(listBagsBySender(ALICE)[0].recipient).toBe(BOB);
+  });
+
+  it('бросает на негодном по форме адресе — тот же контракт, что у listBagsFor', () => {
+    expect(() => listBagsBySender('not-an-address')).toThrow();
+    expect(() => listBagsBySender(null)).toThrow();
+    expect(() => listBagsBySender(42)).toThrow();
+  });
+
+  it('отдаёт в хронологическом порядке (по uploadedAt), даже если записаны вразнобой', () => {
+    const second = put(ALICE, BOB, 2000);
+    const first  = put(ALICE, BOB, 1000);
+    const third  = put(ALICE, BOB, 3000);
+    expect(listBagsBySender(BOB).map((b) => b.key)).toEqual([first, second, third]);
+  });
+
+  it('пуст, если этот адрес ничего не отправлял', () => {
+    put(ALICE, BOB, Date.now());
+    expect(listBagsBySender(ALICE)).toEqual([]);
+  });
+});
+
+// ─── listBagsBySender и режим недоверия ────────────────────────────────────
+//
+// Подводный камень координатора (найден при ревью замысла, до реализации):
+// у записи, реконструированной _scanDiskBags() из одного только имени файла
+// (см. её докстринг и candidate.sender === '' там же), отправитель не
+// восстановим — recipient и uploadedAt несёт само имя файла
+// ("<recipient>/<uploadedAt>-<uuid>.bin"), а вот кто прислал мешок, знает
+// только сам сервер в момент PUT (bagPass), и это знание живёт исключительно
+// в описи. Опись потеряна — значит и знание потеряно, не приблизительно, а
+// совсем: подставить НИЧЕГО не значит "предположить самый вероятный
+// вариант", это значит соврать.
+//
+// listBagsBySender(addr) фильтрует meta.sender === addr, а addr всегда —
+// настоящий, проверенный ETH_ADDR_RE адрес (assertAddress бросает на любом
+// другом виде входа) — значит meta.sender === '' НИКОГДА ни с одним таким
+// addr не совпадёт. Реконструированная запись остаётся невидимой для
+// listBagsBySender автоматически, без отдельной ветки "а если недоверие" —
+// это следствие формы данных, а не отдельная проверка режима, которую
+// можно забыть обновить at the next refactor.
+describe('listBagsBySender в режиме недоверия — отправитель реконструированной записи неизвестен, значит не приписывается никому', () => {
+  it('реконструированный (из одного имени файла) мешок не числится отправленным ни за одним настоящим адресом', () => {
+    const oldKey = manualKey(ALICE, Date.now() - DAY);
+    const fp = path.join(bagStore.DIR_BAGS, oldKey);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'sealed');
+
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8'); // индекса нет, склад не пуст
+    _loadBagMeta(); // режим недоверия — реконструкция
+
+    expect(listBagsFor(ALICE)).toHaveLength(1); // получатель виден — он был в имени файла
+    expect(listBagsBySender(BOB)).toEqual([]);   // отправитель — нет, ни для кого
+    expect(listBagsBySender(ALICE)).toEqual([]); // включая саму получательницу
+  });
+
+  it('недоверие не отключает функцию целиком — мешок, честно записанный ЖИВЫМ recordBag() ПОСЛЕ входа в режим недоверия (сервер сам проверил пропуск, sender не реконструирован), виден немедленно', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    _loadBagMeta(); // режим недоверия, склад пуст на этот момент
+
+    const key = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
+    recordBag({ sender: BOB, recipient: ALICE, key, size: 6, uploadedAt: Date.now() });
+
+    // Не персистировано на диск (см. "выход из режима" ниже и существующий
+    // тест на recordBag() в недоверии выше в файле) — но в ПАМЯТИ отправитель
+    // настоящий, не выдуманный, так что listBagsBySender обязана его видеть.
+    expect(listBagsBySender(BOB)).toHaveLength(1);
+  });
+
+  it('доверие восстанавливается честной загрузкой описи — listBagsBySender сразу видит настоящего отправителя, без перезапуска процесса или какого-либо ручного шага сверх самой _loadBagMeta()', () => {
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), 'null', 'utf8');
+    _loadBagMeta(); // режим недоверия
+    expect(listBagsBySender(BOB)).toEqual([]);
+
+    // Человек чинит индекс руками — валидная запись с НАСТОЯЩИМ отправителем
+    // (не тем, что мог бы придумать сам сервер).
+    const key = bagKeyFor(ALICE);
+    fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
+    fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
+    writeRawBagMeta({ [key]: validRawMeta({ sender: BOB, recipient: ALICE, uploadedAt: 1000 }) });
+
+    _loadBagMeta(); // единственное действие для выхода — честная загрузка
+
+    expect(listBagsBySender(BOB)).toHaveLength(1);
+    expect(listBagsBySender(BOB)[0].key).toBe(key);
+  });
+});
+
 // ─── Дополнительно к брифу: запирающие тесты ──────────────────────────────
 //
 // Ниже — не из брифа буквально, а следствие опыта Задачи 1 (issueBagPass /
@@ -298,7 +435,7 @@ describe('склад — счётчики и поведение чистки з�
     put(ALICE, BOB, now - 40 * DAY);                     // просрочен
     put(ALICE, BOB, now, { firstFetchedAt: now });        // жив
     put(ALICE, BOB, now);                                 // жив (не прочитан, свежий)
-    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 2 });
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 2, deferred: 0 });
   });
 
   it('чистка сносит с диска старый файл-сирота, которого нет в индексе (не просто «не падает»)', () => {
@@ -1006,8 +1143,7 @@ describe('третий тур закрывающего ревью Задачи 4
     fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key2)), { recursive: true });
     fs.writeFileSync(path.join(bagStore.DIR_BAGS, key2), 'sealed');
     recordBag({ sender: ALICE, recipient: BOB, key: key2, size: 6, uploadedAt: Date.now() });
-    const onDisk = JSON.parse(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8'));
-    expect(Object.keys(onDisk)).toEqual([key2]);
+    expect(Object.keys(indexOnDisk())).toEqual([key2]);
   });
 
   it('сквозной сценарий целиком (сценарий координатора): битая опись → запуск → новый мешок → перезапуск → ночная чистка → все мешки живы', () => {
@@ -1220,8 +1356,7 @@ describe('продолжение третьего тура — отсутств�
     fs.mkdirSync(path.dirname(path.join(bagStore.DIR_BAGS, key)), { recursive: true });
     fs.writeFileSync(path.join(bagStore.DIR_BAGS, key), 'sealed');
     recordBag({ sender: BOB, recipient: ALICE, key, size: 6, uploadedAt: Date.now() });
-    const onDisk = JSON.parse(fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8'));
-    expect(Object.keys(onDisk)).toEqual([key]);
+    expect(Object.keys(indexOnDisk())).toEqual([key]);
   });
 
   it('описи нет, а мешки на диске лежат → режим недоверия, мешок старше тридцати дней НЕ удалён', () => {
@@ -1456,6 +1591,18 @@ describe('закрывающий раунд — метла не ходит по 
     // Человек "чинит" опись самой естественной командой — валидный, но
     // пустой JSON. Лог теперь явно предупреждает не делать так (см. текст
     // ниже) — но именно это легко набрать не читая.
+    // К-3 СУЗИЛА ЭТУ ГРАНИЦУ, и это надо сказать вслух. Одного `echo '{}' >
+    // bag-meta.json` теперь НЕ ДОСТАТОЧНО, чтобы беда случилась: журнал
+    // дозаписи всё ещё лежит рядом, разбор доигрывает его поверх пустого
+    // снимка, и все три мешка возвращаются в опись целыми. Проверено —
+    // тест краснел ровно на этом.
+    fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{}', 'utf8');
+    _loadBagMeta();
+    expect(Object.keys(bagStore.listBagsFor(ALICE))).toHaveLength(3); // журнал спас
+
+    // Граница никуда не делась — просто теперь для неё нужно снести ОБА
+    // файла описи, ровно то, от чего предупреждает лог режима недоверия.
+    fs.rmSync(path.join(TMP, 'bag-meta.log'), { force: true });
     fs.writeFileSync(path.join(TMP, 'bag-meta.json'), '{}', 'utf8');
     _loadBagMeta(); // индекс парсится штатно — ДОВЕРИЕ восстановлено, тихо, без единой строки лога
 
@@ -1485,7 +1632,13 @@ describe('закрывающий раунд — метла не ходит по 
       expect(warning.toLowerCase()).toContain('empty');
       expect(warning.toLowerCase()).toContain('just as destructive');
       expect(warning.toLowerCase()).toContain('restore the real index from a backup');
-      expect(warning.toLowerCase()).toContain('remove both the index file and every bag file');
+      // К-3: файлов, которые нужно снести вместе, стало три — снимок,
+      // журнал дозаписи и сами мешки. Предупреждение обязано называть все
+      // три: снести два из трёх — тот же класс беды, что и раньше снести
+      // один из двух.
+      expect(warning.toLowerCase()).toContain('remove the snapshot');
+      expect(warning.toLowerCase()).toContain('append journal');
+      expect(warning.toLowerCase()).toContain('every bag file on disk, all three together');
     } finally {
       spy.mockRestore();
     }
@@ -1627,8 +1780,13 @@ describe('I2 — сохранение индекса атомарно, ошиб�
     // доказательство, что путь записи отличается от основного, а не
     // косвенный вывод из отсутствия мусора.
     const mainPath = path.join(TMP, 'bag-meta.json');
-    const writeSpy = vi.spyOn(fs, 'writeFileSync');
     put(ALICE, BOB, 1000);
+    // К-3: снимок пишет теперь только схлопывание, не каждый PUT — зовём
+    // его явно. Свойство, которое запирает тест (снимок публикуется через
+    // временный файл, а не пишется поверх основного), не изменилось ни на
+    // йоту; изменился лишь повод, по которому снимок вообще случается.
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    _saveBagMeta();
     expect(writeSpy).toHaveBeenCalled();
     const writtenPaths = writeSpy.mock.calls.map(call => call[0]);
     expect(writtenPaths.length).toBeGreaterThan(0);
@@ -1654,9 +1812,10 @@ describe('I2 — сохранение индекса атомарно, ошиб�
   // именно временный путь во ФАЙЛ ОСНОВНОГО ИНДЕКСА, а не что-то ещё.
   it('публикация индекса идёт через настоящий fs.renameSync(temp, основной) — атомарный шаг заперт напрямую', () => {
     const mainPath = path.join(TMP, 'bag-meta.json');
-    const renameSpy = vi.spyOn(fs, 'renameSync');
+    put(ALICE, BOB, 1000);
+    const renameSpy = vi.spyOn(fs, 'renameSync'); // К-3: снимок — только через схлопывание
     try {
-      put(ALICE, BOB, 1000);
+      _saveBagMeta();
     } finally {
       expect(renameSpy).toHaveBeenCalledTimes(1);
       const [src, dest] = renameSpy.mock.calls[0];
@@ -1711,16 +1870,20 @@ describe('I2 — сохранение индекса атомарно, ошиб�
   });
 
   it('бросок ДО того, как записан хоть байт, не портит уже лежащий на диске индекс (простой случай)', () => {
-    const key = put(ALICE, BOB, 1000); // на диске уже лежит корректный индекс
+    const key = put(ALICE, BOB, 1000);
+    _saveBagMeta(); // К-3: снимок на диске — явным схлопыванием
     const before = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
 
-    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+    // К-3: горячий путь пишет дозаписью, значит и валить надо её — иначе
+    // тест «ломает» операцию, которой markFetched больше не делает, и
+    // зеленеет, ничего не проверив.
+    const appendSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
       throw new Error('ENOSPC');
     });
     try {
       expect(() => markFetched(key, 9999)).toThrow();
     } finally {
-      writeSpy.mockRestore();
+      appendSpy.mockRestore();
     }
 
     const after = fs.readFileSync(path.join(TMP, 'bag-meta.json'), 'utf8');
@@ -1739,7 +1902,8 @@ describe('I2 — сохранение индекса атомарно, ошиб�
   // остаётся целиком старым. С наивной прямой записью (мутация ниже) те же
   // обрезанные байты попали бы прямо в основной файл — тест это ловит.
   it('честная атомарность: временный файл реально получает ОБРЕЗАННОЕ содержимое перед крахом, основной индекс всё равно остаётся старым и валидным', () => {
-    const key = put(ALICE, BOB, 1000);
+    put(ALICE, BOB, 1000);
+    _saveBagMeta(); // К-3: снимок на диске — явным схлопыванием
     const mainPath = path.join(TMP, 'bag-meta.json');
     const before = fs.readFileSync(mainPath, 'utf8');
 
@@ -1750,7 +1914,10 @@ describe('I2 — сохранение индекса атомарно, ошиб�
       throw new Error('симулированный обрыв записи после частичного flush');
     });
     try {
-      expect(() => markFetched(key, 9999)).toThrow();
+      // К-3: обрыв ПОСРЕДИ схлопывания — тот же сценарий, что раньше
+      // моделировался через markFetched, только теперь снимок пишет именно
+      // схлопывание, и валить надо его.
+      expect(() => _saveBagMeta()).toThrow();
     } finally {
       writeSpy.mockRestore();
     }
@@ -1762,8 +1929,8 @@ describe('I2 — сохранение индекса атомарно, ошиб�
 
   it('recordBag откатывает in-memory запись, если персист не удался — bagMetaOf не видит запись, которой нет на диске', () => {
     const key = bagKeyFor(ALICE);
-    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
-      throw new Error('ENOSPC');
+    const writeSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC'); // К-3: горячий путь — дозапись, её и валим
     });
     try {
       expect(() => recordBag({ key, sender: BOB, recipient: ALICE, size: 1, uploadedAt: 1 })).toThrow();
@@ -1775,8 +1942,8 @@ describe('I2 — сохранение индекса атомарно, ошиб�
 
   it('markFetched откатывает firstFetchedAt в null, если персист не удался — память не обгоняет диск', () => {
     const key = put(ALICE, BOB, 1000);
-    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
-      throw new Error('ENOSPC');
+    const writeSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC'); // К-3: горячий путь — дозапись, её и валим
     });
     try {
       expect(() => markFetched(key, 5000)).toThrow();
@@ -1974,7 +2141,7 @@ describe('Мелочь (f) — removed считает и снесённых си
     const old = new Date(now - 40 * DAY);
     fs.utimesSync(orphan, old, old);
 
-    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0 });
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0, deferred: 0 });
   });
 
   it('removed складывает записи из индекса и сирот с диска вместе', () => {
@@ -1988,7 +2155,7 @@ describe('Мелочь (f) — removed считает и снесённых си
     const old = new Date(now - 40 * DAY);
     fs.utimesSync(orphan, old, old);
 
-    expect(cleanupBags(now)).toEqual({ removed: 2, kept: 0 });
+    expect(cleanupBags(now)).toEqual({ removed: 2, kept: 0, deferred: 0 });
   });
 });
 
@@ -2005,7 +2172,7 @@ describe('Мелочь (g) — запись без файла отбрасыва
     const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // жив ещё 7 дней
     fs.unlinkSync(path.join(bagStore.DIR_BAGS, key)); // файл пропал, запись в индексе осталась
 
-    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0 });
+    expect(cleanupBags(now)).toEqual({ removed: 1, kept: 0, deferred: 0 });
     expect(bagMetaOf(key)).toBeUndefined();
     expect(listBagsFor(ALICE)).toHaveLength(0);
   });
@@ -2014,7 +2181,7 @@ describe('Мелочь (g) — запись без файла отбрасыва
     const now = Date.now();
     const key = put(ALICE, BOB, now, { firstFetchedAt: now });
 
-    expect(cleanupBags(now)).toEqual({ removed: 0, kept: 1 });
+    expect(cleanupBags(now)).toEqual({ removed: 0, kept: 1, deferred: 0 });
     expect(bagMetaOf(key)).toBeDefined();
   });
 });
@@ -2048,25 +2215,396 @@ describe('Мелочь — _saveBagMeta создаёт свой каталог �
   });
 });
 
-// ─── Мелочи — порядок в cleanupBags и независимость метлы/уборки от
-// падения сохранения индекса ─────────────────────────────────────────────
+// ─── В-4 (аудит устойчивости, 6 августа): тик опроса обходит опись ОДИН
+// раз, а не два ───────────────────────────────────────────────────────────
 //
-// Находки ревью (две, объединены в один коммит — обе меняют одну и ту же
-// функцию и один и тот же кусок управления ошибками):
-// 1. Раньше файл удалялся ДО того, как удаление записи сохранялось в
-//    индексе. Худший случай при падении между этими шагами — индекс,
-//    обещающий файл, которого уже нет. Поменяли порядок: сохранить индекс
-//    (запись уже убрана из него), потом удалить файл — худший случай
-//    становится осиротевшим файлом, который подберёт обычная метла сирот
-//    по mtime, а не индексом, врущим про существование.
-// 2. sweepOrphanFiles/removeEmptyRecipientDirs стояли ПОСЛЕ сохранения
-//    индекса и не выполнялись вовсе, если сохранение бросало (I2) — хотя
-//    обе операции работают с файловой системой напрямую, не зависят от
-//    успеха сохранения индекса.
-describe('Мелочи — cleanupBags: индекс сохраняется до удаления файла, метла/уборка не зависят от падения сохранения', () => {
-  it('индекс сохраняется на диск ДО удаления файла мешка — порядок операций подтверждён напрямую', () => {
+// Замер до правки (scratchpad/measure-v4.mjs, боевые умолчания):
+//   200 000 мешков → один тик GET /bags 306,85 мс = 3,3 тика в секунду.
+// Пункт 29.1 открытых вопросов записывал «семь тиков» — это была цена
+// ОДНОГО прохода (listBagsFor). Задача 1 плана «клиент чата» добавила
+// взгляд отправителя (listBagsBySender), и проходов стало два.
+//
+// Один и тот же _bagMeta перебирается дважды подряд, чтобы разложить его на
+// две кучки по двум разным полям одной и той же записи. Это ровно то, что
+// делается за один проход.
+describe('В-4 — тик опроса: один проход по описи вместо двух', () => {
+  it('listBagsInvolving отдаёт ровно то же, что listBagsFor + listBagsBySender', () => {
     const now = Date.now();
-    const key = put(ALICE, BOB, now - 40 * DAY); // просрочен
+    const CAROL = '0xca401000000000000000000000000000000beef1';
+    put(ALICE, BOB, now - 3000);   // мне от Боба
+    put(BOB, ALICE, now - 2000);   // от меня Бобу
+    put(ALICE, ALICE, now - 1000); // переписка с самим собой — в обеих кучках
+    put(BOB, CAROL, now);          // чужая переписка целиком
+
+    const combined = listBagsInvolving(ALICE);
+    expect(combined.received).toEqual(listBagsFor(ALICE));
+    expect(combined.sent).toEqual(listBagsBySender(ALICE));
+  });
+
+  it('обходит опись РОВНО ОДИН раз — не два прохода под одним именем', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 1000);
+    put(BOB, ALICE, now);
+
+    // Прямой замок на само свойство, а не на время (время на раннере
+    // шумит и красило бы тест случайно). Оба существующих списка строятся
+    // через Object.entries(_bagMeta) — по разу на каждый; объединённая
+    // версия обязана обойтись одним.
+    const spy = vi.spyOn(Object, 'entries');
+    try {
+      spy.mockClear();
+      listBagsFor(ALICE);
+      listBagsBySender(ALICE);
+      const twoPassCalls = spy.mock.calls.length;
+
+      spy.mockClear();
+      listBagsInvolving(ALICE);
+      const onePassCalls = spy.mock.calls.length;
+
+      expect(twoPassCalls).toBe(2);
+      expect(onePassCalls).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('сортировка по uploadedAt сохраняется в обеих половинах', () => {
+    const now = Date.now();
+    const late = put(ALICE, BOB, now);
+    const early = put(ALICE, BOB, now - 5000);
+    const sentLate = put(BOB, ALICE, now);
+    const sentEarly = put(BOB, ALICE, now - 5000);
+
+    const { received, sent } = listBagsInvolving(ALICE);
+    expect(received.map((b) => b.key)).toEqual([early, late]);
+    expect(sent.map((b) => b.key)).toEqual([sentEarly, sentLate]);
+  });
+});
+
+// ─── К-3 (аудит устойчивости, 6 августа): один PUT не переписывает всю
+// опись ───────────────────────────────────────────────────────────────────
+//
+// Замер до правки (scratchpad/measure-k3.mjs, боевые умолчания, локальный
+// диск, ничего не подменено):
+//
+//   20 000 мешков в описи → ОДИН PUT блокирует цикл событий 24,9 мс,
+//   файл описи 7,8 МБ; путь от пустого склада до 20 000 мешков —
+//   281,6 СЕКУНДЫ совокупной блокировки. 50 000 не уложились в 10 минут.
+//
+// Всё это время сервер не отвечает вообще никому: ни мета-транзакции, ни
+// файлы, ни уведомления. Причина — recordBag()/markFetched() звали
+// _saveBagMeta(), а та делает JSON.stringify ВСЕЙ описи и пишет её целиком
+// на каждую отдельную запись.
+//
+// Два свойства запираются ВМЕСТЕ и намеренно в одном describe: «дёшево» без
+// «переживает перезапуск» достигается тем, что не писать вообще ничего, и
+// такая «починка» прошла бы тест на одну лишь стоимость.
+describe('К-3 — один PUT не переписывает всю опись', () => {
+  // Сколько байт уходит на диск за ОДИН recordBag при `n` мешках уже в
+  // описи. Считаем и writeFileSync, и appendFileSync — какой бы приём ни
+  // выбрала реализация, платим мы байтами.
+  function bytesForOnePutAt(n) {
+    fs.rmSync(bagStore.DIR_BAGS, { recursive: true, force: true });
+    fs.rmSync(path.join(TMP, 'bag-meta.json'), { force: true });
+    fs.rmSync(path.join(TMP, 'bag-meta.log'), { force: true });
+    _loadBagMeta();
+
+    const now = Date.now();
+    for (let i = 0; i < n; i++) {
+      recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now - i });
+    }
+
+    let bytes = 0;
+    const count = (_fp, data) => { bytes += Buffer.byteLength(typeof data === 'string' ? data : (data ?? '')); };
+    const realWrite = fs.writeFileSync;
+    const realAppend = fs.appendFileSync;
+    const wSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((fp, data, ...rest) => { count(fp, data); return realWrite(fp, data, ...rest); });
+    const aSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation((fp, data, ...rest) => { count(fp, data); return realAppend(fp, data, ...rest); });
+    try {
+      recordBag({ key: bagKeyFor(ALICE), sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now });
+    } finally {
+      wSpy.mockRestore();
+      aSpy.mockRestore();
+    }
+    return bytes;
+  }
+
+  it('цена одного PUT в байтах не растёт вместе с числом мешков в описи', () => {
+    const at200 = bytesForOnePutAt(200);
+    const at2000 = bytesForOnePutAt(2000);
+
+    // Опись из 2000 записей — примерно в десять раз тяжелее описи из 200.
+    // Если PUT по-прежнему переписывает её целиком, вторая цифра будет
+    // примерно вдесятеро больше первой. Порог с большим запасом: требуем
+    // лишь, чтобы десятикратный рост описи не давал даже двукратного роста
+    // цены записи.
+    expect(at2000).toBeLessThan(at200 * 2);
+    // И в абсолюте: один мешок — это сотни байт, не мегабайты.
+    expect(at2000).toBeLessThan(4096);
+  });
+
+  it('записанное этим дешёвым путём переживает перезапуск процесса', () => {
+    const now = Date.now();
+    const keys = [];
+    for (let i = 0; i < 50; i++) {
+      const key = bagKeyFor(ALICE);
+      recordBag({ key, sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now - i });
+      keys.push(key);
+    }
+    // Отметка о прочтении — второй писатель горячего пути, тоже обязана
+    // доехать до диска, а не остаться только в памяти.
+    markFetched(keys[0], now);
+
+    // «Перезапуск»: выбрасываем состояние в памяти и грузим с диска заново.
+    _loadBagMeta();
+
+    for (const key of keys) expect(bagMetaOf(key)).toBeDefined();
+    expect(bagMetaOf(keys[0]).firstFetchedAt).toBe(now);
+  });
+
+  // Найдено при реализации самой К-3, живым прогоном, а не рассуждением:
+  // первая версия журнала не писала строк УДАЛЕНИЯ вовсе — чистка просто
+  // сохраняла снимок. Обрыв в окне «снимок записан, журнал ещё не обнулён»
+  // ВОСКРЕШАЛ снесённое: разбор доигрывал поверх свежего снимка старую
+  // строку записи того самого ключа. То есть починка производительности
+  // сама по себе завела бы способ вернуть к жизни просроченную переписку.
+  it('перезапуск в окне «снимок записан, журнал не обнулён» НЕ воскрешает снесённое', () => {
+    const now = Date.now();
+    const doomed = put(ALICE, BOB, now - 40 * DAY);   // просрочен — уйдёт под нож
+    const alive = put(ALICE, BOB, now, { firstFetchedAt: now }); // жив ещё 7 дней
+
+    // Перехватываем обнуление журнала — ровно то, что не успевает
+    // произойти при обрыве процесса сразу после записи снимка.
+    const realUnlink = fs.unlinkSync;
+    const logPath = path.join(TMP, 'bag-meta.log');
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation((fp, ...rest) => {
+      if (String(fp) === logPath) return; // «процесс убит здесь»
+      return realUnlink(fp, ...rest);
+    });
+    try {
+      cleanupBags(now);
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+
+    expect(fs.existsSync(logPath)).toBe(true); // журнал и правда остался — тест не проверяет пустоту
+
+    _loadBagMeta(); // «перезапуск»
+
+    expect(bagMetaOf(doomed)).toBeUndefined(); // снесённое осталось снесённым
+    expect(bagMetaOf(alive)).toBeDefined();    // живое не пострадало
+  });
+
+  it('перезапуск ПОСРЕДИ работы: оборванная последняя запись не уносит с собой всё остальное', () => {
+    const now = Date.now();
+    const keys = [];
+    for (let i = 0; i < 10; i++) {
+      const key = bagKeyFor(ALICE);
+      recordBag({ key, sender: BOB, recipient: ALICE, size: 4096, uploadedAt: now - i });
+      keys.push(key);
+    }
+
+    // Процесс убит посреди дописывания последней записи: на диске остался
+    // обрезанный хвост. Так выглядит настоящий обрыв, а не выдуманный.
+    const logPath = path.join(TMP, 'bag-meta.log');
+    if (fs.existsSync(logPath)) {
+      const raw = fs.readFileSync(logPath, 'utf8');
+      fs.writeFileSync(logPath, raw + '{"k":"0xaaa', 'utf8');
+    }
+
+    _loadBagMeta();
+
+    // Девять целых записей обязаны уцелеть — обрезок стоит последним и
+    // касается только себя.
+    for (const key of keys) expect(bagMetaOf(key)).toBeDefined();
+  });
+});
+
+// ─── К-1 ДЛЯ МЕШКОВ (сквозная проверка перед слиянием, 8 августа) ──────────
+//
+// Первая редакция К-1 накрыла вложения и НЕ накрыла сами мешки: cleanupBags()
+// звалась вообще без признака «цепь ответила», и гейт «не знаем — не сносим»
+// до неё не доходил. То есть беда, ради которой К-1 делалась, оставалась
+// живой для САМОГО ЦЕННОГО — слов переписки, а спасены были только вложения.
+//
+// Замер (многолетний прогон по ночам, сделка активная и неоплаченная —
+// значит усыновление режется 90-дневным потолком и мешок обязан жить ровно
+// до ночи №90):
+//
+//   узел отвечает всегда, мешок не прочитан      → снесён в ночь №90 ✔ штатно
+//   узел молчит с ночи 1, мешок не прочитан      → снесён в ночь №30 ✘
+//   узел отвечает всегда, прочитан на день 10    → снесён в ночь №90 ✔ штатно
+//   узел молчит с ночи 1, прочитан на день 10    → снесён в ночь №17 ✘
+//
+// Молчащий узел не даёт усыновлению проставить dealDeadline, мешок доживает
+// по обычному правилу 2/3 и сносится безвозвратно — задолго до конца дела.
+//
+// Правило то же, что для вложений: не знаем — не сносим, но НЕ ДОЛЬШЕ того
+// же 90-дневного потолка (BAG_MAX_AGE_MS от загрузки). Потолок держится и
+// при молчащем узле — иначе авария превращалась бы в «храним вечно».
+describe('К-1 для мешков — узел молчит: просроченное откладывается, но не дольше потолка', () => {
+  it('цепь неизвестна — просроченный мешок НЕ снесён', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now - 20 * DAY, { firstFetchedAt: now - 10 * DAY }); // просрочен правилом 2
+
+    const res = cleanupBags(now, { chainKnown: false });
+
+    expect(bagMetaOf(key)).toBeDefined();
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(true);
+    expect(res.removed).toBe(0);
+  });
+
+  it('цепь ОТВЕТИЛА — тот же мешок снесён как обычно (отсрочка не превращается в «никогда»)', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now - 20 * DAY, { firstFetchedAt: now - 10 * DAY });
+
+    cleanupBags(now, { chainKnown: true });
+
+    expect(bagMetaOf(key)).toBeUndefined();
+  });
+
+  it('цепь неизвестна, но мешок старше 90-дневного потолка — снесён: авария не значит «храним вечно»', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now - 120 * DAY, { firstFetchedAt: now - 110 * DAY });
+
+    cleanupBags(now, { chainKnown: false });
+
+    expect(bagMetaOf(key)).toBeUndefined();
+  });
+
+  it('запись без файла на диске сносится и при молчащем узле — «мелочь g» не про незнание цепи', () => {
+    const now = Date.now();
+    const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // жив по сроку
+    fs.unlinkSync(path.join(bagStore.DIR_BAGS, key));          // но файла нет
+
+    cleanupBags(now, { chainKnown: false });
+
+    // Файла физически нет — держать запись значит врать про существование,
+    // и знание цепи для этого решения не нужно вовсе.
+    expect(bagMetaOf(key)).toBeUndefined();
+  });
+
+  it('отложенное названо числом в возвращаемом итоге, а не растворено в kept', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 20 * DAY, { firstFetchedAt: now - 10 * DAY });
+    put(ALICE, BOB, now - 21 * DAY, { firstFetchedAt: now - 11 * DAY });
+    put(ALICE, BOB, now, { firstFetchedAt: now }); // живой, не отложенный
+
+    const res = cleanupBags(now, { chainKnown: false });
+
+    expect(res.deferred).toBe(2);
+    expect(res.removed).toBe(0);
+  });
+});
+
+// ─── К-2 (аудит устойчивости, 6 августа): когда место кончилось, уборка
+// обязана уметь его освободить ────────────────────────────────────────────
+//
+// Единственный механизм освобождения места переставал работать ровно тогда,
+// когда он нужен. Замер до правки (scratchpad/measure-k2.mjs, боевые
+// умолчания, ЕДИНСТВЕННАЯ подмена — writeFileSync бросает ENOSPC, как на
+// настоящем полном диске; unlinkSync на полном диске работает и есть
+// единственный способ освободить место):
+//
+//   500 просроченных мешков по 1 КиБ, диск полон
+//     → освобождено 0 файлов, 0 байт.
+//
+// Причина — порядок: сначала писалась опись (падала на ENOSPC), и catch
+// откатывал ВСЁ, так что до строчки удаления файлов управление не доходило
+// НИКОГДА. Правка меняет порядок на обратный: сносим сначала, пишем потом.
+// Освобождённое место — единственное, что вообще может дать записи описи
+// шанс пройти в этом же прогоне.
+//
+// ⚠️ ВОЗРАСТ МЕШКОВ ЗДЕСЬ ВЫБРАН НАРОЧНО — не трогать, не «упрощать» до
+// «просто просроченный». Первая версия этих тестов брала мешки 40-42 дней
+// от загрузки, и мутация «вернуть прежний порядок» их НЕ КРАСИЛА: файл
+// старше 30 дней по mtime подбирает МЕТЛА СИРОТ в finally (она работает по
+// mtime и не зависит от описи вовсе), так что место освобождалось — но
+// совсем другим механизмом, чем тот, который тест якобы проверяет. Тест был
+// зелёным по неверной причине.
+//
+// Здесь мешок ПРОЧИТАН: загружен 20 дней назад, прочитан 10 дней назад,
+// значит по правилу 2 (firstFetchedAt + BAG_TTL_MS = 7д) просрочен три дня
+// назад. При этом его mtime — 20 дней, то есть СВЕЖЕЕ порога метлы сирот
+// (30 дней): метла его не тронет НИКОГДА. Освободить это место может
+// только основной цикл истечения срока — ровно тот путь, который К-2 и
+// чинит.
+describe('К-2 — полный диск: уборка обязана освобождать место, а не блокироваться на описи', () => {
+  // Мешок, до которого метла сирот дотянуться не может: просрочен правилом
+  // 2 (прочитан 10 дней назад, TTL прочитанного — 7 дней), но его файлу
+  // всего 20 дней — метла сносит только то, что старше 30.
+  const readAndExpired = (now) => put(ALICE, BOB, now - 20 * DAY, { firstFetchedAt: now - 10 * DAY });
+
+  it('диск полон — файлы просроченных мешков всё равно снесены, место освобождено', () => {
+    const now = Date.now();
+    const keys = [readAndExpired(now), readAndExpired(now), readAndExpired(now)];
+    for (const k of keys) expect(fs.existsSync(path.join(bagStore.DIR_BAGS, k))).toBe(true);
+
+    // «Диск кончился»: ЛЮБАЯ запись нового файла падает. Удаление не
+    // затронуто — именно так ведёт себя настоящая полная файловая система.
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    });
+    try {
+      expect(() => cleanupBags(now)).toThrow(/ENOSPC/); // отказ описи по-прежнему громкий, не проглочен
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    // Главное свойство: место РЕАЛЬНО освобождено — все три файла снесены.
+    for (const k of keys) {
+      expect(fs.existsSync(path.join(bagStore.DIR_BAGS, k))).toBe(false);
+    }
+  });
+
+  it('диск полон — память не откатывает то, что физически снесено с диска', () => {
+    const now = Date.now();
+    const key = readAndExpired(now);
+
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    });
+    try {
+      expect(() => cleanupBags(now)).toThrow(/ENOSPC/);
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    // Откат назад в _bagMeta был бы прямым враньём: файла на диске уже нет,
+    // вернуть его невозможно. Память обязана отражать то, что случилось на
+    // самом деле, а не то, что успело доехать до описи.
+    expect(bagMetaOf(key)).toBeUndefined();
+  });
+});
+
+// ─── cleanupBags: порядок «сначала снести, потом записать» и независимость
+// метлы/уборки от падения сохранения индекса ─────────────────────────────
+//
+// ⚠️ ПОРЯДОК ЗДЕСЬ ПЕРЕВЁРНУТ 6 августа находкой К-2 (аудит устойчивости).
+// Четыре теста этого блока раньше запирали ОБРАТНОЕ правило — «сохранить
+// опись, потом удалять файлы» — и откат в память при падении сохранения.
+// Оба свойства были осознанным выбором пятого раунда ревью Задачи 4, и оба
+// оказались куплены слишком дорого: на ПОЛНОМ ДИСКЕ запись описи падает
+// первой, catch откатывает всё, и до удаления файлов управление не доходит
+// никогда. Замер: 500 просроченных мешков по 1 КиБ → освобождено 0 файлов,
+// 0 байт (после правки — 500 из 500, 512 000 байт). Единственный механизм
+// освобождения места не работал ровно в том состоянии, ради которого он
+// заведён.
+//
+// Что осталось верным и по-прежнему заперто здесь:
+//   • отказ сохранения по-прежнему ГРОМКИЙ (бросок, не молчаливый catch) —
+//     I2 не отменена;
+//   • sweepOrphanFiles/removeEmptyRecipientDirs/sweepStaleTmpFiles в finally
+//     работают независимо от того, упало ли сохранение — находка 2 пятого
+//     раунда цела.
+// Что перевёрнуто намеренно:
+//   • файлы сносятся ПЕРВЫМИ (иначе см. замер выше);
+//   • отката в память больше нет — файла физически нет, возвращать запись
+//     означало бы обещать несуществующее (см. комментарий в cleanupBags()).
+describe('cleanupBags — файлы сносятся до записи описи; метла не зависит от падения сохранения', () => {
+  it('файл мешка удаляется с диска ДО записи описи — порядок операций подтверждён напрямую', () => {
+    const now = Date.now();
+    put(ALICE, BOB, now - 40 * DAY); // просрочен
 
     const order = [];
     const realWriteFileSync = fs.writeFileSync;
@@ -2088,24 +2626,16 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
 
     const writeIdx = order.indexOf('write-index');
     const unlinkIdx = order.indexOf('unlink-file');
-    expect(writeIdx).toBeGreaterThanOrEqual(0);
-    expect(unlinkIdx).toBeGreaterThan(writeIdx);
+    expect(unlinkIdx).toBeGreaterThanOrEqual(0);
+    expect(writeIdx).toBeGreaterThan(unlinkIdx);
   });
 
-  // Находка ревью (И-1, пятый раунд; снята шестым): предыдущая версия
-  // держала два ОТДЕЛЬНЫХ теста и отдельный параметр protectedKeys в
-  // sweepOrphanFiles(). Шестой раунд поймал, что коммит с откатом
-  // (мелочь, пятый раунд — cleanupBags() восстанавливает удалённые записи
-  // в _bagMeta при падении сохранения) молча разлочил protectedKeys:
-  // мутация "отключить protectedKeys целиком" стала давать 125/125 зелёных,
-  // потому что к моменту, когда finally зовёт sweepOrphanFiles(), catch уже
-  // вернул ключ в _bagMeta — обычный hasOwnProperty его и защищает,
-  // protectedKeys ни на что больше не влиял. Параметр убран как мёртвый
-  // вес (bagStore.js), а этот тест теперь проверяет НАСТОЯЩИЙ механизм
-  // (откат в памяти) и оба его свойства В ОДНОМ ПРОХОДЕ: файл, чьё удаление
-  // не сохранилось, уцелел; независимая настоящая сирота в том же проходе
-  // — снесена.
-  it('при падении сохранения: файл, чьё удаление не сохранилось на диск, уцелел — но независимая настоящая сирота в том же проходе снесена', () => {
+  // Находка ревью (И-1, пятый раунд; снята шестым): отдельный параметр
+  // protectedKeys у sweepOrphanFiles() был мёртвым весом и убран. Второе
+  // свойство этого теста — независимость метлы от чужого провала — от К-2
+  // не зависит и остаётся: настоящая сирота сносится, даже когда сохранение
+  // описи в том же проходе упало.
+  it('при падении сохранения: просроченный мешок всё равно снесён, и независимая настоящая сирота — тоже', () => {
     const now = Date.now();
     const key = put(ALICE, BOB, now - 40 * DAY); // непрочитан, просрочен — попадёт под удаление, save упадёт
 
@@ -2128,25 +2658,21 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
       writeSpy.mockRestore();
     }
 
-    // Свойство 1: сохранение не удалось — на диске индекс всё ещё обещает
-    // этот файл; откат в памяти (cleanupBags) вернул ключ в _bagMeta, метла
-    // видит его как проиндексированный и не трогает, несмотря на то что
-    // mtime (40 дней) старше её порога (30 дней).
-    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(true);
-    expect(bagMetaOf(key)).toBeDefined();
-    // Свойство 2: независимая настоящая сирота из ТОГО ЖЕ прохода всё
-    // равно снесена — метла не отключается целиком из-за чужого провала.
+    // Свойство 1 (К-2): место освобождено, несмотря на упавшее сохранение.
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(false);
+    expect(bagMetaOf(key)).toBeUndefined();
+    // Свойство 2: независимая настоящая сирота из ТОГО ЖЕ прохода тоже
+    // снесена — метла не отключается целиком из-за чужого провала.
     expect(fs.existsSync(orphan)).toBe(false);
     expect(fs.existsSync(orphanDir)).toBe(false); // опустевший каталог Боба тоже убран
   });
 
-  // Находка ревью (мелочь, пятый раунд): recordBag()/markFetched() (I2)
-  // откатывают in-memory мутацию, если персист не удался — cleanupBags()
-  // этого не делала: удаляла запись из _bagMeta сразу в основном цикле и
-  // не возвращала её назад, если _saveBagMeta() потом бросала. Разнобой
-  // дисциплины внутри одного модуля: "в памяти нет — на диске есть" —
-  // ровно то расхождение, I2 существует, чтобы не допустить.
-  it('cleanupBags откатывает удаление из памяти, если сохранение индекса упало — та же дисциплина, что у recordBag/markFetched', () => {
+  // Раньше этот тест запирал откат в память (дисциплина I2 из recordBag()/
+  // markFetched()). К-2 его сняла — и это НЕ разнобой дисциплины, а разница
+  // в обратимости: recordBag()/markFetched() при откате возвращают память к
+  // состоянию, которое диск и так подтверждает; cleanupBags() к моменту
+  // ошибки уже снесла файлы, и возвращать память некуда.
+  it('cleanupBags НЕ откатывает удаление из памяти, если сохранение описи упало — файла всё равно уже нет', () => {
     const now = Date.now();
     const key = put(ALICE, BOB, now - 40 * DAY); // просрочен, попадёт под удаление
 
@@ -2159,17 +2685,16 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
       writeSpy.mockRestore();
     }
 
-    // Память снова видит запись — не разошлась с диском, где она всё ещё
-    // числится (сохранение не удалось, диск не тронут).
-    const meta = bagMetaOf(key);
-    expect(meta).toBeDefined();
-    expect(meta.uploadedAt).toBe(now - 40 * DAY);
-    // И файл на диске тоже цел — откат не создаёт впечатление, что мешок
-    // одновременно и есть, и просрочен, и без файла.
-    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(true);
+    // Память согласна с диском: мешка нет ни там, ни там. Разошлась только
+    // ОПИСЬ на диске — её вылечит ветка «мелочь g» на следующем прогоне.
+    expect(bagMetaOf(key)).toBeUndefined();
+    expect(fs.existsSync(path.join(bagStore.DIR_BAGS, key))).toBe(false);
   });
 
-  it('cleanupBags откатывает и "мелочь g" удаления (запись без файла на диске), если сохранение упало', () => {
+  // «Мелочь g» — запись жива по сроку, но файла на диске нет. Удалять
+  // нечего, так что К-2 здесь ничего не меняет физически; меняется только
+  // то, что запись не возвращается в память при упавшем сохранении.
+  it('cleanupBags не откатывает и "мелочь g" (запись без файла на диске), если сохранение упало', () => {
     const now = Date.now();
     const key = put(ALICE, BOB, now, { firstFetchedAt: now }); // формально жив ещё 7 дней
     fs.unlinkSync(path.join(bagStore.DIR_BAGS, key)); // но файл пропал — обычно это ветка "мелочь g"
@@ -2183,7 +2708,40 @@ describe('Мелочи — cleanupBags: индекс сохраняется до
       writeSpy.mockRestore();
     }
 
-    expect(bagMetaOf(key)).toBeDefined(); // тоже откачена, не потеряна
+    expect(bagMetaOf(key)).toBeUndefined(); // файла нет — память это и показывает
+  });
+});
+
+// ─── В-5 (аудит устойчивости, 6 августа): негодное значение ручки не имеет
+// права быть принятым молча ────────────────────────────────────────────────
+//
+// Найдено проверкой КАЖДОЙ ручки релеера на пустом/нулевом/отрицательном/
+// нечисловом значении — и найдено в ручке, которую завела правка К-3
+// НЕСКОЛЬКИМИ ЧАСАМИ РАНЬШЕ. То есть починка производительности сама
+// притащила ровно тот дефект, который эта находка описывает.
+//
+// Замер (scratchpad/measure-v5-journal.mjs, 3000 мешков в описи):
+//   BAG_JOURNAL_MAX_BYTES не задана → 0,017 мс на PUT
+//   BAG_JOURNAL_MAX_BYTES=abc       → 5,283 мс на PUT   (в 311 раз хуже)
+//   BAG_JOURNAL_MAX_BYTES=0         → 5,224 мс
+//   BAG_JOURNAL_MAX_BYTES=-1        → 5,308 мс
+// Причина: `size <= NaN` всегда ложь, значит журнал схлопывается в снимок на
+// КАЖДОЙ записи — ровно то поведение, которое К-3 и убирала. Молча: ни
+// ошибки, ни строки в логе, только сервер, который «почему-то» медленный.
+describe('В-5 — BAG_JOURNAL_MAX_BYTES: негодное значение отвергается при старте, а не молча гробит запись', () => {
+  for (const bad of ['0', '-1', 'abc', '1e999']) {
+    it(`BAG_JOURNAL_MAX_BYTES=${JSON.stringify(bad)} — громкий отказ при старте`, async () => {
+      await withFreshBagStoreModule({ BAG_JOURNAL_MAX_BYTES: bad }, async (fresh) => {
+        expect(() => fresh.assertBagStoreReady()).toThrow(/BAG_JOURNAL_MAX_BYTES/);
+      });
+    });
+  }
+
+  it('пустое значение — законное «пользуйся умолчанием», а не отказ', async () => {
+    await withFreshBagStoreModule({ BAG_JOURNAL_MAX_BYTES: '' }, async (fresh) => {
+      expect(() => fresh.assertBagStoreReady()).not.toThrow();
+      expect(fresh.BAG_JOURNAL_MAX_BYTES).toBe(16 * 1024 * 1024);
+    });
   });
 });
 
@@ -2421,7 +2979,7 @@ describe('assertBagStoreReady — проверка окружения НЕ на 
       fresh.recordBag({ key: newKey, sender: BOB, recipient: ALICE, size: 6, uploadedAt: 4000 });
 
       expect(fresh.listBagsFor(ALICE)).toHaveLength(4);
-      const onDisk = JSON.parse(fs.readFileSync(path.join(storageDirAfterDotenv, 'bag-meta.json'), 'utf8'));
+      const onDisk = indexOnDiskAt(storageDirAfterDotenv);
       expect(Object.keys(onDisk)).toHaveLength(4);
       for (const key of bootKeys) expect(onDisk[key]).toBeDefined(); // все три боевые записи целы
     } finally {

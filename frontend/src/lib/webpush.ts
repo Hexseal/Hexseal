@@ -1,5 +1,7 @@
 'use client';
 
+import { findStoredBagPass, BAG_PASS_HEADER } from '@/lib/storedBagPass';
+
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '';
 const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001';
 
@@ -203,12 +205,186 @@ export async function enablePush(
 // Sends a push notification via the relayer, routed through the Next.js API so
 // the relayer secret never reaches the browser. `from` is never accepted here —
 // the server drops any client-supplied sender to prevent notification impersonation.
-export function notifyPush(to: string, body: string, url?: string, tag?: string): void {
-  fetch('/api/push', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, body, url, tag }),
-  }).catch(() => {});
+/**
+ * Сказать всем зарегистрированным арбитрам, что открыт спор.
+ *
+ * ⚠️ ЭТО ЗАМЕНА, А НЕ НОВОЕ. До 6 августа 2026 то же самое делал
+ * `notifyArbiters` через личку XMTP — с той же оговоркой «лучшим усилием» и
+ * тем же охватом «кто подключил канал, тот и узнает». Канал сменился, охват и
+ * обещание — нет.
+ *
+ * Сервер этого не делает и делать не может дёшево: `Agreement.arbiter` в
+ * момент открытия спора ещё `address(0)` (разбор — `relayer/app.js`, ветка
+ * `both+arbiter`), а «оповестить всех зарегистрированных» — решение продукта,
+ * а не просмотр поля. Поэтому зовёт тот, кто спор и открыл.
+ *
+ * Потолок нужен: `getArbiters()` растёт без ограничения сверху, и цикл без
+ * потолка означал бы, что одно нажатие человека рассылает столько запросов,
+ * сколько арбитров успело зарегистрироваться.
+ */
+const ARBITER_FANOUT_CAP = 50;
+
+/**
+ * ⚠️ ЭТА ДОРОГА НЕ ПРЕДЪЯВЛЯЕТ ПРОПУСК, И ЭТО ГЛАВНОЕ В НЕЙ.
+ *
+ * Я посадил её за пропуск склада вместе с уведомлениями чата — и этим
+ * СЛОМАЛ арбитраж: спор открывает человек, который мог не заходить в чат ни
+ * разу, пропуска у него нет, запрос не уходил вовсе, арбитры о споре не
+ * узнавали. Молча. Замер до починки — 0 запросов из 50.
+ *
+ * Доказательство здесь другое и лежит не у человека, а в цепи: сервер сам
+ * читает статус сделки и шлёт уведомление, только если спор действительно
+ * открыт (`relayer/app.js`, `dealIsDisputed`). Поэтому право звать арбитров
+ * не зависит от того, пользуется ли человек чатом, — как и должно быть.
+ */
+export async function notifyArbitersOfDispute(
+  arbiters: readonly string[],
+  dealAddress: string,
+): Promise<{ sent: number; failed: number }> {
+  const deal = dealAddress.toLowerCase();
+  let sent = 0;
+  let failed = 0;
+
+  for (const arbiter of arbiters.slice(0, ARBITER_FANOUT_CAP)) {
+    // Ссылка не строится ЗДЕСЬ и не едет на сервер: её строит сервер из рода
+    // `dispute` и ПРОВЕРЕННОГО им адреса сделки (К-2).
+    const outcome = await sendPushRequest(arbiter, { kind: 'dispute', deal }, undefined, { needsPass: false });
+    if (outcome === 'ok') sent++; else failed++;
+  }
+
+  // Молчание здесь означает зависший спор: арбитры не пришли, а человек
+  // уверен, что позвал. Одна надпись на весь веер, не пятьдесят.
+  if (failed > 0) await announceDisputeFanoutFailure(failed, arbiters.length);
+  return { sent, failed };
+}
+
+/**
+ * Доводит отказ веера до места, где его ВИДНО человеку.
+ *
+ * Подписчиков `onPushDeliveryFailure` мало: их надо где-то завести, а экраны
+ * сделки — не моя зона и они этого не делают. Поэтому надпись показывается
+ * отсюда напрямую. Импорт ленивый и в try/catch: `webpush.ts` грузится и там,
+ * где всплывашек нет вовсе (серверный рендер, тесты), и падение показа не
+ * имеет права оборвать веер — он и так уже частично не доехал.
+ */
+async function announceDisputeFanoutFailure(failed: number, total: number): Promise<void> {
+  try {
+    const { default: toast } = await import('react-hot-toast');
+    toast.error(
+      `Не удалось оповестить арбитров о споре (${failed} из ${total}). ` +
+      `Спор открыт, но арбитры могли о нём не узнать — откройте страницу сделки ещё раз.`,
+    );
+  } catch {
+    /* показать нечем — отказ уже ушёл в console.warn и подписчикам */
+  }
+}
+
+/* ─── К-2/К-3: пропуск на отправку и слышимый отказ ─────────────────────── */
+
+// Поиск живого пропуска в кладовой вынесен в `lib/storedBagPass.ts`: то же
+// самое нужно заливке вложений чата (К-4), и две копии правила «какой
+// пропуск считать живым» разошлись бы молча.
+
+/** Отправитель, зашитый в ссылку `/chat?peer=<я>` — см. `findStoredBagPass`. */
+function senderFromChatUrl(url?: string): string | undefined {
+  const m = /^\/chat\?peer=(0x[0-9a-fA-F]{40})$/.exec(url ?? '');
+  return m?.[1];
+}
+
+export type PushOutcome = 'ok' | 'no-pass' | 'rate-limited' | 'error';
+
+export interface PushFailure {
+  to: string;
+  outcome: Exclude<PushOutcome, 'ok'>;
+  status?: number;
+}
+
+/**
+ * К-3, вторая половина: РАНЬШЕ ОТКАЗ НЕ ВИДЕЛ НИКТО.
+ *
+ * `fetch(...).catch(() => {})` глушил всё: статус не читался вообще, 429 был
+ * неотличим от 200. Отправитель видел отправленное, получатель не видел
+ * уведомления, сервер молчал. Исход теперь возвращается вызывающему, а те
+ * вызывающие, которым некуда его деть (пожар-и-забыл из хука), всё равно
+ * доводят его сюда — интерфейс подписывается и показывает.
+ */
+type PushFailureListener = (failure: PushFailure) => void;
+const _pushFailureListeners = new Set<PushFailureListener>();
+
+export function onPushDeliveryFailure(listener: PushFailureListener): () => void {
+  _pushFailureListeners.add(listener);
+  return () => { _pushFailureListeners.delete(listener); };
+}
+
+function announceFailure(failure: PushFailure): void {
+  // Один сломанный подписчик не имеет права уронить отправку следующего
+  // уведомления — и уж тем более саму отправку сообщения, из которой сюда
+  // пришли.
+  for (const listener of _pushFailureListeners) {
+    try { listener(failure); } catch { /* его беда, не наша */ }
+  }
+  console.warn(`[push] уведомление для ${failure.to} не ушло: ${failure.outcome}`);
+}
+
+async function sendPushRequest(
+  to: string,
+  payload: { kind?: string; deal?: string },
+  hint?: string,
+  { needsPass = true }: { needsPass?: boolean } = {},
+): Promise<PushOutcome> {
+  // `needsPass: false` — только веер по спору. Там доказывает цепь, а не
+  // человек, и требовать пропуск значило бы отрезать от арбитража всех, кто
+  // не пользуется чатом (блокер сквозной проверки).
+  const pass = needsPass ? findStoredBagPass(hint) : null;
+  if (needsPass && !pass) {
+    // Не ошибка сети и не отказ сервера: слать нечем, потому что сеанс чата
+    // на этом устройстве не заведён. Запроса не делаем вовсе — он всё равно
+    // вернулся бы 401.
+    const failure: PushFailure = { to, outcome: 'no-pass' };
+    announceFailure(failure);
+    return 'no-pass';
+  }
+
+  let res: Response;
+  try {
+    res = await fetch('/api/push', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(pass ? { [BAG_PASS_HEADER]: pass } : {}),
+      },
+      // Ни `body`, ни `url`, ни `tag`: сервер их не берёт (К-2), и везти их
+      // значило бы делать вид, что они на что-то влияют.
+      body: JSON.stringify({ to, ...payload }),
+    });
+  } catch {
+    announceFailure({ to, outcome: 'error' });
+    return 'error';
+  }
+
+  if (res.ok) return 'ok';
+
+  const outcome: Exclude<PushOutcome, 'ok'> = res.status === 429 ? 'rate-limited' : 'error';
+  announceFailure({ to, outcome, status: res.status });
+  return outcome;
+}
+
+/**
+ * Сказать человеку, что ему написали.
+ *
+ * Подпись оставлена прежней (`to, body, url, tag`) намеренно: её зовут
+ * `hooks/usePairChat.ts` и два экрана досок, и менять её отсюда нельзя. Но
+ * `body`, `url` и `tag` НА СЕРВЕР БОЛЬШЕ НЕ ЕДУТ — их строит релеер из
+ * доказанного пропуском отправителя (К-2). `url` используется только как
+ * подсказка «кто отправитель», чтобы взять из кладовой ИМЕННО его пропуск.
+ */
+export async function notifyPush(
+  to: string,
+  _body: string,
+  url?: string,
+  _tag?: string,
+): Promise<PushOutcome> {
+  return sendPushRequest(to, {}, senderFromChatUrl(url));
 }
 
 export async function disablePush(

@@ -15,14 +15,16 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, ShieldQuestion, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2 } from "lucide-react";
+import { User, LayoutDashboard, Settings, LogOut, Copy, Check, ChevronDown, MessageCircle, MessageCircleOff, BellOff, BellRing, Shield, ShieldCheck, ShieldPlus, ShieldQuestion, HelpCircle, Globe, ChevronRight, AlertTriangle, Loader2, KeyRound, RotateCcwKey } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/hooks/useLocale";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
-import { useXmtp } from "@/contexts/XmtpContext";
+import { useChatSession } from "@/hooks/useChatSession";
+import { hasRecoveryCode, restoreEntryVisible } from "@/lib/chatRecovery";
+import { SHOW_RECOVERY_EVENT, RESTORE_RECOVERY_EVENT, DISABLE_CHAT_EVENT } from "@/components/RecoveryCodeGate";
 
 
 interface Props {
@@ -42,7 +44,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
   const t = useTranslations();
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
-  const { status: xmtpStatus, disable: disableXmtp, retry: retryXmtp } = useXmtp();
+  const { status: chatStatus, session: chatSession, retry: retryChat } = useChatSession();
   const { subscribed: pushOn, stale: pushStale, disable: disablePushNotif, loading: pushLoading } = usePushNotifications();
   const {
     address, isConnected, status, isWrongChain,
@@ -372,7 +374,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
             <HelpCircle className="w-3.5 h-3.5" />
             {t("wallet.how_it_works")}
           </DropdownMenuItem>
-          {xmtpStatus === 'loading' && (
+          {chatStatus === 'loading' && (
             <DropdownMenuItem
               disabled
               className="flex items-center gap-2.5 text-white/25"
@@ -381,18 +383,51 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               {t("wallet.connecting_messaging")}
             </DropdownMenuItem>
           )}
-          {xmtpStatus === 'ready' && (
+          {/* Код восстановления — ЕДИНСТВЕННЫЙ путь увидеть его снова.
+              Показывается только владельцам кошельков-контрактов: у обычного
+              кошелька кода нет и не должно быть, его восстановление — сам
+              кошелёк (разбор в шапке `lib/chatSession.ts`). Пункт нужен,
+              потому что окно закрывается «пропустить, запишу позже», и без
+              этого пункта такое решение было бы окончательным. */}
+          {hasRecoveryCode(chatSession) && (
             <DropdownMenuItem
-              onClick={disableXmtp}
+              onClick={() => window.dispatchEvent(new Event(SHOW_RECOVERY_EVENT))}
+              className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              {t("chat.recovery_warning_title")}
+            </DropdownMenuItem>
+          )}
+          {/* Вход в восстановление стоит РЯДОМ с показом кода и под тем же
+              признаком: обычному кошельку он не предлагается вовсе — его
+              восстановление это сам кошелёк. Без этого пункта показ кода был
+              обещанием, которое некуда предъявить. */}
+          {restoreEntryVisible(chatSession) && (
+            <DropdownMenuItem
+              onClick={() => window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT))}
+              className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
+            >
+              <RotateCcwKey className="w-3.5 h-3.5" />
+              {t("chat.restore_menu")}
+            </DropdownMenuItem>
+          )}
+          {/* ⚠️ НЕ `disable()` НАПРЯМУЮ (находка К-1). Одно нажатие снимало
+              ключ с устройства, а цена нажатия у двух родов кошелька разная:
+              обычному — переподписать, контрактному — потерять всю переписку
+              навсегда, если код не записан. Спрашивает подтверждение
+              привратник, он же знает род кошелька. */}
+          {chatStatus === 'ready' && (
+            <DropdownMenuItem
+              onClick={() => window.dispatchEvent(new Event(DISABLE_CHAT_EVENT))}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
               <MessageCircleOff className="w-3.5 h-3.5" />
               {t("wallet.disable_messaging")}
             </DropdownMenuItem>
           )}
-          {xmtpStatus === 'error' && (
+          {chatStatus === 'error' && (
             <DropdownMenuItem
-              onClick={retryXmtp}
+              onClick={retryChat}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
               <MessageCircle className="w-3.5 h-3.5" />

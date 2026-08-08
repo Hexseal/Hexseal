@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Bell, CheckCheck, Trash2, X, ExternalLink, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNotificationsCtx } from "@/contexts/NotificationsContext";
-import { useXmtp } from "@/contexts/XmtpContext";
 import { useAccount } from "wagmi";
 import { type AppNotification, notifIcon } from "@/lib/notifications";
 import { useTranslations } from "next-intl";
@@ -70,8 +69,6 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const t = useTranslations();
 
-  const { status: xmtpStatus } = useXmtp();
-  const xmtpEnabled = xmtpStatus === 'ready';
 
   useEffect(() => {
     if (!open) return;
@@ -176,17 +173,13 @@ export default function NotificationCenter({ open, onOpenChange }: Props) {
               )}
             </div>
 
-            {/* Hint: enable XMTP for message notifications */}
-            {address && !xmtpEnabled && (
-              <Link
-                href="/chat"
-                onClick={() => onOpenChange(false)}
-                className="flex items-center gap-2 px-4 py-2.5 border-t border-white/[0.06] text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
-              >
-                <MessageCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                {t("notifications.enable_messaging_hint")}
-              </Link>
-            )}
+            {/* ЗДЕСЬ БЫЛА ПОДСКАЗКА «включите мессенджер, чтобы получать
+                уведомления о сообщениях». Она обещала строку в этом самом
+                колокольчике на каждое входящее — и обещать её больше нечем:
+                фоновый слушатель сообщений ушёл вместе с XMTP (разбор — в
+                `app/providers.tsx`, на месте `XmtpNotificationsMount`).
+                Оставить подсказку значило бы звать человека включить то, чего
+                не произойдёт. */}
 
             {/* Footer */}
             <div className="border-t border-white/10 flex-shrink-0">

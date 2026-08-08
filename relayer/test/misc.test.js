@@ -21,10 +21,12 @@ describe('GET /balance', () => {
   });
 });
 
+// GET /bot-address удалён вместе с ботом XMTP (6 августа 2026): маршрут
+// отдавал фронту адрес, который тот добавлял в парную группу. Замок
+// перевёрнут — теперь запирает ОТСУТСТВИЕ маршрута, а не его форму.
 describe('GET /bot-address', () => {
-  it('returns a lowercased Ethereum address', async () => {
+  it('маршрута больше нет — бота, чей адрес он отдавал, не существует', async () => {
     const res = await request(app).get('/bot-address');
-    expect(res.status).toBe(200);
-    expect(res.body.address).toMatch(/^0x[0-9a-f]{40}$/);
+    expect(res.status).toBe(404);
   });
 });

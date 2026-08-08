@@ -571,7 +571,7 @@ describe('PUT /bags/:recipient', () => {
 
     const listRes = await getBagsList({ pass: bobPass, ip: freshIp() });
     expect(listRes.status).toBe(200);
-    expect(listRes.body.map((b) => b.key)).toContain(put.body.key);
+    expect(listRes.body.inbox.map((b) => b.key)).toContain(put.body.key);
 
     const getRes = await getBag({ pass: bobPass, key: put.body.key, ip: freshIp() });
     expect(getRes.status).toBe(200);
@@ -913,24 +913,55 @@ describe('PUT /bags/:recipient', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('GET /bags', () => {
-  it('отдаёт только мешки адреса из пропуска, форма — {key, sender, size, uploadedAt}', async () => {
+  it('отдаёт ОБЕ половины переписки владельца пропуска и ни одного чужого мешка', async () => {
+    // Задача 1 (chat-client): ответ стал объектом {inbox, sent, peers} —
+    // этот тест остаётся про inbox конкретно; sent и peers заперты отдельно,
+    // test/bagSenderView.test.js.
+    //
+    // ⚠️ ПРАВИЛО ЗДЕСЬ ИЗМЕНИЛОСЬ НАМЕРЕННО (К-1, задача 7). Раньше тест
+    // назывался «отдаёт только мешки адреса из пропуска» и запирал
+    // `meta.recipient === address`. Под этим правилом человек не мог забрать
+    // СВОИ ЖЕ отправленные сообщения никогда — ни после перезагрузки
+    // вкладки, ни на новом устройстве, — хотя конверт запечатан вторым
+    // слотом ровно ради собственного архива. Теперь inbox — это «всё, что
+    // владелец пропуска вправе прочитать»: обе половины его переписки.
+    //
+    // Зубы теста при этом не выпали, а переставлены: он по-прежнему ловит
+    // главное — ЧУЖОЙ мешок не появляется. Для этого в раскладке появился
+    // третий кошелёк, которого раньше не было вовсе.
     const { wallet: alice, address: aliceAddr } = await newWalletAndAddress();
     const { wallet: bob, address: bobAddr } = await newWalletAndAddress();
+    const { wallet: carol, address: carolAddr } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice, freshIp());
     const bobPass = await issuePassFor(bob, freshIp());
+    const carolPass = await issuePassFor(carol, freshIp());
 
     const toBob = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('to-bob') });
-    await putBag({ pass: bobPass, recipient: aliceAddr, body: Buffer.from('to-alice') });
+    const fromBob = await putBag({ pass: bobPass, recipient: aliceAddr, body: Buffer.from('to-alice') });
+    // Переписка двух посторонних — Боба в ней нет ни с какой стороны.
+    const strangers = await putBag({ pass: carolPass, recipient: aliceAddr, body: Buffer.from('carol->alice') });
 
     const res = await getBagsList({ pass: bobPass, ip: freshIp() });
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0]).toEqual({
+
+    const keys = res.body.inbox.map(b => b.key).sort();
+    expect(keys).toEqual([toBob.body.key, fromBob.body.key].sort());
+    expect(keys).not.toContain(strangers.body.key);
+
+    // Форма записи не менялась — и у принятого, и у своего отправленного.
+    expect(res.body.inbox.find(b => b.key === toBob.body.key)).toEqual({
       key: toBob.body.key,
       sender: aliceAddr,
       size: 6,
       uploadedAt: expect.any(Number),
     });
+    expect(res.body.inbox.find(b => b.key === fromBob.body.key)).toEqual({
+      key: fromBob.body.key,
+      sender: bobAddr,          // своё отправленное — отправитель это я сам
+      size: 8,
+      uploadedAt: expect.any(Number),
+    });
+    expect(carolAddr).toBeTruthy();
   });
 
   it('требует годный пропуск', async () => {
@@ -975,7 +1006,7 @@ describe('GET /bags', () => {
 
     const res = await getBagsList({ pass: bobPass, since: cutoff, ip: freshIp() });
     expect(res.status).toBe(200);
-    expect(res.body.map((b) => b.key)).toEqual([second.body.key]);
+    expect(res.body.inbox.map((b) => b.key)).toEqual([second.body.key]);
   });
 
   it('?since=abc (не число) — 400, а не молчаливый пустой список', async () => {
@@ -1011,7 +1042,7 @@ describe('GET /bags', () => {
 
     const res = await getBagsList({ pass: bobPass, since: sameMs, ip: freshIp() });
     expect(res.status).toBe(200);
-    expect(res.body.map((b) => b.key)).toEqual(expect.arrayContaining([key1, key2]));
+    expect(res.body.inbox.map((b) => b.key)).toEqual(expect.arrayContaining([key1, key2]));
   });
 
   it('лимитер по IP срабатывает даже с валидным пропуском и разными адресами', async () => {
@@ -1131,7 +1162,7 @@ describe('GET /bags', () => {
     // Пропуск Мэллори не открывает ничего в её собственном (пустом) ящике,
     // даже когда запрос всеми доступными каналами пытается заявить, что
     // на самом деле читает Алиса.
-    expect(res.body).toEqual([]);
+    expect(res.body.inbox).toEqual([]);
   });
 });
 
@@ -1140,16 +1171,32 @@ describe('GET /bags', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('GET /bags/:key', () => {
-  it('пропуск на Алису не открывает мешок Боба', async () => {
+  it('пропуск ПОСТОРОННЕГО не открывает чужой мешок (а отправителя — открывает, К-1)', async () => {
+    // ⚠️ РАСКЛАДКА ИСПРАВЛЕНА (К-1, задача 7). Раньше здесь Алиса САМА
+    // клала мешок Бобу и потом «пыталась прочитать чужое» — но она не
+    // посторонняя, она автор этих байтов: запрет ей читать собственное
+    // отправленное и был тем дефектом, из-за которого своя половина
+    // переписки терялась при каждой перезагрузке. Тест в прежнем виде
+    // запирал именно дефект.
+    //
+    // Настоящий посторонний — третий кошелёк, не участвующий в переписке.
+    // Обе стороны проверяются в одном тесте: посторонний получает 404,
+    // отправитель — свои байты. Замок, который запирает всех, — не замок.
     const { wallet: alice } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();
+    const { wallet: carol } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice, freshIp());
+    const carolPass = await issuePassFor(carol, freshIp());
 
     const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('secret-for-bob') });
     expect(put.status).toBe(200);
 
-    // Алиса пытается прочитать мешок, адресованный Бобу, своим же пропуском.
-    const res = await getBag({ pass: alicePass, key: put.body.key, ip: freshIp() });
+    // Отправитель читает своё — это и есть починка К-1.
+    const mine = await getBag({ pass: alicePass, key: put.body.key, ip: freshIp() });
+    expect(mine.status).toBe(200);
+
+    // Посторонний не читает ничего.
+    const res = await getBag({ pass: carolPass, key: put.body.key, ip: freshIp() });
     expect(res.status).toBe(404);
     // Находка ревью («слепота статуса»): 404 отвечает JSON — res.body уже
     // разобранный объект, не Buffer, так что `Buffer.isBuffer(res.body) ? …
@@ -1162,16 +1209,22 @@ describe('GET /bags/:key', () => {
   });
 
   it('чужой пропуск и несуществующий ключ отвечают ОДИНАКОВО', async () => {
+    // «Чужой» — третий кошелёк (К-1, задача 7): Алиса, положившая мешок,
+    // больше не чужая ему, она его автор. Свойство теста прежнее и важное —
+    // «нет прав» и «нет такого ключа» обязаны быть неразличимы, иначе по
+    // коду ответа перебирается чужой список мешков.
     const { wallet: alice } = await newWalletAndAddress();
     const { address: bobAddr } = await newWalletAndAddress();
+    const { wallet: carol } = await newWalletAndAddress();
     const alicePass = await issuePassFor(alice, freshIp());
+    const carolPass = await issuePassFor(carol, freshIp());
 
     const put = await putBag({ pass: alicePass, recipient: bobAddr, body: Buffer.from('x') });
     const realKey = put.body.key;
     const fakeKey = `${bobAddr}/1700000000000-00000000-0000-0000-0000-000000000000.bin`;
 
-    const wrongOwner = await getBag({ pass: alicePass, key: realKey, ip: freshIp() });
-    const notFound   = await getBag({ pass: alicePass, key: fakeKey, ip: freshIp() });
+    const wrongOwner = await getBag({ pass: carolPass, key: realKey, ip: freshIp() });
+    const notFound   = await getBag({ pass: carolPass, key: fakeKey, ip: freshIp() });
 
     expect(wrongOwner.status).toBe(notFound.status);
     expect(wrongOwner.status).toBe(404);

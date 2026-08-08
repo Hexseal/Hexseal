@@ -29,7 +29,7 @@ import { fundAgreementGasless, sendAgreementGasless, proposeExtraGasless, fundDi
 import { useProfile } from "@/hooks/useProfile";
 import { ARBITER_REGISTRY_ABI } from "@/config/contracts";
 import { explorerUrl } from "@/config/chain";
-import { getXmtpClientIfCached, notifyArbiters } from "@/lib/xmtp";
+import { notifyArbitersOfDispute } from "@/lib/webpush";
 import { useTranslations } from "next-intl";
 import { ContextHint } from "@/components/ContextHint";
 import { DisputeCostNotice } from "@/components/DisputeCostNotice";
@@ -524,7 +524,9 @@ export default function DealDetailPage() {
       await sendAgreementGasless(walletClient, publicClient, dealAddress as `0x${string}`, fn, AGREEMENT_ABI as Abi, args);
       toast.success(successMsg);
 
-      // After raiseDispute — notify all registered arbiters via XMTP DM
+      // После raiseDispute — сказать всем зарегистрированным арбитрам, что
+      // спор открыт. Раньше это была личка XMTP, теперь пуш-уведомление:
+      // канал сменился, обещание («лучшим усилием») — нет.
       if (fn === 'raiseDispute') {
         try {
           const arbiters = await publicClient.readContract({
@@ -532,18 +534,11 @@ export default function DealDetailPage() {
             abi: ARBITER_REGISTRY_ABI as Abi,
             functionName: 'getArbiters',
           }) as string[];
-          if (arbiters.length > 0) {
-            // Use cached client only — never trigger a new wallet signature here.
-            // initXmtpClient() used to be called instead, which can itself demand a
-            // fresh signature (up to a 90s wait) — since this whole notify step runs
-            // before the outer finally clears `busy`, every action button on the page
-            // stayed disabled for that entire window right after a dispute had
-            // already succeeded on-chain. DealActionBar's equivalent path already
-            // uses getXmtpClientIfCached for this exact reason; this wasn't updated
-            // to match.
-            const xmtp = getXmtpClientIfCached(address!);
-            if (xmtp) await notifyArbiters(xmtp, dealAddress as string, arbiters);
-          }
+          // Ни одной подписи и ни одного ожидания по дороге: прежняя версия
+          // умела позвать `initXmtpClient()`, а тот — потребовать свежую
+          // подпись и ждать до 90 секунд, всё это ПОСЛЕ уже состоявшегося
+          // на цепи спора и с заблокированными кнопками страницы.
+          if (arbiters.length > 0) notifyArbitersOfDispute(arbiters, dealAddress as string);
         } catch {
           // Non-critical — arbiter notification is best-effort
         }

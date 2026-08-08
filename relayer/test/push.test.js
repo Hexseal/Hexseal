@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ethers } from 'ethers';
 import request from 'supertest';
 import { app } from '../app.js';
+import { issueBagPass } from '../bagPass.js';
 import { signMessage } from './helpers/signing.js';
 
 const FCM_ENDPOINT = 'https://fcm.googleapis.com/fcm/send/test-endpoint-123';
@@ -100,19 +101,38 @@ describe('POST /push/send', () => {
     expect(res.status).toBe(403);
   });
 
-  it('accepts a request with the correct secret (PUSH_SECRET=test-push-secret from test setup)', async () => {
+  // К-2: секрета БОЛЬШЕ НЕ ДОСТАТОЧНО. Он отвечает на вопрос «изнутри или из
+  // интернета», а не «кто человек» — и наш собственный /api/push подставлял
+  // его сам, так что посторонний слал уведомление кому угодно и уводил
+  // открытую вкладку куда угодно. Право слать теперь доказывается тем же
+  // пропуском, что и склад мешков. Полный разбор и замеры — в
+  // test/pushSenderProof.test.js; здесь заперты только два прежних
+  // утверждения, приведённых к новому договору.
+  it('правильного секрета мало: без пропуска — 401 (К-2)', async () => {
     const res = await request(app)
       .post('/push/send')
       .set('X-Push-Secret', 'test-push-secret')
       .send({ to: '0x1234567890123456789012345678901234567890', body: 'hello' });
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts a request with the correct secret AND a live pass', async () => {
+    const { token } = issueBagPass('0x00000000000000000000000000000000000000aa');
+    const res = await request(app)
+      .post('/push/send')
+      .set('X-Push-Secret', 'test-push-secret')
+      .set('x-bag-pass', token)
+      .send({ to: '0x1234567890123456789012345678901234567890' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });
 
-  it('rejects a request missing "to" or "body"', async () => {
+  it('rejects a request missing "to"', async () => {
+    const { token } = issueBagPass('0x00000000000000000000000000000000000000aa');
     const res = await request(app)
       .post('/push/send')
       .set('X-Push-Secret', 'test-push-secret')
+      .set('x-bag-pass', token)
       .send({ body: 'hello' });
     expect(res.status).toBe(400);
   });
