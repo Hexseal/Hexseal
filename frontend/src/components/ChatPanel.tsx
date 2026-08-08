@@ -529,10 +529,43 @@ export function ChatKeyNotAnnounced(
    * только приведён.
    */
   if (standing === 'other_key') {
-    const body = (
+    /**
+     * ⚠️ ТЕКСТ УТВЕРЖДЁН ВЛАДЕЛЬЦЕМ ДОСЛОВНО, И ЭТО ВТОРАЯ РЕДАКЦИЯ. Первую он
+     * забраковал по существу: она ПЕРЕСКАЗЫВАЛА УСТРОЙСТВО вместо того, чтобы
+     * назвать выбор («этот кошелёк уже настроен где-то ещё»), а цена была спрятана
+     * в длинную фразу с «можно… тогда… а прежние…» — три оговорки в одном
+     * предложении читаются как размышление вслух, а не как выбор.
+     *
+     *     Ваш чат уже на другом устройстве
+     *     Сообщения приходят туда.
+     *
+     *         [ Ввести код восстановления ]
+     *         Восстановить сообщения.
+     *
+     *         [ Получать здесь ]
+     *         Прежняя переписка здесь не откроется.
+     *
+     * Три решения владельца, которые нельзя «улучшить» правкой текста:
+     *
+     *  1. **Заголовок называет ФАКТ, а не настройку.** «Ваш чат уже на другом
+     *     устройстве» — факт; «этот кошелёк уже настроен где-то ещё» — пересказ
+     *     механики.
+     *  2. **Цена — ОДНА СТРОКА ПОД КНОПКОЙ, не абзац**, и сказана с той стороны,
+     *     где стоит человек: он на ЭТОМ устройстве, и его волнует «увижу ли я тут
+     *     свою переписку». Про то, что второе устройство перестанет получать
+     *     новые, убрано совсем — правда, но не его забота в этот момент, и именно
+     *     эта половина делала фразу мутной.
+     *  3. **Никаких «можно», «есть», «тогда»** — от них текст звучит неуверенно.
+     *
+     * ⚠️ ПОЧЕМУ КОД ВОССТАНОВЛЕНИЯ ПЕРВЫМ. Здесь нажатие «Получать здесь»
+     * ЗАМЕНЯЕТ ключ другого устройства, и прежняя переписка на этом устройстве не
+     * откроется никогда. Код даёт ТОТ ЖЕ ключ, ничего не заменяя, — значит он и
+     * есть главное предложение, а замена второй, явный и предупреждённый выбор.
+     * Вход по коду уже существовал (`RESTORE_RECOVERY_EVENT`, привратник в
+     * `RecoveryCodeGate`), сюда только приведён.
+     */
+    const choices = (
       <>
-        <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_elsewhere_body")}</p>
-        <p className="text-white/45 text-sm max-w-sm leading-relaxed mt-1.5">{t("chat.key_elsewhere_restore")}</p>
         <button
           type="button"
           onClick={onRestore}
@@ -540,19 +573,22 @@ export function ChatKeyNotAnnounced(
         >
           {t("chat.key_elsewhere_restore_action")}
         </button>
-        {/* ⚠️ ПРЕДУПРЕЖДЕНИЕ СТОИТ НАД ЗАМЕНОЙ, а не под ней и не в другом месте
-            экрана: цена должна быть прочитана ДО нажатия, а не после. */}
-        <p className="text-amber-300/50 text-xs max-w-sm leading-relaxed mt-4">
-          {t("chat.key_elsewhere_switch_warning")}
+        <p className="text-white/35 text-xs leading-relaxed mt-1.5">
+          {t("chat.key_elsewhere_restore_note")}
         </p>
         <button
           type="button"
           onClick={onConfirm}
           disabled={busy}
-          className="mt-2 text-xs text-white/40 hover:text-white/70 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="mt-5 text-sm text-white/50 hover:text-white/80 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {busy ? t("chat.key_unannounced_confirming") : t("chat.key_elsewhere_switch_action")}
         </button>
+        {/* ⚠️ Цена — ПОД своей кнопкой и одной строкой. Не над ней и не в другом
+            месте экрана: она относится к этому выбору, а не ко всему состоянию. */}
+        <p className="text-white/35 text-xs leading-relaxed mt-1.5">
+          {t("chat.key_elsewhere_switch_note")}
+        </p>
       </>
     );
     if (variant === 'inline') {
@@ -561,7 +597,8 @@ export function ChatKeyNotAnnounced(
           <KeyRound className="w-4 h-4 text-primary/70 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm text-white/75 font-medium">{t("chat.key_elsewhere_title")}</p>
-            {body}
+            <p className="text-xs text-white/45 leading-relaxed mt-0.5">{t("chat.key_elsewhere_body")}</p>
+            {choices}
           </div>
         </div>
       );
@@ -571,9 +608,12 @@ export function ChatKeyNotAnnounced(
         <div className="w-12 h-12 rounded-[16px] bg-primary/10 border border-primary/25 flex items-center justify-center">
           <KeyRound className="w-5 h-5 text-primary/80" />
         </div>
+        {/* Весь текст и оба выбора — ВНУТРИ этого блока; замок мерит вложенность,
+            а не порядок в разметке (урок 7 августа). */}
         <div>
           <p className="text-white/80 text-base font-semibold mb-1.5">{t("chat.key_elsewhere_title")}</p>
-          {body}
+          <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_elsewhere_body")}</p>
+          {choices}
         </div>
       </div>
     );

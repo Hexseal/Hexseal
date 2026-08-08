@@ -197,7 +197,7 @@ describe('список: чужой ключ — свой текст и вход 
     const html = await renderList();
     expect(html).toContain(translate('chat.key_elsewhere_restore_action'));
     expect(html, 'в списке о цене замены не предупредили')
-      .toContain(translate('chat.key_elsewhere_switch_warning'));
+      .toContain(translate('chat.key_elsewhere_switch_note'));
     const restore = html.indexOf(translate('chat.key_elsewhere_restore_action'));
     const swap = html.indexOf(translate('chat.key_elsewhere_switch_action'));
     expect(restore).toBeLessThan(swap);

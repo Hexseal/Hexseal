@@ -685,12 +685,12 @@
     "key_unannounced_call": "Confirm in your wallet — and people will find you.",
     "key_unannounced_action": "Confirm",
     "key_unannounced_confirming": "Confirming…",
-    "key_elsewhere_title": "Your messages are going to another device",
-    "key_elsewhere_body": "This wallet is already set up somewhere else, and people are writing to it there.",
-    "key_elsewhere_restore": "If you have a recovery code, enter it — the same conversations will open here.",
+    "key_elsewhere_title": "Your chat is already on another device",
+    "key_elsewhere_body": "Messages are arriving there.",
     "key_elsewhere_restore_action": "Enter recovery code",
-    "key_elsewhere_switch_warning": "Without the code you can start receiving here instead. New messages will then stop arriving on that device, and the earlier ones will stay only there.",
-    "key_elsewhere_switch_action": "Receive here"
+    "key_elsewhere_switch_action": "Receive here",
+    "key_elsewhere_restore_note": "Restore your messages.",
+    "key_elsewhere_switch_note": "Earlier conversations will not open here."
   },
   "deal_bar": {
     "application_received": "Application received",

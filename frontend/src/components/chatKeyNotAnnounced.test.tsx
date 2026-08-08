@@ -332,10 +332,10 @@ function findButton(node: unknown): React.ReactElement | null {
 
 const EL_TITLE = () => translate('chat.key_elsewhere_title');
 const EL_BODY = () => translate('chat.key_elsewhere_body');
-const EL_RESTORE = () => translate('chat.key_elsewhere_restore');
 const EL_RESTORE_ACTION = () => translate('chat.key_elsewhere_restore_action');
-const EL_WARN = () => translate('chat.key_elsewhere_switch_warning');
+const EL_RESTORE_NOTE = () => translate('chat.key_elsewhere_restore_note');
 const EL_SWITCH = () => translate('chat.key_elsewhere_switch_action');
+const EL_SWITCH_NOTE = () => translate('chat.key_elsewhere_switch_note');
 
 describe('чужой ключ в справочнике: ловушка с потерей данных закрыта', () => {
   // ⚠️ ЗАЧЕМ ЭТИ ЗАМКИ. Ревью координатора по моему же сомнению. При чужом ключе
@@ -363,14 +363,28 @@ describe('чужой ключ в справочнике: ловушка с по�
     expect(absent).toContain(TITLE());
   });
 
-  it('ПРЕДУПРЕЖДЕНИЕ о цене замены на экране, рядом с действием', async () => {
+  it('ЦЕНА замены на экране — и стоит ПОД своей кнопкой, а не где-нибудь', async () => {
+    // Решение владельца: цена — одна строка под кнопкой, к которой относится, и
+    // сказана с той стороны, где стоит человек («увижу ли я тут свою переписку»).
+    // Что красит: снятие подписи, либо её переезд к другой кнопке.
     const { ChatKeyNotAnnounced } = await import('@/components/ChatPanel');
     const html = renderToStaticMarkup(React.createElement(ChatKeyNotAnnounced, {
       variant: 'full' as const, busy: false, standing: 'other_key' as const,
       onConfirm: () => {}, onRestore: () => {},
     }));
-    expect(html, 'человека не предупредили о цене замены').toContain(EL_WARN());
+    expect(html, 'человека не предупредили о цене замены').toContain(EL_SWITCH_NOTE());
+    expect(html, 'подпись под входом по коду пропала').toContain(EL_RESTORE_NOTE());
     expect(html).toContain(EL_BODY());
+
+    // Каждая подпись — ПОСЛЕ своей кнопки и ДО чужой. Замок на место, а не на
+    // наличие: подпись, уехавшая под другую кнопку, объясняет не тот выбор.
+    const restoreBtn = html.indexOf(EL_RESTORE_ACTION());
+    const restoreNote = html.indexOf(EL_RESTORE_NOTE());
+    const switchBtn = html.indexOf(EL_SWITCH());
+    const switchNote = html.indexOf(EL_SWITCH_NOTE());
+    expect(restoreBtn).toBeLessThan(restoreNote);
+    expect(restoreNote, 'подпись про восстановление уехала за кнопку замены').toBeLessThan(switchBtn);
+    expect(switchBtn, 'цена замены стоит НАД своей кнопкой').toBeLessThan(switchNote);
   });
 
   it('код восстановления предложен ПЕРВЫМ, замена — вторым', async () => {
@@ -387,7 +401,6 @@ describe('чужой ключ в справочнике: ловушка с по�
     expect(restore, 'входа по коду восстановления нет вовсе').toBeGreaterThanOrEqual(0);
     expect(swap, 'замены нет вовсе — состояние невылечимо без кода').toBeGreaterThanOrEqual(0);
     expect(restore, 'замена предложена раньше кода восстановления').toBeLessThan(swap);
-    expect(html).toContain(EL_RESTORE());
   });
 
   it('оба действия ведут КУДА НАДО и не путаются местами', async () => {
@@ -445,3 +458,113 @@ function findAllButtons(node: unknown, out: React.ReactElement[] = []): React.Re
   for (const kid of list) findAllButtons(kid, out);
   return out;
 }
+
+/* ═══ три правила владельца — теперь и для «ключ с другого устройства» ════════ */
+
+describe('три правила владельца распространены на второй экран', () => {
+  // ⚠️ ЭТИХ ЗАМКОВ НЕ БЫЛО ОДИН КРУГ, И Я СКАЗАЛ ОБ ЭТОМ ПРЯМО: правила
+  // формулировались под первый экран, и распространять их механически без слова
+  // владельца я не стал. Слово получено вместе со второй редакцией текста —
+  // распространяю.
+  const LOCALES = ['ar','de','en','es','fr','hi','it','ja','ko','pt','ru','th','uk','zh-CN'];
+  const KEYS = [
+    'key_elsewhere_title', 'key_elsewhere_body',
+    'key_elsewhere_restore_action', 'key_elsewhere_restore_note',
+    'key_elsewhere_switch_action', 'key_elsewhere_switch_note',
+  ];
+
+  function chatOf(loc: string): Record<string, string> {
+    return (JSON.parse(fs.readFileSync(path.join(MESSAGES_DIR, `${loc}.json`), 'utf8')) as
+      { chat: Record<string, string> }).chat;
+  }
+
+  it('все шесть строк есть во всех 14 локалях, и снятых ключей не осталось', () => {
+    for (const loc of LOCALES) {
+      const chat = chatOf(loc);
+      for (const k of KEYS) expect(chat[k], `${loc}.${k}`).toBeTruthy();
+      // Первая редакция: длинный абзац с тремя оговорками и лишняя строка.
+      expect(chat.key_elsewhere_switch_warning, `${loc}: вернулся забракованный абзац`).toBeUndefined();
+      expect(chat.key_elsewhere_restore, `${loc}: вернулась снятая строка`).toBeUndefined();
+    }
+  });
+
+  it('ПРАВИЛО 1: заголовок называет факт, а не настройку', () => {
+    // Забракованная первая редакция: «этот кошелёк уже настроен где-то ещё» —
+    // пересказ механики. Мерится по языкам, которые я могу судить; про остальные
+    // сказано честно — там держит только буквальная сверка русского ниже.
+    const mechanics: Record<string, RegExp> = {
+      ru: /настрой|шаг|заверш/i,
+      uk: /налашт|крок|заверш/i,
+      en: /\bset ?up\b|\bstep\b|\bcomplete/i,
+    };
+    for (const [loc, re] of Object.entries(mechanics)) {
+      expect(chatOf(loc).key_elsewhere_title, `${loc}: заголовок пересказывает механику`).not.toMatch(re);
+    }
+  });
+
+  it('ПРАВИЛО 2: подписи — одна строка, без «можно / тогда / есть»', () => {
+    // От них текст звучит неуверенно — прямые слова владельца. Плюс «одна
+    // строка»: подпись не имеет права снова стать абзацем с оговорками.
+    const hedges: Record<string, RegExp> = {
+      ru: /\bможно\b|\bтогда\b|\bесть\b/i,
+      uk: /\bможна\b|\bтоді\b|\bє\b/i,
+      en: /\byou can\b|\bthen\b|\bif you have\b/i,
+    };
+    for (const [loc, re] of Object.entries(hedges)) {
+      const chat = chatOf(loc);
+      for (const k of ['key_elsewhere_restore_note', 'key_elsewhere_switch_note', 'key_elsewhere_body']) {
+        expect(chat[k], `${loc}.${k}: вернулась неуверенная оговорка`).not.toMatch(re);
+      }
+    }
+    // Одна фраза, а не абзац: считаем завершители во ВСЕХ 14, это язык-независимо.
+    for (const loc of LOCALES) {
+      const chat = chatOf(loc);
+      for (const k of ['key_elsewhere_restore_note', 'key_elsewhere_switch_note', 'key_elsewhere_body']) {
+        const ends = (chat[k].match(/[.。।]/g) ?? []).length;
+        expect(ends, `${loc}.${k} снова абзац: ${chat[k]}`).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('ПРАВИЛО 3: на обеих кнопках нет слова «ключ» — во всех 14', () => {
+    const keyWord: Record<string, RegExp> = {
+      ru: /ключ/i, uk: /ключ/i, en: /\bkey\b/i, de: /schlüssel/i, fr: /clé|cle/i,
+      es: /clave/i, pt: /chave/i, it: /chiave/i, ja: /キー|鍵/, ko: /키/,
+      'zh-CN': /密钥/, hi: /कुंजी/, ar: /مفتاح/, th: /คีย์|กุญแจ/,
+    };
+    const offenders: string[] = [];
+    for (const [loc, re] of Object.entries(keyWord)) {
+      const chat = chatOf(loc);
+      for (const k of ['key_elsewhere_restore_action', 'key_elsewhere_switch_action']) {
+        if (re.test(chat[k])) offenders.push(`${loc}.${k}: ${chat[k]}`);
+      }
+    }
+    expect(offenders, 'на кнопке снова слово «ключ»').toEqual([]);
+  });
+
+  it('слова «включить» нет и здесь — во всех 14', () => {
+    const forbidden: Record<string, RegExp> = {
+      ru: /включ/i, uk: /увімкн|включ/i, en: /\benable|\bturn on/i,
+      de: /aktivier|einschalt/i, fr: /activer/i, es: /activar/i, pt: /ativar/i,
+      it: /attivare/i, ja: /有効/, ko: /활성/, 'zh-CN': /启用|开启/,
+      hi: /सक्षम|चालू/, ar: /تفعيل|تمكين/, th: /เปิดใช้/,
+    };
+    const offenders: string[] = [];
+    for (const [loc, re] of Object.entries(forbidden)) {
+      const chat = chatOf(loc);
+      for (const k of KEYS) if (re.test(chat[k])) offenders.push(`${loc}.${k}: ${chat[k]}`);
+    }
+    expect(offenders, 'вернулось слово «включить»').toEqual([]);
+  });
+
+  it('русский текст — БУКВА В БУКВУ утверждённый владельцем', () => {
+    // Самый сильный из замков этой группы: язык, на котором текст утверждали.
+    const ru = chatOf('ru');
+    expect(ru.key_elsewhere_title).toBe('Ваш чат уже на другом устройстве');
+    expect(ru.key_elsewhere_body).toBe('Сообщения приходят туда.');
+    expect(ru.key_elsewhere_restore_action).toBe('Ввести код восстановления');
+    expect(ru.key_elsewhere_restore_note).toBe('Восстановить сообщения.');
+    expect(ru.key_elsewhere_switch_action).toBe('Получать здесь');
+    expect(ru.key_elsewhere_switch_note).toBe('Прежняя переписка здесь не откроется.');
+  });
+});

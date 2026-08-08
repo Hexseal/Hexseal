@@ -685,12 +685,12 @@
     "key_unannounced_call": "Bestätigen Sie in Ihrer Wallet — dann findet man Sie.",
     "key_unannounced_action": "Bestätigen",
     "key_unannounced_confirming": "Wird bestätigt…",
-    "key_elsewhere_title": "Ihre Nachrichten gehen an ein anderes Gerät",
-    "key_elsewhere_body": "Diese Wallet ist bereits anderswo eingerichtet, und man schreibt Ihnen dorthin.",
-    "key_elsewhere_restore": "Wenn Sie einen Wiederherstellungscode haben, geben Sie ihn ein — dieselben Unterhaltungen öffnen sich hier.",
+    "key_elsewhere_title": "Ihr Chat ist bereits auf einem anderen Gerät",
+    "key_elsewhere_body": "Nachrichten kommen dort an.",
     "key_elsewhere_restore_action": "Wiederherstellungscode eingeben",
-    "key_elsewhere_switch_warning": "Ohne den Code können Sie stattdessen hier empfangen. Dann kommen auf jenem Gerät keine neuen Nachrichten mehr an, und die früheren bleiben nur dort.",
-    "key_elsewhere_switch_action": "Hier empfangen"
+    "key_elsewhere_switch_action": "Hier empfangen",
+    "key_elsewhere_restore_note": "Nachrichten wiederherstellen.",
+    "key_elsewhere_switch_note": "Frühere Unterhaltungen öffnen sich hier nicht."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

@@ -685,12 +685,12 @@
     "key_unannounced_call": "ยืนยันในกระเป๋าเงินของคุณ แล้วคนอื่นจะหาคุณได้",
     "key_unannounced_action": "ยืนยัน",
     "key_unannounced_confirming": "กำลังยืนยัน…",
-    "key_elsewhere_title": "ข้อความของคุณไปที่อีกเครื่องหนึ่ง",
-    "key_elsewhere_body": "กระเป๋าเงินนี้ตั้งค่าไว้ที่อื่นแล้ว และคนอื่นส่งข้อความไปที่นั่น",
-    "key_elsewhere_restore": "ถ้ามีรหัสกู้คืน ให้กรอกรหัส แล้วบทสนทนาเดิมจะเปิดที่นี่ด้วย",
+    "key_elsewhere_title": "แชทของคุณอยู่บนอีกเครื่องแล้ว",
+    "key_elsewhere_body": "ข้อความไปที่นั่น",
     "key_elsewhere_restore_action": "กรอกรหัสกู้คืน",
-    "key_elsewhere_switch_warning": "ถ้าไม่มีรหัส คุณเปลี่ยนมารับที่นี่ได้ แต่เครื่องนั้นจะไม่ได้รับข้อความใหม่อีก และข้อความก่อนหน้าจะอยู่ที่นั่นเท่านั้น",
-    "key_elsewhere_switch_action": "รับที่นี่"
+    "key_elsewhere_switch_action": "รับที่นี่",
+    "key_elsewhere_restore_note": "กู้คืนข้อความของคุณ",
+    "key_elsewhere_switch_note": "บทสนทนาก่อนหน้าจะไม่เปิดที่นี่"
   },
   "messaging": {
     "enabled_title": "เปิดใช้งานระบบข้อความแล้ว",

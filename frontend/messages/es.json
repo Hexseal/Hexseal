@@ -685,12 +685,12 @@
     "key_unannounced_call": "Confirma en tu cartera y te encontrarán.",
     "key_unannounced_action": "Confirmar",
     "key_unannounced_confirming": "Confirmando…",
-    "key_elsewhere_title": "Tus mensajes llegan a otro dispositivo",
-    "key_elsewhere_body": "Esta cartera ya está configurada en otro sitio, y te escriben allí.",
-    "key_elsewhere_restore": "Si tienes un código de recuperación, introdúcelo y aquí se abrirán las mismas conversaciones.",
+    "key_elsewhere_title": "Tu chat ya está en otro dispositivo",
+    "key_elsewhere_body": "Los mensajes llegan allí.",
     "key_elsewhere_restore_action": "Introducir código de recuperación",
-    "key_elsewhere_switch_warning": "Sin el código puedes empezar a recibir aquí. Entonces dejarán de llegar mensajes nuevos a ese dispositivo, y los anteriores quedarán solo allí.",
-    "key_elsewhere_switch_action": "Recibir aquí"
+    "key_elsewhere_switch_action": "Recibir aquí",
+    "key_elsewhere_restore_note": "Restaurar tus mensajes.",
+    "key_elsewhere_switch_note": "Las conversaciones anteriores no se abrirán aquí."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

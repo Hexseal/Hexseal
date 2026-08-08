@@ -685,12 +685,12 @@
     "key_unannounced_call": "Підтвердьте в гаманці — і вас знайдуть.",
     "key_unannounced_action": "Підтвердити",
     "key_unannounced_confirming": "Підтверджуємо…",
-    "key_elsewhere_title": "Повідомлення надходять на інший пристрій",
-    "key_elsewhere_body": "Цей гаманець уже налаштований в іншому місці, і вам пишуть туди.",
-    "key_elsewhere_restore": "Є код відновлення — впишіть його, і тут відкриється та сама переписка.",
+    "key_elsewhere_title": "Ваш чат уже на іншому пристрої",
+    "key_elsewhere_body": "Повідомлення надходять туди.",
     "key_elsewhere_restore_action": "Ввести код відновлення",
-    "key_elsewhere_switch_warning": "Без коду можна почати отримувати тут. Тоді на той пристрій нові повідомлення надходити перестануть, а попередні залишаться лише там.",
-    "key_elsewhere_switch_action": "Отримувати тут"
+    "key_elsewhere_switch_action": "Отримувати тут",
+    "key_elsewhere_restore_note": "Відновити повідомлення.",
+    "key_elsewhere_switch_note": "Попередня переписка тут не відкриється."
   },
   "messaging": {
     "enabled_title": "Обмін повідомленнями увімкнено",

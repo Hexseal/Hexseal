@@ -685,12 +685,12 @@
     "key_unannounced_call": "Подтвердите в кошельке — и вас найдут.",
     "key_unannounced_action": "Подтвердить",
     "key_unannounced_confirming": "Подтверждаем…",
-    "key_elsewhere_title": "Сообщения приходят на другое устройство",
-    "key_elsewhere_body": "Этот кошелёк уже настроен где-то ещё, и вам пишут туда.",
-    "key_elsewhere_restore": "Есть код восстановления — впишите его, и здесь откроется та же переписка.",
+    "key_elsewhere_title": "Ваш чат уже на другом устройстве",
+    "key_elsewhere_body": "Сообщения приходят туда.",
     "key_elsewhere_restore_action": "Ввести код восстановления",
-    "key_elsewhere_switch_warning": "Без кода можно начать получать здесь. Тогда на то устройство новые сообщения приходить перестанут, а прежние останутся только там.",
-    "key_elsewhere_switch_action": "Получать здесь"
+    "key_elsewhere_switch_action": "Получать здесь",
+    "key_elsewhere_restore_note": "Восстановить сообщения.",
+    "key_elsewhere_switch_note": "Прежняя переписка здесь не откроется."
   },
   "messaging": {
     "enabled_title": "Мессенджер включён",

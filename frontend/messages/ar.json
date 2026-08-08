@@ -685,12 +685,12 @@
     "key_unannounced_call": "أكِّد في محفظتك — وسيجدك الآخرون.",
     "key_unannounced_action": "تأكيد",
     "key_unannounced_confirming": "جارٍ التأكيد…",
-    "key_elsewhere_title": "رسائلك تصل إلى جهاز آخر",
-    "key_elsewhere_body": "هذه المحفظة مُهيّأة في مكان آخر بالفعل، والناس يكتبون إليها هناك.",
-    "key_elsewhere_restore": "إن كان لديك رمز الاستعادة، فأدخله — ستُفتح المحادثات نفسها هنا.",
+    "key_elsewhere_title": "محادثتك موجودة بالفعل على جهاز آخر",
+    "key_elsewhere_body": "الرسائل تصل إلى هناك.",
     "key_elsewhere_restore_action": "إدخال رمز الاستعادة",
-    "key_elsewhere_switch_warning": "بدون الرمز يمكنك أن تبدأ الاستلام هنا. حينها لن تصل رسائل جديدة إلى ذلك الجهاز، وستبقى السابقة هناك فقط.",
-    "key_elsewhere_switch_action": "الاستلام هنا"
+    "key_elsewhere_switch_action": "الاستلام هنا",
+    "key_elsewhere_restore_note": "استعادة رسائلك.",
+    "key_elsewhere_switch_note": "المحادثات السابقة لن تُفتح هنا."
   },
   "messaging": {
     "enabled_title": "تم تفعيل الرسائل",
