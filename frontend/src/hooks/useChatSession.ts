@@ -80,6 +80,9 @@ import { withWalletLock } from '@/lib/walletLock';
 import { noteWalletHandoff, requireSignatureGate, ChatSignatureDeferred } from '@/lib/chatSignatureGate';
 import { mailboxWorthPollingFor } from '@/lib/chatAnnounceStore';
 import { isChatDeclined, rememberChatDecline, forgetChatDecline, isUserDecline } from '@/lib/chatDecline';
+import {
+  publishChatSession, forgetPublishedSession, publishedChatSession, subscribeChatSession,
+} from '@/lib/chatSessionStore';
 
 /* ────────────────────────── справочник ключей ─────────────────────────── */
 
@@ -437,8 +440,14 @@ export function useChatSession(): UseChatSessionValue {
   const { address } = useAccount();
   const { signTypedDataAsync } = useSignTypedData();
 
-  const [status, setStatus] = useState<ChatSessionStatus>('loading');
-  const [session, setSession] = useState<ChatSession | null>(null);
+  // ⚠️ НАЧАЛЬНОЕ ЗНАЧЕНИЕ — ИЗ ОБЩЕГО СКЛАДА, а не `null`. Экземпляр,
+  // смонтированный после того, как ключ уже завели (меню в шапке после перехода
+  // на другую страницу, панель переписки, привратник кода), обязан знать факт
+  // сразу, а не выяснять его заново.
+  const [status, setStatus] = useState<ChatSessionStatus>(
+    () => (publishedChatSession(address) ? 'ready' : 'loading'),
+  );
+  const [session, setSession] = useState<ChatSession | null>(() => publishedChatSession(address));
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<ChatSessionErrorCode | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
@@ -455,6 +464,38 @@ export function useChatSession(): UseChatSessionValue {
     _armListeners.add(listener);
     return () => { _armListeners.delete(listener); };
   }, []);
+
+  /**
+   * ⚠️ КЛЮЧ — ОБЩИЙ ФАКТ, И ЭТО ПРАВКА, НАЙДЕННАЯ НА ЖИВОМ ТЕЛЕФОНЕ.
+   *
+   * Замер 9 августа: чат работает, ключ на устройстве и объявлен, а меню
+   * кошелька в шапке пишет «Подключить мессенджер». Причина не в меню: у ЕГО
+   * экземпляра этого хука сеанса нет. Экземпляр спросил ключ на доске заказов,
+   * не нашёл (заводить там нельзя — К-3), получил `error`, а потом человек завёл
+   * ключ в чате — и шапка об этом не узнала НИКОГДА: её эффект зависит от
+   * адреса, подписывателя и просьбы завести ключ, а не изменилось ни одно из
+   * трёх. До перемонтирования, то есть до перехода на другую страницу.
+   *
+   * Та же беда давала вторую жалобу — «кнопка появляется, только если со
+   * страницы перешелкнуть»: экземпляр внутри `useKeyAnnouncement` застревал так
+   * же, а без сеанса кнопки нет по построению.
+   *
+   * Разбор и замеры — `lib/chatSessionStore.ts` и `lib/walletMenuChat.test.ts`.
+   */
+  useEffect(() => subscribeChatSession(() => {
+    const shared = publishedChatSession(address);
+    if (shared) {
+      setSession(prev => (prev === shared ? prev : shared));
+      setStatus('ready');
+      setError(null);
+      setErrorCode(null);
+    } else {
+      // Ключ сняли (человек выключил чат) — узнают все, а не только то место,
+      // где нажали.
+      setSession(prev => (prev === null ? prev : null));
+      setStatus(prev => (prev === 'ready' ? 'error' : prev));
+    }
+  }), [address]);
 
   useEffect(() => {
     if (!address) {
@@ -494,6 +535,9 @@ export function useChatSession(): UseChatSessionValue {
         }, { createIfMissing: mayCreate });
         if (dropped || cancelledRef.current) return;
         setSession(opened);
+        // Сказать всем: ключ на устройстве есть. Без этой строки соседние места
+        // страницы остаются со своим прежним «его нет» до перемонтирования.
+        publishChatSession(address, opened);
         // Код показывается ТОЛЬКО когда он только что заведён: у
         // восстановленного с устройства сеанса человек его уже видел, и
         // выкидывать двенадцать слов на экран заново — не забота, а утечка.
@@ -549,6 +593,7 @@ export function useChatSession(): UseChatSessionValue {
     // С пробросом нижний слой (`forgetSession`) отказывает всё равно:
     // охрана держится, даже когда её сняли этажом выше.
     if (address) {
+      forgetPublishedSession(address);
       void forgetSession(address, { acknowledged: opts.acknowledged })
         .catch(() => { /* уборка не важнее самого решения */ });
     }
