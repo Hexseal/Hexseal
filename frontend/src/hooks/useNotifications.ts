@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useAccount, usePublicClient, useReadContract, useWatchContractEvent } from "wagmi";
+import { useAccount, usePublicClient, useReadContract } from "wagmi";
 import { toast } from "react-hot-toast";
 import {
   type AppNotification,
@@ -17,22 +17,23 @@ import {
   CONTRACTS,
   DIAMOND_ABI,
   ARBITER_REGISTRY_ABI,
-  SERVICE_BOARD_ABI,
 } from "@/config/contracts";
+// `refundNotifCopy` нужен достройке ленты ниже: она читает состояние из реестра,
+// а не из логов, и разводкой не проходит.
 import { classifySettledRefund, refundNotifCopy } from "@/lib/settledRefund";
 import { refreshFromLogs } from "@/lib/subgraphSync";
+import { routeNotifLogs, type Viewer } from "@/lib/notifRouter";
+import { NOTIF_EVENTS, NOTIF_POLL_MS } from "@/lib/notifEvents";
+import {
+  runChainWatch,
+  type ChainWatchCursor,
+  type ChainWatchIO,
+} from "@/lib/chainWatchGate";
 import type { Abi } from "viem";
 
 const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 
 type DealRole = { role: "client" | "executor"; amount: bigint };
-
-// Helper: pull args from any wagmi log safely
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function a(log: unknown): any {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (log as any)?.args ?? {};
-}
 
 // Событие докатывается не только до колокольчика, но и до ДАННЫХ — через
 // `refreshFromLogs` (lib/subgraphSync). Это чинит то, чего не чинит ничто
@@ -41,10 +42,18 @@ function a(log: unknown): any {
 // приходило уведомление, а экран под ним оставался старым до возвращения во
 // вкладку.
 //
-// Три наблюдателя ниже (`AgreementStatusUpdated`, `JobApplied`,
-// `ServiceRequested`) подписаны на диамонд БЕЗ `args` и получают логи всей
-// биржи, поэтому у них обновление зовётся не от всей пачки, а от собранного
-// вручную подмножества, прошедшего фильтр по адресу.
+// ⚠️ ОДИН НАБЛЮДАТЕЛЬ ВМЕСТО ТРИНАДЦАТИ. Здесь стояло тринадцать
+// `useWatchContractEvent` — тринадцать фильтров на узле и тринадцать
+// `eth_getFilterChanges` за такт. Замер с живого телефона: 135 запросов в минуту
+// на ПРОСТАИВАЮЩЕЙ странице, 8 100 в час с одной вкладки (`docs/OPEN-ITEMS.md`,
+// пункт 38). Стало: один фильтр по набору из девяти родов событий
+// (`lib/notifEvents`), такт `NOTIF_POLL_MS`, и опрос идёт только пока на страницу
+// смотрят (`lib/chainWatchGate`); пропущенное за время отсутствия добирается
+// одной выборкой при возврате.
+//
+// Отбор «моё / не моё», который делали `args` тринадцати фильтров, теперь
+// делается в коде — `lib/notifRouter`, там же перечислены все тринадцать
+// назначений и все они под замером.
 
 export function useNotifications() {
   const { address } = useAccount();
@@ -63,11 +72,27 @@ export function useNotifications() {
   }, [address]);
 
   // Re-sync when another component (e.g. board post page) calls pushNotif directly
+  //
+  // Плюс ДВЕ ДРУГИЕ причины перечитать хранилище, обе ценой ноль запросов к цепи:
+  //
+  //  - `storage` — запись сделала ДРУГАЯ вкладка. С тех пор как опрос идёт
+  //    только на видимой странице, живые логи приходят той вкладке, на которую
+  //    смотрят, а остальные узнают о них отсюда. Событие `hexseal-notif-update`
+  //    для этого не годится: оно не покидает своё окно;
+  //  - возврат во вкладку — на случай, если запись сделана, пока эта вкладка
+  //    была выгружена и слушателя не существовало вовсе.
   useEffect(() => {
     if (!address) return;
     const handler = () => setNotifications(loadNotifs(address));
+    const onVisible = () => { if (document.visibilityState === 'visible') handler(); };
     window.addEventListener('hexseal-notif-update', handler);
-    return () => window.removeEventListener('hexseal-notif-update', handler);
+    window.addEventListener('storage', handler);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('hexseal-notif-update', handler);
+      window.removeEventListener('storage', handler);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [address]);
 
   // Check if current user is a registered arbiter
@@ -259,482 +284,109 @@ export function useNotifications() {
     [address]
   );
 
-  // ─── Stable args/onLogs for every useWatchContractEvent below ───────────
+  // ─── ОДИН цикл опроса вместо тринадцати ─────────────────────────────────
   //
-  // Passing inline object/function literals as `args`/`onLogs` used to mean a NEW
-  // reference on every render of this hook (e.g. every single push() call, since
-  // that updates `notifications` state and re-renders whatever mounts
-  // useNotifications — NotificationsProvider, at the app root). wagmi's
-  // useWatchContractEvent depends on both by reference, so each render was tearing
-  // down and re-establishing all 13 watchers' underlying filters/poll loops, not
-  // just when address/deal-set actually changed. Since polling (not websocket) is
-  // used here, that teardown+recreate has a real async gap (uninstall the old
-  // filter, then create a new one) during which a log from a *different* event can
-  // land and be silently dropped — most of these notification types have no
-  // backfill to recover it. Memoizing both closes that gap: watchers now only
-  // rebuild when address (or the specific ref/state they read) actually changes.
-  const clientArgs   = useMemo(() => ({ client:   address ?? ZERO }), [address]);
-  const executorArgs = useMemo(() => ({ executor: address ?? ZERO }), [address]);
-  const arbiterArgs  = useMemo(() => ({ arbiter:  address ?? ZERO }), [address]);
+  // ЧТО ЧИТАЕТСЯ ЧЕРЕЗ ССЫЛКУ И ПОЧЕМУ. `isArbiter` и `push` меняются по ходу
+  // жизни страницы. Зависеть от них эффектом означало бы перевзводить фильтр на
+  // каждое изменение, а перевзвод — это лишний `eth_newFilter` И щель между
+  // снятием старого фильтра и созданием нового, в которую лог проваливается
+  // молча. Ровно этот класс бага уже ловили здесь однажды (мемоизация
+  // `args`/`onLogs`), и он остаётся в силе: цикл опроса обязан перевзводиться
+  // ТОЛЬКО при смене адреса кошелька.
+  const isArbiterRef = useRef(false);
+  useEffect(() => { isArbiterRef.current = isArbiter === true; }, [isArbiter]);
 
-  const onAgreementRegisteredAsClient = useCallback((logs: unknown[]) => {
-    const mine: unknown[] = [];
-    for (const log of logs) {
-      const { agreement, amount } = a(log);
-      if (!agreement) continue;
-      mine.push(log);
-      myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: amount ?? BigInt(0) });
-      push({
-        type: "deal_new",
-        title: "Deal Created",
-        body: `Deal funded for $${fmtUSDC(amount)} USDC — the executor can now activate to start.`,
-        link: `/deal/${agreement}`,
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    // Сделка, где я клиент, могла родиться и чужим нажатием: исполнитель принял
-    // мой запрос на услугу (acceptRequest). Значит несвежи и список сделок, и
-    // список моих запросов, и баланс — эскроу ушёл из кошелька.
-    refreshFromLogs(mine, { chain: ["deals", "requests", "wallet"], graph: ["deals"] });
-  }, [push]);
+  const pushRef = useRef(push);
+  useEffect(() => { pushRef.current = push; }, [push]);
 
-  const onAgreementRegisteredAsExecutor = useCallback((logs: unknown[]) => {
-    const mine: unknown[] = [];
-    for (const log of logs) {
-      const { agreement, amount } = a(log);
-      if (!agreement) continue;
-      mine.push(log);
-      myDeals.current.set(agreement.toLowerCase(), { role: "executor", amount: amount ?? BigInt(0) });
-      push({
-        type: "deal_new",
-        title: "You've Been Hired!",
-        body: `New deal for $${fmtUSDC(amount)} USDC. Activate to start working.`,
-        link: `/deal/${agreement}`,
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    // Всегда чужое нажатие: клиент принял мой отклик на заказ либо нанял по
-    // услуге. Заказ закрывается, у услуги растёт hiresCount.
-    refreshFromLogs(mine, { chain: ["deals", "jobs", "services"], graph: ["deals"] });
-  }, [push]);
+  const addressRef = useRef(address);
+  useEffect(() => { addressRef.current = address; }, [address]);
 
-  const onAgreementStatusUpdated = useCallback(async (logs: unknown[]) => {
-    // Наблюдатель без `args` — сюда прилетают переходы ВСЕЙ биржи. Обновлять
-    // данные можно только по тем логам, что прошли фильтр ниже.
-    const mine: unknown[] = [];
-    const forArbiter: unknown[] = [];
-    for (const log of logs) {
-      const { agreement, newStatus } = a(log);
-      if (!agreement) continue;
-      const dealInfo = myDeals.current.get(agreement.toLowerCase());
-
-      // Notify registered arbiters about new disputes on deals they're not party to
-      if (!dealInfo) {
-        const status = Number(newStatus);
-        if (isArbiter && status === 3) { // 3 = DISPUTED
-          forArbiter.push(log);
-          push({
-            type: "dispute_new",
-            title: "New Dispute Available",
-            body: "A dispute is open — be the first to claim and resolve it.",
-            link: "/arbiter",
-            txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-          });
-        }
-        continue;
-      }
-
-      const status = Number(newStatus);
-      const { role } = dealInfo;
-      // Отмечаем ДО msgMap: у статуса ACTIVE(0) сообщения нет, но данные он
-      // делает несвежими ровно так же.
-      mine.push(log);
-
-      // Registry enum: ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4
-      const msgMap: Partial<Record<number, [NotifType, string, string]>> = {
-        1: ["deal_completed", "Deal Complete", role === "client" ? "Payment successfully released to executor." : "Payment has been released to your wallet!"],
-        2: ["deal_refunded", "Deal Refunded", role === "client" ? "Funds returned to your wallet." : "The deal was refunded to the client."],
-        3: ["deal_disputed", "Dispute Raised", role === "client" ? "A dispute was opened on your deal." : "Client raised a dispute — arbiter will review."],
-        4: ["deal_resolved", "Dispute Resolved", "The arbiter has resolved the dispute."],
-      };
-
-      const entry = msgMap[status];
-      if (!entry) continue;
-      const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
-
-      let [, title, body] = entry;
-      // REFUNDED(2) is two outcomes wearing one status: a real refund, and a dispute
-      // nobody claimed, which splits the escrow and pays the executor half of it.
-      // The registry cannot tell them apart (the enum mirrors the agreement's frozen
-      // `enum Status`), so the agreement's own DisputeSplitNoVerdict in this very
-      // transaction does — see lib/settledRefund.
-      if (status === 2) {
-        const outcome = await classifySettledRefund(
-          publicClient,
-          agreement as `0x${string}`,
-          txHash as `0x${string}` | undefined,
-        );
-        ({ title, body } = refundNotifCopy(outcome, role));
-      }
-
-      push({
-        type: entry[0],
-        title,
-        body,
-        link: `/deal/${agreement}`,
-        txHash,
-      });
-    }
-
-    // Терминальные переходы двигают деньги и начисляют XP (autoAwardXP в
-    // _complete), поэтому кошелёк тоже несвеж.
-    refreshFromLogs(mine, { chain: ["deals", "wallet"], graph: ["deals"] });
-    // Арбитру интересна только очередь споров: сделка не его, в сабграфе для
-    // него ничего не меняется.
-    refreshFromLogs(forArbiter, { chain: ["arbiter"] });
-  }, [isArbiter, push, publicClient]);
-
-  const onJobAcceptedAsExecutor = useCallback((logs: unknown[]) => {
-    for (const log of logs) {
-      const { jobId, agreement } = a(log);
-      push({
-        type: "deal_new",
-        title: "Application Accepted",
-        body: `Your application for Job #${jobId} was accepted.`,
-        link: agreement ? `/deal/${agreement}` : "/dashboard",
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    // Чужое нажатие: клиент принял мой отклик. Заказ закрылся, сделка родилась.
-    refreshFromLogs(logs, { chain: ["deals", "jobs"], graph: ["deals", "jobs"] });
-  }, [push]);
-
-  const onJobAcceptedAsClient = useCallback((logs: unknown[]) => {
-    for (const log of logs) {
-      const { jobId, agreement } = a(log);
-      push({
-        type: "deal_new",
-        title: "Executor Accepted",
-        body: `Executor confirmed for Job #${jobId}. Deal is ready.`,
-        link: agreement ? `/deal/${agreement}` : "/dashboard",
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    refreshFromLogs(logs, { chain: ["deals", "jobs"], graph: ["deals", "jobs"] });
-  }, [push]);
-
-  const onJobCancelledAsClient = useCallback((logs: unknown[]) => {
-    for (const log of logs) {
-      const { jobId, refundAmount } = a(log);
-      push({
-        type: "job_cancelled",
-        title: "Job Cancelled",
-        body: `Job #${jobId} cancelled. $${fmtUSDC(refundAmount)} USDC refunded.`,
-        link: `/job/${jobId}`,
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    refreshFromLogs(logs, { chain: ["jobs", "wallet"], graph: ["jobs"] });
-  }, [push]);
-
-  const onRequestAcceptedAsClient = useCallback((logs: unknown[]) => {
-    for (const log of logs) {
-      const { agreement } = a(log);
-      push({
-        type: "deal_new",
-        title: "Request Accepted",
-        body: "Your service request was accepted. Deal has been created.",
-        link: agreement ? `/deal/${agreement}` : "/dashboard",
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    // Чужое нажатие: исполнитель принял мой запрос. Запрос уходит из PENDING,
-    // рождается сделка.
-    refreshFromLogs(logs, { chain: ["deals", "requests"], graph: ["deals"] });
-  }, [push]);
-
-  const onRequestAcceptedAsExecutor = useCallback((logs: unknown[]) => {
-    for (const log of logs) {
-      const { agreement } = a(log);
-      push({
-        type: "deal_new",
-        title: "Request Accepted",
-        body: "You accepted a service request. Deal has been created.",
-        link: agreement ? `/deal/${agreement}` : "/dashboard",
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    // У услуги растёт hiresCount — это уже сабграф.
-    refreshFromLogs(logs, {
-      chain: ["deals", "requests", "services"],
-      graph: ["deals", "services"],
+  const handleChainLogs = useCallback(async (logs: unknown[]) => {
+    const me = addressRef.current;
+    if (!me) return;
+    const viewer: Viewer = {
+      address: me,
+      isArbiter: isArbiterRef.current,
+      // Карты передаются по ссылке намеренно: разводка пополняет их по ходу
+      // пачки, и это обязательное свойство при догоне (см. lib/notifRouter).
+      deals: myDeals.current,
+      jobIds: myJobIds.current,
+      serviceIds: myServiceIds.current,
+    };
+    const routed = await routeNotifLogs(logs, viewer, {
+      classifyRefund: (agreement, txHash) =>
+        classifySettledRefund(publicClient, agreement, txHash),
     });
-  }, [push]);
-
-  const onRequestRejectedAsClient = useCallback((logs: unknown[]) => {
-    for (const log of logs) {
-      const { requestId } = a(log);
-      push({
-        type: "service_rejected",
-        title: "Request Declined",
-        body: "The executor declined your service request.",
-        link: requestId !== undefined ? `/request/${requestId}` : "/dashboard",
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
+    for (const notif of routed.notifs) pushRef.current(notif);
+    for (const r of routed.refreshes) {
+      if (r.logs.length > 0) refreshFromLogs(r.logs, r.topics);
     }
-    // Отказ возвращает эскроу за вычетом пола. Запросы фронт из сабграфа не
-    // читает — только цепь.
-    refreshFromLogs(logs, { chain: ["requests", "wallet"] });
-  }, [push]);
+  }, [publicClient]);
 
-  const onDisputeClaimedAsArbiter = useCallback((logs: unknown[]) => {
-    for (const log of logs) {
-      const { agreement } = a(log);
-      if (agreement) {
-        myDeals.current.set(agreement.toLowerCase(), { role: "client", amount: BigInt(0) });
-      }
-      push({
-        type: "dispute_claimed",
-        title: "Dispute Claimed",
-        body: "You have 7 days to review and resolve this case.",
-        link: "/arbiter",
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    // Очередь споров и мои дела как арбитра. Сабграф статус спора не меняет:
-    // DISPUTED пришёл раньше, вместе с AgreementStatusUpdated.
-    refreshFromLogs(logs, { chain: ["arbiter", "deals"] });
-  }, [push]);
+  useEffect(() => {
+    if (!address || !publicClient) return;
+    if (typeof document === "undefined") return;
+    // Набор событий пуст — значит ABI разъехались с разводкой. Взводить фильтр,
+    // который ничего не ловит, бессмысленно; замер на это стоит в
+    // `lib/notifEvents.test.ts`.
+    if (NOTIF_EVENTS.length === 0) return;
 
-  const onDisputeClaimedNotifyParties = useCallback((logs: unknown[]) => {
-    // Наблюдатель без `args`: сюда прилетают заявки арбитров по всей бирже.
-    const mine: unknown[] = [];
-    for (const log of logs) {
-      const { agreement, arbiter } = a(log);
-      if (!agreement) continue;
-      // Skip: the arbiter themselves already get notified by the watcher above
-      if (arbiter?.toLowerCase() === address?.toLowerCase()) continue;
-      const dealInfo = myDeals.current.get(agreement.toLowerCase());
-      if (!dealInfo) continue;
-      mine.push(log);
-      push({
-        type: "dispute_arbiter_claimed",
-        title: "Arbiter Assigned",
-        body: "An arbiter has taken your dispute. Resolution expected within 7 days.",
-        link: `/deal/${agreement}`,
-        txHash: (log as { transactionHash?: string }).transactionHash ?? undefined,
-      });
-    }
-    // Только цепь: у сделки сменился клеймер спора, статус в сабграфе прежний.
-    refreshFromLogs(mine, { chain: ["deals"] });
-  }, [address, push]);
+    // Курсор догона — на адрес. Общий на все вкладки (localStorage), так что
+    // вторая вкладка не платит за уже добранный пропуск повторно.
+    const cursorKey = `hexseal_notifblk_${address.toLowerCase()}`;
+    const cursor: ChainWatchCursor = {
+      read: () => {
+        try {
+          const v = localStorage.getItem(cursorKey);
+          if (!v || !/^[0-9]+$/.test(v)) return null;
+          return BigInt(v);
+        } catch { return null; }
+      },
+      write: (block) => {
+        try { localStorage.setItem(cursorKey, block.toString()); } catch { /* хранилище недоступно */ }
+      },
+    };
 
-  const onJobApplied = useCallback((logs: unknown[]) => {
-    // Наблюдатель без `args`: отклики на ВСЕ заказы биржи. Обновляемся только по
-    // тем, что прошли фильтр — иначе каждое чужое нажатие на доске стоило бы
-    // всем открытым вкладкам похода в цепь и в сабграф.
-    const mine: unknown[] = [];
-    for (const log of logs) {
-      const { jobId, executor } = a(log);
-      const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
-      // Executor applied — confirm to them
-      if (executor?.toLowerCase() === address?.toLowerCase()) {
-        mine.push(log);
-        push({
-          type: "job_applied",
-          title: "Application Submitted",
-          body: `Applied to Job #${jobId}. Waiting for client to review.`,
-          link: `/job/${jobId}`,
-          txHash,
-        });
-        continue;
-      }
-      // Notify client if this is their job
-      if (jobId !== undefined && myJobIds.current.has(jobId.toString())) {
-        mine.push(log);
-        push({
-          type: "job_applied",
-          title: "New Applicant",
-          body: `Someone applied to your Job #${jobId}. Review on the job page.`,
-          link: `/job/${jobId}`,
-          txHash,
-        });
-      }
-    }
-    // Список откликов лежит и в цепи (getApplicants), и в сабграфе
-    // (Job.applicants) — доска читает его оттуда.
-    refreshFromLogs(mine, { chain: ["jobs"], graph: ["jobs"] });
-  }, [address, push]);
+    const io: ChainWatchIO = {
+      watch: (onLogs, onError) =>
+        publicClient.watchEvent({
+          address: CONTRACTS.diamond,
+          events: NOTIF_EVENTS,
+          pollingInterval: NOTIF_POLL_MS,
+          onLogs: (logs) => onLogs(logs as unknown[]),
+          onError,
+        }),
+      blockNumber: () => publicClient.getBlockNumber(),
+      getLogs: (fromBlock, toBlock) =>
+        publicClient.getLogs({
+          address: CONTRACTS.diamond,
+          events: NOTIF_EVENTS,
+          fromBlock,
+          toBlock,
+        }) as Promise<unknown[]>,
+    };
 
-  const onServiceRequested = useCallback((logs: unknown[]) => {
-    // Наблюдатель без `args`: запросы на ВСЕ услуги биржи — тот же фильтр, что
-    // и в onJobApplied выше.
-    const mine: unknown[] = [];
-    for (const log of logs) {
-      const { requestId, serviceId, client, amount } = a(log);
-      const txHash = (log as { transactionHash?: string }).transactionHash ?? undefined;
-      const link = requestId !== undefined ? `/request/${requestId}` : "/dashboard";
-      // Client sent the request — confirm to them
-      if (client?.toLowerCase() === address?.toLowerCase()) {
-        mine.push(log);
-        push({
-          type: "service_requested",
-          title: "Request Sent",
-          body: `Your request for $${fmtUSDC(amount)} USDC has been sent. Waiting for executor.`,
-          link,
-          txHash,
-        });
-        continue;
-      }
-      // Notify executor if this is their service
-      if (serviceId !== undefined && myServiceIds.current.has(serviceId.toString())) {
-        mine.push(log);
-        push({
-          type: "service_requested",
-          title: "New Service Request",
-          body: `A client requested your service for $${fmtUSDC(amount)} USDC.`,
-          link,
-          txHash,
-        });
-      }
-    }
-    // Только цепь: запросы на услугу фронт читает из цепи, не из сабграфа
-    // (`lib/graph.ts` их не запрашивает). У самой услуги здесь ещё ничего не
-    // меняется — hiresCount растёт на acceptRequest, не на requestService.
-    refreshFromLogs(mine, { chain: ["requests", "wallet"] });
-  }, [address, push]);
-
-  // ─── AgreementRegistered as client ──────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    eventName: "AgreementRegistered",
-    args: clientArgs,
-    enabled: !!address,
-    onLogs: onAgreementRegisteredAsClient,
-  });
-
-  // ─── AgreementRegistered as executor ────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    eventName: "AgreementRegistered",
-    args: executorArgs,
-    enabled: !!address,
-    onLogs: onAgreementRegisteredAsExecutor,
-  });
-
-  // ─── AgreementStatusUpdated — filter by myDeals ─────────────────────────
-  //
-  // RegistryFacet.AgreementStatus: ACTIVE=0, COMPLETED=1, REFUNDED=2, DISPUTED=3, RESOLVED=4
-  //
-  // Important: activate() and markDone() do NOT call updateStatus, so this event
-  // only fires for terminal state changes: COMPLETED, REFUNDED, DISPUTED, RESOLVED.
-  // "Deal activated" and "Work submitted" toasts must come from other sources (XMTP bot).
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    eventName: "AgreementStatusUpdated",
-    enabled: !!address,
-    onLogs: onAgreementStatusUpdated,
-  });
-
-  // ─── JobAccepted as executor ─────────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    eventName: "JobAccepted",
-    args: executorArgs,
-    enabled: !!address,
-    onLogs: onJobAcceptedAsExecutor,
-  });
-
-  // ─── JobAccepted as client ────────────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    eventName: "JobAccepted",
-    args: clientArgs,
-    enabled: !!address,
-    onLogs: onJobAcceptedAsClient,
-  });
-
-  // ─── JobCancelled as client ──────────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    eventName: "JobCancelled",
-    args: clientArgs,
-    enabled: !!address,
-    onLogs: onJobCancelledAsClient,
-  });
-
-  // ─── RequestAccepted as client ───────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: SERVICE_BOARD_ABI,
-    eventName: "RequestAccepted",
-    args: clientArgs,
-    enabled: !!address,
-    onLogs: onRequestAcceptedAsClient,
-  });
-
-  // ─── RequestAccepted as executor ─────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: SERVICE_BOARD_ABI,
-    eventName: "RequestAccepted",
-    args: executorArgs,
-    enabled: !!address,
-    onLogs: onRequestAcceptedAsExecutor,
-  });
-
-  // ─── RequestRejected as client ───────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: SERVICE_BOARD_ABI,
-    eventName: "RequestRejected",
-    args: clientArgs,
-    enabled: !!address,
-    onLogs: onRequestRejectedAsClient,
-  });
-
-  // ─── DisputeClaimed as arbiter ───────────────────────────────────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: ARBITER_REGISTRY_ABI,
-    eventName: "DisputeClaimed",
-    args: arbiterArgs,
-    enabled: !!address,
-    onLogs: onDisputeClaimedAsArbiter,
-  });
-
-  // ─── DisputeClaimed — notify deal parties (client/executor) ─────────────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: ARBITER_REGISTRY_ABI,
-    eventName: "DisputeClaimed",
-    enabled: !!address,
-    onLogs: onDisputeClaimedNotifyParties,
-  });
-
-  // ─── JobApplied — notify client (new applicant) + executor (submitted) ───
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: DIAMOND_ABI,
-    eventName: "JobApplied",
-    enabled: !!address,
-    onLogs: onJobApplied,
-  });
-
-  // ─── ServiceRequested — notify executor (new request) + client (sent) ────
-  useWatchContractEvent({
-    address: CONTRACTS.diamond,
-    abi: SERVICE_BOARD_ABI,
-    eventName: "ServiceRequested",
-    enabled: !!address,
-    onLogs: onServiceRequested,
-  });
+    return runChainWatch({
+      io,
+      cursor,
+      doc: document,
+      onLogs: handleChainLogs,
+      onError: (error, phase) => {
+        // Отказ узла не глушится молча: без этого «уведомлений нет» и «узел
+        // недоступен» выглядят с экрана одинаково. Курсор при неудачном догоне
+        // не двигается, поэтому пропуск добирается следующей попыткой.
+        console.warn(`[hexseal] слежение за цепью (${phase}) не удалось:`, error);
+      },
+      onTruncated: (plan) => {
+        console.warn(
+          `[hexseal] пропуск длиннее потолка догона: добраны блоки ` +
+          `${plan.chunks[0]?.fromBlock}–${plan.chunks[plan.chunks.length - 1]?.toBlock}, ` +
+          `более старые события в колокольчик не попадут`,
+        );
+      },
+    });
+  }, [address, publicClient, handleChainLogs]);
 
   // ─── Public API ───────────────────────────────────────────────────────────
   const unreadCount = notifications.filter((n) => !n.read).length;

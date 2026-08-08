@@ -254,7 +254,7 @@ function ChatHubPageInner() {
     keySignaturePending = false,
   } = useChatSession();
   const {
-    conversations, isLoading, error, reload, passSignaturePending = false,
+    conversations, everAnswered, error, reload, passSignaturePending = false,
   } = usePairConversations(sessionStatus === 'ready');
   // Окно кошелька открыто ПРЯМО СЕЙЧАС — по одной из двух причин, и слова у
   // них разные (см. `ChatSignatureWanted`). Ключ старше пропуска: если ждут
@@ -534,11 +534,19 @@ function ChatHubPageInner() {
    * ⚠️ `hasRows` СЧИТАЕТ И СТРОКУ ИЗ АДРЕСА, и строки из цепи: показать нечего —
    * это когда в колонке НЕ БУДЕТ НИ ОДНОЙ строки, а не когда пуст ответ склада.
    * Ровно на этой разнице и жило мигание.
+   *
+   * ⚠️ ЗДЕСЬ СТОЯЛО `loading: isLoading`, И ЭТО БЫЛ НЕ ТОТ ВОПРОС. «Заход в
+   * полёте» и «склад отвечал хоть раз» — разные факты: заход снимается в
+   * `finally` даже когда он не состоялся (порог подписи отложил его молча), и
+   * колонка утверждала «Переписок пока нет» про склад, которого не спрашивали.
+   * Двенадцать секунд этих слов на живом телефоне — с них правка и началась.
+   * Разбор — `everAnswered` в `lib/chatListPhase.ts`; возвращать сюда `isLoading`
+   * нельзя даже «в дополнение» (11 вспышек заготовок за десять тиков).
    */
   const phaseInput = {
     hasRows: allConversations.length > 0
       || (!!selected && !allConversations.some(c => c.peerAddress === selected)),
-    loading: isLoading,
+    everAnswered,
     signatureReason,
     keyNotAnnounced,
     sessionStatus,
