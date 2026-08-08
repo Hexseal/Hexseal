@@ -409,12 +409,12 @@ export function usePairConversations(isEnabled = false) {
     if (!addr || !s) return;
     if (!loaderRef.current) {
       loaderRef.current = createConversationLoader({
-        // Сеанс уезжает третьим (см. `getBagPass`): список переписок стартует
-        // РЯДОМ с открытой перепиской, и лишнее окно кошелька здесь — это
-        // второй одновременный запрос в кошелёк, то есть `-32002`.
+        // `setPassSignaturePending` третьим — и это НЕ уборка. Без него список
+        // рисовал три пульсирующие заготовки строк, пока висело окно кошелька,
+        // и не говорил ни слова о том, что ждут человека. Замер и разбор — в
+        // докстринге самого признака выше.
         getPass: () => getBagPass(
           addressRef.current as `0x${string}`, signMessageAsync, setPassSignaturePending,
-          sessionRef.current,
         ),
         loadWithPass: (pass) => loadPairConversations(sessionRef.current as ChatSession, pass),
         onRows: (rows) => {

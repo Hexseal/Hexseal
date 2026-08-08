@@ -17,9 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { deriveChatKeypair } from '@/lib/chatCrypto';
 import type { ChatSession } from '@/lib/chatSession';
-import {
-  deriveLinkSigningKeypair, signChallengeWithLinkKey, _resetConversationMemoryForTest,
-} from '@/lib/chatConversation';
+import { deriveLinkSigningKeypair, _resetConversationMemoryForTest } from '@/lib/chatConversation';
 import { requestBagPass, _resetBagPassCacheForTest } from '@/lib/chatTransport';
 import { startPairChat, type PairChatState, type PairChatEngine } from './usePairChat';
 
@@ -89,18 +87,27 @@ describe('1. закрыл вкладку, пока висело окно под�
     expect(attempts).toBe(2);
   });
 
-  it('вернувшись, человек НЕ подписывает заново: ключ на устройстве есть', async () => {
-    // Ответ на «что при возврате»: НОЛЬ окон. Ключ переписки лежит на
-    // устройстве, справочник о нём знает — пропуск берётся молча.
+  it('вернувшись, человек подписывает РОВНО ОДИН раз, а не по кругу', async () => {
+    // ⚠️ ЭТОТ ЗАМЕР ПЕРЕПИСАН ПОСЛЕ ОТКАТА, и число в нём изменилось честно.
+    // Пока пропуск подписывался ключом переписки, ответ был «ноль окон». Дорога
+    // откачена решением владельца (разбор — в шапке `POST /bags/pass`), значит
+    // окно кошелька вернулось, и вопрос «что при возврате» получает другой
+    // ответ: одно окно, и ТОЛЬКО одно.
+    //
+    // Оборванная подпись не оставляет ничего, что могло бы уцелеть, — значит
+    // при возврате спросят снова. Важно другое: спросят ОДИН раз, а дальше
+    // пропуск живёт 12 часов и подписи не просит. Замер именно на это: три
+    // обращения за пропуском подряд — одно окно.
     let wallet = 0;
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
-      JSON.stringify({ pass: 'v1.k.mac', expiresAt: Math.floor(Date.now() / 1000) + 43_200 }),
+      JSON.stringify({ pass: 'v1.w.mac', expiresAt: Math.floor(Date.now() / 1000) + 43_200 }),
       { status: 200 },
     )));
-    await requestBagPass(async () => { wallet++; return sig('b'); }, ALICE, {
-      signWithChatKey: (m) => signChallengeWithLinkKey(alice.keypair, m),
-    });
-    expect(wallet).toBe(0);
+    const signer = async () => { wallet++; return sig('b'); };
+    await requestBagPass(signer, ALICE);
+    await requestBagPass(signer, ALICE);
+    await requestBagPass(signer, ALICE);
+    expect(wallet).toBe(1);
   });
 });
 
@@ -150,23 +157,27 @@ describe('2. склад/справочник отказал — две РАЗН�
 /* ───────── 3. две вкладки разом ───────── */
 
 describe('3. две вкладки, обе просят пропуск', () => {
-  it('окон кошелька НОЛЬ, запросов к серверу ОДИН', async () => {
+  it('окно кошелька ОДНО, запрос к серверу ОДИН — не два', async () => {
+    // Число здесь тоже переписано после отката: было «ноль окон», стало «одно».
+    // А вот вторая половина замера важнее и не изменилась: окно РОВНО ОДНО, не
+    // два. Второй одновременный запрос прилетает в кошелёк как `-32002`, и в
+    // мобильном MetaMask его нечем отменить — человек заблокирован, пока не
+    // закроет приложение кошелька целиком.
     let requests = 0;
     let wallet = 0;
     vi.stubGlobal('fetch', vi.fn(async () => {
       requests++;
       await wait(10);
       return new Response(
-        JSON.stringify({ pass: 'v1.k.mac', expiresAt: Math.floor(Date.now() / 1000) + 43_200 }),
+        JSON.stringify({ pass: 'v1.w.mac', expiresAt: Math.floor(Date.now() / 1000) + 43_200 }),
         { status: 200 },
       );
     }));
-    const signer = (m: string) => signChallengeWithLinkKey(alice.keypair, m);
     const [a, b] = await Promise.all([
-      requestBagPass(async () => { wallet++; return sig('b'); }, ALICE, { signWithChatKey: signer }),
-      requestBagPass(async () => { wallet++; return sig('b'); }, ALICE, { signWithChatKey: signer }),
+      requestBagPass(async () => { wallet++; return sig('b'); }, ALICE),
+      requestBagPass(async () => { wallet++; return sig('b'); }, ALICE),
     ]);
-    expect(wallet).toBe(0);
+    expect(wallet).toBe(1);
     expect(requests).toBe(1);
     expect(a.pass).toBe(b.pass);
   });
@@ -222,20 +233,14 @@ describe('4. справочник отдал мусор', () => {
 /* ───────── 5. долбят нарочно ───────── */
 
 describe('5. можно ли заставить переподписывать без конца', () => {
-  it('сервер ВСЕГДА отвечает «ключа нет» — окон кошелька всё равно одно', async () => {
-    // Худший случай для ключевой дороги: справочник о нас не знает и не узнает
-    // (диск потерян, публикация отказывает). Каждый тик заново ходил бы к
-    // кошельку, если бы пропуск не кэшировался, — замер это и проверяет.
+  it('публикация ключей отказывает на каждом тике — окон кошелька всё равно одно', async () => {
+    // Худший случай: справочник о нас не знает и не узнает (диск потерян,
+    // `POST /keys` отдаёт 503 каждый тик). Если бы пропуск не кэшировался,
+    // каждый тик ходил бы к кошельку — замер это и проверяет.
     let wallet = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = new URL(String(url));
       if (u.pathname === '/bags/pass') {
-        const h = new Headers(init?.headers);
-        if (h.get('x-key-sig')) {
-          return new Response(
-            JSON.stringify({ error: 'no key', code: 'key_not_enrolled' }), { status: 401 },
-          );
-        }
         return new Response(
           JSON.stringify({ pass: 'v1.w.mac', expiresAt: Math.floor(Date.now() / 1000) + 43_200 }),
           { status: 200 },
@@ -250,11 +255,10 @@ describe('5. можно ли заставить переподписывать �
       return new Response(JSON.stringify({ inbox: [], sent: [], peers: [] }), { status: 200 });
     }));
 
-    const signer = (m: string) => signChallengeWithLinkKey(alice.keypair, m);
     engine = startPairChat({
       session: alice, peer: BOB, intervals: FAST,
       getPass: () => requestBagPass(
-        async () => { wallet++; return sig('b'); }, ALICE, { signWithChatKey: signer },
+        async () => { wallet++; return sig('b'); }, ALICE,
       ).then(p => p.pass),
       onState: () => {}, onError: () => {},
     });

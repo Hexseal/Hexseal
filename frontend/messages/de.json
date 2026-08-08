@@ -624,7 +624,7 @@
     "privacy_badge_dispute": "Im Streitfall kann jede Seite den Verlauf einem Schiedsrichter vorlegen — vom eigenen Gerät aus.",
     "chain_gap": "Hier fehlt eine Nachricht — sie kam nie an oder wurde nicht herausgegeben",
     "chain_gap_start": "Der Anfang dieses Verlaufs wurde nicht vorgelegt",
-    "pass_signature_hint": "Ihre Wallet bittet um eine Signatur: sie beweist dem Server, dass diese Pakete Ihnen gehören. Sie wird einmal pro Chat-Schlüssel erfragt — wenn dieser zum ersten Mal ins Verzeichnis kommt; danach signiert der Schlüssel selbst, ohne Fenster. Den Schlüssel selbst berührt diese Signatur nicht.",
+    "pass_signature_hint": "Ihre Wallet fragt nach einer Signatur: Sie beweist dem Server, dass diese Pakete Ihnen gehören. Normalerweise höchstens einmal alle 12 Stunden; wenn Ihr Browser die Speicherung blockiert (privater Modus), einmal pro Tab-Ladevorgang. Ihr Chat-Schlüssel wird nie berührt.",
     "signature_wanted": "Bestätigen Sie die Signatur in Ihrer Wallet",
     "signature_wanted_pass": "Sie beweist dem Server, dass diese Pakete Ihnen gehören. Ihre Unterhaltung ist bereits geöffnet — die Signatur wird nur zum Abholen neuer Nachrichten gebraucht.",
     "signature_wanted_key": "Daraus wird Ihr Chat-Schlüssel abgeleitet: einmal pro Gerät, danach lautlos.",

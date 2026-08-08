@@ -32,29 +32,6 @@ export function assertBagPassReady() {
 export const BAG_PASS_TTL_SEC = 12 * 60 * 60;
 const BAG_PASS_PREFIX = 'v1';
 
-/**
- * СОРТ ПРОПУСКА — чем именно доказано владение адресом.
- *
- *  - 'wallet' — подписью кошелька. Корень доверия: только этот сорт вправе
- *    МЕНЯТЬ открытые ключи адреса в справочнике.
- *  - 'key' — ключом переписки, чья открытая половина уже лежит в справочнике за
- *    этим адресом. Такой пропуск не требует окна кошелька вовсе — в этом весь
- *    смысл (в установленном приложении каждое окно кошелька идёт минутами, и
- *    человек уходит; живая выкатка 8 августа, пункт 35 OPEN-ITEMS).
- *
- * ⚠️ ЗАЧЕМ СОРТ ЗАПЕЧЁН В ТОКЕН, А НЕ ВЫВОДИТСЯ ПОТОМ. Без него получался
- * замкнутый круг: ключевой пропуск позволял бы записать в справочник СВОЙ
- * `signKey`, а тот — выдавать себе ключевые пропуска вечно. То есть украденный
- * на двенадцать часов пропуск превращался бы в постоянный доступ, и кошелёк
- * жертвы больше не был бы нужен НИКОГДА. Сорт в теле токена (и под тем же HMAC)
- * — единственный способ узнать это на стороне, которая решает.
- *
- * Тело старой формы (два поля вместо трёх) читается как 'wallet': пропуска на
- * двенадцать часов лежат у людей в браузере прямо сейчас, и выкатка не имеет
- * права отнять у них право сменить ключ до истечения их пропуска.
- */
-export const BAG_PASS_GRADES = Object.freeze(['wallet', 'key']);
-
 export function bagPassChallenge(address, ts) {
   // ':' is the phrase's field separator and is not escaped either — an
   // address or ts containing one would let two different (address, ts)
@@ -73,7 +50,7 @@ function bagPassMac(body) {
     .digest('base64url');
 }
 
-export function issueBagPass(address, nowSec = Math.floor(Date.now() / 1000), grade = 'wallet') {
+export function issueBagPass(address, nowSec = Math.floor(Date.now() / 1000)) {
   // The body separator ('.') is unescaped, so an address that itself
   // contains a dot smuggles an extra field into the body — and the
   // expiresAt this function returns would then lie about what's actually
@@ -87,18 +64,12 @@ export function issueBagPass(address, nowSec = Math.floor(Date.now() / 1000), gr
   // below, all for the same underlying reason: nowSec has to be a number
   // arithmetic can be trusted on.
   if (!Number.isSafeInteger(nowSec)) throw new Error('issueBagPass: invalid nowSec');
-  // Громко, а не молча: незнакомый сорт, тихо ставший строкой в теле, читался
-  // бы обратно как «не wallet» — то есть случайная опечатка вызывающего молча
-  // отняла бы у человека право сменить свой ключ, и выглядело бы это отказом
-  // сервера без причины.
-  if (!BAG_PASS_GRADES.includes(grade)) throw new Error(`issueBagPass: unknown grade ${JSON.stringify(grade)}`);
 
   const expiresAt = nowSec + BAG_PASS_TTL_SEC;
-  const body = `${addr}.${expiresAt}.${grade}`;
+  const body = `${addr}.${expiresAt}`;
   return {
     token: `${BAG_PASS_PREFIX}.${Buffer.from(body, 'utf8').toString('base64url')}.${bagPassMac(body)}`,
     expiresAt,
-    grade,
   };
 }
 
@@ -147,24 +118,12 @@ export function verifyBagPass(token, nowSec = Math.floor(Date.now() / 1000)) {
   const given    = Buffer.from(mac, 'utf8');
   if (expected.length !== given.length || !timingSafeEqual(expected, given)) return bad;
 
-  const fields = body.split('.');
-  // Ровно два поля (старая форма) или ровно три (с сортом). Больше — не «лишнее
-  // проигнорируем»: тело под тем же HMAC, значит четвёртое поле может появиться
-  // только от НАШЕЙ будущей версии, и молча выдавать её токен за нынешний
-  // нельзя.
-  if (fields.length !== 2 && fields.length !== 3) return bad;
-  const [addr, expRaw, gradeRaw] = fields;
+  const [addr, expRaw] = body.split('.');
   if (!addr || !expRaw || !ETH_ADDR_RE.test(addr)) return bad;
-
-  // Двухполевое тело — пропуск, выданный до появления сортов. Он получен
-  // подписью кошелька (другой дороги тогда не было), значит 'wallet' — это не
-  // предположение, а факт про уже выданные токены.
-  const grade = fields.length === 2 ? 'wallet' : gradeRaw;
-  if (!BAG_PASS_GRADES.includes(grade)) return bad;
 
   const expiresAt = Number(expRaw);
   if (!Number.isFinite(expiresAt)) return bad;
   if (nowSec >= expiresAt) return { error: 'Bag pass expired', code: 'pass_expired' };
 
-  return { address: addr, grade };
+  return { address: addr };
 }

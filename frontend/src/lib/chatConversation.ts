@@ -448,44 +448,6 @@ export async function deriveLinkSigningKeypair(keypair: ChatKeypair): Promise<Li
   return promise;
 }
 
-/**
- * Подписывает ПРОИЗВОЛЬНУЮ строку подписным ключом переписки. Отдаёт `0x` + 128
- * hex-цифр (Ed25519 — ровно 64 байта).
- *
- * ⚠️ ЗАЧЕМ ЭТО ЗДЕСЬ, А НЕ В ТРАНСПОРТЕ. Единственный сегодняшний вызывающий —
- * пропуск склада (`chatTransport.requestBagPass`): как только адрес объявил свою
- * открытую половину в справочнике, владение адресом доказывается этим ключом, и
- * второе окно кошелька становится ненужным (живая выкатка 8 августа: «оба просят
- * вечное подключение/подпись», человек ушёл). Но ВЫВОД ключа живёт здесь, и
- * заводить второе место, которое лезет в закрытую половину пары, значило бы
- * заводить второй ответ на вопрос «чем мы подписываем».
- *
- * ⚠️ РАЗВЯЗКА МЕТОК — ЭТО НЕ ФОРМАЛЬНОСТЬ. Ключ теперь подписывает ДВА разных
- * вида байтов: звенья цепочки и вызов склада. Звено подписывается с меткой
- * `LINK_SIGNATURE_DOMAIN` = `hexseal.chat.link.sig.v1` (ТОЧКИ), вызов склада —
- * фразой `hexseal:chat-bags:<адрес>:<время>` (ДВОЕТОЧИЯ). Ни одна из них не
- * является префиксом другой, значит подпись вызова нельзя предъявить как подпись
- * звена и наоборот. Заперто замером в `chatKeyPass.test.ts`.
- *
- * Своей метки эта функция НЕ добавляет намеренно: фразу целиком задаёт сервер
- * (`relayer/bagPass.js` `bagPassChallenge`), и подписать что-то ДРУГОЕ значило бы
- * получить отказ, который выглядел бы как «просто нужен кошелёк».
- */
-export async function signChallengeWithLinkKey(
-  keypair: ChatKeypair, challenge: string,
-): Promise<`0x${string}`> {
-  if (typeof challenge !== 'string' || challenge.length === 0) {
-    throw new TypeError('signChallengeWithLinkKey: ожидается непустая строка');
-  }
-  const signer = await deriveLinkSigningKeypair(keypair);
-  const sodium = (await import('libsodium-wrappers')).default;
-  await sodium.ready;
-  const raw = sodium.crypto_sign_detached(new TextEncoder().encode(challenge), signer.privateKey);
-  let out = '0x';
-  for (const b of raw) out += b.toString(16).padStart(2, '0');
-  return out as `0x${string}`;
-}
-
 /** Байты, которые реально подписываются: доменная метка ‖ преимидж звена. */
 export function linkSignaturePreimage(link: ChainLink): Uint8Array {
   return concat([stringToBytes(LINK_SIGNATURE_DOMAIN), hexToBytes(linkPreimage(link))]);

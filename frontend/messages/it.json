@@ -624,7 +624,7 @@
     "privacy_badge_dispute": "In caso di controversia, ciascuna parte può presentare la conversazione all’arbitro — dal proprio dispositivo.",
     "chain_gap": "Qui manca un messaggio — non è mai arrivato, oppure non è stato consegnato",
     "chain_gap_start": "L’inizio di questa conversazione non è stato presentato",
-    "pass_signature_hint": "Il tuo wallet chiede una firma: dimostra al server che questi pacchetti sono tuoi. Viene chiesta una volta per chiave di chat, quando quella chiave arriva per la prima volta nella rubrica; poi il pass lo firma la chiave stessa, senza finestre. Questa firma non tocca la chiave.",
+    "pass_signature_hint": "Il tuo wallet chiede una firma: dimostra al server che questi pacchetti sono tuoi. Di norma si ripete al massimo una volta ogni 12 ore; se il browser blocca l'archiviazione (modalità privata), una volta per caricamento della scheda. Non tocca mai la tua chiave di chat.",
     "signature_wanted": "Conferma la firma nel tuo wallet",
     "signature_wanted_pass": "Dimostra al server che questi pacchetti sono tuoi. La conversazione è già aperta: la firma serve solo a scaricare i nuovi messaggi.",
     "signature_wanted_key": "Da essa deriva la tua chiave di chat: una volta per dispositivo, poi in silenzio.",
