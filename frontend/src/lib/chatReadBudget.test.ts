@@ -171,3 +171,64 @@ describe('адресный бюджет чтения общий у вкладо�
     expect(seen.refused).toBe(0);
   }, 60_000);
 });
+
+// ─── Отсечка «свой бюджет — не отказ склада» (сквозная проверка, 8 августа) ──
+//
+// Замер, из-за которого этот замок появился: снятие ветки
+// `if (err instanceof BagBudgetError) { await sleep(waitMs); continue; }`
+// в `pollBags` даёт **0 красных из 1402**. Ни один тест не упоминал
+// `BagBudgetError` вовсе.
+//
+// Цена снятия, замерена тем же стендом: отступление уходит на потолок в пять
+// минут (сны 5000, 10000, 20000, 40000, 80000, 160000, 300000 мс), `onError`
+// зовётся восемь раз, успешных тиков ноль — и панель рисует «не удалось
+// подключиться» при полностью здоровом сервере.
+//
+// То есть предохранитель ОТ заморозки сам стал бы её причиной. Свой бюджет —
+// это наше собственное решение подождать, а не отказ склада, и путать их
+// нельзя: у отказа склада отступление осмысленно, у своего решения — нет.
+describe('свой бюджет чтения — не отказ склада', () => {
+  it('ЗАМЕР: бюджет выжжен — onError не зовётся ни разу и паузы не растут', async () => {
+    installRelayer();
+    vi.resetModules();
+    const mod = await import('./chatTransport');
+
+    // Выжигаем минутный бюджет адреса своими же чтениями.
+    for (let i = 0; i < 200; i++) {
+      try { await mod.fetchBag(PASS, `${ADDR}/burn-${i}.bin`); } catch { /* бюджет */ }
+    }
+
+    const errors: unknown[] = [];
+    const slept: number[] = [];
+    const TICKS = 6;
+    let handle!: ReturnType<typeof mod.pollBags>;
+    let resolveDone!: () => void;
+    const done = new Promise<void>(r => { resolveDone = r; });
+
+    handle = mod.pollBags({
+      getPass: () => PASS,
+      isActive: () => true,
+      onBags: () => {},
+      onError: (e: unknown) => { errors.push(e); },
+      sleep: async (ms: number) => {
+        slept.push(ms);
+        if (slept.length >= TICKS) { handle.stop(); resolveDone(); }
+      },
+    });
+    await done;
+
+    console.log(
+      `[отсечка замер] тиков ${slept.length}; сны ${JSON.stringify(slept)}; ` +
+      `onError позвали ${errors.length} раз`,
+    );
+
+    // 1. Своё решение подождать НЕ доезжает до человека как отказ связи.
+    expect(errors, 'свой бюджет доехал до экрана как отказ склада').toHaveLength(0);
+
+    // 2. И не запускает нарастающее отступление: все паузы одинаковы.
+    //    Числа записаны руками, а не взяты из модуля: иначе смена умолчания
+    //    молча переписала бы и ожидание теста.
+    expect(new Set(slept).size, `паузы поехали вверх: ${JSON.stringify(slept)}`).toBe(1);
+    expect(Math.max(...slept), 'пауза доросла до потолка отступления').toBeLessThan(300_000);
+  }, 60_000);
+});
