@@ -1288,7 +1288,12 @@ describe('В-2, обратное направление: схлопываем М
         a: ALICE,
         r: {
           v: 1, boxKey: KEY_C, updatedAt: 1500,
-          history: [{ boxKey: KEY_A, signKey: null, retiredAt: 1500 }],
+          // Форма звена истории — ровно та, что принимает _isValidHistoryEntry:
+          // `replacedAt`, а не `retiredAt`, и signKey либо годный hex, либо
+          // отсутствует вовсе (null не проходит). Первая моя редакция этого
+          // не соблюдала: строка молча отбраковывалась разбором, и тест падал
+          // не на дефекте, а на собственной заготовке.
+          history: [{ boxKey: KEY_A, replacedAt: 1500 }],
           keyChangeCount: 1,
         },
       }) + '\n',
