@@ -23,7 +23,9 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { cn, shortAddr } from "@/lib/utils";
 import { useChatSession } from "@/hooks/useChatSession";
-import { hasRecoveryCode, restoreEntryVisible } from "@/lib/chatRecovery";
+import { useWalletReach } from "@/hooks/useWalletReach";
+import { ownKeyStanding } from "@/lib/chatAnnounceStore";
+import { walletMenuChatItems } from "@/lib/walletMenuChat";
 import { SHOW_RECOVERY_EVENT, RESTORE_RECOVERY_EVENT, DISABLE_CHAT_EVENT } from "@/components/RecoveryCodeGate";
 
 
@@ -52,6 +54,24 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
     isArbiter, isOwner, canApplyAsArbiter, applyPending, handleApplyAsArbiter,
     rolesUnreadable, rolesRechecking, recheckRoles,
   } = data;
+  /**
+   * ЧТО МЕНЮ ГОВОРИТ ПРО ПЕРЕПИСКУ — одним решением, по ФАКТАМ.
+   *
+   * ⚠️ ЗАМЕР С ЖИВОГО ТЕЛЕФОНА (9 августа): чат работает, ключ на устройстве,
+   * ключ объявлен, кошелёк обычный — а меню пишет «Подключить мессенджер» и
+   * «Восстановить по коду». Оба пункта читали состояние СВОЕГО экземпляра хука,
+   * а он застревал без ключа, когда ключ заводили в другом месте страницы.
+   * Разбор — `lib/chatSessionStore.ts`; таблица решений и её замер (три
+   * состояния ключа × два рода кошелька) — `lib/walletMenuChat.ts`.
+   */
+  const { reach: walletReachState, reconnect: reconnectWallet, reconnecting } = useWalletReach();
+  const chatMenu = walletMenuChatItems({
+    hasKey: !!chatSession,
+    connecting: chatStatus === 'loading',
+    walletKind: chatSession ? chatSession.walletKind : 'unknown',
+    standing: ownKeyStanding(address),
+    reach: walletReachState,
+  });
   const { disconnectAsync } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
   // Единая точка запуска подключения: на мобильном она зовёт WalletConnect
@@ -374,7 +394,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
             <HelpCircle className="w-3.5 h-3.5" />
             {t("wallet.how_it_works")}
           </DropdownMenuItem>
-          {chatStatus === 'loading' && (
+          {chatMenu.has('connecting') && (
             <DropdownMenuItem
               disabled
               className="flex items-center gap-2.5 text-white/25"
@@ -389,7 +409,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               кошелёк (разбор в шапке `lib/chatSession.ts`). Пункт нужен,
               потому что окно закрывается «пропустить, запишу позже», и без
               этого пункта такое решение было бы окончательным. */}
-          {hasRecoveryCode(chatSession) && (
+          {chatMenu.has('show-code') && (
             <DropdownMenuItem
               onClick={() => window.dispatchEvent(new Event(SHOW_RECOVERY_EVENT))}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
@@ -402,7 +422,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               признаком: обычному кошельку он не предлагается вовсе — его
               восстановление это сам кошелёк. Без этого пункта показ кода был
               обещанием, которое некуда предъявить. */}
-          {restoreEntryVisible(chatSession) && (
+          {chatMenu.has('restore') && (
             <DropdownMenuItem
               onClick={() => window.dispatchEvent(new Event(RESTORE_RECOVERY_EVENT))}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
@@ -416,7 +436,7 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               обычному — переподписать, контрактному — потерять всю переписку
               навсегда, если код не записан. Спрашивает подтверждение
               привратник, он же знает род кошелька. */}
-          {chatStatus === 'ready' && (
+          {chatMenu.has('disable') && (
             <DropdownMenuItem
               onClick={() => window.dispatchEvent(new Event(DISABLE_CHAT_EVENT))}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
@@ -425,13 +445,32 @@ export default function WalletMenu({ data, open, onOpenChange, hideNavItems = fa
               {t("wallet.disable_messaging")}
             </DropdownMenuItem>
           )}
-          {chatStatus === 'error' && (
+          {chatMenu.has('enable') && (
             <DropdownMenuItem
               onClick={retryChat}
               className="flex items-center gap-2.5 cursor-pointer text-white/35 focus:text-white/70"
             >
               <MessageCircle className="w-3.5 h-3.5" />
               {t("wallet.enable_messaging")}
+            </DropdownMenuItem>
+          )}
+          {/* ⚠️ ЗАПРОСЫ НА ПОДПИСЬ НЕ ДОХОДЯТ — И ЭТО ВЫХОД ОДНИМ НАЖАТИЕМ.
+              Журнал живого телефона: «No matching key», «Invalid Id»,
+              «emitting session_request … without any listeners» — записи сеанса
+              WalletConnect протухли, подпись доставить некому, человек видит
+              вечное ожидание («на рэдми вообще все колом стоит»). Беда шире
+              чата: так же встанет любая подпись, включая сделки. Разбор — шапка
+              `lib/walletReach.ts`. */}
+          {chatMenu.has('reconnect-wallet') && (
+            <DropdownMenuItem
+              onClick={() => { void reconnectWallet(); }}
+              disabled={reconnecting}
+              className="flex items-center gap-2.5 cursor-pointer text-amber-400/70 focus:text-amber-300"
+            >
+              {reconnecting
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <AlertTriangle className="w-3.5 h-3.5" />}
+              {t("wallet.reconnect_wallet")}
             </DropdownMenuItem>
           )}
           {/* Протухшая подписка — это НЕ «уведомления включены».

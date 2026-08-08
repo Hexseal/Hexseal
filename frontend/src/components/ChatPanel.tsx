@@ -14,6 +14,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { usePairChat, type PairChatMessage } from '@/hooks/usePairChat';
 import { useChatSession } from '@/hooks/useChatSession';
+import { useWalletReachState } from '@/hooks/useWalletReach';
 import { useKeyAnnouncement } from '@/hooks/useKeyAnnouncement';
 import { useRecoveryReminder, RESTORE_RECOVERY_EVENT } from '@/components/RecoveryCodeGate';
 import { hasRecoveryCode } from '@/lib/chatRecovery';
@@ -429,6 +430,21 @@ export function ChatSignatureWanted(
 ) {
   const t = useTranslations();
   const why = reason === 'key' ? t("chat.signature_wanted_key") : t("chat.signature_wanted_pass");
+  /**
+   * ⚠️ ЖДЁМ ДОЛГО — ЭТО НАДО СКАЗАТЬ, А НЕ КРУТИТЬ ОЖИДАНИЕ ВЕЧНО.
+   *
+   * Журнал живого Redmi (9 августа): «No matching key», «Invalid Id»,
+   * «emitting session_request … without any listeners» — записи сеанса
+   * WalletConnect протухли, подпись доставить НЕКОМУ. Владелец: «на рэдми
+   * вообще все колом стоит, ничего не меняется».
+   *
+   * Ожидание при этом НЕ ОТМЕНЯЕТСЯ: 8 августа своя починка уже оказалась хуже
+   * дефекта, когда ожидание сочли неудачей и убили чат за пятнадцать секунд.
+   * Мы только называем состояние и указываем выход (сам выход — пункт меню
+   * кошелька, там же, где отключение: это про кошелёк, а не про чат).
+   * Правило и порог — `lib/walletReach.ts`.
+   */
+  const notAnswering = useWalletReachState();
   if (variant === 'inline') {
     return (
       <div className="mx-1 mb-2 px-3 py-2.5 rounded-[12px] bg-primary/[0.07] border border-primary/20 flex items-start gap-2">
@@ -436,6 +452,9 @@ export function ChatSignatureWanted(
         <div>
           <p className="text-sm text-white/75 font-medium">{t("chat.signature_wanted")}</p>
           <p className="text-xs text-white/45 leading-relaxed mt-0.5">{why}</p>
+          {notAnswering && (
+            <p className="text-xs text-amber-400/70 leading-relaxed mt-1">{t("chat.wallet_not_answering")}</p>
+          )}
         </div>
       </div>
     );
@@ -449,6 +468,9 @@ export function ChatSignatureWanted(
         <p className="text-white/80 text-base font-semibold mb-1.5">{t("chat.signature_wanted")}</p>
         <p className="text-white/45 text-sm max-w-sm leading-relaxed">{why}</p>
         <p className="text-white/25 text-xs max-w-sm leading-relaxed mt-2">{t("chat.signature_wanted_where")}</p>
+        {notAnswering && (
+          <p className="text-amber-400/70 text-xs max-w-sm leading-relaxed mt-2">{t("chat.wallet_not_answering")}</p>
+        )}
         {/* ⚠️ УТВЕРЖДЁННЫЙ ДЛИННЫЙ ТЕКСТ ОСТАЁТСЯ НА ЭКРАНЕ — он не заменён
             короткой версией, а стоит под ней. Короткая нужна была потому, что в
             центре читают заголовок, а не абзац; выбрасывать из-за этого

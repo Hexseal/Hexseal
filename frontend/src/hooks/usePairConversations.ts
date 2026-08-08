@@ -37,6 +37,7 @@ import { useAccount, useSignMessage } from 'wagmi';
 import { listBags, fetchBag, BagPassError, BagBudgetError, type BagSummary } from '@/lib/chatTransport';
 import { receiveBags, type IncomingBag } from '@/lib/chatConversation';
 import { BoundedParseCache } from '@/lib/chatParseCache';
+import { mergeConversationRows } from '@/lib/chatListRows';
 import type { ChatSession } from '@/lib/chatSession';
 import { useChatSession, getBagPass,
   armChatSession,
@@ -50,11 +51,38 @@ import { isSignatureDeferred } from '@/lib/chatSignatureGate';
  * подставлял `null as any` для своих собственных строк. Оставлено
  * необязательным, чтобы тот код собрался без правок; Задача 7 его убирает.
  */
+/**
+ * ПОЧЕМУ у строки нет текста последнего сообщения.
+ *
+ * ⚠️ ЗАЧЕМ ЭТО ПОЛЕ. Владелец, дословно: «какие-то нормально в списке
+ * отображаюсься, какие-то нет. гдето написано последнее сообщение а гдето нет».
+ * Пустое превью рисовалось словами «Сообщений пока нет» — то есть УТВЕРЖДЕНИЕМ,
+ * и в трёх случаях из четырёх ложным. Причины выглядели на экране одинаково,
+ * поэтому и читались как случайность.
+ *
+ * ⚠️ СОСТОЯНИЯ «ПОСЛЕДНЕЕ СЛОВО НАШЕ» ЗДЕСЬ БОЛЬШЕ НЕТ, и это правка по
+ * замечанию владельца: подписывать этот случай было НЕ починкой. Текст своего
+ * сообщения у нас есть (второй слот конверта), и он теперь показывается как
+ * везде — «Вы: …». Осталось только «ещё не загрузилось», если своего мешка не
+ * добыть (истёк срок хранения, кончился бюджет чтения, отказ склада).
+ */
+export type PreviewState =
+  /** Текст есть. */
+  | 'text'
+  /** Мешков нет ни в одну сторону. Единственный случай, где «сообщений нет» — правда. */
+  | 'none'
+  /** Мешок есть, но не скачан: кончился бюджет чтения или не досталось места. */
+  | 'pending'
+  /** Мешок скачан и НЕ вскрылся: запечатан на прежний ключ этого устройства либо испорчен. */
+  | 'unreadable';
+
 export interface PairConversation {
   peerAddress: string;
   lastText: string;
   lastAt: number;
   lastFromMe: boolean;
+  /** Почему `lastText` пуст. См. `PreviewState`. */
+  preview?: PreviewState;
   /** @deprecated наследство XMTP, никем не читается. */
   group?: unknown;
 }
@@ -113,7 +141,13 @@ export const UNKNOWN_PREVIEW_SLOTS = 8;
  * К-3): при переполнении жертва случайная, а приём изредка, поэтому доля
  * попаданий падает плавно и не обрывается в ноль.
  */
-const _previewCache = new BoundedParseCache<{ text: string; receivedAt: number }>(500);
+const _previewCache = new BoundedParseCache<{
+  text: string;
+  /** Почему текста нет. Запоминается ВМЕСТЕ с ним: иначе нечитаемый мешок,
+   *  попавший в память пустой строкой, на следующем заходе снова выдавался бы за
+   *  «сообщений нет». */
+  state: PreviewState;
+}>(500);
 
 /** Только тесты: список обязан быть проверяем с холодной памяти. */
 export function _resetPreviewCacheForTest(): void {
@@ -149,20 +183,42 @@ export async function loadPairConversations(
   const { inbox, sent, peers } = await listBags(pass, undefined, signal);
   const own = session.address.toLowerCase();
 
-  // Самый свежий ВХОДЯЩИЙ мешок на собеседника — только его и качаем.
-  const newestFrom = new Map<string, BagSummary>();
+  /**
+   * Самый свежий мешок на собеседника В ЛЮБУЮ СТОРОНУ — его одного и качаем.
+   *
+   * ⚠️ ЗДЕСЬ БЫЛА ЖИВАЯ БЕДА, И ВЛАДЕЛЕЦ НАЗВАЛ ЕЁ ДОСЛОВНО: «он не отображает
+   * сообщение отправляющего, не видит или шо». Качался ТОЛЬКО входящий мешок, и
+   * переписка, где последнее слово наше, оставалась без превью — а это самый
+   * частый случай из всех: человек написал и смотрит в список.
+   *
+   * Своя половина доступна и ничего не стоит:
+   *  - она приезжает ТЕМ ЖЕ ответом склада, полем `sent` (лишних запросов нет);
+   *  - конверт запечатан ДВУМЯ слотами, второй наш (шапка `chatEnvelope.ts`),
+   *    поэтому свой мешок читается нашей же парой ключей;
+   *  - склад отдаёт мешок и отправителю (`meta.sender === address`,
+   *    `relayer/app.js`) — это чинилось отдельно, ради второго устройства.
+   *
+   * ⚠️ И ЗАПРОСОВ НЕ ПРИБАВИЛОСЬ НИ ОДНОГО, потому что качается по-прежнему
+   * ОДИН мешок на собеседника — просто теперь самый свежий, а не самый свежий
+   * чужой. Замер: двадцать переписок в обе стороны — двадцать скачиваний.
+   */
+  const newestFor = new Map<string, { key: string; sender: string; uploadedAt: number; fromMe: boolean }>();
+  const consider = (peer: string, bag: { key: string; sender: string; uploadedAt: number; fromMe: boolean }): void => {
+    const prev = newestFor.get(peer);
+    if (!prev || bag.uploadedAt > prev.uploadedAt) newestFor.set(peer, bag);
+  };
   for (const b of inbox) {
     const from = b.sender.toLowerCase();
-    const prev = newestFrom.get(from);
-    if (!prev || b.uploadedAt > prev.uploadedAt) newestFrom.set(from, b);
+    consider(from, { key: b.key, sender: from, uploadedAt: b.uploadedAt, fromMe: false });
   }
-  // И самый свежий ИСХОДЯЩИЙ — чтобы «последнее слово за мной» отличалось от
-  // «последнее слово за ним» без чтения чужих мешков.
+  // Кому мы писали — и когда в последний раз. Нужно ДВАЖДЫ: для превью своей
+  // половины и для того, чтобы своим не считали мест среди претендентов.
   const newestTo = new Map<string, number>();
   for (const s of sent) {
     const to = s.recipient.toLowerCase();
     const prev = newestTo.get(to) ?? 0;
     if (s.uploadedAt > prev) newestTo.set(to, s.uploadedAt);
+    consider(to, { key: s.key, sender: own, uploadedAt: s.uploadedAt, fromMe: true });
   }
 
   // ─── КОМУ ДОСТАНЕТСЯ БЮДЖЕТ ПРЕВЬЮ ─────────────────────────────────────
@@ -196,12 +252,23 @@ export async function loadPairConversations(
   const rows: PairConversation[] = [];
   for (const peer of ordered) {
     const addr = peer.address.toLowerCase();
-    const summary = newestFrom.get(addr);
+    const summary = newestFor.get(addr);
     let lastText = '';
     let lastAt = 0;
     let lastFromMe = false;
+    // ⚠️ УМОЛЧАНИЕ — «мешков нет вовсе», и оно верно ровно до первой находки.
+    // Дальше каждая ветка обязана сказать свою причину: пустая строка без
+    // причины и была тем самым враньём «Сообщений пока нет».
+    let preview: PreviewState = 'none';
 
     if (summary) {
+      // Мешок ЕСТЬ. Значит «сообщений нет» уже неправда, чем бы ни кончилось
+      // дальше: не скачали — «ещё не загружено», не вскрыли — «не читается».
+      preview = 'pending';
+      // Время склада и сторона — известны СРАЗУ, из описи. Строка встаёт на своё
+      // место в списке даже когда до скачивания дело не дошло.
+      lastAt = summary.uploadedAt;
+      lastFromMe = summary.fromMe;
       const cacheKey = `${own}|${summary.key}`;
       const remembered = _previewCache.get(cacheKey);
       if (remembered) {
@@ -211,29 +278,31 @@ export async function loadPairConversations(
         // Показывается ДАЖЕ ТОМУ, кто сегодня в претенденты не попал: раз оно
         // уже есть, прятать его значило бы, что строка «потеряла» текст.
         lastText = remembered.text;
-        lastAt = remembered.receivedAt;
+        preview = remembered.state;
       } else if (!outOfReads && budget > 0 && candidates.has(addr)) {
         budget--;
         try {
           const body = await fetchBag(pass, summary.key, signal);
           if (body) {
             const bag: IncomingBag = {
-              key: summary.key, sender: summary.sender,
+              key: summary.key, sender: summary.sender as `0x${string}`,
               uploadedAt: summary.uploadedAt, body,
             };
             const state = await receiveBags(session, [bag], { peer: addr as `0x${string}` });
             const last = state.messages[state.messages.length - 1];
             if (last) {
               lastText = last.payload.text ?? last.payload.file?.name ?? '';
-              // В-2: время склада, а не слово отправителя. Иначе посторонний
-              // одним мешком с временем «2096 год» встаёт первой строкой
-              // списка НАВСЕГДА — сортировка в конце функции идёт по `lastAt`.
-              lastAt = last.receivedAt;
+              preview = lastText ? 'text' : 'unreadable';
+            } else {
+              // Скачали и не получили ни одного сообщения: мешок запечатан на
+              // прежний ключ этого устройства либо испорчен. Здесь его не
+              // прочесть НИКОГДА — и человеку надо сказать это, а не «нет».
+              preview = 'unreadable';
             }
             // Запоминается И ПУСТОЕ превью (мешок не вскрылся, не разобрался):
             // иначе нечитаемый мешок качался бы заново каждые тридцать секунд
             // вечно — ровно тот случай, ради которого память и заводится.
-            _previewCache.put(cacheKey, { text: lastText, receivedAt: lastAt });
+            _previewCache.put(cacheKey, { text: lastText, state: preview });
           }
         } catch (err) {
           // Отмена — не «сломанная строка», а уход со страницы: пробрасываем,
@@ -250,15 +319,13 @@ export async function loadPairConversations(
       }
     }
 
-    const sentAt = newestTo.get(addr) ?? 0;
-    if (sentAt > lastAt) { lastAt = sentAt; lastFromMe = true; lastText = ''; }
     // Ни одного собственного признака времени не нашлось — берём то, что
     // сказал сервер. Это НЕ время сообщения, а «когда собеседник последний
     // раз тронул что-то моё» (см. `PeerSummary`), поэтому оно только
     // запасное.
     if (lastAt === 0 && peer.lastActivityWithMeAt) lastAt = peer.lastActivityWithMeAt;
 
-    rows.push({ peerAddress: addr, lastText, lastAt, lastFromMe });
+    rows.push({ peerAddress: addr, lastText, lastAt, lastFromMe, preview });
   }
 
   // Свежие сверху — та же сортировка, что была у версии на XMTP.
@@ -324,42 +391,182 @@ export function createConversationLoader(opts: ConversationLoaderOptions): Conve
   const limit = opts.authFailureLimit ?? CONVERSATION_AUTH_FAILURE_LIMIT;
   let authFailures = 0;
   let stopped = false;
+  /**
+   * Заход в полёте. Второй зов присоединяется к нему, а не начинает свой.
+   *
+   * ⚠️ ЗАМЕР, РАДИ КОТОРОГО ЭТО ЕСТЬ: пять зовов подряд давали ПЯТЬ заходов —
+   * пять перечислений склада и до пяти раз по двадцать четыре скачивания. А
+   * зовут заход три источника сразу: интервал 30 с, возврат во вкладку и новое
+   * сообщение в открытой переписке, — и они накладываются постоянно. Бюджет
+   * чтения при этом ОБЩИЙ с открытой перепиской (120 в минуту на адрес), то
+   * есть лишние заходы отнимали чтения у самой переписки.
+   *
+   * И второе, не менее важное: два ответа, севшие в обратном порядке, ставили
+   * на экран СТАРЫЙ список поверх нового — то самое мигание, только наоборот.
+   */
+  let inFlight: Promise<void> | null = null;
 
   return {
     stopped: () => stopped,
     async run(): Promise<void> {
       if (stopped) return;
-      let stage: 'getPass' | 'load' = 'getPass';
+      if (inFlight) return inFlight;
+      const started = doRun();
+      inFlight = started;
       try {
-        const pass = await opts.getPass();
-        stage = 'load';
-        const rows = await opts.loadWithPass(pass);
-        authFailures = 0;
-        opts.onRows(rows);
-      } catch (err) {
-        // ⚠️ «ЖДЁМ НАЖАТИЯ» / «ОБЪЯВЛЯТЬ ЕЩЁ НЕЧЕМ» — НЕ НЕУДАЧА ВХОДА, и это
-        // ТОТ ЖЕ разбор, что у `pollBags` (`chatTransport.ts`). Здесь свой,
-        // ВТОРОЙ счётчик того же правила: починив только опрос открытой
-        // переписки, мы получили бы список, умирающий там, где переписка уже
-        // выжила, — и заметно это было бы только на списке, то есть в том месте,
-        // куда попадают чаще всего.
-        //
-        // Ни `onError`: человеку про это говорит `useKeyAnnouncement` словами про
-        // дело, а не «не удалось подключиться».
-        if (isSignatureDeferred(err)) return;
-        try { opts.onError?.(err); } catch { /* обработчик не должен стать новым сбоем */ }
-        const isAuthFailure = stage === 'getPass' || err instanceof BagPassError;
-        if (!isAuthFailure) return;
-        authFailures++;
-        if (authFailures >= limit) {
-          // Стоп ДО любого следующего захода — не даём человеку ещё одно окно
-          // кошелька после того, как решение «хватит» уже принято.
-          stopped = true;
-          try { opts.onAuthFailed?.(); } catch { /* тот же принцип */ }
-        }
+        await started;
+      } finally {
+        if (inFlight === started) inFlight = null;
       }
     },
   };
+
+  async function doRun(): Promise<void> {
+    let stage: 'getPass' | 'load' = 'getPass';
+    try {
+      const pass = await opts.getPass();
+      stage = 'load';
+      const rows = await opts.loadWithPass(pass);
+      authFailures = 0;
+      opts.onRows(rows);
+    } catch (err) {
+      // ⚠️ «ЖДЁМ НАЖАТИЯ» / «ОБЪЯВЛЯТЬ ЕЩЁ НЕЧЕМ» — НЕ НЕУДАЧА ВХОДА, и это
+      // ТОТ ЖЕ разбор, что у `pollBags` (`chatTransport.ts`). Здесь свой,
+      // ВТОРОЙ счётчик того же правила: починив только опрос открытой
+      // переписки, мы получили бы список, умирающий там, где переписка уже
+      // выжила, — и заметно это было бы только на списке, то есть в том месте,
+      // куда попадают чаще всего.
+      //
+      // Ни `onError`: человеку про это говорит `useKeyAnnouncement` словами про
+      // дело, а не «не удалось подключиться».
+      if (isSignatureDeferred(err)) return;
+      try { opts.onError?.(err); } catch { /* обработчик не должен стать новым сбоем */ }
+      const isAuthFailure = stage === 'getPass' || err instanceof BagPassError;
+      if (!isAuthFailure) return;
+      authFailures++;
+      if (authFailures >= limit) {
+        // Стоп ДО любого следующего захода — не даём человеку ещё одно окно
+        // кошелька после того, как решение «хватит» уже принято.
+        stopped = true;
+        try { opts.onAuthFailed?.(); } catch { /* тот же принцип */ }
+      }
+    }
+  }
+}
+
+/* ─────────────── состояние списка ОДНИМ объектом (мигание) ─────────────── */
+
+/**
+ * Всё, что список знает о себе. ОДНИМ объектом, а не четырьмя отдельными
+ * состояниями, и это правка, а не уборка.
+ *
+ * ⚠️ ЧТО БЫЛО. `setIsLoading(true)` → загрузка → `setConversations(новые)` →
+ * `setIsLoading(false)`: три обновления состояния на КАЖДЫЙ фоновый заход, из
+ * них два — с признаком «загружаем», который разметка читала как «рисуй
+ * заготовки строк». Владелец, дословно: «постоянно сам обновляет скидывая весь
+ * фронт до скелетона… с такими прыжками надо дисклеймер вещать о эпелепсии».
+ *
+ * ⚠️ ЧТО СТАЛО И ПОЧЕМУ ИМЕННО ТАК. Переходы ниже возвращают ТОТ ЖЕ объект,
+ * если ничего не изменилось, — а `setState` с тем же объектом React гасит сам
+ * (`Object.is`, его собственное правило). То есть «ноль перерисовок на тике без
+ * изменений» — это не бережность разметки, а отсутствие самого обновления.
+ *
+ * И признак «загружаем» больше не может подняться при непустом списке ПО
+ * ПОСТРОЕНИЮ (см. `listStarted`): не «мы стараемся так не делать», а «сделать
+ * иначе нечем».
+ */
+export interface ConversationListState {
+  /**
+   * Чьи это строки. Хранится В СОСТОЯНИИ, а не в отдельной ссылке рядом:
+   * решение «гасить или нет» обязано быть чистой функцией от того, что уже
+   * лежит, — иначе его не замерить (см. `listForKnownAddress`).
+   */
+  address: string | null;
+  rows: PairConversation[];
+  /** Первый заход: показывать нечего И ждём сеть. Только это — заготовки строк. */
+  loading: boolean;
+  /** Код отказа последнего захода. Снимается успехом, а не началом следующего. */
+  error: string | null;
+}
+
+export const EMPTY_LIST_STATE: ConversationListState = {
+  address: null, rows: [], loading: false, error: null,
+};
+
+/**
+ * Заход начался.
+ *
+ * ⚠️ ПРИЗНАКА «ФОНОВЫЙ ЗАХОД В ПОЛЁТЕ» ЗДЕСЬ НЕТ НАРОЧНО. Он был, и он один
+ * стоил бы обновления состояния на каждом тике — то есть перерисовки страницы
+ * ради вращения значка, которого никто не просил. Крутить значок обязано ТОЛЬКО
+ * нажатие человека, а его помнит сама страница.
+ */
+export function listStarted(prev: ConversationListState): ConversationListState {
+  // ⚠️ ЗДЕСЬ ВСЁ РЕШЕНИЕ: при непустом списке «загружаем» не поднимается
+  // НИКОГДА. Прежний код ставил его безусловно, и разметка честно рисовала
+  // заготовки поверх готовых строк.
+  const loading = prev.rows.length === 0;
+  if (prev.loading === loading) return prev;
+  return { ...prev, loading };
+}
+
+/** Заход принёс строки. */
+export function listRows(
+  prev: ConversationListState,
+  rows: readonly PairConversation[],
+): ConversationListState {
+  const merged = mergeConversationRows(prev.rows, rows);
+  // Успех снимает отказ — и только успех. Начало захода его больше не трогает:
+  // моргавший туда-сюда отказ и был половиной мигания.
+  if (merged === prev.rows && prev.error === null) return prev;
+  return { ...prev, rows: merged, error: null };
+}
+
+/** Заход отказал. Строки остаются: их отсутствие — не новость об отказе. */
+export function listFailed(prev: ConversationListState, code: string): ConversationListState {
+  if (prev.error === code) return prev;
+  return { ...prev, error: code };
+}
+
+/** Заход кончился, чем бы ни кончился. */
+export function listSettled(prev: ConversationListState): ConversationListState {
+  if (!prev.loading) return prev;
+  return { ...prev, loading: false };
+}
+
+/** Начальное состояние для адреса: что есть в памяти, то и показываем сразу. */
+export function listForAddress(
+  cached: PairConversation[] | undefined,
+  address?: string,
+): ConversationListState {
+  return { ...EMPTY_LIST_STATE, address: address ?? null, rows: cached ?? [] };
+}
+
+/**
+ * Адрес кошелька изменился — гасить список или нет.
+ *
+ * ⚠️ «ПРОПАЛ» И «СМЕНИЛСЯ» — РАЗНЫЕ ВЕЩИ, И ЭТО ТРЕТЬЯ ДОРОГА К «РЕСЕТУ ДО
+ * СКЕЛЕТОНА». Кошелёк на телефоне переподключается сам: возврат в приложение,
+ * смена сети, пробуждение вкладки — и на миг `useAccount()` отдаёт `undefined`.
+ * Прежний код гасил список на ЛЮБУЮ смену, включая эту: строки исчезали,
+ * показывать становилось нечего, поднимались заготовки, потом адрес возвращался
+ * и строки приезжали обратно. Ровно то мигание, про которое сказано «с такими
+ * прыжками надо дисклеймер вещать о эпелепсии».
+ *
+ * Гасить надо на СМЕНУ АККАУНТА, и причина у этого одна: не показать человеку
+ * ЧУЖИЕ переписки. Пропажа своего адреса чужих переписок не создаёт — значит и
+ * гасить нечего. А если после пропажи пришёл ДРУГОЙ адрес, это всё та же смена
+ * аккаунта, и она гасит: адрес прежних строк лежит в самом состоянии, лазейки
+ * «через пропажу» нет.
+ */
+export function listForKnownAddress(
+  prev: ConversationListState,
+  addrLc: string | undefined,
+  cached: (addr: string) => PairConversation[] | undefined,
+): ConversationListState {
+  if (!addrLc) return prev;
+  if (prev.address === addrLc) return prev;
+  return listForAddress(cached(addrLc), addrLc);
 }
 
 /* ──────────────────────────────── хук ─────────────────────────────────── */
@@ -378,10 +585,18 @@ export function usePairConversations(isEnabled = false) {
   useEffect(() => { armChatSession(); }, []);
 
   const addrLc = address?.toLowerCase();
-  const [conversations, setConversations] = useState<PairConversation[]>(() =>
-    addrLc ? (_convCache.get(addrLc) ?? []) : []
+  /**
+   * ОДНО состояние на весь список — строки, «загружаем» и код отказа вместе.
+   *
+   * ⚠️ ТРИ ОТДЕЛЬНЫХ СОСТОЯНИЯ И БЫЛИ МИГАНИЕМ. Каждое обновлялось само, и на
+   * каждый фоновый заход приходилось три перерисовки, из них две — с поднятым
+   * «загружаем». Здесь переход возвращает ТОТ ЖЕ объект, если ничего не
+   * изменилось, и React гасит обновление сам: тик, который ничего не принёс,
+   * стоит НОЛЬ перерисовок (замер — `hooks/pairConversationsNoFlicker.test.ts`).
+   */
+  const [list, setList] = useState<ConversationListState>(() =>
+    listForAddress(addrLc ? _convCache.get(addrLc) : undefined, addrLc)
   );
-  const [isLoading, setIsLoading] = useState(false);
   /**
    * Окно кошелька за пропуском склада открыто ПРЯМО СЕЙЧАС.
    *
@@ -392,7 +607,6 @@ export function usePairConversations(isEnabled = false) {
    * приложении круг через кошелёк идёт минутами) и уходил.
    */
   const [passSignaturePending, setPassSignaturePending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
   const addressRef = useRef(address);
@@ -401,11 +615,12 @@ export function usePairConversations(isEnabled = false) {
   // Список гасится в тот же миг, когда сменился адрес — не после того, как
   // загрузка доедет. Иначе после смены аккаунта на том же устройстве человек
   // видел бы ЧУЖИЕ переписки, пока не разрешится запрос.
-  const prevAddrRef = useRef(addrLc);
+  //
+  // ⚠️ НО ТОЛЬКО НА СМЕНУ, А НЕ НА ПРОПАЖУ. Разбор и замер — в
+  // `listForKnownAddress`: моргнувший кошелёк уносил список с экрана и
+  // возвращал его через миг.
   useEffect(() => {
-    if (prevAddrRef.current === addrLc) return;
-    prevAddrRef.current = addrLc;
-    setConversations(addrLc ? (_convCache.get(addrLc) ?? []) : []);
+    setList(prev => listForKnownAddress(prev, addrLc, (a) => _convCache.get(a)));
   }, [addrLc]);
 
   // Загрузчик со счётчиком неудач входа. Живёт в ref, а не пересоздаётся на
@@ -433,26 +648,33 @@ export function usePairConversations(isEnabled = false) {
         ),
         loadWithPass: (pass) => loadPairConversations(sessionRef.current as ChatSession, pass),
         onRows: (rows) => {
-          const a = addressRef.current;
-          if (a) _convCache.set(a.toLowerCase(), rows);
-          setConversations(rows);
+          setList((prev) => {
+            const next = listRows(prev, rows);
+            // В памяти — то, что СШИТО, а не то, что приехало: иначе следующее
+            // открытие списка получило бы из кэша новые ссылки на те же строки
+            // и перерисовало бы их все.
+            const a = addressRef.current;
+            if (a) _convCache.set(a.toLowerCase(), next.rows);
+            return next;
+          });
         },
         onError: (err) => {
           // Код отдельным полем, текст запасным: разбор английского запрещён.
-          setError((err as { code?: string })?.code ?? (err instanceof Error ? err.message : 'Failed to load conversations'));
+          setList((prev) => listFailed(prev,
+            (err as { code?: string })?.code
+            ?? (err instanceof Error ? err.message : 'Failed to load conversations')));
         },
         onAuthFailed: () => { setAuthFailed(true); },
       });
     }
-    setIsLoading(true);
-    setError(null);
+    setList(listStarted);
     try {
       await loaderRef.current.run();
     } finally {
       // ОБЯЗАТЕЛЬНО в `finally`: успешная загрузка, вернувшая ПУСТОЙ список,
       // иначе оставляла бы скелетон навсегда — исправная работа притворялась
       // бы поломкой. Урок прежней версии этого файла, не повторяем.
-      setIsLoading(false);
+      setList(listSettled);
     }
   }, [signMessageAsync]);
 
@@ -490,7 +712,12 @@ export function usePairConversations(isEnabled = false) {
   }, [ready, load]);
 
   return {
-    conversations, isLoading, error, reload: load,
+    conversations: list.rows,
+    /** Заготовки строк. Поднимается ТОЛЬКО когда показывать нечего — разбор в
+     *  докстринге `listStarted`. */
+    isLoading: list.loading,
+    error: list.error,
+    reload: load,
     /** Окно кошелька за пропуском открыто прямо сейчас — экран обязан сказать,
      *  чего ждут, а не крутить заготовки строк. */
     passSignaturePending,
