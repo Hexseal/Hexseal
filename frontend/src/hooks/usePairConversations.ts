@@ -371,6 +371,16 @@ export function usePairConversations(isEnabled = false) {
     addrLc ? (_convCache.get(addrLc) ?? []) : []
   );
   const [isLoading, setIsLoading] = useState(false);
+  /**
+   * Окно кошелька за пропуском склада открыто ПРЯМО СЕЙЧАС.
+   *
+   * ⚠️ ЗАЧЕМ НАРУЖУ. Живая выкатка 8 августа, дословно: «оба просят вечное
+   * подключение/подпись» — оба, то есть и открытая переписка, и этот список.
+   * Пока признака не было, страница рисовала три пульсирующие заготовки строк
+   * и молчала: человек видел «что-то грузится» минутами (в установленном
+   * приложении круг через кошелёк идёт минутами) и уходил.
+   */
+  const [passSignaturePending, setPassSignaturePending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
@@ -403,7 +413,8 @@ export function usePairConversations(isEnabled = false) {
         // РЯДОМ с открытой перепиской, и лишнее окно кошелька здесь — это
         // второй одновременный запрос в кошелёк, то есть `-32002`.
         getPass: () => getBagPass(
-          addressRef.current as `0x${string}`, signMessageAsync, undefined, sessionRef.current,
+          addressRef.current as `0x${string}`, signMessageAsync, setPassSignaturePending,
+          sessionRef.current,
         ),
         loadWithPass: (pass) => loadPairConversations(sessionRef.current as ChatSession, pass),
         onRows: (rows) => {
@@ -465,6 +476,9 @@ export function usePairConversations(isEnabled = false) {
 
   return {
     conversations, isLoading, error, reload: load,
+    /** Окно кошелька за пропуском открыто прямо сейчас — экран обязан сказать,
+     *  чего ждут, а не крутить заготовки строк. */
+    passSignaturePending,
     /** Опрос остановлен: пропуск не восстанавливается, нужен новый вход.
      *  Наружное поле, а не молчание, — иначе список просто перестал бы
      *  обновляться и никто не понял бы почему. */

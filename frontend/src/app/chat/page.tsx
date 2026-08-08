@@ -10,7 +10,7 @@ import { usePairConversations } from '@/hooks/usePairConversations';
 import { useChatSession } from '@/hooks/useChatSession';
 import { ChatOffScreen } from '@/components/ChatOffScreen';
 import { useProfile } from '@/hooks/useProfile';
-import { ChatPanel } from '@/components/ChatPanel';
+import { ChatPanel, ChatSignatureWanted } from '@/components/ChatPanel';
 import { Button } from '@/components/ui/button';
 import { DIAMOND_ABI, CONTRACTS, AGREEMENT_ABI } from '@/config/contracts';
 import { MessageCircle, Loader2, RefreshCw, Plus, Lock, Briefcase, User, X, ArrowRight } from 'lucide-react';
@@ -219,8 +219,18 @@ function ChatHubPageInner() {
   const searchParams = useSearchParams();
   const initialPeer  = searchParams.get('peer')?.toLowerCase() ?? null;
 
-  const { status: sessionStatus, retry: retrySession, errorCode: sessionErrorCode } = useChatSession();
-  const { conversations, isLoading, error, reload } = usePairConversations(sessionStatus === 'ready');
+  const {
+    status: sessionStatus, retry: retrySession, errorCode: sessionErrorCode,
+    keySignaturePending = false,
+  } = useChatSession();
+  const {
+    conversations, isLoading, error, reload, passSignaturePending = false,
+  } = usePairConversations(sessionStatus === 'ready');
+  // Окно кошелька открыто ПРЯМО СЕЙЧАС — по одной из двух причин, и слова у
+  // них разные (см. `ChatSignatureWanted`). Ключ старше пропуска: если ждут
+  // обе подписи, человек ждёт первую.
+  const signatureReason: 'pass' | 'key' | null =
+    keySignaturePending ? 'key' : passSignaturePending ? 'pass' : null;
 
   // selected is URL-driven: ?peer=addr — router.back() returns to /chat (list view)
   const selected = searchParams.get('peer')?.toLowerCase() ?? null;
@@ -566,7 +576,16 @@ function ChatHubPageInner() {
             </div>
           )}
 
-          {(isLoading || sessionStatus === 'loading') && conversations.length === 0 && (
+          {/* ⚠️ ЖДЁМ ПОДПИСЬ — ВМЕСТО ЗАГОТОВОК СТРОК, и это правка, а не оформление.
+              Заготовки говорят «сейчас будет», и это правда, только если ждут
+              сеть. Когда ждут ЧЕЛОВЕКА, они врут: он смотрит на пульсирующие
+              полоски минутами (круг через приложение кошелька) и уходит. Живая
+              выкатка 8 августа — дословно так и произошло. */}
+          {signatureReason && conversations.length === 0 && (
+            <ChatSignatureWanted reason={signatureReason} variant="full" />
+          )}
+
+          {!signatureReason && (isLoading || sessionStatus === 'loading') && conversations.length === 0 && (
             <div className="space-y-2">
               {[1, 2, 3].map(i => (
                 <div key={i} className="flex items-center gap-3.5 px-3 py-2.5 rounded-[16px] border border-white/[0.04] bg-white/[0.02]">
