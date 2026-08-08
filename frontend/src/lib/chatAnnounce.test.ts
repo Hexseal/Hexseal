@@ -13,11 +13,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  announceNeedsPress, announceMayAuto, standingFromDirectory,
+  announceNeedsPress, announceMayAuto, standingFromDirectory, attemptAfterFailure, mailboxWorthPolling,
   type KeyStanding, type AnnounceAttempt,
 } from '@/lib/chatAnnounce';
 import { ChatDirectoryError } from '@/hooks/useChatSession';
-import type { SignatureGateVerdict } from '@/lib/chatSignatureGate';
+import { ChatSignatureDeferred, type SignatureGateVerdict } from '@/lib/chatSignatureGate';
 
 const MINE = new Uint8Array(32).fill(7);
 const OTHER = new Uint8Array(32).fill(9);
@@ -107,6 +107,68 @@ describe('кнопку показывать — когда именно', () => 
 
   it('страница скрыта — кнопки нет: показывать некому, ждём', () => {
     expect(press({ gate: 'page_hidden' })).toBe(false);
+  });
+});
+
+describe('опрашивать ли ящик — то есть брать ли пропуск', () => {
+  it('пока справочник не прочитан — НЕТ: не просим пропуск наперёд', () => {
+    // Находка замера, а не осторожность: на повторном заходе с телефона подписи
+    // нет, порог говорит «можно», и опрос успевал взять пропуск ДО того, как
+    // выяснится, что объявлять нечего.
+    expect(mailboxWorthPolling('unknown')).toBe(false);
+  });
+
+  it('точно знаем, что писать нам некуда — НЕТ', () => {
+    expect(mailboxWorthPolling('absent')).toBe(false);
+    expect(mailboxWorthPolling('other_key')).toBe(false);
+  });
+
+  it('объявлены — ДА', () => { expect(mailboxWorthPolling('mine')).toBe(true); });
+
+  it('справочник недоступен — ДА, отказ в сторону работы', () => {
+    // ⚠️ Намеренно. Опрос блокируется только тогда, когда мы ПОЛОЖИТЕЛЬНО знаем,
+    // что написать нам нельзя. Иначе один отказавший запрос к справочнику
+    // означал бы чат, молчащий навсегда, — хуже лишнего пропуска.
+    expect(mailboxWorthPolling('unreachable')).toBe(true);
+  });
+});
+
+describe('«ещё не время» и «не удалось» — разные исходы', () => {
+  // ⚠️ ЭТОТ БЛОК НАЙДЕН МУТАЦИЕЙ, А НЕ РАССУЖДЕНИЕМ. Мутация «считать отказ
+  // порога неудачей» прошла ЗЕЛЁНОЙ на 54 замерах — то есть различие,
+  // выписанное в коде отдельной веткой с абзацем объяснения, не сторожил никто.
+  //
+  // Цена промаха — ровно требование 6. Десктоп, у которого видимость моргнула
+  // один раз (восстановление вкладки, переключение окна): порог отказывает,
+  // отказ записывается в `failed`, `announceMayAuto` больше НИКОГДА не вернёт
+  // true (`attempt !== 'none'`) — и на десктопе появляется кнопка, которой там
+  // быть не должно.
+  it('отказ порога НЕ становится «не удалось»', () => {
+    for (const reason of ['page_hidden', 'needs_press', 'not_announced'] as const) {
+      expect(attemptAfterFailure(new ChatSignatureDeferred(reason)), reason).toBe('none');
+    }
+  });
+
+  it('настоящий отказ становится «не удалось»', () => {
+    // Замок, который горит всегда, — не замок.
+    expect(attemptAfterFailure(new Error('сеть'))).toBe('failed');
+    expect(attemptAfterFailure(new ChatDirectoryError('503', 'directory_unavailable'))).toBe('failed');
+    expect(attemptAfterFailure('мусор вместо ошибки')).toBe('failed');
+    expect(attemptAfterFailure(null)).toBe('failed');
+  });
+
+  it('СЛЕДСТВИЕ: после отказа порога автоматика на десктопе жива', () => {
+    // Главное. Мерится не классификация сама по себе, а то, ради чего она есть.
+    const after = attemptAfterFailure(new ChatSignatureDeferred('page_hidden'));
+    expect(announceMayAuto({
+      keyOnDevice: true, standing: 'absent', attempt: after, gate: 'go',
+    }), 'десктоп потерял автоматику из-за одного моргания видимости').toBe(true);
+  });
+
+  it('СЛЕДСТВИЕ: после настоящего отказа автоматика молчит, а кнопка есть', () => {
+    const after = attemptAfterFailure(new Error('сеть'));
+    expect(announceMayAuto({ keyOnDevice: true, standing: 'absent', attempt: after, gate: 'go' })).toBe(false);
+    expect(announceNeedsPress({ keyOnDevice: true, standing: 'absent', attempt: after, gate: 'go' })).toBe(true);
   });
 });
 

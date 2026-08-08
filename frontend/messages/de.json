@@ -679,7 +679,12 @@
     "bags_failed": "Einige Nachrichten konnten nicht aus dem Speicher geholt werden. Sie sind nicht verloren — versuchen Sie, die Verbindung neu aufzubauen.",
     "push_no_pass": "Benachrichtigung nicht gesendet: auf diesem Gerät gibt es keine Chat-Sitzung.",
     "push_rate_limited": "Benachrichtigungen gehen zu häufig raus — diese wurde übersprungen. Warten Sie kurz.",
-    "push_error": "Die Benachrichtigung konnte nicht gesendet werden. Ihre Nachricht wurde zugestellt, die andere Person sieht sie aber erst beim Öffnen des Chats."
+    "push_error": "Die Benachrichtigung konnte nicht gesendet werden. Ihre Nachricht wurde zugestellt, die andere Person sieht sie aber erst beim Öffnen des Chats.",
+    "key_unannounced_title": "Ihnen kann noch niemand schreiben",
+    "key_unannounced_body": "Ihr Schlüssel ist erstellt, aber noch weiß niemand davon.",
+    "key_unannounced_call": "Bestätigen Sie in Ihrer Wallet — dann findet man Sie.",
+    "key_unannounced_action": "Bestätigen",
+    "key_unannounced_confirming": "Wird bestätigt…"
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

@@ -679,7 +679,12 @@
     "bags_failed": "Alcuni messaggi non sono stati prelevati dall’archivio. Non sono persi: provi a riconnettersi.",
     "push_no_pass": "Notifica non inviata: su questo dispositivo non c’è una sessione di chat.",
     "push_rate_limited": "Le notifiche partono troppo spesso: questa è stata saltata. Attenda un momento.",
-    "push_error": "Non è stato possibile inviare la notifica. Il messaggio è stato consegnato, ma l’altra persona lo vedrà solo aprendo la chat."
+    "push_error": "Non è stato possibile inviare la notifica. Il messaggio è stato consegnato, ma l’altra persona lo vedrà solo aprendo la chat.",
+    "key_unannounced_title": "Nessuno può ancora scriverti",
+    "key_unannounced_body": "La tua chiave è creata, ma nessuno la conosce ancora.",
+    "key_unannounced_call": "Conferma nel tuo wallet e ti troveranno.",
+    "key_unannounced_action": "Conferma",
+    "key_unannounced_confirming": "Conferma in corso…"
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

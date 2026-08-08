@@ -162,7 +162,9 @@ describe('ЗАМЕР: ключ на устройстве, но не объявл
         address: env.address,
         session: env.session,
         humanAsked: true,
-        getPass: (opts) => env.chatSession.getBagPass(env.address, env.phoneSigner, undefined, opts),
+        getPass: (opts) => env.chatSession.getBagPass(
+          env.address, env.phoneSigner, undefined, { ...opts, purpose: 'announce' as const },
+        ),
         publish: env.chatSession.publishChatKeys,
       });
 
@@ -201,7 +203,9 @@ describe('ЗАМЕР: ключ на устройстве, но не объявл
         address: env.address,
         session: env.session,
         humanAsked: false,
-        getPass: (opts) => env.chatSession.getBagPass(env.address, env.phoneSigner, undefined, opts),
+        getPass: (opts) => env.chatSession.getBagPass(
+          env.address, env.phoneSigner, undefined, { ...opts, purpose: 'announce' as const },
+        ),
         publish: env.chatSession.publishChatKeys,
       })).rejects.toSatisfy((e: unknown) => env.gate.isSignatureDeferred(e));
 
@@ -224,7 +228,8 @@ describe('ЗАМЕР: ключ на устройстве, но не объявл
         session: env.session,
         humanAsked: false,
         getPass: (opts) => env.chatSession.getBagPass(
-          env.address, async ({ message }) => wallet.signMessage(message), undefined, opts,
+          env.address, async ({ message }) => wallet.signMessage(message), undefined,
+          { ...opts, purpose: 'announce' as const },
         ),
         publish: env.chatSession.publishChatKeys,
       });
@@ -260,7 +265,8 @@ describe('ЗАМЕР: пропуск по отсутствию СОБЕСЕДН�
       await env.announce.announceOwnKey({
         address: env.address, session: env.session, humanAsked: true,
         getPass: (opts) => env.chatSession.getBagPass(
-          env.address, async ({ message }) => alice.signMessage(message), undefined, opts,
+          env.address, async ({ message }) => alice.signMessage(message), undefined,
+          { ...opts, purpose: 'announce' as const },
         ),
         publish: env.chatSession.publishChatKeys,
       });

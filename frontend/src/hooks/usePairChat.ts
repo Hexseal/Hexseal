@@ -70,6 +70,7 @@ import {
 } from './useChatSession';
 import { uploadFileWithEncryption } from '@/lib/fileStorage';
 import { notifyPush, type PushOutcome } from '@/lib/webpush';
+import { useKeyAnnouncement } from './useKeyAnnouncement';
 
 /* ─────────────────────────── наружная форма ───────────────────────────── */
 
@@ -1079,6 +1080,12 @@ export function usePairChat(peerAddress: string, dealId?: string) {
   // живёт в шапке (находка К-3).
   useEffect(() => { armChatSession(); }, []);
 
+  // Объявлен ли НАШ ключ в справочнике. Спрашивается здесь, а не в шапке: хук
+  // ходит в справочник, а шапка живёт на каждой странице. Отсюда же берётся
+  // признак `keyNotAnnounced` — единственная новость, которую панель обязана
+  // сказать словами и вылечить кнопкой.
+  const announcement = useKeyAnnouncement();
+
   const peerLc = peerAddress.toLowerCase();
   const myLc = address?.toLowerCase() ?? '';
   const pairKey = `${myLc}:${peerLc}`;
@@ -1146,6 +1153,12 @@ export function usePairChat(peerAddress: string, dealId?: string) {
       peer: peerAddress as `0x${string}`,
       // Единственное место подписи во всём чате — и оно под общим мьютексом
       // кошелька (`getBagPass`, см. его докстринг).
+      //
+      // ⚠️ ПОКА НАШ КЛЮЧ НЕ ОБЪЯВЛЕН, `getBagPass` САМА ОТКАЗЫВАЕТ — порог стоит
+      // там, на единственной дороге к пропуску (разбор, почему не здесь, — в её
+      // докстринге: проверка в хуке не сторожится ничем). Отказ приезжает
+      // `ChatSignatureDeferred`, и `pollBags` его не считает неудачей входа:
+      // опрос ждёт и тикает, объявится ключ — следующий же тик пройдёт.
       getPass: () => getBagPass(address, signMessageAsync, setPassSignaturePending),
       isActive: () => activeRef.current,
       // Сделка, в контексте которой открыт чат. Метку на каждое сообщение
@@ -1333,6 +1346,19 @@ export function usePairChat(peerAddress: string, dealId?: string) {
     bagsFailed: engineState.bagsFailed,
     /** Окно кошелька за пропуском склада открыто прямо сейчас. */
     passSignaturePending,
+    /**
+     * Ключ на устройстве есть, а в справочнике его нет — НАМ НЕЛЬЗЯ НАПИСАТЬ, и
+     * человек обязан это увидеть. Тихая поломка до 8 августа: ключ выведен,
+     * никому не объявлен, экран показывает обычный чат.
+     *
+     * `false` на десктопе всегда: там объявление проходит само, и мигать надписью
+     * у того, у кого всё в порядке, нельзя (разбор — `lib/chatAnnounce.ts`).
+     */
+    keyNotAnnounced: announcement.needsPress,
+    /** Объявление идёт прямо сейчас — кнопка занята. */
+    announcing: announcement.busy,
+    /** Нажатие человека: единственная дорога к подписи, когда кошелёк снаружи. */
+    announceKey: announcement.announce,
     /** Ключ переписки не лёг на устройство — см. `sessionStorageNotice`. */
     storageNotice,
     /**

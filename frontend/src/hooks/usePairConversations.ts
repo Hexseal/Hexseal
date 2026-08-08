@@ -41,6 +41,7 @@ import type { ChatSession } from '@/lib/chatSession';
 import { useChatSession, getBagPass,
   armChatSession,
 } from './useChatSession';
+import { isSignatureDeferred } from '@/lib/chatSignatureGate';
 
 /**
  * Строка списка в том виде, в каком её ждёт `app/chat/page.tsx`. Форма
@@ -336,6 +337,16 @@ export function createConversationLoader(opts: ConversationLoaderOptions): Conve
         authFailures = 0;
         opts.onRows(rows);
       } catch (err) {
+        // ⚠️ «ЖДЁМ НАЖАТИЯ» / «ОБЪЯВЛЯТЬ ЕЩЁ НЕЧЕМ» — НЕ НЕУДАЧА ВХОДА, и это
+        // ТОТ ЖЕ разбор, что у `pollBags` (`chatTransport.ts`). Здесь свой,
+        // ВТОРОЙ счётчик того же правила: починив только опрос открытой
+        // переписки, мы получили бы список, умирающий там, где переписка уже
+        // выжила, — и заметно это было бы только на списке, то есть в том месте,
+        // куда попадают чаще всего.
+        //
+        // Ни `onError`: человеку про это говорит `useKeyAnnouncement` словами про
+        // дело, а не «не удалось подключиться».
+        if (isSignatureDeferred(err)) return;
         try { opts.onError?.(err); } catch { /* обработчик не должен стать новым сбоем */ }
         const isAuthFailure = stage === 'getPass' || err instanceof BagPassError;
         if (!isAuthFailure) return;
@@ -413,6 +424,10 @@ export function usePairConversations(isEnabled = false) {
         // рисовал три пульсирующие заготовки строк, пока висело окно кошелька,
         // и не говорил ни слова о том, что ждут человека. Замер и разбор — в
         // докстринге самого признака выше.
+        //
+        // ⚠️ Пока наш ключ не объявлен, `getBagPass` сама отказывает — порог стоит
+        // там, на единственной дороге к пропуску. Список заведомо пуст: запечатать
+        // нам нельзя ничего (разбор — шапка `lib/chatAnnounce.ts`).
         getPass: () => getBagPass(
           addressRef.current as `0x${string}`, signMessageAsync, setPassSignaturePending,
         ),

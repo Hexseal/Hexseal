@@ -115,3 +115,38 @@ describe('ЗАМЕР: ожидание нажатия не убивает опр
     expect(grown, `отступление разогналось: ${JSON.stringify(sleeps.slice(0, 6))}`).toEqual([]);
   });
 });
+
+describe('ЗАМЕР: список переписок — тот же счётчик, та же беда', () => {
+  it('ожидание нажатия не останавливает загрузчик списка навсегда', async () => {
+    // ⚠️ ВТОРОЙ счётчик неудач входа живёт в `createConversationLoader` — своя
+    // копия того же правила, со своим пределом. Починив только `pollBags`, мы
+    // получили бы список переписок, умирающий ровно там, где открытая переписка
+    // уже выжила: половина беды исправлена, половина нет, и заметно это только
+    // на списке — то есть в том месте, куда попадают чаще всего.
+    const { createConversationLoader } = await import('@/hooks/usePairConversations');
+
+    let authFailed = 0;
+    let deferUntilPress = true;
+    let rows = 0;
+
+    const loader = createConversationLoader({
+      getPass: () => {
+        if (deferUntilPress) throw new ChatSignatureDeferred('not_announced');
+        return 'v1.p';
+      },
+      loadWithPass: async () => { rows++; return []; },
+      onRows: () => {},
+      onAuthFailed: () => { authFailed++; },
+    });
+
+    // Заходов заведомо больше предела (3).
+    for (let i = 0; i < 6; i++) await loader.run();
+
+    expect(authFailed, 'ожидание зачли за неудачу входа и остановили список').toBe(0);
+    expect(loader.stopped(), 'загрузчик остановлен — нажатие уже ничего не даст').toBe(false);
+
+    deferUntilPress = false;
+    await loader.run();
+    expect(rows, 'после нажатия список так и не загрузился').toBe(1);
+  });
+});

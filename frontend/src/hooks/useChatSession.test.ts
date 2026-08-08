@@ -312,6 +312,15 @@ describe('слишком длинное сообщение получает от
 
 /* ─────────── В-1/В-2: ОБА пути подписи под общим мьютексом ─────────── */
 
+/* ⚠️ ВЕЗДЕ НИЖЕ `purpose: 'announce'`, И ЭТО НЕ ОСЛАБЛЕНИЕ ЗАМКА.
+ * У пропуска два назначения. Пропуск РАДИ ЯЩИКА `getBagPass` теперь отказывает
+ * сама, пока свой ключ не объявлен в справочнике: запечатать нам нельзя ничего,
+ * значит на складе для нас нет ни одного мешка и подписывать нечего (требование
+ * «ноль запросов пропуска», замер — `hooks/chatAnnounceStore.test.ts`).
+ * Пропуск РАДИ ОБЪЯВЛЕНИЯ этим порогом не отсекается — иначе вышло бы кольцо.
+ * Замки ниже про ОКНО КОШЕЛЬКА и про мьютекс, а до окна доходит именно этот
+ * вызов; оставив умолчание, они мерили бы отказ порога, а не то, ради чего
+ * заведены. */
 describe('мьютекс кошелька доказывается удержанием, а не строкой импорта', () => {
   // В-2 независимой проверки: гейт `lib/signaturePaths.test.ts` смотрит на
   // НАЛИЧИЕ строки импорта — «снять замок, импорт оставить» давало 0 красных
@@ -328,7 +337,7 @@ describe('мьютекс кошелька доказывается удержа�
     const signMessageAsync = vi.fn(async () => { signs++; return sig('11'); });
 
     const release = await acquireWalletLock(ALICE);
-    const pending = getBagPass(ALICE, signMessageAsync);
+    const pending = getBagPass(ALICE, signMessageAsync, undefined, { purpose: 'announce' });
     await new Promise(r => setTimeout(r, 30));
     expect(signs).toBe(0);          // держатель чужой — окна нет
 
@@ -372,7 +381,8 @@ describe('мьютекс кошелька доказывается удержа�
 
     const a = signChatKeyLocked(ALICE, async () => { order.push('typed:start'); await firstDone; order.push('typed:end'); return sig('22'); });
     await new Promise(r => setTimeout(r, 10));
-    const b = getBagPass(ALICE, async () => { order.push('msg:start'); return sig('11'); });
+    const b = getBagPass(ALICE, async () => { order.push('msg:start'); return sig('11'); },
+      undefined, { purpose: 'announce' });
     await new Promise(r => setTimeout(r, 10));
 
     expect(order).toEqual(['typed:start']); // второй ещё не начинался

@@ -50,6 +50,17 @@ export type SignatureGateVerdict =
    *  обязан запустить человек нажатием. */
   | 'needs_press';
 
+/**
+ * Причины отсрочки шире вердикта порога: опрос ящика откладывают и тогда, когда
+ * подписывать нечего — пока наш ключ не объявлен, на складе для нас не может
+ * лежать ни одного мешка (разбор — `lib/chatAnnounce.ts`).
+ *
+ * Отдельным типом, а не расширением вердикта: `signatureGateVerdict` про ОКНО
+ * КОШЕЛЬКА и обязана остаться про него, иначе чистая функция начнёт отвечать на
+ * второй вопрос и перестанет быть проверяемой одной таблицей.
+ */
+export type DeferReason = Exclude<SignatureGateVerdict, 'go'> | 'not_announced';
+
 export interface SignatureGateInput {
   /** `document.visibilityState === 'hidden'` прямо сейчас. */
   hiddenNow: boolean;
@@ -86,11 +97,13 @@ export function signatureGateVerdict(input: SignatureGateInput): SignatureGateVe
  * оказалась бы хуже дефекта.
  */
 export class ChatSignatureDeferred extends Error {
-  readonly reason: Exclude<SignatureGateVerdict, 'go'>;
-  constructor(reason: Exclude<SignatureGateVerdict, 'go'>) {
+  readonly reason: DeferReason;
+  constructor(reason: DeferReason) {
     super(reason === 'page_hidden'
       ? 'Подпись не запрашивается, пока страница скрыта'
-      : 'Подпись ждёт нажатия человека: кошелёк уводил страницу из глаз');
+      : reason === 'not_announced'
+        ? 'Опрос ящика отложен: наш ключ ещё не объявлен, писать нам некуда'
+        : 'Подпись ждёт нажатия человека: кошелёк уводил страницу из глаз');
     this.name = 'ChatSignatureDeferred';
     this.reason = reason;
   }

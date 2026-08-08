@@ -25,7 +25,7 @@ import { quoteFeeLocal } from '@/lib/fee';
 import {
   PanelLeftOpen, Send, Loader2, MessageCircle, AlertCircle,
   Copy, Check, Paperclip, FileText, ExternalLink, Lock,
-  ChevronDown, Download, Search, X, Clock, RotateCw, ShieldCheck, Scissors, PenLine,
+  ChevronDown, Download, Search, X, Clock, RotateCw, ShieldCheck, Scissors, PenLine, KeyRound,
 } from 'lucide-react';
 import { classifyAttachmentFailure, type AttachmentFailure } from '@/lib/attachmentFailure';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE, isTrustedAttachmentUrl } from '@/lib/fileCrypto';
@@ -462,6 +462,89 @@ export function ChatSignatureWanted(
   );
 }
 
+/**
+ * ВАМ ПОКА НЕ МОГУТ ПИСАТЬ — ключ есть, а в справочнике его нет.
+ *
+ * ─── ТЕКСТ УТВЕРЖДЁН ВЛАДЕЛЬЦЕМ ДОСЛОВНО ────────────────────────────────────
+ *
+ *     Вам пока не могут писать
+ *     Ключ создан, но о нём ещё никто не знает.
+ *     Подтвердите в кошельке — и вас найдут.
+ *                                     [ Подтвердить ]
+ *
+ * Три решения владельца, которые за этим стоят. Их нельзя «улучшить» правкой
+ * текста, не спросив:
+ *
+ *  1. **Слова «включить» быть не должно.** Дословно: «я ж при подписи его и так
+ *     включил — мысли юзера». Человек считает, что первой подписью чат уже
+ *     включил, И ОН ПРАВ: ключ создан. Не спорим с ним, говорим про другое — что
+ *     его не видно собеседникам.
+ *  2. **Заголовок — от последствия, а не от механики.** Не «настройка не
+ *     завершена», а «вам пока не могут писать»: человека волнует, что не
+ *     работает, а не какой у нас шаг по счёту.
+ *  3. **На кнопке нет слова «ключ».** «Объявить мой ключ» забраковано с точной
+ *     причиной: звучит как «показать сам ключ». Кнопка повторяет текст выше —
+ *     «Подтвердите в кошельке» → «Подтвердить».
+ *
+ * ⚠️ ТО ЖЕ САМОЕ СООБЩЕНИЕ показывается и при следующем открытии чата, если ключ
+ * так и не объявлен. Намеренно те же слова: иначе человек решит, что это про
+ * что-то новое.
+ *
+ * ⚠️ ПОЧЕМУ ЗДЕСЬ КНОПКА, А НЕ АВТОМАТИКА. На телефоне кошелёк — отдельное
+ * приложение, и переключение на него замораживает страницу. Вторая подпись,
+ * запущенная нами самими, уходит в спящую страницу и теряется — ровно это
+ * замерено 8 августа (`castW2`: ключа нет). Нажатие означает, что страница жива
+ * и на переднем плане. На десктопе этот блок не показывается вовсе: там
+ * объявление проходит само (`lib/chatAnnounce.ts`).
+ */
+export function ChatKeyNotAnnounced(
+  { variant, busy, onConfirm }: { variant: 'full' | 'inline'; busy: boolean; onConfirm: () => void },
+) {
+  const t = useTranslations();
+  const button = (
+    <button
+      type="button"
+      onClick={onConfirm}
+      disabled={busy}
+      className="mt-3 px-4 py-2 rounded-[12px] bg-primary/20 border border-primary/40 text-sm font-medium text-white/85 hover:bg-primary/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    >
+      {busy ? t("chat.key_unannounced_confirming") : t("chat.key_unannounced_action")}
+    </button>
+  );
+  if (variant === 'inline') {
+    return (
+      <div className="mx-1 mb-2 px-3 py-2.5 rounded-[12px] bg-primary/[0.07] border border-primary/20 flex items-start gap-2">
+        <KeyRound className="w-4 h-4 text-primary/70 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm text-white/75 font-medium">{t("chat.key_unannounced_title")}</p>
+          <p className="text-xs text-white/45 leading-relaxed mt-0.5">{t("chat.key_unannounced_body")}</p>
+          <p className="text-xs text-white/45 leading-relaxed">{t("chat.key_unannounced_call")}</p>
+          {button}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+      <div className="w-12 h-12 rounded-[16px] bg-primary/10 border border-primary/25 flex items-center justify-center">
+        <KeyRound className="w-5 h-5 text-primary/80" />
+      </div>
+      {/* ⚠️ ВЕСЬ ТЕКСТ И КНОПКА — ВНУТРИ ЭТОГО БЛОКА, и замок мерит именно
+          ВЛОЖЕННОСТЬ, а не порядок в разметке. Урок оплачен 7 августа: замок,
+          сравнивавший индексы («текст раньше поля ввода»), остался зелёным на
+          мутации, которая вернула текст в полосу под перепиской, — полоса тоже
+          стоит раньше поля ввода. Он пропускал ровно тот дефект, ради которого
+          заводился. */}
+      <div>
+        <p className="text-white/80 text-base font-semibold mb-1.5">{t("chat.key_unannounced_title")}</p>
+        <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_unannounced_body")}</p>
+        <p className="text-white/45 text-sm max-w-sm leading-relaxed">{t("chat.key_unannounced_call")}</p>
+        {button}
+      </div>
+    </div>
+  );
+}
+
 function ChatOpening() {
   const t = useTranslations();
   return (
@@ -630,6 +713,9 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     // `components/` не находил ни одного). Умолчания — по той же причине,
     // что у соседей выше: заготовки замков подменяют хук целиком.
     pendingBags = 0, bagsFailed = false, pushOutcome = null,
+    // «Ключ есть, но не объявлен» — тихая поломка до 8 августа. Умолчания по той
+    // же причине, что у соседей: заготовки замков подменяют хук целиком.
+    keyNotAnnounced = false, announcing = false, announceKey = () => {},
     // ⚠️ «Склад уже отвечал». Без этого признака «Сообщений пока нет»
     // говорилось бы в первое мгновение каждого открытия — то есть врало бы
     // всем и всегда, ровно один раз. Умолчание `true` намеренно: заготовки
@@ -1276,6 +1362,24 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
           )}
           {signatureReason && messages.length === 0 && (
             <ChatSignatureWanted reason={signatureReason} variant="full" />
+          )}
+
+          {/* ⚠️ «ВАМ ПОКА НЕ МОГУТ ПИСАТЬ» — РЯДОМ С ОЖИДАНИЕМ ПОДПИСИ И ВЫШЕ
+              ПОЛЯ ВВОДА, по той же причине: человек смотрит в центр. Разбор
+              текста и трёх решений владельца — в докстринге
+              `ChatKeyNotAnnounced`.
+
+              Ниже ожидания подписи по порядку и НЕ одновременно с ним: пока окно
+              кошелька открыто, ждут именно его, и вторая просьба нажать кнопку в
+              этот момент — лишний шум. Признак приходит уже готовым решением
+              (`keyNotAnnounced`), а не собирается здесь: собирать его в разметке
+              значило бы дать ему разъехаться между панелью и списком, что в этом
+              проекте уже случалось (находка К-2). */}
+          {!signatureReason && keyNotAnnounced && messages.length > 0 && (
+            <ChatKeyNotAnnounced variant="inline" busy={announcing} onConfirm={announceKey} />
+          )}
+          {!signatureReason && keyNotAnnounced && messages.length === 0 && (
+            <ChatKeyNotAnnounced variant="full" busy={announcing} onConfirm={announceKey} />
           )}
 
           {/* Блоки ниже — состояния ПУСТОГО экрана: если история уже

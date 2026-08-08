@@ -84,12 +84,25 @@ vi.mock('@/hooks/usePairConversations', () => ({
   usePairConversations: () => ({ ...conv }),
 }));
 
+const ann: Record<string, unknown> = {};
+function setAnn(patch: Record<string, unknown>): void {
+  for (const k of Object.keys(ann)) delete ann[k];
+  Object.assign(ann, {
+    standing: 'mine', attempt: 'none', needsPress: false, busy: false,
+    announce: () => {}, errorCode: null,
+  }, patch);
+}
+vi.mock('@/hooks/useKeyAnnouncement', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/hooks/useKeyAnnouncement')>();
+  return { ...real, useKeyAnnouncement: () => ({ ...ann }) };
+});
+
 async function renderList(): Promise<string> {
   const mod = await import('@/app/chat/page');
   return renderToStaticMarkup(React.createElement(mod.default));
 }
 
-beforeEach(() => { setConv({}); setSess({}); });
+beforeEach(() => { setConv({}); setSess({}); setAnn({}); });
 
 describe('список переписок: ожидание подписи называет себя', () => {
   it('пока висит окно кошелька — на экране сказано, чего ждут', async () => {
@@ -116,5 +129,50 @@ describe('список переписок: ожидание подписи на�
     const html = await renderList();
     expect(html).toContain('animate-pulse');
     expect(html).not.toContain(translate('chat.signature_wanted'));
+  });
+});
+
+/* ═════════════ «Вам пока не могут писать» — и в списке тоже ═════════════════ */
+
+describe('список: «ключ есть, но не объявлен» назван и вылечиваем', () => {
+  // ⚠️ ЭТОТ БЛОК ЕСТЬ РОВНО ПОТОМУ, ЧТО В ЭТОМ ПРОЕКТЕ ПАНЕЛЬ И СПИСОК УЖЕ
+  // РАЗЪЕЗЖАЛИСЬ МОЛЧА (находка К-2). Панель заперта
+  // `components/chatKeyNotAnnounced.test.tsx`; без замка здесь тихая поломка
+  // осталась бы ровно там, куда попадают первым делом.
+  it('состояние названо утверждёнными словами, и кнопка на экране', async () => {
+    setAnn({ standing: 'absent', needsPress: true });
+    setConv({ isLoading: true, conversations: [] });
+    const html = await renderList();
+    expect(html, 'заголовок не доехал до списка').toContain(translate('chat.key_unannounced_title'));
+    expect(html).toContain(translate('chat.key_unannounced_body'));
+    expect(html).toContain(translate('chat.key_unannounced_call'));
+    expect(html, 'кнопки в списке нет — лечить нечем').toContain(translate('chat.key_unannounced_action'));
+  });
+
+  it('вместо заготовок строк, а не рядом с ними', async () => {
+    // Заготовки говорят «сейчас будет». Здесь ждут не сеть, а человека — и
+    // пульсирующие полоски рядом с просьбой нажать кнопку означали бы, что
+    // что-то всё-таки грузится само.
+    setAnn({ standing: 'absent', needsPress: true });
+    setConv({ isLoading: true, conversations: [] });
+    const html = await renderList();
+    expect(html, 'заготовки строк остались рядом с просьбой нажать').not.toContain('animate-pulse');
+  });
+
+  it('ключ объявлен — надписи нет, заготовки на месте', async () => {
+    // Замок, который горит всегда, — не замок.
+    setAnn({ standing: 'mine', needsPress: false });
+    setConv({ isLoading: true, conversations: [] });
+    const html = await renderList();
+    expect(html).not.toContain(translate('chat.key_unannounced_title'));
+    expect(html).toContain('animate-pulse');
+  });
+
+  it('пока висит окно кошелька — эта надпись молчит, ждут кошелёк', async () => {
+    setAnn({ standing: 'absent', needsPress: true });
+    setConv({ isLoading: true, conversations: [], passSignaturePending: true });
+    const html = await renderList();
+    expect(html).toContain(translate('chat.signature_wanted'));
+    expect(html, 'две просьбы об одном на одном экране').not.toContain(translate('chat.key_unannounced_title'));
   });
 });

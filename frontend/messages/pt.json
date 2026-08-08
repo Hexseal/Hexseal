@@ -679,7 +679,12 @@
     "bags_failed": "Algumas mensagens não puderam ser buscadas no armazenamento. Elas não se perderam — tente reconectar.",
     "push_no_pass": "Aviso não enviado: não há sessão de chat neste dispositivo.",
     "push_rate_limited": "Os avisos estão saindo com muita frequência — este foi pulado. Aguarde um pouco.",
-    "push_error": "Não foi possível enviar o aviso. Sua mensagem chegou, mas a outra pessoa só verá ao abrir o chat."
+    "push_error": "Não foi possível enviar o aviso. Sua mensagem chegou, mas a outra pessoa só verá ao abrir o chat.",
+    "key_unannounced_title": "Ninguém pode lhe escrever ainda",
+    "key_unannounced_body": "Sua chave foi criada, mas ninguém sabe dela ainda.",
+    "key_unannounced_call": "Confirme na sua carteira — e vão te encontrar.",
+    "key_unannounced_action": "Confirmar",
+    "key_unannounced_confirming": "Confirmando…"
   },
   "messaging": {
     "enabled_title": "Mensagens habilitadas",

@@ -34,6 +34,13 @@
  * функции, которые в приложении открывают окно кошелька (структурный гейт
  * `lib/signaturePaths.test.ts` держит, что других нет). Подделан только сам
  * кошелёк и склад.
+ *
+ * ⚠️ ПОЧЕМУ ВЕЗДЕ `purpose: 'announce'`. У пропуска два назначения, и второй
+ * подписи в жизни бывает только одно: объявить свой ключ. Пропуск РАДИ ЯЩИКА до
+ * объявления не берётся вовсе — `getBagPass` отказывает сама, потому что
+ * запечатать нам ещё нечем (это замерено отдельно,
+ * `hooks/chatAnnounceStore.test.ts`). Здесь мерится порог ПОДПИСИ, значит вызов
+ * обязан быть тем, который до подписи вообще доходит.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { _resetBagPassCacheForTest } from '@/lib/chatTransport';
@@ -147,7 +154,8 @@ describe('ЗАМЕР 1: подпись в спящую страницу', () => 
     const { getBagPass } = await import('@/hooks/useChatSession');
     page.visibilityState = 'hidden';
 
-    await getBagPass(ALICE, phoneWallet(), undefined).catch(() => { /* отказ — штатный исход */ });
+    await getBagPass(ALICE, phoneWallet(), undefined, { purpose: 'announce' })
+      .catch(() => { /* отказ — штатный исход */ });
 
     expect(walletPrompts, 'подпись ушла в спящую страницу — там её никто не увидит').toBe(0);
     expect(passCalls, 'запрос пропуска без подписи всё равно ушёл').toBe(0);
@@ -171,7 +179,8 @@ describe('ЗАМЕР 2: вторая подпись сразу за первой
     expect(walletPrompts, 'первая подпись не состоялась — замер ниже потерял смысл').toBe(1);
 
     // Вторая — та, что сегодня уходит автоматически.
-    await getBagPass(ALICE, phoneWallet(), undefined).catch(() => { /* отказ — штатный исход */ });
+    await getBagPass(ALICE, phoneWallet(), undefined, { purpose: 'announce' })
+      .catch(() => { /* отказ — штатный исход */ });
 
     expect(walletPrompts, 'вторая подпись ушла сама, сразу за первой').toBe(1);
     expect(passCalls, 'пропуск взят без участия человека').toBe(0);
@@ -193,10 +202,10 @@ describe('ЗАМЕР 2: вторая подпись сразу за первой
       address: string,
       signMessageAsync: (a: { message: string }) => Promise<string>,
       onSigning?: (b: boolean) => void,
-      opts?: { humanAsked?: boolean },
+      opts?: { humanAsked?: boolean; purpose?: 'mailbox' | 'announce' },
     ) => Promise<string>;
 
-    const pass = await asked(ALICE, phoneWallet(), undefined, { humanAsked: true });
+    const pass = await asked(ALICE, phoneWallet(), undefined, { humanAsked: true, purpose: 'announce' });
 
     expect(walletPrompts, 'нажатие не довело до кошелька').toBe(2);
     expect(passCalls).toBe(1);
@@ -211,7 +220,7 @@ describe('ЗАМЕР 3: десктоп не стал длиннее', () => {
     const { signChatKeyLocked, getBagPass } = await import('@/hooks/useChatSession');
 
     await signChatKeyLocked(ALICE, async () => { walletPrompts++; return sig('a'); });
-    const pass = await getBagPass(ALICE, desktopWallet(), undefined);
+    const pass = await getBagPass(ALICE, desktopWallet(), undefined, { purpose: 'announce' });
 
     expect(walletPrompts, 'на десктопе подписей стало не две').toBe(2);
     expect(passCalls, 'на десктопе пропуск больше не берётся сам').toBe(1);
@@ -223,12 +232,12 @@ describe('ЗАМЕР 3: десктоп не стал длиннее', () => {
     // она отняла бы работу у того, у кого пропуск уже есть, — то есть у всех на
     // повторных заходах в течение 12 часов.
     const { getBagPass } = await import('@/hooks/useChatSession');
-    await getBagPass(ALICE, desktopWallet(), undefined);
+    await getBagPass(ALICE, desktopWallet(), undefined, { purpose: 'announce' });
     expect(passCalls).toBe(1);
 
     page.goAway();
     page.comeBack();
-    const again = await getBagPass(ALICE, phoneWallet(), undefined);
+    const again = await getBagPass(ALICE, phoneWallet(), undefined, { purpose: 'announce' });
 
     expect(walletPrompts, 'живой пропуск потребовал подписи').toBe(1);
     expect(passCalls, 'живой пропуск потребовал запроса').toBe(1);

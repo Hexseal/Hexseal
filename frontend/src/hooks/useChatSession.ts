@@ -72,91 +72,24 @@ import {
 import { CHAT_KEY_TYPED_DATA } from '@/lib/chatCrypto';
 import { deriveLinkSigningKeypair } from '@/lib/chatConversation';
 import { RELAYER_URL, requestBagPass } from '@/lib/chatTransport';
+import {
+  ChatDirectoryError, CHAT_PUBLIC_KEY_LEN, KEY_HEX_RE, toKeyHex, fromKeyHex,
+  type ChatDirectoryErrorCode, type PeerChatKeys,
+} from '@/lib/chatDirectoryTypes';
 import { withWalletLock } from '@/lib/walletLock';
-import { noteWalletHandoff, requireSignatureGate } from '@/lib/chatSignatureGate';
+import { noteWalletHandoff, requireSignatureGate, ChatSignatureDeferred } from '@/lib/chatSignatureGate';
+import { mailboxWorthPollingFor } from '@/lib/chatAnnounceStore';
 import { isChatDeclined, rememberChatDecline, forgetChatDecline, isUserDecline } from '@/lib/chatDecline';
 
 /* ────────────────────────── справочник ключей ─────────────────────────── */
 
-export type ChatDirectoryErrorCode =
-  /** По адресу собеседника ключа нет — он ещё не заходил. НЕ ошибка сети и
-   *  не поломка: единственная причина, у которой есть человеческое действие
-   *  («пришлите ему ссылку»). */
-  | 'peer_unknown'
-  /** Справочник отдал что-то, что ключом не является: не hex, не 32 байта,
-   *  не строка вовсе. Ровно тот мусор, который libsodium принял бы молча. */
-  | 'peer_key_malformed'
-  /** Сервер сказал, что справочник ему самому недоступен (503). */
-  | 'directory_unavailable'
-  /** Всё остальное: 4xx/5xx без разобранного кода, ответ не той формы. */
-  | 'directory_failed';
-
-/** Каждый отказ несёт `.code` ОТДЕЛЬНЫМ полем — та же дисциплина, что в
- *  `chatTransport.ts`, `chatSession.ts` и `chatConversation.ts`. `.status`
- *  проброшен, чтобы вызывающий отличал 413 от 400 не по тексту. */
-export class ChatDirectoryError extends Error {
-  readonly code: ChatDirectoryErrorCode;
-  readonly status?: number;
-  constructor(message: string, code: ChatDirectoryErrorCode, options?: { cause?: unknown; status?: number }) {
-    super(message, options);
-    this.name = 'ChatDirectoryError';
-    this.code = code;
-    this.status = options?.status;
-  }
-}
-
-/** Длина обеих половин обеих пар — 32 байта. Записана здесь ЯВНО, а не взята
- *  из чужого модуля: сервер применяет ровно это же число собственной
- *  проверкой (`relayer/directory.js`, `_isValidKeyHex`), и два места обязаны
- *  сходиться числом, а не ссылкой друг на друга. */
-export const CHAT_PUBLIC_KEY_LEN = 32;
-
-/** То, что сервер принимает и отдаёт: `0x` + 64 нижнерегистровых hex-цифры. */
-const KEY_HEX_RE = /^0x[0-9a-f]{64}$/;
-
-export interface PeerChatKeys {
-  /** X25519 — на него запечатывается конверт. */
-  boxKey: Uint8Array;
-  /**
-   * ВСЕ подписные ключи, которые собеседник когда-либо публиковал: нынешний
-   * первым, дальше история от свежей к старой.
-   *
-   * ⚠️ Б-2 финальной проверки. Справочник хранит историю ДОСЛОВНО ради этого
-   * случая — правило 3 Задачи 2 записано так: «старый сохраняется в истории,
-   * иначе переписка, запечатанная на прежний ключ, станет нечитаемой молча».
-   * Сервер своё выполнял, до двухсот записей; мы читали только нынешний ключ,
-   * и честная смена ключа собеседником превращалась в ОБВИНЕНИЕ: два старых
-   * сообщения пропадали с экрана, а панель говорила «не прошли проверку
-   * подлинности». Половина обещания выполнена сервером, вторая не выполнена
-   * нами — и платил за это человек, не сделавший ничего плохого.
-   *
-   * Пустой массив — собеседник подписного ключа не публиковал ни разу
-   * (запись сделана до Задачи 6). Пина тогда нет, и это честно.
-   */
-  signKeyHistory: Uint8Array[];
-  /** Ed25519 — им проверяется подпись звена. `null` — запись сделана до того,
-   *  как публикация появилась: шифровать можно, пинить нечем. Отказать по
-   *  такой записи значило бы закрыть чат тем, кто уже заходил. */
-  signKey: Uint8Array | null;
-}
-
-function toKeyHex(bytes: Uint8Array): string {
-  let s = '0x';
-  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0');
-  return s;
-}
-
-function fromKeyHex(value: unknown, what: string): Uint8Array {
-  if (typeof value !== 'string' || !KEY_HEX_RE.test(value)) {
-    throw new ChatDirectoryError(
-      `Справочник отдал ${what} не той формы (ожидалось 0x + 64 hex, ${CHAT_PUBLIC_KEY_LEN} байта)`,
-      'peer_key_malformed',
-    );
-  }
-  const out = new Uint8Array(CHAT_PUBLIC_KEY_LEN);
-  for (let i = 0; i < CHAT_PUBLIC_KEY_LEN; i++) out[i] = parseInt(value.slice(2 + i * 2, 4 + i * 2), 16);
-  return out;
-}
+/* Форма справочника переехала в `@/lib/chatDirectoryTypes` — разбор причины в
+ * шапке того файла (кольцо импортов через порог пропуска). Здесь — переэкспорт,
+ * чтобы прежние импорты по всему фронту продолжали работать. */
+export {
+  ChatDirectoryError, CHAT_PUBLIC_KEY_LEN, toKeyHex, fromKeyHex, KEY_HEX_RE,
+} from '@/lib/chatDirectoryTypes';
+export type { ChatDirectoryErrorCode, PeerChatKeys } from '@/lib/chatDirectoryTypes';
 
 async function directoryFailure(res: Response, fallback: string): Promise<never> {
   let body: { error?: string; code?: string } = {};
@@ -337,13 +270,29 @@ export async function signChatKeyLocked(
  *   ⚠️ Сюда обязано приезжать НАСТОЯЩЕЕ нажатие, а не `true` «чтобы работало»:
  *   подставив его из автоматики, мы вернём подпись в спящую страницу и замеры
  *   `chatPhoneSignature.test.ts` покраснеют.
+ * @param opts.purpose зачем пропуск. `'mailbox'` (умолчание) — забрать мешки:
+ *   такой пропуск НЕ БЕРЁТСЯ, пока наш ключ не объявлен, потому что запечатать
+ *   нам нельзя ничего и на складе для нас нет ни одного мешка. `'announce'` —
+ *   ради самой записи в справочник: этот порог к нему не применяется, иначе
+ *   вышло бы кольцо (объявиться нельзя без пропуска, пропуск нельзя без
+ *   объявления).
+ *
+ * ⚠️ ПОЧЕМУ ПОРОГ ЯЩИКА СТОИТ ЗДЕСЬ, А НЕ В ХУКАХ. Первая версия проверяла это в
+ * `usePairChat` и в `usePairConversations` — по одной строке в каждом. Мутации
+ * «снять проверку из открытой переписки» и «снять из списка» проходили ЗЕЛЁНЫМИ
+ * на 73 замерах: у фронта нет jsdom, отрисовать хук нечем, и проводка внутри него
+ * не сторожится НИЧЕМ. Здесь проверка одна, стоит на единственной дороге к
+ * пропуску и мерится напрямую.
  */
 export async function getBagPass(
   address: `0x${string}`,
   signMessageAsync: (args: { message: string }) => Promise<string>,
   onSigning?: (busy: boolean) => void,
-  opts: { humanAsked?: boolean } = {},
+  opts: { humanAsked?: boolean; purpose?: 'mailbox' | 'announce' } = {},
 ): Promise<string> {
+  if ((opts.purpose ?? 'mailbox') === 'mailbox' && !mailboxWorthPollingFor(address)) {
+    throw new ChatSignatureDeferred('not_announced');
+  }
   return withWalletLock(address, async () => {
     const pass = await requestBagPass(async (message) => {
       // ⚠️ ПОРОГ ЗДЕСЬ, ВНУТРИ КОЛБЭКА, — И ЭТО ГЛАВНОЕ РЕШЕНИЕ ФАЙЛА.
