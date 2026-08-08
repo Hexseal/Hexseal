@@ -228,6 +228,20 @@ export interface PairChatState {
   /** `false` — собеседник ни разу не заходил, писать ему некуда. */
   peerKnown: boolean;
   /**
+   * Склад уже отвечал — то есть переписка на экране полная, а не «то, что
+   * нашлось до подписи».
+   *
+   * ⚠️ ЗАЧЕМ ЭТО ПОЯВИЛОСЬ. С тех пор как первый снимок выдаётся ДО пропуска
+   * (см. `chain` в движке), «сообщений нет» перестало означать «сообщений нет»:
+   * в первое мгновение их нет ПОТОМУ, что склад ещё не спрошен. Панель без
+   * этого признака сказала бы «Сообщений пока нет» и через миг заменила бы это
+   * на переписку — то есть соврала бы ровно один раз, зато каждому и на каждом
+   * открытии.
+   *
+   * Замок на это — `pairChatBreathes.test.ts` и `chatPanelBreathes.test.tsx`.
+   */
+  synced: boolean;
+  /**
    * Мешки, которые склад ПОКАЗАЛ в описи и которые относятся к этой переписке,
    * но которых мы ещё НЕ ВЗЯЛИ: очередь за потолком бюджета плюс те, на
    * которых скачивание отказало.
@@ -426,6 +440,54 @@ export const MAX_BAG_DOWNLOADS_PER_TICK = 80;
 const BAG_RETRY_BASE_MS = 5_000;
 const BAG_RETRY_MAX_MS = 5 * 60 * 1000;
 
+/* ───────────── ключ собеседника: спросить один раз и отступить ─────────── */
+
+/**
+ * Чем закончилась попытка спросить справочник о собеседнике. Два исхода, и они
+ * РАЗНЫЕ ПО СМЫСЛУ — смешивать нельзя:
+ *
+ *  - `absent` — справочник ОТВЕТИЛ: ключа по этому адресу нет, собеседник ни
+ *    разу не заходил. Это утверждение, у него есть человеческое действие
+ *    («пришлите ему ссылку»), и оно не изменится, пока он не зайдёт.
+ *  - `failed` — справочник НЕ ОТВЕТИЛ (сеть, 503, мусор вместо ключа). Мы не
+ *    знаем ничего. Сказать здесь «он не заходил» значило бы обвинить человека
+ *    в том, чего он не делал.
+ */
+export type PeerKeyOutcome = 'absent' | 'failed';
+
+/**
+ * Отступление перед ПОВТОРНЫМ вопросом о ключе собеседника: минута при «не
+ * заходил», пять секунд при отказе, и то и другое удваивается, но не дольше
+ * пяти минут.
+ *
+ * ⚠️ ЗАМЕР, РАДИ КОТОРОГО ЭТО ЗАВЕДЕНО. В консоли владельца 8 августа — пять
+ * одинаковых `GET /keys/<peer>` → 404 подряд. Ответ известен и не меняется, а
+ * спрашивался он каждый тик: 48 обращений за 50 тиков (замер
+ * `pairChatBreathes.test.ts`), то есть на боевых пяти секундах — двенадцать
+ * запросов в минуту за ответом, который уже получен.
+ *
+ * Почему при 404 РЕЖЕ, чем при отказе, а не наоборот: 404 — это ответ, и он
+ * верен до тех пор, пока собеседник не зайдёт (событие в минутах и часах, не в
+ * секундах). Отказ — это отсутствие ответа, и он может кончиться в любую
+ * секунду. «Никогда» при 404 тоже нельзя: собеседник, зашедший через минуту
+ * после нас, иначе остался бы для нас несуществующим до перезагрузки страницы.
+ *
+ * Отдельная экспортированная функция, а не строка внутри `ensurePeerKeys`:
+ * инлайном соотношение двух чисел не проверяемо, а именно оно тут и решает.
+ */
+export const PEER_KEY_ABSENT_RETRY_MS = 60_000;
+export const PEER_KEY_ERROR_RETRY_BASE_MS = 5_000;
+export const PEER_KEY_RETRY_MAX_MS = 5 * 60 * 1000;
+
+export function peerKeyRetryDelayMs(outcome: PeerKeyOutcome, tries: number): number {
+  const n = Math.max(1, Math.floor(tries));
+  const base = outcome === 'absent' ? PEER_KEY_ABSENT_RETRY_MS : PEER_KEY_ERROR_RETRY_BASE_MS;
+  // 2 ** 30 уже переполняет любое разумное окно, а `Infinity * base` дал бы
+  // NaN на сравнении с `Date.now()` — то есть отступление, которое НИКОГДА не
+  // отпускает. Потолок берётся до возведения в степень.
+  return Math.min(base * 2 ** Math.min(n - 1, 20), PEER_KEY_RETRY_MAX_MS);
+}
+
 const KEY_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 
 /**
@@ -548,6 +610,30 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   let downloads = 0;
 
   /**
+   * Код последнего отказа СПРАВОЧНИКА — чтения чужого ключа или публикации
+   * своего. `null` — справочник отвечает.
+   *
+   * ⚠️ ОТДЕЛЬНО ОТ `lastError`, и это не стиль. У них разная жизнь: отказ
+   * склада снимается успешным ТИКОМ, а справочник тик не трогает — к нему
+   * обращаются реже (отступление ниже). Сведи их в одно поле, и успешный тик
+   * гасил бы надпись про справочник, к которому в этом тике никто не ходил.
+   */
+  let directoryError: string | null = null;
+
+  /**
+   * Когда можно снова спросить про ключ собеседника и чем закончился прошлый
+   * раз. `null` — спрашивать можно прямо сейчас.
+   */
+  let peerLookup: { outcome: PeerKeyOutcome; tries: number; nextAt: number } | null = null;
+  /** То же для публикации СВОИХ ключей: 503 справочника не повод стучать в него
+   *  каждые пять секунд до конца сеанса. */
+  let publishNextAt = 0;
+  let publishTries = 0;
+
+  /** Склад уже отвечал хотя бы раз. См. `PairChatState.synced`. */
+  let synced = false;
+
+  /**
    * ОПИСЬ НЕВЗЯТОГО: мешки, которые склад показал в описи, которые относятся к
    * этой переписке — и которых мы ещё не взяли.
    *
@@ -574,32 +660,73 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     });
   }
 
-  /** Ключи собеседника — один раз за жизнь движка, дальше из памяти. */
-  async function ensurePeerKeys(): Promise<PeerChatKeys | null> {
+  /**
+   * Ключи собеседника — один раз за жизнь движка, дальше из памяти.
+   *
+   * ⚠️ НИЧЕГО НЕ БРОСАЕТ, и это правка, а не смягчение. Раньше отказ
+   * справочника вылетал наружу — а звали её ИЗ `getPass`, то есть `pollBags`
+   * записывал это в «неудачи ВХОДА» и на третьей подряд звал `onAuthFailed`:
+   * чат мёртв до перезагрузки страницы из-за того, что моргнул справочник.
+   * Замерено: 1 из 1 (`pairChatBreathes.test.ts`).
+   *
+   * @param force человек нажал «отправить» — самое время спросить заново, не
+   *   считаясь с отступлением. Отступление существует против ХОЛОСТОГО опроса,
+   *   а не против прямого действия человека.
+   */
+  async function ensurePeerKeys(force = false): Promise<PeerChatKeys | null> {
     if (peerKeys) return peerKeys;
+    if (!force && peerLookup && Date.now() < peerLookup.nextAt) return null;
     try {
       peerKeys = await fetchPeerChatKeys(peer, abort.signal);
       peerKnown = true;
+      peerLookup = null;
+      directoryError = null;
       return peerKeys;
     } catch (err) {
-      if (err instanceof ChatDirectoryError && err.code === 'peer_unknown') {
-        // Не поломка: у этой причины есть человеческое действие («пришлите
-        // ему ссылку»). Смешать её с сетевым отказом значило бы показать
-        // «что-то сломалось» там, где всё работает.
+      // Уход со страницы — не отказ справочника. Записать это отступлением
+      // значило бы наказать следующий движок за то, что предыдущий остановили.
+      if ((err as { name?: string })?.name === 'AbortError') return null;
+      // Не поломка: у 404 есть человеческое действие («пришлите ему ссылку»).
+      // Смешать её с сетевым отказом значило бы показать «что-то сломалось»
+      // там, где всё работает — и наоборот, сказать «он не заходил» там, где
+      // мы просто не дозвонились.
+      const outcome: PeerKeyOutcome =
+        err instanceof ChatDirectoryError && err.code === 'peer_unknown' ? 'absent' : 'failed';
+      const tries = (peerLookup?.outcome === outcome ? peerLookup.tries : 0) + 1;
+      peerLookup = { outcome, tries, nextAt: Date.now() + peerKeyRetryDelayMs(outcome, tries) };
+      if (outcome === 'absent') {
         peerKnown = false;
-        return null;
+        directoryError = null;
+      } else {
+        // `peerKnown` НЕ трогаем: мы не знаем, заходил он или нет.
+        directoryError = err instanceof ChatDirectoryError
+          ? (err.code ?? err.message)
+          : err instanceof Error ? err.message : 'directory_failed';
       }
-      throw err;
+      return null;
     }
   }
 
   /** Свои ключи в справочник — один раз. Повтор байт-в-байт сервер и так
    *  отбрасывает ранним возвратом, но лишний запрос каждые пять секунд
-   *  незачем. */
+   *  незачем. Отказ не бросается наружу по той же причине, что у
+   *  `ensurePeerKeys` — он не про вход. */
   async function ensureOwnKeysPublished(pass: string): Promise<void> {
     if (keysPublished) return;
-    await publishChatKeys(pass, opts.session, abort.signal);
-    keysPublished = true;
+    if (Date.now() < publishNextAt) return;
+    try {
+      await publishChatKeys(pass, opts.session, abort.signal);
+      keysPublished = true;
+      publishTries = 0;
+      directoryError = null;
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      publishTries++;
+      publishNextAt = Date.now() + peerKeyRetryDelayMs('failed', publishTries);
+      directoryError = err instanceof ChatDirectoryError
+        ? (err.code ?? err.message)
+        : err instanceof Error ? err.message : 'directory_failed';
+    }
   }
 
   async function emit(): Promise<void> {
@@ -655,17 +782,56 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
       troubles: state.troubles,
       burnedSeqs,
       peerKnown,
+      synced,
       // К-2: «показано складом» и «есть у нас» — разные вещи, и разница
       // выражается здесь, а не остаётся внутри движка.
       pendingBags: pending.size,
       bagsFailed: failures.size > 0,
-      transportError: lastError,
+      // Склад молчит ИЛИ справочник молчит — для человека это одна новость
+      // («не удалось подключиться») с одним действием («повторить»). Разные
+      // жизненные циклы у полей внутри, одно поле наружу.
+      transportError: lastError ?? directoryError,
     });
   }
 
   /** Тики сериализуются: медленный разбор не должен наложиться на следующий
    *  и удвоить скачивания. */
   let chain: Promise<void> = Promise.resolve();
+
+  /**
+   * ПЕРВЫЙ СНИМОК — ДО ПРОПУСКА. В этом вся правка «переписка не ждёт подписи».
+   *
+   * ⚠️ ЗАЧЕМ (живая выкатка 8 августа, пункт 35 `docs/OPEN-ITEMS.md`). Человек
+   * открыл чат, увидел «Настройка шифрования сообщений» и закрыл приложение.
+   * Причина не в логике: единственным способом снять ожидание был снимок или
+   * отказ движка, а движок на первом тике шёл ЗА ПРОПУСКОМ, то есть за подписью
+   * кошелька. Пока подпись не подтверждена, наверх не уходило НИ ОДНОГО снимка
+   * и НИ ОДНОЙ ошибки — замерено: 0 снимков, ожидание не снимается никогда. В
+   * установленном приложении круг через кошелёк идёт минутами.
+   *
+   * Здесь берётся ровно то, что доступно БЕЗ подписи, и этого хватает на
+   * осмысленный экран:
+   *  - своя копия переписки с устройства (`seeded` внутри `emit`) — то, что у
+   *    человека уже на руках;
+   *  - справочник собеседника (`GET /keys/:address` пропуска не требует,
+   *    правило 4 Задачи 2) — то есть ответ «писать некуда» становится известен
+   *    ДО окна кошелька, а не после него.
+   *
+   * Ожидание подписи после этого — отдельное состояние ПОВЕРХ переписки
+   * (`passSignaturePending` в хуке), а не вместо неё.
+   *
+   * Ставится в ту же очередь, что тики: снимок «до пропуска» и снимок первого
+   * тика не должны наложиться и приехать не в том порядке.
+   */
+  chain = chain.then(async () => {
+    if (stopped) return;
+    await ensurePeerKeys();
+    if (stopped) return;
+    await emit();
+    // `noteError` объявлена ниже, но зовётся из микрозадачи — к этому моменту
+    // тело функции уже досчитано до конца. Порядок объявлений здесь ради
+    // читаемости: первый снимок стоит рядом с очередью, которой он открывает.
+  }).catch((err) => { if (!stopped) noteError(err); });
 
   async function handleTick(result: ListBagsResult, pass: string): Promise<void> {
     for (const s of result.sent) if (s.fetched) delivered.add(s.key);
@@ -746,6 +912,10 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
     // перезавода движка: моргнувшая сеть не должна стоить человеку переписки
     // до перезагрузки страницы.
     lastError = null;
+    // Склад ответил — переписка на экране полная. Ставится ЗДЕСЬ, а не в
+    // `emit()`: `emit()` зовётся и до пропуска, и из разбора отказа, а этот
+    // признак означает ровно одно — «список мешков доехал».
+    synced = true;
 
     // ─── В-3: СВОЯ КОПИЯ ПОПОЛНЯЕТСЯ ТЕМ, ЧТО ПРИЕХАЛО ───────────────────
     // Кладём ВСЁ, что лежит в наборе, а не только новинки: уже лежащее
@@ -795,21 +965,24 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
   };
 
   const handle: BagPollHandle = pollBags({
-    getPass: async () => {
-      const pass = await opts.getPass();
-      // Публикация своих ключей и добор чужих идут ВНУТРИ тика опроса
-      // намеренно: у них тот же пропуск, та же отмена и тот же откат при
-      // отказе, что у самого опроса — отдельная лестница повторов рядом с
-      // существующей была бы вторым, несогласованным механизмом.
-      await ensureOwnKeysPublished(pass);
-      await ensurePeerKeys();
-      return pass;
-    },
+    // ⚠️ ЗДЕСЬ БОЛЬШЕ НЕТ НИ СПРАВОЧНИКА, НИ ПУБЛИКАЦИИ КЛЮЧЕЙ, и это правка.
+    // Пока они стояли внутри `getPass`, их отказ считался отказом ВХОДА
+    // (`pollBags` метит эту ступень как `getPass`), и три подряд означали
+    // `onAuthFailed` — то есть моргнувший СПРАВОЧНИК убивал чат до перезагрузки
+    // страницы. Замерено: 1 из 1. Теперь оба живут в теле тика, где отказ — это
+    // обычная неудача тика со своим бесконечным откатом.
+    getPass: opts.getPass,
     isActive: opts.isActive ?? (() => true),
     onBags: (result) => {
       chain = chain.then(async () => {
         if (stopped) return;
         const pass = await opts.getPass();
+        // Порядок намеренный: сначала объявить себя (иначе собеседнику некуда
+        // писать), потом добрать чужой ключ (нужен пину при разборе), потом
+        // сам тик. Ни одна из первых двух больше не бросает — см. их
+        // докстринги, — так что отказ справочника не отменяет показ мешков.
+        await ensureOwnKeysPublished(pass);
+        await ensurePeerKeys();
         await handleTick(result, pass);
       }).catch((err) => { if (!stopped) noteError(err); });
     },
@@ -834,12 +1007,25 @@ export function startPairChat(opts: PairChatEngineOptions): PairChatEngine {
         payload = { ...payload, dealId: opts.dealId };
       }
       const pass = await opts.getPass();
-      const keys = await ensurePeerKeys();
+      // `force` — человек нажал «отправить», и отступление тут не при чём: оно
+      // заведено против ХОЛОСТОГО опроса, а не против прямого действия.
+      const keys = await ensurePeerKeys(true);
       if (!keys) {
-        throw new ChatDirectoryError(
-          'Собеседник ещё не заходил в переписку — писать ему пока некуда',
-          'peer_unknown',
-        );
+        // ⚠️ ДВА РАЗНЫХ ОТКАЗА, А НЕ ОДИН. Раньше здесь всегда говорилось
+        // «собеседник ещё не заходил» — то есть отказ СПРАВОЧНИКА (сеть, 503,
+        // мусор вместо ключа) выдавался за утверждение о человеке, которого
+        // никто не проверял. Обвинить его в том, чего он не делал, дороже, чем
+        // сказать «не дозвонились»: во втором случае человек повторит, в первом
+        // — уйдёт искать другой способ связи.
+        throw peerKnown
+          ? new ChatDirectoryError(
+            'Справочник ключей не ответил — попробуйте ещё раз',
+            'directory_failed',
+          )
+          : new ChatDirectoryError(
+            'Собеседник ещё не заходил в переписку — писать ему пока некуда',
+            'peer_unknown',
+          );
       }
       const fromMemory = ownSent.length > 0 ? ownSent[ownSent.length - 1].link : null;
       const prev = furtherLink(recoveredHead, fromMemory);
@@ -915,7 +1101,7 @@ export function usePairChat(peerAddress: string, dealId?: string) {
    */
   const [engineState, setEngineState] = useState<PairChatState>({
     messages: _msgCache.get(pairKey) ?? [], gapAfterSeq: [], troubles: [],
-    burnedSeqs: [], peerKnown: true, pendingBags: 0, bagsFailed: false,
+    burnedSeqs: [], peerKnown: true, synced: false, pendingBags: 0, bagsFailed: false,
     transportError: null,
   });
   const [streamDead, setStreamDead] = useState(false);
@@ -1117,6 +1303,9 @@ export function usePairChat(peerAddress: string, dealId?: string) {
     streamDead, reconnect, needsSetup: status !== 'ready',
     /** Разрывы в цепочке собеседника и «собеседник ещё не заходил». */
     gapAfterSeq: engineState.gapAfterSeq, peerKnown: engineState.peerKnown,
+    /** Склад уже отвечал — «сообщений пока нет» имеет право быть сказанным.
+     *  До этого их нет ПОТОМУ, что склад ещё не спрошен. */
+    synced: engineState.synced,
     /** Предъявленному верить нельзя (подпись, отпечаток, ключ, номер). */
     chainUnverified: troubles.chainUnverified,
     /** Честное звено, которое не открывается нашим ключом. */

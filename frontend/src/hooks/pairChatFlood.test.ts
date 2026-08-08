@@ -252,12 +252,18 @@ describe('К-1: посторонний наполняет ящик', () => {
     const states: PairChatState[] = [];
     const engine = startPairChat({
       session: alice, peer: BOB, getPass: async () => 'v1.p', isActive: () => true,
-      onState: (s) => { if (atFirstState < 0) atFirstState = downloads.length; states.push(s); },
+      // `synced` — снимок КОНЦА ТИКА. Первый снимок движка приезжает ДО
+      // пропуска и до единого скачивания, и считать по нему «скачано за
+      // первый тик» означало бы намерить ноль всегда.
+      onState: (s) => {
+        if (s.synced && atFirstState < 0) atFirstState = downloads.length;
+        states.push(s);
+      },
       onError: () => {},
       sleep: async () => { await new Promise(r => setTimeout(r, 1)); },
     });
     try {
-      await waitFor(() => states.length >= 1);
+      await waitFor(() => states.some(s => s.synced));
     } finally {
       engine.stop();
     }
