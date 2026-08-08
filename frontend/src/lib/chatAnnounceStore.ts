@@ -168,6 +168,31 @@ export function _resetKeyAnnouncementForTest(): void {
 export const STANDING_RECHECK_MIN_GAP_MS = 30_000;
 
 /**
+ * Насколько недавний уход считать ВОЗНЁЙ КОШЕЛЬКА, а не походом человека.
+ *
+ * ⚠️ САМОПИСЕЦ НА ЖИВОМ REDMI (9 августа), настоящий MetaMask:
+ *
+ *     34,7 с  расфокус                видимость: visible
+ *     36,0 с  фокус → расфокус        visible      ← кошелёк дёргает фокус
+ *     37,1 с  видимость → hidden      hidden       ← поход в кошелёк
+ *     67,2 с  видимость → visible                  ← человек вернулся
+ *
+ * Кошелёк перед уходом даёт расфокус-фокус-расфокус ЗА ПОЛТОРЫ СЕКУНДЫ. Считать
+ * этот фокус возвратом нельзя, и не потому, что жаль запроса: он СЪЕДАЕТ порог
+ * ниже, и тогда настоящий возврат на 67-й секунде попадёт внутрь
+ * тридцатисекундного окна и справочник не перечитает. Кнопка снова появилась бы
+ * «как будто на таймере» — теперь по вине нашей же защиты.
+ *
+ * Отличитель — время: возня укладывается в полторы секунды, поход в кошелёк идёт
+ * секунды и минуты. Три секунды — двойной запас к замеренному.
+ *
+ * ⚠️ ПРАВИЛО ГАСИТ, А НЕ РАЗРЕШАЕТ. Возврат БЕЗ записанного ухода считается
+ * настоящим: на iOS в установленном приложении события видимости ненадёжны, и
+ * требовать уход значило бы не перечитать вовсе там, где это нужнее всего.
+ */
+export const RETURN_JITTER_MS = 3_000;
+
+/**
  * Стояния, при которых ответ справочника МОЖЕТ изменить то, что на экране.
  *
  * ⚠️ Множеством, а не сравнением по месту: правило «когда спрашивать» обязано
@@ -233,6 +258,9 @@ function page(): PageLike | null {
 
 let _watching = false;
 let _onReturn: (() => void) | null = null;
+let _onAway: (() => void) | null = null;
+/** Когда страница последний раз ушла из глаз (скрылась или потеряла фокус). */
+let _awayAt: number | null = null;
 
 /**
  * Взвести наблюдение за возвратом страницы. Зовётся из `readStandingInto`, то
@@ -250,28 +278,39 @@ function watchReturn(): void {
   if (_watching) return;
   const doc = page();
   if (!doc?.addEventListener) return;
+  _onAway = () => { _awayAt = Date.now(); };
   _onReturn = () => {
     // Скрыта — значит это уход, а не возврат. Спрашивать из свёрнутого
     // приложения незачем: показывать некому, и сеть там всё равно не идёт.
-    if (doc.visibilityState === 'hidden') return;
+    if (doc.visibilityState === 'hidden') { _awayAt = Date.now(); return; }
+    // Возня кошелька с фокусом — не возврат. Разбор и замер с прибора — у
+    // `RETURN_JITTER_MS`.
+    if (_awayAt !== null && Date.now() - _awayAt < RETURN_JITTER_MS) return;
+    _awayAt = null;
     recheckStandingOnReturn();
   };
   doc.addEventListener('visibilitychange', _onReturn);
   doc.addEventListener('focus', _onReturn);
   doc.addEventListener('pageshow', _onReturn);
+  doc.addEventListener('blur', _onAway);
   _watching = true;
 }
 
 /** Только для замеров: снять наблюдение вместе с подделанной страницей. */
 export function _resetStandingWatchForTest(): void {
   const doc = page();
-  if (_onReturn && doc?.removeEventListener) {
-    doc.removeEventListener('visibilitychange', _onReturn);
-    doc.removeEventListener('focus', _onReturn);
-    doc.removeEventListener('pageshow', _onReturn);
+  if (doc?.removeEventListener) {
+    if (_onReturn) {
+      doc.removeEventListener('visibilitychange', _onReturn);
+      doc.removeEventListener('focus', _onReturn);
+      doc.removeEventListener('pageshow', _onReturn);
+    }
+    if (_onAway) doc.removeEventListener('blur', _onAway);
   }
   _watching = false;
   _onReturn = null;
+  _onAway = null;
+  _awayAt = null;
 }
 
 /**

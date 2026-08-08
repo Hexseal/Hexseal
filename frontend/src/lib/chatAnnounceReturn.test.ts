@@ -63,7 +63,7 @@ function fakePage(): FakePage {
     },
     removeEventListener(t, fn) { p.listeners.get(t)?.delete(fn); },
     fire(t) { for (const fn of p.listeners.get(t) ?? []) fn(); },
-    goAway() { p.visibilityState = 'hidden'; p.fire('visibilitychange'); },
+    goAway() { p.visibilityState = 'hidden'; p.fire('visibilitychange'); p.fire('blur'); },
     comeBack() { p.visibilityState = 'visible'; p.fire('visibilitychange'); },
   };
   return p;
@@ -88,6 +88,26 @@ function stubDirectory(): void {
       boxKey: '0x' + Buffer.from(session.keypair.publicKey).toString('hex'),
     }), { status: 200 });
   }));
+}
+
+/** Сдвинуть часы. Все замеры этого файла идут на поддельных часах: правило
+ *  «возня кошелька — не возврат» держится на ВРЕМЕНИ, и мерить его иначе
+ *  нечем. */
+function advance(ms: number): void {
+  vi.setSystemTime(Date.now() + ms);
+}
+
+/**
+ * НАСТОЯЩИЙ поход в кошелёк: страница ушла, прошло время, страница вернулась.
+ *
+ * Отдельным хелпером, потому что мгновенный `goAway(); comeBack();` — это НЕ
+ * поход, а ровно та возня с фокусом, которую самописец увидел на живом Redmi
+ * (полторы секунды). Замеры обязаны отличать одно от другого так же, как код.
+ */
+function walletTrip(awayMs = 10_000): void {
+  page.goAway();
+  advance(awayMs);
+  page.comeBack();
 }
 
 /** Обещания подделанного справочника разрешаются микрозадачами — дать им дойти. */
@@ -115,9 +135,14 @@ beforeEach(async () => {
   vi.stubGlobal('localStorage', undefined);
   stubDirectory();
   session = { address: ALICE, keypair: await deriveChatKeypair(('0x' + 'ab'.repeat(65)) as `0x${string}`) } as ChatSession;
+  // Часы поддельные — но ТОЛЬКО после вывода ключа: libsodium ждёт своей
+  // готовности таймером, и поддельные часы его подвесили бы.
+  vi.useFakeTimers();
+  vi.setSystemTime(1_000_000);
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   _resetStandingWatchForTest();
   _resetSignatureGateForTest();
   vi.unstubAllGlobals();
@@ -140,7 +165,7 @@ describe('справочник не ответил, пока мы ходили �
     // Человек подтвердил подпись и вернулся на страницу. Ничего не нажимал и
     // никуда не переходил.
     answer = 'absent';
-    page.comeBack();
+    walletTrip();
     await flush();
 
     expect(directoryCalls, 'справочник не спрошен на возврате').toBe(askedBefore + 1);
@@ -157,6 +182,7 @@ describe('справочник не ответил, пока мы ходили �
       page.goAway();
       expect(told, 'уход в фон перерисовывает зря').toBe(0);
       answer = 'absent';
+      advance(10_000);
       page.comeBack();
       await flush();
       expect(told, 'возврат никого не перерисовал').toBeGreaterThan(0);
@@ -184,6 +210,7 @@ describe('справочник не ответил, пока мы ходили �
       expect(buttonShown(), 'кнопка у свёрнутого приложения').toBe(false);
       const askedBefore = directoryCalls;
       told = 0;
+      advance(10_000);
       page.comeBack();
       await flush();
       expect(directoryCalls - askedBefore, 'спросили справочник там, где ответ ничего не меняет').toBe(0);
@@ -208,28 +235,28 @@ describe('справочник не ответил, пока мы ходили �
 /* ═════════════ 2. возвраты не множат запросы ═══════════════════════════════ */
 
 describe('десять переключений — сколько запросов к справочнику', () => {
-  it('не знаем стояния: десять возвратов дают ОДИН запрос', async () => {
+  it('не знаем стояния: десять походов в кошелёк — ДВА запроса, не десять', async () => {
     await readStandingInto(ALICE, session, fetchPeerChatKeys);
     const askedBefore = directoryCalls;
     // Справочник продолжает отказывать: стояние остаётся «не знаем», то есть
     // спрашивать по-прежнему есть зачем — и вот тут порог обязан держать.
-    for (let i = 0; i < 10; i++) { page.goAway(); page.comeBack(); await flush(); }
-    expect(directoryCalls - askedBefore, 'каждое переключение стоит запроса').toBe(1);
+    //
+    // Десять походов по четыре секунды — это сорок секунд. Порог 30 с пускает
+    // первый и ещё один за тридцатой секундой: два запроса на десять
+    // переключений вместо десяти.
+    for (let i = 0; i < 10; i++) { walletTrip(4_000); await flush(); }
+    expect(directoryCalls - askedBefore, 'каждое переключение стоит запроса').toBe(2);
   });
 
   it('порог отпустил — следующий возврат снова спрашивает', async () => {
     // Замок, который запирает навсегда, — не порог, а поломка.
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(1_000_000);
-      await readStandingInto(ALICE, session, fetchPeerChatKeys);
-      const askedBefore = directoryCalls;
-      page.goAway(); page.comeBack(); await flush();
-      expect(directoryCalls - askedBefore).toBe(1);
-      vi.setSystemTime(1_000_000 + STANDING_RECHECK_MIN_GAP_MS + 1);
-      page.goAway(); page.comeBack(); await flush();
-      expect(directoryCalls - askedBefore).toBe(2);
-    } finally { vi.useRealTimers(); }
+    await readStandingInto(ALICE, session, fetchPeerChatKeys);
+    const askedBefore = directoryCalls;
+    walletTrip(); await flush();
+    expect(directoryCalls - askedBefore).toBe(1);
+    advance(STANDING_RECHECK_MIN_GAP_MS + 1);
+    walletTrip(); await flush();
+    expect(directoryCalls - askedBefore).toBe(2);
   });
 
   it('ключ объявлен — НОЛЬ запросов на десять переключений', async () => {
@@ -239,7 +266,7 @@ describe('десять переключений — сколько запрос�
     await readStandingInto(ALICE, session, fetchPeerChatKeys);
     expect(ownKeyStanding(ALICE)).toBe('mine');
     const askedBefore = directoryCalls;
-    for (let i = 0; i < 10; i++) { page.goAway(); page.comeBack(); await flush(); }
+    for (let i = 0; i < 10; i++) { walletTrip(4_000); await flush(); }
     expect(directoryCalls - askedBefore, 'здоровое состояние стоит запросов').toBe(0);
   });
 
@@ -276,6 +303,60 @@ describe('десять переключений — сколько запрос�
     for (let i = 0; i < 10; i++) askStandingIfWorth(ALICE, session, fetchPeerChatKeys);
     await flush();
     expect(directoryCalls - asked, 'каждое монтирование стоит запроса').toBe(0);
+  });
+
+  /* ═══════ ВОЗНЯ КОШЕЛЬКА С ФОКУСОМ — НЕ ВОЗВРАТ ═══════════════════════════
+     ⚠️ САМОПИСЕЦ НА ЖИВОМ REDMI (9 августа), настоящий MetaMask, дословно:
+
+         34,7 с  расфокус                  видимость: visible
+         36,0 с  фокус → расфокус          visible     ← кошелёк дёргает фокус
+         37,1 с  видимость → hidden        hidden      ← поход в кошелёк
+         52,9 с  ключ лёг на устройство    hidden
+         67,2 с  видимость → visible + фокус           ← человек вернулся
+
+     Кошелёк даёт расфокус-фокус-расфокус за полторы секунды ДО похода. Если
+     считать этот фокус возвратом, он съедает порог — и настоящий возврат на
+     67-й секунде окажется внутри тридцатисекундного окна и НЕ перечитает
+     справочник. То есть кнопка снова появится «как будто на таймере», только
+     теперь по вине нашей же защиты.
+
+     Отличитель — время: возня кошелька укладывается в полторы секунды, поход в
+     кошелёк идёт секунды и минуты. */
+  it('возня кошелька с фокусом не тратит ни одного запроса', async () => {
+    {
+      vi.setSystemTime(34_700);
+      await readStandingInto(ALICE, session, fetchPeerChatKeys);
+      const askedBefore = directoryCalls;
+      answer = 'absent';
+
+      // 34,7 расфокус → 36,0 фокус → расфокус. Страница ни разу не скрывалась.
+      page.fire('blur');
+      vi.setSystemTime(36_000);
+      page.fire('focus');
+      await flush();
+      page.fire('blur');
+      expect(directoryCalls - askedBefore, 'возня кошелька стоила запроса').toBe(0);
+
+      // 37,1 уход, 67,2 возврат — вот это возврат.
+      vi.setSystemTime(37_100);
+      page.goAway();
+      vi.setSystemTime(67_200);
+      page.comeBack();
+      await flush();
+      expect(directoryCalls - askedBefore, 'настоящий возврат не перечитал справочник').toBe(1);
+      expect(ownKeyStanding(ALICE)).toBe('absent');
+    }
+  });
+
+  it('короткий уход и возврат (быстрая подпись) — возврат всё равно считается', async () => {
+    // Порог отличает возню от похода, а не «долгий поход от короткого». Подпись
+    // в расширении может занять три секунды, и это настоящий возврат.
+    await readStandingInto(ALICE, session, fetchPeerChatKeys);
+    const askedBefore = directoryCalls;
+    answer = 'absent';
+    walletTrip(6_000);
+    await flush();
+    expect(directoryCalls - askedBefore).toBe(1);
   });
 
   it('ушли в фон и остались там — ни одного запроса', async () => {

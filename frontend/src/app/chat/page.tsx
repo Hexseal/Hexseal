@@ -88,12 +88,11 @@ const DEAL_STATUS_CLS: Record<number, string> = {
  * молчит, и новая причина показалась бы человеку как «Сообщений пока нет», то
  * есть ровно тем враньём, из-за которого таблица и появилась.
  */
-const PREVIEW_KEY: Record<PreviewState, 'chat.no_messages_yet' | 'chat.preview_pending' | 'chat.preview_unreadable' | 'chat.preview_from_me'> = {
+const PREVIEW_KEY: Record<PreviewState, 'chat.no_messages_yet' | 'chat.preview_pending' | 'chat.preview_unreadable'> = {
   text:       'chat.no_messages_yet',
   none:       'chat.no_messages_yet',
   pending:    'chat.preview_pending',
   unreadable: 'chat.preview_unreadable',
-  from_me:    'chat.preview_from_me',
 };
 
 const ConvoItem = memo(function ConvoItem({
@@ -203,7 +202,14 @@ const ConvoItem = memo(function ConvoItem({
         {/* Always reserve this line — an empty conversation with no dealCtx would
             otherwise render one line shorter than every other row in the list. */}
         {lastText ? (
-          <p className={`text-xs truncate mt-1 ${hasUnread ? 'text-white/70 font-medium' : 'text-white/30'}`}>{lastText}</p>
+          /* ⚠️ СВОЁ СООБЩЕНИЕ ПОКАЗЫВАЕТСЯ ТЕКСТОМ, с пометкой «Вы», как в любом
+             мессенджере. Здесь стояла подпись «вы написали последним» вместо
+             самого текста — владелец назвал это прямо: подписывать случай не
+             значит его решить. Текст у нас есть (второй слот конверта), список
+             просто не шёл за своей половиной. */
+          <p className={`text-xs truncate mt-1 ${hasUnread ? 'text-white/70 font-medium' : 'text-white/30'}`}>
+            {lastFromMe ? `${t('chat.preview_you')}: ${lastText}` : lastText}
+          </p>
         ) : (
           /* ⚠️ ПУСТОТА ОБЪЯСНЕНА, А НЕ ОСТАВЛЕНА ПУСТОЙ. Здесь на все причины
              стояло «Сообщений пока нет» — утверждение, ложное в трёх случаях из

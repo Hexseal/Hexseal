@@ -59,14 +59,18 @@ import { isSignatureDeferred } from '@/lib/chatSignatureGate';
  * Пустое превью рисовалось словами «Сообщений пока нет» — то есть УТВЕРЖДЕНИЕМ,
  * и в трёх случаях из четырёх ложным. Причины выглядели на экране одинаково,
  * поэтому и читались как случайность.
+ *
+ * ⚠️ СОСТОЯНИЯ «ПОСЛЕДНЕЕ СЛОВО НАШЕ» ЗДЕСЬ БОЛЬШЕ НЕТ, и это правка по
+ * замечанию владельца: подписывать этот случай было НЕ починкой. Текст своего
+ * сообщения у нас есть (второй слот конверта), и он теперь показывается как
+ * везде — «Вы: …». Осталось только «ещё не загрузилось», если своего мешка не
+ * добыть (истёк срок хранения, кончился бюджет чтения, отказ склада).
  */
 export type PreviewState =
   /** Текст есть. */
   | 'text'
   /** Мешков нет ни в одну сторону. Единственный случай, где «сообщений нет» — правда. */
   | 'none'
-  /** Последнее слово НАШЕ. Свой мешок запечатан на ключ собеседника — текста у нас нет. */
-  | 'from_me'
   /** Мешок есть, но не скачан: кончился бюджет чтения или не досталось места. */
   | 'pending'
   /** Мешок скачан и НЕ вскрылся: запечатан на прежний ключ этого устройства либо испорчен. */
@@ -138,7 +142,7 @@ export const UNKNOWN_PREVIEW_SLOTS = 8;
  * попаданий падает плавно и не обрывается в ноль.
  */
 const _previewCache = new BoundedParseCache<{
-  text: string; receivedAt: number;
+  text: string;
   /** Почему текста нет. Запоминается ВМЕСТЕ с ним: иначе нечитаемый мешок,
    *  попавший в память пустой строкой, на следующем заходе снова выдавался бы за
    *  «сообщений нет». */
@@ -179,20 +183,42 @@ export async function loadPairConversations(
   const { inbox, sent, peers } = await listBags(pass, undefined, signal);
   const own = session.address.toLowerCase();
 
-  // Самый свежий ВХОДЯЩИЙ мешок на собеседника — только его и качаем.
-  const newestFrom = new Map<string, BagSummary>();
+  /**
+   * Самый свежий мешок на собеседника В ЛЮБУЮ СТОРОНУ — его одного и качаем.
+   *
+   * ⚠️ ЗДЕСЬ БЫЛА ЖИВАЯ БЕДА, И ВЛАДЕЛЕЦ НАЗВАЛ ЕЁ ДОСЛОВНО: «он не отображает
+   * сообщение отправляющего, не видит или шо». Качался ТОЛЬКО входящий мешок, и
+   * переписка, где последнее слово наше, оставалась без превью — а это самый
+   * частый случай из всех: человек написал и смотрит в список.
+   *
+   * Своя половина доступна и ничего не стоит:
+   *  - она приезжает ТЕМ ЖЕ ответом склада, полем `sent` (лишних запросов нет);
+   *  - конверт запечатан ДВУМЯ слотами, второй наш (шапка `chatEnvelope.ts`),
+   *    поэтому свой мешок читается нашей же парой ключей;
+   *  - склад отдаёт мешок и отправителю (`meta.sender === address`,
+   *    `relayer/app.js`) — это чинилось отдельно, ради второго устройства.
+   *
+   * ⚠️ И ЗАПРОСОВ НЕ ПРИБАВИЛОСЬ НИ ОДНОГО, потому что качается по-прежнему
+   * ОДИН мешок на собеседника — просто теперь самый свежий, а не самый свежий
+   * чужой. Замер: двадцать переписок в обе стороны — двадцать скачиваний.
+   */
+  const newestFor = new Map<string, { key: string; sender: string; uploadedAt: number; fromMe: boolean }>();
+  const consider = (peer: string, bag: { key: string; sender: string; uploadedAt: number; fromMe: boolean }): void => {
+    const prev = newestFor.get(peer);
+    if (!prev || bag.uploadedAt > prev.uploadedAt) newestFor.set(peer, bag);
+  };
   for (const b of inbox) {
     const from = b.sender.toLowerCase();
-    const prev = newestFrom.get(from);
-    if (!prev || b.uploadedAt > prev.uploadedAt) newestFrom.set(from, b);
+    consider(from, { key: b.key, sender: from, uploadedAt: b.uploadedAt, fromMe: false });
   }
-  // И самый свежий ИСХОДЯЩИЙ — чтобы «последнее слово за мной» отличалось от
-  // «последнее слово за ним» без чтения чужих мешков.
+  // Кому мы писали — и когда в последний раз. Нужно ДВАЖДЫ: для превью своей
+  // половины и для того, чтобы своим не считали мест среди претендентов.
   const newestTo = new Map<string, number>();
   for (const s of sent) {
     const to = s.recipient.toLowerCase();
     const prev = newestTo.get(to) ?? 0;
     if (s.uploadedAt > prev) newestTo.set(to, s.uploadedAt);
+    consider(to, { key: s.key, sender: own, uploadedAt: s.uploadedAt, fromMe: true });
   }
 
   // ─── КОМУ ДОСТАНЕТСЯ БЮДЖЕТ ПРЕВЬЮ ─────────────────────────────────────
@@ -226,7 +252,7 @@ export async function loadPairConversations(
   const rows: PairConversation[] = [];
   for (const peer of ordered) {
     const addr = peer.address.toLowerCase();
-    const summary = newestFrom.get(addr);
+    const summary = newestFor.get(addr);
     let lastText = '';
     let lastAt = 0;
     let lastFromMe = false;
@@ -239,6 +265,10 @@ export async function loadPairConversations(
       // Мешок ЕСТЬ. Значит «сообщений нет» уже неправда, чем бы ни кончилось
       // дальше: не скачали — «ещё не загружено», не вскрыли — «не читается».
       preview = 'pending';
+      // Время склада и сторона — известны СРАЗУ, из описи. Строка встаёт на своё
+      // место в списке даже когда до скачивания дело не дошло.
+      lastAt = summary.uploadedAt;
+      lastFromMe = summary.fromMe;
       const cacheKey = `${own}|${summary.key}`;
       const remembered = _previewCache.get(cacheKey);
       if (remembered) {
@@ -248,7 +278,6 @@ export async function loadPairConversations(
         // Показывается ДАЖЕ ТОМУ, кто сегодня в претенденты не попал: раз оно
         // уже есть, прятать его значило бы, что строка «потеряла» текст.
         lastText = remembered.text;
-        lastAt = remembered.receivedAt;
         preview = remembered.state;
       } else if (!outOfReads && budget > 0 && candidates.has(addr)) {
         budget--;
@@ -256,17 +285,13 @@ export async function loadPairConversations(
           const body = await fetchBag(pass, summary.key, signal);
           if (body) {
             const bag: IncomingBag = {
-              key: summary.key, sender: summary.sender,
+              key: summary.key, sender: summary.sender as `0x${string}`,
               uploadedAt: summary.uploadedAt, body,
             };
             const state = await receiveBags(session, [bag], { peer: addr as `0x${string}` });
             const last = state.messages[state.messages.length - 1];
             if (last) {
               lastText = last.payload.text ?? last.payload.file?.name ?? '';
-              // В-2: время склада, а не слово отправителя. Иначе посторонний
-              // одним мешком с временем «2096 год» встаёт первой строкой
-              // списка НАВСЕГДА — сортировка в конце функции идёт по `lastAt`.
-              lastAt = last.receivedAt;
               preview = lastText ? 'text' : 'unreadable';
             } else {
               // Скачали и не получили ни одного сообщения: мешок запечатан на
@@ -277,7 +302,7 @@ export async function loadPairConversations(
             // Запоминается И ПУСТОЕ превью (мешок не вскрылся, не разобрался):
             // иначе нечитаемый мешок качался бы заново каждые тридцать секунд
             // вечно — ровно тот случай, ради которого память и заводится.
-            _previewCache.put(cacheKey, { text: lastText, receivedAt: lastAt, state: preview });
+            _previewCache.put(cacheKey, { text: lastText, state: preview });
           }
         } catch (err) {
           // Отмена — не «сломанная строка», а уход со страницы: пробрасываем,
@@ -294,11 +319,6 @@ export async function loadPairConversations(
       }
     }
 
-    const sentAt = newestTo.get(addr) ?? 0;
-    // Последнее слово за нами. Текста нет и быть не может: свой мешок запечатан
-    // на ключ собеседника. Но «сообщений пока нет» — вранье, и самое обидное:
-    // человек только что написал сам и видит, что его сообщения «нет».
-    if (sentAt > lastAt) { lastAt = sentAt; lastFromMe = true; lastText = ''; preview = 'from_me'; }
     // Ни одного собственного признака времени не нашлось — берём то, что
     // сказал сервер. Это НЕ время сообщения, а «когда собеседник последний
     // раз тронул что-то моё» (см. `PeerSummary`), поэтому оно только
