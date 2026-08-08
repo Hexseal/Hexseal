@@ -43,8 +43,18 @@ function rows(n: number, textPrefix = 'сообщение'): PairConversation[] 
   return out;
 }
 
+/**
+ * Здоровое основание: склад УЖЕ отвечал (`everAnswered: true`), окна кошелька
+ * нет, ключ объявлен, сеанс открыт.
+ *
+ * ⚠️ `loading` во входе исхода больше нет — вместо него `everAnswered`. Причина:
+ * «заход в полёте» снимается в `finally` даже когда захода не было, и колонка
+ * утверждала «переписок нет» про неспрошенный склад (правка 9 августа, разбор —
+ * `lib/chatListPhase.ts`). Замеры ниже, которым нужно «памяти нет», ставят
+ * `everAnswered: false` явно.
+ */
 const BASE_PHASE = {
-  hasRows: false, loading: false, signatureReason: null as null,
+  hasRows: false, everAnswered: true, signatureReason: null as null,
   keyNotAnnounced: false, sessionStatus: 'ready' as const, error: null as string | null,
 };
 
@@ -67,7 +77,7 @@ describe('человек ушёл посреди захода и вернулс�
     state = listStarted(state);
     expect(state.rows, 'оборванный заход потерял строки').toBe(before);
     expect(state.loading, 'заготовки поверх целого списка').toBe(false);
-    expect(listPhase({ ...BASE_PHASE, hasRows: true, loading: state.loading })).toBe('rows');
+    expect(listPhase({ ...BASE_PHASE, hasRows: true })).toBe('rows');
   });
 
   it('запоздавший заход принёс ТО ЖЕ — ни одной смены состояния', () => {
@@ -88,7 +98,8 @@ describe('человек ушёл посреди захода и вернулс�
     // значит заготовки честны: ждём сеть, а не человека.
     const state = listStarted(EMPTY_LIST_STATE);
     expect(state.loading).toBe(true);
-    expect(listPhase({ ...BASE_PHASE, hasRows: false, loading: true })).toBe('skeleton');
+    expect(state.everAnswered, 'начало захода сошло за ответ склада').toBe(false);
+    expect(listPhase({ ...BASE_PHASE, hasRows: false, everAnswered: false })).toBe('skeleton');
   });
 });
 
