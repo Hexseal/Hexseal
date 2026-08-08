@@ -80,6 +80,8 @@ function fakeChain(opts: { head?: bigint; failGetLogs?: boolean; failWatch?: boo
     io, calls,
     /** Прошло `n` тактов опроса живого слежения. */
     tick(n = 1) { for (let i = 0; i < n; i++) pollTimer?.(); },
+    /** Старый лог в истории — голову НЕ двигает (иначе цепь «откатывается назад»). */
+    seed(log: unknown, block: bigint) { chain.push({ block, log }); },
     /** Событие случилось в цепи. Живое слежение узнаёт о нём, если взведено. */
     emit(log: unknown, block?: bigint) {
       head = block ?? head + BigInt(1);
@@ -262,7 +264,7 @@ describe('возврат к вкладке догоняет пропущенно
   it('ПЕРВЫЙ В ЖИЗНИ запуск не заливает колокольчик историей', async () => {
     const v = fakeDoc('visible');
     const c = fakeChain({ head: BigInt(5000) });
-    c.emit({ eventName: 'JobApplied', mark: 'древнее' }, BigInt(10));
+    c.seed({ eventName: 'JobApplied', mark: 'древнее' }, BigInt(10));
     const seen: unknown[] = [];
     const cursor = memCursor(null);
     const stop = runChainWatch({ io: c.io, cursor, doc: v.doc, hideGraceMs: 0, onLogs: (l) => seen.push(...l) });
@@ -332,11 +334,18 @@ describe('обстоятельства', () => {
     };
     const seen: unknown[] = [];
     const onError = vi.fn();
-    const stop = runChainWatch({ io, cursor: memCursor(BigInt(900)), doc: v.doc, hideGraceMs: 0, onLogs: (l) => seen.push(...l), onError });
+    const cursor = memCursor(BigInt(900));
+    const stop = runChainWatch({ io, cursor, doc: v.doc, hideGraceMs: 0, onLogs: (l) => seen.push(...l), onError });
     await new Promise((r) => setTimeout(r, 0));
     v.set('visible');
     await new Promise((r) => setTimeout(r, 0));
     expect(seen).toEqual([]);
+    // ⚠️ Главное здесь не «не упало», а что мусор НЕ выдан за успешный догон.
+    // Замерено мутацией: без проверки на массив утверждение «seen пусто»
+    // оставалось зелёным, потому что `undefined.length > 0` тоже ложь, — а курсор
+    // при этом уезжал на голову и пропуск терялся навсегда.
+    expect(onError, 'мусор из узла съеден молча').toHaveBeenCalled();
+    expect(cursor.peek(), 'курсор уехал на мусорном ответе — пропуск потерян').toBe(BigInt(900));
     stop();
   });
 
@@ -377,7 +386,8 @@ describe('обстоятельства', () => {
     v.set('visible'); v.set('hidden'); v.set('visible');
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
-    expect(c.calls.getLogs, 'догон запустился дважды параллельно').toBeLessThanOrEqual(2);
+    // Ровно один: `<= 2` было зелёным и при снятом замке (замерено мутацией).
+    expect(c.calls.getLogs, 'догон запустился дважды параллельно').toBe(1);
     stop();
   });
 });
