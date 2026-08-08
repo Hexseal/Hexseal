@@ -34,7 +34,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { announceNeedsPress, announceMayAuto } from '@/lib/chatAnnounce';
 import {
-  readStandingInto, announceInto, keyAnnouncementState, ownKeyStanding,
+  askStandingIfWorth, announceInto, keyAnnouncementState, ownKeyStanding,
   subscribeKeyAnnouncement,
 } from '@/lib/chatAnnounceStore';
 import { checkSignatureGate, clearWalletHandoff } from '@/lib/chatSignatureGate';
@@ -101,25 +101,32 @@ export function useKeyAnnouncement(): KeyAnnouncementValue {
   // а не только того, кто спросил последним.
   useEffect(() => subscribeKeyAnnouncement(() => bump(n => n + 1)), []);
 
-  // Возвращение страницы в глаза меняет ВЕРДИКТ ПОРОГА, а значит и то, что видно
-  // на экране: свёрнутое приложение кнопки не показывало (показывать некому), и
-  // без этой перерисовки она не появилась бы и после возврата.
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const fn = () => bump(n => n + 1);
-    document.addEventListener('visibilitychange', fn);
-    return () => { document.removeEventListener('visibilitychange', fn); };
-  }, []);
+  // ⚠️ СВОЕГО СЛУШАТЕЛЯ ВОЗВРАТА ЗДЕСЬ БОЛЬШЕ НЕТ, и это правка, а не уборка.
+  // Он делал ровно половину дела: перерисовывал (вердикт порога на возврате
+  // меняется — верно), но НЕ ПЕРЕЧИТЫВАЛ справочник. А ответ справочника мы
+  // получаем в худший момент — пока страница заморожена походом к кошельку, —
+  // и на отказе застревали в «мы не знаем», при котором кнопки нет. Разбор,
+  // замер и оба события (`focus`/`pageshow` вдобавок к видимости) — в
+  // `recheckStandingOnReturn` (`lib/chatAnnounceStore.ts`). Оттуда же приходит
+  // и перерисовка: склад зовёт `tell()` на каждом возврате.
+  //
+  // Здесь этого нет ещё и потому, что здесь это НЕЧЕМ ЗАМЕРИТЬ (нет jsdom), а
+  // в складе — мерится подделанной страницей.
 
   const st = keyAnnouncementState(address);
   const gate = checkSignatureGate(false);
   const input = { keyOnDevice: !!session, standing: st.standing, attempt: st.attempt, gate };
 
-  // Спросить справочник — один раз на адрес, как только ключ на устройстве есть.
+  // Спросить справочник, как только ключ на устройстве есть.
+  //
+  // ⚠️ БЕЗ УСЛОВИЯ. Здесь стояло своё («стояние ещё не известно»), и мутация
+  // «вернуть его» прошла зелёной на 37 замерах — проводку внутри хука нечем
+  // сторожить. Решение, спрашивать или нет, переехало в склад
+  // (`askStandingIfWorth`) и мерится там числом запросов; здесь остался
+  // единственный безусловный зов, который нельзя испортить незаметно.
   useEffect(() => {
     if (!address || !session) return;
-    if (ownKeyStanding(address) !== 'unknown') return;
-    void readStandingInto(address as `0x${string}`, session as ChatSession, fetchPeerChatKeys);
+    askStandingIfWorth(address as `0x${string}`, session as ChatSession, fetchPeerChatKeys);
   }, [address, session]);
 
   // Объявить самим — там, где это разрешено (десктоп: страница не пропадала).
