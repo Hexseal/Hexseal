@@ -224,7 +224,38 @@ describe('тик без изменений не меняет ни пикселя
   });
 });
 
-/* ═══════════════ 3. моргнувший отказ не сносит список ══════════════════════ */
+/* ═══════════════ 3. пустое превью объяснено словами ════════════════════════ */
+
+describe('пустое превью не выдаётся за «сообщений нет»', () => {
+  it('у каждой причины свои слова, и они на экране', async () => {
+    setConv({ conversations: [
+      { peerAddress: PEER,  lastText: '', lastAt: LONG_AGO, lastFromMe: true,  preview: 'from_me' },
+      { peerAddress: PEER2, lastText: '', lastAt: LONG_AGO, lastFromMe: false, preview: 'pending' },
+      { peerAddress: '0x5555555555555555555555555555555555555555', lastText: '', lastAt: LONG_AGO, lastFromMe: false, preview: 'unreadable' },
+      { peerAddress: '0x6666666666666666666666666666666666666666', lastText: '', lastAt: LONG_AGO, lastFromMe: false, preview: 'none' },
+    ] });
+    const html = await renderList();
+    expect(html, 'про своё последнее слово не сказано').toContain(translate('chat.preview_from_me'));
+    expect(html, 'про нескачанный мешок не сказано').toContain(translate('chat.preview_pending'));
+    expect(html, 'про нечитаемый мешок не сказано').toContain(translate('chat.preview_unreadable'));
+    expect(html, 'честная пустота потеряла свои слова').toContain(translate('chat.no_messages_yet'));
+  });
+
+  it('«сообщений нет» стоит РОВНО ОДИН раз — у той строки, где это правда', async () => {
+    // Иначе замок зелёный от того, что фраза где-то есть, а не от того, что она
+    // стоит там, где надо.
+    setConv({ conversations: [
+      { peerAddress: PEER,  lastText: '', lastAt: LONG_AGO, lastFromMe: true,  preview: 'from_me' },
+      { peerAddress: PEER2, lastText: '', lastAt: LONG_AGO, lastFromMe: false, preview: 'pending' },
+      { peerAddress: '0x6666666666666666666666666666666666666666', lastText: '', lastAt: LONG_AGO, lastFromMe: false, preview: 'none' },
+    ] });
+    const html = await renderList();
+    const phrase = translate('chat.no_messages_yet');
+    expect(html.split(phrase).length - 1, 'пустота без причины снова выдаётся за «сообщений нет»').toBe(1);
+  });
+});
+
+/* ═══════════════ 4. моргнувший отказ не сносит список ══════════════════════ */
 
 describe('отказ одного тика не уносит переписки с экрана', () => {
   it('склад отказал — строки остались', async () => {

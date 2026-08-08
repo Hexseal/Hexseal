@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import type { Abi } from 'viem';
 import { isAddress } from 'viem';
-import { usePairConversations } from '@/hooks/usePairConversations';
+import { usePairConversations, type PreviewState } from '@/hooks/usePairConversations';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useKeyAnnouncement } from '@/hooks/useKeyAnnouncement';
 import { ChatOffScreen } from '@/components/ChatOffScreen';
@@ -80,13 +80,30 @@ const DEAL_STATUS_CLS: Record<number, string> = {
   6: 'text-white/30',
 };
 
+/**
+ * Слова для каждой причины пустого превью — таблицей, а не цепочкой `?:`.
+ *
+ * ⚠️ ПОЛНОТА ПРОВЕРЯЕТСЯ ТИПОМ (`Record<PreviewState, …>`): добавится новая
+ * причина — не соберётся, пока ей не подберут слова. Цепочка условий про такое
+ * молчит, и новая причина показалась бы человеку как «Сообщений пока нет», то
+ * есть ровно тем враньём, из-за которого таблица и появилась.
+ */
+const PREVIEW_KEY: Record<PreviewState, 'chat.no_messages_yet' | 'chat.preview_pending' | 'chat.preview_unreadable' | 'chat.preview_from_me'> = {
+  text:       'chat.no_messages_yet',
+  none:       'chat.no_messages_yet',
+  pending:    'chat.preview_pending',
+  unreadable: 'chat.preview_unreadable',
+  from_me:    'chat.preview_from_me',
+};
+
 const ConvoItem = memo(function ConvoItem({
-  peerAddress, lastText, lastAt, lastFromMe, isSelected, isSeen, onSelect, dealCtx, myAddress,
+  peerAddress, lastText, lastAt, lastFromMe, preview, isSelected, isSeen, onSelect, dealCtx, myAddress,
 }: {
   peerAddress: string;
   lastText: string;
   lastAt: number;
   lastFromMe: boolean;
+  preview?: PreviewState;
   isSelected: boolean;
   isSeen: boolean;
   onSelect: (addr: string) => void;
@@ -188,7 +205,12 @@ const ConvoItem = memo(function ConvoItem({
         {lastText ? (
           <p className={`text-xs truncate mt-1 ${hasUnread ? 'text-white/70 font-medium' : 'text-white/30'}`}>{lastText}</p>
         ) : (
-          <p className="text-xs truncate mt-1 text-white/15 italic">{t("chat.no_messages_yet")}</p>
+          /* ⚠️ ПУСТОТА ОБЪЯСНЕНА, А НЕ ОСТАВЛЕНА ПУСТОЙ. Здесь на все причины
+             стояло «Сообщений пока нет» — утверждение, ложное в трёх случаях из
+             четырёх: мы написали последними; мешок не скачан; мешок не вскрылся.
+             Владелец увидел это как «где-то написано последнее сообщение, а где-то
+             нет». Разбор причин — `PreviewState` в `usePairConversations.ts`. */
+          <p className="text-xs truncate mt-1 text-white/15 italic">{t(PREVIEW_KEY[preview ?? 'none'])}</p>
         )}
       </div>
     </button>
@@ -461,7 +483,9 @@ function ChatHubPageInner() {
     const extras: typeof conversations = [];
     for (const [peer] of peerDealsMap) {
       if (!knownPeers.has(peer)) {
-        extras.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true });
+        // Мешков нет ни в одну сторону — это ЧЕСТНОЕ «сообщений пока нет»:
+        // сделка есть, переписка не начата.
+        extras.push({ group: null as any, peerAddress: peer, lastText: '', lastAt: 0, lastFromMe: true, preview: 'none' });
       }
     }
     if (extras.length === 0) return conversations;
@@ -747,13 +771,14 @@ function ChatHubPageInner() {
           {/* ⚠️ БЕЗ `!error`. Строки рисуются ВСЕГДА, когда они есть: моргнувший
               отказ склада не имеет права уносить с экрана то, что человек уже
               читает. Про отказ говорит полоса выше. */}
-          {allConversations.map(({ peerAddress, lastText, lastAt, lastFromMe }) => (
+          {allConversations.map(({ peerAddress, lastText, lastAt, lastFromMe, preview }) => (
             <ConvoItem
               key={peerAddress}
               peerAddress={peerAddress}
               lastText={lastText}
               lastAt={lastAt}
               lastFromMe={lastFromMe}
+              preview={preview}
               isSelected={selected === peerAddress}
               isSeen={seenConvos.has(peerAddress)}
               dealCtx={peerDealsMap.get(peerAddress)?.[0]}

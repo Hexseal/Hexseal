@@ -31,7 +31,11 @@ export function sameConversationRow(a: PairConversation, b: PairConversation): b
   return a.peerAddress === b.peerAddress
     && a.lastText === b.lastText
     && a.lastAt === b.lastAt
-    && a.lastFromMe === b.lastFromMe;
+    && a.lastFromMe === b.lastFromMe
+    // Причина пустого превью видна на экране словами — значит её смена ЕСТЬ
+    // изменение строки. Без этой строки «ещё не загружено» так и осталось бы на
+    // экране после того, как мешок доехал и вскрылся.
+    && a.preview === b.preview;
 }
 
 /**

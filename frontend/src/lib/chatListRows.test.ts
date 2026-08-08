@@ -92,4 +92,17 @@ describe('тик принёс изменения — но только там, �
     const empty: PairConversation[] = [];
     expect(mergeConversationRows(empty, [])).toBe(empty);
   });
+
+  it('причина пустого превью сменилась — это изменение: она видна словами', async () => {
+    // «Ещё не загружено» → мешок доехал и не вскрылся. Текст пуст в обоих
+    // случаях, а на экране РАЗНЫЕ слова: сшиватель обязан это заметить.
+    const rows: PairConversation[] = [
+      { peerAddress: A, lastText: '', lastAt: 1000, lastFromMe: false, preview: 'pending' },
+    ];
+    const next = mergeConversationRows(rows, [
+      { peerAddress: A, lastText: '', lastAt: 1000, lastFromMe: false, preview: 'unreadable' },
+    ]);
+    expect(next, 'смена причины пустого превью проигнорирована').not.toBe(rows);
+    expect(next[0].preview).toBe('unreadable');
+  });
 });

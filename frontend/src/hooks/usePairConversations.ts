@@ -51,11 +51,34 @@ import { isSignatureDeferred } from '@/lib/chatSignatureGate';
  * подставлял `null as any` для своих собственных строк. Оставлено
  * необязательным, чтобы тот код собрался без правок; Задача 7 его убирает.
  */
+/**
+ * ПОЧЕМУ у строки нет текста последнего сообщения.
+ *
+ * ⚠️ ЗАЧЕМ ЭТО ПОЛЕ. Владелец, дословно: «какие-то нормально в списке
+ * отображаюсься, какие-то нет. гдето написано последнее сообщение а гдето нет».
+ * Пустое превью рисовалось словами «Сообщений пока нет» — то есть УТВЕРЖДЕНИЕМ,
+ * и в трёх случаях из четырёх ложным. Причины выглядели на экране одинаково,
+ * поэтому и читались как случайность.
+ */
+export type PreviewState =
+  /** Текст есть. */
+  | 'text'
+  /** Мешков нет ни в одну сторону. Единственный случай, где «сообщений нет» — правда. */
+  | 'none'
+  /** Последнее слово НАШЕ. Свой мешок запечатан на ключ собеседника — текста у нас нет. */
+  | 'from_me'
+  /** Мешок есть, но не скачан: кончился бюджет чтения или не досталось места. */
+  | 'pending'
+  /** Мешок скачан и НЕ вскрылся: запечатан на прежний ключ этого устройства либо испорчен. */
+  | 'unreadable';
+
 export interface PairConversation {
   peerAddress: string;
   lastText: string;
   lastAt: number;
   lastFromMe: boolean;
+  /** Почему `lastText` пуст. См. `PreviewState`. */
+  preview?: PreviewState;
   /** @deprecated наследство XMTP, никем не читается. */
   group?: unknown;
 }
@@ -114,7 +137,13 @@ export const UNKNOWN_PREVIEW_SLOTS = 8;
  * К-3): при переполнении жертва случайная, а приём изредка, поэтому доля
  * попаданий падает плавно и не обрывается в ноль.
  */
-const _previewCache = new BoundedParseCache<{ text: string; receivedAt: number }>(500);
+const _previewCache = new BoundedParseCache<{
+  text: string; receivedAt: number;
+  /** Почему текста нет. Запоминается ВМЕСТЕ с ним: иначе нечитаемый мешок,
+   *  попавший в память пустой строкой, на следующем заходе снова выдавался бы за
+   *  «сообщений нет». */
+  state: PreviewState;
+}>(500);
 
 /** Только тесты: список обязан быть проверяем с холодной памяти. */
 export function _resetPreviewCacheForTest(): void {
@@ -201,8 +230,15 @@ export async function loadPairConversations(
     let lastText = '';
     let lastAt = 0;
     let lastFromMe = false;
+    // ⚠️ УМОЛЧАНИЕ — «мешков нет вовсе», и оно верно ровно до первой находки.
+    // Дальше каждая ветка обязана сказать свою причину: пустая строка без
+    // причины и была тем самым враньём «Сообщений пока нет».
+    let preview: PreviewState = 'none';
 
     if (summary) {
+      // Мешок ЕСТЬ. Значит «сообщений нет» уже неправда, чем бы ни кончилось
+      // дальше: не скачали — «ещё не загружено», не вскрыли — «не читается».
+      preview = 'pending';
       const cacheKey = `${own}|${summary.key}`;
       const remembered = _previewCache.get(cacheKey);
       if (remembered) {
@@ -213,6 +249,7 @@ export async function loadPairConversations(
         // уже есть, прятать его значило бы, что строка «потеряла» текст.
         lastText = remembered.text;
         lastAt = remembered.receivedAt;
+        preview = remembered.state;
       } else if (!outOfReads && budget > 0 && candidates.has(addr)) {
         budget--;
         try {
@@ -230,11 +267,17 @@ export async function loadPairConversations(
               // одним мешком с временем «2096 год» встаёт первой строкой
               // списка НАВСЕГДА — сортировка в конце функции идёт по `lastAt`.
               lastAt = last.receivedAt;
+              preview = lastText ? 'text' : 'unreadable';
+            } else {
+              // Скачали и не получили ни одного сообщения: мешок запечатан на
+              // прежний ключ этого устройства либо испорчен. Здесь его не
+              // прочесть НИКОГДА — и человеку надо сказать это, а не «нет».
+              preview = 'unreadable';
             }
             // Запоминается И ПУСТОЕ превью (мешок не вскрылся, не разобрался):
             // иначе нечитаемый мешок качался бы заново каждые тридцать секунд
             // вечно — ровно тот случай, ради которого память и заводится.
-            _previewCache.put(cacheKey, { text: lastText, receivedAt: lastAt });
+            _previewCache.put(cacheKey, { text: lastText, receivedAt: lastAt, state: preview });
           }
         } catch (err) {
           // Отмена — не «сломанная строка», а уход со страницы: пробрасываем,
@@ -252,14 +295,17 @@ export async function loadPairConversations(
     }
 
     const sentAt = newestTo.get(addr) ?? 0;
-    if (sentAt > lastAt) { lastAt = sentAt; lastFromMe = true; lastText = ''; }
+    // Последнее слово за нами. Текста нет и быть не может: свой мешок запечатан
+    // на ключ собеседника. Но «сообщений пока нет» — вранье, и самое обидное:
+    // человек только что написал сам и видит, что его сообщения «нет».
+    if (sentAt > lastAt) { lastAt = sentAt; lastFromMe = true; lastText = ''; preview = 'from_me'; }
     // Ни одного собственного признака времени не нашлось — берём то, что
     // сказал сервер. Это НЕ время сообщения, а «когда собеседник последний
     // раз тронул что-то моё» (см. `PeerSummary`), поэтому оно только
     // запасное.
     if (lastAt === 0 && peer.lastActivityWithMeAt) lastAt = peer.lastActivityWithMeAt;
 
-    rows.push({ peerAddress: addr, lastText, lastAt, lastFromMe });
+    rows.push({ peerAddress: addr, lastText, lastAt, lastFromMe, preview });
   }
 
   // Свежие сверху — та же сортировка, что была у версии на XMTP.
