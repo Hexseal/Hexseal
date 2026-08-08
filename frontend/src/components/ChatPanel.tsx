@@ -400,6 +400,68 @@ function ChatSetupBar({ explained = false }: { explained?: boolean }) {
   );
 }
 
+/**
+ * ЖДЁМ ПОДПИСЬ — там, куда человек смотрит.
+ *
+ * ⚠️ ЗАЧЕМ ЭТО ПОЯВИЛОСЬ. Живая выкатка 8 августа (пункт 35
+ * `docs/OPEN-ITEMS.md`): человек открыл чат, увидел в центре крутящийся замок с
+ * «Подключение… / Настройка шифрования сообщений» и УШЁЛ — «я как юзер уже
+ * вышел и закрыл приложение потому что сразу не подключился». Криптография в это
+ * время работала: оба ключа легли в справочник, ошибок ноль.
+ *
+ * Объяснение при этом БЫЛО — `chat.pass_signature_hint`, и текст верный. Но
+ * рисовалось оно мелким серым (`text-xs text-white/45`) ВНИЗУ, у поля ввода,
+ * тогда как в центре крутился замок. Человек смотрит в центр.
+ *
+ * Две причины ждать подписи, и слова для них РАЗНЫЕ:
+ *  - `pass` — пропуск к складу: переписка уже открыта, подпись нужна, чтобы
+ *    забрать новые мешки;
+ *  - `key` — вывод ключа переписки: первый вход на этом устройстве.
+ * Одна надпись на две причины объясняла бы не то, чего ждут.
+ *
+ * `variant` — центральный блок, когда показывать больше нечего, и узкая плашка
+ * ПОВЕРХ переписки, когда сообщения на руках есть. Тот же приём, что у отказа
+ * склада ниже: ожидание — состояние поверх переписки, а не вместо неё.
+ */
+export function ChatSignatureWanted(
+  { reason, variant }: { reason: 'pass' | 'key'; variant: 'full' | 'inline' },
+) {
+  const t = useTranslations();
+  const why = reason === 'key' ? t("chat.signature_wanted_key") : t("chat.signature_wanted_pass");
+  if (variant === 'inline') {
+    return (
+      <div className="mx-1 mb-2 px-3 py-2.5 rounded-[12px] bg-primary/[0.07] border border-primary/20 flex items-start gap-2">
+        <PenLine className="w-4 h-4 text-primary/70 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm text-white/75 font-medium">{t("chat.signature_wanted")}</p>
+          <p className="text-xs text-white/45 leading-relaxed mt-0.5">{why}</p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+      <div className="w-12 h-12 rounded-[16px] bg-primary/10 border border-primary/25 flex items-center justify-center">
+        <PenLine className="w-5 h-5 text-primary/80" />
+      </div>
+      <div>
+        <p className="text-white/80 text-base font-semibold mb-1.5">{t("chat.signature_wanted")}</p>
+        <p className="text-white/45 text-sm max-w-sm leading-relaxed">{why}</p>
+        <p className="text-white/25 text-xs max-w-sm leading-relaxed mt-2">{t("chat.signature_wanted_where")}</p>
+        {/* ⚠️ УТВЕРЖДЁННЫЙ ДЛИННЫЙ ТЕКСТ ОСТАЁТСЯ НА ЭКРАНЕ — он не заменён
+            короткой версией, а стоит под ней. Короткая нужна была потому, что в
+            центре читают заголовок, а не абзац; выбрасывать из-за этого
+            подробности («ключа переписки не касается») значило бы решить за
+            владельца, что человеку это неинтересно. Только для пропуска: про
+            ключ переписки он говорит, что его НЕ касается. */}
+        {reason === 'pass' && (
+          <p className="text-white/25 text-xs max-w-sm leading-relaxed mt-2">{t("chat.pass_signature_hint")}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ChatOpening() {
   const t = useTranslations();
   return (
@@ -568,6 +630,12 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
     // `components/` не находил ни одного). Умолчания — по той же причине,
     // что у соседей выше: заготовки замков подменяют хук целиком.
     pendingBags = 0, bagsFailed = false, pushOutcome = null,
+    // ⚠️ «Склад уже отвечал». Без этого признака «Сообщений пока нет»
+    // говорилось бы в первое мгновение каждого открытия — то есть врало бы
+    // всем и всегда, ровно один раз. Умолчание `true` намеренно: заготовки
+    // соседних замков подменяют хук целиком, и молчаливое `false` у них
+    // означало бы, что экран пустой переписки перестал проверяться вовсе.
+    synced = true,
   } = usePairChat(recipientAddress, dealContext?.agreementAddr);
 
   const bagsNotice = bagsNoticeFor(pendingBags, bagsFailed);
@@ -577,7 +645,15 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
   // панель их не различала и на выключенном мессенджере крутила спиннер
   // «Инициализация…» рядом с надписью «Сообщений пока нет», хотя ничего не
   // инициализировалось и инициализироваться не собиралось.
-  const { status: sessionStatus, retry: retrySession, session, errorCode: sessionErrorCode } = useChatSession();
+  const {
+    status: sessionStatus, retry: retrySession, session, errorCode: sessionErrorCode,
+    keySignaturePending = false,
+  } = useChatSession();
+  // Окно кошелька открыто ПРЯМО СЕЙЧАС — по любой из двух причин. Причина
+  // нужна дальше: слова у пропуска и у ключа разные (см. `ChatSignatureWanted`).
+  // Ключ старше пропуска: если ждут обе подписи, человек ждёт первую.
+  const signatureReason: 'pass' | 'key' | null =
+    keySignaturePending ? 'key' : passSignaturePending ? 'pass' : null;
   // ⚠️ К-2: экран «чат не открылся» — ОДИН на панель и на список
   // (`ChatOffScreen`). Две копии расходятся молча, и уже разошлись: список
   // рисовал «мессенджер выключен» на все семь причин.
@@ -1177,17 +1253,42 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative flex flex-col bg-black px-3" style={{ overscrollBehavior: 'none', overflowAnchor: 'none' }}>
-        {isLoading && <ChatOpening />}
+        {/* ⚠️ `!signatureReason` — В ЭТОМ ВСЯ ПРАВКА. Замок «Настройка шифрования
+            сообщений» крутился РОВНО в тот момент, когда от человека ждали
+            подпись, и не говорил об этом ни слова: живая выкатка 8 августа,
+            человек ушёл с этого экрана. Ожидание подписи теперь называет себя
+            (`ChatSignatureWanted` ниже), а спиннер остаётся тому, что
+            действительно грузится само. */}
+        {isLoading && !signatureReason && <ChatOpening />}
         {!isLoading && !needsSetup && !error && messages.length > 0 && <div className="flex-1" />}
         <div className="py-4">
+
+          {/* ⚠️ ЖДЁМ ПОДПИСЬ — ПЕРВЫМ БЛОКОМ И ВЫШЕ ПОЛЯ ВВОДА. Разбор — в
+              докстринге `ChatSignatureWanted`: объяснение существовало и до
+              этой правки, но стояло мелким серым внизу, у поля ввода, пока в
+              центре крутился замок.
+              Узкая плашка, когда переписка на руках есть, и центральный блок,
+              когда показывать больше нечего, — тот же приём, что у отказа
+              склада ниже: ожидание это состояние ПОВЕРХ переписки, а не вместо
+              неё. */}
+          {signatureReason && messages.length > 0 && (
+            <ChatSignatureWanted reason={signatureReason} variant="inline" />
+          )}
+          {signatureReason && messages.length === 0 && (
+            <ChatSignatureWanted reason={signatureReason} variant="full" />
+          )}
 
           {/* Блоки ниже — состояния ПУСТОГО экрана: если история уже
               подгружена из кэша, её и надо показывать, а про сеанс скажет
               полоса под полем ввода (ChatSetupBar). Иначе большой центральный
               блок висел бы поверх нормальной переписки. */}
 
-          {/* Сеанс действительно открывается — вот здесь спиннер уместен. */}
-          {!isLoading && needsSetup && messages.length === 0 && sessionStatus === 'loading' && (
+          {/* Сеанс действительно открывается — вот здесь спиннер уместен.
+              ⚠️ `!signatureReason`: пока ждут подпись ключа, «открывается» —
+              неправда. Ничего не открывается, ждут человека, и он об этом
+              узнаёт из блока выше. */}
+          {!isLoading && needsSetup && messages.length === 0 && sessionStatus === 'loading'
+            && !signatureReason && (
             <div className="flex flex-col items-center justify-center py-16 gap-3 px-4 text-center">
               <div className="w-8 h-8 border-2 border-white/10 border-t-white/30 rounded-full animate-spin" />
               <p className="text-sm text-white/25">{t("chat.connecting")}</p>
@@ -1204,7 +1305,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               потому, что подключение к чужой сети умело отказать семью
               способами. Своей сети у чата нет — есть склад мешков и ключ на
               устройстве, и отказать они умеют двумя способами, оба ниже. */}
-          {!isLoading && needsSetup && messages.length === 0 && sessionStatus !== 'loading' && (
+          {!isLoading && needsSetup && messages.length === 0 && sessionStatus !== 'loading'
+            && !signatureReason && (
             <ChatOffScreen errorCode={sessionErrorCode} onRetry={retrySession} variant="full" />
           )}
 
@@ -1212,7 +1314,11 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               Это НЕ поломка: у причины есть человеческое действие — послать
               ему ссылку. Признак приходит отдельным полем (`peerKnown`), а не
               разбором английского текста ошибки, как было до пересадки. */}
-          {!isLoading && !peerKnown && (
+          {/* ⚠️ БЕЗ `!isLoading`, и это правка. Ответ «писать некуда» справочник
+              даёт БЕЗ пропуска — значит он известен до всякой подписи, и держать
+              его за спиннером означало провести человека через настройку
+              шифрования, чтобы потом сказать, что переписка невозможна. */}
+          {!peerKnown && (
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center px-4">
               <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-white/[0.15]" />
@@ -1314,7 +1420,14 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               действительно пусто И претензий к предъявленному нет. В
               остальных состояниях эта надпись утверждала бы то, чего никто не
               проверял. */}
-          {!isLoading && !error && peerKnown && !needsSetup && !chainUnverified && !undecryptable
+          {/* ⚠️ `synced` — «склад уже отвечал». Первый снимок движка приезжает ДО
+              пропуска (иначе человек смотрит на замок, пока висит кошелёк), и в
+              нём сообщений нет ПОТОМУ, что склад ещё не спрошен. Без этого
+              условия экран утверждал бы пустоту на первое мгновение каждого
+              открытия. И `!signatureReason`: пока ждут подпись, про пустоту
+              говорить нечего — её ещё не проверяли. */}
+          {!isLoading && synced && !signatureReason && !error && peerKnown && !needsSetup
+            && !chainUnverified && !undecryptable
             && messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
               <div className="w-12 h-12 rounded-[16px] bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
@@ -1560,19 +1673,13 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
             пары, значит плашка горела бы ВСЕГДА и ни о чём — а предъявляют
             переписку теперь сами стороны (третья строка бейджа в шапке). */}
 
-        {/* Окно кошелька открылось не по нажатию — надо сказать, зачем.
-            Пропуск склада живёт 12 часов, и раз в 12 часов подпись всплывает
-            при ОТКРЫТИИ чата, без единого действия человека. Формально это не
-            нарушает «кошелёк спрашивают один раз в жизни» (речь про ключ
-            переписки, а это пропуск на выдачу мешков), но глазами человека
-            это второе окно, о котором ему никто не обещал. Молчать про него —
-            и есть способ выглядеть сломанным. */}
-        {passSignaturePending && (
-          <div className="flex items-start gap-2 px-3 py-2 mx-1 mb-1 rounded-[12px] bg-white/[0.04] border border-white/[0.08]">
-            <PenLine className="w-3.5 h-3.5 text-white/35 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-white/45 leading-relaxed">{t("chat.pass_signature_hint")}</p>
-          </div>
-        )}
+        {/* ⚠️ ЗДЕСЬ БЫЛА ПЛАШКА «кошелёк просит подпись» — мелким серым, у поля
+            ввода. Текст был верный, место — нет: в центре экрана в этот момент
+            крутился замок с «Настройка шифрования сообщений», и человек смотрел
+            туда. Объяснение переехало в область переписки (`ChatSignatureWanted`
+            выше), одним местом на обе причины. Двух копий здесь быть не должно:
+            они расходятся молча, и в этой панели такое уже случалось
+            (`ChatOffScreen`, находка К-2). */}
 
         {/* Ключ переписки не лёг на устройство. Молчать нельзя: без записи
             подпись будет спрашиваться при каждой перезагрузке, и человек не

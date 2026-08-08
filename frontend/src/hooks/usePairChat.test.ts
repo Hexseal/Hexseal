@@ -182,7 +182,12 @@ function drive(engineOpts: Parameters<typeof startPairChat>[0], wantStates: numb
     // этого файла.
     sleep: async (ms) => { slept.push(ms); await new Promise(r => setTimeout(r, 1)); },
   });
-  const done = waitFor(() => states.length >= wantStates).finally(() => engine.stop());
+  // Считаются снимки СО СКЛАДА (`synced`), а не все подряд: движок теперь
+  // выдаёт снимок ДО пропуска (иначе человек смотрит на «Настройка
+  // шифрования» всё время, пока висит окно кошелька), и в нём склада ещё не
+  // спрашивали. Без этого условия `drive(…, 1)` читал бы пустоту.
+  const done = waitFor(() => states.filter(s => s.synced).length >= wantStates)
+    .finally(() => engine.stop());
   return { engine, done, states, slept, errors };
 }
 

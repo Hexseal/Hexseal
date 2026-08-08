@@ -302,8 +302,26 @@ export async function fetchPeerChatKeys(
 export async function signChatKeyLocked(
   address: `0x${string}`,
   signTypedDataAsync: (typedData: typeof CHAT_KEY_TYPED_DATA) => Promise<`0x${string}`>,
+  onSigning?: (busy: boolean) => void,
 ): Promise<`0x${string}`> {
-  return withWalletLock(address, () => signTypedDataAsync(CHAT_KEY_TYPED_DATA));
+  return withWalletLock(address, async () => {
+    // ⚠️ `onSigning` — ровно вокруг вызова кошелька, как у `getBagPass` ниже, и
+    // по той же причине. Без него отображение не может отличить «читаем ключ с
+    // устройства» (миллисекунды) от «висит окно кошелька» (в установленном
+    // приложении — минуты): наружу и то, и другое выглядело как `status:
+    // 'loading'`, и панель крутила спиннер «Подключение…» без слова о том, что
+    // от человека чего-то ждут. Живая выкатка 8 августа: человек ушёл именно с
+    // этого экрана.
+    //
+    // `false` ставится в `finally`, чтобы отказ человека подписать не оставил
+    // экран с вечным «подпишите».
+    onSigning?.(true);
+    try {
+      return await signTypedDataAsync(CHAT_KEY_TYPED_DATA);
+    } finally {
+      onSigning?.(false);
+    }
+  });
 }
 
 export async function getBagPass(
@@ -395,6 +413,16 @@ export interface UseChatSessionValue {
   recoveryCode: string | null;
   /** Ключ не лёг на устройство — см. `sessionStorageNotice`. */
   storageNotice: SessionStorageNotice | null;
+  /**
+   * Окно кошелька за ПОДПИСЬЮ КЛЮЧА ПЕРЕПИСКИ открыто прямо сейчас.
+   *
+   * Второй признак рядом с `passSignaturePending` у `usePairChat`, и они разные
+   * по смыслу: та подпись берёт пропуск к складу, эта выводит ключ. Причины
+   * разные, значит и слова человеку разные (`chat.signature_wanted_key` против
+   * `chat.signature_wanted_pass`) — свести их в один признак значило бы
+   * объяснить не то, чего ждут.
+   */
+  keySignaturePending: boolean;
 }
 
 /* ─────────────── когда именно заводить ключ (К-3) ─────────────────────── */
@@ -444,6 +472,7 @@ export function useChatSession(): UseChatSessionValue {
   const [errorCode, setErrorCode] = useState<ChatSessionErrorCode | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [keySignaturePending, setKeySignaturePending] = useState(false);
   const cancelledRef = useRef(false);
   // Взведён ли запрос на заведение ключа. Подписка — чтобы экземпляр,
   // смонтированный ДО прихода человека в чат (шапка, привратник), узнал о
@@ -489,6 +518,7 @@ export function useChatSession(): UseChatSessionValue {
           return signChatKeyLocked(
             address,
             (td) => signTypedDataAsync(td as Parameters<typeof signTypedDataAsync>[0]) as Promise<`0x${string}`>,
+            setKeySignaturePending,
           );
         }, { createIfMissing: mayCreate });
         if (dropped || cancelledRef.current) return;
@@ -558,5 +588,6 @@ export function useChatSession(): UseChatSessionValue {
     status, error, errorCode, retry, cancel, disable,
     session, recoveryCode,
     storageNotice: session ? sessionStorageNotice(session) : null,
+    keySignaturePending,
   };
 }

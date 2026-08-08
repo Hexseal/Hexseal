@@ -151,7 +151,14 @@ describe('два человека, вырезанное сообщение и н
           session: aliceSession,
           peer: bobAddr,
           getPass: async () => alicePass.pass,
-          onState: (s) => { engine.stop(); resolve(s as never); },
+          // ⚠️ ЖДЁМ СНИМОК СО СКЛАДА (`synced`). Движок теперь выдаёт снимок
+          // ДО пропуска — иначе человек смотрит на «Настройка шифрования»
+          // всё время, пока висит окно кошелька. В том первом снимке склада
+          // ещё не спрашивали, и замер без этого условия мерил бы пустоту.
+          onState: (s) => {
+            if (!(s as { synced?: boolean }).synced) return;
+            engine.stop(); resolve(s as never);
+          },
           onError: (e) => { engine.stop(); reject(e); },
         });
       },

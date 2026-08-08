@@ -77,7 +77,15 @@ describe('К-1: своя половина переписки', () => {
         (resolve, reject) => {
           const e = pair.startPairChat({
             session: s, peer, getPass: async () => pass,
-            onState: (st) => { e.stop(); resolve(st as never); },
+            // ⚠️ ЖДЁМ СНИМОК СО СКЛАДА (`synced`), а не первый попавшийся.
+            // С тех пор как движок выдаёт снимок ДО пропуска (чтобы человек
+            // не смотрел на «Настройка шифрования» минутами), первый снимок —
+            // это «что нашлось на устройстве», и своей половины со СКЛАДА в
+            // нём ещё нет. Замер без этого условия проверял бы пустоту.
+            onState: (st) => {
+              if (!(st as { synced?: boolean }).synced) return;
+              e.stop(); resolve(st as never);
+            },
             onError: (err) => { e.stop(); reject(err); },
           });
         },
@@ -119,7 +127,8 @@ describe('К-1: своя половина переписки', () => {
       // Дать опросу пройти несколько кругов — мешок успевает приехать со
       // склада к уже лежащему в памяти.
       const started = Date.now();
-      while (states.length < 4 && Date.now() - started < 20_000) {
+      while (states.filter(s => (s as { synced?: boolean }).synced).length < 4
+        && Date.now() - started < 20_000) {
         await new Promise(r => setTimeout(r, 50));
       }
     } finally {
@@ -226,7 +235,10 @@ describe('К-1: своя половина переписки', () => {
     const seen = await new Promise<{ messages: { text: string }[] }>((resolve, reject) => {
       const e = pair.startPairChat({
         session: alice, peer: bw.address as `0x${string}`, getPass: async () => ap.pass,
-        onState: (s) => { e.stop(); resolve(s as never); },
+        onState: (s) => {
+          if (!(s as { synced?: boolean }).synced) return;
+          e.stop(); resolve(s as never);
+        },
         onError: (err) => { e.stop(); reject(err); },
       });
     });

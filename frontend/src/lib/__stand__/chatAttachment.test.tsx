@@ -136,7 +136,14 @@ describe('К-4: вложение проходит обе половины', () =
       (resolve, reject) => {
         const e = pair.startPairChat({
           session: bob, peer: A, getPass: async () => bp.pass,
-          onState: (s) => { e.stop(); resolve(s as never); },
+          // ⚠️ ЖДЁМ СНИМОК СО СКЛАДА (`synced`). Движок теперь выдаёт снимок
+          // ДО пропуска — иначе человек смотрит на «Настройка шифрования»
+          // всё время, пока висит окно кошелька. В том первом снимке склада
+          // ещё не спрашивали, и замер без этого условия мерил бы пустоту.
+          onState: (s) => {
+            if (!(s as { synced?: boolean }).synced) return;
+            e.stop(); resolve(s as never);
+          },
           onError: (err) => { e.stop(); reject(err); },
         });
       },
@@ -180,7 +187,14 @@ describe('К-4: вложение проходит обе половины', () =
     const seen = await new Promise<{ messages: { attachment?: never }[] }>((resolve, reject) => {
       const e = pair.startPairChat({
         session: bob, peer: A, getPass: async () => bp.pass,
-        onState: (s) => { e.stop(); resolve(s as never); },
+        // ⚠️ ЖДЁМ СНИМОК СО СКЛАДА (`synced`). Движок теперь выдаёт снимок
+        // ДО пропуска — иначе человек смотрит на «Настройка шифрования»
+        // всё время, пока висит окно кошелька. В том первом снимке склада
+        // ещё не спрашивали, и замер без этого условия мерил бы пустоту.
+        onState: (s) => {
+          if (!(s as { synced?: boolean }).synced) return;
+          e.stop(); resolve(s as never);
+        },
         onError: (err) => { e.stop(); reject(err); },
       });
     });
@@ -213,7 +227,14 @@ describe('К-4: вложение проходит обе половины', () =
     const seen = await new Promise<{ messages: unknown[] }>((resolve, reject) => {
       const e = pair.startPairChat({
         session: bob, peer: A, getPass: async () => bp.pass,
-        onState: (s) => { e.stop(); resolve(s as never); },
+        // ⚠️ ЖДЁМ СНИМОК СО СКЛАДА (`synced`). Движок теперь выдаёт снимок
+        // ДО пропуска — иначе человек смотрит на «Настройка шифрования»
+        // всё время, пока висит окно кошелька. В том первом снимке склада
+        // ещё не спрашивали, и замер без этого условия мерил бы пустоту.
+        onState: (s) => {
+          if (!(s as { synced?: boolean }).synced) return;
+          e.stop(); resolve(s as never);
+        },
         onError: (err) => { e.stop(); reject(err); },
       });
     });
