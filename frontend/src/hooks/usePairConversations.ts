@@ -371,42 +371,67 @@ export function createConversationLoader(opts: ConversationLoaderOptions): Conve
   const limit = opts.authFailureLimit ?? CONVERSATION_AUTH_FAILURE_LIMIT;
   let authFailures = 0;
   let stopped = false;
+  /**
+   * Заход в полёте. Второй зов присоединяется к нему, а не начинает свой.
+   *
+   * ⚠️ ЗАМЕР, РАДИ КОТОРОГО ЭТО ЕСТЬ: пять зовов подряд давали ПЯТЬ заходов —
+   * пять перечислений склада и до пяти раз по двадцать четыре скачивания. А
+   * зовут заход три источника сразу: интервал 30 с, возврат во вкладку и новое
+   * сообщение в открытой переписке, — и они накладываются постоянно. Бюджет
+   * чтения при этом ОБЩИЙ с открытой перепиской (120 в минуту на адрес), то
+   * есть лишние заходы отнимали чтения у самой переписки.
+   *
+   * И второе, не менее важное: два ответа, севшие в обратном порядке, ставили
+   * на экран СТАРЫЙ список поверх нового — то самое мигание, только наоборот.
+   */
+  let inFlight: Promise<void> | null = null;
 
   return {
     stopped: () => stopped,
     async run(): Promise<void> {
       if (stopped) return;
-      let stage: 'getPass' | 'load' = 'getPass';
+      if (inFlight) return inFlight;
+      const started = doRun();
+      inFlight = started;
       try {
-        const pass = await opts.getPass();
-        stage = 'load';
-        const rows = await opts.loadWithPass(pass);
-        authFailures = 0;
-        opts.onRows(rows);
-      } catch (err) {
-        // ⚠️ «ЖДЁМ НАЖАТИЯ» / «ОБЪЯВЛЯТЬ ЕЩЁ НЕЧЕМ» — НЕ НЕУДАЧА ВХОДА, и это
-        // ТОТ ЖЕ разбор, что у `pollBags` (`chatTransport.ts`). Здесь свой,
-        // ВТОРОЙ счётчик того же правила: починив только опрос открытой
-        // переписки, мы получили бы список, умирающий там, где переписка уже
-        // выжила, — и заметно это было бы только на списке, то есть в том месте,
-        // куда попадают чаще всего.
-        //
-        // Ни `onError`: человеку про это говорит `useKeyAnnouncement` словами про
-        // дело, а не «не удалось подключиться».
-        if (isSignatureDeferred(err)) return;
-        try { opts.onError?.(err); } catch { /* обработчик не должен стать новым сбоем */ }
-        const isAuthFailure = stage === 'getPass' || err instanceof BagPassError;
-        if (!isAuthFailure) return;
-        authFailures++;
-        if (authFailures >= limit) {
-          // Стоп ДО любого следующего захода — не даём человеку ещё одно окно
-          // кошелька после того, как решение «хватит» уже принято.
-          stopped = true;
-          try { opts.onAuthFailed?.(); } catch { /* тот же принцип */ }
-        }
+        await started;
+      } finally {
+        if (inFlight === started) inFlight = null;
       }
     },
   };
+
+  async function doRun(): Promise<void> {
+    let stage: 'getPass' | 'load' = 'getPass';
+    try {
+      const pass = await opts.getPass();
+      stage = 'load';
+      const rows = await opts.loadWithPass(pass);
+      authFailures = 0;
+      opts.onRows(rows);
+    } catch (err) {
+      // ⚠️ «ЖДЁМ НАЖАТИЯ» / «ОБЪЯВЛЯТЬ ЕЩЁ НЕЧЕМ» — НЕ НЕУДАЧА ВХОДА, и это
+      // ТОТ ЖЕ разбор, что у `pollBags` (`chatTransport.ts`). Здесь свой,
+      // ВТОРОЙ счётчик того же правила: починив только опрос открытой
+      // переписки, мы получили бы список, умирающий там, где переписка уже
+      // выжила, — и заметно это было бы только на списке, то есть в том месте,
+      // куда попадают чаще всего.
+      //
+      // Ни `onError`: человеку про это говорит `useKeyAnnouncement` словами про
+      // дело, а не «не удалось подключиться».
+      if (isSignatureDeferred(err)) return;
+      try { opts.onError?.(err); } catch { /* обработчик не должен стать новым сбоем */ }
+      const isAuthFailure = stage === 'getPass' || err instanceof BagPassError;
+      if (!isAuthFailure) return;
+      authFailures++;
+      if (authFailures >= limit) {
+        // Стоп ДО любого следующего захода — не даём человеку ещё одно окно
+        // кошелька после того, как решение «хватит» уже принято.
+        stopped = true;
+        try { opts.onAuthFailed?.(); } catch { /* тот же принцип */ }
+      }
+    }
+  }
 }
 
 /* ─────────────── состояние списка ОДНИМ объектом (мигание) ─────────────── */
