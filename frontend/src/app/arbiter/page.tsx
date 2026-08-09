@@ -208,7 +208,16 @@ export default function ArbiterPage() {
       if (salt) {
         try {
           toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-          const { txHash: claimTx } = await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
+          // ⚠️ ВРЕМЕННО, заменяется Задачей 4 того же плана: ключи чата ещё не
+          // добываются на этой странице. Заглушка НЕ нулевая намеренно — нулевой
+          // ключ контракт отвергает (ZeroChatKey), и тогда отказ выглядел бы как
+          // ошибка контракта, а не как незаконченная работа фронта.
+          const TODO_BOX_KEY = ("0x" + "11".repeat(32)) as Hex;
+          const TODO_SIGN_KEY = ("0x" + "22".repeat(32)) as Hex;
+          const { txHash: claimTx } = await claimDisputeGasless(
+            walletClient, publicClient, agreement as Address, salt,
+            TODO_BOX_KEY, TODO_SIGN_KEY,
+          );
           assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           toast.success(t("arbiter.claim_success"), { id: commitToast });
@@ -257,7 +266,16 @@ export default function ArbiterPage() {
       toast.loading(t("arbiter.claim_confirming"), { id: commitToast });
       assertMined(await publicClient.waitForTransactionReceipt({ hash: commitTx as `0x${string}` }));
       toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-      const { txHash: claimTx } = await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
+      // ⚠️ ВРЕМЕННО, заменяется Задачей 4 того же плана: ключи чата ещё не
+      // добываются на этой странице. Заглушка НЕ нулевая намеренно — нулевой
+      // ключ контракт отвергает (ZeroChatKey), и тогда отказ выглядел бы как
+      // ошибка контракта, а не как незаконченная работа фронта.
+      const TODO_BOX_KEY = ("0x" + "11".repeat(32)) as Hex;
+      const TODO_SIGN_KEY = ("0x" + "22".repeat(32)) as Hex;
+      const { txHash: claimTx } = await claimDisputeGasless(
+        walletClient, publicClient, agreement as Address, salt,
+        TODO_BOX_KEY, TODO_SIGN_KEY,
+      );
       assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
       try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
       toast.success(t("arbiter.claim_success"), { id: commitToast });

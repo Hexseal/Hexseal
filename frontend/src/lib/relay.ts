@@ -56,7 +56,7 @@ const USDC_READ_ABI = parseAbi([
  * фронт с контрактом автоматически.
  */
 export const CLAIM_DISPUTE_ABI = parseAbi([
-  'function claimDispute(address agreement, bytes32 salt)',
+  'function claimDispute(address agreement, bytes32 salt, bytes32 boxKey, bytes32 signKey)',
 ]);
 
 // ─── EIP-712: ForwardRequest ──────────────────────────────────────────────────
@@ -250,7 +250,16 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   pauseService:          80_000n,
   unpauseService:        80_000n,
   removeService:         80_000n,
-  claimDispute:         200_000n,
+  // 9 августа заявка стала возить два открытых ключа чата арбитра: это два
+  // холодных SSTORE (2×22 100) и один LOG2 — примерно +46 000 газа. Замер по
+  // фасету: первая в жизни запись ключа до 72 868, тёплая перезапись ~38 656
+  // (медиана из 108 вызовов).
+  //
+  // ⚠️ В ЭТОМ ЖЕ ФАЙЛЕ такое уже случалось: замеренные 126 383 против прежней
+  // отсечки 120 000. Слишком низкая отсечка валит предварительный staticCall
+  // релеера, и действие отдаёт отказ. Завышенная не стоит ничего: газ платится
+  // по факту, а не по лимиту.
+  claimDispute:         260_000n,
   releaseDisputeClaim:  100_000n,
   commitDisputeClaim:   100_000n,
   resolveDispute:       200_000n,
@@ -1175,12 +1184,19 @@ export async function sendAgreementGasless(
  * Арбитр берёт спорное дело — шаг 2/2 commit-reveal.
  * salt — случайные 32 байта, использованные в commitDisputeClaimGasless().
  * Можно вызывать только после того как коммит-транзакция замайнена (≥1 блок).
+ *
+ * boxKey/signKey — открытые половины ключей чата арбитра, по 32 байта.
+ * ОБЯЗАТЕЛЬНЫ: контракт не принимает заявку без них, и это сделано формой
+ * аргумента, а не проверкой. Арбитр без ключа не смог бы прочитать
+ * предъявленное, а дело ушло бы в таймаут с делением котла пополам.
  */
 export async function claimDisputeGasless(
   walletClient: WalletClient,
   publicClient: PublicClient,
   agreementAddress: Address,
   salt: Hex,
+  boxKey: Hex,
+  signKey: Hex,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
@@ -1189,7 +1205,7 @@ export async function claimDisputeGasless(
   const calldata = encodeFunctionData({
     abi: CLAIM_DISPUTE_ABI,
     functionName: 'claimDispute',
-    args: [agreementAddress, salt],
+    args: [agreementAddress, salt, boxKey, signKey],
   });
   try {
     const result = await _sendForwardRequest(walletClient, publicClient, calldata as Hex, 'claimDispute', DIAMOND);
@@ -1200,7 +1216,7 @@ export async function claimDisputeGasless(
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.writeContract({
       address: DIAMOND, abi: CLAIM_DISPUTE_ABI, functionName: 'claimDispute',
-      args: [agreementAddress, salt], account, chain: walletClient.chain,
+      args: [agreementAddress, salt, boxKey, signKey], account, chain: walletClient.chain,
     });
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };

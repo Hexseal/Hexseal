@@ -17,13 +17,30 @@ import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
  * Прецедент чтения исходника — disputeBounty.test.ts.
  */
 
-/** Каноническая подпись из объявления функции в .sol: только типы, по порядку. */
+/**
+ * Каноническая подпись из объявления функции в .sol: только типы, по порядку.
+ *
+ * Обязана падать, если объявлений больше одного — иначе перегрузка молча
+ * подменяет подпись, по которой сверяется замок (регулярка без флага `g`
+ * раньше брала первое совпадение и не глядела, есть ли второе). Ревью
+ * Задачи 1 подсунуло в .sol вторую перегрузку claimDispute(address) и
+ * показало, что первые две проверки в этом файле сверяются с чем попало,
+ * пока их не подпирает третья («ровно одно объявление»). Явный отказ здесь
+ * убирает саму возможность тихой подмены, а не полагается на соседнюю
+ * проверку это заметить.
+ */
 function solidityCanonicalSignature(source: string, fnName: string): string {
   // Объявление может быть многострочным, поэтому берём всё до закрывающей скобки.
-  const re = new RegExp(`function\\s+${fnName}\\s*\\(([^)]*)\\)`, 'm');
-  const m = source.match(re);
-  if (!m) throw new Error(`объявление ${fnName} не найдено в исходнике`);
-  const types = m[1]
+  const re = new RegExp(`function\\s+${fnName}\\s*\\(([^)]*)\\)`, 'mg');
+  const matches = [...source.matchAll(re)];
+  if (matches.length === 0) throw new Error(`объявление ${fnName} не найдено в исходнике`);
+  if (matches.length > 1) {
+    throw new Error(
+      `объявление ${fnName} встречается ${matches.length} раза в исходнике — ` +
+      `подпись неоднозначна, каноническую сверку сделать нельзя`,
+    );
+  }
+  const types = matches[0][1]
     .split(',')
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
@@ -66,5 +83,19 @@ describe('ABI заявки на спор не расходится с контр
     // без ключа, ровно ту дыру, которую 4б-1 закрывал.
     const count = (FACET.match(/function\s+claimDispute\s*\(/g) ?? []).length;
     expect(count).toBe(1);
+  });
+
+  it('solidityCanonicalSignature падает, если объявлений больше одного', () => {
+    // Не читаем реальный .sol — здесь важно только поведение самой функции
+    // разбора на сфабрикованном источнике с перегрузкой. Именно так ревью
+    // Задачи 1 и нашло дыру: вторая перегрузка в файле молча брала первую
+    // найденную сигнатуру, и с ней «совпадала» проверка записи в
+    // config/contracts.ts — по чистой случайности, а не потому что запись
+    // была верна.
+    const fakeSourceWithOverload = `
+      function claimDispute(address agreement, bytes32 salt, bytes32 boxKey, bytes32 signKey) external {}
+      function claimDispute(address agreement) external {}
+    `;
+    expect(() => solidityCanonicalSignature(fakeSourceWithOverload, 'claimDispute')).toThrow();
   });
 });
