@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { compareChainWithDirectory, ZERO_KEY } from './arbiterChatKey';
+import { compareChainWithDirectory, decideDirectoryDivergenceNotice, ZERO_KEY } from './arbiterChatKey';
+import type { DirectoryVerdict } from './arbiterChatKey';
 import type { Hex } from 'viem';
 
 const KEY_A = ('0x' + 'aa'.repeat(32)) as Hex;
@@ -58,4 +59,23 @@ describe('ключ арбитра: цепь против справочника'
       ),
     ).toBe('chain_missing');
   });
+});
+
+describe('decideDirectoryDivergenceNotice — говорим ТОЛЬКО при directory_differs', () => {
+  // Решение владельца 9 августа: расхождение обязано быть проговорено —
+  // иначе о подмене ключа на нашем сервере мы не узнаем никогда. Но
+  // отсутствие в справочнике (директория просто отстала) — не тревога.
+  const cases: Array<[DirectoryVerdict | null, boolean]> = [
+    ['directory_differs', true],
+    ['directory_missing', false],
+    ['chain_missing', false],
+    ['agree', false],
+    [null, false],
+  ];
+
+  for (const [verdict, expected] of cases) {
+    it(`${verdict} → ${expected}`, () => {
+      expect(decideDirectoryDivergenceNotice(verdict)).toBe(expected);
+    });
+  }
 });

@@ -757,6 +757,7 @@
     "claim_step2": "Passo 2/2: Reivindicando disputa…",
     "claim_success": "Disputa reivindicada. Você agora é o árbitro.",
     "claim_press_again": "Toque novamente — a página foi para sua carteira",
+    "key_directory_mismatch": "Aviso: nosso servidor tem registrada uma chave de chat diferente da que está na chain. Usamos a chave da chain — é ela que decide.",
     "no_key_notice": "Neste caso ainda não podem lhe apresentar nada: sua chave de chat não está registrada na chain. É uma única transação.",
     "publish_key": "Publicar chave",
     "key_published": "Pronto — agora a conversa pode ser apresentada a você",

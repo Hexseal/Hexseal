@@ -756,6 +756,7 @@
     "claim_step2": "Paso 2/2: Reclamando disputa…",
     "claim_success": "Disputa reclamada. Ahora eres el árbitro.",
     "claim_press_again": "Pulsa de nuevo: la página pasó a tu monedero",
+    "key_directory_mismatch": "Aviso: nuestro servidor tiene registrada una clave de chat distinta a la que está en la cadena. Usamos la clave de la cadena — es la que decide.",
     "no_key_notice": "En este caso todavía no pueden mostrarte nada: tu clave de chat no está registrada en la cadena. Es una sola transacción.",
     "publish_key": "Publicar clave",
     "key_published": "Listo — ahora sí pueden mostrarte la conversación",

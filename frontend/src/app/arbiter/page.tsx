@@ -33,7 +33,11 @@ import {
   type GatedSignChatKey,
 } from "@/lib/arbiterClaimKeys";
 import { isSignatureDeferred } from "@/lib/chatSignatureGate";
-import { decideNoKeyNotice } from "@/lib/arbiterChatKey";
+import {
+  decideNoKeyNotice, decideDirectoryDivergenceNotice, readArbiterChatKeysFromChain,
+  compareChainWithDirectory, type ChainChatKeys, type DirectoryVerdict,
+} from "@/lib/arbiterChatKey";
+import { fetchPeerChatKeys } from "@/hooks/useChatSession";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -155,24 +159,65 @@ export default function ArbiterPage() {
     query: { enabled: !!address },
   }) as { data: boolean | undefined };
 
-  // Есть ли у меня ключ в цепи. Читается ИЗ ЦЕПИ, справочник в этом решении не
-  // участвует: он живёт на нашем сервере, и кто до сервера добрался, подсунул бы
-  // свой ключ вместо моего.
-  const {
-    data: myChainKeys,
-    error: myChainKeysError,
-    refetch: refetchMyChainKeys,
-  } = useReadContract({
-    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
-    functionName: "getArbiterChatKeys", args: [address ?? ZERO_ADDR as Address],
-    query: { enabled: !!address },
-  }) as { data: [Hex, Hex] | undefined; error: unknown; refetch: () => void };
+  // Есть ли у меня ключ в цепи, и совпадает ли он с тем, что знает справочник
+  // на нашем сервере. Ключ ЧИТАЕТСЯ ИЗ ЦЕПИ через readArbiterChatKeysFromChain
+  // (arbiterChatKey.ts) — не своим инлайновым useReadContract: там объявлена
+  // «точка доверия», где порядок boxKey/signKey прибит к исходнику контракта
+  // и заперт claimAbiMatchesContract.test.ts. Свой инлайновый вызов рядом был
+  // бы вторым, несинхронизированным чтением того же самого.
+  //
+  // Справочник (решение владельца 9 августа) — только свидетель: он живёт на
+  // нашем сервере, и кто до сервера добрался, подсунул бы свой ключ вместо
+  // моего. Решает ВСЕГДА цепь; справочник лишь позволяет заметить подмену —
+  // и об этом расхождении (`directory_differs`) МЫ ГОВОРИМ ВСЛУХ
+  // (arbiter.key_directory_mismatch). Отставший справочник (`directory_missing`)
+  // — не тревога, молчим (compareChainWithDirectory, decideDirectoryDivergenceNotice).
+  const [myChainKeys, setMyChainKeys] = useState<ChainChatKeys | null>(null);
+  const [myChainKeysError, setMyChainKeysError] = useState<unknown>(null);
+  const [directoryVerdict, setDirectoryVerdict] = useState<DirectoryVerdict | null>(null);
+  const [chainKeysTick, setChainKeysTick] = useState(0);
+  const refetchMyChainKeys = useCallback(() => setChainKeysTick(k => k + 1), []);
+
+  useEffect(() => {
+    if (!address || !publicClient) {
+      setMyChainKeys(null); setMyChainKeysError(null); setDirectoryVerdict(null);
+      return;
+    }
+    let cancelled = false;
+    readArbiterChatKeysFromChain(publicClient, address)
+      .then(async (keys) => {
+        if (cancelled) return;
+        setMyChainKeys(keys);
+        setMyChainKeysError(null);
+        // Справочник — только свидетель. Провал его чтения РАВЕН
+        // directory_missing (compareChainWithDirectory увидит null здесь) —
+        // молчим, как и задумано, а не превращаем отказ сети в тревогу.
+        let directory: { boxKey: Uint8Array; signKey: Uint8Array | null } | null = null;
+        try {
+          const peer = await fetchPeerChatKeys(address);
+          directory = { boxKey: peer.boxKey, signKey: peer.signKey };
+        } catch { /* directory_missing ниже и так покрывает молчание справочника */ }
+        if (cancelled) return;
+        setDirectoryVerdict(compareChainWithDirectory(keys, directory));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setMyChainKeys(null);
+        setMyChainKeysError(err);
+        setDirectoryVerdict(null);
+      });
+    return () => { cancelled = true; };
+  }, [address, publicClient, chainKeysTick]);
 
   // Решение вынесено в decideNoKeyNotice (arbiterChatKey.ts) и НЕ повторяется
   // здесь условием на месте: отказ чтения (функции ещё нет в даймонде до
   // разреза) — это НЕ «ключа нет», и различать их обязана ОДНА функция с
   // замером на неё, а не копия условия в разметке.
-  const showNoKeyNotice = decideNoKeyNotice({ keys: myChainKeys, error: myChainKeysError });
+  const showNoKeyNotice = decideNoKeyNotice({
+    keys: myChainKeys ? [myChainKeys.boxKey, myChainKeys.signKey] : undefined,
+    error: myChainKeysError,
+  });
+  const showDirectoryMismatchNotice = decideDirectoryDivergenceNotice(directoryVerdict);
 
   const { data: myReward, refetch: refetchReward } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
@@ -479,6 +524,19 @@ export default function ArbiterPage() {
           <p className="text-xs text-white/40 mt-0.5">{t("arbiter.subtitle")}</p>
         </div>
       </div>
+
+      {/* ── Расхождение ключа со справочником ── Решает всегда цепь; это
+          только СЛОВО о том, что наш сервер называет другой ключ — иначе о
+          подмене на сервере мы бы не узнали никогда (решение владельца
+          9 августа). Не гейтится isArbiter: если ключ уже был опубликован,
+          знать об этом важно и разжалованному арбитру с открытым делом
+          (submitVerdict проверяет только disputeClaims, не isArbiter). */}
+      {showDirectoryMismatchNotice && (
+        <div className="rounded-[16px] border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-amber-400/70 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.key_directory_mismatch")}</p>
+        </div>
+      )}
 
       {/* ── Reward strip ── */}
       {isArbiter && myReward !== undefined && myReward > 0n && (

@@ -756,6 +756,7 @@
     "claim_step2": "Schritt 2/2: Streitfall wird übernommen…",
     "claim_success": "Streitfall übernommen. Du bist jetzt der Schlichter.",
     "claim_press_again": "Bitte erneut tippen — die Seite war kurz bei deiner Wallet",
+    "key_directory_mismatch": "Hinweis: unser Server hat für dich einen anderen Chat-Schlüssel hinterlegt als den in der Chain. Wir verwenden den Schlüssel aus der Chain — er entscheidet.",
     "no_key_notice": "Bei diesem Fall kann dir noch nichts vorgelegt werden: dein Chat-Schlüssel steht nicht in der Chain. Das ist eine einzige Transaktion.",
     "publish_key": "Schlüssel veröffentlichen",
     "key_published": "Fertig — jetzt kann dir die Unterhaltung vorgelegt werden",

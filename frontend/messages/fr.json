@@ -757,6 +757,7 @@
     "claim_step2": "Étape 2/2 : Revendication du litige…",
     "claim_success": "Litige revendiqué. Vous êtes maintenant l'arbitre.",
     "claim_press_again": "Appuyez à nouveau — la page est passée par votre portefeuille",
+    "key_directory_mismatch": "Remarque : notre serveur a enregistré pour vous une clé de discussion différente de celle inscrite sur la chaîne. Nous utilisons la clé de la chaîne — c'est elle qui fait foi.",
     "no_key_notice": "Pour ce dossier, rien ne peut encore vous être présenté : votre clé de discussion n'est pas enregistrée sur la chaîne. C'est une seule transaction.",
     "publish_key": "Publier la clé",
     "key_published": "Terminé — la conversation peut désormais vous être présentée",
