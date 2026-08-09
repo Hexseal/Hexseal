@@ -46,6 +46,19 @@ const USDC_READ_ABI = parseAbi([
   'function version() view returns (string)',
 ]);
 
+/**
+ * ABI заявки на спор. Вынесен из тела функции наружу НАМЕРЕННО: по нему
+ * сверяется замок `claimAbiMatchesContract.test.ts`, а замок обязан проверять
+ * тот ABI, которым реально идёт вызов, а не отдельную запись в config/contracts.ts
+ * (та не используется для записи и уже один раз разошлась с контрактом молча).
+ *
+ * Меняется подпись в контракте — краснеет тест. Это единственное, что связывает
+ * фронт с контрактом автоматически.
+ */
+export const CLAIM_DISPUTE_ABI = parseAbi([
+  'function claimDispute(address agreement, bytes32 salt)',
+]);
+
 // ─── EIP-712: ForwardRequest ──────────────────────────────────────────────────
 
 const FORWARDER_DOMAIN = {
@@ -1173,9 +1186,8 @@ export async function claimDisputeGasless(
   if (!userAddress) throw new Error('Wallet not connected');
   const releaseLock = await acquireWalletLock(userAddress);
   try {
-  const CLAIM_ABI = parseAbi(['function claimDispute(address agreement, bytes32 salt)']);
   const calldata = encodeFunctionData({
-    abi: CLAIM_ABI,
+    abi: CLAIM_DISPUTE_ABI,
     functionName: 'claimDispute',
     args: [agreementAddress, salt],
   });
@@ -1187,7 +1199,7 @@ export async function claimDisputeGasless(
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
     const txHash = await walletClient.writeContract({
-      address: DIAMOND, abi: CLAIM_ABI, functionName: 'claimDispute',
+      address: DIAMOND, abi: CLAIM_DISPUTE_ABI, functionName: 'claimDispute',
       args: [agreementAddress, salt], account, chain: walletClient.chain,
     });
     await assertFallbackMined(publicClient, txHash);
