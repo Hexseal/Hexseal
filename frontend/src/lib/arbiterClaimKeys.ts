@@ -17,7 +17,7 @@ import { noteWalletHandoff, isSignatureDeferred } from '@/lib/chatSignatureGate'
 
 // Константа нуля одна на весь фронт — берём из Задачи 3, своей не заводим.
 export { ZERO_KEY } from '@/lib/arbiterChatKey';
-import { ZERO_KEY } from '@/lib/arbiterChatKey';
+import { ZERO_KEY, toBoxKey, toSignKey, type BoxKey, type SignKey } from '@/lib/arbiterChatKey';
 
 function keyToHex(bytes: Uint8Array): Hex {
   const hex = toKeyHex(bytes);
@@ -27,12 +27,17 @@ function keyToHex(bytes: Uint8Array): Hex {
 /** Обе открытые половины из уже открытой сессии. Окон кошелька не просит. */
 export async function claimKeysFromSession(
   session: ChatSession,
-): Promise<{ boxKey: Hex; signKey: Hex }> {
-  const boxKey = keyToHex(session.keypair.publicKey);
+): Promise<{ boxKey: BoxKey; signKey: SignKey }> {
+  // ТОЧКА ДОВЕРИЯ №2 (первая — readArbiterChatKeysFromChain, arbiterChatKey.ts):
+  // единственное место, где ключи, добытые из ЛОКАЛЬНОЙ сессии, помечаются
+  // BoxKey/SignKey. Порядок известен по построению, не по соглашению: box —
+  // публичная половина X25519-пары сессии, sign — ключ, выведенный из неё
+  // ОТДЕЛЬНЫМ контекстом (см. комментарий у deriveLinkSigningKeypair ниже).
+  const boxKey = toBoxKey(keyToHex(session.keypair.publicKey));
   // Ключ подписи выводится из ЗАКРЫТОЙ половины X25519-пары отдельным
   // контекстом — это НЕ тот же ключ, что boxKey.
   const link = await deriveLinkSigningKeypair(session.keypair);
-  const signKey = keyToHex(link.publicKey);
+  const signKey = toSignKey(keyToHex(link.publicKey));
   return { boxKey, signKey };
 }
 
@@ -121,7 +126,7 @@ export function createGatedSignChatKey(
 export async function deriveClaimChatKeys(
   address: Address,
   signTypedData: GatedSignChatKey,
-): Promise<{ boxKey: Hex; signKey: Hex }> {
+): Promise<{ boxKey: BoxKey; signKey: SignKey }> {
   const session = await openSession(address, signTypedData, { createIfMissing: true });
   return claimKeysFromSession(session);
 }

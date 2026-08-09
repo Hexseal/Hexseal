@@ -20,6 +20,7 @@ import {
 } from 'viem';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { CHAIN_ID } from '@/config/constants';
+import type { BoxKey, SignKey } from '@/lib/arbiterChatKey';
 import {
   acquireWalletLock,
   awaitFreshForwarderNonce,
@@ -1202,14 +1203,21 @@ export async function sendAgreementGasless(
  * ОБЯЗАТЕЛЬНЫ: контракт не принимает заявку без них, и это сделано формой
  * аргумента, а не проверкой. Арбитр без ключа не смог бы прочитать
  * предъявленное, а дело ушло бы в таймаут с делением котла пополам.
+ *
+ * ⚠️ Типы `BoxKey`/`SignKey` (arbiterChatKey.ts) — ФИРМЕННЫЕ, не `Hex`
+ * напрямую: независимое ревью переставило аргументы местами
+ * (`claimDisputeGasless(..., keys.signKey, keys.boxKey)`) и получило
+ * `npm run type-check` чистым, ноль красных тестов — оба ключа bytes32,
+ * структурно неотличимы, контракт принял бы, а вскрыть предъявленное было бы
+ * нечем. Теперь такая перестановка не компилируется.
  */
 export async function claimDisputeGasless(
   walletClient: WalletClient,
   publicClient: PublicClient,
   agreementAddress: Address,
   salt: Hex,
-  boxKey: Hex,
-  signKey: Hex,
+  boxKey: BoxKey,
+  signKey: SignKey,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
@@ -1328,12 +1336,21 @@ export async function commitDisputeClaimGasless(
  * ключей не возила. Он числится судьёй, а ключей в цепи нет — сторона услышит
  * «предъявлять некому», не предъявит, а молчание толкуется против молчащего.
  * Один вызов это лечит.
+ *
+ * ⚠️ Хуже отсутствия ключа — перестановка местами. `BoxKey`/`SignKey` —
+ * фирменные типы (arbiterChatKey.ts), а не `Hex`: независимое ревью
+ * подставило `keys.signKey, keys.boxKey` сюда и получило чистый
+ * `npm run type-check`, 0 красных из 1826 — оба ключа ненулевые, в цепи, и
+ * `decideNoKeyNotice` замолкает НАВСЕГДА, хотя сторона на предъявлении
+ * получает нечитаемое (печать на ключ подписи вместо ключа шифрования). При
+ * отсутствии ключа мы хотя бы честно говорим «предъявить нечего» — здесь все
+ * уверены, что порядок верный. Теперь перестановка не компилируется.
  */
 export async function setArbiterChatKeyGasless(
   walletClient: WalletClient,
   publicClient: PublicClient,
-  boxKey: Hex,
-  signKey: Hex,
+  boxKey: BoxKey,
+  signKey: SignKey,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
