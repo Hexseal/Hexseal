@@ -25,8 +25,8 @@ import { DISPUTE_WINDOW_DAYS, FINALIZE_DELAY } from "@/config/constants";
 import { computeArbiterReward } from "@/lib/disputeBounty";
 import { withWalletLock } from "@/lib/walletLock";
 import { loadPass, savePass, clearPass, type DisputeLogPass } from "@/lib/disputeLogPass";
-import { deriveClaimChatKeys } from "@/lib/arbiterClaimKeys";
-import { noteWalletHandoff, requireSignatureGate, isSignatureDeferred } from "@/lib/chatSignatureGate";
+import { deriveClaimChatKeys, createGatedSignChatKey, canRetryRevealAsFreshCommit } from "@/lib/arbiterClaimKeys";
+import { requireSignatureGate, isSignatureDeferred } from "@/lib/chatSignatureGate";
 import type { SignChatKey } from "@/lib/chatSession";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
@@ -196,15 +196,18 @@ export default function ArbiterPage() {
 
   const handleClaim = async (agreement: string) => {
     if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
-    // Каждое обращение к кошельку отмечается: на телефоне переход в кошелёк
-    // замораживает страницу, и гейт обязан знать, что мы уходили.
-    const signChatKey: SignChatKey = async (typedData) => {
-      noteWalletHandoff();
-      return walletClient.signTypedData({
+    // Отметка ухода к кошельку и сам вызов подписи — из общей обёртки
+    // (`createGatedSignChatKey`, arbiterClaimKeys.ts), а НЕ повторены здесь
+    // руками: порядок «отметили → подписали» проверен тестом только пока
+    // страница зовёт ровно эту функцию, а не пересобирает тот же приём
+    // заново (потерять `noteWalletHandoff()` при таком переносе — ровно та
+    // находка, из-за которой гейт однажды превращался в пустышку).
+    const signChatKey: SignChatKey = createGatedSignChatKey((typedData) =>
+      walletClient.signTypedData({
         account: walletClient.account!,
         ...(typedData as any),
-      }) as Promise<`0x${string}`>;
-    };
+      }) as Promise<`0x${string}`>,
+    );
     setBusy(`claim:${agreement}`);
     // The salt used to live only in this closure's local memory — if the tab
     // closed/reloaded (or the wallet/network hung and the user gave up) in the
@@ -240,12 +243,15 @@ export default function ArbiterPage() {
           bump();
           return;
         } catch (revealErr) {
-          // Отсрочка гейта — НЕ провалившееся предъявление. Коммит остаётся
-          // валиден, соль остаётся на устройстве: падать в «начать заново» и
-          // жечь свежий коммит из-за того, что страница ушла в кошелёк, было
-          // бы неверно — человеку нужно просто нажать ещё раз. Пробрасываем
-          // во внешний catch, у него есть обработка ровно этого случая.
-          if (isSignatureDeferred(revealErr)) throw revealErr;
+          // Решение «начинать ли заново» — из общего предиката
+          // (`canRetryRevealAsFreshCommit`, arbiterClaimKeys.ts), а не
+          // переписано заново здесь: отсрочка гейта — НЕ провалившееся
+          // предъявление, коммит остаётся валиден, соль остаётся на
+          // устройстве. Жечь свежий коммит из-за того, что страница ушла в
+          // кошелёк, было бы неверно — нужно просто нажать ещё раз.
+          // Пробрасываем во внешний catch, у него есть обработка ровно
+          // этого случая.
+          if (!canRetryRevealAsFreshCommit(revealErr)) throw revealErr;
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           salt = null;
           // A failed reveal doesn't necessarily mean the commitment is stale —

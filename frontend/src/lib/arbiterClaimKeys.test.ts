@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { claimKeysFromSession } from './arbiterClaimKeys';
+import { claimKeysFromSession, createGatedSignChatKey, canRetryRevealAsFreshCommit } from './arbiterClaimKeys';
 import { ZERO_KEY } from './arbiterChatKey';
+import { ChatSignatureDeferred } from './chatSignatureGate';
 
 describe('добыча ключей для заявки', () => {
   it('обе половины отдаются как 0x + 64 hex', async () => {
@@ -51,5 +52,54 @@ describe('добыча ключей для заявки', () => {
     const keys = await claimKeysFromSession(session as any);
     expect(keys.boxKey).not.toBe(ZERO_KEY);
     expect(keys.signKey).not.toBe(ZERO_KEY);
+  });
+});
+
+describe('createGatedSignChatKey — отметка ухода ДО подписи, по факту исполнения', () => {
+  it('порядок вызовов: сначала отметка, потом настоящий подписчик', async () => {
+    // Общий массив, а не .mock.invocationCallOrder — доказывает порядок ПО
+    // ФАКТУ выполнения кода, не по чтению текста между двумя строками.
+    const calls: string[] = [];
+    const markHandoff = vi.fn(() => { calls.push('mark'); });
+    const sign = vi.fn(async () => { calls.push('sign'); return '0xdeadbeef' as `0x${string}`; });
+
+    const gated = createGatedSignChatKey(sign as any, markHandoff);
+    const result = await gated({} as any);
+
+    expect(calls).toEqual(['mark', 'sign']);
+    expect(result).toBe('0xdeadbeef');
+  });
+
+  it('markHandoff вызывается ровно один раз за одну подпись', async () => {
+    const markHandoff = vi.fn();
+    const sign = vi.fn(async () => '0x' as `0x${string}`);
+    const gated = createGatedSignChatKey(sign as any, markHandoff);
+    await gated({} as any);
+    expect(markHandoff).toHaveBeenCalledTimes(1);
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('без markHandoff по умолчанию не падает (использует noteWalletHandoff)', async () => {
+    // Только на отсутствие исключения — реальный noteWalletHandoff трогает
+    // document, который в node-окружении может отсутствовать; сам модуль
+    // это уже учитывает (см. chatSignatureGate.ts).
+    const sign = vi.fn(async () => '0x' + '11'.repeat(32) as `0x${string}`);
+    const gated = createGatedSignChatKey(sign as any);
+    await expect(gated({} as any)).resolves.toMatch(/^0x/);
+  });
+});
+
+describe('canRetryRevealAsFreshCommit — решение по неудавшемуся reveal', () => {
+  it('отсрочка гейта подписи — НЕ повод начинать заново (пробросить)', () => {
+    expect(canRetryRevealAsFreshCommit(new ChatSignatureDeferred('needs_press'))).toBe(false);
+  });
+
+  it('обычная ошибка — можно начинать заново (свежий коммит)', () => {
+    expect(canRetryRevealAsFreshCommit(new Error('дело в контракте, не в гейте'))).toBe(true);
+  });
+
+  it('мусор на входе (не Error вовсе) — тоже можно начинать заново', () => {
+    expect(canRetryRevealAsFreshCommit('строка вместо ошибки')).toBe(true);
+    expect(canRetryRevealAsFreshCommit(undefined)).toBe(true);
   });
 });
