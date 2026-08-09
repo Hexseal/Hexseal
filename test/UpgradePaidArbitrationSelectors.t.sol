@@ -234,18 +234,22 @@ contract UpgradePaidArbitrationSelectorsTest is Test {
         uint256 total;
         for (uint256 g = 0; g < groups.length; g++) total += groups[g].length;
 
-        // Post-upgrade diamond should route exactly 167 selectors across all
-        // eleven facets. This is the same literal test/DeployFullSelectors.t.sol
-        // asserts for a wholly fresh deploy built from today's source
-        // (104 across the nine untouched facets + 54 ArbiterRegistryFacet +
-        // 9 ReputationFacet) — deliberately frozen here as a cross-check
-        // between two independently written selector lists (this script's
-        // Replace+Add builders vs. DeployFull's Add-only builders), not as a
-        // description of chain history (this script has not been broadcast).
-        // If a later, unrelated facet legitimately grows, this number must
-        // move in lockstep with test/DeployFullSelectors.t.sol's own total,
-        // or one of the two was left behind.
-        assertEq(total, 167, "post-upgrade diamond should route exactly 167 selectors across all 11 facets");
+        // 167 is this script's OWN historical delivery — the diamond really
+        // did route exactly this many selectors right after this script's
+        // 31 July 2026 broadcast (see the UPDATE note in the file header),
+        // computed here as a cross-check between two independently written
+        // selector lists at that point in time (this script's Replace+Add
+        // builders vs. what DeployFull.s.sol's Add-only builders produced
+        // for the nine untouched facets back then). It is frozen ON
+        // PURPOSE and must NOT move in lockstep with
+        // test/DeployFullSelectors.t.sol's own total: that total is a LIVE
+        // read of today's source and has already grown past this number
+        // (169 since 9 August 2026's arbiter chat keys) for reasons this
+        // script's own history has nothing to do with — this facet's ABI
+        // kept growing after 31 July, same as testArbiterRegistryFacetSelectors()
+        // above explains. If a later, unrelated facet legitimately grows,
+        // DeployFullSelectors.t.sol's total moves; this 167 does not.
+        assertEq(total, 167, "post-upgrade diamond should route exactly 167 selectors across all 11 facets (this script's 31 July 2026 delivery, frozen)");
 
         bytes4[] memory flat = new bytes4[](total);
         uint256 k = 0;

@@ -53,7 +53,7 @@ contract UpgradeArbiterRegistryDAO is Script {
         replaceSels[2]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         replaceSels[3]  = ArbiterRegistryFacet.getChiefArbiter.selector;
         replaceSels[4]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        replaceSels[5]  = ArbiterRegistryFacet.claimDispute.selector;
+        replaceSels[5]  = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         replaceSels[6]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
         replaceSels[7]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
         replaceSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;

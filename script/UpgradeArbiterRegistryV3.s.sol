@@ -56,7 +56,7 @@ contract UpgradeArbiterRegistryV3 is Script {
         replaceSels[2]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         replaceSels[3]  = ArbiterRegistryFacet.getChiefArbiter.selector;
         replaceSels[4]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        replaceSels[5]  = ArbiterRegistryFacet.claimDispute.selector;
+        replaceSels[5]  = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         replaceSels[6]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
         replaceSels[7]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
         replaceSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
@@ -114,7 +114,7 @@ contract UpgradeArbiterRegistryV3 is Script {
             "submitVerdict: wrong facet"
         );
         require(
-            IDiamondLoupe(DIAMOND).facetAddress(ArbiterRegistryFacet.claimDispute.selector) == address(newFacet),
+            IDiamondLoupe(DIAMOND).facetAddress(bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */) == address(newFacet),
             "claimDispute: wrong facet"
         );
         console.log("Verification passed.");
