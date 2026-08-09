@@ -114,6 +114,22 @@ library ArbiterRegistryStorage {
         // клейма и уменьшение openClaimCount молча. Недоставленное складывается
         // сюда и вытягивается через withdrawDisputeBounty().
         mapping(address => uint256)        refundableBounty;   // плательщик → не доставленный возврат, забирается сам
+        // ── Ключи чата арбитра (4б, 9 августа 2026) ──
+        // Открытые половины ключей чата: шифрования (X25519) и подписи (Ed25519).
+        // Лежат ЗДЕСЬ, а не в справочнике релеера, по требованию владельца:
+        // регулировать арбитров должен диамонд, а не владелец. Справочник живёт
+        // на нашем сервере, и тот, кто до сервера добрался, подсунул бы свой
+        // ключ вместо ключа арбитра и прочитал бы ВСЕ предъявления по всем
+        // спорам, ничем себя не выдав. Здесь ключ пишет сам арбитр своей
+        // транзакцией — подменить нечем.
+        //
+        // Закрытые половины в цепь НЕ попадают никогда: они выводятся из
+        // подписи арбитра и остаются на его устройстве. Публичность открытой
+        // половины — не утечка, а условие работы: сторона берёт её, чтобы
+        // запечатать предъявление так, что вскрыть сможет только владелец
+        // закрытой.
+        mapping(address => bytes32)        arbiterBoxKey;   // арбитр → открытый ключ шифрования
+        mapping(address => bytes32)        arbiterSignKey;  // арбитр → открытый ключ подписи
     }
 
     function data() internal pure returns (Data storage d) {
@@ -1208,6 +1224,18 @@ contract ArbiterRegistryFacet {
     function isRegisteredArbiter(address addr) external view returns (bool) { return ArbiterRegistryStorage.data().isArbiter[addr]; }
     function getArbiters()      external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterList; }
     function getDisputeClaimer(address agreement) external view returns (address) { return ArbiterRegistryStorage.data().disputeClaims[agreement]; }
+
+    /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —
+    /// для 4в это признак «предъявлять некому», и различать «нет записи» от
+    /// «записан нуль» незачем: нулевой ключ запрещён при записи.
+    function getArbiterChatKeys(address arbiter)
+        external
+        view
+        returns (bytes32 boxKey, bytes32 signKey)
+    {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        return (d.arbiterBoxKey[arbiter], d.arbiterSignKey[arbiter]);
+    }
     function getArbiterDeals(address arbiter) external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterDeals[arbiter]; }
     function getClaimCommitment(bytes32 c) external view returns (uint256) { return ArbiterRegistryStorage.data().claimCommitments[c]; }
 

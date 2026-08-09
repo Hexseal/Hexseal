@@ -34,13 +34,29 @@ import "../src/DiamondProxy.sol";
 ///   - the grand total drifts from 55 Replace-eligible (this upgrade's two
 ///     facets, pre-upgrade) / 8 Add / 167 (post-upgrade, all eleven facets)
 ///
-/// Unlike test/UpgradeFeeModelSelectors.t.sol, this script has NOT been
-/// broadcast yet (dry-run only, per the task) — so unlike that file's
-/// frozen "history" numbers, the nine untouched facets here are read LIVE
-/// from DeployFull.s.sol's own already-gated builders (test/DeployFullSelectors.t.sol),
-/// not hardcoded: a real diamond built from today's source really would
-/// mount today's ABI, so the collision scan and the 167 grand total below
-/// must track that source, not a snapshot of it.
+/// UPDATE (9 August 2026): the "not broadcast yet" claim above is stale — the
+/// header comment in script/UpgradePaidArbitration.s.sol still calls this a
+/// dry run, but broadcast/UpgradePaidArbitration.s.sol/84532/run-latest.json
+/// holds three real transactions with status 0x1 at block 0x2acaff6/0x2acaff7
+/// (31 July 2026), the same shape as the confirmed UpgradeFeeModel broadcast.
+/// So this script IS live history now, same as UpgradeFeeModel — the direct
+/// live-ABI comparison for ArbiterRegistryFacet was removed for exactly the
+/// same reason it was removed from test/UpgradeFeeModelSelectors.t.sol on 31
+/// July: this facet's ABI kept growing afterward (getArbiterChatKeys, 9
+/// August 2026), and comparing a frozen historical Replace+Add list against a
+/// live-growing ABI means demanding the past match the present. See
+/// testArbiterRegistryFacetSelectors() below.
+///
+/// The nine untouched facets are still read LIVE from DeployFull.s.sol's own
+/// already-gated builders (test/DeployFullSelectors.t.sol), not hardcoded:
+/// a real diamond built from today's source really would mount today's ABI,
+/// so the collision scan below tracks that source, not a snapshot of it. The
+/// 167 grand total is this script's OWN historical delivery (54 + 9 across
+/// the two touched facets, as computed from the upgrade contract's own
+/// Replace+Add lists — not from live ABI), and is expected to no longer equal
+/// a fresh DeployFull total once other facets grow (DeployFull is at 168
+/// since 9 August 2026's arbiter chat keys; this script's own math is
+/// unaffected and stays 167).
 contract UpgradePaidArbitrationSelectorsTest is Test {
     UpgradePaidArbitration internal upgrade;
     DeployFull internal deploy;
@@ -117,11 +133,16 @@ contract UpgradePaidArbitrationSelectorsTest is Test {
         assertEq(replace.length, 47, "ArbiterRegistryFacet: expected 47 Replace selectors");
         assertEq(add.length, 7, "ArbiterRegistryFacet: expected 7 Add selectors");
         _assertDisjoint(replace, add, "ArbiterRegistryFacet");
-        _assertSameSelectorSet(_concat(replace, add), _abiSelectors("ArbiterRegistryFacet"), "ArbiterRegistryFacet");
-        // Must also equal DeployFull's own (independently maintained) full
-        // selector list for this facet — a fresh deploy today and this
-        // upgrade's end state must mount the identical ABI.
-        _assertSameSelectorSet(_concat(replace, add), deploy.arbiterRegistryFacetSelectors(), "ArbiterRegistryFacet vs DeployFull");
+        // Сверка с живым ABI и с DeployFull снята 9 августа 2026 — тем же
+        // способом и по той же причине, что и в
+        // test/UpgradeFeeModelSelectors.t.sol:testArbiterRegistryFacetSelectors()
+        // 31 июля: этот скрипт реально broadcast (см. UPDATE в шапке файла),
+        // Replace+Add здесь — запись того, что было смонтировано 31 июля.
+        // ABI фасета продолжает расти (getArbiterChatKeys, 9 августа), а
+        // требовать равенства с живым ABI/DeployFull значило бы требовать,
+        // чтобы прошлое совпадало с настоящим. Дрейф свежих деплоев ловит
+        // test/DeployFullSelectors.t.sol, а новые cut'ы — свои собственные
+        // гейты.
     }
 
     function testReputationFacetSelectors() public view {
