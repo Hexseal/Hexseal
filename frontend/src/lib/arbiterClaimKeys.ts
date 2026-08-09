@@ -43,22 +43,6 @@ export async function claimKeysFromSession(
   return { boxKey, signKey };
 }
 
-/**
- * Есть ли ключ на этом устройстве — БЕЗ окна кошелька.
- * `createIfMissing: false` означает «прочитай, но не заводи».
- */
-export async function hasLocalChatKeys(
-  address: Address,
-  signTypedData: SignChatKey,
-): Promise<boolean> {
-  try {
-    const session = await openSession(address, signTypedData, { createIfMissing: false });
-    return !!session?.keypair?.publicKey?.length;
-  } catch {
-    return false;
-  }
-}
-
 /* ───────────────── подписывающая обёртка с отметкой ухода ─────────────── */
 
 declare const GATED_SIGN_CHAT_KEY: unique symbol;
