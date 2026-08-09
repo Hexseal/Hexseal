@@ -219,7 +219,9 @@ contract DiamondTest is Test {
         uint256 nextBlock = block.number + 1;
         vm.roll(nextBlock);
         vm.prank(arbiterAddr);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agreementAddr, DISPUTE_SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     // Full deploy -> fund -> activate -> dispute -> claim -> submit -> overturn cycle against a
@@ -1927,7 +1929,9 @@ contract DiamondTest is Test {
         // Reveal in the same block — should fail
         vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.CommitmentTooEarly.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agreementAddr, DISPUTE_SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function testArbiterClaimRevertIfCommitmentExpired() public {
@@ -1950,7 +1954,9 @@ contract DiamondTest is Test {
 
         vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.CommitmentExpired.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agreementAddr, DISPUTE_SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function testArbiterClaimRevertIfNotDisputed() public {
@@ -1972,7 +1978,9 @@ contract DiamondTest is Test {
 
         vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.NotDisputed.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agreementAddr, DISPUTE_SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function testArbiterClaimRevertIfAlreadyClaimed() public {
@@ -1999,7 +2007,9 @@ contract DiamondTest is Test {
 
         vm.prank(arbiter2);
         vm.expectRevert(ArbiterRegistryFacet.AlreadyClaimed.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agreementAddr, DISPUTE_SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agreementAddr, DISPUTE_SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function testArbiterReleaseDisputeClaim() public {

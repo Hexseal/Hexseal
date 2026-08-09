@@ -445,11 +445,28 @@ contract ArbiterRegistryFacet {
 
     /// @notice Клейм спора. Diamond устанавливается арбитром в Agreement (не сам арбитр).
     /// Это позволяет Diamond контролировать исполнение вердикта (задержка, overturn).
-    function claimDispute(address agreement, bytes32 salt) external {
+    ///
+    /// Ключи чата — ОБЯЗАТЕЛЬНЫЕ аргументы, а не проверка: арбитр без ключа
+    /// не может прочитать предъявленное, и пускать его к спору значило бы
+    /// оставить бесплатный способ развалить любое дело (заявился, разбирать
+    /// нечем, таймаут делит котёл). Каждая заявка ПЕРЕЗАПИСЫВАЕТ ключи — так
+    /// смена устройства у арбитра лечится сама.
+    ///
+    /// ⚠️ Селектор этой функции сменился 9 августа (4б). Старый
+    /// `claimDispute(address,bytes32)` удалён из монтировки тем же diamondCut —
+    /// оставить его значило бы держать вторую дорогу, по которой спор берётся
+    /// БЕЗ ключа, то есть ровно ту дыру, которую эта правка закрывает.
+    function claimDispute(
+        address agreement,
+        bytes32 salt,
+        bytes32 boxKey,
+        bytes32 signKey
+    ) external {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
         if (!d.isArbiter[caller]) revert NotArbiter();
+        if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
         if (d.disputeClaims[agreement] != address(0)) revert AlreadyClaimed();
 
         bytes32 commitment = keccak256(abi.encodePacked(agreement, caller, salt));
@@ -496,6 +513,13 @@ contract ArbiterRegistryFacet {
         d.disputeClaims[agreement] = caller;
         d.arbiterDeals[caller].push(agreement);
         d.openClaimCount[caller]++;
+
+        // Ключи пишутся ЗДЕСЬ, а не отдельным вызовом: одна транзакция вместо
+        // двух, и арбитр не может оказаться заявленным без ключа даже на
+        // мгновение.
+        d.arbiterBoxKey[caller]  = boxKey;
+        d.arbiterSignKey[caller] = signKey;
+        emit ArbiterChatKeySet(caller, boxKey, signKey);
 
         emit DisputeClaimed(agreement, caller);
     }

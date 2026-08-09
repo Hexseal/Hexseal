@@ -216,6 +216,58 @@ contract ArbiterChatKeyTest is Test {
         assertEq(fwdSign, bytes32(0), unicode"ключ утёк на адрес форвардера вместо человека");
     }
 
+    /// Заявка обязана возить ключи и записывать их. Проверяется на уровне
+    /// подписи: тест не скомпилируется, если аргументов нет.
+    function test_ClaimDispute_HasKeyArguments() public {
+        // Достаточно того, что вызов с четырьмя аргументами компилируется и
+        // отваливается на проверке арбитра, а не на форме вызова.
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(ArbiterRegistryFacet.NotArbiter.selector);
+        facet.claimDispute(
+            address(0xA9),
+            bytes32(uint256(1)),
+            bytes32(uint256(0x11)),
+            bytes32(uint256(0x22))
+        );
+    }
+
+    /// Нулевой ключ в заявке отвергается той же ошибкой, что в setArbiterChatKey:
+    /// два входа, одно правило.
+    function test_ClaimDispute_RejectsZeroKey() public {
+        address arb = address(0xA1);
+        _makeArbiter(arb);
+        vm.prank(arb);
+        vm.expectRevert(ArbiterRegistryFacet.ZeroChatKey.selector);
+        facet.claimDispute(address(0xA9), bytes32(uint256(1)), bytes32(0), bytes32(uint256(0x22)));
+    }
+
+    /// Успешный клейм обязан ЗАПИСАТЬ ключи, а не только принять их формой
+    /// аргумента. Замок на регрессию: «ключ — обязательный аргумент» без
+    /// записи означает, что арбитр заявился, ключ уехал в calldata и пропал,
+    /// а стороны по-прежнему предъявляют переписку в пустоту — ровно та дыра,
+    /// ради закрытия которой заводилась вся задача.
+    function test_ClaimDispute_WritesKeys() public {
+        address arb = address(0xA1);
+        _makeArbiter(arb);
+
+        MockDisputedAgreement agr = new MockDisputedAgreement(address(0xC1), address(0xE1));
+
+        bytes32 salt = bytes32(uint256(0x9));
+        bytes32 commitment = keccak256(abi.encodePacked(address(agr), arb, salt));
+        vm.prank(arb);
+        facet.commitDisputeClaim(commitment);
+        vm.roll(block.number + 1);
+
+        bytes32 box  = bytes32(uint256(0x33));
+        bytes32 sign = bytes32(uint256(0x44));
+        vm.prank(arb);
+        facet.claimDispute(address(agr), salt, box, sign);
+
+        (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
+        assertEq(gotBox, box, unicode"успешный клейм не записал boxKey");
+        assertEq(gotSign, sign, unicode"успешный клейм не записал signKey");
+    }
+
     /// Садит арбитра прямо в хранилище фасета. `applyAsArbiter()` заперт за
     /// `isDaoActive()` (ArbiterRegistryFacet.sol:293), а ДАО намеренно не
     /// запущено — решение владельца 1 августа. Тест не должен зависеть от
@@ -226,5 +278,28 @@ contract ArbiterChatKeyTest is Test {
         bytes32 slot = keccak256(abi.encode(who, uint256(pos)));
         vm.store(address(facet), slot, bytes32(uint256(1)));
         assertTrue(facet.isRegisteredArbiter(who), unicode"не удалось посадить арбитра");
+    }
+}
+
+/// Минимальная заглушка Agreement — ровно то подмножество интерфейса, которое
+/// claimDispute() опрашивает staticcall'ами (status/disputedAt/DISPUTE_WINDOW/
+/// client/executor) и вызывает (setArbiter). Живёт в статусе DISPUTED(4) с
+/// открытым окном спора с момента деплоя.
+contract MockDisputedAgreement {
+    uint8 public constant status = 4; // Agreement.Status.DISPUTED
+    uint256 public disputedAt;
+    uint256 public constant DISPUTE_WINDOW = 3 days;
+    address public client;
+    address public executor;
+    address public arbiter;
+
+    constructor(address _client, address _executor) {
+        client = _client;
+        executor = _executor;
+        disputedAt = block.timestamp;
+    }
+
+    function setArbiter(address newArbiter) external {
+        arbiter = newArbiter;
     }
 }

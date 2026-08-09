@@ -240,7 +240,9 @@ contract ExtrasTest is Test {
         ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
         vm.roll(block.number + 1);
         vm.prank(arbiter);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agr, SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function _resolveDispute(address agr, bool clientWins) internal {
