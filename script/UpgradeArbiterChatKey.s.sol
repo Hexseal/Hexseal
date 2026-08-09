@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
-import {IDiamondCut} from "../src/DiamondProxy.sol";
+import {IDiamondCut, IDiamondLoupe} from "../src/DiamondProxy.sol";
 
 /**
  * 4б: ключи чата арбитра в цепи.
@@ -20,6 +20,20 @@ import {IDiamondCut} from "../src/DiamondProxy.sol";
  *
  * Почему Replace обязателен: без него 53 селектора фасета остались бы на
  * прежнем адресе, и диамонд поехал бы наполовину старым кодом.
+ *
+ * ── Pre/post-flight ──────────────────────────────────────────────────────
+ * Форма — script/UpgradePaidArbitration.s.sol:166-171, :202-205, помощники
+ * :259-299. Replace на адрес, у которого нужного селектора нет, НЕ ревертит
+ * (DiamondCutLib.replaceFunctions проверяет только «адрес другой и есть код»,
+ * не «реализует ли он этот селектор») — тихий разъезд «смонтировано, но не
+ * работает» ровно того класса, что уже ломал fundDispute на msg.sender вместо
+ * _msgSender() (d172064): задеплоено, ни разу не сработало, никто не заметил
+ * до отдельного разбора. Поэтому до broadcast проверяется, что Replace/Remove
+ * целятся в один и тот же реально смонтированный старый адрес, а Add — в
+ * пока не смонтированные селекторы; после broadcast — что Replace/Add легли
+ * на новый адрес, старый адрес опустел, Remove увёл в никуда, и вдобавок
+ * функциональный смоук: getArbiterChatKeys ЧЕРЕЗ ДАЙМОНД реально исполняется
+ * (не ревертит, отдаёт нули), а не просто числится в loupe.
  */
 contract UpgradeArbiterChatKey is Script {
     function run() external {
@@ -27,13 +41,141 @@ contract UpgradeArbiterChatKey is Script {
         uint256 pk = vm.envUint("PRIVATE_KEY");
         require(diamond != address(0), "DIAMOND_ADDRESS not set");
 
+        bytes4[] memory removeSels  = removeSelectors();
+        bytes4[] memory replaceSels = replaceSelectors();
+        bytes4[] memory addSels     = addSelectors();
+
+        // ── Pre-flight ────────────────────────────────────────────────────
+        console.log("=== UpgradeArbiterChatKey: pre-flight ===");
+        address oldFacet = checkReplaceGroup(replaceSels, diamond);
+        checkRemoveSelectorMounted(removeSels, oldFacet, diamond);
+        checkAddGroupUnmounted(addSels, diamond);
+        console.log("Old ArbiterRegistryFacet currently mounted at:", oldFacet);
+
+        uint256 selectorsBefore = totalRoutedSelectors(diamond);
+        console.log("Total routed selectors BEFORE cut:", selectorsBefore);
+        console.log("");
+
+        // ── Апгрейд ───────────────────────────────────────────────────────
         vm.startBroadcast(pk);
         ArbiterRegistryFacet facet = new ArbiterRegistryFacet();
         IDiamondCut(diamond).diamondCut(buildCuts(address(facet)), address(0), "");
         vm.stopBroadcast();
 
         console.log("ArbiterRegistryFacet:", address(facet));
-        console.log("Remove 1 / Replace", replaceSelectors().length, "/ Add", addSelectors().length);
+        console.log("Remove 1 / Replace", replaceSels.length, "/ Add", addSels.length);
+        console.log("");
+
+        // ── Post-flight ───────────────────────────────────────────────────
+        console.log("=== Post-flight ===");
+        assertRouted(replaceSels, address(facet), diamond);
+        assertRouted(addSels,     address(facet), diamond);
+        assertFacetHoldsNoSelectors(oldFacet, diamond);
+        assertSelectorsUnrouted(removeSels, diamond);
+        console.log("Replace/Add -> new facet, old facet emptied, Remove routes nowhere.");
+
+        (bytes32 boxKey, bytes32 signKey) = smokeGetArbiterChatKeys(diamond, address(0xDEAD));
+        require(
+            boxKey == bytes32(0) && signKey == bytes32(0),
+            "post: smoke call to getArbiterChatKeys through the diamond did not return zeros"
+        );
+        console.log("Smoke getArbiterChatKeys(0x...DEAD) through diamond did not revert, returned (0, 0).");
+
+        uint256 selectorsAfter = totalRoutedSelectors(diamond);
+        require(
+            selectorsAfter == selectorsBefore - removeSels.length + addSels.length,
+            "post: routed selector count did not move by exactly -Remove +Add"
+        );
+        console.log("Total routed selectors AFTER cut:", selectorsAfter);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Pre/post-flight helpers — public так, чтобы test/ArbiterChatKeyUpgrade.t.sol
+    // мог звать их напрямую против локально развёрнутого даймонда, не только
+    // против живой цепи внутри run(). Форма — script/UpgradePaidArbitration.s.sol:259-299.
+    // ════════════════════════════════════════════════════════════════════
+
+    /// Каждый селектор группы смонтирован сейчас, и все указывают на ОДИН и
+    /// тот же адрес — иначе список Replace выведен неверно (фасет уже
+    /// разъехался по нескольким адресам, и Replace на единый новый адрес
+    /// был бы неверной операцией). Возвращает этот адрес.
+    function checkReplaceGroup(bytes4[] memory sels, address diamond)
+        public view returns (address facetAddr)
+    {
+        require(sels.length > 0, "UpgradeArbiterChatKey: replace group is empty");
+        facetAddr = IDiamondLoupe(diamond).facetAddress(sels[0]);
+        require(facetAddr != address(0), "UpgradeArbiterChatKey: selector[0] of Replace is not mounted");
+        for (uint256 i = 0; i < sels.length; i++) {
+            address a = IDiamondLoupe(diamond).facetAddress(sels[i]);
+            require(a != address(0), "UpgradeArbiterChatKey: a Replace selector is not mounted");
+            require(a == facetAddr, "UpgradeArbiterChatKey: Replace selectors are split across more than one live facet address");
+        }
+    }
+
+    /// Удаляемый селектор смонтирован сейчас и живёт на ТОМ ЖЕ адресе, что и
+    /// группа Replace — иначе Remove целится не в тот фасет, который
+    /// апгрейдится этим cut'ом.
+    function checkRemoveSelectorMounted(bytes4[] memory sels, address expectedFacet, address diamond) public view {
+        require(sels.length == 1, "UpgradeArbiterChatKey: remove group must have exactly one selector");
+        address a = IDiamondLoupe(diamond).facetAddress(sels[0]);
+        require(a != address(0), "UpgradeArbiterChatKey: Remove selector is not mounted anywhere");
+        require(a == expectedFacet, "UpgradeArbiterChatKey: Remove selector lives on a different facet address than the Replace group");
+    }
+
+    /// Ни один селектор группы ещё не смонтирован — иначе Add ревертит
+    /// "selector exists" в DiamondCutLib.addFunctions, и вся выкатка падает.
+    function checkAddGroupUnmounted(bytes4[] memory sels, address diamond) public view {
+        for (uint256 i = 0; i < sels.length; i++) {
+            require(
+                IDiamondLoupe(diamond).facetAddress(sels[i]) == address(0),
+                "UpgradeArbiterChatKey: an Add selector is already mounted somewhere - Add would revert"
+            );
+        }
+    }
+
+    /// Каждый селектор группы ведёт на ожидаемый (новый) адрес фасета.
+    function assertRouted(bytes4[] memory sels, address expected, address diamond) public view {
+        for (uint256 i = 0; i < sels.length; i++) {
+            require(
+                IDiamondLoupe(diamond).facetAddress(sels[i]) == expected,
+                "UpgradeArbiterChatKey: a selector did not land on the new facet"
+            );
+        }
+    }
+
+    /// У старого адреса фасета не осталось ни одного селектора — полностью
+    /// вытеснен, а не разъехался наполовину.
+    function assertFacetHoldsNoSelectors(address facetAddr, address diamond) public view {
+        require(
+            IDiamondLoupe(diamond).facetFunctionSelectors(facetAddr).length == 0,
+            "UpgradeArbiterChatKey: old facet address still holds selectors after the cut"
+        );
+    }
+
+    /// Удалённый селектор больше никуда не ведёт (facetAddress -> address(0)).
+    function assertSelectorsUnrouted(bytes4[] memory sels, address diamond) public view {
+        for (uint256 i = 0; i < sels.length; i++) {
+            require(
+                IDiamondLoupe(diamond).facetAddress(sels[i]) == address(0),
+                "UpgradeArbiterChatKey: a removed selector still routes somewhere"
+            );
+        }
+    }
+
+    /// Функциональный смоук: getArbiterChatKeys ЧЕРЕЗ ДАЙМОНД (не прямой
+    /// вызов фасета) не ревертит и отдаёт нули для адреса без записанных
+    /// ключей. Отличает «селектор числится смонтированным по loupe» от
+    /// «маршрут правда исполняет код нового фасета» — именно та разница,
+    /// которую Replace на нереализующий адрес не ловит никак иначе.
+    function smokeGetArbiterChatKeys(address diamond, address probe)
+        public view returns (bytes32 boxKey, bytes32 signKey)
+    {
+        return ArbiterRegistryFacet(diamond).getArbiterChatKeys(probe);
+    }
+
+    function totalRoutedSelectors(address diamond) public view returns (uint256 total) {
+        IDiamondLoupe.Facet[] memory all = IDiamondLoupe(diamond).facets();
+        for (uint256 i = 0; i < all.length; i++) total += all[i].functionSelectors.length;
     }
 
     /// Вынесено в public pure, чтобы тест проверял состав cut'а без выкатки.
