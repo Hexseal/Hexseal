@@ -34,6 +34,17 @@ import {IDiamondCut, IDiamondLoupe} from "../src/DiamondProxy.sol";
  * на новый адрес, старый адрес опустел, Remove увёл в никуда, и вдобавок
  * функциональный смоук: getArbiterChatKeys ЧЕРЕЗ ДАЙМОНД реально исполняется
  * (не ревертит, отдаёт нули), а не просто числится в loupe.
+ *
+ * ── Целостность хранилища (найдено финальным ревью 9 августа) ────────────
+ * Всё выше проверяет МАРШРУТИЗАЦИЮ селекторов — ни одна из проверок не
+ * читает ни одного значения, которое уже лежало в арбитражном неймспейсе
+ * ДО разреза. Это ровно тот класс, что в июле 2026 сломал JobBoard:
+ * getOpenJobs() начал ревертить Panic(0x22) на живом хранилище после смены
+ * раскладки, а статические гейты (селекторы, ABI) этого не видели — увидеть
+ * может только чтение настоящего состояния до и после. Поэтому здесь читаются
+ * getArbiters().length, getVaultBalance() и getArbiterFloor() ДО
+ * vm.startBroadcast и снова ПОСЛЕ vm.stopBroadcast, с require на равенство —
+ * доказательство на реальных данных, а не на факте, что cut прошёл.
  */
 contract UpgradeArbiterChatKey is Script {
     function run() external {
@@ -54,6 +65,16 @@ contract UpgradeArbiterChatKey is Script {
 
         uint256 selectorsBefore = totalRoutedSelectors(diamond);
         console.log("Total routed selectors BEFORE cut:", selectorsBefore);
+
+        // Значения, которые уже лежат в арбитражном неймспейсе — читаются
+        // ДО broadcast, сверяются с тем же чтением ПОСЛЕ. Форма — ниже,
+        // snapshotArbiterStorage/assertStorageContinuity.
+        StorageSnapshot memory before = snapshotArbiterStorage(diamond);
+        console.log("Arbiter storage BEFORE cut - arbiters:", before.arbiterCount);
+        console.log("  vaultBalance:", before.vaultBalance);
+        console.log("  arbiterFloor:", before.arbiterFloor);
+
+        warnArbitersWithOpenClaimsMissingKeys(diamond);
         console.log("");
 
         // ── Апгрейд ───────────────────────────────────────────────────────
@@ -73,6 +94,13 @@ contract UpgradeArbiterChatKey is Script {
         assertFacetHoldsNoSelectors(oldFacet, diamond);
         assertSelectorsUnrouted(removeSels, diamond);
         console.log("Replace/Add -> new facet, old facet emptied, Remove routes nowhere.");
+
+        StorageSnapshot memory afterCut = snapshotArbiterStorage(diamond);
+        assertStorageContinuity(before, afterCut);
+        console.log("Arbiter storage AFTER cut  - arbiters:", afterCut.arbiterCount);
+        console.log("  vaultBalance:", afterCut.vaultBalance);
+        console.log("  arbiterFloor:", afterCut.arbiterFloor);
+        console.log("Storage continuity OK: arbiters/vaultBalance/arbiterFloor unchanged by the cut.");
 
         (bytes32 boxKey, bytes32 signKey) = smokeGetArbiterChatKeys(diamond, address(0xDEAD));
         require(
@@ -171,6 +199,112 @@ contract UpgradeArbiterChatKey is Script {
         public view returns (bytes32 boxKey, bytes32 signKey)
     {
         return ArbiterRegistryFacet(diamond).getArbiterChatKeys(probe);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Целостность хранилища — читает значения, которые уже лежали в
+    // арбитражном неймспейсе ДО разреза, не только маршрутизацию селекторов.
+    // ════════════════════════════════════════════════════════════════════
+
+    struct StorageSnapshot {
+        uint256 arbiterCount;
+        uint256 vaultBalance;
+        uint256 arbiterFloor;
+    }
+
+    /// Три чтения существующих полей арбитражного неймспейса ЧЕРЕЗ ДАЙМОНД.
+    /// getArbiterFloor() возвращает DEFAULT_ARBITER_FLOOR, если поле в
+    /// хранилище нулевое (см. сам фасет) — это всё ещё чтение существующего
+    /// поля, не выдумка: если раскладка сдвинется, значение прыгнет вместе с
+    /// остальными, а не молча останется дефолтным.
+    function snapshotArbiterStorage(address diamond) public view returns (StorageSnapshot memory s) {
+        ArbiterRegistryFacet f = ArbiterRegistryFacet(diamond);
+        s.arbiterCount = f.getArbiters().length;
+        s.vaultBalance = f.getVaultBalance();
+        s.arbiterFloor = f.getArbiterFloor();
+    }
+
+    /// Три значения, снятые ДО и ПОСЛЕ cut'а, обязаны совпасть буквально —
+    /// diamondCut ничего не должен писать в чужой неймспейс. Расхождение
+    /// здесь — тот же класс сигнала, что Panic(0x22) на getOpenJobs() после
+    /// смены раскладки JobBoard в июле 2026: раскладка сдвинулась, и старые
+    /// записи читаются не с тех слотов.
+    function assertStorageContinuity(StorageSnapshot memory beforeCut, StorageSnapshot memory afterCut) public pure {
+        require(
+            afterCut.arbiterCount == beforeCut.arbiterCount,
+            "post: getArbiters().length changed across the cut - storage layout may have shifted"
+        );
+        require(
+            afterCut.vaultBalance == beforeCut.vaultBalance,
+            "post: getVaultBalance() changed across the cut - storage layout may have shifted"
+        );
+        require(
+            afterCut.arbiterFloor == beforeCut.arbiterFloor,
+            "post: getArbiterFloor() changed across the cut - storage layout may have shifted"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Заявки, взятые старой подписью — громкое предупреждение, не require.
+    // ════════════════════════════════════════════════════════════════════
+
+    /// Спор, заклеймленный ДО апгрейда, после cut'а сохраняет арбитра в
+    /// disputeClaims (openClaimCount у него > 0), а getArbiterChatKeys по
+    /// нему отдаёт нули — ключей у старой заявки не было и не могло быть.
+    /// getArbiterChatKeys учит читать нули как «предъявлять некому», так что
+    /// сторона молча решит, что предъявить нечего — а лекарство есть:
+    /// арбитр сам зовёт setArbiterChatKey() в любой момент, даже посреди
+    /// открытого спора (гейт там — isArbiter, не отсутствие ключа). НЕ
+    /// require: эти заявки взяты законно, до апгрейда никакого ключа не
+    /// требовалось, и падать здесь было бы неправдой.
+    ///
+    /// НЕ вызывает getArbiterChatKeys(): эта функция зовётся ДО broadcast
+    /// (пред-полёт), а getArbiterChatKeys — сам один из трёх Add-селекторов
+    /// этого же cut'а, то есть на живом даймонде в этот момент ещё НЕ
+    /// смонтирован — вызов ревертнул бы "Diamond: Function does not exist".
+    /// Читать его и не нужно: до ЭТОГО апгрейда setArbiterChatKey не
+    /// существовал вовсе, значит ключа не могло появиться в принципе — у
+    /// любого арбитра с openClaimCount > 0 он гарантированно отсутствует.
+    /// Одного openClaimCount (существующий селектор, часть Replace)
+    /// достаточно.
+    ///
+    /// Перечисляет по текущему списку зарегистрированных арбитров
+    /// (getArbiters()) — арбитра, уже потерявшего статус, но всё ещё
+    /// сидящего в disputeClaims с открытым счётчиком, этот обход не найдёт;
+    /// это отдельный, более редкий случай (см. предупреждение в докстринге
+    /// setArbiterChatKey про исключение из «петля замыкается сама»).
+    function findArbitersWithOpenClaimsMissingKeys(address diamond) public view returns (address[] memory flagged) {
+        ArbiterRegistryFacet f = ArbiterRegistryFacet(diamond);
+        address[] memory arbiters = f.getArbiters();
+
+        uint256 count;
+        bool[] memory hit = new bool[](arbiters.length);
+        for (uint256 i = 0; i < arbiters.length; i++) {
+            if (f.getOpenClaimCount(arbiters[i]) == 0) continue;
+            hit[i] = true;
+            count++;
+        }
+
+        flagged = new address[](count);
+        uint256 k;
+        for (uint256 i = 0; i < arbiters.length; i++) {
+            if (hit[i]) flagged[k++] = arbiters[i];
+        }
+    }
+
+    function warnArbitersWithOpenClaimsMissingKeys(address diamond) public view {
+        address[] memory flagged = findArbitersWithOpenClaimsMissingKeys(diamond);
+        console.log("=== Pre-flight: arbiters with open claims and no chat key ===");
+        if (flagged.length == 0) {
+            console.log("  none.");
+            return;
+        }
+        for (uint256 i = 0; i < flagged.length; i++) {
+            console.log("  MISSING KEY - arbiter:", flagged[i]);
+            console.log("    openClaimCount:", ArbiterRegistryFacet(diamond).getOpenClaimCount(flagged[i]));
+            console.log("    -> must call setArbiterChatKey(boxKey, signKey) after this upgrade");
+        }
+        console.log("Total arbiters needing setArbiterChatKey after upgrade:", flagged.length);
     }
 
     function totalRoutedSelectors(address diamond) public view returns (uint256 total) {

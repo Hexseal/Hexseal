@@ -213,6 +213,73 @@ contract ArbiterChatKeyUpgradeTest is Test {
         oldFacetAddr = address(oldFacet);
     }
 
+    bytes32 constant ARB_POS = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
+
+    /// Прямая запись в vaultBalance (простое uint256-поле в
+    /// ArbiterRegistryStorage.Data, слот POSITION+9). Сеттера без USDC-перевода
+    /// нет, а fundVault() здесь недоступен — этот даймонд не монтирует
+    /// Factory, и FactoryStorage.usdc == address(0). Смещение подтверждается
+    /// тем же приёмом, что test/ArbiterChatKey.t.sol::_setTrustedForwarder —
+    /// перечитыванием через геттер сразу после записи, а не на слово.
+    function _setVaultBalance(DiamondProxy diamond, uint256 amount) internal {
+        bytes32 slot = bytes32(uint256(ARB_POS) + 9);
+        vm.store(address(diamond), slot, bytes32(amount));
+        assertEq(
+            ArbiterRegistryFacet(address(diamond)).getVaultBalance(), amount,
+            unicode"смещение vaultBalance в ArbiterRegistryStorage.Data уехало"
+        );
+    }
+
+    /// Прямая запись в openClaimCount[arbiter] (мапа, база слота POSITION+13).
+    /// Дать арбитру «открытый спор» через настоящий claimDispute здесь
+    /// нельзя — тому нужен Agreement, отвечающий на status()/disputedAt()/
+    /// client()/executor(), и Registry-запись, которых у этого минимального
+    /// даймонда нет. Смещение подтверждается перечитыванием через
+    /// getOpenClaimCount(), тем же приёмом, что и выше.
+    function _setOpenClaimCount(DiamondProxy diamond, address arbiter, uint256 n) internal {
+        bytes32 slot = keccak256(abi.encode(arbiter, uint256(ARB_POS) + 13));
+        vm.store(address(diamond), slot, bytes32(n));
+        assertEq(
+            ArbiterRegistryFacet(address(diamond)).getOpenClaimCount(arbiter), n,
+            unicode"смещение openClaimCount в ArbiterRegistryStorage.Data уехало"
+        );
+    }
+
+    bytes32 constant SEED_BOX_KEY  = bytes32(uint256(0x5eed0001));
+    bytes32 constant SEED_SIGN_KEY = bytes32(uint256(0x5eed0002));
+
+    /// Прямая запись в arbiterBoxKey/arbiterSignKey (мапы, базы слотов
+    /// POSITION+20/+21). НЕ через setArbiterChatKey: тот селектор, как и
+    /// getArbiterChatKeys, смонтирован только ПОСЛЕ этого самого cut'а —
+    /// на живой цепи «арбитр с ключом ДО апгрейда» структурно невозможен
+    /// (до этого апгрейда возможности задать ключ не существовало вовсе).
+    /// Пишем сюда напрямую, чтобы доказать другое: раскладка этих двух
+    /// НОВЫХ полей (append-only, добавлены тем же PR) переживает замену
+    /// адреса фасета в cut'е — то есть замену кода, а не замену слотов.
+    /// Прочитать обратно можно только ПОСЛЕ cut'а (см. вызывающий тест) —
+    /// getArbiterChatKeys до него не смонтирован.
+    function _setChatKeyRaw(DiamondProxy diamond, address arbiter, bytes32 box, bytes32 sign) internal {
+        bytes32 boxSlot  = keccak256(abi.encode(arbiter, uint256(ARB_POS) + 20));
+        bytes32 signSlot = keccak256(abi.encode(arbiter, uint256(ARB_POS) + 21));
+        vm.store(address(diamond), boxSlot, box);
+        vm.store(address(diamond), signSlot, sign);
+    }
+
+    /// Итоговое ревью, правка 3: сажает арбитра с ключом и непустой банк ДО
+    /// cut'а, чтобы сверка pre/post не сравнивала нули с нулями — без этого
+    /// проверка целостности хранилища была бы честной проверкой на пустом
+    /// месте, а не проверкой на настоящих данных.
+    ///
+    /// Вызывать ДО передачи владения диамондом другому адресу: addArbiter —
+    /// onlyOwnerOrChief, а сразу после _deployMinimalDiamond владелец —
+    /// address(this) (тестовый контракт).
+    function _seedPreCutArbiterState(DiamondProxy diamond, address arbiter) internal {
+        ArbiterRegistryFacet f = ArbiterRegistryFacet(address(diamond));
+        f.addArbiter(arbiter);
+        _setVaultBalance(diamond, 777_000_000); // 777 USDC — заведомо не ноль и не «круглый» дефолт
+        _setChatKeyRaw(diamond, arbiter, SEED_BOX_KEY, SEED_SIGN_KEY);
+    }
+
     /// Честное состояние: пред-проверки проходят и возвращают правильный
     /// старый адрес. Без этого теста красные из следующих двух ничего бы не
     /// доказывали — мало показать, что замок ревертит на плохом входе, надо
@@ -385,12 +452,28 @@ contract ArbiterChatKeyUpgradeTest is Test {
     /// остальные тесты вызывают её через smokeGetArbiterChatKeys() отдельно,
     /// но не через сам run(), и не поймали бы, если бы кто-то удалил именно
     /// эту строку из run(), а не из вынесенного помощника.
+    ///
+    /// Итоговое ревью, правка 3: даймонд ДО cut'а сажается не пустым —
+    /// зарегистрированный арбитр, непустой vaultBalance и (сырой записью,
+    /// см. _setChatKeyRaw) заполненные arbiterBoxKey/arbiterSignKey. Без
+    /// этого проверка целостности хранилища ВНУТРИ run() сверяла бы нули с
+    /// нулями и прошла бы даже будучи полностью сломанной. После run()
+    /// сверяем, что arbiterCount/vaultBalance пережили cut через
+    /// snapshotArbiterStorage(), и что сырые байты ключа, записанные ДО
+    /// того, как getArbiterChatKeys вообще существовал, читаются обратно
+    /// ЧЕРЕЗ НЕЁ теперь, когда она смонтирована.
     function test_RunEndToEndOnLocalDiamond() public {
         uint256 pk = 0xA11CE;
         address ownerAddr = vm.addr(pk);
+        address seededArbiter = address(0xA12BE12);
 
         DiamondProxy diamond = _deployMinimalDiamond(); // owner = address(this) поначалу
         address oldFacetAddr = _mountOldFacet(diamond);  // тоже как address(this)
+        _seedPreCutArbiterState(diamond, seededArbiter); // непустое хранилище ДО cut'а
+
+        UpgradeArbiterChatKey.StorageSnapshot memory before = upgrade.snapshotArbiterStorage(address(diamond));
+        assertEq(before.arbiterCount, 1, unicode"сид не добавил арбитра — сверка ниже была бы нулями с нулями");
+        assertEq(before.vaultBalance, 777_000_000, unicode"сид не поднял vaultBalance");
 
         // Передать владение диамондом адресу PRIVATE_KEY — run() зовёт
         // diamondCut, а он проходит только для владельца.
@@ -402,9 +485,9 @@ contract ArbiterChatKeyUpgradeTest is Test {
         vm.setEnv("DIAMOND_ADDRESS", vm.toString(address(diamond)));
         vm.setEnv("PRIVATE_KEY", vm.toString(pk));
 
-        uint256 before = upgrade.totalRoutedSelectors(address(diamond));
+        uint256 before_ = upgrade.totalRoutedSelectors(address(diamond));
 
-        upgrade.run(); // ← сам метод, а не его пересказ
+        upgrade.run(); // ← сам метод, а не его пересказ (доказывает continuity-require ВНУТРИ run())
 
         // run() сам проверяет всё внутри себя (иначе он бы уже ревертнул);
         // здесь дублируем внешним взглядом, что диамонд действительно
@@ -413,11 +496,21 @@ contract ArbiterChatKeyUpgradeTest is Test {
         upgrade.assertSelectorsUnrouted(upgrade.removeSelectors(), address(diamond));
 
         uint256 afterTotal = upgrade.totalRoutedSelectors(address(diamond));
-        assertEq(afterTotal, before - upgrade.removeSelectors().length + upgrade.addSelectors().length);
+        assertEq(afterTotal, before_ - upgrade.removeSelectors().length + upgrade.addSelectors().length);
 
         (bytes32 boxKey, bytes32 signKey) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
         assertEq(boxKey, bytes32(0));
         assertEq(signKey, bytes32(0));
+
+        // Непустое состояние, посаженное ДО cut'а, пережило замену адреса
+        // фасета — не сверка нулей с нулями.
+        UpgradeArbiterChatKey.StorageSnapshot memory afterCut = upgrade.snapshotArbiterStorage(address(diamond));
+        assertEq(afterCut.arbiterCount, before.arbiterCount, unicode"arbiterCount не пережил cut");
+        assertEq(afterCut.vaultBalance, before.vaultBalance, unicode"vaultBalance не пережил cut");
+
+        (bytes32 seededBox, bytes32 seededSign) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(seededArbiter);
+        assertEq(seededBox, SEED_BOX_KEY, unicode"arbiterBoxKey, записанный ДО cut'а, не пережил замену фасета");
+        assertEq(seededSign, SEED_SIGN_KEY, unicode"arbiterSignKey, записанный ДО cut'а, не пережил замену фасета");
     }
 
     /// Пост-проверка "старый адрес опустел" ловит недомонтированный Replace:
@@ -483,5 +576,131 @@ contract ArbiterChatKeyUpgradeTest is Test {
         bytes4[] memory removeSels = upgrade.removeSelectors();
         vm.expectRevert(bytes("UpgradeArbiterChatKey: a removed selector still routes somewhere"));
         upgrade.assertSelectorsUnrouted(removeSels, address(diamond));
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Итоговое ревью, правка 3: целостность хранилища арбитражного
+    // неймспейса поперёк cut'а — не только маршрутизация селекторов.
+    // ════════════════════════════════════════════════════════════════════
+
+    /// Честное состояние: одинаковый снимок до/после не ревертит.
+    function test_StorageContinuity_PassesOnUnchangedSnapshot() public view {
+        UpgradeArbiterChatKey.StorageSnapshot memory s =
+            UpgradeArbiterChatKey.StorageSnapshot({arbiterCount: 3, vaultBalance: 100, arbiterFloor: 5});
+        upgrade.assertStorageContinuity(s, s); // ничего не ревертнуло — цель теста
+    }
+
+    /// Что исчезнет из поведения, если снять правку: апгрейд-скрипт молча
+    /// проедет мимо сдвига раскладки арбитражного неймспейса — ровно тот
+    /// класс, что в июле 2026 уронил getOpenJobs() на живом хранилище
+    /// JobBoard Panic(0x22) уже ПОСЛЕ выкатки, а не до.
+    function test_StorageContinuity_RevertsWhenArbiterCountChanged() public {
+        UpgradeArbiterChatKey.StorageSnapshot memory b =
+            UpgradeArbiterChatKey.StorageSnapshot({arbiterCount: 3, vaultBalance: 100, arbiterFloor: 5});
+        UpgradeArbiterChatKey.StorageSnapshot memory a =
+            UpgradeArbiterChatKey.StorageSnapshot({arbiterCount: 4, vaultBalance: 100, arbiterFloor: 5});
+        vm.expectRevert(bytes("post: getArbiters().length changed across the cut - storage layout may have shifted"));
+        upgrade.assertStorageContinuity(b, a);
+    }
+
+    function test_StorageContinuity_RevertsWhenVaultBalanceChanged() public {
+        UpgradeArbiterChatKey.StorageSnapshot memory b =
+            UpgradeArbiterChatKey.StorageSnapshot({arbiterCount: 3, vaultBalance: 100, arbiterFloor: 5});
+        UpgradeArbiterChatKey.StorageSnapshot memory a =
+            UpgradeArbiterChatKey.StorageSnapshot({arbiterCount: 3, vaultBalance: 101, arbiterFloor: 5});
+        vm.expectRevert(bytes("post: getVaultBalance() changed across the cut - storage layout may have shifted"));
+        upgrade.assertStorageContinuity(b, a);
+    }
+
+    function test_StorageContinuity_RevertsWhenArbiterFloorChanged() public {
+        UpgradeArbiterChatKey.StorageSnapshot memory b =
+            UpgradeArbiterChatKey.StorageSnapshot({arbiterCount: 3, vaultBalance: 100, arbiterFloor: 5});
+        UpgradeArbiterChatKey.StorageSnapshot memory a =
+            UpgradeArbiterChatKey.StorageSnapshot({arbiterCount: 3, vaultBalance: 100, arbiterFloor: 6});
+        vm.expectRevert(bytes("post: getArbiterFloor() changed across the cut - storage layout may have shifted"));
+        upgrade.assertStorageContinuity(b, a);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Итоговое ревью, правка 4: предупреждение об арбитрах с открытыми
+    // заявками без ключа — громкое, не require.
+    // ════════════════════════════════════════════════════════════════════
+
+    /// Арбитр с открытым спором (openClaimCount > 0) обязан попасть в список.
+    function test_FindArbitersWithOpenClaimsMissingKeys_FlagsArbiterWithOpenClaim() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+        ArbiterRegistryFacet f = ArbiterRegistryFacet(address(diamond));
+
+        address arb = address(0xAB1);
+        f.addArbiter(arb);
+        _setOpenClaimCount(diamond, arb, 1);
+
+        address[] memory flagged = upgrade.findArbitersWithOpenClaimsMissingKeys(address(diamond));
+        assertEq(flagged.length, 1, unicode"арбитр с открытым спором обязан попасть в предупреждение");
+        assertEq(flagged[0], arb);
+    }
+
+    /// Что исчезнет из поведения, если снять правку: пред-полёт скрипта
+    /// перестанет предупреждать об арбитрах, чьи старые заявки (взятые до
+    /// апгрейда, без ключа по построению) после cut'а дадут getArbiterChatKeys
+    /// == (0, 0) — сторона молча услышит «предъявлять некому» вместо
+    /// «арбитру нужно позвать setArbiterChatKey».
+    function test_FindArbitersWithOpenClaimsMissingKeys_SkipsArbiterWithoutOpenClaim() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+        ArbiterRegistryFacet f = ArbiterRegistryFacet(address(diamond));
+
+        address arb = address(0xAB2);
+        f.addArbiter(arb); // зарегистрирован, но openClaimCount == 0
+
+        address[] memory flagged = upgrade.findArbitersWithOpenClaimsMissingKeys(address(diamond));
+        assertEq(flagged.length, 0, unicode"без открытого спора предупреждать не о чем");
+    }
+
+    /// Арбитр без открытого спора не попадает, даже если он единственный
+    /// зарегистрированный, а другой (с открытым спором) — попадает: список
+    /// фильтрует по каждому арбитру отдельно, не по факту "хоть кто-то есть".
+    function test_FindArbitersWithOpenClaimsMissingKeys_MixOfFlaggedAndNot() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+        ArbiterRegistryFacet f = ArbiterRegistryFacet(address(diamond));
+
+        address quiet = address(0xAB3);
+        address busy  = address(0xAB4);
+        f.addArbiter(quiet);
+        f.addArbiter(busy);
+        _setOpenClaimCount(diamond, busy, 2);
+
+        address[] memory flagged = upgrade.findArbitersWithOpenClaimsMissingKeys(address(diamond));
+        assertEq(flagged.length, 1);
+        assertEq(flagged[0], busy);
+    }
+
+    /// findArbitersWithOpenClaimsMissingKeys зовётся ДО broadcast в run() —
+    /// то есть ДО того, как getArbiterChatKeys вообще смонтирован на
+    /// даймонде (это один из трёх Add-селекторов того же cut'а). Замок на
+    /// регрессию: если бы функция читала getArbiterChatKeys напрямую (как в
+    /// первой версии этой правки), она ревертела бы "Diamond: Function does
+    /// not exist" на КАЖДОМ вызове пред-полёта на живой цепи — предупреждение
+    /// уронило бы весь скрипт вместо того, чтобы просто напечататься.
+    function test_FindArbitersWithOpenClaimsMissingKeys_WorksBeforeAddSelectorsAreMounted() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond); // ТОЛЬКО старая раскладка — getArbiterChatKeys НЕ смонтирован
+        ArbiterRegistryFacet f = ArbiterRegistryFacet(address(diamond));
+
+        address arb = address(0xAB5);
+        f.addArbiter(arb);
+        _setOpenClaimCount(diamond, arb, 1);
+
+        // Сначала доказываем предпосылку: getArbiterChatKeys правда не
+        // смонтирован на этом даймонде до cut'а.
+        vm.expectRevert();
+        f.getArbiterChatKeys(arb);
+
+        // А предупреждение при этом отрабатывает без единого revert.
+        address[] memory flagged = upgrade.findArbitersWithOpenClaimsMissingKeys(address(diamond));
+        assertEq(flagged.length, 1);
+        assertEq(flagged[0], arb);
     }
 }
