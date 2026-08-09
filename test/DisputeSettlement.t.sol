@@ -281,7 +281,9 @@ contract DisputeSettlementTest is Test {
         ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
         vm.roll(block.number + 1);
         vm.prank(arbiterAddr);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(address(a), salt);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            address(a), salt, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     /// Настоящая цепочка исполнения вердикта. resolveDispute() в проде
@@ -692,7 +694,9 @@ contract DisputeSettlementTest is Test {
 
         vm.prank(arbiterAddr);
         vm.expectRevert(ArbiterRegistryFacet.DisputeWindowPassed.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(address(a), salt);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            address(a), salt, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     /// Тот же гейт, но проверяем деньги: попытка позднего клейма не должна
@@ -715,7 +719,9 @@ contract DisputeSettlementTest is Test {
         ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
         vm.roll(block.number + 1);
         vm.prank(arbiterAddr);
-        try ArbiterRegistryFacet(address(diamond)).claimDispute(address(a), salt) {} catch {}
+        try ArbiterRegistryFacet(address(diamond)).claimDispute(
+            address(a), salt, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        ) {} catch {}
 
         assertEq(a.arbiter(), address(0), "a late claim must not stick");
 

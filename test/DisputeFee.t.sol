@@ -253,7 +253,9 @@ contract DisputeFeeTest is Test {
         ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
         vm.roll(block.number + 1);
         vm.prank(arb);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agreement, salt);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agreement, salt, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
 
         vm.prank(arb);
         ArbiterRegistryFacet(address(diamond)).submitVerdict(agreement, true);

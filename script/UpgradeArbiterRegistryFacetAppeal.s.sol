@@ -70,7 +70,7 @@ contract UpgradeArbiterRegistryFacetAppeal is Script {
         replaceSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
         replaceSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
         replaceSels[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        replaceSels[4]  = ArbiterRegistryFacet.claimDispute.selector;
+        replaceSels[4]  = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         replaceSels[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
         replaceSels[6]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
         replaceSels[7]  = ArbiterRegistryFacet.getChiefArbiter.selector;

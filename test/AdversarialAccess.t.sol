@@ -329,7 +329,9 @@ contract AdversarialAccessTest is Test {
         ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(commitment);
         vm.roll(block.number + 1);
         vm.prank(arbiter);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agr, SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     // ============================================================
@@ -512,7 +514,9 @@ contract AdversarialAccessTest is Test {
         ArbiterRegistryFacet(address(diamond)).commitDisputeClaim(c1);
         vm.roll(block.number + 1);
         vm.prank(arbiter);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agr, SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
 
         // arbiter2 also committed (in same block range), but dispute is already claimed
         bytes32 c2 = keccak256(abi.encodePacked(agr, arbiter2, SALT2));
@@ -521,7 +525,9 @@ contract AdversarialAccessTest is Test {
         vm.roll(block.number + 1);
         vm.prank(arbiter2);
         vm.expectRevert(ArbiterRegistryFacet.AlreadyClaimed.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT2);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agr, SALT2, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function testClaimWithoutCommit_Reverts() public {
@@ -529,7 +535,9 @@ contract AdversarialAccessTest is Test {
         // arbiter skips commit step entirely
         vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.CommitmentNotFound.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agr, SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function testClaimSameBlock_Reverts() public {
@@ -540,7 +548,9 @@ contract AdversarialAccessTest is Test {
         // No vm.roll — still in the same block
         vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.CommitmentTooEarly.selector);
-        ArbiterRegistryFacet(address(diamond)).claimDispute(agr, SALT);
+        ArbiterRegistryFacet(address(diamond)).claimDispute(
+            agr, SALT, bytes32(uint256(0xB0)), bytes32(uint256(0x51))
+        );
     }
 
     function testFinalizeVerdictRejectsZeroAgreement() public {

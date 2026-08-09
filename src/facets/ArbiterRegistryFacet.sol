@@ -114,6 +114,31 @@ library ArbiterRegistryStorage {
         // клейма и уменьшение openClaimCount молча. Недоставленное складывается
         // сюда и вытягивается через withdrawDisputeBounty().
         mapping(address => uint256)        refundableBounty;   // плательщик → не доставленный возврат, забирается сам
+        // ── Ключи чата арбитра (4б, 9 августа 2026) ──
+        // Открытые половины ключей чата: шифрования (X25519) и подписи (Ed25519).
+        // Лежат ЗДЕСЬ, а не в справочнике релеера, по требованию владельца:
+        // регулировать арбитров должен диамонд, а не владелец. Справочник жил
+        // на нашем сервере, и тот, кто до сервера добрался, подсунул бы свой
+        // ключ вместо ключа арбитра и прочитал бы ВСЕ предъявления по всем
+        // спорам, ничем себя не выдав. Здесь ключ пишет сам арбитр своей
+        // транзакцией — сервер перестал быть точкой подмены, и это весь
+        // выигрыш этой задачи.
+        //
+        // Владелец диамонда точкой подмены остался: право апгрейда позволяет
+        // развернуть маленький фасет с функцией, пишущей в arbiterBoxKey
+        // произвольного адреса, смонтировать его через diamondCut, переписать
+        // ключ, прочитать предъявления сторон и снять фасет. ArbiterChatKeySet
+        // при этом НЕ летит — приложения сторон смены не увидят. Тот же класс
+        // и тот же порядок цены, что уже замеренный обход гейта резерва казны
+        // (~31 700 газа, невидим для loupe) — docs/OPEN-ITEMS.md.
+        //
+        // Закрытые половины в цепь НЕ попадают никогда: они выводятся из
+        // подписи арбитра и остаются на его устройстве. Публичность открытой
+        // половины — не утечка, а условие работы: сторона берёт её, чтобы
+        // запечатать предъявление так, что вскрыть сможет только владелец
+        // закрытой.
+        mapping(address => bytes32)        arbiterBoxKey;   // арбитр → открытый ключ шифрования
+        mapping(address => bytes32)        arbiterSignKey;  // арбитр → открытый ключ подписи
     }
 
     function data() internal pure returns (Data storage d) {
@@ -162,6 +187,14 @@ contract ArbiterRegistryFacet {
     event DisputeReleased(address indexed agreement, address indexed prevArbiter);
     event DAOActivated(address indexed by);
     event ArbiterApplied(address indexed arbiter);
+    /// Ключи чата арбитра опубликованы или заменены.
+    ///
+    /// ⚠️ СОБЫТИЕ ОБЯЗАТЕЛЬНО, и вот почему: 4в следит за сменой ключа, чтобы
+    /// автоматически предъявить заново, если арбитр сменил устройство. Без
+    /// события ему пришлось бы ОПРАШИВАТЬ цепь — а 9 августа мы убрали 8 100
+    /// обращений к цепи в час с одной вкладки, и новый опрос вернул бы ту же
+    /// беду под другим именем. Не удалять и не делать неиндексируемым.
+    event ArbiterChatKeySet(address indexed arbiter, bytes32 boxKey, bytes32 signKey);
     event VerdictSubmitted(address indexed agreement, address indexed arbiter, bool clientWins);
     event VerdictFinalized(address indexed agreement, address indexed arbiter, bool clientWins);
     event VerdictFrozen(address indexed agreement);
@@ -206,6 +239,7 @@ contract ArbiterRegistryFacet {
     error CommitmentTooEarly();
     error CommitmentExpired();
     error DAONotActive();
+    error ZeroChatKey();
     error InsufficientXP(uint256 have, uint256 need);
     error NoVerdict();
     error DisputeWindowPassed();
@@ -396,13 +430,76 @@ contract ArbiterRegistryFacet {
         emit DisputeClaimCommitted(caller, commitment);
     }
 
+    /// Опубликовать или заменить открытые половины своих ключей чата.
+    ///
+    /// Нужна отдельно от заявки на спор ради одного случая: арбитр, потерявший
+    /// ключ ПОСЛЕ заявки, застревает — адрес в цепи тот же, а прочитать
+    /// предъявленное нечем, и повторное предъявление на тот же ключ не
+    /// поможет. С этой функцией петля замыкается сама: опубликовал новый →
+    /// приложения сторон заметили по событию → предъявили заново → читает.
+    ///
+    /// Адрес берётся из отправителя, аргумента «кому» НЕТ вовсе: чужой ключ
+    /// записать нельзя не потому, что мы проверяем, а потому что записать
+    /// некуда.
+    ///
+    /// ⚠️ Исключение, где петля НЕ замыкается сама: гейт здесь — `isArbiter`,
+    /// и он снимается (removeArbiter/resignAsArbiter/демоушен на 3 ошибки
+    /// подряд) без очистки уже записанного ключа. Арбитр, потерявший статус
+    /// с открытым спором на руках, ключ ротировать больше не может (эта
+    /// функция ревертит `NotArbiter`), а `getArbiterChatKeys` по нему
+    /// по-прежнему отдаёт старый — живой на вид, но заменить его некому.
+    /// `submitVerdict` этот случай не перекрывает: он проверяет только
+    /// `disputeClaims`, никогда `isArbiter`. Настоящее лекарство (разрешить
+    /// ротацию, пока `openClaimCount` не пуст) меняет права и здесь
+    /// сознательно не реализовано.
+    function setArbiterChatKey(bytes32 boxKey, bytes32 signKey) external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (!d.isArbiter[caller]) revert NotArbiter();
+        if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
+
+        // Событие — только если хотя бы одна половина реально изменилась.
+        // Запись делаем всегда (идемпотентна и дешевле ветвления) — условие
+        // только вокруг emit. Причина в 4в, а не здесь: он предъявляет заново
+        // ПО СОБЫТИЮ, и одинаковая перезапись — обычный no-op с фронта
+        // (повторный вызов, гонка вкладок) — иначе заставила бы его
+        // перешифровать и перезалить на склад переписку по каждому открытому
+        // спору арбитра, хотя ключ не менялся вовсе.
+        bool changed = d.arbiterBoxKey[caller] != boxKey || d.arbiterSignKey[caller] != signKey;
+        d.arbiterBoxKey[caller]  = boxKey;
+        d.arbiterSignKey[caller] = signKey;
+        if (changed) emit ArbiterChatKeySet(caller, boxKey, signKey);
+    }
+
     /// @notice Клейм спора. Diamond устанавливается арбитром в Agreement (не сам арбитр).
     /// Это позволяет Diamond контролировать исполнение вердикта (задержка, overturn).
-    function claimDispute(address agreement, bytes32 salt) external {
+    ///
+    /// Ключи чата — ОБЯЗАТЕЛЬНЫЕ аргументы, держится формой аргумента, а не
+    /// проверкой: контракт не умеет отличить настоящий ключ от двух мусорных
+    /// bytes32 — форма только делает невозможным взять спор, вообще ничего не
+    /// прислав. Это закрывает случай БЕЗ злого умысла (забыл, не настроил
+    /// устройство). Арбитра, который умышленно везёт мусор вместо ключа,
+    /// форма не остановит: он получит тот же исход, а стороны впустую
+    /// перешифруют переписку на ключ, которым никто не владеет. Умышленный
+    /// отказ читать закрывается обнаружением, а не формой аргумента — это
+    /// работа следующих частей, не этой. Каждая заявка ПЕРЕЗАПИСЫВАЕТ ключи —
+    /// так смена устройства у арбитра лечится сама.
+    ///
+    /// ⚠️ Селектор этой функции сменился 9 августа (4б). Старый
+    /// `claimDispute(address,bytes32)` удалён из монтировки тем же diamondCut —
+    /// оставить его значило бы держать вторую дорогу, по которой спор берётся
+    /// БЕЗ ключа, то есть ровно ту дыру, которую эта правка закрывает.
+    function claimDispute(
+        address agreement,
+        bytes32 salt,
+        bytes32 boxKey,
+        bytes32 signKey
+    ) external {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
         if (!d.isArbiter[caller]) revert NotArbiter();
+        if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
         if (d.disputeClaims[agreement] != address(0)) revert AlreadyClaimed();
 
         bytes32 commitment = keccak256(abi.encodePacked(agreement, caller, salt));
@@ -449,6 +546,20 @@ contract ArbiterRegistryFacet {
         d.disputeClaims[agreement] = caller;
         d.arbiterDeals[caller].push(agreement);
         d.openClaimCount[caller]++;
+
+        // Ключи пишутся ЗДЕСЬ, а не отдельным вызовом: одна транзакция вместо
+        // двух, и арбитр не может оказаться заявленным без ключа даже на
+        // мгновение.
+        //
+        // Событие — только при реальной смене (см. setArbiterChatKey выше,
+        // тот же приём и та же причина): без условия арбитр с N открытыми
+        // спорами, беря спор N+1 своим обычным ключом, шлёт N бесплатных
+        // повторных предъявлений на склад — заявка почти всегда везёт ТОТ ЖЕ
+        // ключ, что уже записан.
+        bool keysChanged = d.arbiterBoxKey[caller] != boxKey || d.arbiterSignKey[caller] != signKey;
+        d.arbiterBoxKey[caller]  = boxKey;
+        d.arbiterSignKey[caller] = signKey;
+        if (keysChanged) emit ArbiterChatKeySet(caller, boxKey, signKey);
 
         emit DisputeClaimed(agreement, caller);
     }
@@ -896,8 +1007,8 @@ contract ArbiterRegistryFacet {
     /// v.submittedAt != 0 (иначе revert NoVerdict до вызова) и держит
     /// v.executing = true всё время внешнего вызова — именно executing==true
     /// не даёт clearDisputeClaim() удалить pendingVerdicts в этом окне (это не
-    /// единственное место, которое умеет удалить запись — clearStuckVerdict,
-    /// :905-913, делает то же самое БЕЗ проверки !v.executing; его гейт
+    /// единственное место, которое умеет удалить запись — clearStuckVerdict
+    /// делает то же самое БЕЗ проверки !v.executing; его гейт
     /// require(status != DISPUTED) сам по себе здесь не защита — resolvedAt
     /// уже выставлен к этому моменту (Agreement.sol:665, до вызова), поэтому
     /// status() внутри этого окна уже вернул бы RESOLVED, а не DISPUTED, и
@@ -931,7 +1042,8 @@ contract ArbiterRegistryFacet {
             // Вердикт отменён (overturnVerdict/resolveAppeal) — арбитр ошибся,
             // награды не будет, весь сбор идёт в казну. Симметрично тому, что
             // finalizeVerdict при overturned не отдаёт арбитру и доплату, а
-            // возвращает её плательщику через refundableBounty (:584-595).
+            // возвращает её плательщику через refundableBounty (см. блок
+            // возврата доплаты внутри finalizeVerdict, выше по файлу).
             // Прежняя ссылка вела на выплату из банка за спор — того блока нет
             // с коммита a9c9095, плоскую выплату сняли целиком.
             toTreasury = total;
@@ -1045,7 +1157,8 @@ contract ArbiterRegistryFacet {
 
         uint256 need = quoteDisputeTopUp(agreement); // ревертит NotDisputed, если спора нет
 
-        // Тот же гейт, что в claimDispute (:424-430), и то же сравнение:
+        // Тот же гейт, что в claimDispute (проверка DisputeWindowPassed после
+        // disputedAt()/DISPUTE_WINDOW()), и то же сравнение:
         // после disputedAt + DISPUTE_WINDOW спор нельзя ни заклеймить, ни
         // отсудить (submitVerdict тоже бьёт DisputeWindowPassed), и статус
         // остаётся DISPUTED, пока кто-нибудь не дёрнет таймаут. Принимать
@@ -1136,7 +1249,8 @@ contract ArbiterRegistryFacet {
         if (!v.executing) {
             // Счётчик обоим: спор кончился, судить было некому или некогда.
             // Пишем напрямую в namespaced-хранилище репутации — тот же приём,
-            // которым этот файл уже сбрасывает XP при демоушене (:685).
+            // которым этот файл уже сбрасывает XP при демоушене
+            // (_recordArbiterMistake).
             RegistryStorage.AgreementRecord storage rec = RegistryStorage.store().agreements[agreement];
             if (rec.client != address(0)) {
                 ReputationStorage.Data storage rep = ReputationStorage.data();
@@ -1208,6 +1322,23 @@ contract ArbiterRegistryFacet {
     function isRegisteredArbiter(address addr) external view returns (bool) { return ArbiterRegistryStorage.data().isArbiter[addr]; }
     function getArbiters()      external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterList; }
     function getDisputeClaimer(address agreement) external view returns (address) { return ArbiterRegistryStorage.data().disputeClaims[agreement]; }
+
+    /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —
+    /// для 4в это признак «предъявлять некому», и различать «нет записи» от
+    /// «записан нуль» незачем: нулевой ключ запрещён при записи.
+    ///
+    /// ⚠️ Обратное неверно: ненулевой ключ НЕ означает «действующий арбитр».
+    /// Ключ не стирается при потере статуса (removeArbiter/resignAsArbiter/
+    /// демоушен) — см. предупреждение в setArbiterChatKey. Статус читается
+    /// отдельно, через isRegisteredArbiter, а не выводится из наличия ключа.
+    function getArbiterChatKeys(address arbiter)
+        external
+        view
+        returns (bytes32 boxKey, bytes32 signKey)
+    {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        return (d.arbiterBoxKey[arbiter], d.arbiterSignKey[arbiter]);
+    }
     function getArbiterDeals(address arbiter) external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterDeals[arbiter]; }
     function getClaimCommitment(bytes32 c) external view returns (uint256) { return ArbiterRegistryStorage.data().claimCommitments[c]; }
 

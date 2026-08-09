@@ -69,3 +69,5 @@ deploy-local.sh
 # Real user push endpoints + auth keys — never commit
 relayer/push_subscriptions.json
 relayer/storage/
+
+docs/hexseal-one-pager.standalone.html

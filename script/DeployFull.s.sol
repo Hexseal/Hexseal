@@ -8,13 +8,15 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 167
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 169
 // селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже трижды протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже пятикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
-// где код вырос до 167, 31 июля 2026), поэтому сверяется тем же тестом.
+// где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
+// getArbiterChatKeys; затем 168, когда в тот же день добавился setArbiterChatKey),
+// поэтому сверяется тем же тестом.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -380,9 +382,9 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 54 селектора
+    // ArbiterRegistryFacet — 56 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](54);
+        sels = new bytes4[](56);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -457,6 +459,10 @@ contract DeployFull is Script {
         sels[51] = ArbiterRegistryFacet.getDisputeBounty.selector;
         sels[52] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
         sels[53] = ArbiterRegistryFacet.getRefundableBounty.selector;
+
+        // Ключи чата арбитра (4б, 9 августа 2026)
+        sels[54] = ArbiterRegistryFacet.getArbiterChatKeys.selector;
+        sels[55] = ArbiterRegistryFacet.setArbiterChatKey.selector;
     }
 
     // DealMetadataFacet — 1 селектор

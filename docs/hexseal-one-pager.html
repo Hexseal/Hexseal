@@ -1,0 +1,495 @@
+<title>Hexseal — Protocol Overview</title>
+<style>
+  /* ── tokens: light is the base set; both dark states redefine only these ── */
+  :root {
+    --ground:      #f7f8fb;
+    --surface:     #ffffff;
+    --surface-alt: #eef1f7;
+    --ink:         #14192b;
+    --ink-soft:    #454d66;
+    --ink-faint:   #6f7791;
+    --rule:        #d9dee9;
+    --rule-soft:   #e8ebf2;
+    --accent:      #2f3fd0;
+    --accent-soft: #e6e9fb;
+    --live:        #0f6b5c;
+    --live-soft:   #dff0eb;
+    --caution:     #8a5100;
+    --caution-soft:#fdefd9;
+    --shadow:      0 1px 2px rgba(20, 25, 43, .06), 0 8px 24px -18px rgba(20, 25, 43, .35);
+
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+    --sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono:  ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0d1019;
+      --surface:     #151a27;
+      --surface-alt: #1c2231;
+      --ink:         #e8ebf4;
+      --ink-soft:    #b3bad0;
+      --ink-faint:   #838ca6;
+      --rule:        #2b3245;
+      --rule-soft:   #232936;
+      --accent:      #93a0ff;
+      --accent-soft: #1e2440;
+      --live:        #5fc9b0;
+      --live-soft:   #14302a;
+      --caution:     #e3ab5c;
+      --caution-soft:#33260f;
+      --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -20px rgba(0, 0, 0, .9);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #0d1019;
+    --surface:     #151a27;
+    --surface-alt: #1c2231;
+    --ink:         #e8ebf4;
+    --ink-soft:    #b3bad0;
+    --ink-faint:   #838ca6;
+    --rule:        #2b3245;
+    --rule-soft:   #232936;
+    --accent:      #93a0ff;
+    --accent-soft: #1e2440;
+    --live:        #5fc9b0;
+    --live-soft:   #14302a;
+    --caution:     #e3ab5c;
+    --caution-soft:#33260f;
+    --shadow:      0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -20px rgba(0, 0, 0, .9);
+  }
+
+  /* ── print: this is how the file becomes a PDF (browser → Print → Save as PDF) ──
+     Печать всегда в светлой палитре: тёмная тема дала бы чёрные страницы. Фоны
+     плашек печатать ОБЯЗАТЕЛЬНО — в них смысл (кто решает: контракт или человек),
+     а браузер по умолчанию фоны не печатает и различие исчезло бы молча. */
+  @media print {
+    :root {
+      --ground: #ffffff; --surface: #ffffff; --surface-alt: #f2f4f9;
+      --ink: #12172a; --ink-soft: #3c4460; --ink-faint: #5f6780;
+      --rule: #c9d0de; --rule-soft: #dfe4ee;
+      --accent: #26339e; --accent-soft: #eceffb;
+      --live: #0b5648; --live-soft: #e4f2ee;
+      --caution: #6f4100; --caution-soft: #fbf0dd;
+      --shadow: none;
+    }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body { font-size: 10.5pt; }
+    .page { padding: 0; gap: 22px; max-width: none; }
+    .card, tr, .note, ol.road li { break-inside: avoid; }
+    section, header { break-inside: auto; }
+    h2, .eyebrow { break-after: avoid; }
+    .table-wrap { overflow: visible; }
+    table { min-width: 0; }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: clamp(28px, 6vw, 72px) clamp(18px, 5vw, 40px) 72px;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(36px, 5vw, 56px);
+  }
+
+  /* ── masthead ── */
+  header { display: flex; flex-direction: column; gap: 18px; }
+
+  .wordmark {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .wordmark h1 {
+    font-family: var(--serif);
+    font-size: clamp(34px, 6vw, 46px);
+    line-height: 1.05;
+    letter-spacing: -.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .wordmark .tld { color: var(--ink-faint); font-weight: 400; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--rule);
+    color: var(--ink-soft);
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .chip.live { color: var(--live); background: var(--live-soft); border-color: transparent; }
+
+  .lede {
+    font-family: var(--serif);
+    font-size: clamp(18px, 2.6vw, 21px);
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  /* ── sections ── */
+  section { display: flex; flex-direction: column; gap: 16px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-size: clamp(23px, 3.4vw, 28px);
+    line-height: 1.2;
+    letter-spacing: -.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h2 + p, .eyebrow + h2 { margin-top: -2px; }
+  p { margin: 0; max-width: 66ch; }
+  p + p { margin-top: 12px; }
+  strong { font-weight: 650; color: var(--ink); }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  /* ── capability grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule-soft);
+    border-radius: 6px;
+    padding: 16px 18px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .card h3 {
+    font-family: var(--sans);
+    font-size: 14.5px;
+    font-weight: 650;
+    letter-spacing: -.005em;
+    margin: 0;
+  }
+  .card p { font-size: 14px; line-height: 1.55; color: var(--ink-soft); max-width: none; }
+
+  /* ── tables ── */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--rule-soft); border-radius: 6px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; min-width: 520px; }
+  th, td { text-align: left; padding: 12px 16px; vertical-align: top; border-bottom: 1px solid var(--rule-soft); }
+  thead th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 400;
+    background: var(--surface-alt);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td:first-child { font-weight: 600; width: 34%; }
+  td p { font-size: 14.5px; color: var(--ink-soft); max-width: none; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: 3px 7px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .tag.contract { color: var(--live);    background: var(--live-soft); }
+  .tag.human    { color: var(--caution); background: var(--caution-soft); }
+
+  /* ── honest note ── */
+  .note {
+    border-left: 3px solid var(--caution);
+    background: var(--caution-soft);
+    color: var(--ink);
+    padding: 14px 18px;
+    border-radius: 0 5px 5px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .note p { font-size: 15px; max-width: 64ch; }
+  .note .eyebrow { color: var(--caution); }
+
+  /* ── roadmap: a real sequence, so it is numbered ── */
+  ol.road { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; counter-reset: step; }
+  ol.road li {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 42px 1fr;
+    gap: 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  ol.road li:last-child { border-bottom: none; }
+  ol.road li::before {
+    content: counter(step, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--accent);
+    padding-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  ol.road b { font-weight: 650; }
+  ol.road span { display: block; color: var(--ink-soft); font-size: 14.5px; }
+
+  /* ── ask ── */
+  .ask { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .ask .card { border-color: var(--rule); }
+  .ask .card h3 { font-size: 15.5px; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--ink-faint);
+    font-size: 13.5px;
+  }
+  footer .mono { font-family: var(--mono); font-size: 12.5px; }
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="wordmark">
+      <h1>Hexseal</h1>
+      <span class="tld">— escrow that no one can lean on</span>
+    </div>
+    <div class="chips">
+      <span class="chip live">Live · Base Sepolia</span>
+      <span class="chip">Diamond EIP-2535</span>
+      <span class="chip">USDC escrow</span>
+      <span class="chip">Gasless ERC-2771</span>
+      <span class="chip">End-to-end encrypted chat</span>
+      <span class="chip">14 locales</span>
+    </div>
+    <p class="lede">
+      A freelance marketplace where the deal, the money, the dispute and the reputation all
+      live in contracts on Base — so neither we nor a curator can decide who wins. Working
+      end-to-end on testnet today, with the road to mainnet mapped and the remaining
+      centralization named out loud rather than papered over.
+    </p>
+  </header>
+
+  <section>
+    <p class="eyebrow">What it is</p>
+    <h2>A client and a stranger can transact without trusting each other, or us</h2>
+    <p>
+      A client posts a job or hires against a posted service. Funds go into a per-deal escrow
+      contract in USDC. Work is delivered, the client approves — or the timeout approves for
+      them, so an absent client cannot strand an executor. Either side can raise a dispute; an
+      arbiter takes it from an on-chain registry and rules. Completion pays out, awards
+      reputation and mints a permanent record, all in the same transaction.
+    </p>
+    <p>
+      Users need no ETH: every action can travel as a signed meta-transaction that our relayer
+      pays gas for. If the relayer is down the app falls back to the user's own wallet, so the
+      relayer is a convenience, never a gate.
+    </p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Working today on testnet</p>
+    <h2>What is already built</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Per-deal escrow</h3>
+        <p>Each agreement is its own contract, cloned via EIP-1167 to keep deployment cheap. Funding, delivery, approval, timeout approval, refund.</p>
+      </div>
+      <div class="card">
+        <h3>Two-sided marketplace</h3>
+        <p>Clients post jobs; executors post services. Both boards are on-chain, with regional pricing and supersede/cancel handled by the contracts.</p>
+      </div>
+      <div class="card">
+        <h3>Arbitration with skin in the game</h3>
+        <p>Anyone can apply as arbiter behind a clean-streak gate and a forfeitable USDC bond. Claims and verdicts are commit-reveal, so an arbiter cannot shop for the case they want.</p>
+      </div>
+      <div class="card">
+        <h3>Appeals and recovery</h3>
+        <p>A verdict can be appealed to a vote of other arbiters. A silent arbiter times out and the case returns to the pool instead of freezing the money.</p>
+      </div>
+      <div class="card">
+        <h3>Paid arbiter call</h3>
+        <p>On small pots a percentage fee will not pay for fifteen minutes of reading, so a dispute goes untaken. The party who needs a judge tops the reward up to a working floor.</p>
+      </div>
+      <div class="card">
+        <h3>Earned reputation</h3>
+        <p>XP is awarded by the contract on completion — not claimed, not granted. Clean streaks unlock the arbiter seat; a verdict against you costs you.</p>
+      </div>
+      <div class="card">
+        <h3>Protocol treasury</h3>
+        <p>A separate immutable contract. Fees fill an arbiter-reward buffer first, then split by fixed constants. Reserve withdrawal is gated on <em>earned</em> unique active users, not on a flag we can flip.</p>
+      </div>
+      <div class="card">
+        <h3>On-chain records</h3>
+        <p>A soulbound receipt is minted when a job is posted; the agreement itself is a permanent NFT with metadata and SVG rendered on chain, not hosted by us.</p>
+      </div>
+      <div class="card">
+        <h3>End-to-end encrypted chat</h3>
+        <p>Our own transport, built to replace a third-party messenger. Keys derive from a wallet signature; messages are sealed envelopes in a hash-chain signed by a separate key; our server stores opaque bags it cannot read, and both parties keep proofs.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Trust model</p>
+    <h2>What the contracts decide, and what a human still can</h2>
+    <p>
+      The interesting question about an "autonomous" protocol is not what it automates but what
+      it still lets someone override. Here is the honest split.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Decision</th><th>Who holds it</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Release of escrowed funds</td>
+            <td><span class="tag contract">Contract</span></td>
+            <td><p>Client approval, timeout approval, or an arbiter verdict. No key can move a deal's funds outside those paths.</p></td>
+          </tr>
+          <tr>
+            <td>Dispute verdict</td>
+            <td><span class="tag contract">Contract</span></td>
+            <td><p>Commit-reveal claim and verdict, appeal vote, timeout recovery. We cannot pick the arbiter for a case.</p></td>
+          </tr>
+          <tr>
+            <td>Reputation</td>
+            <td><span class="tag contract">Contract</span></td>
+            <td><p>Awarded on completion inside the same call. Not mintable, not adjustable.</p></td>
+          </tr>
+          <tr>
+            <td>Fee split and treasury ladder</td>
+            <td><span class="tag contract">Contract</span></td>
+            <td><p>Percentages are compile-time constants; changing them means replacing the contract.</p></td>
+          </tr>
+          <tr>
+            <td>Which code runs (upgrade authority)</td>
+            <td><span class="tag human">Owner key</span></td>
+            <td><p><strong>The known centralization point.</strong> The Diamond owner can replace any facet. Our own review found the treasury's reserve gate holds against a governance flag but not against this key — the cheapest bypass measured at ~31,700 gas and is invisible to standard Diamond introspection.</p></td>
+          </tr>
+          <tr>
+            <td>Who the first arbiters are</td>
+            <td><span class="tag human">Owner key</span></td>
+            <td><p>Deliberate launch decision: the first arbiters are seated by hand, under the same rules, bonds and penalties as everyone else. Self-application and governance stay in the code but are not switched on at launch.</p></td>
+          </tr>
+          <tr>
+            <td>Relayer, file storage, notifications</td>
+            <td><span class="tag human">Our servers</span></td>
+            <td><p>Liveness only, never custody. Chat storage is blind by construction; the app falls back to direct wallet transactions when the relayer is unavailable.</p></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <p class="eyebrow">Stated plainly</p>
+      <p>
+        Until the upgrade key is timelocked or burned, "autonomous" describes the protocol's
+        logic, not its governance. We would rather an auditor read that here than discover it
+        in the diff.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">How it is built</p>
+    <h2>The defects we expect are the ones we automated against</h2>
+    <p>
+      Two bug classes have cost this project real time, so both are now gates that fail the
+      build rather than review items someone might notice.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Gate</th><th>Catches</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Storage layout, three checks</td>
+            <td><p>Any change to a Diamond-storage field that is not a pure append — including a type swap inside the same slot, which is what actually broke our job board once. Covers namespace slots, facet variables, struct fields, and the cloned agreement layout.</p></td>
+          </tr>
+          <tr>
+            <td>Gasless sender, by AST</td>
+            <td><p><code>msg.sender</code> reached for in a meta-transaction path, where it is the forwarder rather than the person. Parsed from the compiler's syntax tree, not by regex; every contract must be classified or the gate goes red.</p></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Beyond that: <span class="num">3,100+</span> automated tests across contracts, frontend
+      and relayer; Slither on the contract set; and a review rule that a fix is only accepted
+      with a measurement showing behaviour changed — because "fix this" gets satisfied
+      formally, while "prove by measurement that it differs" does not. Findings that survive
+      that bar are tracked in the open, including the ones still open.
+    </p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Road to mainnet</p>
+    <h2>What is left, in order</h2>
+    <ol class="road">
+      <li><b>Dispute evidence</b><span>Presenting the encrypted conversation to an arbiter: original frames with per-message keys sealed to the arbiter's on-chain key, an anchor from each side, and divergence between anchors treated as a finding of its own. In progress.</span></li>
+      <li><b>Hardening pass</b><span>Close the tracked open items, then freeze the contract set. Auditing a moving target wastes the audit.</span></li>
+      <li><b>External audit</b><span>Full review of the frozen set: escrow, arbitration and appeals, treasury, Diamond upgrade surface.</span></li>
+      <li><b>Governance of the upgrade key</b><span>Timelock or hand off the authority named in the trust model above, so the mainnet claim matches the code.</span></li>
+      <li><b>Mainnet beta</b><span>Real USDC, capped deal sizes, arbiters seated by hand while the registry proves itself.</span></li>
+    </ol>
+  </section>
+
+  <section>
+    <p class="eyebrow">What we are looking for</p>
+    <h2>Two concrete things</h2>
+    <div class="ask">
+      <div class="card">
+        <h3>A scoped audit quote</h3>
+        <p>Roughly 7,200 lines of Solidity: Diamond EIP-2535, per-deal escrow with EIP-1167 clones, an arbiter registry with commit-reveal and appeals, a treasury, and an ERC-2771 forwarder. A written scope and price now lets us plan the freeze around it, even though the engagement itself belongs after step&nbsp;2.</p>
+      </div>
+      <div class="card">
+        <h3>Funding to reach the beta</h3>
+        <p>The protocol works on testnet; getting to a usable mainnet beta is engineering time we are currently financing ourselves. We are open to grant programs, ecosystem support, and audit-backed formats for pre-revenue teams.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Hexseal — decentralized freelance escrow on Base.</p>
+    <p class="mono">Current as of August 2026 · testnet deployment · contract addresses on request</p>
+  </footer>
+
+</div>

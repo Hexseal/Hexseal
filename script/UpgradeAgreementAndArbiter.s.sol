@@ -79,7 +79,7 @@ contract UpgradeAgreementAndArbiter is Script {
         bytes4[] memory arbiterSelectors = new bytes4[](8);
         arbiterSelectors[0] = ArbiterRegistryFacet.addArbiter.selector;
         arbiterSelectors[1] = ArbiterRegistryFacet.removeArbiter.selector;
-        arbiterSelectors[2] = ArbiterRegistryFacet.claimDispute.selector;
+        arbiterSelectors[2] = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         arbiterSelectors[3] = ArbiterRegistryFacet.releaseDisputeClaim.selector;
         arbiterSelectors[4] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         arbiterSelectors[5] = ArbiterRegistryFacet.getArbiters.selector;
