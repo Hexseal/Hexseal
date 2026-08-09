@@ -458,9 +458,17 @@ contract ArbiterRegistryFacet {
         if (!d.isArbiter[caller]) revert NotArbiter();
         if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
 
+        // Событие — только если хотя бы одна половина реально изменилась.
+        // Запись делаем всегда (идемпотентна и дешевле ветвления) — условие
+        // только вокруг emit. Причина в 4в, а не здесь: он предъявляет заново
+        // ПО СОБЫТИЮ, и одинаковая перезапись — обычный no-op с фронта
+        // (повторный вызов, гонка вкладок) — иначе заставила бы его
+        // перешифровать и перезалить на склад переписку по каждому открытому
+        // спору арбитра, хотя ключ не менялся вовсе.
+        bool changed = d.arbiterBoxKey[caller] != boxKey || d.arbiterSignKey[caller] != signKey;
         d.arbiterBoxKey[caller]  = boxKey;
         d.arbiterSignKey[caller] = signKey;
-        emit ArbiterChatKeySet(caller, boxKey, signKey);
+        if (changed) emit ArbiterChatKeySet(caller, boxKey, signKey);
     }
 
     /// @notice Клейм спора. Diamond устанавливается арбитром в Agreement (не сам арбитр).
@@ -542,9 +550,16 @@ contract ArbiterRegistryFacet {
         // Ключи пишутся ЗДЕСЬ, а не отдельным вызовом: одна транзакция вместо
         // двух, и арбитр не может оказаться заявленным без ключа даже на
         // мгновение.
+        //
+        // Событие — только при реальной смене (см. setArbiterChatKey выше,
+        // тот же приём и та же причина): без условия арбитр с N открытыми
+        // спорами, беря спор N+1 своим обычным ключом, шлёт N бесплатных
+        // повторных предъявлений на склад — заявка почти всегда везёт ТОТ ЖЕ
+        // ключ, что уже записан.
+        bool keysChanged = d.arbiterBoxKey[caller] != boxKey || d.arbiterSignKey[caller] != signKey;
         d.arbiterBoxKey[caller]  = boxKey;
         d.arbiterSignKey[caller] = signKey;
-        emit ArbiterChatKeySet(caller, boxKey, signKey);
+        if (keysChanged) emit ArbiterChatKeySet(caller, boxKey, signKey);
 
         emit DisputeClaimed(agreement, caller);
     }

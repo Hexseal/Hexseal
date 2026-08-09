@@ -108,6 +108,72 @@ contract ArbiterChatKeyTest is Test {
         assertEq(sign, bytes32(uint256(0x44)));
     }
 
+    bytes32 constant CHAT_KEY_SET_TOPIC = keccak256("ArbiterChatKeySet(address,bytes32,bytes32)");
+
+    function _countChatKeySetEvents(Vm.Log[] memory logs) internal pure returns (uint256 n) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == CHAT_KEY_SET_TOPIC) n++;
+        }
+    }
+
+    /// Итоговое ревью, правка 5 (амплификация через событие): одинаковая
+    /// перезапись НЕ излучает ArbiterChatKeySet. Следующая часть (4в)
+    /// предъявляет заново ПО СОБЫТИЮ — без этого условия арбитр с N открытыми
+    /// спорами, беря спор N+1 обычным (тем же) ключом, посылал бы N
+    /// бессмысленных повторных предъявлений: полное перешифрование и
+    /// перезалив каждой переписки на склад, бесплатно для него самого.
+    ///
+    /// Что исчезнет из поведения, если снять правку: событие полетит и на
+    /// байт-в-байт идентичную перезапись — ровно та амплификация, которую
+    /// замысел уже поймал в опросе цепи (8 100 обращений в час, см. комментарий
+    /// у ArbiterChatKeySet) и закрыл, а здесь она вернулась бы через другую
+    /// дверь.
+    function test_SetChatKey_NoEventOnIdenticalRewrite() public {
+        address arb = address(0xA1);
+        _makeArbiter(arb);
+        bytes32 box  = bytes32(uint256(0x11));
+        bytes32 sign = bytes32(uint256(0x22));
+
+        vm.prank(arb);
+        facet.setArbiterChatKey(box, sign);
+
+        vm.recordLogs();
+        vm.prank(arb);
+        facet.setArbiterChatKey(box, sign); // те же значения — no-op по смыслу
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(
+            _countChatKeySetEvents(logs), 0,
+            unicode"одинаковая перезапись не должна излучать ArbiterChatKeySet"
+        );
+        // Запись при этом всё равно на месте — идемпотентность, не отказ записи.
+        (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
+        assertEq(gotBox, box);
+        assertEq(gotSign, sign);
+    }
+
+    /// Симметрия предыдущего теста: РЕАЛЬНО изменённая перезапись обязана
+    /// излучать событие ровно один раз — иначе замок test_SetChatKey_NoEventOnIdenticalRewrite
+    /// прошёл бы и в мире, где событие не летит вообще никогда (замок сторожил
+    /// бы текст условия, а не поведение).
+    function test_SetChatKey_EmitsEventWhenValueActuallyChanges() public {
+        address arb = address(0xA1);
+        _makeArbiter(arb);
+
+        vm.prank(arb);
+        facet.setArbiterChatKey(bytes32(uint256(0x11)), bytes32(uint256(0x22)));
+
+        vm.recordLogs();
+        vm.prank(arb);
+        facet.setArbiterChatKey(bytes32(uint256(0x33)), bytes32(uint256(0x22))); // boxKey меняется
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(
+            _countChatKeySetEvents(logs), 1,
+            unicode"изменённая перезапись обязана излучать ArbiterChatKeySet ровно один раз"
+        );
+    }
+
     // ============================================================
     //  ЧЕРЕЗ НАСТОЯЩИЙ ФОРВАРДЕР (ERC-2771)
     // ============================================================
@@ -266,6 +332,80 @@ contract ArbiterChatKeyTest is Test {
         (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
         assertEq(gotBox, box, unicode"успешный клейм не записал boxKey");
         assertEq(gotSign, sign, unicode"успешный клейм не записал signKey");
+    }
+
+    /// commit+roll+claim в отдельном хелпере, а не инлайном дважды в теле
+    /// теста: тот же приём, что test/Diamond.t.sol::_claimDisputeAs — вызов
+    /// одной и той же последовательности ВТОРОЙ раз инлайном в одной функции
+    /// теста под этим репозиторием (via_ir) наблюдался как «второй
+    /// vm.roll(block.number + 1) не берётся», хотя тот же паттерн через
+    /// вызов функции-хелпера работает штатно.
+    function _commitAndClaim(MockDisputedAgreement agr, address arb, bytes32 salt, bytes32 box, bytes32 sign) internal {
+        bytes32 commitment = keccak256(abi.encodePacked(address(agr), arb, salt));
+        vm.prank(arb);
+        facet.commitDisputeClaim(commitment);
+        uint256 nextBlock = block.number + 1;
+        vm.roll(nextBlock);
+        vm.prank(arb);
+        facet.claimDispute(address(agr), salt, box, sign);
+    }
+
+    /// Итоговое ревью, правка 5: клейм ВТОРОГО спора тем же ключом, что уже
+    /// записан за арбитром, не излучает ArbiterChatKeySet повторно. Прямое
+    /// продолжение амплификации из задания: арбитр с N открытыми спорами,
+    /// беря спор N+1 обычным ключом устройства (а не новым), не должен
+    /// заставлять 4в перешифровывать и перезаливать N уже открытых переписок.
+    function test_ClaimDispute_NoEventWhenKeySameAsAlreadyRecorded() public {
+        address arb = address(0xA1);
+        _makeArbiter(arb);
+
+        MockDisputedAgreement agr1 = new MockDisputedAgreement(address(0xC1), address(0xE1));
+        MockDisputedAgreement agr2 = new MockDisputedAgreement(address(0xC2), address(0xE2));
+
+        bytes32 box  = bytes32(uint256(0x33));
+        bytes32 sign = bytes32(uint256(0x44));
+
+        _commitAndClaim(agr1, arb, bytes32(uint256(0x9)), box, sign); // первый клейм — ключ новый, событие летит
+
+        vm.recordLogs();
+        _commitAndClaim(agr2, arb, bytes32(uint256(0xA)), box, sign); // тот же ключ, второй спор
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(
+            _countChatKeySetEvents(logs), 0,
+            unicode"клейм вторым спором с тем же ключом не должен переизлучать ArbiterChatKeySet"
+        );
+
+        // DisputeClaimed при этом обязан лететь — условие только вокруг
+        // ArbiterChatKeySet, не вокруг всей функции.
+        bytes32 disputeClaimedTopic = keccak256("DisputeClaimed(address,address)");
+        bool sawDisputeClaimed;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == disputeClaimedTopic) sawDisputeClaimed = true;
+        }
+        assertTrue(sawDisputeClaimed, unicode"DisputeClaimed обязан лететь при каждом клейме");
+    }
+
+    /// Симметрия предыдущего теста: клейм с ДРУГИМ ключом обязан излучать
+    /// событие — иначе предыдущий замок прошёл бы и в мире, где
+    /// ArbiterChatKeySet из claimDispute не летит вообще никогда.
+    function test_ClaimDispute_EmitsEventWhenKeyDiffersFromRecorded() public {
+        address arb = address(0xA1);
+        _makeArbiter(arb);
+
+        MockDisputedAgreement agr1 = new MockDisputedAgreement(address(0xC1), address(0xE1));
+        MockDisputedAgreement agr2 = new MockDisputedAgreement(address(0xC2), address(0xE2));
+
+        _commitAndClaim(agr1, arb, bytes32(uint256(0x9)), bytes32(uint256(0x33)), bytes32(uint256(0x44)));
+
+        vm.recordLogs();
+        _commitAndClaim(agr2, arb, bytes32(uint256(0xA)), bytes32(uint256(0x55)), bytes32(uint256(0x44))); // новый boxKey
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(
+            _countChatKeySetEvents(logs), 1,
+            unicode"смена ключа на клейме обязана излучать ArbiterChatKeySet ровно один раз"
+        );
     }
 
     /// Садит арбитра прямо в хранилище фасета. `applyAsArbiter()` заперт за
