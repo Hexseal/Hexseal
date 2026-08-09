@@ -29,10 +29,10 @@ import { computeArbiterReward } from "@/lib/disputeBounty";
 import { withWalletLock } from "@/lib/walletLock";
 import { loadPass, savePass, clearPass, type DisputeLogPass } from "@/lib/disputeLogPass";
 import {
-  deriveClaimChatKeys, createGatedSignChatKey, rethrowIfSignatureDeferred,
+  deriveClaimChatKeys, createGatedSignChatKey, rethrowIfSignatureDeferred, runGatedKeyAction,
   type GatedSignChatKey,
 } from "@/lib/arbiterClaimKeys";
-import { requireSignatureGate, isSignatureDeferred } from "@/lib/chatSignatureGate";
+import { isSignatureDeferred } from "@/lib/chatSignatureGate";
 import { decideNoKeyNotice } from "@/lib/arbiterChatKey";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
@@ -251,16 +251,20 @@ export default function ArbiterPage() {
           // попытка) — ждать блок не нужно, но ключ всё равно добывается
           // только сейчас, по нажатию, тем же вызовом, что и в полном пути.
           toast.loading(t("arbiter.claim_key"), { id: commitToast });
-          const keys = await deriveClaimChatKeys(address as Address, signChatKey);
-
-          // Страница могла замёрзнуть, пока человек был в кошельке. Тогда следующее
-          // автоматическое окно улетит в никуда — гейт требует явного нажатия.
-          requireSignatureGate(false);
-
-          toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-          const { txHash: claimTx } = await claimDisputeGasless(
-            walletClient, publicClient, agreement as Address, salt,
-            keys.boxKey, keys.signKey,
+          // Гейт-последовательность (сброс отметки → гейт перед добычей ключа
+          // → добыча → гейт перед заявкой) — из общей runGatedKeyAction
+          // (arbiterClaimKeys.ts), не пересобрана здесь руками: три места
+          // страницы обязаны вести себя одинаково, а не разъехаться со
+          // временем.
+          const { txHash: claimTx } = await runGatedKeyAction(
+            () => deriveClaimChatKeys(address as Address, signChatKey),
+            (keys) => {
+              toast.loading(t("arbiter.claim_step2"), { id: commitToast });
+              return claimDisputeGasless(
+                walletClient, publicClient, agreement as Address, salt as Hex,
+                keys.boxKey, keys.signKey,
+              );
+            },
           );
           assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
@@ -325,16 +329,15 @@ export default function ArbiterPage() {
       // На критический путь это не ложится: гонку за спор решает claimDispute,
       // а не коммит.
       toast.loading(t("arbiter.claim_key"), { id: commitToast });
-      const keys = await deriveClaimChatKeys(address as Address, signChatKey);
-
-      // Страница могла замёрзнуть, пока человек был в кошельке. Тогда следующее
-      // автоматическое окно улетит в никуда — гейт требует явного нажатия.
-      requireSignatureGate(false);
-
-      toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-      const { txHash: claimTx } = await claimDisputeGasless(
-        walletClient, publicClient, agreement as Address, salt,
-        keys.boxKey, keys.signKey,
+      const { txHash: claimTx } = await runGatedKeyAction(
+        () => deriveClaimChatKeys(address as Address, signChatKey),
+        (keys) => {
+          toast.loading(t("arbiter.claim_step2"), { id: commitToast });
+          return claimDisputeGasless(
+            walletClient, publicClient, agreement as Address, salt as Hex,
+            keys.boxKey, keys.signKey,
+          );
+        },
       );
       assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
       try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
@@ -383,14 +386,12 @@ export default function ArbiterPage() {
     setBusy("publish-key");
     const id = toast.loading(t("arbiter.claim_key"));
     try {
-      // Ключ добывается ЗДЕСЬ, по нажатию — не на входе на страницу.
-      const keys = await deriveClaimChatKeys(address as Address, signChatKey);
-
-      // Страница могла замёрзнуть, пока человек был в кошельке.
-      requireSignatureGate(false);
-
-      const { txHash } = await setArbiterChatKeyGasless(
-        walletClient, publicClient, keys.boxKey, keys.signKey,
+      // Ключ добывается ЗДЕСЬ, по нажатию — не на входе на страницу. Гейт —
+      // из общей runGatedKeyAction (arbiterClaimKeys.ts), той же, что
+      // handleClaim выше: третье место с тем же приёмом не заводит свою копию.
+      const { txHash } = await runGatedKeyAction(
+        () => deriveClaimChatKeys(address as Address, signChatKey),
+        (keys) => setArbiterChatKeyGasless(walletClient, publicClient, keys.boxKey, keys.signKey),
       );
       assertMined(await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}` }));
       toast.success(t("arbiter.key_published"), { id });

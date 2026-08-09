@@ -65,6 +65,23 @@ import { readFileSync } from 'node:fs';
  * решения), это уже не дыра, а просто честно названная граница инструмента.
  */
 
+/**
+ * ⚠️⚠️⚠️⚠️ ЧЕТВЁРТЫЙ СЛОЙ (финальное ревью ветки, находка №1 — «вечная петля на
+ * телефоне»). Одиночный `requireSignatureGate(false)` ПОСЛЕ добычи ключа —
+ * и НИЧЕГО перед ней — видел СВОЙ ЖЕ уход: `noteWalletHandoff()` внутри
+ * `createGatedSignChatKey` взводит отметку, а следующая же (и единственная)
+ * проверка гейта читала её как «мы только что были в кошельке». На телефоне
+ * это давало отсрочку НА КАЖДОМ нажатии, и выйти было нечем — страница
+ * нигде не звала `clearWalletHandoff()`. Замер: 20 нажатий → взято 0.
+ *
+ * Лечение вынесено в `runGatedKeyAction` (`arbiterClaimKeys.ts`) — общую для
+ * всех ТРЁХ мест страницы (быстрый путь заявки, полный путь заявки, кнопка
+ * дисклеймера), а не втроём переписанное вручную здесь. Проверки ниже
+ * переписаны под эту форму: ищут `runGatedKeyAction(`, а не голый
+ * `requireSignatureGate(false)` — он больше не должен появляться в тексте
+ * страницы вовсе, только внутри библиотечной функции.
+ */
+
 const PAGE_PATH = new URL('../app/arbiter/page.tsx', import.meta.url);
 const RAW = readFileSync(PAGE_PATH, 'utf8');
 
@@ -106,6 +123,24 @@ function extractHandleClaim(code: string): string {
 
 const HANDLE_CLAIM = extractHandleClaim(CODE);
 
+/** Тело `handlePublishKey` целиком — тем же приёмом, что `extractHandleClaim`. */
+function extractHandlePublishKey(code: string): string {
+  const start = code.indexOf('const handlePublishKey = async');
+  if (start === -1) throw new Error('handlePublishKey не найден в arbiter/page.tsx');
+  const bodyStart = code.indexOf('{', start);
+  let depth = 0;
+  for (let i = bodyStart; i < code.length; i++) {
+    if (code[i] === '{') depth++;
+    else if (code[i] === '}') {
+      depth--;
+      if (depth === 0) return code.slice(start, i + 1);
+    }
+  }
+  throw new Error('не нашли парную закрывающую скобку handlePublishKey');
+}
+
+const HANDLE_PUBLISH_KEY = extractHandlePublishKey(CODE);
+
 /** Индексы всех вхождений подстроки, по порядку. */
 function indicesOf(haystack: string, needle: string): number[] {
   const out: number[] = [];
@@ -126,29 +161,39 @@ describe('handleClaim: гейт подписи на пути добычи клю
     expect(HANDLE_CLAIM).not.toMatch(/TODO_BOX_KEY|TODO_SIGN_KEY/);
   });
 
-  it('каждая добыча ключа стоит МЕЖДУ добычей и следующей заявкой claimDisputeGasless', () => {
-    // Главное свойство задачи: гейт стоит НЕ где попало в файле, а именно на
-    // критическом отрезке — после того, как кошелёк вернул ключ (и мог
-    // заморозить страницу), и до следующего автоматического обращения к
-    // кошельку (заявка). Порядок, не просто присутствие.
+  it('оба пути идут через runGatedKeyAction — не переписывают гейт-последовательность вручную', () => {
+    // Находка №1 финального ревью: голый requireSignatureGate(false) ПОСЛЕ
+    // добычи ключа (и без проверки ДО неё, и без сброса памяти в начале)
+    // видел СВОЙ ЖЕ уход и вечно откладывал заявку. Три места страницы
+    // обязаны звать ОДНУ общую функцию (runGatedKeyAction,
+    // arbiterClaimKeys.ts) — не держать на странице свою копию, которой
+    // легко разъехаться с двумя остальными местами.
+    const runCalls = indicesOf(HANDLE_CLAIM, 'runGatedKeyAction(');
+    expect(runCalls).toHaveLength(2);
+    // requireSignatureGate/clearWalletHandoff НЕ должны появляться на
+    // странице напрямую — только внутри библиотечной функции. Прямой вызов
+    // здесь означал бы вторую, несинхронизированную копию гейта.
+    expect(HANDLE_CLAIM).not.toMatch(/\brequireSignatureGate\s*\(/);
+    expect(HANDLE_CLAIM).not.toMatch(/\bclearWalletHandoff\s*\(/);
+  });
+
+  it('каждая добыча ключа (deriveClaimChatKeys) вложена в СВОЙ runGatedKeyAction, ПЕРЕД claimDisputeGasless', () => {
+    // Главное свойство задачи: добыча ключа — первый аргумент
+    // runGatedKeyAction, заявка (claimDisputeGasless) — внутри второго.
+    // Порядок вложенности, не просто присутствие где-то в файле.
+    const runCalls = indicesOf(HANDLE_CLAIM, 'runGatedKeyAction(');
     const deriveCalls = indicesOf(HANDLE_CLAIM, 'deriveClaimChatKeys(');
     const claimCalls = indicesOf(HANDLE_CLAIM, 'claimDisputeGasless(');
-    const gateCalls = indicesOf(HANDLE_CLAIM, 'requireSignatureGate(false)');
 
+    expect(runCalls).toHaveLength(2);
     expect(deriveCalls).toHaveLength(2);
     expect(claimCalls).toHaveLength(2);
-    expect(gateCalls).toHaveLength(2);
 
-    deriveCalls.forEach((deriveAt, i) => {
+    runCalls.forEach((runAt, i) => {
+      const deriveAt = deriveCalls[i];
       const claimAt = claimCalls[i];
+      expect(deriveAt, 'deriveClaimChatKeys обязан идти ПОСЛЕ открытия runGatedKeyAction(').toBeGreaterThan(runAt);
       expect(claimAt, 'claimDisputeGasless обязан идти ПОСЛЕ добычи ключа').toBeGreaterThan(deriveAt);
-
-      const gateBetween = gateCalls.some(g => g > deriveAt && g < claimAt);
-      expect(
-        gateBetween,
-        `requireSignatureGate(false) не найден между добычей ключа №${i + 1} и её claimDisputeGasless — ` +
-        `при заморозке страницы в кошельке третья автоподпись улетела бы в спящую вкладку`,
-      ).toBe(true);
     });
   });
 
@@ -173,6 +218,29 @@ describe('handleClaim: гейт подписи на пути добычи клю
 
   it('проброс отсрочки reveal — из rethrowIfSignatureDeferred, а не переписан в catch', () => {
     expect(CODE).toMatch(/rethrowIfSignatureDeferred\s*\(\s*revealErr\s*\)/);
+  });
+});
+
+describe('handlePublishKey (кнопка дисклеймера): тот же гейт, что у handleClaim', () => {
+  it('добыча ключа и публикация идут через ту же runGatedKeyAction, вложенно и по порядку', () => {
+    const runCalls = indicesOf(HANDLE_PUBLISH_KEY, 'runGatedKeyAction(');
+    const deriveCalls = indicesOf(HANDLE_PUBLISH_KEY, 'deriveClaimChatKeys(');
+    const publishCalls = indicesOf(HANDLE_PUBLISH_KEY, 'setArbiterChatKeyGasless(');
+
+    expect(runCalls).toHaveLength(1);
+    expect(deriveCalls).toHaveLength(1);
+    expect(publishCalls).toHaveLength(1);
+    expect(deriveCalls[0]).toBeGreaterThan(runCalls[0]);
+    expect(publishCalls[0]).toBeGreaterThan(deriveCalls[0]);
+
+    // Третье место — то же требование, что у handleClaim выше: никакой
+    // отдельной, ручной копии гейта на этой странице.
+    expect(HANDLE_PUBLISH_KEY).not.toMatch(/\brequireSignatureGate\s*\(/);
+    expect(HANDLE_PUBLISH_KEY).not.toMatch(/\bclearWalletHandoff\s*\(/);
+  });
+
+  it('отсрочка гейта тоже обрабатывается отдельно от общей ошибки', () => {
+    expect(HANDLE_PUBLISH_KEY).toMatch(/isSignatureDeferred\(err\)/);
   });
 });
 
