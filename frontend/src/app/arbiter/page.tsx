@@ -315,6 +315,11 @@ export default function ArbiterPage() {
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           toast.success(t("arbiter.claim_success"), { id: commitToast });
           bump();
+          // Заявка только что записала ключ в цепь (claimDisputeGasless возит
+          // boxKey/signKey) — без этого плашка «нет ключа» осталась бы висеть
+          // до следующего действия на странице, хотя ключ уже на месте.
+          // handlePublishKey уже так делает — здесь тот же случай.
+          refetchMyChainKeys();
           return;
         } catch (revealErr) {
           // Проброс отсрочки гейта — из общего ДЕЙСТВИЯ
@@ -351,6 +356,9 @@ export default function ArbiterPage() {
                 { id: commitToast },
               );
               bump();
+              // Если клеймер — это МЫ (другая вкладка), ключ уже лёг в цепь
+              // оттуда, а эта вкладка ещё не знает.
+              if (claimer.toLowerCase() === address.toLowerCase()) refetchMyChainKeys();
               return;
             }
           } catch { /* on-chain check failed — fall through and try a fresh commit */ }
@@ -388,6 +396,9 @@ export default function ArbiterPage() {
       try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
       toast.success(t("arbiter.claim_success"), { id: commitToast });
       bump();
+      // См. комментарий у того же вызова на быстром пути выше: заявка только
+      // что записала ключ в цепь, плашка «нет ключа» обязана это увидеть.
+      refetchMyChainKeys();
     } catch (err: any) {
       // Гейт отложил подпись, потому что страница уходила к кошельку. Это не
       // ошибка: человеку надо нажать ещё раз, и тогда окно откроется по его

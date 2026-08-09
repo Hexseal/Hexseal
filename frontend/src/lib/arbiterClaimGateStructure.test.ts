@@ -221,6 +221,29 @@ describe('handleClaim: гейт подписи на пути добычи клю
   });
 });
 
+/**
+ * Находка №3 финального ревью. Заявка (claimDisputeGasless) возит ключ и
+ * записывает его в цепь — ТЕМ ЖЕ вызовом, что publishKey. `handlePublishKey`
+ * после успеха звал `refetchMyChainKeys()`, `handleClaim` — только `bump()`,
+ * который на чтение ключа не распространяется (у него нет scopeKey, завязанного
+ * на `refresh`). При `staleTime` react-query плашка «нет ключа» оставалась
+ * висеть уже после того, как ключ лёг в цепь заявкой — следующее нажатие
+ * «Опубликовать ключ» жгло ОПЛАЧЕННУЮ РЕЛЕЕРОМ транзакцию впустую (контракт не
+ * ревертит и не шлёт событие, если значение не изменилось).
+ */
+describe('handleClaim: после успешной заявки плашка «нет ключа» обновляется', () => {
+  it('оба успешных пути заявки зовут refetchMyChainKeys() рядом с bump()', () => {
+    const bumpCalls = indicesOf(HANDLE_CLAIM, 'bump();');
+    const refetchCalls = indicesOf(HANDLE_CLAIM, 'refetchMyChainKeys();');
+    // Три места зовут bump(): быстрый путь успеха, «уже взято мной в другой
+    // вкладке», полный путь успеха. Все три публикуют ключ в цепь (либо этим
+    // же вызовом, либо чужим — но НАШИМ адресом), значит все три обязаны
+    // перечитать его.
+    expect(bumpCalls).toHaveLength(3);
+    expect(refetchCalls.length, 'refetchMyChainKeys() встречается реже, чем успешные пути заявки').toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe('handlePublishKey (кнопка дисклеймера): тот же гейт, что у handleClaim', () => {
   it('добыча ключа и публикация идут через ту же runGatedKeyAction, вложенно и по порядку', () => {
     const runCalls = indicesOf(HANDLE_PUBLISH_KEY, 'runGatedKeyAction(');
