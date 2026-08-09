@@ -758,6 +758,7 @@
     "claim_press_again": "Pulsa de nuevo: la página pasó a tu monedero",
     "key_directory_mismatch": "Aviso: nuestro servidor tiene registrada una clave de chat distinta a la que está en la cadena. Usamos la clave de la cadena — es la que decide.",
     "no_key_notice": "En este caso todavía no pueden mostrarte nada: tu clave de chat no está registrada en la cadena. Es una sola transacción.",
+    "no_key_notice_demoted": "Ya no eres un árbitro registrado, así que no se puede publicar una clave de chat para este caso — no se puede sellar nada para ti, y esto no es algo que puedas arreglar tú mismo.",
     "publish_key": "Publicar clave",
     "key_published": "Listo — ahora sí pueden mostrarte la conversación",
     "releasing": "Liberando reclamo…",

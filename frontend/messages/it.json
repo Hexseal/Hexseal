@@ -759,6 +759,7 @@
     "claim_press_again": "Tocca di nuovo: la pagina è passata al tuo wallet",
     "key_directory_mismatch": "Nota: il nostro server ha registrato per te una chiave di chat diversa da quella sulla chain. Usiamo la chiave della chain — è quella che conta.",
     "no_key_notice": "Per questo caso non possono ancora mostrarti nulla: la tua chiave di chat non è registrata sulla chain. È una sola transazione.",
+    "no_key_notice_demoted": "Non sei più un arbitro registrato, quindi non è possibile pubblicare una chiave di chat per questo caso — non può esserti sigillato nulla, e non è qualcosa che puoi risolvere da solo.",
     "publish_key": "Pubblica chiave",
     "key_published": "Fatto — ora la conversazione può esserti mostrata",
     "releasing": "Rilascio presa…",

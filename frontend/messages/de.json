@@ -758,6 +758,7 @@
     "claim_press_again": "Bitte erneut tippen — die Seite war kurz bei deiner Wallet",
     "key_directory_mismatch": "Hinweis: unser Server hat für dich einen anderen Chat-Schlüssel hinterlegt als den in der Chain. Wir verwenden den Schlüssel aus der Chain — er entscheidet.",
     "no_key_notice": "Bei diesem Fall kann dir noch nichts vorgelegt werden: dein Chat-Schlüssel steht nicht in der Chain. Das ist eine einzige Transaktion.",
+    "no_key_notice_demoted": "Du bist kein registrierter Schiedsrichter mehr, daher kann für diesen Fall kein Chat-Schlüssel veröffentlicht werden — dir kann nichts versiegelt werden, und das kannst du nicht selbst beheben.",
     "publish_key": "Schlüssel veröffentlichen",
     "key_published": "Fertig — jetzt kann dir die Unterhaltung vorgelegt werden",
     "releasing": "Übernahme wird freigegeben…",

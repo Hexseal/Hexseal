@@ -373,4 +373,20 @@ describe('дисклеймер «нет ключа» реально отрисо
     expect(MY_CASE_CARD).toMatch(/t\(\s*["']arbiter\.no_key_notice["']\s*\)/);
     expect(MY_CASE_CARD).toMatch(/t\(\s*["']arbiter\.publish_key["']\s*\)/);
   });
+
+  /**
+   * Находка №4 финального ревью: кнопка не смотрела на isArbiter, хотя он уже
+   * читался страницей выше. Разжалованный арбитр (третья судейская ошибка)
+   * остаётся судьёй по открытому делу (submitVerdict проверяет только
+   * disputeClaims), но setArbiterChatKey в контракте гейтится isArbiter —
+   * кнопка гарантированно ревертит (NotArbiter), плашка не гаснет никогда,
+   * объяснения нет.
+   */
+  it('кнопка публикации показывается ТОЛЬКО когда isArbiter — иначе честное объяснение вместо неё', () => {
+    // Внутри блока showNoKeyNotice кнопка обязана стоять за условием isArbiter
+    // (тернарник или &&), а не быть безусловной — иначе разжалованный видит
+    // ту же кнопку, что действующий арбитр.
+    expect(MY_CASE_CARD).toMatch(/isArbiter\s*\?/);
+    expect(MY_CASE_CARD).toMatch(/t\(\s*["']arbiter\.no_key_notice_demoted["']\s*\)/);
+  });
 });

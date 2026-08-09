@@ -759,6 +759,7 @@
     "claim_press_again": "Toque novamente — a página foi para sua carteira",
     "key_directory_mismatch": "Aviso: nosso servidor tem registrada uma chave de chat diferente da que está na chain. Usamos a chave da chain — é ela que decide.",
     "no_key_notice": "Neste caso ainda não podem lhe apresentar nada: sua chave de chat não está registrada na chain. É uma única transação.",
+    "no_key_notice_demoted": "Você não é mais um árbitro registrado, então não é possível publicar uma chave de chat para este caso — nada pode ser selado para você, e isso não é algo que você possa corrigir sozinho.",
     "publish_key": "Publicar chave",
     "key_published": "Pronto — agora a conversa pode ser apresentada a você",
     "releasing": "Liberando reivindicação…",

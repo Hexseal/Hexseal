@@ -800,6 +800,7 @@
     "claim_press_again": "Press again — the page went to your wallet",
     "key_directory_mismatch": "Note: our server has a different chat key on file for you than the one recorded on-chain. We're using the on-chain key — it's the one that decides.",
     "no_key_notice": "On this case, nothing can be presented against you yet — your chat key isn't recorded on-chain. It's a single transaction.",
+    "no_key_notice_demoted": "You're no longer a registered arbiter, so a chat key can't be published for this case — nothing can be sealed to you, and this isn't something you can fix yourself.",
     "publish_key": "Publish key",
     "key_published": "Done — now the conversation can be presented to you",
     "releasing": "Releasing claim…",

@@ -677,6 +677,7 @@ export default function ArbiterPage() {
                     onFinalizeVerdict={handleFinalizeVerdict}
                     showNoKeyNotice={showNoKeyNotice}
                     onPublishKey={handlePublishKey}
+                    isArbiter={!!isArbiter}
                   />
                 ))}
               </div>
@@ -1076,7 +1077,7 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
 
 function MyCaseCard({
   agreement, myAddress, busy, refresh, onRelease, onSubmitVerdict, onFinalizeVerdict,
-  showNoKeyNotice, onPublishKey,
+  showNoKeyNotice, onPublishKey, isArbiter,
 }: {
   agreement: string; myAddress?: string; busy: string | null; refresh: number;
   onRelease: (a: string) => void;
@@ -1084,6 +1085,13 @@ function MyCaseCard({
   onFinalizeVerdict: (a: string) => void;
   showNoKeyNotice: boolean;
   onPublishKey: () => void;
+  /** Разжалованный арбитр (третья судейская ошибка) остаётся судьёй по
+   *  открытому делу — submitVerdict проверяет только disputeClaims, а не
+   *  реестр, — но setArbiterChatKey гейтится isArbiter и он ключ записать
+   *  больше не может. Кнопка показывается только когда isArbiter истинно;
+   *  иначе — честное объяснение вместо кнопки, которая гарантированно
+   *  ревертит (NotArbiter). */
+  isArbiter: boolean;
 }) {
   const t = useTranslations();
   const MINI_ABI = [
@@ -1237,15 +1245,25 @@ function MyCaseCard({
           кнопка «Завершить вердикт» в Verdict panel ниже), не свои. */}
       {isMineClaim && showNoKeyNotice && (
         <div className="mx-3 mb-3 rounded-[12px] border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5">
-          <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.no_key_notice")}</p>
-          <button
-            onClick={onPublishKey}
-            disabled={!!busy}
-            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
-          >
-            {busy === "publish-key" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {t("arbiter.publish_key")}
-          </button>
+          {isArbiter ? (
+            <>
+              <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.no_key_notice")}</p>
+              <button
+                onClick={onPublishKey}
+                disabled={!!busy}
+                className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
+              >
+                {busy === "publish-key" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {t("arbiter.publish_key")}
+              </button>
+            </>
+          ) : (
+            // Разжалован, но всё ещё судья по этому открытому делу (см.
+            // комментарий у пропа isArbiter выше) — кнопка гарантированно
+            // ревертнула бы (NotArbiter в контракте). Молчать нельзя: он не
+            // должен решить, что предъявление просто прошло гладко.
+            <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.no_key_notice_demoted")}</p>
+          )}
         </div>
       )}
 
