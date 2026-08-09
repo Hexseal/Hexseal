@@ -17,7 +17,10 @@ import {
 import { toast } from "react-hot-toast";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless } from "@/lib/relay";
+import {
+  commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless,
+  setArbiterChatKeyGasless,
+} from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
 import { shortAddr } from "@/lib/utils";
@@ -30,6 +33,7 @@ import {
   type GatedSignChatKey,
 } from "@/lib/arbiterClaimKeys";
 import { requireSignatureGate, isSignatureDeferred } from "@/lib/chatSignatureGate";
+import { decideNoKeyNotice } from "@/lib/arbiterChatKey";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -150,6 +154,25 @@ export default function ArbiterPage() {
     functionName: "isRegisteredArbiter", args: [address ?? ZERO_ADDR as Address],
     query: { enabled: !!address },
   }) as { data: boolean | undefined };
+
+  // Есть ли у меня ключ в цепи. Читается ИЗ ЦЕПИ, справочник в этом решении не
+  // участвует: он живёт на нашем сервере, и кто до сервера добрался, подсунул бы
+  // свой ключ вместо моего.
+  const {
+    data: myChainKeys,
+    error: myChainKeysError,
+    refetch: refetchMyChainKeys,
+  } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: "getArbiterChatKeys", args: [address ?? ZERO_ADDR as Address],
+    query: { enabled: !!address },
+  }) as { data: [Hex, Hex] | undefined; error: unknown; refetch: () => void };
+
+  // Решение вынесено в decideNoKeyNotice (arbiterChatKey.ts) и НЕ повторяется
+  // здесь условием на месте: отказ чтения (функции ещё нет в даймонде до
+  // разреза) — это НЕ «ключа нет», и различать их обязана ОДНА функция с
+  // замером на неё, а не копия условия в разметке.
+  const showNoKeyNotice = decideNoKeyNotice({ keys: myChainKeys, error: myChainKeysError });
 
   const { data: myReward, refetch: refetchReward } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
@@ -340,6 +363,41 @@ export default function ArbiterPage() {
       bump();
     } catch (err: any) {
       toast.error(err?.message || t("common.error"));
+    } finally { setBusy(null); }
+  };
+
+  // Для арбитра, взявшего спор ДО апгрейда 9 августа: тогда заявка ключей не
+  // возила, и в цепи их нет. Одна транзакция публикует их отдельно от заявки —
+  // сторона на предъявлении наконец получит, кому предъявлять.
+  const handlePublishKey = async () => {
+    if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
+    // Тот же защищённый подписчик, что уже применяется в handleClaim выше —
+    // не свой отдельный. GatedSignChatKey — фирменный тип: подставить сюда
+    // голый SignChatKey не даст скомпилироваться.
+    const signChatKey: GatedSignChatKey = createGatedSignChatKey((typedData) =>
+      walletClient.signTypedData({
+        account: walletClient.account!,
+        ...(typedData as any),
+      }) as Promise<`0x${string}`>,
+    );
+    setBusy("publish-key");
+    const id = toast.loading(t("arbiter.claim_key"));
+    try {
+      // Ключ добывается ЗДЕСЬ, по нажатию — не на входе на страницу.
+      const keys = await deriveClaimChatKeys(address as Address, signChatKey);
+
+      // Страница могла замёрзнуть, пока человек был в кошельке.
+      requireSignatureGate(false);
+
+      const { txHash } = await setArbiterChatKeyGasless(
+        walletClient, publicClient, keys.boxKey, keys.signKey,
+      );
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}` }));
+      toast.success(t("arbiter.key_published"), { id });
+      refetchMyChainKeys();
+    } catch (err: any) {
+      if (isSignatureDeferred(err)) { toast(t("arbiter.claim_press_again"), { id }); return; }
+      toast.error(err?.message || t("common.error"), { id });
     } finally { setBusy(null); }
   };
 
@@ -547,6 +605,8 @@ export default function ArbiterPage() {
                     onRelease={handleRelease}
                     onSubmitVerdict={handleSubmitVerdict}
                     onFinalizeVerdict={handleFinalizeVerdict}
+                    showNoKeyNotice={showNoKeyNotice}
+                    onPublishKey={handlePublishKey}
                   />
                 ))}
               </div>
@@ -946,11 +1006,14 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
 
 function MyCaseCard({
   agreement, myAddress, busy, refresh, onRelease, onSubmitVerdict, onFinalizeVerdict,
+  showNoKeyNotice, onPublishKey,
 }: {
   agreement: string; myAddress?: string; busy: string | null; refresh: number;
   onRelease: (a: string) => void;
   onSubmitVerdict: (a: string, clientWins: boolean) => void;
   onFinalizeVerdict: (a: string) => void;
+  showNoKeyNotice: boolean;
+  onPublishKey: () => void;
 }) {
   const t = useTranslations();
   const MINI_ABI = [
@@ -1096,6 +1159,23 @@ function MyCaseCard({
             )}
           </div>
           <DisputeLog dealId={agreement} client={client ?? undefined} executor={executor ?? undefined} />
+        </div>
+      )}
+
+      {/* No-key notice: спор взят ДО апгрейда 9 августа, ключа в цепи нет.
+          Классы — амбер из соседних блоков этой же карточки (Dispute reason,
+          кнопка «Завершить вердикт» в Verdict panel ниже), не свои. */}
+      {isMineClaim && showNoKeyNotice && (
+        <div className="mx-3 mb-3 rounded-[12px] border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5">
+          <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.no_key_notice")}</p>
+          <button
+            onClick={onPublishKey}
+            disabled={!!busy}
+            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
+          >
+            {busy === "publish-key" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {t("arbiter.publish_key")}
+          </button>
         </div>
       )}
 

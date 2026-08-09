@@ -59,6 +59,16 @@ export const CLAIM_DISPUTE_ABI = parseAbi([
   'function claimDispute(address agreement, bytes32 salt, bytes32 boxKey, bytes32 signKey)',
 ]);
 
+/**
+ * ABI публикации ключей чата арбитра отдельно от заявки. Вынесен наружу по
+ * той же причине, что и CLAIM_DISPUTE_ABI выше: замок
+ * setArbiterChatKeyGasless.test.ts сверяет ИМЕННО эту запись с исходником
+ * контракта, а не отдельную от неё.
+ */
+export const SET_ARBITER_CHAT_KEY_ABI = parseAbi([
+  'function setArbiterChatKey(bytes32 boxKey, bytes32 signKey)',
+]);
+
 // ─── EIP-712: ForwardRequest ──────────────────────────────────────────────────
 
 const FORWARDER_DOMAIN = {
@@ -262,6 +272,9 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   claimDispute:         260_000n,
   releaseDisputeClaim:  100_000n,
   commitDisputeClaim:   100_000n,
+  // Публикация ключа: два SSTORE (первый раз холодные, 2×22 100) + LOG2.
+  // Замер по фасету: max 72 868, медиана 38 656.
+  setArbiterChatKey:    120_000n,
   resolveDispute:       200_000n,
   // transferFrom USDC (permit-authorized, Diamond as spender) + two storage
   // writes (disputeBounty, disputeBountyPayer) + one event.
@@ -1301,6 +1314,52 @@ export async function commitDisputeClaimGasless(
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── setArbiterChatKeyGasless ─────────────────────────────────────────────────
+
+/**
+ * Публикация ключей чата арбитра отдельно от заявки.
+ *
+ * Нужна для одного случая: арбитр взял спор ДО апгрейда 9 августа, когда заявка
+ * ключей не возила. Он числится судьёй, а ключей в цепи нет — сторона услышит
+ * «предъявлять некому», не предъявит, а молчание толкуется против молчащего.
+ * Один вызов это лечит.
+ */
+export async function setArbiterChatKeyGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  boxKey: Hex,
+  signKey: Hex,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    const calldata = encodeFunctionData({
+      abi: SET_ARBITER_CHAT_KEY_ABI,
+      functionName: 'setArbiterChatKey',
+      args: [boxKey, signKey],
+    });
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata as Hex, 'setArbiterChatKey', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      const txHash = await walletClient.writeContract({
+        address: DIAMOND, abi: SET_ARBITER_CHAT_KEY_ABI, functionName: 'setArbiterChatKey',
+        args: [boxKey, signKey], account, chain: walletClient.chain,
+      });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
   } finally {
     releaseLock();
   }

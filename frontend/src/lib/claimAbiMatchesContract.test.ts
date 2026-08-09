@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { CLAIM_DISPUTE_ABI } from './relay';
+import { CLAIM_DISPUTE_ABI, SET_ARBITER_CHAT_KEY_ABI } from './relay';
 import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
 
 /**
@@ -106,6 +106,71 @@ function abiCanonicalReturnTypes(abi: readonly unknown[], fnName: string): strin
   return types.join(',');
 }
 
+/**
+ * Канонические ИМЕНА входных параметров из объявления в .sol, по порядку.
+ *
+ * ⚠️ Заводится Задачей 5 намеренно ОТДЕЛЬНО от solidityCanonicalSignature
+ * выше: та сверяет только типы по позиции, и перестановка двух одноимённых
+ * по типу параметров (bytes32 boxKey, bytes32 signKey) даёт по ней 0
+ * красных — типы совпадают, порядок для сверки типов невидим. А читающий
+ * код на фронте деструктурирует результат по порядку ([boxKey, signKey]),
+ * так что переставленная запись ABI даёт рабочий на вид код, который берёт
+ * НЕ ТОТ ключ.
+ */
+function solidityCanonicalParamNames(source: string, fnName: string): string {
+  const re = new RegExp(`function\\s+${fnName}\\s*\\(([^)]*)\\)`, 'mg');
+  const matches = [...source.matchAll(re)];
+  if (matches.length === 0) throw new Error(`объявление ${fnName} не найдено в исходнике`);
+  if (matches.length > 1) {
+    throw new Error(
+      `объявление ${fnName} встречается ${matches.length} раза в исходнике — ` +
+      `подпись неоднозначна, каноническую сверку сделать нельзя`,
+    );
+  }
+  const names = matches[0][1]
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => p.split(/\s+/).pop() as string);
+  return names.join(',');
+}
+
+/** Канонические имена входных параметров из ABI-записи viem, по порядку. */
+function abiCanonicalParamNames(abi: readonly unknown[], fnName: string): string {
+  const entry = (abi as any[]).find(
+    (e) => e && e.type === 'function' && e.name === fnName,
+  );
+  if (!entry) throw new Error(`${fnName} не найдена в ABI`);
+  const names = (entry.inputs ?? []).map((i: any) => i.name);
+  return names.join(',');
+}
+
+/**
+ * Канонические ИМЕНА значений возврата из `returns (...)` в .sol, по порядку.
+ * Пустая строка — функция без возврата.
+ */
+function solidityCanonicalReturnNames(source: string, fnName: string): string {
+  const decl = solidityDeclarationBlock(source, fnName);
+  const returnsMatch = decl.match(/returns\s*\(([^)]*)\)/);
+  if (!returnsMatch) return '';
+  const names = returnsMatch[1]
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => p.split(/\s+/).pop() as string);
+  return names.join(',');
+}
+
+/** Канонические имена значений возврата из ABI-записи viem (`entry.outputs`). */
+function abiCanonicalReturnNames(abi: readonly unknown[], fnName: string): string {
+  const entry = (abi as any[]).find(
+    (e) => e && e.type === 'function' && e.name === fnName,
+  );
+  if (!entry) throw new Error(`${fnName} не найдена в ABI`);
+  const names = (entry.outputs ?? []).map((o: any) => o.name);
+  return names.join(',');
+}
+
 const FACET = readFileSync(
   new URL('../../../src/facets/ArbiterRegistryFacet.sol', import.meta.url),
   'utf8',
@@ -196,5 +261,62 @@ describe('ABI чтения ключей арбитра не расходится
       function getArbiterChatKeys(bytes32 arbiter) external view returns (bytes32 boxKey) {}
     `;
     expect(() => solidityCanonicalReturnTypes(fakeSourceWithOverload, 'getArbiterChatKeys')).toThrow();
+  });
+});
+
+/**
+ * Задача 5, найдено ревью Задачи 3 замером: сверка выше держит только ТИПЫ
+ * по позиции, и у обоих параметров `setArbiterChatKey` (и обоих возвратов
+ * `getArbiterChatKeys`) тип один и тот же — `bytes32`. Переставить местами
+ * ИМЕНА `boxKey`/`signKey` в записи ABI, не трогая типов, — и проверки выше
+ * дают 0 красных, потому что смотрят только на список типов. Читающий код
+ * (deriveClaimChatKeys → claimKeysFromSession, handlePublishKey) берёт ключи
+ * по ПОЗИЦИИ ([boxKey, signKey] или args: [boxKey, signKey]), так что такая
+ * перестановка компилируется, все прежние тесты остаются зелёными, а
+ * сторона на предъявлении получает ключ подписи вместо ключа шифрования —
+ * вскрыть предъявленное этим ключом нельзя.
+ */
+describe('ABI ключей арбитра не путает boxKey/signKey местами (типы у обоих bytes32)', () => {
+  it('setArbiterChatKey: имена входов совпадают с исходником, не только типы', () => {
+    const fromContract = solidityCanonicalParamNames(FACET, 'setArbiterChatKey');
+    const fromFront = abiCanonicalParamNames(
+      SET_ARBITER_CHAT_KEY_ABI as readonly unknown[],
+      'setArbiterChatKey',
+    );
+    expect(fromFront).toBe(fromContract);
+  });
+
+  it('setArbiterChatKey: типы входов тоже совпадают с исходником', () => {
+    const fromContract = solidityCanonicalSignature(FACET, 'setArbiterChatKey');
+    const fromFront = abiCanonicalSignature(
+      SET_ARBITER_CHAT_KEY_ABI as readonly unknown[],
+      'setArbiterChatKey',
+    );
+    expect(fromFront).toBe(fromContract);
+  });
+
+  it('исходник контракта содержит ровно одно объявление setArbiterChatKey', () => {
+    const count = (FACET.match(/function\s+setArbiterChatKey\s*\(/g) ?? []).length;
+    expect(count).toBe(1);
+  });
+
+  it('getArbiterChatKeys: имена входов совпадают с исходником, не только типы', () => {
+    const fromContract = solidityCanonicalParamNames(FACET, 'getArbiterChatKeys');
+    const fromConfig = abiCanonicalParamNames(
+      ARBITER_REGISTRY_ABI as readonly unknown[],
+      'getArbiterChatKeys',
+    );
+    expect(fromConfig).toBe(fromContract);
+  });
+
+  it('getArbiterChatKeys: имена ВОЗВРАТА совпадают с исходником, не только типы', () => {
+    // Здесь и живёт та самая дыра: boxKey/signKey оба bytes32, и тип-сверка
+    // (уже существующий тест выше) не различает переставленную запись.
+    const fromContract = solidityCanonicalReturnNames(FACET, 'getArbiterChatKeys');
+    const fromConfig = abiCanonicalReturnNames(
+      ARBITER_REGISTRY_ABI as readonly unknown[],
+      'getArbiterChatKeys',
+    );
+    expect(fromConfig).toBe(fromContract);
   });
 });

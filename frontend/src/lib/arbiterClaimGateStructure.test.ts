@@ -193,3 +193,54 @@ describe('страница арбитра не заводит ключ реак�
     expect(CODE).toMatch(/\bderiveClaimChatKeys\s*\(/);
   });
 });
+
+/**
+ * Задача 5. ЗАМЕРЕНО, ЧТО БЕЗ ЭТОЙ ПРОВЕРКИ ЗАМКА НЕ БЫЛО: заменить строку
+ * `const showNoKeyNotice = decideNoKeyNotice({ keys: ..., error: ... });` на
+ * собственноручное условие такой же формы (`!error && !!keys && (keys[0] ===
+ * ZERO || keys[1] === ZERO)`) и прогнать `npm test` — 0 красных из 1823.
+ * `arbiterNoticeDecision.test.ts` защищает саму функцию `decideNoKeyNotice`
+ * (arbiterChatKey.ts), но ничем не защищает, что страница арбитра реально её
+ * ЗОВЁТ, а не пересобирает то же условие рядом, без разбора «отказ чтения ≠
+ * ключа нет» — тот самый класс дыры, что CLAUDE.md называет «замок, который
+ * ищет имя, а не употребление» (см. заголовок файла, третий круг ревью
+ * Задачи 4, тот же приём для createGatedSignChatKey/rethrowIfSignatureDeferred
+ * выше).
+ */
+describe('дисклеймер «нет ключа» решается через decideNoKeyNotice, а не переписан на странице', () => {
+  it('showNoKeyNotice — результат вызова decideNoKeyNotice(...), не своего условия', () => {
+    expect(RAW).toMatch(/from\s+['"]@\/lib\/arbiterChatKey['"]/);
+    expect(CODE).toMatch(/\bshowNoKeyNotice\s*=\s*decideNoKeyNotice\s*\(/);
+  });
+});
+
+/**
+ * ЗАМЕРЕНО, ЧТО БЕЗ ЭТОЙ ПРОВЕРКИ ЗАМКА НЕ БЫЛО: убрав саму разметку
+ * дисклеймера из `MyCaseCard` целиком (JSX-блок с текстом и кнопкой), оставив
+ * `showNoKeyNotice`/`onPublishKey` объявленными, но нигде не отрисованными —
+ * `npm test` дал 0 красных из 1824, `npm run type-check` тоже чист
+ * (неиспользуемые пропсы не запрещены tsconfig'ом). Проверка выше в этом файле
+ * защищает только ВЫЧИСЛЕНИЕ `showNoKeyNotice`, а не то, что карточка спора
+ * его реально показывает арбитру, — тот же класс дыры, вид сверху.
+ */
+function extractMyCaseCard(raw: string): string {
+  const start = raw.indexOf('function MyCaseCard(');
+  if (start === -1) throw new Error('MyCaseCard не найден в arbiter/page.tsx');
+  const end = raw.indexOf('// ─── HistoryRow', start);
+  if (end === -1) throw new Error('не нашли конец MyCaseCard (маркер секции HistoryRow)');
+  return raw.slice(start, end);
+}
+
+const MY_CASE_CARD = extractMyCaseCard(RAW);
+
+describe('дисклеймер «нет ключа» реально отрисован в карточке взятого спора', () => {
+  it('показывается только для карточки ЭТОГО арбитра и когда showNoKeyNotice истинно', () => {
+    expect(MY_CASE_CARD).toMatch(/isMineClaim\s*&&\s*showNoKeyNotice/);
+  });
+
+  it('кнопка зовёт onPublishKey, текст и надпись кнопки — из локалей no_key_notice/publish_key', () => {
+    expect(MY_CASE_CARD).toMatch(/onClick=\{onPublishKey\}/);
+    expect(MY_CASE_CARD).toMatch(/t\(\s*["']arbiter\.no_key_notice["']\s*\)/);
+    expect(MY_CASE_CARD).toMatch(/t\(\s*["']arbiter\.publish_key["']\s*\)/);
+  });
+});

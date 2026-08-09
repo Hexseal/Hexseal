@@ -48,6 +48,23 @@ export async function readArbiterChatKeysFromChain(
   return { boxKey, signKey, present };
 }
 
+/**
+ * Показывать ли дисклеймер «вам не смогут предъявить».
+ *
+ * ⚠️ Отказ чтения — это НЕ «ключа нет». До разреза даймонда getArbiterChatKeys
+ * в нём отсутствует, и чтение ревертит; трактовать это как отсутствие ключа
+ * значило бы показать дисклеймер всем и предложить кнопку, которая не сработает
+ * (setArbiterChatKey в даймонде ещё тоже нет). «Не знаем» → молчим.
+ */
+export function decideNoKeyNotice(input: {
+  keys: readonly [Hex, Hex] | undefined;
+  error: unknown;
+}): boolean {
+  if (input.error) return false;
+  if (!input.keys) return false;
+  return input.keys[0] === ZERO_KEY || input.keys[1] === ZERO_KEY;
+}
+
 export function compareChainWithDirectory(
   chain: { boxKey: Hex; signKey: Hex },
   directory: { boxKey: Uint8Array; signKey: Uint8Array | null } | null,
