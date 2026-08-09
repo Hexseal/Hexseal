@@ -54,9 +54,9 @@ import "../src/DiamondProxy.sol";
 /// 167 grand total is this script's OWN historical delivery (54 + 9 across
 /// the two touched facets, as computed from the upgrade contract's own
 /// Replace+Add lists — not from live ABI), and is expected to no longer equal
-/// a fresh DeployFull total once other facets grow (DeployFull is at 168
-/// since 9 August 2026's arbiter chat keys; this script's own math is
-/// unaffected and stays 167).
+/// a fresh DeployFull total once other facets grow (DeployFull is at 169
+/// since 9 August 2026's arbiter chat keys plus same-day setArbiterChatKey;
+/// this script's own math is unaffected and stays 167).
 contract UpgradePaidArbitrationSelectorsTest is Test {
     UpgradePaidArbitration internal upgrade;
     DeployFull internal deploy;

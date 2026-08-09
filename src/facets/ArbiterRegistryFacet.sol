@@ -178,6 +178,14 @@ contract ArbiterRegistryFacet {
     event DisputeReleased(address indexed agreement, address indexed prevArbiter);
     event DAOActivated(address indexed by);
     event ArbiterApplied(address indexed arbiter);
+    /// Ключи чата арбитра опубликованы или заменены.
+    ///
+    /// ⚠️ СОБЫТИЕ ОБЯЗАТЕЛЬНО, и вот почему: 4в следит за сменой ключа, чтобы
+    /// автоматически предъявить заново, если арбитр сменил устройство. Без
+    /// события ему пришлось бы ОПРАШИВАТЬ цепь — а 9 августа мы убрали 8 100
+    /// обращений к цепи в час с одной вкладки, и новый опрос вернул бы ту же
+    /// беду под другим именем. Не удалять и не делать неиндексируемым.
+    event ArbiterChatKeySet(address indexed arbiter, bytes32 boxKey, bytes32 signKey);
     event VerdictSubmitted(address indexed agreement, address indexed arbiter, bool clientWins);
     event VerdictFinalized(address indexed agreement, address indexed arbiter, bool clientWins);
     event VerdictFrozen(address indexed agreement);
@@ -222,6 +230,7 @@ contract ArbiterRegistryFacet {
     error CommitmentTooEarly();
     error CommitmentExpired();
     error DAONotActive();
+    error ZeroChatKey();
     error InsufficientXP(uint256 have, uint256 need);
     error NoVerdict();
     error DisputeWindowPassed();
@@ -410,6 +419,28 @@ contract ArbiterRegistryFacet {
         if (!d.isArbiter[caller]) revert NotArbiter();
         d.claimCommitments[commitment] = block.number;
         emit DisputeClaimCommitted(caller, commitment);
+    }
+
+    /// Опубликовать или заменить открытые половины своих ключей чата.
+    ///
+    /// Нужна отдельно от заявки на спор ради одного случая: арбитр, потерявший
+    /// ключ ПОСЛЕ заявки, застревает — адрес в цепи тот же, а прочитать
+    /// предъявленное нечем, и повторное предъявление на тот же ключ не
+    /// поможет. С этой функцией петля замыкается сама: опубликовал новый →
+    /// приложения сторон заметили по событию → предъявили заново → читает.
+    ///
+    /// Адрес берётся из отправителя, аргумента «кому» НЕТ вовсе: чужой ключ
+    /// записать нельзя не потому, что мы проверяем, а потому что записать
+    /// некуда.
+    function setArbiterChatKey(bytes32 boxKey, bytes32 signKey) external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (!d.isArbiter[caller]) revert NotArbiter();
+        if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
+
+        d.arbiterBoxKey[caller]  = boxKey;
+        d.arbiterSignKey[caller] = signKey;
+        emit ArbiterChatKeySet(caller, boxKey, signKey);
     }
 
     /// @notice Клейм спора. Diamond устанавливается арбитром в Agreement (не сам арбитр).
