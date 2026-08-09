@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { claimKeysFromSession, createGatedSignChatKey, canRetryRevealAsFreshCommit } from './arbiterClaimKeys';
+import { claimKeysFromSession, createGatedSignChatKey, rethrowIfSignatureDeferred } from './arbiterClaimKeys';
 import { ZERO_KEY } from './arbiterChatKey';
 import { ChatSignatureDeferred } from './chatSignatureGate';
 
@@ -89,17 +89,24 @@ describe('createGatedSignChatKey — отметка ухода ДО подпис
   });
 });
 
-describe('canRetryRevealAsFreshCommit — решение по неудавшемуся reveal', () => {
-  it('отсрочка гейта подписи — НЕ повод начинать заново (пробросить)', () => {
-    expect(canRetryRevealAsFreshCommit(new ChatSignatureDeferred('needs_press'))).toBe(false);
+describe('rethrowIfSignatureDeferred — действие, не решение', () => {
+  it('отсрочка гейта подписи — бросает её же дальше', () => {
+    const deferred = new ChatSignatureDeferred('needs_press');
+    expect(() => rethrowIfSignatureDeferred(deferred)).toThrow(ChatSignatureDeferred);
+    try {
+      rethrowIfSignatureDeferred(deferred);
+      throw new Error('не должно было дойти сюда');
+    } catch (thrown) {
+      expect(thrown).toBe(deferred); // та же ошибка, не обёртка и не новая
+    }
   });
 
-  it('обычная ошибка — можно начинать заново (свежий коммит)', () => {
-    expect(canRetryRevealAsFreshCommit(new Error('дело в контракте, не в гейте'))).toBe(true);
+  it('обычная ошибка — не бросает, управление возвращается вызывающему', () => {
+    expect(() => rethrowIfSignatureDeferred(new Error('дело в контракте, не в гейте'))).not.toThrow();
   });
 
-  it('мусор на входе (не Error вовсе) — тоже можно начинать заново', () => {
-    expect(canRetryRevealAsFreshCommit('строка вместо ошибки')).toBe(true);
-    expect(canRetryRevealAsFreshCommit(undefined)).toBe(true);
+  it('мусор на входе (не Error вовсе) — тоже не бросает', () => {
+    expect(() => rethrowIfSignatureDeferred('строка вместо ошибки')).not.toThrow();
+    expect(() => rethrowIfSignatureDeferred(undefined)).not.toThrow();
   });
 });
