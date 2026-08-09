@@ -58,6 +58,54 @@ function abiCanonicalSignature(abi: readonly unknown[], fnName: string): string 
   return `${fnName}(${types.join(',')})`;
 }
 
+/**
+ * Блок объявления функции целиком — от `function fnName(` до первой `{`
+ * (начала тела). Нужен для типов ВОЗВРАТА: они стоят в `returns (...)`
+ * ПОСЛЕ списка аргументов, `solidityCanonicalSignature` туда не заглядывает —
+ * ей нужны только входы.
+ *
+ * Та же проверка «ровно одно объявление», что и выше, и по той же причине:
+ * без неё вторая перегрузка молча подставила бы чужой `returns (...)`.
+ */
+function solidityDeclarationBlock(source: string, fnName: string): string {
+  const re = new RegExp(`function\\s+${fnName}\\s*\\([^)]*\\)[\\s\\S]*?(?:\\{|;)`, 'g');
+  const matches = [...source.matchAll(re)];
+  if (matches.length === 0) throw new Error(`объявление ${fnName} не найдено в исходнике`);
+  if (matches.length > 1) {
+    throw new Error(
+      `объявление ${fnName} встречается ${matches.length} раза в исходнике — ` +
+      `подпись неоднозначна, каноническую сверку сделать нельзя`,
+    );
+  }
+  return matches[0][0];
+}
+
+/**
+ * Канонические типы ВОЗВРАТА из объявления в .sol: `returns (t1 a, t2 b)` →
+ * `"t1,t2"`. Пустая строка — функция без возврата (как у `claimDispute`).
+ */
+function solidityCanonicalReturnTypes(source: string, fnName: string): string {
+  const decl = solidityDeclarationBlock(source, fnName);
+  const returnsMatch = decl.match(/returns\s*\(([^)]*)\)/);
+  if (!returnsMatch) return '';
+  const types = returnsMatch[1]
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => p.split(/\s+/)[0]);
+  return types.join(',');
+}
+
+/** Канонические типы возврата из ABI-записи viem (`entry.outputs`). */
+function abiCanonicalReturnTypes(abi: readonly unknown[], fnName: string): string {
+  const entry = (abi as any[]).find(
+    (e) => e && e.type === 'function' && e.name === fnName,
+  );
+  if (!entry) throw new Error(`${fnName} не найдена в ABI`);
+  const types = (entry.outputs ?? []).map((o: any) => o.type);
+  return types.join(',');
+}
+
 const FACET = readFileSync(
   new URL('../../../src/facets/ArbiterRegistryFacet.sol', import.meta.url),
   'utf8',
@@ -97,5 +145,56 @@ describe('ABI заявки на спор не расходится с контр
       function claimDispute(address agreement) external {}
     `;
     expect(() => solidityCanonicalSignature(fakeSourceWithOverload, 'claimDispute')).toThrow();
+  });
+});
+
+/**
+ * `getArbiterChatKeys` добавлена в `config/contracts.ts` только что (Задача 3,
+ * следом за брифом, который сам об этой записи не знал: без неё
+ * `readArbiterChatKeysFromChain` падал бы на живой странице — grep по этому
+ * имени в contracts.ts до правки давал ноль совпадений). Тот же класс дыры,
+ * что закрывал этот файл для `claimDispute`, здесь тоже есть, только с
+ * дополнительной стороной: у `getArbiterChatKeys` есть ВОЗВРАТ, у `claimDispute`
+ * его не было. Ошибка во ВХОДЕ ловится ревертом при вызове — она видна сразу.
+ * Ошибка в ВЫХОДЕ (один `bytes32` вместо двух, перепутанный порядок box/sign)
+ * не ревертит ничего: `readContract` в `readArbiterChatKeysFromChain`
+ * приводит результат типом (`as [Hex, Hex]`), без проверки формы в рантайме —
+ * рассинхрон читался бы молча, как неверный ключ, который никто не заметит
+ * до первой попытки расшифровать чужую переписку.
+ */
+describe('ABI чтения ключей арбитра не расходится с контрактом', () => {
+  it('входы совпадают с исходником контракта', () => {
+    const fromContract = solidityCanonicalSignature(FACET, 'getArbiterChatKeys');
+    const fromConfig = abiCanonicalSignature(
+      ARBITER_REGISTRY_ABI as readonly unknown[],
+      'getArbiterChatKeys',
+    );
+    expect(fromConfig).toBe(fromContract);
+  });
+
+  it('выходы совпадают с исходником контракта — здесь ошибка молчит', () => {
+    const fromContract = solidityCanonicalReturnTypes(FACET, 'getArbiterChatKeys');
+    const fromConfig = abiCanonicalReturnTypes(
+      ARBITER_REGISTRY_ABI as readonly unknown[],
+      'getArbiterChatKeys',
+    );
+    expect(fromConfig).toBe(fromContract);
+  });
+
+  it('исходник контракта содержит ровно одно объявление getArbiterChatKeys', () => {
+    const count = (FACET.match(/function\s+getArbiterChatKeys\s*\(/g) ?? []).length;
+    expect(count).toBe(1);
+  });
+
+  it('solidityCanonicalReturnTypes падает, если объявлений больше одного', () => {
+    // Тот же приём, что и для solidityCanonicalSignature выше: на сфабрикованном
+    // источнике с перегрузкой, не на реальном .sol. Без этой проверки вторая
+    // перегрузка молча взяла бы `returns (...)` первого совпадения — и «совпадение»
+    // с ABI ничего бы не доказывало.
+    const fakeSourceWithOverload = `
+      function getArbiterChatKeys(address arbiter) external view returns (bytes32 boxKey, bytes32 signKey) {}
+      function getArbiterChatKeys(bytes32 arbiter) external view returns (bytes32 boxKey) {}
+    `;
+    expect(() => solidityCanonicalReturnTypes(fakeSourceWithOverload, 'getArbiterChatKeys')).toThrow();
   });
 });

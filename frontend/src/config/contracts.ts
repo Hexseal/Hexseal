@@ -1696,6 +1696,16 @@ export const ARBITER_REGISTRY_ABI = [
     type: 'function',
   },
   {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getArbiterChatKeys',
+    outputs: [
+      { internalType: 'bytes32', name: 'boxKey', type: 'bytes32' },
+      { internalType: 'bytes32', name: 'signKey', type: 'bytes32' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
     inputs: [{ internalType: 'bytes32', name: 'commitment', type: 'bytes32' }],
     name: 'commitDisputeClaim',
     outputs: [],
