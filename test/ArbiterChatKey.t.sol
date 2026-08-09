@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {FactoryStorage} from "../src/FactoryFacet.sol";
+import {MinimalForwarder} from "../src/MinimalForwarder.sol";
 
 contract ArbiterChatKeyTest is Test {
     ArbiterRegistryFacet facet;
@@ -104,6 +106,114 @@ contract ArbiterChatKeyTest is Test {
         (bytes32 box, bytes32 sign) = facet.getArbiterChatKeys(arb);
         assertEq(box, bytes32(uint256(0x33)));
         assertEq(sign, bytes32(uint256(0x44)));
+    }
+
+    // ============================================================
+    //  ЧЕРЕЗ НАСТОЯЩИЙ ФОРВАРДЕР (ERC-2771)
+    // ============================================================
+    //
+    // Все шесть тестов выше зовут facet.setArbiterChatKey(...) напрямую под
+    // vm.prank — в этом окружении trustedForwarder не выставлен, поэтому
+    // _msgSender() возвращает msg.sender, и подмена _msgSender() → msg.sender
+    // внутри функции никак не отличалась бы по их зелёному цвету. Ровно тот
+    // же класс бага уже был у fundDispute (см. CLAUDE.md, фикс d172064) —
+    // платный вызов арбитра не срабатывал ни разу, потому что читал
+    // msg.sender, а прямые тесты этого не ловили. Единственный путь, которым
+    // арбитр реально публикует ключ — гейслесс, через релеер: если функция
+    // прочитает msg.sender, ключ запишется на адрес форвардера, арбитр решит,
+    // что опубликовал его, а стороны запечатают предъявление в пустоту.
+    // Образец сетапа (сигнатура ForwardRequest, EIP-712 домен) —
+    // test/DisputeSettlement.t.sol:1782-1857.
+
+    bytes32 constant FWD_TYPEHASH = keccak256(
+        "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
+    );
+
+    /// Смещение trustedForwarder внутри FactoryStorage.Layout — 3 слота от
+    /// базы (usdc(0), feeRecipient(1), regionFee(2, mapping — свой слот),
+    /// trustedForwarder(3)). То же смещение, что уже утверждено и
+    /// используется в test/BoardsFixture.sol (комментарий там же). Пишем
+    /// напрямую в слот фасета, потому что здесь нет диамонда и initFactory —
+    /// facet развёрнут отдельно, как и во всех остальных тестах файла.
+    function _setTrustedForwarder(address forwarder) internal {
+        bytes32 slot = bytes32(uint256(FactoryStorage.FACTORY_STORAGE_POSITION) + 3);
+        vm.store(address(facet), slot, bytes32(uint256(uint160(forwarder))));
+        // Не берём смещение на веру: если раскладка Layout когда-нибудь
+        // уедет, тест должен упасть здесь с понятной причиной, а не молча
+        // писать в чужое поле и потом гадать, почему подпись «не сработала».
+        assertEq(
+            address(uint160(uint256(vm.load(address(facet), slot)))),
+            forwarder,
+            unicode"смещение trustedForwarder в FactoryStorage.Layout уехало"
+        );
+    }
+
+    function _signFwd(MinimalForwarder fwd, uint256 pk, MinimalForwarder.ForwardRequest memory req)
+        internal view returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(abi.encode(
+            FWD_TYPEHASH, req.from, req.to, req.value, req.gas, req.nonce, keccak256(req.data)
+        ));
+        bytes32 digest = keccak256(abi.encodePacked(
+            "\x19\x01",
+            keccak256(abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("MinimalForwarder")),
+                keccak256(bytes("0.0.1")),
+                block.chainid,
+                address(fwd)
+            )),
+            structHash
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// Замер ревью: setArbiterChatKey, вызванный через настоящий
+    /// MinimalForwarder, должен записать ключ ЧЕЛОВЕКУ, который подписал
+    /// ForwardRequest, а не адресу форвардера, который физически сделал
+    /// msg.sender-вызов на facet. Отправляет execute() ТРЕТИЙ адрес (не
+    /// арбитр, не форвардер) — ровно так это устроено в проде: релеер платит
+    /// газ, но не является ни подписантом, ни получателем.
+    ///
+    /// Второе утверждение (нули на адресе форвардера) обязательно: оно и
+    /// отличает «прочитали человека» от «прочитали посыльного» — без него
+    /// тест прошёл бы и в мире, где _msgSender() тихо вернул бы что угодно,
+    /// лишь бы на этом адресе потом лежали какие-то ключи.
+    function test_SetChatKey_ThroughRealForwarder_RecordsHumanNotForwarder() public {
+        uint256 arbiterPk = 0xCA11;
+        address arb = vm.addr(arbiterPk);
+        address relayer = address(0x9999); // третий адрес: не арбитр, не форвардер
+        _makeArbiter(arb);
+
+        MinimalForwarder fwd = new MinimalForwarder();
+        _setTrustedForwarder(address(fwd));
+
+        bytes32 box  = bytes32(uint256(0x77));
+        bytes32 sign = bytes32(uint256(0x88));
+        bytes memory data = abi.encodeWithSelector(ArbiterRegistryFacet.setArbiterChatKey.selector, box, sign);
+
+        MinimalForwarder.ForwardRequest memory req = MinimalForwarder.ForwardRequest({
+            from:  arb,
+            to:    address(facet),
+            value: 0,
+            gas:   500_000,
+            nonce: fwd.getNonce(arb),
+            data:  data
+        });
+        bytes memory sig = _signFwd(fwd, arbiterPk, req);
+
+        vm.prank(relayer);
+        (bool ok, bytes memory ret) = fwd.execute(req, sig);
+        assertTrue(ok, string.concat("forwarded setArbiterChatKey failed: ", vm.toString(ret)));
+
+        (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
+        assertEq(gotBox, box, unicode"ключ должен быть записан подписанту, а не форвардеру");
+        assertEq(gotSign, sign, unicode"ключ должен быть записан подписанту, а не форвардеру");
+
+        (bytes32 fwdBox, bytes32 fwdSign) = facet.getArbiterChatKeys(address(fwd));
+        assertEq(fwdBox, bytes32(0), unicode"ключ утёк на адрес форвардера вместо человека");
+        assertEq(fwdSign, bytes32(0), unicode"ключ утёк на адрес форвардера вместо человека");
     }
 
     /// Садит арбитра прямо в хранилище фасета. `applyAsArbiter()` заперт за
