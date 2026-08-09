@@ -25,6 +25,9 @@ import { DISPUTE_WINDOW_DAYS, FINALIZE_DELAY } from "@/config/constants";
 import { computeArbiterReward } from "@/lib/disputeBounty";
 import { withWalletLock } from "@/lib/walletLock";
 import { loadPass, savePass, clearPass, type DisputeLogPass } from "@/lib/disputeLogPass";
+import { deriveClaimChatKeys } from "@/lib/arbiterClaimKeys";
+import { noteWalletHandoff, requireSignatureGate, isSignatureDeferred } from "@/lib/chatSignatureGate";
+import type { SignChatKey } from "@/lib/chatSession";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -193,6 +196,15 @@ export default function ArbiterPage() {
 
   const handleClaim = async (agreement: string) => {
     if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
+    // Каждое обращение к кошельку отмечается: на телефоне переход в кошелёк
+    // замораживает страницу, и гейт обязан знать, что мы уходили.
+    const signChatKey: SignChatKey = async (typedData) => {
+      noteWalletHandoff();
+      return walletClient.signTypedData({
+        account: walletClient.account!,
+        ...(typedData as any),
+      }) as Promise<`0x${string}`>;
+    };
     setBusy(`claim:${agreement}`);
     // The salt used to live only in this closure's local memory — if the tab
     // closed/reloaded (or the wallet/network hung and the user gave up) in the
@@ -207,23 +219,33 @@ export default function ArbiterPage() {
       let salt = (() => { try { return localStorage.getItem(storageKey) as Hex | null; } catch { return null; } })();
       if (salt) {
         try {
+          // Коммит уже был замайнен раньше (другая вкладка, прерванная
+          // попытка) — ждать блок не нужно, но ключ всё равно добывается
+          // только сейчас, по нажатию, тем же вызовом, что и в полном пути.
+          toast.loading(t("arbiter.claim_key"), { id: commitToast });
+          const keys = await deriveClaimChatKeys(address as Address, signChatKey);
+
+          // Страница могла замёрзнуть, пока человек был в кошельке. Тогда следующее
+          // автоматическое окно улетит в никуда — гейт требует явного нажатия.
+          requireSignatureGate(false);
+
           toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-          // ⚠️ ВРЕМЕННО, заменяется Задачей 4 того же плана: ключи чата ещё не
-          // добываются на этой странице. Заглушка НЕ нулевая намеренно — нулевой
-          // ключ контракт отвергает (ZeroChatKey), и тогда отказ выглядел бы как
-          // ошибка контракта, а не как незаконченная работа фронта.
-          const TODO_BOX_KEY = ("0x" + "11".repeat(32)) as Hex;
-          const TODO_SIGN_KEY = ("0x" + "22".repeat(32)) as Hex;
           const { txHash: claimTx } = await claimDisputeGasless(
             walletClient, publicClient, agreement as Address, salt,
-            TODO_BOX_KEY, TODO_SIGN_KEY,
+            keys.boxKey, keys.signKey,
           );
           assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           toast.success(t("arbiter.claim_success"), { id: commitToast });
           bump();
           return;
-        } catch {
+        } catch (revealErr) {
+          // Отсрочка гейта — НЕ провалившееся предъявление. Коммит остаётся
+          // валиден, соль остаётся на устройстве: падать в «начать заново» и
+          // жечь свежий коммит из-за того, что страница ушла в кошелёк, было
+          // бы неверно — человеку нужно просто нажать ещё раз. Пробрасываем
+          // во внешний catch, у него есть обработка ровно этого случая.
+          if (isSignatureDeferred(revealErr)) throw revealErr;
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           salt = null;
           // A failed reveal doesn't necessarily mean the commitment is stale —
@@ -265,22 +287,35 @@ export default function ArbiterPage() {
       const { txHash: commitTx } = await commitDisputeClaimGasless(walletClient, publicClient, commitment);
       toast.loading(t("arbiter.claim_confirming"), { id: commitToast });
       assertMined(await publicClient.waitForTransactionReceipt({ hash: commitTx as `0x${string}` }));
+
+      // Ключ добывается ЗДЕСЬ — в мёртвом времени между двумя ходами заявки.
+      // Порядок выбран владельцем: только по его действию, никаких «заранее».
+      // На критический путь это не ложится: гонку за спор решает claimDispute,
+      // а не коммит.
+      toast.loading(t("arbiter.claim_key"), { id: commitToast });
+      const keys = await deriveClaimChatKeys(address as Address, signChatKey);
+
+      // Страница могла замёрзнуть, пока человек был в кошельке. Тогда следующее
+      // автоматическое окно улетит в никуда — гейт требует явного нажатия.
+      requireSignatureGate(false);
+
       toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-      // ⚠️ ВРЕМЕННО, заменяется Задачей 4 того же плана: ключи чата ещё не
-      // добываются на этой странице. Заглушка НЕ нулевая намеренно — нулевой
-      // ключ контракт отвергает (ZeroChatKey), и тогда отказ выглядел бы как
-      // ошибка контракта, а не как незаконченная работа фронта.
-      const TODO_BOX_KEY = ("0x" + "11".repeat(32)) as Hex;
-      const TODO_SIGN_KEY = ("0x" + "22".repeat(32)) as Hex;
       const { txHash: claimTx } = await claimDisputeGasless(
         walletClient, publicClient, agreement as Address, salt,
-        TODO_BOX_KEY, TODO_SIGN_KEY,
+        keys.boxKey, keys.signKey,
       );
       assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
       try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
       toast.success(t("arbiter.claim_success"), { id: commitToast });
       bump();
     } catch (err: any) {
+      // Гейт отложил подпись, потому что страница уходила к кошельку. Это не
+      // ошибка: человеку надо нажать ещё раз, и тогда окно откроется по его
+      // действию, а не в замороженную вкладку.
+      if (isSignatureDeferred(err)) {
+        toast(t("arbiter.claim_press_again"), { id: commitToast });
+        return;
+      }
       toast.error(err?.message || t("common.error"), { id: commitToast });
     } finally { setBusy(null); }
   };
