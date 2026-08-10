@@ -169,14 +169,28 @@ describe('recoverOneTimeKey', () => {
     expect(spyOwn.mock.calls.length).toBe(2);
   });
 
-  it('7. не Uint8Array (envelope) — TypeError, а не null (наш мусор не носит костюм штатного исхода)', async () => {
+  it('7. не Uint8Array (envelope) — TypeError ИМЕННО recoverOneTimeKey, не чужая ошибка', async () => {
+    // ⚠️ Доработка ревью (третий круг), находка «голая проверка класса заперта
+    // случайно»: со СТРОКОЙ на входе (было `'q6ur…'`, base64 без `0x`) гейт
+    // снаружи и не нужен, чтобы тест покраснел — БЕЗ гейта `sliceEnvelope`
+    // сравнивает `envelope[0]` (символ строки) с `ENVELOPE_VERSION` (числом)
+    // через `!==` без коэрсии, они никогда не равны, и функция ТИХО
+    // РЕЗОЛВИТСЯ в `null` — `.rejects.toThrow` краснеет не потому, что текст
+    // не совпал, а потому что промиса-отказа вообще нет (замерено: «promise
+    // resolved "null" instead of rejecting»). Число красных совпадало (1), но
+    // причина была чужой — не то же самое, что «наш гейт держит».
+    //
+    // Вход ниже — ОБЫЧНЫЙ `Array`, не `Uint8Array`, с ТЕМИ ЖЕ байтами
+    // настоящего конверта (первый байт — число 1, версия сходится). Это и
+    // есть форма, которая доходит до `sliceEnvelope` и падает на
+    // `envelope.subarray is not a function` — ЧУЖОЙ `TypeError`, того же
+    // класса, но не нашего текста и не нашего места. Только сверка ТЕКСТА
+    // отличает наш гейт от этого чужого краха.
     const { bob } = await actors();
-    // Строка — РОВНО в том виде, в каком поле приезжает из контейнера: base64
-    // без `0x` (исправление 2 договора v2). Раскодировать обязан вызывающий;
-    // забыл — получает громкий отказ, а не `null`, который слился бы с «не мой
-    // конверт». В типах это к тому же запрещено (фикстура, запрет 7).
-    // @ts-expect-error намеренно base64-строка вместо байт
-    await expect(recoverOneTimeKey('q6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur', bob)).rejects.toThrow(TypeError);
+    const env = await packEnvelope({ text: 'a' }, bob.publicKey, bob.publicKey, AUTHOR_LOWER);
+    const formLike = Array.from(env) as unknown as Uint8Array;
+    await expect(recoverOneTimeKey(formLike, bob))
+      .rejects.toThrow(/recoverOneTimeKey: envelope должен быть Uint8Array/);
   });
 
   // ⚠️ Доработка ревью, находка «обе проверки половин пары не заперты — 0
@@ -424,7 +438,24 @@ describe('openEnvelopeWithOneTimeKey', () => {
     expect('q6urq6urq6urq6urq6urq6urq6urq6ur'.length).toBe(32); // руками: иначе замер выше ни о чём
   });
 
-  it('25. не Uint8Array конверт — TypeError; ключ не 32 байт — громко, а НЕ вердикт bad_key', async () => {
+  it('25. не Uint8Array конверт — TypeError ИМЕННО openEnvelopeWithOneTimeKey; ключ не 32 байт — громко, а НЕ вердикт bad_key', async () => {
+    // ⚠️ Доработка ревью (третий круг), находка «голая проверка класса заперта
+    // случайно»: со СТРОКОЙ '0xdead' на входе гейт снаружи и не нужен, чтобы
+    // тест покраснел — БЕЗ гейта `sliceEnvelope` сравнивает `envelope[0]`
+    // (символ строки) с `ENVELOPE_VERSION` (числом) через `!==` без коэрсии,
+    // они никогда не равны, и функция ТИХО РЕЗОЛВИТСЯ в `{ok:false,
+    // reason:'malformed'}` — `.rejects.toThrow` краснеет не потому, что текст
+    // не совпал, а потому что промиса-отказа вообще нет (замерено: «promise
+    // resolved "{ ok: false, reason: 'malformed' }" instead of rejecting»).
+    // Число красных совпадало (1), но причина была чужой.
+    //
+    // Вход ниже — ОБЫЧНЫЙ `Array`, не `Uint8Array`, с ТЕМИ ЖЕ байтами
+    // настоящего конверта (первый байт — число 1, версия сходится). Эта форма
+    // доходит до `sliceEnvelope` и падает на `envelope.subarray is not a
+    // function` — ЧУЖОЙ `TypeError`, того же класса, но не нашего текста и не
+    // нашего места. Только сверка ТЕКСТА отличает наш гейт от этого чужого
+    // краха.
+    //
     // Второе — важнее. Клеймо живёт только в типах, значит приведением сюда
     // можно занести что угодно. ⚠️ Без явного гейта длины `importKey` НИЖЕ
     // всё равно бросил бы (он СНАРУЖИ try — см. докстринг `assertOneTimeKeyLength`
@@ -434,8 +465,9 @@ describe('openEnvelopeWithOneTimeKey', () => {
     const { bob, alice } = await actors();
     const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey, AUTHOR_LOWER);
     const key = await keyOf(env, bob);
-    // @ts-expect-error намеренно строка вместо байт конверта
-    await expect(openEnvelopeWithOneTimeKey('0xdead', key, AUTHOR_LOWER)).rejects.toThrow(TypeError);
+    const formLikeEnvelope = Array.from(env) as unknown as Uint8Array;
+    await expect(openEnvelopeWithOneTimeKey(formLikeEnvelope, key, AUTHOR_LOWER))
+      .rejects.toThrow(/openEnvelopeWithOneTimeKey: envelope должен быть Uint8Array/);
     const stunted = new Uint8Array(31) as unknown as OneTimeKey; // приведение — ровно то, чего боимся
     await expect(openEnvelopeWithOneTimeKey(env, stunted, AUTHOR_LOWER))
       .rejects.toThrow(/openEnvelopeWithOneTimeKey: unexpected recovered key length \(31\), expected 32/);
@@ -515,14 +547,47 @@ describe('openEnvelopeWithOneTimeKey', () => {
     expect(corruptedVersion[0]).toBe(99); // руками: сверка выше бессмысленна, если байт мог остаться и порченым, и «починенным»
   });
 
-  it('27. автор не адрес — TypeError (наш мусор), а не вердикт', async () => {
+  it('27. автор не адрес (содержимое) — TypeError ИМЕННО envelopeAad, а не вердикт', async () => {
     // `envelopeAad` бросает на негодном адресе. Он обязан вычисляться ВНЕ try
     // — правило В-5 этого файла: гейт, чей бросок глотает чужой catch, не
     // отличим от «гейт честно отказал».
+    //
+    // ⚠️ Доработка ревью (третий круг), находка «голая проверка класса заперта
+    // случайно» — ЗДЕСЬ, в отличие от теста 25, БЕЗ гейта downstream-крах ТОГО
+    // ЖЕ класса не бывает вовсе: `author.slice(2)` у строки отрабатывает
+    // всегда (у строк `.slice` есть всегда), а `parseInt` на нехекс-символах
+    // («неадрес» — кириллица) тихо даёт `NaN`, который `Uint8Array` молча
+    // коэрсит в 0 — без throw. Замерено: без гейта результат —
+    // `{ ok: false, reason: 'bad_key' }` (тег не сошёлся на испорченном AAD),
+    // `.rejects.toThrow` краснеет ТОЛЬКО потому, что промиса-отказа вообще
+    // нет, не из-за текста. Число совпадало (1 красный), причина была чужой.
+    // Текстовая сверка ниже всё равно нужна — она делает намерение явным и
+    // ловит будущий рефакторинг, который заменит этот `throw` на другой, — но
+    // «форму, похожую на настоящую, только с неверным первым байтом», как в
+    // тесте 25, здесь нечем изобразить: риск чужого `TypeError` того же класса
+    // живёт не в СОДЕРЖИМОМ строки, а в её РОДЕ — см. тест 27б ниже.
     const { bob, alice } = await actors();
     const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey, AUTHOR_LOWER);
     const key = await keyOf(env, bob);
-    await expect(openEnvelopeWithOneTimeKey(env, key, '0xнеадрес' as `0x${string}`)).rejects.toThrow(TypeError);
+    await expect(openEnvelopeWithOneTimeKey(env, key, '0xнеадрес' as `0x${string}`))
+      .rejects.toThrow(/envelopeAad: author должен быть адресом 0x \+ 40 hex-цифр/);
+  });
+
+  it('27б. автор не адрес (род, не строка) — TypeError ИМЕННО envelopeAad, не чужая ошибка', async () => {
+    // ⚠️ Это и есть форма, похожая на находку теста 25: `author` НЕ строка
+    // (число вместо `` `0x${string}` ``, приведение — ровно то, чего боимся,
+    // клеймо шаблонного литерального типа живёт только в TS). Без гейта
+    // `typeof author !== 'string'` код доходит до `author.slice(2)` —
+    // у ЧИСЛА нет `.slice`, и это падает `TypeError: author.slice is not a
+    // function` — ЧУЖОЙ класс той же категории, чужой текст, чужое место.
+    // Замерено (см. отчёт задачи): без гейта — эта ошибка; с гейтом — наш
+    // текст. Голая проверка класса не отличила бы одно от другого.
+    const { bob, alice } = await actors();
+    const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey, AUTHOR_LOWER);
+    const key = await keyOf(env, bob);
+    const notAString = 12345 as unknown as `0x${string}`;
+    await expect(openEnvelopeWithOneTimeKey(env, key, notAString))
+      .rejects.toThrow(/envelopeAad: author должен быть адресом 0x \+ 40 hex-цифр/);
   });
 });
 
