@@ -185,6 +185,68 @@ function _isValidKeyHex(v) {
   return typeof v === 'string' && KEY_HEX_RE.test(v) && !ALL_ZERO_KEY_RE.test(v);
 }
 
+// ─── Заверение ключей кошельком (4в-1, §15.2 замысла) ─────────────────────
+//
+// ⚠️ СЕРВЕР НЕ ПРОВЕРЯЕТ ПОДПИСЬ И НЕ ДОЛЖЕН. Весь смысл заверения в том, что
+// его проверяет ЧИТАТЕЛЬ, у которого нет причин верить нам (§10 замысла: через
+// сервер едет только нечитаемый мешок, судит браузер). Вторая реализация
+// EIP-712 здесь была бы вторым источником истины о том, что подписано —
+// запрещено шапкой frontend/src/lib/chatCrypto.ts. Здесь проверяется ФОРМА
+// (сколько байт, какой hex) и СОГЛАСОВАННОСТЬ (то заверение про этот адрес и
+// про эти ключи?) — то есть ровно то, что можно проверить, ничего не зная о
+// криптографии, и что защищает диск и читателя от заведомого мусора.
+const ATTESTATION_SIG_HEX_RE = /^0x[0-9a-f]+$/;
+// Ровно то же число, что у клиента (frontend/src/lib/chatKeyAttestation.ts,
+// MAX_ATTESTATION_SIG_BYTES): заверение, которое клиент считает годным, а
+// сервер отвергает, ломает объявление ключа целиком — а POST /keys это
+// ЕДИНСТВЕННАЯ дорога объявить ключ. Два места сходятся ЧИСЛОМ.
+export const MAX_ATTESTATION_SIG_BYTES = 512;
+
+// Форма — одной функцией для ЗАПИСИ и для ЗАГРУЗКИ, по тому же правилу, что
+// _assertKeyHexInput уже соблюдает: две отдельные копии одной проверки рано
+// или поздно разойдутся молча.
+function _isValidAttestation(a) {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return false;
+  if (typeof a.address !== 'string' || !ETH_ADDR_RE.test(a.address.toLowerCase())) return false;
+  if (!_isValidKeyHex(a.boxKey)) return false;
+  if (!_isValidKeyHex(a.signKey)) return false;
+  if (!Number.isSafeInteger(a.issuedAt) || a.issuedAt <= 0) return false;
+  if (typeof a.signature !== 'string' || !ATTESTATION_SIG_HEX_RE.test(a.signature)) return false;
+  const bytes = (a.signature.length - 2) / 2;
+  if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_ATTESTATION_SIG_BYTES) return false;
+  return true;
+}
+
+// СОГЛАСОВАННОСТЬ проверяется только НА ЗАПИСИ: здесь известно, что именно
+// кладётся и от кого пришёл пропуск. На ЗАГРУЗКЕ — только форма, по правилу
+// И-1 (вперёд-совместимое чтение): запись, сделанная более новой версией с
+// другими правилами согласованности, не должна выбрасываться целиком.
+//
+// Возвращается ПЕРЕСОБРАННЫЙ объект, а не пришедший: незнакомые соседние поля
+// на диск не едут. Тело запроса ограничено 64 КБ, но 64 КБ мусора в записи
+// справочника — это 64 КБ мусора на каждый адрес.
+function _assertAttestationInput(att, address, boxKey, signKey) {
+  const bad = (why) => {
+    const err = new Error(`putKey: invalid attestation — ${why}, got ${JSON.stringify(att)}`);
+    err.code = 'invalid_attestation';
+    throw err;
+  };
+  if (!_isValidAttestation(att)) {
+    bad('expected { address, boxKey, signKey, issuedAt, signature } of the documented form');
+  }
+  if (att.address.toLowerCase() !== address) bad(`attestation names ${att.address}, pass says ${address}`);
+  if (signKey === undefined) bad('body has no signKey — nothing to check the attestation against');
+  if (att.boxKey !== boxKey) bad('attestation boxKey differs from the boxKey being stored');
+  if (att.signKey !== signKey) bad('attestation signKey differs from the signKey being stored');
+  return {
+    address: att.address,
+    boxKey: att.boxKey,
+    signKey: att.signKey,
+    issuedAt: att.issuedAt,
+    signature: att.signature,
+  };
+}
+
 // `changed` — И-2 (ревью координатора, round 3): необязательное на ЗАГРУЗКЕ
 // (не гейтится строго) — записи, созданные ДО этого поля (та же ветвь
 // разработки, до этого самого раунда), не отбрасываются как повреждённые
@@ -202,6 +264,7 @@ function _isValidHistoryEntry(h) {
     if (!Array.isArray(h.changed)) return false;
     if (!h.changed.every((c) => HISTORY_CHANGED_VALUES.has(c))) return false;
   }
+  if (h.attestation !== undefined && !_isValidAttestation(h.attestation)) return false;
   return true;
 }
 
@@ -220,6 +283,7 @@ function _isValidRecord(rec) {
   if (typeof rec.keyChangeCount !== 'number' || !Number.isFinite(rec.keyChangeCount) || rec.keyChangeCount < 0) return false;
   // v — только тип, не конкретное значение: вперёд-совместимость, не гейт версии.
   if (rec.v !== undefined && typeof rec.v !== 'number') return false;
+  if (rec.attestation !== undefined && !_isValidAttestation(rec.attestation)) return false;
   return true;
 }
 
@@ -613,6 +677,10 @@ function _assertKeyHexInput(fieldName, value) {
 function _cloneHistoryEntry(h) {
   const clone = { ...h };
   if (Array.isArray(h.changed)) clone.changed = [...h.changed];
+  // Тот же класс дыры, что `changed`: `{...h}` копирует звено, но НЕ вложенный
+  // объект заверения — правка одного его поля меняла бы состояние модуля
+  // исподтишка, без единого явного putKey().
+  if (h.attestation) clone.attestation = { ...h.attestation };
   return clone;
 }
 
@@ -623,12 +691,14 @@ function _cloneHistoryEntry(h) {
 // этом явным признаком, а не догадываться по совпадению длины истории с
 // умолчанием.
 function _cloneRecordForCaller(address, rec) {
-  return {
+  const out = {
     ...rec,
     address,
     history: rec.history.map(_cloneHistoryEntry),
     historyTruncated: rec.keyChangeCount > rec.history.length,
   };
+  if (rec.attestation) out.attestation = { ...rec.attestation };
+  return out;
 }
 
 /**
@@ -642,6 +712,15 @@ function _cloneRecordForCaller(address, rec) {
  * `keys.boxKey` обязателен. `keys.signKey` необязателен ПО ФОРМЕ — клиент
  * чата передаёт его всегда (см. докстринг файла), но старая запись без него
  * остаётся читаемой, и запись без него не отвергается.
+ *
+ * `keys.attestation` необязателен (4в-1, §15.2 замысла): заверение связки
+ * «адрес ↔ ключи» подписью КОШЕЛЬКА. Сервер его хранит и отдаёт, подпись не
+ * проверяет — весь смысл в том, что проверяет читатель. Проверяется только
+ * СОГЛАСОВАННОСТЬ: заверение обязано быть про ТОТ ЖЕ адрес и про ТЕ ЖЕ
+ * `boxKey`/`signKey`, что кладутся этим вызовом — иначе `invalid_attestation`,
+ * запись не тронута. Заверение прежних ключей при их смене уезжает в звено
+ * истории, а не остаётся на записи (иначе читалось бы как подделка вместо
+ * честного «заверения нет»).
  *
  * Смена ЛЮБОГО из двух ключей (новое значение отличается от текущего)
  * уносит СТАРУЮ пару в `history` (срез до MAX_KEY_HISTORY последних,
@@ -684,6 +763,9 @@ export function putKey(address, keys, nowMs = Date.now()) {
   }
   const boxKey = _assertKeyHexInput('boxKey', keys.boxKey);
   const signKey = keys.signKey !== undefined ? _assertKeyHexInput('signKey', keys.signKey) : undefined;
+  const attestation = keys.attestation !== undefined
+    ? _assertAttestationInput(keys.attestation, address, boxKey, signKey)
+    : undefined;
   if (!Number.isSafeInteger(nowMs)) {
     fail('putKey', `invalid nowMs ${JSON.stringify(nowMs)}`);
   }
@@ -694,12 +776,21 @@ export function putKey(address, keys, nowMs = Date.now()) {
   const signKeyChanged = signKey !== undefined && (!existing || existing.signKey !== signKey);
   const isRealChange = boxKeyChanged || signKeyChanged;
 
-  // Мелочь (ревью координатора, round 3): байт-в-байт идентичная повторная
-  // регистрация — ранний возврат, ничего не трогая. `existing` здесь
-  // всегда истинен на этом пути: первая регистрация делает boxKeyChanged
-  // истинным через `!existing`, значит isRealChange тоже истинен, и эта
-  // ветка для неё физически недостижима.
-  if (existing && !isRealChange) {
+  // ⚠️ ЗАВЕРЕНИЕ — ТРЕТЬЯ ПРИЧИНА ПИСАТЬ. Обычный порядок жизни: ключи
+  // объявлены давно, заверение подписано позже (оно стоит человеческого
+  // действия). Без этой строки ранний возврат ниже глотал бы ПЕРВОЕ заверение
+  // навсегда: ключи те же, значит «ничего не изменилось».
+  const attestationChanged = attestation !== undefined && (
+    !existing || !existing.attestation
+      || existing.attestation.signature !== attestation.signature
+      || existing.attestation.issuedAt !== attestation.issuedAt
+      || existing.attestation.boxKey !== attestation.boxKey
+      || existing.attestation.signKey !== attestation.signKey
+  );
+
+  // Байт-в-байт идентичная повторная регистрация — ранний возврат, ничего не
+  // трогая (клиент чата шлёт это при каждом открытии сеанса).
+  if (existing && !isRealChange && !attestationChanged) {
     return _cloneRecordForCaller(address, existing);
   }
 
@@ -717,12 +808,25 @@ export function putKey(address, keys, nowMs = Date.now()) {
   let keyChangeCount = existing
     ? Math.max(existing.keyChangeCount, _keyChangeCountOnDisk(address))
     : 0;
-  if (existing) {
+  // ⚠️ ГЕЙТ ЗДЕСЬ — `existing && isRealChange`, НЕ ГОЛОЕ `existing`. Ранний
+  // возврат выше теперь пропускает и путь «поменялось только заверение»
+  // (attestationChanged без isRealChange) — без этого гейта звено истории и
+  // инкремент keyChangeCount создавались бы и тогда, когда ключи не менялись
+  // вовсе, а R7 (запись обновляется НОВЫМ заверением, keyChangeCount и history
+  // стоят на месте) не сходился бы числом.
+  if (existing && isRealChange) {
     const changed = [];
     if (boxKeyChanged) changed.push('boxKey');
     if (signKeyChanged) changed.push('signKey');
     const histEntry = { boxKey: existing.boxKey, replacedAt: nowMs, changed };
     if (existing.signKey !== undefined) histEntry.signKey = existing.signKey;
+    // Заверение прежней пары уезжает в звено ВМЕСТЕ с ключами, которые оно
+    // заверяет. Потолка на число заверений в истории НЕТ намеренно: он повторил
+    // бы ошибку, которую MAX_KEY_HISTORY уже исправил (см. его комментарий) —
+    // девять смен ключа выталкивали бы заверение той пары, которой подписано
+    // НЕУДОБНОЕ сообщение, и оно становилось бы непроверяемым. Границу держит
+    // размер одного заверения (MAX_ATTESTATION_SIG_BYTES), а не их число.
+    if (existing.attestation !== undefined) histEntry.attestation = existing.attestation;
     // В-5: режем до max(потолок, сколько уже есть) — а не до потолка.
     //
     // Смысл: потолок останавливает РОСТ истории, но НИКОГДА не отнимает
@@ -746,8 +850,10 @@ export function putKey(address, keys, nowMs = Date.now()) {
     keyChangeCount += 1;
   }
 
-  // isRealChange гарантированно true в этой точке — ранний возврат выше
-  // отсёк единственный случай, где это было бы не так.
+  // ⚠️ isRealChange здесь НЕ гарантированно true (правка 4в-1): ранний
+  // возврат выше пропускает и путь «поменялось только заверение». Верно
+  // только более слабое: `isRealChange || attestationChanged` гарантированно
+  // true — иначе мы бы уже вышли через ранний возврат.
   const updatedAt = nowMs;
 
   // spread `...(existing || {})` СНАЧАЛА — то же правило И-1, что и в
@@ -768,6 +874,13 @@ export function putKey(address, keys, nowMs = Date.now()) {
   if (signKey !== undefined) record.signKey = signKey;
   // signKey не передан этим вызовом — ничего доп. делать не нужно: если он
   // уже был у existing, spread выше его уже сохранил как есть.
+
+  if (attestation !== undefined) record.attestation = attestation;
+  // ⚠️ Ключи сменились, а заверения к НОВЫМ не пришло — прежнее обязано уйти с
+  // записи: оно про прежние ключи, и оставленное здесь читалось бы как
+  // «заверение не сходится» (то есть как подделка) вместо честного «заверения
+  // нет». В историю оно при этом уже легло строкой выше (если существовало).
+  else if (isRealChange) delete record.attestation;
 
   _directory[address] = record;
   try {

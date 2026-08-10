@@ -3550,13 +3550,23 @@ app.post('/keys', (req, res) => {
   // под-ключом в chatConversation.ts). Клиент чата передаёт его ВСЕГДА;
   // необязательным поле осталось по форме, чтобы старое тело без него
   // по-прежнему клало только boxKey и не отвергалось.
-  const { boxKey, signKey } = req.body || {};
+  //
+  // attestation — заверение связки «адрес ↔ ключи» подписью КОШЕЛЬКА (4в-1).
+  // Сервер его хранит и отдаёт, подпись не проверяет (разбор — directory.js).
+  const { boxKey, signKey, attestation } = req.body || {};
   try {
-    const stored = putKey(address, { boxKey, signKey }, Date.now());
+    const stored = putKey(address, { boxKey, signKey, attestation }, Date.now());
     res.json(stored);
   } catch (e) {
     if (e.code === 'invalid_key') {
       return res.status(400).json({ error: e.message, code: 'invalid_key' });
+    }
+    if (e.code === 'invalid_attestation') {
+      // Отдельный код, а не invalid_key: клиент по нему повторяет запрос БЕЗ
+      // заверения, чтобы негодная улика не стоила человеку самого объявления
+      // ключа (publishChatKeys). Слитые в один код, эти два случая заставили бы
+      // его повторять и то, что повторять бессмысленно.
+      return res.status(400).json({ error: e.message, code: 'invalid_attestation' });
     }
     if (e.code === 'directory_unavailable') {
       return res.status(503).json({ error: e.message, code: 'directory_unavailable' });
