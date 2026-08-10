@@ -40,6 +40,7 @@ import { SEALED_ATTACHMENT_KEY_HEX_LEN } from './chatPayloadForm';
 import {
   buildPresentation, canonicalPresentationBytes, b64FromBytes, bytesFromB64,
   PRESENTATION_KIND, DECLARED_COUNTS_CARRY_NO_UNOPENED, type PresentationContainer,
+  toArbiterBoxKeyBytes, toPeerBoxKeyBytes,
 } from './presentation';
 import type { ChatSession } from './chatSession';
 import { installFakeChatDisk, type FakeChatDisk } from './__stand__/fakeChatDisk';
@@ -175,8 +176,8 @@ async function conversation(peerTexts: string[]): Promise<{ own: ChainLink[]; pe
 async function build(selected: { seq: number; sender: `0x${string}` }[], over: Partial<Parameters<typeof buildPresentation>[0]> = {}) {
   return buildPresentation({
     dealId: DEAL, presenter: ALICE, peer: L(BOB),
-    arbiterBoxKey: arbiter.keypair.publicKey,
-    peerBoxKey: bob.keypair.publicKey,
+    arbiterBoxKey: toArbiterBoxKeyBytes(arbiter.keypair.publicKey),
+    peerBoxKey: toPeerBoxKeyBytes(bob.keypair.publicKey),
     selected, session: alice,
     ownAttestation: aliceAtt, peerAttestation: bobAtt,
     now: () => 1_754_500_000_000,
@@ -531,6 +532,96 @@ describe('4в-5: три объявленных числа (§15.4, §15.5)', () 
   }, 60_000);
 });
 
+/* ═══ доработка ревью: not_in_archive / not_in_conversation — ноль тестов было ═══ */
+
+describe('4в-5: подготовить не удалось БЕЗ звена — not_in_archive и not_in_conversation (доработка ревью)', () => {
+  // ⚠️ ДО ЭТОГО КРУГА этих двух родов не проверял ни один тест: грепом по всем
+  // трём файлам тестов задачи — ноль попаданий на `not_in_conversation` и
+  // `not_in_archive`. Опасность именно в этом: сумма «прочитано+скрыто+
+  // notPrepared» у ЭТИХ ДВУХ родов НАМЕРЕННО превышает число сообщений в
+  // переписке (звена нет физически — кадра нет на устройстве вовсе, ни своего,
+  // ни чужого), в отличие от `undecryptable`/`aad_mismatch` (звено остаётся в
+  // цепочке, суммы сходятся день-в-день). Кто-нибудь увидит превышение, решит,
+  // что это баг, и «починит» — а поведение названо вслух намеренным
+  // (`presentation.ts:713-717`).
+
+  it('выбор от третьего лица (не сторона переписки) — not_in_conversation, звена нет НИГДЕ', async () => {
+    await conversation(['чужое-0', 'чужое-1']);   // own 4 (seq0..3) + peer 2 (seq0..1) = 6 сообщений
+    const res = await build([
+      { seq: 1, sender: ALICE },              // настоящее своё — прочитано
+      { seq: 0, sender: L(carol.address) },   // третье лицо: не presenter, не peer
+    ]);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const c = res.container;
+
+    expect(c.notPrepared).toEqual([{ seq: 0, sender: L(carol.address), reason: 'not_in_conversation' }]);
+    expect(c.frames.map(f => f.seq)).toEqual([1]);
+    // Клеймо carol не встречается НИ В ОДНОЙ из двух цепочек (не presenter,
+    // не peer) — звена нет нигде, не только среди показанных.
+    expect(c.chains[0].sender).toBe(L(ALICE));
+    expect(c.chains[1].sender).toBe(L(BOB));
+    expect(c.chains.every(ch => ch.links.every(l => l.sender !== L(carol.address)))).toBe(true);
+
+    // Руками: own — 4 ожидалось (голова покрывает), 1 звено (seq1) → скрыто 3;
+    // peer — 2 ожидалось (архивных сообщений двое), 0 звеньев (carol —
+    // не участник, ни один peer-выбор не удался) → скрыто 2.
+    expect(c.counts).toEqual({ read: 1, hidden: 5, notPrepared: 1 });
+    const sum = c.counts.read + c.counts.hidden + c.counts.notPrepared;
+    expect(sum).toBe(7);   // на 1 БОЛЬШЕ настоящих 6 — ровно число not_in_conversation записей
+    console.info(
+      `[4в-5 доработка] переписка 6 (4 своих + 2 чужих); прочитано ${c.counts.read}, ` +
+      `скрыто ${c.counts.hidden}, не подготовлено ${c.counts.notPrepared} (not_in_conversation); ` +
+      `сумма ${sum} — намеренно на 1 больше 6.`,
+    );
+  }, 60_000);
+
+  it('дыра в архиве (кадр не долетел/место кончилось) — not_in_archive, звена тоже нет', async () => {
+    // Реальное сообщение существовало (номер внутри диапазона, который якорь
+    // подтверждает по максимуму АРХИВНОГО номера), но кадра на устройстве нет:
+    // сеть оборвалась на приёме, кончилось место, вкладку свернули до записи.
+    // Дыра НАМЕРЕННО посередине (seq 2 из 0..3), а не на хвосте — иначе она бы
+    // просто не попала в диапазон и не отличалась бы от «ещё не написали».
+    const built: { frame: Uint8Array; key: string }[] = [];
+    let prev: ChainLink | null = null;
+    for (let i = 0; i < 4; i++) {
+      const f = await frameFrom(bob, alice.keypair.publicKey, { text: `чужое-${i}` }, 20_000 + i, prev);
+      prev = f.link;
+      if (i !== 2) built.push({ frame: f.frame, key: f.key });   // ⚠️ seq 2 НЕ архивируется
+    }
+    await archiveAsEngineDoes(built, BOB);
+    const stored = await readConversationArchive(ALICE, BOB);
+    expect(stored).toHaveLength(3);
+    expect(new Set(stored.map(f => decodeFrame(f.frame)!.link.seq))).toEqual(new Set([0, 1, 3]));
+
+    const res = await build([{ seq: 1, sender: BOB }, { seq: 2, sender: BOB }]);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const c = res.container;
+
+    expect(c.notPrepared).toEqual([{ seq: 2, sender: L(BOB), reason: 'not_in_archive' }]);
+    expect(c.frames.map(f => f.seq)).toEqual([1]);
+    // Звена 2 нет НИГДЕ в цепочке — в отличие от `undecryptable`/`aad_mismatch`,
+    // где кадр физически есть на устройстве и звено остаётся.
+    expect(c.chains[1].links.map(l => l.seq)).toEqual([1]);
+
+    // Руками: own — Алиса не писала вовсе, якорь нулевой → скрыто 0;
+    // peer — максимум АРХИВНОГО номера 3 → ожидалось 4, звеньев 1 (seq1) →
+    // скрыто 3.
+    expect(c.chains[0].links).toEqual([]);
+    expect(c.chains[0].anchor.expectedMessageCount).toBe(0);
+    expect(c.chains[1].anchor.expectedMessageCount).toBe(4);
+    expect(c.counts).toEqual({ read: 1, hidden: 3, notPrepared: 1 });
+    const sum = c.counts.read + c.counts.hidden + c.counts.notPrepared;
+    expect(sum).toBe(5);   // диапазон 4 сообщения (0,1,[дыра],3) — намеренно на 1 больше
+    console.info(
+      `[4в-5 доработка] дыра в архиве на seq 2; прочитано ${c.counts.read}, ` +
+      `скрыто ${c.counts.hidden}, не подготовлено ${c.counts.notPrepared} (not_in_archive); ` +
+      `сумма ${sum} — намеренно на 1 больше диапазона 4.`,
+    );
+  }, 60_000);
+});
+
 /* ═══════════════════════ ключ на двоих ═══════════════════════ */
 
 describe('4в-5: разовый ключ печатается на двоих (§15.6)', () => {
@@ -663,7 +754,7 @@ describe('4в-5: отказы названы, а не проглочены', () 
     // Предъявитель видел бы «сдано», арбитр — пустоту, а молчание истолковали бы
     // против предъявителя. Что красит: печать на нулевой ключ вместо отказа.
     await conversation(['чужое-0']);
-    const res = await build([{ seq: 0, sender: BOB }], { arbiterBoxKey: new Uint8Array(32) });
+    const res = await build([{ seq: 0, sender: BOB }], { arbiterBoxKey: toArbiterBoxKeyBytes(new Uint8Array(32)) });
     expect(res).toEqual({ ok: false, reason: 'arbiter_has_no_key' });
   }, 60_000);
 
@@ -675,7 +766,7 @@ describe('4в-5: отказы названы, а не проглочены', () 
     // выглядит как ключ и не открывается ничем, а §7 замысла тогда молча не
     // достроить никогда).
     await conversation(['чужое-0']);
-    expect(await build([{ seq: 0, sender: BOB }], { peerBoxKey: new Uint8Array(32) }))
+    expect(await build([{ seq: 0, sender: BOB }], { peerBoxKey: toPeerBoxKeyBytes(new Uint8Array(32)) }))
       .toEqual({ ok: false, reason: 'peer_has_no_key' });
   }, 60_000);
 
@@ -685,9 +776,9 @@ describe('4в-5: отказы названы, а не проглочены', () 
     // только из нашего же кода. Отказ здесь врал бы про причину, поэтому громко,
     // как в openSealed на нашем мусоре (chatCrypto.ts:197-205).
     await conversation(['чужое-0']);
-    await expect(build([{ seq: 0, sender: BOB }], { peerBoxKey: new Uint8Array(31).fill(7) }))
+    await expect(build([{ seq: 0, sender: BOB }], { peerBoxKey: toPeerBoxKeyBytes(new Uint8Array(31).fill(7)) }))
       .rejects.toThrow(TypeError);
-    await expect(build([{ seq: 0, sender: BOB }], { arbiterBoxKey: new Uint8Array(31).fill(7) }))
+    await expect(build([{ seq: 0, sender: BOB }], { arbiterBoxKey: toArbiterBoxKeyBytes(new Uint8Array(31).fill(7)) }))
       .rejects.toThrow(TypeError);
     // `peer` теперь обязателен договором — и мусор в нём не проглатывается.
     await expect(build([{ seq: 0, sender: BOB }], { peer: 'не адрес' as `0x${string}` }))

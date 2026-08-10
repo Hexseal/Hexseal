@@ -38,7 +38,10 @@ import {
 } from './chatConversation';
 import { buildLink, type ChainLink } from './chatChain';
 import { signChatKeyAttestation, type ChatKeyAttestation } from './chatKeyAttestation';
-import { buildPresentation, PRESENTATION_MAX_BYTES, PRESENTATION_SEAL_OVERHEAD } from './presentation';
+import {
+  buildPresentation, PRESENTATION_MAX_BYTES, PRESENTATION_SEAL_OVERHEAD,
+  toArbiterBoxKeyBytes, toPeerBoxKeyBytes,
+} from './presentation';
 import type { ChatSession } from './chatSession';
 import { installFakeChatDisk, type FakeChatDisk } from './__stand__/fakeChatDisk';
 
@@ -117,8 +120,8 @@ const pick = (n: number) => Array.from({ length: n }, (_, i) => ({ seq: i, sende
 async function build(selected: { seq: number; sender: `0x${string}` }[]) {
   return buildPresentation({
     dealId: DEAL, presenter: ALICE,
-    arbiterBoxKey: arbiter.keypair.publicKey,
-    peerBoxKey: bob.keypair.publicKey,
+    arbiterBoxKey: toArbiterBoxKeyBytes(arbiter.keypair.publicKey),
+    peerBoxKey: toPeerBoxKeyBytes(bob.keypair.publicKey),
     selected, session: alice, ownAttestation: aliceAtt,
     peer: BOB.toLowerCase() as `0x${string}`,
     now: () => 1_754_500_000_000,
@@ -144,6 +147,14 @@ describe('4в-5: потолок 256 КиБ', () => {
     const refused = await build(pick(5));
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
+    // ⚠️ ДОРАБОТКА РЕВЬЮ: `PresentationRefusal` — размеченный союз (не плоский
+    // интерфейс с необязательными полями). Сужение по `reason` ниже — не
+    // формальность: без него `fits`/`estimatedBytes`/`limitBytes` типизированы
+    // как `number | undefined` (второй член союза их не несёт вовсе), и
+    // компилятор потребовал бы восклицательный знак на каждом обращении. ПОСЛЕ
+    // сужения `refused.fits` — уже `number`, без `!` (строка ниже раньше была
+    // `refused.fits!`).
+    if (refused.reason !== 'too_large') return;
     expect(refused.reason).toBe('too_large');
     expect(refused.limitBytes).toBe(LIMIT);
     expect(refused.estimatedBytes).toBeGreaterThan(LIMIT);
@@ -157,7 +168,8 @@ describe('4в-5: потолок 256 КиБ', () => {
     );
 
     // Названному числу можно верить: ровно столько собирается и влезает…
-    const fits = refused.fits!;
+    // `fits` — уже `number` после сужения выше, никакого `!`.
+    const fits = refused.fits;
     globalThis.__sealCalls = 0;
     const ok = await build(pick(fits));
     expect(ok.ok).toBe(true);

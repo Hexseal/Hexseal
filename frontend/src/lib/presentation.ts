@@ -168,27 +168,83 @@ export type UnsignedPresentation = Omit<PresentationContainer, 'signature'>;
 export type BuildFailure =
   | 'arbiter_has_no_key' | 'peer_has_no_key' | 'nothing_selected' | 'too_large' | 'no_session';
 
-/** Отказ. Поля `fits`/`estimatedBytes`/`limitBytes` — расширение договора: без
- *  числа влезающих кадров отказ по потолку нельзя выполнить человеку (§15.7 и
- *  требование «с числом влезающих кадров»). Присвоение в договорный тип
- *  `{ ok: false; reason: BuildFailure }` от этого не ломается.
+/**
+ * Отказ. РАЗМЕЧЕННЫЙ СОЮЗ, а не плоский интерфейс с необязательными полями
+ * (доработка ревью — прежняя форма держалась присваиваемостью, а не тем, что
+ * иначе не собралось бы: сужение по `reason === 'too_large'` над плоским типом
+ * оставляло `fits` типом `number | undefined`, и обязательность приходилось
+ * подавлять восклицательным знаком).
  *
- *  ⚠️ `fits` — ЕДИНСТВЕННЫЙ источник этого числа на весь план (исправление 11):
- *  `fittingMessageCount` (Задача 8) берёт его отсюда и не считает своей моделью
- *  размера. Две модели разойдутся, и человек увидит «влезает 4» там, где склад
- *  ответит 413 на четырёх. */
-export interface PresentationRefusal {
-  ok: false;
-  reason: BuildFailure;
-  fits?: number;
-  estimatedBytes?: number;
-  limitBytes?: number;
-}
+ * ⚠️ ЭТО НЕ ФОРМАЛЬНОСТЬ. Ровно из плоской формы вырос случай, где выборка
+ * варианта по литералу (`Extract<T, {reason:'too_large'}>` без кортежной
+ * обёртки) давала пустой тип, а утверждение о пустом типе истинно ВСЕГДА —
+ * тип-замок проходил не потому, что форма верна, а потому, что он ничего не
+ * проверял. Союз с двумя явными членами такому не подвержен: `Extract` на нём
+ * даёт ровно один настоящий член, а не пустое пересечение.
+ *
+ * `fits`/`estimatedBytes`/`limitBytes` — расширение договора (без числа
+ * влезающих кадров отказ по потолку нельзя выполнить человеку, §15.7), но
+ * ТОЛЬКО у `reason: 'too_large'` — остальные причины отказа этих чисел не
+ * несут и не притворяются, что несут.
+ *
+ * ⚠️ `fits` — ЕДИНСТВЕННЫЙ источник этого числа на весь план (исправление 11):
+ * `fittingMessageCount` (Задача 8) берёт его отсюда и не считает своей моделью
+ * размера. Две модели разойдутся, и человек увидит «влезает 4» там, где склад
+ * ответит 413 на четырёх.
+ */
+export type PresentationRefusal =
+  | { ok: false; reason: 'too_large'; fits: number; estimatedBytes: number; limitBytes: number }
+  | { ok: false; reason: Exclude<BuildFailure, 'too_large'> };
+
+/**
+ * ⚠️ ЗАМОК КОМПИЛЯТОРА (тот же приём, что `DECLARED_COUNTS_CARRY_NO_UNOPENED`
+ * выше): доказывает, что `fits` под `reason: 'too_large'` — это `number`, а не
+ * `number | undefined`. Если кто-нибудь снова сделает `fits` необязательным
+ * (вернёт плоскую форму), присвоение `true` этому типу перестанет собираться —
+ * `npm run type-check` отдаёт отказ. Живёт здесь, а не в тесте: `*.test.ts`
+ * исключены из программы tsc (`tsconfig.json:34`), проверка формы там ничего
+ * не поймает.
+ */
+type TooLargeRefusal = Extract<PresentationRefusal, { reason: 'too_large' }>;
+export type PresentationRefusalFitsIsRequired =
+  undefined extends TooLargeRefusal['fits'] ? never : true;
+export const PRESENTATION_REFUSAL_FITS_IS_REQUIRED: PresentationRefusalFitsIsRequired = true;
 
 export type NotPreparedReason =
   | 'not_in_archive' | 'not_in_conversation' | 'undecryptable' | 'seal_failed'
   | 'malformed' | 'body_mismatch' | 'bad_signature'
   | 'bad_key' | 'aad_mismatch' | 'bad_form';
+
+declare const ARBITER_BOX_KEY_BYTES: unique symbol;
+declare const PEER_BOX_KEY_BYTES: unique symbol;
+
+/**
+ * Клеймо на 32 байта печати АРБИТРА — фирменный (nominal) тип, тот же приём,
+ * что `BoxKey`/`SignKey` в `arbiterChatKey.ts`. Structurally оба ключа входа —
+ * одинаковые `Uint8Array` длиной 32, ничем не различимые: ревью переставило их
+ * в двух местах вызова, компилятор смолчал (0 ошибок), и перестановку поймал
+ * только прогон (1 красный из всей мутационной серии) — то есть сегодня это
+ * держится поведением, а не формой. Рядом с этими двумя — третий 32-байтовый
+ * ключ (`session.keypair.publicKey`), и следующая правка легко добавит
+ * четвёртый. Клеймо переносит защиту с прогона на компилятор: перестановка
+ * `arbiterBoxKey`/`peerBoxKey` в вызове `buildPresentation` перестаёт
+ * собираться. */
+export type ArbiterBoxKeyBytes = Uint8Array & { readonly [ARBITER_BOX_KEY_BYTES]: true };
+/** Симметричное клеймо для ключа печати ВТОРОЙ СТОРОНЫ. См. `ArbiterBoxKeyBytes`. */
+export type PeerBoxKeyBytes = Uint8Array & { readonly [PEER_BOX_KEY_BYTES]: true };
+
+/** Единственная законная точка клеймения сырых байт ключом печати арбитра —
+ *  для вызывающих, которые уже добыли байты не через `arbiterBoxKeyBytes()`
+ *  ниже (тесты; локальный кэш байт по адресу). Рантайм ничего не проверяет —
+ *  клеймо только для тип-чекера, сюда приходят СТРОГО со стороны, которая уже
+ *  знает происхождение байт. */
+export function toArbiterBoxKeyBytes(bytes: Uint8Array): ArbiterBoxKeyBytes {
+  return bytes as ArbiterBoxKeyBytes;
+}
+/** Симметрично `toArbiterBoxKeyBytes` — для ключа второй стороны. */
+export function toPeerBoxKeyBytes(bytes: Uint8Array): PeerBoxKeyBytes {
+  return bytes as PeerBoxKeyBytes;
+}
 
 export interface BuildPresentationInput {
   dealId: `0x${string}`;
@@ -199,8 +255,8 @@ export interface BuildPresentationInput {
    *  собеседника или из выбора» не закрывал случай «показываю только своё,
    *  заверения собеседника нет» вовсе — теперь дыры не существует, а не обходится. */
   peer: `0x${string}`;
-  arbiterBoxKey: Uint8Array;
-  peerBoxKey: Uint8Array;
+  arbiterBoxKey: ArbiterBoxKeyBytes;
+  peerBoxKey: PeerBoxKeyBytes;
   selected: { seq: number; sender: `0x${string}` }[];
   session: ChatSession;
   ownAttestation: ChatKeyAttestation;
@@ -264,14 +320,17 @@ function hex32(bytes: Uint8Array): string {
  *
  * Нулевой ключ здесь НЕ отвергается: «в цепи ключа нет» — законное состояние,
  * и решает его `buildPresentation` отказом `arbiter_has_no_key`, а не броском.
+ *
+ * Возвращает `ArbiterBoxKeyBytes` (не голый `Uint8Array`) — единственный путь
+ * к этому клейму из хексовых байт с цепи, симметрично `toArbiterBoxKeyBytes`.
  */
-export function arbiterBoxKeyBytes(key: BoxKey): Uint8Array {
+export function arbiterBoxKeyBytes(key: BoxKey): ArbiterBoxKeyBytes {
   if (typeof key !== 'string' || !KEY_HEX_RE.test(key)) {
     throw new TypeError(`arbiterBoxKeyBytes: ожидался 0x + 64 hex (получено ${String(key)})`);
   }
   const out = new Uint8Array(BOX_KEY_LEN);
   for (let i = 0; i < BOX_KEY_LEN; i++) out[i] = parseInt(key.slice(2 + i * 2, 4 + i * 2), 16);
-  return out;
+  return toArbiterBoxKeyBytes(out);
 }
 
 /* ─────────────────────────── base64 ─────────────────────────── */

@@ -45,7 +45,7 @@ import {
 } from './chatConversation';
 import { buildLink } from './chatChain';
 import { signChatKeyAttestation, type ChatKeyAttestation } from './chatKeyAttestation';
-import { buildPresentation } from './presentation';
+import { buildPresentation, toArbiterBoxKeyBytes, toPeerBoxKeyBytes } from './presentation';
 import type { ChatSession } from './chatSession';
 import { installFakeChatDisk, type FakeChatDisk } from './__stand__/fakeChatDisk';
 
@@ -124,8 +124,8 @@ const chainClient = (): PublicClient =>
 async function build(over: Partial<Parameters<typeof buildPresentation>[0]> = {}) {
   return buildPresentation({
     dealId: DEAL, presenter: ALICE, peer: BOB.toLowerCase() as `0x${string}`,
-    arbiterBoxKey: arbiter.keypair.publicKey,
-    peerBoxKey: bob.keypair.publicKey,
+    arbiterBoxKey: toArbiterBoxKeyBytes(arbiter.keypair.publicKey),
+    peerBoxKey: toPeerBoxKeyBytes(bob.keypair.publicKey),
     selected: [{ seq: 0, sender: BOB }],
     session: alice, ownAttestation: aliceAtt,
     now: () => 1_754_500_000_000,
