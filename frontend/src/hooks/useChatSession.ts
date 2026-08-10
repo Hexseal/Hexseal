@@ -76,6 +76,10 @@ import {
   ChatDirectoryError, CHAT_PUBLIC_KEY_LEN, KEY_HEX_RE, toKeyHex, fromKeyHex,
   type ChatDirectoryErrorCode, type PeerChatKeys,
 } from '@/lib/chatDirectoryTypes';
+import {
+  cachedChatKeyAttestation, forgetChatKeyAttestation, parseChatKeyAttestation,
+  type ChatKeyAttestation,
+} from '@/lib/chatKeyAttestation';
 import { withWalletLock } from '@/lib/walletLock';
 import { noteWalletHandoff, requireSignatureGate, ChatSignatureDeferred } from '@/lib/chatSignatureGate';
 import { mailboxWorthPollingFor } from '@/lib/chatAnnounceStore';
@@ -110,16 +114,43 @@ async function directoryFailure(res: Response, fallback: string): Promise<never>
   throw new ChatDirectoryError(body.error ?? fallback, code, { status: res.status });
 }
 
+/** Отказ именно про заверение? Тело читается ТОЛЬКО на этой ветке — на всех
+ *  остальных его читает `directoryFailure`, и отобрать у неё тело значило бы
+ *  потерять код отказа там, где вся дисциплина про имена отказов. */
+async function refusedAttestation(res: Response): Promise<boolean> {
+  try {
+    const body: unknown = await res.json();
+    return !!body && typeof body === 'object'
+      && (body as { code?: unknown }).code === 'invalid_attestation';
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Кладёт в справочник ОБЕ открытые половины сеанса.
+ * Кладёт в справочник ОБЕ открытые половины сеанса — и заверение кошельком,
+ * если оно есть на устройстве.
  *
- * Адрес сервер берёт ИЗ ПРОПУСКА, не из тела — положить ключ за другого
- * нельзя (правило 1 Задачи 2). Поэтому сюда приходит `pass`, а не адрес.
+ * Адрес сервер берёт ИЗ ПРОПУСКА, не из тела — положить ключ за другого нельзя
+ * (правило 1 Задачи 2). Поэтому сюда приходит `pass`, а не адрес.
  *
  * Байт-в-байт повторная публикация на сервере — ранний возврат без записи на
  * диск (`relayer/directory.js`), так что звать это на каждом открытии сеанса
  * дёшево и намеренно: устройство, где ключ уже лежал, всё равно обязано
  * убедиться, что справочник о нём знает.
+ *
+ * ⚠️ ПОДПИСИ ЗДЕСЬ НЕ ПРОСЯТ НИКОГДА. Заверение только ЧИТАЕТСЯ из кладовой:
+ * эта функция зовётся на каждом открытии сеанса, и окно кошелька в ней
+ * означало бы подпись при каждом заходе (и петлю на Android — два
+ * автоподписания, столкнувшихся после выгрузки вкладки, 31 июля). Подписывает
+ * `ensureChatKeyAttestation`, по нажатию человека.
+ *
+ * ⚠️ ОТКАЗ СПРАВОЧНИКА ИМЕННО ПРО ЗАВЕРЕНИЕ НЕ СМЕЕТ СТОИТЬ ЧЕЛОВЕКУ САМОГО
+ * ОБЪЯВЛЕНИЯ. `POST /keys` — единственная дорога объявить ключ; не пройдёт
+ * она, и человеку не сможет написать никто, при том что чат у него выглядит
+ * работающим. Поэтому: повторить без заверения, негодное снять с устройства,
+ * сказать в журнал. Молчать нельзя — иначе «сломалось» неотличимо от
+ * «сработало».
  */
 export async function publishChatKeys(
   pass: string,
@@ -127,16 +158,31 @@ export async function publishChatKeys(
   signal?: AbortSignal,
 ): Promise<void> {
   const signer = await deriveLinkSigningKeypair(session.keypair);
-  const res = await fetch(`${RELAYER_URL}/keys`, {
+  const keys = {
+    boxKey: toKeyHex(session.keypair.publicKey),
+    signKey: toKeyHex(signer.publicKey),
+  };
+  const attestation = await cachedChatKeyAttestation(session);
+
+  const send = (body: unknown) => fetch(`${RELAYER_URL}/keys`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-bag-pass': pass },
-    body: JSON.stringify({
-      boxKey: toKeyHex(session.keypair.publicKey),
-      signKey: toKeyHex(signer.publicKey),
-    }),
+    body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok) await directoryFailure(res, 'Не удалось опубликовать открытые ключи чата');
+
+  const res = await send(attestation ? { ...keys, attestation } : keys);
+  if (res.ok) return;
+
+  if (attestation && res.status === 400 && await refusedAttestation(res)) {
+    forgetChatKeyAttestation(session.address);
+    const bare = await send(keys);
+    if (!bare.ok) await directoryFailure(bare, 'Не удалось опубликовать открытые ключи чата');
+    console.warn('[chat] справочник отверг заверение ключей — ключи объявлены без него, заверение снято с устройства');
+    return;
+  }
+
+  await directoryFailure(res, 'Не удалось опубликовать открытые ключи чата');
 }
 
 /**
@@ -185,7 +231,23 @@ export async function fetchPeerChatKeys(
     }
   }
 
-  return { boxKey: fromKeyHex(rec.boxKey, 'ключ запечатывания'), signKey, signKeyHistory: history };
+  // Заверение — данные из сети, и МУСОР В ОДНОМ ЗВЕНЕ не повод потерять
+  // остальные: битое заверение прежней пары не должно стоить человеку
+  // проверяемости нынешней.
+  const attestation = parseChatKeyAttestation(rec.attestation);
+  const attestationHistory: ChatKeyAttestation[] = [];
+  if (Array.isArray(rec.history)) {
+    for (const entry of rec.history) {
+      const parsed = parseChatKeyAttestation((entry as Record<string, unknown> | null)?.attestation);
+      if (parsed) attestationHistory.push(parsed);
+    }
+  }
+
+  return {
+    boxKey: fromKeyHex(rec.boxKey, 'ключ запечатывания'),
+    signKey, signKeyHistory: history,
+    attestation, attestationHistory,
+  };
 }
 
 /* ──────────────────────── пропуск склада ──────────────────────────────── */
