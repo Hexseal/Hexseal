@@ -1641,11 +1641,16 @@ export const ARBITER_REGISTRY_ABI = [
   },
   // Arbiter actions
   {
-    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
-    name: 'claimDispute',
+    type: "function",
+    name: "claimDispute",
+    inputs: [
+      { name: "agreement", type: "address" },
+      { name: "salt", type: "bytes32" },
+      { name: "boxKey", type: "bytes32" },
+      { name: "signKey", type: "bytes32" },
+    ],
     outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
+    stateMutability: "nonpayable",
   },
   {
     inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
@@ -1687,6 +1692,16 @@ export const ARBITER_REGISTRY_ABI = [
     inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
     name: 'getArbiterDeals',
     outputs: [{ internalType: 'address[]', name: '', type: 'address[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getArbiterChatKeys',
+    outputs: [
+      { internalType: 'bytes32', name: 'boxKey', type: 'bytes32' },
+      { internalType: 'bytes32', name: 'signKey', type: 'bytes32' },
+    ],
     stateMutability: 'view',
     type: 'function',
   },

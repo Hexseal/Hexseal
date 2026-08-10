@@ -17,7 +17,10 @@ import {
 import { toast } from "react-hot-toast";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless } from "@/lib/relay";
+import {
+  commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless,
+  setArbiterChatKeyGasless,
+} from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
 import { shortAddr } from "@/lib/utils";
@@ -25,6 +28,16 @@ import { DISPUTE_WINDOW_DAYS, FINALIZE_DELAY } from "@/config/constants";
 import { computeArbiterReward } from "@/lib/disputeBounty";
 import { withWalletLock } from "@/lib/walletLock";
 import { loadPass, savePass, clearPass, type DisputeLogPass } from "@/lib/disputeLogPass";
+import {
+  deriveClaimChatKeys, createGatedSignChatKey, rethrowIfSignatureDeferred, runGatedKeyAction,
+  type GatedSignChatKey,
+} from "@/lib/arbiterClaimKeys";
+import { isSignatureDeferred } from "@/lib/chatSignatureGate";
+import {
+  decideNoKeyNotice, decideDirectoryDivergenceNotice, readArbiterChatKeysFromChain,
+  compareChainWithDirectory, type ChainChatKeys, type DirectoryVerdict,
+} from "@/lib/arbiterChatKey";
+import { fetchPeerChatKeys } from "@/hooks/useChatSession";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -146,6 +159,66 @@ export default function ArbiterPage() {
     query: { enabled: !!address },
   }) as { data: boolean | undefined };
 
+  // Есть ли у меня ключ в цепи, и совпадает ли он с тем, что знает справочник
+  // на нашем сервере. Ключ ЧИТАЕТСЯ ИЗ ЦЕПИ через readArbiterChatKeysFromChain
+  // (arbiterChatKey.ts) — не своим инлайновым useReadContract: там объявлена
+  // «точка доверия», где порядок boxKey/signKey прибит к исходнику контракта
+  // и заперт claimAbiMatchesContract.test.ts. Свой инлайновый вызов рядом был
+  // бы вторым, несинхронизированным чтением того же самого.
+  //
+  // Справочник (решение владельца 9 августа) — только свидетель: он живёт на
+  // нашем сервере, и кто до сервера добрался, подсунул бы свой ключ вместо
+  // моего. Решает ВСЕГДА цепь; справочник лишь позволяет заметить подмену —
+  // и об этом расхождении (`directory_differs`) МЫ ГОВОРИМ ВСЛУХ
+  // (arbiter.key_directory_mismatch). Отставший справочник (`directory_missing`)
+  // — не тревога, молчим (compareChainWithDirectory, decideDirectoryDivergenceNotice).
+  const [myChainKeys, setMyChainKeys] = useState<ChainChatKeys | null>(null);
+  const [myChainKeysError, setMyChainKeysError] = useState<unknown>(null);
+  const [directoryVerdict, setDirectoryVerdict] = useState<DirectoryVerdict | null>(null);
+  const [chainKeysTick, setChainKeysTick] = useState(0);
+  const refetchMyChainKeys = useCallback(() => setChainKeysTick(k => k + 1), []);
+
+  useEffect(() => {
+    if (!address || !publicClient) {
+      setMyChainKeys(null); setMyChainKeysError(null); setDirectoryVerdict(null);
+      return;
+    }
+    let cancelled = false;
+    readArbiterChatKeysFromChain(publicClient, address)
+      .then(async (keys) => {
+        if (cancelled) return;
+        setMyChainKeys(keys);
+        setMyChainKeysError(null);
+        // Справочник — только свидетель. Провал его чтения РАВЕН
+        // directory_missing (compareChainWithDirectory увидит null здесь) —
+        // молчим, как и задумано, а не превращаем отказ сети в тревогу.
+        let directory: { boxKey: Uint8Array; signKey: Uint8Array | null } | null = null;
+        try {
+          const peer = await fetchPeerChatKeys(address);
+          directory = { boxKey: peer.boxKey, signKey: peer.signKey };
+        } catch { /* directory_missing ниже и так покрывает молчание справочника */ }
+        if (cancelled) return;
+        setDirectoryVerdict(compareChainWithDirectory(keys, directory));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setMyChainKeys(null);
+        setMyChainKeysError(err);
+        setDirectoryVerdict(null);
+      });
+    return () => { cancelled = true; };
+  }, [address, publicClient, chainKeysTick]);
+
+  // Решение вынесено в decideNoKeyNotice (arbiterChatKey.ts) и НЕ повторяется
+  // здесь условием на месте: отказ чтения (функции ещё нет в даймонде до
+  // разреза) — это НЕ «ключа нет», и различать их обязана ОДНА функция с
+  // замером на неё, а не копия условия в разметке.
+  const showNoKeyNotice = decideNoKeyNotice({
+    keys: myChainKeys ? [myChainKeys.boxKey, myChainKeys.signKey] : undefined,
+    error: myChainKeysError,
+  });
+  const showDirectoryMismatchNotice = decideDirectoryDivergenceNotice(directoryVerdict);
+
   const { data: myReward, refetch: refetchReward } = useReadContract({
     address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
     functionName: "getArbiterReward", args: [address ?? ZERO_ADDR as Address],
@@ -193,6 +266,18 @@ export default function ArbiterPage() {
 
   const handleClaim = async (agreement: string) => {
     if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
+    // Отметка ухода к кошельку и сам вызов подписи — из общей обёртки
+    // (`createGatedSignChatKey`, arbiterClaimKeys.ts), а НЕ повторены здесь
+    // руками. Тип `GatedSignChatKey` (не голый `SignChatKey`) — граница
+    // компилятора, не только соглашение: подставить сюда неотмеченного
+    // подписчика (`signChatKey = <голая функция>`) теперь не проходит
+    // `npm run type-check`, а не просто «расходится с тестом».
+    const signChatKey: GatedSignChatKey = createGatedSignChatKey((typedData) =>
+      walletClient.signTypedData({
+        account: walletClient.account!,
+        ...(typedData as any),
+      }) as Promise<`0x${string}`>,
+    );
     setBusy(`claim:${agreement}`);
     // The salt used to live only in this closure's local memory — if the tab
     // closed/reloaded (or the wallet/network hung and the user gave up) in the
@@ -207,14 +292,46 @@ export default function ArbiterPage() {
       let salt = (() => { try { return localStorage.getItem(storageKey) as Hex | null; } catch { return null; } })();
       if (salt) {
         try {
-          toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-          const { txHash: claimTx } = await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
+          // Коммит уже был замайнен раньше (другая вкладка, прерванная
+          // попытка) — ждать блок не нужно, но ключ всё равно добывается
+          // только сейчас, по нажатию, тем же вызовом, что и в полном пути.
+          toast.loading(t("arbiter.claim_key"), { id: commitToast });
+          // Гейт-последовательность (сброс отметки → гейт перед добычей ключа
+          // → добыча → гейт перед заявкой) — из общей runGatedKeyAction
+          // (arbiterClaimKeys.ts), не пересобрана здесь руками: три места
+          // страницы обязаны вести себя одинаково, а не разъехаться со
+          // временем.
+          const { txHash: claimTx } = await runGatedKeyAction(
+            () => deriveClaimChatKeys(address as Address, signChatKey),
+            (keys) => {
+              toast.loading(t("arbiter.claim_step2"), { id: commitToast });
+              return claimDisputeGasless(
+                walletClient, publicClient, agreement as Address, salt as Hex,
+                keys.boxKey, keys.signKey,
+              );
+            },
+          );
           assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           toast.success(t("arbiter.claim_success"), { id: commitToast });
           bump();
+          // Заявка только что записала ключ в цепь (claimDisputeGasless возит
+          // boxKey/signKey) — без этого плашка «нет ключа» осталась бы висеть
+          // до следующего действия на странице, хотя ключ уже на месте.
+          // handlePublishKey уже так делает — здесь тот же случай.
+          refetchMyChainKeys();
           return;
-        } catch {
+        } catch (revealErr) {
+          // Проброс отсрочки гейта — из общего ДЕЙСТВИЯ
+          // (`rethrowIfSignatureDeferred`, arbiterClaimKeys.ts), не решение,
+          // переписанное заново здесь: отсрочка гейта — НЕ провалившееся
+          // предъявление, коммит остаётся валиден, соль остаётся на
+          // устройстве. Жечь свежий коммит из-за того, что страница ушла в
+          // кошелёк, было бы неверно — нужно просто нажать ещё раз. Функция
+          // либо бросает сама (и код ниже не выполнится), либо не бросает —
+          // смотреть на результат нечего, у вызова нет ничего, что можно
+          // забыть проверить.
+          rethrowIfSignatureDeferred(revealErr);
           try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
           salt = null;
           // A failed reveal doesn't necessarily mean the commitment is stale —
@@ -239,6 +356,9 @@ export default function ArbiterPage() {
                 { id: commitToast },
               );
               bump();
+              // Если клеймер — это МЫ (другая вкладка), ключ уже лёг в цепь
+              // оттуда, а эта вкладка ещё не знает.
+              if (claimer.toLowerCase() === address.toLowerCase()) refetchMyChainKeys();
               return;
             }
           } catch { /* on-chain check failed — fall through and try a fresh commit */ }
@@ -256,13 +376,37 @@ export default function ArbiterPage() {
       const { txHash: commitTx } = await commitDisputeClaimGasless(walletClient, publicClient, commitment);
       toast.loading(t("arbiter.claim_confirming"), { id: commitToast });
       assertMined(await publicClient.waitForTransactionReceipt({ hash: commitTx as `0x${string}` }));
-      toast.loading(t("arbiter.claim_step2"), { id: commitToast });
-      const { txHash: claimTx } = await claimDisputeGasless(walletClient, publicClient, agreement as Address, salt);
+
+      // Ключ добывается ЗДЕСЬ — в мёртвом времени между двумя ходами заявки.
+      // Порядок выбран владельцем: только по его действию, никаких «заранее».
+      // На критический путь это не ложится: гонку за спор решает claimDispute,
+      // а не коммит.
+      toast.loading(t("arbiter.claim_key"), { id: commitToast });
+      const { txHash: claimTx } = await runGatedKeyAction(
+        () => deriveClaimChatKeys(address as Address, signChatKey),
+        (keys) => {
+          toast.loading(t("arbiter.claim_step2"), { id: commitToast });
+          return claimDisputeGasless(
+            walletClient, publicClient, agreement as Address, salt as Hex,
+            keys.boxKey, keys.signKey,
+          );
+        },
+      );
       assertMined(await publicClient.waitForTransactionReceipt({ hash: claimTx as `0x${string}` }));
       try { localStorage.removeItem(storageKey); } catch { /* unavailable */ }
       toast.success(t("arbiter.claim_success"), { id: commitToast });
       bump();
+      // См. комментарий у того же вызова на быстром пути выше: заявка только
+      // что записала ключ в цепь, плашка «нет ключа» обязана это увидеть.
+      refetchMyChainKeys();
     } catch (err: any) {
+      // Гейт отложил подпись, потому что страница уходила к кошельку. Это не
+      // ошибка: человеку надо нажать ещё раз, и тогда окно откроется по его
+      // действию, а не в замороженную вкладку.
+      if (isSignatureDeferred(err)) {
+        toast(t("arbiter.claim_press_again"), { id: commitToast });
+        return;
+      }
       toast.error(err?.message || t("common.error"), { id: commitToast });
     } finally { setBusy(null); }
   };
@@ -278,6 +422,39 @@ export default function ArbiterPage() {
       bump();
     } catch (err: any) {
       toast.error(err?.message || t("common.error"));
+    } finally { setBusy(null); }
+  };
+
+  // Для арбитра, взявшего спор ДО апгрейда 9 августа: тогда заявка ключей не
+  // возила, и в цепи их нет. Одна транзакция публикует их отдельно от заявки —
+  // сторона на предъявлении наконец получит, кому предъявлять.
+  const handlePublishKey = async () => {
+    if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
+    // Тот же защищённый подписчик, что уже применяется в handleClaim выше —
+    // не свой отдельный. GatedSignChatKey — фирменный тип: подставить сюда
+    // голый SignChatKey не даст скомпилироваться.
+    const signChatKey: GatedSignChatKey = createGatedSignChatKey((typedData) =>
+      walletClient.signTypedData({
+        account: walletClient.account!,
+        ...(typedData as any),
+      }) as Promise<`0x${string}`>,
+    );
+    setBusy("publish-key");
+    const id = toast.loading(t("arbiter.claim_key"));
+    try {
+      // Ключ добывается ЗДЕСЬ, по нажатию — не на входе на страницу. Гейт —
+      // из общей runGatedKeyAction (arbiterClaimKeys.ts), той же, что
+      // handleClaim выше: третье место с тем же приёмом не заводит свою копию.
+      const { txHash } = await runGatedKeyAction(
+        () => deriveClaimChatKeys(address as Address, signChatKey),
+        (keys) => setArbiterChatKeyGasless(walletClient, publicClient, keys.boxKey, keys.signKey),
+      );
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}` }));
+      toast.success(t("arbiter.key_published"), { id });
+      refetchMyChainKeys();
+    } catch (err: any) {
+      if (isSignatureDeferred(err)) { toast(t("arbiter.claim_press_again"), { id }); return; }
+      toast.error(err?.message || t("common.error"), { id });
     } finally { setBusy(null); }
   };
 
@@ -358,6 +535,19 @@ export default function ArbiterPage() {
           <p className="text-xs text-white/40 mt-0.5">{t("arbiter.subtitle")}</p>
         </div>
       </div>
+
+      {/* ── Расхождение ключа со справочником ── Решает всегда цепь; это
+          только СЛОВО о том, что наш сервер называет другой ключ — иначе о
+          подмене на сервере мы бы не узнали никогда (решение владельца
+          9 августа). Не гейтится isArbiter: если ключ уже был опубликован,
+          знать об этом важно и разжалованному арбитру с открытым делом
+          (submitVerdict проверяет только disputeClaims, не isArbiter). */}
+      {showDirectoryMismatchNotice && (
+        <div className="rounded-[16px] border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-amber-400/70 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.key_directory_mismatch")}</p>
+        </div>
+      )}
 
       {/* ── Reward strip ── */}
       {isArbiter && myReward !== undefined && myReward > 0n && (
@@ -485,6 +675,9 @@ export default function ArbiterPage() {
                     onRelease={handleRelease}
                     onSubmitVerdict={handleSubmitVerdict}
                     onFinalizeVerdict={handleFinalizeVerdict}
+                    showNoKeyNotice={showNoKeyNotice}
+                    onPublishKey={handlePublishKey}
+                    isArbiter={!!isArbiter}
                   />
                 ))}
               </div>
@@ -884,11 +1077,21 @@ function DisputeLog({ dealId, client, executor }: { dealId: string; client?: str
 
 function MyCaseCard({
   agreement, myAddress, busy, refresh, onRelease, onSubmitVerdict, onFinalizeVerdict,
+  showNoKeyNotice, onPublishKey, isArbiter,
 }: {
   agreement: string; myAddress?: string; busy: string | null; refresh: number;
   onRelease: (a: string) => void;
   onSubmitVerdict: (a: string, clientWins: boolean) => void;
   onFinalizeVerdict: (a: string) => void;
+  showNoKeyNotice: boolean;
+  onPublishKey: () => void;
+  /** Разжалованный арбитр (третья судейская ошибка) остаётся судьёй по
+   *  открытому делу — submitVerdict проверяет только disputeClaims, а не
+   *  реестр, — но setArbiterChatKey гейтится isArbiter и он ключ записать
+   *  больше не может. Кнопка показывается только когда isArbiter истинно;
+   *  иначе — честное объяснение вместо кнопки, которая гарантированно
+   *  ревертит (NotArbiter). */
+  isArbiter: boolean;
 }) {
   const t = useTranslations();
   const MINI_ABI = [
@@ -1034,6 +1237,33 @@ function MyCaseCard({
             )}
           </div>
           <DisputeLog dealId={agreement} client={client ?? undefined} executor={executor ?? undefined} />
+        </div>
+      )}
+
+      {/* No-key notice: спор взят ДО апгрейда 9 августа, ключа в цепи нет.
+          Классы — амбер из соседних блоков этой же карточки (Dispute reason,
+          кнопка «Завершить вердикт» в Verdict panel ниже), не свои. */}
+      {isMineClaim && showNoKeyNotice && (
+        <div className="mx-3 mb-3 rounded-[12px] border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5">
+          {isArbiter ? (
+            <>
+              <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.no_key_notice")}</p>
+              <button
+                onClick={onPublishKey}
+                disabled={!!busy}
+                className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
+              >
+                {busy === "publish-key" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {t("arbiter.publish_key")}
+              </button>
+            </>
+          ) : (
+            // Разжалован, но всё ещё судья по этому открытому делу (см.
+            // комментарий у пропа isArbiter выше) — кнопка гарантированно
+            // ревертнула бы (NotArbiter в контракте). Молчать нельзя: он не
+            // должен решить, что предъявление просто прошло гладко.
+            <p className="text-xs text-amber-300/85 leading-relaxed">{t("arbiter.no_key_notice_demoted")}</p>
+          )}
         </div>
       )}
 

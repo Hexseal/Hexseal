@@ -20,6 +20,7 @@ import {
 } from 'viem';
 import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { CHAIN_ID } from '@/config/constants';
+import type { BoxKey, SignKey } from '@/lib/arbiterChatKey';
 import {
   acquireWalletLock,
   awaitFreshForwarderNonce,
@@ -45,6 +46,75 @@ const USDC_READ_ABI = parseAbi([
   'function name() view returns (string)',
   'function version() view returns (string)',
 ]);
+
+/**
+ * ABI заявки на спор. Вынесен из тела функции наружу НАМЕРЕННО: по нему
+ * сверяется замок `claimAbiMatchesContract.test.ts`, а замок обязан проверять
+ * тот ABI, которым реально идёт вызов, а не отдельную запись в config/contracts.ts
+ * (та не используется для записи и уже один раз разошлась с контрактом молча).
+ *
+ * Меняется подпись в контракте — краснеет тест. Это единственное, что связывает
+ * фронт с контрактом автоматически.
+ */
+export const CLAIM_DISPUTE_ABI = parseAbi([
+  'function claimDispute(address agreement, bytes32 salt, bytes32 boxKey, bytes32 signKey)',
+]);
+
+/**
+ * ABI публикации ключей чата арбитра отдельно от заявки. Вынесен наружу по
+ * той же причине, что и CLAIM_DISPUTE_ABI выше: замок
+ * setArbiterChatKeyGasless.test.ts сверяет ИМЕННО эту запись с исходником
+ * контракта, а не отдельную от неё.
+ */
+export const SET_ARBITER_CHAT_KEY_ABI = parseAbi([
+  'function setArbiterChatKey(bytes32 boxKey, bytes32 signKey)',
+]);
+
+/**
+ * Сборка калдаты заявки на спор — ЕДИНСТВЕННОЕ место во всём фронте, где
+ * agreement/salt/boxKey/signKey складываются в порядок аргументов
+ * `claimDispute`. И гейслесс-путь (calldata для форвардера), и запасной
+ * прямой вызов (calldata для `walletClient.sendTransaction`) в
+ * `claimDisputeGasless` ниже ОБЯЗАНЫ звать эту функцию и переиспользовать её
+ * РЕЗУЛЬТАТ — не собирать калдату (или отдельный `args`) заново.
+ *
+ * ⚠️ ПОЧЕМУ ЭТО ПОСЛЕДНИЙ СЛОЙ ЗАЩИТЫ, А НЕ ЕЩЁ ОДИН. Фирменные типы
+ * `BoxKey`/`SignKey` защищают ГРАНИЦУ ВЫЗОВА этой функции — подставить их
+ * местами при ВЫЗОВЕ `buildClaimDisputeCalldata(...)` не даёт тип-чекер. Но
+ * ВНУТРИ неё, в массиве `args` для `encodeFunctionData`, `BoxKey`/`SignKey`
+ * (подтипы обычного `Hex`) расширяются обратно до `Hex` — виem типизирует
+ * аргументы по ABI, а там оба параметра `bytes32`, структурно неразличимы.
+ * Перестановка ВНУТРИ этой функции невидима тип-чекеру: замерено ревью на
+ * боевом коде — 0 ошибок `type-check`, 1826 из 1826 зелёных тестов. Замок —
+ * `arbiterKeyCalldataOrder.test.ts`, он сверяет БАЙТЫ собранной калдаты по
+ * фиксированному смещению, а не факт вызова этой функции.
+ */
+export function buildClaimDisputeCalldata(
+  agreement: Address,
+  salt: Hex,
+  boxKey: BoxKey,
+  signKey: SignKey,
+): Hex {
+  return encodeFunctionData({
+    abi: CLAIM_DISPUTE_ABI,
+    functionName: 'claimDispute',
+    args: [agreement, salt, boxKey, signKey],
+  }) as Hex;
+}
+
+/**
+ * Сборка калдаты публикации ключа — та же гарантия «одно место», что и
+ * `buildClaimDisputeCalldata` выше, только для `setArbiterChatKeyGasless`.
+ * См. докстринг `buildClaimDisputeCalldata` про то, почему это последний
+ * слой защиты порядка `boxKey`/`signKey`, который в принципе можно построить.
+ */
+export function buildSetArbiterChatKeyCalldata(boxKey: BoxKey, signKey: SignKey): Hex {
+  return encodeFunctionData({
+    abi: SET_ARBITER_CHAT_KEY_ABI,
+    functionName: 'setArbiterChatKey',
+    args: [boxKey, signKey],
+  }) as Hex;
+}
 
 // ─── EIP-712: ForwardRequest ──────────────────────────────────────────────────
 
@@ -237,9 +307,21 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   pauseService:          80_000n,
   unpauseService:        80_000n,
   removeService:         80_000n,
-  claimDispute:         200_000n,
+  // 9 августа заявка стала возить два открытых ключа чата арбитра: это два
+  // холодных SSTORE (2×22 100) и один LOG2 — примерно +46 000 газа. Замер по
+  // фасету: первая в жизни запись ключа до 72 868, тёплая перезапись ~38 656
+  // (медиана из 108 вызовов).
+  //
+  // ⚠️ В ЭТОМ ЖЕ ФАЙЛЕ такое уже случалось: замеренные 126 383 против прежней
+  // отсечки 120 000. Слишком низкая отсечка валит предварительный staticCall
+  // релеера, и действие отдаёт отказ. Завышенная не стоит ничего: газ платится
+  // по факту, а не по лимиту.
+  claimDispute:         260_000n,
   releaseDisputeClaim:  100_000n,
   commitDisputeClaim:   100_000n,
+  // Публикация ключа: два SSTORE (первый раз холодные, 2×22 100) + LOG2.
+  // Замер по фасету: max 72 868, медиана 38 656.
+  setArbiterChatKey:    120_000n,
   resolveDispute:       200_000n,
   // transferFrom USDC (permit-authorized, Diamond as spender) + two storage
   // writes (disputeBounty, disputeBountyPayer) + one event.
@@ -1162,34 +1244,46 @@ export async function sendAgreementGasless(
  * Арбитр берёт спорное дело — шаг 2/2 commit-reveal.
  * salt — случайные 32 байта, использованные в commitDisputeClaimGasless().
  * Можно вызывать только после того как коммит-транзакция замайнена (≥1 блок).
+ *
+ * boxKey/signKey — открытые половины ключей чата арбитра, по 32 байта.
+ * ОБЯЗАТЕЛЬНЫ: контракт не принимает заявку без них, и это сделано формой
+ * аргумента, а не проверкой. Арбитр без ключа не смог бы прочитать
+ * предъявленное, а дело ушло бы в таймаут с делением котла пополам.
+ *
+ * ⚠️ Типы `BoxKey`/`SignKey` (arbiterChatKey.ts) — ФИРМЕННЫЕ, не `Hex`
+ * напрямую: независимое ревью переставило аргументы местами
+ * (`claimDisputeGasless(..., keys.signKey, keys.boxKey)`) и получило
+ * `npm run type-check` чистым, ноль красных тестов — оба ключа bytes32,
+ * структурно неотличимы, контракт принял бы, а вскрыть предъявленное было бы
+ * нечем. Теперь такая перестановка не компилируется.
  */
 export async function claimDisputeGasless(
   walletClient: WalletClient,
   publicClient: PublicClient,
   agreementAddress: Address,
   salt: Hex,
+  boxKey: BoxKey,
+  signKey: SignKey,
 ): Promise<{ txHash: string; fallbackUsed?: boolean }> {
   const userAddress = walletClient.account?.address;
   if (!userAddress) throw new Error('Wallet not connected');
   const releaseLock = await acquireWalletLock(userAddress);
   try {
-  const CLAIM_ABI = parseAbi(['function claimDispute(address agreement, bytes32 salt)']);
-  const calldata = encodeFunctionData({
-    abi: CLAIM_ABI,
-    functionName: 'claimDispute',
-    args: [agreementAddress, salt],
-  });
+  // Единственное место, где эти четыре аргумента складываются в порядок —
+  // buildClaimDisputeCalldata (см. её докстринг у объявления, рядом с ABI).
+  // Оба пути ниже переиспользуют РЕЗУЛЬТАТ, а не собирают калдату заново.
+  const calldata = buildClaimDisputeCalldata(agreementAddress, salt, boxKey, signKey);
   try {
-    const result = await _sendForwardRequest(walletClient, publicClient, calldata as Hex, 'claimDispute', DIAMOND);
+    const result = await _sendForwardRequest(walletClient, publicClient, calldata, 'claimDispute', DIAMOND);
     return { txHash: result.txHash };
   } catch (err) {
     if (!isRelayDown(err)) throw err;
     const account = walletClient.account;
     if (!account) throw new Error('Wallet not connected');
-    const txHash = await walletClient.writeContract({
-      address: DIAMOND, abi: CLAIM_ABI, functionName: 'claimDispute',
-      args: [agreementAddress, salt], account, chain: walletClient.chain,
-    });
+    // ТА ЖЕ калдата, что ушла бы через релеер — не пересобранные заново
+    // args в writeContract(). Тот же приём, что у mintJobWithPermit/
+    // mintServiceWithPermit/requestService выше в этом файле.
+    const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
@@ -1273,6 +1367,59 @@ export async function commitDisputeClaimGasless(
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── setArbiterChatKeyGasless ─────────────────────────────────────────────────
+
+/**
+ * Публикация ключей чата арбитра отдельно от заявки.
+ *
+ * Нужна для одного случая: арбитр взял спор ДО апгрейда 9 августа, когда заявка
+ * ключей не возила. Он числится судьёй, а ключей в цепи нет — сторона услышит
+ * «предъявлять некому», не предъявит, а молчание толкуется против молчащего.
+ * Один вызов это лечит.
+ *
+ * ⚠️ Хуже отсутствия ключа — перестановка местами. `BoxKey`/`SignKey` —
+ * фирменные типы (arbiterChatKey.ts), а не `Hex`: независимое ревью
+ * подставило `keys.signKey, keys.boxKey` сюда и получило чистый
+ * `npm run type-check`, 0 красных из 1826 — оба ключа ненулевые, в цепи, и
+ * `decideNoKeyNotice` замолкает НАВСЕГДА, хотя сторона на предъявлении
+ * получает нечитаемое (печать на ключ подписи вместо ключа шифрования). При
+ * отсутствии ключа мы хотя бы честно говорим «предъявить нечего» — здесь все
+ * уверены, что порядок верный. Теперь перестановка не компилируется.
+ */
+export async function setArbiterChatKeyGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  boxKey: BoxKey,
+  signKey: SignKey,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    // Единственное место, где boxKey/signKey складываются в порядок —
+    // buildSetArbiterChatKeyCalldata (докстринг у объявления, рядом с ABI).
+    // Оба пути ниже переиспользуют РЕЗУЛЬТАТ, а не собирают калдату заново.
+    const calldata = buildSetArbiterChatKeyCalldata(boxKey, signKey);
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata, 'setArbiterChatKey', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      // ТА ЖЕ калдата, что ушла бы через релеер — не пересобранные заново
+      // args в writeContract().
+      const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
   } finally {
     releaseLock();
   }
