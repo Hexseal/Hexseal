@@ -1,5 +1,30 @@
 'use client';
 
+import { findStoredBagPass, BAG_PASS_HEADER } from '@/lib/storedBagPass';
+
+/**
+ * Пропуск склада на СКАЧИВАНИЕ вложения.
+ *
+ * ⚠️ Появился 10 августа 2026 вместе с замком выдачи на релеере (§5 замысла).
+ * До этого `GET /files/:key` отдавал файл любому, кто знает адрес, — и это
+ * было заперто тремя зелёными тестами.
+ *
+ * Подсказки владельца здесь нет и взять её негде: карточки вложения
+ * (`ImageBubble`/`FileCard`) получают только само вложение, ни сеанса, ни
+ * адреса (ChatPanel.tsx:120, :201). Поэтому берём самый долгоживущий пропуск
+ * устройства — на устройстве кошелёк подключён один, а от прежнего аккаунта
+ * остался бы протухающий (см. `findStoredBagPass`).
+ *
+ * Пропуска нет — заголовка нет, запрос всё равно уходит: единственный
+ * источник истины про доступ это сервер. Своё предсказание «не пустят» было
+ * бы вторым мнением рядом с настоящим и разошлось бы с ним при первом
+ * изменении правил.
+ */
+function downloadHeaders(): Record<string, string> {
+  const pass = findStoredBagPass();
+  return pass ? { [BAG_PASS_HEADER]: pass } : {};
+}
+
 // ─── Hex helpers ─────────────────────────────────────────────────────────────
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -120,7 +145,7 @@ export async function decryptToObjectUrl(
   const cached = _cache.get(cacheKey);
   if (cached) return cached;
 
-  const response = await fetch(encryptedUrl);
+  const response = await fetch(encryptedUrl, { headers: downloadHeaders() });
   if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`);
   const ciphertext = await response.arrayBuffer();
 
@@ -213,7 +238,7 @@ export async function decryptAndSaveChunked(
 
   const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
 
-  const response = await fetch(encryptedUrl);
+  const response = await fetch(encryptedUrl, { headers: downloadHeaders() });
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
 
   // ── Try streaming save to disk (Chrome / Edge) ────────────────────────────

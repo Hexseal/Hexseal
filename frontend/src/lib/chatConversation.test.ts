@@ -573,6 +573,24 @@ describe('отправка не открывает кошелёк', () => {
     expect(await listBurnedSeqs(ALICE, BOB)).toEqual([]);
     expect(stub.calls.filter(c => c.method === 'PUT')).toHaveLength(1); // второе даже не поехало
   });
+
+  it('негодный ключ вложения — НЕ выдаётся за «слишком длинное»', async () => {
+    // ⚠️ Прежний глухой перехват называл ЛЮБУЮ ошибку сборки «слишком
+    // длинным». Человек по такому совету режет текст, а причина в другом.
+    const stub = installFetchStub();
+    const alice = await makeSession('1c3d', ALICE);
+    const bob = await makeSession('7f2e', BOB);
+
+    await expect(
+      sendMessage(alice, BOB, bob.keypair.publicKey, {
+        file: { url: 'https://x', name: 'f.bin', size: 1, keyHex: 'zz'.repeat(32), ivHex: 'cd'.repeat(12) },
+      }, null, { pass: PASS }),
+    ).rejects.toThrow(/attachment key/);
+
+    // И номер не сгорел, и на склад ничего не поехало.
+    expect(stub.calls.filter(c => c.method === 'PUT')).toHaveLength(0);
+    expect(await listBurnedSeqs(ALICE, BOB)).toEqual([]);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

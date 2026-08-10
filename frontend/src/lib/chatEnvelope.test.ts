@@ -4,9 +4,9 @@ import { deriveChatKeypair, sealForRecipient, type ChatKeypair } from './chatCry
 import * as chatCryptoModule from './chatCrypto';
 import {
   packEnvelope, unpackEnvelope, assertSealedKeyLength, assertOneTimeKeyLength,
-  MAX_ENVELOPE_BYTES,
+  MAX_ENVELOPE_BYTES, recoverOneTimeKey, openEnvelopeWithOneTimeKey,
 } from './chatEnvelope';
-import { stripDangerousKeys, type ChatPayload } from './chatPayloadForm';
+import { stripDangerousKeys, SEALED_ATTACHMENT_KEY_HEX_LEN, type ChatPayload } from './chatPayloadForm';
 import * as chatPayloadFormModule from './chatPayloadForm';
 
 // Подписи разной формы — тот же приём, что в chatCrypto.test.ts (SIG_A/SIG_B):
@@ -575,7 +575,14 @@ describe('packEnvelope / unpackEnvelope', () => {
     // — true, не ловится) проезжал как валидный. Бесконечный размер
     // (`1e400` в JSON — переполняется в Infinity при разборе) уже ловился
     // `!Number.isFinite`, но тоже не был заперт ИЗОЛИРОВАННО.
-    const good = { url: 'https://x', name: 'f.pdf', size: 100, keyHex: 'ab', ivHex: 'cd' };
+    // ⚠️ 10 августа 2026 (§5 замысла): keyHex/ivHex обязаны быть настоящими 32/12
+    // байтами hex, иначе `packEnvelope` (замок вложенного ключа) бросает громко —
+    // это НАШ мусор, не чужой (см. `sealAttachmentKeyForWire`). Раньше здесь стояли
+    // заглушки 'ab'/'cd' (валидные, потому что тогда форма не проверялась вовсе);
+    // теперь только этот, «контрольный», тест реально гоняет `good` через
+    // `packEnvelope` — остальные кейсы ниже идут в обход, через `buildRawEnvelope`,
+    // и на них ширина значения не влияет.
+    const good = { url: 'https://x', name: 'f.pdf', size: 100, keyHex: 'ab'.repeat(32), ivHex: 'cd'.repeat(12) };
 
     it.each([
       ['url не строка', { ...good, url: 1 }],
@@ -788,5 +795,273 @@ describe('packEnvelope / unpackEnvelope', () => {
       await expect(packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey))
         .rejects.toThrow(/unexpected own sealed key length \(79\), expected 80/);
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §5 замысла: «арбитр не мог скачать файлы, увидеть видит, а скачать нихуя»
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('§5: ключ вложения под вложенным замком', () => {
+  const AUTHOR = '0xaaaa000000000000000000000000000000000001' as `0x${string}`;
+
+  /** Легаси-вид вложения: ключ и вектор открытыми hex-строками, как их сегодня
+   *  производит `fileCrypto.encryptFile` (64 и 24 цифры, БЕЗ префикса 0x). */
+  const F = {
+    url: 'https://x',
+    name: 'f.bin',
+    size: 1,
+    keyHex: 'ab'.repeat(32),
+    ivHex: 'cd'.repeat(12),
+  };
+
+  it('разовый ключ открывает текст, но НЕ ключ вложения — на проводе его нет', async () => {
+    // ⚠️ ЭТО И ЕСТЬ ГЛАВНЫЙ ЗАМЕР ЗАДАЧИ. Ровно то, что получит арбитр:
+    // исходные байты конверта плюс разовый ключ этого сообщения (Задача 2).
+    // Ключа вложения в этом виде быть не должно ВООБЩЕ — иначе выдача
+    // разового ключа отдаёт и файл.
+    const { bob, alice } = await actors();
+    const payload: ChatPayload = { text: 'вот скан акта', file: { ...F } };
+    const env = await packEnvelope(payload, bob.publicKey, alice.publicKey, AUTHOR);
+
+    // ⚠️ `await` ОБЯЗАТЕЛЕН (договор v2, исправление 1): `recoverOneTimeKey`
+    // возвращает `Promise<OneTimeKey | null>`. Снять `await` — и строка ниже
+    // сравнивает с `null` промис, то есть НЕ КРАСНЕЕТ НИКОГДА, что бы модуль
+    // ни делал. Не вакуумность этой строки замеряется мутацией M2 (убрать
+    // замок вовсе): она обязана покраснеть здесь первой.
+    const otk = await recoverOneTimeKey(env, bob);
+    expect(otk).not.toBeNull();
+
+    const res = await openEnvelopeWithOneTimeKey(env, otk!, AUTHOR);
+    expect(res.ok).toBe(true);
+    const seen = (res as { ok: true; payload: ChatPayload }).payload;
+
+    expect(seen.text).toBe('вот скан акта');       // слова видит целиком
+    expect(seen.file?.name).toBe('f.bin');         // факт вложения видит
+    expect(seen.file?.size).toBe(1);
+    expect(seen.file?.keyHex).toBeUndefined();     // ключа — НЕТ
+    expect(seen.file?.ivHex).toBeUndefined();
+    expect(typeof seen.file?.sealedKey).toBe('string');
+    // ⚠️ 368 РУКАМИ, а не через константу модуля (договор v2, исправление 12):
+    // ожидаемое число, взятое из проверяемого модуля, — тождество по
+    // построению, оно доказывает только «какая-то ширина есть». Совпадение
+    // боевой константы с этим числом проверяется ОТДЕЛЬНОЙ строкой, в тесте
+    // «ширина sealedKey» ниже.
+    expect(seen.file!.sealedKey!.length).toBe(368);
+  });
+
+  it('получатель по-прежнему получает ключ: конверт открылся ⟹ вложение открылось', async () => {
+    const { bob, alice } = await actors();
+    const payload: ChatPayload = { text: 'акт', file: { ...F } };
+    const env = await packEnvelope(payload, bob.publicKey, alice.publicKey, AUTHOR);
+    // Сравнение с ЛИТЕРАЛОМ, а не со ссылкой `payload`: сравнение со ссылкой
+    // молча позеленело бы, если бы сборка правила объект на месте.
+    expect(await unpackEnvelope(env, bob, AUTHOR)).toEqual({
+      text: 'акт',
+      file: { url: 'https://x', name: 'f.bin', size: 1, keyHex: 'ab'.repeat(32), ivHex: 'cd'.repeat(12) },
+    });
+  });
+
+  it('автор со второго устройства открывает свой же ключ вложения', async () => {
+    const { bob, alice } = await actors();
+    const env = await packEnvelope({ file: { ...F } }, bob.publicKey, alice.publicKey, AUTHOR);
+    expect(await unpackEnvelope(env, alice, AUTHOR)).toEqual({
+      file: { url: 'https://x', name: 'f.bin', size: 1, keyHex: 'ab'.repeat(32), ivHex: 'cd'.repeat(12) },
+    });
+  });
+
+  it('нарезанный файл: базовый вектор тоже под замком и возвращается целым', async () => {
+    // Базовый вектор нарезанного файла — тот, из которого XOR-ом получаются
+    // векторы кусков (`fileCrypto.ts:44-52`). Потеряется он — не соберётся
+    // НИ ОДИН кусок, а числа нарезки остаются открытыми намеренно (структуру
+    // файла арбитр видеть может, содержимое — нет).
+    const { bob, alice } = await actors();
+    const big = {
+      url: 'https://x/big', name: 'большой.zip', size: 41_943_040,
+      keyHex: 'ee'.repeat(32), ivHex: 'ff'.repeat(12),
+      fileKey: 'files/big', mime: 'application/zip',
+      chunked: true, chunkCount: 5, chunkSize: 8 * 1024 * 1024,
+    };
+    const env = await packEnvelope({ file: { ...big } }, bob.publicKey, alice.publicKey, AUTHOR);
+    expect(await unpackEnvelope(env, bob, AUTHOR)).toEqual({ file: big });
+
+    const otk = await recoverOneTimeKey(env, bob);
+    const res = await openEnvelopeWithOneTimeKey(env, otk!, AUTHOR);
+    const seen = (res as { ok: true; payload: ChatPayload }).payload;
+    expect(seen.file?.chunkCount).toBe(5);          // структуру видит
+    expect(seen.file?.ivHex).toBeUndefined();       // вектор — нет
+  });
+
+  it('packEnvelope НЕ ОТНИМАЕТ ключ у переданного объекта (копия, не правка на месте)', async () => {
+    // ⚠️ ЛОВУШКА 1. Тот же объект уезжает в `payloadToMessage` и рисуется
+    // отправителю. Отнять у него keyHex значит отнять у человека его же файл.
+    const { bob, alice } = await actors();
+    const payload: ChatPayload = { text: 'моё', file: { ...F } };
+    const before = JSON.parse(JSON.stringify(payload));
+    await packEnvelope(payload, bob.publicKey, alice.publicKey, AUTHOR);
+    expect(payload).toEqual(before);
+    expect(payload.file).not.toHaveProperty('sealedKey');
+  });
+
+  it('открытый ключ на провод не уезжает НИ В ОДНОЙ форме входа', async () => {
+    // Три входа: только легаси, только замок, и оба сразу (мусор из будущего
+    // или чужая сборка). Ни один не должен дать на проводе keyHex/ivHex.
+    const { bob, alice } = await actors();
+    // 184 байта = 368 цифр, записано РУКАМИ (исправление 12): фикстура, взятая
+    // из константы модуля, поехала бы за ней и на подменённой ширине.
+    const sealedAlready = 'ab'.repeat(184);
+    const inputs: ChatPayload['file'][] = [
+      { ...F },
+      { url: 'https://x', name: 'f.bin', size: 1, sealedKey: sealedAlready },
+      { ...F, sealedKey: sealedAlready },
+    ];
+    for (const file of inputs) {
+      const env = await packEnvelope({ file }, bob.publicKey, alice.publicKey, AUTHOR);
+      const otk = await recoverOneTimeKey(env, bob);
+      const res = await openEnvelopeWithOneTimeKey(env, otk!, AUTHOR);
+      const seen = (res as { ok: true; payload: ChatPayload }).payload;
+      expect(seen.file?.keyHex).toBeUndefined();
+      expect(seen.file?.ivHex).toBeUndefined();
+    }
+  });
+
+  it('подложный sealedKey (правильной ширины, но не наша печать) — текст цел, ключа нет, ничего не брошено', async () => {
+    // Собеседник может собрать конверт руками и положить туда что угодно.
+    //
+    // ⚠️ ПРАВКА ФИКСТУРЫ ПРИ ИСПОЛНЕНИИ (не дословно по плану). Первоначальный
+    // приём — «честно запечатать НА НАШ ключ, но не 44 байта»
+    // (`sealForRecipient(bob.publicKey, new Uint8Array(10))`) — физически не
+    // может дать строку ПРАВИЛЬНОЙ ширины: `crypto_box_seal` детерминированно
+    // отдаёт `plaintext.length + 48`, то есть 58 байт на слот при 10-байтном
+    // плейнтексте, а не 92. Такая строка (116 байт = 232 hex-цифры) не
+    // проходит уже ФОРМУ (`SEALED_ATTACHMENT_KEY_RE` требует РОВНО 368
+    // hex-цифр) — `sanitizePayload` отбрасывает ВСЁ сообщение, включая текст,
+    // что прямо противоречит замеру «текст обязан выжить». Проверено запуском:
+    // с исходной фикстурой `opened` был `null` целиком.
+    //
+    // Единственный чужой мусор ПРАВИЛЬНОЙ ширины (184 байта = 368 hex-цифр,
+    // проходит форму) — байты, которые вообще не являются печатью НА НАШ
+    // ключ: аутентификация `crypto_box_seal_open` не сойдётся ни на одном из
+    // двух слотов, и это НЕОТЛИЧИМО от печати честного размера с чужим
+    // содержимым — тот же исход (тихая потеря ключа), которого добивался
+    // исходный тест.
+    const { bob, alice } = await actors();
+    const both = crypto.getRandomValues(new Uint8Array(184)); // 2×92 байта, НЕ наша печать
+    const hex = Array.from(both).map(b => b.toString(16).padStart(2, '0')).join('');
+    const raw = JSON.stringify({
+      text: 'текст обязан выжить',
+      file: { url: 'https://x', name: 'f.bin', size: 1, sealedKey: hex },
+    });
+    const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+    const opened = await unpackEnvelope(env, bob);
+    expect(opened?.text).toBe('текст обязан выжить');
+    expect(opened?.file?.keyHex).toBeUndefined();
+    expect(opened?.file?.name).toBe('f.bin');
+  });
+
+  it.each([
+    ['не hex вовсе',        'z'.repeat(368)],
+    ['короче на цифру',     'ab'.repeat(183) + 'a'],
+    ['длиннее на цифру',    'ab'.repeat(184) + 'a'],
+    ['заглавный hex',       'AB'.repeat(184)],
+    // ⚠️ ЗАМОК НА СТЫК КОДИРОВОК (договор v2, исправление 2 — четырнадцатый
+    // случай класса: Задача 5 писала base64, Задача 6 читала hex, обе зелёные).
+    // Это РОВНО ТЕ ЖЕ 184 байта (0xab × 184), что в годной фикстуре выше, но в
+    // base64 — той кодировке, в которой живут ВСЕ остальные байтовые поля
+    // плана. Если кто-нибудь «унифицирует» `sealedKey` под контейнер, это
+    // единственное место, которое покраснеет. 248 цифр и `=` записаны руками.
+    ['base64 вместо hex', 'q6ur'.repeat(61) + 'qw=='],
+  ])('sealedKey не той формы (%s) — отказ ВСЕМУ сообщению', async (_label, bad) => {
+    // Знакомое поле не той формы — отказ всему сообщению, как у остальных
+    // полей `file` в этом гейте. Форма проверяется ПОЛНОСТЬЮ (длина и
+    // алфавит), а не «типом строка»: у keyHex проверялся только тип, и это
+    // названо пробелом Б-8 справочника.
+    const { bob, alice } = await actors();
+    const raw = JSON.stringify({ file: { url: 'https://x', name: 'f.bin', size: 1, sealedKey: bad } });
+    const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+    await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+  });
+
+  it('file без всякого ключа (ни легаси, ни замка) — null, как было до правки', async () => {
+    // Требование замысла «прежние сообщения читаются и не падают» НЕ означает
+    // «принимать вложение без ключа»: сегодня keyHex/ivHex обязательны, и
+    // такое сообщение отвергается целиком. Ослабить это значило бы пустить
+    // панель третьей ветвью (`mode: 'plain'`) и потянуть шифротекст в <img>.
+    const { bob, alice } = await actors();
+    const raw = JSON.stringify({ file: { url: 'https://x', name: 'f.bin', size: 1 } });
+    const env = await buildRawEnvelope(raw, bob.publicKey, alice.publicKey);
+    await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+  });
+
+  it.each([
+    ['keyHex без ivHex', { url: 'https://x', name: 'f.bin', size: 1, keyHex: 'ab'.repeat(32) }],
+    ['ivHex без keyHex', { url: 'https://x', name: 'f.bin', size: 1, ivHex: 'cd'.repeat(12) }],
+  ])('половина легаси-пары (%s) — null', async (_label, file) => {
+    const { bob, alice } = await actors();
+    const env = await buildRawEnvelope(JSON.stringify({ file }), bob.publicKey, alice.publicKey);
+    await expect(unpackEnvelope(env, bob)).resolves.toBeNull();
+  });
+
+  describe('замок ВЫРОС — потолок мерится по проводу, а не по исходному содержимому', () => {
+    // ⚠️ Числа записаны РУКАМИ (правило В-4: тест, берущий предел из
+    // проверяемого модуля, доказывает только «какой-то предел есть»).
+    //
+    //  189 = 173 (заголовок конверта) + 16 (тег GCM) — ENVELOPE_OVERHEAD_BYTES.
+    //  272 = 383 − 111, где
+    //        383 = длина `,"sealedKey":"<368 цифр>"` (15 + 368),
+    //        111 = длина `,"keyHex":"<64>","ivHex":"<24>"` (12+64 + 11+24).
+    //
+    // Оба числа ПРОВЕРЯЮТСЯ поведением: первый тест требует длину конверта
+    // РОВНО MAX_ENVELOPE_BYTES, и это сходится только если рост ровно 272.
+    const ENVELOPE_OVERHEAD = 189;
+    const SEAL_GROWTH = 272;
+
+    it('с замком конверт РОВНО MAX_ENVELOPE_BYTES собирается и читается (граница включена)', async () => {
+      const { bob, alice } = await actors();
+      const base = JSON.stringify({ text: '', file: F }).length;   // ASCII: символы = байты
+      const text = 'a'.repeat(MAX_ENVELOPE_BYTES - ENVELOPE_OVERHEAD - base - SEAL_GROWTH);
+      const env = await packEnvelope({ text, file: { ...F } }, bob.publicKey, alice.publicKey, AUTHOR);
+      expect(env.length).toBe(MAX_ENVELOPE_BYTES);
+      expect(await unpackEnvelope(env, bob, AUTHOR)).toEqual({ text, file: F });
+    });
+
+    it('содержимое, влезавшее ДО замка и не влезающее ПОСЛЕ, отказывает на сборке', async () => {
+      // ⚠️ Это замок на МЕСТО проверки потолка. Исходное содержимое здесь на
+      // 271 байт НЕ достаёт до предела — то есть проверка «до замка» пустила
+      // бы это письмо, склад отбил бы его 413-м, а человек увидел бы
+      // «отправлено». Проверка обязана стоять ПОСЛЕ замка.
+      const { bob, alice } = await actors();
+      const base = JSON.stringify({ text: '', file: F }).length;
+      const text = 'a'.repeat(MAX_ENVELOPE_BYTES - ENVELOPE_OVERHEAD - base - SEAL_GROWTH + 1);
+      await expect(
+        packEnvelope({ text, file: { ...F } }, bob.publicKey, alice.publicKey, AUTHOR),
+      ).rejects.toThrow(/payload too large/);
+    });
+  });
+
+  it('ширина sealedKey — 368 цифр, записано руками и совпадает с настоящей', async () => {
+    // Два независимых утверждения об одном числе: константа модуля и то, что
+    // реально произвела сборка. Разойдутся — тест покраснеет.
+    expect(SEALED_ATTACHMENT_KEY_HEX_LEN).toBe(368);   // 2 слота × 92 байта × 2 цифры
+    const { bob, alice } = await actors();
+    const env = await packEnvelope({ file: { ...F } }, bob.publicKey, alice.publicKey, AUTHOR);
+    const otk = await recoverOneTimeKey(env, bob);
+    const res = await openEnvelopeWithOneTimeKey(env, otk!, AUTHOR);
+    const seen = (res as { ok: true; payload: ChatPayload }).payload;
+    expect(seen.file!.sealedKey!.length).toBe(368);
+  });
+
+  it('негодный ключ вложения на входе — громкий бросок, а не тихо открытый ключ', async () => {
+    // Ключ вложения производит НАШ КОД (`fileCrypto.encryptFile`), поэтому
+    // не-hex здесь — наш собственный мусор, и он обязан быть виден. Тихо
+    // оставить его открытым было бы худшим из возможных исходов: §5 отменён,
+    // и никто не узнал.
+    const { bob, alice } = await actors();
+    await expect(
+      packEnvelope({ file: { ...F, keyHex: 'zz'.repeat(32) } }, bob.publicKey, alice.publicKey, AUTHOR),
+    ).rejects.toThrow(/attachment key/);
+    await expect(
+      packEnvelope({ file: { ...F, ivHex: 'cd'.repeat(4) } }, bob.publicKey, alice.publicKey, AUTHOR),
+    ).rejects.toThrow(/attachment key/);
   });
 });

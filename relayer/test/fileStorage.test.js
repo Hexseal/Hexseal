@@ -47,24 +47,44 @@ describe('POST /files/presign', () => {
 });
 
 describe('PUT /files/upload-put/:key then GET /files/:key', () => {
-  it('round-trips a small encrypted file', async () => {
-    const presign = await withPass(request(app).post('/files/presign')).send({});
+  it('round-trips a small encrypted file — скачивание ТРЕБУЕТ пропуск (§5, 10.08.2026)', async () => {
+    // ⚠️ ПРОПУСК ОДИН НА ВСЕ ТРИ ЗАПРОСА (`p`), а не `withPass(...)` без
+    // аргумента на каждом вызове: без этого метка пары/владельца на
+    // скачивании не сверится с тем же адресом, что заливал, и (отдельно)
+    // адресный бюджет разъедется на три разных адреса вместо одного.
+    const p = chatPass();
+    const presign = await withPass(request(app).post('/files/presign'), p).send({});
     const { key } = jsonBody(presign);
 
     const payload = Buffer.from('encrypted-bytes-here');
     const putRes = await withPass(request(app)
-      .put(`/files/upload-put/${key}`))
+      .put(`/files/upload-put/${key}`), p)
       .set('Content-Type', 'application/octet-stream')
       .send(payload);
     expect(putRes.status).toBe(200);
 
-    const getRes = await request(app).get(`/files/${key}`);
+    // ⚠️ ПЕРЕВЁРНУТО: было `GET` БЕЗ пропуска с ожиданием 200. Ключ больше не
+    // «и есть пропуск» — см. relayer/test/chatFilesPass.test.js.
+    const getRes = await withPass(request(app).get(`/files/${key}`), p);
     expect(getRes.status).toBe(200);
     expect(getRes.headers['content-disposition']).toMatch(/attachment/);
     expect(getRes.headers['x-content-type-options']).toBe('nosniff');
     // Same Content-Type-mislabeling quirk applies to served bytes: res.text is left
     // undefined, the raw bytes land in res.body as a Buffer instead.
     expect(getRes.body.toString('utf8')).toBe('encrypted-bytes-here');
+  });
+
+  it('без пропуска байты не отдаются вовсе', async () => {
+    const p = chatPass();
+    const presign = await withPass(request(app).post('/files/presign'), p).send({});
+    const { key } = jsonBody(presign);
+    await withPass(request(app).put(`/files/upload-put/${key}`), p)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('secret-ciphertext'));
+
+    const getRes = await request(app).get(`/files/${key}`);
+    expect(getRes.status).toBe(401);
+    expect(getRes.body.code).toBe('pass_invalid');
   });
 });
 
@@ -146,7 +166,13 @@ describe('multipart upload (create → part → complete)', () => {
     expect(complete.status).toBe(200);
     expect(jsonBody(complete)).toHaveProperty('downloadUrl');
 
-    const getRes = await request(app).get(`/files/${key}`);
+    // ⚠️ ПЕРЕВЁРНУТО (третий из трёх): выдача требует пропуск. Пары у
+    // многокусочного ключа нет вовсе (названный пробел, см.
+    // chatFilesPass.test.js), поэтому годится ЛЮБОЙ живой пропуск — здесь
+    // намеренно СВЕЖИЙ (`withPass(...)` без второго аргумента), не пропуск
+    // ни одного из заливавших выше, чтобы не выдать «совпало владельцем» за
+    // «принадлежность проверена».
+    const getRes = await withPass(request(app).get(`/files/${key}`));
     expect(getRes.status).toBe(200);
     expect(getRes.body.toString('utf8')).toBe('hello-world');
   });

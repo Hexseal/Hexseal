@@ -121,7 +121,10 @@
  */
 
 import { sealForRecipient, openSealed, type ChatKeypair } from './chatCrypto';
-import { stripDangerousKeys, sanitizePayload, type ChatPayload } from './chatPayloadForm';
+import {
+  stripDangerousKeys, sanitizePayload,
+  SEALED_ATTACHMENT_KEY_HEX_LEN, type ChatPayload,
+} from './chatPayloadForm';
 
 export type { ChatPayload } from './chatPayloadForm';
 
@@ -427,15 +430,197 @@ export function envelopeAad(header: Uint8Array, author?: `0x${string}`): Uint8Ar
   return out;
 }
 
+/**
+ * Открытый текст вложенного замка — ключ вложения и его вектор одной
+ * склейкой: 32 байта AES-256 плюс 12 байт nonce. Склейкой, а не двумя
+ * замками: замок один, значит и потерять его можно только целиком —
+ * состояния «ключ есть, вектора нет» не существует.
+ */
+const ATTACHMENT_KEY_PLAIN_LEN = ONE_TIME_KEY_LEN + IV_LEN; // 44
+
+/**
+ * Ширина одного слота вложенного замка — выход `sealForRecipient()` над РОВНО
+ * 44 байтами: 48 накладных расходов запечатывания (32 одноразовый открытый
+ * ключ + 16 MAC) плюс сами 44. Измерено тем же способом, что `SEALED_KEY_LEN`,
+ * и заперто `assertSealedAttachmentSlot` ниже.
+ */
+const SEALED_ATTACHMENT_SLOT_LEN = 92;
+
+/** Замок на собственное предположение о ширине слота — тот же приём и та же
+ *  причина, что у `assertSealedKeyLength`: громкий отказ здесь, а не тихая
+ *  порча раскладки у случайного получателя.
+ *  @throws {Error} если `bytes.length !== SEALED_ATTACHMENT_SLOT_LEN`. */
+export function assertSealedAttachmentSlot(bytes: Uint8Array, label: string): void {
+  if (bytes.length !== SEALED_ATTACHMENT_SLOT_LEN) {
+    throw new Error(
+      `packEnvelope: unexpected ${label} attachment slot length (${bytes.length}), expected ${SEALED_ATTACHMENT_SLOT_LEN}`,
+    );
+  }
+}
+
+/** hex без префикса `0x`, строчными — тот же формат, в котором ключ вложения
+ *  живёт с самого начала (`fileCrypto.ts:5-7`). */
+function hexOfBytes(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * СТРОГИЙ разбор hex: `null` на любом отклонении.
+ *
+ * ⚠️ Не переиспользуется `hexToBytes` из `fileCrypto.ts` — она не проверяет
+ * НИЧЕГО (`parseInt` от не-hex даёт `NaN`, который в `Uint8Array` пишется
+ * нулём), то есть на мусоре отдаёт мусорный ключ вместо отказа. Это названо
+ * пробелом Б-8 справочника конверта; тащить его сюда значило бы вскрывать
+ * подложный замок «успешно» и получать нулевой ключ.
+ */
+function bytesOfHex(hex: string): Uint8Array | null {
+  if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/.test(hex)) return null;
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+/**
+ * Кладёт ключ вложения ПОД ЗАМОК и возвращает КОПИЮ содержимого для провода.
+ *
+ * ⚠️ КОПИЯ, А НЕ ПРАВКА НА МЕСТЕ, И ЭТО НЕ СТИЛЬ. `packEnvelope` получает тот
+ * же объект, который `engine.send()` возвращает наверх и рисует ОТПРАВИТЕЛЮ
+ * (`usePairChat.ts:1039` → `payloadToMessage`). Правка на месте отняла бы у
+ * человека ключ его же вложения, и узнал бы он об этом, попробовав открыть
+ * свой файл. Замер — в `usePairChat.test.ts` («возврат send() несёт ключ»).
+ *
+ * ⚠️ ЗАПЕЧАТЫВАЕТСЯ НА ТЕ ЖЕ ДВА КЛЮЧА, ЧТО И СЛОТЫ КОНВЕРТА, и порядок тот
+ * же (получатель, потом автор). Отсюда свойство по построению: конверт
+ * открылся — значит и этот замок открылся. Ни одного нового состояния
+ * «письмо читается, вложение нет» для честных сообщений.
+ *
+ * Инвариант, который эта функция держит БЕЗУСЛОВНО: после неё на проводе НЕТ
+ * открытого ключа вложения — ни в какой форме входа. Легаси-пара уходит под
+ * замок; уже запечатанный ключ остаётся как есть, а легаси-пара рядом с ним
+ * (мусор из будущего или чужая сборка) — СНИМАЕТСЯ.
+ *
+ * @throws {Error} если ключ вложения не 32 байта hex или вектор не 12 —
+ *   это НАШ мусор (ключ производит `fileCrypto`), и он обязан быть виден.
+ *   Тихо оставить его открытым было бы худшим исходом: §5 отменён, и никто
+ *   не узнал.
+ */
+async function sealAttachmentKeyForWire(
+  payload: ChatPayload,
+  recipientPub: Uint8Array,
+  ownPub: Uint8Array,
+): Promise<ChatPayload> {
+  const f = payload.file;
+  if (!f) return payload;
+
+  // Уже под замком — легаси-пару рядом с ним всё равно снимаем.
+  if (typeof f.sealedKey === 'string') {
+    if (f.keyHex === undefined && f.ivHex === undefined) return payload;
+    const { keyHex: _k, ivHex: _iv, ...rest } = f;
+    return { ...payload, file: rest };
+  }
+
+  if (typeof f.keyHex !== 'string' || typeof f.ivHex !== 'string') return payload;
+
+  const key = bytesOfHex(f.keyHex);
+  const iv = bytesOfHex(f.ivHex);
+  if (!key || !iv || key.length !== ONE_TIME_KEY_LEN || iv.length !== IV_LEN) {
+    throw new Error(
+      `packEnvelope: attachment key/iv must be ${ONE_TIME_KEY_LEN}/${IV_LEN} bytes of lowercase hex`,
+    );
+  }
+
+  const plain = new Uint8Array(ATTACHMENT_KEY_PLAIN_LEN);
+  plain.set(key, 0);
+  plain.set(iv, ONE_TIME_KEY_LEN);
+
+  const slotA = await sealForRecipient(recipientPub, plain);
+  const slotB = await sealForRecipient(ownPub, plain);
+  assertSealedAttachmentSlot(slotA, 'recipient');
+  assertSealedAttachmentSlot(slotB, 'own');
+
+  const both = new Uint8Array(SEALED_ATTACHMENT_SLOT_LEN * 2);
+  both.set(slotA, 0);
+  both.set(slotB, SEALED_ATTACHMENT_SLOT_LEN);
+  const sealedKey = hexOfBytes(both);
+  if (sealedKey.length !== SEALED_ATTACHMENT_KEY_HEX_LEN) {
+    // Два независимых числа об одном и том же (ширина слота здесь, ширина
+    // строки в гейте формы) разошлись — наш баг, и он обязан быть громким.
+    throw new Error(
+      `packEnvelope: sealed attachment key hex length ${sealedKey.length}, expected ${SEALED_ATTACHMENT_KEY_HEX_LEN}`,
+    );
+  }
+
+  const { keyHex: _k, ivHex: _iv, ...rest } = f;
+  return { ...payload, file: { ...rest, sealedKey } };
+}
+
+/**
+ * Возвращает ключ вложения на место — ТОЛЬКО тому, у кого есть пара ключей.
+ *
+ * ⚠️ ЗДЕСЬ И НИГДЕ БОЛЬШЕ. На этом стоит весь §5: путь арбитра
+ * (`openEnvelopeWithOneTimeKey`) получает разовый ключ сообщения и НЕ получает
+ * пары — то есть вскрыть этот замок он не может физически, а не по правилу.
+ * Добавить `ownKeypair` в тот путь «для симметрии» значит отменить §5 одной
+ * строкой.
+ *
+ * ⚠️ Прозрачность намеренная: наружу уходит РОВНО прежняя форма (`keyHex`/
+ * `ivHex`, `sealedKey` снят). Одиннадцать точек чтения ключа в панели, синхронный
+ * `payloadToMessage` и кэш расшифрованного остаются нетронутыми — правка живёт
+ * в одном месте, а не размазана по пути показа.
+ *
+ * Неудача (подложный замок, чужие байты) — тихая потеря ключа, не исключение:
+ * `sealedKey` приходит ИЗ СЕТИ, и его негодность это чужой мусор, а не наш.
+ * Та же дисциплина, что «мешок не наш» → `null` в этом модуле.
+ */
+async function openAttachmentKey(payload: ChatPayload, ownKeypair: ChatKeypair): Promise<ChatPayload> {
+  const f = payload.file;
+  if (!f || typeof f.sealedKey !== 'string') return payload;
+
+  const both = bytesOfHex(f.sealedKey);
+  if (!both || both.length !== SEALED_ATTACHMENT_SLOT_LEN * 2) return payload;
+
+  // Проба «A, потом B» — та же, что у слотов конверта, и по той же причине:
+  // чей слот, из байтов не выводится никак (запечатывание анонимно), «мой» и
+  // «не мой» различаются только успехом вскрытия. Свои сообщения откроются
+  // слотом B, чужие — слотом A, одним кодом.
+  let plain = await openSealed(ownKeypair, both.slice(0, SEALED_ATTACHMENT_SLOT_LEN));
+  if (!plain) plain = await openSealed(ownKeypair, both.slice(SEALED_ATTACHMENT_SLOT_LEN));
+  if (!plain || plain.length !== ATTACHMENT_KEY_PLAIN_LEN) return payload;
+
+  const { sealedKey: _s, ...rest } = f;
+  return {
+    ...payload,
+    file: {
+      ...rest,
+      keyHex: hexOfBytes(plain.subarray(0, ONE_TIME_KEY_LEN)),
+      ivHex: hexOfBytes(plain.subarray(ONE_TIME_KEY_LEN)),
+    },
+  };
+}
+
 export async function packEnvelope(
   payload: ChatPayload,
   recipientPub: Uint8Array,
   ownPub: Uint8Array,
   author?: `0x${string}`,
 ): Promise<Uint8Array> {
-  // ДО какой-либо крипто-работы (В-6, ревью координатора): JSON.stringify/
+  // ⚠️ ЗАМОК НА КЛЮЧ ВЛОЖЕНИЯ — ПЕРВЫМ, ДО ЗАМЕРА РАЗМЕРА (§5 замысла,
+  // 10 августа 2026). Порядок несущий: замок РАСТИТ содержимое на 272 байта
+  // (383 добавленных против 111 снятых), и мерить потолок по ИСХОДНОМУ виду
+  // значило бы выпускать письма, которые склад отобьёт 413-м, а человек
+  // увидит «отправлено». Замер — тест «содержимое, влезавшее ДО замка и не
+  // влезающее ПОСЛЕ, отказывает на сборке».
+  //
+  // ⚠️ ЧЕСТНО ПРО В-6. Прежний докстринг обещал проверку размера «ДО
+  // какой-либо крипто-работы». Теперь ей предшествуют ДВА `crypto_box_seal`
+  // над 44 байтами. Дух правила соблюдён — ни разового ключа, ни вектора, ни
+  // AES над содержимым (то есть ничего, что растёт с размером письма) до
+  // проверки не происходит; буква изменилась, и это сказано, а не спрятано.
+  const forWire = await sealAttachmentKeyForWire(payload, recipientPub, ownPub);
+
+  // ДО какой-либо ДРУГОЙ крипто-работы (В-6, ревью координатора): JSON.stringify/
   // TextEncoder — не крипто, дешевле любого альтернативного места проверки.
-  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+  const plaintext = new TextEncoder().encode(JSON.stringify(forWire));
   assertPayloadFitsEnvelope(plaintext.length);
 
   const oneTimeKey = crypto.getRandomValues(new Uint8Array(ONE_TIME_KEY_LEN));
@@ -568,7 +753,11 @@ export async function unpackEnvelope(
   // повлияет на ЛОКАЛЬНУЮ ссылку внутри него же), а глобальная подмена
   // встроенных функций (`Object.keys` и т.п.) слишком груба — задевает
   // посторонний код в том же тесте.
-  return sanitizePayload(stripDangerousKeys(parsed));
+  const payload = sanitizePayload(stripDangerousKeys(parsed));
+  if (payload === null) return null;
+  // Ключ вложения — на место, и ТОЛЬКО здесь: пара ключей есть только у
+  // стороны переписки. См. докстринг `openAttachmentKey`.
+  return openAttachmentKey(payload, ownKeypair);
 }
 
 /* ══════════════ разовый ключ наружу: предъявление арбитру (4в §2) ══════════ */

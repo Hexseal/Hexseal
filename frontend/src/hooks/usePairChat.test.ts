@@ -740,6 +740,33 @@ describe('вложение доезжает целиком, а не наполо
       key: 'ee'.repeat(32), iv: 'ff'.repeat(12),
     });
   }, 40_000);
+
+  it('ЗАМЕР ЛОВУШКИ: возврат send() несёт ключ — отправитель открывает своё вложение', async () => {
+    // ⚠️ ЭТО НЕ ДУБЛЬ МОДУЛЬНОГО ЗАМЕРА. Модульный проверяет, что
+    // `packEnvelope` не правит переданный объект. Этот — что тот же объект
+    // доезжает до интерфейса С КЛЮЧОМ: `send()` возвращает
+    // `payloadToMessage(payload, …)` (usePairChat.ts:1039) — ТОТ ЖЕ объект,
+    // что ушёл в сборку. Отними у него ключ, и отправитель узнает об этом,
+    // когда нажмёт на своё же вложение.
+    const { mine } = await roundTrip({
+      file: {
+        url: 'https://relay.example/files/own', name: 'моё.pdf', size: 999,
+        keyHex: '11'.repeat(32), ivHex: '22'.repeat(12),
+        fileKey: 'files/own', mime: 'application/pdf', chunked: false,
+      },
+    });
+
+    expect(mine.attachment).toEqual({
+      name: 'моё.pdf',
+      url: 'https://relay.example/files/own',
+      size: 999,
+      key: '11'.repeat(32),
+      iv: '22'.repeat(12),
+      fileKey: 'files/own',
+      mime: 'application/pdf',
+      chunked: false,
+    });
+  }, 40_000);
 });
 
 /* ─── В-3, вторая половина: мусор в новых полях вложения ─── */
@@ -843,7 +870,12 @@ describe('метка сделки едет внутри каждого сооб�
     });
     try {
       await engine.send({ text: 'по сделке' });
-      await engine.send({ file: { url: 'u', name: 'n', size: 1, keyHex: 'k', ivHex: 'i' } });
+      // ⚠️ 10 августа 2026 (§5 замысла): keyHex/ivHex теперь реально парсятся
+      // packEnvelope'ом (замок вложенного ключа) — заглушки 'k'/'i' были не hex
+      // вовсе и не той длины, и раньше это не мешало, потому что содержимое
+      // ключа было проверке безразлично. Смысл теста (метка сделки едет и на
+      // вложении) от смены значений не меняется.
+      await engine.send({ file: { url: 'u', name: 'n', size: 1, keyHex: 'ab'.repeat(32), ivHex: 'cd'.repeat(12) } });
       expect(bodies).toHaveLength(2);
       const asText = await dealIdOnWire(bodies[0], bob, ALICE.toLowerCase() as `0x${string}`);
       const asFile = await dealIdOnWire(bodies[1], bob, ALICE.toLowerCase() as `0x${string}`);

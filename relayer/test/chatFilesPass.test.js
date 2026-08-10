@@ -277,13 +277,105 @@ describe('К-4: ЗАМЕР — кто ещё пользуется файловы
     expect(res.status).toBe(200);
   });
 
-  it('скачивание чат-файла остаётся открытым — ключ и есть пропуск, содержимое зашифровано', async () => {
+  it('скачивание чат-файла ТРЕБУЕТ пропуск — без него 401', async () => {
+    // ⚠️ ПЕРЕВЁРНУТЫЙ ТЕСТ. До 10 августа 2026 здесь утверждалось обратное:
+    // «скачивание остаётся открытым — ключ и есть пропуск, содержимое
+    // зашифровано». Довод верен ровно до того дня, когда у переписки
+    // появляется ТРЕТИЙ читатель. Арбитр им и становится (§5 замысла): он
+    // обязан видеть, ЧТО вложение было, и не мочь его взять. Главный замок —
+    // вложенный на ключ (chatEnvelope.ts) и вид арбитра БЕЗ адреса файла;
+    // этот — второй, для сообщений, отправленных до правки формы: у них ключ
+    // открыт, и живут они ещё семь дней (FILE_TTL_MS).
     const p = pass();
     const { body } = await presign({ pass: p });
     await request(app).put(`/files/upload-put/${body.key}`)
       .set('CF-Connecting-IP', freshIp()).set('x-bag-pass', p).send('шифротекст');
 
     const res = await request(app).get(`/files/${body.key}`);
+    expect(res.status).toBe(401);
+    // Код читается — значит отказ уехал как JSON, а не под навязанным
+    // Content-Type: application/octet-stream (замок обязан стоять ДО
+    // защитных заголовков, иначе res.json() их не перебьёт).
+    expect(res.body.code).toBe('pass_invalid');
+  });
+
+  // ⚠️ ПРАВКА ПРИ ИСПОЛНЕНИИ (не дословно по плану): четыре теста ниже сначала
+  // делили общие адреса ME/PEER/OTHER (POST /files/presign И PUT upload-put
+  // оба списывают адресный бюджет `CHAT_FILE_RATE_MAX` — здесь 5, выставлен в
+  // начале файла). Каждый тест тратит на владельца ДВЕ единицы (presign +
+  // upload); трёх таких тестов подряд на ОДНОМ адресе — уже 6 > 5. Четвёртый
+  // и пятый по счёту тесты ловили тихий 429 на заливке, файл не долетал до
+  // диска, и GET по правильному ключу отвечал 404 (а не тем кодом, что
+  // проверяет тест) — замерено запуском с исходной фикстурой. Лечение —
+  // свой свежий адрес владельца на каждый тест (freshAddr()), как везде в
+  // остальном файле; общие ME/PEER/OTHER оставлены только там, где были до
+  // этой правки.
+  it('участника пары к её вложению пускает', async () => {
+    const owner = freshAddr();
+    const peer = freshAddr();
+    const me = pass(owner);
+    const { body } = await presign({ pass: me, body: { peerB: peer } });
+    await request(app).put(`/files/upload-put/${body.key}`)
+      .set('CF-Connecting-IP', freshIp()).set('x-bag-pass', me).send('шифротекст');
+
+    const mine = await request(app).get(`/files/${body.key}`).set('x-bag-pass', pass(owner));
+    expect(mine.status).toBe(200);
+    const theirs = await request(app).get(`/files/${body.key}`).set('x-bag-pass', pass(peer));
+    expect(theirs.status).toBe(200);
+  });
+
+  it('сторонний пропуск к вложению пары — 403, а не 200', async () => {
+    // Пропуск склада есть у КАЖДОГО пользователя чата, включая арбитра.
+    // Значит «просто требовать пропуск» его бы не остановило — нужна
+    // принадлежность паре, а она в описи (`file-pairs.json`) уже есть.
+    const owner = freshAddr();
+    const peer = freshAddr();
+    const stranger = freshAddr();
+    const me = pass(owner);
+    const { body } = await presign({ pass: me, body: { peerB: peer } });
+    await request(app).put(`/files/upload-put/${body.key}`)
+      .set('CF-Connecting-IP', freshIp()).set('x-bag-pass', me).send('шифротекст');
+
+    const res = await request(app).get(`/files/${body.key}`).set('x-bag-pass', pass(stranger));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('not_your_file');
+  });
+
+  it('Cache-Control приватный — общий кэш не раздаст чужое вложение', async () => {
+    // Пока выдача была открыта всем, `public, max-age=3600` не значил ничего.
+    // Появилась проверка личности — и общий кэш на пути (прокси, тоннель)
+    // раздавал бы уже проверенный ответ следующему просящему.
+    const owner = freshAddr();
+    const peer = freshAddr();
+    const me = pass(owner);
+    const { body } = await presign({ pass: me, body: { peerB: peer } });
+    await request(app).put(`/files/upload-put/${body.key}`)
+      .set('CF-Connecting-IP', freshIp()).set('x-bag-pass', me).send('шифротекст');
+
+    const res = await request(app).get(`/files/${body.key}`).set('x-bag-pass', pass(owner));
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toContain('private');
+    expect(res.headers['cache-control']).not.toContain('public');
+  });
+
+  it('НАЗВАННЫЙ ПРОБЕЛ: у ключа без записи в описи пара неизвестна — пускает любой живой пропуск', async () => {
+    // ⚠️ ЭТО НЕ ЗАБЫТО, ЭТО ИЗМЕРЕНО. Метка пары ставится ТОЛЬКО в
+    // `POST /files/presign` и только при переданном `peerB`; многокусочная
+    // заливка (>20 МБ) не метится ВОВСЕ — `create` даже не принимает `peerB`
+    // (relayer/app.js:2405, frontend/src/lib/fileStorage.ts:224-225).
+    // Значит для крупных вложений принадлежность паре проверить нечем, и
+    // замок вырождается в «нужен любой пропуск». Отказать всем было бы хуже:
+    // сломались бы все крупные вложения у обеих сторон. Пробел закрывается
+    // меткой пары на многокусочном пути — отдельная работа, §4.5 справочника
+    // вложений.
+    const owner = freshAddr();
+    const stranger = freshAddr();
+    const me = pass(owner);
+    const { body } = await presign({ pass: me });   // без peerB — записи в описи нет
+    await request(app).put(`/files/upload-put/${body.key}`)
+      .set('CF-Connecting-IP', freshIp()).set('x-bag-pass', me).send('шифротекст');
+
+    const res = await request(app).get(`/files/${body.key}`).set('x-bag-pass', pass(stranger));
     expect(res.status).toBe(200);
   });
 });

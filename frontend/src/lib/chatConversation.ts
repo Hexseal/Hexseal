@@ -1459,11 +1459,21 @@ export async function sendMessage(
     // потому что это не проверка, а невозможность.
     envelope = await packEnvelope(payload, peerPub, session.keypair.publicKey, own);
   } catch (err) {
-    throw new ChatConversationError(
-      'Сообщение слишком длинное — склад такое не примет. Сократите текст или отправьте вложением.',
-      'message_too_large',
-      { cause: err },
-    );
+    // ⚠️ ПЕРЕХВАТ СУЗИЛСЯ, И ЭТО ПРАВКА, А НЕ УБОРКА. Раньше сюда попадала
+    // ЛЮБАЯ ошибка сборки и уезжала человеку словами «сообщение слишком
+    // длинное». С 10 августа `packEnvelope` умеет отказать и по другой
+    // причине (негодный ключ вложения — наш собственный мусор), а негодный
+    // открытый ключ собеседника (TypeError из sealForRecipient) мислейблился
+    // так же и ДО этой правки. «Слишком длинное» на негодный ключ — совет,
+    // по которому человек будет резать текст, пока не сдастся.
+    if (err instanceof Error && /payload too large/.test(err.message)) {
+      throw new ChatConversationError(
+        'Сообщение слишком длинное — склад такое не примет. Сократите текст или отправьте вложением.',
+        'message_too_large',
+        { cause: err },
+      );
+    }
+    throw err;
   }
 
   const bodyHash = messageBodyHash(signer.publicKey, envelope);

@@ -1580,19 +1580,78 @@ app.use('/public', (req, res, next) => {
 // Note: no 'immutable' — allows hard-refresh (Ctrl+Shift+R) to bypass cache.
 // 'immutable' would lock in a broken cache (e.g. missing CORS headers) for a year.
 }, express.static(DIR_PUBLIC, { maxAge: '1d' }));
-// Serve encrypted chat files — content is always AES-256-GCM ciphertext (never renderable),
-// but defensive headers prevent any accidental MIME-sniffing or rendering attempt
+/**
+ * Ключ файла из адреса запроса. Внутри `app.use('/files', …)` `req.path` уже
+ * без префикса. `safeKey` — та же чистка, что на записи (только
+ * `[a-zA-Z0-9.\-_]`, `path.basename`, 200 знаков).
+ */
+function fileKeyFromPath(reqPath) {
+  let raw = String(reqPath || '');
+  if (raw.startsWith('/')) raw = raw.slice(1);
+  try { raw = decodeURIComponent(raw); } catch { /* не декодируется — берём как пришло */ }
+  return safeKey(raw);
+}
+
+// Serve encrypted chat files — content is always AES-256-GCM ciphertext.
+//
+// ⚠️ ЗДЕСЬ ДО 10 АВГУСТА 2026 БЫЛО НАПИСАНО ОБРАТНОЕ, и обратное было заперто
+// ТРЕМЯ зелёными тестами («скачивание остаётся открытым — ключ и есть
+// пропуск»). Довод — ключ есть случайный UUID, который знают только
+// собеседники — верен ровно до того дня, когда у переписки появляется ТРЕТИЙ
+// читатель. Арбитр им и становится: §5 замысла требует, чтобы он видел, ЧТО
+// вложение было, и не мог его взять.
+//
+// Главный замок — не здесь: ключ вложения ушёл под вложенное запечатывание
+// (frontend/src/lib/chatEnvelope.ts), а вид арбитра не несёт даже АДРЕСА
+// файла (`RedactedFilePayload`). Этот замок — второй, и он про сообщения,
+// отправленные ДО правки формы: у них ключ открыт, и живут они ещё семь дней
+// (FILE_TTL_MS). Плюс он закрывает утечку адреса «мимо» предъявления.
+//
+// ⚠️ ПРОПУСКА ОДНОГО НЕДОСТАТОЧНО, и это замерено: пропуск склада есть у
+// каждого пользователя чата, включая арбитра. Поэтому проверяется
+// ПРИНАДЛЕЖНОСТЬ ПАРЕ по уже существующей описи (`file-pairs.json`,
+// filePairIdOf). У ключей без записи в описи (многокусочная заливка не
+// метится вовсе — см. §4.5) пара неизвестна, и замок вырождается в «нужен
+// любой живой пропуск». Отказать им всем значило бы сломать все крупные
+// вложения у обеих сторон; пробел назван тестом и закрывается меткой пары на
+// многокусочном пути — отдельная работа.
+//
+// ⚠️ БЮДЖЕТ ЗДЕСЬ НАМЕРЕННО НЕ СПИСЫВАЕТСЯ. `requireChatFileAccess` списал бы
+// адресный бюджет (40/мин), и переписка с пятью десятками картинок упёрлась
+// бы в 429 при обычном открытии чата. Ограничитель на скачивании остаётся
+// тем же, что был, — то есть его нет; это НЕ ухудшение относительно прежнего
+// состояния и названо здесь, чтобы не считалось сделанным.
 app.use('/files', (req, res, next) => {
-  // Only the actual file-download path (express.static below) needs these forced —
-  // the JSON API routes nested under /files/* (presign, multipart, ...) must keep
-  // their own real Content-Type so res.json() isn't silently mislabeled.
+  // Только настоящая выдача файла (express.static ниже). JSON-маршруты
+  // семьи /files/* (presign, multipart, …) обязаны сохранить свой реальный
+  // Content-Type, чтобы res.json() не был подписан октет-стримом.
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+
+  // ⚠️ ЗАМОК СТОИТ ДО ЗАЩИТНЫХ ЗАГОЛОВКОВ. `res.json()` в Express НЕ
+  // перебивает уже выставленный Content-Type — отказ уехал бы как
+  // application/octet-stream, и клиент (и тест) увидел бы Buffer вместо
+  // {code}. Тот же казус уже описан в relayer/test/fileStorage.test.js.
+  const asker = requireBagPass(req, res);
+  if (!asker) return;                       // 401 уже отправлен
+
+  const pairId = filePairIdOf(fileKeyFromPath(req.path));
+  if (pairId && !String(pairId).split('-').includes(String(asker).toLowerCase())) {
+    res.status(403).json({ error: 'Not your file', code: 'not_your_file' });
+    return;
+  }
+
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'");
   res.setHeader('Content-Disposition', 'attachment');
   res.setHeader('Content-Type', 'application/octet-stream');
   next();
-}, express.static(DIR_FILES, { maxAge: '1h' }));
+}, express.static(DIR_FILES, {
+  maxAge: '1h',
+  // ⚠️ `private`, а не `public`: выдача теперь зависит от того, КТО просит.
+  // Общий кэш на пути (прокси, тоннель) раздал бы уже проверенный ответ
+  // следующему просящему, и замок выше не сработал бы ни разу.
+  setHeaders(res) { res.setHeader('Cache-Control', 'private, max-age=3600'); },
+}));
 
 // TRUST_PROXY=true only when the relayer sits behind a proxy we control that
 // rewrites the client-identifying headers — here a Cloudflare Tunnel. Leave it
