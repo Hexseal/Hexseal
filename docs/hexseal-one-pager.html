@@ -452,7 +452,7 @@
       </table>
     </div>
     <p>
-      Beyond that: <span class="num">3,100+</span> automated tests across contracts, frontend
+      Beyond that: <span class="num">3,290+</span> automated tests across contracts, frontend
       and relayer; Slither on the contract set; and a review rule that a fix is only accepted
       with a measurement showing behaviour changed — because "fix this" gets satisfied
       formally, while "prove by measurement that it differs" does not. Findings that survive
@@ -464,7 +464,7 @@
     <p class="eyebrow">Road to mainnet</p>
     <h2>What is left, in order</h2>
     <ol class="road">
-      <li><b>Dispute evidence</b><span>Presenting the encrypted conversation to an arbiter: original frames with per-message keys sealed to the arbiter's on-chain key, an anchor from each side, and divergence between anchors treated as a finding of its own. In progress.</span></li>
+      <li><b>Dispute evidence</b><span><b>Step 1 of 2 shipped (Aug&nbsp;2026).</b> Arbiters now publish the public halves of their chat keys <em>on chain</em>, carried as mandatory arguments of the dispute claim — so a claim without a key is impossible by argument form, not by a check that could be forgotten. Clients read that key from the chain rather than from our directory server, and say so when the two disagree.<br>Step&nbsp;2, in progress: handing the arbiter the original signed frames plus a per-message key sealed to that on-chain key — never a re-encrypted copy, since the signature covers the ciphertext and a re-encrypted excerpt proves nothing. Plus an anchor from each side, with divergence between anchors treated as a finding of its own.</span></li>
       <li><b>Hardening pass</b><span>Close the tracked open items, then freeze the contract set. Auditing a moving target wastes the audit.</span></li>
       <li><b>External audit</b><span>Full review of the frozen set: escrow, arbitration and appeals, treasury, Diamond upgrade surface.</span></li>
       <li><b>Governance of the upgrade key</b><span>Timelock or hand off the authority named in the trust model above, so the mainnet claim matches the code.</span></li>
@@ -489,7 +489,7 @@
 
   <footer>
     <p>Hexseal — decentralized freelance escrow on Base.</p>
-    <p class="mono">Current as of August 2026 · testnet deployment · contract addresses on request</p>
+    <p class="mono">Current as of 10 August 2026 · testnet deployment · contract addresses on request</p>
   </footer>
 
 </div>
