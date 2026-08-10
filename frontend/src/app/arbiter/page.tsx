@@ -272,11 +272,21 @@ export default function ArbiterPage() {
     // компилятора, не только соглашение: подставить сюда неотмеченного
     // подписчика (`signChatKey = <голая функция>`) теперь не проходит
     // `npm run type-check`, а не просто «расходится с тестом».
+    //
+    // ⚠️ ОБЩИЙ МЬЮТЕКС КОШЕЛЬКА — НАХОДКА РАУНДА УСИЛЕНИЯ ГЕЙТА
+    // (`lib/signaturePaths.test.ts`, 10 августа 2026). Этот вызов подписи
+    // существовал в файле рядом с импортом `withWalletLock` (тот берётся
+    // ниже, для «View history»), но сам НЕ был им обёрнут — прежний, слабый
+    // гейт проверял только факт импорта и такой пропуск не видел. Без
+    // обёртки заявка на спор из этой вкладки могла столкнуться в кошельке с
+    // любым другим окном подписи приложения (страница сделки, профиль,
+    // пуши, вторая вкладка того же арбитра) — ровно тот -32002, ради
+    // которого мьютекс и заведён.
     const signChatKey: GatedSignChatKey = createGatedSignChatKey((typedData) =>
-      walletClient.signTypedData({
+      withWalletLock(address, () => walletClient.signTypedData({
         account: walletClient.account!,
         ...(typedData as any),
-      }) as Promise<`0x${string}`>,
+      })) as Promise<`0x${string}`>,
     );
     setBusy(`claim:${agreement}`);
     // The salt used to live only in this closure's local memory — if the tab
@@ -433,11 +443,14 @@ export default function ArbiterPage() {
     // Тот же защищённый подписчик, что уже применяется в handleClaim выше —
     // не свой отдельный. GatedSignChatKey — фирменный тип: подставить сюда
     // голый SignChatKey не даст скомпилироваться.
+    //
+    // ⚠️ ОБЩИЙ МЬЮТЕКС КОШЕЛЬКА — та же находка раунда усиления гейта, что и
+    // у handleClaim выше: см. комментарий там.
     const signChatKey: GatedSignChatKey = createGatedSignChatKey((typedData) =>
-      walletClient.signTypedData({
+      withWalletLock(address, () => walletClient.signTypedData({
         account: walletClient.account!,
         ...(typedData as any),
-      }) as Promise<`0x${string}`>,
+      })) as Promise<`0x${string}`>,
     );
     setBusy("publish-key");
     const id = toast.loading(t("arbiter.claim_key"));

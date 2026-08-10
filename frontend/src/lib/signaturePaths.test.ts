@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
  *   1. НИ ОДИН путь не запрашивает подпись кошелька без явного действия
  *      человека;
  *   2. КАЖДЫЙ путь, который её всё-таки запрашивает, делает это под общим
- *      мьютексом кошелька.
+ *      мьютексом кошелька — И ИМЕННО ЭТИМ ВЫЗОВОМ ПОДПИСИ, А НЕ ФАКТОМ, ЧТО
+ *      МЬЮТЕКС ГДЕ-ТО В ФАЙЛЕ УПОМЯНУТ.
  *
  * Проверяется чтением исходников, а не запуском браузера, — намеренно. Оба
  * свойства ломаются одинаково: кто-то добавляет новый вызов подписи и просто
@@ -22,6 +23,21 @@ import { fileURLToPath } from 'node:url';
  * а мобильный MetaMask отменять такие запросы не умеет — просьба об этом висит
  * у них с 2023 года. Человек остаётся заблокирован, пока не закроет приложение
  * кошелька целиком.
+ *
+ * ⚠️ РАУНД УСИЛЕНИЯ (10 августа 2026, ревью Задачи 1 плана «предъявление чата
+ * арбитру»). Пункт 2 раньше проверялся ИМПОРТОМ: строка
+ * `from '@/lib/walletLock'` где-то в файле. Этого достаточно для «файл знает
+ * про мьютекс», но НЕ для «этот конкретный вызов подписи мьютексом закрыт».
+ * Замер ревьюера: снять саму обёртку `withWalletLock(...)` вокруг
+ * `walletClient.signTypedData(...)` в `signChatKeyAttestation`
+ * (`lib/chatKeyAttestation.ts`), оставив импорт нетронутым (мёртвый
+ * импорт) — **0 красных из 45**. Гейт зелёный, защиты нет.
+ *
+ * Ниже — проверка ПО МЕСТУ (`unlockedSignCalls`): каждый найденный вызов
+ * подписи обязан лежать лексически ВНУТРИ вызова `withWalletLock(...)`, либо
+ * внутри `try`-блока, за которым следует `acquireWalletLock` и `finally` с
+ * вызовом освобождения — те же два раскроя, что реально встречаются в этом
+ * репозитории (`lib/walletLock.ts`, шапка `withWalletLock`/`acquireWalletLock`).
  */
 
 const SRC = fileURLToPath(new URL('..', import.meta.url)); // frontend/src
@@ -54,13 +70,22 @@ function walk(dir: string): string[] {
  *  («don't») и о литералы регулярок, и, ошибившись, тихо СЪЕДАЕТ настоящий код
  *  — то есть гейт молча перестаёт что-либо проверять. Отбросить строку,
  *  которая целиком является комментарием, ошибиться так не может: код в этом
- *  файле никогда не начинается с `//` или `*`. */
+ *  файле никогда не начинается с `//` или `*`.
+ *
+ *  ⚠️ Комментарийная строка становится ПУСТОЙ, а не УДАЛЯЕТСЯ (было —
+ *  `.filter()`, до раунда усиления 10 августа 2026). Раньше это было
+ *  безопасно: `text` использовался только для матчинга по regex без оглядки
+ *  на номер строки. Проверка вложенности ниже (`unlockedSignCalls`) считает
+ *  позиции символов внутри `text` и обязана сходиться с номерами строк
+ *  `raw` — построчное удаление сдвигало бы координаты на число выброшенных
+ *  строк выше по файлу и портило бы диагностику (а при достаточно кривом
+ *  файле — и сам разбор скобок, если вырезанная строка меняла их баланс). */
 function codeOnly(src: string): string {
   return src
     .split('\n')
-    .filter(line => {
+    .map(line => {
       const t = line.trim();
-      return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'));
+      return (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) ? '' : line;
     })
     // Хвостовые комментарии на строке кода. Оба вычищения — строго в пределах
     // одной строки, поэтому промах портит ровно её, а не разъезжается по файлу.
@@ -87,20 +112,225 @@ const FILES = walk(SRC).map(f => {
 // собственный колбэк-параметр, а он кошелька не трогает — подпись делает тот,
 // кто этот колбэк передал.
 const WALLET_SIGN_CALL = /walletClient\.signMessage\s*\(|\.signTypedData\s*\(|\bsignMessageAsync\s*\(/;
-const TAKES_LOCK       = /from\s+['"]@\/lib\/walletLock['"]/;
 
 // Файлы, где вообще есть вызов подписи. Ищем по тексту БЕЗ комментариев и
 // строк, чтобы не ловить собственные объяснения в коде.
 const SIGNING_FILES = FILES.filter(f => WALLET_SIGN_CALL.test(f.text));
 
+/* ─────────────────────── разбор вложенности по месту ───────────────────── */
+
+/** Индекс символа, где закрывается скобка, открытая в `openIdx` (`text[openIdx]`
+ *  обязан быть `(`). Считает по балансу, БЕЗ разбора строк/шаблонов —
+ *  см. предупреждения в докстринге `unlockedSignCalls` ниже. `-1` — не
+ *  закрылась до конца файла (битый код или парная скобка отрезана обрывом). */
+function matchParen(text: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < text.length; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+/** То же для `{`/`}`. */
+function matchBrace(text: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+/** Диапазоны текста, закрытые раскроем А: `withWalletLock(АДРЕС, () => ЗВОНОК)`.
+ *  Вызов подписи защищён, если его индекс попадает СТРОГО ВНУТРЬ пары скобок
+ *  вызова `withWalletLock(` — вне зависимости от того, сколько промежуточных
+ *  вызовов лежит между (`getBagPass`/`requestBagPass` в `useChatSession.ts`
+ *  зовут подпись через два вложенных колбэка, и это по-прежнему «внутри»). */
+function lockedSpansWithWalletLock(text: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const re = /\bwithWalletLock\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const openIdx = m.index + m[0].length - 1;
+    const closeIdx = matchParen(text, openIdx);
+    if (closeIdx !== -1) spans.push([m.index, closeIdx]);
+  }
+  return spans;
+}
+
+/** Диапазоны текста, закрытые раскроем Б:
+ *
+ *    const X = await acquireWalletLock(АДРЕС);
+ *    try {
+ *      ЗВОНОК
+ *    } finally {
+ *      X();
+ *    }
+ *
+ *  Защищённый диапазон — тело `try` (там реально стоит вызов подписи в
+ *  каждом сегодняшнем случае в `lib/relay.ts`). Требуем, чтобы `finally`
+ *  шёл СРАЗУ за закрытием `try` (между ними — только пробелы: в этом
+ *  репозитории нет `try {} catch {} finally {}` на верхнем уровне таких
+ *  функций, только вложенный `catch` ВНУТРИ тела `try`) и чтобы внутри
+ *  `finally` реально звался тот же `X()` — иначе `acquireWalletLock` взят,
+ *  но не отпущен по этому пути, и защиты фактически нет. */
+function lockedSpansAcquireRelease(text: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const re = /\b(?:const|let|var)\s+(\w+)\s*=\s*await\s+acquireWalletLock\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const varName = m[1];
+    const acquireOpenParen = m.index + m[0].length - 1;
+    const acquireCloseParen = matchParen(text, acquireOpenParen);
+    if (acquireCloseParen === -1) continue;
+
+    const tryRe = /\btry\s*\{/g;
+    tryRe.lastIndex = acquireCloseParen;
+    const tryMatch = tryRe.exec(text);
+    if (!tryMatch) continue;
+    const tryBraceIdx = tryMatch.index + tryMatch[0].length - 1;
+    const tryCloseIdx = matchBrace(text, tryBraceIdx);
+    if (tryCloseIdx === -1) continue;
+
+    const finallyRe = /\bfinally\s*\{/g;
+    finallyRe.lastIndex = tryCloseIdx;
+    const finallyMatch = finallyRe.exec(text);
+    if (!finallyMatch) continue;
+    // `finally` обязан идти СРАЗУ за закрытием `try` — только пробелы между.
+    if (!/^\s*$/.test(text.slice(tryCloseIdx + 1, finallyMatch.index))) continue;
+    const finallyBraceIdx = finallyMatch.index + finallyMatch[0].length - 1;
+    const finallyCloseIdx = matchBrace(text, finallyBraceIdx);
+    if (finallyCloseIdx === -1) continue;
+
+    const releaseCallRe = new RegExp(`\\b${varName}\\s*\\(`);
+    if (!releaseCallRe.test(text.slice(finallyBraceIdx, finallyCloseIdx))) continue;
+
+    spans.push([tryBraceIdx, tryCloseIdx]);
+  }
+  return spans;
+}
+
+/** Индекс `{`, открывающего ТЕЛО функции — считая от закрытия списка
+ *  параметров и ПРОПУСКАЯ аннотацию типа возврата между ними. Наивный
+ *  `text.indexOf('{', parenCloseIdx)` спотыкается о ПЕРВУЮ `{` в самом типе:
+ *  `Promise<{ txHash: string; jobId?: string }>` — то есть находил бы фигурную
+ *  скобку объектного типа, а не тела функции, и `matchBrace` от неё закрывал бы
+ *  тело в ОДНУ строку (замерено на `_sendForwardRequest`: без этой пропайки
+ *  тело считалось строкой 502-502 вместо настоящих 502-580). Здесь `<`, `(`,
+ *  `[` в позиции типа возврата ОДНОЗНАЧНО открывающие скобки, не операторы
+ *  сравнения — эта неоднозначность существует только внутри тела функции,
+ *  куда мы ещё не дошли. */
+function findBodyBrace(text: string, parenCloseIdx: number): number {
+  let depth = 0;
+  for (let i = parenCloseIdx + 1; i < text.length; i++) {
+    const c = text[i];
+    if (c === '(' || c === '[' || c === '<') depth++;
+    else if (c === ')' || c === ']' || c === '>') { if (depth > 0) depth--; }
+    else if (c === '{') {
+      if (depth === 0) return i;
+      depth++;
+    } else if (c === '}') {
+      if (depth > 0) depth--;
+    }
+  }
+  return -1;
+}
+
+/** Тела НЕэкспортируемых функций файла — кандидаты на «приватный хелпер,
+ *  защищённый вызывающим». Экспортные функции не считаем: у них может быть
+ *  сколько угодно вызывающих ВНЕ файла, и «где-то в файле есть защищённый
+ *  вызов» тогда ничего не доказывает. */
+function privateHelperBodies(text: string): Array<{ name: string; bodyStart: number; bodyEnd: number }> {
+  const out: Array<{ name: string; bodyStart: number; bodyEnd: number }> = [];
+  const re = /(^|\n)([ \t]*)async function\s+(\w+)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const name = m[3];
+    const parenOpenIdx = m.index + m[0].length - 1;
+    const parenCloseIdx = matchParen(text, parenOpenIdx);
+    if (parenCloseIdx === -1) continue;
+    const braceIdx = findBodyBrace(text, parenCloseIdx);
+    if (braceIdx === -1) continue;
+    const braceCloseIdx = matchBrace(text, braceIdx);
+    if (braceCloseIdx === -1) continue;
+    out.push({ name, bodyStart: braceIdx, bodyEnd: braceCloseIdx });
+  }
+  return out;
+}
+
+/** Номер строки (1-based) индекса символа `idx` в `text` — используется
+ *  только для читаемого отчёта офендеров. */
+function lineOf(text: string, idx: number): number {
+  let line = 1;
+  for (let i = 0; i < idx; i++) if (text[i] === '\n') line++;
+  return line;
+}
+
+/**
+ * Индексы (и читаемые `path:line`) вызовов подписи, которые НЕ лежат внутри
+ * защищённого раскроя.
+ *
+ * ⚠️ ЧЕГО ЭТА ПРОВЕРКА НЕ ДЕЛАЕТ — сказано вслух, а не спрятано:
+ *
+ *   - Это счётчик скобок по тексту БЕЗ комментариев, а НЕ разбор синтаксиса
+ *     (AST). Строковый литерал или JSX-текст с непарной скобкой внутри собьёт
+ *     баланс молча. В сегодняшнем коде рядом с вызовами подписи такого нет —
+ *     но полагаться на это вслепую в будущем файле нельзя.
+ *   - Понимает «приватный вызов защищён вызывающим» РОВНО НА ОДИН ХОП: если
+ *     вызов подписи сидит в теле НЕэкспортируемой функции этого же файла, а
+ *     ИМЯ этой функции зовётся (буквально, `имя(`) из места, которое уже
+ *     внутри защищённого диапазона — засчитывает как защищённый (в этом
+ *     репозитории это ровно `_sendForwardRequest` в `lib/relay.ts`,
+ *     приватный хелпер двенадцати обёрток `*Gasless`). Хелпер, зовущий ДРУГОЙ
+ *     хелпер, который уже зовёт подпись, — два хопа — тест не распутает и
+ *     засчитает как офендера: то есть ошибётся в БЕЗОПАСНУЮ сторону (ложный
+ *     красный, не ложный зелёный).
+ *   - Не проверяет, что мьютекс взят по ТОМУ ЖЕ адресу, что подписывает
+ *     кошелёк, — только что вызов лексически внутри защищённого диапазона.
+ *     `withWalletLock(чужойАдрес, () => сюдаПодписьВерногоАдреса)` тест не
+ *     поймает.
+ *   - Не ловит передачу подписчика ПО ССЫЛКЕ без вызова в скобках
+ *     (`withWalletLock(addr, someNamedSigner)`, где `someNamedSigner` сам
+ *     где-то дальше зовёт подпись) — засчитает такой файл офендером, даже
+ *     если по факту он защищён. В сегодняшнем коде такого раскроя нет (везде
+ *     явные стрелочные обёртки), но если он появится — тест ложно покраснеет,
+ *     а не ложно промолчит.
+ */
+function unlockedSignCalls(f: { path: string; text: string }): string[] {
+  const { text } = f;
+  const lockedSpans = [...lockedSpansWithWalletLock(text), ...lockedSpansAcquireRelease(text)];
+  const isLocked = (idx: number) => lockedSpans.some(([s, e]) => idx > s && idx < e);
+
+  const helpers = privateHelperBodies(text);
+  const protectedHelperNames = new Set<string>();
+  for (const h of helpers) {
+    const callRe = new RegExp(`\\b${h.name}\\s*\\(`, 'g');
+    let cm: RegExpExecArray | null;
+    while ((cm = callRe.exec(text))) {
+      if (cm.index >= h.bodyStart && cm.index < h.bodyEnd) continue; // вызов самой себя внутри своего же тела — не в счёт
+      if (isLocked(cm.index)) { protectedHelperNames.add(h.name); break; }
+    }
+  }
+
+  const offenders: string[] = [];
+  const scanRe = new RegExp(WALLET_SIGN_CALL.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = scanRe.exec(text))) {
+    const idx = m.index;
+    if (isLocked(idx)) continue;
+    const enclosing = helpers.find(h => idx > h.bodyStart && idx < h.bodyEnd);
+    if (enclosing && protectedHelperNames.has(enclosing.name)) continue;
+    offenders.push(`${f.path}:${lineOf(text, idx)}`);
+  }
+  return offenders;
+}
+
 describe('пути подписи', () => {
-  it('каждый файл с вызовом подписи берёт общий мьютекс кошелька', () => {
-    // Импорт проверяем по СЫРОМУ тексту: путь модуля — строковый литерал, а в
-    // `text` строки вырезаны.
+  it('каждый ВЫЗОВ подписи лежит внутри withWalletLock/acquireWalletLock — не просто соседствует с импортом', () => {
     const offenders = SIGNING_FILES
       .filter(f => f.path !== 'lib/walletLock.ts')
-      .filter(f => !TAKES_LOCK.test(f.raw))
-      .map(f => f.path);
+      .flatMap(f => unlockedSignCalls(f));
 
     expect(offenders).toEqual([]);
   });
