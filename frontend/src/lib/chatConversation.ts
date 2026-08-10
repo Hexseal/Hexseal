@@ -574,6 +574,196 @@ export function decodeFrame(bytes: Uint8Array): SignedLinkFrame | null {
   };
 }
 
+/* ──────── проверка кадра: одна на приём и на предъявление арбитру ──────── */
+
+/**
+ * Вердикт об ОДНОМ кадре, полученный ТОЛЬКО из его байтов и заявленного
+ * рядом звена. Свидетельства склада здесь нет и быть не может: у арбитра
+ * его не существует, а вердикт, который у арбитра не воспроизводится, —
+ * не доказательство.
+ *
+ *  - `malformed` — байты не кадр, ЛИБО заявленное рядом звено/подпись/ключ
+ *    не то, что в байтах (см. `verifyFrameEvidence`);
+ *  - `body_mismatch` — `bodyHash` звена не сходится с `signerPub‖envelope`;
+ *  - `bad_signature` — подпись не сходится с преимиджем звена.
+ */
+export type FrameVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'malformed' | 'body_mismatch' | 'bad_signature' };
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/** Регистронезависимо, как `sameHash` в `chatChain.ts`: гейт формы там
+ *  принимает A-F, и сравнение обязано трактовать регистр так же — иначе
+ *  честное звено получает «сломано» за текстовый регистр одного поля. */
+function sameHexNoCase(claimed: unknown, decoded: `0x${string}`): boolean {
+  return typeof claimed === 'string' && claimed.toLowerCase() === decoded.toLowerCase();
+}
+
+/** Ровно то, чем мы пользуемся у libsodium. Узко намеренно: проверка подписи
+ *  и больше ничего. */
+type SignatureVerifier = {
+  crypto_sign_verify_detached(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean;
+};
+
+/**
+ * ОДНО обещание на весь модуль, а не флаг «прогрето». Два вызова, начатые
+ * разом на холодном модуле, грузят библиотеку ОДИН раз: второй присоединяется
+ * к обещанию первого. Флаг тут дал бы две параллельные загрузки.
+ */
+let _verifierPromise: Promise<SignatureVerifier> | null = null;
+
+/**
+ * Обещание проверяльщика подписи. Заводится при первой надобности и живёт до
+ * конца жизни модуля.
+ *
+ * ⚠️ Отдаём ОБЪЕКТ sodium, а не выхваченную функцию, и свойство читается в
+ * МОМЕНТ ВЫЗОВА. Замеры кэша разбора считают настоящие вызовы через
+ * `vi.spyOn(sodium, 'crypto_sign_verify_detached')` (`chatParseCache.test.ts`,
+ * `timeParse`), а шпион подменяет свойство объекта. Выхватив функцию, мы
+ * ослепили бы замер и НИЧЕГО не сломали бы в поведении — ровно тот род
+ * промаха, за которым здесь следят (мутация 7).
+ *
+ * ⚠️ Неудачную загрузку НЕ запоминаем: иначе один сбой библиотеки запер бы
+ * проверку кадров навсегда. Та же дисциплина, что у `deriveLinkSigningKeypair`
+ * выше (`:445-447`).
+ */
+function frameVerifier(): Promise<SignatureVerifier> {
+  if (_verifierPromise) return _verifierPromise;
+  const promise = (async () => {
+    const sodium = (await import('libsodium-wrappers')).default;
+    await sodium.ready;
+    return sodium as SignatureVerifier;
+  })();
+  _verifierPromise = promise;
+  promise.catch(() => { if (_verifierPromise === promise) _verifierPromise = null; });
+  return promise;
+}
+
+/**
+ * Греет проверяльщик подписи ЗАРАНЕЕ — и больше ничего не делает.
+ *
+ * ⚠️ Условием работы `verifyFrameEvidence` НЕ является: та ждёт готовности
+ * сама. Здесь эта функция ради `receiveBags` — чтобы загрузка библиотеки была
+ * явным шагом перед разбором пачки, а не пряталась в первом витке цикла.
+ * Прежнее решение — «обязательный прогрев, иначе отказ `verifier_not_ready`» —
+ * снято договором v2 (испр. 4): требование, которое держится словами в чужом
+ * черновике, не держится ничем. Греп по восьми файлам плана показал, что
+ * прогрев не звал НИКТО.
+ */
+export async function readyFrameVerifier(): Promise<void> {
+  await frameVerifier();
+}
+
+/** Только тесты: «работает с холодного модуля» обязано проверяться замером, а
+ *  не порядком объявления тестов в файле. */
+export function _resetFrameVerifierForTest(): void {
+  _verifierPromise = null;
+}
+
+/**
+ * Проверяет ОДИН кадр против заявленного рядом звена, подписи и подписного
+ * ключа. Всё, что здесь проверяется, проверяется ПО САМИМ БАЙТАМ — поэтому
+ * функция годится и приёму (`receiveBags`), и арбитру, у которого нет ни
+ * нашего сеанса, ни свидетельства склада.
+ *
+ * ⚠️ ЗАЯВЛЕННОЕ ТОЛЬКО СВЕРЯЕТСЯ, И БОЛЬШЕ НИ ДЛЯ ЧЕГО НЕ УПОТРЕБЛЯЕТСЯ.
+ * Ниже сверки все вычисления идут над РАЗОБРАННЫМИ значениями. Это не
+ * педантизм: в предъявлении арбитру (план 4в) контейнер несёт звенья
+ * ОТДЕЛЬНО от кадров, и предъявитель мог бы подать честные байты с
+ * сочинённым звеном рядом — вердикт цепочки посчитался бы по сочинённому, а
+ * содержимое показалось из байтов. Подменённое значение здесь физически не
+ * доезжает до крипто, поэтому «забыть учесть» его негде.
+ *
+ * ⚠️ ЧЕГО ЗДЕСЬ НЕТ И БЫТЬ НЕ МОЖЕТ: сверки `link.sender` со свидетельством
+ * склада (`IncomingBag.sender`). Она осталась в `receiveBags` — у арбитра
+ * свидетеля нет, и функция, требующая его, была бы непригодна половине
+ * вызывающих. Следствие названо вслух: пройденный `verifyFrameEvidence`
+ * означает «эти байты подписаны ключом, который в них назван», а НЕ «их
+ * положил тот, кто назван» — второе даёт заверение кошельком (задача 1).
+ *
+ * ⚠️ ГОТОВНОСТИ ЖДЁТ САМА, и это форма, а не договорённость. Прежде здесь
+ * стоял отказ `verifier_not_ready` с требованием «сначала позовите
+ * `readyFrameVerifier()`» — требование, которое никто не выполнял: греп по
+ * восьми файлам плана не нашёл ни одного вызова, то есть предъявление арбитру
+ * упало бы на первом же кадре. Теперь звать нечего: первое обращение само
+ * заводит обещание и ждёт его. Цена — одно ожидание уже сошедшегося обещания
+ * на кадр, названа числом в замере (шаг 6).
+ *
+ * ⚠️ ПРЕДЕЛ, КОТОРЫЙ ЗДЕСЬ ТОЛЬКО НАЗЫВАЕТСЯ, а закрывается в задаче 5:
+ * `verifyChain` (`chatChain.ts:323`) ни разу не сравнивает `sender` между
+ * звеньями — цепочка, у которой посреди меняется отправитель, даёт
+ * `ok: true`. В приёме от этого спасает группировка по свидетельству склада
+ * (`bySender`); в предъявлении группировку по отправителю обязана делать
+ * задача 5 (`PerSenderChain`).
+ *
+ * @throws {TypeError} `frame` не `Uint8Array` — НАШ мусор (правило
+ *   `decodeFrame`/`unpackEnvelope`). Функция асинхронная, значит это
+ *   ОТКЛОНЁННОЕ ОБЕЩАНИЕ, а не синхронный бросок: проверять его надо
+ *   `await expect(...).rejects.toThrow(TypeError)`, потому что
+ *   `expect(() => ...).toThrow()` на async зелен ВСЕГДА. Всё остальное —
+ *   чужие данные, и на любой их вид отвечает вердикт, а не исключение.
+ */
+export async function verifyFrameEvidence(
+  frame: Uint8Array,
+  link: ChainLink,
+  signature: Uint8Array,
+  signerPublicKey: Uint8Array,
+): Promise<FrameVerdict> {
+  // Ожидание ПЕРВОЙ строкой, до разбора: так «готовность» перестаёт быть
+  // условием, о котором вызывающий обязан знать. Мусорный кадр платит за это
+  // одним ожиданием сошедшегося обещания — дешевле, чем ещё одно правило,
+  // которое надо помнить.
+  const verifier = await frameVerifier();
+
+  const decoded = decodeFrame(frame);
+  if (!decoded) return { ok: false, reason: 'malformed' };
+
+  // ─── сверка заявленного с байтами ───
+  const inBytes = decoded.link;
+  const sameLink =
+    typeof link === 'object' && link !== null
+    && link.seq === inBytes.seq
+    && link.sentAt === inBytes.sentAt
+    && sameHexNoCase(link.prevHash, inBytes.prevHash)
+    && sameHexNoCase(link.bodyHash, inBytes.bodyHash)
+    && sameHexNoCase(link.sender, inBytes.sender);
+  if (!sameLink) return { ok: false, reason: 'malformed' };
+  if (!(signature instanceof Uint8Array) || !sameBytes(signature, decoded.signature)) {
+    return { ok: false, reason: 'malformed' };
+  }
+  if (!(signerPublicKey instanceof Uint8Array) || !sameBytes(signerPublicKey, decoded.signerPublicKey)) {
+    return { ok: false, reason: 'malformed' };
+  }
+
+  // ─── отпечаток тела: ключ подписи пришит к цепочке через него ───
+  // Ширина ключа тут гарантирована разбором кадра, поэтому messageBodyHash
+  // не бросит; на всякий чужой вид ответила сверка выше.
+  if (messageBodyHash(decoded.signerPublicKey, decoded.envelope).toLowerCase()
+    !== inBytes.bodyHash.toLowerCase()) {
+    return { ok: false, reason: 'body_mismatch' };
+  }
+
+  // ─── подпись ───
+  let signatureOk: boolean;
+  try {
+    // Свойство читается в момент вызова — шпион замера видит вызов (мутация 7).
+    signatureOk = verifier.crypto_sign_verify_detached(
+      decoded.signature, linkSignaturePreimage(inBytes), decoded.signerPublicKey,
+    );
+  } catch {
+    // libsodium бросает TypeError на негодной длине. Форма уже проверена
+    // разбором кадра, но чужие данные не повод падать целиком.
+    signatureOk = false;
+  }
+  return signatureOk ? { ok: true } : { ok: false, reason: 'bad_signature' };
+}
+
 /* ─────────────────── голова разговора на устройстве ───────────────────── */
 
 export interface ConversationHead {
@@ -1615,6 +1805,12 @@ function mergeSides(messages: ChatMessage[]): ChatMessage[] {
 // расшифровка конверта — оба зависят ТОЛЬКО от байтов мешка (и второе ещё от
 // нашей пары ключей).
 //
+// Кэшируется ВЕРДИКТ ЦЕЛИКОМ (`verifyFrameEvidence`), а не одна подпись:
+// разбор кадра и отпечаток тела зависят от тех же байтов и переспрашивать их
+// незачем. Вердикт берётся из локальной переменной, а не из возвращённого
+// `put` — непринятая запись (мешок сверх потолка) не должна превращаться в
+// «сломано», то есть в обвинение за переполненный кэш.
+//
 // ОПОРА КЭША — ТОЖДЕСТВО ОБЪЕКТА ТЕЛА, а не ключ мешка. Ключ выдаёт СЕРВЕР, и
 // верить ему как отпечатку нельзя: под тем же ключом могут приехать другие
 // байты. Движок держит скачанные мешки в карте и подаёт те же объекты каждый
@@ -1652,20 +1848,13 @@ function mergeSides(messages: ChatMessage[]): ChatMessage[] {
 // повторный разбор становился ДОРОЖЕ холодного. Разбор причины, замеры и
 // почему поднять потолок было бы не починкой — в шапке `chatParseCache.ts`.
 
-const _signatureCache = new BoundedParseCache<{ body: Uint8Array; ok: boolean }>();
+const _frameVerdictCache = new BoundedParseCache<{ body: Uint8Array; verdict: FrameVerdict }>();
 const _payloadCache = new BoundedParseCache<{ body: Uint8Array; ownPub: Uint8Array; payload: ChatPayload | null }>();
 
 /** Только тесты: разбор обязан быть проверяем с холодного кэша. */
 export function _resetParseCacheForTest(): void {
-  _signatureCache.clear();
+  _frameVerdictCache.clear();
   _payloadCache.clear();
-}
-
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
 }
 
 /**
@@ -1721,8 +1910,17 @@ export async function receiveBags(
   );
 
   // ─── шаг 1: кадр, свидетельство сервера, отпечаток тела, подпись ───
-  const sodium = (await import('libsodium-wrappers')).default;
-  await sodium.ready;
+  // Проверку кадра ведёт `verifyFrameEvidence` — ТА ЖЕ функция, которой судит
+  // предъявление арбитр. Второй копии этих проверок в проекте нет: разойдясь,
+  // они дали бы разные вердикты об одном кадре — у себя приняли, арбитру
+  // показали «сломано».
+  //
+  // Прогрев здесь — НЕ условие работы (`verifyFrameEvidence` ждёт готовности
+  // сама), а место загрузки: пусть библиотека грузится явным шагом перед
+  // разбором пачки, а не в первом витке цикла. Убрать эту строку — вердикты
+  // не изменятся; проверяется это числом, а не верой (мутация 11 — ноль
+  // красных, названный вслух).
+  await readyFrameVerifier();
 
   // Ключ — приведённый адрес отправителя, ЗАСВИДЕТЕЛЬСТВОВАННЫЙ СЕРВЕРОМ (тип
   // сохраняется, а не сплющивается в `string`: ниже он уезжает и в `troubles`,
@@ -1793,31 +1991,38 @@ export async function receiveBags(
       continue;
     }
 
-    if (messageBodyHash(frame.signerPublicKey, frame.envelope).toLowerCase() !== frame.link.bodyHash.toLowerCase()) {
-      troubles.push({ kind: 'body_mismatch', key: bag.key, seq: frame.link.seq, from: attested });
-      noteRejected(attested, frame.link.seq);
-      continue;
-    }
-
-    let signatureOk: boolean;
-    const sigHit = _signatureCache.get(bag.key);
-    if (sigHit && sigHit.body === bag.body) {
+    let verdict: FrameVerdict;
+    const hit = _frameVerdictCache.get(bag.key);
+    if (hit && hit.body === bag.body) {
       // К-2: те же байты уже проверялись — самая дорогая половина разбора.
-      signatureOk = sigHit.ok;
-    } else try {
-      signatureOk = _signatureCache.put(bag.key, {
-        body: bag.body,
-        ok: sodium.crypto_sign_verify_detached(
-          frame.signature, linkSignaturePreimage(frame.link), frame.signerPublicKey,
-        ),
-      }).ok;
-    } catch {
-      // libsodium бросает TypeError на негодной длине — форма уже проверена
-      // разбором кадра, но чужие данные не повод падать целиком.
-      signatureOk = false;
+      // Опора — ТОЖДЕСТВО ОБЪЕКТА тела, не ключ мешка (ключ выдаёт сервер).
+      verdict = hit.verdict;
+    } else {
+      // Заявленное берётся из ТОГО ЖЕ разбора, поэтому сверка внутри
+      // `verifyFrameEvidence` здесь всегда сходится и стоит три сравнения.
+      // Ради предъявления она там и стоит: у арбитра звенья приезжают
+      // ОТДЕЛЬНО от кадров.
+      //
+      // `await` не «на всякий случай»: функция асинхронная (испр. 4). Без него
+      // в `verdict` лёг бы объект-обещание, `verdict.ok` было бы `undefined`, и
+      // КАЖДЫЙ мешок получил бы `verdict.reason === undefined` → `body_mismatch`,
+      // то есть обвинение всех подряд.
+      verdict = await verifyFrameEvidence(bag.body, frame.link, frame.signature, frame.signerPublicKey);
+      _frameVerdictCache.put(bag.key, { body: bag.body, verdict });
     }
-    if (!signatureOk) {
-      troubles.push({ kind: 'bad_signature', key: bag.key, seq: frame.link.seq, from: attested });
+    if (!verdict.ok) {
+      if (verdict.reason === 'malformed') {
+        // Недостижимо: кадр уже разобран этими же байтами, а заявленное взято
+        // из того же разбора. Ветка есть потому, что вердикт исчерпывается по
+        // типу, а не по вере в недостижимость; ведёт себя как «разбор не дал
+        // кадра» — без `noteRejected`, ровно как гейт формы выше (номера
+        // звена у неразобранного кадра нет).
+        troubles.push({ kind: 'malformed', key: bag.key });
+        continue;
+      }
+      troubles.push(verdict.reason === 'bad_signature'
+        ? { kind: 'bad_signature', key: bag.key, seq: frame.link.seq, from: attested }
+        : { kind: 'body_mismatch', key: bag.key, seq: frame.link.seq, from: attested });
       noteRejected(attested, frame.link.seq);
       continue;
     }
