@@ -285,12 +285,32 @@ interface EnvelopeParts {
 }
 
 /**
+ * Смещения полей заголовка, вычисленные ИЗ констант раскладки один раз.
+ *
+ * ⚠️ Доработка ревью: докстринг `sliceEnvelope` ниже раньше заявлял «ЕДИНСТВЕННОЕ
+ * место, где живут смещения 1/81/161/173» — но это было правдой только для
+ * РАЗБОРА. `packEnvelope` держала СВОЮ копию тех же трёх чисел на записи
+ * (`header[0]=...`, `header.set(sealedSlotA, 1)`, `header.set(sealedSlotB, 81)`,
+ * `header.set(iv, 161)`) — вторая копия молча расходится, ровно тот класс
+ * дефекта, против которого стоят гейты раскладки. Починено переносом, а не
+ * переписыванием утверждения: сборка заголовка (`buildHeader` ниже) читает ТЕ
+ * ЖЕ три константы, что и разбор (`sliceEnvelope`), — теперь оба смотрят в одно
+ * место, и утверждение «единственное» стало правдой в обе стороны.
+ */
+const SLOT_A_OFFSET = 1;
+const SLOT_B_OFFSET = 1 + SEALED_KEY_LEN; // 81
+const IV_OFFSET = 1 + SEALED_KEY_LEN * 2; // 161
+
+/**
  * ЕДИНСТВЕННОЕ место во всём проекте, где живут смещения конверта (1, 81, 161,
- * 173). Три пути разбора — `unpackEnvelope` (своей парой), `recoverOneTimeKey`
- * (отдать голый ключ) и `openEnvelopeWithOneTimeKey` (вскрыть готовым ключом) —
- * нарезают конверт ЗДЕСЬ, а не каждый у себя. Вторая копия этих четырёх чисел
- * — тот самый класс дефекта, против которого в проекте стоят три гейта
- * раскладки (`script/check-storage-*.sh`): расходятся не сразу и молча.
+ * 173) — И НА РАЗБОР, И НА СБОРКУ (см. `SLOT_A_OFFSET`/`SLOT_B_OFFSET`/
+ * `IV_OFFSET` выше и `buildHeader` ниже — доработка ревью, до неё сборка в
+ * `packEnvelope` держала свою копию этих же чисел). Три пути разбора —
+ * `unpackEnvelope` (своей парой), `recoverOneTimeKey` (отдать голый ключ) и
+ * `openEnvelopeWithOneTimeKey` (вскрыть готовым ключом) — нарезают конверт
+ * ЗДЕСЬ, а не каждый у себя. Вторая копия этих четырёх чисел — тот самый класс
+ * дефекта, против которого в проекте стоят три гейта раскладки
+ * (`script/check-storage-*.sh`): расходятся не сразу и молча.
  *
  * `null` — «это не конверт этой версии»: раздут выше потолка, незнакомая
  * версия, или срезы не той длины. Все три проверки — ДО какой-либо крипто-
@@ -315,15 +335,33 @@ function sliceEnvelope(envelope: Uint8Array): EnvelopeParts | null {
   if (envelope[0] !== ENVELOPE_VERSION) return null;
 
   const header = envelope.subarray(0, HEADER_LEN);
-  const sealedSlotA = envelope.subarray(1, 1 + SEALED_KEY_LEN);
-  const sealedSlotB = envelope.subarray(1 + SEALED_KEY_LEN, 1 + SEALED_KEY_LEN * 2);
-  const iv = envelope.subarray(1 + SEALED_KEY_LEN * 2, HEADER_LEN);
+  const sealedSlotA = envelope.subarray(SLOT_A_OFFSET, SLOT_A_OFFSET + SEALED_KEY_LEN);
+  const sealedSlotB = envelope.subarray(SLOT_B_OFFSET, SLOT_B_OFFSET + SEALED_KEY_LEN);
+  const iv = envelope.subarray(IV_OFFSET, HEADER_LEN);
   const ciphertext = envelope.subarray(HEADER_LEN);
 
   if (sealedSlotA.length !== SEALED_KEY_LEN || sealedSlotB.length !== SEALED_KEY_LEN || iv.length !== IV_LEN) {
     return null;
   }
   return { header, sealedSlotA, sealedSlotB, iv, ciphertext };
+}
+
+/**
+ * Обратная операция к `sliceEnvelope` — собирает заголовок конверта из трёх
+ * готовых частей (оба запечатанных слота и вектор). Читает ТЕ ЖЕ три
+ * константы смещения (`SLOT_A_OFFSET`/`SLOT_B_OFFSET`/`IV_OFFSET`), что и
+ * `sliceEnvelope` — это и есть починка находки ревью: сборка (`packEnvelope`)
+ * раньше писала `1`/`81`/`161` заново, инлайном, отдельной копией тех же
+ * чисел. Теперь читает и пишет одна и та же пара функций, смотрящая в одни и
+ * те же константы — второй копии не осталось.
+ */
+function buildHeader(sealedSlotA: Uint8Array, sealedSlotB: Uint8Array, iv: Uint8Array): Uint8Array {
+  const header = new Uint8Array(HEADER_LEN);
+  header[0] = ENVELOPE_VERSION;
+  header.set(sealedSlotA, SLOT_A_OFFSET);
+  header.set(sealedSlotB, SLOT_B_OFFSET);
+  header.set(iv, IV_OFFSET);
+  return header;
 }
 
 /**
@@ -418,11 +456,11 @@ export async function packEnvelope(
   // подавая никакого сигнала вообще. Заголовок как AAD связывает ВСЕ его
   // байты с тегом аутентификации — подмена любого из них рвёт проверку
   // ОБЕИМ сторонам одинаково, независимо от того, чей слот задет.
-  const header = new Uint8Array(HEADER_LEN);
-  header[0] = ENVELOPE_VERSION;
-  header.set(sealedSlotA, 1);
-  header.set(sealedSlotB, 1 + SEALED_KEY_LEN);
-  header.set(iv, 1 + SEALED_KEY_LEN * 2);
+  //
+  // buildHeader (доработка ревью, раньше здесь была инлайновая копия тех же
+  // трёх смещений 1/81/161) — та же функция, что читает `sliceEnvelope` в
+  // обратную сторону; см. её докстринг и докстринг `sliceEnvelope` выше.
+  const header = buildHeader(sealedSlotA, sealedSlotB, iv);
 
   const cryptoKey = await crypto.subtle.importKey('raw', oneTimeKey, { name: 'AES-GCM' }, false, ['encrypt']);
   const ciphertext = new Uint8Array(
@@ -577,6 +615,28 @@ declare const ONE_TIME_KEY: unique symbol;
  * подстановка обычных байт не «ловится тестом», а НЕ КОМПИЛИРУЕТСЯ; перечень
  * запрещённых подстановок — `chatEnvelopeOneTimeKeyTypeBans.ts` (обычный `.ts`,
  * а не тест-файл: тесты исключены из программы tsc, замерено).
+ *
+ * ⚠️ КЛЕЙМО ОДНОСТОРОННЕЕ, И ЭТО НАДО ЗНАТЬ ЧЕСТНО (доработка ревью). Оно
+ * запрещает только ОБРАТНОЕ: непроверенные байты на месте `OneTimeKey`
+ * (`chatEnvelopeOneTimeKeyTypeBans.ts`, запреты 1-4 — TS2578 при снятии
+ * клейма, мутация 20 задачи). Оно НЕ запрещает ПРЯМОЕ: `OneTimeKey` —
+ * структурный подтип простого `Uint8Array` (`Uint8Array & {...}`), значит он
+ * СВОБОДНО течёт в ЛЮБОЙ параметр, ожидающий просто `Uint8Array` — клеймо
+ * там попросту не читается. Замерено (доработка ревью, отдельный пробный файл
+ * в программе tsc, затем удалён): `sealForRecipient(oneTimeKey, pub)` с
+ * ПЕРЕСТАВЛЕННЫМИ аргументами (разовый ключ на месте `recipientPub`) — **0
+ * ошибок**; подстановка `oneTimeKey` в параметр-заглушку «ключ вложения»
+ * (32 байта, тот же структурный вид, что в `fileCrypto.ts`) — тоже **0**.
+ *
+ * Значит из четырёх структурно неотличимых массивов, которых касается
+ * докстринг выше (разовый ключ, ключ вложения, вектор инициализации,
+ * запечатанный слот), клеймо реально защищает только ОДНО направление
+ * перепутывания — когда что-то из них по ошибке пытаются выдать ЗА разовый
+ * ключ. Обратное — когда УЖЕ добытый `OneTimeKey` по ошибке подставляют на
+ * место одного из этих трёх массивов — типами не ловится вовсе. Настоящее
+ * лечение (клеймо и на соседей — `AttachmentKey`, вектор, слот, каждый своим
+ * фирменным типом) в эту задачу не входит — записано отдельным требованием
+ * следующей задаче плана (клеймение ключа вложения, Задача 5).
  */
 export type OneTimeKey = Uint8Array & { readonly [ONE_TIME_KEY]: true };
 
@@ -693,6 +753,20 @@ export async function recoverOneTimeKey(
  * исправление 4, она асинхронна и готовности ждёт внутри — прогрев звать не
  * надо) доказывает, что байты — те самые подписанные, и тогда `bad_key` уже
  * нельзя списать на порчу.
+ *
+ * ⚠️ `aad_mismatch` ДОСТИЖИМ ТОЛЬКО ВРАЖДЕБНО (доработка ревью, назвать вслух
+ * для 4в-2: арбитр не должен читать этот код как рядовую техническую мелочь).
+ * Боевое место сборки конверта во всём проекте ОДНО — `packEnvelope`
+ * (`chatConversation.ts:1268`), и оно ВСЕГДА называет автора при отправке
+ * внутри переписки (см. `author` необязателен только в самой сигнатуре, не
+ * на боевом пути). Значит в ЧЕСТНОМ мешке `aad_mismatch` не бывает НИКОГДА —
+ * автор в AAD либо назван правильно (тег сходится, `ok:true`), либо конверт
+ * вообще не для этой переписки (`bad_key`, другая причина отказа). Единственный
+ * способ реально получить `aad_mismatch` — предъявителю подсунуть конверт,
+ * запечатанный БЕЗ автора в AAD (или собранный вручную, в обход `packEnvelope`)
+ * и НАЗВАТЬ при предъявлении автора, которого в конверте нет: то есть это
+ * СИГНАЛ ФАЛЬСИФИКАЦИИ предъявления, не «просто ещё один технический код
+ * отказа» наравне с `bad_form`/`malformed`.
  */
 export type OpenFailure = 'malformed' | 'bad_key' | 'aad_mismatch' | 'bad_form';
 
@@ -719,6 +793,18 @@ export type OpenFailure = 'malformed' | 'bad_key' | 'aad_mismatch' | 'bad_form';
  *
  * `TypeError` — наш мусор на входе (не байты, не тот адрес автора, ключ не той
  * длины). Всё остальное — вердикт, не исключение.
+ *
+ * ⚠️ `author` НЕОБЯЗАТЕЛЕН, И ЭТО ОПАСНО (доработка ревью, называю вслух для
+ * Задач 6/7: тип этого не ловит — так и задумано договором v4, `author?`).
+ * Забыть передать `author` при вызове — не «то же самое чуть менее строго»:
+ * это открывает ЛЮБОЙ конверт по голому заголовку и делает `aad_mismatch`
+ * НЕДОСТИЖИМЫМ в принципе для этого вызова — единственная проба AAD (см.
+ * ветку `aadWithAuthor === null` ниже) СРАЗУ бьёт по голому заголовку, и если
+ * тег сойдётся, ответ будет `ok: true` БЕЗ единой проверки, что содержимое
+ * действительно принадлежит тому, кого читалка арбитра собиралась показать
+ * как автора. Вызывающий обязан передавать `author` при КАЖДОМ предъявлении,
+ * где автор вообще известен (а он известен всегда — `decodeFrame(...).link.sender`,
+ * задача 6) — пропуск этого параметра здесь тихий, компилятор его не покажет.
  */
 export async function openEnvelopeWithOneTimeKey(
   envelope: Uint8Array,
@@ -732,13 +818,34 @@ export async function openEnvelopeWithOneTimeKey(
     throw new TypeError('openEnvelopeWithOneTimeKey: key должен быть Uint8Array (не строка/иное)');
   }
 
+  // ДО sliceEnvelope — порядок гейтов (доработка ревью, находка «наша ошибка
+  // отдаётся вердиктом `malformed`»). Длина КЛЮЧА — это НАШ гейт, не про
+  // форму конверта: раньше стояла ПОСЛЕ sliceEnvelope, и негодный по форме
+  // конверт ПЛЮС огрызок ключа (оба разом) отдавали бы `malformed` — то есть
+  // НАША ошибка (не та длина ключа) уезжала бы под видом беды предъявителя
+  // (плохой конверт), хотя надо было бросить громко именно про ключ. Заперто
+  // тестом «malformed-конверт + огрызок ключа — TypeError про ключ, не
+  // вердикт malformed» (`chatEnvelopeOneTimeKey.test.ts`).
+  //
+  // Клеймо `OneTimeKey` живёт только в типах, а сюда байты могли приехать
+  // приведением из разбора мешка. ⚠️ Замерено (доработка ревью): БЕЗ этой
+  // строки `importKey` ниже НЕ ловится вердиктом «не тот ключ» — он бросает
+  // `DOMException: Invalid key length` СНАРУЖИ `try` (`attempt` ниже ловит
+  // только `crypto.subtle.decrypt`, а `importKey` вызывается раньше, отдельно
+  // от неё), и отказ и без этой строки был бы громким. Разница, которую даёт
+  // эта строка, не «тихо/громко», а ЧЬЁ имя в тексте ошибки и что именно
+  // сказано: `openEnvelopeWithOneTimeKey: unexpected recovered key length` —
+  // своя функция, свой смысл — против чужого `DOMException` браузерного API,
+  // который не называет ни вызывающего, ни того, что вообще проверялось.
+  // ⚠️ ОПАСНОСТЬ ЭТОГО КОММЕНТАРИЯ (если бы он остался прежним, до доработки):
+  // читающий, поверивший старой версии («без строки — паразитный вердикт»),
+  // мог бы перенести `importKey` ВНУТРЬ `try`/`attempt` «ради единообразия» —
+  // и вот ТОГДА старое утверждение стало бы правдой взамен нынешней
+  // громкости. Не делать этого: `importKey` стоит СНАРУЖИ намеренно.
+  assertOneTimeKeyLength(key, 'openEnvelopeWithOneTimeKey');
+
   const parts = sliceEnvelope(envelope);
   if (!parts) return { ok: false, reason: 'malformed' };
-
-  // ДО try. Клеймо `OneTimeKey` живёт только в типах, а сюда байты могли
-  // приехать приведением из разбора мешка. Без этой строки `importKey` бросил
-  // бы ВНУТРИ перехвата, и наш баг вернулся бы вердиктом «не тот ключ».
-  assertOneTimeKeyLength(key, 'openEnvelopeWithOneTimeKey');
 
   // ДО try, правило В-5 этого файла: `envelopeAad` бросает `TypeError` на
   // негодном адресе автора. Гейт, чей бросок глотает чужой `catch`, не отличим

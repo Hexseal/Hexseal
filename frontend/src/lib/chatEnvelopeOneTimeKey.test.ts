@@ -169,7 +169,7 @@ describe('recoverOneTimeKey', () => {
     expect(spyOwn.mock.calls.length).toBe(2);
   });
 
-  it('7. не Uint8Array — TypeError, а не null (наш мусор не носит костюм штатного исхода)', async () => {
+  it('7. не Uint8Array (envelope) — TypeError, а не null (наш мусор не носит костюм штатного исхода)', async () => {
     const { bob } = await actors();
     // Строка — РОВНО в том виде, в каком поле приезжает из контейнера: base64
     // без `0x` (исправление 2 договора v2). Раскодировать обязан вызывающий;
@@ -177,11 +177,35 @@ describe('recoverOneTimeKey', () => {
     // конверт». В типах это к тому же запрещено (фикстура, запрет 7).
     // @ts-expect-error намеренно base64-строка вместо байт
     await expect(recoverOneTimeKey('q6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur', bob)).rejects.toThrow(TypeError);
+  });
+
+  // ⚠️ Доработка ревью, находка «обе проверки половин пары не заперты — 0
+  // красных из 1934»: `env` в обоих тестах ниже — КАНОНИЧЕСКИЙ конверт, а
+  // проверка сравнивает ТЕКСТ отказа, не только класс. Без гейта
+  // `ownKeypair.publicKey`/`privateKey` в самой `recoverOneTimeKey` исполнение
+  // доходит до `sliceEnvelope` (проходит) и дальше до `openSealed`
+  // (chatCrypto.ts) — а ТА бросает СВОЙ `TypeError` того же класса, с текстом
+  // «openSealed: …», а не «recoverOneTimeKey: …». Замерено: снятие любой из
+  // двух проверок ниже ПООДИНОЧКЕ даёт 0 красных из 1934, если проверять
+  // только класс исключения через `.rejects.toThrow(TypeError)` — нужен
+  // текст, по которому видно, ЧЬЯ это проверка среагировала. Каждая половина —
+  // ОТДЕЛЬНЫЙ тест, чтобы «снять каждую проверку по одной» измерялось
+  // однозначно, без риска, что первая ассерция уже упавшего теста скроет
+  // вторую.
+  it('7а. ownKeypair.publicKey не Uint8Array — TypeError ИМЕННО recoverOneTimeKey, не openSealed', async () => {
+    const { bob } = await actors();
     const env = await packEnvelope({ text: 'a' }, bob.publicKey, bob.publicKey, AUTHOR_LOWER);
     // @ts-expect-error намеренно строка вместо половины пары
-    await expect(recoverOneTimeKey(env, { publicKey: 'нет', privateKey: bob.privateKey })).rejects.toThrow(TypeError);
+    await expect(recoverOneTimeKey(env, { publicKey: 'нет', privateKey: bob.privateKey }))
+      .rejects.toThrow(/recoverOneTimeKey: ownKeypair\.publicKey должен быть Uint8Array/);
+  });
+
+  it('7б. ownKeypair.privateKey не Uint8Array — TypeError ИМЕННО recoverOneTimeKey, не openSealed', async () => {
+    const { bob } = await actors();
+    const env = await packEnvelope({ text: 'a' }, bob.publicKey, bob.publicKey, AUTHOR_LOWER);
     // @ts-expect-error намеренно строка вместо половины пары
-    await expect(recoverOneTimeKey(env, { publicKey: bob.publicKey, privateKey: 'нет' })).rejects.toThrow(TypeError);
+    await expect(recoverOneTimeKey(env, { publicKey: bob.publicKey, privateKey: 'нет' }))
+      .rejects.toThrow(/recoverOneTimeKey: ownKeypair\.privateKey должен быть Uint8Array/);
   });
 
   it('8. систематическая порча длины ключа брошена ГРОМКО и с именем ЭТОЙ функции', async () => {
@@ -365,8 +389,16 @@ describe('openEnvelopeWithOneTimeKey', () => {
     const key = await keyOf(env, bob);
     const out = await openEnvelopeWithOneTimeKey(env, key, AUTHOR_LOWER);
     expect(out).toEqual({ ok: true, payload: { text: 'привет' } });
-    expect(out.ok && Object.prototype.hasOwnProperty.call(out.payload, '__proto__')).toBe(false);
-    expect(out.ok && Object.getPrototypeOf(out.payload)).toBe(Object.prototype);
+    // ⚠️ Доработка ревью: `out.ok && X` — ПУСТОЕ утверждение само по себе,
+    // когда ожидаемый результат `.toBe(false)` совпадает со значением, в
+    // которое схлопывается короткое замыкание при `out.ok === false`. Раньше
+    // это было прикрыто СОСЕДНЕЙ строкой (`toEqual` выше уже упал бы первой),
+    // но как отдельная проверка — мертво. Сужение через `if` убирает
+    // короткое замыкание: без него дальнейшие строки просто не выполнились
+    // бы, а не молча прошли с `false`.
+    if (!out.ok) throw new Error('заготовка теста: ожидался ok:true, дальше проверять нечего');
+    expect(Object.prototype.hasOwnProperty.call(out.payload, '__proto__')).toBe(false);
+    expect(Object.getPrototypeOf(out.payload)).toBe(Object.prototype);
   });
 
   it('24. toOneTimeKey — единственная дверь, и она мерит длину, а не верит на слово', async () => {
@@ -394,9 +426,11 @@ describe('openEnvelopeWithOneTimeKey', () => {
 
   it('25. не Uint8Array конверт — TypeError; ключ не 32 байт — громко, а НЕ вердикт bad_key', async () => {
     // Второе — важнее. Клеймо живёт только в типах, значит приведением сюда
-    // можно занести что угодно. Без явного гейта `importKey` бросил бы внутри
-    // try, и НАШ баг вернулся бы вердиктом «не тот ключ» — сбой в костюме
-    // штатного исхода.
+    // можно занести что угодно. ⚠️ Без явного гейта длины `importKey` НИЖЕ
+    // всё равно бросил бы (он СНАРУЖИ try — см. докстринг `assertOneTimeKeyLength`
+    // в `openEnvelopeWithOneTimeKey`, chatEnvelope.ts), но чужим `DOMException`
+    // без имени нашей функции — этот тест проверяет, что отказ говорит именно
+    // ЭТИМ текстом, а не первым попавшимся громким исключением.
     const { bob, alice } = await actors();
     const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey, AUTHOR_LOWER);
     const key = await keyOf(env, bob);
@@ -404,6 +438,43 @@ describe('openEnvelopeWithOneTimeKey', () => {
     await expect(openEnvelopeWithOneTimeKey('0xdead', key, AUTHOR_LOWER)).rejects.toThrow(TypeError);
     const stunted = new Uint8Array(31) as unknown as OneTimeKey; // приведение — ровно то, чего боимся
     await expect(openEnvelopeWithOneTimeKey(env, stunted, AUTHOR_LOWER))
+      .rejects.toThrow(/openEnvelopeWithOneTimeKey: unexpected recovered key length \(31\), expected 32/);
+  });
+
+  it('25б. ключ не Uint8Array НА ИСПОЛНЕНИИ (приведение из строки) — TypeError про key, не чужая ошибка', async () => {
+    // ⚠️ Доработка ревью, находка «проверка рода ключа не заперта»: до этого
+    // теста НИ ОДИН тест файла не подавал НЕ-`Uint8Array` на месте `key` НА
+    // ИСПОЛНЕНИИ — только на компиляции, через фикстуру запретов
+    // (`chatEnvelopeOneTimeKeyTypeBans.ts`), а её тело НИКОГДА не вызывается
+    // (см. докстринг файла фикстуры). Клеймо `OneTimeKey` живёт только в
+    // типах — приведением (`as unknown as OneTimeKey`) сюда может приехать
+    // строка, например если Задача 6 забудет разобрать base64 из
+    // `keys[].forArbiter`.
+    //
+    // Строка ДЛИНОЙ РОВНО 32 — намеренно: если бы гейт `key instanceof
+    // Uint8Array` сверял только `.length`, строка такой длины прошла бы его
+    // и доехала до `toArrayBuffer(key)`/`importKey`, дав ЧУЖОЙ TypeError без
+    // имени функции — тот же класс, что и наш, замок на класс это не поймал
+    // бы (замерено, 0 красных из 1934 при снятии этой проверки в источнике).
+    const { bob, alice } = await actors();
+    const env = await packEnvelope({ text: 'a' }, bob.publicKey, alice.publicKey, AUTHOR_LOWER);
+    const bogusKey = 'q6urq6urq6urq6urq6urq6urq6urq6ur' as unknown as OneTimeKey;
+    expect('q6urq6urq6urq6urq6urq6urq6urq6ur'.length).toBe(32); // руками: иначе замер выше ни о чём
+    await expect(openEnvelopeWithOneTimeKey(env, bogusKey, AUTHOR_LOWER))
+      .rejects.toThrow(/openEnvelopeWithOneTimeKey: key должен быть Uint8Array/);
+  });
+
+  it('25в. malformed-конверт + огрызок ключа — TypeError про ключ (НАШ гейт), а не вердикт malformed', async () => {
+    // ⚠️ Доработка ревью, находка «порядок гейтов»: длина ключа — гейт про
+    // КЛЮЧ (наш собственный мусор), не про форму конверта. Если бы он стоял
+    // ПОСЛЕ sliceEnvelope (как было до доработки), негодный конверт ПЛЮС
+    // огрызок ключа (оба разом) отдавали бы вердикт `malformed` — то есть
+    // НАША ошибка (не та длина ключа) уезжала бы под видом беды предъявителя
+    // (плохой конверт). Оба условия здесь ложны РАЗОМ, намеренно: только так
+    // видно, какой гейт сработал первым.
+    const malformedEnvelope = new Uint8Array(10); // короче заголовка — форма конверта негодная
+    const stunted = new Uint8Array(31) as unknown as OneTimeKey; // и ключ тоже огрызок
+    await expect(openEnvelopeWithOneTimeKey(malformedEnvelope, stunted))
       .rejects.toThrow(/openEnvelopeWithOneTimeKey: unexpected recovered key length \(31\), expected 32/);
   });
 
@@ -418,6 +489,30 @@ describe('openEnvelopeWithOneTimeKey', () => {
     await openEnvelopeWithOneTimeKey(env, key, AUTHOR_LOWER);
     await openEnvelopeWithOneTimeKey(env, key, OTHER_AUTHOR); // и на пути отказа тоже
     expect(Buffer.from(env).toString('hex')).toBe(before);
+
+    // ⚠️ Доработка ревью: побайтовая сверка ВАЛИДНОГО конверта (выше) не
+    // ловит «полезную» нормализацию, которая пишет ТО ЖЕ значение, что уже
+    // там лежит (`envelope[0] = ENVELOPE_VERSION` на конверте, где версия и
+    // так 1, — значение не меняется, только сама запись, а `Buffer`-сравнение
+    // видит лишь итоговое значение). Отчёт задачи это признавал (мутация 15,
+    // «не тот замок»): реальным замком оказался тест 17 (семантический), а
+    // не эта побайтовая сверка. Чтобы она тоже ловила эту мутацию — нужен
+    // конверт, где нормализация ИЗМЕНИЛА бы значение: версия ПОРЧЕНА (99), не
+    // 1. Если бы `sliceEnvelope`/`openEnvelopeWithOneTimeKey` «чинили» байт
+    // версии перед проверкой, здесь он стал бы `1`, и это увидела бы именно
+    // побайтовая сверка, а не только вердикт `malformed`.
+    const corruptedVersion = await packEnvelope({ text: 'b' }, bob.publicKey, alice.publicKey, AUTHOR_LOWER);
+    // Ключ добывается на ЦЕЛОМ конверте, ДО порчи версии — recoverOneTimeKey
+    // сама гейтится версией (тест 4), поэтому свой ключ этого, второго
+    // конверта, не бывает того же, что у первого (`packEnvelope` берёт
+    // свежий случайный разовый ключ на каждый вызов).
+    const key2 = await keyOf(corruptedVersion, bob);
+    corruptedVersion[0] = 99;
+    const beforeCorrupted = Buffer.from(corruptedVersion).toString('hex');
+    const out = await openEnvelopeWithOneTimeKey(corruptedVersion, key2, AUTHOR_LOWER);
+    expect(out).toEqual({ ok: false, reason: 'malformed' });
+    expect(Buffer.from(corruptedVersion).toString('hex')).toBe(beforeCorrupted);
+    expect(corruptedVersion[0]).toBe(99); // руками: сверка выше бессмысленна, если байт мог остаться и порченым, и «починенным»
   });
 
   it('27. автор не адрес — TypeError (наш мусор), а не вердикт', async () => {
