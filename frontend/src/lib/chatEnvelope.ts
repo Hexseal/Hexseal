@@ -259,13 +259,71 @@ export function assertSealedKeyLength(bytes: Uint8Array, label: string): void {
  * `assertSealedKeyLength` выше, и по той же причине выделена отдельной
  * функцией: проверяема напрямую, без подмены `chatCrypto.ts`.
  * @throws {Error} если `bytes.length !== ONE_TIME_KEY_LEN`.
+ *
+ * `label` — имя вызывающего. Теперь функцию зовут ТРИ пути (`unpackEnvelope`,
+ * `recoverOneTimeKey`, `openEnvelopeWithOneTimeKey`), и отказ, указывающий не на
+ * ту функцию, отправляет читающего разбираться не в то место. Умолчание
+ * сохраняет прежний текст сообщения байт в байт — существующие проверки в
+ * `chatEnvelope.test.ts` от этой правки не меняются.
  */
-export function assertOneTimeKeyLength(bytes: Uint8Array): void {
+export function assertOneTimeKeyLength(bytes: Uint8Array, label = 'unpackEnvelope'): void {
   if (bytes.length !== ONE_TIME_KEY_LEN) {
     throw new Error(
-      `unpackEnvelope: unexpected recovered key length (${bytes.length}), expected ${ONE_TIME_KEY_LEN}`,
+      `${label}: unexpected recovered key length (${bytes.length}), expected ${ONE_TIME_KEY_LEN}`,
     );
   }
+}
+
+/** Разобранный на части конверт. Держится ВНУТРИ модуля: наружу уходят
+ *  значения, а не раскладка. */
+interface EnvelopeParts {
+  header: Uint8Array;
+  sealedSlotA: Uint8Array;
+  sealedSlotB: Uint8Array;
+  iv: Uint8Array;
+  ciphertext: Uint8Array;
+}
+
+/**
+ * ЕДИНСТВЕННОЕ место во всём проекте, где живут смещения конверта (1, 81, 161,
+ * 173). Три пути разбора — `unpackEnvelope` (своей парой), `recoverOneTimeKey`
+ * (отдать голый ключ) и `openEnvelopeWithOneTimeKey` (вскрыть готовым ключом) —
+ * нарезают конверт ЗДЕСЬ, а не каждый у себя. Вторая копия этих четырёх чисел
+ * — тот самый класс дефекта, против которого в проекте стоят три гейта
+ * раскладки (`script/check-storage-*.sh`): расходятся не сразу и молча.
+ *
+ * `null` — «это не конверт этой версии»: раздут выше потолка, незнакомая
+ * версия, или срезы не той длины. Все три проверки — ДО какой-либо крипто-
+ * работы, О(1), не растут с размером входа. Порядок сохранён прежний
+ * (`unpackEnvelope`, до этой правки): потолок → версия → длины срезов.
+ *
+ * Про длины срезов (И-3, ревью координатора, откорректировано): при
+ * ФИКСИРОВАННЫХ смещениях «длина < 173» и «хотя бы один срез короче
+ * ожидаемого» математически ТОЖДЕСТВЕННЫ — 174 обрубка длин 0..173 это
+ * подтвердили, снятие любого из двух условий поодиночке не красило ни одного
+ * теста. Оставлена одна проверка — та, что смотрит на РЕАЛЬНЫЕ срезы, которыми
+ * пользуется код дальше.
+ *
+ * Про гейт версии: в `unpackEnvelope` он стоял ради ЭКОНОМИИ (AAD и так рвёт
+ * тег, В-3). ⚠️ Для двух новых путей он несёт КОРРЕКТНОСТЬ: `recoverOneTimeKey`
+ * до AAD не доходит вовсе, и без гейта отдал бы настоящий разовый ключ от
+ * конверта незнакомого формата. Замерено: слоты у конверта с подменённым
+ * байтом версии целы и открываются.
+ */
+function sliceEnvelope(envelope: Uint8Array): EnvelopeParts | null {
+  if (envelope.length > MAX_ENVELOPE_BYTES) return null;
+  if (envelope[0] !== ENVELOPE_VERSION) return null;
+
+  const header = envelope.subarray(0, HEADER_LEN);
+  const sealedSlotA = envelope.subarray(1, 1 + SEALED_KEY_LEN);
+  const sealedSlotB = envelope.subarray(1 + SEALED_KEY_LEN, 1 + SEALED_KEY_LEN * 2);
+  const iv = envelope.subarray(1 + SEALED_KEY_LEN * 2, HEADER_LEN);
+  const ciphertext = envelope.subarray(HEADER_LEN);
+
+  if (sealedSlotA.length !== SEALED_KEY_LEN || sealedSlotB.length !== SEALED_KEY_LEN || iv.length !== IV_LEN) {
+    return null;
+  }
+  return { header, sealedSlotA, sealedSlotB, iv, ciphertext };
 }
 
 /**
@@ -404,44 +462,11 @@ export async function unpackEnvelope(
     throw new TypeError('unpackEnvelope: ownKeypair.privateKey должен быть Uint8Array (не строка/иное)');
   }
 
-  // Раздутый вход — см. докстринг файла, раздел «раздутый вход». Сравнение
-  // длины, до какой-либо попытки вскрыть слоты или расшифровать.
-  if (envelope.length > MAX_ENVELOPE_BYTES) return null;
-  // Версия входит в заголовок, а заголовок — в AAD (К-1), поэтому подмена
-  // ЭТОГО байта в любом случае рвёт тег на decrypt даже без явного гейта
-  // здесь (В-3, ревью координатора — независимая проверка подтвердила: без
-  // этой строки исход `null` не меняется). Гейт остаётся не ради КОРРЕКТНОСТИ
-  // (её уже даёт AAD), а ради ЭКОНОМИИ — не пытаться вскрывать слоты и
-  // расшифровывать заведомо непонятный формат; заперт тестом через число
-  // вызовов `crypto.subtle.decrypt`, а не через сам факт `null`.
-  if (envelope[0] !== ENVELOPE_VERSION) return null;
-
-  const header = envelope.subarray(0, HEADER_LEN);
-  const sealedSlotA = envelope.subarray(1, 1 + SEALED_KEY_LEN);
-  const sealedSlotB = envelope.subarray(1 + SEALED_KEY_LEN, 1 + SEALED_KEY_LEN * 2);
-  const iv = envelope.subarray(1 + SEALED_KEY_LEN * 2, HEADER_LEN);
-  const ciphertext = envelope.subarray(HEADER_LEN);
-
-  // Единственная проверка длины заголовка (И-3, ревью координатора —
-  // ОТКОРРЕКТИРОВАНО после независимой проверки: раньше здесь стояли ДВА
-  // отдельных условия — `envelope.length < HEADER_LEN` ВЫШЕ и эта проверка
-  // срезов — представленные как «два независимых слоя». Замер независимой
-  // проверки это опроверг: при ФИКСИРОВАННЫХ смещениях (1, 81, 161, 173)
-  // они математически ЭКВИВАЛЕНТНЫ — сам факт что `envelope.length < 173`
-  // ЛОГИЧЕСКИ ТОЖДЕСТВЕН факту «хотя бы один из трёх срезов короче
-  // ожидаемого» (последний срез, `iv`, кончается ровно на 173-м байте, и
-  // любая длина короче 173 обязана обрезать ХОТЯ БЫ этот срез). 174 обрубка
-  // длин 0..173 подтвердили: снятие ЛЮБОГО из двух условий поодиночке не
-  // красит НИ ОДНОГО теста (второе условие подхватывает целиком), красит
-  // только снятие ОБОИХ разом — то есть по факту это ОДНА проверка,
-  // сформулированная дважды, а не два независимых слоя. Оставлена ЭТА,
-  // единственная: она проверяет РЕАЛЬНЫЕ срезы, которыми пользуется код
-  // ниже (`sealedSlotA`/`sealedSlotB`/`iv`), а не отдельно посчитанную
-  // длину заголовка как прокси — на один шаг ближе к тому, что фактически
-  // происходит, если формула `HEADER_LEN`/смещений когда-нибудь разъедется.
-  if (sealedSlotA.length !== SEALED_KEY_LEN || sealedSlotB.length !== SEALED_KEY_LEN || iv.length !== IV_LEN) {
-    return null;
-  }
+  // Потолок, версия и длины срезов — в sliceEnvelope (единственное место
+  // смещений в модуле, см. её докстринг). Порядок и исходы прежние.
+  const parts = sliceEnvelope(envelope);
+  if (!parts) return null;
+  const { header, sealedSlotA, sealedSlotB, iv, ciphertext } = parts;
 
   // Оба слота запечатывают ОДИН И ТОТ ЖЕ разовый ключ на разные открытые
   // ключи — какой откроется нашей парой, для результата не важно (см.
@@ -506,4 +531,267 @@ export async function unpackEnvelope(
   // встроенных функций (`Object.keys` и т.п.) слишком груба — задевает
   // посторонний код в том же тесте.
   return sanitizePayload(stripDangerousKeys(parsed));
+}
+
+/* ══════════════ разовый ключ наружу: предъявление арбитру (4в §2) ══════════ */
+
+/**
+ * ЗАЧЕМ ЭТИ ДВЕ ФУНКЦИИ СУЩЕСТВУЮТ.
+ *
+ * Подпись звена накрывает ЗАШИФРОВАННЫЕ байты:
+ * `bodyHash = keccak256("hexseal.chat.body.v1" ‖ signerPublicKey ‖ envelope)`
+ * (`chatConversation.ts:459-477`). Значит перешифровать предъявляемое на ключ
+ * арбитра нельзя: новые байты с прежней подписью не связаны НИЧЕМ, и
+ * предъявитель мог бы показать что угодно.
+ *
+ * Третий запечатанный слот в конверт тоже не добавить: это меняет байты
+ * заголовка → меняет `bodyHash` → РВЁТ уже поставленную подпись, а для
+ * исторических сообщений это невозможно в принципе.
+ *
+ * Остаётся один путь: отдать арбитру ИСХОДНЫЕ байты плюс разовый ключ ЭТОГО
+ * сообщения, запечатанный рядом. Отсюда две функции:
+ *
+ *  - `recoverOneTimeKey` — у стороны есть слот, и она достаёт голые 32 байта,
+ *    НЕ расшифровывая содержимое (`unpackEnvelope` ключ добывает и выбрасывает
+ *    в локальной переменной, наружу его не отдаёт ни один экспорт);
+ *  - `openEnvelopeWithOneTimeKey` — обратный путь, которого не было вовсе: у
+ *    арбитра НИ ОДНОГО слота, и `unpackEnvelope` для него бесполезна, потому
+ *    что она выводит ключ ИЗ слотов.
+ */
+
+declare const ONE_TIME_KEY: unique symbol;
+
+/**
+ * Разовый симметричный ключ одного сообщения — фирменный (nominal) тип, не
+ * структурный. Тот же приём, что `BoxKey`/`SignKey` (`arbiterChatKey.ts:21-46`).
+ *
+ * ⚠️ ПОЧЕМУ ФИРМЕННЫЙ, А НЕ ПРОСТО `Uint8Array`. На путях предъявления рядом
+ * живут четыре разных массива байт, структурно НЕОТЛИЧИМЫХ: разовый ключ (32),
+ * ключ вложения (32, `fileCrypto.ts`), вектор инициализации (12) и
+ * запечатанный слот (80). Прецедент в этом проекте замерен: перестановка
+ * `boxKey`/`signKey` в реальном вызове дала 0 красных из 1826
+ * (`arbiterChatKey.ts:28-42`). Здесь цена та же — арбитр получает нечитаемое,
+ * а предъявитель видит «сдано».
+ *
+ * Клеймо ставится РОВНО В ОДНОМ месте — `toOneTimeKey` ниже. После этого
+ * подстановка обычных байт не «ловится тестом», а НЕ КОМПИЛИРУЕТСЯ; перечень
+ * запрещённых подстановок — `chatEnvelopeOneTimeKeyTypeBans.ts` (обычный `.ts`,
+ * а не тест-файл: тесты исключены из программы tsc, замерено).
+ */
+export type OneTimeKey = Uint8Array & { readonly [ONE_TIME_KEY]: true };
+
+/**
+ * ЕДИНСТВЕННАЯ дверь `Uint8Array → OneTimeKey` — так её и называет договор v2
+ * (исправление 1: «единственная точка клеймения, с проверкой длины»). `null`,
+ * если это не 32 байта или вообще не байты.
+ *
+ * ⚠️ В отличие от `toBoxKey`/`toSignKey` (те клеймят молча) здесь длина
+ * ПРОВЕРЯЕТСЯ: сюда приходят байты С ПРОВОДА — читалка арбитра берёт
+ * `keys[].forArbiter` (base64 без `0x`, исправление 2), раскодирует его
+ * `bytesFromB64`, вскрывает `openSealed` и получает то, что запечатал
+ * ПРЕДЪЯВИТЕЛЬ. Враждебный предъявитель запечатает 31 байт, и без проверки
+ * огрызок доехал бы до `crypto.subtle.importKey`, бросил внутри `try` и вышел
+ * вердиктом «не тот ключ» — то есть НАШ отказ выглядел бы как его беда.
+ * Отдельная проверка ЗДЕСЬ и громкий бросок В `recoverOneTimeKey` — не
+ * дублирование: источники разные (провод против системной поломки библиотеки),
+ * значит и ответы разные.
+ *
+ * ⚠️ ГЕЙТ `instanceof` НЕ ЛИШНИЙ ПРИ ГЕЙТЕ ДЛИНЫ. У base64-строки из контейнера
+ * тоже есть `.length`, и строка ровно из 32 знаков прошла бы проверку длины
+ * насквозь. Тогда дверь заклеймила бы СТРОКУ как разовый ключ — заперто тестом
+ * 24, мутация 17.
+ */
+export function toOneTimeKey(bytes: Uint8Array): OneTimeKey | null {
+  if (!(bytes instanceof Uint8Array)) return null;
+  if (bytes.length !== ONE_TIME_KEY_LEN) return null;
+  return bytes as OneTimeKey; // ← единственное клеймение
+}
+
+/**
+ * Достаёт голый разовый ключ конверта своей парой, НЕ расшифровывая содержимое.
+ *
+ * Пробуются ОБА слота, A затем B — единственный существующий в коде порядок
+ * (`unpackEnvelope`). Порядок задаёт РАСКЛАДКУ, а не смысл: оба слота
+ * запечатывают ОДИН И ТОТ ЖЕ 32-байтный ключ. Практически: для ЧУЖОГО
+ * сообщения откроется слот A (одна проба), для СВОЕГО — слот B (две). Значит
+ * предъявитель добывает ключ и к своим сообщениям, и к чужим, одним кодом, —
+ * если он вообще может их читать.
+ *
+ * `null` — не наш конверт, повреждён, незнакомая версия или раздут: то же
+ * правило, что у `unpackEnvelope`. `TypeError` — наш собственный мусор на
+ * входе, в фиксированном порядке проверок, ДО какой-либо попытки истолковать
+ * байты (дисциплина `openSealed`).
+ *
+ * ⚠️ AAD, вектор и шифротекст здесь не участвуют ВООБЩЕ — `openSealed` про них
+ * не знает. Поэтому добыча ключа не зависит от того, назван ли автор, и
+ * работает на конвертах любой сборки.
+ */
+export async function recoverOneTimeKey(
+  envelope: Uint8Array,
+  ownKeypair: ChatKeypair,
+): Promise<OneTimeKey | null> {
+  if (!(envelope instanceof Uint8Array)) {
+    throw new TypeError('recoverOneTimeKey: envelope должен быть Uint8Array (не строка/иное)');
+  }
+  if (!(ownKeypair.publicKey instanceof Uint8Array)) {
+    throw new TypeError('recoverOneTimeKey: ownKeypair.publicKey должен быть Uint8Array (не строка/иное)');
+  }
+  if (!(ownKeypair.privateKey instanceof Uint8Array)) {
+    throw new TypeError('recoverOneTimeKey: ownKeypair.privateKey должен быть Uint8Array (не строка/иное)');
+  }
+
+  const parts = sliceEnvelope(envelope);
+  if (!parts) return null;
+
+  let oneTimeKey = await openSealed(ownKeypair, parts.sealedSlotA);
+  if (!oneTimeKey) {
+    oneTimeKey = await openSealed(ownKeypair, parts.sealedSlotB);
+  }
+  if (!oneTimeKey) return null;
+
+  // ДО возврата и вне всякого перехвата: систематическая порча длины (смена
+  // библиотеки/алгоритма ломает ВСЕ сообщения разом) обязана быть громкой, а
+  // не слиться с «мешок не наш». Для ОДНОГО чужого мешка это в принципе
+  // невозможно — `crypto_box_seal` фиксирует длину открытого текста жёстко.
+  assertOneTimeKeyLength(oneTimeKey, 'recoverOneTimeKey');
+  return toOneTimeKey(oneTimeKey);
+}
+
+/**
+ * Названные рода отказа вскрытия.
+ *
+ * ⚠️ ЗАЧЕМ ИМЕНА, А НЕ `null`. Сегодня неверный AAD, чужой конверт и порча
+ * схлопнуты в одну точку (`unpackEnvelope`, `catch { return null }`). Для
+ * арбитра это худший из возможных ответов: «не открылось» неотличимо от
+ * «сторона утаила». §15.4 замысла требует РАЗДЕЛЬНЫЕ числа, а §15.5 добавляет
+ * четвёртое; договор v2 (исправление 7) назвал их точно:
+ * `MeasuredCounts { read, unopened, hidden, notPrepared }` — это то, что
+ * СЧИТАЕТ АРБИТР. Мой вердикт кладётся РОВНО в одно из них: любой
+ * `{ ok: false, reason }` — это `unopened` (и `reason` едет рядом,
+ * `PresentedMessage.reason`), и НИКОГДА не `hidden` и не `notPrepared`.
+ * «Не открылось» не смеет уменьшать «скрыто» — форма это и держит: числа
+ * разные поля, сложить их случайно нельзя.
+ *
+ * ⚠️ У ПРЕДЪЯВИТЕЛЯ `unopened` НЕТ ВОВСЕ. Его `DeclaredCounts { read, hidden,
+ * notPrepared }` — заявление, а не измерение (исправление 7): он не арбитр и не
+ * знает, что у арбитра откроется. Значит мой `OpenFailure` в контейнер не
+ * попадает ни в каком виде и ничьих чужих чисел не подтверждает.
+ *
+ * - `malformed`    — это не конверт: раздут, незнакомая версия, срезы не той
+ *                    длины. Установлено ДО крипто-работы, ноль вызовов
+ *                    расшифровки.
+ * - `bad_key`      — тег GCM не сошёлся ни при одном варианте AAD.
+ * - `aad_mismatch` — тег сошёлся на ГОЛОМ заголовке, хотя автор был назван:
+ *                    ключ верен, но привязки к автору у конверта нет.
+ * - `bad_form`     — расшифровалось, но внутри не `ChatPayload`.
+ *
+ * ⚠️ ЧЕГО `bad_key` НЕ РАЗЛИЧАЕТ, и это честно. Единственный оракул — тег GCM;
+ * он говорит «сошлось/не сошлось». Поэтому «не тот ключ», «назван не тот
+ * автор» и «порчен шифротекст» дают ОДИН И ТОТ ЖЕ `bad_key` — замерено, и
+ * заперто тестом 12, чтобы никто не начал строить на несуществующем различении.
+ * Различает ПАРА: `await verifyFrameEvidence(...)` (Задача 4; по договору v2,
+ * исправление 4, она асинхронна и готовности ждёт внутри — прогрев звать не
+ * надо) доказывает, что байты — те самые подписанные, и тогда `bad_key` уже
+ * нельзя списать на порчу.
+ */
+export type OpenFailure = 'malformed' | 'bad_key' | 'aad_mismatch' | 'bad_form';
+
+/**
+ * Вскрывает конверт ГОТОВЫМ разовым ключом — путь арбитра, у которого нет ни
+ * одного запечатанного слота.
+ *
+ * ⚠️ ДВЕ ПРОБЫ AAD, И ЭТО НЕ ПЕРЕСТРАХОВКА. Признака «в AAD был автор» в
+ * конверте НЕТ: `ENVELOPE_VERSION` остался `1` и до, и после правки В-1, а
+ * `author` необязателен — конверт, собранный с автором, побайтово неотличим от
+ * собранного без. Единственный способ прочитать неизвестное — попробовать оба
+ * варианта. Порядок: сначала С автором (боевой путь,
+ * `chatConversation.ts:1270` — один вызов расшифровки), потом голый заголовок.
+ *
+ * ⚠️ УСПЕХ НА ГОЛОМ ЗАГОЛОВКЕ — НЕ `ok`. Тег сошёлся, значит ключ верен, но
+ * конверт НЕ связан с автором, которого назвал предъявитель. Выдать такое
+ * содержимое как «сказанное этим автором» значит соврать молча — ровно тот
+ * класс промаха, который проект называет главным (§15.2 замысла). Поэтому
+ * `aad_mismatch`: отказ с названной причиной, без содержимого.
+ *
+ * ⚠️ БАЙТЫ ВХОДА НЕ ТРОГАЕМ. Вызывающий по этим же байтам пересчитывает
+ * `bodyHash` и проверяет подпись. Любая «нормализация» на месте убила бы
+ * доказательство в читалке.
+ *
+ * `TypeError` — наш мусор на входе (не байты, не тот адрес автора, ключ не той
+ * длины). Всё остальное — вердикт, не исключение.
+ */
+export async function openEnvelopeWithOneTimeKey(
+  envelope: Uint8Array,
+  key: OneTimeKey,
+  author?: `0x${string}`,
+): Promise<{ ok: true; payload: ChatPayload } | { ok: false; reason: OpenFailure }> {
+  if (!(envelope instanceof Uint8Array)) {
+    throw new TypeError('openEnvelopeWithOneTimeKey: envelope должен быть Uint8Array (не строка/иное)');
+  }
+  if (!(key instanceof Uint8Array)) {
+    throw new TypeError('openEnvelopeWithOneTimeKey: key должен быть Uint8Array (не строка/иное)');
+  }
+
+  const parts = sliceEnvelope(envelope);
+  if (!parts) return { ok: false, reason: 'malformed' };
+
+  // ДО try. Клеймо `OneTimeKey` живёт только в типах, а сюда байты могли
+  // приехать приведением из разбора мешка. Без этой строки `importKey` бросил
+  // бы ВНУТРИ перехвата, и наш баг вернулся бы вердиктом «не тот ключ».
+  assertOneTimeKeyLength(key, 'openEnvelopeWithOneTimeKey');
+
+  // ДО try, правило В-5 этого файла: `envelopeAad` бросает `TypeError` на
+  // негодном адресе автора. Гейт, чей бросок глотает чужой `catch`, не отличим
+  // от «гейт честно отказал» — этот дефект здесь уже находили однажды.
+  const aadWithAuthor = author === undefined ? null : envelopeAad(parts.header, author);
+  const aadBare = parts.header;
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', toArrayBuffer(key), { name: 'AES-GCM' }, false, ['decrypt'],
+  );
+
+  const attempt = async (aad: Uint8Array): Promise<Uint8Array | null> => {
+    try {
+      return new Uint8Array(
+        await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: toArrayBuffer(parts.iv), additionalData: toArrayBuffer(aad) },
+          cryptoKey,
+          toArrayBuffer(parts.ciphertext),
+        ),
+      );
+    } catch {
+      return null; // тег не сошёлся — вердикт решается снаружи, не здесь
+    }
+  };
+
+  let plaintext: Uint8Array | null;
+  let authorBindingMissing = false;
+  if (aadWithAuthor === null) {
+    // Автор не назван — второго варианта AAD не существует: его 20 байт
+    // неоткуда взять. Одна проба.
+    plaintext = await attempt(aadBare);
+  } else {
+    plaintext = await attempt(aadWithAuthor);
+    if (!plaintext) {
+      plaintext = await attempt(aadBare);
+      if (plaintext) authorBindingMissing = true;
+    }
+  }
+  if (!plaintext) return { ok: false, reason: 'bad_key' };
+  if (authorBindingMissing) return { ok: false, reason: 'aad_mismatch' };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(plaintext));
+  } catch {
+    return { ok: false, reason: 'bad_form' };
+  }
+
+  // Гейты формы — ВНЕ перехвата (В-5): они обязаны возвращать вердикт САМИ.
+  // Бросок отсюда — НАШ баг и обязан быть виден, а не спрятан под кодом
+  // «мешок не наш». `stripDangerousKeys` на этом пути свой: экспортированная
+  // функция, которую путь не зовёт, защитой не является.
+  const payload = sanitizePayload(stripDangerousKeys(parsed));
+  if (!payload) return { ok: false, reason: 'bad_form' };
+  return { ok: true, payload };
 }
