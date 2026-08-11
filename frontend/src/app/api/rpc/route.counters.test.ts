@@ -146,4 +146,54 @@ describe('/api/rpc — агрегат ОТКАЗОВ: тихо на каждом
     const rejectLine = logSpy.mock.calls.map(c => String(c[0])).find(l => l.includes('отказы'));
     expect(rejectLine).toBeUndefined();
   });
+
+  /* ═══════ НАХОДКА РЕВЬЮ (Critical): ключ агрегата из тела ЧУЖОГО запроса ═══════
+   * `method_not_allowed:${m}` строился из СЫРОГО имени метода — поля из
+   * присланного (не нашего) JSON-RPC-вызова, без потолка длины и без
+   * потолка числа РАЗНЫХ таких ключей. Пачка до 10, тело до 64 КиБ — один
+   * запрос мог завести до десяти новых ключей суммарно почти на 64 КБ, а
+   * поток таких запросов (до починки порядка гейтов) не лимитировался
+   * ВООБЩЕ. Два теста ниже — на печатную сторону: строка журнала (и, стало
+   * быть, память карты между печатями) остаётся ОГРАНИЧЕННОЙ даже когда
+   * входные данные — нет.
+   */
+  it('ЗАМЕР: гигантское имя метода в запросе — в журнале ключ ОБРЕЗАН, не гигантская строка', async () => {
+    logSpy.mockClear();
+    const hugeMethod = 'z'.repeat(10_000);
+    await POST(rejectableReq(
+      { jsonrpc: '2.0', method: hugeMethod, params: [], id: 1 },
+      { 'x-forwarded-for': '198.51.100.200' },
+    ));
+    await vi.advanceTimersByTimeAsync(FIVE_MIN_MS);
+
+    const rejectLine = logSpy.mock.calls.map(c => String(c[0])).find(l => l.includes('отказы'));
+    expect(rejectLine).toBeTruthy();
+    // Строка журнала в разы короче, чем было бы при полном 10 000-символьном методе.
+    expect(rejectLine!.length).toBeLessThan(200);
+    expect(rejectLine).not.toContain(hugeMethod);
+    expect(rejectLine).toContain('method_not_allowed:zzzz'); // начало метода видно
+    expect(rejectLine).toContain('…'); // и видно, что он обрезан, а не потерян молча
+  });
+
+  it('ЗАМЕР: много РАЗНЫХ неразрешённых методов подряд — карта не растёт без предела, лишнее в общее ведро', async () => {
+    logSpy.mockClear();
+    const COUNT = 60; // заведомо больше потолка разных ключей (MAX_COUNTER_KEYS=40)
+    for (let i = 0; i < COUNT; i++) {
+      await POST(rejectableReq(
+        { jsonrpc: '2.0', method: `garbage_method_number_${i}`, params: [], id: i },
+        { 'x-forwarded-for': `198.51.100.${100 + (i % 100)}` }, // разные IP — лимитер здесь не мешает
+      ));
+    }
+    await vi.advanceTimersByTimeAsync(FIVE_MIN_MS);
+
+    const rejectLine = logSpy.mock.calls.map(c => String(c[0])).find(l => l.includes('отказы'));
+    expect(rejectLine).toBeTruthy();
+    // Строка не растёт пропорционально числу РАЗНЫХ мусорных имён — переполнение
+    // ушло в одно общее ведро причины «method_not_allowed».
+    expect(rejectLine).toContain('method_not_allowed:other=');
+    // Число элементов через запятую (грубая мера числа РАЗНЫХ ключей в строке)
+    // ограничено потолком, а не равно числу отправленных запросов.
+    const entries = rejectLine!.split(', ').length;
+    expect(entries).toBeLessThan(COUNT);
+  });
 });

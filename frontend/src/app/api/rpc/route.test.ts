@@ -113,36 +113,7 @@ describe('/api/rpc — гейт 1: потолок пачки и тела', () =>
   });
 });
 
-describe('/api/rpc — гейт 2: список разрешённых методов', () => {
-  it('неразрешённый метод — отказ 400, fetch не позван', async () => {
-    const res = await POST(req({ jsonrpc: '2.0', method: 'debug_traceTransaction', params: [], id: 1 }, {
-      'x-forwarded-for': '198.51.100.10',
-    }));
-    expect(res.status).toBe(400);
-    expect(fetchMock).not.toHaveBeenCalled();
-    const j = await res.json();
-    expect(j.error.message).toContain('debug_traceTransaction');
-  });
-
-  it('пачка со ХОТЯ БЫ одним неразрешённым методом — отказ целиком, ни один вызов не уезжает', async () => {
-    const res = await POST(req([
-      CALL,
-      { jsonrpc: '2.0', method: 'trace_block', params: [], id: 2 },
-    ], { 'x-forwarded-for': '198.51.100.11' }));
-    expect(res.status).toBe(400);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('eth_sendRawTransaction — отказ: этот путь никогда не идёт через /api/rpc', async () => {
-    const res = await POST(req({ jsonrpc: '2.0', method: 'eth_sendRawTransaction', params: ['0xdead'], id: 1 }, {
-      'x-forwarded-for': '198.51.100.12',
-    }));
-    expect(res.status).toBe(400);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('/api/rpc — гейт 3: лимитер частоты по IP', () => {
+describe('/api/rpc — гейт 2: лимитер частоты по IP', () => {
   it('в пределах потолка проходят все, за потолком — 429', async () => {
     const statuses: number[] = [];
     for (let i = 0; i < RPC_RATE_MAX + 20; i++) {
@@ -178,6 +149,70 @@ describe('/api/rpc — гейт 3: лимитер частоты по IP', () =>
     }
     const res = await POST(req(CALL, { 'cf-connecting-ip': '203.0.113.80', 'x-forwarded-for': '9.9.9.9' }));
     expect(res.status).toBe(429);
+  });
+
+  /* ═══ НАХОДКА РЕВЬЮ (Critical): гейт методов раньше стоял ДО лимитера ═══
+   * Запрос с запрещённым методом отклонялся 400-м раньше, чем доходил до
+   * счётчика частоты — то есть отправлялся сколько угодно раз в секунду с
+   * одного IP БЕЗ ограничения. Лимитер переставлен раньше — тесты ниже
+   * доказывают именно это, а не факт существования обоих гейтов по
+   * отдельности (это уже покрыто выше и в следующем describe).
+   */
+  it('ЗАМЕР: запросы с ЗАПРЕЩЁННЫМ методом теперь тоже упираются в потолок частоты', async () => {
+    const badCall = { jsonrpc: '2.0', method: 'debug_traceTransaction', params: [], id: 1 };
+    const statuses: number[] = [];
+    for (let i = 0; i < RPC_RATE_MAX + 20; i++) {
+      const res = await POST(req(badCall, { 'x-forwarded-for': '203.0.113.90' }));
+      statuses.push(res.status);
+    }
+    const rateLimited = statuses.filter(s => s === 429).length;
+    const methodRejected = statuses.filter(s => s === 400).length;
+    // До находки: 400 без предела (RPC_RATE_MAX+20 раз), 429 — НИ РАЗУ.
+    expect(methodRejected).toBe(RPC_RATE_MAX); // не больше потолка проехало ДО лимитера
+    expect(rateLimited).toBe(20);
+    expect(fetchMock).not.toHaveBeenCalled(); // метод всё равно не разрешён — fetch не идёт
+  });
+
+  it('ПОРЯДОК: источник, уже исчерпавший потолок валидными вызовами, получает 429 даже на запрещённый метод (не 400)', async () => {
+    for (let i = 0; i < RPC_RATE_MAX; i++) {
+      await POST(req(CALL, { 'x-forwarded-for': '203.0.113.91' }));
+    }
+    const res = await POST(req(
+      { jsonrpc: '2.0', method: 'debug_traceTransaction', params: [], id: 1 },
+      { 'x-forwarded-for': '203.0.113.91' },
+    ));
+    // Если бы список методов проверялся раньше, здесь был бы 400 (метод
+    // запрещён) — 429 доказывает, что лимитер сработал ПЕРВЫМ.
+    expect(res.status).toBe(429);
+  });
+});
+
+describe('/api/rpc — гейт 3: список разрешённых методов', () => {
+  it('неразрешённый метод — отказ 400, fetch не позван', async () => {
+    const res = await POST(req({ jsonrpc: '2.0', method: 'debug_traceTransaction', params: [], id: 1 }, {
+      'x-forwarded-for': '198.51.100.10',
+    }));
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const j = await res.json();
+    expect(j.error.message).toContain('debug_traceTransaction');
+  });
+
+  it('пачка со ХОТЯ БЫ одним неразрешённым методом — отказ целиком, ни один вызов не уезжает', async () => {
+    const res = await POST(req([
+      CALL,
+      { jsonrpc: '2.0', method: 'trace_block', params: [], id: 2 },
+    ], { 'x-forwarded-for': '198.51.100.11' }));
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('eth_sendRawTransaction — отказ: этот путь никогда не идёт через /api/rpc', async () => {
+    const res = await POST(req({ jsonrpc: '2.0', method: 'eth_sendRawTransaction', params: ['0xdead'], id: 1 }, {
+      'x-forwarded-for': '198.51.100.12',
+    }));
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

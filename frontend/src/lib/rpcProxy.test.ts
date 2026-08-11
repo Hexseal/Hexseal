@@ -28,6 +28,8 @@ import {
   isGateRejectionBody,
   shouldRaiseGateSignal,
   createRpcGateSignal,
+  MAX_COUNTER_KEY_LEN,
+  MAX_COUNTER_KEYS,
 } from './rpcProxy';
 
 describe('rpcHostLabel', () => {
@@ -470,6 +472,73 @@ describe('bumpMethodCounts / formatMethodCounts', () => {
     bumpMethodCounts(counts, ['eth_call']);
     expect(counts.get('eth_call')).toBe(3);
     expect(counts.get('eth_blockNumber')).toBe(1);
+  });
+
+  /* ═══════ НАХОДКА РЕВЬЮ (Critical): ключ агрегата — из тела ЧУЖОГО запроса ═══════
+   *
+   * `route.ts` строит ключ `method_not_allowed:${m}`, где `m` — сырое имя
+   * метода из ПРИСЛАННОГО (не нашего) JSON-RPC-вызова, никак не обрезанное.
+   * Пачка до `MAX_BATCH_SIZE`=10, тело до `MAX_BODY_BYTES`=64 КиБ — значит
+   * ОДИН HTTP-запрос мог завести до десяти новых уникальных ключей суммарно
+   * почти на 64 КБ, и (до починки гейт 2 стоял раньше лимитера) ничем не
+   * лимитировался по частоте. Карта росла без предела — правдоподобный OOM
+   * на процессе, который обслуживает ВСЕ чтения цепи сайта: ровно та беда,
+   * которую весь разрез должен был снять.
+   */
+  it('длинный ключ обрезается потолком длины — один гигантский ключ не раздувает карту', () => {
+    const counts = new Map<string, number>();
+    const huge = 'method_not_allowed:' + 'x'.repeat(10_000);
+    bumpMethodCounts(counts, [huge]);
+    expect(counts.size).toBe(1);
+    const [storedKey] = [...counts.keys()];
+    expect(storedKey.length).toBeLessThanOrEqual(MAX_COUNTER_KEY_LEN + 1); // +1 — многоточие
+    expect(storedKey.length).toBeLessThan(huge.length);
+  });
+
+  it('короткий ключ не трогается — усечение не портит настоящие имена методов', () => {
+    const counts = new Map<string, number>();
+    bumpMethodCounts(counts, ['eth_call']);
+    expect(counts.has('eth_call')).toBe(true);
+  });
+
+  it('МНОГО РАЗНЫХ уникальных ключей — карта перестаёт расти после потолка, лишнее в общее ведро', () => {
+    const counts = new Map<string, number>();
+    for (let i = 0; i < MAX_COUNTER_KEYS + 500; i++) {
+      bumpMethodCounts(counts, [`method_not_allowed:garbage_${i}`]);
+    }
+    // Ключей — не больше потолка ПЛЮС ведро переполнения.
+    expect(counts.size).toBeLessThanOrEqual(MAX_COUNTER_KEYS + 1);
+    expect(counts.size).toBe(MAX_COUNTER_KEYS + 1); // потолок исчерпан целиком + ведро
+    const overflowTotal = [...counts.values()].reduce((a, b) => a + b, 0);
+    expect(overflowTotal).toBe(MAX_COUNTER_KEYS + 500); // ни один вызов не потерян, просто не у всех свой ключ
+  });
+
+  it('переполнение уходит в СВОЙ (настраиваемый) ключ ведра — узнаваемый в журнале, не общая безымянная куча', () => {
+    const counts = new Map<string, number>();
+    for (let i = 0; i < 3; i++) {
+      bumpMethodCounts(counts, [`k${i}`], { maxKeys: 2, overflowKey: 'method_not_allowed:other' });
+    }
+    expect(counts.get('method_not_allowed:other')).toBe(1);
+  });
+
+  it('уже существующий ключ продолжает копиться САМ, а не уезжает в ведро — переполнение только для НОВЫХ ключей', () => {
+    const counts = new Map<string, number>();
+    bumpMethodCounts(counts, ['k0', 'k1'], { maxKeys: 2, overflowKey: 'other' });
+    bumpMethodCounts(counts, ['k0', 'k0']); // тот же ключ снова, потолок уже исчерпан
+    expect(counts.get('k0')).toBe(3);
+    expect(counts.has('other')).toBe(false);
+  });
+
+  it('свои maxKeyLen/maxKeys/overflowKey работают независимо от умолчаний модуля', () => {
+    const counts = new Map<string, number>();
+    bumpMethodCounts(counts, ['abcdefgh'], { maxKeyLen: 3 });
+    expect([...counts.keys()][0].length).toBeLessThanOrEqual(4); // 3 + многоточие
+  });
+
+  it('умолчания — разумные константы, а не выдумка теста', () => {
+    expect(MAX_COUNTER_KEY_LEN).toBeGreaterThan(20); // с запасом вмещает "method_not_allowed:" (19 симв.) + короткое имя
+    expect(MAX_COUNTER_KEYS).toBeGreaterThan(ALLOWED_RPC_METHODS.size); // счётчик успехов никогда не должен переполниться
+    expect(MAX_COUNTER_KEYS).toBeLessThan(1000); // потолок памяти карты, не «почти без разницы»
   });
 
   it('formatMethodCounts — по убыванию счёта, метод=число', () => {

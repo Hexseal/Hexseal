@@ -610,9 +610,67 @@ export function isOriginAllowed(input: OriginCheckInput, allowed: string[]): boo
  * раз в несколько минут, не на каждый запрос) — см. докстринг у вызывающей
  * стороны в `route.ts`: «не на каждый успешный запрос — иначе журнал
  * станет второй бедой» ровно это и означает.
+ *
+ * ⚠️ НАХОДКА РЕВЬЮ (Critical), ВНЕСЁННАЯ САМОЙ ПРАВКОЙ, ЧИНИВШЕЙ ЖУРНАЛ.
+ * `route.ts` кладёт сюда ключ `method_not_allowed:${m}`, где `m` — сырое
+ * имя метода из ТЕЛА ЧУЖОГО ЗАПРОСА, без единой проверки длины. Пачка до
+ * `MAX_BATCH_SIZE`=10, тело до `MAX_BODY_BYTES`=64 КиБ — один HTTP-запрос
+ * мог завести до десяти новых уникальных ключей суммарно почти на 64 КБ, и
+ * (до отдельной починки порядка гейтов в `route.ts`) ничем не лимитировался
+ * по частоте. Карта росла без предела между пятиминутными печатями —
+ * правдоподобный OOM на процессе, который обслуживает ВСЕ чтения цепи
+ * сайта: ровно та беда, которую весь разрез должен был снять.
+ *
+ * ДВА НЕЗАВИСИМЫХ ПОТОЛКА, ОБА ОБЯЗАТЕЛЬНЫ (одного мало):
+ *  1. `maxKeyLen` — длина ОДНОГО ключа. Без него единственный вызов с
+ *     30-КБ «методом» держал бы в памяти один 30-КБ ключ — редкость не
+ *     спасает, раз он вообще возможен.
+ *  2. `maxKeys` — число РАЗНЫХ ключей в карте. Без него даже КОРОТКИЕ, но
+ *     РАЗНЫЕ мусорные имена (`garbage_1`, `garbage_2`, …) растили бы карту
+ *     без предела — усечение длины тут не спасает вовсе, это другая ось.
+ * Вместе: карта ограничена `maxKeys × (maxKeyLen + 1)` байт — с
+ * умолчаниями ниже это ≈40 × 65 ≈ 2,6 КБ, что уже не проблема памяти ни
+ * при каких условиях запроса.
+ *
+ * Существующий ключ (уже был в карте до потолка) продолжает копиться САМ —
+ * в переполнение уезжают только НОВЫЕ ключи после того, как потолок
+ * исчерпан; иначе повторяющийся мусор искусственно раздувал бы «ведро»,
+ * хотя памяти на него уже и так тратится O(1).
  */
-export function bumpMethodCounts(counts: Map<string, number>, methods: Iterable<string>): void {
-  for (const m of methods) counts.set(m, (counts.get(m) ?? 0) + 1);
+export const MAX_COUNTER_KEY_LEN = 64;
+export const MAX_COUNTER_KEYS = 40;
+const DEFAULT_OVERFLOW_KEY = '(overflow)';
+
+export interface BumpMethodCountsOptions {
+  /** Потолок длины одного ключа. Умолчание рассчитано на `method_not_allowed:`
+   *  (19 симв.) + самое длинное настоящее имя метода Ethereum JSON-RPC
+   *  (`eth_getTransactionByBlockNumberAndIndex`, 39 симв.) — оба помещаются
+   *  целиком, только мусор длиннее реальных методов режется. */
+  maxKeyLen?: number;
+  /** Потолок числа РАЗНЫХ ключей. Умолчание — с запасом над
+   *  `ALLOWED_RPC_METHODS.size` (11, счётчик успехов никогда не переполнится)
+   *  и достаточно для диагностики «кто-то перебирает много разных
+   *  запрещённых методов», не открывая рост без предела. */
+  maxKeys?: number;
+  /** Куда уезжают НОВЫЕ ключи сверх потолка. Задаётся вызывающим по
+   *  смыслу отказа (`method_not_allowed:other`) — так в журнале видно, ЧТО
+   *  переполнилось, а не безымянная общая куча. */
+  overflowKey?: string;
+}
+
+export function bumpMethodCounts(
+  counts: Map<string, number>,
+  methods: Iterable<string>,
+  opts: BumpMethodCountsOptions = {},
+): void {
+  const maxKeyLen = opts.maxKeyLen ?? MAX_COUNTER_KEY_LEN;
+  const maxKeys = opts.maxKeys ?? MAX_COUNTER_KEYS;
+  const overflowKey = opts.overflowKey ?? DEFAULT_OVERFLOW_KEY;
+  for (const raw of methods) {
+    const key = raw.length > maxKeyLen ? `${raw.slice(0, maxKeyLen)}…` : raw;
+    const target = !counts.has(key) && counts.size >= maxKeys ? overflowKey : key;
+    counts.set(target, (counts.get(target) ?? 0) + 1);
+  }
 }
 
 /** Сводка счётчика для одной строки журнала — по убыванию частоты. */
