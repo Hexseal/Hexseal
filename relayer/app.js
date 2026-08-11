@@ -2075,17 +2075,18 @@ app.get('/dispute-log/:dealId', async (req, res) => {
 // приём, что уже применён к RECEIPT_POLL этого файла и к lib/pollForFact.ts
 // на фронте.
 //
-// РЕВЬЮ КРУГ 2, БЛОКЕР — ограничитель на живом (Next) пути ключевался по
-// строке, которую выбирает нападающий (route.ts:from, без проверки формата),
-// а опрос из круга 1 впервые сделал бездействие дорогим: девять чтений на
-// КАЖДЫЙ отказ, и отрицательный ответ не кэшировался вовсе. Здесь этот путь
-// спит и напрямую не эксплуатируется, но твин обязан остаться поведенчески
-// идентичным (shared/relay-target-scenes.json) — три средства круга 2:
-//  1. RELAY_TARGET_POLL.attempts сжат (9 -> 4) — см. докстринг ниже;
-//  2. RELAY_TARGET_NEGATIVE_CACHE — короткий (секунды) отрицательный кэш;
-//  3. настоящий ограничитель по IP — только в route.ts (relayer/app.js уже
-//     ограничивает POST /relay по IP через clientIp(), см. app.post('/relay')
-//     ниже — здесь чинить нечего, IP-ключ уже стоял).
+// РЕВЬЮ КРУГ 2, БЛОКЕР -> КРУГ 3, ИСПРАВЛЕНО. Ограничитель на живом (Next)
+// пути ключевался по строке, которую выбирает нападающий (route.ts:from, без
+// проверки формата), а опрос из круга 1 впервые сделал бездействие дорогим.
+// Круг 2 предложил три средства; круг 3 оставил одно:
+//  1. RELAY_TARGET_POLL.attempts ВОЗВРАЩЁН к 9 (круг 2 временно сжимал до 4,
+//     ссылаясь на цифру из тестовой СЦЕНЫ, не на замер — отменено на круге 3,
+//     см. докстринг RELAY_TARGET_POLL ниже);
+//  2. RELAY_TARGET_NEGATIVE_CACHE УБРАН (заводился на круге 2, снят на круге
+//     3 — переносил неудачу первого спросившего на любого другого);
+//  3. настоящий ограничитель по IP остался — только в route.ts (relayer/app.js
+//     уже ограничивает POST /relay по IP через clientIp(), см. app.post('/relay')
+//     ниже — здесь чинить было нечего, IP-ключ уже стоял).
 const REGISTRY_RECORD_ABI = [
   'function getRecord(address agreement) view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt))',
 ];
@@ -2101,58 +2102,55 @@ const REGISTRY_RECORD_ABI = [
 // Перезапуск процесса оставляет кэш пустым, и это безопасно: пустой кэш стоит
 // лишнего чтения цепи, а не лишнего пропуска.
 //
+// Ревью круг 2 заводил ЕЩЁ и короткий отрицательный кэш — круг 3 его убрал:
+// он переносил неудачу ПЕРВОГО спросившего на любого ДРУГОГО, кто спросил про
+// тот же адрес в течение TTL, включая контрагента по той же свежесозданной
+// сделке с собственным независимым шансом на опрос.
+//
 // Ревью круг 1, мелочь: RELAY_TARGET_CACHE_MAX экспортирован и сверяется с
 // shared/relay-target-scenes.json («кэшРазмер») — то же число, что у
 // фронтового близнеца, пиннится ОДНИМ местом (тест — в обоих файлах сцен).
 const RELAY_TARGET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;   // 6 часов
 export const RELAY_TARGET_CACHE_MAX = 1000;
 
-// Ревью круг 1, находка 1 -> круг 2, блокер: бюджет опроса при «false»
-// ответе. Интервал (750 мс) — то же число, что у фронтового близнеца, там
-// это DEFAULT_POLL_INTERVAL_MS из lib/pollForFact.ts (импортировать через
+// Ревью круг 1, находка 1 -> круг 3: бюджет опроса при «false» ответе.
+// Интервал (750 мс) — то же число, что у фронтового близнеца, там это
+// DEFAULT_POLL_INTERVAL_MS из lib/pollForFact.ts (импортировать через
 // границу пакетов нельзя — разные npm-проекты, отсюда литерал, не импорт).
-// ЧИСЛО ПОПЫТОК больше НЕ копия чужого бюджета: RECEIPT_POLL (24×500) этого
-// же файла и NONCE_POLL_ATTEMPTS фронта (9×750) опрашивают ПОСЛЕ собственного
-// действия вызывающего (его нонс, его транзакция) — редкая, доказанная точка.
-// Этот путь — публично достижимая точка, где вызывающий не доказал ничего.
-// Взято по факту: сцена «отстаёт» (shared/relay-target-scenes.json) замеряет
-// наблюдаемый лаг в 3 чтения; 4 попытки — тот же запас без утроения, которое
-// отличало старые 9 от однократно измеренного отставания. Мутируемый
-// экспортируемый объект (тот же приём, что RECEIPT_POLL): тесты сокращают
-// stepMs до нуля, не трогая attempts.
-export const RELAY_TARGET_POLL = { attempts: 4, stepMs: 750 };
-
-// Ревью круг 2, блокер (пункт 2 из трёх). Короткий отрицательный кэш — автор
-// плана пересмотрел обоснование 5 исходного плана («не наш» никогда не
-// кэшируем): при полном опросе каждый повторный запрос к тому же чужому
-// адресу платил ту же цену заново — раньше 1 чтение на запрос, с опросом —
-// attempts чтений на запрос. Секунды, не часы: честная гонка решается за один
-// опрос, самое большее — за следующий запрос уже после истечения кэша.
-export const RELAY_TARGET_NEGATIVE_CACHE = { ttlMs: 5_000 };
+// ЧИСЛО ПОПЫТОК = 9, ТА ЖЕ цифра, что NONCE_POLL_ATTEMPTS фронта
+// (lib/walletLock.ts) — и ВЗЯТА ОТТУДА, не изобретена: walletLock.ts:166-172
+// документирует НАСТОЯЩИЙ замер (отставание реплик того же порядка, что блок
+// Base Sepolia, ~2 с) и принятую в проекте доктрину ТРЁХКРАТНОГО запаса
+// поверх измеренного — 9×750≈6.75 с даёт ровно её. (Круг 2 временно сжимал
+// это число до 4, обосновывая цифрой «3 чтения» из тестовой СЦЕНЫ «отстаёт» —
+// фикстуры, не замера; отменено на круге 3.) Цена этого числа при спаме
+// теперь ограничена не им самим, а IP-лимитером в route.ts (30 запросов/мин
+// × 9 = 270 чтений/мин с одного источника). Мутируемый экспортируемый объект
+// (тот же приём, что RECEIPT_POLL): тесты сокращают stepMs до нуля, не
+// трогая attempts.
+export const RELAY_TARGET_POLL = { attempts: 9, stepMs: 750 };
 
 const _ourAgreements    = new Map();   // "диамонд:адрес" (нижний регистр) → до какого мс верим
-const _notOurAgreements = new Map();   // тот же ключ → до какого мс верим отрицательному ответу
 const _agreementLookups = new Map();   // тот же ключ → обещание ИДУЩЕГО чтения (склейка одновременных)
 
 export function _resetRelayTargetCacheForTest() {
   _ourAgreements.clear();
-  _notOurAgreements.clear();
   _agreementLookups.clear();
 }
 
-function rememberVerdict(map, key, ttlMs) {
-  map.delete(key);        // переставить в конец очереди вставки
-  map.set(key, Date.now() + ttlMs);
-  while (map.size > RELAY_TARGET_CACHE_MAX) {
-    const oldest = map.keys().next().value;
-    map.delete(oldest);
+function rememberOurAgreement(key) {
+  _ourAgreements.delete(key);        // переставить в конец очереди вставки
+  _ourAgreements.set(key, Date.now() + RELAY_TARGET_CACHE_TTL_MS);
+  while (_ourAgreements.size > RELAY_TARGET_CACHE_MAX) {
+    const oldest = _ourAgreements.keys().next().value;
+    _ourAgreements.delete(oldest);
   }
 }
 
-function cachedVerdict(map, key) {
-  const until = map.get(key);
+function cachedAsOurAgreement(key) {
+  const until = _ourAgreements.get(key);
   if (until === undefined) return false;
-  if (until <= Date.now()) { map.delete(key); return false; }
+  if (until <= Date.now()) { _ourAgreements.delete(key); return false; }
   return true;
 }
 
@@ -2239,20 +2237,10 @@ export async function relayTargetVerdict(to) {
   // повод, что у фронтового близнеца (relayTarget.ts), хотя здесь DIAMOND_ADDR
   // — константа модуля, не параметр: симметрия ради одного и того же шва.
   const key = `${diamondLower}:${addr}`;
-  if (cachedVerdict(_ourAgreements, key)) return { ok: true, kind: 'agreement' };
-
-  // Ревью круг 2, блокер (пункт 2): короткий отрицательный кэш — до полного
-  // опроса, не после кэша положительных.
-  if (cachedVerdict(_notOurAgreements, key)) {
-    return {
-      ok: false, status: 403, code: 'target_not_ours',
-      error: 'Target is not a Hexseal contract — the relayer pays gas only for its own',
-    };
-  }
+  if (cachedAsOurAgreement(key)) return { ok: true, kind: 'agreement' };
 
   // Склейка одновременных: пятьдесят запросов об одном адресе стоят одного
-  // чтения цепи, а не пятидесяти. Неудачное чтение запоминается коротко
-  // (RELAY_TARGET_NEGATIVE_CACHE), а не вовсе не запоминается — обещание
+  // чтения цепи, а не пятидесяти. Неудачное чтение НЕ запоминается — обещание
   // удаляется из карты, как только оно сойдётся.
   let lookup = _agreementLookups.get(key);
   if (!lookup) {
@@ -2268,13 +2256,17 @@ export async function relayTargetVerdict(to) {
     };
   }
   if (answer === false) {
-    rememberVerdict(_notOurAgreements, key, RELAY_TARGET_NEGATIVE_CACHE.ttlMs);
+    // Ревью круг 2 -> круг 3: НЕ запоминаем «не наш», ни долго, ни коротко —
+    // короткий отрицательный кэш (заведённый на круге 2) переносил неудачу
+    // ПЕРВОГО спросившего на ЛЮБОГО другого в течение TTL, включая
+    // контрагента по той же свежесозданной сделке. Убран; каждый запрос
+    // получает свой независимый опрос.
     return {
       ok: false, status: 403, code: 'target_not_ours',
       error: 'Target is not a Hexseal contract — the relayer pays gas only for its own',
     };
   }
-  rememberVerdict(_ourAgreements, key, RELAY_TARGET_CACHE_TTL_MS);
+  rememberOurAgreement(key);
   return { ok: true, kind: 'agreement' };
 }
 
