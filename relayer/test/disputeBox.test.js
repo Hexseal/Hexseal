@@ -399,6 +399,14 @@ describe('замок чтения: тот, кто ведёт спор СЕЙЧА
     expect(res.body.arbiter).toBe(arb);
     expect(res.body.sealedForOthers).toBe(0);
     expect(res.body.bags.map((b) => b.key).sort()).toEqual([k1, k2].sort());
+    // Форма ОПИСИ (DisputeBoxList) — ровно четыре поля верхнего уровня
+    // (ревью, круг 2: добавлен indexTrusted). Список написан руками, а не
+    // собран из ответа — Задача 6 зеркалит именно его.
+    expect(Object.keys(res.body).sort())
+      .toEqual(['arbiter', 'bags', 'indexTrusted', 'sealedForOthers']);
+    // Индекс цел — опись не восстанавливалась с диска, bags можно
+    // показывать как факт. Контрольная пара к T30 (там же, но false).
+    expect(res.body.indexTrusted).toBe(true);
     // Форма записи описи — ровно шесть полей, ни больше ни меньше (Задача 6
     // зеркалит именно её). Список написан руками, а не собран из ответа.
     expect(Object.keys(res.body.bags[0]).sort())
@@ -1064,5 +1072,19 @@ describe('ревью круг 1 (Important) — находка 1: режим н�
     expect(meta.deal).toBeUndefined();
     expect(meta.sender).toBe('');           // тот же провал, что у чат-мешков
     expect(listDisputeBags(agreement)).toEqual([]);
+
+    // Ревью, круг 2 (решение координатора по следу этой же находки): признак
+    // едет В ОТВЕТЕ маршрута, а не только комментарием в релеере — иначе
+    // ничто не обязывает экран узнать об этом. Самое ценное здесь — именно
+    // ЭТА ПАРА: bags пуст И indexTrusted === false ОДНОВРЕМЕННО, в одном
+    // ответе. Порознь оба факта уже видны (T6 — cache-контроль на true,
+    // bags выше — на []); вместе они и есть то, что отличает «сторона
+    // молчала» от «опись перестраивалась» — ради чего заводился весь этот
+    // признак. Пропуск клиента годится: клиент — сторона сделки, читает
+    // СВОИ мешки (isParty), а не только арбитр.
+    const list = await listBox({ pass, agreement });
+    expect(list.status).toBe(200);
+    expect(list.body.indexTrusted).toBe(false);
+    expect(list.body.bags).toEqual([]);
   });
 });
