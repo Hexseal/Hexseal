@@ -155,6 +155,15 @@ echo "✓ множители сходятся: DAY_MS=$day_ms_value мс, HOUR_M
 # декой-функция/дохлый код/подмена знака не может пройти это — если
 # реально возвращённое число не совпадает с независимо посчитанным
 # ожиданием, гейт красный, с конкретными числами обеих сторон.
+# Ревью круг 1, находка 4: под `set -euo pipefail` голое присваивание
+# `var="$(cmd)"` — простая команда, и её код выхода = коду выхода cmd. Не
+# завёрнутая в `if`/`&&`/`||`, она РОНЯЕТ ВЕСЬ СКРИПТ немедленно при
+# ненулевом коде node — до строки `node_exit=$?` ниже. Замерено вживую
+# (сломанный экспорт в bagStore.js): гейт умирал молча после трёх «✓», без
+# единой строки объяснения, и оставлял `FORMULA_CHECK_STORAGE_DIR` неубранным
+# (rm -rf ниже тоже не успевал выполниться). Дефект был записан отдельно —
+# docs/OPEN-ITEMS.md:1116-1120. `|| node_exit=$?` — стандартный приём:
+# ловит код ошибки, не давая `set -e` сработать раньше присваивания.
 FORMULA_CHECK_STORAGE_DIR="$(mktemp -d)"
 formula_check_stderr="$(mktemp)"
 formula_check_output="$(STORAGE_DIR="$FORMULA_CHECK_STORAGE_DIR" node --input-type=module -e "
@@ -195,8 +204,7 @@ const gotBox = disputeBoxBagDeadline(boxAnchorMs, disputeWindowMs);
 const boxTailMs = gotBox - boxAnchorMs;
 
 console.log(JSON.stringify({ expectedDispute, gotDispute, expectedCreation, gotCreation, expectedBox, gotBox, boxTailMs, bagTtlMs: BAG_TTL_MS }));
-" 2>"$formula_check_stderr")"
-node_exit=$?
+" 2>"$formula_check_stderr")" && node_exit=0 || node_exit=$?
 rm -rf "$FORMULA_CHECK_STORAGE_DIR"
 
 if [[ "$node_exit" -ne 0 ]]; then

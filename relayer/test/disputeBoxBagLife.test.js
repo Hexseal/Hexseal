@@ -94,8 +94,26 @@ function recordOnly(recipient, sender, uploadedAt, extra = {}) {
  * status_). Если PUT ниже отвечает не 200 — чинить ЭТОТ мок под её замок, а
  * не ожидание в тесте.
  */
+/**
+ * Ревью круг 1, находка 1: `disputed` и `registryKnows` — теперь ДВА
+ * независимых переключателя, а не один. `disputed` — что отвечает сам
+ * Agreement (getDetails().status_/status()), тот же источник, что читает
+ * маршрут PUT (disputeBoxFacts()). `registryKnows` — отдельно, что видит
+ * Registry.getDisputed() на диамонде, тот же источник, что читает ночная
+ * adoptDisputedPairBags(). По умолчанию `registryKnows = disputed` —
+ * держит все прежние 25 сцен байт-в-байт (два источника согласны, как и
+ * было), расходятся они только там, где тест просит это явно.
+ *
+ * ⚠️ До этой правки `status_`/`status()` были ЗАШИТЫ в 4 всегда, даже когда
+ * `disputed: false` — реалистичной эта комбинация не была никогда, просто
+ * этого не было видно: ничто не читало Agreement для сделки, отсутствующей
+ * в getDisputed(). Т16 («спор кончился») случайно полагался именно на эту
+ * невидимость. Обнаружено этим же кругом ревью: adoptStrandedBoxBags()
+ * впервые стал читать Agreement НАПРЯМУЮ для мешков, которых нет в
+ * getDisputed(), — и мок соврал бы ему, что спор ещё идёт.
+ */
 function mockChain({
-  deal, disputedAtMs, disputed = true, disputeWindowSec = 4 * 24 * 60 * 60,
+  deal, disputedAtMs, disputed = true, registryKnows = disputed, disputeWindowSec = 4 * 24 * 60 * 60,
   fundedAtMs = null, client = CLIENT, executor = EXECUTOR,
 }) {
   const funded = fundedAtMs === null ? disputedAtMs - DAY : fundedAtMs;
@@ -105,7 +123,7 @@ function mockChain({
   };
   mockContract(process.env.DIAMOND_ADDRESS, {
     getActive: [],
-    getDisputed: disputed ? [record] : [],
+    getDisputed: registryKnows ? [record] : [],
     getRecord: async () => record,
     getDisputeClaimer: async () => ARBITER,
   });
@@ -116,9 +134,9 @@ function mockChain({
       fundedAt_: BigInt(Math.max(0, Math.floor(funded / 1000))),
       activatedAt_: 0n, markedDoneAt_: 0n,
       disputedAt_: BigInt(Math.floor(disputedAtMs / 1000)),
-      resolvedAt_: 0n, status_: 4,
+      resolvedAt_: 0n, status_: disputed ? 4 : 5,
     }),
-    status: async () => 4,
+    status: async () => (disputed ? 4 : 5),
     DISPUTE_WINDOW: async () => BigInt(disputeWindowSec),
     DEADLINE_GRACE: async () => 0n,
     AUTO_APPROVE_WINDOW: async () => 0n,
@@ -181,14 +199,25 @@ describe('срок мешка ящика — формула', () => {
       .toBe(dealDeadlineFromDispute(disputedAt, win));
   });
 
+  // Ревью круг 1, находка 3: disputeBoxBagDeadline не держит СВОИХ проверок
+  // входа — она чистая передача в dealDeadlineFromDispute, которая делает
+  // РОВНО ТЕ ЖЕ два предиката на те же значения (см. её докстринг). Регэксп
+  // сужен до имени функции, которая РЕАЛЬНО бросает (dealDeadlineFromDispute)
+  // — /disputeBoxBagDeadline/ совпал бы и с TypeError «disputeBoxBagDeadline
+  // is not a function», случись экспорту исчезнуть целиком, и тест был бы
+  // зелёным без единой настоящей проверки. Явное утверждение существования
+  // — отдельной строкой, чтобы удаление экспорта падало по СВОЕЙ причине, а
+  // не совпадением текста.
   it('Т3 отрицательное окно спора — громкий отказ, а не молча укороченный срок', () => {
-    expect(() => disputeBoxBagDeadline(1_700_000_000_000, -1)).toThrow(/disputeBoxBagDeadline/);
+    expect(typeof disputeBoxBagDeadline).toBe('function');
+    expect(() => disputeBoxBagDeadline(1_700_000_000_000, -1)).toThrow(/dealDeadlineFromDispute/);
   });
 
   it('Т4 нечисло в момент вызова — громкий отказ', () => {
-    expect(() => disputeBoxBagDeadline('вчера', 4 * DAY)).toThrow(/disputeBoxBagDeadline/);
-    expect(() => disputeBoxBagDeadline(NaN, 4 * DAY)).toThrow(/disputeBoxBagDeadline/);
-    expect(() => disputeBoxBagDeadline(Infinity, 4 * DAY)).toThrow(/disputeBoxBagDeadline/);
+    expect(typeof disputeBoxBagDeadline).toBe('function');
+    expect(() => disputeBoxBagDeadline('вчера', 4 * DAY)).toThrow(/dealDeadlineFromDispute/);
+    expect(() => disputeBoxBagDeadline(NaN, 4 * DAY)).toThrow(/dealDeadlineFromDispute/);
+    expect(() => disputeBoxBagDeadline(Infinity, 4 * DAY)).toThrow(/dealDeadlineFromDispute/);
   });
 });
 
@@ -628,6 +657,87 @@ describe('отметка «забрал» больше не решает суд�
 
       expect(bagMetaOf(key).dealDeadline).toBe(T0 + 19 * DAY);
       expect(bagExpiryAt(bagMetaOf(key), T0 + 9 * DAY)).toBe(T0 + 19 * DAY);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ─── Ж. Ревью круг 1, находка 1: расхождение источников статуса спора ──────
+//
+// У «идёт ли спор» — два хозяина: маршрут PUT спрашивает Agreement.getDetails()
+// НАПРЯМУЮ, ночная уборка до этого круга смотрела ТОЛЬКО в Registry.getDisputed().
+// Agreement._updateRegistry() обёрнут в try/catch (Agreement.sol:1261-1266) и
+// на отказе синхронизации только эмитит RegistrySyncFailed — raiseDispute()
+// (:695) при этом НЕ ревертит. «Agreement говорит DISPUTED, реестр молчит» —
+// легальное состояние контракта, и mockChain() умеет теперь развести его
+// параметром registryKnows, независимым от disputed.
+
+/** Как night(), но не глушит console.warn молча — собирает вызовы для проверки. */
+async function nightCapturingWarn() {
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const warnCalls = [];
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation((msg) => { warnCalls.push(msg); });
+  try {
+    await runFileCleanup();
+  } finally {
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  }
+  return warnCalls;
+}
+
+describe('расхождение источников — Agreement и Registry штатно не совпадают', () => {
+  it('Т27 Agreement говорит DISPUTED, Registry.getDisputed() молчит — ночь всё равно продлевает мешок ящика', async () => {
+    const deal = freshDeal();
+    const T0 = Date.UTC(2026, 7, 11);
+    try {
+      vi.setSystemTime(T0);
+      const { key } = putBoxBag(deal, CLIENT, T0, {
+        dealDeadline: disputeBoxBagDeadline(T0, 4 * DAY),
+      });
+      markFetched(key, T0);
+      // Реестр НЕ видит эту сделку спорной (RegistrySyncFailed на цепи),
+      // Agreement сам говорит DISPUTED (disputed: true — умолчание).
+      mockChain({ deal, disputedAtMs: T0, registryKnows: false });
+
+      vi.setSystemTime(T0 + 9 * DAY);
+      const warnCalls = await nightCapturingWarn();
+
+      // Без adoptStrandedBoxBags() мешок остался бы на T0+10д (первичный
+      // срок от PUT) — adoptDisputedPairBags() его не находит, реестр о нём
+      // не знает. С починкой ночь на T0+9д продлевает от СЕБЯ — то же
+      // число, что дала бы обычная дорога, будь реестр синхронен (Т26).
+      expect(bagMetaOf(key).dealDeadline).toBe(T0 + 19 * DAY);
+      expect(warnCalls.some((m) => String(m).includes('registry is likely out of sync'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Т28 контроль: Registry молчит, но Agreement ТОЖЕ не говорит DISPUTED — не продлевается и не предупреждает', async () => {
+    const deal = freshDeal();
+    const T0 = Date.UTC(2026, 7, 11);
+    try {
+      vi.setSystemTime(T0);
+      const { key } = putBoxBag(deal, CLIENT, T0, {
+        dealDeadline: disputeBoxBagDeadline(T0, 4 * DAY),
+      });
+      markFetched(key, T0);
+      // Оба источника согласны: спор действительно закрылся — это НЕ
+      // рассинхрон, а обычное «дело закончилось раньше, чем реестр
+      // подхватил Задача-2-ную ночь». Продлевать нечего.
+      mockChain({ deal, disputedAtMs: T0, disputed: false, registryKnows: false });
+
+      vi.setSystemTime(T0 + 9 * DAY);
+      const warnCalls = await nightCapturingWarn();
+
+      // Срок остался ровно тем, что дал PUT (T0+10д) — ни adoptDisputedPairBags
+      // (реестр молчит), ни adoptStrandedBoxBags (Agreement тоже не 4) не
+      // тронули запись. Функция не продлевает вслепую всё, что не нашла в
+      // реестре — только то, что Agreement подтверждает НАПРЯМУЮ.
+      expect(bagMetaOf(key).dealDeadline).toBe(T0 + 10 * DAY);
+      expect(warnCalls.some((m) => String(m).includes('registry is likely out of sync'))).toBe(false);
     } finally {
       vi.useRealTimers();
     }

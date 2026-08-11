@@ -31,7 +31,7 @@ import {
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
   isBagStoreHealthy, bagStorePersistError,
   adoptPairBags, adoptDealBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
-  disputeBoxBagDeadline,
+  disputeBoxBagDeadline, listLiveBoxDeals,
   assertNotFromFuture,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
@@ -544,6 +544,67 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       if (files) console.log(`[files] adoption: extended ${files} attachment(s) of ${r.agreement}`);
     } catch (e) {
       console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);
+    }
+  }
+}
+
+// Задача 2 (4в-2), ревью круг 1, находка 1 (Important). adoptDisputedPairBags()
+// выше отбирает по Registry.getDisputed() — а PUT /disputes/:agreement/bags
+// (disputeBoxFacts()) спрашивает статус НАПРЯМУЮ у Agreement.getDetails().
+// Это два разных источника, и расхождение — ШТАТНОЕ: Agreement._updateRegistry()
+// (Agreement.sol:1261-1266) обёрнут в try/catch и на отказе синхронизации
+// только эмитит RegistrySyncFailed, raiseDispute() (:695) при этом НЕ
+// ревертит. Значит «Agreement говорит DISPUTED, реестр молчит» — легальное
+// состояние контракта.
+//
+// В этом состоянии, БЕЗ этой функции: PUT принимает мешок (её замок смотрит
+// в Agreement), а adoptDisputedPairBags() выше НИКОГДА его не находит (её
+// отбор — по getDisputed()) — мешок ящика умирает через disputeBoxBagDeadline()
+// от МОМЕНТА ПОСЛЕДНЕЙ ЗАПИСИ, хотя спор физически идёт. Ровно та беда, ради
+// которой заведена вся Задача 2, только с другой причиной расхождения.
+//
+// Дёшево — на общем пути (устойчивое состояние: реестр обычно синхронен).
+// listLiveBoxDeals() (bagStore.js) — обход описи В ПАМЯТИ, ноль обращений в
+// цепь; known — уже прочитанный этим же прогоном disputed-массив реестра.
+// Только для РАЗНИЦЫ (в устойчивом состоянии — пустой набор) идёт прицельное
+// Agreement.getDetails() — по одному на РАСХОДЯЩИЙСЯ адрес, не по одному на
+// каждый мешок в описи.
+//
+// ⚠️ Не подменяет Registry — только продлевает срок мешка НАПРЯМУЮ по
+// источнику маршрута (то же Agreement), и громко предупреждает: реестр для
+// этой сделки устарел, а syncRegistry(agreement) (Agreement.sol:1273,
+// публична, любой может позвать) — штатный способ починить САМ реестр, не
+// эта функция. Починка реестра и продление мешка — независимы: продление не
+// ждёт первого.
+async function adoptStrandedBoxBags(disputed, nowMs = Date.now()) {
+  const known = new Set(disputed.map((r) => String(r.agreement).toLowerCase()));
+  const liveBoxDeals = listLiveBoxDeals(nowMs);
+  for (const deal of liveBoxDeals) {
+    if (known.has(deal)) continue;
+    try {
+      const agr = new ethers.Contract(deal, AGREEMENT_MINI_ABI, provider);
+      const details = await agr.getDetails();
+      // Agreement уже НЕ говорит DISPUTED — расхождение решилось само (спор
+      // действительно закрылся на обеих сторонах, реестр просто ещё не
+      // позвал sync); продлевать нечего, предупреждать не о чем — это не
+      // рассинхрон, а обычный мешок, доживающий прежний хвост.
+      if (Number(details.status_) !== AGREEMENT_STATUS_DISPUTED) continue;
+      const disputeWindowMs = await getDisputeWindowMs(agr, deal);
+      const fundedAtMs = Number(details.fundedAt_) * 1000;
+      if (fundedAtMs > 0) assertNotFromFuture('adoptStrandedBoxBags', 'fundedAtMs', fundedAtMs, nowMs);
+      const funded = fundedAtMs > 0;
+      const result = adoptDealBags(deal, disputeBoxBagDeadline(nowMs, disputeWindowMs), nowMs, funded);
+      logAdoptionResult('[bags] adoption (box, registry stale)', deal, 'box', result);
+      if (result.adopted) {
+        console.warn(
+          `[bags] adoption (box): agreement ${deal} is DISPUTED on Agreement.getDetails() but MISSING from ` +
+          `Registry.getDisputed() — the registry is likely out of sync (Agreement._updateRegistry() failed ` +
+          `silently, see RegistrySyncFailed). The box bag(s) were extended directly from Agreement, without ` +
+          `waiting for that. Anyone can call syncRegistry(${deal}) to fix the registry itself.`
+        );
+      }
+    } catch (e) {
+      console.error(`[bags] adoption (box, registry stale): failed for ${deal}, skipping:`, e.message);
     }
   }
 }
@@ -1221,6 +1282,20 @@ export async function runFileCleanup() {
     await adoptDisputedPairBags(disputedRecords);
   } catch (e) {
     console.error('[bags] adoption error:', e.stack || e.message);
+  }
+
+  // Задача 2 (4в-2), ревью круг 1, находка 1: только когда реестр реально
+  // ОТВЕТИЛ этой ночью (chainKnown) — `disputedRecords` тогда настоящий
+  // список, и «отсутствует в нём» значит «расходится», а не «узел молчал».
+  // При chainKnown=false пропускаем целиком: пришлось бы читать Agreement
+  // для КАЖДОГО живого мешка ящика без всякой пользы — К-1 уже откладывает
+  // снос этих же записей ниже, продлевать вслепую нечем.
+  if (chainKnown) {
+    try {
+      await adoptStrandedBoxBags(disputedRecords);
+    } catch (e) {
+      console.error('[bags] adoption (box, registry stale) error:', e.stack || e.message);
+    }
   }
 
   // Expired chat files — skip any still tagged to a currently-disputed pair,
@@ -3645,6 +3720,30 @@ function boxWriteRateKey(address) { return `box-write:${address}`; }
 function boxReadRateKey(address)  { return `box-read:${address}`;  }
 function boxChainRateKey(address) { return `box-chain:${address}`; }
 
+// ⚠️ Ревью круг 1, находка 2 (Important) — цена «не умрёт никогда», числом.
+// ДО Задачи 2 (4в-2) у мешка ящика был жёсткий потолок BAG_MAX_AGE_MS
+// (90 суток от загрузки), без исключений. ПОСЛЕ нeё: пока цепь говорит
+// DISPUTED и эскроу заперт (funded=true), потолок НЕ применяется вовсе
+// (disputeBoxBagDeadline() в bagStore.js, мутации 5/6 в её тестах) — якорь
+// «сейчас» двигает срок вперёд каждую ночь, пока freezeVerdict() держит
+// дело (ArbiterRegistryFacet.sol:848, onlyOwnerOrDAO, без таймаута).
+// Потолка по объёму на ОДНУ сторону при этом тоже нет — квота на ящик не
+// заводится (открытый пункт 28.2 плана 4в-2). Худший случай числом:
+//   DISPUTE_BOX_WRITE_RATE_MAX (60/мин) × MAX_BAG_SIZE (256 КиБ, bagStore.js)
+//   = 15 360 КиБ/мин × 1440 мин/сутки = 22 118 400 КиБ/сутки ≈ 21,1 ГиБ/сутки
+//   НА ОДНУ СТОРОНУ спора, БЕССРОЧНО, пока дело заморожено.
+// Это не гипотеза — это цена решения «funded освобождает от 90-дневного
+// потолка», принятого этой же задачей. Одна сторона такого не сделает по
+// ошибке (нужно 60 запросов в минуту непрерывно), но это уже не
+// «космети­ческий» долг у пункта 28.2 — это конкретное число, которое
+// квота обязана будет закрыть.
+// ⚠️ Сосед по теме: отсрочка «узел молчит» (К-1, cleanupBags() в
+// bagStore.js) ограничена ТЕМ ЖЕ BAG_MAX_AGE_MS от uploadedAt — то есть
+// узел, молчащий дольше 90 суток подряд, снесёт мешок живого спора, даже
+// если цепь (будь она доступна) сказала бы DISPUTED. Асимметрия честная:
+// «спор жив и цепь отвечает» — бессрочно; «спор жив, а узнать нечем» —
+// не дольше 90 суток. Не чинится этим кругом — названо числом, как
+// потребовало ревью.
 const DISPUTE_BOX_WRITE_RATE_MAX = readPositiveInt('DISPUTE_BOX_WRITE_RATE_MAX', 60);
 const DISPUTE_BOX_READ_RATE_MAX  = readPositiveInt('DISPUTE_BOX_READ_RATE_MAX', 120);
 

@@ -1444,6 +1444,38 @@ export function listDisputeBags(deal) {
     .sort((a, b) => a.uploadedAt - b.uploadedAt);
 }
 
+// Задача 2 (4в-2), ревью круг 1, находка 1 (Important). У «идёт ли спор» —
+// ДВА хозяина, и они штатно расходятся: маршрут PUT спрашивает
+// Agreement.getDetails().status_ == 4 НАПРЯМУЮ (relayer/app.js:
+// disputeBoxFacts()), а ночная уборка до сих пор смотрела ТОЛЬКО в
+// Registry.getDisputed() (adoptDisputedPairBags()). Agreement._updateRegistry()
+// (Agreement.sol:1261-1266) обёрнут в try/catch и на отказе синхронизации
+// только эмитит RegistrySyncFailed — raiseDispute() (Agreement.sol:695) при
+// этом НЕ ревертит. Значит «Agreement говорит DISPUTED, реестр молчит» —
+// легальное состояние контракта, не баг: мешок ящика в этом состоянии
+// принимается PUT-ом (замок смотрит в Agreement), но никогда не находится
+// ночным отбором по getDisputed() — и умирает через хвост от последней
+// записи, хотя спор физически идёт. Ровно та беда, ради которой заведена
+// вся Задача 2, только с другой причиной расхождения.
+//
+// listLiveBoxDeals(nowMs) — дешёвая половина починки (app.js держит вторую,
+// точечную): чистый обход описи В ПАМЯТИ, ноль обращений в цепь. Отдаёт
+// множество адресов сделок, у которых есть хотя бы один ЖИВОЙ
+// (bagExpiryAt(meta, nowMs) > nowMs) мешок ящика — то есть «ещё не поздно
+// продлевать». Ночная уборка сверяет это множество с тем, что вернул
+// getDisputed() СЕГОДНЯ, и только для РАЗНИЦЫ идёт в цепь — по одному
+// прицельному Agreement.getDetails() на адрес, а не по одному на каждый
+// мешок в описи (см. adoptStrandedBoxBags() в app.js).
+export function listLiveBoxDeals(nowMs = Date.now()) {
+  assertSafeInt('listLiveBoxDeals', 'nowMs', nowMs);
+  const deals = new Set();
+  for (const meta of Object.values(_bagMeta)) {
+    if (meta.deal == null) continue;
+    if (bagExpiryAt(meta, nowMs) > nowMs) deals.add(meta.deal);
+  }
+  return [...deals];
+}
+
 // I3: раньше отдавала `_bagMeta[key]` напрямую — тот же объект, что живёт в
 // индексе. Мутация возвращённого объекта (`m.recipient = кто-то-другой`)
 // меняла запись в _bagMeta мгновенно, без единого вызова recordBag()/
@@ -1730,9 +1762,19 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
 // якорем. Расширение script/check-appeal-window.sh зовёт именно эту
 // функцию и сверяет ВЫЧИСЛЕННОЕ число — подмена хвоста (например, на
 // BAG_TTL_MS) красит гейт, а не проходит текстовой проверкой.
+//
+// ⚠️ Ревью круг 1, находка 3: своих проверок входа здесь НЕТ, и это не
+// упущение. `dealDeadlineFromDispute` делает `assertSafeInt(fn, 'disputedAtMs',
+// disputedAtMs)` + `assertNonNegativeSafeInt(fn, 'disputeWindowMs',
+// disputeWindowMs)` — ТЕ ЖЕ два предиката на ТЕ ЖЕ значения (nowMs
+// пересылается позиционно как disputedAtMs, форму не меняя). Держать здесь
+// вторую пару тех же вызовов было бы мёртвым замком: он не расширяет
+// множество отвергаемых входов ни на один — что доказано мутацией «убрать
+// обе проверки из обёртки» (0 изменений в поведении, T3/T4 остаются
+// зелёными потому что бросает `dealDeadlineFromDispute`, а не потому что
+// обёртка перестала проверять). Вход сторожит ОДНО место — внутренняя
+// функция; называю это вслух, а не дублирую молча.
 export function disputeBoxBagDeadline(nowMs, disputeWindowMs) {
-  assertSafeInt('disputeBoxBagDeadline', 'nowMs', nowMs);
-  assertNonNegativeSafeInt('disputeBoxBagDeadline', 'disputeWindowMs', disputeWindowMs);
   return dealDeadlineFromDispute(nowMs, disputeWindowMs);
 }
 
