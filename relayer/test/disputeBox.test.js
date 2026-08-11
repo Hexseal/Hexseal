@@ -966,3 +966,103 @@ describe('ящик спора не протекает в чат', () => {
     expect(bagMetaOf(key)).toBeDefined();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ревью, круг 1 (Important) — находка 2: пропуск заперт на всех трёх маршрутах
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// До этого раунда ни один из 34 тестов не ходил на /disputes/* без
+// x-bag-pass или с негодным, и ни одна из 22 мутаций не трогала
+// requireBagPass — единственный замок аутентификации на этих маршрутах.
+// Замер, доказавший дыру (до этого теста): подмени requireBagPass так,
+// чтобы при отсутствии пропуска он не отвечал 401, а придумывал адрес, —
+// ноль красных, потому что пропуск шлют все тесты без исключения. Не
+// требует mockDeal(): пропуск проверяется РАНЬШЕ параметра :agreement и
+// любого чтения цепи на всех трёх маршрутах (см. порядок в самих
+// обработчиках).
+
+describe('ревью круг 1 (Important) — находка 2: пропуск заперт на всех трёх маршрутах', () => {
+  it('T29: без x-bag-pass — 401 pass_invalid на PUT, описи и мешке', async () => {
+    const agreement = freshAgreement();
+
+    const put = await request(app)
+      .put(`/disputes/${agreement}/bags`)
+      .set('CF-Connecting-IP', freshIp())
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('мешок'));
+    expect(put.status).toBe(401);
+    expect(put.body.code).toBe('pass_invalid');
+
+    const list = await request(app)
+      .get(`/disputes/${agreement}/bags`)
+      .set('CF-Connecting-IP', freshIp());
+    expect(list.status).toBe(401);
+    expect(list.body.code).toBe('pass_invalid');
+
+    // Имя мешка произвольное (ключ несуществующего мешка) — пропуск проверяется
+    // раньше, чем сервер вообще посмотрит на :name, так что маршрут обязан
+    // отказать 401 прежде, чем дойдёт до вопроса «есть ли такой мешок».
+    const one = await request(app)
+      .get(`/disputes/${agreement}/bags/0-00000000-0000-0000-0000-000000000000.bin`)
+      .set('CF-Connecting-IP', freshIp());
+    expect(one.status).toBe(401);
+    expect(one.body.code).toBe('pass_invalid');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ревью, круг 1 (Important) — находка 1: режим недоверия опустошает ящик
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ⚠️ ЭТОТ ТЕСТ ЗАВИСИТ ОТ ПОРЯДКА: он переводит модуль bagStore.js в режим
+// недоверия (_bagMetaLoadOk = false) на весь остаток жизни процесса этого
+// файла — восстановления не делает, потому что после него в этом файле
+// больше ничего не выполняется. Держать ПОСЛЕДНИМ describe-блоком файла.
+//
+// План обосновывал общую опись (а не отдельное хранилище ящика) тем, что
+// «метла сирот и режим недоверия достаются даром». Даром достаётся МЕТЛА, а
+// не недоверие: запись, восстановленная _scanDiskBags() из одного лишь
+// имени файла, несёт recipient/uploadedAt/size — и НИКОГДА deal/sealedFor,
+// их неоткуда взять (bagKeyFor кодирует только получателя и время). Значит
+// после потери индекса КАЖДЫЙ мешок ящика выпадает из listDisputeBags()
+// НАВСЕГДА (до починки индекса руками) — условие meta.deal === addr не
+// совпадёт ни разу — и арбитр видит пустой ящик, неотличимый от «сторона
+// ничего не предъявляла»: ровно та беда §2.3 замысла, ради которой ящик
+// заводился. Задача 7 обязана уметь сказать «опись перестраивалась,
+// возможна потеря» (например, по isBagStoreHealthy() === false) — НЕ
+// показывать пустой ящик как факт.
+describe('ревью круг 1 (Important) — находка 1: режим недоверия опустошает ящик', () => {
+  it('T30: после потери индекса и реконструкции с диска listDisputeBags(deal) пуст — измеренная потеря, не сюрприз', async () => {
+    const agreement = freshAgreement();
+    const arb = '0x' + '44'.repeat(20);
+    const client = ethers.Wallet.createRandom();
+    const { pass, address } = await issuePassFor(client);
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: arb });
+
+    const put = await putBox({ pass, agreement, body: Buffer.from('мешок'), sealedFor: arb });
+    expect(put.status).toBe(200);
+    expect(listDisputeBags(agreement)).toHaveLength(1);
+
+    // Тот же приём, что test/bagStore.test.js использует для листалок
+    // переписки («реконструированный мешок не числится ни за одним
+    // отправителем»): снимок описи существует, но не разбирается как объект
+    // (JSON.parse('null') === null) — а склад НЕ пуст (мешок только что
+    // положен) — значит это не свежая установка, а потеря доверия.
+    // BAG_META_PATH не экспортирован (умышленно, см. test/bagStore.test.js —
+    // export let ловится vi.mock снимком); путь вычислен той же формулой,
+    // что и в самом bagStore.js (STORAGE_DIR/bag-meta.json), а
+    // process.env.STORAGE_DIR выставлен один раз для всего файла test/setup.js
+    // и здесь не переопределялся ни разу.
+    const metaPath = path.join(process.env.STORAGE_DIR, 'bag-meta.json');
+    fs.writeFileSync(metaPath, 'null', 'utf8');
+    _loadBagMeta();
+
+    // Измерено, а не предположено. Реконструированная запись жива (в неё
+    // попал бы старый маршрут по recipient), но ящика для неё больше нет.
+    const meta = bagMetaOf(put.body.key);
+    expect(meta).toBeDefined();
+    expect(meta.deal).toBeUndefined();
+    expect(meta.sender).toBe('');           // тот же провал, что у чат-мешков
+    expect(listDisputeBags(agreement)).toEqual([]);
+  });
+});
