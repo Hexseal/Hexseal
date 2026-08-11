@@ -15,6 +15,12 @@
  *
  * ⚠️ Окружения отрисовки здесь нет и не нужно: это серверный обработчик,
  * зовётся напрямую как функция (тот же приём, что в src/app/api/push/route.test.ts).
+ *
+ * ⚠️ РЕВЬЮ КРУГ 1. Фикстуры адресов — CHECKSUM-регистра (`viem.getAddress`),
+ * не строчные. Замерено: строчные фикстуры делали `.toLowerCase()`-нормализацию
+ * в `readOnce` (relayTarget.ts) МЁРТВЫМ замком (находка 2) — убери её, тесты не
+ * заметят, потому что запись УЖЕ была строчной и совпадала без нормализации.
+ * Checksum заставляет нормализацию реально что-то делать.
  */
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -36,6 +42,11 @@ const цепь = vi.hoisted(() => ({
   записей: 0,
   молчит: false,
   запись: (_addr: string): unknown => null,
+  // Ревью круг 1, находка 1: сколько раз подряд ЛЮБОЙ адрес получает пустую
+  // запись, прежде чем `запись()` начнёт отвечать по-настоящему — симуляция
+  // реплики, ещё не увидевшей блок регистрации свежего Agreement.
+  отстаётПопыток: 0,
+  попыткиПоАдресу: new Map<string, number>(),
 }));
 
 vi.mock('viem', async (importActual) => {
@@ -49,7 +60,15 @@ vi.mock('viem', async (importActual) => {
         if (functionName === 'getRecord') {
           цепь.чтенийРеестра += 1;
           if (цепь.молчит) throw new Error('узел молчит');
-          return цепь.запись(String(args[0]));
+          const addr = String(args[0]).toLowerCase();
+          if (цепь.отстаётПопыток > 0) {
+            const n = (цепь.попыткиПоАдресу.get(addr) ?? 0) + 1;
+            цепь.попыткиПоАдресу.set(addr, n);
+            if (n <= цепь.отстаётПопыток) {
+              return { agreement: '0x0000000000000000000000000000000000000000', client: '0x0000000000000000000000000000000000000000', executor: '0x0000000000000000000000000000000000000000', amount: 0n, status: 0, createdAt: 0n, resolvedAt: 0n };
+            }
+          }
+          return цепь.запись(addr);
         }
         throw new Error(`неожиданное чтение с цепи: ${functionName}`);
       },
@@ -64,26 +83,38 @@ vi.mock('viem', async (importActual) => {
 });
 
 const { POST } = await import('./route');
-const { _resetRelayTargetCacheForTest, relayTargetVerdict } = await import('@/lib/relayTarget');
+const {
+  _resetRelayTargetCacheForTest, relayTargetVerdict, REGISTRY_RECORD_ABI,
+  RELAY_TARGET_POLL, RELAY_TARGET_CACHE_MAX,
+} = await import('@/lib/relayTarget');
 const { CONTRACTS } = await import('@/config/contracts');
+// Настоящий decodeFunctionResult viem — `vi.mock('viem', …)` выше подменяет
+// только createPublicClient/createWalletClient, остальное идёт из `...actual`.
+const { decodeFunctionResult, getAddress } = await import('viem');
+
+// Бюджет опроса задан в lib/relayTarget.ts (attempts=9, intervalMs=750) —
+// проверен self-check тестом ниже ДО того, как эта строка его меняет; здесь
+// только убираем реальный сон, чтобы файл не ждал секунды на отказанных целях.
+const БЮДЖЕТ_ПО_УМОЛЧАНИЮ = { ...RELAY_TARGET_POLL };
+RELAY_TARGET_POLL.intervalMs = 0;
 
 const ZERO      = '0x0000000000000000000000000000000000000000';
 const DIAMOND   = CONTRACTS.diamond.toLowerCase();
-const AGREEMENT = '0xa9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9';
+const AGREEMENT = getAddress('0xa9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9');
 // Настоящий чужой контракт: тестовый USDC Base Sepolia.
-const FOREIGN   = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
-const EOA       = '0xee01ee01ee01ee01ee01ee01ee01ee01ee01ee01';
-const CLIENT    = '0xc11e1700000000000000000000000000000000c1';
-const EXECUTOR  = '0xe8ec0000000000000000000000000000000000e8';
+const FOREIGN   = getAddress('0x036cbd53842c5426634e7929541ec2318f3dcf7e');
+const EOA       = getAddress('0xee01ee01ee01ee01ee01ee01ee01ee01ee01ee01');
+const CLIENT    = getAddress('0xc11e1700000000000000000000000000000000c1');
+const EXECUTOR  = getAddress('0xe8ec0000000000000000000000000000000000e8');
 
 const ДОГОВОР = JSON.parse(
   readFileSync(new URL('../../../../../shared/relay-target-scenes.json', import.meta.url), 'utf8'),
-) as { сцены: Сцена[] };
+) as { сцены: Сцена[]; кэшРазмер: number };
 
 interface Сцена {
   имя: string;
   цель: 'diamond' | 'agreement' | 'foreign' | 'eoa';
-  цепь: 'отвечает' | 'молчит';
+  цепь: 'отвечает' | 'молчит' | 'отстаёт';
   исход: 'пропуск' | 'отказ';
   статус: number;
   код: string | null;
@@ -109,13 +140,16 @@ const НАША = {
 
 function поднятьЦепь({
   молчит = false,
-  запись = (addr: string): unknown => (addr.toLowerCase() === AGREEMENT ? НАША : ПУСТАЯ),
+  отстаётПопыток = 0,
+  запись = (addr: string): unknown => (addr.toLowerCase() === AGREEMENT.toLowerCase() ? НАША : ПУСТАЯ),
 } = {}) {
   цепь.чтенийРеестра = 0;
   цепь.проверокПодписи = 0;
   цепь.записей = 0;
   цепь.молчит = молчит;
   цепь.запись = запись;
+  цепь.отстаётПопыток = отстаётПопыток;
+  цепь.попыткиПоАдресу = new Map();
 }
 
 // Ограничитель маршрута — 10/мин ПО КОШЕЛЬКУ from (route.ts:166-177), карта
@@ -147,16 +181,28 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     поднятьЦепь();
   });
 
-  it('договор двух путей на месте, и в нём ровно шесть сцен', () => {
+  it('договор двух путей на месте, и в нём ровно семь сцен', () => {
     // Число руками. Добавивший сцену обязан прийти сюда — и в
     // relayer/test/relayTargetGuard.test.js, на другую сторону шва.
     expect(Array.isArray(СЦЕНЫ)).toBe(true);
-    expect(СЦЕНЫ.length).toBe(6);
+    expect(СЦЕНЫ.length).toBe(7);
+  });
+
+  it('потолок кэша сверен с договором двух путей — не две несверенные копии', () => {
+    expect(RELAY_TARGET_CACHE_MAX).toBe(ДОГОВОР.кэшРазмер);
+  });
+
+  it('бюджет опроса при отставании реплики — 9 попыток по 750 мс, тот же порядок, что у RECEIPT_POLL (релеер) и NONCE_POLL_* (walletLock.ts)', () => {
+    expect(БЮДЖЕТ_ПО_УМОЛЧАНИЮ.attempts).toBe(9);
+    expect(БЮДЖЕТ_ПО_УМОЛЧАНИЮ.intervalMs).toBe(750);
   });
 
   for (const сцена of СЦЕНЫ) {
     it(`шов: ${сцена.имя}`, async () => {
-      поднятьЦепь({ молчит: сцена.цепь === 'молчит' });
+      поднятьЦепь({
+        молчит: сцена.цепь === 'молчит',
+        отстаётПопыток: сцена.цепь === 'отстаёт' ? сцена.чтенийРеестра - 1 : 0,
+      });
 
       const res = await отправить(ЦЕЛЬ[сцена.цель]);
       const json = await res.json();
@@ -201,13 +247,16 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     expect(цепь.записей).toBe(0);
   });
 
-  it('мусор вместо записи реестра — 503 и ни одной транзакции, а не 500', async () => {
+  it('мусор вместо записи реестра — 503 и ни одной транзакции, а не 500; ОДНО чтение, не опрос', async () => {
+    // «Не смогли прочитать» — не гонка отставшей реплики, повтор её не лечит
+    // (правило 1: сбой первой попытки — наружу без опроса).
     поднятьЦепь({ запись: () => 'нет' });
 
     const res = await отправить(AGREEMENT);
 
     expect(res.status).toBe(503);
     expect(цепь.записей).toBe(0);
+    expect(цепь.чтенийРеестра).toBe(1);
   });
 
   it('второй вызов к тому же агрименту цепи не спрашивает, а после перезапуска — спрашивает снова', async () => {
@@ -223,13 +272,28 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     expect(цепь.чтенийРеестра).toBe(2);
   });
 
-  it('чужой адрес НЕ запоминается: оба раза 403 и оба раза чтение цепи', async () => {
+  it('чужой адрес НЕ запоминается: оба раза 403 и оба раза полный опрос цепи', async () => {
+    // Каждый запрос теперь стоит ПОЛНОГО бюджета опроса (9), не одного чтения
+    // — цена ревью-круг-1-находки-1: детерминированно чужой адрес не
+    // становится «нашим» ни на какой попытке, опрос исчерпывается целиком.
     const первый = await отправить(FOREIGN);
     const второй = await отправить(FOREIGN);
 
     expect(первый.status).toBe(403);
     expect(второй.status).toBe(403);
-    expect(цепь.чтенийРеестра).toBe(2);
+    expect(цепь.чтенийРеестра).toBe(2 * RELAY_TARGET_POLL.attempts);
+  });
+
+  it('отставшая реплика: два пустых чтения, третье видит запись — пускаем БЕЗ повторной отправки согласия', async () => {
+    поднятьЦепь({ отстаётПопыток: 2 });
+
+    const res = await отправить(AGREEMENT);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(цепь.чтенийРеестра).toBe(3);
+    expect(цепь.записей).toBe(1);
   });
 
   it('пятьдесят одновременных вопросов об одном агрименте — одно чтение цепи', async () => {
@@ -248,7 +312,7 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     console.info(`[замер] 50 одновременных вопросов → чтений цепи: ${чтений}`);
   });
 
-  it('кэш ограничен размером: 1001-й адрес вытесняет самый первый', async () => {
+  it('кэш ограничен размером: 1001-й адрес вытесняет РОВНО самый первый, не больше', async () => {
     let чтений = 0;
     const читалка = async (addr: `0x${string}`) => {
       чтений += 1;
@@ -262,7 +326,55 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     await relayTargetVerdict(адрес(1001), DIAMOND, читалка);
     expect(чтений).toBe(1001);          // свежий — из кэша
 
+    // ⚠️ Пин точного потолка (ревью круг 1, мелочь): без этой строки тест
+    // проходит при ЛЮБОМ потолке от 1 до 1000. Адрес 2 остаётся в кэше ТОЛЬКО
+    // если потолок РОВНО 1000 — будь он меньше, адрес 2 вытеснился бы раньше.
+    await relayTargetVerdict(адрес(2), DIAMOND, читалка);
+    expect(чтений).toBe(1001);
+
     await relayTargetVerdict(адрес(1), DIAMOND, читалка);
     expect(чтений).toBe(1002);          // первый — вытеснен
+  });
+
+  // ── Ревью круг 1, находка 3: форма ABI на шве viem↔реестр ──────────────────
+  //
+  // Все сцены выше подменяют createPublicClient целиком — реальный декодер
+  // viem не исполняется НИ РАЗУ, значит регрессия формы ABI (общий DIAMOND_ABI
+  // вместо пришпиленного REGISTRY_RECORD_ABI, либо порча компонентов tuple)
+  // прошла бы мимо них молча. Этот тест — единственный, что реально зовёт
+  // decodeFunctionResult настоящего viem против ТОЧНО ТОЙ ЖЕ константы, что
+  // использует маршрут (импортирована из lib/relayTarget.ts — route.ts её
+  // только использует, Next запрещает route-файлам чужие экспорты).
+  //
+  // ⚠️ Тело encode'ится НЕ viem: viem.encodeFunctionResult у этой ABI даёт
+  // InvalidAddressError даже под голым `node` (замерено — воспроизводится и
+  // без vitest, значит это не мок и не тестовый раннер, а нечто внутри самого
+  // viem/окружения на этом дереве). Продакшен-путь только ДЕКОДИРУЕТ ответ
+  // цепи, никогда не кодирует его сам — значит decode-путь достаточен и
+  // ближе к боевому употреблению. Байты собраны один раз через ethers
+  // (relayer/app.js использует ту же библиотеку) и вписаны как есть.
+  it('ABI записи реестра декодируется viem как ИМЕНОВАННЫЙ объект — иначе замок молча превращается в вечный 503', () => {
+    const raw = ('0x' +
+      '000000000000000000000000a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9' +
+      '000000000000000000000000c11e1700000000000000000000000000000000c1' +
+      '000000000000000000000000e8ec0000000000000000000000000000000000e8' +
+      '00000000000000000000000000000000000000000000000000000000000f4240' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000001' +
+      '0000000000000000000000000000000000000000000000000000000000000000'
+    ) as `0x${string}`;
+
+    const decoded = decodeFunctionResult({
+      abi: REGISTRY_RECORD_ABI, functionName: 'getRecord', data: raw,
+    }) as { agreement?: unknown; client?: unknown };
+
+    // Если бы tuple потерял имена компонентов, viem отдал бы МАССИВ:
+    // Array.isArray(decoded) === true, а decoded.agreement === undefined —
+    // ровно то, что readOnce читает как «не разбирается» → бросок → 503
+    // chain_unavailable на каждый агриментный вызов денежного пути, хотя
+    // цепь ответила прекрасно.
+    expect(Array.isArray(decoded)).toBe(false);
+    expect(typeof decoded.agreement).toBe('string');
+    expect((decoded.agreement as string).toLowerCase()).toBe(AGREEMENT.toLowerCase());
   });
 });

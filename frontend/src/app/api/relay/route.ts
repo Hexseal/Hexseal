@@ -8,15 +8,14 @@ import {
   keccak256,
   toBytes,
   decodeEventLog,
-  type Abi,
   type Hex,
   type Address,
   isAddress,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { appChain, appRpcUrl } from '@/config/chain';
-import { CONTRACTS, DIAMOND_ABI } from '@/config/contracts';
-import { relayTargetVerdict } from '@/lib/relayTarget';
+import { CONTRACTS } from '@/config/contracts';
+import { relayTargetVerdict, REGISTRY_RECORD_ABI } from '@/lib/relayTarget';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -316,7 +315,7 @@ export async function POST(req: NextRequest) {
     const target = await relayTargetVerdict(to, DIAMOND, (agreement) =>
       publicClient.readContract({
         address: DIAMOND,
-        abi: DIAMOND_ABI as Abi,
+        abi: REGISTRY_RECORD_ABI,
         functionName: 'getRecord',
         args: [agreement],
       }),

@@ -2050,6 +2050,30 @@ app.get('/dispute-log/:dealId', async (req, res) => {
 // именно тот, а не этот (см. комментарий ниже). Общего кода у них быть не может:
 // разные рантаймы. Договор о ПОВЕДЕНИИ — shared/relay-target-scenes.json, его
 // читают тесты обеих сторон; разошлись — краснеет та сторона, что отстала.
+//
+// ⚠️ РЕВЬЮ КРУГ 1, НАХОДКА 4 — `getRecord` стал единой точкой отказа денежного
+// пути, и класс отказа шире, чем «diamondCut потерял селектор». Любой ревert
+// из RegistryFacet (рассинхрон раскладки хранилища, забытая миграция и т.п.)
+// даёт 503 chain_unavailable на КАЖДЫЙ агриментный вызов — прецедент в этом же
+// репозитории: getOpenJobs() ревертил Panic(0x22) после разъезда раскладки
+// хранилища JobBoard. Самолечения нет — isRelayDown (frontend/src/lib/relay.ts)
+// узнаёт «релеер лежит» по тексту ошибки, не по коду chain_unavailable, значит
+// фолбэка на кошелёк здесь не будет. Оставлено НАМЕРЕННО: учить isRelayDown
+// доверять chain_unavailable значило бы отдавать фолбэк любому отказу реестра,
+// включая сломанный сам замок (мутация 8 задачи 3) — молчаливый выход из
+// сломанного замка тише самой поломки. Вопрос — за Задачей 8 плана 4в-2.
+//
+// ⚠️ РЕВЬЮ КРУГ 1, НАХОДКА 1 — чтение сразу после записи по отставшей реплике.
+// Agreement разворачивается и регистрируется в реестре ОДНОЙ транзакцией
+// (FactoryFacet.acceptRequest/acceptApplicant/deployAndFund), и следом фронт
+// сразу шлёт гейслесс-вызов на свежий адрес. RPC за одним URL — пул реплик, и
+// чтение может попасть на узел, ещё не увидевший блок регистрации — getRecord
+// отдаёт нулевую запись, замок читает «не наш», честная сделка получает 403.
+// Здесь этот путь спит (см. выше), но твин на фронте — боевой, и договор о
+// ПОВЕДЕНИИ обязывает обе стороны отвечать на гонку одинаково: readOnce/
+// readsAsOurAgreement ниже опрашивают, не читают один раз и надеются — тот же
+// приём, что уже применён к RECEIPT_POLL этого файла и к lib/pollForFact.ts
+// на фронте (три прецедента там же).
 const REGISTRY_RECORD_ABI = [
   'function getRecord(address agreement) view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt))',
 ];
@@ -2064,53 +2088,102 @@ const REGISTRY_RECORD_ABI = [
 // верим себе после замены диамонда. Размер — чтобы карта не росла вечно.
 // Перезапуск процесса оставляет кэш пустым, и это безопасно: пустой кэш стоит
 // лишнего чтения цепи, а не лишнего пропуска.
+//
+// Ревью круг 1, мелочь: RELAY_TARGET_CACHE_MAX экспортирован и сверяется с
+// shared/relay-target-scenes.json («кэшРазмер») — то же число, что у
+// фронтового близнеца, пиннится ОДНИМ местом (тест — в обоих файлах сцен).
 const RELAY_TARGET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;   // 6 часов
-const RELAY_TARGET_CACHE_MAX    = 1000;
+export const RELAY_TARGET_CACHE_MAX = 1000;
 
-const _ourAgreements    = new Map();   // адрес (нижний регистр) → до какого мс верим
-const _agreementLookups = new Map();   // адрес → обещание ИДУЩЕГО чтения (склейка одновременных)
+// Ревью круг 1, находка 1 — бюджет опроса при «false» ответе (см. докстринг
+// перед REGISTRY_RECORD_ABI). Числа НЕ свои: то же RPC, то же измеренное
+// отставание реплик, откалиброванное для RECEIPT_POLL чуть ниже по этому же
+// файлу и для lib/pollForFact.ts на фронте — 9 попыток по 750 мс, потолок
+// ~6.75 с. Мутируемый экспортируемый объект (тот же приём, что RECEIPT_POLL):
+// тесты сокращают stepMs до нуля, не трогая attempts.
+export const RELAY_TARGET_POLL = { attempts: 9, stepMs: 750 };
+
+const _ourAgreements    = new Map();   // "диамонд:адрес" (нижний регистр) → до какого мс верим
+const _agreementLookups = new Map();   // тот же ключ → обещание ИДУЩЕГО чтения (склейка одновременных)
 
 export function _resetRelayTargetCacheForTest() {
   _ourAgreements.clear();
   _agreementLookups.clear();
 }
 
-function rememberOurAgreement(addr) {
-  _ourAgreements.delete(addr);        // переставить в конец очереди вставки
-  _ourAgreements.set(addr, Date.now() + RELAY_TARGET_CACHE_TTL_MS);
+function rememberOurAgreement(key) {
+  _ourAgreements.delete(key);        // переставить в конец очереди вставки
+  _ourAgreements.set(key, Date.now() + RELAY_TARGET_CACHE_TTL_MS);
   while (_ourAgreements.size > RELAY_TARGET_CACHE_MAX) {
     const oldest = _ourAgreements.keys().next().value;
     _ourAgreements.delete(oldest);
   }
 }
 
-function cachedAsOurAgreement(addr) {
-  const until = _ourAgreements.get(addr);
+function cachedAsOurAgreement(key) {
+  const until = _ourAgreements.get(key);
   if (until === undefined) return false;
-  if (until <= Date.now()) { _ourAgreements.delete(addr); return false; }
+  if (until <= Date.now()) { _ourAgreements.delete(key); return false; }
   return true;
 }
 
 /**
- * true  — запись прочитана, это наш агримент;
- * false — запись прочитана, это НЕ наш;
- * null  — прочитать не удалось (узел молчит либо ответ не разбирается).
+ * Одно чтение реестра, разобранное в true/false — БРОСАЕТ на «не удалось
+ * прочитать» (узел молчит либо ответ не разбирается) вместо третьего
+ * значения. Решает разницу между двумя классами беды: «false» (запись
+ * пуста/чужая) стоит ПОВТОРИТЬ — гонка с отставшей репликой; «не прочиталось
+ * вовсе» повторять незачем (сеть легла или ABI разъехался) — вызывающий
+ * (`readsAsOurAgreement`) ловит бросок на ПЕРВОЙ попытке и отдаёт его без
+ * единой лишней попытки, той же ценой в один read, что была до этой правки.
+ */
+async function readOnce(addr) {
+  const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_RECORD_ABI, provider);
+  const record = await registry.getRecord(addr);
+  const agreement = typeof record?.agreement === 'string' ? record.agreement.toLowerCase() : null;
+  const client    = typeof record?.client    === 'string' ? record.client.toLowerCase()    : null;
+  if (agreement === null || client === null) {
+    console.error('[relay] реестр ответил тем, что не разбирается как запись сделки:', addr);
+    throw new Error('registry response does not parse as a deal record');
+  }
+  return agreement === addr || client !== ZERO_ADDR;
+}
+
+/**
+ * Опрашивает `readOnce` до `RELAY_TARGET_POLL.attempts` раз, пока не увидит
+ * `true` — тот же приём (три правила), что `waitForReceipt` в этом же файле и
+ * `lib/pollForFact.ts` на фронте:
+ *  1. первое чтение — без сна, и его сбой бросается НАРУЖУ без единой
+ *     дальнейшей попытки (быстрый отказ — тот же, что был до опроса);
+ *  2. не подтвердилось за все попытки — отдаём последнее прочитанное `false`,
+ *     молча не виснем;
+ *  3. сбой НЕ первой попытки (узел уже ответил хоть раз) не роняет весь
+ *     опрос — глотаем и пробуем дальше с последним удачным значением.
+ * true  — запись прочитана (в т.ч. после отставания), это наш агримент;
+ * false — запись прочитана и это НЕ наш, даже после исчерпанных попыток;
+ * null  — ПЕРВОЕ чтение не удалось — не повторяем.
  */
 async function readsAsOurAgreement(addr) {
+  const { attempts, stepMs } = RELAY_TARGET_POLL;
+  let value;
   try {
-    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_RECORD_ABI, provider);
-    const record = await registry.getRecord(addr);
-    const agreement = typeof record?.agreement === 'string' ? record.agreement.toLowerCase() : null;
-    const client    = typeof record?.client    === 'string' ? record.client.toLowerCase()    : null;
-    if (agreement === null || client === null) {
-      console.error('[relay] реестр ответил тем, что не разбирается как запись сделки:', addr);
-      return null;
-    }
-    return agreement === addr || client !== ZERO_ADDR;
+    value = await readOnce(addr); // правило 1, первая половина
   } catch (e) {
     console.error('[relay] реестр не ответил на getRecord:', e.message);
-    return null;
+    return null; // правило 1, вторая половина: первый сбой — наружу, без опроса
   }
+  if (value === true) return true;
+
+  for (let i = 1; i < attempts; i++) {
+    await new Promise((r) => setTimeout(r, stepMs));
+    try {
+      value = await readOnce(addr);
+    } catch (e) {
+      console.error('[relay] реестр не ответил на getRecord (попытка', i + 1, '):', e.message);
+      continue; // правило 3
+    }
+    if (value === true) return true;
+  }
+  return value; // правило 2
 }
 
 /**
@@ -2120,17 +2193,23 @@ async function readsAsOurAgreement(addr) {
  */
 export async function relayTargetVerdict(to) {
   const addr = String(to).toLowerCase();
+  const diamondLower = String(DIAMOND_ADDR).toLowerCase();
 
-  if (addr === String(DIAMOND_ADDR).toLowerCase()) return { ok: true, kind: 'diamond' };
-  if (cachedAsOurAgreement(addr))                  return { ok: true, kind: 'agreement' };
+  if (addr === diamondLower) return { ok: true, kind: 'diamond' };
+
+  // Ревью круг 1, мелочь: ключ кэша несёт диамонд, а не только адрес — тот же
+  // повод, что у фронтового близнеца (relayTarget.ts), хотя здесь DIAMOND_ADDR
+  // — константа модуля, не параметр: симметрия ради одного и того же шва.
+  const key = `${diamondLower}:${addr}`;
+  if (cachedAsOurAgreement(key)) return { ok: true, kind: 'agreement' };
 
   // Склейка одновременных: пятьдесят запросов об одном адресе стоят одного
   // чтения цепи, а не пятидесяти. Неудачное чтение НЕ запоминается — обещание
   // удаляется из карты, как только оно сойдётся.
-  let lookup = _agreementLookups.get(addr);
+  let lookup = _agreementLookups.get(key);
   if (!lookup) {
-    lookup = readsAsOurAgreement(addr).finally(() => { _agreementLookups.delete(addr); });
-    _agreementLookups.set(addr, lookup);
+    lookup = readsAsOurAgreement(addr).finally(() => { _agreementLookups.delete(key); });
+    _agreementLookups.set(key, lookup);
   }
   const answer = await lookup;
 
@@ -2146,7 +2225,7 @@ export async function relayTargetVerdict(to) {
       error: 'Target is not a Hexseal contract — the relayer pays gas only for its own',
     };
   }
-  rememberOurAgreement(addr);
+  rememberOurAgreement(key);
   return { ok: true, kind: 'agreement' };
 }
 
