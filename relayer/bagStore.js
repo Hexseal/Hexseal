@@ -1710,21 +1710,47 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
   return disputedAtMs + disputeWindowMs + FINALIZE_DELAY_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
 }
 
-// pairId — опаковая строка, та же форма, что производит _pairIdFromAddresses
-// (и app.js:pairIdFromAddresses — заперто тестом на совпадение обеих в
-// test/bagStore.test.js). dealDeadline — уже готовое число мс, посчитанное
-// вызывающим (обычно через dealDeadlineFromDispute() выше); эта функция сама
-// формулу не знает и не пересчитывает — только применяет её ко всем
-// подходящим записям.
+// Задача 2 (4в-2). Срок мешка ЯЩИКА СПОРА.
 //
-// ВАЖНО (Q5 отчёта Задачи 5): adoptPairBags() НЕ имеет способа проверить,
-// что вызывающий действительно вправе усыновлять именно эту пару — тот же
-// класс допущения, что уже есть у пометки пары disputedPairIds для вложений
-// (app.js: "peerA/peerB tagging on /files/presign has no proof-of-
-// participation check"). Единственная граница, реально ограничивающая
+// Отличие от dealDeadlineFromDispute ровно одно — ЯКОРЬ. Там он
+// disputedAt: мешок переписки старше спора, и его хвост считается от
+// начала дела. Мешок ящика РОЖДАЕТСЯ ВНУТРИ спора и обязан пережить его
+// конец, а конца у спора в цепи может не быть вовсе: freezeVerdict()
+// (onlyOwnerOrDAO, ArbiterRegistryFacet.sol:848) держит дело живым без
+// таймаута, а finalizeVerdict() может быть не вызвана никогда.
+//
+// Отсюда правило: пока цепь ГОВОРИТ DISPUTED, у мешка всегда впереди
+// полный хвост спора, считая от МОМЕНТА ВЫЗОВА. Как только сделка ушла
+// из getDisputed(), продлевать некому — мешок доживает последний хвост и
+// уходит. Прецедент приёма — dealDeadlineFromCreation() выше: пока
+// activatedAtMs ещё 0, её якорь тоже nowMs, и по той же причине («срок не
+// должен отставать от текущей ночи»).
+//
+// Своих чисел здесь НЕТ и не будет: это та же формула, вызванная с другим
+// якорем. Расширение script/check-appeal-window.sh зовёт именно эту
+// функцию и сверяет ВЫЧИСЛЕННОЕ число — подмена хвоста (например, на
+// BAG_TTL_MS) красит гейт, а не проходит текстовой проверкой.
+export function disputeBoxBagDeadline(nowMs, disputeWindowMs) {
+  assertSafeInt('disputeBoxBagDeadline', 'nowMs', nowMs);
+  assertNonNegativeSafeInt('disputeBoxBagDeadline', 'disputeWindowMs', disputeWindowMs);
+  return dealDeadlineFromDispute(nowMs, disputeWindowMs);
+}
+
+// pairId/deal — опаковый селектор записей (либо pairId клиент↔исполнитель,
+// либо адрес сделки для ящика спора — см. matches() у вызывающих обёрток
+// ниже). dealDeadline — уже готовое число мс, посчитанное вызывающим
+// (обычно через dealDeadlineFromDispute()/disputeBoxBagDeadline() выше);
+// эта функция сама формулу не знает и не пересчитывает — только применяет
+// её ко всем подходящим записям.
+//
+// ВАЖНО (Q5 отчёта Задачи 5): _adoptBags() НЕ имеет способа проверить, что
+// вызывающий действительно вправе усыновлять именно эту пару/сделку — тот
+// же класс допущения, что уже есть у пометки пары disputedPairIds для
+// вложений (app.js: "peerA/peerB tagging on /files/presign has no proof-
+// of-participation check"). Единственная граница, реально ограничивающая
 // злоупотребление, — потолок BAG_MAX_AGE_MS в bagExpiryAt() (не здесь):
 // сколько бы ни было передано в dealDeadline, итоговый срок мешка никогда
-// не превышает uploadedAt + BAG_MAX_AGE_MS. adoptPairBags() сознательно не
+// не превышает uploadedAt + BAG_MAX_AGE_MS. _adoptBags() сознательно не
 // дублирует эту проверку — дублирование двух копий одного правила в двух
 // местах разошлось бы молча при следующей правке одного из них.
 //
@@ -1827,10 +1853,15 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
 // — если мешок ещё НЕ был продлён за потолок, неоплаченная сделка может
 //   толкать его ВВЕРХ ДО потолка (кандидат растёт вместе с candidate, но
 //   упирается в ceiling) — и не дальше, сколько бы ночей подряд ни звали.
-export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded = false) {
-  assertPairId('adoptPairBags', pairId);
-  assertSafeInt('adoptPairBags', 'dealDeadline', dealDeadline);
-  assertSafeInt('adoptPairBags', 'nowMs', nowMs);
+//
+// Задача 2 (4в-2): ядро усыновления. Одно на два отбора — по паре
+// (переписка) и по сделке (ящик спора). Две копии этого тела разошлись бы
+// молча при первой же правке одной из них: здесь и потолок BAG_MAX_AGE_MS,
+// и правило «только продлевать» (Math.max), и откат при неудавшемся
+// персисте — три правила, каждое из которых уже стоило раунда ревью.
+function _adoptBags(fnName, matches, dealDeadline, nowMs, funded) {
+  assertSafeInt(fnName, 'dealDeadline', dealDeadline);
+  assertSafeInt(fnName, 'nowMs', nowMs);
 
   const rollback = []; // [meta, previousDealDeadline] — только записи, реально изменённые этим вызовом
   // К-3: ключи изменённых записей — для журнала дозаписи. Усыновление зовут
@@ -1842,7 +1873,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
   let cappedCount = 0;
 
   for (const [key, meta] of Object.entries(_bagMeta)) {
-    if (meta.pairId !== pairId) continue;
+    if (!matches(meta)) continue;
     // И-2: гейт первого усыновления — "жив ли мешок ПРЯМО СЕЙЧАС", не
     // "молодой ли он". Уже усыновлённая запись (dealDeadline != null)
     // пересчитывается независимо от этой проверки, см. докстринг выше (I-B).
@@ -1879,7 +1910,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
 
   if (adopted) {
     try {
-      _persistUnlessDistrusted('adoptPairBags', changedKeys.map((k) => ({ k, m: { ..._bagMeta[k] } })));
+      _persistUnlessDistrusted(fnName, changedKeys.map((k) => ({ k, m: { ..._bagMeta[k] } })));
     } catch (e) {
       // I2, тот же приём, что у recordBag()/markFetched(): не оставлять
       // память впереди диска. Откатываем РОВНО те записи, что изменил этот
@@ -1896,6 +1927,22 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
   // не агрегат по записям — funded описывает САМ ВЫЗОВ, не то, что
   // когда-либо было true на затронутых записях; см. докстринг выше).
   return { adopted, requested: dealDeadline, minEffectiveExpiry, cappedCount, funded: !!funded };
+}
+
+// Отбор по паре; правила — в _adoptBags().
+export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded = false) {
+  assertPairId('adoptPairBags', pairId);
+  return _adoptBags('adoptPairBags', (meta) => meta.pairId === pairId, dealDeadline, nowMs, funded);
+}
+
+// Задача 2 (4в-2): отбор по СДЕЛКЕ. У мешка ящика pairId — это
+// (сторона ↔ сделка), а не (клиент ↔ исполнитель), поэтому усыновление по
+// паре не тронуло бы его никогда (разведка, GAP 8). Адрес приводится
+// assertAddress к тому же виду, в котором его хранит recordBag, — так
+// регистр перестаёт быть вопросом на этом шве, а не «проверяется».
+export function adoptDealBags(deal, dealDeadline, nowMs = Date.now(), funded = false) {
+  const addr = assertAddress('adoptDealBags', deal);
+  return _adoptBags('adoptDealBags', (meta) => meta.deal === addr, dealDeadline, nowMs, funded);
 }
 
 // ─── Чистка ─────────────────────────────────────────────────────────────────

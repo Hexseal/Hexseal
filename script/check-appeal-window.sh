@@ -35,8 +35,25 @@ fi
 # настоящие "7". Вырезаем блочные комментарии ОБЕИХ сторон ПЕРЕД любым
 # извлечением (perl -0777, слёрп всего файла, non-greedy + dotall — ловит и
 # многострочные блоки).
-sol_clean="$(perl -0777 -pe 's{/\*.*?\*/}{}gs' "$SOL")"
-js_clean="$(perl -0777 -pe 's{/\*.*?\*/}{}gs' "$JS")"
+#
+# Задача 2 (4в-2), находка на сдаче: НЕЯКОРЕННЫЙ `/\*` ловит и одиночный
+# слэш-звёздочку ВНУТРИ `//`-комментария — bagStore.js:105 несёт
+# `// едут прежним путём (/files/*), в мешок попадает только ссылка…`,
+# то есть текстовую "/*" без всякого намерения открыть блочный комментарий.
+# На чистом main это было безобидно (в файле не было ни одного настоящего
+# `*/` дальше по тексту — non-greedy `.*?\*/` просто не находил пары и не
+# резал ничего). Как только Задача 1 добавила первый настоящий `/** … */`
+# (докстринг listDisputeBags(), bagStore.js:1396-1438), non-greedy матч
+# впервые нашёл закрывающую `*/` — и вырезал ВСЁ от строки 105 до 1438,
+# включая export const APPEAL_REVIEW_WINDOW_DAYS = 4; (:171). Гейт падал
+# "не нашёл объявление" по причине, не имеющей отношения к формулам.
+# Правка: якорим `/\*` на начало строки (после пробелов) — оба настоящих
+# блочных комментария в обоих файлах и так начинаются с начала строки
+# (замерено: единственное НЕзаякоренное вхождение "/\*" в обоих файлах —
+# именно эта одна ложная строка), а текстовая "/*" посреди `//`-комментария
+# перестаёт открывать несуществующий блок.
+sol_clean="$(perl -0777 -pe 's{^[ \t]*/\*.*?\*/}{}gsm' "$SOL")"
+js_clean="$(perl -0777 -pe 's{^[ \t]*/\*.*?\*/}{}gsm' "$JS")"
 
 # Та же находка, вторая часть: дубль настоящего (не закомментированного)
 # объявления где-то ещё в файле раньше выигрывал бы через `head -1` точно
@@ -141,7 +158,7 @@ echo "✓ множители сходятся: DAY_MS=$day_ms_value мс, HOUR_M
 FORMULA_CHECK_STORAGE_DIR="$(mktemp -d)"
 formula_check_stderr="$(mktemp)"
 formula_check_output="$(STORAGE_DIR="$FORMULA_CHECK_STORAGE_DIR" node --input-type=module -e "
-import { dealDeadlineFromDispute, dealDeadlineFromCreation, APPEAL_REVIEW_WINDOW_DAYS, FINALIZE_DELAY_HOURS, BAG_DEAL_GRACE_MS } from '$(pwd)/$JS';
+import { dealDeadlineFromDispute, dealDeadlineFromCreation, APPEAL_REVIEW_WINDOW_DAYS, FINALIZE_DELAY_HOURS, BAG_DEAL_GRACE_MS, disputeBoxBagDeadline, BAG_TTL_MS } from '$(pwd)/$JS';
 
 const DAY_MS = 86400000; // внешне известное, не из day_ms_expr этого же файла
 const HOUR_MS = 3600000;
@@ -168,13 +185,22 @@ const gotCreation = dealDeadlineFromCreation({
   deadlineGraceMs, autoApproveWindowMs, nowMs: createdAtMs,
 });
 
-console.log(JSON.stringify({ expectedDispute, gotDispute, expectedCreation, gotCreation }));
+// Задача 2 (4в-2): срок мешка ЯЩИКА СПОРА. Считается той же формулой, но с
+// якорем «сейчас» — и обязан сходиться с окном спора, иначе предъявление
+// сотрут раньше, чем спор кончится.
+const boxAnchorMs = 1700000000000;
+const expectedBox = boxAnchorMs + disputeWindowMs
+  + FINALIZE_DELAY_HOURS * HOUR_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
+const gotBox = disputeBoxBagDeadline(boxAnchorMs, disputeWindowMs);
+const boxTailMs = gotBox - boxAnchorMs;
+
+console.log(JSON.stringify({ expectedDispute, gotDispute, expectedCreation, gotCreation, expectedBox, gotBox, boxTailMs, bagTtlMs: BAG_TTL_MS }));
 " 2>"$formula_check_stderr")"
 node_exit=$?
 rm -rf "$FORMULA_CHECK_STORAGE_DIR"
 
 if [[ "$node_exit" -ne 0 ]]; then
-  echo "❌ не удалось выполнить формулы $JS через node (код выхода $node_exit) — гейт сломан, синтаксическая ошибка (в т.ч. дубль объявления) или экспорт сломан (dealDeadlineFromDispute/dealDeadlineFromCreation/APPEAL_REVIEW_WINDOW_DAYS/FINALIZE_DELAY_HOURS/BAG_DEAL_GRACE_MS обязаны быть export):"
+  echo "❌ не удалось выполнить формулы $JS через node (код выхода $node_exit) — гейт сломан, синтаксическая ошибка (в т.ч. дубль объявления) или экспорт сломан (dealDeadlineFromDispute/dealDeadlineFromCreation/APPEAL_REVIEW_WINDOW_DAYS/FINALIZE_DELAY_HOURS/BAG_DEAL_GRACE_MS/disputeBoxBagDeadline/BAG_TTL_MS обязаны быть export):"
   cat "$formula_check_stderr"
   rm -f "$formula_check_stderr"
   exit 1
@@ -195,3 +221,25 @@ if [[ "$got_creation" != "$expected_creation" ]]; then
   exit 1
 fi
 echo "✓ обе формулы (dealDeadlineFromDispute/dealDeadlineFromCreation) реально ВЫЧИСЛЕНЫ и дают правильное число, не просто содержат правильные слова"
+
+expected_box="$(node -e "console.log(JSON.parse(process.argv[1]).expectedBox)" "$formula_check_output")"
+got_box="$(node -e "console.log(JSON.parse(process.argv[1]).gotBox)" "$formula_check_output")"
+box_tail="$(node -e "console.log(JSON.parse(process.argv[1]).boxTailMs)" "$formula_check_output")"
+bag_ttl="$(node -e "console.log(JSON.parse(process.argv[1]).bagTtlMs)" "$formula_check_output")"
+
+if [[ "$got_box" != "$expected_box" ]]; then
+  echo "❌ disputeBoxBagDeadline($JS) вернула $got_box, ожидалось $expected_box — срок мешка ящика разошёлся с окном спора (подмена хвоста/якоря/декой-функция?)"
+  echo "   Пока они не совпадут, предъявление арбитру будет стёрто раньше, чем спор закончится."
+  exit 1
+fi
+# Смысл ящика: пережить правило «семь суток после первого прочтения». Если
+# хвост ящика перестанет быть длиннее BAG_TTL_MS, вся задача 2 отменяется
+# молча — мешок снова умирает через неделю после того, как арбитр его открыл.
+# BAG_TTL_MS здесь — умолчание сборки (окружение гейта его не переопределяет);
+# на боевом сервере оно настраивается, и это ограничение проверки названо здесь.
+if [[ "$box_tail" -le "$bag_ttl" ]]; then
+  echo "❌ хвост мешка ящика $box_tail мс не длиннее правила «после прочтения» BAG_TTL_MS=$bag_ttl мс — мешок предъявления снова умрёт раньше спора"
+  exit 1
+fi
+echo "✓ срок мешка ящика сходится с окном спора: хвост $box_tail мс"
+echo "✓ срок мешка ящика длиннее семидневного правила «после прочтения» ($bag_ttl мс)"

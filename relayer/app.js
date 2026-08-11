@@ -30,7 +30,8 @@ import {
   listDisputeBags,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
   isBagStoreHealthy, bagStorePersistError,
-  adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
+  adoptPairBags, adoptDealBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
+  disputeBoxBagDeadline,
   assertNotFromFuture,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
@@ -411,7 +412,12 @@ function logAdoptionResult(logPrefix, agreementAddress, kind, result) {
   if (!adopted) return;
   const paymentTag = funded ? 'paid — ceiling does not apply' : 'unpaid — 90d ceiling applies';
   const tail = kind === 'creation' ? `preliminary, ${paymentTag}` : paymentTag;
-  console.log(`${logPrefix}: extended ${adopted} bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress} to ${new Date(minEffectiveExpiry).toISOString()} (${tail})`);
+  // Задача 2 (4в-2): «for the pair of …» неправда для ящика спора — тот
+  // отобран по СДЕЛКЕ, не по паре клиент↔исполнитель.
+  const subject = kind === 'box'
+    ? `bags in the dispute box of agreement ${agreementAddress}`
+    : `bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress}`;
+  console.log(`${logPrefix}: extended ${adopted} ${subject} to ${new Date(minEffectiveExpiry).toISOString()} (${tail})`);
   if (cappedCount) {
     console.warn(
       `${logPrefix}: BAG_MAX_AGE_MS ceiling cut ${cappedCount} of ${adopted} bag(s) short for agreement ${agreementAddress} — ` +
@@ -519,6 +525,20 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
       const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);
+      // Задача 2 (4в-2): ящик спора — отдельный отбор, по СДЕЛКЕ. Ни одного
+      // лишнего вызова в цепь: disputeWindowMs и funded уже прочитаны выше,
+      // из того же getDetails(). Якорь — nowMs (эта ночь), а не disputedAt:
+      // пока цепь говорит DISPUTED, у мешка ящика всегда впереди полный хвост
+      // спора (см. disputeBoxBagDeadline в bagStore.js). Как только сделка
+      // ушла из getDisputed(), сюда мы больше не попадаем — мешок доживает
+      // последний хвост и уходит.
+      const boxResult = adoptDealBags(
+        String(r.agreement).toLowerCase(),
+        disputeBoxBagDeadline(nowMs, disputeWindowMs),
+        nowMs,
+        funded,
+      );
+      logAdoptionResult('[bags] adoption (box)', r.agreement, 'box', boxResult);
       // В-3: вложения — тем же сроком и в тот же миг, что и сообщения.
       const files = adoptPairFiles(pairId, dealDeadline, nowMs, funded);
       if (files) console.log(`[files] adoption: extended ${files} attachment(s) of ${r.agreement}`);
@@ -3827,6 +3847,38 @@ app.put('/disputes/:agreement/bags', async (req, res) => {
     return res.status(409).json({ error: 'This deal is not in dispute', code: 'not_disputed' });
   }
 
+  // Задача 2 (4в-2): СРОК СТАВИТСЯ ЗДЕСЬ, а не ночной уборкой в 03:00.
+  // Мешок, залитый в 03:05 и открытый арбитром в тот же день, получил бы
+  // семидневный срок (правило 2 склада) и мог не дожить до конца спора —
+  // ночная уборка добралась бы до него только следующей ночью, а спор с
+  // апелляцией идёт девять суток и верхней границы в цепи не имеет.
+  //
+  // ⚠️ Это ПЯТОЕ чтение цепи на маршрутах ящика — то самое, что названо
+  // в договоре шапки плана («Кто это проверяет», строка 5 таблицы).
+  // Список общий на весь план, не мой частный: поддельный узел в стендах
+  // Задачи 6 обязан отвечать и на этот селектор, иначе каждый PUT вернёт
+  // 503 ниже и стенд покраснеет по чужой причине.
+  //
+  // DISPUTE_WINDOW() — public constant КОНКРЕТНОГО клона, кэшируется по
+  // адресу агримента на весь процесс (makeCachedConstantMsReader), так
+  // что цена — один staticcall на ПЕРВЫЙ мешок каждой сделки, дальше 0.
+  let boxDeadline;
+  try {
+    const agr = new ethers.Contract(agreement, AGREEMENT_MINI_ABI, provider);
+    const disputeWindowMs = await getDisputeWindowMs(agr, agreement);
+    boxDeadline = disputeBoxBagDeadline(Date.now(), disputeWindowMs);
+  } catch (e) {
+    // Отказ узла именно здесь — не повод принять мешок с неизвестным
+    // сроком: «принято» с семидневной жизнью хуже, чем честное «попробуй
+    // ещё раз», потому что первое человек считает сделанным делом. Ответ
+    // — БАЙТ В БАЙТ тот же, которым requireBoxFacts() Задачи 1 отвечает
+    // на молчащую цепь: второго словаря отказов у одного маршрута быть
+    // не должно.
+    console.error('[disputes] DISPUTE_WINDOW read failed for', agreement, '-', e.message);
+    return res.status(503).set('Retry-After', '5')
+      .json({ error: 'Deal state could not be read on-chain right now', code: 'chain_unavailable' });
+  }
+
   let key, filePath;
   try {
     key = bagKeyFor(agreement);
@@ -3854,7 +3906,7 @@ app.put('/disputes/:agreement/bags', async (req, res) => {
     }
     try {
       const uploadedAt = Date.now();
-      // ⚠️ Задача 2 (срок жизни мешков ящика) ДОПИШЕТ сюда `dealDeadline` —
+      // ⚠️ Задача 2 (срок жизни мешков ящика) ДОПИСАЛА сюда `dealDeadline` —
       // она дописывает поле, а не переписывает вызов. `deal` и `sealedFor`
       // обязаны остаться: без первого мешок перестаёт быть мешком ящика
       // (6 красных в test/disputeBox.test.js), без второго опись теряет
@@ -3863,6 +3915,7 @@ app.put('/disputes/:agreement/bags', async (req, res) => {
       const stored = recordBag({
         sender, recipient: agreement, key, size, uploadedAt,
         deal: agreement, sealedFor,
+        dealDeadline: boxDeadline,   // ← Задача 2, единственная новая строка
       });
       // uploadedAt отдаём наружу намеренно: человеку показывают «положено в
       // ящик» + ВРЕМЯ, и это время обязано быть серверным. Возьми клиент

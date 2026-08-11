@@ -115,7 +115,13 @@ function mockDeal({ agreement, client, executor, status = 4, arbiter = null, ver
       ? { arbiter: verdictArbiter, submittedAt: 1n }
       : { arbiter: ZERO, submittedAt: 0n }),
   });
-  mockContract(agreement, { getDetails: async () => ({ status_: BigInt(status) }) });
+  mockContract(agreement, {
+    getDetails: async () => ({ status_: BigInt(status) }),
+    // Задача 2 (4в-2): пятое чтение цепи на маршрутах ящика — срок жизни
+    // мешка на записи. Без него PUT, дошедший до её кода, отвечает 503
+    // chain_unavailable по чужой причине (см. ⚠ в шапке task-1.md).
+    DISPUTE_WINDOW: async () => BigInt(4 * 24 * 60 * 60),
+  });
 }
 
 /** Узел молчит: любое чтение реестра бросает. */
