@@ -39,7 +39,7 @@ import {
 } from '@/lib/presentationBag';
 import {
   draftFromContainer, savePresentationDraft, readPresentationDrafts,
-  unsentPresentationDrafts, markPresentationSent,
+  unsentPresentationDrafts, markPresentationSent, LOCK_TIMEOUT_MS,
 } from '@/lib/presentationDraft';
 import {
   makeActor, attestationOf, forgeFrames, seedArchive, fitsFromRefusal,
@@ -636,4 +636,52 @@ describe('Потолок мешка: 256 КиБ — отказ с числом �
       'суммы §15.5 не сходятся — часть переписки пропала из счёта',
     ).toBe(6);
   }, 120_000);
+});
+
+/* ═══════ ПРЕДЕЛЬНЫЙ СРОК ЗАМКА ЧЕРНОВИКОВ (круг доработки 2) ═══════════ */
+
+describe('Предельный срок замка черновиков: названный отказ, не вечная крутилка', () => {
+  it('другая вкладка держит замок вечно (та же мутация 7, но снаружи) — свой lock_timeout, не зависание', async () => {
+    // ⚠️ Тот же приём, что `chatConversation.test.ts` («боевой потолок реально
+    // ПРОВОДИТСЯ, а не только объявлен»): реальный `setTimeout` подменяется, но
+    // сжимается ТОЛЬКО тот вызов, чья задержка равна боевой константе — всё
+    // остальное (микрозадачи libsodium, прочие таймеры) идёт как есть. Значит
+    // зелёный результат доказывает, что именно ЭТОТ срок реально дошёл до
+    // `setTimeout`, а не то, что тест сам себя подождал.
+    const realSetTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    vi.stubGlobal('setTimeout', ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+      delays.push(ms ?? 0);
+      return realSetTimeout(fn, ms === LOCK_TIMEOUT_MS ? 0 : ms, ...rest);
+    }) as typeof setTimeout);
+
+    let taken!: () => void;
+    const takenP = new Promise<void>((resolve) => { taken = resolve; });
+    // Держим НАСТОЯЩИЙ замок (то же имя, что `presentationDraft.ts:LOCK_NAME`)
+    // снаружи, колбэк не разрешается НИКОГДА — ровно то, что делает мутация 7
+    // изнутри `idbPut`, только источник повисания теперь чужая вкладка, а не
+    // наша собственная работа.
+    void navigator.locks.request('hexseal.presentation.drafts', () => {
+      taken();
+      return new Promise<void>(() => {});
+    });
+    await takenP;
+
+    const container = await mustBuild(selectAll());
+    const verdict = await savePresentationDraft(
+      draftFromContainer(container, presentationWireBytes(container)),
+    );
+    expect(verdict, 'чужая вкладка держит замок вечно, а мы не отказали по сроку').toBe('lock_timeout');
+    expect(delays, 'боевой LOCK_TIMEOUT_MS не был передан в реальный setTimeout').toContain(LOCK_TIMEOUT_MS);
+
+    // markPresentationSent зовёт тот же withLock — тот же отказ, тем же именем.
+    const markVerdict = await markPresentationSent(
+      container.presenter, container.dealId, container.issuedAt, 'k/x.bin',
+    );
+    expect(markVerdict, 'markPresentationSent повис вместо отказа по сроку').toBe('lock_timeout');
+  }, 30_000);
+
+  it('боевой срок — не тестовое значение', () => {
+    expect(LOCK_TIMEOUT_MS).toBe(10_000);
+  });
 });

@@ -22,6 +22,23 @@
  * ⚠️ ПОДПИСЕЙ ЗДЕСЬ НЕ ПРОВЕРЯЕТСЯ. Это своё, на своём устройстве; проверка
  * своей же подписи мерила бы задачу 5, а не диск. Форма записи проверяется
  * строго — иначе мусор с диска стал бы «вот ваше предъявление».
+ *
+ * ⚠️ КРУГ ДОРАБОТКИ 2 (11 августа 2026): У ЗАМКА ЕСТЬ ПРЕДЕЛЬНЫЙ СРОК. Ревью
+ * подтвердило по коду и по мутации 7 (задача 8, отчёт): `navigator.locks.request`
+ * без `signal` и без потолка держит лок РОВНО столько, сколько не разрешается и
+ * не отклоняется колбэк — а колбэк здесь асинхронная работа с IndexedDB, которая
+ * умеет не ответить вовсе (см. `STORAGE_OPEN_TIMEOUT_MS`, `chatSession.ts:265-275`,
+ * тот же класс беды: `blocked`, придержанное хранилище). Без потолка это не
+ * отказ, а ВЕЧНАЯ КРУТИЛКА — и не только у того, чья запись повисла: лок один на
+ * процесс (`LOCK_NAME`), и следующая вкладка, которая тоже пойдёт писать
+ * черновик, встанет в очередь за тем же именем и повиснет следом, молча.
+ * `LOCK_TIMEOUT_MS` ограничивает ОБА участка одним и тем же сроком — и ожидание
+ * своей очереди (через `AbortSignal` у `locks.request`), и саму работу под
+ * замком (через `Promise.race` внутри колбэка) — так что зависший держатель не
+ * блокирует следующего дольше этого же срока: самолечение без перезагрузки
+ * вкладки. Отказ по сроку называется `'lock_timeout'` — отдельно от
+ * `'disk_unavailable'`, потому что это разные новости: «диск отказал» и «диск
+ * не ответил за отведённое время» требуют разного объяснения человеку.
  */
 // ⚠️ Род берётся ИЗ ЗАДАЧИ 5 напрямую (договор v2, исправление 11): один источник
 // на весь план, без цепочки реэкспортов через мой же `presentationBag`.
@@ -36,8 +53,30 @@ const LOCK_NAME = 'hexseal.presentation.drafts';
 const MAX_DRAFTS_PER_PRESENTER = 20;
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
+/**
+ * Потолок ожидания-и-работы под межвкладочным замком черновиков (круг
+ * доработки 2). Тот же класс задачи и то же обоснование, что у
+ * `STORAGE_OPEN_TIMEOUT_MS` (`chatSession.ts:265-275`) — не сеть и не ЖИВОЕ
+ * окно кошелька (там счёт на минуты, человек имеет право думать —
+ * `SESSION_LOCK_TIMEOUT_MS`/`WALLET_LOCK_TIMEOUT_MS`), а МЕСТНАЯ работа с
+ * IndexedDB: прочитать список черновиков, потом записать. Десять секунд —
+ * заведомо больше двух обычных локальных операций (миллисекунды на каждую) и
+ * заведомо меньше терпения человека у крутилки «сохраняю».
+ *
+ * ⚠️ ЦЕНА ИСТЕЧЕНИЯ НАЗВАНА. Если работа честно ещё идёт (медленный диск, не
+ * повисший), после срока мы её БРОСАЕМ — она может доработать в фоне и лечь на
+ * диск сама, а вызывающий уже получил `'lock_timeout'` и не узнает об этом.
+ * Тот же самый размен, каким `CONVERSATION_LOCK_TIMEOUT_MS`
+ * (`chatConversation.ts:302-317`) жертвует редким столкновением номеров ради
+ * того же самого — не заклинить навсегда.
+ */
+export const LOCK_TIMEOUT_MS = 10_000;
+
 export type DraftState = 'built' | 'sent';
-export type DraftSaveVerdict = 'saved' | 'disk_unavailable';
+/** `'lock_timeout'` — замок (своя очередь ИЛИ работа под ним) не уложился в
+ *  `LOCK_TIMEOUT_MS`. Отдельно от `'disk_unavailable'`: там диск ОТВЕТИЛ отказом,
+ *  здесь диск НЕ ОТВЕТИЛ вовсе — разные новости человеку. */
+export type DraftSaveVerdict = 'saved' | 'disk_unavailable' | 'lock_timeout';
 export type DraftMarkVerdict = DraftSaveVerdict | 'not_found';
 
 export interface PresentationDraft {
@@ -161,16 +200,48 @@ async function idbPut(key: string, value: DraftsRecord): Promise<void> {
   }
 }
 
-async function withLock<T>(fn: () => Promise<T>): Promise<T> {
+/** Сентинел «не уложились в срок» — отличим от любого настоящего `T` (в
+ *  отличие от `null`/строки, которые сама работа могла бы вернуть законно). */
+const LOCK_TIMED_OUT = Symbol('presentationDraft.lockTimedOut');
+
+function afterMs(ms: number): Promise<typeof LOCK_TIMED_OUT> {
+  return new Promise((resolve) => setTimeout(() => resolve(LOCK_TIMED_OUT), ms));
+}
+
+/**
+ * Замок с потолком (круг доработки 2). Один и тот же срок (`LOCK_TIMEOUT_MS`)
+ * ограничивает ОБА участка одним и тем же дедлайном, а не двумя независимыми
+ * окнами: сколько мы стоим в очереди за замком (через `AbortSignal` —
+ * `locks.request` роняет запрос из очереди, если он ещё не выдан) и сколько
+ * длится сама работа под уже выданным замком (через `Promise.race` внутри
+ * колбэка — `locks.request` отпускает лок ровно тогда, когда СЕТТЛИТСЯ промис
+ * колбэка, и гонка settle'ится по таймауту, даже если настоящая работа так и
+ * не ответила). Общий дедлайн, а не два по `LOCK_TIMEOUT_MS` подряд: держатель,
+ * которому дали замок в последний момент, не получает вторые полные десять
+ * секунд поверх уже потраченных на ожидание.
+ */
+async function withLock<T>(fn: () => Promise<T>): Promise<T | typeof LOCK_TIMED_OUT> {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  const remainingMs = (): number => Math.max(0, deadline - Date.now());
+  const bounded = (): Promise<T | typeof LOCK_TIMED_OUT> => Promise.race([fn(), afterMs(remainingMs())]);
+
   const locks = (globalThis as { navigator?: Navigator }).navigator?.locks;
-  if (!locks || typeof locks.request !== 'function') return fn();
+  if (!locks || typeof locks.request !== 'function') return bounded();
+
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), remainingMs());
   try {
-    return (await locks.request(LOCK_NAME, async () => fn())) as T;
+    return (await locks.request(LOCK_NAME, { signal: controller.signal }, bounded)) as T | typeof LOCK_TIMED_OUT;
   } catch (err) {
-    // Замок может отсутствовать/отказать; считать это отказом записи было бы
-    // хуже, чем записать без него.
-    if (err instanceof Error && /lock/i.test(err.name)) return fn();
+    // Оторвались от очереди по сроку — своя, названная причина, а не то же
+    // самое, что «замок вообще не поддержан».
+    if (err instanceof Error && err.name === 'AbortError') return LOCK_TIMED_OUT;
+    // Замок может отсутствовать/отказать иначе; считать это отказом записи
+    // было бы хуже, чем записать без него.
+    if (err instanceof Error && /lock/i.test(err.name)) return bounded();
     throw err;
+  } finally {
+    clearTimeout(abortTimer);
   }
 }
 
@@ -200,7 +271,7 @@ export async function savePresentationDraft(draft: PresentationDraft): Promise<D
     // Наш собственный мусор — наружу громко, это баг вызывающего, не диска.
     throw new TypeError('savePresentationDraft: ожидается черновик предъявления');
   }
-  return withLock(async () => {
+  const result = await withLock(async (): Promise<DraftSaveVerdict> => {
     try {
       const key = draftsKey(draft.presenter);
       const list = readList(await idbGet(key));
@@ -210,6 +281,10 @@ export async function savePresentationDraft(draft: PresentationDraft): Promise<D
       return 'disk_unavailable';
     }
   });
+  // ⚠️ Сентинел таймаута переводится в СВОЁ имя здесь, на границе — внутрь
+  // `withLock` он не течёт как строка, чтобы не спутать его случайно со
+  // значением, которое вернула бы настоящая работа.
+  return result === LOCK_TIMED_OUT ? 'lock_timeout' : result;
 }
 
 export async function readPresentationDrafts(
@@ -236,7 +311,7 @@ export async function markPresentationSent(
   bagKey: string,
   sentAt: number = Date.now(),
 ): Promise<DraftMarkVerdict> {
-  return withLock(async () => {
+  const result = await withLock(async (): Promise<DraftMarkVerdict> => {
     const key = draftsKey(presenter);
     let list: PresentationDraft[];
     try {
@@ -256,4 +331,5 @@ export async function markPresentationSent(
     }
     return 'saved';
   });
+  return result === LOCK_TIMED_OUT ? 'lock_timeout' : result;
 }
