@@ -63,11 +63,32 @@ if (ALLOWED_ORIGINS.length === 0) {
 /** Счётчик методов между печатями в журнал. Один на процесс, не на запрос —
  *  иначе он и есть вторая беда, которую всё это чинит. */
 let _methodCounts = new Map<string, number>();
+
+/**
+ * НАХОДКА РЕВЬЮ: счётчик успехов выше сделан «раз в 5 минут, чтобы журнал не
+ * стал второй бедой» — а путь ОТКАЗОВ был не защищён вовсе: `console.warn`
+ * на КАЖДЫЙ отклонённый гейтом запрос. Если абузивный трафик продолжится (а
+ * продолжится — просто теперь дешевле для платной квоты), в журнал польётся
+ * тот же порядок строк, где раньше было около нуля. `docker-compose.yml` не
+ * задаёт ротацию логов ни одному сервису, и у этого проекта уже была беда
+ * «кончился диск» (`BAG_JOURNAL_MAX_BYTES`, см. `.env.vps.example`).
+ *
+ * Сведено к ТОМУ ЖЕ агрегату: считается по причине отказа на КАЖДЫЙ
+ * отклонённый запрос (не печатается), печатается ОДНОЙ строкой в тот же
+ * такт, что и счётчик методов.
+ */
+let _rejectCounts = new Map<string, number>();
+
 const METHOD_LOG_INTERVAL_MS = 5 * 60_000; // тот же порядок, что у уборки карты лимитера в relayer/app.js (5 минут)
 const _methodLogTimer = setInterval(() => {
-  if (_methodCounts.size === 0) return;
-  console.log(`[/api/rpc] методы за ${METHOD_LOG_INTERVAL_MS / 60_000} мин: ${formatMethodCounts(_methodCounts)}`);
-  _methodCounts = new Map();
+  if (_methodCounts.size > 0) {
+    console.log(`[/api/rpc] методы за ${METHOD_LOG_INTERVAL_MS / 60_000} мин: ${formatMethodCounts(_methodCounts)}`);
+    _methodCounts = new Map();
+  }
+  if (_rejectCounts.size > 0) {
+    console.log(`[/api/rpc] отказы за ${METHOD_LOG_INTERVAL_MS / 60_000} мин: ${formatMethodCounts(_rejectCounts)}`);
+    _rejectCounts = new Map();
+  }
 }, METHOD_LOG_INTERVAL_MS);
 // Не держит процесс живым ради самого себя — как и таймер GC карты лимитера
 // в relayer/app.js, только там он этого не требует (Express-процесс и так
@@ -160,7 +181,7 @@ export async function POST(req: NextRequest) {
   const rawText = await req.text();
   const bodyBytes = Buffer.byteLength(rawText, 'utf-8');
   if (bodyBytes > MAX_BODY_BYTES) {
-    console.warn(`[/api/rpc] отказ: тело ${bodyBytes} байт > потолка ${MAX_BODY_BYTES}`);
+    bumpMethodCounts(_rejectCounts, ['body_too_large']);
     return gateRejection(413, -32600, `Request body too large: ${bodyBytes} bytes (max ${MAX_BODY_BYTES})`);
   }
 
@@ -179,7 +200,7 @@ export async function POST(req: NextRequest) {
   // один запрос = сколько угодно обращений к платной квоте.
   const size = batchLength(body);
   if (size > MAX_BATCH_SIZE) {
-    console.warn(`[/api/rpc] отказ: пачка из ${size} > потолка ${MAX_BATCH_SIZE}`);
+    bumpMethodCounts(_rejectCounts, ['batch_too_large']);
     return gateRejection(400, -32600, `Batch too large: ${size} calls (max ${MAX_BATCH_SIZE})`);
   }
 
@@ -189,7 +210,7 @@ export async function POST(req: NextRequest) {
   // гигантские диапазоны чужой платной квотой.
   const badMethods = disallowedMethods(body, ALLOWED_RPC_METHODS);
   if (badMethods.length > 0) {
-    console.warn(`[/api/rpc] отказ: метод(ы) вне списка — ${badMethods.join(', ')}`);
+    bumpMethodCounts(_rejectCounts, badMethods.map(m => `method_not_allowed:${m}`));
     return gateRejection(400, -32601, `Method not allowed: ${badMethods.join(', ')}`);
   }
 
@@ -197,7 +218,7 @@ export async function POST(req: NextRequest) {
   // запросы — амплификация пачкой сюда не доезжает вовсе.
   const source = requestSourceIp(req.headers);
   if (!checkRpcRateLimit(_rpcRateStore, `rpc:${source}`, RPC_RATE_MAX)) {
-    console.warn(`[/api/rpc] отказ: лимит частоты для ${source}`);
+    bumpMethodCounts(_rejectCounts, ['rate_limited']);
     return gateRejection(429, -32005, 'Rate limit exceeded', { source });
   }
 
@@ -206,7 +227,7 @@ export async function POST(req: NextRequest) {
   const origin = req.headers.get('origin');
   const secFetchSite = req.headers.get('sec-fetch-site');
   if (!isOriginAllowed({ origin, secFetchSite }, ALLOWED_ORIGINS)) {
-    console.warn(`[/api/rpc] отказ: происхождение ${origin ?? '<нет>'} (sec-fetch-site=${secFetchSite ?? '<нет>'}) не в списке`);
+    bumpMethodCounts(_rejectCounts, ['origin_rejected']);
     return gateRejection(403, -32600, 'Origin not allowed');
   }
 

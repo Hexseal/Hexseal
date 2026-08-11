@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   PRIVATE_RETRY_MAX_ELAPSED_MS,
   classifyFetchFailure,
@@ -22,6 +22,12 @@ import {
   bumpMethodCounts,
   formatMethodCounts,
   type RateLimitStore,
+  GATE_SIGNAL_CODES,
+  GATE_SIGNAL_COOLDOWN_MS,
+  GATE_SIGNAL_MESSAGE,
+  isGateRejectionBody,
+  shouldRaiseGateSignal,
+  createRpcGateSignal,
 } from './rpcProxy';
 
 describe('rpcHostLabel', () => {
@@ -476,5 +482,130 @@ describe('bumpMethodCounts / formatMethodCounts', () => {
 
   it('пустая карта — не пустая строка (иначе строка журнала пропадает молча)', () => {
     expect(formatMethodCounts(new Map())).toBeTruthy();
+  });
+});
+
+/* ═══════════════════════ видимый сигнал на отказ гейта (находка ревью) ═══════════════════════
+ *
+ * `useReadContracts` без `isError` (DealCard.tsx), `useNotifications`/
+ * `useDealLiveRefresh` (только console.warn) — отказ ЧЕТЫРЁХ новых гейтов
+ * тонет: экран просто не обновляется, и застывший дашборд неотличим от
+ * факта. Чинится на транспорте (providers.tsx: `onFetchResponse` у
+ * viem-http), не на экранах — экраны не тронуты вовсе. Логика классификации
+ * и троттлинга — здесь, тестируема без DOM; сама подмена — в providers.tsx
+ * (см. providers.rpcGateSignal.test.ts, тестирует именно ПРОВОД).
+ */
+
+describe('isGateRejectionBody', () => {
+  it('коды наших гейтов — да', () => {
+    for (const code of GATE_SIGNAL_CODES) {
+      expect(isGateRejectionBody({ jsonrpc: '2.0', error: { code }, id: null })).toBe(true);
+    }
+  });
+
+  it('чужой код (например, -32700 — ошибка разбора, не наш гейт) — нет', () => {
+    expect(isGateRejectionBody({ jsonrpc: '2.0', error: { code: -32700 }, id: null })).toBe(false);
+  });
+
+  it('502 апстрима (-32603) — нет: это отказ УЗЛА, не нашего гейта, и у него своя история', () => {
+    expect(isGateRejectionBody({ jsonrpc: '2.0', error: { code: -32603 }, id: null })).toBe(false);
+  });
+
+  it('успешный ответ (нет error) — нет', () => {
+    expect(isGateRejectionBody({ jsonrpc: '2.0', result: '0x1', id: 1 })).toBe(false);
+  });
+
+  it('мусор вместо тела — нет, не падение', () => {
+    expect(isGateRejectionBody(null)).toBe(false);
+    expect(isGateRejectionBody('строка')).toBe(false);
+    expect(isGateRejectionBody({})).toBe(false);
+    expect(isGateRejectionBody({ error: 'не объект' })).toBe(false);
+    expect(isGateRejectionBody({ error: { code: 'не число' } })).toBe(false);
+  });
+});
+
+describe('shouldRaiseGateSignal', () => {
+  it('сигнала ещё не было (lastAt === null) — можно', () => {
+    expect(shouldRaiseGateSignal(null, 0, 60_000)).toBe(true);
+  });
+
+  it('внутри окна остывания — нельзя', () => {
+    expect(shouldRaiseGateSignal(0, 59_999, 60_000)).toBe(false);
+  });
+
+  it('окно истекло — можно снова', () => {
+    expect(shouldRaiseGateSignal(0, 60_000, 60_000)).toBe(true);
+  });
+
+  it('умолчание — минута, как сказано в задаче («не чаще раза в минуту»)', () => {
+    expect(GATE_SIGNAL_COOLDOWN_MS).toBe(60_000);
+  });
+});
+
+describe('createRpcGateSignal', () => {
+  function fakeResponse(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  }
+
+  it('ok-ответ (успех) — сигнал не поднимается', async () => {
+    const raise = vi.fn();
+    const handler = createRpcGateSignal({ raise, now: () => 0 });
+    await handler(fakeResponse(200, { jsonrpc: '2.0', result: '0x1', id: 1 }));
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('отказ НАШЕГО гейта — сигнал поднимается ровно с сообщением задачи', async () => {
+    const raise = vi.fn();
+    const handler = createRpcGateSignal({ raise, now: () => 0 });
+    await handler(fakeResponse(429, { jsonrpc: '2.0', error: { code: -32005, message: 'Rate limit exceeded' }, id: null }));
+    expect(raise).toHaveBeenCalledTimes(1);
+    expect(raise).toHaveBeenCalledWith(GATE_SIGNAL_MESSAGE);
+  });
+
+  it('отказ ЧУЖОЙ природы (парсинг/апстрим) — сигнал НЕ поднимается', async () => {
+    const raise = vi.fn();
+    const handler = createRpcGateSignal({ raise, now: () => 0 });
+    await handler(fakeResponse(502, { jsonrpc: '2.0', error: { code: -32603, message: 'RPC proxy error' }, id: null }));
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('троттлинг: два отказа гейта подряд в одну минуту — ОДИН сигнал, не два', async () => {
+    const raise = vi.fn();
+    let now = 0;
+    const handler = createRpcGateSignal({ raise, now: () => now });
+    const rejected = fakeResponse(400, { jsonrpc: '2.0', error: { code: -32600 }, id: null });
+    await handler(rejected.clone());
+    now = 30_000; // ещё внутри минуты
+    await handler(rejected.clone());
+    expect(raise).toHaveBeenCalledTimes(1);
+  });
+
+  it('троттлинг снимается через минуту — второй отказ подаёт второй сигнал', async () => {
+    const raise = vi.fn();
+    let now = 0;
+    const handler = createRpcGateSignal({ raise, now: () => now });
+    const rejected = fakeResponse(400, { jsonrpc: '2.0', error: { code: -32600 }, id: null });
+    await handler(rejected.clone());
+    now = 60_000;
+    await handler(rejected.clone());
+    expect(raise).toHaveBeenCalledTimes(2);
+  });
+
+  it('тело не JSON — не падает, сигнал не поднимается (не наш случай)', async () => {
+    const raise = vi.fn();
+    const handler = createRpcGateSignal({ raise, now: () => 0 });
+    const notJson = new Response('не json{', { status: 400 });
+    await expect(handler(notJson)).resolves.toBeUndefined();
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('читает тело клоном — не мешает вызывающему (viem) прочитать response.json() следом', async () => {
+    const raise = vi.fn();
+    const handler = createRpcGateSignal({ raise, now: () => 0 });
+    const res = fakeResponse(429, { jsonrpc: '2.0', error: { code: -32005 }, id: null });
+    await handler(res);
+    // Если бы `handler` прочитал тело БЕЗ клонирования, второе чтение здесь упало бы
+    // («body stream already read») — именно так viem читает ответ ПОСЛЕ onFetchResponse.
+    await expect(res.json()).resolves.toMatchObject({ error: { code: -32005 } });
   });
 });
