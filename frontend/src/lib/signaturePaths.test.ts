@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve as pathResolve, dirname as pathDirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -428,5 +428,118 @@ describe('автоматических подписей не осталось', 
     const wp = FILES.find(f => f.path === 'lib/webpush.ts')!;
     expect(wp.text).not.toMatch(/shouldAutoRegisterPush/);
     expect(wp.text).toMatch(/export function isPushRegistrationStale/);
+  });
+});
+
+/* ────────────── __stand__ не может быть зависимостью боевого кода ────────────── */
+/**
+ * ⚠️ ЗАВЕДЕНО КРУГОМ ДОРАБОТКИ 1 ЗАДАЧИ 7 (11 августа 2026). Исключение каталога
+ * `__stand__/` из обхода `walk()` выше (комментарий «Добавлено задачей 7…») слепо
+ * ДВУМЯ способами разом, не одним. Опыт ревьюера доказал оба:
+ *
+ *   - `lib/__stand__/__reviewProbeSign.ts` — файл ВНУТРИ каталога, с незащищённым
+ *     `wc.signTypedData({})` без `withWalletLock` — не сканируется вовсе (`walk()`
+ *     пропускает сам каталог, причина 1);
+ *   - `lib/__reviewProbeCaller.ts` — файл СНАРУЖИ, рядом с боевым `relay.ts`,
+ *     импортирует первый и зовёт его из обработчика — литерала `signTypedData(` в
+ *     НЁМ САМОМ нет, `WALLET_SIGN_CALL` его не видит (причина 2, для гейта выше
+ *     невидимая по конструкции: он ищет текст вызова, а не то, что происходит
+ *     транзитивно через импорт).
+ *
+ * `npm test -- signaturePaths` на обоих файлах разом — 4 из 4 зелёных, 0 красных.
+ *
+ * Замок ниже не чинит `WALLET_SIGN_CALL` (игра в догонялки с формами транзитивного
+ * вызова бесконечна по построению) — он запрещает САМУ ВОЗМОЖНОСТЬ: ни один файл
+ * ВНЕ `__stand__/`, кроме `*.test.ts`/`*.test.tsx`, не имеет права импортировать
+ * ЧТО-ЛИБО из `__stand__/`. Направление зависимости — единственное свойство,
+ * которое боевому коду вообще нужно от тестовой оснастки (синтетические ключи,
+ * подпись без мьютекса — законное устройство стенда, не баг), и единственное,
+ * что нарушить снаружи стенда нельзя иначе, чем явным импортом.
+ *
+ * Спецификаторы модулей достаются РАЗБОРОМ АСТ (`typescript`, та же техника, что
+ * уже проверена в этом дереве на точно таком же классе задачи — `lib/noXmtpImports.test.ts`,
+ * «гейт читает дерево импортов, а не слова»), НЕ текстовым поиском строки
+ * `__stand__`: относительные импорты бывают любой глубины (`./__stand__/x`,
+ * `../__stand__/x`, `../../lib/__stand__/x`) и записываются алиасом
+ * (`@/lib/__stand__/x`, `tsconfig.json`: `paths: {"@/*": ["./src/*"]}`) — АСТ
+ * отдаёт голый текст спецификатора одинаково для всех форм и синтаксисов
+ * (`import … from`, `export … from`, `import(...)`, `require(...)`), а РЕЗОЛЮЦИЯ
+ * в абсолютный путь происходит уже после разбора, отдельным шагом.
+ */
+async function moduleSpecifiersOfFile(source: string, fileName: string): Promise<string[]> {
+  const tsSpecifier = 'typescript';
+  const ts = (await import(/* @vite-ignore */ tsSpecifier)) as typeof import('typescript');
+  const sf = ts.createSourceFile(
+    fileName, source, ts.ScriptTarget.Latest, /* setParentNodes */ true,
+    fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const found: string[] = [];
+  const visit = (node: import('typescript').Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const spec = node.moduleSpecifier;
+      if (spec && ts.isStringLiteral(spec)) found.push(spec.text);
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const arg = node.moduleReference.expression;
+      if (ts.isStringLiteral(arg)) found.push(arg.text);
+    } else if (ts.isCallExpression(node)) {
+      const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const requireCall = ts.isIdentifier(node.expression) && node.expression.text === 'require';
+      const first = node.arguments[0];
+      if ((dynamicImport || requireCall) && first && ts.isStringLiteral(first)) found.push(first.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/**
+ * Спецификатор ведёт внутрь `__stand__/`? Относительный путь (начинается с `.`)
+ * резолвится через `path.resolve` от директории САМОГО ФАЙЛА — работает для любой
+ * глубины `../` без ручного разбора сегментов. Алиас `@/` резолвится через `SRC`
+ * (подстановка `tsconfig.json`). Пакет `node_modules` (не начинается ни с `.`, ни
+ * с `@/`) никогда не ведёт в `__stand__/` — резолвить нечего, не наш путь физически.
+ */
+function resolvesIntoStand(specifier: string, fromAbsFile: string): boolean {
+  let resolved: string;
+  if (specifier.startsWith('.')) {
+    resolved = pathResolve(pathDirname(fromAbsFile), specifier);
+  } else if (specifier.startsWith('@/')) {
+    resolved = pathResolve(SRC, specifier.slice(2));
+  } else {
+    return false;
+  }
+  return resolved.split(/[\\/]/).includes('__stand__');
+}
+
+describe('__stand__ не может быть зависимостью боевого кода', () => {
+  it('ни один файл вне __stand__ (кроме *.test.ts/.tsx) не импортирует из __stand__', async () => {
+    // FILES уже построен walk()'ом, который исключает и __stand__/, и *.test.ts —
+    // ровно нужный набор кандидатов «боевой код, которому в __stand__/ делать нечего».
+    const offenders: string[] = [];
+    for (const f of FILES) {
+      const absPath = join(SRC, f.path);
+      for (const spec of await moduleSpecifiersOfFile(f.raw, absPath)) {
+        if (resolvesIntoStand(spec, absPath)) offenders.push(`${f.path} → ${spec}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('резолвер видит алиас и относительные пути любой глубины, а не одну запись', () => {
+    // Тот же замер, что «гейт читает дерево импортов, а не слова» в noXmtpImports —
+    // здесь же дополнительно: три РАЗНЫЕ синтаксические формы одного и того же
+    // назначения обязаны опознаваться ОДИНАКОВО, иначе замок ловит одно написание
+    // и открыт для остальных.
+    const fakeFrom = join(SRC, 'lib', 'relay.ts');
+    expect(resolvesIntoStand('./__stand__/x', fakeFrom)).toBe(true);
+    expect(resolvesIntoStand('../lib/__stand__/x', join(SRC, 'hooks', 'useChatSession.ts'))).toBe(true);
+    expect(resolvesIntoStand('../../lib/__stand__/x', join(SRC, 'app', 'deal', 'page.tsx'))).toBe(true);
+    expect(resolvesIntoStand('@/lib/__stand__/x', fakeFrom)).toBe(true);
+    // А посторонние пути — нет: замок, который запирает всех, не замок.
+    expect(resolvesIntoStand('./chatSession', fakeFrom)).toBe(false);
+    expect(resolvesIntoStand('@/lib/chatSession', fakeFrom)).toBe(false);
+    expect(resolvesIntoStand('viem', fakeFrom)).toBe(false);
+    expect(resolvesIntoStand('@xmtp/browser-sdk', fakeFrom)).toBe(false);
   });
 });
