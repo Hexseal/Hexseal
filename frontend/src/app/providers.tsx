@@ -7,6 +7,8 @@ import { createGraphClient } from '@/lib/graph'
 const graphClient = createGraphClient()
 import { WagmiProvider, createStorage, useAccount } from "wagmi";
 import { http, fallback } from "viem";
+import { toast } from "react-hot-toast";
+import { createRpcGateSignal } from "@/lib/rpcProxy";
 import {
   RainbowKitProvider,
   darkTheme,
@@ -88,9 +90,70 @@ const publicRpc = isMainnet ? "https://mainnet.base.org" : "https://sepolia.base
 // /api/rpc proxies through Next.js (uses server-side RPC_URL with API key).
 // On the server (SSR) relative URLs don't work — fall back to publicRpc directly.
 const clientRpc = typeof window !== "undefined" ? `${window.location.origin}/api/rpc` : publicRpc;
+
+/**
+ * НАХОДКА РЕВЬЮ по разрезу «/api/rpc: потолок пачки/тела, список методов,
+ * лимитер, происхождение». Гейты того разреза отвечают честной JSON-RPC-
+ * ошибкой, но НИКТО из потребителей на неё не смотрит: `DealCard.tsx` зовёт
+ * `useReadContracts` без `isError`, `useNotifications`/`useDealLiveRefresh`
+ * на отказ только логируют и ждут следующего такта — экран просто
+ * ЗАСТЫВАЕТ, и это неотличимо от факта (см. `hooks/useWarnFailedReads.ts`).
+ *
+ * Чинится ЗДЕСЬ, на транспорте — не на трёх экранах: один перехват
+ * `onFetchResponse` закрывает все поверхности разом, существующие и
+ * будущие. Классификация/троттлинг — чистые функции в `lib/rpcProxy.ts`
+ * (`createRpcGateSignal`), тестируемые без DOM; здесь только подстановка
+ * настоящего `toast()`.
+ *
+ * Экспортирован (а не держится в замыкании модуля) РОВНО ради мутационного
+ * замка: `providers.rpcGateSignal.test.ts` зовёт эту же функцию напрямую и
+ * подтверждает, что снятие строки `onFetchResponse: onRpcGateSignal` ниже
+ * красит тест — иначе провод мог бы существовать в `rpcProxy.ts` и никогда
+ * не быть подключённым, и никто бы не заметил.
+ */
+export const onRpcGateSignal = createRpcGateSignal({
+  raise: (message) => toast(message, {
+    id: "rpc-gate-signal", // тот же id — новый вызов ЗАМЕНЯЕТ предыдущий тост, а не громоздит второй
+    duration: 6000,
+    style: {
+      background: "#050505",
+      color: "#f0f0f0",
+      border: "1px solid rgba(255,255,255,0.1)",
+      borderRadius: "12px",
+      fontSize: "13px",
+      maxWidth: "320px",
+    },
+  }),
+});
+
+// Вынесен отдельной переменной (а не собран инлайн внутри `fallback([...])`
+// ниже) РОВНО ради мутационного замка: `providers.rpcGateSignal.test.ts`
+// зовёт `clientRpcTransport({...})` и гонит через него настоящий
+// EIP-1193-запрос с подменённым `fetch`, чтобы доказать, что
+// `onFetchResponse: onRpcGateSignal` не потерялся при сборке `transports`
+// — а не просто существует где-то как экспорт, которым никто не пользуется.
+//
+// onFetchResponse — ТОЛЬКО здесь, не на publicRpc ниже (у него своя история,
+// официальный узел Base, к нашим гейтам отношения не имеет — вешать сигнал
+// туда означало бы либо не сработает никогда, либо сработает по чужому 4xx,
+// который вовсе не «мы ограничили»).
+//
+// ⚠️ ТОЧНЕЕ: «нога, что говорит с НАШИМ /api/rpc» — это правда только в
+// БРАУЗЕРЕ. `clientRpc` (выше) на СЕРВЕРЕ (`typeof window === "undefined"`,
+// SSR) сам схлопывается в `publicRpc` — значит на сервере ЭТА ЖЕ константа
+// `clientRpcTransport` фактически указывает на публичный узел, а перехватчик
+// всё равно к ней приклеен. Сегодня это безвредно ДВОЙНО: чтения идут из
+// React-эффектов и на сервере не стреляют вовсе, а даже если бы выстрелили —
+// коды публичного узла `isGateRejectionBody` не пропустит (наши гейты
+// НИКОГДА их не вернут), так что тост не поднимется. Но если однажды кто-то
+// заведёт серверный предзапрос через тот же `config`/`clientRpcTransport`,
+// это перестанет быть безвредной случайностью и станет тихим несоответствием
+// комментария факту — тогда поведение здесь стоит пересмотреть.
+export const clientRpcTransport = http(clientRpc, { timeout: 20_000, onFetchResponse: onRpcGateSignal }); // /api/rpc → private RPC with key
+
 const transports = {
   [appChainId]: fallback([
-    http(clientRpc,  { timeout: 20_000 }), // /api/rpc → private RPC with key
+    clientRpcTransport,
     http(publicRpc,  { timeout: 20_000 }), // sepolia.base.org — official fallback
   ]),
 };

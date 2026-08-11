@@ -7,7 +7,109 @@ import {
   rpcHostLabel,
   shouldRetryPrivate,
   type RpcAttempt,
+  MAX_BATCH_SIZE,
+  MAX_BODY_BYTES,
+  batchLength,
+  ALLOWED_RPC_METHODS,
+  rpcMethods,
+  disallowedMethods,
+  RPC_RATE_MAX,
+  checkRpcRateLimit,
+  requestSourceIp,
+  parseAllowedOrigins,
+  isOriginAllowed,
+  bumpMethodCounts,
+  formatMethodCounts,
+  type RateLimitStore,
 } from '@/lib/rpcProxy';
+
+// ═══════════════════════════ открытый прокси — гейты ═══════════════════════════
+//
+// `/api/rpc` пересылал тело запроса на платный узел drpc КАК ЕСТЬ: без проверки
+// происхождения, без ограничителя частоты, без разбора того, что вообще
+// прислали. По панели drpc — ~150 000 запросов в сутки (≈104/мин непрерывно),
+// источник неизвестен. Полный разбор чисел и обоснование — в отчёте задачи
+// (`.superpowers/rpc-proxy-report.md`, вне git).
+//
+// ⚠️ ПОРЯДОК ГЕЙТОВ НИЖЕ — НЕ «по убыванию пользы», а по порядку ИСПОЛНЕНИЯ,
+// и это НАМЕРЕННО РАЗНЫЕ ВЕЩИ (находка ревью, Critical). Раньше порядок
+// исполнения совпадал с порядком пользы (1→2→3→4), и это была ошибка: список
+// методов (тогда — гейт 2) стоял РАНЬШЕ лимитера частоты (тогда — гейт 3), а
+// значит запрос с запрещённым методом мог отправляться сколько угодно раз в
+// секунду с одного IP — гейт, который его отклонял, сам никак не был
+// лимитирован. Хуже: ключ агрегата отказов для этого гейта строился из СЫРОГО
+// имени метода — поля из ТЕЛА ЧУЖОГО ЗАПРОСА, без потолка длины — так что
+// один и тот же незалимитированный поток мог ещё и растить карту в памяти
+// процесса без предела (см. докстринг `bumpMethodCounts` в `rpcProxy.ts`).
+//
+//  1а/1б. потолок на пачку и на тело (см. `rpcProxy.ts` — это ГЛАВНОЕ: JSON-RPC
+//     пачка умеет быть массивом из сотен вызовов, и без потолка именно на НЕЁ
+//     лимитер частоты (гейт 2) почти бесполезен — один HTTP-запрос обходит
+//     любой потолок «N запросов в минуту»). Дешёвые проверки, идут первыми.
+//  2. лимитер частоты по IP — ПЕРЕД списком методов: дешевле разбора (одно
+//     сравнение с числом в карте) и закрывает саму ВОЗМОЖНОСТЬ долбить
+//     ЛЮБЫМ последующим отказом с одного источника без ограничения.
+//  3. список разрешённых методов (закрытый, собран по факту использования)
+//     — уже посчитан лимитером выше, что бы он дальше ни отклонил.
+//  4. проверка происхождения — ПОСЛЕДНЯЯ: она не останавливает `curl`
+//     (Origin/Sec-Fetch-Site подделываются вне браузера как угодно), поэтому
+//     не имеет смысла тратить её первой (но она тоже уже посчитана лимитером).
+// Счётчик методов и отказов — не гейт, копится по каждому запросу (успеху или
+// отказу) и пишется в журнал раз в несколько минут, не на каждый запрос —
+// сам защищён потолком длины/числа ключей (`bumpMethodCounts`), иначе он был
+// бы ровно тем каналом утечки памяти, который и нашли.
+
+/** Общая карта лимитера — на процесс, как и у соседнего `api/push/route.ts`
+ *  (`_proxyRate`) и у релеера (`_rateMap`). При нескольких инстансах фронта
+ *  потолок умножится на их число — это честная граница, а не недосмотр. */
+const _rpcRateStore: RateLimitStore = new Map();
+
+const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+if (ALLOWED_ORIGINS.length === 0) {
+  // Тот же приём, что у предупреждения про публичный узел в приватном
+  // слоте ниже: тихая дыра хуже названной. Само решение «не задан — не
+  // судим» и почему оно НЕ «дыра по недосмотру» — докстринг `isOriginAllowed`.
+  console.warn(
+    '[/api/rpc] ALLOWED_ORIGINS не задан — проверка происхождения ВЫКЛЮЧЕНА ' +
+    '(остальные три гейта работают независимо от неё)',
+  );
+}
+
+/** Счётчик методов между печатями в журнал. Один на процесс, не на запрос —
+ *  иначе он и есть вторая беда, которую всё это чинит. */
+let _methodCounts = new Map<string, number>();
+
+/**
+ * НАХОДКА РЕВЬЮ: счётчик успехов выше сделан «раз в 5 минут, чтобы журнал не
+ * стал второй бедой» — а путь ОТКАЗОВ был не защищён вовсе: `console.warn`
+ * на КАЖДЫЙ отклонённый гейтом запрос. Если абузивный трафик продолжится (а
+ * продолжится — просто теперь дешевле для платной квоты), в журнал польётся
+ * тот же порядок строк, где раньше было около нуля. `docker-compose.yml` не
+ * задаёт ротацию логов ни одному сервису, и у этого проекта уже была беда
+ * «кончился диск» (`BAG_JOURNAL_MAX_BYTES`, см. `.env.vps.example`).
+ *
+ * Сведено к ТОМУ ЖЕ агрегату: считается по причине отказа на КАЖДЫЙ
+ * отклонённый запрос (не печатается), печатается ОДНОЙ строкой в тот же
+ * такт, что и счётчик методов.
+ */
+let _rejectCounts = new Map<string, number>();
+
+const METHOD_LOG_INTERVAL_MS = 5 * 60_000; // тот же порядок, что у уборки карты лимитера в relayer/app.js (5 минут)
+const _methodLogTimer = setInterval(() => {
+  if (_methodCounts.size > 0) {
+    console.log(`[/api/rpc] методы за ${METHOD_LOG_INTERVAL_MS / 60_000} мин: ${formatMethodCounts(_methodCounts)}`);
+    _methodCounts = new Map();
+  }
+  if (_rejectCounts.size > 0) {
+    console.log(`[/api/rpc] отказы за ${METHOD_LOG_INTERVAL_MS / 60_000} мин: ${formatMethodCounts(_rejectCounts)}`);
+    _rejectCounts = new Map();
+  }
+}, METHOD_LOG_INTERVAL_MS);
+// Не держит процесс живым ради самого себя — как и таймер GC карты лимитера
+// в relayer/app.js, только там он этого не требует (Express-процесс и так
+// не завершается). Next.js dev/test-процессы иногда ждут именно ОТСУТСТВИЯ
+// активных таймеров, чтобы выйти.
+_methodLogTimer.unref?.();
 
 // Private RPC with API key — server-only, never exposed to client.
 // Set DRPC_URL (no NEXT_PUBLIC_ prefix) in .env.vps so the key stays
@@ -78,16 +180,93 @@ async function callRpc(url: string, body: unknown, timeoutMs = PRIVATE_TIMEOUT_M
   });
 }
 
+/** JSON-RPC-формой ответа на отказ гейта — тем же, что и у остальных ошибок
+ *  этого маршрута (502 ниже, parse error выше). Вызывающие — viem — ждут
+ *  JSON-RPC объект в любом случае, а не голый `{error}`. */
+function gateRejection(status: number, code: number, message: string, extra?: Record<string, unknown>) {
+  return NextResponse.json(
+    { jsonrpc: '2.0', error: { code, message, ...(extra ? { data: extra } : {}) }, id: null },
+    { status },
+  );
+}
+
 export async function POST(req: NextRequest) {
+  // ── Гейт 1а: тело — по СЫРЫМ байтам, ДО разбора JSON. Гигантское мусорное
+  // тело иначе тратит время на `JSON.parse`, прежде чем его отвергнут.
+  const rawText = await req.text();
+  const bodyBytes = Buffer.byteLength(rawText, 'utf-8');
+  if (bodyBytes > MAX_BODY_BYTES) {
+    bumpMethodCounts(_rejectCounts, ['body_too_large']);
+    return gateRejection(413, -32600, `Request body too large: ${bodyBytes} bytes (max ${MAX_BODY_BYTES})`);
+  }
+
   let body: unknown;
   try {
-    body = await req.json();
+    body = JSON.parse(rawText);
   } catch {
     return NextResponse.json(
       { jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null },
       { status: 400 },
     );
   }
+
+  // ── Гейт 1б: длина пачки. САМОЕ ВАЖНОЕ звено — без него JSON-RPC-массив
+  // из сотен вызовов обходит лимитер частоты (гейт 3) одним HTTP-запросом:
+  // один запрос = сколько угодно обращений к платной квоте.
+  const size = batchLength(body);
+  if (size > MAX_BATCH_SIZE) {
+    bumpMethodCounts(_rejectCounts, ['batch_too_large']);
+    return gateRejection(400, -32600, `Batch too large: ${size} calls (max ${MAX_BATCH_SIZE})`);
+  }
+
+  // ── Гейт 2: лимитер частоты по IP. ⚠️ НАХОДКА РЕВЬЮ (Critical): раньше
+  // стоял ПОСЛЕ списка методов (гейт 3 ниже) — а значит запрос с
+  // запрещённым методом вообще не доходил до лимитера и мог отправляться
+  // сколько угодно раз в секунду с одного IP БЕЗ ограничения частоты.
+  // Лимитер переставлен раньше самого разбора методов: он дешевле
+  // (сравнение с числом в карте) и закрывает саму ВОЗМОЖНОСТЬ долбить
+  // отказами — после 1а/1б (которые снимают амплификацию пачкой и стоят
+  // копейки) первым делом считается КАЖДЫЙ отклонённый запрос, каким бы
+  // гейтом он ни был отклонён дальше.
+  const source = requestSourceIp(req.headers);
+  if (!checkRpcRateLimit(_rpcRateStore, `rpc:${source}`, RPC_RATE_MAX)) {
+    bumpMethodCounts(_rejectCounts, ['rate_limited']);
+    return gateRejection(429, -32005, 'Rate limit exceeded', { source });
+  }
+
+  // ── Гейт 3: список разрешённых методов — закрытый, собран по факту
+  // использования (см. `ALLOWED_RPC_METHODS` в `lib/rpcProxy.ts`). Заодно
+  // снимает самый дорогой сценарий — `debug_*`/`trace_*` и обходы логов за
+  // гигантские диапазоны чужой платной квотой.
+  //
+  // ⚠️ `m` — сырое имя метода из ТЕЛА ЧУЖОГО ЗАПРОСА, не наше. Ключ агрегата
+  // ниже ОБЯЗАН идти через `bumpMethodCounts` с потолком длины/числа
+  // ключей (см. докстринг там) — без него сама эта строка была источником
+  // Critical-находки: карта росла без предела на чужом вводе. `overflowKey`
+  // называет ПРИЧИНУ переполнения в журнале, а не сваливает её в общую кучу.
+  const badMethods = disallowedMethods(body, ALLOWED_RPC_METHODS);
+  if (badMethods.length > 0) {
+    bumpMethodCounts(
+      _rejectCounts,
+      badMethods.map(m => `method_not_allowed:${m}`),
+      { overflowKey: 'method_not_allowed:other' },
+    );
+    return gateRejection(400, -32601, `Method not allowed: ${badMethods.join(', ')}`);
+  }
+
+  // ── Гейт 4: происхождение — ПОСЛЕДНИЙ, см. докстринг `isOriginAllowed`:
+  // не останавливает `curl`, поэтому не имеет смысла первым.
+  const origin = req.headers.get('origin');
+  const secFetchSite = req.headers.get('sec-fetch-site');
+  if (!isOriginAllowed({ origin, secFetchSite }, ALLOWED_ORIGINS)) {
+    bumpMethodCounts(_rejectCounts, ['origin_rejected']);
+    return gateRejection(403, -32600, 'Origin not allowed');
+  }
+
+  // Прошёл все гейты — считаем метод(ы) в агрегат журнала. По каждому вызову
+  // ПАЧКИ отдельно (тарификация платной квоты идёт по вызову, не по HTTP-
+  // запросу) — строка в журнал печатается отдельно и редко, не здесь.
+  bumpMethodCounts(_methodCounts, rpcMethods(body));
 
   // Чем был этот запрос — для журнала. Без него строка «узел отказал» не
   // отвечает на главный вопрос расследования: КАКОЕ чтение упало. Ровно этот
