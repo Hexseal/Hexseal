@@ -623,6 +623,8 @@
     "enable_messaging": "メッセージを有効にする",
     "file_expired": "保存期間が終了しました — ファイルを送り直してもらってください",
     "file_expired_image": "保存期間が終了しました",
+    "no_access": "アクセスが確認できません — チャットを開き直してもう一度お試しください",
+    "no_access_image": "アクセスが確認できません",
     "recovery_warning_title": "リカバリーコード",
     "recovery_warning_access": "これは会話すべてへのアクセス権です。この12語を手に入れた人は、すべてを読めます。取り消しも変更もできません。",
     "recovery_warning_loss": "失うと、メッセージは二度と戻りません。",

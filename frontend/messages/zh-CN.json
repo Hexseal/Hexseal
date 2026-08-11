@@ -623,6 +623,8 @@
     "enable_messaging": "开启消息功能",
     "file_expired": "保存期已结束 — 请对方重新发送",
     "file_expired_image": "保存期已结束",
+    "no_access": "访问未确认 — 请重新打开聊天再试一次",
+    "no_access_image": "访问未确认",
     "recovery_warning_title": "恢复码",
     "recovery_warning_access": "这是你全部聊天记录的访问权限。拿到这 12 个词的人可以读到一切。无法撤销，也无法更换。",
     "recovery_warning_loss": "一旦丢失，聊天记录将永远无法找回。",

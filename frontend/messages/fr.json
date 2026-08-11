@@ -623,6 +623,8 @@
     "enable_messaging": "Activer la messagerie",
     "file_expired": "Durée de conservation écoulée — redemandez le fichier",
     "file_expired_image": "Durée de conservation écoulée",
+    "no_access": "Accès non confirmé — rouvrez le chat et réessayez",
+    "no_access_image": "Accès non confirmé",
     "recovery_warning_title": "Code de récupération",
     "recovery_warning_access": "Ceci est l’accès à toute votre conversation. Quiconque obtient ces 12 mots peut tout lire. Ils ne peuvent être ni révoqués ni modifiés.",
     "recovery_warning_loss": "Si vous les perdez, les messages sont perdus définitivement.",

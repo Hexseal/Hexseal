@@ -72,6 +72,13 @@ function storePass(addr: string, pass: string) {
   );
 }
 
+function storePassWithExpiry(addr: string, pass: string, expiresInSec: number) {
+  (g.localStorage as Storage).setItem(
+    PASS_STORAGE_PREFIX + addr.toLowerCase(),
+    JSON.stringify({ pass, expiresAt: Math.floor(Date.now() / 1000) + expiresInSec }),
+  );
+}
+
 function headersOfCall(i: number): Record<string, string> {
   const [, init] = fetchMock.mock.calls[i] as [string, RequestInit | undefined];
   return (init?.headers ?? {}) as Record<string, string>;
@@ -106,5 +113,39 @@ describe('скачивание вложения предъявляет проп�
     await decryptToObjectUrl(`${ORIGIN}/files/three.bin`, keyHex, ivHex).catch(() => {});
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(headersOfCall(0)).not.toHaveProperty('x-bag-pass');
+  });
+
+  describe('два аккаунта на устройстве — подсказка адреса решает, чей пропуск едет', () => {
+    // Итоговое ревью 4в-1: `findStoredBagPass()` без подсказки берёт САМЫЙ
+    // ДОЛГОЖИВУЩИЙ пропуск устройства. На устройстве с двумя аккаунтами это
+    // может оказаться пропуск ЧУЖОГО — свой протухает раньше (обычный ход
+    // событий: чужой аккаунт залогинился позже и получил более свежий срок),
+    // а склад тогда отвечает 403 `not_your_file` на СОБСТВЕННОМ вложении.
+    const FOREIGN = '0xbbbb000000000000000000000000000000000002';
+
+    beforeEach(() => {
+      // Свой — истекает раньше (близкий срок). Чужой — истекает позже
+      // (дальний срок). Без подсказки «самый долгоживущий» — это чужой.
+      storePassWithExpiry(ME, 'v1.mine.mac', 600);
+      storePassWithExpiry(FOREIGN, 'v1.foreign.mac', 7200);
+    });
+
+    it('БЕЗ подсказки берётся пропуск с дальним сроком — то есть ЧУЖОЙ', async () => {
+      const url = await decryptToObjectUrl(`${ORIGIN}/files/mine.bin`, keyHex, ivHex, 'text/plain');
+      expect(url).toBe('blob:test');
+      expect(headersOfCall(0)['x-bag-pass']).toBe('v1.foreign.mac');
+    });
+
+    it('С подсказкой своего адреса берётся СВОЙ пропуск, несмотря на более близкий срок', async () => {
+      const url = await decryptToObjectUrl(`${ORIGIN}/files/mine.bin`, keyHex, ivHex, 'text/plain', ME);
+      expect(url).toBe('blob:test');
+      expect(headersOfCall(0)['x-bag-pass']).toBe('v1.mine.mac');
+    });
+
+    it('decryptAndSaveChunked тоже слушает подсказку', async () => {
+      await decryptAndSaveChunked(`${ORIGIN}/files/mine2.bin`, keyHex, ivHex, 'f.bin', undefined, 1, 8, 4, undefined, ME)
+        .catch(() => {});
+      expect(headersOfCall(0)['x-bag-pass']).toBe('v1.mine.mac');
+    });
   });
 });

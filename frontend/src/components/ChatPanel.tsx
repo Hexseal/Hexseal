@@ -29,7 +29,7 @@ import {
   Copy, Check, Paperclip, FileText, ExternalLink, Lock,
   ChevronDown, Download, Search, X, Clock, RotateCw, ShieldCheck, Scissors, PenLine, KeyRound,
 } from 'lucide-react';
-import { classifyAttachmentFailure, type AttachmentFailure } from '@/lib/attachmentFailure';
+import { classifyAttachmentFailure, shouldRetryAttachmentFetch, type AttachmentFailure } from '@/lib/attachmentFailure';
 import { decryptToObjectUrl, decryptAndSave, decryptAndSaveChunked, CHUNK_SIZE, isTrustedAttachmentUrl } from '@/lib/fileCrypto';
 import { MAX_FILE_SIZE, refreshDownloadUrl } from '@/lib/fileStorage';
 import { useProfile } from '@/hooks/useProfile';
@@ -117,13 +117,13 @@ function isImageMime(mime?: string) {
 
 // ─── Attachment components ────────────────────────────────────────────────────
 
-function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
+function ImageBubble({ a, isMe, sentAt, self }: { a: NonNullable<PairChatMessage['attachment']>; isMe: boolean; sentAt: number; self?: string }) {
   const [src, setSrc]               = useState<string | null>(null);
   const [decrypting, setDecrypting] = useState(false);
-  // Не булево «не вышло», а ЧТО именно не вышло: истёкший срок хранения и
-  // сломанная расшифровка — разные события, и лечатся они по-разному (первое —
-  // «попроси прислать заново», второе — настоящая поломка). Разбор —
-  // `lib/attachmentFailure.ts`.
+  // Не булево «не вышло», а ЧТО именно не вышло: истёкший срок хранения,
+  // отказ склада в доступе и сломанная расшифровка — три разных события, и
+  // лечатся они по-разному («попроси прислать заново» / «зайди в чат заново»
+  // / настоящая поломка). Разбор — `lib/attachmentFailure.ts`.
   const [failure, setFailure]       = useState<AttachmentFailure | null>(null);
   const [lightbox, setLightbox]     = useState(false);
   const t = useTranslations();
@@ -139,10 +139,12 @@ function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['atta
     }
     let active = true;
     setDecrypting(true);
-    const tryDecrypt = (url: string) => decryptToObjectUrl(url, a.key!, a.iv!, a.mime);
+    const tryDecrypt = (url: string) => decryptToObjectUrl(url, a.key!, a.iv!, a.mime, self);
     tryDecrypt(a.url)
       .then((url) => { if (active) setSrc(url); })
       .catch(async (err: unknown) => {
+        const initial = classifyAttachmentFailure(err, { sentAt });
+        if (!shouldRetryAttachmentFetch(initial)) { if (active) setFailure(initial); return; }
         if (a.fileKey) {
           try {
             const fresh = await refreshDownloadUrl(a.fileKey);
@@ -154,11 +156,11 @@ function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['atta
             return;
           }
         }
-        if (active) setFailure(classifyAttachmentFailure(err, { sentAt }));
+        if (active) setFailure(initial);
       })
       .finally(() => { if (active) setDecrypting(false); });
     return () => { active = false; };
-  }, [a.url, a.key, a.iv, a.mime, a.fileKey, sentAt]);
+  }, [a.url, a.key, a.iv, a.mime, a.fileKey, sentAt, self]);
 
   const rounded = isMe ? 'rounded-t-2xl rounded-bl-2xl rounded-br-sm' : 'rounded-t-2xl rounded-br-2xl rounded-bl-sm';
 
@@ -172,6 +174,12 @@ function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['atta
   if (failure === 'expired') return (
     <div className={`w-full max-w-[220px] h-[80px] ${rounded} border border-white/[0.08] bg-white/[0.02] flex items-center justify-center px-3 text-center`}>
       <span className="text-xs text-white/30">{t("chat.file_expired_image")}</span>
+    </div>
+  );
+
+  if (failure === 'no_access') return (
+    <div className={`w-full max-w-[220px] h-[80px] ${rounded} border border-white/[0.08] bg-white/[0.02] flex items-center justify-center px-3 text-center`}>
+      <span className="text-xs text-white/30">{t("chat.no_access_image")}</span>
     </div>
   );
 
@@ -198,10 +206,10 @@ function ImageBubble({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['atta
   );
 }
 
-function FileCard({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['attachment']>; isMe: boolean; sentAt: number }) {
+function FileCard({ a, isMe, sentAt, self }: { a: NonNullable<PairChatMessage['attachment']>; isMe: boolean; sentAt: number; self?: string }) {
   const [saving,     setSaving]     = useState(false);
-  // См. тот же комментарий в ImageBubble: «истёк срок хранения» и «не удалось
-  // расшифровать» больше не выглядят одинаково.
+  // См. тот же комментарий в ImageBubble: «истёк срок хранения», «нет
+  // доступа» и «не удалось расшифровать» — три разных надписи.
   const [failure,    setFailure]    = useState<AttachmentFailure | null>(null);
   const [dlProgress, setDlProgress] = useState<number | null>(null);
   const t = useTranslations();
@@ -219,27 +227,29 @@ function FileCard({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['attachm
       const plan = attachmentDecryptPlan(a);
       if (plan.mode === 'chunked') {
         await decryptAndSaveChunked(
-          url, a.key!, a.iv!, a.name, plan.mime, plan.chunkCount, plan.chunkSize, plan.size, setDlProgress,
+          url, a.key!, a.iv!, a.name, plan.mime, plan.chunkCount, plan.chunkSize, plan.size, setDlProgress, self,
         );
       } else {
         // `plain` сюда не доходит: ветка без ключа отсекается выше, до
         // `setSaving` (файл открывается по ссылке). Проверка формы — чтобы
         // компилятор это знал, а не чтобы «на всякий случай».
-        await decryptAndSave(url, a.key!, a.iv!, a.name, plan.mode === 'whole' ? plan.mime : undefined);
+        await decryptAndSave(url, a.key!, a.iv!, a.name, plan.mode === 'whole' ? plan.mime : undefined, self);
       }
     };
 
     try {
       await doDownload(a.url);
     } catch (err: unknown) {
-      // URL might be stale — reconstruct from fileKey if available
-      if (a.fileKey) {
+      const initial = classifyAttachmentFailure(err, { sentAt });
+      if (!shouldRetryAttachmentFetch(initial)) { setFailure(initial); }
+      else if (a.fileKey) {
+        // URL might be stale — reconstruct from fileKey if available
         try {
           const fresh = await refreshDownloadUrl(a.fileKey);
           await doDownload(fresh);
         } catch (retryErr) { setFailure(classifyAttachmentFailure(retryErr, { sentAt })); }
       } else {
-        setFailure(classifyAttachmentFailure(err, { sentAt }));
+        setFailure(initial);
       }
     } finally {
       setSaving(false); setDlProgress(null);
@@ -259,6 +269,7 @@ function FileCard({ a, isMe, sentAt }: { a: NonNullable<PairChatMessage['attachm
         <p className="text-xs font-medium text-white/85 truncate leading-tight">{a.name}</p>
         <p className="text-[11px] text-white/35 mt-0.5">
           {failure === 'expired' ? <span className="text-white/40">{t("chat.file_expired")}</span>
+               : failure === 'no_access' ? <span className="text-white/40">{t("chat.no_access")}</span>
                : failure ? <span className="text-red-400/70">{t("chat.decrypt_failed")}</span>
                : dlProgress !== null ? <span className="text-primary/70">{t("chat.decrypting")} {dlProgress}%</span>
                : a.size != null ? formatBytes(a.size)
@@ -1776,8 +1787,8 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
                   <div className={`group max-w-[72%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                     {msg.attachment
                       ? !msg.attachment.chunked && isImageMime(msg.attachment.mime)
-                        ? <ImageBubble a={msg.attachment} isMe={isMe} sentAt={msg.timestamp} />
-                        : <FileCard a={msg.attachment} isMe={isMe} sentAt={msg.timestamp} />
+                        ? <ImageBubble a={msg.attachment} isMe={isMe} sentAt={msg.timestamp} self={address} />
+                        : <FileCard a={msg.attachment} isMe={isMe} sentAt={msg.timestamp} self={address} />
                       : (
                         <div className={`px-4 py-2.5 text-[15px] break-words leading-relaxed ${
                           isMe

@@ -623,6 +623,8 @@
     "enable_messaging": "Enable messaging",
     "file_expired": "Storage period ended — ask for the file again",
     "file_expired_image": "Storage period ended",
+    "no_access": "Access not confirmed — reopen the chat and try again",
+    "no_access_image": "Access not confirmed",
     "recovery_warning_title": "Recovery code",
     "recovery_warning_access": "This is access to all your messages. Anyone who gets these 12 words can read everything. They cannot be revoked or changed.",
     "recovery_warning_loss": "Lose them and your messages are gone for good.",

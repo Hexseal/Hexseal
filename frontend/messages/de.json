@@ -623,6 +623,8 @@
     "enable_messaging": "Nachrichten aktivieren",
     "file_expired": "Aufbewahrungsfrist abgelaufen — bitte die Datei erneut anfordern",
     "file_expired_image": "Aufbewahrungsfrist abgelaufen",
+    "no_access": "Zugriff nicht bestätigt — Chat neu öffnen und erneut versuchen",
+    "no_access_image": "Zugriff nicht bestätigt",
     "recovery_warning_title": "Wiederherstellungscode",
     "recovery_warning_access": "Dies ist der Zugang zu Ihrem gesamten Nachrichtenverlauf. Wer diese 12 Wörter erhält, kann alles lesen. Sie lassen sich weder widerrufen noch ändern.",
     "recovery_warning_loss": "Gehen sie verloren, sind die Nachrichten endgültig weg.",

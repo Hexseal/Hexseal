@@ -623,6 +623,8 @@
     "enable_messaging": "Ativar mensagens",
     "file_expired": "Prazo de armazenamento terminou — peça o ficheiro novamente",
     "file_expired_image": "Prazo de armazenamento terminou",
+    "no_access": "Acesso não confirmado — reabra o chat e tente novamente",
+    "no_access_image": "Acesso não confirmado",
     "recovery_warning_title": "Código de recuperação",
     "recovery_warning_access": "Isto é o acesso a toda a sua conversa. Quem obtiver estas 12 palavras poderá ler tudo. Não podem ser revogadas nem alteradas.",
     "recovery_warning_loss": "Se as perder, as mensagens somem para sempre.",

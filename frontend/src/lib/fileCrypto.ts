@@ -9,19 +9,20 @@ import { findStoredBagPass, BAG_PASS_HEADER } from '@/lib/storedBagPass';
  * До этого `GET /files/:key` отдавал файл любому, кто знает адрес, — и это
  * было заперто тремя зелёными тестами.
  *
- * Подсказки владельца здесь нет и взять её негде: карточки вложения
- * (`ImageBubble`/`FileCard`) получают только само вложение, ни сеанса, ни
- * адреса (ChatPanel.tsx:120, :201). Поэтому берём самый долгоживущий пропуск
- * устройства — на устройстве кошелёк подключён один, а от прежнего аккаунта
- * остался бы протухающий (см. `findStoredBagPass`).
+ * `hint` — адрес СВОЕГО кошелька, когда он известен вызывающему (карточки
+ * вложения передают `self` из `useAccount()` — ChatPanel.tsx). Без подсказки
+ * `findStoredBagPass` берёт самый долгоживущий пропуск устройства, а это на
+ * двух-аккаунтном устройстве может оказаться пропуск ЧУЖОГО аккаунта: тогда
+ * склад отвечает 403 `not_your_file` на собственном же вложении. Замечено
+ * при итоговом ревью 4в-1 (fix-attachment-no-access).
  *
  * Пропуска нет — заголовка нет, запрос всё равно уходит: единственный
  * источник истины про доступ это сервер. Своё предсказание «не пустят» было
  * бы вторым мнением рядом с настоящим и разошлось бы с ним при первом
  * изменении правил.
  */
-function downloadHeaders(): Record<string, string> {
-  const pass = findStoredBagPass();
+function downloadHeaders(hint?: string): Record<string, string> {
+  const pass = findStoredBagPass(hint);
   return pass ? { [BAG_PASS_HEADER]: pass } : {};
 }
 
@@ -138,6 +139,7 @@ export async function decryptToObjectUrl(
   keyHex: string,
   ivHex: string,
   mime?: string,
+  selfHint?: string,
 ): Promise<string> {
   if (!isTrustedAttachmentUrl(encryptedUrl)) throw new Error('Untrusted attachment URL');
 
@@ -145,7 +147,7 @@ export async function decryptToObjectUrl(
   const cached = _cache.get(cacheKey);
   if (cached) return cached;
 
-  const response = await fetch(encryptedUrl, { headers: downloadHeaders() });
+  const response = await fetch(encryptedUrl, { headers: downloadHeaders(selfHint) });
   if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`);
   const ciphertext = await response.arrayBuffer();
 
@@ -174,8 +176,9 @@ export async function decryptAndSave(
   ivHex: string,
   filename: string,
   mime?: string,
+  selfHint?: string,
 ): Promise<void> {
-  const objectUrl = await decryptToObjectUrl(encryptedUrl, keyHex, ivHex, mime);
+  const objectUrl = await decryptToObjectUrl(encryptedUrl, keyHex, ivHex, mime, selfHint);
   const a = document.createElement('a');
   a.href = objectUrl;
   a.download = filename;
@@ -230,6 +233,7 @@ export async function decryptAndSaveChunked(
   chunkSize: number,   // plaintext bytes per chunk (CHUNK_SIZE)
   originalSize: number, // total plaintext file size
   onProgress?: (pct: number) => void,
+  selfHint?: string,
 ): Promise<void> {
   if (!isTrustedAttachmentUrl(encryptedUrl)) throw new Error('Untrusted attachment URL');
 
@@ -238,7 +242,7 @@ export async function decryptAndSaveChunked(
 
   const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
 
-  const response = await fetch(encryptedUrl, { headers: downloadHeaders() });
+  const response = await fetch(encryptedUrl, { headers: downloadHeaders(selfHint) });
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
 
   // ── Try streaming save to disk (Chrome / Edge) ────────────────────────────
