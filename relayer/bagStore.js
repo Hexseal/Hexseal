@@ -559,6 +559,14 @@ function isValidBagMetaEntry(key, meta) {
     assertSafeInt('_loadBagMeta', 'uploadedAt', meta.uploadedAt);
     if (meta.firstFetchedAt != null) assertSafeInt('_loadBagMeta', 'firstFetchedAt', meta.firstFetchedAt);
     if (meta.dealDeadline != null) assertSafeInt('_loadBagMeta', 'dealDeadline', meta.dealDeadline);
+    // 4в-2, Задача 1: поля ящика спора. Проверяются ровно так же, как
+    // остальные, и по той же причине: строка журнала — это то, что лежало на
+    // диске, а не то, что мы туда клали. Запись с `deal: {}` без этой проверки
+    // загрузилась бы, и замок ящика начал бы сравнивать адрес с объектом.
+    // Отсутствие полей — законно и нормально: так выглядит каждый чат-мешок и
+    // каждая запись, сделанная до этой задачи.
+    if (meta.deal != null) assertAddress('_loadBagMeta', meta.deal);
+    if (meta.sealedFor != null) assertAddress('_loadBagMeta', meta.sealedFor);
     // C1 (координатор, критическая находка): dealFunded как ПОЛЕ ЗАПИСИ
     // убран целиком — он и был источником дыры (свойство мешка, а не
     // свойство конкретного продления, см. докстринг adoptPairBags()).
@@ -1216,6 +1224,29 @@ export function recordBag(meta, nowMs = Date.now()) {
   assertFetchNotBeforeUpload('recordBag', uploadedAt, firstFetchedAt);
   const dealDeadline   = assertNullableSafeInt('recordBag', 'dealDeadline', meta.dealDeadline ?? null);
 
+  // 4в-2, Задача 1 — ящик спора. Два необязательных поля:
+  //
+  //   deal      — адрес Agreement: «эта запись лежит в ЯЩИКЕ СПОРА, а не в
+  //               переписке». Сегодня он всегда равен recipient (ключ мешка
+  //               ящика строится bagKeyFor(agreement)), и поле всё равно
+  //               отдельное: recipient — координата ХРАНЕНИЯ (префикс ключа,
+  //               каталог), deal — СМЫСЛ. Слив их, мы бы привязали замок
+  //               ящика к тому, что раскладка ключа никогда не изменится, и
+  //               открыли бы дорогу в ящик чат-мешку, случайно адресованному
+  //               контракту сделки.
+  //
+  //   sealedFor — адрес арбитра, на чей ключ мешок ЗАЯВЛЕН запечатанным.
+  //               Слово кладущего: мешок нечитаем для сервера, проверить
+  //               нечем. Хранится как есть и отдаётся с пометкой источника —
+  //               см. GET /disputes/:agreement/bags в app.js.
+  //
+  // ⚠️ Оба кладутся в запись ТОЛЬКО когда не null. Так запись чат-мешка
+  // остаётся байт в байт такой же, какой была до этой задачи: старые записи
+  // на диске не мигрируются, откат релеера назад ничего не ломает, а всё
+  // чтение обязано идти через `!= null` (undefined и null неразличимы).
+  const deal      = meta.deal      == null ? null : assertAddress('recordBag', meta.deal);
+  const sealedFor = meta.sealedFor == null ? null : assertAddress('recordBag', meta.sealedFor);
+
   const stored = {
     sender,
     recipient,
@@ -1224,6 +1255,8 @@ export function recordBag(meta, nowMs = Date.now()) {
     uploadedAt,
     firstFetchedAt,
     dealDeadline,
+    ...(deal      != null ? { deal }      : {}),
+    ...(sealedFor != null ? { sealedFor } : {}),
   };
   _bagMeta[key] = stored;
   try {
@@ -1342,6 +1375,13 @@ export function listBagsInvolving(address) {
   const received = [];
   const sent = [];
   for (const [key, meta] of Object.entries(_bagMeta)) {
+    // 4в-2, Задача 1: мешок ЯЩИКА СПОРА — не кадр переписки, и в чат-описи
+    // ему делать нечего. Оставь его здесь — и получатель у него адрес
+    // КОНТРАКТА сделки, то есть он приехал бы человеку в `sent`, а сам
+    // контракт — в `peers` как собеседник; фронт (receiveBags) попытался бы
+    // разобрать его как кадр и выдал бы человеку беду `malformed` о его же
+    // собственном предъявлении. Опись ящика отдаёт listDisputeBags() ниже.
+    if (meta.deal != null) continue;
     // Один и тот же объект-копия не переиспользуется между кучками: у
     // переписки с самим собой запись попадает в обе, и общий объект дал бы
     // вызывающему два имени одной и той же ссылки.
@@ -1351,6 +1391,29 @@ export function listBagsInvolving(address) {
   received.sort((a, b) => a.uploadedAt - b.uploadedAt);
   sent.sort((a, b) => a.uploadedAt - b.uploadedAt);
   return { received, sent };
+}
+
+/**
+ * 4в-2, Задача 1: опись ЯЩИКА СПОРА — записи, у которых `meta.deal` равен
+ * адресу этой сделки.
+ *
+ * Отбор идёт по `deal`, а НЕ по `recipient`, хотя сегодня они совпадают:
+ * совпадение — свойство нынешней раскладки ключа, а не правило. Отбирая по
+ * `recipient`, мы бы отдали в ящик любой чат-мешок, случайно адресованный
+ * контракту сделки.
+ *
+ * Полный обход описи, O(n) — ровно как у listBagsFor()/listBagsInvolving().
+ * Сегодня это приемлемо по той же причине, что и у них: опись живёт в
+ * памяти, обращение к диску не делается ни одного. Если ящиков станет много,
+ * дешёвое лекарство — индекс `deal → ключи`, но заводить его до нужды значит
+ * держать вторую копию правды.
+ */
+export function listDisputeBags(deal) {
+  const addr = assertAddress('listDisputeBags', deal);
+  return Object.entries(_bagMeta)
+    .filter(([, meta]) => meta.deal === addr)
+    .map(([key, meta]) => ({ key, ...meta }))
+    .sort((a, b) => a.uploadedAt - b.uploadedAt);
 }
 
 // I3: раньше отдавала `_bagMeta[key]` напрямую — тот же объект, что живёт в
