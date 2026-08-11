@@ -8,13 +8,15 @@ import {
   keccak256,
   toBytes,
   decodeEventLog,
+  type Abi,
   type Hex,
   type Address,
   isAddress,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { appChain, appRpcUrl } from '@/config/chain';
-import { CONTRACTS } from '@/config/contracts';
+import { CONTRACTS, DIAMOND_ABI } from '@/config/contracts';
+import { relayTargetVerdict } from '@/lib/relayTarget';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -298,6 +300,33 @@ export async function POST(req: NextRequest) {
     // Fire-and-forget, rate-limited to once per LOW_BALANCE_CHECK_INTERVAL_MS —
     // never awaited, so it adds no latency to this (or any) request.
     checkRelayerBalance(publicClient, account.address);
+
+    // ── Пункт 44: цель обязана быть НАШЕЙ ───────────────────────────────────
+    // Подпись доказывает «этот человек подписал этот запрос», а не «этот запрос
+    // про Hexseal». Разрешены только диамонд (сверка с константой, без цепи) и
+    // Agreement, известный реестру. Списка разрешённых функций нет намеренно —
+    // гибкость «фронт сам решает, что звать» несущая; ограничивается адрес.
+    //
+    // ⚠️ Стоит ДО withRelayerLock и ДО USDC.permit: permit уходит отдельной
+    // транзакцией с нашего кошелька ещё до форварда, и замок ниже него оставил
+    // бы дыру «цель чужая, а за permit мы заплатили».
+    //
+    // Близнец — relayer/app.js:relayTargetVerdict; договор о поведении —
+    // shared/relay-target-scenes.json, читается тестами обеих сторон.
+    const target = await relayTargetVerdict(to, DIAMOND, (agreement) =>
+      publicClient.readContract({
+        address: DIAMOND,
+        abi: DIAMOND_ABI as Abi,
+        functionName: 'getRecord',
+        args: [agreement],
+      }),
+    );
+    if (!target.ok) {
+      return NextResponse.json(
+        { error: target.error, code: target.code },
+        { status: target.status },
+      );
+    }
 
     const walletClient = createWalletClient({
       account,

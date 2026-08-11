@@ -2019,6 +2019,137 @@ app.get('/dispute-log/:dealId', async (req, res) => {
   }
 });
 
+// ─── Пункт 44: за чей контракт релеер платит газ ──────────────────────────────
+//
+// Подпись ForwardRequest доказывает «этот человек подписал этот запрос», а НЕ
+// «этот запрос про Hexseal». Пока `to` сверялся только с формой адреса, любой
+// желающий подписывал своим ключом вызов ЧУЖОГО контракта, и газ за него платили
+// мы: при потолке 10 запросов/мин и 7 млн газа на вызов это ~$3600 в сутки с
+// ОДНОГО адреса в мейннете (docs/OPEN-ITEMS.md, пункт 44).
+//
+// Разрешены ровно два рода цели:
+//   1. сам диамонд — сверка с константой, БЕЗ обращения к цепи. Через него идут
+//      все доски и весь арбитраж, то есть подавляющее большинство вызовов —
+//      и именно поэтому молчание узла для них не меняет ничего;
+//   2. наш Agreement — по записи реестра getRecord(addr) на диамонде.
+//
+// ⚠️ Признак существования сделки — АДРЕС в записи, а не статус.
+// RegistryStorage.AgreementStatus.ACTIVE == 0, значит нулевая запись
+// незнакомого адреса выглядит «активной». Проверка по статусу пускала бы кого
+// угодно; условие `client != 0` — подпорка на случай реестра, заполняющего
+// запись в два приёма (сегодняшний register() пишет всю структуру разом,
+// src/RegistryFacet.sol:142-150).
+//
+// Списка разрешённых ФУНКЦИЙ здесь нет и не будет — решение владельца: гибкость
+// «фронт сам решает, что звать» несущая, а список закрыл бы дыру лишь частично
+// (за чужой контракт можно платить любым разрешённым селектором). `data` не
+// разбирается вовсе.
+//
+// ⚠️ ВТОРАЯ ПОЛОВИНА ЭТОГО ЗАМКА ЖИВЁТ ВО ФРОНТЕ: frontend/src/lib/relayTarget.ts,
+// вызывается из frontend/src/app/api/relay/route.ts — и сегодня боевой путь
+// именно тот, а не этот (см. комментарий ниже). Общего кода у них быть не может:
+// разные рантаймы. Договор о ПОВЕДЕНИИ — shared/relay-target-scenes.json, его
+// читают тесты обеих сторон; разошлись — краснеет та сторона, что отстала.
+const REGISTRY_RECORD_ABI = [
+  'function getRecord(address agreement) view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt))',
+];
+
+// Кэшируем ТОЛЬКО положительные ответы. «Наш агримент» — свойство монотонное:
+// реестр записи не удаляет. «Не наш» — не монотонное: адрес станет нашим в ту
+// секунду, когда acceptApplicant/acceptRequest/deployAndFund создадут и
+// зарегистрируют сделку в одной транзакции (src/FactoryFacet.sol:271, :320).
+// Закэшированный отказ запер бы свежесозданную сделку на весь срок кэша.
+//
+// Срок нужен не реестру (он не отзывает), а нам: он ограничивает, сколько мы
+// верим себе после замены диамонда. Размер — чтобы карта не росла вечно.
+// Перезапуск процесса оставляет кэш пустым, и это безопасно: пустой кэш стоит
+// лишнего чтения цепи, а не лишнего пропуска.
+const RELAY_TARGET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;   // 6 часов
+const RELAY_TARGET_CACHE_MAX    = 1000;
+
+const _ourAgreements    = new Map();   // адрес (нижний регистр) → до какого мс верим
+const _agreementLookups = new Map();   // адрес → обещание ИДУЩЕГО чтения (склейка одновременных)
+
+export function _resetRelayTargetCacheForTest() {
+  _ourAgreements.clear();
+  _agreementLookups.clear();
+}
+
+function rememberOurAgreement(addr) {
+  _ourAgreements.delete(addr);        // переставить в конец очереди вставки
+  _ourAgreements.set(addr, Date.now() + RELAY_TARGET_CACHE_TTL_MS);
+  while (_ourAgreements.size > RELAY_TARGET_CACHE_MAX) {
+    const oldest = _ourAgreements.keys().next().value;
+    _ourAgreements.delete(oldest);
+  }
+}
+
+function cachedAsOurAgreement(addr) {
+  const until = _ourAgreements.get(addr);
+  if (until === undefined) return false;
+  if (until <= Date.now()) { _ourAgreements.delete(addr); return false; }
+  return true;
+}
+
+/**
+ * true  — запись прочитана, это наш агримент;
+ * false — запись прочитана, это НЕ наш;
+ * null  — прочитать не удалось (узел молчит либо ответ не разбирается).
+ */
+async function readsAsOurAgreement(addr) {
+  try {
+    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_RECORD_ABI, provider);
+    const record = await registry.getRecord(addr);
+    const agreement = typeof record?.agreement === 'string' ? record.agreement.toLowerCase() : null;
+    const client    = typeof record?.client    === 'string' ? record.client.toLowerCase()    : null;
+    if (agreement === null || client === null) {
+      console.error('[relay] реестр ответил тем, что не разбирается как запись сделки:', addr);
+      return null;
+    }
+    return agreement === addr || client !== ZERO_ADDR;
+  } catch (e) {
+    console.error('[relay] реестр не ответил на getRecord:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Можно ли платить газ за вызов к этому адресу.
+ * Статус и код отказа возвращает САМА функция — у маршрута своих литералов нет,
+ * поэтому «один путь тихо поменял код» здесь негде сделать.
+ */
+export async function relayTargetVerdict(to) {
+  const addr = String(to).toLowerCase();
+
+  if (addr === String(DIAMOND_ADDR).toLowerCase()) return { ok: true, kind: 'diamond' };
+  if (cachedAsOurAgreement(addr))                  return { ok: true, kind: 'agreement' };
+
+  // Склейка одновременных: пятьдесят запросов об одном адресе стоят одного
+  // чтения цепи, а не пятидесяти. Неудачное чтение НЕ запоминается — обещание
+  // удаляется из карты, как только оно сойдётся.
+  let lookup = _agreementLookups.get(addr);
+  if (!lookup) {
+    lookup = readsAsOurAgreement(addr).finally(() => { _agreementLookups.delete(addr); });
+    _agreementLookups.set(addr, lookup);
+  }
+  const answer = await lookup;
+
+  if (answer === null) {
+    return {
+      ok: false, status: 503, code: 'chain_unavailable',
+      error: 'Cannot verify the target contract right now — the chain did not answer',
+    };
+  }
+  if (answer === false) {
+    return {
+      ok: false, status: 403, code: 'target_not_ours',
+      error: 'Target is not a Hexseal contract — the relayer pays gas only for its own',
+    };
+  }
+  rememberOurAgreement(addr);
+  return { ok: true, kind: 'agreement' };
+}
+
 // ⚠️  RELAY IS SPLIT: frontend currently calls Vercel /api/relay/route.ts, NOT this endpoint.
 // This endpoint is unused until VPS migration. On VPS: /api/relay/route.ts becomes a thin
 // proxy to this endpoint (localhost:3001/relay) and duplication disappears.
@@ -2077,6 +2208,13 @@ app.post('/relay', async (req, res) => {
     const MAX_GAS = 7_000_000n;
     if (BigInt(gas) > MAX_GAS) {
       return res.status(400).json({ error: `gas exceeds maximum (${MAX_GAS})` });
+    }
+
+    // Пункт 44: цель обязана быть нашей. Стоит ДО нонса, подписи и симуляции —
+    // три обращения к узлу, которых чужой контракт получать не должен.
+    const target = await relayTargetVerdict(to);
+    if (!target.ok) {
+      return res.status(target.status).json({ error: target.error, code: target.code });
     }
 
     const onChainNonce = await forwarder.getNonce(from);
