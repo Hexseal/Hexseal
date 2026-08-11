@@ -1051,6 +1051,18 @@ describe('ревью круг 1 (Important) — находка 1: режим н�
     expect(put.status).toBe(200);
     expect(listDisputeBags(agreement)).toHaveLength(1);
 
+    // Ревью, круг 3 (Minor): «было непусто» — тоже СКВОЗНОЙ HTTP-вызов, не
+    // только прямой listDisputeBags() выше. Без него пара «было непусто →
+    // стало пусто», которую этот тест доказывает, была бы измерена только
+    // наполовину через маршрут: конец («стало») — через listBox() ниже,
+    // начало («было») — только через внутреннюю функцию. Индекс здесь ещё
+    // цел, поэтому заодно и honest baseline для indexTrusted: true рядом с
+    // false после порчи.
+    const before = await listBox({ pass, agreement });
+    expect(before.status).toBe(200);
+    expect(before.body.bags).toHaveLength(1);
+    expect(before.body.indexTrusted).toBe(true);
+
     // Тот же приём, что test/bagStore.test.js использует для листалок
     // переписки («реконструированный мешок не числится ни за одним
     // отправителем»): снимок описи существует, но не разбирается как объект
