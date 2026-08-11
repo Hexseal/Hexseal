@@ -1,4 +1,4 @@
-import { pollForFact } from './pollForFact';
+import { pollForFact, DEFAULT_POLL_INTERVAL_MS } from './pollForFact';
 
 /**
  * Пункт 44, боевая половина: за чей контракт мы платим газ на Next-пути.
@@ -48,6 +48,28 @@ import { pollForFact } from './pollForFact';
  * «не наш»: гонка бывает именно там, а «не разбирается» (`null`) — другой
  * класс беды (сорванный ABI/селектор), который повтор не лечит и который
  * незачем облагать той же задержкой.
+ *
+ * РЕВЬЮ КРУГ 2, БЛОКЕР - ограничитель на этом же маршруте (route.ts)
+ * ключуется по from из тела запроса, БЕЗ проверки формата (у to есть
+ * isAddress, у from - нет вовсе): нападающему не нужны ни кошелёк, ни
+ * подпись, достаточно менять строку на каждый запрос. Опрос из круга 1
+ * делает это дорогим ВПЕРВЫЕ: без границы отрицательные ответы не
+ * запоминались вовсе (обоснование 5 исходного плана - "не наш" не
+ * монотонно), значит девятикратная цена опроса платилась заново на каждый
+ * запрос. Круг 2 чинит это ТРЕМЯ независимыми средствами:
+ *  1. бюджет опроса СЖАТ (9 попыток -> 4, см. RELAY_TARGET_POLL ниже) -
+ *     публично достижимая точка, где вызывающий не доказал НИЧЕГО (в отличие
+ *     от остальных мест pollForFact.ts - там опрос идёт ПОСЛЕ собственного
+ *     действия вызывающего, его нонса, его транзакции);
+ *  2. заведён КОРОТКИЙ отрицательный кэш (RELAY_TARGET_NEGATIVE_CACHE,
+ *     секунды, не часы) - честной гонке не мешает, а повторный спам одним
+ *     адресом убирает почти целиком; автор плана пересмотрел на круге 2
+ *     обоснование 5 исходного плана ("не наш" никогда не кэшируем) именно
+ *     под этим углом - TTL короткий, а не вечный, и взвешен против цены
+ *     опроса на каждый запрос;
+ *  3. НАСТОЯЩИЙ ограничитель ставится в route.ts - по IP (переиспользует
+ *     lib/rpcProxy.ts: requestSourceIp, checkRpcRateLimit), а не по строке,
+ *     которую выбирает сам нападающий.
  */
 
 /** Ровно те же роды исхода, что у релеерной половины. */
@@ -101,9 +123,8 @@ export const REGISTRY_RECORD_ABI = [
   },
 ] as const;
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-
-// Кэшируем ТОЛЬКО положительные ответы: «наш агримент» монотонно (реестр
+// Кэшируем ТОЛЬКО положительные ответы (долгий срок) и, с круга 2 ревью,
+// коротко — отрицательные тоже: «наш агримент» монотонно (реестр
 // записи не удаляет), «не наш» — нет (адрес станет нашим в ту секунду, когда
 // acceptApplicant/acceptRequest/deployAndFund зарегистрируют сделку). Срок и
 // размер — границы для нас самих; перезапуск оставляет кэш пустым, и это
@@ -116,40 +137,58 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const RELAY_TARGET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 export const RELAY_TARGET_CACHE_MAX = 1000;
 
-// Ревью круг 1, находка 1 — бюджет опроса при «false» ответе. Числа НЕ свои:
-// это то же RPC (drpc), то же измеренное отставание реплик, что уже
-// откалибровано для трёх других мест этого класса (`lib/pollForFact.ts`
-// DEFAULT_POLL_ATTEMPTS/DEFAULT_POLL_INTERVAL_MS, `lib/walletLock.ts`
-// NONCE_POLL_ATTEMPTS/_INTERVAL_MS) — 9 попыток по 750 мс, потолок ~6.75 с
-// (три блока Base Sepolia при замеренном отставании порядка одного блока).
-// Мутируемый ЭКСПОРТИРУЕМЫЙ объект (тот же приём, что RECEIPT_POLL в
-// relayer/app.js) — тесты сокращают `intervalMs` до нуля, чтобы не ждать
-// реальные секунды, не трогая `attempts` (иначе замеры чтений станут
-// неправдой про боевой бюджет).
-export const RELAY_TARGET_POLL = { attempts: 9, intervalMs: 750 };
+// Ревью круг 1, находка 1 -> круг 2, блокер: бюджет опроса при "false"
+// ответе. Интервал (750мс) взят готовым из lib/pollForFact.ts
+// (DEFAULT_POLL_INTERVAL_MS) - тот же RPC, то же измеренное отставание
+// реплик, тот же приём "проба - это round-trip, не время блока". ЧИСЛО
+// ПОПЫТОК больше НЕ копия чужого бюджета: `lib/walletLock.ts`
+// (NONCE_POLL_ATTEMPTS=9) и `relayer/app.js` (RECEIPT_POLL=24) опрашивают
+// ПОСЛЕ собственного действия вызывающего (его нонс, его транзакция) - редкая,
+// доказанная точка. Этот вызов - публично достижимая точка, где вызывающий
+// не доказал ничего. Взято по факту: сцена "отстаёт" (shared/relay-target-
+// scenes.json) замеряет наблюдаемый лаг в 3 чтения; 4 попытки дают тот же
+// запас, что дал бы четвёртый прецедент, если бы он тут был уместен - без
+// утроения, которое отличало старые 9 от однократно измеренного отставания.
+// Мутируемый экспортируемый объект (тот же приём, что RECEIPT_POLL в
+// relayer/app.js) - тесты сокращают `intervalMs` до нуля, не трогая
+// `attempts` (иначе замеры чтений станут неправдой про боевой бюджет).
+export const RELAY_TARGET_POLL = { attempts: 4, intervalMs: DEFAULT_POLL_INTERVAL_MS };
+
+// Ревью круг 2, блокер (пункт 2 из трёх). Короткий отрицательный кэш - автор
+// плана пересмотрел на этом круге обоснование 5 исходного плана ("не наш"
+// никогда не кэшируем): при полном опросе (RELAY_TARGET_POLL.attempts чтений)
+// каждый повторный запрос к тому же чужому адресу платил ту же цену заново -
+// раньше это стоило 1 чтение на запрос, теперь, с опросом, стоило бы
+// attempts чтений на запрос. Секунды, не часы: честная гонка (свежий
+// Agreement, отставшая реплика) решается за один опрос, самое большее - за
+// следующий запрос уже после истечения кэша; спам ОДНИМ адресом почти
+// целиком перестаёт стоить читений.
+export const RELAY_TARGET_NEGATIVE_CACHE = { ttlMs: 5_000 };
 
 const _ourAgreements = new Map<string, number>();
+const _notOurAgreements = new Map<string, number>();
 const _agreementLookups = new Map<string, Promise<boolean | null>>();
 
 export function _resetRelayTargetCacheForTest(): void {
   _ourAgreements.clear();
+  _notOurAgreements.clear();
   _agreementLookups.clear();
 }
 
-function rememberOurAgreement(key: string): void {
-  _ourAgreements.delete(key);
-  _ourAgreements.set(key, Date.now() + RELAY_TARGET_CACHE_TTL_MS);
-  while (_ourAgreements.size > RELAY_TARGET_CACHE_MAX) {
-    const oldest = _ourAgreements.keys().next().value;
+function rememberVerdict(map: Map<string, number>, key: string, ttlMs: number): void {
+  map.delete(key);
+  map.set(key, Date.now() + ttlMs);
+  while (map.size > RELAY_TARGET_CACHE_MAX) {
+    const oldest = map.keys().next().value;
     if (oldest === undefined) break;
-    _ourAgreements.delete(oldest);
+    map.delete(oldest);
   }
 }
 
-function cachedAsOurAgreement(key: string): boolean {
-  const until = _ourAgreements.get(key);
+function cachedVerdict(map: Map<string, number>, key: string): boolean {
+  const until = map.get(key);
   if (until === undefined) return false;
-  if (until <= Date.now()) { _ourAgreements.delete(key); return false; }
+  if (until <= Date.now()) { map.delete(key); return false; }
   return true;
 }
 
@@ -162,6 +201,16 @@ function cachedAsOurAgreement(key: string): boolean {
  * гонка (сеть легла или ABI разъехался), и `pollForFact` бросок на ПЕРВОЙ
  * попытке отдаёт наружу без единой лишней попытки (см. вызывающего ниже),
  * сохраняя ту же цену в один read, что была до этой правки.
+ *
+ * Ревью круг 2, находка 2: подпорка `client !== ZERO_ADDRESS` УБРАНА.
+ * Автор плана отменил решение исходной задачи (обоснование 3) на этом круге:
+ * `RegistryFacet.register()` (`src/RegistryFacet.sol:141-148`) пишет всю
+ * структуру ОДНИМ присваиванием — значит `client != 0` при `agreement !=
+ * addr` СТРУКТУРНО недостижим по коду контракта, не «маловероятен». Хуже
+ * того: подпорка регистронезависима (сравнение с адресом из одних нулей) и
+ * спасала бы исход при ЛЮБОМ регистре — то есть маскировала `.toLowerCase()`
+ * у `agreement` мёртвым замком ДАЖЕ на checksum-фикстурах кругa 1. Убрана —
+ * `agreement === addr` стала единственной несущей проверкой.
  */
 async function readOnce(addr: string, readRecord: RegistryRecordReader): Promise<boolean> {
   const raw = await readRecord(addr as `0x${string}`);
@@ -174,7 +223,7 @@ async function readOnce(addr: string, readRecord: RegistryRecordReader): Promise
   }
   // ⚠️ АДРЕС, а не статус: RegistryStorage.AgreementStatus.ACTIVE == 0, и
   // нулевая запись незнакомого адреса выглядит «активной».
-  return agreement === addr || client !== ZERO_ADDRESS;
+  return agreement === addr;
 }
 
 /**
@@ -221,7 +270,17 @@ export async function relayTargetVerdict(
   // константой модуля, значит кэш не имеет права молчаливо доверять записи,
   // сделанной под ДРУГИМ диамондом (переживший процесс редеплой).
   const key = `${diamondLower}:${addr}`;
-  if (cachedAsOurAgreement(key)) return { ok: true, kind: 'agreement' };
+  if (cachedVerdict(_ourAgreements, key)) return { ok: true, kind: 'agreement' };
+
+  // Ревью круг 2, блокер (пункт 2): короткий отрицательный кэш — до полного
+  // опроса, не после кэша положительных. Секунды, не часы (см. докстринг
+  // RELAY_TARGET_NEGATIVE_CACHE выше).
+  if (cachedVerdict(_notOurAgreements, key)) {
+    return {
+      ok: false, status: 403, code: 'target_not_ours',
+      error: 'Target is not a Hexseal contract — the relayer pays gas only for its own',
+    };
+  }
 
   let lookup = _agreementLookups.get(key);
   if (!lookup) {
@@ -238,11 +297,12 @@ export async function relayTargetVerdict(
     };
   }
   if (answer === false) {
+    rememberVerdict(_notOurAgreements, key, RELAY_TARGET_NEGATIVE_CACHE.ttlMs);
     return {
       ok: false, status: 403, code: 'target_not_ours',
       error: 'Target is not a Hexseal contract — the relayer pays gas only for its own',
     };
   }
-  rememberOurAgreement(key);
+  rememberVerdict(_ourAgreements, key, RELAY_TARGET_CACHE_TTL_MS);
   return { ok: true, kind: 'agreement' };
 }

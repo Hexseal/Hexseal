@@ -16,6 +16,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { appChain, appRpcUrl } from '@/config/chain';
 import { CONTRACTS } from '@/config/contracts';
 import { relayTargetVerdict, REGISTRY_RECORD_ABI } from '@/lib/relayTarget';
+import { requestSourceIp, checkRpcRateLimit, type RateLimitStore } from '@/lib/rpcProxy';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -177,6 +178,34 @@ function checkRateLimit(address: string): boolean {
   return true;
 }
 
+// ─── Ревью круг 2, блокер (пункт 3 из трёх): ограничитель по IP ────────────
+//
+// checkRateLimit(from) выше ключуется СТРОКОЙ ИЗ ТЕЛА ЗАПРОСА — `from` не
+// проверяется на формат адреса (в отличие от `to`, см. isAddress ниже), а
+// подпись проверяется ЗНАЧИТЕЛЬНО ПОЗЖЕ. Значит нападающему не нужны ни
+// кошелёк, ни подпись, ни даже корректный адрес — достаточно менять строку
+// `from` на каждый запрос, и лимит по кошельку не ограничивает НИЧЕГО.
+// Опрос из круга 1 (RELAY_TARGET_POLL, lib/relayTarget.ts) впервые сделал
+// это дорогим: до 4 чтений реестра на КАЖДЫЙ отказ. Это тот самый ключ,
+// который выбирает сам нападающий — недопустимо, закрывается здесь.
+//
+// Переиспользует lib/rpcProxy.ts (requestSourceIp — разбор адреса за
+// Cloudflare: CF-Connecting-IP, последний хоп X-Forwarded-For;
+// checkRpcRateLimit — то же окно-счётчик, что у /api/rpc), а не второй
+// самописный ограничитель. Свой ПОТОЛОК — не RPC_RATE_MAX=120: та цифра
+// калибрована под ЧТЕНИЯ (/api/rpc опрашивается фоном десятки раз в минуту
+// НА ВКЛАДКУ, см. её докстринг). Этот маршрут — запись ДЕЙСТВИЯ, редкая по
+// своей природе; потолок — тот же порядок, что у checkRateLimit(from) по
+// кошельку (10/мин), умноженный на разумное число одновременных легитимных
+// отправителей за одним IP (офис/NAT/семья, тот же расчёт, что и у
+// RPC_RATE_MAX, но с базой поменьше — здесь не фоновый опрос, а нажатие
+// кнопки человеком).
+const RELAY_IP_RATE_MAX = 30;
+const _ipRateStore: RateLimitStore = new Map();
+function checkIpRateLimit(ip: string): boolean {
+  return checkRpcRateLimit(_ipRateStore, ip, RELAY_IP_RATE_MAX);
+}
+
 // ─── Request type ────────────────────────────────────────────────────────────
 
 type ForwardRequest = {
@@ -203,6 +232,17 @@ type ForwardRequest = {
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Ревью круг 2, блокер (пункт 3): ограничитель по IP — ПЕРВЫМ ────────────
+    // До разбора тела: неважно, что нападающий пришлёт (пустое тело, мусор,
+    // меняющийся `from`) — сверх лимита IP не проходит дальше вовсе.
+    const sourceIp = requestSourceIp(req.headers);
+    if (!checkIpRateLimit(sourceIp)) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded (IP). Please slow down.' },
+        { status: 429, headers: { 'Retry-After': '60' } }
+      );
+    }
+
     // ── Parse body ──────────────────────────────────────────────────────────
     let body: Partial<ForwardRequest>;
     try {

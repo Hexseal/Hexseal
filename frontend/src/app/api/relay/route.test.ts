@@ -21,6 +21,16 @@
  * в `readOnce` (relayTarget.ts) МЁРТВЫМ замком (находка 2) — убери её, тесты не
  * заметят, потому что запись УЖЕ была строчной и совпадала без нормализации.
  * Checksum заставляет нормализацию реально что-то делать.
+ *
+ * ⚠️ РЕВЬЮ КРУГ 2, БЛОКЕР. `checkRateLimit(from)` (route.ts) ключуется строкой
+ * из тела запроса БЕЗ проверки формата — нападающему не нужны ни кошелёк, ни
+ * подпись, только менять `from`. Опрос круга 1 впервые сделал это дорогим (до
+ * 4 чтений реестра на КАЖДЫЙ отказ). Три средства: бюджет опроса сжат (9→4),
+ * короткий отрицательный кэш (секунды), и — вот тут, в этом файле — НАСТОЯЩИЙ
+ * ограничитель по IP (`@/lib/rpcProxy`: `requestSourceIp`+`checkRpcRateLimit`,
+ * переиспользованы, не написаны заново). ⚠️ Каждый вызов `отправить()` ниже
+ * получает УНИКАЛЬНЫЙ IP по умолчанию — иначе файл упёрся бы в 429 от
+ * ЭТОГО ЖЕ лимитера на пробеге всех сцен, и это была бы не та причина.
  */
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -85,14 +95,14 @@ vi.mock('viem', async (importActual) => {
 const { POST } = await import('./route');
 const {
   _resetRelayTargetCacheForTest, relayTargetVerdict, REGISTRY_RECORD_ABI,
-  RELAY_TARGET_POLL, RELAY_TARGET_CACHE_MAX,
+  RELAY_TARGET_POLL, RELAY_TARGET_CACHE_MAX, RELAY_TARGET_NEGATIVE_CACHE,
 } = await import('@/lib/relayTarget');
 const { CONTRACTS } = await import('@/config/contracts');
 // Настоящий decodeFunctionResult viem — `vi.mock('viem', …)` выше подменяет
 // только createPublicClient/createWalletClient, остальное идёт из `...actual`.
 const { decodeFunctionResult, getAddress } = await import('viem');
 
-// Бюджет опроса задан в lib/relayTarget.ts (attempts=9, intervalMs=750) —
+// Бюджет опроса задан в lib/relayTarget.ts (attempts=4, intervalMs=750) —
 // проверен self-check тестом ниже ДО того, как эта строка его меняет; здесь
 // только убираем реальный сон, чтобы файл не ждал секунды на отказанных целях.
 const БЮДЖЕТ_ПО_УМОЛЧАНИЮ = { ...RELAY_TARGET_POLL };
@@ -155,9 +165,17 @@ function поднятьЦепь({
 // Ограничитель маршрута — 10/мин ПО КОШЕЛЬКУ from (route.ts:166-177), карта
 // живёт в модуле и между тестами не сбрасывается. Свой кошелёк на каждый
 // запрос: иначе файл упёрся бы в 429 и покраснел не по той причине.
+//
+// Ревью круг 2: с этого круга ЕСТЬ и второй, IP-ограничитель (route.ts,
+// RELAY_IP_RATE_MAX=30), с тем же свойством «карта не сбрасывается между
+// тестами». Свой IP на каждый запрос по умолчанию — по той же причине, что и
+// свой кошелёк; `ip` можно передать явно там, где ограничитель IP — то, что
+// проверяется.
 let счётчикКошельков = 0;
-function отправить(to: string, extra: Record<string, unknown> = {}) {
+let счётчикIP = 0;
+function отправить(to: string, extra: Record<string, unknown> = {}, ip?: string) {
   счётчикКошельков += 1;
+  счётчикIP += 1;
   const body = {
     from: `0x${String(счётчикКошельков).padStart(40, '0')}`,
     to,
@@ -170,7 +188,10 @@ function отправить(to: string, extra: Record<string, unknown> = {}) {
   };
   return POST(new Request('http://localhost/api/relay', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-for': ip ?? `198.51.100.${(счётчикIP % 65000) + 1}-${счётчикIP}`,
+    },
     body: JSON.stringify(body),
   }) as never);
 }
@@ -192,9 +213,13 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     expect(RELAY_TARGET_CACHE_MAX).toBe(ДОГОВОР.кэшРазмер);
   });
 
-  it('бюджет опроса при отставании реплики — 9 попыток по 750 мс, тот же порядок, что у RECEIPT_POLL (релеер) и NONCE_POLL_* (walletLock.ts)', () => {
-    expect(БЮДЖЕТ_ПО_УМОЛЧАНИЮ.attempts).toBe(9);
+  it('бюджет опроса при отставании реплики — 4 попытки по 750 мс, взято по факту наблюдаемого лага, не скопировано у мест с доказанным вызывающим', () => {
+    expect(БЮДЖЕТ_ПО_УМОЛЧАНИЮ.attempts).toBe(4);
     expect(БЮДЖЕТ_ПО_УМОЛЧАНИЮ.intervalMs).toBe(750);
+  });
+
+  it('отрицательный кэш — секунды, не часы', () => {
+    expect(RELAY_TARGET_NEGATIVE_CACHE.ttlMs).toBe(5_000);
   });
 
   for (const сцена of СЦЕНЫ) {
@@ -272,16 +297,40 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     expect(цепь.чтенийРеестра).toBe(2);
   });
 
-  it('чужой адрес НЕ запоминается: оба раза 403 и оба раза полный опрос цепи', async () => {
-    // Каждый запрос теперь стоит ПОЛНОГО бюджета опроса (9), не одного чтения
-    // — цена ревью-круг-1-находки-1: детерминированно чужой адрес не
-    // становится «нашим» ни на какой попытке, опрос исчерпывается целиком.
+  it('чужой адрес запоминается НА КОРОТКИЙ СРОК: второй запрос сразу — из кэша, чтения нет', async () => {
+    // Ревью круг 2, блокер (пункт 2): раньше «не наш» не запоминался вовсе —
+    // каждый повторный запрос платил полный опрос заново. Реальный (не
+    // сжатый) TTL=5с — «сразу» здесь означает миллисекунды выполнения теста.
     const первый = await отправить(FOREIGN);
-    const второй = await отправить(FOREIGN);
-
     expect(первый.status).toBe(403);
+    const послеПервого = цепь.чтенийРеестра;
+    expect(послеПервого).toBe(RELAY_TARGET_POLL.attempts);
+
+    const второй = await отправить(FOREIGN);
     expect(второй.status).toBe(403);
-    expect(цепь.чтенийРеестра).toBe(2 * RELAY_TARGET_POLL.attempts);
+    expect(цепь.чтенийРеестра).toBe(послеПервого); // из отрицательного кэша, чтения нет
+  });
+
+  it('отрицательный кэш ИСТЕКАЕТ: после короткого TTL — опрос снова, а не запрет навсегда', async () => {
+    // TTL сжат ЛОКАЛЬНО ДО первой записи в кэш (тот же приём, что
+    // RELAY_TARGET_POLL выше) — иначе уже сохранённая запись не заметила бы
+    // новое число.
+    const исходныйTtl = RELAY_TARGET_NEGATIVE_CACHE.ttlMs;
+    RELAY_TARGET_NEGATIVE_CACHE.ttlMs = 1;
+    try {
+      const первый = await отправить(FOREIGN);
+      expect(первый.status).toBe(403);
+      const послеПервого = цепь.чтенийРеестра;
+      expect(послеПервого).toBe(RELAY_TARGET_POLL.attempts);
+
+      await new Promise((r) => setTimeout(r, 20)); // переживаем TTL=1мс
+
+      const второй = await отправить(FOREIGN);
+      expect(второй.status).toBe(403);
+      expect(цепь.чтенийРеестра).toBe(послеПервого + RELAY_TARGET_POLL.attempts); // кэш истёк
+    } finally {
+      RELAY_TARGET_NEGATIVE_CACHE.ttlMs = исходныйTtl;
+    }
   });
 
   it('отставшая реплика: два пустых чтения, третье видит запись — пускаем БЕЗ повторной отправки согласия', async () => {
@@ -376,5 +425,48 @@ describe('Пункт 44 (Next, боевой путь): платим газ то�
     expect(Array.isArray(decoded)).toBe(false);
     expect(typeof decoded.agreement).toBe('string');
     expect((decoded.agreement as string).toLowerCase()).toBe(AGREEMENT.toLowerCase());
+  });
+
+  // ── Ревью круг 2, блокер (пункт 3): ограничитель по IP ──────────────────────
+  describe('ограничитель по IP — настоящий, а не по строке, которую выбирает нападающий', () => {
+    it('30 запросов с ОДНОГО IP проходят, 31-й получает 429 — ДАЖЕ с разными кошельками и БЕЗ единого чтения реестра', async () => {
+      // Каждый запрос — свой `from` (как обычно даёт отправить()), но ОДИН и
+      // тот же IP: это ровно сценарий находки — нападающему не нужен ни
+      // кошелёк, ни подпись, только смена `from`. Если бы ограничивал только
+      // checkRateLimit(from), все 31 прошли бы — каждый `from` свой.
+      const ip = '203.0.113.7';
+      const ответы: number[] = [];
+      for (let i = 0; i < 31; i++) {
+        const res = await отправить(FOREIGN, {}, ip);
+        ответы.push(res.status);
+      }
+
+      const последний = ответы[ответы.length - 1];
+      expect(последний).toBe(429);
+      expect(ответы.slice(0, 30).every((s) => s === 403)).toBe(true); // цель чужая — но ограничитель их пропустил
+      // eslint-disable-next-line no-console
+      console.info(`[замер] с одного IP: 30 прошли до ограничителя цели, 31-й — 429 от лимитера`);
+    });
+
+    it('запрос сверх лимита IP не тратит НИ ОДНОГО чтения реестра — 429 раньше замка цели', async () => {
+      const ip = '203.0.113.8';
+      for (let i = 0; i < 30; i++) await отправить(AGREEMENT, {}, ip);
+      цепь.чтенийРеестра = 0; // считаем только 31-й запрос
+      цепь.записей = 0;
+
+      const res = await отправить(AGREEMENT, {}, ip);
+
+      expect(res.status).toBe(429);
+      expect(цепь.чтенийРеестра).toBe(0);
+      expect(цепь.записей).toBe(0);
+    });
+
+    it('РАЗНЫЕ IP не делят один бюджет — сосед не платит за нападающего', async () => {
+      const нападающий = '203.0.113.9';
+      for (let i = 0; i < 31; i++) await отправить(FOREIGN, {}, нападающий); // исчерпал свой лимит
+
+      const сосед = await отправить(AGREEMENT, {}, '203.0.113.10');
+      expect(сосед.status).toBe(200); // свежий IP, свой бюджет цел
+    });
   });
 });
