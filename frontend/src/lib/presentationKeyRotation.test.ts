@@ -388,6 +388,42 @@ describe('4в-2/48: собеседник честно сменил ключ', ()
     }
   }, 60_000);
 
+  it('R14: мусорное заверение с огромным issuedAt не становится «нынешним» для стороны', async () => {
+    // Ревью, круг 1. `issuedAt` у заверения с НЕСОШЕДШЕЙСЯ подписью подписан
+    // только сам собой — значит предъявитель волен написать туда что угодно.
+    // Пока заверение на адрес было ОДНО, ручки не существовало; список её
+    // создаёт, и мерится здесь именно она.
+    await bobChain();
+    const forged: ChatKeyAttestation = { ...bobAttOld, issuedAt: T0 + 10 * YEAR_MS };
+    // Сцена не вырождена: подделка НЕ годна (правка `issuedAt` рвёт подпись
+    // кошелька) и она СВЕЖЕЕ настоящего — то есть `newest` по всем записям
+    // выбрал бы именно её.
+    expect(await verifyChatKeyAttestation(forged), 'подделка прошла как годная').not.toBe('ok');
+    expect(forged.issuedAt, 'подделка не свежее настоящего — ручка не мерится')
+      .toBeGreaterThan(bobAttNew.issuedAt);
+
+    const c = await mustBuild({ otherAttestations: [bobAttNew, forged] });
+    expect(c.attestations, 'подделка не доехала — мерить нечего').toHaveLength(3);
+
+    // Кадр сообщения #0 убираем: тогда `readOne` возвращается сразу, ДО разбора
+    // кадра, и несёт ровно вердикт СТОРОНЫ — единственное место, где выбор
+    // «нынешнего» заверения наблюдаем.
+    const { signature: _drop, ...unsigned } = c;
+    const gutted = await resign({
+      ...unsigned,
+      frames: unsigned.frames.filter(f => f.seq !== 0),
+      keys: unsigned.keys.filter(k => k.seq !== 0),
+    });
+    const view = await readPresentation(gutted, arbiter.keypair);
+    expect(view.container).toBe('ok');
+
+    const orphan = view.messages.find(m => m.seq === 0)!;
+    expect(orphan.frame.ok, 'кадр всё-таки разобрался — сцена не та').toBe(false);
+    // Годное заверение у стороны есть, и вердикт стороны обязан быть ЕГО, а не
+    // подделки, которую предъявитель пометил будущим числом.
+    expect(orphan.attestation, 'мусорное заверение стало «нынешним» для стороны').toBe('ok');
+  }, 60_000);
+
   it('R12 (ЗАМЕР): выбор по паре не покупает лишних проверок — числа названы', async () => {
     await bobChain();
     const c = await mustBuild();

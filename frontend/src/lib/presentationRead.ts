@@ -720,7 +720,15 @@ export async function readPresentation(
     }
 
     const rows = bySide.get(sender) ?? [];
-    const current = newest(rows);
+    // ⚠️ ГОДНЫЕ ИМЕЮТ ПРЕИМУЩЕСТВО, И ЭТО НЕ ВКУСОВЩИНА (ревью, круг 1).
+    // `issuedAt` у заверения с НЕСОШЕДШЕЙСЯ подписью — поле свободное: оно
+    // подписано только само собой. Простое `newest(rows)` давало предъявителю
+    // ручку: приложи мусорное заверение с огромным `issuedAt` — оно станет
+    // «нынешним» для стороны, и сообщения, у которых кадр не разобрался вовсе,
+    // получат `bad_signature`/`wrong_address` вместо честного `ok`. Прежнее
+    // правило «одно заверение на адрес» эту ручку отрицало по построению, и
+    // терять её на переходе к списку нельзя. Замок — R14.
+    const current = newest(rows.filter(r => r.verdict === 'ok')) ?? newest(rows);
     const ask = signerFor(sender);
     for (const link of pc.links) {
       const key = seqKey(sender, link.seq);
