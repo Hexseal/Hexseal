@@ -7,6 +7,7 @@ import { DIAMOND_ABI } from '@/config/contracts';
 import { sendGasless, requestServiceGasless } from '@/lib/relay';
 import { refreshAfterTx } from '@/lib/subgraphSync';
 import { DealActionBar } from '@/components/DealActionBar';
+import { PresentToArbiter } from '@/components/PresentToArbiter';
 import { usePreDealBar } from '@/hooks/usePreDealBar';
 import { toast } from 'react-hot-toast';
 import { useTranslations } from 'next-intl';
@@ -1372,6 +1373,19 @@ export function ChatPanel({ recipientAddress, onBack, dealContexts, dealsLoading
               <ShieldCheck className="w-3 h-3 flex-shrink-0" />
               <span className="hidden sm:inline">{t("chat.privacy_badge_title")}</span>
             </button>
+            {/* Кнопка предъявления стоит ВПЛОТНУЮ к бейджу намеренно: третья
+                строка бейджа обещает предъявление (`chat.privacy_badge_dispute`),
+                и до этой задачи обещание жило в двух сантиметрах от места, где
+                механизма не было вовсе (пункт 50.6 открытых находок). Показывать
+                ли кнопку, решает она сама — по СВОЕМУ чтению статуса из цепи. */}
+            {dealContext && session && (
+              <PresentToArbiter
+                agreement={dealContext.agreementAddr as `0x${string}`}
+                peer={recipientAddress as `0x${string}`}
+                messages={messages}
+                session={session}
+              />
+            )}
             <button onClick={toggleSearch}
               className={`p-1.5 rounded-[10px] transition-colors ${
                 showSearch ? 'bg-white/[0.08] text-white/70' : 'text-white/30 hover:text-white/60 hover:bg-white/[0.06]'

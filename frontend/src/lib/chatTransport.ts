@@ -167,7 +167,10 @@ import { isSignatureDeferred } from '@/lib/chatSignatureGate';
 // молча (у одного модуля хвостовой слэш срезан, у другого нет).
 export const RELAYER_URL = (process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
-const BAG_PASS_HEADER = 'x-bag-pass';
+/** Заголовок пропуска. Экспортирован ради `disputeBox.ts` (ящик спора ходит
+ *  ТЕМ ЖЕ пропуском, договор шапки плана 4в-2): вторая копия имени означала бы
+ *  пропуск в другом заголовке и 401 на живом маршруте. */
+export const BAG_PASS_HEADER = 'x-bag-pass';
 
 /**
  * `encodeURIComponent` для одного URL-сегмента — с одним отказом вместо
@@ -187,7 +190,10 @@ const BAG_PASS_HEADER = 'x-bag-pass';
  * `new URL('.../bags/../x').pathname` — оба теряют `/bags/` из пути.
  * Единственная рабочая защита — не пускать такой сегмент в путь ВООБЩЕ.
  */
-function encodePathSegment(segment: string): string {
+/** Экспортирована ради `disputeBox.ts`: у ящика спора в пути ДВА чужих
+ *  сегмента (агримент и имя мешка), и защита от `..` обязана быть той же
+ *  самой — разбор выше объясняет, почему `%2E%2E` её не заменяет. */
+export function encodePathSegment(segment: string): string {
   if (segment === '.' || segment === '..') {
     throw new BagTransportError(`Refusing to build a request with a "${segment}" path segment`);
   }
@@ -486,7 +492,12 @@ export function _resetReadBudgetForTest(): void {
  * зависит ни от пропуска, ни от хранилища — см. `MAX_BAG_DOWNLOADS_PER_TICK`
  * в `usePairChat.ts`.
  */
-async function reserveReadForPass(pass: string): Promise<void> {
+/** ⚠️ Экспортирована ради `disputeBox.ts`, и это несущее: бюджет чтения —
+ *  АДРЕСНЫЙ и ОБЩИЙ на все роды чтения, как на складе. Свой счёт у ящика
+ *  спора означал бы два независимых счётчика против одного серверного, то
+ *  есть бюджет перестал бы значить что-либо ровно там, где он и заводился
+ *  (замер потопа: ящик арбитра кончается на 99-м мешке из 122). */
+export async function reserveReadForPass(pass: string): Promise<void> {
   const addr = parseBagPassAddress(pass);
   if (!addr) return;
   if (!(await reserveBagRead(addr))) throw new BagBudgetError();
@@ -614,7 +625,10 @@ function retryAfterSecOf(res: Response): number {
  * C1 в отчёте задачи). `requestBagPass` сама этот параметр не передаёт: она
  * ещё ничего не закэшировала, выбрасывать нечего.
  */
-async function throwForFailedResponse(res: Response, fallback: string, passToForget?: string): Promise<never> {
+/** Экспортирована ради `disputeBox.ts`: 401 обязан выбрасывать протухший
+ *  пропуск из кэша на ЛЮБОМ маршруте, иначе человек получает отказ до конца
+ *  жизни вкладки. */
+export async function throwForFailedResponse(res: Response, fallback: string, passToForget?: string): Promise<never> {
   const body = await parseErrorBody(res);
   if (res.status === 401) {
     if (passToForget) forgetBagPassByToken(passToForget);
@@ -713,6 +727,21 @@ export async function requestBagPass(
   }).catch(() => {}); // не создавать необработанное отклонение здесь — оно уже летит из `promise` самого
 
   return promise;
+}
+
+/**
+ * Пропуск, КОТОРЫЙ УЖЕ ЕСТЬ, — без единого окна кошелька.
+ *
+ * ⚠️ ЗАЧЕМ ОТДЕЛЬНОЕ ИМЯ. `requestBagPass` на холодном кэше подписывает
+ * фразу, то есть будит кошелёк. Опрос описи ящика («забрал ли арбитр»,
+ * 4в-2, Задача 6) идёт по такту, и требовать за него подпись каждые
+ * тридцать секунд нельзя. Здесь читается ровно тот же двухслойный кэш
+ * (память модуля + кладовая), что и внутри `requestBagPass`, с той же
+ * проверкой истечения: `null` означает «спросить придётся у человека», и
+ * тогда опрос просто не идёт.
+ */
+export function peekBagPass(address: `0x${string}`): string | null {
+  return cachedPass(address.toLowerCase(), Math.floor(Date.now() / 1000))?.pass ?? null;
 }
 
 /** Только для тестов: забыть весь кэш пропусков и записи "в полёте" между
