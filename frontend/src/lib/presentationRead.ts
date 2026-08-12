@@ -114,6 +114,29 @@ export interface PresentedMessage {
    *  нет ни строки. Без этого вопроса цепочка, сочинённая предъявителем за
    *  собеседника свежей парой Ed25519, доезжала бы до арбитра с `ok`. */
   attestation: AttestationVerdict;
+  /**
+   * КОГДА заверено то заверение, под которым разобран ЭТОТ кадр (`issuedAt`,
+   * мс). `undefined` — заверение под кадр не выбиралось вовсе: кадр не
+   * разобрался, либо годного заверения у стороны нет.
+   *
+   * ⚠️ ПОЛЕ ЗАВЕДЕНО ПО НАХОДКЕ 51 (`docs/OPEN-ITEMS.md`), И ОНО НЕ УКРАШЕНИЕ.
+   * Заверение ОТОЗВАТЬ НЕЧЕМ: поля отзыва в нём нет, единственная граница —
+   * `ATTESTATION_MAX_AGE_MS`, то есть год. До пункта 48 отзыв работал
+   * случайно (контейнер вёз одно заверение на сторону), после — все
+   * исторически заверённые пары дают `ok` ОДНОВРЕМЕННО. Сцена: у человека
+   * украли устройство с сохранённым сеансом, он восстановился по коду и
+   * заверил новую пару; вор подписывает прежней, и прежнее заверение живо.
+   * Арбитр видит `ok` и на словах человека, и на словах вора — и развести их
+   * может ТОЛЬКО по дате заверения. Поэтому дата едет наружу, а экран арбитра
+   * обязан печатать «подписано ключом, заверённым тогда-то», а не «автор
+   * подтверждён».
+   *
+   * ⚠️ ВЫБОР ЗАВЕРЕНИЯ ЗДЕСЬ НЕ ПОВТОРЯЕТСЯ. Это `issuedAt` РОВНО ТОГО
+   * заверения, которое выбрал `signerFor` под названный кадром ключ. Свой
+   * поиск «самого свежего заверения этой стороны» назвал бы арбитру дату
+   * ДРУГОЙ пары — то есть ровно ту ошибку, ради которой поле заводится.
+   */
+  attestedAt?: number;
   frame: FrameVerdict;
   /** «У этого вложения ключ лежал в содержимом ОТКРЫТЫМ» (старая форма
    *  `keyHex`/`ivHex`). Поле ОБЯЗАТЕЛЬНОЕ, а не `?`, ровно потому, что забыть его
@@ -432,7 +455,9 @@ async function readOne(input: {
    *  ⚠️ ВЫБОР ЗАВЕРЕНИЯ НЕ ЗДЕСЬ. Решение «под какой ключ» принято один раз, в
    *  `readPresentation`; тут только вопрос и ответ — иначе выбор оказался бы в
    *  двух местах и разошёлся бы молча. */
-  signerFor: (claimed: Uint8Array) => Promise<{ verdict: AttestationVerdict; signKey: Uint8Array | null }>;
+  signerFor: (claimed: Uint8Array) => Promise<{
+    verdict: AttestationVerdict; signKey: Uint8Array | null; attestedAt: number | null;
+  }>;
   frameB64: string | undefined;
   sealed: SealedOneTimeKey | undefined;
   arbiterKeypair: ChatKeypair;
@@ -441,7 +466,15 @@ async function readOne(input: {
    *  открытия — потому что не пробовали. */
   mayOpen: boolean;
 }): Promise<PresentedMessage> {
-  const base = {
+  // ⚠️ `let`, А НЕ `const`, РАДИ ОДНОГО ПОЛЯ — `attestedAt` (находка 51).
+  // Дата заверения становится известна ровно там же, где вердикт пары: после
+  // `signerFor`. Дописать её в каждый из полутора десятка возвратов ниже
+  // значило бы завести полтора десятка мест, где её можно забыть; здесь она
+  // дописывается ОДИН раз, и все возвраты ПОСЛЕ выбора несут её сами, а все
+  // возвраты ДО — честно не несут (заверение под кадр ещё не выбрано).
+  let base: {
+    seq: number; sender: `0x${string}`; legacyAttachmentExposed: boolean; attestedAt?: number;
+  } = {
     seq: input.link.seq,
     sender: input.sender,
     legacyAttachmentExposed: false,
@@ -473,6 +506,9 @@ async function readOne(input: {
   // названный ключ (памятка — в `readPresentation`, замки — T33 и R12).
   const picked = await input.signerFor(decoded.signerPublicKey);
   attestation = picked.verdict;
+  // Дата ТОГО заверения, под которым разобран этот кадр (находка 51). `null` —
+  // годного заверения у стороны нет вовсе, и датировать нечего.
+  if (picked.attestedAt !== null) base = { ...base, attestedAt: picked.attestedAt };
 
   // ⚠️ Ключ подписи — ИЗ ЗАВЕРЕНИЯ ТОЙ ПАРЫ, КОТОРУЮ НАЗВАЛ КАДР (пункт 48).
   // ⚠️ `await` НЕСУЩИЙ: проверка асинхронна. Без него здесь лежал бы `Promise`,
@@ -630,18 +666,31 @@ export async function readPresentation(
    * где его нет. Своей сверки ключей, решающей вердикт, здесь нет ни строки.
    */
   const signerFor = (side: string) =>
-    async (claimed: Uint8Array): Promise<{ verdict: AttestationVerdict; signKey: Uint8Array | null }> => {
+    async (claimed: Uint8Array): Promise<{
+      verdict: AttestationVerdict; signKey: Uint8Array | null; attestedAt: number | null;
+    }> => {
       const claimedHex = hexFromBytes(claimed);
       const rows = bySide.get(side) ?? [];
       const okRows = rows.filter(r => r.verdict === 'ok');
       if (okRows.length === 0) {
         // Годного заверения у стороны нет вовсе: вердикт уже назван точнее
         // (`expired`, `bad_signature`, `absent`), уточнять его ключом нечем.
+        // Датировать тоже нечего: заверение, которое не годится, не датирует
+        // кадр — назвать его дату значило бы придать негодному вес (находка 51).
         const current = newest(rows);
-        return { verdict: current ? current.verdict : 'absent', signKey: null };
+        return { verdict: current ? current.verdict : 'absent', signKey: null, attestedAt: null };
       }
       const pick = okRows.find(r => r.signKeyHex === claimedHex) ?? newest(okRows)!;
-      return { verdict: await askForKeys(pick.att, claimedHex), signKey: pick.signKey };
+      // ⚠️ ДАТА БЕРЁТСЯ У ТОГО ЖЕ `pick`, что и ключ, — одной строкой ниже
+      // выбора и без второго поиска. Это и есть весь смысл находки 51: арбитру
+      // нужна дата ИМЕННО ТОЙ пары, которой назван кадр, а не самой свежей у
+      // стороны. У человека, восстановившегося по коду, этих пар две, и
+      // различить его слова от слов вора можно только по ним.
+      return {
+        verdict: await askForKeys(pick.att, claimedHex),
+        signKey: pick.signKey,
+        attestedAt: pick.att.issuedAt,
+      };
     };
 
   // 2. Подпись контейнера (§15.1). `crypto_box_seal` анонимен, поэтому личность

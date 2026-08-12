@@ -1,0 +1,410 @@
+"use client";
+
+/**
+ * ArbiterPresentations.tsx — пятая вкладка арбитра.
+ *
+ * ⚠️ КОШЕЛЬКА ЭТОТ ФАЙЛ НЕ ТРОГАЕТ. `signChatKey` и `getBoxPass` приезжают
+ * пропсами из `app/arbiter/page.tsx`, где подписи уже стоят под общим
+ * мьютексом. Причина не косметическая: `lib/signaturePaths.test.ts`
+ * перечисляет файлы с вызовом подписи ПОИМЁННО, и новый файл в списке — повод
+ * осознанно решать, по нажатию ли там подпись. Замер — мутации 13 и 15.
+ *
+ * ⚠️ НИЧЕГО НЕ ЧИТАЕТСЯ САМО. Ни описи, ни мешков, ни ключа — только по
+ * нажатию: чтение стоит КЛИЕНТСКОГО адресного бюджета (100/мин на весь склад,
+ * один на переписку и ящик — `BAG_READ_BUDGET_PER_MIN`; серверные потолки у
+ * них при этом РАЗНЫЕ — у ящика свой `DISPUTE_BOX_READ_RATE_MAX`), а ключ
+ * может стоить окна подписи.
+ *
+ * ⚠️ ЧТО ЗДЕСЬ ПРОВЕРЯЕТСЯ, А ЧТО НЕТ — НАЗЫВАЮ В САМОМ ФАЙЛЕ, а не только в
+ * отчёте. У фронта нет ни jsdom, ни `@testing-library` (`environment: 'node'`):
+ * нажатие кнопки не проверяется ничем, и что кнопка дошла ДО ГЛАЗ — не
+ * замеряется вовсе. Поэтому здесь два разных рода кода и два разных рода
+ * доверия:
+ *   — ТРИ ЧИСТЫЕ ЧАСТИ РАЗМЕТКИ (`BoxSummaryView`, `PresentationBagView`,
+ *     `BoxFailureView`) экспортируются наружу и запираются СТРУКТУРНО —
+ *     `components/arbiterPresentationsRender.test.tsx` рендерит их
+ *     `renderToStaticMarkup` и меряет, что решённое доехало до разметки, а
+ *     запрещённое в ней не появилось. Это проверка ТЕКСТА РАЗМЕТКИ, не
+ *     поведения;
+ *   — ВСЁ, ЧТО РЕШАЕТ, живёт в `lib/arbiterPresentations.ts` и запирается
+ *     по-настоящему, вызовом. В `DisputeBoxCard` ниже остаётся склейка:
+ *     последовательность вызовов и раскладка состояния. Она не сторожится
+ *     ничем, и это сказано вслух, а не выдано за проверенное.
+ */
+import { useCallback, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import Link from 'next/link';
+import type { PublicClient } from 'viem';
+import { Loader2, AlertTriangle, Inbox, MessageCircle, FileText, ShieldAlert } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { shortAddr } from '@/lib/utils';
+import { claimKeysFromSession, runGatedKeyAction, type GatedSignChatKey } from '@/lib/arbiterClaimKeys';
+import type { ChainChatKeys } from '@/lib/arbiterChatKey';
+import { listDisputeBox, fetchDisputeBag } from '@/lib/disputeBox';
+import { arbiterTurnOf } from '@/lib/arbiterTurn';
+import {
+  readDisputeBox, openArbiterBoxSession, isSessionAbsent,
+  arbitersBefore, deviceKeyVerdict, boxReadRefusal, BOX_READ_REFUSAL_KEYS,
+  attestationDateLabel,
+  type BoxReadRefusal, type DeviceKeyVerdict, type DisputeBoxReading,
+  type PresentedBag, type PresentedMessageView,
+} from '@/lib/arbiterPresentations';
+
+/** Пока `getDetails` дела не приехал, стороны неизвестны — ссылок в чат не рисуем. */
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+export interface ArbiterCase {
+  agreement: `0x${string}`;
+  client: `0x${string}`;
+  executor: `0x${string}`;
+}
+
+export interface ArbiterPresentationsTabProps {
+  cases: ArbiterCase[];
+  me?: `0x${string}`;
+  chainKeys: ChainChatKeys | null;
+  publicClient: PublicClient | undefined;
+  signChatKey: () => GatedSignChatKey | null;
+  getBoxPass: () => Promise<string>;
+}
+
+type BoxState =
+  | { kind: 'idle' }
+  | { kind: 'reading' }
+  | { kind: 'key_needed' }
+  // ⚠️ НЕ `message: string`. Текст ошибки транспорта человеку не показывается
+  // вовсе: он на английском, он про HTTP и он ничего не советует. Наружу едет
+  // РАЗОБРАННАЯ причина, у каждой свой ключ локали и свой совет.
+  | { kind: 'failed'; refusal: BoxReadRefusal }
+  | { kind: 'done'; reading: DisputeBoxReading; before: number | null; deviceKey: DeviceKeyVerdict };
+
+/* ─────────────────────────── чистая разметка ──────────────────────────── */
+
+/** Сводка по ящику. Чистая: всё решённое приезжает готовым. */
+export function BoxSummaryView({ reading, before, deviceKey }: {
+  reading: DisputeBoxReading; before: number | null; deviceKey: DeviceKeyVerdict;
+}) {
+  const t = useTranslations();
+  return (
+    <div className="space-y-2 text-xs text-white/50">
+      {/* ⚠️ «Спор ведёт другой» и «спор не ведёт никто» — РАЗНЫЕ новости, и
+          прочерк вместо адреса был бы третьей, несуществующей. После
+          развязки `_clearDisputeClaim` обнуляет клеймо, и у старого дела
+          арбитра в цепи нет вовсе — это законный конец, а не поломка.
+          ⚠️ И ОБЕ ГОВОРЯТ ПРО СЛОВО СЕРВЕРА, А НЕ ПРО ЦЕПЬ СИЮ СЕКУНДУ:
+          `arbiterNow` приезжает из кэша фактов релеера (15 с). Поэтому обе
+          надписи названы словом сервера и обе зовут вернуться через
+          полминуты — иначе арбитр, только что взявший спор, прочтёт «спор
+          ведёте не вы» как утверждение цепи и решит, что дело у него
+          отняли. */}
+      {!reading.mine && (
+        <p className="text-amber-300/85">
+          {reading.arbiterNow
+            ? t('arbiter.presentations_not_mine', { arbiter: shortAddr(reading.arbiterNow) })
+            : t('arbiter.presentations_box_closed')}
+        </p>
+      )}
+      {/* Сколько арбитров ДО него — факт цепи, и честное «не знаем» рядом. */}
+      <p>{before === null
+        ? t('arbiter.presentations_turn_unknown')
+        : t('arbiter.presentations_turn_known', { count: before })}</p>
+      {deviceKey === 'differs' && (
+        <p className="text-amber-300/85">{t('arbiter.presentations_device_key_differs')}</p>
+      )}
+      {/* Слово СЕРВЕРА, не цепи, — и это сказано в самой строке. */}
+      {reading.sealedForOthersDeclared > 0 && (
+        <p>{t('arbiter.presentations_sealed_for_others', { count: reading.sealedForOthersDeclared })}</p>
+      )}
+      {/* ⚠️ А ЭТО — ПОСЧИТАННОЕ, и без него «пусто» врало бы. Заголовка
+          `x-sealed-for` могло не быть вовсе (он законно необязателен), тогда
+          заявленных на других ноль, а нечитаемых — полный ящик. Два числа
+          стоят порознь и подписаны порознь: одно заявлено, другое измерено. */}
+      {reading.notOurs > 0 && (
+        <p>{t('arbiter.presentations_not_ours', { count: reading.notOurs })}</p>
+      )}
+      {reading.notOursFetched > 0 && (
+        <p>{t('arbiter.presentations_not_ours_fetched', { count: reading.notOursFetched })}</p>
+      )}
+      {reading.tried < reading.listed && reading.stop !== 'not_mine' && (
+        <p className="text-amber-300/85">
+          {t('arbiter.presentations_partial', { read: reading.tried, total: reading.listed })}
+        </p>
+      )}
+      {/* ⚠️ ТРЕТИЙ ОХРАННИК, ОБЯЗАТЕЛЬНЫЙ (ревью Задачи 1, круг 2).
+          `indexTrusted === false` значит: опись релеера терялась и
+          восстанавливалась с диска, восстановленные записи ящика НЕ несут
+          `deal`/`sealedFor` (взять неоткуда), выпадают из `listDisputeBags()`
+          насовсем — то есть `bags` мог прийти пустым (а с ним и
+          `notOurs === 0`, `sealedForOthersDeclared === 0`) НЕ потому, что
+          сторона ничего не предъявляла, а потому что опись перестраивалась.
+          Оба посчитанных стража молчат в этом случае одинаково — они меряют
+          то, что ВИДНО в ответе, а не то, что могло из него выпасть. */}
+      {reading.mine && !reading.indexTrusted && (
+        <p className="text-amber-300/85">{t('arbiter.presentations_index_rebuilt')}</p>
+      )}
+      {/* ⚠️ «Вам ничего не предъявили» — самая опасная надпись экрана: сказанная
+          не вовремя, она превращает «мы не смогли открыть» в «сторона молчала»
+          (§2.3 замысла запрещает это прямым текстом). Поэтому она подавляется,
+          если ящик пуст НЕ по обоим счётам: и по посчитанному (`notOurs`), и по
+          заявленному (`sealedForOthersDeclared`) — И ЕСЛИ ОПИСИ МОЖНО ДОВЕРЯТЬ
+          (`indexTrusted`): восстановленная с диска опись МОЛЧА даёт оба
+          посчитанных нуля, и без третьего условия «пусто» прозвучало бы там,
+          где сервер сам не уверен, что видит всё. */}
+      {reading.mine && reading.presentations.length === 0 && reading.stop === 'read_all'
+        && reading.notOurs === 0 && reading.sealedForOthersDeclared === 0
+        && reading.indexTrusted && (
+        <p>{t('arbiter.presentations_empty')}</p>
+      )}
+    </div>
+  );
+}
+
+/** Почему ящик не прочитался. Чистая: причина приезжает уже разобранной. */
+export function BoxFailureView({ refusal }: { refusal: BoxReadRefusal }) {
+  const t = useTranslations();
+  return (
+    <p className="text-xs text-red-300/85 flex items-start gap-1.5">
+      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+      {t(BOX_READ_REFUSAL_KEYS[refusal])}
+    </p>
+  );
+}
+
+function MessageRow({ m }: { m: PresentedMessageView }) {
+  const t = useTranslations();
+  return (
+    <li className="rounded-[10px] border border-white/[0.06] px-3 py-2 space-y-1">
+      <div className="flex items-center gap-2 text-[11px] text-white/35 font-mono">
+        <span>#{m.seq}</span><span>{shortAddr(m.sender)}</span>
+      </div>
+      {m.read && m.text !== null && <p className="text-sm text-white/80 whitespace-pre-wrap">{m.text}</p>}
+      {/* Имя, размер и ТИП — ровно то, что стороне обещано в предупреждении
+          Задачи 6 («уедут имя, размер и тип»). Не показать здесь тип значило
+          бы разойтись с тем, на что человек соглашался. Тип неизвестен —
+          прочерк, а не пустое место: пустое читается как «типа нет». */}
+      {m.file && (
+        <p className="text-[11px] text-white/45 flex items-center gap-1.5">
+          <FileText className="w-3 h-3" />
+          {t('arbiter.msg_file_fact', { name: m.file.name, size: m.file.size, mime: m.file.mime ?? '—' })}
+        </p>
+      )}
+      {m.legacyAttachmentExposed && (
+        <p className="text-[11px] text-amber-300/85">{t('arbiter.msg_legacy_key_exposed')}</p>
+      )}
+      {!m.read && (
+        <p className="text-[11px] text-white/45">
+          {t('arbiter.msg_unopened', { reason: m.openFailure ?? '—' })}
+        </p>
+      )}
+      {m.frameFailure && (
+        <p className="text-[11px] text-red-300/85">{t('arbiter.msg_frame_broken', { reason: m.frameFailure })}</p>
+      )}
+      {/* ⚠️ НАХОДКА 51: «АВТОР ПОДТВЕРЖДЁН» ОДНО, БЕЗ ДАТЫ, ЗДЕСЬ НЕ ПИШЕТСЯ И
+          НЕ БУДЕТ. Заверение ключей отозвать нечем — поля отзыва в нём нет, а
+          срок ему год. Сцена: у человека украли устройство с сохранённым
+          сеансом, он восстановился по коду и заверил новую пару; прежнее
+          заверение осталось годным, и вор подписывает прежним ключом. Арбитр
+          получает `ok` и на словах человека, и на словах вора вперемешку, и
+          развести их может ТОЛЬКО по дате заверения — он-то из спора знает,
+          когда устройство украли. Поэтому подтверждённый автор приезжает
+          датой, а не бейджем.
+          Дата — `ГГГГ-ММ-ДД` по UTC (`attestationDateLabel`): она работает
+          уликой, и расхождение часовых поясов между арбитром и стороной
+          здесь стоило бы вердикта. */}
+      {m.authorConfirmed && attestationDateLabel(m.attestedAt) !== null && (
+        <p className="text-[11px] text-white/45">
+          {t('arbiter.msg_author_attested', { date: attestationDateLabel(m.attestedAt)! })}
+        </p>
+      )}
+      {!m.authorConfirmed && (
+        <p className="text-[11px] text-amber-300/85">
+          {t('arbiter.msg_author_unconfirmed', { verdict: m.attestation })}
+        </p>
+      )}
+    </li>
+  );
+}
+
+/** Одно предъявление. Чистая. */
+export function PresentationBagView({ bag }: { bag: PresentedBag }) {
+  const t = useTranslations();
+  return (
+    <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.02] p-3 space-y-2">
+      {bag.view.container === 'bad_signature' && (
+        <p className="text-xs text-red-300/85">{t('arbiter.presentation_bad_signature')}</p>
+      )}
+      {bag.view.container === 'malformed' && (
+        <p className="text-xs text-red-300/85">{t('arbiter.presentation_malformed')}</p>
+      )}
+      {bag.uploaderIsPresenter === false && (
+        <p className="text-xs text-amber-300/85">
+          {t('arbiter.presentation_uploader_differs', {
+            uploader: shortAddr(bag.uploadedBy),
+            presenter: bag.view.presenter ? shortAddr(bag.view.presenter) : '—',
+          })}
+        </p>
+      )}
+
+      {/* ⚠️ ДВЕ РАЗНЫЕ СТРОКИ, И СКЛАДЫВАТЬ ИХ ЗАПРЕЩЕНО. Первая — СЛОВО
+          стороны (три числа, из контейнера), вторая — СЧЁТ читалки (четыре).
+          Слова стороны нет вовсе, когда неизвестно, чьё оно. */}
+      {bag.declared && (
+        <p className="text-[11px] text-white/40 font-mono">
+          {t('arbiter.presentation_counts_declared', {
+            read: bag.declared.read, hidden: bag.declared.hidden, notPrepared: bag.declared.notPrepared,
+          })}
+        </p>
+      )}
+      <p className="text-[11px] text-white/60 font-mono">
+        {t('arbiter.presentation_counts_measured', {
+          read: bag.measured.read, unopened: bag.measured.unopened,
+          hidden: bag.measured.hidden, notPrepared: bag.measured.notPrepared,
+        })}
+      </p>
+      {bag.countsDisagree.length > 0 && (
+        <p className="text-[11px] text-amber-300/85 flex items-center gap-1.5">
+          <ShieldAlert className="w-3 h-3" />
+          {t('arbiter.presentation_counts_disagree')}
+        </p>
+      )}
+
+      <ul className="space-y-1.5">
+        {bag.messages.map(m => <MessageRow key={`${m.sender}-${m.seq}`} m={m} />)}
+      </ul>
+    </div>
+  );
+}
+
+/* ────────────────────────── ящик одного спора ─────────────────────────── */
+
+function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBoxPass }: {
+  deal: ArbiterCase; me?: `0x${string}`; chainKeys: ChainChatKeys | null;
+  publicClient: PublicClient | undefined;
+  signChatKey: () => GatedSignChatKey | null;
+  getBoxPass: () => Promise<string>;
+}) {
+  const t = useTranslations();
+  const [state, setState] = useState<BoxState>({ kind: 'idle' });
+
+  const open = useCallback(async (mayCreate: boolean) => {
+    const sign = signChatKey();
+    if (!me || !sign) return;
+    setState({ kind: 'reading' });
+    try {
+      // Одно нажатие — два обращения к кошельку подряд (ключ, потом пропуск).
+      // Между ними обязан стоять гейт: на телефоне кошелёк уводит страницу, и
+      // вторая подпись улетела бы в замёрзшую вкладку.
+      const reading = await runGatedKeyAction(
+        () => openArbiterBoxSession(me, sign, { mayCreate }),
+        async ({ session }) => {
+          const pass = await getBoxPass();
+          const agreement = deal.agreement;
+          const r = await readDisputeBox({
+            source: {
+              list: () => listDisputeBox(pass, agreement),
+              // ⚠️ КЛЮЧ ЕДЕТ ЦЕЛИКОМ, ДВУМЯ СЕГМЕНТАМИ — так объявила Задача 6
+              // (договор шапки). Резать его на имя здесь нельзя: `fetchDisputeBag`
+              // сама сверяет префикс с ящиком и на голом имени бросает TypeError.
+              // Ключ из ЧУЖОГО ящика до неё не доезжает вовсе — `readDisputeBox`
+              // отбраковывает такой `bagNameFromKey` ДО обращения, не тратя бюджет.
+              fetch: (key) => fetchDisputeBag(pass, agreement, key),
+            },
+            own: session.keypair,
+            agreement,
+            me,
+            publicClient,
+          });
+          const keys = await claimKeysFromSession(session);
+          const turn = publicClient ? await arbiterTurnOf(publicClient, agreement) : { known: false as const };
+          return {
+            reading: r,
+            before: arbitersBefore(turn),
+            deviceKey: deviceKeyVerdict(keys.boxKey, chainKeys),
+          };
+        },
+      );
+      setState({ kind: 'done', ...reading });
+    } catch (err) {
+      // Ключа на устройстве нет — это НЕ поломка, а названная причина с
+      // отдельной кнопкой: окно подписи не должно быть неожиданностью.
+      if (isSessionAbsent(err)) { setState({ kind: 'key_needed' }); return; }
+      // Причина разбирается ЗДЕСЬ и по коду: дальше в разметку едет уже она,
+      // а не английский текст исключения.
+      setState({ kind: 'failed', refusal: boxReadRefusal(err) });
+    }
+  }, [me, signChatKey, getBoxPass, deal.agreement, publicClient, chainKeys]);
+
+  return (
+    <div className="rounded-[18px] border border-white/[0.08] bg-[#0f0f11] p-3 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-mono text-white/45">{shortAddr(deal.agreement)}</p>
+        <div className="flex items-center gap-2">
+          {/* Просьба предъявить — обычным сообщением в чат, и обеим сторонам:
+              предъявляет любая, а просить арбитру бывает нужно именно ту, что
+              молчит. Кнопки «записать, что просил и не ответили» в этой выкатке
+              НЕТ (это Выкатка 2), и рисовать её нельзя.
+              Стороны берутся из `getDetails`, который приезжает отдельным
+              эффектом; пока не приехал — адрес нулевой, и ссылка не рисуется
+              вовсе, вместо того чтобы вести в чат с `0x0000…`. */}
+          {deal.client !== ZERO_ADDRESS && (
+            <Link href={`/chat?peer=${deal.client}`} className="text-[11px] text-white/40 hover:text-white/70 flex items-center gap-1">
+              <MessageCircle className="w-3 h-3" />{t('arbiter.presentations_ask_client')}
+            </Link>
+          )}
+          {deal.executor !== ZERO_ADDRESS && (
+            <Link href={`/chat?peer=${deal.executor}`} className="text-[11px] text-white/40 hover:text-white/70 flex items-center gap-1">
+              <MessageCircle className="w-3 h-3" />{t('arbiter.presentations_ask_executor')}
+            </Link>
+          )}
+          <Button size="sm" onClick={() => void open(false)} disabled={state.kind === 'reading'}>
+            {state.kind === 'reading' ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+            {t('arbiter.presentations_open_box')}
+          </Button>
+        </div>
+      </div>
+
+      {state.kind === 'key_needed' && (
+        <div className="space-y-2">
+          <p className="text-xs text-amber-300/85">{t('arbiter.presentations_key_needed')}</p>
+          <Button size="sm" onClick={() => void open(true)}>{t('arbiter.presentations_key_button')}</Button>
+        </div>
+      )}
+      {state.kind === 'failed' && <BoxFailureView refusal={state.refusal} />}
+      {state.kind === 'reading' && <p className="text-xs text-white/40">{t('arbiter.presentations_reading')}</p>}
+      {state.kind === 'done' && (
+        <>
+          <BoxSummaryView reading={state.reading} before={state.before} deviceKey={state.deviceKey} />
+          <div className="space-y-2">
+            {state.reading.presentations.map(b => <PresentationBagView key={b.bagKey} bag={b} />)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function ArbiterPresentationsTab(props: ArbiterPresentationsTabProps) {
+  const t = useTranslations();
+  if (props.cases.length === 0) {
+    return <p className="text-sm text-white/30 text-center py-10">{t('arbiter.presentations_no_cases')}</p>;
+  }
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-white/30 leading-relaxed flex items-start gap-1.5">
+        <Inbox className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        {t('arbiter.presentations_desc')}
+      </p>
+      {props.cases.map(deal => (
+        <DisputeBoxCard
+          key={deal.agreement}
+          deal={deal}
+          me={props.me}
+          chainKeys={props.chainKeys}
+          publicClient={props.publicClient}
+          signChatKey={props.signChatKey}
+          getBoxPass={props.getBoxPass}
+        />
+      ))}
+    </div>
+  );
+}

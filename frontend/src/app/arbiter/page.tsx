@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import {
   Loader2, AlertTriangle, CheckCircle, History, ShieldCheck, Scale,
   UserCheck, UserX, Search, Crown, UserPlus, UserMinus, MessageCircle,
-  Coins, Lock,
+  Coins, Lock, Inbox,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import Link from "next/link";
@@ -38,6 +38,8 @@ import {
   compareChainWithDirectory, type ChainChatKeys, type DirectoryVerdict,
 } from "@/lib/arbiterChatKey";
 import { fetchPeerChatKeys } from "@/hooks/useChatSession";
+import { requestBagPass } from "@/lib/chatTransport";
+import { ArbiterPresentationsTab, type ArbiterCase } from "@/components/ArbiterPresentations";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -121,7 +123,7 @@ function SectionEmpty({ icon, text }: { icon: ReactNode; text: string }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type TabKey = "disputes" | "mine" | "history" | "manage";
+type TabKey = "disputes" | "mine" | "presentations" | "history" | "manage";
 
 export default function ArbiterPage() {
   const t = useTranslations();
@@ -263,6 +265,62 @@ export default function ArbiterPage() {
   }, [myHistory, publicClient]);
 
   const disputedList = disputed ?? [];
+
+  // Дела, где ящик спора МОЖЕТ быть мне доступен.
+  //
+  // ⚠️ ОТБИРАТЬ ПО СТАТУСУ ЗДЕСЬ ЗАПРЕЩЕНО (договор шапки плана, §4). Право
+  // читать ящик даёт `disputeArbiterOf`, а не статус сделки: после вердикта
+  // дело уходит в RESOLVED (а при дележе без вердикта — в REFUNDED), клеймо
+  // спора обнуляется `_clearDisputeClaim`, и правило держится второй
+  // половиной — `getPendingVerdict().arbiter` при `submittedAt != 0`.
+  // Апелляцию арбитр разбирает ИМЕННО в этом промежутке, и Задача 2
+  // специально держит мешки живыми до её конца. Фильтр `status === 4` сделал
+  // бы предъявленное недостижимым ровно в тот момент, ради которого его
+  // хранили и оплачивали местом на диске.
+  //
+  // Список приходит из цепи: `getArbiterDeals(me)` — это дела, где спор брал Я.
+  // Статус употребляется РОВНО НА ОДНО: порядок (живой спор выше) — тот же
+  // приём, что с `sealedFor` у мешков, где заявление годится для очерёдности и
+  // не годится для выбрасывания. Ответ «ящик не ваш» даёт СЕРВЕР, прочитав
+  // цепь, и печатается строками `presentations_not_mine` /
+  // `presentations_box_closed`.
+  const myBoxCases: ArbiterCase[] = [...(myHistory ?? [])]
+    .sort((x, y) =>
+      Number(histDetails[y]?.status === AGREEMENT_STATUS_DISPUTED) -
+      Number(histDetails[x]?.status === AGREEMENT_STATUS_DISPUTED))
+    .map(a => ({
+      agreement: a as `0x${string}`,
+      client: (histDetails[a]?.client ?? ZERO_ADDR) as `0x${string}`,
+      executor: (histDetails[a]?.executor ?? ZERO_ADDR) as `0x${string}`,
+    }));
+
+  // Подписчик ключа чата — тот же раскрой, что у заявки и публикации ключа.
+  // Создаётся ЗДЕСЬ, а не в панели: гейт «места подписи наперечёт»
+  // (lib/signaturePaths.test.ts) перечисляет файлы поимённо, и панель, позвав
+  // кошелёк сама, добавила бы в список новый файл — то есть потребовала бы
+  // осознанного решения там, где его можно не заметить.
+  const signChatKeyForBox = useCallback((): GatedSignChatKey | null => {
+    if (!walletClient || !address) return null;
+    return createGatedSignChatKey((typedData) =>
+      withWalletLock(address, () => walletClient.signTypedData({
+        account: walletClient.account!,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...(typedData as any),
+      })) as Promise<`0x${string}`>,
+    );
+  }, [walletClient, address]);
+
+  // Пропуск склада — НЕ через `getBagPass`: та стоит за порогом «наш ключ
+  // объявлен в справочнике», а ящик спора закрыт ЦЕПЬЮ, и справочник к нему
+  // отношения не имеет. Подпись при этом остаётся под общим мьютексом кошелька.
+  const getBoxPass = useCallback(async (): Promise<string> => {
+    if (!walletClient || !address) throw new Error("wallet");
+    const { pass } = await requestBagPass(
+      (message) => withWalletLock(address, () => walletClient.signMessage({ account: address, message })),
+      address.toLowerCase() as `0x${string}`,
+    );
+    return pass;
+  }, [walletClient, address]);
 
   const handleClaim = async (agreement: string) => {
     if (!walletClient || !publicClient || !address) { toast.error(t("common.error")); return; }
@@ -607,6 +665,13 @@ export default function ArbiterPage() {
             <Scale className="w-3.5 h-3.5" />
             {t("arbiter.tab_my_cases")}
           </Tab>
+          {/* Число на вкладке = сколько КАРТОЧЕК внутри, то есть сколько споров я
+              когда-либо брал, а не сколько живых. Обещать «столько-то ждут вас»
+              нечем: доступен ящик или нет, знает сервер, и только по нажатию. */}
+          <Tab active={tab === "presentations"} onClick={() => setTab("presentations")} count={myBoxCases.length}>
+            <Inbox className="w-3.5 h-3.5" />
+            {t("arbiter.tab_presentations")}
+          </Tab>
           <Tab active={tab === "history"} onClick={() => setTab("history")}>
             <History className="w-3.5 h-3.5" />
             {t("arbiter.tab_history")}
@@ -695,6 +760,18 @@ export default function ArbiterPage() {
                 ))}
               </div>
             )
+          )}
+
+          {/* ── Предъявления ── */}
+          {tab === "presentations" && (
+            <ArbiterPresentationsTab
+              cases={myBoxCases}
+              me={address}
+              chainKeys={myChainKeys}
+              publicClient={publicClient}
+              signChatKey={signChatKeyForBox}
+              getBoxPass={getBoxPass}
+            />
           )}
 
           {/* ── History ── */}
