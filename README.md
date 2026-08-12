@@ -225,6 +225,34 @@ cast send $DIAMOND_ADDRESS "setFeeRecipient(address)" <treasury> \
 | Treasury | `0x2e7a7A0515bfDC0006A812EBb3E55d32800Bc660` |
 | USDC (test) | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 
+### ⚠️ The verified source on Basescan is one line behind this repository
+
+Everything above was deployed and verified while the contracts in `src/` still
+carried `// SPDX-License-Identifier: MIT` on their first line. That line is now
+`// SPDX-License-Identifier: BUSL-1.1` — the root [`LICENSE`](LICENSE) was
+adopted after the deployment, and in Solidity the per-file SPDX header, not the
+root file, is the operative declaration.
+
+So if you diff a contract in this repository against its verified source on
+Basescan, you will find **exactly one differing line, and it is that header.**
+We are saying it here rather than letting you discover it.
+
+What that costs, measured rather than assumed. Solidity's default
+`bytecode_hash = "ipfs"` embeds a hash of the source metadata — which covers
+comments — into the deployed bytecode, so a rebuild from today's tree does not
+reproduce the deployed bytes exactly. Comparing `Treasury` built both ways:
+
+| | |
+|---|---|
+| Deployed bytecode length | identical, 3547 bytes |
+| First 3504 bytes (98.8 %) — all executable code | **byte-for-byte identical** |
+| The 32 bytes after the CBOR marker `58221220` | differ — this is the metadata (IPFS) hash |
+| Trailing CBOR (compiler version) | identical |
+
+In other words the machine code is unchanged; only the metadata fingerprint
+moved. The next deployment re-verifies with the new header and the difference
+disappears.
+
 **Facet addresses are deliberately not listed here.** They change with every upgrade and a stale table sends people to abandoned deployments. Ask the chain instead — `facets()` on the proxy (EIP-2535 loupe) is the source of truth; the app itself reads the proxy address from configuration for the same reason.
 
 ## Documentation
@@ -257,6 +285,11 @@ See [`SECURITY.md`](SECURITY.md). Reports go through GitHub's **private vulnerab
   so itself. We would rather say that than call this "open source" and be
   corrected.
 
-Third-party code vendored under `lib/` (OpenZeppelin, forge-std) keeps its own
-MIT / Apache-2.0 terms and is not covered by the above — see
+All 15 files in `src/` carry `// SPDX-License-Identifier: BUSL-1.1`. Nothing
+else does: `script/` and `test/` stay MIT, and the vendored third-party code
+under `lib/` (OpenZeppelin, forge-std) keeps its own MIT / Apache-2.0 terms and
+is not covered by the above — see
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+
+⚠️ The contracts already deployed to Base Sepolia were verified before that
+header changed — see [the note above](#️-the-verified-source-on-basescan-is-one-line-behind-this-repository).

@@ -4,12 +4,25 @@ The root [`LICENSE`](LICENSE) (Business Source License 1.1) covers **only the So
 sources in `src/`** — 15 files, the Hexseal protocol contracts. Everything listed below
 belongs to somebody else, keeps its original licence, and is unaffected by the BUSL.
 
-Two rules follow from that, and both are load-bearing:
+Because in Solidity the **per-file `SPDX-License-Identifier` header** — not this document
+and not the root `LICENSE` — is the operative declaration, the split is drawn in the files
+themselves:
 
-- **Do not edit the `SPDX-License-Identifier` header of a vendored file.** In Solidity that
-  header, not this document and not the root `LICENSE`, is the operative declaration for
-  the file. `solc` also warns when it is missing, so the rule is a compiler requirement as
-  well as a legal one.
+| Where | Header | Count |
+|---|---|---|
+| `src/` | `// SPDX-License-Identifier: BUSL-1.1` | 15 |
+| `script/`, `test/` | `// SPDX-License-Identifier: MIT` | 90 |
+| `lib/` | whatever upstream wrote — untouched | 924 files |
+
+⚠️ The contracts already deployed to Base Sepolia were verified on Basescan **before** the
+`src/` headers changed, so their verified source differs from this repository by exactly
+that one line. The measurement of what that costs is in `README.md`, under the deployed
+contracts.
+
+Two rules follow, and both are load-bearing:
+
+- **Do not edit the `SPDX-License-Identifier` header of a vendored file.** `solc` also
+  warns when it is missing, so the rule is a compiler requirement as well as a legal one.
 - **Do not delete the licence texts listed in the "Where the text lives" column.** MIT
   requires the copyright notice to travel with the copies; Apache-2.0 requires the licence
   text to be included on redistribution. They are in the repository for that reason, not
