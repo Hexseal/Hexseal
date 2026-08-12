@@ -108,8 +108,19 @@ export function BoxSummaryView({ reading, before, deviceKey }: {
       <p>{before === null
         ? t('arbiter.presentations_turn_unknown')
         : t('arbiter.presentations_turn_known', { count: before })}</p>
+      {/* ⚠️ ЧЕТЫРЕ ВЕРДИКТА — ЧЕТЫРЕ ИСХОДА, А НЕ ОДИН ГОВОРЯЩИЙ И ТРИ НЕМЫХ
+          (ревью круг 1). `chain_missing` («ключа в цепи у вас нет вовсе») и
+          `chain_unread` («цепь не ответила, сверить нечем») молчали, а оба —
+          законные причины, по которым ящик выглядит пустым не из-за стороны.
+          `agree` молчит намеренно: это отсутствие новости, а не новость. */}
       {deviceKey === 'differs' && (
         <p className="text-amber-300/85">{t('arbiter.presentations_device_key_differs')}</p>
+      )}
+      {deviceKey === 'chain_missing' && (
+        <p className="text-amber-300/85">{t('arbiter.presentations_device_key_chain_missing')}</p>
+      )}
+      {deviceKey === 'chain_unread' && (
+        <p>{t('arbiter.presentations_device_key_chain_unread')}</p>
       )}
       {/* Слово СЕРВЕРА, не цепи, — и это сказано в самой строке. */}
       {reading.sealedForOthersDeclared > 0 && (
@@ -125,9 +136,32 @@ export function BoxSummaryView({ reading, before, deviceKey }: {
       {reading.notOursFetched > 0 && (
         <p>{t('arbiter.presentations_not_ours_fetched', { count: reading.notOursFetched })}</p>
       )}
+      {/* ⚠️ МЕШКИ, НЕ ДОЕХАВШИЕ ДО ВЕРДИКТА ВООБЩЕ (ревью круг 1, Important 1).
+          Это число считалось моделью, было заперто тестами — и не показывалось
+          никому. Острее всего `not_presentation`: контейнер от клиента другой
+          версии отсеивается ДО читалки, и без этой строки арбитр читал бы
+          «вам сюда ничего не предъявили» над ящиком, в котором мешок лежал.
+          `notOurs` сюда НЕ входит — он назван своей строкой выше, и сложить их
+          значило бы посчитать один мешок дважды. */}
+      {reading.notParsed > 0 && (
+        <p className="text-amber-300/85">
+          {t('arbiter.presentations_not_parsed', { count: reading.notParsed })}
+        </p>
+      )}
+      {/* ⚠️ ПРИЧИНУ НЕДОЧИТАННОГО НЕ УГАДЫВАЕМ (ревью круг 1, Important 2).
+          Прежняя единственная строка утверждала «бюджет чтения кончился»
+          ВСЕГДА — в том числе когда оборвалась связь (и совет «вернитесь через
+          минуту» тогда неверен) и когда бюджет не тратился вовсе, а мешки
+          отсеялись до забора по толщине или чужому ключу. Тот же экран
+          отказывается угадывать причину отказа по классу статуса — угадывать
+          её здесь было бы той же ошибкой на соседней строке. */}
       {reading.tried < reading.listed && reading.stop !== 'not_mine' && (
         <p className="text-amber-300/85">
-          {t('arbiter.presentations_partial', { read: reading.tried, total: reading.listed })}
+          {reading.stop === 'read_budget'
+            ? t('arbiter.presentations_partial_budget', { read: reading.tried, total: reading.listed })
+            : reading.stop === 'transport'
+              ? t('arbiter.presentations_partial_transport', { read: reading.tried, total: reading.listed })
+              : t('arbiter.presentations_partial_unread', { read: reading.tried, total: reading.listed })}
         </p>
       )}
       {/* ⚠️ ТРЕТИЙ ОХРАННИК, ОБЯЗАТЕЛЬНЫЙ (ревью Задачи 1, круг 2).
@@ -149,9 +183,16 @@ export function BoxSummaryView({ reading, before, deviceKey }: {
           заявленному (`sealedForOthersDeclared`) — И ЕСЛИ ОПИСИ МОЖНО ДОВЕРЯТЬ
           (`indexTrusted`): восстановленная с диска опись МОЛЧА даёт оба
           посчитанных нуля, и без третьего условия «пусто» прозвучало бы там,
-          где сервер сам не уверен, что видит всё. */}
+          где сервер сам не уверен, что видит всё.
+          ⚠️ ЧЕТВЁРТЫЙ ОХРАННИК — `skipped` (ревью круг 1, Important 1). Мешок,
+          не доехавший до вердикта (чужая версия контейнера, пропал со склада,
+          слишком толст), молчит во всех трёх числах выше: `sealed_for_other`
+          из него вычтен, `tried` у половины причин успел вырасти, а
+          `indexTrusted` про это не знает вовсе. Без него самая опасная надпись
+          экрана произносилась бы над ящиком, в котором мешок ЛЕЖАЛ. */}
       {reading.mine && reading.presentations.length === 0 && reading.stop === 'read_all'
         && reading.notOurs === 0 && reading.sealedForOthersDeclared === 0
+        && reading.skipped.length === 0
         && reading.indexTrusted && (
         <p>{t('arbiter.presentations_empty')}</p>
       )}

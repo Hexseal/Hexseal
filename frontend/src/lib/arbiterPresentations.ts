@@ -275,6 +275,24 @@ export interface DisputeBoxReading {
    *  в прошлый раз), и выдавать это за «прежний арбитр прочитал» нельзя:
    *  отметка ставится ненадёжно и говорит про байты, а не про глаза. */
   notOursFetched: number;
+  /**
+   * Мешки, которые до вердикта не доехали ВОВСЕ, — и это НЕ `notOurs`.
+   * Считается как `skipped` минус `sealed_for_other`: тот уже назван своим
+   * числом и своей строкой, сложить их значило бы посчитать один мешок дважды.
+   *
+   * ⚠️ ЧЕТВЁРТЫЙ ОХРАННИК «ПУСТО», И САМЫЙ ОСТРЫЙ ИЗ НИХ — `not_presentation`
+   * (ревью круг 1, Important 1). Контейнер от клиента другой версии, форму
+   * которого наша читалка не узнаёт, отсеивается ДО `readPresentation`: мешок
+   * демонстративно лежал в ящике, а арбитр без этого числа читал бы «вам сюда
+   * пока ничего не предъявили». Это активное ложное утверждение, а не
+   * умолчание. Сюда же `gone` (мешок пропал со склада между описью и забором),
+   * `not_json`, `other_deal`, `too_big` и `foreign_key`.
+   *
+   * ⚠️ И `tried` этого не покажет: четыре причины из шести срабатывают ПОСЛЕ
+   * успешного забора, то есть `tried` у них вырос, и строка «прочитано N из M»
+   * молчит.
+   */
+  notParsed: number;
   /** Проброшено из `DisputeBoxList.indexTrusted` без изменений (ревью
    *  Задачи 1, круг 2). `false` обязано подавлять «вам ничего не
    *  предъявили» ДАЖЕ когда `notOurs` и `sealedForOthersDeclared` оба нули. */
@@ -383,8 +401,21 @@ export async function readDisputeBox(input: {
   const head = {
     arbiterNow: list.arbiter ?? null,
     listed: bags.length,
-    sealedForOthersDeclared:
-      Number.isSafeInteger(list.sealedForOthers) && list.sealedForOthers >= 0 ? list.sealedForOthers : 0,
+    // ⚠️ НЕ «ПОДСТАВИТЬ НОЛЬ», А РУГАТЬСЯ (ревью круг 1, мелочь 4). Ноль здесь
+    // — не безобидное умолчание, а СНЯТИЕ ОХРАНЫ: именно на `> 0` держится
+    // подавление «вам ничего не предъявили». Молча превратив мусор сервера в
+    // ноль, мы бы получили самое опасное утверждение экрана, выведенное из
+    // числа, которого никто не понял. Отказ уходит наружу и печатается как
+    // «ящик прочитать не удалось — это НЕ значит, что он пуст».
+    sealedForOthersDeclared: (() => {
+      if (!Number.isSafeInteger(list.sealedForOthers) || list.sealedForOthers < 0) {
+        throw Object.assign(
+          new Error(`readDisputeBox: sealedForOthers = ${String(list.sealedForOthers)} — не целое неотрицательное`),
+          { code: 'malformed_listing' },
+        );
+      }
+      return list.sealedForOthers;
+    })(),
     // ⚠️ Ревью Задачи 1, круг 2: НЕ `!!list.indexTrusted` (истинность
     // ПРОИЗВОЛЬНОГО значения) — если клиент когда-нибудь ослабят и это
     // поле пропадёт из ответа, `undefined` не имеет права молча стать
@@ -408,7 +439,7 @@ export async function readDisputeBox(input: {
   if (!same(list.arbiter, me)) {
     return {
       ...head, mine: false, tried: 0, stop: 'not_mine',
-      notOurs: 0, notOursFetched: 0, skipped: [], presentations: [],
+      notOurs: 0, notOursFetched: 0, notParsed: 0, skipped: [], presentations: [],
     };
   }
 
@@ -452,6 +483,9 @@ export async function readDisputeBox(input: {
   const notOursKeys = triage.skipped.filter(s => s.why === 'sealed_for_other').map(s => s.bagKey);
   const notOurs = notOursKeys.length;
   const notOursFetched = notOursKeys.filter(k => (fetchedAtOf.get(k) ?? null) !== null).length;
+  // Не доехали до вердикта вовсе — всё, кроме «не открылось нашим ключом»: то
+  // названо своим числом строкой выше, и складывать их нельзя (ревью круг 1).
+  const notParsed = skipped.filter(s => s.why !== 'sealed_for_other').length;
 
   const presentations: PresentedBag[] = [];
   for (const found of triage.presentations) {
@@ -474,7 +508,7 @@ export async function readDisputeBox(input: {
     });
   }
 
-  return { ...head, mine: true, tried, stop, notOurs, notOursFetched, skipped, presentations };
+  return { ...head, mine: true, tried, stop, notOurs, notOursFetched, notParsed, skipped, presentations };
 }
 
 /* ─────────────────────── сеанс арбитра, и почём он ────────────────────── */

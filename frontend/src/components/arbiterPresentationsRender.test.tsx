@@ -40,7 +40,7 @@ const B = '0x2222222222222222222222222222222222222222' as `0x${string}`;
 
 const emptyReading = (over: Partial<DisputeBoxReading> = {}): DisputeBoxReading => ({
   arbiterNow: A, mine: true, listed: 0, tried: 0, stop: 'read_all',
-  sealedForOthersDeclared: 0, notOurs: 0, notOursFetched: 0,
+  sealedForOthersDeclared: 0, notOurs: 0, notOursFetched: 0, notParsed: 0,
   // ⚠️ Индекс доверенный — умолчание для ВСЕХ сцен R1-R10: ни одна из них это
   // поле не переопределяет и не обязана, они про другие охранники. Сцена
   // «опись перестраивалась» (R7b) называет его явно.
@@ -63,7 +63,9 @@ const bagOf = (over: Partial<PresentedBag> = {}): PresentedBag => ({
   ...over,
 });
 
-async function summary(reading: DisputeBoxReading, before: number | null, deviceKey = 'agree' as const): Promise<string> {
+type DeviceKey = 'agree' | 'differs' | 'chain_missing' | 'chain_unread';
+
+async function summary(reading: DisputeBoxReading, before: number | null, deviceKey: DeviceKey = 'agree'): Promise<string> {
   const { BoxSummaryView } = await import('@/components/ArbiterPresentations');
   return renderToStaticMarkup(React.createElement(BoxSummaryView, { reading, before, deviceKey }));
 }
@@ -110,9 +112,34 @@ describe('слово сервера названо словом сервера',
 
   it('R5: ящик прочитан не целиком — сказано числом, а не молчанием', async () => {
     const html = await summary(emptyReading({ listed: 122, tried: 99, stop: 'read_budget' }), 0);
-    expect(html).toContain(translate('arbiter.presentations_partial', { read: 99, total: 122 }));
+    expect(html).toContain(translate('arbiter.presentations_partial_budget', { read: 99, total: 122 }));
     expect(html, '«пусто» показано поверх непрочитанного ящика')
       .not.toContain(translate('arbiter.presentations_empty'));
+  });
+
+  it('R5b: причина недочитанного НЕ угадывается — три остановки, три разных надписи (ревью круг 1)', async () => {
+    // Прежде здесь всегда печаталось «кончился бюджет чтения». На обрыве связи
+    // это ложь про причину И неверный совет («вернитесь через минуту»), а на
+    // `read_all` бюджет не тратился вовсе: мешки отсеяны до забора по толщине
+    // или чужому ключу. Тот же экран отказывается угадывать причину отказа по
+    // классу статуса — угадывать её тут было бы той же ошибкой рядом.
+    const budget = await summary(emptyReading({ listed: 122, tried: 99, stop: 'read_budget' }), 0);
+    const broke = await summary(emptyReading({ listed: 122, tried: 99, stop: 'transport' }), 0);
+    const skipped = await summary(emptyReading({
+      listed: 3, tried: 1, stop: 'read_all', notParsed: 2,
+      skipped: [{ bagKey: 'a', why: 'too_big' }, { bagKey: 'b', why: 'foreign_key' }],
+    }), 0);
+
+    expect(budget).toContain(translate('arbiter.presentations_partial_budget', { read: 99, total: 122 }));
+    expect(broke).toContain(translate('arbiter.presentations_partial_transport', { read: 99, total: 122 }));
+    expect(skipped).toContain(translate('arbiter.presentations_partial_unread', { read: 1, total: 3 }));
+
+    // И ни одна из трёх не притворяется другой: совет у них разный и
+    // несовместимый, схлопывание — ровно тот промах, ради которого замок стоит.
+    expect(broke, 'обрыв связи выдан за кончившийся бюджет')
+      .not.toContain(translate('arbiter.presentations_partial_budget', { read: 99, total: 122 }));
+    expect(skipped, 'мешки, отсеянные до забора, выданы за кончившийся бюджет')
+      .not.toContain(translate('arbiter.presentations_partial_budget', { read: 1, total: 3 }));
   });
 });
 
@@ -158,6 +185,56 @@ describe('посчитанное доезжает до глаз, а «пусто
     expect(trusted).toContain(translate('arbiter.presentations_empty'));
     expect(trusted, 'лишняя надпись про перестройку при целом индексе')
       .not.toContain(translate('arbiter.presentations_index_rebuilt'));
+  });
+
+  it('R7c: мешок не доехал до вердикта — назван числом, и «пусто» подавлено (ревью круг 1, Important 1)', async () => {
+    // САМЫЙ ОСТРЫЙ СЛУЧАЙ — `not_presentation`: у стороны клиент другой версии,
+    // её контейнер отсеивается ДО читалки, и мешок демонстративно лежал в
+    // ящике. Без этого охранника арбитр читал бы «вам сюда пока ничего не
+    // предъявили» — активное ложное утверждение, а не умолчание. `tried` его
+    // не спасает: мешок ЗАБРАН, то есть `tried === listed`, и строка
+    // «прочитано N из M» молчит.
+    const alien = await summary(emptyReading({
+      listed: 1, tried: 1, stop: 'read_all', notParsed: 1,
+      skipped: [{ bagKey: 'k', why: 'not_presentation' }],
+    }), 0);
+    expect(alien, '«сторона молчала» сказано над ящиком, в котором мешок ЛЕЖАЛ')
+      .not.toContain(translate('arbiter.presentations_empty'));
+    expect(alien, 'число не доехавших до вердикта не показано никому')
+      .toContain(translate('arbiter.presentations_not_parsed', { count: 1 }));
+
+    // И то же самое, когда мешок пропал со склада между описью и забором.
+    const gone = await summary(emptyReading({
+      listed: 1, tried: 1, stop: 'read_all', notParsed: 1,
+      skipped: [{ bagKey: 'k', why: 'gone' }],
+    }), 0);
+    expect(gone).not.toContain(translate('arbiter.presentations_empty'));
+
+    // Обратная сторона: пустой ящик обязан остаться названным пустым, иначе
+    // «подавить всегда» было бы дешёвым способом пройти замок.
+    const really = await summary(emptyReading(), 0);
+    expect(really, 'пустой ящик перестал называться пустым')
+      .toContain(translate('arbiter.presentations_empty'));
+    expect(really, 'ноль не доехавших до вердикта показан числом')
+      .not.toContain(translate('arbiter.presentations_not_parsed', { count: 0 }));
+  });
+
+  it('R7d: «не открылось моим ключом» и «не доехало до вердикта» — РАЗНЫЕ числа, не сумма (ревью круг 1)', async () => {
+    // `sealed_for_other` живёт в `skipped` тоже, и сложить его сюда значило бы
+    // посчитать один и тот же мешок дважды: одной строкой как нечитаемый,
+    // другой — как неразобранный. Модель вычитает его, и это видно на экране.
+    const html = await summary(emptyReading({
+      listed: 3, tried: 3, stop: 'read_all', notOurs: 2, notParsed: 1,
+      skipped: [
+        { bagKey: 'a', why: 'sealed_for_other' },
+        { bagKey: 'b', why: 'sealed_for_other' },
+        { bagKey: 'c', why: 'not_presentation' },
+      ],
+    }), 0);
+    expect(html).toContain(translate('arbiter.presentations_not_ours', { count: 2 }));
+    expect(html).toContain(translate('arbiter.presentations_not_parsed', { count: 1 }));
+    expect(html, 'нечитаемые сложены с неразобранными — мешок посчитан дважды')
+      .not.toContain(translate('arbiter.presentations_not_parsed', { count: 3 }));
   });
 
   it('R8: «уже забирали» — числом и без имени', async () => {
@@ -211,10 +288,44 @@ describe('подтверждённый автор — с датой завере
 
     // Датировать нечем — молчим, а не подставляем «—» и не пишем «подтверждён»
     // без даты: выдуманная дата хуже её отсутствия.
+    //
+    // ⚠️ ИЩЕМ НЕ СЫРУЮ РУССКУЮ ПОДСТРОКУ, А НЕИЗМЕННУЮ ЧАСТЬ САМОГО ПЕРЕВОДА
+    // (ревью круг 1, мелочь 2). Сырое слово в тесте держится за нынешнюю
+    // редакцию ru.json: перепишут строку — замок промолчит, ничего не заметив,
+    // и это ровно класс «тест сторожит текст, а не работу». Кусок до
+    // подстановки берётся из локали, значит правка текста замок не обманет.
+    const attestedPrefix = translate('arbiter.msg_author_attested', { date: 'ДАТА-СЮДА' }).split('ДАТА-СЮДА')[0];
+    expect(attestedPrefix.length, 'у надписи не осталось неизменной части — замерять нечем')
+      .toBeGreaterThan(10);
     const undated = await bagHtml(bagOf({
       messages: [{ ...bagOf().messages[0], attestedAt: null }],
     }));
-    expect(undated, 'дата придумана там, где заверения нет')
-      .not.toContain('заверил');
+    expect(undated, 'дата придумана там, где заверения нет').not.toContain(attestedPrefix);
+  });
+});
+
+describe('четыре вердикта ключа устройства — четыре исхода (ревью круг 1)', () => {
+  it('R12: «ключа в цепи нет» и «цепь не ответила» больше не молчат', async () => {
+    // Оба — законные причины, по которым ящик выглядит пустым НЕ из-за
+    // стороны, и оба молчали: разметка знала только `differs`. Пара
+    // «модель/разметка» тут была единственной несделанной.
+    const missing = await summary(emptyReading(), 0, 'chain_missing');
+    expect(missing).toContain(translate('arbiter.presentations_device_key_chain_missing'));
+    const unread = await summary(emptyReading(), 0, 'chain_unread');
+    expect(unread).toContain(translate('arbiter.presentations_device_key_chain_unread'));
+    const differs = await summary(emptyReading(), 0, 'differs');
+    expect(differs).toContain(translate('arbiter.presentations_device_key_differs'));
+
+    // Три разные новости — три разные надписи, ни одна не притворяется другой.
+    expect(missing, 'два разных вердикта схлопнуты в одну надпись')
+      .not.toContain(translate('arbiter.presentations_device_key_differs'));
+    expect(unread).not.toContain(translate('arbiter.presentations_device_key_chain_missing'));
+
+    // А согласие молчит намеренно: это отсутствие новости, а не новость.
+    const agree = await summary(emptyReading(), 0, 'agree');
+    for (const k of ['differs', 'chain_missing', 'chain_unread']) {
+      expect(agree, `при согласии ключей показана тревога ${k}`)
+        .not.toContain(translate(`arbiter.presentations_device_key_${k === 'differs' ? 'differs' : k}`));
+    }
   });
 });

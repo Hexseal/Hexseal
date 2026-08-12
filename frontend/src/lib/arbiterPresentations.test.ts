@@ -326,6 +326,47 @@ describe('ящик спора', () => {
     expect(boxReadRefusal(new TypeError('fetch failed')), 'обрыв сети выдан за отказ сервера').toBe('unknown');
   });
 
+  it('B8b: мешки, не доехавшие до вердикта, посчитаны ОТДЕЛЬНО от нечитаемых (ревью круг 1)', async () => {
+    // `notOurs` живёт в `skipped` тоже, и сложить их значило бы посчитать один
+    // мешок дважды. А главное — без своего числа `not_presentation` не виден
+    // вовсе: контейнер от клиента другой версии отсеивается ДО читалки, мешок
+    // ЗАБРАН (`tried` вырос), и «прочитано N из M» про него молчит.
+    const alien = summary('alien.bin');           // не наша форма контейнера
+    const mine  = summary('theirs.bin', { sealedFor: REX });  // не открылось моим ключом
+    const bodies = new Map([
+      // Годный JSON, вскрываемый МОИМ ключом, но не предъявление — ровно то,
+      // что приедет от клиента другой версии.
+      [alien.key, await sealPresentation(
+        { kind: 'hexseal.presentation.v0' } as never, judy.publicKey)],
+      [mine.key, new Uint8Array(512).fill(7)],
+    ]);
+    const s = stand({ bags: [alien, mine], arbiter: JUDY, sealedForOthers: 1 }, bodies);
+    const r = await read(s.source);
+    expect(r.tried, 'мешки не забраны — сцена не про то').toBe(2);
+    expect(r.presentations).toEqual([]);
+    expect(r.skipped.map(x => x.why).sort()).toEqual(['not_presentation', 'sealed_for_other']);
+    expect(r.notOurs, 'нечитаемый посчитан не там').toBe(1);
+    expect(r.notParsed, 'неразобранный слит с нечитаемым или потерян').toBe(1);
+    // Ноль на честном ящике — иначе «подавить всегда» прошло бы даром.
+    const clean = stand({ bags: [], arbiter: JUDY, sealedForOthers: 0 }, new Map());
+    expect((await read(clean.source)).notParsed).toBe(0);
+  }, 60_000);
+
+  it('B8c: мусор в счёте сервера — ОТКАЗ, а не тихий ноль (ревью круг 1)', async () => {
+    // Ноль здесь не безобидное умолчание, а СНЯТИЕ ОХРАНЫ: именно на `> 0`
+    // держится подавление «вам ничего не предъявили». Молча превратив мусор в
+    // ноль, мы вывели бы самое опасное утверждение экрана из числа, которого
+    // никто не понял.
+    for (const bad of [-1, 1.5, Number.NaN]) {
+      const s = stand({ bags: [], arbiter: JUDY, sealedForOthers: bad }, new Map());
+      await expect(read(s.source), `sealedForOthers = ${bad} проглочено молча`).rejects.toThrow();
+    }
+    // И отказ назван так, чтобы человеку сказали «это НЕ значит, что пусто».
+    const s = stand({ bags: [], arbiter: JUDY, sealedForOthers: -1 }, new Map());
+    const err = await read(s.source).catch((e: unknown) => e);
+    expect(boxReadRefusal(err)).toBe('unknown');
+  });
+
   it('B9: indexTrusted переживает модель — при пустом ящике летит ОБА состояния, не теряется (ревью Задачи 1, круг 3)', async () => {
     // Пустой ящик — ключевой случай, а не любой: посчитанные числа
     // (notOurs, sealedForOthersDeclared) молчат ОДИНАКОВО что при честной
@@ -579,6 +620,86 @@ describe('цена', () => {
       disk.restore();
     }
   }, 120_000);
+
+  it('E3: ЗАМЕР — ДОСТИЖИМЫЙ худший случай: 99 мешков ПРЕДЕЛЬНОГО размера (ревью круг 1)', async () => {
+    // ⚠️ ЗАЧЕМ ОТДЕЛЬНО ОТ E2. У E2 мешки по 1 КБ и мусорные: печать не
+    // открывается, и до `readPresentation` дело не доходит вовсе — то есть E2
+    // меряет цену ПЕРЕБОРА, а не цену РАЗБОРА, и подставлять его как ответ на
+    // «долбят нарочно» нельзя. Достижимый худший случай другой: писать в ящик
+    // может любая сторона спора, значит она может залить ГОДНЫЕ контейнеры
+    // предельного размера, а `readDisputeBox` гоняет `readPresentation`
+    // последовательно и своего потолка на объём не имеет (Возражение 5,
+    // открытый пункт 50.2). Останавливает арбитра только бюджет чтения —
+    // 1 опись + 99 мешков.
+    const { installFakeChatDisk } = await import('@/lib/__stand__/fakeChatDisk');
+    const { attestationOf, forgeFrames, seedArchive, fitsFromRefusal } =
+      await import('@/lib/__stand__/presentationFixtures');
+    const { _resetConversationMemoryForTest } = await import('@/lib/chatConversation');
+    const { presentationJson } = await import('@/lib/presentationBag');
+
+    // Самый толстый контейнер, который вообще соглашается собрать сборщик:
+    // просим заведомо больше, получаем отказ `too_large` с числом влезающих и
+    // собираем ровно по нему. Это потолок не наш, а боевой.
+    _resetConversationMemoryForTest();
+    const disk = installFakeChatDisk();
+    let fat: PresentationContainer;
+    try {
+      const texts = Array.from({ length: 300 }, (_, i) => `сообщение номер ${i} ` + 'ы'.repeat(40));
+      const frames = await forgeFrames(alice, bob, texts);
+      expect(await seedArchive(alice, bob, frames)).toBe(300);
+      const own = await attestationOf(alice);
+      const input = (take: number) => ({
+        dealId: AGREEMENT, presenter: alice.address, peer: bob.address,
+        arbiterBoxKey: toArbiterBoxKeyBytes(judy.publicKey),
+        peerBoxKey: toPeerBoxKeyBytes(bob.session.keypair.publicKey),
+        selected: frames.slice(0, take).map(f => ({ seq: f.seq, sender: alice.address })),
+        session: alice.session,
+        ownAttestation: own,
+      });
+      const tooMuch = await buildPresentation(input(300));
+      expect(tooMuch.ok, 'сборщик проглотил 300 сообщений — потолок съехал').toBe(false);
+      const fits = fitsFromRefusal(tooMuch);
+      expect(fits, 'отказ приехал без числа влезающих').not.toBeNull();
+      const built = await buildPresentation(input(fits!));
+      if (!built.ok) throw new Error(`и подрезанный не влез: ${built.reason}`);
+      fat = built.container;
+    } finally { disk.restore(); _resetConversationMemoryForTest(); }
+
+    const containerBytes = presentationJson(fat).byteLength;
+    const sealed = await sealPresentation(fat, judy.publicKey);
+
+    // Цена ОДНОГО разбора, замеренная отдельно: если ниже она разделится не в
+    // это число, значит что-то кэшируется, и замер надо читать иначе.
+    const { readPresentation } = await import('@/lib/presentationRead');
+    const tOne = Date.now();
+    const oneView = await readPresentation(fat, judy);
+    const oneMs = Date.now() - tOne;
+    expect(oneView.container).toBe('ok');
+
+    // Ровно столько, сколько успеет забрать бюджет: 1 опись + 99 мешков.
+    const bodies = new Map<string, Uint8Array>();
+    const bags: DisputeBoxBag[] = [];
+    for (let i = 0; i < 99; i++) {
+      const b = summary(`fat-${String(i).padStart(3, '0')}.bin`,
+        { size: sealed.byteLength, uploadedAt: 3_000 + i });
+      bags.push(b); bodies.set(b.key, sealed);
+    }
+    const s = stand({ bags, arbiter: JUDY, sealedForOthers: 0 }, bodies);
+    const started = Date.now();
+    const r = await read(s.source);
+    const ms = Date.now() - started;
+
+    expect(r.tried).toBe(99);
+    expect(r.presentations.length, 'предельные контейнеры не разобрались').toBe(99);
+    console.info(
+      `[замер] ДОСТИЖИМЫЙ ХУДШИЙ СЛУЧАЙ: контейнер ${containerBytes} Б (${fat.frames.length} сообщений), `
+      + `один разбор ${oneMs} мс; 99 таких мешков — ${ms} мс (${Math.round(ms / 99)} мс на мешок). `
+      + `Сравнить с E2 (122 мусорных по 1 КБ): там до разбора дело не доходит вовсе.`,
+    );
+    // Потолка на объём у чтения НЕТ (пункт 50.2) — порог здесь только чтобы
+    // замер не висел вечно, а не утверждение, что этого времени достаточно.
+    expect(ms, 'разбор предельного ящика упёрся во что-то новое').toBeLessThan(600_000);
+  }, 900_000);
 
   it('E2: ЗАМЕР — 122 мешка в ящике: сколько это стоит времени', async () => {
     const sealed = await sealPresentation(honest, judy.publicKey);
