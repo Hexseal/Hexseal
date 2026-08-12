@@ -1,11 +1,10 @@
 {
   "hero": {
-    "tagline": "Base 上的去中心化自由职业协议。托管逻辑运行在链上；治理仍掌握在一把密钥手中，而交出它的计划是公开的。",
-    "decentralization": "走向自主之路",
-    "heading1": "无中间商。",
-    "heading2": "无需信任。",
-    "subheading1": "签署一次。代码执行。",
-    "subheading2": "无需托管的托管。",
+    "tagline": "去中心化自由职业",
+    "heading1": "钱放在合约里。",
+    "heading2": "而不是放在平台手里。",
+    "subheading1": "你签署的条款由代码执行。",
+    "subheading2": "争议由并非当事方的人来裁决。",
     "cta": "开始使用",
     "connect_wallet": "连接钱包",
     "wordmark1": "交易",
@@ -750,7 +749,8 @@
     "q_get_usdc": "How do I get test USDC?"
   },
   "footer": {
-    "tagline": "基于 Base 的去中心化自由职业协议。无管理员。代码即法律。",
+    "tagline": "Base 上的去中心化自由职业协议。托管逻辑运行在链上；治理仍掌握在一把密钥手中，而交出它的计划是公开的。",
+    "decentralization": "走向自主之路",
     "resources_title": "资源",
     "faq": "常见问题",
     "contract": "合同",

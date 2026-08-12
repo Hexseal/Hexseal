@@ -4,6 +4,7 @@ import React, { useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
 import { useConnectWallet } from "@/hooks/useConnectWallet";
 import BackgroundFX from "@/components/BackgroundFX";
+import { appChain } from "@/config/chain";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
@@ -63,9 +64,15 @@ export default function Hero() {
 
       <div className="content-container">
         {/* Protocol badge */}
+        {/* ⚠️ Сеть дорисовывается ИЗ КОНФИГА, а не из перевода. Раньше в бейдже
+            стояло написанное руками «Base Network» — в пятнадцати файлах сразу,
+            то есть обновлялось бы вручную пятнадцать раз и потому не обновлялось
+            бы никогда (ровно так протух адрес диамонда в справке). Теперь имя
+            приходит из `appChain`, и первый экран называет ту сеть, на которой
+            приложение действительно работает, — Base Sepolia, тестовую. */}
         <div className="hero-badge" ref={badgeRef}>
           <span className="hero-dot" />
-          {t("hero.tagline")}
+          {t("hero.tagline")} · {appChain.name}
         </div>
 
         {/* Headline */}

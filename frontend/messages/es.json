@@ -1,11 +1,10 @@
 {
   "hero": {
-    "tagline": "Protocolo freelance descentralizado en Base. La lógica de depósito corre on-chain; la gobernanza sigue en una sola clave, y el plan para cederla es público.",
-    "decentralization": "Camino a la autonomía",
-    "heading1": "Sin intermediarios.",
-    "heading2": "Sin confianza requerida.",
-    "subheading1": "Firma una vez. El código ejecuta.",
-    "subheading2": "Depósito sin depósito.",
+    "tagline": "Freelance Descentralizado",
+    "heading1": "Tu dinero está en el contrato.",
+    "heading2": "No en la plataforma.",
+    "subheading1": "El código ejecuta las condiciones que firmaste.",
+    "subheading2": "Una disputa la juzga alguien que no es parte de ella.",
     "cta": "Comenzar",
     "connect_wallet": "Conectar Billetera",
     "wordmark1": "EL TRATO",
@@ -1013,7 +1012,8 @@
     "a_become_arbiter": "Por ahora no. En el lanzamiento la lista de árbitros se elige a mano y el auto-registro en cadena está desactivado — applyAsArbiter() revierte para todos, por eso la app no te ofrece el botón. La entrada abierta es un paso posterior y no tiene fecha. Si quieres que te consideren, abre un issue en GitHub."
   },
   "footer": {
-    "tagline": "Protocolo freelance descentralizado en Base. Sin administradores. El código es la ley.",
+    "tagline": "Protocolo freelance descentralizado en Base. La lógica de depósito corre on-chain; la gobernanza sigue en una sola clave, y el plan para cederla es público.",
+    "decentralization": "Camino a la autonomía",
     "resources_title": "Recursos",
     "faq": "Preguntas frecuentes",
     "contract": "Contrato",

@@ -1,11 +1,10 @@
 {
   "hero": {
-    "tagline": "Decentralized freelance protocol on Base. The escrow logic runs on chain; governance is still one key, and the plan to hand it over is public.",
-    "decentralization": "Path to autonomy",
-    "heading1": "No middlemen.",
-    "heading2": "No trust required.",
-    "subheading1": "Sign once. Code enforces.",
-    "subheading2": "Escrow without the escrow.",
+    "tagline": "Decentralized Freelance",
+    "heading1": "Your money sits in the contract.",
+    "heading2": "Not with the platform.",
+    "subheading1": "Code executes the terms you signed.",
+    "subheading2": "A dispute is judged by someone who is not a party to it.",
     "cta": "Get Started",
     "connect_wallet": "Connect Wallet",
     "wordmark1": "THE DEAL",
@@ -1070,7 +1069,8 @@
     "a_become_arbiter": "Not for now. At launch the arbiter roster is picked by hand, and on-chain self-registration is switched off — applyAsArbiter() reverts for everyone, so the app does not offer you the button. Open entry is a later step and has no date. If you want to be considered, open an issue on GitHub."
   },
   "footer": {
-    "tagline": "Decentralized freelance protocol on Base. No admins. Code is law.",
+    "tagline": "Decentralized freelance protocol on Base. The escrow logic runs on chain; governance is still one key, and the plan to hand it over is public.",
+    "decentralization": "Path to autonomy",
     "resources_title": "Resources",
     "faq": "FAQ",
     "contract": "Contract",

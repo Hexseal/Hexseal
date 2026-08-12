@@ -1,11 +1,10 @@
 {
   "hero": {
-    "tagline": "Dezentrales Freelance-Protokoll auf Base. Die Treuhandlogik läuft on-chain; die Governance liegt noch bei einem Schlüssel, und der Plan zur Übergabe ist öffentlich.",
-    "decentralization": "Weg zur Autonomie",
-    "heading1": "Keine Mittelsmänner.",
-    "heading2": "Kein Vertrauen nötig.",
-    "subheading1": "Einmal signieren. Code setzt durch.",
-    "subheading2": "Treuhand ohne Treuhand.",
+    "tagline": "Dezentrales Freelancing",
+    "heading1": "Dein Geld liegt im Vertrag.",
+    "heading2": "Nicht bei der Plattform.",
+    "subheading1": "Den Vertrag, den du signiert hast, führt Code aus.",
+    "subheading2": "Einen Streit entscheidet jemand, der nicht Partei ist.",
     "cta": "Loslegen",
     "connect_wallet": "Wallet verbinden",
     "wordmark1": "DER DEAL",
@@ -1013,7 +1012,8 @@
     "a_become_arbiter": "Vorerst nicht. Zum Start wird die Schlichterliste von Hand ausgewählt, und die On-chain-Selbstregistrierung ist abgeschaltet — applyAsArbiter() schlägt bei allen fehl, deshalb bietet die App den Button gar nicht an. Der offene Zugang ist ein späterer Schritt und hat kein Datum. Wenn du berücksichtigt werden möchtest, öffne ein Issue auf GitHub."
   },
   "footer": {
-    "tagline": "Dezentrales Freelance-Protokoll auf Base. Keine Admins. Code ist Gesetz.",
+    "tagline": "Dezentrales Freelance-Protokoll auf Base. Die Treuhandlogik läuft on-chain; die Governance liegt noch bei einem Schlüssel, und der Plan zur Übergabe ist öffentlich.",
+    "decentralization": "Weg zur Autonomie",
     "resources_title": "Ressourcen",
     "faq": "FAQ",
     "contract": "Vertrag",

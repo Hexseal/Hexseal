@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IntlMessageFormat } from 'intl-messageformat';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { locales } from './config';
 import {
@@ -256,4 +257,101 @@ describe('копирайт про сроки печатает число окн�
       expect(offenders).toEqual([]);
     });
   }
+});
+
+// ─── 4. Подвал: обещание про план — и лозунг, которого код не даёт ───────────
+//
+// ⚠️ ЗАЧЕМ ЗАМОК ИМЕННО ЗДЕСЬ И ИМЕННО ТАКОЙ.
+//
+// 12 августа 2026 подпись подвала во всех локалях утверждала «Без
+// администраторов. Код — закон», хотя владелец диамонда отменяет вердикт
+// арбитра (`ArbiterRegistryFacet.overturnVerdict`) и меняет любой фасет
+// (`diamondCut`). Подпись переписана на честную, и она теперь ОБЕЩАЕТ, что план
+// передачи управления опубликован, — значит в подвале обязана быть ссылка на
+// сам план, иначе обещание пустое.
+//
+// Замок меряет УПОТРЕБЛЕНИЕ, а не наличие строки: подвал рендерится настоящий,
+// и проверяется разметка. Вычеркнуть ссылку из файла и оставить импорт — тот
+// самый способ пройти мимо текстового замка, которым этот проект уже платил.
+//
+// И вторая половина важнее первой: ссылку заметят глазами, а вернувшийся лозунг
+// — нет. Поэтому список запрещённых утверждений проверяется по ВСЕМ файлам
+// каталога переводов, включая не подключённые к приложению (`zh.json` —
+// сирота, и она уже один раз пронесла мимо замков мёртвый адрес).
+//
+// ⚠️ Этот же замок ловит промах, которым он и оплачен: правка, адресованная
+// «ключу tagline», попала в секцию `hero` вместо `footer` — состав ключей
+// остался сойтись, сборка собралась, а «No admins» остался на месте.
+const DOC_LINK = 'https://github.com/Hexseal/Hexseal/blob/main/docs/DECENTRALIZATION.md';
+const MESSAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../messages');
+
+/** Утверждения, которых код не даёт ни на одном языке. */
+const BANNED_CLAIMS = [
+  'No admins', 'Code is law',
+  'Без администраторов', 'Код — закон',
+  'Без адмінів', 'Keine Admins', 'Code ist Gesetz',
+  'Sans admins', 'code fait loi',
+  'Sin administradores', 'código es la ley',
+  'Nessun admin', 'codice è legge',
+  'Sem admins', 'código é a lei',
+  'بلا مشرفين', 'الكود هو القانون',
+  'कोई एडमिन नहीं', 'कोड ही कानून',
+  '管理者なし', 'コードが法律',
+  '관리자 없음', '코드가 법',
+  'ไม่มีผู้ดูแล', 'โค้ดคือกฎหมาย',
+  '无管理员', '代码即法律',
+];
+
+function translateFromEn(key: string): string {
+  const value = key.split('.').reduce<unknown>(
+    (acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined),
+    bundles.en,
+  );
+  if (typeof value !== 'string') throw new Error(`нет ключа перевода: ${key}`);
+  return value;
+}
+
+vi.mock('next-intl', () => ({ useTranslations: () => translateFromEn }));
+vi.mock('next/link', async () => {
+  const React = await import('react');
+  return {
+    default: ({ href, children }: { href: string; children: React.ReactNode }) =>
+      React.createElement('a', { href }, children),
+  };
+});
+vi.mock('wagmi', () => ({ useAccount: () => ({ address: undefined, isConnected: false }) }));
+
+describe('подвал не обещает того, чего код не даёт', () => {
+  it('ссылка на план РИСУЕТСЯ, и ни одна локаль не утверждает отсутствие администраторов', async () => {
+    const React = await import('react');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { default: Footer } = await import('@/components/Footer');
+
+    const html = renderToStaticMarkup(React.createElement(Footer));
+
+    expect(html, 'подпись подвала не доехала до разметки').toContain(
+      translateFromEn('footer.tagline'),
+    );
+    expect(html, `в подвале нет ссылки на ${DOC_LINK} — подпись обещает план, взять его негде`)
+      .toContain(DOC_LINK);
+    expect(html, 'ссылка есть, а подписи у неё нет — человеку не на что нажать')
+      .toContain(translateFromEn('footer.decentralization'));
+
+    const guilty: string[] = [];
+    const files = readdirSync(MESSAGES_DIR).filter((f) => f.endsWith('.json'));
+    expect(files.length, 'файлы переводов не найдены — замок остался бы зелёным ни на чём')
+      .toBeGreaterThanOrEqual(locales.length);
+    for (const file of files) {
+      const dict = JSON.parse(readFileSync(join(MESSAGES_DIR, file), 'utf8')) as Messages;
+      const tagline = (dict.footer as Record<string, unknown> | undefined)?.tagline;
+      if (typeof tagline !== 'string') {
+        guilty.push(`${file}: нет footer.tagline`);
+        continue;
+      }
+      for (const claim of BANNED_CLAIMS) {
+        if (tagline.includes(claim)) guilty.push(`${file}: «${claim}»`);
+      }
+    }
+    expect(guilty).toEqual([]);
+  });
 });
