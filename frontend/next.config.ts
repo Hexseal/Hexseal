@@ -73,7 +73,6 @@ const nextConfig: NextConfig = {
   },
 
   env: {
-    NEXT_PUBLIC_HEXSEAL_ADDRESS: process.env.NEXT_PUBLIC_HEXSEAL_ADDRESS,
     NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID,
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
     // Один и тот же номер уезжает и в страницу, и в `/api/version` — см. врезку
