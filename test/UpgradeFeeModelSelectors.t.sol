@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../script/UpgradeFeeModel.s.sol";
+import "../script/archive/UpgradeFeeModel.s.sol";
 import "../script/DeployFull.s.sol";
 import "../src/DiamondProxy.sol";
 import "./BoardsFixture.sol";

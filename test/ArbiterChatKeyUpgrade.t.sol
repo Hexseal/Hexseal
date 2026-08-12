@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
-import {UpgradeArbiterChatKey} from "../script/UpgradeArbiterChatKey.s.sol";
+import {UpgradeArbiterChatKey} from "../script/archive/UpgradeArbiterChatKey.s.sol";
 import "../src/DiamondProxy.sol";
 
 contract ArbiterChatKeyUpgradeTest is Test {
