@@ -99,6 +99,8 @@ const REQUIRED_PRESENT = [
   'chat.present_draft_found',
   'chat.present_draft_sent',
   'chat.present_draft_use',
+  // Ревью, круг 1 (I-4): запись на устройстве не легла, а мешок уехал.
+  'chat.present_draft_not_saved',
   'chat.present_err_arbiter_has_no_key',
   'chat.present_err_peer_has_no_key',
   'chat.present_err_nothing_selected',
@@ -120,6 +122,8 @@ const REQUIRED_PRESENT = [
   'chat.present_err_box_refused',
   'chat.present_err_offline',
   'chat.present_err_pass_refused',
+  // Ревью, круг 1 (I-5): наша поломка ДО склада — своё имя и свой текст.
+  'chat.present_err_internal_error',
 ];
 
 /** Ключи, которые обязаны исчезнуть: они говорили про XMTP и про журнал
@@ -486,10 +490,10 @@ describe('адрес контракта не вписан в переводы р
 
 /* ─── Предъявление арбитру (4в-2, Задача 6) ─────────────────────────────── */
 describe('тексты предъявления арбитру', () => {
-  it('L1: все 43 ключа есть в каждой из 14 локалей и ни один не пуст', () => {
+  it('L1: все 45 ключей есть в каждой из 14 локалей и ни один не пуст', () => {
     // Число написано РУКАМИ: список выше может усохнуть незамеченным.
-    // 22 ключа показа + 21 ключ отказа (по числу членов `PresentRefusal`).
-    expect(REQUIRED_PRESENT.length).toBe(43);
+    // 23 ключа показа + 22 ключа отказа (по числу членов `PresentRefusal`).
+    expect(REQUIRED_PRESENT.length).toBe(45);
     const missing: string[] = [];
     for (const locale of LOCALES) {
       const dict = read(locale);
@@ -501,7 +505,7 @@ describe('тексты предъявления арбитру', () => {
     expect(missing).toEqual([]);
   });
 
-  it('L2: у каждой из 21 причины отказа есть свой ключ, и он в локалях', async () => {
+  it('L2: у каждой из 22 причин отказа есть свой ключ, и он в локалях', async () => {
     // ⚠️ Список причин пишется ЗДЕСЬ РУКАМИ и сверяется с картой модуля.
     // ВОСЕМЬ имён сборщика — от Задачи 4, включая три беды заверения с
     // РАЗНЫМ лечением. Добавит она девятое — карта не соберётся в
@@ -513,9 +517,9 @@ describe('тексты предъявления арбитру', () => {
       'not_disputed', 'arbiter_changed', 'key_changed', 'arbiter_left',
       'no_consent', 'already_sending',
       'chain_unavailable', 'not_a_party', 'no_such_deal', 'rate_limited',
-      'box_refused', 'offline', 'pass_refused',
+      'box_refused', 'offline', 'pass_refused', 'internal_error',
     ];
-    expect(REASONS.length).toBe(21);
+    expect(REASONS.length).toBe(22);
     const { PRESENT_REFUSAL_KEYS } = await import('./presentToArbiter');
     expect(Object.keys(PRESENT_REFUSAL_KEYS).sort()).toEqual([...REASONS].sort());
     const en = read('en');

@@ -743,7 +743,9 @@
     "present_err_rate_limited": "过于频繁。什么都没有发送——请等一分钟。",
     "present_err_box_refused": "争议信箱未接收。什么都没有发送。",
     "present_err_offline": "无法连接服务器。什么都没有发送。",
-    "present_err_pass_refused": "服务器未接受通行凭证。什么都没有发送。"
+    "present_err_pass_refused": "服务器未接受通行凭证。什么都没有发送。",
+    "present_draft_not_saved": "已发送，但无法记录在本设备上：重新加载后，页面既不会记得「已放入」，也不会记得勾选。包裹在信箱里——这是服务器的答复，不是我们的记录。",
+    "present_err_internal_error": "本设备上出了问题，出示内容没有生成。什么都没有发送。"
   },
   "messaging": {
     "enabled_title": "消息功能已启用",

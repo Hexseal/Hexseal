@@ -743,7 +743,9 @@
     "present_err_rate_limited": "Demasiadas vezes. Nada foi enviado — espere um minuto.",
     "present_err_box_refused": "A caixa da disputa não aceitou. Nada foi enviado.",
     "present_err_offline": "Não se conseguiu chegar ao servidor. Nada foi enviado.",
-    "present_err_pass_refused": "O servidor não aceitou o passe. Nada foi enviado."
+    "present_err_pass_refused": "O servidor não aceitou o passe. Nada foi enviado.",
+    "present_draft_not_saved": "Enviado, mas não foi possível registar neste dispositivo: depois de recarregar, a página não se lembrará nem de «colocado» nem das marcas. O pacote está na caixa — essa é a resposta do servidor, não o nosso registo.",
+    "present_err_internal_error": "Algo se avariou neste dispositivo e a apresentação não foi preparada. Nada foi enviado."
   },
   "messaging": {
     "enabled_title": "Mensagens habilitadas",

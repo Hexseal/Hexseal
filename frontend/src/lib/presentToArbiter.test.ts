@@ -29,8 +29,16 @@ import type { Hex } from 'viem';
 import {
   AGREEMENT_STATUS_DISPUTED,
   PRESENT_REFUSAL_KEYS,
+  boxStateFromList,
   canSend,
+  draftKeepNotice,
   fitNotice,
+  keepFirstSent,
+  keepKnownBox,
+  restoreMountImpl,
+  sameBoxState,
+  shouldPollBox,
+  tickBoxImpl,
   lastDraftOfDeal,
   lastSentBag,
   otherAttestationsOf,
@@ -48,7 +56,9 @@ import {
   type PresentRefusal,
   type ReadyArbiterKey,
   type SendPresentationDeps,
+  type SentBagState,
 } from './presentToArbiter';
+import type { DisputeBoxList } from './disputeBox';
 import { fetchDisputeBag, putDisputeBag } from './disputeBox';
 import { installFakeChatDisk, type FakeChatDisk } from './__stand__/fakeChatDisk';
 import {
@@ -734,8 +744,10 @@ describe('слова человеку', () => {
       'no_consent', 'already_sending',
       'chain_unavailable', 'not_a_party', 'no_such_deal', 'rate_limited',
       'box_refused', 'offline', 'pass_refused',
+      // Ревью, круг 1 (I-5): наша поломка ДО склада.
+      'internal_error',
     ];
-    expect(REASONS.length, 'список причин усох незамеченным').toBe(21);
+    expect(REASONS.length, 'список причин усох незамеченным').toBe(22);
     expect(Object.keys(PRESENT_REFUSAL_KEYS).sort()).toEqual([...REASONS].sort());
     const values = REASONS.map(r => PRESENT_REFUSAL_KEYS[r]);
     expect(new Set(values).size, 'две причины делят один текст').toBe(REASONS.length);
@@ -828,4 +840,211 @@ describe('слова человеку', () => {
     // решает по этому числу, показывать ли переписку.
     expect(w.lines[1].params).toBeUndefined();
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Монтирование и такт описи — РЕШЕНИЯ, вынесенные из эффектов (ревью, круг 1)
+//
+// ⚠️ ЗАЧЕМ ЭТОТ БЛОК. Прежде эти правила жили функциональными обновлениями
+// внутри `useEffect`, и я назвал это «замка нет и БЫТЬ НЕ МОЖЕТ». Это было
+// шире правды: приём есть в этом же репозитории (Задача 5,
+// `handleChainLogsImpl` + `chainEventBus.test.ts`). Здесь меряется РАБОТА, а
+// проводка сторожится вторым, ТЕКСТОВЫМ слоем — и его природа названа там.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('вернулся на страницу: восстановление не затирает свежее', () => {
+  it('T33: восстановленное СТАРОЕ уступает тому, что уже на экране', () => {
+    const back = { key: BAG_KEY, uploadedAt: STORED_AT };
+    // Пусто — берём восстановленное.
+    expect(keepFirstSent(null, back)).toEqual({ key: BAG_KEY });
+    expect(keepKnownBox({ kind: 'unknown' }, back))
+      .toEqual({ kind: 'placed', uploadedAt: STORED_AT });
+    // ⚠️ ГЛАВНОЕ: человек успел отправить ЗАНОВО, пока читался диск. Прямая
+    // запись вместо функционального обновления вернула бы ему прошлый мешок и
+    // прошлое время — то есть соврала бы про то, что лежит в ящике сейчас.
+    const fresher = { key: `${AGREEMENT}/1754402000000-bbbb.bin` };
+    expect(keepFirstSent(fresher, back), 'восстановленное затёрло свежее').toBe(fresher);
+    const known: SentBagState = { kind: 'fetched', uploadedAt: 1, fetchedAt: 2 };
+    expect(keepKnownBox(known, back), 'известное понижено до восстановленного').toBe(known);
+  });
+
+  it('T34: тело эффекта монтирования зовёт оба слияния — и молчит, когда нечего', async () => {
+    const draft = {
+      dealId: AGREEMENT, presenter: ARBITER, issuedAt: 1, messageCount: 1, wireBytes: 10,
+      state: 'sent' as const, bagKey: BAG_KEY, sentAt: STORED_AT,
+      container: { frames: [] },
+    } as unknown as PresentationDraft;
+
+    const applied: string[] = [];
+    await restoreMountImpl({
+      presenter: ARBITER, agreement: AGREEMENT, alive: () => true,
+      applySent: (fn) => { applied.push(`sent:${JSON.stringify(fn(null))}`); },
+      applyBox: (fn) => { applied.push(`box:${JSON.stringify(fn({ kind: 'unknown' }))}`); },
+      read: async () => [draft],
+    });
+    expect(applied).toEqual([
+      `sent:${JSON.stringify({ key: BAG_KEY })}`,
+      `box:${JSON.stringify({ kind: 'placed', uploadedAt: STORED_AT })}`,
+    ]);
+
+    // Вкладку закрыли, пока читался диск — не трогаем ничего.
+    const dead: string[] = [];
+    await restoreMountImpl({
+      presenter: ARBITER, agreement: AGREEMENT, alive: () => false,
+      applySent: () => dead.push('sent'), applyBox: () => dead.push('box'),
+      read: async () => [draft],
+    });
+    expect(dead, 'писали в состояние мёртвой вкладки').toEqual([]);
+
+    // Восстанавливать нечего — и не пишем «положено неизвестно когда».
+    const empty: string[] = [];
+    await restoreMountImpl({
+      presenter: ARBITER, agreement: AGREEMENT, alive: () => true,
+      applySent: () => empty.push('sent'), applyBox: () => empty.push('box'),
+      read: async () => [],
+    });
+    expect(empty).toEqual([]);
+
+    // Диск сломался — «нечего восстанавливать», а не поломка открытия чата.
+    const broken: string[] = [];
+    await expect(restoreMountImpl({
+      presenter: ARBITER, agreement: AGREEMENT, alive: () => true,
+      applySent: () => broken.push('sent'), applyBox: () => broken.push('box'),
+      read: async () => { throw new Error('диск'); },
+    })).resolves.toBeUndefined();
+    expect(broken).toEqual([]);
+  });
+});
+
+describe('такт описи: три правила, и каждое меряется', () => {
+  const listOf = (over: Partial<DisputeBoxList> = {}): DisputeBoxList => ({
+    bags: [{
+      key: BAG_KEY, sender: ARBITER, sealedFor: ARBITER, size: 10,
+      uploadedAt: STORED_AT, fetchedAt: null,
+    }],
+    arbiter: ARBITER, sealedForOthers: 0, indexTrusted: true, ...over,
+  });
+
+  it('T35: нет пропуска — в сеть не пошли и состояния не тронули', async () => {
+    const calls: string[] = [];
+    await tickBoxImpl({
+      presenter: ARBITER, agreement: AGREEMENT, bagKey: BAG_KEY, alive: () => true,
+      peekPass: () => null,
+      list: async () => { calls.push('list'); return listOf(); },
+      applyBox: () => calls.push('apply'),
+    });
+    expect(calls, 'такт описи разбудил бы кошелёк или тронул состояние').toEqual([]);
+
+    // Опись не ответила — известное остаётся как есть, а не мигает.
+    const onFail: string[] = [];
+    await tickBoxImpl({
+      presenter: ARBITER, agreement: AGREEMENT, bagKey: BAG_KEY, alive: () => true,
+      peekPass: () => 'v1.pass',
+      list: async () => { throw new BagTransportError('нет связи'); },
+      applyBox: () => onFail.push('apply'),
+    });
+    expect(onFail, 'сбой описи стёр то, что уже знали').toEqual([]);
+
+    // Ответила — «забрали» доезжает.
+    let got: SentBagState | null = null;
+    await tickBoxImpl({
+      presenter: ARBITER, agreement: AGREEMENT, bagKey: BAG_KEY, alive: () => true,
+      peekPass: () => 'v1.pass',
+      list: async () => listOf({ bags: [{
+        key: BAG_KEY, sender: ARBITER, sealedFor: ARBITER, size: 10,
+        uploadedAt: STORED_AT, fetchedAt: STORED_AT + 60_000,
+      }] }),
+      applyBox: (fn) => { got = fn({ kind: 'placed', uploadedAt: STORED_AT }); },
+    });
+    expect(got).toEqual({ kind: 'fetched', uploadedAt: STORED_AT, fetchedAt: STORED_AT + 60_000 });
+  });
+
+  it('T36: НЕДОВЕРЕННАЯ опись не понижает «положено» — единственный потребитель indexTrusted', () => {
+    const placed: SentBagState = { kind: 'placed', uploadedAt: STORED_AT };
+    // ⚠️ СЦЕНА I-3 ДОСЛОВНО. Опись релеера перестраивалась с диска, у
+    // восстановленных записей нет `deal`, мешок выпал из выдачи. Понизь мы
+    // здесь известное — строка «Положено в ящик спора · 14:02» ИСЧЕЗЛА бы,
+    // сменившись на «узнать не удалось», при том что сервер прямым текстом
+    // сказал «моей описи не верь», а у стороны есть и ответ склада, и черновик.
+    expect(boxStateFromList(placed, listOf({ bags: [], indexTrusted: false }), BAG_KEY))
+      .toBe(placed);
+    // А при ДОВЕРЕННОЙ описи «мешка нет» — честный ответ сервера (вышел срок).
+    expect(boxStateFromList(placed, listOf({ bags: [], indexTrusted: true }), BAG_KEY))
+      .toEqual({ kind: 'unknown' });
+    // Ничего не знали и при недоверенной описи — так и остаёмся «не знаю».
+    expect(boxStateFromList({ kind: 'unknown' }, listOf({ bags: [], indexTrusted: false }), BAG_KEY))
+      .toEqual({ kind: 'unknown' });
+    // ⚠️ ТОЖДЕСТВО ПРИ НЕИЗМЕНИВШЕМСЯ: без него каждый такт отдавал бы новый
+    // объект, экран перерисовывался бы, а эффект такта (он зависит от
+    // состояния) перезапускался бы — опрос шёл бы со скоростью перерисовки.
+    expect(boxStateFromList(placed, listOf(), BAG_KEY)).toBe(placed);
+    expect(sameBoxState(placed, { kind: 'placed', uploadedAt: STORED_AT })).toBe(true);
+    expect(sameBoxState(placed, { kind: 'placed', uploadedAt: STORED_AT + 1 })).toBe(false);
+    expect(sameBoxState(
+      { kind: 'fetched', uploadedAt: 1, fetchedAt: 2 },
+      { kind: 'fetched', uploadedAt: 1, fetchedAt: 3 })).toBe(false);
+  });
+
+  it('T37: после «забрали» опрос прекращается — узнавать больше нечего', () => {
+    expect(shouldPollBox({ kind: 'unknown' })).toBe(true);
+    expect(shouldPollBox({ kind: 'placed', uploadedAt: STORED_AT })).toBe(true);
+    expect(shouldPollBox({ kind: 'fetched', uploadedAt: 1, fetchedAt: 2 })).toBe(false);
+  });
+});
+
+describe('человек узнаёт, если запись на устройстве не легла', () => {
+  it('T38: отказ черновика назван строкой, а отправка остаётся успешной', () => {
+    const ok = {
+      ok: true as const, bagKey: BAG_KEY, uploadedAt: STORED_AT,
+      draftSaved: 'saved' as const, draftMarked: 'saved' as const,
+    };
+    expect(draftKeepNotice(ok), 'сказали лишнее там, где всё легло').toBeNull();
+    // ⚠️ ПЯТЫЙ ВОПРОС ОБСТОЯТЕЛЬСТВ: «сломается — узнает ли?». Прежде — нет.
+    expect(draftKeepNotice({ ...ok, draftSaved: 'disk_unavailable' }))
+      .toBe('chat.present_draft_not_saved');
+    expect(draftKeepNotice({ ...ok, draftSaved: 'lock_timeout' }))
+      .toBe('chat.present_draft_not_saved');
+    expect(draftKeepNotice({ ...ok, draftMarked: 'not_found' }))
+      .toBe('chat.present_draft_not_saved');
+    // Отказ отправки — не про устройство, и второй строкой его не сопровождаем.
+    expect(draftKeepNotice({ ok: false, reason: 'offline' })).toBeNull();
+  });
+});
+
+describe('«не бросает» — про весь путь, а не про половину', () => {
+  it('T39: сборщик бросил на чужой форме входа — вердикт с именем, а не поломка', async () => {
+    // ⚠️ СЦЕНА I-5. Сборщик бросает `TypeError` на само наличие прежнего имени
+    // `peerAttestation` (Задача 4) и на мусорный адрес. Голым он уводил бросок
+    // мимо `doSend` (там `try/finally` без `catch`) в `void doSend()` — то есть
+    // в необработанный отказ промиса: ни тоста, ни причины, окно открыто,
+    // кнопка снова живая.
+    const trace: Trace = { steps: [], puts: 0 };
+    const v = await sendPresentation({
+      ...(await realDeps({}, trace)),
+      peerBoxKey: new Uint8Array(7),   // не 32 байта — сборщик бросит
+    });
+    expect(v).toEqual({ ok: false, reason: 'internal_error' });
+    expect(trace.puts, 'мешок уехал после нашей же поломки').toBe(0);
+
+    // Черновик бросил — тоже вердикт, и тоже ДО склада.
+    _resetSendingForTest();
+    const t2: Trace = { steps: [], puts: 0 };
+    expect(await sendPresentation(await realDeps({
+      saveDraft: async () => { throw new Error('кладовая'); },
+    }, t2))).toEqual({ ok: false, reason: 'internal_error' });
+    expect(t2.puts).toBe(0);
+
+    // ⚠️ А ПОМЕТКА, БРОСИВШАЯ ПОСЛЕ УСПЕШНОГО СКЛАДА, — НЕ ОТКАЗ: мешок уже в
+    // ящике, и «ничего не отправлено» было бы враньём с уверенным лицом.
+    _resetSendingForTest();
+    const t3: Trace = { steps: [], puts: 0 };
+    const after = await sendPresentation(await realDeps({
+      markSent: async () => { throw new Error('кладовая'); },
+    }, t3));
+    expect(after.ok, 'бросок пометки выдан за несостоявшуюся отправку').toBe(true);
+    if (!after.ok) return;
+    expect(t3.puts).toBe(1);
+    expect(after.draftMarked).toBe('disk_unavailable');
+    expect(draftKeepNotice(after)).toBe('chat.present_draft_not_saved');
+  }, 180_000);
 });

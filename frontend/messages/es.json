@@ -743,7 +743,9 @@
     "present_err_rate_limited": "Demasiado a menudo. No se ha enviado nada: espere un minuto.",
     "present_err_box_refused": "El buzón de la disputa no lo ha aceptado. No se ha enviado nada.",
     "present_err_offline": "No se ha podido contactar con el servidor. No se ha enviado nada.",
-    "present_err_pass_refused": "El servidor no ha aceptado el pase. No se ha enviado nada."
+    "present_err_pass_refused": "El servidor no ha aceptado el pase. No se ha enviado nada.",
+    "present_draft_not_saved": "Enviado, pero no se ha podido anotar en este dispositivo: tras recargar, la página no recordará ni «depositado» ni las marcas. El paquete está en el buzón: esa es la respuesta del servidor, no nuestra anotación.",
+    "present_err_internal_error": "Algo se ha roto en este dispositivo y la presentación no se ha preparado. No se ha enviado nada."
   },
   "messaging": {
     "enabled_title": "Mensajería habilitada",

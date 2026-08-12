@@ -743,7 +743,9 @@
     "present_err_rate_limited": "너무 잦습니다. 아무것도 보내지 않았습니다. 일 분 기다려 주세요.",
     "present_err_box_refused": "분쟁 사서함이 받지 않았습니다. 아무것도 보내지 않았습니다.",
     "present_err_offline": "서버에 닿지 못했습니다. 아무것도 보내지 않았습니다.",
-    "present_err_pass_refused": "서버가 통행증을 받지 않았습니다. 아무것도 보내지 않았습니다."
+    "present_err_pass_refused": "서버가 통행증을 받지 않았습니다. 아무것도 보내지 않았습니다.",
+    "present_draft_not_saved": "보냈지만 이 기기에 적어 두지 못했습니다. 새로 고치면 「넣었음」도 체크도 기억하지 못합니다. 꾸러미는 사서함에 있습니다. 이는 서버의 답이지 우리의 기록이 아닙니다.",
+    "present_err_internal_error": "이 기기에서 무언가 고장 나 제시물이 만들어지지 않았습니다. 아무것도 보내지 않았습니다."
   },
   "messaging": {
     "enabled_title": "메시징 활성화됨",

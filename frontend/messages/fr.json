@@ -743,7 +743,9 @@
     "present_err_rate_limited": "Trop souvent. Rien n'a été envoyé — attendez une minute.",
     "present_err_box_refused": "La boîte du litige n'a pas accepté. Rien n'a été envoyé.",
     "present_err_offline": "Le serveur n'a pas répondu. Rien n'a été envoyé.",
-    "present_err_pass_refused": "Le serveur n'a pas accepté le laissez-passer. Rien n'a été envoyé."
+    "present_err_pass_refused": "Le serveur n'a pas accepté le laissez-passer. Rien n'a été envoyé.",
+    "present_draft_not_saved": "Envoyé, mais impossible de l'inscrire sur cet appareil : après un rechargement, la page ne se souviendra ni de « déposé » ni des coches. Le paquet est dans la boîte — c'est la réponse du serveur, pas notre inscription.",
+    "present_err_internal_error": "Quelque chose s'est cassé sur cet appareil et la présentation n'a pas été constituée. Rien n'a été envoyé."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

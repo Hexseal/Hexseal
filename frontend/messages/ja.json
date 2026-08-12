@@ -743,7 +743,9 @@
     "present_err_rate_limited": "頻繁すぎます。何も送られていません。一分ほどお待ちください。",
     "present_err_box_refused": "紛争の受け箱が受け付けませんでした。何も送られていません。",
     "present_err_offline": "サーバーに届きませんでした。何も送られていません。",
-    "present_err_pass_refused": "サーバーが通行証を受け付けませんでした。何も送られていません。"
+    "present_err_pass_refused": "サーバーが通行証を受け付けませんでした。何も送られていません。",
+    "present_draft_not_saved": "送りましたが、この端末に書き留められませんでした。読み込み直すと「入れました」もチェックも思い出せません。袋は受け箱にあります。これはサーバーの答えであって、こちらの記録ではありません。",
+    "present_err_internal_error": "この端末で何かが壊れ、提示は作られませんでした。何も送られていません。"
   },
   "messaging": {
     "enabled_title": "メッセージング有効",

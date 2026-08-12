@@ -48,10 +48,11 @@ import { toPeerBoxKeyBytes, type ArbiterBoxKeyBytes } from '@/lib/presentation';
 // (арбитра сменили, просят предъявить заново) не существует вовсе.
 import { readPresentationDrafts, type PresentationDraft } from '@/lib/presentationDraft';
 import {
-  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, canSend, fitNotice, lastDraftOfDeal,
-  otherAttestationsOf, pickingPrep, presentButtonVisible, presentWarning,
-  presentedFromKey, readAgreementStatus, restoreSentBag, selectableMessages,
-  selectionFromContainer, sendPresentation, sentBagState,
+  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, canSend, draftKeepNotice, fitNotice,
+  lastDraftOfDeal, otherAttestationsOf, pickingPrep, presentButtonVisible,
+  presentWarning, presentedFromKey, readAgreementStatus, restoreMountImpl,
+  selectableMessages, selectionFromContainer, sendPresentation, shouldPollBox,
+  tickBoxImpl,
   type FitNotice, type PrepVerdict, type PresentableMessage, type SelectableMessage,
   type SentBagState, type WarnLine,
 } from '@/lib/presentToArbiter';
@@ -330,6 +331,10 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
    * к переносу той же беды на этаж ниже.
    */
   const prepSession = useRef<{ get: () => Promise<PrepVerdict> } | null>(null);
+  /** Порядковый номер пересчёта. ⚠️ Человек щёлкает быстрее, чем считает
+   *  крипто: без номера ответ ПРЕЖНЕГО набора, вернувшийся позже свежего,
+   *  оставлял бы на экране «влезает N» от отменённого выбора. */
+  const recountSeq = useRef(0);
 
   // Статус — СВОЁ чтение цепи, а не число из родителя: `dealContexts`
   // живёт столько, сколько живёт его запрос, а отправлять по устаревшему
@@ -409,6 +414,10 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
     setConsent(false);        // согласие — ЗАНОВО на каждое предъявление
     setChange(null);
     setStage('picking');
+    // ⚠️ Сеанс гасится ДО раннего выхода: комментарий ниже обещает «сеанс
+    // сменяется на каждое открытие», а на ветке «кошелька нет» прежний сеанс
+    // прежде доживал до следующего захода — с ключом печати прошлого арбитра.
+    prepSession.current = null;
     if (!address) return;
     /**
      * ⚠️ ДЕШЁВЫЙ СНИМОК — ОДИН НА ОТКРЫТИЕ ВЫБОРА. Сеанс заводится здесь, а
@@ -459,10 +468,14 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
   const recount = useCallback(async (
     sel: { seq: number; sender: `0x${string}` }[],
   ) => {
+    const seq = ++recountSeq.current;
     if (sel.length === 0) { setNotice(null); return; }
     const picking = prepSession.current;
-    if (!picking) { setNotice(null); return; }
+    // ⚠️ Причина, а не пустота: сеанса нет, когда нет кошелька или узла, и
+    // человек иначе смотрел бы на запертую кнопку «Дальше» без единого слова.
+    if (!picking) { setNotice({ kind: 'refused', reason: 'chain_unavailable' }); return; }
     const got = await picking.get();
+    if (seq !== recountSeq.current) return;   // отметки успели поменяться
     // Снимка нет — говорим ПОЧЕМУ, а не оставляем пустое место у запертой
     // кнопки: «цепь молчит», «арбитра нет», «ключи не заверены» лечатся
     // по-разному, и слова у них разные.
@@ -480,6 +493,7 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
       otherAttestations: prep.otherAttestations,
       publicClient: publicClient ?? undefined,
     });
+    if (seq !== recountSeq.current) return;   // пока считали, набор сменился
     setNotice(fitNotice(verdict, sel.length));
   }, [address, agreement, peer, publicClient, session]);
 
@@ -550,6 +564,11 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
       setStage('idle');
       setConsent(false);   // следующее предъявление спросит заново
       toast.success(t('chat.present_sent'));
+      // ⚠️ ЗАПИСЬ НА УСТРОЙСТВЕ МОГЛА НЕ ЛЕЧЬ, и человек об этом узнаёт
+      // (ревью, круг 1, I-4). Мешок при этом в ящике — отправка удалась;
+      // не удалась память вкладки, и последствие у неё заметное.
+      const kept = draftKeepNotice(verdict);
+      if (kept) toast(t(kept as Parameters<typeof t>[0]));
     } finally {
       setBusy(false);
     }
@@ -603,21 +622,24 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
    * асинхронное, и если человек успел отправить заново раньше, чем оно
    * вернулось, восстановленное СТАРОЕ не должно затирать свежее.
    *
-   * ⚠️ Замок здесь — на решение (`restoreSentBag`, T27), а на сам вызов из
-   * эффекта замка НЕТ и быть не может: эффекты в этом проекте не исполняются
-   * ни одним тестом. Число названо в мутациях (снять вызов — ноль красных).
+   * ⚠️ ТЕЛО ЭФФЕКТА ВЫНЕСЕНО ЦЕЛИКОМ — `restoreMountImpl` (ревью, круг 1,
+   * I-1), и вместе с ним вынесены ОБА правила слияния, которых прежде не
+   * сторожило ничто: «восстановленное старое не затирает свежее» и «известное
+   * не понижаем». Node-тест зовёт её напрямую и меряет работу. Здесь остаётся
+   * только проводка — её сторожит второй, ТЕКСТОВЫЙ слой
+   * (`components/presentToArbiter.test.tsx`, C11), и его природа названа там
+   * вслух. Само нажатие по-прежнему не проверяется ничем.
    */
   useEffect(() => {
     if (!address) return;
     let alive = true;
-    void (async () => {
-      const back = await restoreSentBag(
-        address.toLowerCase() as `0x${string}`, agreement);
-      if (!alive || !back) return;
-      setSent(prev => prev ?? { key: back.key });
-      setBoxState(prev => (prev.kind === 'unknown'
-        ? { kind: 'placed', uploadedAt: back.uploadedAt } : prev));
-    })();
+    void restoreMountImpl({
+      presenter: address.toLowerCase() as `0x${string}`,
+      agreement,
+      alive: () => alive,
+      applySent: (fn) => setSent(fn),
+      applyBox: (fn) => setBoxState(fn),
+    });
     return () => { alive = false; };
   }, [address, agreement]);
 
@@ -629,31 +651,34 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
    * время из ответа склада или из черновика). Такт `BOX_POLL_MS` тратит общий
    * адресный бюджет чтения (тот же, что у склада), своего счёта у ящика нет.
    *
-   * ⚠️ ОТКАЗ ОПИСИ НЕ СТИРАЕТ ТОГО, ЧТО УЖЕ ИЗВЕСТНО. «Положено» подтвердил
-   * склад ответом (или черновик — той же серверной отметкой), и не ответившая
-   * сейчас опись этого не отменяет; неизвестным остаётся только «забрали».
-   * Сброс в `unknown` дал бы мигание «положено» ↔ «узнать не удалось» на
-   * каждом сбое сети. А вот `unknown` ИЗ ОПИСИ (мешка в ней больше нет —
-   * например, вышел срок хранения, Задача 2) выставляется честно: это ответ
-   * сервера, а не наша немота.
+   * ⚠️ ОТКАЗ ОПИСИ НЕ СТИРАЕТ ТОГО, ЧТО УЖЕ ИЗВЕСТНО, и `unknown` при
+   * НЕДОВЕРЕННОЙ описи не понижает «положено» (ревью, круг 1, I-3). Оба
+   * правила живут в `tickBoxImpl`/`boxStateFromList` и меряются node-тестами;
+   * здесь остаётся такт и проводка.
+   *
+   * ⚠️ ПОСЛЕ «ЗАБРАЛИ» ОПРОС ПРЕКРАЩАЕТСЯ (`shouldPollBox`): состояние
+   * конечное, узнавать больше нечего, а бюджет чтения общий со складом. Гейта
+   * по видимости вкладки здесь НЕТ — это открытый пункт 38, и он назван, а не
+   * сделан молча.
    */
   useEffect(() => {
     if (!sent || !address) return;
+    if (!shouldPollBox(boxState)) return;
     let alive = true;
-    const tick = async (): Promise<void> => {
-      const pass = peekBagPass(address.toLowerCase() as `0x${string}`);
-      if (!pass) return;
-      try {
-        const list = await listDisputeBox(pass, agreement);
-        if (alive) setBoxState(sentBagState(list, sent.key));
-      } catch {
-        /* опись не ответила — оставляем известное как есть (см. ⚠️ выше) */
-      }
+    const io = {
+      presenter: address.toLowerCase() as `0x${string}`,
+      agreement,
+      bagKey: sent.key,
+      alive: () => alive,
+      peekPass: peekBagPass,
+      list: listDisputeBox,
+      applyBox: (fn: (prev: SentBagState) => SentBagState) => setBoxState(fn),
     };
-    void tick();
-    const id = setInterval(() => { void tick(); }, BOX_POLL_MS);
+    const tick = (): void => { void tickBoxImpl(io); };
+    tick();
+    const id = setInterval(tick, BOX_POLL_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [address, agreement, sent]);
+  }, [address, agreement, sent, boxState]);
 
   if (!visible) return null;
 

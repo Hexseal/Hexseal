@@ -40,8 +40,8 @@ import type { DisputeBoxList } from './disputeBox';
 /** Agreement.Status.DISPUTED. ⚠️ У реестра DISPUTED = 3 — это ДРУГОЙ enum. */
 export const AGREEMENT_STATUS_DISPUTED = 4;
 
-/** Такт опроса описи: «забрал ли арбитр». Три обращения в минуту против
- *  серверных ста — и все по общему адресному бюджету, своего счёта нет. */
+/** Такт опроса описи: «забрал ли арбитр». ДВА обращения в минуту против
+ *  серверных ста — и оба по общему адресному бюджету, своего счёта нет. */
 export const BOX_POLL_MS = 30_000;
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -63,7 +63,22 @@ export type PresentRefusal =
   | 'not_disputed'
   | 'no_consent' | 'already_sending'
   | 'chain_unavailable' | 'not_a_party' | 'no_such_deal' | 'rate_limited'
-  | 'box_refused' | 'offline' | 'pass_refused';
+  | 'box_refused' | 'offline' | 'pass_refused'
+  /**
+   * ⚠️ НАША ПОЛОМКА ДО СКЛАДА, и она приехала ревью (круг 1, I-5). Докстринг
+   * `sendPresentation` обещал «НЕ БРОСАЕТ», а в `try` были завёрнуты только
+   * чтения цепи и блок «пропуск + склад»: `buildPresentation` бросает
+   * `TypeError` на чужой форме входа, черновик — на негодном. Бросок уходил
+   * мимо `doSend` (там `try/finally` без `catch`) в `void doSend()` —
+   * необработанный отказ промиса: ни тоста, ни причины, окно открыто, кнопка
+   * снова живая. Теперь у этого случая есть имя и текст.
+   *
+   * ⚠️ Это имя достаётся ТОЛЬКО тому, что случилось ДО склада: текст говорит
+   * «ничего не отправлено», и после успешного `put` он был бы враньём. Отказ
+   * пометки черновика после успешной отправки сюда не попадает — он едет
+   * `draftKeepNotice` ниже.
+   */
+  | 'internal_error';
 
 /**
  * Причина → ключ локали. ⚠️ ЭТО ЗАМОК НА ШОВ С ЗАДАЧЕЙ 4, А НЕ СПРАВОЧНИК.
@@ -103,6 +118,7 @@ export const PRESENT_REFUSAL_KEYS: Record<PresentRefusal, string> = {
   box_refused:           'chat.present_err_box_refused',
   offline:               'chat.present_err_offline',
   pass_refused:          'chat.present_err_pass_refused',
+  internal_error:        'chat.present_err_internal_error',
 };
 
 /* ─────────────────────────── выбор сообщений ─────────────────────────── */
@@ -545,6 +561,136 @@ export async function restoreSentBag(
   }
 }
 
+/* ───── монтирование и такт описи: РЕШЕНИЯ ВЫНЕСЕНЫ, эффект остаётся тонким ─────
+ *
+ * ⚠️ ЗАЧЕМ ЭТОТ РАЗДЕЛ СУЩЕСТВУЕТ (ревью, круг 1, I-1). Прежде здесь было
+ * написано, что замка на эту работу «нет и БЫТЬ НЕ МОЖЕТ до появления окружения
+ * отрисовки», и это было шире правды: приём есть, и он в этом же репозитории —
+ * Задача 5 вынесла тело хука в `handleChainLogsImpl(logs, deps)`, а обычный
+ * node-тест зовёт её напрямую и меряет РАБОТУ (`chainEventBus.test.ts`).
+ *
+ * Отдача здесь больше, чем «замок на вызов»: в эффектах лежали ДВА правила,
+ * которых не сторожило ничто, — «восстановленное СТАРОЕ не затирает свежее» и
+ * «отказ описи не стирает уже известное». Оба названы несущими в докстрингах и
+ * оба портились без единого красного.
+ *
+ * Непроверяемым остаётся ровно одно — НАЖАТИЕ. Проводка (что эти функции
+ * действительно отданы эффектам) сторожится вторым слоем — сверкой ТЕКСТА
+ * исходника, и природа того слоя названа там вслух.
+ */
+
+/** Ссылка на положенный мешок в состоянии экрана. */
+export interface SentBagRef { key: string }
+
+/**
+ * ⚠️ ВОССТАНОВЛЕННОЕ СТАРОЕ НЕ ЗАТИРАЕТ СВЕЖЕЕ. Чтение диска асинхронное: если
+ * человек успел отправить заново раньше, чем оно вернулось, поднятый из
+ * черновика ключ обязан уступить. Правило жило функциональным обновлением
+ * внутри эффекта — то есть не меряется ничем; здесь у него есть вызывающий.
+ */
+export function keepFirstSent(prev: SentBagRef | null, back: SentBagRecord): SentBagRef | null {
+  return prev ?? { key: back.key };
+}
+
+/** То же правило для «положено»: известное не понижаем до восстановленного. */
+export function keepKnownBox(prev: SentBagState, back: SentBagRecord): SentBagState {
+  return prev.kind === 'unknown' ? { kind: 'placed', uploadedAt: back.uploadedAt } : prev;
+}
+
+/** Тождество состояний. ⚠️ Нужно не ради красоты: без него каждый такт описи
+ *  отдавал бы новый объект, экран перерисовывался бы, а эффект такта (он
+ *  зависит от состояния) перезапускался бы — опрос вместо раз в тридцать секунд
+ *  шёл бы со скоростью перерисовки. */
+export function sameBoxState(a: SentBagState, b: SentBagState): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'unknown' || b.kind === 'unknown') return true;
+  if (a.uploadedAt !== b.uploadedAt) return false;
+  return a.kind !== 'fetched' || b.kind !== 'fetched' || a.fetchedAt === b.fetchedAt;
+}
+
+/**
+ * Что показывать после ответа описи.
+ *
+ * ⚠️ ЗДЕСЬ ЖИВЁТ ЕДИНСТВЕННЫЙ ПОТРЕБИТЕЛЬ `indexTrusted` НА СТОРОНЕ СТОРОНЫ
+ * (ревью, круг 1, I-3). Сцена: опись релеера терялась и восстанавливалась с
+ * диска, у восстановленных записей нет `deal`, они выпадают из выдачи — и
+ * мешка, который лежит, в ответе нет. Без этой ветки строка «Положено в ящик
+ * спора · 14:02» ИСЧЕЗАЛА бы, сменившись на «узнать не удалось», при том что
+ * сервер прямым текстом сказал «моей описи не верь», а у стороны есть и ответ
+ * склада, и черновик. Понижать известное по недоверенной описи нельзя.
+ *
+ * ⚠️ А при ДОВЕРЕННОЙ описи `unknown` выставляется честно: мешка в ней больше
+ * нет (например, вышел срок хранения, Задача 2) — это ответ сервера, а не наша
+ * немота.
+ */
+export function boxStateFromList(
+  prev: SentBagState, list: DisputeBoxList, key: string,
+): SentBagState {
+  const next = sentBagState(list, key);
+  if (next.kind === 'unknown' && !list.indexTrusted && prev.kind !== 'unknown') return prev;
+  return sameBoxState(prev, next) ? prev : next;
+}
+
+/** Опрашивать ли опись дальше. ⚠️ «Забрали» — состояние конечное: узнавать
+ *  больше нечего, а бюджет чтения общий со складом. */
+export function shouldPollBox(state: SentBagState): boolean {
+  return state.kind !== 'fetched';
+}
+
+export interface MountRestoreIO {
+  presenter: `0x${string}`;
+  agreement: `0x${string}`;
+  /** Жив ли ещё вызывающий (вкладку закрыли, чат переключили). */
+  alive: () => boolean;
+  applySent: (fn: (prev: SentBagRef | null) => SentBagRef | null) => void;
+  applyBox: (fn: (prev: SentBagState) => SentBagState) => void;
+  read?: (p: `0x${string}`) => Promise<PresentationDraft[]>;
+}
+
+/**
+ * Тело эффекта монтирования, вынесенное целиком. ⚠️ НЕ БРОСАЕТ (через
+ * `restoreSentBag`): не прочитались черновики — значит «восстанавливать
+ * нечего», а не поломка кнопки при открытии чата.
+ */
+export async function restoreMountImpl(io: MountRestoreIO): Promise<void> {
+  const back = await restoreSentBag(io.presenter, io.agreement, io.read);
+  if (!io.alive() || !back) return;
+  io.applySent(prev => keepFirstSent(prev, back));
+  io.applyBox(prev => keepKnownBox(prev, back));
+}
+
+export interface BoxTickIO {
+  presenter: `0x${string}`;
+  agreement: `0x${string}`;
+  bagKey: string;
+  alive: () => boolean;
+  /** ⚠️ Пропуск ИЗ КЭША: такт описи кошелёк не будит. Нет пропуска — не идём. */
+  peekPass: (presenter: `0x${string}`) => string | null;
+  list: (pass: string, agreement: `0x${string}`) => Promise<DisputeBoxList>;
+  applyBox: (fn: (prev: SentBagState) => SentBagState) => void;
+}
+
+/**
+ * Один такт опроса описи, вынесенный целиком.
+ *
+ * ⚠️ ТРИ ПРАВИЛА, И КАЖДОЕ ТЕПЕРЬ МЕРЯЕТСЯ. Нет пропуска — в сеть не идём
+ * вовсе (кошелёк не будим); опись не ответила — оставляем известное как есть
+ * («положено» подтвердил склад, и сбой сети этого не отменяет); ответила —
+ * решает `boxStateFromList`, у которой своя оговорка про `indexTrusted`.
+ */
+export async function tickBoxImpl(io: BoxTickIO): Promise<void> {
+  const pass = io.peekPass(io.presenter);
+  if (!pass) return;
+  let list: DisputeBoxList;
+  try {
+    list = await io.list(pass, io.agreement);
+  } catch {
+    return;   // опись не ответила — известное не трогаем
+  }
+  if (!io.alive()) return;
+  io.applyBox(prev => boxStateFromList(prev, list, io.bagKey));
+}
+
 /* ──────────────────────────────── отправка ───────────────────────────── */
 
 export interface SendPresentationDeps {
@@ -602,6 +748,28 @@ export type PresentVerdict =
   | { ok: true; bagKey: string; uploadedAt: number;
       draftSaved: DraftSaveVerdict; draftMarked: DraftMarkVerdict }
   | { ok: false; reason: PresentRefusal };
+
+/**
+ * Что сказать человеку про ЗАПИСЬ НА ЭТОМ УСТРОЙСТВЕ. `null` — говорить нечего.
+ *
+ * ⚠️ ПРИЕХАЛО РЕВЬЮ (круг 1, I-4): `draftSaved`/`draftMarked` возвращались и не
+ * читались никем. `savePresentationDraft` честно отдаёт `disk_unavailable` /
+ * `lock_timeout` (частный режим, кончившаяся квота, занятый замок), отправка
+ * при этом продолжается — и это правильно, мешок важнее записи. Но человеку не
+ * говорилось НИЧЕГО, а последствие у него заметное: после перезагрузки
+ * «Положено в ящик спора» пропадёт (восстанавливать нечего), вход «вернуть
+ * отметки» окажется пустым, — при том что мешок в ящике лежит. То есть пятый
+ * вопрос обстоятельств («если сломается — узнает ли?») был отвечен «нет».
+ *
+ * ⚠️ Это НЕ отказ отправки: `ok` остаётся `true`, мешок уехал. Строка говорит
+ * ровно про устройство и прямо называет, что мешок в ящике — ответ сервера, а
+ * не наша запись.
+ */
+export function draftKeepNotice(verdict: PresentVerdict): string | null {
+  if (!verdict.ok) return null;
+  if (verdict.draftSaved === 'saved' && verdict.draftMarked === 'saved') return null;
+  return 'chat.present_draft_not_saved';
+}
 
 /**
  * Отправки, идущие ПРЯМО СЕЙЧАС, по ящику.
@@ -704,8 +872,13 @@ function changeRefusal(
  * оба раза СНИМОК (`deps.presented`) — то, что человек видел и на что
  * соглашался, а не два свежих чтения между собой: те сходятся всегда.
  *
- * ⚠️ НЕ БРОСАЕТ. Любая беда возвращается вердиктом с именем — человеку посреди
- * спора нужна причина, а не поломка. Чтения цепи обёрнуты именно поэтому.
+ * ⚠️ НЕ БРОСАЕТ, И ТЕПЕРЬ ЭТО ПРАВДА ПРО ВЕСЬ ПУТЬ, А НЕ ПРО ЕГО ПОЛОВИНУ
+ * (ревью, круг 1, I-5). Обёрнуты все четыре рода броска: чтения цепи
+ * (`chain_unavailable`), сборка/черновик/печать (`internal_error`, до склада),
+ * пропуск и склад (`refusalOfBoxError`) и пометка черновика после успешной
+ * отправки (не отказ вовсе — `draftKeepNotice`). Голый бросок отсюда уходил бы
+ * мимо `doSend` в необработанный отказ промиса: человек посреди спора получал
+ * бы молчащую кнопку вместо причины.
  */
 export async function sendPresentation(deps: SendPresentationDeps): Promise<PresentVerdict> {
   if (deps.consent !== true) return { ok: false, reason: 'no_consent' };
@@ -732,36 +905,52 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
     const changedEarly = changeRefusal(deps.presented, before);
     if (changedEarly) return changedEarly;
 
-    const built = await buildPresentation({
-      dealId: deps.agreement.toLowerCase() as `0x${string}`,
-      presenter: deps.presenter,
-      peer: deps.peer,
-      // ⚠️ БАЙТЫ ИЗ СНИМКА, ГОТОВЫМИ: печатаем на того, про кого спросили, и
-      // переход «ключ → байты» здесь не делается вовсе (он в Задаче 5).
-      arbiterBoxKey: deps.arbiterBoxKey,
-      peerBoxKey: toPeerBoxKeyBytes(deps.peerBoxKey),
-      selected: deps.selected,
-      session: deps.session,
-      ownAttestation: deps.ownAttestation,
-      // ⚠️ СПИСОК, а не одно заверение (пункт 48).
-      otherAttestations: deps.otherAttestations,
-      publicClient: deps.publicClient,
-      now: deps.now,
-    });
-    if (!built.ok) return { ok: false, reason: built.reason };
+    // ⚠️ СБОРКА, ЧЕРНОВИК И ПЕЧАТЬ — ПОД ОДНИМ `try` (ревью, круг 1, I-5).
+    // Все три БРОСАЮТ: сборщик — `TypeError` на чужой форме входа, черновик —
+    // на негодной записи. Голыми они уводили бросок мимо `doSend` (там
+    // `try/finally` без `catch`) в `void doSend()`, то есть в необработанный
+    // отказ промиса: человек не получал ни тоста, ни причины, окно оставалось
+    // открытым, а кнопка — живой. Здесь у этого случая есть имя, и текст у
+    // него честный: до склада дело не дошло, значит «ничего не отправлено» —
+    // правда.
+    let container: PresentationContainer;
+    let sealed: Uint8Array;
+    let draftSaved: DraftSaveVerdict;
+    try {
+      const built = await buildPresentation({
+        dealId: deps.agreement.toLowerCase() as `0x${string}`,
+        presenter: deps.presenter,
+        peer: deps.peer,
+        // ⚠️ БАЙТЫ ИЗ СНИМКА, ГОТОВЫМИ: печатаем на того, про кого спросили, и
+        // переход «ключ → байты» здесь не делается вовсе (он в Задаче 5).
+        arbiterBoxKey: deps.arbiterBoxKey,
+        peerBoxKey: toPeerBoxKeyBytes(deps.peerBoxKey),
+        selected: deps.selected,
+        session: deps.session,
+        ownAttestation: deps.ownAttestation,
+        // ⚠️ СПИСОК, а не одно заверение (пункт 48).
+        otherAttestations: deps.otherAttestations,
+        publicClient: deps.publicClient,
+        now: deps.now,
+      });
+      if (!built.ok) return { ok: false, reason: built.reason };
 
-    const container = built.container;
-    const wireBytes = presentationWireBytes(container);
-    // Черновик — ДО отправки. См. ⚠️ про порядок выше.
-    const draftSaved = await (deps.saveDraft ?? savePresentationDraft)(
-      draftFromContainer(container, wireBytes),
-    );
+      container = built.container;
+      const wireBytes = presentationWireBytes(container);
+      // Черновик — ДО отправки. См. ⚠️ про порядок выше.
+      draftSaved = await (deps.saveDraft ?? savePresentationDraft)(
+        draftFromContainer(container, wireBytes),
+      );
 
-    // ⚠️ Клеймо теряется ровно здесь и только здесь: `sealPresentation`
-    // принимает голый Uint8Array (`presentationBag.ts:73`). Второго такого
-    // стыка не заводить. Уходит ТО ЖЕ значение, что и в сборку, — одно поле
-    // снимка, а не два вычисления.
-    const sealed = await sealPresentation(container, deps.arbiterBoxKey);
+      // ⚠️ Клеймо теряется ровно здесь и только здесь: `sealPresentation`
+      // принимает голый Uint8Array (`presentationBag.ts:73`). Второго такого
+      // стыка не заводить. Уходит ТО ЖЕ значение, что и в сборку, — одно поле
+      // снимка, а не два вычисления.
+      sealed = await sealPresentation(container, deps.arbiterBoxKey);
+    } catch (err) {
+      console.error('[present] сборка/черновик/печать сломались:', err);
+      return { ok: false, reason: 'internal_error' };
+    }
 
     // ⚠️ АВТОРИТЕТНАЯ СВЕРКА — ЗДЕСЬ, между печатью и складом.
     let after: DisputeArbiterKey;
@@ -787,10 +976,20 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
       return { ok: false, reason: refusalOfBoxError(err) };
     }
 
-    const draftMarked = await (deps.markSent ?? markPresentationSent)(
-      deps.presenter, deps.agreement.toLowerCase() as `0x${string}`,
-      container.issuedAt, bagKey, uploadedAt,
-    );
+    // ⚠️ ПОМЕТКА ТОЖЕ МОЖЕТ БРОСИТЬ, И ЗДЕСЬ ЭТО НЕ ОТКАЗ ОТПРАВКИ. Мешок уже
+    // в ящике: сказать «ничего не отправлено» было бы враньём с уверенным
+    // лицом. Бросок приравнивается к честному вердикту черновика, и человек
+    // узнаёт об этом отдельной строкой (`draftKeepNotice`), а не отказом.
+    let draftMarked: DraftMarkVerdict;
+    try {
+      draftMarked = await (deps.markSent ?? markPresentationSent)(
+        deps.presenter, deps.agreement.toLowerCase() as `0x${string}`,
+        container.issuedAt, bagKey, uploadedAt,
+      );
+    } catch (err) {
+      console.error('[present] пометка черновика сломалась (мешок УЖЕ в ящике):', err);
+      draftMarked = 'disk_unavailable';
+    }
     return { ok: true, bagKey, uploadedAt, draftSaved, draftMarked };
   } finally {
     _sending.delete(box);

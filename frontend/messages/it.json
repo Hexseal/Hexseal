@@ -743,7 +743,9 @@
     "present_err_rate_limited": "Troppo spesso. Non è stato inviato nulla: attendete un minuto.",
     "present_err_box_refused": "La cassetta della controversia non ha accettato. Non è stato inviato nulla.",
     "present_err_offline": "Non si è raggiunto il server. Non è stato inviato nulla.",
-    "present_err_pass_refused": "Il server non ha accettato il lasciapassare. Non è stato inviato nulla."
+    "present_err_pass_refused": "Il server non ha accettato il lasciapassare. Non è stato inviato nulla.",
+    "present_draft_not_saved": "Inviato, ma non è stato possibile annotarlo su questo dispositivo: dopo un ricaricamento la pagina non ricorderà né «depositato» né i segni. Il pacco è nella cassetta: questa è la risposta del server, non la nostra annotazione.",
+    "present_err_internal_error": "Qualcosa si è rotto su questo dispositivo e la presentazione non è stata messa insieme. Non è stato inviato nulla."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",

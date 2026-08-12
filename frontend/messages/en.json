@@ -743,7 +743,9 @@
     "present_err_rate_limited": "Too often. Nothing was sent — wait a minute.",
     "present_err_box_refused": "The dispute box did not accept it. Nothing was sent.",
     "present_err_offline": "Could not reach the server. Nothing was sent.",
-    "present_err_pass_refused": "The server did not accept the pass. Nothing was sent."
+    "present_err_pass_refused": "The server did not accept the pass. Nothing was sent.",
+    "present_draft_not_saved": "Sent, but it could not be written down on this device: after a reload the page will remember neither \"placed\" nor the ticks. The bag is in the box — that is the server's answer, not our record.",
+    "present_err_internal_error": "Something broke on this device and the presentation was not put together. Nothing was sent."
   },
   "deal_bar": {
     "application_received": "Application received",
