@@ -46,7 +46,11 @@ import {
 } from './chatConversation';
 import { recoverOneTimeKey, openEnvelopeWithOneTimeKey, MAX_ENVELOPE_BYTES } from './chatEnvelope';
 import { sealForRecipient } from './chatCrypto';
-import { verifyChatKeyAttestation, type ChatKeyAttestation } from './chatKeyAttestation';
+import {
+  verifyChatKeyAttestation,
+  type AttestationVerdict,
+  type ChatKeyAttestation,
+} from './chatKeyAttestation';
 import type { BoxKey } from './arbiterChatKey';
 import type { ChatSession } from './chatSession';
 import type { PublicClient } from 'viem';
@@ -161,12 +165,41 @@ export interface PresentationContainer {
 export type UnsignedPresentation = Omit<PresentationContainer, 'signature'>;
 
 /**
- * Имена отказов. `peer_has_no_key` — исправление 6 договора: `SealedOneTimeKey.forPeer`
- * обязателен по типу, а ключа второй стороны может не быть вовсе. Бросок `TypeError`
- * на этом месте показывал бы человеку посреди спора поломку вместо причины.
+ * Имена отказов. `peer_has_no_key` — исправление 6 договора 4в-1:
+ * `SealedOneTimeKey.forPeer` обязателен по типу, а ключа второй стороны может не
+ * быть вовсе.
+ *
+ * ⚠️ ТРИ ИМЕНИ ПРО ЗАВЕРЕНИЕ (пункт 49 открытых находок). До 4в-2 отказом
+ * `no_session` отвечали ЧЕТЫРЕ разные беды, и три из них сеанса не касались:
+ * заверение про другой адрес или другие ключи, ПРОСРОЧЕННОЕ заверение
+ * (`ATTESTATION_MAX_AGE_MS` — год) и «проверить нечем» (счётный кошелёк,
+ * ERC-1271 без клиента цепи). Человек посреди спора получал «нет сеанса чата»,
+ * переподключал кошелёк, перезаводил сеанс — и получал то же самое, потому что
+ * лечение было ДРУГИМ и ему его не назвали.
  */
 export type BuildFailure =
-  | 'arbiter_has_no_key' | 'peer_has_no_key' | 'nothing_selected' | 'too_large' | 'no_session';
+  | 'arbiter_has_no_key' | 'peer_has_no_key' | 'nothing_selected' | 'too_large'
+  | 'no_session'
+  | 'attestation_missing' | 'attestation_expired' | 'attestation_unproven';
+
+/**
+ * Все имена отказа — значением, а не только типом.
+ *
+ * ⚠️ ЗАМОК ИСЧЕРПАЕМОСТИ. `Record<BuildFailure, true>` требует ВСЕ члены союза:
+ * добавить имя в тип и забыть про него здесь нельзя — `npm run type-check`
+ * краснеет. Задача 6 строит по этому объекту список ключей локали, поэтому
+ * забытое имя видит компилятор, а не человек со сломанной кнопкой.
+ */
+export const BUILD_FAILURE_NAMES: Record<BuildFailure, true> = {
+  arbiter_has_no_key: true,
+  peer_has_no_key: true,
+  nothing_selected: true,
+  too_large: true,
+  no_session: true,
+  attestation_missing: true,
+  attestation_expired: true,
+  attestation_unproven: true,
+};
 
 /**
  * Отказ. РАЗМЕЧЕННЫЙ СОЮЗ, а не плоский интерфейс с необязательными полями
@@ -260,13 +293,31 @@ export interface BuildPresentationInput {
   selected: { seq: number; sender: `0x${string}` }[];
   session: ChatSession;
   ownAttestation: ChatKeyAttestation;
-  peerAttestation?: ChatKeyAttestation;
+  /**
+   * Заверения ДРУГИХ пар ключей: нынешняя пара собеседника и ПРЕЖНИЕ пары обеих
+   * сторон. Источник — справочник (`PeerChatKeys.attestation` +
+   * `PeerChatKeys.attestationHistory`, `useChatSession.ts:236-250`; поле
+   * собиралось с 4в-1 и не читалось никем). Порядок не важен — сборщик
+   * упорядочивает сам.
+   *
+   * ⚠️ ЗАМЕНИЛО `peerAttestation?: ChatKeyAttestation` (пункт 48). Одного было
+   * мало: собеседник, вошедший по коду восстановления, подписывает часть
+   * сообщений ПРЕЖНИМ ключом, и заверение нынешней пары превращает его честные
+   * слова в `wrong_keys` + `malformed` — арбитр видит ровно то же, что видел бы
+   * на сочинённой цепочке.
+   *
+   * ⚠️ Едут не все: в контейнер кладутся только те, чей подписной ключ НАЗВАН
+   * хотя бы одним положенным кадром (и только про предъявителя или собеседника).
+   * Заверение, не накрывающее ни одного показанного кадра, не доказывает ничего
+   * и стоит 420 байт бюджета плюс одно восстановление адреса у арбитра.
+   */
+  otherAttestations?: readonly ChatKeyAttestation[];
   /** Клиент цепи для проверки ERC-1271 (исправление 5 договора). Без него
    *  заверение развёрнутого умного кошелька — Safe и подобные, два рода из четырёх
    *  (`project_wallet_kinds_four`) — не проверяется НИКАК, и предъявить такой
-   *  человек не может вовсе: сборщик откажет `no_session`. Со клиентом проверяется
-   *  вызовом `isValidSignature`. Счётный кошелёк без кода на цепи не проверяется
-   *  ничем и получает честный отказ, а не тишину. */
+   *  человек не может вовсе: сборщик откажет `attestation_unproven`. Со клиентом
+   *  проверяется вызовом `isValidSignature`. Счётный кошелёк без кода на цепи не
+   *  проверяется ничем и получает честный отказ, а не тишину. */
   publicClient?: PublicClient;
   /** Расширение договора: часы, ради повторяемости замеров (как
    *  `SendMessageOptions.now`). */
@@ -309,6 +360,40 @@ function isAllZero(bytes: Uint8Array): boolean {
 
 function hex32(bytes: Uint8Array): string {
   return '0x' + [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Имена отказа, относящиеся к заверению. Выделены типом, а не соглашением:
+ *  вернуть отсюда `no_session` не скомпилируется. */
+type AttestationFailure = Extract<BuildFailure, `attestation_${string}`>;
+
+/**
+ * Вердикт Задачи 1 → имя отказа. У каждого имени СВОЁ лечение, и в этом весь
+ * смысл разбора (пункт 49):
+ *   `expired`      — заверению больше года: переподписать;
+ *   `absent`       — доказательства нет (нет клиента цепи, нет кода на цепи у
+ *                    счётного кошелька, узел молчит): подключить сеть;
+ *   `wrong_address`— 65 байт, восстановился ДРУГОЙ адрес, а цепь не подтвердила.
+ *                    Это либо владелец Safe без клиента цепи, либо подделка, и
+ *                    отличить их здесь НЕЧЕМ — «подтвердить не смогли» честнее
+ *                    обоих обвинений;
+ *   остальные      — то, что лежит на устройстве, заверением ЭТИХ ключей не
+ *                    является: заверить заново.
+ *
+ * ⚠️ `wrong_keys` сюда не приходит НИКОГДА (он рождается только в
+ * `verifyChatKeyAttestationForKeys`), но ветка обязана быть: без неё `switch`
+ * не исчерпывает союз и `never` ниже краснеет у компилятора. Это форма, а не
+ * мёртвый код — появится восьмой вердикт, и сборка встанет здесь.
+ */
+function attestationRefusal(verdict: Exclude<AttestationVerdict, 'ok'>): AttestationFailure {
+  switch (verdict) {
+    case 'expired': return 'attestation_expired';
+    case 'absent': case 'wrong_address': return 'attestation_unproven';
+    case 'malformed': case 'bad_signature': case 'wrong_keys': return 'attestation_missing';
+    default: {
+      const unreachable: never = verdict;
+      return unreachable;
+    }
+  }
 }
 
 /**
@@ -498,6 +583,23 @@ interface Candidate {
 export async function buildPresentation(
   input: BuildPresentationInput,
 ): Promise<{ ok: true; container: PresentationContainer } | PresentationRefusal> {
+  // ⚠️ ГРОМКО ПРО ПРЕЖНЕЕ ИМЯ, и это не украшение. Тестовые файлы `tsc` не
+  // видит вовсе (`tsconfig.json:exclude`), а вход сборщика в двух местах
+  // собирается ПЕРЕМЕННОЙ, где лишнее поле не ловит и проверка свежего литерала.
+  // Забытая правка означала бы тихо исчезнувшее заверение собеседника и
+  // `absent` вместо `ok` у арбитра — ровно ту беду, которую чинит пункт 48.
+  // Проверяется НАЛИЧИЕ поля, а не значение: `{ peerAttestation: undefined }`
+  // — тоже незавершённая правка.
+  if (input !== null && typeof input === 'object' && 'peerAttestation' in input) {
+    throw new TypeError(
+      'buildPresentation: поле peerAttestation заменено на otherAttestations (пункт 48) — ' +
+      'одно заверение на сторону делает прежние слова собеседника непроверяемыми',
+    );
+  }
+  if (input?.otherAttestations !== undefined && !Array.isArray(input.otherAttestations)) {
+    throw new TypeError('buildPresentation: otherAttestations должен быть массивом заверений');
+  }
+
   const dealId = lowerAddr(input?.dealId, 'dealId (адрес агримента)');
   const presenter = lowerAddr(input?.presenter, 'адрес предъявителя');
   // `peer` — ОБЯЗАТЕЛЬНОЕ поле договора (исправление 6). Никакого вывода второй
@@ -538,20 +640,25 @@ export async function buildPresentation(
     : null;
   if (!signer) return { ok: false, reason: 'no_session' };
 
+  // Своё заверение. Сначала то, что видно без сети: оно про ЭТОГО человека и про
+  // ЭТИ ключи? Контейнер подписывается ключом подписи предъявителя, и заверение
+  // про другие ключи означало бы предъявление, которое ничего не доказывает.
   const att = input?.ownAttestation;
   if (!att || typeof att !== 'object'
     || typeof att.address !== 'string' || att.address.toLowerCase() !== presenter
     || typeof att.boxKey !== 'string' || att.boxKey.toLowerCase() !== hex32(session.keypair.publicKey)
-    || typeof att.signKey !== 'string' || att.signKey.toLowerCase() !== hex32(signer.publicKey)
-    // ⚠️ Клиент цепи ПРОБРАСЫВАЕТСЯ (исправление 5). Без него заверение
-    // развёрнутого умного кошелька получает `malformed` всегда, то есть Safe-хозяин
-    // не может предъявить переписку вовсе. Отдельный вердикт `absent` — «заверения
-    // нет» — тоже не годен: контейнер, подписанный ключом, который не связан с
-    // адресом, ничего не доказывает (§15.2), и отдавать его человеку как «сдано»
-    // хуже, чем отказать сразу.
-    || await verifyChatKeyAttestation(att, input.publicClient) !== 'ok') {
-    return { ok: false, reason: 'no_session' };
+    || typeof att.signKey !== 'string' || att.signKey.toLowerCase() !== hex32(signer.publicKey)) {
+    // ⚠️ НЕ `no_session` (пункт 49): сеанс тут может быть безупречен. Лечение —
+    // «заверить ключи», и оно другое, чем «перезайти в чат».
+    return { ok: false, reason: 'attestation_missing' };
   }
+  // ⚠️ Клиент цепи ПРОБРАСЫВАЕТСЯ (исправление 5 договора 4в-1). Без него
+  // заверение владельца Safe с 65-байтовой подписью получает `wrong_address`, а
+  // ERC-1271-подпись не той длины — `absent` (`chatKeyAttestation.ts:441-462`);
+  // в обоих случаях предъявить он не может, и причину надо НАЗВАТЬ, а не свести
+  // к «нет сеанса чата».
+  const ownVerdict = await verifyChatKeyAttestation(att, input.publicClient);
+  if (ownVerdict !== 'ok') return { ok: false, reason: attestationRefusal(ownVerdict) };
 
   // Выбор. Мусор в записи выбора — наш баг (её собирает наш же интерфейс), и
   // проглотить его значило бы предъявить не то, что человек отметил.
@@ -610,7 +717,7 @@ export async function buildPresentation(
 
   const limitBytes = PRESENTATION_MAX_BYTES - PRESENTATION_SEAL_OVERHEAD;
   const fixed = FIXED_JSON
-    + PER_ATTESTATION_JSON * (1 + (input.peerAttestation ? 1 : 0))
+    + PER_ATTESTATION_JSON * (1 + (input.otherAttestations?.length ?? 0))
     + PER_CHAIN_JSON * 2
     + PER_NOT_PREPARED_JSON * notPrepared.length;
   let acc = fixed;
@@ -640,6 +747,10 @@ export async function buildPresentation(
 
   const frames: PresentationContainer['frames'] = [];
   const keys: SealedOneTimeKey[] = [];
+  /** Подписные ключи, НАЗВАННЫЕ положенными кадрами. По ним ниже отбираются
+   *  заверения: заверение, не накрывающее ни одного показанного кадра, арбитру
+   *  не доказывает ничего. */
+  const usedSignKeys = new Set<string>();
   for (const c of candidates) {
     // 1. То, что арбитр гарантированно назовёт подделкой, предъявителю
     //    предъявлять незачем: архив хранит кадры НЕ РАЗБИРАЯ (движок
@@ -683,6 +794,7 @@ export async function buildPresentation(
     }
     frames.push({ seq: c.seq, sender: c.sender, frame: b64FromBytes(c.frame) });
     keys.push({ seq: c.seq, sender: c.sender, forArbiter, forPeer });
+    usedSignKeys.add(hex32(c.signerPublicKey));
   }
 
   /* ── якоря ПО ОТПРАВИТЕЛЮ (§15.3) ── */
@@ -777,6 +889,40 @@ export async function buildPresentation(
 
   /* ── подпись над каноническим видом (§15.1) ── */
 
+  /* ── заверения: ПО ПАРЕ КЛЮЧЕЙ, а не по стороне (пункт 48) ── */
+
+  // Едет своё нынешнее (им подписан контейнер) плюс те чужие, чей подписной ключ
+  // НАЗВАН положенным кадром. Про третий адрес — не едет: карта читалки ведётся
+  // по адресу, такое заверение не читает никто, а восстановление адреса по его
+  // подписи арбитр оплачивает.
+  const attPairId = (a: ChatKeyAttestation): string =>
+    `${a.address.toLowerCase()}|${a.signKey.toLowerCase()}`;
+  const seenPairs = new Set<string>([attPairId(att)]);
+  const otherAttestations: ChatKeyAttestation[] = [];
+  for (const a of input.otherAttestations ?? []) {
+    if (!a || typeof a !== 'object') continue;
+    if (typeof a.address !== 'string' || typeof a.signKey !== 'string') continue;
+    const addr = a.address.toLowerCase();
+    if (addr !== presenter && addr !== peer) continue;
+    if (!usedSignKeys.has(a.signKey.toLowerCase())) continue;
+    const id = attPairId(a);
+    if (seenPairs.has(id)) continue;      // дубль пары — гейт читалки отвергнет контейнер целиком
+    seenPairs.add(id);
+    otherAttestations.push(a);
+  }
+  // ⚠️ ПОРЯДОК ОДНОЗНАЧЕН, И ЭТО НЕ КОСМЕТИКА. `canonicalPresentationBytes`
+  // печатает заверения В ПОРЯДКЕ МАССИВА, а справочник отдаёт историю в порядке
+  // сервера: без сортировки два честных предъявления одного и того же куска
+  // дали бы разные байты и разную подпись, а отпечаток в цепи (Выкатка 2)
+  // перестал бы быть функцией содержимого. Первым — своё нынешнее, дальше по
+  // адресу, при равенстве — по подписному ключу.
+  otherAttestations.sort((x, y) => {
+    const xa = x.address.toLowerCase(); const ya = y.address.toLowerCase();
+    if (xa !== ya) return xa < ya ? -1 : 1;
+    const xk = x.signKey.toLowerCase(); const yk = y.signKey.toLowerCase();
+    return xk === yk ? 0 : xk < yk ? -1 : 1;
+  });
+
   const now = typeof input.now === 'function' ? input.now : () => Date.now();
   const unsigned: UnsignedPresentation = {
     kind: PRESENTATION_KIND,
@@ -784,7 +930,7 @@ export async function buildPresentation(
     presenter,
     // Заверения кладутся ДОСЛОВНО, ни одно поле не приводится и не правится:
     // любая правка рвёт подпись кошелька, а её проверяет арбитр сам.
-    attestations: input.peerAttestation ? [att, input.peerAttestation] : [att],
+    attestations: [att, ...otherAttestations],
     chains: [ownChain, peerChain],
     frames,
     keys,

@@ -319,10 +319,16 @@ function asContainer(value: unknown): PresentationContainer | null {
     if (typeof a.signKey !== 'string' || !BYTES32_RE.test(a.signKey)) return null;
     if (!isCount(a.issuedAt)) return null;
     if (typeof a.signature !== 'string') return null;
-    // Два заверения на один адрес — возможность «купить» удобный вердикт:
-    // читалка взяла бы первое, экран показал бы второе.
-    if (seenAtt.has(a.address.toLowerCase())) return null;
-    seenAtt.add(a.address.toLowerCase());
+    // Два заверения на один адрес И ОДНУ ПАРУ КЛЮЧЕЙ — возможность «купить»
+    // удобный вердикт: читалка взяла бы первое, экран показал бы второе.
+    // ⚠️ КЛЮЧ УНИКАЛЬНОСТИ — ПАРА (адрес, подписной ключ), а не адрес (пункт 48).
+    // У собеседника, честно сменившего ключ, заверений на один адрес ДВА, и
+    // отвергать такой контейнер значит объявлять его прежние слова подделкой.
+    // «Купить вердикт» это по-прежнему не даёт: под каждый НАЗВАННЫЙ КАДРОМ ключ
+    // заверение ровно одно, и выбирать читалке не из чего.
+    const pairId = `${a.address.toLowerCase()}|${a.signKey.toLowerCase()}`;
+    if (seenAtt.has(pairId)) return null;
+    seenAtt.add(pairId);
   }
 
   if (c.chains.length > MAX_PRESENTED_CHAINS) return null;
@@ -414,18 +420,19 @@ function asContainer(value: unknown): PresentationContainer | null {
 async function readOne(input: {
   link: ChainLink;
   sender: `0x${string}`;
-  /** Вердикт заверения САМОЙ СТОРОНЫ, без оглядки на кадр. Уточняется ниже,
-   *  после разбора кадра, вопросом про названный кадром ключ. */
+  /** Вердикт заверения САМОЙ СТОРОНЫ — самого свежего её заверения. Нужен ровно
+   *  для кадра, который не разобрался вовсе: названного ключа тогда нет, и
+   *  спрашивать про пару нечего. */
   attestation: AttestationVerdict;
-  /** Заверенный ключ подписи, если связку удалось подтвердить. `null` — берём из
-   *  кадра, и сообщение уносит `attestation !== 'ok'`. */
-  attestedSignKey: Uint8Array | null;
-  /** «Заверены ли ИМЕННО те ключи, которыми назван кадр» — вопрос к Задаче 1
-   *  (`verifyChatKeyAttestationForKeys`, единственный источник `wrong_keys`).
-   *  Приходит уже замкнутым на заверение этой стороны, на клиент цепи и на
-   *  памятку вердиктов. `null` — заверения этой стороны нет или оно негодно:
-   *  вердикт уже назван точнее, и уточнять его ключом нечем. */
-  claimedKeyVerdict: ((claimed: Uint8Array) => Promise<AttestationVerdict>) | null;
+  /** Заверение ПОД КЛЮЧ, НАЗВАННЫЙ КАДРОМ (пункт 48): вердикт этой пары и ключ,
+   *  которым проверять кадр (`null` — годного заверения у стороны нет, ключ
+   *  берётся из кадра). Приходит уже замкнутым на сторону, на клиент цепи и на
+   *  памятку вердиктов.
+   *
+   *  ⚠️ ВЫБОР ЗАВЕРЕНИЯ НЕ ЗДЕСЬ. Решение «под какой ключ» принято один раз, в
+   *  `readPresentation`; тут только вопрос и ответ — иначе выбор оказался бы в
+   *  двух местах и разошёлся бы молча. */
+  signerFor: (claimed: Uint8Array) => Promise<{ verdict: AttestationVerdict; signKey: Uint8Array | null }>;
   frameB64: string | undefined;
   sealed: SealedOneTimeKey | undefined;
   arbiterKeypair: ChatKeypair;
@@ -457,25 +464,21 @@ async function readOne(input: {
 
   // ⚠️ ВОПРОС ЗАДАЧЕ 1, А НЕ СВОЯ СВЕРКА: «те ли ключи заверены, которыми назван
   // кадр». Единственный источник `wrong_keys` — и единственная дорога к этому
-  // значению вердикта вообще. Кадр после этого всё равно проверяется ЗАВЕРЕННЫМ
-  // ключом (Л-1), поэтому сочинённая цепочка остаётся нечитаемой; меняется то,
-  // ЧТО арбитр видит: не «подпись не сошлась», а названное «заверены другие
-  // ключи».
+  // значению вообще.
   //
-  // ⚠️ МЕСТО ВЫБРАНО НЕ ЗА ДЕШЕВИЗНУ, а по необходимости (Л-6): после проверки
-  // подписи негодный кадр уходит с `bad_signature` возвратом ниже, и до вопроса
-  // дело не дошло бы НИКОГДА — то есть `wrong_keys` снова стал бы недостижим.
+  // ⚠️ МЕСТО ВЫБРАНО НЕ ЗА ДЕШЕВИЗНУ, а по необходимости: после проверки подписи
+  // негодный кадр уходит возвратом ниже, и до вопроса дело не дошло бы НИКОГДА.
   // Цена честно названа: это восстановление адреса по подписи, и мусор его
-  // оплачивает; поэтому вопрос задаётся не на сообщение, а на РАЗЛИЧНЫЙ названный
-  // ключ (памятка — в `readPresentation`, замок на число вызовов — T33).
-  if (input.claimedKeyVerdict) attestation = await input.claimedKeyVerdict(decoded.signerPublicKey);
+  // оплачивает; поэтому вопрос задаётся не на сообщение, а на РАЗЛИЧНЫЙ
+  // названный ключ (памятка — в `readPresentation`, замки — T33 и R12).
+  const picked = await input.signerFor(decoded.signerPublicKey);
+  attestation = picked.verdict;
 
-  // ⚠️ Ключ подписи — ИЗ ЗАВЕРЕНИЯ (см. шапку файла).
-  // ⚠️ `await` НЕСУЩИЙ: проверка асинхронна (Задача 4 ждёт готовности libsodium
-  // внутри себя, прогрев условием не является). Без `await` здесь лежал бы
-  // `Promise`, `frame.ok` был бы `undefined`, и КАЖДЫЙ кадр молча оказался бы
-  // негодным — этот класс ловит `npm run type-check`, а не тест.
-  const signerKey = input.attestedSignKey ?? decoded.signerPublicKey;
+  // ⚠️ Ключ подписи — ИЗ ЗАВЕРЕНИЯ ТОЙ ПАРЫ, КОТОРУЮ НАЗВАЛ КАДР (пункт 48).
+  // ⚠️ `await` НЕСУЩИЙ: проверка асинхронна. Без него здесь лежал бы `Promise`,
+  // `frame.ok` был бы `undefined`, и КАЖДЫЙ кадр молча оказался бы негодным —
+  // этот класс ловит `npm run type-check`, а не тест.
+  const signerKey = picked.signKey ?? decoded.signerPublicKey;
   const frame = await verifyFrameEvidence(bytes, input.link, decoded.signature, signerKey);
   if (!frame.ok) return { ...base, attestation, state: 'unopened', frame };
 
@@ -544,40 +547,101 @@ export async function readPresentation(
   //
   //    ⚠️ `publicClient` ПРОКИДЫВАЕТСЯ, и в ОБЕ двери (вторая — ниже). Без него
   //    ветка ERC-1271 в Задаче 1 неработоспособна, и два рода кошельков из
-  //    четырёх (Safe, развёрнутый умный кошелёк) получают `malformed` ВСЕГДА — то
-  //    есть не могут предъявить вовсе. Своей проверки цепи здесь нет ни строки:
-  //    читалка не ходит по сети.
+  //    четырёх не могут предъявить вовсе.
   //
-  //    Вердикт СТОРОНЫ нужен двум местам: подписи контейнера (каким ключом её
-  //    проверять) и тем сообщениям, у которых кадр не разобрался вовсе. У
-  //    остальных он уточняется вопросом про ключ, названный кадром.
-  const attested = new Map<string, { att: ChatKeyAttestation; verdict: AttestationVerdict; signKey: Uint8Array }>();
+  //    ⚠️ КАРТА ВЕДЁТСЯ ПО СТОРОНЕ, НО ХРАНИТ СПИСОК (пункт 48). Собеседник,
+  //    честно сменивший ключ чата, приезжает ДВУМЯ заверениями на один адрес.
+  //    Выбирать между ними по свежести нельзя: половина его сообщений подписана
+  //    прежним ключом, и «нынешнее» заверение превращает их в `wrong_keys` +
+  //    `malformed` — ровно то, что арбитр видит на сочинённой цепочке.
+  interface AttRecord {
+    att: ChatKeyAttestation;
+    verdict: AttestationVerdict;
+    signKey: Uint8Array;
+    signKeyHex: string;
+  }
+  const bySide = new Map<string, AttRecord[]>();
   for (const att of c.attestations) {
-    attested.set(lower(att.address), {
+    const rec: AttRecord = {
       att,
       verdict: await verifyChatKeyAttestation(att, publicClient),
       signKey: hexToBytes(att.signKey),
-    });
+      signKeyHex: att.signKey.toLowerCase(),
+    };
+    const side = lower(att.address);
+    const rows = bySide.get(side);
+    if (rows) rows.push(rec); else bySide.set(side, [rec]);
   }
+
+  /** Самое свежее из поданных заверений. ⚠️ Порядок массива сюда НЕ входит: он
+   *  пришёл от предъявителя, а `issuedAt` подписан кошельком. При равном
+   *  времени — большее hex подписного ключа, чтобы выбор был функцией данных, а
+   *  не того, как предъявитель разложил массив.
+   *
+   *  ⚠️ ЭТО НАБЛЮДАЕМО, И ЗАМОК ЕСТЬ — R13. Наблюдаемо ровно там, где у стороны
+   *  НЕТ ни одного годного заверения: тогда вердикт сообщений берётся отсюда, и
+   *  «просрочено» против «проверить нечем» — разные упрёки. Возьми `rows[0]` —
+   *  и предъявитель выбирал бы раскладкой массива, какой из них прочитает
+   *  арбитр. Там, где годные есть, выбор действительно ненаблюдаем: вердикт у
+   *  всех кандидатов один и тот же `ok`. */
+  const newest = (rows: readonly AttRecord[]): AttRecord | undefined => {
+    let best: AttRecord | undefined;
+    for (const r of rows) {
+      if (!best
+        || r.att.issuedAt > best.att.issuedAt
+        || (r.att.issuedAt === best.att.issuedAt && r.signKeyHex > best.signKeyHex)) best = r;
+    }
+    return best;
+  };
 
   // Вердикт по ключу, НАЗВАННОМУ КАДРОМ, — вторая дверь к тому же заверению и
   // единственная дорога к `wrong_keys`. Сверяет Задача 1; здесь только памятка,
-  // чтобы один и тот же ответ не покупался дважды: у честного контейнера ключ на
-  // всю цепочку один (значит по одному вопросу на сторону, замок T33 — ровно на
-  // это число), у враждебного различных ключей столько, сколько кадров, и это
-  // верхняя граница цены, названная в замере 2. Памятка — не сверка своими
-  // руками: ключом служит сторона плюс названный ключ, а решение принимает
-  // только `verifyChatKeyAttestationForKeys`.
+  // чтобы один и тот же ответ не покупался дважды: у честного контейнера ключей
+  // на сторону один-два (замок T33 и R12 — ровно на эти числа), у враждебного
+  // различных ключей столько, сколько кадров, и это верхняя граница цены.
   const claimedVerdicts = new Map<string, AttestationVerdict>();
-  const claimedKeyVerdictFor = (att: ChatKeyAttestation) =>
-    async (claimed: Uint8Array): Promise<AttestationVerdict> => {
-      const signKey = hexFromBytes(claimed);
-      const memo = `${lower(att.address)}|${signKey}`;
-      const seen = claimedVerdicts.get(memo);
-      if (seen !== undefined) return seen;
-      const verdict = await verifyChatKeyAttestationForKeys(att, { signKey }, publicClient);
-      claimedVerdicts.set(memo, verdict);
-      return verdict;
+  const askForKeys = async (
+    att: ChatKeyAttestation, claimedHex: `0x${string}`,
+  ): Promise<AttestationVerdict> => {
+    const memo = `${lower(att.address)}|${claimedHex}`;
+    const seen = claimedVerdicts.get(memo);
+    if (seen !== undefined) return seen;
+    const verdict = await verifyChatKeyAttestationForKeys(att, { signKey: claimedHex }, publicClient);
+    claimedVerdicts.set(memo, verdict);
+    return verdict;
+  };
+
+  /**
+   * Заверение ПОД КЛЮЧ, НАЗВАННЫЙ КАДРОМ (пункт 48). Отдаёт вердикт этой пары и
+   * ключ, которым проверять кадр; `signKey: null` — «годного заверения у стороны
+   * нет вовсе», и тогда кадр проверяется ключом из себя самого, а сообщение
+   * уносит `attestation !== 'ok'`.
+   *
+   * ⚠️ ТРИ ВЕТКИ ИЗ ЧЕТЫРЁХ ПОВТОРЯЮТ СЕГОДНЯШНЕЕ ПОВЕДЕНИЕ ДОСЛОВНО, и это
+   * несущее требование, а не осторожность: у стороны есть годное заверение, а
+   * кадр называет ДРУГОЙ ключ — кадр обязан проверяться ЗАВЕРЕННЫМ ключом и
+   * уходить `malformed` (T17, T18). Иначе сочинённая цепочка становится читаемой
+   * с бейджем, то есть защита меняется на украшение.
+   *
+   * ⚠️ HEX-РАВЕНСТВО ЗДЕСЬ ТОЛЬКО ВЫБИРАЕТ КАНДИДАТА. Вердикт по-прежнему выносит
+   * `verifyChatKeyAttestationForKeys` (Задача 1), и сверку той же пары она делает
+   * сама. Значит расхождение этого сравнения с ней может лишь ПОТЕРЯТЬ совпадение
+   * — тогда путь ровно тот же, что у сочинённой цепочки, — но НЕ выдать `ok` там,
+   * где его нет. Своей сверки ключей, решающей вердикт, здесь нет ни строки.
+   */
+  const signerFor = (side: string) =>
+    async (claimed: Uint8Array): Promise<{ verdict: AttestationVerdict; signKey: Uint8Array | null }> => {
+      const claimedHex = hexFromBytes(claimed);
+      const rows = bySide.get(side) ?? [];
+      const okRows = rows.filter(r => r.verdict === 'ok');
+      if (okRows.length === 0) {
+        // Годного заверения у стороны нет вовсе: вердикт уже назван точнее
+        // (`expired`, `bad_signature`, `absent`), уточнять его ключом нечем.
+        const current = newest(rows);
+        return { verdict: current ? current.verdict : 'absent', signKey: null };
+      }
+      const pick = okRows.find(r => r.signKeyHex === claimedHex) ?? newest(okRows)!;
+      return { verdict: await askForKeys(pick.att, claimedHex), signKey: pick.signKey };
     };
 
   // 2. Подпись контейнера (§15.1). `crypto_box_seal` анонимен, поэтому личность
@@ -585,11 +649,15 @@ export async function readPresentation(
   //    заверения, и подпись проверяется заверенным ключом. Не подтвердили
   //    заверение — контейнер не приписан никому.
   const presenter = lower(c.presenter);
-  const presenterAtt = attested.get(presenter);
+  // Личность предъявителя приходит из ЕГО заверения, и подпись проверяется
+  // заверенным ключом. Из нескольких годных берётся самое свежее: контейнер
+  // подписывается нынешним ключом сеанса, а сборщик кладёт нынешнее заверение
+  // первым и обязан требовать их совпадения.
+  const presenterAtt = newest((bySide.get(presenter) ?? []).filter(r => r.verdict === 'ok'));
   const { signature, ...unsigned } = c;
 
   let signatureOk = false;
-  if (presenterAtt && presenterAtt.verdict === 'ok') {
+  if (presenterAtt) {
     const sodium = (await import('libsodium-wrappers')).default;
     await sodium.ready;
     const sig = bytesFromB64(signature);
@@ -651,7 +719,9 @@ export async function readPresentation(
       if (gap > 0) hidden += gap;
     }
 
-    const att = attested.get(sender);
+    const rows = bySide.get(sender) ?? [];
+    const current = newest(rows);
+    const ask = signerFor(sender);
     for (const link of pc.links) {
       const key = seqKey(sender, link.seq);
       if (notPreparedAt.has(key)) continue;   // считается отдельно, сообщением не является
@@ -659,13 +729,9 @@ export async function readPresentation(
         link,
         sender,
         // ⚠️ `absent`, а не `malformed`: «этой стороны в заверениях нет вовсе» и
-        // «на месте заверения мусор» — разные обвинения (договор v2).
-        attestation: att ? att.verdict : 'absent',
-        attestedSignKey: att && att.verdict === 'ok' ? att.signKey : null,
-        // Спрашиваем про названный кадром ключ ТОЛЬКО там, где заверение стороны
-        // само в порядке: у негодного заверения вердикт уже назван точнее
-        // (`expired`, `bad_signature`, `absent`), и уточнять его ключом нечем.
-        claimedKeyVerdict: att && att.verdict === 'ok' ? claimedKeyVerdictFor(att.att) : null,
+        // «на месте заверения мусор» — разные обвинения (договор v2 4в-1).
+        attestation: current ? current.verdict : 'absent',
+        signerFor: ask,
         frameB64: frameAt.get(key),
         sealed: keyAt.get(key),
         arbiterKeypair,

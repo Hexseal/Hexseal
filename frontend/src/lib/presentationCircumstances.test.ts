@@ -88,7 +88,7 @@ function inputFor(selected: BuildInput['selected'], over: Partial<BuildInput> = 
     selected,
     session: alice.session,
     ownAttestation: aliceAtt,
-    peerAttestation: bobAtt,
+    otherAttestations: [bobAtt],
     ...over,
   };
 }
@@ -426,7 +426,7 @@ describe('4. Пришёл мусор: вердикт, не падение, и у
   it('заверение не сходится — сказано прямо, а не молча «ок»', async () => {
     // Заверение собеседника подписано им, но названо чужим адресом.
     const container = await mustBuild(selectAll(), {
-      peerAttestation: { ...bobAtt, address: eve.address },
+      otherAttestations: [{ ...bobAtt, address: eve.address }],
     });
     const view = await readPresentation(container, judy.session.keypair);
     expect(view.container).toBe('ok');
@@ -441,11 +441,11 @@ describe('4. Пришёл мусор: вердикт, не падение, и у
   }, 30_000);
 
   it('заверения собеседника нет вовсе — absent, а не malformed и не «ок»', async () => {
-    // `peerAttestation` необязателен: собеседник мог не объявлять ключ ключом
-    // кошелька. Это ШТАТНЫЙ случай, и он обязан называться своим именем —
-    // «не приложено» и «приложен мусор» для арбитра разные новости
+    // `otherAttestations` необязателен и может быть ПУСТ: собеседник мог не
+    // объявлять ключ ключом кошелька. Это ШТАТНЫЙ случай, и он обязан называться
+    // своим именем — «не приложено» и «приложен мусор» для арбитра разные новости
     // (договор v2, исправление 5: вердикт `absent` попросили три задачи порознь).
-    const container = await mustBuild(selectAll(), { peerAttestation: undefined });
+    const container = await mustBuild(selectAll(), { otherAttestations: [] });
     const view = await readPresentation(container, judy.session.keypair);
     expect(view.container, 'без заверения собеседника предъявление вообще не читается').toBe('ok');
 
