@@ -1,6 +1,7 @@
 {
   "name": "hexseal-subgraph",
   "version": "2.3.0",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "graph": "node node_modules/@graphprotocol/graph-cli/bin/run",
     "codegen": "node node_modules/@graphprotocol/graph-cli/bin/run codegen",
