@@ -10,6 +10,12 @@ name: CI · образы · выкатка только вручную
 on:
   push:
     branches: [main]
+  # Без этого триггера у чужого PR не было бы НИ ОДНОЙ проверки: репозиторий
+  # открыт, значит первая правка со стороны приезжает именно так, а не пушем в
+  # main. Гоняются оба job'а с тестами (`contracts` и `web`); публикация образов
+  # (`build`) на PR намеренно пропускается — см. `if:` у неё.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       deploy:
@@ -151,8 +157,16 @@ jobs:
         working-directory: frontend
         run: npm run type-check
 
+  # Публикация образов в ghcr — НЕ на pull_request, и это не осторожность, а
+  # арифметика: у PR из форка `GITHUB_TOKEN` только на чтение, `packages: write`
+  # ему не выдаётся ни при каких настройках, и шаг «Login to GHCR» упал бы у
+  # каждого стороннего участника. Он увидел бы красный CI за то, чего не делал,
+  # а образ из непроверенной ветки в реестр не попал бы всё равно.
+  # Триггер именно `pull_request`, а не `pull_request_target`: код форка
+  # исполняется без доступа к секретам репозитория. Менять на `_target` нельзя.
   build:
     needs: [contracts, web]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

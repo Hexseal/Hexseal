@@ -24,13 +24,20 @@ export default [
       // Stubs: files carry inline `eslint-disable` comments for rules that this
       // minimal config does not load. Without stubs ESLint reports
       // "Definition for rule ... was not found" and drowns the real signal.
-      "@typescript-eslint": { rules: { "no-explicit-any": noop } },
+      "@typescript-eslint": {
+        rules: { "no-explicit-any": noop, "no-implied-eval": noop },
+      },
       "@next/next": { rules: { "no-img-element": noop } },
     },
     rules: {
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
       "@typescript-eslint/no-explicit-any": "off",
+      // `swNotificationTarget.test.ts` гоняет НАСТОЯЩИЙ sw.js через
+      // `new Function(...)` и глушит эту пару правил строчным комментарием.
+      // Без заглушки шаг «Hooks rule gate» краснел на чистом дереве, и чужой
+      // PR приезжал бы сломанным ещё до первой своей строки.
+      "@typescript-eslint/no-implied-eval": "off",
       "@next/next/no-img-element": "off",
     },
     linterOptions: { reportUnusedDisableDirectives: "off" },
