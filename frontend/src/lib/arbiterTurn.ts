@@ -2,6 +2,7 @@ import type { Address, PublicClient } from 'viem';
 import type { Abi, AbiEvent } from 'viem';
 import { AGREEMENT_ABI, ARBITER_REGISTRY_ABI, CONTRACTS } from '@/config/contracts';
 import { CATCHUP_CHUNK_BLOCKS } from '@/lib/chainWatchGate';
+import { disputeArbiterOf } from '@/lib/disputeArbiter';
 
 /**
  * Какой по счёту это арбитр — факт цепи, добытый счётом логов.
@@ -10,6 +11,14 @@ import { CATCHUP_CHUNK_BLOCKS } from '@/lib/chainWatchGate';
  * целиком; ушедший ничего не возвращает, он уже всё знает. Сторона имеет право
  * показать второму МЕНЬШЕ, чем первому, и лишена этого права, если не знает,
  * что показывает не первому (§2.4 замысла).
+ *
+ * ⚠️ ЧТО ИМЕННО СЧИТАЕТСЯ — ЗАЯВКИ, А НЕ ЛЮДИ. Считаются логи `DisputeClaimed`,
+ * а не различные адреса арбитров: `releaseDisputeClaim` с последующим повторным
+ * `claimDispute` ТЕМ ЖЕ арбитром даёт +1, хотя человек тот же. Направление
+ * ошибки безопасное — счёт может оказаться больше числа людей, но никогда
+ * меньше, — и сторона от этого осторожнее, а не беспечнее. Считать людей по
+ * логам можно (адрес в них есть), но тогда пришлось бы решать, считать ли
+ * вернувшегося тем же; сегодня это решение не нужно никому.
  *
  * ПОЧЕМУ ЛОГАМИ, А НЕ ГЕТТЕРОМ. Счётчика на спор в цепи нет ни в каком виде —
  * проверено чтением всей ArbiterRegistryStorage.Data и всего фасета: ни поля,
@@ -22,7 +31,9 @@ import { CATCHUP_CHUNK_BLOCKS } from '@/lib/chainWatchGate';
  *
  * ЧЕГО ЗДЕСЬ НЕТ НАМЕРЕННО: недосчёта. Любая беда — молчащий узел, слишком
  * широкий диапазон, непроверяемый край окна — даёт `{ known: false }`, а не
- * меньшее число. Неправда числом здесь дороже незнания: на это число сторона
+ * меньшее число. ⚠️ Включая беду, которая не бросает: узел, ответивший на
+ * широкий запрос пустым массивом вместо ошибки, ловится проверкой `settle`
+ * ниже — ноль заявок при живом арбитре невозможен, и мы говорим «не знаю». Неправда числом здесь дороже незнания: на это число сторона
  * опирается, решая, показывать ли переписку.
  *
  * ЦЕНА, ЗАМЕРЕННАЯ ТЕСТАМИ (не оценка на глаз):
@@ -240,6 +251,40 @@ async function verifiedTo(
   return head;
 }
 
+/**
+ * Последняя проверка перед тем, как назвать число: НОЛЬ ЗАЯВОК ПРИ ЖИВОМ АРБИТРЕ
+ * — это не «арбитр первый», а «мы не увидели логов».
+ *
+ * ⚠️ ЗАЧЕМ. `claimLogs` отдаёт `null` только на БРОСКЕ. Провайдер, который на
+ * слишком широкий `eth_getLogs` отвечает пустым или усечённым массивом вместо
+ * ошибки (такие есть), проходил бы мимо всех наших проверок и давал
+ * `{ known: true, turn: 0 }` — уверенную неправду. Цена её необратима: сторона
+ * показала бы ТРЕТЬЕМУ арбитру переписку целиком, считая его первым, — ровно то
+ * право, которое §2.4 замысла у неё защищает.
+ *
+ * ⚠️ ПОЧЕМУ ЭТО ЗАКОННО. Спора без заявки не бывает: арбитр становится ведущим
+ * спор только через `claimDispute`, а он излучает `DisputeClaimed`. Значит
+ * «арбитр есть» и «заявок ноль» несовместимы, и встретив их вместе, честнее
+ * признать незнание.
+ *
+ * ⚠️ ЦЕНА. Лишнее чтение делается ТОЛЬКО при нуле — то есть в случае, когда
+ * спор поднят, а арбитр ещё не взялся (тогда ответ честный ноль, одно чтение
+ * сверху) либо когда узел нас обманул. При `turn >= 1` не стоит ничего.
+ */
+async function settle(
+  publicClient: PublicClient, agreement: Address, turn: number,
+): Promise<ArbiterTurn> {
+  if (turn > 0) return { known: true, turn };
+  let arbiter: Address | null;
+  try {
+    arbiter = await disputeArbiterOf(publicClient, agreement);
+  } catch {
+    // Спросить не смогли — значит подтвердить ноль нечем.
+    return { known: false };
+  }
+  return arbiter === null ? { known: true, turn: 0 } : { known: false };
+}
+
 export async function arbiterTurnOf(
   publicClient: PublicClient, agreement: Address,
 ): Promise<ArbiterTurn> {
@@ -255,7 +300,7 @@ export async function arbiterTurnOf(
   // сделки делает ответ крошечным; если провайдер не режет диапазон — это весь
   // счёт целиком, один поход.
   const wide = await claimLogs(publicClient, agreement, DIAMOND_DEPLOY_BLOCK, head);
-  if (wide !== null) return { known: true, turn: countClaimsForAgreement(wide, agreement) };
+  if (wide !== null) return settle(publicClient, agreement, countClaimsForAgreement(wide, agreement));
 
   // Дорога 2: сужаем окном спора и идём кусками. ВСЕ заявки этой сделки лежат
   // внутри [disputedAt, disputedAt + DISPUTE_WINDOW]: и claimDispute, и
@@ -284,5 +329,5 @@ export async function arbiterTurnOf(
     if (logs === null) return { known: false };
     all.push(...logs);
   }
-  return { known: true, turn: countClaimsForAgreement(all, agreement) };
+  return settle(publicClient, agreement, countClaimsForAgreement(all, agreement));
 }

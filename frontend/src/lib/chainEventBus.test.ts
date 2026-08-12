@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
 import { publishChainLogs, subscribeChainLogs, chainLogSinkCount } from './chainEventBus';
+import { handleChainLogsImpl } from '@/hooks/useNotifications';
 
 /**
  * Раздатчик пачек с общего фильтра цепи.
@@ -106,23 +107,70 @@ describe('раздатчик пачек — доставка и отписка',
 /**
  * ШОВ, У КОТОРОГО НЕТ ДРУГОГО СТОРОЖА: кто-то обязан РАЗДАВАТЬ.
  *
- * ⚠️ ЧЕСТНО ПРО ПРИРОДУ ЭТОГО ЗАМКА. Он читает исходник, а не исполняет код:
- * `useNotifications` — реактовский хук, а окружения отрисовки в проекте нет
- * (`environment: 'node'`, ни jsdom, ни testing-library), поэтому позвать его
- * по-настоящему нельзя. Это тот самый «замок на текст», к которому проект
- * относится с подозрением, и он назван таковым вслух.
+ * Без этих замков удаление одной строки `publishChainLogs(logs)` из обработчика
+ * не краснеет НИГДЕ: тесты раздатчика зовут раздачу сами, тесты слежения — тоже.
+ * Слежение молча перестало бы получать что-либо вообще, а прогон остался бы
+ * зелёным. Замерено: ноль красных без этого файла.
  *
- * ПОЧЕМУ ОН ВСЁ РАВНО ЗАВЕДЁН. Без него удаление одной строки
- * `publishChainLogs(logs)` из хука не краснеет НИГДЕ: тесты раздатчика зовут
- * раздачу сами, тесты слежения — тоже. То есть слежение молча перестало бы
- * получать что-либо вообще, а весь прогон остался бы зелёным. Замерено:
- * убрать строку — ноль красных без этого файла.
- *
- * ЧТО ОН ПРОВЕРЯЕТ ТОЧНО: что раздача стоит в ТОЙ ЖЕ функции, которая отдана
- * общему слежению как `onLogs`, — а не просто встречается где-то в файле.
- * Значит и живые пачки, и добранные догоном проходят через раздачу.
+ * ⚠️ ЗАМОК ЗДЕСЬ ПОВЕДЕНЧЕСКИЙ, А НЕ ТЕКСТОВЫЙ, И ЭТО ВАЖНО. Тело обработчика
+ * вынесено из хука в `handleChainLogsImpl(logs, deps)` ровно затем, чтобы его
+ * можно было позвать обычным node-тестом без jsdom. Сверка текста пропускала бы
+ * целый класс порчи: `if (флаг) publishChainLogs(logs)` и `publishChainLogs([])`
+ * оставили бы её зелёной, а слежение — слепым. Здесь меряется РАБОТА: пачка
+ * доехала до подписчика или нет.
  */
-describe('общий фильтр обязан раздавать пачки — иначе слежение слепо', () => {
+describe('обработчик пачек обязан раздавать их — замер работой', () => {
+  const DEPS = {
+    isArbiter: false,
+    deals: new Map(),
+    jobIds: new Set<string>(),
+    serviceIds: new Set<string>(),
+    classifyRefund: async () => ({ kind: 'refund' as const }),
+    push: () => {},
+    refresh: () => {},
+  };
+
+  it('раздача случилась, ХОТЯ КОШЕЛЬКА НЕТ', async () => {
+    // ⚠️ ГЛАВНАЯ СЦЕНА. Условия у читателей разные: колокольчику без кошелька
+    // уведомлять некого и он выходит сразу, а слежению пачка нужна всё равно.
+    // Поставь раздачу ниже отказа по кошельку — этот тест краснеет.
+    const got: unknown[][] = [];
+    const off = subscribeChainLogs((logs) => got.push(logs));
+    await handleChainLogsImpl([{ eventName: 'ArbiterChatKeySet' }], { ...DEPS, me: undefined });
+    expect(got, 'пачка не роздана — слежение слепо').toHaveLength(1);
+    off();
+  });
+
+  it('раздаётся ВСЯ пачка, а не пустышка', async () => {
+    // ⚠️ Против `publishChainLogs([])`: текстовый замок такого не видит.
+    const got: unknown[][] = [];
+    const off = subscribeChainLogs((logs) => got.push(logs));
+    const pack = [{ eventName: 'DisputeReleased' }, { eventName: 'ArbiterChatKeySet' }];
+    await handleChainLogsImpl(pack, { ...DEPS, me: undefined });
+    expect(got[0]).toHaveLength(2);
+    expect(got[0]).toEqual(pack);
+    off();
+  });
+
+  it('раздача идёт и при ПОДКЛЮЧЁННОМ кошельке — не «или/или»', async () => {
+    const got: unknown[][] = [];
+    const off = subscribeChainLogs((logs) => got.push(logs));
+    await handleChainLogsImpl([{ eventName: 'ArbiterChatKeySet' }], {
+      ...DEPS, me: '0xAbCdEf1111111111111111111111111111111111',
+    });
+    expect(got).toHaveLength(1);
+    off();
+  });
+
+});
+
+/**
+ * Второй слой — сверка ТЕКСТА. Оставлен намеренно и назван вслух: он ловит то,
+ * чего не видит поведенческий замер выше — что вынесенная функция действительно
+ * отдана общему слежению как `onLogs`, а не осталась в стороне. Позвать хук
+ * по-настоящему нельзя (jsdom в проекте нет), поэтому здесь читается исходник.
+ */
+describe('вынесенный обработчик действительно подключён к общему слежению', () => {
   const HOOK = readFileSync(
     new URL('../hooks/useNotifications.ts', import.meta.url), 'utf8',
   );
@@ -141,27 +189,16 @@ describe('общий фильтр обязан раздавать пачки —
     throw new Error(`тело не закрылось: ${decl}`);
   }
 
-  it('раздача стоит внутри обработчика пачек, а не «где-то в файле»', () => {
-    const body = bodyOf(HOOK, 'const handleChainLogs = useCallback(');
-    expect(body, 'обработчик пачек не раздаёт их — слежение не получит ничего')
-      .toMatch(/\bpublishChainLogs\s*\(/);
+  it('обработчик пачек раздаёт их — раздача внутри вынесенной функции', () => {
+    const body = bodyOf(HOOK, 'export async function handleChainLogsImpl(');
+    expect(body, 'вынесенная функция не раздаёт пачки').toMatch(/\bpublishChainLogs\s*\(/);
   });
 
-  it('именно этот обработчик отдан общему слежению как onLogs', () => {
-    // Без этой половины раздача могла бы сидеть в функции, которую никто не зовёт.
+  it('именно эта функция отдана общему слежению как onLogs', () => {
+    // ⚠️ Половина, которой нет у поведенческого замера: без неё раздача могла бы
+    // жить в функции, которую не зовёт никто.
     expect(HOOK).toMatch(/onLogs:\s*handleChainLogs\b/);
-  });
-
-  it('раздача идёт ДО отказа по неподключённому кошельку', () => {
-    // ⚠️ Условия у читателей разные: колокольчику без кошелька уведомлять
-    // некого, а слежению пачка нужна. Поставь раздачу ниже — и читатель молча
-    // остался бы без неё в чужом случае.
-    const body = bodyOf(HOOK, 'const handleChainLogs = useCallback(');
-    const publishAt = body.search(/\bpublishChainLogs\s*\(/);
-    const bailAt = body.search(/if\s*\(!me\)\s*return;/);
-    expect(publishAt).toBeGreaterThanOrEqual(0);
-    expect(bailAt).toBeGreaterThanOrEqual(0);
-    expect(publishAt, 'раздача стоит ниже отказа по кошельку').toBeLessThan(bailAt);
+    expect(HOOK).toMatch(/handleChainLogsImpl\s*\(\s*logs\s*,/);
   });
 
   it('разборщик тела падает там, где разбирать нечего', () => {

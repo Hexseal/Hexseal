@@ -5,6 +5,7 @@ import type { Address, Hex, PublicClient } from 'viem';
 import { ARBITER_REGISTRY_ABI, CONTRACTS } from '@/config/contracts';
 import { runChainWatch, type ChainWatchIO, type VisibilityDoc } from './chainWatchGate';
 import { WIRE_EVENT_NAMES } from './notifEvents';
+import { WIRE_ONLY_EVENT_NAMES } from './notifRouter';
 import { chainLogSinkCount, publishChainLogs } from './chainEventBus';
 import { ZERO_KEY, toBoxKey } from './arbiterChatKey';
 import { arbiterBoxKeyBytes } from './presentation';
@@ -676,6 +677,18 @@ describe('arbiterChangeWatchIO — СВОЕГО цикла опроса нет, 
     const onWire = new Set<string>(WIRE_EVENT_NAMES as readonly string[]);
     const lost = ARBITER_CHANGE_EVENT_NAMES.filter((n) => !onWire.has(n));
     expect(lost, 'род слежения не едет по общему проводу — повод не придёт никогда').toEqual([]);
+  });
+
+  it('ОБРАТНО: на провод ради слежения кладут только то, что слежение читает', () => {
+    // ⚠️ ВТОРАЯ СТОРОНА ТОГО ЖЕ ШВА, и без неё он сторожился в одну.
+    // `WIRE_ONLY_EVENT_NAMES` — это не просто «ещё рода в фильтре»: разводка
+    // отсеивает их ДО проверки `KNOWN` (`notifRouter.ts`), то есть попадание в
+    // этот список выводит род из-под счётчика мусора. Допиши туда имя просто
+    // так — и узел начнёт слать нам логи, которых не читает никто, а счётчик
+    // мусора о них смолчит.
+    const read = new Set<string>(ARBITER_CHANGE_EVENT_NAMES as readonly string[]);
+    const unread = WIRE_ONLY_EVENT_NAMES.filter((n) => !read.has(n));
+    expect(unread, 'род положен на провод «ради слежения», но слежение его не читает').toEqual([]);
   });
 });
 

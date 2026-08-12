@@ -108,10 +108,16 @@ describe('блок деплоя диамонда: копия во фронте �
     expect(DIAMOND_DEPLOY_BLOCK).toBe(subgraphStartBlock(SUBGRAPH_YAML));
   });
 
-  it('у хозяина сегодня то самое число (написано руками)', () => {
-    // Отдельно от предыдущего: тот ловит РАСХОЖДЕНИЕ сторон, этот — что
-    // разборщик достал число, а не мусор.
-    expect(subgraphStartBlock(SUBGRAPH_YAML)).toBe(BigInt(44_613_049));
+  it('разборщик достал ЧИСЛО, а не мусор — но не сверяет его значение', () => {
+    // ⚠️ ЗДЕСЬ НАМЕРЕННО ДИАПАЗОН, А НЕ РАВЕНСТВО. Третий рукописный экземпляр
+    // `44_613_049` означал бы, что при ЗАКОННОЙ замене диамонда этот тест
+    // краснеет, а починка выглядит как «поправить число в тесте» — то есть
+    // замок учит себя игнорировать. Расхождение сторон ловит тест выше; здесь
+    // проверяется только, что из yaml вынули правдоподобный номер блока Base,
+    // а не ноль, не строку и не длину файла.
+    const got = subgraphStartBlock(SUBGRAPH_YAML);
+    expect(got).toBeGreaterThan(BigInt(1_000_000));
+    expect(got).toBeLessThan(BigInt(1_000_000_000));
   });
 
   it('startBlock не найден — отказ, а не тихий ноль', () => {
@@ -211,8 +217,12 @@ interface Stand {
   maxRange?: bigint;
   disputedAt?: bigint;
   disputeWindow?: bigint;
+  /** Кто ведёт спор. `undefined` — никто (спор поднят, арбитр не взялся). */
+  arbiter?: Address;
   fail?: Set<string>;
 }
+
+const ZERO = '0x0000000000000000000000000000000000000000' as Address;
 
 function fakeChain(stand: Stand) {
   const calls = { blockNumber: 0, getBlock: 0, getLogs: 0, readContract: 0 };
@@ -241,6 +251,10 @@ function fakeChain(stand: Stand) {
       if (stand.fail?.has(functionName)) throw new Error(`узел отказал: ${functionName}`);
       if (functionName === 'disputedAt') return stand.disputedAt ?? BigInt(0);
       if (functionName === 'DISPUTE_WINDOW') return stand.disputeWindow ?? BigInt(4 * 86400);
+      // «Кто ведёт спор» — этим `settle` подтверждает честный ноль: спора без
+      // заявки не бывает, поэтому ноль заявок законен только без арбитра.
+      if (functionName === 'getDisputeClaimer') return stand.arbiter ?? ZERO;
+      if (functionName === 'getPendingVerdict') return { arbiter: ZERO, submittedAt: BigInt(0) };
       throw new Error(`стенд не знает ${functionName}`);
     },
   } as unknown as PublicClient;
@@ -360,6 +374,44 @@ describe('arbiterTurnOf — факт цепи либо честное «не з�
     expect(await arbiterTurnOf(wrapped, DEAL)).toEqual({ known: false });
   });
 
+  it('АРБИТР ЕСТЬ, а логов ноль — { known: false }, а НЕ «первый»', async () => {
+    // ⚠️ САМАЯ ДОРОГАЯ ЛОЖЬ ИЗ ВОЗМОЖНЫХ, и она не бросает. Провайдер вправе
+    // ответить на слишком широкий eth_getLogs пустым (или усечённым) массивом
+    // вместо ошибки — тогда все проверки на отказ проходят мимо, и наружу
+    // выходит уверенное «арбитр первый». Сторона показала бы ТРЕТЬЕМУ арбитру
+    // переписку целиком, считая его первым, и не узнала бы об этом никогда.
+    // Спора без заявки не бывает: есть арбитр — значит был `DisputeClaimed`.
+    const { client } = fakeChain({
+      head: HEAD, headTs: HEAD_TS, logs: [], arbiter: ARB_A,
+    });
+    expect(await arbiterTurnOf(client, DEAL)).toEqual({ known: false });
+  });
+
+  it('арбитра нет и логов нет — вот тут ноль ЧЕСТНЫЙ', async () => {
+    // Обратная половина: спор поднят, никто не взялся. Ноль здесь — факт, и
+    // слить его с «не знаю» было бы такой же неправдой, только в другую сторону.
+    const { client } = fakeChain({ head: HEAD, headTs: HEAD_TS, logs: [] });
+    expect(await arbiterTurnOf(client, DEAL)).toEqual({ known: true, turn: 0 });
+  });
+
+  it('ноль при НЕЧИТАЕМОМ арбитре — тоже незнание', async () => {
+    // Подтвердить ноль нечем — значит его нет.
+    const { client } = fakeChain({
+      head: HEAD, headTs: HEAD_TS, logs: [], fail: new Set(['getDisputeClaimer']),
+    });
+    expect(await arbiterTurnOf(client, DEAL)).toEqual({ known: false });
+  });
+
+  it('при ненулевом счёте «кто ведёт спор» не спрашивается — лишних чтений нет', async () => {
+    // ЗАМЕР ЦЕНЫ: проверка стоит ровно там, где подозрительно, и ни разу больше.
+    const { client, calls } = fakeChain({
+      head: HEAD, headTs: HEAD_TS,
+      logs: [{ block: HEAD - BigInt(10), log: claimLog(DEAL, ARB_A, HEAD - BigInt(10), 'a') }],
+    });
+    expect(await arbiterTurnOf(client, DEAL)).toEqual({ known: true, turn: 1 });
+    expect(calls.readContract, 'счёт сходил в цепь без нужды').toBe(0);
+  });
+
   it('чужие логи в ответе узла в счёт не идут', async () => {
     const { client } = fakeChain({
       head: HEAD, headTs: HEAD_TS,
@@ -375,12 +427,27 @@ describe('arbiterTurnOf — факт цепи либо честное «не з�
 // ═══ форма ответа ════════════════════════════════════════════════════════
 
 describe('форма ответа: незнание и ноль — разные вещи', () => {
-  it('{ known: false } не несёт числа ВООБЩЕ', () => {
-    // Рантайм-половина замка. Вторая половина — тип-замок
-    // ARBITER_TURN_UNKNOWN_CARRIES_NO_NUMBER в самом модуле: приписать сюда
-    // turn нельзя, не сломав `npm run type-check`.
-    const unknownTurn: ArbiterTurn = { known: false };
+  it('«не знаю» С БОЕВОГО ПУТИ не несёт числа', async () => {
+    // ⚠️ ЗНАЧЕНИЕ БЕРЁТСЯ ИЗ `arbiterTurnOf`, А НЕ СОЧИНЯЕТСЯ ЗДЕСЬ. Прежняя
+    // редакция строила литерал `{ known: false }` сама и проверяла его ключи —
+    // такой тест не мог покраснеть НИКОГДА, что бы ни делал модуль, и при этом
+    // назывался «рантайм-половиной замка». Теперь он меряет то, что боевой код
+    // действительно отдаёт.
+    const { client } = fakeChain({
+      head: HEAD, headTs: HEAD_TS, logs: [], fail: new Set(['getBlockNumber']),
+    });
+    const unknownTurn: ArbiterTurn = await arbiterTurnOf(client, DEAL);
+    expect(unknownTurn.known).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(unknownTurn, 'turn')).toBe(false);
     expect(Object.keys(unknownTurn)).toEqual(['known']);
+  });
+
+  it('«знаю» с боевого пути несёт РОВНО два поля', async () => {
+    // Обратная половина: чтобы предыдущий тест не зеленел на пустом объекте.
+    const { client } = fakeChain({
+      head: HEAD, headTs: HEAD_TS,
+      logs: [{ block: HEAD - BigInt(10), log: claimLog(DEAL, ARB_A, HEAD - BigInt(10), 'a') }],
+    });
+    expect(Object.keys(await arbiterTurnOf(client, DEAL)).sort()).toEqual(['known', 'turn']);
   });
 });
