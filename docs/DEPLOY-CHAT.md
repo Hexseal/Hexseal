@@ -85,7 +85,7 @@ tar tzf relayer-storage-*.tgz | grep -c .
 ## Шаг 3. Обновить посредника (первым)
 
 ```bash
-cd "~/dev/Hexseal"
+cd ~/Hexseal
 scp root@IP_VPS:/opt/hexseal/app/.env.vps /tmp/hexseal-deploy.env
 set -a; source /tmp/hexseal-deploy.env; set +a
 docker build -t hexseal-relayer --build-arg CACHEBUST="$(date +%s)" ./relayer
@@ -123,7 +123,7 @@ curl -s https://api.hexseal.net/keys/0x0000000000000000000000000000000000000001
 ## Шаг 5. Обновить сайт (вторым)
 
 ```bash
-cd "~/dev/Hexseal"
+cd ~/Hexseal
 bash deploy-local.sh
 ```
 
@@ -159,7 +159,7 @@ ssh root@IP_VPS "docker run --rm -v relayer_storage:/s alpine rm -rf /s/xmtp-bot
 **Откатывать можно только сайт:**
 
 ```bash
-cd "~/dev/Hexseal"
+cd ~/Hexseal
 git checkout main~1
 bash deploy-local.sh --fresh
 ```
