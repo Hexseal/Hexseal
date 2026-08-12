@@ -1,7 +1,24 @@
-tunnel: b9656259-6f7b-4376-a881-181fc7671fae
+# cloudflared — шаблон. Скопируйте рядом и заполните:
+#
+#   cp cloudflared/config.example.yml cloudflared/config.yml
+#
+# `docker-compose.yml` монтирует именно `cloudflared/config.yml` (не этот файл),
+# так что без копии контейнер туннеля не поднимется.
+#
+# ⚠️ `config.yml` в репозиторий не кладут: идентификатор туннеля — это имя
+# конкретной живой машины. Сам по себе он не мандат (учётные данные приезжают
+# отдельно, через окружение), но он опознаёт установку.
+
+# Идентификатор туннеля из `cloudflared tunnel create <имя>`.
+tunnel: 00000000-0000-0000-0000-000000000000
+
 ingress:
-  - hostname: hexseal.net
+  # Веб-приложение. `frontend` и `relayer` — имена служб из docker-compose.yml,
+  # порты — те же, на которых они слушают внутри своей сети.
+  - hostname: example.com
     service: http://frontend:3000
-  - hostname: api.hexseal.net
+  # Релеер: мета-транзакции, файлы, пуши.
+  - hostname: api.example.com
     service: http://relayer:3001
+  # Обязательное последнее правило — всё прочее отбивается.
   - service: http_status:404
