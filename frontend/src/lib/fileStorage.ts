@@ -221,8 +221,11 @@ export async function uploadFileWithEncryption(
     return { url, fileKey, keyHex, ivHex, chunked: false };
   }
 
-  // Multipart (>20 MB) uploads are not tagged with a pairId — see plan/spec for why
-  // (evidence-TTL protection is scoped to the common small-file case only).
+  // ⚠️ Этот путь не проставляет разметку принадлежности паре, и это открытый
+  // долг, а не задумка: защита срока хранения улик покрывает пока только
+  // общий случай. Заведено пунктом 52 `docs/OPEN-ITEMS.md`; там же сказано,
+  // почему подробности не публикуются до починки. Правится здесь и на
+  // стороне релеера одним заходом.
   const { url, fileKey, keyHex, ivHex, chunkCount } = await uploadEncryptedFileMultipart(file, originalName, onProgress, signal, peerContext?.self);
   return { url, fileKey, keyHex, ivHex, chunked: true, chunkCount, chunkSize: CHUNK_SIZE };
 }

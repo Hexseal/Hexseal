@@ -1739,11 +1739,14 @@ function fileKeyFromPath(reqPath) {
 // ⚠️ ПРОПУСКА ОДНОГО НЕДОСТАТОЧНО, и это замерено: пропуск склада есть у
 // каждого пользователя чата, включая арбитра. Поэтому проверяется
 // ПРИНАДЛЕЖНОСТЬ ПАРЕ по уже существующей описи (`file-pairs.json`,
-// filePairIdOf). У ключей без записи в описи (многокусочная заливка не
-// метится вовсе — см. §4.5) пара неизвестна, и замок вырождается в «нужен
-// любой живой пропуск». Отказать им всем значило бы сломать все крупные
-// вложения у обеих сторон; пробел назван тестом и закрывается меткой пары на
-// многокусочном пути — отдельная работа.
+// filePairIdOf).
+//
+// ⚠️ ЗАМОК ПОКА НЕ ПОЛНЫЙ, и это открытый пункт: разметка принадлежности
+// ставится не на всех путях заливки, поэтому у части ключей пара неизвестна.
+// Ужесточить «в лоб» нельзя — сломает честных с обеих сторон; закрывается
+// разметкой на оставшемся пути, отдельной работой. Подробности (какой путь,
+// при каком условии, с какого размера) намеренно не публикуются ни здесь, ни
+// в docs/OPEN-ITEMS.md (пункт 52) до починки. Пробел заперт тестом.
 //
 // ⚠️ БЮДЖЕТ ЗДЕСЬ НАМЕРЕННО НЕ СПИСЫВАЕТСЯ. `requireChatFileAccess` списал бы
 // адресный бюджет (40/мин), и переписка с пятью десятками картинок упёрлась
@@ -3132,19 +3135,23 @@ const BAG_IP_RATE_MAX = readPositiveInt('BAG_IP_RATE_MAX', 300);
 // переподключает кошелёк, а не для нагрузки.
 const BAG_PASS_CHAIN_RATE_MAX = readPositiveInt('BAG_PASS_CHAIN_RATE_MAX', 12);
 
-// Находка ревью (Important): bag-read:<адрес> и сырая строка из clientIp()
-// жили в одном и том же _rateMap. При TRUST_PROXY=true clientIp() отдаёт
-// заголовок CF-Connecting-IP дословно, без проверки, что это вообще похоже
-// на IP (ни IPv4, ни IPv6 формат не проверяется нигде) — заголовок
-// `CF-Connecting-IP: bag-read:0x<жертва>` превращал бы IP-ключ буквально в
-// ключ чужого адресного бюджета чтения, списывая с него как со своего.
-// Сегодня недостижимо из интернета за реальным туннелем Cloudflare (он сам
-// выставляет этот заголовок и вычищает клиентский), но это ровно тот же
-// класс ошибки конфигурации, что и С1 — одна неверная настройка прокси, и
-// снова кто угодно с сети жжёт бюджет чужого адреса. Префикс `ip:` не
-// может встретиться ни в одном из bagPassRateKey/bagReadRateKey/
-// bagWriteRateKey (они начинаются на `bag-`) — коллизия исключена по
-// форме ключа, а не по вере в то, что заголовок всегда честный.
+// Находка ревью (Important): адресные ключи и сырая строка из clientIp()
+// жили в одном и том же _rateMap. При TRUST_PROXY=true clientIp() берёт
+// значение из заголовка, выставленного впереди стоящим прокси, и берёт его
+// дословно — а значит пространство имён счётчиков нельзя считать защищённым
+// от того, что в него попадёт строка, выбранная не нами. Сегодня из
+// интернета за настоящим туннелем это недостижимо (прокси сам выставляет
+// заголовок и вычищает клиентский), но полагаться на это значило бы
+// защищаться верой в конфигурацию.
+//
+// Поэтому разделение сделано ПО ФОРМЕ КЛЮЧА: префикс `ip:` не может
+// встретиться ни в одном из bagPassRateKey/bagReadRateKey/bagWriteRateKey
+// (они начинаются на `bag-`), и наоборот. Коллизия исключена построением, а
+// не проверкой содержимого заголовка.
+//
+// ⚠️ Разделены не все пользователи общей карты — остаток записан отдельным
+// открытым пунктом (docs/OPEN-ITEMS.md, 28.1); подробности там намеренно не
+// публикуются, и здесь их тоже быть не должно.
 function bagIpRateKey(ip)         { return `ip:${ip}`;             }
 function bagPassRateKey(address)  { return `bag-pass:${address}`;  }
 function bagReadRateKey(address)  { return `bag-read:${address}`;  }
@@ -3419,14 +3426,14 @@ export { UNIVERSAL_SIG_VALIDATOR_BYTECODE };
 // same shape of problem (no URL-supplied resource, signer proves an address
 // that's also plain input).
 //
-// Deliberately NOT copied from /push/subscribe/unsubscribe: those two have no
-// replay protection at all (docs/OPEN-ITEMS.md #27) — a captured signature is
-// valid forever. This route keeps bagPassChallenge's ±5 minute window, the
-// same discipline GET /dispute-log/:dealId already applies to its own
-// signature path, checked via Number.isFinite (not a bare Number(ts) > …
-// comparison — that version silently accepts a non-numeric ts because
-// `NaN > 300` is always false, the exact failure mode named in the same
-// OPEN-ITEMS entry).
+// Deliberately NOT copied from /push/subscribe/unsubscribe: the shape of the
+// signed phrase over there is weaker, and that is filed as an open item
+// (docs/OPEN-ITEMS.md #27 — details are kept out of the public register until
+// it is fixed; do not restate them here either). This route keeps
+// bagPassChallenge's ±5 minute window, the same discipline
+// GET /dispute-log/:dealId already applies to its own signature path, and
+// checks it via Number.isFinite rather than a bare magnitude comparison —
+// see the note at the check itself for why the finite test carries its weight.
 //
 // Ordering is cost-ordered, cheapest first: address shape → header presence →
 // timestamp window → rate limit by the CLAIMED address → only then the actual
@@ -3462,11 +3469,11 @@ app.post('/bags/pass', async (req, res) => {
 
   const nowSec = Math.floor(Date.now() / 1000);
   const tsNum  = Number(ts);
-  // Number.isFinite first, not just `Math.abs(nowSec - tsNum) > 300` — the
-  // same class of bug docs/OPEN-ITEMS.md #27 (subpoint 3) found in
-  // /push/subscribe's sibling code: Number('never') is NaN, and any
-  // comparison against NaN is always false, so a non-numeric x-ts silently
-  // sails through a bare magnitude check instead of being rejected by it.
+  // Number.isFinite first, not just `Math.abs(nowSec - tsNum) > 300`: a bare
+  // magnitude comparison is not a total check over every input a client can
+  // send, and the gap is silent rather than loud. Same class as the one filed
+  // in docs/OPEN-ITEMS.md #27 (subpoint 3) — kept as a pointer only, the
+  // mechanism stays out of the register until that item is closed.
   // (bagPassChallenge() below happens to also reject NaN via its own
   // Number.isSafeInteger guard — Задача 1's contract, not this route's — so
   // removing this line doesn't reopen an exploit today; it does start
@@ -4023,15 +4030,16 @@ function boxChainRateKey(address) { return `box-chain:${address}`; }
 // «сейчас» двигает срок вперёд каждую ночь, пока freezeVerdict() держит
 // дело (ArbiterRegistryFacet.sol:848, onlyOwnerOrDAO, без таймаута).
 // Потолка по объёму на ОДНУ сторону при этом тоже нет — квота на ящик не
-// заводится (открытый пункт 28.2 плана 4в-2). Худший случай числом:
-//   DISPUTE_BOX_WRITE_RATE_MAX (60/мин) × MAX_BAG_SIZE (256 КиБ, bagStore.js)
-//   = 15 360 КиБ/мин × 1440 мин/сутки = 22 118 400 КиБ/сутки ≈ 21,1 ГиБ/сутки
-//   НА ОДНУ СТОРОНУ спора, БЕССРОЧНО, пока дело заморожено.
+// заводится (открытый пункт 28.2 плана 4в-2). Ограничение здесь только
+// временно́е: темп записи, а не объём, который может накопиться, и не срок,
+// пока дело заморожено.
+//
 // Это не гипотеза — это цена решения «funded освобождает от 90-дневного
-// потолка», принятого этой же задачей. Одна сторона такого не сделает по
-// ошибке (нужно 60 запросов в минуту непрерывно), но это уже не
-// «космети­ческий» долг у пункта 28.2 — это конкретное число, которое
-// квота обязана будет закрыть.
+// потолка», принятого этой же задачей. По ошибке одна сторона столько не
+// накопит (нужен непрерывный поток), но это уже не «косметический» долг у
+// пункта 28.2 — это то, что квота обязана будет закрыть. Худший случай
+// посчитан и лежит во внутреннем реестре; здесь и в docs/OPEN-ITEMS.md он
+// намеренно не приводится числом, пока квоты нет.
 // ⚠️ Сосед по теме: отсрочка «узел молчит» (К-1, cleanupBags() в
 // bagStore.js) ограничена ТЕМ ЖЕ BAG_MAX_AGE_MS от uploadedAt — то есть
 // узел, молчащий дольше 90 суток подряд, снесёт мешок живого спора, даже
