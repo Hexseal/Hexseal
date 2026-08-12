@@ -413,6 +413,49 @@ const GAS_DEFAULTS: Record<string, bigint> = {
 
 const DEFAULT_GAS = 500_000n;
 
+/**
+ * Отсечка газа для ОДНОГО вызова — одна функция на ОБА пути: через релеер и
+ * прямой запасной «релеер лежит». Живая оценка узла с запасом 30%, а если узел
+ * оценить не смог — потолок из `GAS_DEFAULTS` по имени функции.
+ *
+ * ⚠️ ЗАЧЕМ ВЫНЕСЕНА. До 11 августа правило «взять потолок ИЗ ТАБЛИЦЫ» жило
+ * внутри `_sendForwardRequest`, то есть применялось ТОЛЬКО к запросу, который
+ * уходит релееру. Запасной путь (`walletClient.sendTransaction`) уходил в цепь
+ * без поля `gas` вообще: замеренные и выстраданные потолки (`claimDispute`
+ * 260 000 после того, как заявка стала возить два ключа чата) на нём не
+ * действовали никак. Момент, когда это ранит, — ровно тот, ради которого
+ * запасной путь и существует: релеер недоступен, а заявка на спор это второй
+ * шаг commit-reveal, который нельзя переиграть дёшево.
+ *
+ * ⚠️ Цена — один лишний eth_estimateGas на запасном пути. Он оправдан: узел
+ * во фронте — это fallback([/api/rpc, sepolia.base.org]) (providers.tsx:91),
+ * то есть «релеер лёг» НЕ означает «оценить нечем», и живая оценка точнее
+ * любого потолка. А если узел молчит — потолок ровно для этого и есть.
+ *
+ * ⚠️ ЧЕМ ЭТА ФУНКЦИЯ НЕ ЯВЛЯЕТСЯ — чтобы следующий читатель не решил лишнего.
+ * Она НЕ единственное место в файле, где считается газ. Та же формула
+ * («оценка × 130/100, иначе запасное») написана руками ещё дважды — в
+ * `fundAgreementGasless` и `proposeExtraGasless`, и обе копии берут в catch
+ * зашитое 150_000n МИМО GAS_DEFAULTS. Значит правка потолка в таблице их не
+ * заденет. Сюда их не перевели намеренно (одна — путь оплаты сделки, трогать
+ * его ради стройности в этой выкатке не стали); остаток назван числом в
+ * docs/OPEN-ITEMS.md, пункт 53.1: копий формулы три, через таблицу ходит одна.
+ */
+export async function callGasLimit(
+  publicClient: PublicClient,
+  from: Address,
+  to: Address,
+  data: Hex,
+  functionName: string,
+): Promise<bigint> {
+  try {
+    const estimated = await publicClient.estimateGas({ account: from, to, data });
+    return (estimated * 130n) / 100n;
+  } catch {
+    return GAS_DEFAULTS[functionName] ?? DEFAULT_GAS;
+  }
+}
+
 // ─── Per-wallet serialization ─────────────────────────────────────────────────
 //
 // `acquireWalletLock` жил здесь и был приватным для этого файла — двенадцать
@@ -513,18 +556,7 @@ async function _sendForwardRequest(
   // Get nonce from the effective MinimalForwarder (опрос до свежего — см. readFreshNonce)
   const nonce = await readFreshNonce(publicClient, effectiveForwarder, userAddress);
 
-  // Estimate gas; fallback to default
-  let gasLimit: bigint;
-  try {
-    const estimated = await publicClient.estimateGas({
-      account: userAddress,
-      to: targetAddress,
-      data: calldata,
-    });
-    gasLimit = (estimated * 130n) / 100n;
-  } catch {
-    gasLimit = GAS_DEFAULTS[functionName] ?? DEFAULT_GAS;
-  }
+  const gasLimit = await callGasLimit(publicClient, userAddress, targetAddress, calldata, functionName);
 
   const message = {
     from:  userAddress,
@@ -1283,7 +1315,8 @@ export async function claimDisputeGasless(
     // ТА ЖЕ калдата, что ушла бы через релеер — не пересобранные заново
     // args в writeContract(). Тот же приём, что у mintJobWithPermit/
     // mintServiceWithPermit/requestService выше в этом файле.
-    const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
+    const gas = await callGasLimit(publicClient, userAddress, DIAMOND, calldata, 'claimDispute');
+    const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain });
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
@@ -1416,7 +1449,8 @@ export async function setArbiterChatKeyGasless(
       if (!account) throw new Error('Wallet not connected');
       // ТА ЖЕ калдата, что ушла бы через релеер — не пересобранные заново
       // args в writeContract().
-      const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, chain: walletClient.chain });
+      const gas = await callGasLimit(publicClient, userAddress, DIAMOND, calldata, 'setArbiterChatKey');
+      const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain });
       await assertFallbackMined(publicClient, txHash);
       return { txHash, fallbackUsed: true };
     }
