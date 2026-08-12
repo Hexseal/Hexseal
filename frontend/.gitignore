@@ -36,7 +36,11 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
-.env.example
+# `.env.example` — шаблон без единого настоящего значения, он ОБЯЗАН лежать в
+# репозитории: README и CONTRIBUTING велят с него начинать. Заглушался строкой
+# `.env.example` здесь, и `cp .env.example .env.local` упиралось в пустоту.
+# Отрицание нужно потому, что `.env*` выше ловит его первым.
+!.env.example
 .env.relayer
 
 
