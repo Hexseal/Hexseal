@@ -387,12 +387,12 @@ facet deployments, before the revert):
 └─ ← [Revert] DeployFull: INITIAL_ARBITER is zero - a diamond with no arbiter resolves every dispute as a client refund
 Error: script failed: DeployFull: INITIAL_ARBITER is zero - a diamond with no arbiter resolves every dispute as a client refund
 ```
-Positive (dry run with `INITIAL_ARBITER=0x1CFca926483Dc588aa84C35782c2BF494166d58b`,
+Positive (dry run with `INITIAL_ARBITER=<адрес посаженного арбитра>`,
 the same address live's `getArbiters()` returns):
 ```
   --- Arbiters ---
   Count:          1
-    Arbiter:      0x1CFca926483Dc588aa84C35782c2BF494166d58b
+    Arbiter:      <адрес посаженного арбитра>
 ```
 
 ### IMPORTANT 2 — drift gate missed the exact failure it was built for
@@ -497,7 +497,7 @@ Also caught the deliberate removal in finding 2's second proof above
 
 **Problem**: `if (feeRecipient == address(0)) feeRecipient = owner;` — on
 live these are two different addresses (`getFeeRecipient()` =
-`0x82D4CfDF70bA209A60DCC019e3a0c4653244F0D5`, `owner()` =
+отдельный кошелёк сбора комиссий, `owner()` =
 `0xC2801Ba1A82D26E742045dF5408C8666d36F8567`). An unset env var would have
 silently routed all platform fees to the deployer's hot key.
 
@@ -623,7 +623,7 @@ from the original regeneration — findings 1–6 did not touch any selector
 array): all 11 arrays still `declared == assignments`, contiguous from 0, sum
 = 145.
 
-**Dry run** (`INITIAL_ARBITER=0x1CFca926483Dc588aa84C35782c2BF494166d58b forge script script/DeployFull.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL"`,
+**Dry run** (`INITIAL_ARBITER=<адрес посаженного арбитра> forge script script/DeployFull.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL"`,
 no `--broadcast`, current live `TRUSTED_FORWARDER`/`FEE_RECIPIENT`/`USDC_ADDRESS`
 from `.env`):
 ```
@@ -639,7 +639,7 @@ Script ran successfully.
     6 AU:     7000000
   --- Arbiters ---
   Count:          1
-    Arbiter:      0x1CFca926483Dc588aa84C35782c2BF494166d58b
+    Arbiter:      <адрес посаженного арбитра>
   =============================================
 ...
 Estimated total gas used for script: 41452438
@@ -665,7 +665,7 @@ script) — both resolved on retry.
   instantiates the real Diamond and calls `run()`'s post-cut steps.
 - `INITIAL_ARBITER` is not validated for anything beyond non-zero (e.g. not
   checked to be a contract, not checked to differ from `owner`/`feeRecipient`).
-  Live's manually-added arbiter (`0x1CFca926483Dc588aa84C35782c2BF494166d58b`)
+  Live's manually-added arbiter (адрес не публикуется — это кошелёк человека)
   was used for the dry run as the coordinator's message indicated it should
   be; whoever runs the real deploy needs to independently decide the actual
   `INITIAL_ARBITER` value (this script only guarantees the set is non-empty,
