@@ -123,14 +123,28 @@ export const PRESENT_REFUSAL_KEYS: Record<PresentRefusal, string> = {
 
 /* ─────────────────────────── выбор сообщений ─────────────────────────── */
 
-/** Структурная форма, а не импорт `PairChatMessage`: выбору нужны четыре
- *  поля, и привязка к полному типу хука заставила бы тест собирать вложения. */
+/** Структурная форма, а не импорт `PairChatMessage`: выбору нужны пять полей,
+ *  и привязка к полному типу хука заставила бы тест собирать вложения. */
 export interface PresentableMessage {
   from: string;
   seq: number;
   text: string;
   timestamp: number;
   isFromMe: boolean;
+  /**
+   * ⚠️ ПЯТОЕ ПОЛЕ, И ОНО ПРО ЧЕСТНОСТЬ ПРЕДУПРЕЖДЕНИЯ (ревью, круг 2).
+   * `key` здесь — это `payload.file.keyHex` (`usePairChat.ts:361`), то есть
+   * ключ вложения, лежащий В САМОМ СООБЩЕНИИ открытой строкой. Так делалось
+   * до 10 августа 2026; с тех пор ключ уехал под замок (`sealedKey`), и его
+   * в сообщении нет.
+   *
+   * Пока признак не спрашивали, окно предупреждения утверждало «сам файл
+   * арбитру не уйдёт» — для старых сообщений это ЛОЖЬ: арбитр получает
+   * сообщение целиком, значит и ключ, значит откроет файл. Код это знал и
+   * говорил прямым текстом (`chatPayloadForm.ts:381-401`), а кнопка не
+   * спрашивала ни разу.
+   */
+  attachment?: { key?: string };
 }
 
 export interface SelectableMessage {
@@ -139,6 +153,15 @@ export interface SelectableMessage {
   text: string;
   at: number;
   mine: boolean;
+  /**
+   * ⚠️ У ЭТОГО СООБЩЕНИЯ КЛЮЧ ВЛОЖЕНИЯ ОТКРЫТ. Условие — ТО ЖЕ САМОЕ, что у
+   * `redactPayload` (`legacyAttachmentExposed = typeof f.keyHex === 'string'`,
+   * `chatPayloadForm.ts:472`), и второго правила здесь нет намеренно: два
+   * ответа на вопрос «откроет ли арбитр вложение» разошлись бы молча, а
+   * разойдясь — соврали бы человеку в окне, где он решает, показывать ли
+   * переписку.
+   */
+  legacyAttachmentExposed: boolean;
 }
 
 /**
@@ -165,9 +188,27 @@ export function selectableMessages(
       text: typeof m.text === 'string' ? m.text : '',
       at: Number.isFinite(m.timestamp) ? m.timestamp : 0,
       mine: m.isFromMe === true,
+      // ⚠️ ТО ЖЕ УСЛОВИЕ, ЧТО У `redactPayload`: ключ вложения лежит строкой
+      // в самом сообщении. Не «есть вложение», а «есть ключ»: у новой формы
+      // вложение есть, а ключа в сообщении нет — и обещание про файл честно.
+      legacyAttachmentExposed: typeof m.attachment?.key === 'string',
     });
   }
   return { rows, dropped };
+}
+
+/**
+ * Сколько из ЭТИХ сообщений откроются ключом из самого сообщения.
+ *
+ * ⚠️ СЧИТАЕТСЯ ПО ОТМЕЧЕННЫМ, А НЕ ПО ВСЕЙ ПЕРЕПИСКЕ. Человеку в окне
+ * предупреждения важно, что уйдёт у НЕГО сейчас; число по всему разговору
+ * пугало бы там, где он как раз ничего такого не выбрал, и молчало бы там,
+ * где выбрал одно-единственное.
+ */
+export function countLegacyExposed(rows: readonly SelectableMessage[]): number {
+  let n = 0;
+  for (const r of rows) if (r.legacyAttachmentExposed) n++;
+  return n;
 }
 
 /* ──────────────────────────── что показывать ─────────────────────────── */
@@ -244,10 +285,24 @@ export interface WarnLine { key: string; params?: Record<string, string | number
  * ⚠️ `known: false` — не то же, что `turn: 0`. Сторона решает по этому числу,
  * показывать ли переписку; не узнали — так и пишем, а согласие спрашиваем всё
  * равно (§2.4 замысла).
+ *
+ * ⚠️ И ОДНА СТРОКА ПОЯВЛЯЕТСЯ УСЛОВНО — ПРО СТАРЫЕ ВЛОЖЕНИЯ (ревью, круг 2).
+ * Соседняя строка обещает «сам файл арбитру не уйдёт», и для сообщений до
+ * 10 августа 2026 это ЛОЖЬ: ключ вложения лежит в самом сообщении, арбитр
+ * получает сообщение целиком — значит откроет и файл. Строка говорит это
+ * числом и без смягчения («сможет открыть», а не «может быть доступно»), но
+ * НИЧЕГО НЕ ЗАПРЕЩАЕТ: в споре файл часто и есть суть дела, и решать за
+ * человека мы не будем. Ноль таких сообщений — строки нет вовсе: пугать в
+ * пустоту не надо.
  */
 export function presentWarning(
-  input: { count: number; arbiter: `0x${string}`; turn: ArbiterTurn },
+  input: {
+    count: number; arbiter: `0x${string}`; turn: ArbiterTurn;
+    /** Сколько из ОТМЕЧЕННЫХ несут ключ вложения в себе. */
+    legacyExposed?: number;
+  },
 ): { lines: WarnLine[] } {
+  const exposed = input.legacyExposed ?? 0;
   return {
     lines: [
       { key: 'chat.present_warn_who', params: { n: input.count, arbiter: input.arbiter } },
@@ -259,6 +314,11 @@ export function presentWarning(
       { key: 'chat.present_warn_everything' },
       // §2.10: обещать «арбитр не сможет скачать» НЕЛЬЗЯ.
       { key: 'chat.present_warn_files' },
+      // ⚠️ Стоит ВПЛОТНУЮ за строкой про файлы, потому что уточняет именно её:
+      // «файл не уйдёт… кроме вот этих N, их он откроет».
+      ...(exposed > 0
+        ? [{ key: 'chat.present_warn_legacy_files', params: { n: exposed } }]
+        : []),
       { key: 'chat.present_warn_final' },
     ],
   };

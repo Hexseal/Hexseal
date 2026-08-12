@@ -745,7 +745,9 @@
     "present_err_offline": "Não se conseguiu chegar ao servidor. Nada foi enviado.",
     "present_err_pass_refused": "O servidor não aceitou o passe. Nada foi enviado.",
     "present_draft_not_saved": "Enviado, mas não foi possível registar neste dispositivo: depois de recarregar, a página não se lembrará nem de «colocado» nem das marcas. O pacote está na caixa — essa é a resposta do servidor, não o nosso registo.",
-    "present_err_internal_error": "Algo se avariou neste dispositivo e a apresentação não foi preparada. Nada foi enviado."
+    "present_err_internal_error": "Algo se avariou neste dispositivo e a apresentação não foi preparada. Nada foi enviado.",
+    "present_pick_legacy_mark": "o árbitro conseguirá abrir o anexo desta mensagem",
+    "present_warn_legacy_files": "Uma exceção, e é importante: em {n} das mensagens marcadas a chave do anexo está dentro da própria mensagem. Esses ficheiros o árbitro conseguirá abrir."
   },
   "messaging": {
     "enabled_title": "Mensagens habilitadas",

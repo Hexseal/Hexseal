@@ -90,6 +90,9 @@ const REQUIRED_PRESENT = [
   'chat.present_warn_turn_unknown',
   'chat.present_warn_everything',
   'chat.present_warn_files',
+  // Ревью, круг 2: у старых вложений ключ лежит в самом сообщении.
+  'chat.present_warn_legacy_files',
+  'chat.present_pick_legacy_mark',
   'chat.present_warn_final',
   'chat.present_consent',
   'chat.present_send',
@@ -490,10 +493,10 @@ describe('адрес контракта не вписан в переводы р
 
 /* ─── Предъявление арбитру (4в-2, Задача 6) ─────────────────────────────── */
 describe('тексты предъявления арбитру', () => {
-  it('L1: все 45 ключей есть в каждой из 14 локалей и ни один не пуст', () => {
+  it('L1: все 47 ключей есть в каждой из 14 локалей и ни один не пуст', () => {
     // Число написано РУКАМИ: список выше может усохнуть незамеченным.
-    // 23 ключа показа + 22 ключа отказа (по числу членов `PresentRefusal`).
-    expect(REQUIRED_PRESENT.length).toBe(45);
+    // 25 ключей показа + 22 ключа отказа (по числу членов `PresentRefusal`).
+    expect(REQUIRED_PRESENT.length).toBe(47);
     const missing: string[] = [];
     for (const locale of LOCALES) {
       const dict = read(locale);

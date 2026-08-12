@@ -745,7 +745,9 @@
     "present_err_offline": "Le serveur n'a pas répondu. Rien n'a été envoyé.",
     "present_err_pass_refused": "Le serveur n'a pas accepté le laissez-passer. Rien n'a été envoyé.",
     "present_draft_not_saved": "Envoyé, mais impossible de l'inscrire sur cet appareil : après un rechargement, la page ne se souviendra ni de « déposé » ni des coches. Le paquet est dans la boîte — c'est la réponse du serveur, pas notre inscription.",
-    "present_err_internal_error": "Quelque chose s'est cassé sur cet appareil et la présentation n'a pas été constituée. Rien n'a été envoyé."
+    "present_err_internal_error": "Quelque chose s'est cassé sur cet appareil et la présentation n'a pas été constituée. Rien n'a été envoyé.",
+    "present_pick_legacy_mark": "l'arbitre pourra ouvrir la pièce jointe de ce message",
+    "present_warn_legacy_files": "Une exception, et elle compte : pour {n} des messages cochés, la clé de la pièce jointe se trouve dans le message lui-même. L'arbitre pourra ouvrir ces fichiers."
   },
   "messaging": {
     "enabled_title": "Messagerie activée",

@@ -48,8 +48,8 @@ import { toPeerBoxKeyBytes, type ArbiterBoxKeyBytes } from '@/lib/presentation';
 // (арбитра сменили, просят предъявить заново) не существует вовсе.
 import { readPresentationDrafts, type PresentationDraft } from '@/lib/presentationDraft';
 import {
-  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, canSend, draftKeepNotice, fitNotice,
-  lastDraftOfDeal, otherAttestationsOf, pickingPrep, presentButtonVisible,
+  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, canSend, countLegacyExposed, draftKeepNotice,
+  fitNotice, lastDraftOfDeal, otherAttestationsOf, pickingPrep, presentButtonVisible,
   presentWarning, presentedFromKey, readAgreementStatus, restoreMountImpl,
   selectableMessages, selectionFromContainer, sendPresentation, shouldPollBox,
   tickBoxImpl,
@@ -141,6 +141,17 @@ export function PresentPickerModal(props: PickerProps) {
                   {m.mine ? t('common.you') : `${m.sender.slice(0, 8)}…`} · #{m.seq}
                 </span>
                 <span className="block text-xs text-white/70 break-words">{m.text}</span>
+                {/* ⚠️ ПОМЕТКА ВИДНА ДО ОТМЕТКИ, И ЭТО ГЛАВНОЕ (ревью, круг 2).
+                    Человек должен понимать, КАКИЕ ИМЕННО его сообщения
+                    открывают арбитру вложение, пока ещё выбирает, — а не
+                    узнавать общее число уже в окне согласия. Ничего не
+                    запрещаем: отметить такое сообщение он вправе, в споре
+                    файл часто и есть суть дела. */}
+                {m.legacyAttachmentExposed && (
+                  <span data-pick-legacy className="block text-[10px] text-amber-400/80">
+                    {t('chat.present_pick_legacy_mark')}
+                  </span>
+                )}
               </span>
             </label>
           ))}
@@ -361,10 +372,12 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
   }, [address, details]);
 
   const { rows, dropped } = useMemo(() => selectableMessages(messages), [messages]);
+  /** Отмеченные СТРОКАМИ — из них же считается и выбор, и число старых
+   *  вложений: два прохода по одному набору вместо двух разных наборов. */
+  const selectedRows = useMemo(
+    () => rows.filter(r => picked.has(idOf(r))), [rows, picked]);
   const selected = useMemo(
-    () => rows.filter(r => picked.has(idOf(r))).map(r => ({ seq: r.seq, sender: r.sender })),
-    [rows, picked],
-  );
+    () => selectedRows.map(r => ({ seq: r.seq, sender: r.sender })), [selectedRows]);
 
   /**
    * ДОРОГОЙ СНИМОК: кто ведёт спор, чем его печатать, КАКОЙ ПО СЧЁТУ, чем
@@ -729,6 +742,8 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
             count: selected.length,
             arbiter: snap.presented.arbiter,
             turn: snap.turn,
+            // ⚠️ ПО ОТМЕЧЕННЫМ, а не по всей переписке (ревью, круг 2).
+            legacyExposed: countLegacyExposed(selectedRows),
           }).lines}
           consent={consent}
           busy={busy}

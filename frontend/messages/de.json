@@ -745,7 +745,9 @@
     "present_err_offline": "Der Server war nicht erreichbar. Nichts wurde gesendet.",
     "present_err_pass_refused": "Der Server hat den Passierschein nicht angenommen. Nichts wurde gesendet.",
     "present_draft_not_saved": "Abgeschickt, aber auf diesem Gerät ließ es sich nicht festhalten: nach einem Neuladen erinnert sich die Seite weder an „hineingelegt“ noch an die Markierungen. Der Beutel liegt im Kasten — das ist die Antwort des Servers, nicht unsere Aufzeichnung.",
-    "present_err_internal_error": "Auf diesem Gerät ist etwas kaputtgegangen, und die Vorlage wurde nicht zusammengestellt. Nichts wurde gesendet."
+    "present_err_internal_error": "Auf diesem Gerät ist etwas kaputtgegangen, und die Vorlage wurde nicht zusammengestellt. Nichts wurde gesendet.",
+    "present_pick_legacy_mark": "den Anhang dieser Nachricht wird der Schiedsrichter öffnen können",
+    "present_warn_legacy_files": "Eine Ausnahme, und sie ist wichtig: bei {n} der markierten Nachrichten liegt der Schlüssel des Anhangs in der Nachricht selbst. Diese Dateien wird der Schiedsrichter öffnen können."
   },
   "messaging": {
     "enabled_title": "Messaging aktiviert",

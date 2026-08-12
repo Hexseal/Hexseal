@@ -745,7 +745,9 @@
     "present_err_offline": "서버에 닿지 못했습니다. 아무것도 보내지 않았습니다.",
     "present_err_pass_refused": "서버가 통행증을 받지 않았습니다. 아무것도 보내지 않았습니다.",
     "present_draft_not_saved": "보냈지만 이 기기에 적어 두지 못했습니다. 새로 고치면 「넣었음」도 체크도 기억하지 못합니다. 꾸러미는 사서함에 있습니다. 이는 서버의 답이지 우리의 기록이 아닙니다.",
-    "present_err_internal_error": "이 기기에서 무언가 고장 나 제시물이 만들어지지 않았습니다. 아무것도 보내지 않았습니다."
+    "present_err_internal_error": "이 기기에서 무언가 고장 나 제시물이 만들어지지 않았습니다. 아무것도 보내지 않았습니다.",
+    "present_pick_legacy_mark": "이 메시지의 첨부는 중재인이 열 수 있습니다",
+    "present_warn_legacy_files": "예외가 있고, 중요한 예외입니다. 체크한 메시지 가운데 {n}건은 첨부의 키가 메시지 자체에 들어 있습니다. 그 파일들은 중재인이 열 수 있습니다."
   },
   "messaging": {
     "enabled_title": "메시징 활성화됨",

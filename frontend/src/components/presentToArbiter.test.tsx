@@ -72,6 +72,13 @@ const load = async () => ({
 const msg = (from: string, seq: number, text: string) =>
   ({ from, seq, text, timestamp: 1_754_400_000_000 + seq, isFromMe: from === ME });
 
+/** Сообщение СТАРОЙ формы: ключ вложения лежит в самом сообщении (до
+ *  10 августа 2026). Ровно то, что отдаёт `usePairChat` (`:355-370`). */
+const msgWithKey = (from: string, seq: number, text: string) => ({
+  ...msg(from, seq, text),
+  attachment: { name: text, url: 'https://s/x', key: 'ab'.repeat(16), iv: 'cd'.repeat(6) },
+});
+
 describe('кнопка предъявления в разметке', () => {
   it('C1: вне спора кнопки в разметке НЕТ вовсе', async () => {
     const { PresentToArbiter } = await load();
@@ -291,6 +298,12 @@ describe('проводка: вынесенное действительно ко
       .toMatch(/if\s*\(!shouldPollBox\(/);
     expect(SELF, 'человеку не говорят, что запись на устройстве не легла')
       .toMatch(/draftKeepNotice\s*\(\s*verdict\s*\)/);
+    // ⚠️ Круг 2: число старых вложений считается по ОТМЕЧЕННЫМ, а не по всей
+    // переписке. Замерено: подмена `selectedRows` на `rows` даёт ноль красных
+    // во всех поведенческих — счёт-то верный, неверен набор, а набор
+    // собирается здесь. Это ловится только текстом, и это его законная работа.
+    expect(SELF, 'старые вложения считаются не по отмеченным')
+      .toMatch(/legacyExposed:\s*countLegacyExposed\(selectedRows\)/);
     // ⚠️ И обратная сторона: восстановлению отданы ФУНКЦИОНАЛЬНЫЕ обновления,
     // а не прямая запись. Слияния (`keepFirstSent`/`keepKnownBox`) без этого
     // получали бы не то `prev`, ради которого написаны, и правило
@@ -302,5 +315,57 @@ describe('проводка: вынесенное действительно ко
       .toMatch(/applySent:\s*\(fn\)\s*=>\s*setSent\(fn\)/);
     expect(SELF, 'восстановлению отданы не функциональные обновления')
       .toMatch(/applyBox:\s*\(fn\)\s*=>\s*setBoxState\(fn\)/);
+  });
+});
+
+describe('старое вложение: человек видит, КАКИЕ сообщения это касается', () => {
+  it('C12: помечено ровно то сообщение, у которого ключ в нём самом', async () => {
+    // ⚠️ ПОМЕТКА НУЖНА ДО ОТМЕТКИ (ревью, круг 2). Число в окне согласия
+    // отвечает «сколько», а этот значок — «какие именно»; без него человек
+    // узнавал бы про исключение уже после того, как всё выбрал.
+    const { PresentPickerModal, selectableMessages } = await load();
+    const { rows, dropped } = selectableMessages([
+      msgWithKey(ME, 0, 'акт.pdf'), msg(PEER, 0, 'привет'),
+    ]);
+    expect(rows.map(r => r.legacyAttachmentExposed)).toEqual([true, false]);
+    const html = renderToStaticMarkup(
+      <PresentPickerModal open rows={rows} dropped={dropped} picked={new Set()}
+        notice={null} draft={null} onToggle={() => {}} onUseDraft={() => {}}
+        onNext={() => {}} onCancel={() => {}} />,
+    );
+    // Ровно ОДНА пометка на два сообщения — не на всех и не ни на ком.
+    expect((html.match(/data-pick-legacy/g) ?? []).length).toBe(1);
+    expect(html).toContain(translate('chat.present_pick_legacy_mark'));
+
+    // Старых вложений нет — и пометки нет вовсе.
+    const clean = selectableMessages([msg(ME, 0, 'привет'), msg(PEER, 0, 'ответ')]);
+    const quiet = renderToStaticMarkup(
+      <PresentPickerModal open rows={clean.rows} dropped={clean.dropped} picked={new Set()}
+        notice={null} draft={null} onToggle={() => {}} onUseDraft={() => {}}
+        onNext={() => {}} onCancel={() => {}} />,
+    );
+    expect(quiet).not.toContain('data-pick-legacy');
+    expect(quiet).not.toContain(translate('chat.present_pick_legacy_mark'));
+  });
+
+  it('C13: строка предупреждения про старые вложения печатается числом', async () => {
+    const { PresentWarningModal, presentWarning } = await load();
+    const lines = presentWarning({
+      count: 3, arbiter: ARB, turn: { known: true as const, turn: 1 }, legacyExposed: 2,
+    }).lines;
+    const html = renderToStaticMarkup(
+      <PresentWarningModal open lines={lines} consent={false} busy={false}
+        canSendNow={false} onConsent={() => {}} onSend={() => {}} onCancel={() => {}} />,
+    );
+    expect(html).toContain(translate('chat.present_warn_legacy_files', { n: 2 }));
+    // И число подставлено, а не осталось фигурной скобкой.
+    expect(html).not.toContain('{n}');
+    // Ноль — строки в разметке нет, потому что её нет в списке.
+    const zero = renderToStaticMarkup(
+      <PresentWarningModal open busy={false} consent={false} canSendNow={false}
+        lines={presentWarning({ count: 3, arbiter: ARB, turn: { known: true as const, turn: 1 } }).lines}
+        onConsent={() => {}} onSend={() => {}} onCancel={() => {}} />,
+    );
+    expect(zero).not.toContain(translate('chat.present_warn_legacy_files', { n: 2 }));
   });
 });

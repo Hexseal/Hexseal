@@ -31,6 +31,7 @@ import {
   PRESENT_REFUSAL_KEYS,
   boxStateFromList,
   canSend,
+  countLegacyExposed,
   draftKeepNotice,
   fitNotice,
   keepFirstSent,
@@ -815,6 +816,8 @@ describe('слова человеку', () => {
   });
 
   it('T18: предупреждение называет ВСЕ пять вещей, включая третьих лиц и вложения', () => {
+    // ⚠️ Старых вложений в выборе НЕТ — значит и строки про них нет вовсе
+    // (ревью, круг 2: пугать в пустоту не надо).
     const w = presentWarning({ count: 7, arbiter: ARBITER, turn: { known: true, turn: 2 } });
     expect(w.lines.map(l => l.key)).toEqual([
       'chat.present_warn_who',
@@ -1047,4 +1050,96 @@ describe('«не бросает» — про весь путь, а не про �
     expect(after.draftMarked).toBe('disk_unavailable');
     expect(draftKeepNotice(after)).toBe('chat.present_draft_not_saved');
   }, 180_000);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Старые вложения: ключ лежит в самом сообщении (ревью, круг 2)
+//
+// ⚠️ ЗАЧЕМ ЭТОТ БЛОК. Окно предупреждения утверждало «сам файл арбитру не
+// уйдёт — уедут имя, размер и тип». Для сообщений ДО 10 АВГУСТА 2026 это
+// ЛОЖЬ: `keyHex`/`ivHex` лежат в самом сообщении открытой строкой, арбитр
+// получает сообщение целиком — значит и ключ, значит откроет файл. Код это
+// знал и говорил прямым текстом (`chatPayloadForm.ts:381-401`, обязательный
+// признак `legacyAttachmentExposed`), а кнопка не спрашивала его ни разу.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('старая форма вложения — видна в списке и названа числом', () => {
+  /** Сообщение в том виде, в каком его отдаёт `usePairChat` (`:355-370`). */
+  const withKey = (seq: number) => ({
+    from: '0xAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaa', seq, text: 'акт.pdf',
+    timestamp: 1, isFromMe: true,
+    // Старая форма: ключ ЛЕЖИТ В СООБЩЕНИИ.
+    attachment: { name: 'акт.pdf', url: 'https://s/x', key: 'ab'.repeat(16), iv: 'cd'.repeat(6) },
+  });
+  const sealed = (seq: number) => ({
+    from: '0xAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaa', seq, text: 'смета.pdf',
+    timestamp: 2, isFromMe: true,
+    // Новая форма: вложение есть, ключа в сообщении нет — он под замком.
+    attachment: { name: 'смета.pdf', url: 'https://s/y' },
+  });
+  const plain = (seq: number) => ({
+    from: '0xBBbbBBbbBBbbBBbbBBbbBBbbBBbbBBbbBBbbBBbb', seq, text: 'привет',
+    timestamp: 3, isFromMe: false,
+  });
+
+  it('T40: признак берётся по КЛЮЧУ в сообщении, а не по наличию вложения', () => {
+    const { rows } = selectableMessages([withKey(0), sealed(1), plain(0)]);
+    // ⚠️ Условие ТО ЖЕ, что у `redactPayload` (`typeof f.keyHex === 'string'`).
+    // Возьми мы «есть вложение» — новая форма попала бы под ту же надпись, и
+    // человек боялся бы там, где обещание про файл честно.
+    expect(rows.map(r => r.legacyAttachmentExposed)).toEqual([true, false, false]);
+  });
+
+  it('T41: считается по ОТМЕЧЕННЫМ, а не по всей переписке', () => {
+    const { rows } = selectableMessages([withKey(0), withKey(1), sealed(2), plain(0)]);
+    expect(countLegacyExposed(rows), 'по всей переписке').toBe(2);
+    // Отметил только «безопасные» — числа нет вовсе.
+    expect(countLegacyExposed(rows.filter(r => !r.legacyAttachmentExposed))).toBe(0);
+    // Отметил одно из двух — число про НЕГО, а не про разговор.
+    expect(countLegacyExposed(rows.filter(r => r.seq === 1))).toBe(1);
+    expect(countLegacyExposed([])).toBe(0);
+  });
+
+  it('T42: строка есть при N > 0, стоит ВПЛОТНУЮ за строкой про файлы, и её нет при нуле', () => {
+    const withOld = presentWarning({
+      count: 4, arbiter: ARBITER, turn: { known: true, turn: 1 }, legacyExposed: 2,
+    });
+    expect(withOld.lines.map(l => l.key)).toEqual([
+      'chat.present_warn_who',
+      'chat.present_warn_turn',
+      'chat.present_warn_everything',
+      'chat.present_warn_files',
+      // ⚠️ ИМЕННО ЗДЕСЬ: строка уточняет соседнюю сверху («файл не уйдёт…
+      // кроме вот этих, их он откроет»), а не живёт отдельной новостью в конце.
+      'chat.present_warn_legacy_files',
+      'chat.present_warn_final',
+    ]);
+    expect(withOld.lines[4].params).toEqual({ n: 2 });
+
+    // ⚠️ НОЛЬ — СТРОКИ НЕТ ВОВСЕ. Пугать в пустоту не надо.
+    for (const zero of [0, undefined]) {
+      const w = presentWarning({
+        count: 4, arbiter: ARBITER, turn: { known: true, turn: 1 }, legacyExposed: zero,
+      });
+      expect(w.lines.map(l => l.key), `legacyExposed=${String(zero)}`).toEqual([
+        'chat.present_warn_who',
+        'chat.present_warn_turn',
+        'chat.present_warn_everything',
+        'chat.present_warn_files',
+        'chat.present_warn_final',
+      ]);
+    }
+    // И при неизвестном счёте арбитров строка тоже на своём месте — две
+    // условности не мешают друг другу.
+    expect(presentWarning({
+      count: 1, arbiter: ARBITER, turn: { known: false }, legacyExposed: 1,
+    }).lines.map(l => l.key)).toEqual([
+      'chat.present_warn_who',
+      'chat.present_warn_turn_unknown',
+      'chat.present_warn_everything',
+      'chat.present_warn_files',
+      'chat.present_warn_legacy_files',
+      'chat.present_warn_final',
+    ]);
+  });
 });

@@ -745,7 +745,9 @@
     "present_err_offline": "Could not reach the server. Nothing was sent.",
     "present_err_pass_refused": "The server did not accept the pass. Nothing was sent.",
     "present_draft_not_saved": "Sent, but it could not be written down on this device: after a reload the page will remember neither \"placed\" nor the ticks. The bag is in the box — that is the server's answer, not our record.",
-    "present_err_internal_error": "Something broke on this device and the presentation was not put together. Nothing was sent."
+    "present_err_internal_error": "Something broke on this device and the presentation was not put together. Nothing was sent.",
+    "present_pick_legacy_mark": "the arbiter will be able to open the attachment of this message",
+    "present_warn_legacy_files": "Exception, and it matters: {n} of the ticked messages carry the attachment key inside the message itself. The arbiter will be able to open those files."
   },
   "deal_bar": {
     "application_received": "Application received",

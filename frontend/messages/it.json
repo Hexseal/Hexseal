@@ -745,7 +745,9 @@
     "present_err_offline": "Non si è raggiunto il server. Non è stato inviato nulla.",
     "present_err_pass_refused": "Il server non ha accettato il lasciapassare. Non è stato inviato nulla.",
     "present_draft_not_saved": "Inviato, ma non è stato possibile annotarlo su questo dispositivo: dopo un ricaricamento la pagina non ricorderà né «depositato» né i segni. Il pacco è nella cassetta: questa è la risposta del server, non la nostra annotazione.",
-    "present_err_internal_error": "Qualcosa si è rotto su questo dispositivo e la presentazione non è stata messa insieme. Non è stato inviato nulla."
+    "present_err_internal_error": "Qualcosa si è rotto su questo dispositivo e la presentazione non è stata messa insieme. Non è stato inviato nulla.",
+    "present_pick_legacy_mark": "l'allegato di questo messaggio l'arbitro potrà aprirlo",
+    "present_warn_legacy_files": "Un'eccezione, e conta: in {n} dei messaggi segnati la chiave dell'allegato sta dentro il messaggio stesso. Quei file l'arbitro potrà aprirli."
   },
   "messaging": {
     "enabled_title": "Messaggistica abilitata",
