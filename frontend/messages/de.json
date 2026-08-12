@@ -1,6 +1,7 @@
 {
   "hero": {
-    "tagline": "Dezentrales Freelancing · Base Netzwerk",
+    "tagline": "Dezentrales Freelance-Protokoll auf Base. Die Treuhandlogik läuft on-chain; die Governance liegt noch bei einem Schlüssel, und der Plan zur Übergabe ist öffentlich.",
+    "decentralization": "Weg zur Autonomie",
     "heading1": "Keine Mittelsmänner.",
     "heading2": "Kein Vertrauen nötig.",
     "subheading1": "Einmal signieren. Code setzt durch.",

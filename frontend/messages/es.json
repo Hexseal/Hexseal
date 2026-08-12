@@ -1,6 +1,7 @@
 {
   "hero": {
-    "tagline": "Freelance Descentralizado · Red Base",
+    "tagline": "Protocolo freelance descentralizado en Base. La lógica de depósito corre on-chain; la gobernanza sigue en una sola clave, y el plan para cederla es público.",
+    "decentralization": "Camino a la autonomía",
     "heading1": "Sin intermediarios.",
     "heading2": "Sin confianza requerida.",
     "subheading1": "Firma una vez. El código ejecuta.",

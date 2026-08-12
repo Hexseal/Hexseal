@@ -1,6 +1,7 @@
 {
   "hero": {
-    "tagline": "去中心化自由职业 · Base 网络",
+    "tagline": "Base 上的去中心化自由职业协议。托管逻辑运行在链上；治理仍掌握在一把密钥手中，而交出它的计划是公开的。",
+    "decentralization": "走向自主之路",
     "heading1": "无中间商。",
     "heading2": "无需信任。",
     "subheading1": "签署一次。代码执行。",

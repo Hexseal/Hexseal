@@ -10,7 +10,7 @@
 
 - Deployed on **Base Sepolia only** (chainId `84532`). Every USDC figure you see in the app is **test USDC** — no real money is at risk.
 - **No external audit** has been done. Slither runs in CI and its report is in `docs/audits/`; that is not an audit.
-- **Decentralized in its logic, not yet in its governance.** One key can upgrade the protocol and overturn a pending arbiter verdict. What exactly that key can do, what is planned instead (a multisig at mainnet launch) and why it is like this today — [see below](#progressive-decentralization-stated-plainly).
+- **Decentralized in its logic, not yet in its governance.** One key can upgrade the protocol and overturn a pending arbiter verdict. What exactly that key can do, what is planned instead (a multisig with a timelock before mainnet) and why it is like this today — [see below](#progressive-decentralization-stated-plainly), in full in [`docs/DECENTRALIZATION.md`](docs/DECENTRALIZATION.md).
 - Known weaknesses are tracked in the open in [`docs/OPEN-ITEMS.md`](docs/OPEN-ITEMS.md), including the ones still unfixed.
 - Do not point this at mainnet funds.
 
@@ -48,7 +48,7 @@ A protocol fee (5 % of the deal amount, floor $1) is likewise an owner-settable 
 
 **Today.** The protocol is decentralized in its logic and not yet in its governance. One key — the Diamond owner — can replace any facet (`diamondCut`), can overturn a pending arbiter verdict (`src/facets/ArbiterRegistryFacet.sol:759`), can freeze one (`:848`), and gets past the treasury's own reserve gate for about **31 717 gas** without that showing up in Diamond introspection (`src/Treasury.sol:114-170`). Those are facts about the code as it stands, not accusations someone still has to find.
 
-**Planned.** Governance moves to a **multisig at the mainnet launch** — the point where real money appears. This is the one forward-looking statement on this page: it is a plan, not a property the code enforces today, and nothing in this repository implements it yet.
+**Planned.** Governance moves to a **multisig with a timelock before mainnet**, and the powers above are handed over in a fixed order after that — `overturnVerdict` first, `diamondCut` last. The full staging, with the event that triggers each step, is in [`docs/DECENTRALIZATION.md`](docs/DECENTRALIZATION.md). This is the one forward-looking statement on this page: it is a plan, not a property the code enforces today, and nothing in this repository implements it yet.
 
 **Why it is like this now.** The deployment is Base Sepolia testnet, the USDC is test USDC, and there is no external audit. At that stage a single key buys speed: a money bug can be fixed the same day instead of waiting on a quorum. Handing the key to a multisig before there is anything to protect would cost that speed and protect nothing. This is the usual staged path — the same one Uniswap and Compound took — and we would rather write it down than let a reviewer discover it in the diff.
 
@@ -222,6 +222,7 @@ cast send $DIAMOND_ADDRESS "setFeeRecipient(address)" <treasury> \
 
 ## Documentation
 
+- [`docs/DECENTRALIZATION.md`](docs/DECENTRALIZATION.md) — what one key can still do, why it exists, and the event that ends each power (English)
 - [`docs/CONTRACT_GUIDE.md`](docs/CONTRACT_GUIDE.md) — how the contracts fit together, storage rules, incident history (Russian)
 - [`docs/hexseal-one-pager.html`](docs/hexseal-one-pager.html) — external overview, including the trust model above (English)
 - [`docs/OPEN-ITEMS.md`](docs/OPEN-ITEMS.md) — the open-defect register we keep in public (Russian)

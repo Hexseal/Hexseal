@@ -20,6 +20,21 @@ export default function Footer() {
           <h4>{t("footer.resources_title")}</h4>
           <ul>
             <li><Link href="/docs/faq">{t("footer.faq")}</Link></li>
+            {/* ⚠️ Подпись в первой колонке говорит «управление пока у одного
+                ключа, план передачи опубликован» — вот он, план. Без этой
+                ссылки строка обещает документ, которого человеку негде взять:
+                ровно та неправда, вместо которой она и написана. Ведёт на
+                GitHub, потому что `docs/DECENTRALIZATION.md` живёт в репозитории,
+                а не страницей сайта. */}
+            <li>
+              <a
+                href="https://github.com/Hexseal/Hexseal/blob/main/docs/DECENTRALIZATION.md"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {t("footer.decentralization")}
+              </a>
+            </li>
             <li>
               <a
                 href={explorerUrl('address', CONTRACTS.diamond)}

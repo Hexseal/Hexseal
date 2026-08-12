@@ -1,6 +1,7 @@
 {
   "hero": {
-    "tagline": "Freelance Descentralizado · Rede Base",
+    "tagline": "Protocolo freelance descentralizado na Base. A lógica de custódia roda on-chain; a governança ainda está em uma chave, e o plano para entregá-la é público.",
+    "decentralization": "Caminho para a autonomia",
     "heading1": "Sem intermediários.",
     "heading2": "Sem confiança exigida.",
     "subheading1": "Assine uma vez. O código executa.",

@@ -1,6 +1,7 @@
 {
   "hero": {
-    "tagline": "Decentralized Freelance · Base Network",
+    "tagline": "Decentralized freelance protocol on Base. The escrow logic runs on chain; governance is still one key, and the plan to hand it over is public.",
+    "decentralization": "Path to autonomy",
     "heading1": "No middlemen.",
     "heading2": "No trust required.",
     "subheading1": "Sign once. Code enforces.",
