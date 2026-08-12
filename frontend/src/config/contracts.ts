@@ -1750,6 +1750,16 @@ export const ARBITER_REGISTRY_ABI = [
     name: 'DisputeReleased',
     type: 'event',
   },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'address', name: 'arbiter', type: 'address' },
+      { indexed: false, internalType: 'bytes32', name: 'boxKey', type: 'bytes32' },
+      { indexed: false, internalType: 'bytes32', name: 'signKey', type: 'bytes32' },
+    ],
+    name: 'ArbiterChatKeySet',
+    type: 'event',
+  },
   // DAO mode
   {
     inputs: [],
