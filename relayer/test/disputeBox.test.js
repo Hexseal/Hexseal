@@ -46,6 +46,9 @@ const { mockContract } = await import('./mocks/ethersRegistry.js');
 
 const DIAMOND = '0x2222222222222222222222222222222222222222';   // test/setup.js
 const ZERO    = '0x0000000000000000000000000000000000000000';
+// Живой арбитр спора. С итогового ревью ветки право ПИСАТЬ в ящик даёт он, а
+// не статус сделки, поэтому сцены «мешок доехал до диска» обязаны его называть.
+const LIVE_ARBITER = '0x' + '44'.repeat(20);
 
 // ─── Заготовки ──────────────────────────────────────────────────────────────
 
@@ -296,7 +299,7 @@ describe('замок записи: только две стороны спора
     expect(fs.existsSync(boxDir(agreement))).toBe(false);
   });
 
-  it('T2: сторона, но спора ещё нет (status_ = 2, ACTIVE) — 409 not_disputed', async () => {
+  it('T2: сторона, но спора нет и не было (ACTIVE, арбитра нет) — 409 not_disputed', async () => {
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
@@ -309,9 +312,7 @@ describe('замок записи: только две стороны спора
     expect(listDisputeBags(agreement)).toEqual([]);
   });
 
-  it('T2b: status_ = 3 — это COMPLETED У СДЕЛКИ (а DISPUTED у РЕЕСТРА) — 409', async () => {
-    // Ловушка двух enum. Спутав их, замок принял бы завершённую сделку за
-    // спорную и отверг настоящий спор.
+  it('T2b: завершённая сделка, арбитра нет — 409', async () => {
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
@@ -321,6 +322,86 @@ describe('замок записи: только две стороны спора
 
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('not_disputed');
+  });
+
+  // ─── Итоговое ревью ветки, правка 1: право писать = право читать ─────────
+  //
+  // РЕШЕНИЕ ВЛАДЕЛЬЦА. Читать ящик может тот, кто ВЕДЁТ СПОР СЕЙЧАС, и это
+  // намеренно не привязано к статусу сделки — иначе арбитр не разобрал бы
+  // апелляцию после вердикта. Писать при этом требовало status_ == 4, и
+  // получалась дыра ровно посередине: экран арбитра четырежды советует
+  // «попросите предъявить заново» в окне, где сторона физически не может
+  // этого сделать — сделка уже RESOLVED, кнопки нет, склад отвечает 409.
+  // Теперь признак ОДИН на оба права: у спора есть ведущий арбитр.
+  it('T35: вердикт подан, сделка RESOLVED, арбитр её ведёт — сторона МОЖЕТ предъявить', async () => {
+    const agreement = freshAgreement();
+    const arbiter = '0x' + 'ad'.repeat(20);
+    const client = ethers.Wallet.createRandom();
+    const { pass, address } = await issuePassFor(client);
+    // Заявка стёрта clearDisputeClaim, запись о вердикте помнит арбитра —
+    // ровно то состояние, в котором идёт апелляция (T8b проверяет, что этот
+    // же арбитр в этот же момент ЧИТАЕТ ящик).
+    mockDeal({
+      agreement, client: address, executor: ZERO,
+      status: 5, arbiter: null, verdictArbiter: arbiter,
+    });
+
+    const res = await putBox({ pass, agreement, body: Buffer.from('предъявление'), sealedFor: arbiter });
+
+    expect(res.status).toBe(200);
+    expect(listDisputeBags(agreement)).toHaveLength(1);
+  });
+
+  it('T36: спор идёт, но заявку никто не взял — 409: печатать не на кого', async () => {
+    // Обратная сторона правки, и без неё «пускаем по арбитру» звучало бы как
+    // «пускаем всегда»: status_ == 4 больше не пропуск сам по себе.
+    const agreement = freshAgreement();
+    const client = ethers.Wallet.createRandom();
+    const { pass, address } = await issuePassFor(client);
+    mockDeal({ agreement, client: address, executor: ZERO, status: 4, arbiter: null });
+
+    const res = await putBox({ pass, agreement, body: Buffer.from('мешок') });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('not_disputed');
+    expect(listDisputeBags(agreement)).toEqual([]);
+  });
+
+  it('T37: спор закрыт и арбитра нет — 409, ящик заперт на запись', async () => {
+    const agreement = freshAgreement();
+    const client = ethers.Wallet.createRandom();
+    const { pass, address } = await issuePassFor(client);
+    mockDeal({ agreement, client: address, executor: ZERO, status: 5, arbiter: null });
+
+    const res = await putBox({ pass, agreement, body: Buffer.from('мешок') });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('not_disputed');
+    expect(listDisputeBags(agreement)).toEqual([]);
+  });
+
+  it('T38: посторонний при живом арбитре — по-прежнему 403, замок сторон не тронут', async () => {
+    // Правка 1 меняет ОДИН из двух замков записи. Второй («писать могут только
+    // клиент и исполнитель») обязан остаться, и это сказано замером: у
+    // постороннего есть всё, что теперь нужно, — живой арбитр у спора.
+    const agreement = freshAgreement();
+    const arbiter = '0x' + 'ae'.repeat(20);
+    const client = ethers.Wallet.createRandom();
+    const executor = ethers.Wallet.createRandom();
+    const stranger = ethers.Wallet.createRandom();
+    mockDeal({
+      agreement,
+      client: (await client.getAddress()).toLowerCase(),
+      executor: (await executor.getAddress()).toLowerCase(),
+      status: 5, arbiter: null, verdictArbiter: arbiter,
+    });
+    const { pass } = await issuePassFor(stranger);
+
+    const res = await putBox({ pass, agreement, body: Buffer.from('мешок') });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('not_a_party');
+    expect(listDisputeBags(agreement)).toEqual([]);
   });
 
   it('T3: сторона в споре — 200, ключ из адреса сделки, файл и запись описи', async () => {
@@ -589,7 +670,7 @@ describe('мусор на входе — вердикт, а не падение'
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
-    mockDeal({ agreement, client: address, executor: ZERO });
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: LIVE_ARBITER });
 
     // ⚠️ ОТКЛОНЕНИЕ ОТ ПЛАНА, замерено на этом дереве 11 августа: план требовал
     // здесь 'не адрес' (кириллица) первым значением. Node v24.12.0 отвергает
@@ -633,7 +714,7 @@ describe('мусор на входе — вердикт, а не падение'
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
-    mockDeal({ agreement, client: address, executor: ZERO });
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: LIVE_ARBITER });
 
     const res = await putBox({ pass, agreement, body: Buffer.alloc(0) });
 
@@ -649,7 +730,7 @@ describe('мусор на входе — вердикт, а не падение'
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
-    mockDeal({ agreement, client: address, executor: ZERO });
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: LIVE_ARBITER });
 
     const res = await putBox({
       pass, agreement, body: JSON.stringify({ a: 1 }), contentType: 'application/json',
@@ -737,7 +818,7 @@ describe('мусор на входе — вердикт, а не падение'
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
-    mockDeal({ agreement, client: address, executor: ZERO });
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: LIVE_ARBITER });
     bagStoreThrows.recordBag = true;
 
     const res = await putBox({ pass, agreement, body: Buffer.from('мешок') });
@@ -855,7 +936,7 @@ describe('обстоятельства числом', () => {
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
-    mockDeal({ agreement, client: address, executor: ZERO });
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: LIVE_ARBITER });
 
     await abortedPut({ agreement, pass, declaredLength: 200_000, actualBytes: 40_000 });
 
@@ -868,7 +949,7 @@ describe('обстоятельства числом', () => {
     const agreement = freshAgreement();
     const client = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(client);
-    mockDeal({ agreement, client: address, executor: ZERO });
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: LIVE_ARBITER });
 
     // ⚠️ Восемь запросов разом стоят ОДНО обращение к цепи, а не восемь:
     // supertest успевает довести первый запрос до записи кэша фактов раньше,
@@ -924,7 +1005,7 @@ describe('обстоятельства числом', () => {
     const agreement = freshAgreement();
     const victim = ethers.Wallet.createRandom();
     const { pass, address } = await issuePassFor(victim);
-    mockDeal({ agreement, client: address, executor: ZERO });
+    mockDeal({ agreement, client: address, executor: ZERO, arbiter: LIVE_ARBITER });
 
     for (let i = 0; i < 8; i++) {
       await request(app).post('/relay').set('CF-Connecting-IP', address).send({});
@@ -1023,6 +1104,77 @@ describe('ревью круг 1 (Important) — находка 2: пропуск
     expect(one.body.code).toBe('pass_invalid');
   });
 });
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// ИТОГОВОЕ РЕВЬЮ ВЕТКИ 4в-2, ПРАВКА 7: мусорное значение попадало в кэш ДО
+// проверки. `makeCachedConstantMsReader` (app.js:372) клал в Map результат
+// `Number(await agr[methodName]()) * 1000` немедленно — а `Number('мусор')`
+// это NaN. NaN лежал в кэше ВЕЧНО (кэш живёт до перезапуска процесса, по
+// адресу агримента), `disputeBoxBagDeadline` на нём бросал, и маршрут отвечал
+// 503 «попробуйте через пять секунд» на КАЖДУЮ попытку по этой сделке — совет,
+// который не мог сработать никогда.
+describe('ревью итога 4в-2, правка 7: негодный ответ узла не отравляет кэш', () => {
+  it('T33: мусор в DISPUTE_WINDOW — 503, а СЛЕДУЮЩАЯ попытка кладёт мешок', async () => {
+    const agreement = freshAgreement();
+    const arbiter = '0x' + 'ab'.repeat(20);
+    const client = ethers.Wallet.createRandom();
+    const { pass, address } = await issuePassFor(client);
+
+    // Узел отвечает, но ответ не разбирается как число секунд (сменили ABI,
+    // прокси отдал заглушку, клон без этого метода вернул пустоту).
+    let окно = 'мусор';
+    mockDeal({ agreement, client: address, executor: ZERO, status: 4, arbiter });
+    mockContract(agreement, {
+      getDetails: async () => ({ status_: 4n }),
+      DISPUTE_WINDOW: async () => окно,
+    });
+
+    const первый = await putBox({ pass, agreement, body: Buffer.from('раз') });
+    expect(первый.status).toBe(503);
+    expect(первый.body.code).toBe('chain_unavailable');
+    expect(listDisputeBags(agreement)).toEqual([]);
+
+    // Узел выздоровел. Совет «попробуйте через пять секунд» обязан сработать.
+    окно = BigInt(4 * 24 * 60 * 60);
+    const второй = await putBox({ pass, agreement, body: Buffer.from('два') });
+
+    expect(второй.status).toBe(200);
+    expect(listDisputeBags(agreement)).toHaveLength(1);
+    // И срок мешка посчитан по ЗДОРОВОМУ значению, а не по остатку мусора.
+    expect(bagMetaOf(второй.body.key).dealDeadline).toBeGreaterThan(Date.now());
+  });
+
+  it('T34: отрицательное окно спора кэш тоже не отравляет', async () => {
+    // Number(-1n) * 1000 — безупречный safe integer: проверка «разбирается ли
+    // это как число» его пропустит, и без проверки ЗНАКА он лёг бы в кэш как
+    // годный. Отказ при этом виден и сегодня (assertNonNegativeSafeInt внутри
+    // dealDeadlineFromDispute) — краснеет здесь не первый ответ, а ВТОРОЙ:
+    // сегодня отравленный кэш держит 503 навсегда.
+    const agreement = freshAgreement();
+    const arbiter = '0x' + 'ac'.repeat(20);
+    const client = ethers.Wallet.createRandom();
+    const { pass, address } = await issuePassFor(client);
+
+    let окно = -1n;
+    mockDeal({ agreement, client: address, executor: ZERO, status: 4, arbiter });
+    mockContract(agreement, {
+      getDetails: async () => ({ status_: 4n }),
+      DISPUTE_WINDOW: async () => окно,
+    });
+
+    const первый = await putBox({ pass, agreement, body: Buffer.from('раз') });
+    expect(первый.status).toBe(503);
+    expect(первый.body.code).toBe('chain_unavailable');
+
+    окно = BigInt(4 * 24 * 60 * 60);
+    const второй = await putBox({ pass, agreement, body: Buffer.from('два') });
+
+    expect(второй.status).toBe(200);
+    expect(listDisputeBags(agreement)).toHaveLength(1);
+  });
+});
+
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Ревью, круг 1 (Important) — находка 1: режим недоверия опустошает ящик

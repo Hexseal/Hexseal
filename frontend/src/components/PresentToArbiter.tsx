@@ -25,11 +25,12 @@ import { useTranslations } from 'next-intl';
 import { toast } from 'react-hot-toast';
 import { Loader2, Scale } from 'lucide-react';
 import type { Abi } from 'viem';
-import { AGREEMENT_ABI } from '@/config/contracts';
+import { AGREEMENT_ABI, ARBITER_REGISTRY_ABI, CONTRACTS } from '@/config/contracts';
 import type { ChatSession } from '@/lib/chatSession';
 import { arbiterTurnOf, type ArbiterTurn } from '@/lib/arbiterTurn';
 import {
-  arbiterChangeWatchIO, comparePresentedWith, readDisputeArbiterKey, watchDisputeArbiter,
+  arbiterChangeWatchIO, comparePresentedWith, disputeArbiterFrom, readDisputeArbiterKey,
+  watchDisputeArbiter,
   type ArbiterChangeSignal, type PresentedTo,
 } from '@/lib/disputeArbiter';
 import {
@@ -50,7 +51,7 @@ import { readPresentationDrafts, type PresentationDraft } from '@/lib/presentati
 import {
   BOX_POLL_MS, PRESENT_REFUSAL_KEYS, canSend, countLegacyExposed, draftKeepNotice,
   fitNotice, lastDraftOfDeal, otherAttestationsOf, pickingPrep, presentButtonVisible,
-  presentWarning, presentedFromKey, readAgreementStatus, restoreMountImpl,
+  presentWarning, presentedFromKey, restoreMountImpl,
   selectableMessages, selectionFromContainer, sendPresentation, shouldPollBox,
   tickBoxImpl,
   type FitNotice, type PrepVerdict, type PresentableMessage, type SelectableMessage,
@@ -347,12 +348,34 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
    *  оставлял бы на экране «влезает N» от отменённого выбора. */
   const recountSeq = useRef(0);
 
-  // Статус — СВОЁ чтение цепи, а не число из родителя: `dealContexts`
-  // живёт столько, сколько живёт его запрос, а отправлять по устаревшему
-  // числу значит показать «отправлено» там, где ничего не произошло.
-  const { data: statusNum } = useReadContract({
-    address: agreement, abi: AGREEMENT_ABI as Abi, functionName: 'status',
-  }) as { data: number | undefined };
+  /*
+   * КТО ВЕДЁТ СПОР — СВОИ ЧТЕНИЯ ЦЕПИ, а не число из родителя: `dealContexts`
+   * живёт столько, сколько живёт его запрос, а показывать кнопку по
+   * устаревшему значению значит пообещать действие, которое кончится отказом.
+   *
+   * ⚠️ ЧИТАЮТСЯ ОБА ОТВЕТА, А РЕШАЕТ ОДНА ФУНКЦИЯ (итоговое ревью, правка 1).
+   * Хуки короткого замыкания не умеют — `useReadContract` зовётся всегда, — но
+   * СКЛЕИВАТЬ их здесь выражением нельзя: у правила «кто ведёт спор» один
+   * хозяин, `disputeArbiterFrom`, и он же стоит за `disputeArbiterOf`, которую
+   * зовут снимок и сверка перед складом. Иначе у кнопки завелась бы вторая
+   * копия композиции, и разошлись бы они молча.
+   *
+   * ⚠️ Прежде здесь читался `status` сделки — и только он. Он больше не решает
+   * ничего: право предъявлять даёт ведущий арбитр, тем же признаком, каким
+   * склад даёт право писать, а релеер — право читать.
+   */
+  const { data: disputeClaimer } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: 'getDisputeClaimer', args: [agreement],
+  }) as { data: unknown };
+  const { data: pendingVerdict } = useReadContract({
+    address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI as Abi,
+    functionName: 'getPendingVerdict', args: [agreement],
+  }) as { data: unknown };
+  const arbiterNow = useMemo(
+    () => disputeArbiterFrom(disputeClaimer, pendingVerdict),
+    [disputeClaimer, pendingVerdict],
+  );
 
   const { data: details } = useReadContract({
     address: agreement, abi: AGREEMENT_ABI as Abi, functionName: 'getDetails',
@@ -553,7 +576,6 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
         otherAttestations: snap.otherAttestations,
         consent,
         publicClient,
-        readStatus: () => readAgreementStatus(publicClient, agreement),
         readArbiterNow: () => readDisputeArbiterKey(publicClient, agreement),
         getPass: () => withWalletLock(address, async () => (await requestBagPass(
           (m) => walletClient.signMessage({ account: walletClient.account!, message: m }),
@@ -587,7 +609,7 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
     }
   }, [address, agreement, consent, peer, publicClient, selected, session, snap, t, walletClient]);
 
-  const visible = presentButtonVisible({ status: statusNum, isParty });
+  const visible = presentButtonVisible({ arbiter: arbiterNow, isParty });
 
   /**
    * СЛЕЖЕНИЕ ЗА СМЕНОЙ АРБИТРА И КЛЮЧА (пункт 3 Выкатки 1).
@@ -747,7 +769,7 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
           }).lines}
           consent={consent}
           busy={busy}
-          canSendNow={canSend({ consent, selected: selected.length, busy, status: statusNum })}
+          canSendNow={canSend({ consent, selected: selected.length, busy, arbiter: arbiterNow })}
           onConsent={setConsent}
           onSend={() => { void doSend(); }}
           onCancel={() => { setStage('idle'); setConsent(false); }}

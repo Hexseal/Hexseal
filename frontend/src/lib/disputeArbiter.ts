@@ -117,16 +117,49 @@ export const ARBITER_CHANGE_SIGNAL_CARRIES_NO_BLOCK: ArbiterChangeSignalCarriesN
 
 const lower = (v: unknown): string => String(v ?? '').toLowerCase();
 
+/** Ненулевой адрес из ответа цепи, иначе `null`. Один предикат на оба чтения:
+ *  «заявитель» и «арбитр вердикта» проверяются им же, а не двумя копиями. */
+function liveAddress(v: unknown): Address | null {
+  return typeof v === 'string' && lower(v) !== lower(ZERO_ADDRESS) ? (v as Address) : null;
+}
+
 /**
- * Кто вправе читать ящик этого спора — ЗЕРКАЛО `relayer/app.js:201-218`.
- * Сначала живой заявитель, при нуле — подавший вердикт (клейм стирается
- * `clearDisputeClaim`, запись о вердикте остаётся). Второй половины нет у
- * `getDisputeClaimer` в одиночку, и без неё фронт сказал бы «арбитра нет» там,
- * где сервер по тому же адресу отдаёт ящик.
+ * КТО ВЕДЁТ СПОР — ПРАВИЛО, ОТДЕЛЁННОЕ ОТ ЧТЕНИЯ, и хозяин у него один.
+ *
+ * Сначала живой заявитель (`getDisputeClaimer`), при нуле — подавший вердикт
+ * (`getPendingVerdict`, клейм стирается `clearDisputeClaim`, запись о вердикте
+ * остаётся). Второй половины нет у `getDisputeClaimer` в одиночку, и без неё
+ * фронт сказал бы «арбитра нет» там, где сервер по тому же адресу отдаёт ящик.
+ * Зеркало правила — `relayer/app.js:201-218`.
+ *
+ * ⚠️ ПОЧЕМУ ЧИСТАЯ ФУНКЦИЯ, А НЕ ТОЛЬКО ЧИТАЛКА (итоговое ревью ветки, правка
+ * 1). С этого круга по тому же признаку решается, ПОКАЗЫВАТЬ ЛИ КНОПКУ
+ * предъявления, а компонент берёт оба ответа цепи хуками (`useReadContract`) —
+ * эффектов у него в отрисовке нет вовсе. Держи правило только внутри
+ * `disputeArbiterOf`, и у кнопки завелась бы вторая, своя копия композиции:
+ * ровно тот шов, на котором эта ветка уже обожглась.
+ */
+export function disputeArbiterFrom(claimer: unknown, pendingVerdict: unknown): Address | null {
+  const live = liveAddress(claimer);
+  if (live) return live;
+  const verdict = pendingVerdict as { arbiter?: unknown; submittedAt?: unknown } | null | undefined;
+  if (!verdict || typeof verdict !== 'object') return null;
+  const submittedAt = verdict.submittedAt;
+  if (typeof submittedAt !== 'bigint' || submittedAt === BigInt(0)) return null;
+  return liveAddress(verdict.arbiter);
+}
+
+/**
+ * То же правило, но с цепью.
  *
  * ⚠️ БРОСАЕТ, если узел молчит. `null` здесь означает ровно «спор никто не
  * ведёт», и склеивать с ним «мы не спросили» нельзя: с экрана это выглядело бы
  * одинаково, а значит человек решил бы, что предъявлять некому.
+ *
+ * ⚠️ ВТОРОЕ ЧТЕНИЕ — ТОЛЬКО ПРИ НУЛЕВОМ ЗАЯВИТЕЛЕ, и это не «вторая копия
+ * правила»: тем же `liveAddress` решает и `disputeArbiterFrom`, а ответ наружу
+ * в обоих случаях отдаёт она. Читать `getPendingVerdict` всегда значило бы два
+ * eth_call на каждый живой спор вместо одного.
  */
 export async function disputeArbiterOf(
   publicClient: PublicClient, agreement: Address,
@@ -137,7 +170,7 @@ export async function disputeArbiterOf(
     functionName: 'getDisputeClaimer',
     args: [agreement],
   }) as Address;
-  if (typeof claimer === 'string' && lower(claimer) !== lower(ZERO_ADDRESS)) return claimer;
+  if (liveAddress(claimer)) return disputeArbiterFrom(claimer, null);
 
   const verdict = await publicClient.readContract({
     address: CONTRACTS.diamond,
@@ -145,12 +178,7 @@ export async function disputeArbiterOf(
     functionName: 'getPendingVerdict',
     args: [agreement],
   }) as { arbiter?: unknown; submittedAt?: unknown } | null;
-  if (!verdict || typeof verdict !== 'object') return null;
-  const submittedAt = verdict.submittedAt;
-  if (typeof submittedAt !== 'bigint' || submittedAt === BigInt(0)) return null;
-  const arbiter = verdict.arbiter;
-  if (typeof arbiter !== 'string' || lower(arbiter) === lower(ZERO_ADDRESS)) return null;
-  return arbiter as Address;
+  return disputeArbiterFrom(claimer, verdict);
 }
 
 export async function readDisputeArbiterKey(

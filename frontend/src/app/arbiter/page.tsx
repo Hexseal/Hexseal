@@ -40,6 +40,11 @@ import {
 import { fetchPeerChatKeys } from "@/hooks/useChatSession";
 import { requestBagPass } from "@/lib/chatTransport";
 import { ArbiterPresentationsTab, type ArbiterCase } from "@/components/ArbiterPresentations";
+// ⚠️ Число статуса — ИЗ ОДНОГО МЕСТА НА ВЕСЬ ФРОНТ (итоговое ревью ветки 4в-2,
+// правка 2). Своей копии здесь больше нет: она была третьей, и сверялась
+// только сама с собой. Хозяин один, и он заперт на исходник контракта
+// (`lib/agreementStatus.test.ts` читает `src/Agreement.sol`).
+import { AGREEMENT_STATUS_DISPUTED } from "@/lib/agreementStatus";
 
 // viem's waitForTransactionReceipt resolves on a REVERTED receipt too — it
 // only rejects if the receipt never arrives. Every call site below must check
@@ -51,7 +56,6 @@ function assertMined(receipt: TransactionReceipt): void {
 }
 
 // Agreement.Status: 0=CREATED 1=FUNDED 2=ACTIVE 3=COMPLETED 4=DISPUTED 5=RESOLVED 6=REFUNDED
-const AGREEMENT_STATUS_DISPUTED = 4;
 const TERMINAL = new Set([3, 5, 6]);
 
 const STATUS_KEYS: Record<number, string> = {

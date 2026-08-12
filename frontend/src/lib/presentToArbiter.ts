@@ -12,8 +12,7 @@
  * доказательство, а выглядеть замазанное будет как обычное. Контейнер уходит
  * на склад ровно тем, что вернула сборка.
  */
-import type { Abi, PublicClient } from 'viem';
-import { AGREEMENT_ABI } from '@/config/contracts';
+import type { PublicClient } from 'viem';
 import type { ChatSession } from './chatSession';
 import type { ChatKeyAttestation } from './chatKeyAttestation';
 import type { PeerChatKeys } from './chatDirectoryTypes';
@@ -36,9 +35,6 @@ import {
 } from './presentationDraft';
 import { BagBudgetError, BagPassError, BagRateLimitError, BagTransportError } from './chatTransport';
 import type { DisputeBoxList } from './disputeBox';
-
-/** Agreement.Status.DISPUTED. ⚠️ У реестра DISPUTED = 3 — это ДРУГОЙ enum. */
-export const AGREEMENT_STATUS_DISPUTED = 4;
 
 /** Такт опроса описи: «забрал ли арбитр». ДВА обращения в минуту против
  *  серверных ста — и оба по общему адресному бюджету, своего счёта нет. */
@@ -213,23 +209,41 @@ export function countLegacyExposed(rows: readonly SelectableMessage[]): number {
 
 /* ──────────────────────────── что показывать ─────────────────────────── */
 
-/** Кнопка живёт вместе со спором (§2.2 замысла): собрать можно когда угодно,
- *  ОТПРАВИТЬ — только при живом споре, потому что до спора читать некому. */
+/**
+ * Кнопка живёт вместе со спором (§2.2 замысла): собрать можно когда угодно,
+ * ОТПРАВИТЬ — только пока есть кому читать.
+ *
+ * ⚠️ ПРИЗНАК — ВЕДУЩИЙ АРБИТР, А НЕ СТАТУС СДЕЛКИ (решение владельца,
+ * итоговое ревью ветки). Прежде здесь стоял `status === 4`, а склад пускал по
+ * тому же признаку — и оба расходились с ЧТЕНИЕМ ящика, которое статуса не
+ * спрашивает вовсе: подан вердикт, сделка ушла в RESOLVED, а арбитр ещё
+ * разбирает апелляцию и четырьмя строками экрана просит «предъявите заново» —
+ * в окне, где кнопки нет ни у кого. Теперь признак один на все три двери:
+ * `disputeArbiterOf(agreement) != null`.
+ *
+ * ⚠️ `null` — это И «арбитра нет», И «мы ещё не спросили», и обе прячут
+ * кнопку. Показать кнопку, за которой не стоит ключ печати, значило бы
+ * пообещать действие, которое отказом и кончится.
+ */
 export function presentButtonVisible(
-  input: { status: number | undefined; isParty: boolean },
+  input: { arbiter: `0x${string}` | null | undefined; isParty: boolean },
 ): boolean {
-  return input.isParty === true && input.status === AGREEMENT_STATUS_DISPUTED;
+  return input.isParty === true && input.arbiter != null;
 }
 
 /** Четыре запрета, и каждый сам по себе. Согласие спрашивается ЗАНОВО на
- *  каждое предъявление — функция ничего не помнит намеренно. */
+ *  каждое предъявление — функция ничего не помнит намеренно.
+ *  ⚠️ Четвёртый — тот же, что у кнопки: ведущий арбитр, не статус сделки. */
 export function canSend(
-  input: { consent: boolean; selected: number; busy: boolean; status: number | undefined },
+  input: {
+    consent: boolean; selected: number; busy: boolean;
+    arbiter: `0x${string}` | null | undefined;
+  },
 ): boolean {
   if (input.consent !== true) return false;
   if (!(input.selected > 0)) return false;
   if (input.busy) return false;
-  return input.status === AGREEMENT_STATUS_DISPUTED;
+  return input.arbiter != null;
 }
 
 export type FitNotice =
@@ -326,25 +340,23 @@ export function presentWarning(
 
 /* ───────────────────────────── факты цепи ────────────────────────────── */
 
-/**
- * Статус сделки — из ЦЕПИ, в момент вопроса. ⚠️ И это ЕДИНСТВЕННОЕ своё
- * чтение цепи в этом файле.
+/*
+ * ⚠️ СВОИХ ЧТЕНИЙ ЦЕПИ В ЭТОМ ФАЙЛЕ НЕТ НИ ОДНОГО, и это стало правдой на
+ * итоговом ревью ветки. `readAgreementStatus` здесь была ровно затем, чтобы
+ * отказать `not_disputed` до сборки, — а статус сделки больше не решает
+ * ничего: право предъявлять даёт ведущий арбитр (см. `presentButtonVisible`).
+ * «Спора уже нет» приезжает теперь одной дверью с «арбитр сменился» —
+ * `readArbiterNow` + `comparePresentedWith`, у которых есть имя для каждого
+ * исхода (`arbiter_left`, `arbiter_changed`, `key_changed`).
  *
  * Кто ведёт спор и чем его печатать — `readDisputeArbiterKey` Задачи 5, и
- * второго правила здесь нет намеренно. Правило это составное: сначала
- * `getDisputeClaimer`, при нуле — `getPendingVerdict(...).arbiter` с
- * проверкой `submittedAt != 0` (клейм стирается, запись о вердикте
- * остаётся). Возьми кнопка один `getDisputeClaimer` — после финализации она
- * говорила бы «арбитра нет», пока релеер на том же сервере отдаёт ящик
- * подавшему вердикт: два ответа на один вопрос, и оба «из цепи».
+ * второго правила здесь нет намеренно. Правило составное: сначала
+ * `getDisputeClaimer`, при нуле — `getPendingVerdict(...).arbiter` с проверкой
+ * `submittedAt != 0` (клейм стирается, запись о вердикте остаётся). Возьми
+ * кнопка один `getDisputeClaimer` — после финализации она говорила бы «арбитра
+ * нет», пока релеер на том же сервере отдаёт ящик подавшему вердикт: два
+ * ответа на один вопрос, и оба «из цепи».
  */
-export async function readAgreementStatus(
-  publicClient: PublicClient, agreement: `0x${string}`,
-): Promise<number> {
-  return Number(await publicClient.readContract({
-    address: agreement, abi: AGREEMENT_ABI as Abi, functionName: 'status',
-  }));
-}
 
 /** Готовый снимок Задачи 5 — тот исход `readDisputeArbiterKey`, у которого
  *  есть и адрес, и ключ, и байты печати. */
@@ -782,8 +794,13 @@ export interface SendPresentationDeps {
   /** Согласие ЭТОГО предъявления. Прошлое согласие сюда не доезжает. */
   consent: boolean;
   publicClient?: PublicClient;
-  readStatus: () => Promise<number>;
-  /** Свежее чтение Задачи 5 — сверяется со СНИМКОМ, не с другим чтением. */
+  /**
+   * Свежее чтение Задачи 5 — сверяется со СНИМКОМ, не с другим чтением.
+   * ⚠️ ЕДИНСТВЕННАЯ ДВЕРЬ В ЦЕПЬ НА ЭТОМ ПУТИ (итоговое ревью, правка 1):
+   * `readStatus` отсюда убрана вместе с гейтом по статусу сделки. «Спор
+   * закрылся» и «арбитр ушёл» — одно и то же событие с точки зрения
+   * предъявления, и у него один ответчик, а не два.
+   */
   readArbiterNow: () => Promise<DisputeArbiterKey>;
   getPass: () => Promise<string>;
   put: (
@@ -947,15 +964,7 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
   if (_sending.has(box)) return { ok: false, reason: 'already_sending' };
   _sending.add(box);
   try {
-    let status: number;
-    try {
-      status = await deps.readStatus();
-    } catch {
-      return { ok: false, reason: 'chain_unavailable' };
-    }
-    if (status !== AGREEMENT_STATUS_DISPUTED) return { ok: false, reason: 'not_disputed' };
-
-    // Дешёвая дверь: сменился — не собираем вовсе.
+    // Дешёвая дверь: сменился или ушёл — не собираем вовсе.
     let before: DisputeArbiterKey;
     try {
       before = await deps.readArbiterNow();

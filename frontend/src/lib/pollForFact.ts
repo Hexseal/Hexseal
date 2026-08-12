@@ -50,6 +50,18 @@ export interface FactPollResult<T> {
   satisfied: boolean;
   /** Сколько раз реально звали `read` (включая упавшие пробы). */
   reads: number;
+  /**
+   * Сколько проб РАЗОБРАЛОСЬ, то есть вернуло значение вместо броска. Первая
+   * всегда среди них: её бросок уходит наружу, и результата не бывает вовсе.
+   *
+   * ⚠️ ЗАЧЕМ ОТДЕЛЬНОЕ ЧИСЛО (итоговое ревью ветки 4в-2, правка 4). По `reads`
+   * НЕЛЬЗЯ отличить «узел отвечал девять раз и девять раз сказал нет» от «узел
+   * ответил однажды и замолчал»: оба дают `reads: 9`, `satisfied: false` и одно
+   * и то же последнее значение. А цена у них разная — первое это вердикт,
+   * второе неизвестность. `lib/relayTarget.ts` отвечает на них разными кодами
+   * (403 против 503), и без этого числа отличить их ему нечем.
+   */
+  okReads: number;
 }
 
 /**
@@ -79,18 +91,20 @@ export async function pollForFact<T>(
   // Правило 3, вторая половина: первое чтение не глушится.
   let value = await read();
   let reads = 1;
-  if (satisfied(value)) return { value, satisfied: true, reads };
+  let okReads = 1;
+  if (satisfied(value)) return { value, satisfied: true, reads, okReads };
 
   for (let attempt = 1; attempt < attempts; attempt++) {
     await sleep(intervalMs);
     reads++;
     try {
       value = await read();
+      okReads++;
     } catch {
       continue; // правило 3
     }
-    if (satisfied(value)) return { value, satisfied: true, reads };
+    if (satisfied(value)) return { value, satisfied: true, reads, okReads };
   }
 
-  return { value, satisfied: false, reads }; // правило 2
+  return { value, satisfied: false, reads, okReads }; // правило 2
 }

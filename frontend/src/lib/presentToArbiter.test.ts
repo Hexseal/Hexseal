@@ -27,7 +27,6 @@ import { toBoxKey } from '@/lib/arbiterChatKey';
 import type { DisputeArbiterKey, PresentedTo } from '@/lib/disputeArbiter';
 import type { Hex } from 'viem';
 import {
-  AGREEMENT_STATUS_DISPUTED,
   PRESENT_REFUSAL_KEYS,
   boxStateFromList,
   canSend,
@@ -162,7 +161,6 @@ async function realDeps(over: Partial<SendPresentationDeps> = {}, trace?: Trace)
       attestation: await attestationOf(bob), attestationHistory: [],
     }),
     consent: true,
-    readStatus: async () => { trace?.steps.push('status'); return 4; },
     readArbiterNow: async () => {
       trace?.steps.push('arbiter');
       return readyKey(ARBITER, judy.session.keypair.publicKey);
@@ -198,7 +196,6 @@ function cheapDeps(over: Partial<SendPresentationDeps> = {}, trace?: Trace): Sen
     session: {} as unknown as ChatSession,
     ownAttestation: {} as unknown as ChatKeyAttestation,
     consent: true,
-    readStatus: async () => { trace?.steps.push('status'); return 4; },
     readArbiterNow: async () => {
       trace?.steps.push('arbiter');
       return readyKey(ARBITER, new Uint8Array(32).fill(0xab));
@@ -220,21 +217,30 @@ function cheapDeps(over: Partial<SendPresentationDeps> = {}, trace?: Trace): Sen
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('когда кнопка вообще есть', () => {
-  it('T1: вне спора кнопки нет ни в одном из шести прочих статусов', () => {
-    // Число 4 написано РУКАМИ рядом с константой модуля — иначе замер сверял бы
-    // значение сам с собой и молчал бы при её смене.
-    expect(AGREEMENT_STATUS_DISPUTED).toBe(4);
-    const shown = [0, 1, 2, 3, 5, 6, undefined].map(
-      status => presentButtonVisible({ status, isParty: true }));
-    expect(shown).toEqual([false, false, false, false, false, false, false]);
+  it('T1: спор никто не ведёт — кнопки нет, и «не спросили» прячет её так же', () => {
+    // ⚠️ ПРИЗНАК СМЕНИЛСЯ (решение владельца, итоговое ревью ветки): не статус
+    // сделки, а ведущий арбитр — тот же признак, по которому склад даёт право
+    // ПИСАТЬ, а релеер право ЧИТАТЬ. Оба `null`-подобных ответа прячут кнопку:
+    // за ней не стоит ключ печати, и нажатие кончилось бы отказом.
+    const shown = [null, undefined].map(
+      arbiter => presentButtonVisible({ arbiter, isParty: true }));
+    expect(shown).toEqual([false, false]);
   });
 
-  it('T2: в споре и я сторона — кнопка есть', () => {
-    expect(presentButtonVisible({ status: 4, isParty: true })).toBe(true);
+  it('T2: спор ведут и я сторона — кнопка есть', () => {
+    expect(presentButtonVisible({ arbiter: ARBITER, isParty: true })).toBe(true);
   });
 
-  it('T3: в споре, но я не сторона (арбитр, посторонний) — кнопки нет', () => {
-    expect(presentButtonVisible({ status: 4, isParty: false })).toBe(false);
+  it('T2b: вердикт подан, сделка уже не DISPUTED — кнопка ВСЁ РАВНО есть', () => {
+    // Ровно та дыра, ради которой правка и делалась: арбитр после вердикта
+    // разбирает апелляцию, экран просит «предъявите заново» — а у стороны при
+    // старом правиле (`status === 4`) кнопки не было вовсе. Здесь статуса нет
+    // среди входов ВООБЩЕ: спрятать кнопку по нему теперь нечем.
+    expect(presentButtonVisible({ arbiter: OTHER_ARB, isParty: true })).toBe(true);
+  });
+
+  it('T3: спор ведут, но я не сторона (арбитр, посторонний) — кнопки нет', () => {
+    expect(presentButtonVisible({ arbiter: ARBITER, isParty: false })).toBe(false);
   });
 });
 
@@ -252,7 +258,7 @@ describe('согласие', () => {
   });
 
   it('T5: «Отправить» заперта, пока согласие не поставлено — и после отправки заново', () => {
-    const base = { selected: 3, busy: false, status: 4 };
+    const base = { selected: 3, busy: false, arbiter: ARBITER };
     expect(canSend({ ...base, consent: false })).toBe(false);
     expect(canSend({ ...base, consent: true })).toBe(true);
     // Второе предъявление начинается с чистого согласия: состояние согласия —
@@ -262,7 +268,7 @@ describe('согласие', () => {
     // И три остальных запрета — каждый сам по себе.
     expect(canSend({ ...base, consent: true, selected: 0 })).toBe(false);
     expect(canSend({ ...base, consent: true, busy: true })).toBe(false);
-    expect(canSend({ ...base, consent: true, status: 2 })).toBe(false);
+    expect(canSend({ ...base, consent: true, arbiter: null })).toBe(false);
   });
 });
 
@@ -271,18 +277,24 @@ describe('согласие', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('цепь сверяется со снимком, а не сама с собой', () => {
-  it('T6: спор закрылся, пока человек читал предупреждение — не отправляем', async () => {
+  it('T6: спор кончился совсем — арбитра нет, и до сборки дело не доходит', async () => {
     // ⚠️ ЗДЕСЬ НУЖНЫ НАСТОЯЩИЕ ЗАВИСИМОСТИ, и это не роскошь. На дешёвых
-    // снятие проверки статуса упёрлось бы в сборщик (`no_session`), и мутация
-    // 2 красила бы имя чужого отказа, а не факт «мешок уехал по закрытому
-    // спору». С `realDeps` снятие двери даёт `trace.puts === 1` — порча портит.
+    // снятие дешёвой двери упёрлось бы в сборщик (`no_session`), и мутация
+    // красила бы имя чужого отказа, а не факт «мешок уехал в пустоту». С
+    // `realDeps` снятие двери даёт `trace.puts === 1` — порча портит.
+    //
+    // ⚠️ И ИМЯ ОТКАЗА ТЕПЕРЬ ДРУГОЕ (итоговое ревью, правка 1). Прежде эта
+    // сцена задавалась статусом 5 и отвечала `not_disputed`; статус больше не
+    // решает ничего — «предъявлять некому» приезжает одной дверью со сменой
+    // арбитра. `not_disputed` при этом жив и осмыслен: так отвечает СКЛАД
+    // (409), когда арбитр ушёл между нашим чтением и записью (T10).
     const trace: Trace = { steps: [], puts: 0 };
-    const v = await sendPresentation(await realDeps({ readStatus: async () => {
-      trace.steps.push('status'); return 5;
-    } }, trace));
-    expect(v).toEqual({ ok: false, reason: 'not_disputed' });
-    expect(trace.puts, 'мешок уехал по закрытому спору').toBe(0);
-    expect(trace.steps, 'до сборки дело дошло').toEqual(['status']);
+    const v = await sendPresentation(await realDeps({
+      readArbiterNow: async () => { trace.steps.push('arbiter'); return { state: 'no_arbiter' }; },
+    }, trace));
+    expect(v).toEqual({ ok: false, reason: 'arbiter_left' });
+    expect(trace.puts, 'мешок уехал по мёртвому спору').toBe(0);
+    expect(trace.steps, 'до сборки дело дошло').toEqual(['arbiter']);
   }, 120_000);
 
   it('T7: арбитр сменился ДО сборки — отказ раньше пяти секунд крипто', async () => {
@@ -297,7 +309,7 @@ describe('цепь сверяется со снимком, а не сама с �
     expect(trace.puts, 'мешок на ключ прежнего арбитра всё-таки уехал').toBe(0);
     // ⚠️ ИМЕННО ЭТО ОТЛИЧАЕТ ПЕРВУЮ ДВЕРЬ ОТ ВТОРОЙ: сборки не было вовсе.
     // Уберите раннюю сверку — появится 'save', и замер это назовёт.
-    expect(trace.steps).toEqual(['status', 'arbiter']);
+    expect(trace.steps).toEqual(['arbiter']);
   }, 120_000);
 
   it('T22: арбитр сменился МЕЖДУ сборкой и складом — согласие было про другого', async () => {
@@ -318,7 +330,7 @@ describe('цепь сверяется со снимком, а не сама с �
     expect(v).toEqual({ ok: false, reason: 'arbiter_changed' });
     expect(trace.puts, 'мешок уехал ДРУГОМУ человеку, чем показали').toBe(0);
     // Сборка была, склад — нет: вторая дверь стоит именно там.
-    expect(trace.steps).toEqual(['status', 'arbiter', 'save', 'arbiter']);
+    expect(trace.steps).toEqual(['arbiter', 'save', 'arbiter']);
   }, 120_000);
 
   it('T23: ключ повернулся, арбитра нет, узел молчит — три разные двери', async () => {
@@ -349,10 +361,6 @@ describe('цепь сверяется со снимком, а не сама с �
     // Докстринг обещает «НЕ БРОСАЕТ». Обещание проверяется, а не подразумевается.
     const trace: Trace = { steps: [], puts: 0 };
     expect(await sendPresentation(await realDeps({
-      readStatus: async () => { throw new Error('RPC timeout'); },
-    }, trace))).toEqual({ ok: false, reason: 'chain_unavailable' });
-    _resetSendingForTest();
-    expect(await sendPresentation(await realDeps({
       readArbiterNow: async () => { throw new Error('RPC timeout'); },
     }, trace))).toEqual({ ok: false, reason: 'chain_unavailable' });
     expect(trace.puts).toBe(0);
@@ -364,13 +372,13 @@ describe('цепь сверяется со снимком, а не сама с �
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('отправка', () => {
-  it('T8: порядок «статус → арбитр → сборка → черновик → арбитр → пропуск → склад → пометка»', async () => {
+  it('T8: порядок «арбитр → сборка → черновик → арбитр → пропуск → склад → пометка»', async () => {
     const trace: Trace = { steps: [], puts: 0 };
     const deps = await realDeps({}, trace);
     const v = await sendPresentation(deps);
     expect(v.ok, `отправка отказала: ${v.ok ? '' : v.reason}`).toBe(true);
     if (!v.ok) return;
-    expect(trace.steps).toEqual(['status', 'arbiter', 'save', 'arbiter', 'pass', 'put', 'mark']);
+    expect(trace.steps).toEqual(['arbiter', 'save', 'arbiter', 'pass', 'put', 'mark']);
     expect(v.draftSaved, 'черновик не лёг ДО отправки').toBe('saved');
     expect(v.draftMarked, 'помечать было нечего — черновика не было').toBe('saved');
     expect(v.bagKey).toBe(BAG_KEY);

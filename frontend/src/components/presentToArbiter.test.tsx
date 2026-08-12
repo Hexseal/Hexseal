@@ -44,17 +44,28 @@ const PEER  = '0x2222222222222222222222222222222222222222';
 const DEAL  = '0x3333333333333333333333333333333333333333' as `0x${string}`;
 const ARB   = '0x4444444444444444444444444444444444444444' as `0x${string}`;
 
-let status = 4;
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+/**
+ * ⚠️ ЦЕПЬ ОТВЕЧАЕТ НА ДВА ВОПРОСА, А НЕ НА ОДИН (итоговое ревью ветки, правка
+ * 1). Кнопка живёт теперь не по статусу сделки, а по «кто ведёт спор сейчас», и
+ * правило это составное: живой заявитель, при нуле — арбитр поданного вердикта.
+ * Мок отвечает на оба чтения порознь именно затем, чтобы сцена «вердикт подан,
+ * сделка уже RESOLVED» была здесь ВОЗМОЖНА — при старом моке (одно `status`) её
+ * нельзя было даже поставить.
+ */
+let claimer: string = ZERO;
+let verdict: { arbiter: string; submittedAt: bigint } = { arbiter: ZERO, submittedAt: 0n };
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: ME }),
   usePublicClient: () => null,
   useWalletClient: () => ({ data: null }),
-  useReadContract: (args: { functionName: string }) => (
-    args.functionName === 'status'
-      ? { data: status }
-      : { data: { client_: ME, executor_: PEER } }
-  ),
+  useReadContract: (args: { functionName: string }) => {
+    if (args.functionName === 'getDisputeClaimer') return { data: claimer };
+    if (args.functionName === 'getPendingVerdict') return { data: verdict };
+    return { data: { client_: ME, executor_: PEER } };
+  },
 }));
 vi.mock('next-intl', () => ({ useTranslations: () => translate }));
 vi.mock('react-hot-toast', () => ({
@@ -79,26 +90,49 @@ const msgWithKey = (from: string, seq: number, text: string) => ({
   attachment: { name: text, url: 'https://s/x', key: 'ab'.repeat(16), iv: 'cd'.repeat(6) },
 });
 
+function renderPanel(PresentToArbiter: (p: never) => React.ReactElement | null) {
+  return renderToStaticMarkup(
+    <PresentToArbiter agreement={DEAL} peer={PEER as `0x${string}`}
+      messages={[msg(ME, 0, 'раз')]} session={{} as never} {...({} as never)} />,
+  );
+}
+
 describe('кнопка предъявления в разметке', () => {
-  it('C1: вне спора кнопки в разметке НЕТ вовсе', async () => {
+  it('C1: спор никто не ведёт — кнопки в разметке НЕТ вовсе', async () => {
     const { PresentToArbiter } = await load();
-    status = 2;
-    const html = renderToStaticMarkup(
-      <PresentToArbiter agreement={DEAL} peer={PEER as `0x${string}`}
-        messages={[msg(ME, 0, 'раз')]} session={{} as never} />,
-    );
-    expect(html).toBe('');
+    claimer = ZERO;
+    verdict = { arbiter: ZERO, submittedAt: 0n };
+    expect(renderPanel(PresentToArbiter as never)).toBe('');
   });
 
-  it('C2: в споре и я сторона — кнопка в разметке есть', async () => {
+  it('C2: спор ведут и я сторона — кнопка в разметке есть', async () => {
     const { PresentToArbiter } = await load();
-    status = 4;
-    const html = renderToStaticMarkup(
-      <PresentToArbiter agreement={DEAL} peer={PEER as `0x${string}`}
-        messages={[msg(ME, 0, 'раз')]} session={{} as never} />,
-    );
+    claimer = ARB;
+    verdict = { arbiter: ZERO, submittedAt: 0n };
+    const html = renderPanel(PresentToArbiter as never);
     expect(html).toContain('data-present-btn');
     expect(html).toContain(translate('chat.present_btn'));
+  });
+
+  it('C2b: вердикт подан, заявка стёрта — кнопка ЕСТЬ (шов со складом и экраном арбитра)', async () => {
+    // ⚠️ ЭТО ТА САМАЯ СЦЕНА (решение владельца, итоговое ревью ветки). Арбитр
+    // разбирает апелляцию и просит предъявить заново; сделка при этом уже
+    // RESOLVED. При старом правиле кнопки не было, а склад отвечал 409 —
+    // совет с экрана арбитра было физически нечем выполнить. Теперь и склад,
+    // и кнопка смотрят на одно: у спора есть ведущий арбитр.
+    const { PresentToArbiter } = await load();
+    claimer = ZERO;
+    verdict = { arbiter: ARB, submittedAt: 1n };
+    expect(renderPanel(PresentToArbiter as never)).toContain('data-present-btn');
+  });
+
+  it('C2c: вердикта нет (submittedAt = 0) — запись о нём кнопку НЕ оживляет', async () => {
+    // Пустая запись вердикта несёт нулевой адрес и нулевое время; принять её
+    // за «арбитр есть» значило бы открыть кнопку на всякой сделке подряд.
+    const { PresentToArbiter } = await load();
+    claimer = ZERO;
+    verdict = { arbiter: ARB, submittedAt: 0n };
+    expect(renderPanel(PresentToArbiter as never)).toBe('');
   });
 });
 
@@ -133,7 +167,7 @@ describe('предупреждение: разметка сверяется с �
     // пустой, а число красных — враньём.
     const render = (consent: boolean) => renderToStaticMarkup(
       <PresentWarningModal open lines={lines} consent={consent} busy={false}
-        canSendNow={canSend({ consent, selected: 1, busy: false, status: 4 })}
+        canSendNow={canSend({ consent, selected: 1, busy: false, arbiter: ARB })}
         onConsent={() => {}} onSend={() => {}} onCancel={() => {}} />,
     );
     expect(render(false)).toContain('disabled=""');
