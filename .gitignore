@@ -40,6 +40,12 @@ broadcast/
 # ── Docker / local services ───────────────────────────────────────────────────
 qdrant_storage/
 
+# Рабочий конфиг туннеля: несёт идентификатор конкретной живой машины.
+# В репозитории лежит только `cloudflared/config.example.yml` с заглушкой,
+# из него оператор делает свою копию — её `docker-compose.yml` и монтирует.
+# Без этой строки следующий `git add -A` вернул бы настоящий идентификатор.
+cloudflared/config.yml
+
 # ── Subgraph build artifacts ──────────────────────────────────────────────────
 subgraph/build/
 subgraph/generated/
