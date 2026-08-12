@@ -96,7 +96,13 @@
 
 | Маршрут | Файл | Кто | Что делает |
 |---|---|---|---|
-| `/admin` | `app/admin/page.tsx` | Diamond owner | Управление реестром арбитров, chief arbiter, Protocol Arbiter, пороги, комиссии, пауза |
+| `/admin` | `app/admin/page.tsx` | Diamond owner | Реестр арбитров (`addArbiter`/`removeArbiter`), главный арбитр, комиссия (`setFeeBps`/`setFeeFloor`), потолок заявок (`setMaxPendingRequests`), получатель комиссий, форвардер |
+
+> ⚠️ Здесь раньше значились ещё «Protocol Arbiter» и «пауза». Ни того, ни другого
+> нет: `protocolArbiter` и `paused` — поля хранилища `FactoryStorage`
+> (`src/FactoryFacet.sol:50-51`), у которых **нет ни одного сеттера** во всём
+> `src/`, а на странице нет и кнопок. Панель рекламировала рычаг, которого не
+> существует.
 
 ---
 
@@ -152,7 +158,7 @@
 | Компонент | Где живёт | Технология |
 |---|---|---|
 | Фронт | Vercel | Next.js 14, wagmi/viem, framer-motion, XMTP browser-sdk |
-| Релей | <провайдер и размер машины> | Node.js Express, ethers.js, XMTP node-sdk, локальный диск |
+| Релей | VPS (Docker Compose за Cloudflare Tunnel) | Node.js Express, ethers.js, XMTP node-sdk, локальный диск |
 | Смарт-контракты | Base Sepolia | Solidity 0.8.20, Diamond EIP-2535, ERC-2771 |
 | Хранилище файлов | relay `/var/lib/hexseal/storage/` | Локальный диск, TTL 7д для чат-файлов |
 | Профили | IPFS (Lighthouse) | lighthouse SDK |
