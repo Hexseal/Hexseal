@@ -125,7 +125,7 @@ forge test
 ```bash
 cd relayer
 npm ci
-# create relayer/.env — see the table below
+cp .env.example .env      # then fill it in — see the table below
 node index.js
 ```
 
@@ -136,13 +136,20 @@ The frontend borrows the relayer's test runner, so **install the relayer first**
 ```bash
 cd frontend
 npm ci --legacy-peer-deps    # the flag is required, not optional
-# create frontend/.env.local — see the table below
+cp .env.example .env.local   # then fill it in — see the table below
 npm run dev
 ```
 
 ### Environment
 
-There is no committed `.env` template for the app yet; create the files by hand.
+`frontend/.env.example` and `relayer/.env.example` list **every** variable the code
+actually reads, with no real values in either. The tables below are the short
+version — the ones you cannot skip.
+
+⚠️ In `frontend/.env.local` an **empty** value is not the same as an absent one:
+most of the frontend reads with `??`, which passes an empty string through as a
+legitimate value. That is why everything optional in the template is commented
+out — uncomment a line only together with a value.
 
 `frontend/.env.local`:
 
@@ -227,11 +234,29 @@ cast send $DIAMOND_ADDRESS "setFeeRecipient(address)" <treasury> \
 - [`docs/hexseal-one-pager.html`](docs/hexseal-one-pager.html) — external overview, including the trust model above (English)
 - [`docs/OPEN-ITEMS.md`](docs/OPEN-ITEMS.md) — the open-defect register we keep in public (Russian)
 - [FAQ](https://hexseal.net/docs/faq) — the in-app help
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build, test and not lose an evening to `npx vitest` (English)
+- [`SECURITY.md`](SECURITY.md) — how to report a vulnerability, and what is in scope (English)
 
 ## Reporting a security issue
 
-The deployment is a testnet one and holds no real funds. Until a disclosure policy is published, open a GitHub issue — or, if the finding would put a live user's data or money at risk, mark it clearly and leave out the reproduction steps until we reply.
+See [`SECURITY.md`](SECURITY.md). Reports go through GitHub's **private vulnerability reporting** (Security → Report a vulnerability), never a public issue. There is no bug bounty, the deployment is a testnet one, and it holds no real funds.
 
 ## License
 
-ISC.
+[**BUSL-1.1**](LICENSE) — Business Source License 1.1, converting to **MIT** on
+**2030-08-12**.
+
+- The Licensed Work is the Solidity source in `src/` and nothing else.
+- The Additional Use Grant permits any **non-commercial** use, and deploying and
+  running the code on any **public test network**. Studying it, forking it,
+  auditing it, security-testing it, running your own instance and contributing
+  back are all explicitly allowed and need no permission from us.
+- What it does not permit before the change date is running the contracts as a
+  commercial, revenue-generating service on a production network.
+- BUSL is **not** an OSI-approved open-source licence, and the licence text says
+  so itself. We would rather say that than call this "open source" and be
+  corrected.
+
+Third-party code vendored under `lib/` (OpenZeppelin, forge-std) keeps its own
+MIT / Apache-2.0 terms and is not covered by the above — see
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
