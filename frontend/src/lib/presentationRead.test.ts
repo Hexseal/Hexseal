@@ -287,7 +287,7 @@ const A_TEXTS: ChatPayload[] = [
   { text: 'сроки я двигал по твоей просьбе', dealId: DEAL },
   FILE_PAYLOAD,
 ];
-const B_TEXTS: ChatPayload[] = [{ text: 'да ты хуйню намутил', dealId: DEAL }];
+const B_TEXTS: ChatPayload[] = [{ text: 'да ты фигню намутил', dealId: DEAL }];
 
 interface Parts {
   arbiter: ChatKeypair;
@@ -500,7 +500,7 @@ describe('подпись контейнера проверяется САМА (�
       `${p.a.lower}#0:read`, `${p.a.lower}#1:read`, `${p.b.lower}#0:read`,
     ]);
     expect(view.messages.map(m => m.payload?.text)).toEqual([
-      'сроки я двигал по твоей просьбе', 'смета в файле', 'да ты хуйню намутил',
+      'сроки я двигал по твоей просьбе', 'смета в файле', 'да ты фигню намутил',
     ]);
     expect(view.messages.every(m => m.attestation === 'ok')).toBe(true);
     expect(view.messages.every(m => m.frame.ok)).toBe(true);
@@ -557,7 +557,7 @@ describe('подпись контейнера проверяется САМА (�
     expect(view.presenter).toBe(p.a.lower);
 
     const wire = JSON.stringify(view);
-    expect(wire).not.toContain('хуйню');
+    expect(wire).not.toContain('фигню');
     expect(wire).not.toContain('сроки');
     expect(wire).not.toContain('смета.pdf');   // имя файла — тоже содержимое
   });
@@ -682,7 +682,7 @@ describe('вердикт заверения стоит в КАЖДОМ сооб�
     expect(theirs.map(m => m.attestation)).toEqual(['absent']);
     // Пометили — но НЕ спрятали: слова видны, вердикт рядом.
     expect(theirs.map(m => m.state)).toEqual(['read']);
-    expect(theirs[0].payload?.text).toBe('да ты хуйню намутил');
+    expect(theirs[0].payload?.text).toBe('да ты фигню намутил');
   });
 
   it('T14: просроченное заверение собеседника — expired на каждом его сообщении', async () => {
@@ -775,7 +775,7 @@ describe('кадр проверяется вынесенной проверко�
     expect(theirs[0].frame.ok).toBe(false);     // и кадр заверенному ключу не принадлежит
     expect(theirs[0].state).toBe('unopened');
     expect(theirs[0].payload).toBeUndefined();
-    expect(JSON.stringify(view)).not.toContain('хуйню');
+    expect(JSON.stringify(view)).not.toContain('фигню');
   });
 
   it('T18: цепочка ПРЕДЪЯВИТЕЛЯ подписана свежей парой — контейнер ok, его слова не читаются', async () => {
@@ -819,7 +819,7 @@ describe('кадр проверяется вынесенной проверко�
     // Ключ у арбитра ГОДНЫЙ — и всё равно расшифровка не оплачивается:
     // ровно два обращения, оба на годные кадры А, и ни одного на подменённое звено.
     expect(spy).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(view)).not.toContain('хуйню');
+    expect(JSON.stringify(view)).not.toContain('фигню');
     // Цепочка Б при этом получает `broken`: якорь называл другой последний хеш.
     // Здесь мерится не он — названо, чтобы падение читалось однозначно.
     expect(view.perSender.find(s => s.sender === p.b.lower)!.verdict.ok).toBe(false);
@@ -847,7 +847,7 @@ describe('кадр проверяется вынесенной проверко�
     // Заверение Б тут ни при чём — ключ в кадре заверенный, испорчено содержимое.
     expect(theirs[0].attestation).toBe('ok');
     expect(spy).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(view)).not.toContain('хуйню');
+    expect(JSON.stringify(view)).not.toContain('фигню');
   });
 
   it('T20: кадра для звена нет — frame malformed, причины ОТКРЫТИЯ нет (беда не в ключе)', async () => {
@@ -918,7 +918,7 @@ describe('разовый ключ вскрывается только своей
     expect(theirs[0].frame).toEqual({ ok: true });
     expect(theirs[0].state).toBe('unopened');
     expect(theirs[0].reason).toBe('bad_key');
-    expect(JSON.stringify(view)).not.toContain('хуйню');
+    expect(JSON.stringify(view)).not.toContain('фигню');
   });
 
   it('T24: forArbiter не той формы — unopened/malformed, и hex тоже НЕ ТА ФОРМА', async () => {

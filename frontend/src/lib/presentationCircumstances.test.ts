@@ -124,7 +124,7 @@ beforeEach(async () => {
   bobAtt = await attestationOf(bob);
 
   const mine = await forgeFrames(alice, bob, ['сроки прошли, где работа', 'жду до вечера']);
-  const theirs = await forgeFrames(bob, alice, ['да ты хуйню намутил', 'файл отправил вчера'], 1_754_400_500_000);
+  const theirs = await forgeFrames(bob, alice, ['да ты фигню намутил', 'файл отправил вчера'], 1_754_400_500_000);
   frames = [...mine, ...theirs];
   const seeded = await seedArchive(alice, bob, frames);
   expect(seeded, 'посев архива не лёг — дальше мерить нечего').toBe(frames.length);

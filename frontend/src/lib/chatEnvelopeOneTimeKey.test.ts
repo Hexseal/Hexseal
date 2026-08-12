@@ -240,7 +240,7 @@ describe('openEnvelopeWithOneTimeKey', () => {
   it('9. верный ключ и верный автор — ok, содержимое то же, РОВНО один вызов decrypt', async () => {
     const { bob, alice } = await actors();
     const payload: ChatPayload = {
-      text: 'да ты хуйню намутил',
+      text: 'да ты фигню намутил',
       dealId: getAddress('0x1234567890123456789012345678901234567890') as `0x${string}`,
     };
     const env = await packEnvelope(payload, bob.publicKey, alice.publicKey, AUTHOR_LOWER);
