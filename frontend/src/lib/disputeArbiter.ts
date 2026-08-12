@@ -2,7 +2,7 @@ import type { Abi, AbiEvent, Address, PublicClient } from 'viem';
 import { ARBITER_REGISTRY_ABI, CONTRACTS } from '@/config/contracts';
 import { readArbiterChatKeysFromChain, type BoxKey } from '@/lib/arbiterChatKey';
 import { arbiterBoxKeyBytes, type ArbiterBoxKeyBytes } from '@/lib/presentation';
-import { NOTIF_POLL_MS } from '@/lib/notifEvents';
+import { subscribeChainLogs } from '@/lib/chainEventBus';
 import {
   runChainWatch,
   type ChainWatchIO,
@@ -40,10 +40,9 @@ import {
  *
  * ЦЕНА, ЗАМЕРЕННАЯ ТЕСТАМИ: снимок — 3 чтения цепи (`getDisputeClaimer`,
  * `isRegisteredArbiter`, `getArbiterChatKeys`) и 4, когда живого заявителя нет
- * и добавляется `getPendingVerdict`. Слежение на видимой вкладке — один
- * `eth_newFilter` на взвод и 3 опроса в минуту (`NOTIF_POLL_MS`) на все три
- * рода сразу; спрятанная вкладка и возврат в неё — НОЛЬ запросов (гейт
- * видимости чужой, догона нет).
+ * и добавляется `getPendingVerdict`. Слежение — **НОЛЬ** обращений к цепи в
+ * любом состоянии вкладки: своего фильтра у него нет, оно подписано на пачки
+ * общего фильтра уведомлений через `lib/chainEventBus.ts`.
  */
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
@@ -229,9 +228,17 @@ export function comparePresentedWith(
  * Иначе у вопроса «сменился ли арбитр» стало бы два ответчика, и один из них
  * (лог) отвечал бы по данным, которые могли не доехать.
  *
- * ⚠️ ДОГОНА НЕТ: `runChainWatch` зовётся БЕЗ курсора, значит `io.blockNumber` и
- * `io.getLogs` не зовутся вовсе, а пропущенное за время скрытия вкладки не
- * добирается. Цена этого названа в шапке задачи и замерена тестом «ДОГОНА НЕТ».
+ * ⚠️ СВОЕГО ДОГОНА НЕТ — И ОН НЕ НУЖЕН, ПОТОМУ ЧТО ЕСТЬ ЧУЖОЙ. `runChainWatch`
+ * зовётся здесь БЕЗ курсора, поэтому `io.blockNumber` и `io.getLogs` не зовутся
+ * вовсе: своих запросов истории слежение не делает ни одного. Но пропущенное за
+ * время скрытой вкладки **добирается** — его добирает владелец общего фильтра
+ * (`useNotifications` идёт с курсором в `localStorage`), и добранные логи
+ * приезжают сюда обычной пачкой через раздатчик.
+ *
+ * ⚠️ ЭТО ИСПРАВЛЕНИЕ ПРЕЖНЕГО ОБЪЯВЛЕНИЯ, А НЕ ОПИСКА. Пока у слежения был свой
+ * фильтр, здесь было написано «пропущенное не добирается», и это было правдой.
+ * С переездом на общий фильтр правдой быть перестало — переписаны и объявление,
+ * и его замер (тест «пропущенное за время скрытой вкладки ДОБИРАЕТСЯ»).
  */
 
 /** Три рода, по которым «кто ведёт спор и чем печатать» может измениться.
@@ -327,28 +334,43 @@ export function routeArbiterChangeLogs(
 }
 
 /**
- * Цепь для следящего: ОДИН фильтр на три рода (viem ставит `topics[0]`
- * массивом), такт — `NOTIF_POLL_MS`, чужое число: задача та же, что у
- * колокольчика, — известить, а не показывать живой экран.
+ * Цепь для следящего — БЕЗ СВОЕГО ЦИКЛА ОПРОСА.
+ *
+ * ⚠️ СВОЕГО ФИЛЬТРА ЗДЕСЬ НЕТ, И ЭТО НЕСУЩЕЕ. Фильтр на диамонде в приложении
+ * один, его взводит `hooks/useNotifications.ts`, а наши три рода добавлены в его
+ * набор (`WIRE_ONLY_EVENT_NAMES` в `notifRouter.ts` плюс уже бывший там
+ * `DisputeClaimed`). Мы подписываемся на готовую пачку через
+ * `lib/chainEventBus.ts`. Цена — **ноль** обращений к цепи: viem кладёт
+ * `topics[0]` массивом, растёт фильтр на узле, а не число запросов.
+ *
+ * Второй цикл рядом стоил бы три запроса в минуту с каждой открытой вкладки и
+ * пробил бы бюджет опроса: `hooks/chainPollBudget.test.ts` держит потолок в два
+ * цикла и восемь запросов в минуту — замерено, что с третьим выходит 3 цикла и
+ * 11 запросов. Бюджет стоит там после замера 8 100 обращений в час с одной
+ * вкладки, и обходить его подбором такта нельзя.
+ *
+ * ⚠️ ТАКТА У НАС НЕТ ВОВСЕ — он принадлежит общему фильтру (`NOTIF_POLL_MS`,
+ * 20 с). Параметра такта здесь нет намеренно: ручка, которая ни на что не
+ * влияет, хуже отсутствующей — следующий передал бы в неё число, увидел зелёные
+ * тесты и решил, что настроил опрос.
  *
  * ⚠️ `blockNumber` и `getLogs` — настоящие, а не заглушки, хотя без курсора их
  * никто не зовёт (`runChainWatch:190, :246`). Заглушка `async () => []` ждала бы
  * ровно того дня, когда сюда передадут курсор, и в этот день молча вернула бы
  * пустой догон — то есть «догнали», не сходив никуда.
+ *
+ * ⚠️ `onError` этого ввода-вывода не сработает НИКОГДА: отказы общего фильтра
+ * ловит и печатает его владелец (`useNotifications`, `console.warn`), а
+ * раздатчик отказов не возит. Сказано вслух, чтобы Задача 6 не считала свой
+ * `onError` дверью к ошибкам цепи — он остаётся дверью к ошибкам ЛЮБОГО
+ * `ChainWatchIO`, а у этого их не бывает.
  */
-export function arbiterChangeWatchIO(
-  publicClient: PublicClient, pollingIntervalMs: number = NOTIF_POLL_MS,
-): ChainWatchIO {
+export function arbiterChangeWatchIO(publicClient: PublicClient): ChainWatchIO {
   return {
-    watch: (onLogs, onError) => publicClient.watchEvent({
-      address: CONTRACTS.diamond,
-      events: ARBITER_CHANGE_EVENTS,
-      pollingInterval: pollingIntervalMs,
-      // ⚠️ Тип пишется руками: объект уходит в `watchEvent` через `as never`,
-      // а под `never` вывод параметра молчит и даёт неявный `any`.
-      onLogs: (logs: unknown[]) => onLogs(logs),
-      onError,
-    } as never),
+    watch: (onLogs, onError) => {
+      void onError; // см. шапку: у раздатчика отказов нет
+      return subscribeChainLogs(onLogs);
+    },
     blockNumber: () => publicClient.getBlockNumber(),
     getLogs: async (fromBlock, toBlock) => {
       const logs = await publicClient.getLogs({

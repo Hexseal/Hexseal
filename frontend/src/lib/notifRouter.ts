@@ -80,7 +80,15 @@ export interface RouteDeps {
   classifyRefund: (agreement: `0x${string}`, txHash?: `0x${string}`) => Promise<SettledRefund>;
 }
 
-/** Девять родов событий, которые сторожат уведомления. Один фильтр покрывает все. */
+/**
+ * Девять родов событий, которые становятся УВЕДОМЛЕНИЯМИ (колокольчик, пуш).
+ *
+ * ⚠️ ЭТО НЕ ТО ЖЕ, ЧТО «рода на проводе». Общий фильтр везёт ещё и
+ * `WIRE_ONLY_EVENT_NAMES` — рода, нужные другому читателю; уведомлениями они не
+ * становятся и веток в разводке ниже не имеют. Два списка нарочно раздельны и
+ * названы по-разному: один отвечает на вопрос «что человек увидит», другой — на
+ * «что приехало по проводу», и склеивать их нельзя.
+ */
 export const NOTIF_EVENT_NAMES = [
   'AgreementRegistered',
   'AgreementStatusUpdated',
@@ -95,7 +103,33 @@ export const NOTIF_EVENT_NAMES = [
 
 export type NotifEventName = (typeof NOTIF_EVENT_NAMES)[number];
 
+/**
+ * Рода, которые едут ПО ОБЩЕМУ ПРОВОДУ, но уведомлениями НЕ становятся.
+ *
+ * ЗАЧЕМ ОНИ ЗДЕСЬ. Их читает слежение за сменой арбитра
+ * (`lib/disputeArbiter.ts`): «арбитр сменился или повернул ключ — предъявите
+ * заново». Своего цикла опроса слежение не заводит намеренно — третий фильтр на
+ * странице спора сломал бы бюджет опроса цепи (`hooks/chainPollBudget.test.ts`:
+ * не больше двух циклов и восьми запросов в минуту), а замер 9 августа, ради
+ * которого этот бюджет заведён, — 8 100 обращений в час с одной вкладки.
+ * Поэтому рода добавлены в общий фильтр: тот же фильтр, тот же такт, НОЛЬ лишних
+ * обращений — растёт только массив `topics[0]`.
+ *
+ * ⚠️ НАЗВАНЫ ОНИ ИМЕННО ЗДЕСЬ, ЧТОБЫ НЕ СЧИТАТЬСЯ МУСОРОМ. Разводка ниже кладёт
+ * всё, чего нет в `KNOWN`, в счётчик `unknown` («мусор либо новое событие»). Эти
+ * два рода не мусор — они везутся нарочно, и счётчик о них знать обязан.
+ * Замок — `notifRouter.test.ts`, «рода с провода не считаются мусором».
+ *
+ * ⚠️ И ГЛАВНОЕ: уведомлением такой род не становится НИКОГДА. Человеку от смены
+ * ключа арбитра не прилетает ни колокольчик, ни пуш. Замок на это отдельный —
+ * `notifRouter.test.ts`, «род с провода не превращается в уведомление».
+ */
+export const WIRE_ONLY_EVENT_NAMES = ['DisputeReleased', 'ArbiterChatKeySet'] as const;
+
+export type WireOnlyEventName = (typeof WIRE_ONLY_EVENT_NAMES)[number];
+
 const KNOWN = new Set<string>(NOTIF_EVENT_NAMES);
+const WIRE_ONLY = new Set<string>(WIRE_ONLY_EVENT_NAMES);
 
 // ── мелкие безопасные читатели ───────────────────────────────────────────────
 //
@@ -202,7 +236,11 @@ export async function routeNotifLogs(
     if (block !== undefined && (maxBlock === undefined || block > maxBlock)) maxBlock = block;
 
     const event = nameOf(log);
-    if (event === null || !KNOWN.has(event)) { unknown++; continue; }
+    if (event === null) { unknown++; continue; }
+    // Род везётся по общему проводу ради ДРУГОГО читателя (слежение за сменой
+    // арбитра). Не мусор и не уведомление: молча пропускаем, счётчик не трогаем.
+    if (WIRE_ONLY.has(event)) continue;
+    if (!KNOWN.has(event)) { unknown++; continue; }
     const args = argsOf(log);
     if (args === null) { unknown++; continue; }
     // Кошелёк не подключён — уведомлять некого. Курсор блока при этом уже учтён.

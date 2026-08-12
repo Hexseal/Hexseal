@@ -23,7 +23,8 @@ import {
 import { classifySettledRefund, refundNotifCopy } from "@/lib/settledRefund";
 import { refreshFromLogs } from "@/lib/subgraphSync";
 import { routeNotifLogs, type Viewer } from "@/lib/notifRouter";
-import { NOTIF_EVENTS, NOTIF_POLL_MS } from "@/lib/notifEvents";
+import { WIRE_EVENTS, NOTIF_POLL_MS } from "@/lib/notifEvents";
+import { publishChainLogs } from "@/lib/chainEventBus";
 import {
   runChainWatch,
   type ChainWatchCursor,
@@ -303,6 +304,13 @@ export function useNotifications() {
   useEffect(() => { addressRef.current = address; }, [address]);
 
   const handleChainLogs = useCallback(async (logs: unknown[]) => {
+    // ⚠️ РАЗДАЧА ПЕРВЫМ ДЕЛОМ И ДО ВСЯКИХ УСЛОВИЙ. Фильтр на диамонде в
+    // приложении один, и вторым его читателем идёт слежение за сменой арбитра
+    // (`lib/disputeArbiter.ts`). Поставь раздачу ниже проверки кошелька — и
+    // читатель молча остался бы без пачки в тех же случаях, что колокольчик,
+    // хотя условия у них разные. Своих запросов раздача не делает.
+    publishChainLogs(logs);
+
     const me = addressRef.current;
     if (!me) return;
     const viewer: Viewer = {
@@ -330,7 +338,7 @@ export function useNotifications() {
     // Набор событий пуст — значит ABI разъехались с разводкой. Взводить фильтр,
     // который ничего не ловит, бессмысленно; замер на это стоит в
     // `lib/notifEvents.test.ts`.
-    if (NOTIF_EVENTS.length === 0) return;
+    if (WIRE_EVENTS.length === 0) return;
 
     // Курсор догона — на адрес. Общий на все вкладки (localStorage), так что
     // вторая вкладка не платит за уже добранный пропуск повторно.
@@ -352,7 +360,7 @@ export function useNotifications() {
       watch: (onLogs, onError) =>
         publicClient.watchEvent({
           address: CONTRACTS.diamond,
-          events: NOTIF_EVENTS,
+          events: WIRE_EVENTS,
           pollingInterval: NOTIF_POLL_MS,
           onLogs: (logs) => onLogs(logs as unknown[]),
           onError,
@@ -361,7 +369,7 @@ export function useNotifications() {
       getLogs: (fromBlock, toBlock) =>
         publicClient.getLogs({
           address: CONTRACTS.diamond,
-          events: NOTIF_EVENTS,
+          events: WIRE_EVENTS,
           fromBlock,
           toBlock,
         }) as Promise<unknown[]>,

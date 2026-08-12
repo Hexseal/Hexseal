@@ -3,8 +3,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { decodeEventLog, pad, toEventSelector, type Abi, type AbiEvent } from 'viem';
 import type { Address, Hex, PublicClient } from 'viem';
 import { ARBITER_REGISTRY_ABI, CONTRACTS } from '@/config/contracts';
-import type { ChainWatchIO, VisibilityDoc } from './chainWatchGate';
-import { NOTIF_POLL_MS } from './notifEvents';
+import { runChainWatch, type ChainWatchIO, type VisibilityDoc } from './chainWatchGate';
+import { WIRE_EVENT_NAMES } from './notifEvents';
+import { chainLogSinkCount, publishChainLogs } from './chainEventBus';
 import { ZERO_KEY, toBoxKey } from './arbiterChatKey';
 import { arbiterBoxKeyBytes } from './presentation';
 import {
@@ -566,10 +567,11 @@ describe('watchDisputeArbiter — повод доезжает один раз и
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('ДОГОНА НЕТ: ни blockNumber, ни getLogs не позваны ни разу', () => {
-    // ⚠️ Курсор не передаётся намеренно (см. шапку задачи). Числа здесь —
-    // доказательство, что «догона нет» это про поведение, а не про намерение:
-    // возврат во вкладку не стоит ни одного запроса истории.
+  it('СВОИХ запросов истории не делает: ни blockNumber, ни getLogs ни разу', () => {
+    // ⚠️ Курсор сюда не передаётся намеренно: догон делает ВЛАДЕЛЕЦ общего
+    // фильтра, а не мы. Числа здесь — доказательство, что своей истории мы не
+    // запрашиваем: возврат во вкладку не стоит нам ни одного запроса.
+    // Что пропущенное при этом ВСЁ РАВНО ДОЕЗЖАЕТ — отдельный тест ниже.
     const doc = fakeDoc('visible');
     const chain = fakeWatchIO();
     const stop = watchDisputeArbiter({
@@ -601,7 +603,7 @@ describe('watchDisputeArbiter — повод доезжает один раз и
 
 // ═══ цепь для следящего ══════════════════════════════════════════════════
 
-describe('arbiterChangeWatchIO — один фильтр на три рода, на нашем диамонде', () => {
+describe('arbiterChangeWatchIO — СВОЕГО цикла опроса нет, подписка на общий', () => {
   function fakePublicClient() {
     const seen: Record<string, unknown> = {};
     const client = {
@@ -612,16 +614,37 @@ describe('arbiterChangeWatchIO — один фильтр на три рода, �
     return { client, seen };
   }
 
-  it('фильтр ставится на диамонд, тремя родами, с тактом извещений', () => {
+  it('watch НЕ взводит фильтр на узле — цикла опроса не заводится вовсе', () => {
+    // ⚠️ ЭТО ГЛАВНОЕ СВОЙСТВО, А НЕ МЕЛОЧЬ. Третий цикл опроса на странице спора
+    // пробивал бюджет: замерено 3 цикла и 11 запросов в минуту при потолке в 2 и 8
+    // (`hooks/chainPollBudget.test.ts`). Подписка на общий фильтр стоит НОЛЬ
+    // обращений к цепи.
     const { client, seen } = fakePublicClient();
     const io = arbiterChangeWatchIO(client);
     const off = io.watch(() => {}, () => {});
-    const args = seen.watch as { address: string; events: unknown[]; pollingInterval: number };
-    expect(args.address).toBe(CONTRACTS.diamond);
-    expect(args.events).toHaveLength(3);
-    expect(args.pollingInterval).toBe(NOTIF_POLL_MS);
+    expect(seen.watch, 'io взвёл собственный watchEvent — это третий цикл опроса').toBeUndefined();
     off();
-    expect(seen.unwatched).toBe(true);
+  });
+
+  it('watch подписывается на раздатчик и отписывается снятием', () => {
+    const { client } = fakePublicClient();
+    const before = chainLogSinkCount();
+    const off = arbiterChangeWatchIO(client).watch(() => {}, () => {});
+    expect(chainLogSinkCount()).toBe(before + 1);
+    off();
+    expect(chainLogSinkCount(), 'снятие не отписало от раздатчика — утечка').toBe(before);
+  });
+
+  it('пачка с общего фильтра доезжает до нашего обработчика как есть', () => {
+    const { client } = fakePublicClient();
+    const got: unknown[][] = [];
+    const off = arbiterChangeWatchIO(client).watch((logs) => got.push(logs), () => {});
+    publishChainLogs([claimed(DEAL, ARB_B)]);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toHaveLength(1);
+    off();
+    publishChainLogs([claimed(DEAL, ARB_B)]);
+    expect(got, 'после отписки пачки всё ещё доезжают').toHaveLength(1);
   });
 
   it('getLogs просит те же три рода и заданный диапазон — а не заглушка', () => {
@@ -640,10 +663,89 @@ describe('arbiterChangeWatchIO — один фильтр на три рода, �
     });
   });
 
-  it('такт можно задать снаружи, умолчание — не выдумка, а NOTIF_POLL_MS', async () => {
-    const { client, seen } = fakePublicClient();
-    arbiterChangeWatchIO(client, 5_000).watch(() => {}, () => {});
-    expect((seen.watch as { pollingInterval: number }).pollingInterval).toBe(5_000);
+  it('blockNumber настоящий, а не выдумка', async () => {
+    const { client } = fakePublicClient();
     expect(await arbiterChangeWatchIO(client).blockNumber()).toBe(BigInt(44_700_000));
+  });
+
+  it('наши три рода ЕДУТ по общему проводу — иначе следили бы за пустотой', () => {
+    // ⚠️ ШОВ, КОТОРОГО РАНЬШЕ НЕ БЫЛО. Свой фильтр сам вёз то, что просил;
+    // подписчик чужого фильтра везёт только то, что положили в чужой набор.
+    // Выпади род из `WIRE_EVENT_NAMES` — слежение молча перестало бы его видеть,
+    // и ни один другой замок этого бы не заметил.
+    const onWire = new Set<string>(WIRE_EVENT_NAMES as readonly string[]);
+    const lost = ARBITER_CHANGE_EVENT_NAMES.filter((n) => !onWire.has(n));
+    expect(lost, 'род слежения не едет по общему проводу — повод не придёт никогда').toEqual([]);
+  });
+});
+
+// ═══ догон: чужой, но он есть ════════════════════════════════════════════
+
+describe('пропущенное за время скрытой вкладки ДОБИРАЕТСЯ — общим догоном', () => {
+  it('событие случилось, пока нас не было, — узнали после возврата', async () => {
+    // ⚠️ ЗДЕСЬ ВОСПРОИЗВЕДЕНА БОЕВАЯ ТОПОЛОГИЯ, а не «обратное свойство с
+    // минусом». Общий фильтр (в бою — `useNotifications`) идёт С КУРСОРОМ и
+    // раздаёт пачки в раздатчик; слежение на раздатчик подписано. Сцена: лог
+    // случился, пока слежение не слушало, и приехал ДОГОНОМ общего фильтра.
+    const missed = keySet(ARB_A);
+
+    const onChange = vi.fn();
+    const mineDoc = fakeDoc('visible');
+    const stopMine = watchDisputeArbiter({
+      io: arbiterChangeWatchIO({
+        async getBlockNumber() { return BigInt(200); },
+        async getLogs() { return []; },
+      } as unknown as PublicClient),
+      doc: mineDoc.doc, agreement: DEAL, presentedTo: () => ARB_A,
+      onChange, hideGraceMs: 0,
+    });
+
+    // Пока общий фильтр не догнал — мы ничего не знаем.
+    expect(onChange).not.toHaveBeenCalled();
+
+    // Общий фильтр: курсор отстал на сто блоков, в пропуске лежит наш лог.
+    const sharedDoc = fakeDoc('visible');
+    let cursorAt: bigint | null = BigInt(100);
+    const stopShared = runChainWatch({
+      io: {
+        watch: () => () => {},
+        blockNumber: async () => BigInt(200),
+        getLogs: async () => [missed],
+      },
+      cursor: { read: () => cursorAt, write: (b) => { cursorAt = b; } },
+      doc: sharedDoc.doc,
+      onLogs: (logs) => { publishChainLogs(logs); },
+      hideGraceMs: 0,
+    });
+
+    // Догон асинхронный: даём ему доехать.
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(onChange, 'догон общего фильтра до слежения не доехал').toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ reason: 'key_changed', arbiter: ARB_A });
+
+    stopShared();
+    stopMine();
+  });
+
+  it('пока слежение снято, пачки до него не доходят', () => {
+    // Обратная половина той же сцены: подписка живёт ровно между взводом и
+    // снятием, а гейт видимости снимает её на скрытой вкладке.
+    const onChange = vi.fn();
+    const doc = fakeDoc('visible');
+    const stop = watchDisputeArbiter({
+      io: arbiterChangeWatchIO({} as unknown as PublicClient),
+      doc: doc.doc, agreement: DEAL, presentedTo: () => ARB_A,
+      onChange, hideGraceMs: 0,
+    });
+    doc.set('hidden');
+    publishChainLogs([keySet(ARB_A)]);
+    expect(onChange, 'скрытая вкладка всё равно получила пачку').not.toHaveBeenCalled();
+
+    doc.set('visible');
+    publishChainLogs([keySet(ARB_A)]);
+    expect(onChange, 'после возврата пачки не доходят').toHaveBeenCalledTimes(1);
+    stop();
   });
 });
