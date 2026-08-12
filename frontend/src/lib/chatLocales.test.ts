@@ -475,15 +475,22 @@ describe('адрес контракта не вписан в переводы р
     expect(text, `${locale}: нет подстановки {address}`).toContain('{address}');
   });
 
-  it('ни один текст справки не называет адрес руками', () => {
+  // ⚠️ ХОДИМ ПО КАТАЛОГУ, А НЕ ПО СПИСКУ `LOCALES`. Список — это то, что грузит
+  // приложение; в каталоге переводов лежит БОЛЬШЕ файлов. Замер 12 августа
+  // 2026: `zh.json` — сирота, в приложение не подключён, а мёртвый адрес
+  // `0xF00CC718…` пролежал в нём ещё пять дней после того, как его убрали из
+  // четырнадцати подключённых, — потому что оба замка выше ходили по списку.
+  // Публикуется каталог целиком, значит и сторожить надо каталог.
+  it('ни один текст справки не называет адрес руками — во всех файлах каталога', () => {
     const guilty: string[] = [];
-    for (const locale of LOCALES) {
-      const dict = JSON.parse(
-        fs.readFileSync(path.join(MESSAGES_DIR, `${locale}.json`), 'utf8')
-      );
+    const files = fs.readdirSync(MESSAGES_DIR).filter((f) => f.endsWith('.json'));
+    expect(files.length, 'файлы переводов не найдены — замок остался бы зелёным ни на чём')
+      .toBeGreaterThanOrEqual(LOCALES.length);
+    for (const file of files) {
+      const dict = JSON.parse(fs.readFileSync(path.join(MESSAGES_DIR, file), 'utf8'));
       for (const [key, value] of Object.entries(dict?.faq ?? {})) {
         if (typeof value === 'string' && HEX_ADDRESS.test(value)) {
-          guilty.push(`${locale}:faq.${key}`);
+          guilty.push(`${file}:faq.${key}`);
         }
       }
     }

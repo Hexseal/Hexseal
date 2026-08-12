@@ -69,7 +69,7 @@ export default function FAQPage() {
         { q: t("faq.q_no_activate"), a: t("faq.a_no_activate", { days: ACTIVATION_WINDOW_DAYS }) },
         { q: t("faq.q_deadline"),    a: t("faq.a_deadline") },
         { q: t("faq.q_cancel"),      a: t("faq.a_cancel", { days: ACTIVATION_WINDOW_DAYS }) },
-        { q: t("faq.q_autoapprove"), a: t("faq.a_autoapprove") },
+        { q: t("faq.q_autoapprove"), a: t("faq.a_autoapprove", { days: AUTO_APPROVE_WINDOW_DAYS }) },
       ],
     },
     {

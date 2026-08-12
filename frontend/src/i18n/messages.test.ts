@@ -203,6 +203,11 @@ const DEADLINE_COPY: DeadlineCopy[] = [
   { key: 'faq.a_no_activate', window: ACTIVATION_WINDOW, scanStaleDigits: true },
   { key: 'faq.a_cancel', window: ACTIVATION_WINDOW, scanStaleDigits: true },
   { key: 'faq.a_how_deal', window: AUTO_APPROVE_WINDOW, scanStaleDigits: false },
+  // Добавлено 12 августа 2026. Ключа здесь не было — и именно в нём срок был
+  // написан числом («5 days») спустя год после того, как AUTO_APPROVE_WINDOW
+  // стала двухдневной: страница звала его вообще без подстановки
+  // (`faq/page.tsx`), так что ловить расхождение было нечем.
+  { key: 'faq.a_autoapprove', window: AUTO_APPROVE_WINDOW, scanStaleDigits: true },
   { key: 'arbiter.my_cases_desc', window: DISPUTE_WINDOW, scanStaleDigits: true },
 ];
 
