@@ -22,8 +22,9 @@ import {
 // а не из логов, и разводкой не проходит.
 import { classifySettledRefund, refundNotifCopy } from "@/lib/settledRefund";
 import { refreshFromLogs } from "@/lib/subgraphSync";
-import { routeNotifLogs, type Viewer } from "@/lib/notifRouter";
-import { NOTIF_EVENTS, NOTIF_POLL_MS } from "@/lib/notifEvents";
+import { routeNotifLogs, type NotifDraft, type Viewer } from "@/lib/notifRouter";
+import { WIRE_EVENTS, NOTIF_POLL_MS } from "@/lib/notifEvents";
+import { publishChainLogs } from "@/lib/chainEventBus";
 import {
   runChainWatch,
   type ChainWatchCursor,
@@ -32,6 +33,58 @@ import {
 import type { Abi } from "viem";
 
 const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+
+/** Всё, что обработчику пачки нужно снаружи. Хук собирает это из своих ссылок. */
+export interface ChainLogsDeps {
+  /** Подключённый кошелёк; `undefined` — не подключён. */
+  me: string | undefined;
+  isArbiter: boolean;
+  deals: Viewer["deals"];
+  jobIds: Viewer["jobIds"];
+  serviceIds: Viewer["serviceIds"];
+  classifyRefund: Parameters<typeof routeNotifLogs>[2]["classifyRefund"];
+  push: (notif: NotifDraft) => void;
+  refresh: typeof refreshFromLogs;
+}
+
+/**
+ * ЧТО ДЕЛАТЬ С ПАЧКОЙ ЛОГОВ — вынесено из хука НАРОЧНО, ради замера.
+ *
+ * ⚠️ ЗАЧЕМ ОТДЕЛЬНОЙ ФУНКЦИЕЙ. Внутри `useCallback` эту работу нельзя позвать
+ * из теста: окружения отрисовки в проекте нет (`environment: 'node'`, ни jsdom,
+ * ни testing-library), а значит единственным сторожем осталась бы сверка ТЕКСТА
+ * исходника. Текстовый замок здесь был бы выбором, а не необходимостью, и он
+ * пропускает целый класс порчи: `if (флаг) publishChainLogs(logs)` или
+ * `publishChainLogs([])` оставили бы его зелёным, а слежение — слепым.
+ * Вынесенную функцию тест зовёт напрямую и меряет РАБОТУ.
+ *
+ * ⚠️ РАЗДАЧА ПЕРВЫМ ДЕЛОМ И ДО ВСЯКИХ УСЛОВИЙ. Фильтр на диамонде в приложении
+ * один, и вторым его читателем идёт слежение за сменой арбитра
+ * (`lib/disputeArbiter.ts`). Условия у читателей РАЗНЫЕ: колокольчику без
+ * подключённого кошелька уведомлять некого, а слежению пачка нужна всё равно.
+ * Поставь раздачу ниже проверки кошелька — и читатель молча остался бы без неё
+ * в чужом случае. Своих запросов к цепи раздача не делает ни одного.
+ */
+export async function handleChainLogsImpl(
+  logs: unknown[],
+  deps: ChainLogsDeps,
+): Promise<void> {
+  publishChainLogs(logs);
+
+  if (!deps.me) return;
+  const viewer: Viewer = {
+    address: deps.me,
+    isArbiter: deps.isArbiter,
+    deals: deps.deals,
+    jobIds: deps.jobIds,
+    serviceIds: deps.serviceIds,
+  };
+  const routed = await routeNotifLogs(logs, viewer, { classifyRefund: deps.classifyRefund });
+  for (const notif of routed.notifs) deps.push(notif);
+  for (const r of routed.refreshes) {
+    if (r.logs.length > 0) deps.refresh(r.logs, r.topics);
+  }
+}
 
 type DealRole = { role: "client" | "executor"; amount: bigint };
 
@@ -46,7 +99,8 @@ type DealRole = { role: "client" | "executor"; amount: bigint };
 // `useWatchContractEvent` — тринадцать фильтров на узле и тринадцать
 // `eth_getFilterChanges` за такт. Замер с живого телефона: 135 запросов в минуту
 // на ПРОСТАИВАЮЩЕЙ странице, 8 100 в час с одной вкладки (`docs/OPEN-ITEMS.md`,
-// пункт 38). Стало: один фильтр по набору из девяти родов событий
+// пункт 38). Стало: один фильтр по набору из одиннадцати родов событий
+// (девять уведомлений плюс два «только на провод», см. WIRE_ONLY_EVENT_NAMES)
 // (`lib/notifEvents`), такт `NOTIF_POLL_MS`, и опрос идёт только пока на страницу
 // смотрят (`lib/chainWatchGate`); пропущенное за время отсутствия добирается
 // одной выборкой при возврате.
@@ -302,27 +356,22 @@ export function useNotifications() {
   const addressRef = useRef(address);
   useEffect(() => { addressRef.current = address; }, [address]);
 
-  const handleChainLogs = useCallback(async (logs: unknown[]) => {
-    const me = addressRef.current;
-    if (!me) return;
-    const viewer: Viewer = {
-      address: me,
+  const handleChainLogs = useCallback(
+    (logs: unknown[]) => handleChainLogsImpl(logs, {
+      me: addressRef.current,
       isArbiter: isArbiterRef.current,
       // Карты передаются по ссылке намеренно: разводка пополняет их по ходу
       // пачки, и это обязательное свойство при догоне (см. lib/notifRouter).
       deals: myDeals.current,
       jobIds: myJobIds.current,
       serviceIds: myServiceIds.current,
-    };
-    const routed = await routeNotifLogs(logs, viewer, {
       classifyRefund: (agreement, txHash) =>
         classifySettledRefund(publicClient, agreement, txHash),
-    });
-    for (const notif of routed.notifs) pushRef.current(notif);
-    for (const r of routed.refreshes) {
-      if (r.logs.length > 0) refreshFromLogs(r.logs, r.topics);
-    }
-  }, [publicClient]);
+      push: (n) => pushRef.current(n),
+      refresh: refreshFromLogs,
+    }),
+    [publicClient],
+  );
 
   useEffect(() => {
     if (!address || !publicClient) return;
@@ -330,7 +379,7 @@ export function useNotifications() {
     // Набор событий пуст — значит ABI разъехались с разводкой. Взводить фильтр,
     // который ничего не ловит, бессмысленно; замер на это стоит в
     // `lib/notifEvents.test.ts`.
-    if (NOTIF_EVENTS.length === 0) return;
+    if (WIRE_EVENTS.length === 0) return;
 
     // Курсор догона — на адрес. Общий на все вкладки (localStorage), так что
     // вторая вкладка не платит за уже добранный пропуск повторно.
@@ -352,7 +401,7 @@ export function useNotifications() {
       watch: (onLogs, onError) =>
         publicClient.watchEvent({
           address: CONTRACTS.diamond,
-          events: NOTIF_EVENTS,
+          events: WIRE_EVENTS,
           pollingInterval: NOTIF_POLL_MS,
           onLogs: (logs) => onLogs(logs as unknown[]),
           onError,
@@ -361,7 +410,7 @@ export function useNotifications() {
       getLogs: (fromBlock, toBlock) =>
         publicClient.getLogs({
           address: CONTRACTS.diamond,
-          events: NOTIF_EVENTS,
+          events: WIRE_EVENTS,
           fromBlock,
           toBlock,
         }) as Promise<unknown[]>,

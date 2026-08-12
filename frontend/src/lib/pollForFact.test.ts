@@ -30,7 +30,7 @@ describe('pollForFact', () => {
     const r = reader([1]);
     const s = fakeSleep();
     const res = await pollForFact(r.read, isTrue, { sleep: s.sleep });
-    expect(res).toEqual({ value: 1, satisfied: true, reads: 1 });
+    expect(res).toEqual({ value: 1, satisfied: true, reads: 1, okReads: 1 });
     expect(s.slept).toEqual([]);
   });
 
@@ -90,6 +90,32 @@ describe('pollForFact', () => {
     expect(res.reads).toBe(1);
     expect(res.satisfied).toBe(false);
     expect(s.slept).toEqual([]);
+  });
+
+  /**
+   * Итоговое ревью ветки 4в-2, правка 4. `reads` считает ПОПЫТКИ, включая
+   * упавшие, и по нему нельзя отличить «узел отвечал восемь раз и восемь раз
+   * сказал нет» от «узел ответил однажды и замолчал». Разница в цене: первое
+   * — вердикт, второе — неизвестность, и вызывающий (`lib/relayTarget.ts`)
+   * обязан отвечать на них разными кодами (403 против 503).
+   */
+  it('okReads: все повторы упали — разобралось ровно одно чтение, первое', async () => {
+    const r = reader([0, null]);
+    const s = fakeSleep();
+    const res = await pollForFact(r.read, isTrue, { sleep: s.sleep, attempts: 4 });
+    expect(res.reads).toBe(4);      // попыток четыре
+    expect(res.okReads).toBe(1);    // разобралась одна
+    expect(res.satisfied).toBe(false);
+    expect(res.value).toBe(0);
+  });
+
+  it('okReads: моргнула одна проба из трёх — разобралось две', async () => {
+    const r = reader([0, null, 0]);
+    const s = fakeSleep();
+    const res = await pollForFact(r.read, isTrue, { sleep: s.sleep, attempts: 3 });
+    expect(res.reads).toBe(3);
+    expect(res.okReads).toBe(2);
+    expect(res.satisfied).toBe(false);
   });
 
   it('условие проверяется на каждом чтении, включая первое', async () => {

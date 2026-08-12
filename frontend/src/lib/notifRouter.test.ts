@@ -15,7 +15,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { routeNotifLogs, makeViewer, type Viewer } from './notifRouter';
+import {
+  routeNotifLogs, makeViewer, WIRE_ONLY_EVENT_NAMES, NOTIF_EVENT_NAMES, type Viewer,
+} from './notifRouter';
 
 // ⚠️ В адресах ОБЯЗАТЕЛЬНЫ буквы. С `0x1111…` замер на регистр вырождался в
 // сравнение строки с собой (у неё нет букв — регистр менять нечему) и оставался
@@ -298,5 +300,68 @@ describe('перечитывание данных — по темам, толь�
   it('чужой JobApplied не тянет ничего', async () => {
     const r = await route([log('JobApplied', { jobId: BigInt(99), executor: OTHER })]);
     expect(r.refreshes.every((x) => x.logs.length === 0)).toBe(true);
+  });
+});
+
+/**
+ * РОДА «ТОЛЬКО НА ПРОВОД»: приезжают, но человеку не показываются.
+ *
+ * ЗАЧЕМ ЭТИ ЗАМКИ. Три рода слежения за сменой арбитра едут по ОБЩЕМУ фильтру
+ * уведомлений — иначе понадобился бы третий цикл опроса, а бюджет опроса цепи
+ * выбран (`hooks/chainPollBudget.test.ts`). Плата за это — чужие логи в пачке
+ * разводки, и у них ровно два способа навредить:
+ *
+ *  1. стать уведомлением — человеку прилетит колокольчик «арбитр повернул ключ»,
+ *     чего мы не обещали и обещать не хотим;
+ *  2. попасть в счётчик `unknown` как мусор — тогда «приехало нарочно» и
+ *     «приехала дрянь» станут неотличимы, и настоящий мусор перестанет быть виден.
+ *
+ * Что исчезнет из поведения, если снять эти замки: ничто не помешает добавить
+ * роду ветку в разводку (и начать слать пуши о внутренней кухне арбитража) или
+ * убрать его из `WIRE_ONLY_EVENT_NAMES` (и утопить счётчик мусора).
+ */
+describe('рода «только на провод» — приезжают, но уведомлениями не становятся', () => {
+  const ARB = '0xArB1000000000000000000000000000000000001'.replace('r', 'a');
+
+  it('DisputeReleased не превращается в уведомление', async () => {
+    const r = await route([log('DisputeReleased', { agreement: DEAL, prevArbiter: ME })]);
+    expect(r.notifs, 'освобождение спора уехало человеку колокольчиком').toEqual([]);
+  });
+
+  it('ArbiterChatKeySet не превращается в уведомление — даже мой собственный', async () => {
+    // ⚠️ Сцена нарочно «мой»: если бы разводка когда-нибудь получила ветку по
+    // этому роду, сработала бы она именно на своём адресе.
+    const r = await route([log('ArbiterChatKeySet', { arbiter: ME, boxKey: '0x01', signKey: '0x02' })]);
+    expect(r.notifs, 'смена ключа арбитра уехала человеку колокольчиком').toEqual([]);
+  });
+
+  it('рода с провода НЕ считаются мусором', async () => {
+    // Счётчик `unknown` означает «мусор либо новое событие». Нарочно везомый род
+    // не то и не другое.
+    const r = await route([
+      log('DisputeReleased', { agreement: DEAL, prevArbiter: ARB }),
+      log('ArbiterChatKeySet', { arbiter: ARB, boxKey: '0x01', signKey: '0x02' }),
+    ]);
+    expect(r.unknown, 'нарочно везомый род посчитан мусором').toBe(0);
+    expect(r.notifs).toEqual([]);
+  });
+
+  it('настоящий мусор по-прежнему считается — счётчик не оглох', async () => {
+    // ⚠️ Обратная сторона предыдущего: если бы «не считать мусором» сделали
+    // огульно, счётчик замолчал бы на всём подряд.
+    const r = await route([log('ЧтоТоНеизвестное', { agreement: DEAL }), null, 42]);
+    expect(r.unknown).toBe(3);
+  });
+
+  it('рода с провода не тянут перечитывание — они не про экран', async () => {
+    const r = await route([log('ArbiterChatKeySet', { arbiter: ME, boxKey: '0x01', signKey: '0x02' })]);
+    expect(r.refreshes.every((x) => x.logs.length === 0)).toBe(true);
+  });
+
+  it('списки объявлены врозь и не пересекаются', () => {
+    // Замок на имя: род, попавший в оба списка, был бы и уведомлением, и
+    // «только проводом» одновременно — то есть имя врало бы.
+    const bell = new Set<string>(NOTIF_EVENT_NAMES);
+    expect(WIRE_ONLY_EVENT_NAMES.filter((n) => bell.has(n))).toEqual([]);
   });
 });

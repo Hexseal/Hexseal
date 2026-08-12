@@ -179,7 +179,7 @@ async function build(selected: { seq: number; sender: `0x${string}` }[], over: P
     arbiterBoxKey: toArbiterBoxKeyBytes(arbiter.keypair.publicKey),
     peerBoxKey: toPeerBoxKeyBytes(bob.keypair.publicKey),
     selected, session: alice,
-    ownAttestation: aliceAtt, peerAttestation: bobAtt,
+    ownAttestation: aliceAtt, otherAttestations: [bobAtt],
     now: () => 1_754_500_000_000,
     ...over,
   });
@@ -294,7 +294,7 @@ describe('4в-5: контейнер предъявления', () => {
     // чего попало — тогда этот вызов отказывает `nothing_selected`, то есть врёт
     // про причину: выбор был.
     await conversation(['чужое-0']);
-    const res = await build([{ seq: 2, sender: ALICE }], { peerAttestation: undefined });
+    const res = await build([{ seq: 2, sender: ALICE }], { otherAttestations: [] });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.container.attestations).toEqual([aliceAtt]);
@@ -787,7 +787,7 @@ describe('4в-5: отказы названы, а не проглочены', () 
       .rejects.toThrow(TypeError);
   }, 60_000);
 
-  it('нечего предъявлять, не тот сеанс, заверение не о том адресе', async () => {
+  it('нечего предъявлять, не тот сеанс, заверение не о том адресе — три РАЗНЫХ имени', async () => {
     // Что красит: сборка контейнера, подписанного ключом, который заверением НЕ
     // накрыт (арбитр обязан будет пометить всё непроверенным — §15.2), и сборка
     // пустого предъявления, которое выглядит как «сдано».
@@ -798,11 +798,14 @@ describe('4в-5: отказы названы, а не проглочены', () 
     // то, что хотели: сеанс на руках чужой предъявителю.
     expect(await build([{ seq: 0, sender: BOB }], { presenter: BOB, peer: L(ALICE) }))
       .toEqual({ ok: false, reason: 'no_session' });
+    // ⚠️ НЕ `no_session` (пункт 49 открытых находок): сеанс в обоих случаях
+    // безупречен, беда в заверении, и лечение у неё другое — «заверить ключи», а
+    // не «перезайти в чат».
     expect(await build([{ seq: 0, sender: BOB }], { ownAttestation: bobAtt }))
-      .toEqual({ ok: false, reason: 'no_session' });
+      .toEqual({ ok: false, reason: 'attestation_missing' });
     expect(await build([{ seq: 0, sender: BOB }], {
       ownAttestation: { ...aliceAtt, signature: sig('ab') },
-    })).toEqual({ ok: false, reason: 'no_session' });
+    })).toEqual({ ok: false, reason: 'attestation_missing' });
   }, 60_000);
 });
 

@@ -114,7 +114,12 @@ let activeStand = false;
  * `stop()` предыдущего — нельзя: см. предупреждение в докстринге файла.
  * Нарушение бросает громко, а не смешивает склады молча.
  */
-export async function startChatStand(): Promise<ChatStand> {
+export interface ChatStandOptions {
+  /** Адрес JSON-RPC узла для релеера. Умолчание — недостижимый адрес. */
+  rpcUrl?: string;
+}
+
+export async function startChatStand(opts: ChatStandOptions = {}): Promise<ChatStand> {
   if (activeStand) {
     throw new Error(
       'chatStand: another stand from this module is already running in this process. ' +
@@ -134,14 +139,14 @@ export async function startChatStand(): Promise<ChatStand> {
   // после успешного return — владение флагом переходит возвращённому
   // stop().
   try {
-    return await createStand();
+    return await createStand(opts);
   } catch (e) {
     activeStand = false;
     throw e;
   }
 }
 
-async function createStand(): Promise<ChatStand> {
+async function createStand(opts: ChatStandOptions): Promise<ChatStand> {
   standCounter += 1;
   const storageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexseal-chat-stand-'));
 
@@ -168,7 +173,12 @@ async function createStand(): Promise<ChatStand> {
   // staticcall), но защита в глубину: даже случайно задетый путь не
   // дозвонится до настоящей сети, а не тихо использует боевой RPC_URL из
   // .env.relayer.
-  process.env.RPC_URL = 'http://127.0.0.1:1';
+  // ⚠️ Умолчание НЕ МЕНЯЕТСЯ: гарантированно недостижимый адрес, чтобы
+  // случайно задетый путь не дозвонился до настоящей сети. Параметр появился
+  // ради маршрутов ящика спора (4в-2, Задача 1): они читают цепь, и на
+  // недостижимом узле отвечают отказом ВСЕГДА — то есть замок ящика на таком
+  // стенде проверить нечем.
+  process.env.RPC_URL = opts.rpcUrl ?? 'http://127.0.0.1:1';
 
   // Динамический import ПОСЛЕ всех присваиваний выше — см. докстринг файла.
   // `vi.resetModules()` — только если тестовый раннер (vitest) сейчас

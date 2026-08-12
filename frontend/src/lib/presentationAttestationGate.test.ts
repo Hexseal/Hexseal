@@ -31,7 +31,11 @@ vi.mock('./chatKeyAttestation', async (importOriginal) => {
     verifyChatKeyAttestation: async (_att: unknown, publicClient?: unknown) => {
       globalThis.__attSawClient = [...(globalThis.__attSawClient ?? []), publicClient !== undefined];
       if (globalThis.__attVerdict) return globalThis.__attVerdict;
-      return publicClient === undefined ? 'malformed' : 'ok';
+      // ⚠️ `wrong_address`, а не `malformed`: по коду Задачи 1
+      // (`chatKeyAttestation.ts:441-455`) владелец Safe с 65-байтовой подписью без
+      // клиента цепи получает именно его. Прежнее `malformed` было удобной
+      // выдумкой и уводило имя отказа не туда.
+      return publicClient === undefined ? 'wrong_address' : 'ok';
     },
   };
 });
@@ -136,7 +140,9 @@ async function build(over: Partial<Parameters<typeof buildPresentation>[0]> = {}
 describe('4в-5: заверение предъявителя (§15.2, исправление 5)', () => {
   it('ЗАМЕР: клиент цепи доходит до проверки — иначе владелец Safe не предъявит ничего', async () => {
     // Что красит: потерянный второй аргумент. Тогда `sawClient` — `false`, вердикт
-    // `malformed`, и сборщик отказывает `no_session` тому, у кого всё в порядке.
+    // `wrong_address`, и сборщик отказывает `attestation_unproven` — «подтвердить
+    // не смогли», что для владельца Safe и есть правда. Прежде здесь стояло
+    // `no_session`, и человек лечил сеанс вместо сети (пункт 49).
     await oneFrameFromBob();
 
     const withChain = await build({ publicClient: chainClient() });
@@ -151,7 +157,7 @@ describe('4в-5: заверение предъявителя (§15.2, испра
 
     // Без клиента цепи — честный отказ, а не молчаливо собранный контейнер.
     globalThis.__attSawClient = [];
-    expect(await build()).toEqual({ ok: false, reason: 'no_session' });
+    expect(await build()).toEqual({ ok: false, reason: 'attestation_unproven' });
     expect(globalThis.__attSawClient).toEqual([false]);
   }, 60_000);
 
@@ -161,8 +167,12 @@ describe('4в-5: заверение предъявителя (§15.2, испра
     // Что красит: «принимать всё, кроме bad_signature» — тогда наружу уедет
     // предъявление, подписанное ключом, не связанным с адресом ничем (§15.2), а
     // человек увидит «сдано».
+    // ⚠️ И имя у этого отказа СВОЁ (пункт 49): счётный кошелёк проверить нечем, и
+    // это НЕ «нет сеанса чата». Лечение — подключить сеть / развернуть кошелёк;
+    // переподпись не поможет, а прежнее `no_session` гнало человека именно туда.
     await oneFrameFromBob();
     globalThis.__attVerdict = 'absent';
-    expect(await build({ publicClient: chainClient() })).toEqual({ ok: false, reason: 'no_session' });
+    expect(await build({ publicClient: chainClient() }))
+      .toEqual({ ok: false, reason: 'attestation_unproven' });
   }, 60_000);
 });

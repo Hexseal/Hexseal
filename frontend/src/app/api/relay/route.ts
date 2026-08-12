@@ -15,6 +15,8 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { appChain, appRpcUrl } from '@/config/chain';
 import { CONTRACTS } from '@/config/contracts';
+import { relayTargetVerdict, REGISTRY_RECORD_ABI } from '@/lib/relayTarget';
+import { requestSourceIp, checkRpcRateLimit, type RateLimitStore } from '@/lib/rpcProxy';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -176,6 +178,42 @@ function checkRateLimit(address: string): boolean {
   return true;
 }
 
+// ─── Ревью круг 2, блокер (пункт 3 из трёх) — ЕДИНСТВЕННОЕ из трёх средств,
+// оставшееся после круга 3: ограничитель по IP ──────────────────────────────
+//
+// checkRateLimit(from) выше ключуется СТРОКОЙ ИЗ ТЕЛА ЗАПРОСА — `from` не
+// проверяется на формат адреса (в отличие от `to`, см. isAddress ниже), а
+// подпись проверяется ЗНАЧИТЕЛЬНО ПОЗЖЕ. Значит нападающему не нужны ни
+// кошелёк, ни подпись, ни даже корректный адрес — достаточно менять строку
+// `from` на каждый запрос, и лимит по кошельку не ограничивает НИЧЕГО.
+// Опрос из круга 1 (RELAY_TARGET_POLL, lib/relayTarget.ts, бюджет 9 попыток
+// — круг 2 временно сжимал его до 4 ссылкой на цифру из тестовой сцены, не
+// на замер, отменено на круге 3) впервые сделал это дорогим: до 9 чтений
+// реестра на КАЖДЫЙ отказ. Это тот самый ключ, который выбирает сам
+// нападающий — недопустимо, закрывается здесь.
+//
+// Переиспользует lib/rpcProxy.ts (requestSourceIp — разбор адреса за
+// Cloudflare: CF-Connecting-IP, последний хоп X-Forwarded-For;
+// checkRpcRateLimit — то же окно-счётчик, что у /api/rpc), а не второй
+// самописный ограничитель. Свой ПОТОЛОК — не RPC_RATE_MAX=120: та цифра
+// калибрована под ЧТЕНИЯ (/api/rpc опрашивается фоном десятки раз в минуту
+// НА ВКЛАДКУ, см. её докстринг). Этот маршрут — запись ДЕЙСТВИЯ, редкая по
+// своей природе; потолок — тот же порядок, что у checkRateLimit(from) по
+// кошельку (10/мин), умноженный на разумное число одновременных легитимных
+// отправителей за одним IP (офис/NAT/семья, тот же расчёт, что и у
+// RPC_RATE_MAX, но с базой поменьше — здесь не фоновый опрос, а нажатие
+// кнопки человеком). При этом потолке и бюджете опроса (30 × 9) — 270
+// чтений реестра в минуту с одного источника: круг 2 предлагал сжать бюджет
+// опроса ИМЕННО чтобы удешевить этот произведение, но круг 3 признал этот
+// довод несостоятельным — 270/мин не то число, которое в этом проекте
+// кого-то пугало (для сравнения — 150 000/сутки в соседней работе), и
+// сжатие само по себе опиралось на выдуманное число, а не на замер.
+const RELAY_IP_RATE_MAX = 30;
+const _ipRateStore: RateLimitStore = new Map();
+function checkIpRateLimit(ip: string): boolean {
+  return checkRpcRateLimit(_ipRateStore, ip, RELAY_IP_RATE_MAX);
+}
+
 // ─── Request type ────────────────────────────────────────────────────────────
 
 type ForwardRequest = {
@@ -202,6 +240,17 @@ type ForwardRequest = {
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Ревью круг 2, блокер (пункт 3): ограничитель по IP — ПЕРВЫМ ────────────
+    // До разбора тела: неважно, что нападающий пришлёт (пустое тело, мусор,
+    // меняющийся `from`) — сверх лимита IP не проходит дальше вовсе.
+    const sourceIp = requestSourceIp(req.headers);
+    if (!checkIpRateLimit(sourceIp)) {
+      return NextResponse.json(
+        { error: `Rate limit exceeded. Max ${RELAY_IP_RATE_MAX} requests per minute.` },
+        { status: 429, headers: { 'Retry-After': '60' } }
+      );
+    }
+
     // ── Parse body ──────────────────────────────────────────────────────────
     let body: Partial<ForwardRequest>;
     try {
@@ -298,6 +347,33 @@ export async function POST(req: NextRequest) {
     // Fire-and-forget, rate-limited to once per LOW_BALANCE_CHECK_INTERVAL_MS —
     // never awaited, so it adds no latency to this (or any) request.
     checkRelayerBalance(publicClient, account.address);
+
+    // ── Пункт 44: цель обязана быть НАШЕЙ ───────────────────────────────────
+    // Подпись доказывает «этот человек подписал этот запрос», а не «этот запрос
+    // про Hexseal». Разрешены только диамонд (сверка с константой, без цепи) и
+    // Agreement, известный реестру. Списка разрешённых функций нет намеренно —
+    // гибкость «фронт сам решает, что звать» несущая; ограничивается адрес.
+    //
+    // ⚠️ Стоит ДО withRelayerLock и ДО USDC.permit: permit уходит отдельной
+    // транзакцией с нашего кошелька ещё до форварда, и замок ниже него оставил
+    // бы дыру «цель чужая, а за permit мы заплатили».
+    //
+    // Близнец — relayer/app.js:relayTargetVerdict; договор о поведении —
+    // shared/relay-target-scenes.json, читается тестами обеих сторон.
+    const target = await relayTargetVerdict(to, DIAMOND, (agreement) =>
+      publicClient.readContract({
+        address: DIAMOND,
+        abi: REGISTRY_RECORD_ABI,
+        functionName: 'getRecord',
+        args: [agreement],
+      }),
+    );
+    if (!target.ok) {
+      return NextResponse.json(
+        { error: target.error, code: target.code },
+        { status: target.status },
+      );
+    }
 
     const walletClient = createWalletClient({
       account,

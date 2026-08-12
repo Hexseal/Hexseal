@@ -27,9 +27,11 @@ dotenv.config({ path: '.env.relayer' });
 // дешевле и надёжнее как сигнал для читателя, поэтому он такой.
 import {
   bagKeyFor, recordBag, markFetched, listBagsFor, listBagsBySender, listBagsInvolving, bagMetaOf, bagPathFor,
+  listDisputeBags,
   assertBagStoreReady, MAX_BAG_SIZE, cleanupBags,
   isBagStoreHealthy, bagStorePersistError,
-  adoptPairBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
+  adoptPairBags, adoptDealBags, dealDeadlineFromDispute, dealDeadlineFromCreation,
+  disputeBoxBagDeadline, listLiveBoxDeals,
   assertNotFromFuture,
 } from './bagStore.js';
 import { bagPassChallenge, issueBagPass, verifyBagPass, assertBagPassReady } from './bagPass.js';
@@ -156,6 +158,19 @@ const REGISTRY_MINI_ABI = [
   // Задача 5, этап 1 (усыновление при создании сделки) — тот же tuple, что
   // getDisputed() выше, RegistryStorage.AgreementRecord одна на оба статуса.
   'function getActive() view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt)[])',
+  // 4в-2, Задача 1 (ящик спора): точечная проверка «этот адрес — сторона
+  // ЭТОЙ сделки». Двух соседей выше для этого не хватает: getActive() и
+  // getDisputed() возвращают ВСЮ историю (RegistryFacet.sol:219-236 —
+  // массив allAgreements только растёт), то есть один вопрос про одну
+  // сделку стоил бы полного прохода по всем когда-либо созданным. Здесь
+  // такой вопрос задаётся на КАЖДЫЙ мешок.
+  //
+  // ⚠️ getRecord по незнакомому адресу НЕ ревертит — отдаёт нулевую
+  // структуру, и `status = 0` в enum РЕЕСТРА означает ACTIVE. Значит
+  // «сделки нет» и «сделка жива» по статусу неотличимы; признак
+  // существования — `record.agreement === agreement`, ровно так проверяет
+  // сам контракт (RegistryFacet.sol:104).
+  'function getRecord(address agreement) view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt))',
 ];
 
 // ─── Who is the arbiter of a dispute (and why NOT Agreement.arbiter) ──────────
@@ -198,7 +213,7 @@ const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
  * The address currently entitled to read this deal's dispute log, or null.
  * Reads the DIAMOND, never the agreement — see the block above.
  */
-async function disputeArbiterOf(agreement) {
+export async function disputeArbiterOf(agreement) {
   const registry = new ethers.Contract(DIAMOND_ADDR, ARBITER_REGISTRY_MINI_ABI, provider);
 
   const claimer = (await registry.getDisputeClaimer(agreement))?.toLowerCase();
@@ -354,12 +369,32 @@ function disputedPairIdsFromRecords(disputed) {
 // не запомнит ошибку как будто это было валидное значение (см. "мелочи",
 // отчёт Задачи 5 — "ревертнувший вызов не отравляет кэш", проверено этим же
 // порядком операций: await ДО set(), не после).
+// ⚠️ ИТОГОВОЕ РЕВЬЮ 4в-2, ПРАВКА 7: ПРОВЕРКА СТОИТ ПЕРЕД cache.set(), А НЕ
+// ПОСЛЕ. Комментарий выше обещает «ревертнувший вызов не отравляет кэш» — и
+// это правда только про БРОСОК. Ответ, который не бросил, но не разбирается
+// как число (сменили ABI, прокси отдал заглушку, клон вернул пустоту), давал
+// `Number(...) * 1000` === NaN — и NaN ложился в кэш НАВСЕГДА: Map живёт до
+// перезапуска процесса, промаха по этому ключу больше не будет никогда.
+// Дальше `disputeBoxBagDeadline(now, NaN)` бросал на каждом мешке, маршрут
+// отвечал 503 с советом «попробуйте через пять секунд», и совет не мог
+// сработать ни разу — узел давно здоров, а мусор лежит у нас.
+//
+// Отрицательное значение проверяется тем же условием и по своей причине:
+// Number(-1n)*1000 — безупречный safe integer, «разбирается ли это как
+// число» его пропускает, а мешок получил бы срок жизни ПОЗАДИ «сейчас».
+//
+// Негодное значение НЕ запоминается и уходит броском: у вызывающего уже есть
+// ветка «узел не ответил» (503 + Retry-After), и это ровно та новость —
+// прочитать не удалось. Следующая попытка честно перечитает.
 function makeCachedConstantMsReader(methodName) {
   const cache = new Map(); // agreement (нижний регистр) → мс
   return async function (agr, agreementAddress) {
     const key = agreementAddress.toLowerCase();
     if (cache.has(key)) return cache.get(key);
     const ms = Number(await agr[methodName]()) * 1000;
+    if (!Number.isSafeInteger(ms) || ms < 0) {
+      throw new Error(`${methodName}() ответил тем, что не разбирается как срок: ${String(ms)}`);
+    }
     cache.set(key, ms);
     return ms;
   };
@@ -397,7 +432,12 @@ function logAdoptionResult(logPrefix, agreementAddress, kind, result) {
   if (!adopted) return;
   const paymentTag = funded ? 'paid — ceiling does not apply' : 'unpaid — 90d ceiling applies';
   const tail = kind === 'creation' ? `preliminary, ${paymentTag}` : paymentTag;
-  console.log(`${logPrefix}: extended ${adopted} bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress} to ${new Date(minEffectiveExpiry).toISOString()} (${tail})`);
+  // Задача 2 (4в-2): «for the pair of …» неправда для ящика спора — тот
+  // отобран по СДЕЛКЕ, не по паре клиент↔исполнитель.
+  const subject = kind === 'box'
+    ? `bags in the dispute box of agreement ${agreementAddress}`
+    : `bag(s) for the pair of ${kind === 'creation' ? 'active' : 'disputed'} agreement ${agreementAddress}`;
+  console.log(`${logPrefix}: extended ${adopted} ${subject} to ${new Date(minEffectiveExpiry).toISOString()} (${tail})`);
   if (cappedCount) {
     console.warn(
       `${logPrefix}: BAG_MAX_AGE_MS ceiling cut ${cappedCount} of ${adopted} bag(s) short for agreement ${agreementAddress} — ` +
@@ -505,11 +545,86 @@ async function adoptDisputedPairBags(disputed, nowMs = Date.now()) {
       const dealDeadline = dealDeadlineFromDispute(disputedAtMs, disputeWindowMs);
       const result = adoptPairBags(pairId, dealDeadline, nowMs, funded);
       logAdoptionResult('[bags] adoption', r.agreement, 'dispute', result);
+      // Задача 2 (4в-2): ящик спора — отдельный отбор, по СДЕЛКЕ. Ни одного
+      // лишнего вызова в цепь: disputeWindowMs и funded уже прочитаны выше,
+      // из того же getDetails(). Якорь — nowMs (эта ночь), а не disputedAt:
+      // пока цепь говорит DISPUTED, у мешка ящика всегда впереди полный хвост
+      // спора (см. disputeBoxBagDeadline в bagStore.js). Как только сделка
+      // ушла из getDisputed(), сюда мы больше не попадаем — мешок доживает
+      // последний хвост и уходит.
+      const boxResult = adoptDealBags(
+        String(r.agreement).toLowerCase(),
+        disputeBoxBagDeadline(nowMs, disputeWindowMs),
+        nowMs,
+        funded,
+      );
+      logAdoptionResult('[bags] adoption (box)', r.agreement, 'box', boxResult);
       // В-3: вложения — тем же сроком и в тот же миг, что и сообщения.
       const files = adoptPairFiles(pairId, dealDeadline, nowMs, funded);
       if (files) console.log(`[files] adoption: extended ${files} attachment(s) of ${r.agreement}`);
     } catch (e) {
       console.error(`[bags] adoption: failed for disputed agreement ${r.agreement}, skipping:`, e.message);
+    }
+  }
+}
+
+// Задача 2 (4в-2), ревью круг 1, находка 1 (Important). adoptDisputedPairBags()
+// выше отбирает по Registry.getDisputed() — а PUT /disputes/:agreement/bags
+// (disputeBoxFacts()) спрашивает статус НАПРЯМУЮ у Agreement.getDetails().
+// Это два разных источника, и расхождение — ШТАТНОЕ: Agreement._updateRegistry()
+// (Agreement.sol:1261-1266) обёрнут в try/catch и на отказе синхронизации
+// только эмитит RegistrySyncFailed, raiseDispute() (:695) при этом НЕ
+// ревертит. Значит «Agreement говорит DISPUTED, реестр молчит» — легальное
+// состояние контракта.
+//
+// В этом состоянии, БЕЗ этой функции: PUT принимает мешок (её замок смотрит
+// в Agreement), а adoptDisputedPairBags() выше НИКОГДА его не находит (её
+// отбор — по getDisputed()) — мешок ящика умирает через disputeBoxBagDeadline()
+// от МОМЕНТА ПОСЛЕДНЕЙ ЗАПИСИ, хотя спор физически идёт. Ровно та беда, ради
+// которой заведена вся Задача 2, только с другой причиной расхождения.
+//
+// Дёшево — на общем пути (устойчивое состояние: реестр обычно синхронен).
+// listLiveBoxDeals() (bagStore.js) — обход описи В ПАМЯТИ, ноль обращений в
+// цепь; known — уже прочитанный этим же прогоном disputed-массив реестра.
+// Только для РАЗНИЦЫ (в устойчивом состоянии — пустой набор) идёт прицельное
+// Agreement.getDetails() — по одному на РАСХОДЯЩИЙСЯ адрес, не по одному на
+// каждый мешок в описи.
+//
+// ⚠️ Не подменяет Registry — только продлевает срок мешка НАПРЯМУЮ по
+// источнику маршрута (то же Agreement), и громко предупреждает: реестр для
+// этой сделки устарел, а syncRegistry(agreement) (Agreement.sol:1273,
+// публична, любой может позвать) — штатный способ починить САМ реестр, не
+// эта функция. Починка реестра и продление мешка — независимы: продление не
+// ждёт первого.
+async function adoptStrandedBoxBags(disputed, nowMs = Date.now()) {
+  const known = new Set(disputed.map((r) => String(r.agreement).toLowerCase()));
+  const liveBoxDeals = listLiveBoxDeals(nowMs);
+  for (const deal of liveBoxDeals) {
+    if (known.has(deal)) continue;
+    try {
+      const agr = new ethers.Contract(deal, AGREEMENT_MINI_ABI, provider);
+      const details = await agr.getDetails();
+      // Agreement уже НЕ говорит DISPUTED — расхождение решилось само (спор
+      // действительно закрылся на обеих сторонах, реестр просто ещё не
+      // позвал sync); продлевать нечего, предупреждать не о чем — это не
+      // рассинхрон, а обычный мешок, доживающий прежний хвост.
+      if (Number(details.status_) !== AGREEMENT_STATUS_DISPUTED) continue;
+      const disputeWindowMs = await getDisputeWindowMs(agr, deal);
+      const fundedAtMs = Number(details.fundedAt_) * 1000;
+      if (fundedAtMs > 0) assertNotFromFuture('adoptStrandedBoxBags', 'fundedAtMs', fundedAtMs, nowMs);
+      const funded = fundedAtMs > 0;
+      const result = adoptDealBags(deal, disputeBoxBagDeadline(nowMs, disputeWindowMs), nowMs, funded);
+      logAdoptionResult('[bags] adoption (box, registry stale)', deal, 'box', result);
+      if (result.adopted) {
+        console.warn(
+          `[bags] adoption (box): agreement ${deal} is DISPUTED on Agreement.getDetails() but MISSING from ` +
+          `Registry.getDisputed() — the registry is likely out of sync (Agreement._updateRegistry() failed ` +
+          `silently, see RegistrySyncFailed). The box bag(s) were extended directly from Agreement, without ` +
+          `waiting for that. Anyone can call syncRegistry(${deal}) to fix the registry itself.`
+        );
+      }
+    } catch (e) {
+      console.error(`[bags] adoption (box, registry stale): failed for ${deal}, skipping:`, e.message);
     }
   }
 }
@@ -1187,6 +1302,20 @@ export async function runFileCleanup() {
     await adoptDisputedPairBags(disputedRecords);
   } catch (e) {
     console.error('[bags] adoption error:', e.stack || e.message);
+  }
+
+  // Задача 2 (4в-2), ревью круг 1, находка 1: только когда реестр реально
+  // ОТВЕТИЛ этой ночью (chainKnown) — `disputedRecords` тогда настоящий
+  // список, и «отсутствует в нём» значит «расходится», а не «узел молчал».
+  // При chainKnown=false пропускаем целиком: пришлось бы читать Agreement
+  // для КАЖДОГО живого мешка ящика без всякой пользы — К-1 уже откладывает
+  // снос этих же записей ниже, продлевать вслепую нечем.
+  if (chainKnown) {
+    try {
+      await adoptStrandedBoxBags(disputedRecords);
+    } catch (e) {
+      console.error('[bags] adoption (box, registry stale) error:', e.stack || e.message);
+    }
   }
 
   // Expired chat files — skip any still tagged to a currently-disputed pair,
@@ -1910,6 +2039,274 @@ app.get('/dispute-log/:dealId', async (req, res) => {
   }
 });
 
+// ─── Пункт 44: за чей контракт релеер платит газ ──────────────────────────────
+//
+// Подпись ForwardRequest доказывает «этот человек подписал этот запрос», а НЕ
+// «этот запрос про Hexseal». Пока `to` сверялся только с формой адреса, любой
+// желающий подписывал своим ключом вызов ЧУЖОГО контракта, и газ за него платили
+// мы: при потолке 10 запросов/мин и 7 млн газа на вызов это ~$3600 в сутки с
+// ОДНОГО адреса в мейннете (docs/OPEN-ITEMS.md, пункт 44).
+//
+// Разрешены ровно два рода цели:
+//   1. сам диамонд — сверка с константой, БЕЗ обращения к цепи. Через него идут
+//      все доски и весь арбитраж, то есть подавляющее большинство вызовов —
+//      и именно поэтому молчание узла для них не меняет ничего;
+//   2. наш Agreement — по записи реестра getRecord(addr) на диамонде.
+//
+// ⚠️ Признак существования сделки — АДРЕС в записи, а не статус.
+// RegistryStorage.AgreementStatus.ACTIVE == 0, значит нулевая запись
+// незнакомого адреса выглядит «активной». Проверка по статусу пускала бы кого
+// угодно; условие `client != 0` — подпорка на случай реестра, заполняющего
+// запись в два приёма (сегодняшний register() пишет всю структуру разом,
+// src/RegistryFacet.sol:142-150).
+//
+// Списка разрешённых ФУНКЦИЙ здесь нет и не будет — решение владельца: гибкость
+// «фронт сам решает, что звать» несущая, а список закрыл бы дыру лишь частично
+// (за чужой контракт можно платить любым разрешённым селектором). `data` не
+// разбирается вовсе.
+//
+// ⚠️ ВТОРАЯ ПОЛОВИНА ЭТОГО ЗАМКА ЖИВЁТ ВО ФРОНТЕ: frontend/src/lib/relayTarget.ts,
+// вызывается из frontend/src/app/api/relay/route.ts — и сегодня боевой путь
+// именно тот, а не этот (см. комментарий ниже). Общего кода у них быть не может:
+// разные рантаймы. Договор о ПОВЕДЕНИИ — shared/relay-target-scenes.json, его
+// читают тесты обеих сторон; разошлись — краснеет та сторона, что отстала.
+//
+// ⚠️ РЕВЬЮ КРУГ 1, НАХОДКА 4 — `getRecord` стал единой точкой отказа денежного
+// пути, и класс отказа шире, чем «diamondCut потерял селектор». Любой ревert
+// из RegistryFacet (рассинхрон раскладки хранилища, забытая миграция и т.п.)
+// даёт 503 chain_unavailable на КАЖДЫЙ агриментный вызов — прецедент в этом же
+// репозитории: getOpenJobs() ревертил Panic(0x22) после разъезда раскладки
+// хранилища JobBoard. Самолечения нет — isRelayDown (frontend/src/lib/relay.ts)
+// узнаёт «релеер лежит» по тексту ошибки, не по коду chain_unavailable, значит
+// фолбэка на кошелёк здесь не будет. Оставлено НАМЕРЕННО: учить isRelayDown
+// доверять chain_unavailable значило бы отдавать фолбэк любому отказу реестра,
+// включая сломанный сам замок (мутация 8 задачи 3) — молчаливый выход из
+// сломанного замка тише самой поломки. Вопрос — за Задачей 8 плана 4в-2.
+//
+// ⚠️ РЕВЬЮ КРУГ 1, НАХОДКА 1 — чтение сразу после записи по отставшей реплике.
+// Agreement разворачивается и регистрируется в реестре ОДНОЙ транзакцией
+// (FactoryFacet.acceptRequest/acceptApplicant/deployAndFund), и следом фронт
+// сразу шлёт гейслесс-вызов на свежий адрес. RPC за одним URL — пул реплик, и
+// чтение может попасть на узел, ещё не увидевший блок регистрации — getRecord
+// отдаёт нулевую запись, замок читает «не наш», честная сделка получает 403.
+// Здесь этот путь спит (см. выше), но твин на фронте — боевой, и договор о
+// ПОВЕДЕНИИ обязывает обе стороны отвечать на гонку одинаково: readOnce/
+// readsAsOurAgreement ниже опрашивают, не читают один раз и надеются — тот же
+// приём, что уже применён к RECEIPT_POLL этого файла и к lib/pollForFact.ts
+// на фронте.
+//
+// РЕВЬЮ КРУГ 2, БЛОКЕР -> КРУГ 3, ИСПРАВЛЕНО. Ограничитель на живом (Next)
+// пути ключевался по строке, которую выбирает нападающий (route.ts:from, без
+// проверки формата), а опрос из круга 1 впервые сделал бездействие дорогим.
+// Круг 2 предложил три средства; круг 3 оставил одно:
+//  1. RELAY_TARGET_POLL.attempts ВОЗВРАЩЁН к 9 (круг 2 временно сжимал до 4,
+//     ссылаясь на цифру из тестовой СЦЕНЫ, не на замер — отменено на круге 3,
+//     см. докстринг RELAY_TARGET_POLL ниже);
+//  2. RELAY_TARGET_NEGATIVE_CACHE УБРАН (заводился на круге 2, снят на круге
+//     3 — переносил неудачу первого спросившего на любого другого);
+//  3. настоящий ограничитель по IP остался — только в route.ts (relayer/app.js
+//     уже ограничивает POST /relay по IP через clientIp(), см. app.post('/relay')
+//     ниже — здесь чинить было нечего, IP-ключ уже стоял).
+const REGISTRY_RECORD_ABI = [
+  'function getRecord(address agreement) view returns (tuple(address agreement, address client, address executor, uint256 amount, uint8 status, uint256 createdAt, uint256 resolvedAt))',
+];
+
+// Кэшируем ТОЛЬКО положительные ответы. «Наш агримент» — свойство монотонное:
+// реестр записи не удаляет. «Не наш» — не монотонное: адрес станет нашим в ту
+// секунду, когда acceptApplicant/acceptRequest/deployAndFund создадут и
+// зарегистрируют сделку в одной транзакции (src/FactoryFacet.sol:271, :320).
+// Закэшированный отказ запер бы свежесозданную сделку на весь срок кэша.
+//
+// Срок нужен не реестру (он не отзывает), а нам: он ограничивает, сколько мы
+// верим себе после замены диамонда. Размер — чтобы карта не росла вечно.
+// Перезапуск процесса оставляет кэш пустым, и это безопасно: пустой кэш стоит
+// лишнего чтения цепи, а не лишнего пропуска.
+//
+// Ревью круг 2 заводил ЕЩЁ и короткий отрицательный кэш — круг 3 его убрал:
+// он переносил неудачу ПЕРВОГО спросившего на любого ДРУГОГО, кто спросил про
+// тот же адрес в течение TTL, включая контрагента по той же свежесозданной
+// сделке с собственным независимым шансом на опрос.
+//
+// Ревью круг 1, мелочь: RELAY_TARGET_CACHE_MAX экспортирован и сверяется с
+// shared/relay-target-scenes.json («кэшРазмер») — то же число, что у
+// фронтового близнеца, пиннится ОДНИМ местом (тест — в обоих файлах сцен).
+const RELAY_TARGET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;   // 6 часов
+export const RELAY_TARGET_CACHE_MAX = 1000;
+
+// Ревью круг 1, находка 1 -> круг 3: бюджет опроса при «false» ответе.
+// Интервал (750 мс) — то же число, что у фронтового близнеца, там это
+// DEFAULT_POLL_INTERVAL_MS из lib/pollForFact.ts (импортировать через
+// границу пакетов нельзя — разные npm-проекты, отсюда литерал, не импорт).
+// ЧИСЛО ПОПЫТОК = 9, ТА ЖЕ цифра, что NONCE_POLL_ATTEMPTS фронта
+// (lib/walletLock.ts) — и ВЗЯТА ОТТУДА, не изобретена: walletLock.ts:166-172
+// документирует НАСТОЯЩИЙ замер (отставание реплик того же порядка, что блок
+// Base Sepolia, ~2 с) и принятую в проекте доктрину ТРЁХКРАТНОГО запаса
+// поверх измеренного — 9×750≈6.75 с даёт ровно её. (Круг 2 временно сжимал
+// это число до 4, обосновывая цифрой «3 чтения» из тестовой СЦЕНЫ «отстаёт» —
+// фикстуры, не замера; отменено на круге 3.) Цена этого числа при спаме
+// теперь ограничена не им самим, а IP-лимитером в route.ts (30 запросов/мин
+// × 9 = 270 чтений/мин с одного источника). Мутируемый экспортируемый объект
+// (тот же приём, что RECEIPT_POLL): тесты сокращают stepMs до нуля, не
+// трогая attempts.
+export const RELAY_TARGET_POLL = { attempts: 9, stepMs: 750 };
+
+const _ourAgreements    = new Map();   // "диамонд:адрес" (нижний регистр) → до какого мс верим
+const _agreementLookups = new Map();   // тот же ключ → обещание ИДУЩЕГО чтения (склейка одновременных)
+
+export function _resetRelayTargetCacheForTest() {
+  _ourAgreements.clear();
+  _agreementLookups.clear();
+}
+
+function rememberOurAgreement(key) {
+  _ourAgreements.delete(key);        // переставить в конец очереди вставки
+  _ourAgreements.set(key, Date.now() + RELAY_TARGET_CACHE_TTL_MS);
+  while (_ourAgreements.size > RELAY_TARGET_CACHE_MAX) {
+    const oldest = _ourAgreements.keys().next().value;
+    _ourAgreements.delete(oldest);
+  }
+}
+
+function cachedAsOurAgreement(key) {
+  const until = _ourAgreements.get(key);
+  if (until === undefined) return false;
+  if (until <= Date.now()) { _ourAgreements.delete(key); return false; }
+  return true;
+}
+
+/**
+ * Одно чтение реестра, разобранное в true/false — БРОСАЕТ на «не удалось
+ * прочитать» (узел молчит либо ответ не разбирается) вместо третьего
+ * значения. Решает разницу между двумя классами беды: «false» (запись
+ * пуста/чужая) стоит ПОВТОРИТЬ — гонка с отставшей репликой; «не прочиталось
+ * вовсе» повторять незачем (сеть легла или ABI разъехался) — вызывающий
+ * (`readsAsOurAgreement`) ловит бросок на ПЕРВОЙ попытке и отдаёт его без
+ * единой лишней попытки, той же ценой в один read, что была до этой правки.
+ *
+ * Ревью круг 2, находка 2: подпорка `client !== ZERO_ADDR` УБРАНА. Автор
+ * плана отменил решение исходной задачи (обоснование 3): register()
+ * (src/RegistryFacet.sol:141-148) пишет структуру ОДНИМ присваиванием —
+ * client != 0 при agreement != addr СТРУКТУРНО недостижим, не «маловероятен».
+ * Хуже: подпорка регистронезависима (сравнение с нулевым адресом) и спасала
+ * бы исход при любом регистре — маскировала .toLowerCase() у agreement
+ * мёртвым замком даже на checksum-фикстурах круга 1. agreement === addr —
+ * теперь единственная несущая проверка.
+ */
+async function readOnce(addr) {
+  const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_RECORD_ABI, provider);
+  const record = await registry.getRecord(addr);
+  const agreement = typeof record?.agreement === 'string' ? record.agreement.toLowerCase() : null;
+  const client    = typeof record?.client    === 'string' ? record.client.toLowerCase()    : null;
+  if (agreement === null || client === null) {
+    console.error('[relay] реестр ответил тем, что не разбирается как запись сделки:', addr);
+    throw new Error('registry response does not parse as a deal record');
+  }
+  return agreement === addr;
+}
+
+/**
+ * Опрашивает `readOnce` до `RELAY_TARGET_POLL.attempts` раз, пока не увидит
+ * `true` — тот же приём (три правила), что `waitForReceipt` в этом же файле и
+ * `lib/pollForFact.ts` на фронте:
+ *  1. первое чтение — без сна, и его сбой бросается НАРУЖУ без единой
+ *     дальнейшей попытки (быстрый отказ — тот же, что был до опроса);
+ *  2. не подтвердилось за все попытки — отдаём последнее прочитанное `false`,
+ *     молча не виснем;
+ *  3. сбой НЕ первой попытки (узел уже ответил хоть раз) не роняет весь
+ *     опрос — глотаем и пробуем дальше с последним удачным значением.
+ * true  — запись прочитана (в т.ч. после отставания), это наш агримент;
+ * false — запись прочитана и это НЕ наш, даже после исчерпанных попыток;
+ * null  — ПЕРВОЕ чтение не удалось — не повторяем; ЛИБО первое чтение
+ *         разобралось, а все повторы бросили (см. правило 4 ниже).
+ *
+ * ⚠️ ПРАВИЛО 4, ИТОГОВОЕ РЕВЬЮ ВЕТКИ 4в-2: если после первого чтения НИ ОДНА
+ * попытка не дала разобранного ответа, наружу уходит null («не знаем»), а не
+ * последнее прочитанное `false`. Прежде правило 3 глотало все восемь бросков и
+ * отдавало `false` — то есть 403 «не наш контракт» — на единственном
+ * доказательстве от отставшей реплики, ровно той, ради которой опрос и
+ * заведён. Разобралась хоть одна повторная проба — отказ остаётся 403: там
+ * «не наш» подтверждён живым узлом. Близнец — frontend/src/lib/relayTarget.ts.
+ */
+async function readsAsOurAgreement(addr) {
+  const { attempts, stepMs } = RELAY_TARGET_POLL;
+  let value;
+  try {
+    value = await readOnce(addr); // правило 1, первая половина
+  } catch (e) {
+    console.error('[relay] реестр не ответил на getRecord:', e.message);
+    return null; // правило 1, вторая половина: первый сбой — наружу, без опроса
+  }
+  if (value === true) return true;
+
+  let разобралось = 1;   // первое чтение уже разобралось, иначе мы бы сюда не дошли
+  for (let i = 1; i < attempts; i++) {
+    await new Promise((r) => setTimeout(r, stepMs));
+    try {
+      value = await readOnce(addr);
+      разобралось += 1;
+    } catch (e) {
+      console.error('[relay] реестр не ответил на getRecord (попытка', i + 1, '):', e.message);
+      continue; // правило 3
+    }
+    if (value === true) return true;
+  }
+  // Правило 4. `attempts > 1` — потому что без повторов единственное
+  // разобравшееся чтение и есть полноценный ответ, а не остаток от опроса.
+  if (attempts > 1 && разобралось === 1) {
+    console.error('[relay] реестр ответил один раз и замолчал — вердикта нет:', addr);
+    return null;
+  }
+  return value; // правило 2
+}
+
+/**
+ * Можно ли платить газ за вызов к этому адресу.
+ * Статус и код отказа возвращает САМА функция — у маршрута своих литералов нет,
+ * поэтому «один путь тихо поменял код» здесь негде сделать.
+ */
+export async function relayTargetVerdict(to) {
+  const addr = String(to).toLowerCase();
+  const diamondLower = String(DIAMOND_ADDR).toLowerCase();
+
+  if (addr === diamondLower) return { ok: true, kind: 'diamond' };
+
+  // Ревью круг 1, мелочь: ключ кэша несёт диамонд, а не только адрес — тот же
+  // повод, что у фронтового близнеца (relayTarget.ts), хотя здесь DIAMOND_ADDR
+  // — константа модуля, не параметр: симметрия ради одного и того же шва.
+  const key = `${diamondLower}:${addr}`;
+  if (cachedAsOurAgreement(key)) return { ok: true, kind: 'agreement' };
+
+  // Склейка одновременных: пятьдесят запросов об одном адресе стоят одного
+  // чтения цепи, а не пятидесяти. Неудачное чтение НЕ запоминается — обещание
+  // удаляется из карты, как только оно сойдётся.
+  let lookup = _agreementLookups.get(key);
+  if (!lookup) {
+    lookup = readsAsOurAgreement(addr).finally(() => { _agreementLookups.delete(key); });
+    _agreementLookups.set(key, lookup);
+  }
+  const answer = await lookup;
+
+  if (answer === null) {
+    return {
+      ok: false, status: 503, code: 'chain_unavailable',
+      error: 'Cannot verify the target contract right now — the chain did not answer',
+    };
+  }
+  if (answer === false) {
+    // Ревью круг 2 -> круг 3: НЕ запоминаем «не наш», ни долго, ни коротко —
+    // короткий отрицательный кэш (заведённый на круге 2) переносил неудачу
+    // ПЕРВОГО спросившего на ЛЮБОГО другого в течение TTL, включая
+    // контрагента по той же свежесозданной сделке. Убран; каждый запрос
+    // получает свой независимый опрос.
+    return {
+      ok: false, status: 403, code: 'target_not_ours',
+      error: 'Target is not a Hexseal contract — the relayer pays gas only for its own',
+    };
+  }
+  rememberOurAgreement(key);
+  return { ok: true, kind: 'agreement' };
+}
+
 // ⚠️  RELAY IS SPLIT: frontend currently calls Vercel /api/relay/route.ts, NOT this endpoint.
 // This endpoint is unused until VPS migration. On VPS: /api/relay/route.ts becomes a thin
 // proxy to this endpoint (localhost:3001/relay) and duplication disappears.
@@ -1968,6 +2365,13 @@ app.post('/relay', async (req, res) => {
     const MAX_GAS = 7_000_000n;
     if (BigInt(gas) > MAX_GAS) {
       return res.status(400).json({ error: `gas exceeds maximum (${MAX_GAS})` });
+    }
+
+    // Пункт 44: цель обязана быть нашей. Стоит ДО нонса, подписи и симуляции —
+    // три обращения к узлу, которых чужой контракт получать не должен.
+    const target = await relayTargetVerdict(to);
+    if (!target.ok) {
+      return res.status(target.status).json({ error: target.error, code: target.code });
     }
 
     const onChainNonce = await forwarder.getNonce(from);
@@ -3565,6 +3969,582 @@ app.get('/bags/:recipient/:filename', (req, res) => {
   rs.pipe(res);
 });
 
+// ─── Ящик спора: факты из цепи, кэш, придержка, бюджет ────────────────────
+//
+// Три вопроса на каждый мешок: кто стороны этой сделки, идёт ли спор, кто
+// ведёт спор СЕЙЧАС. Все три — из цепи, ни один — из наших записей: наши
+// записи говорят только о том, что мы сами когда-то записали.
+//
+// ⚠️ ПОЧЕМУ НЕ _disputeProof (ниже по файлу). Тот держит одно булево «спор
+// есть/нет» и, исчерпав потолок, уходит на ЗАПАСНУЮ ДОРОГУ — список всех
+// спорных сделок разом. Здесь запасной дороги НЕ СУЩЕСТВУЕТ: getDisputed()
+// не отдаёт ни арбитра, ни принадлежность сторон. Значит при молчании узла
+// — ОТКАЗ (503), а не «пускаем на всякий случай». Сомнение решается в
+// пользу закрытого ящика.
+//
+// ⚠️ TTL — 15 000 мс, и число выбрано по самому скоропортящемуся факту
+// записи. Стороны в реестре не меняются никогда, статус меняется редко, а
+// «кто ведёт спор сейчас» меняется — и именно он и есть замок. После
+// releaseDisputeClaim прежний арбитр читает ящик ещё не дольше 15 секунд.
+// Не 60 (DISPUTE_PROOF_TTL_MS): там кэш защищал ПУШ, здесь — доступ к чужой
+// переписке. Не 0: при опросе описи раз в 5 с ящик стоит ≤4 обращений к
+// цепи в минуту вместо 12 (замер — T16). Остаточный риск назван вслух:
+// мешки, положенные в эти 15 секунд, запечатаны уже на НОВОГО арбитра, так
+// что прежний получил бы нечитаемые байты.
+const DISPUTE_BOX_TTL_MS            = readPositiveInt('DISPUTE_BOX_TTL_MS', 15_000);
+const DISPUTE_BOX_RETRY_COOLDOWN_MS = readPositiveInt('DISPUTE_BOX_RETRY_COOLDOWN_MS', 10_000);
+// ⚠️ Бюджет обращений к цепи — ПО АДРЕСУ СПРАШИВАЮЩЕГО, общего потолка нет
+// намеренно. Общий делает больно соседу: у dispute-proof-chain это пришлось
+// лечить запасной дорогой, а здесь её нет — исчерпанный общий потолок
+// означал бы 503 честной стороне из-за чужого потока. Ключ списывается
+// ТОЛЬКО когда мы реально идём в цепь (попадание в кэш и отказ по придержке
+// не стоят ничего), поэтому 90/мин покрывает 22 ящика, опрашиваемых
+// непрерывно, — больше, чем открытых заявок бывает у одного арбитра.
+const DISPUTE_BOX_CHAIN_MAX         = readPositiveInt('DISPUTE_BOX_CHAIN_MAX', 90);
+const DISPUTE_BOX_MAX_ENTRIES = 500;
+
+const _boxFacts        = new Map();   // сделка → { facts, at }
+const _boxReadFailedAt = new Map();   // сделка → момент последней неудачи
+
+// Префикс обязателен: ключи /relay — сырая строка clientIp() БЕЗ префикса
+// (app.js:1920), а при TRUST_PROXY=true clientIp() отдаёт заголовок
+// дословно, формы не проверяя. Голый адрес в качестве ключа означал бы, что
+// `CF-Connecting-IP: 0x<жертва>` разряжает бюджет жертвы. Тот же приём, что
+// у `ip:`/`bag-`/`chain:`/`push-` выше.
+function boxWriteRateKey(address) { return `box-write:${address}`; }
+function boxReadRateKey(address)  { return `box-read:${address}`;  }
+function boxChainRateKey(address) { return `box-chain:${address}`; }
+
+// ⚠️ Ревью круг 1, находка 2 (Important) — цена «не умрёт никогда», числом.
+// ДО Задачи 2 (4в-2) у мешка ящика был жёсткий потолок BAG_MAX_AGE_MS
+// (90 суток от загрузки), без исключений. ПОСЛЕ нeё: пока цепь говорит
+// DISPUTED и эскроу заперт (funded=true), потолок НЕ применяется вовсе
+// (disputeBoxBagDeadline() в bagStore.js, мутации 5/6 в её тестах) — якорь
+// «сейчас» двигает срок вперёд каждую ночь, пока freezeVerdict() держит
+// дело (ArbiterRegistryFacet.sol:848, onlyOwnerOrDAO, без таймаута).
+// Потолка по объёму на ОДНУ сторону при этом тоже нет — квота на ящик не
+// заводится (открытый пункт 28.2 плана 4в-2). Худший случай числом:
+//   DISPUTE_BOX_WRITE_RATE_MAX (60/мин) × MAX_BAG_SIZE (256 КиБ, bagStore.js)
+//   = 15 360 КиБ/мин × 1440 мин/сутки = 22 118 400 КиБ/сутки ≈ 21,1 ГиБ/сутки
+//   НА ОДНУ СТОРОНУ спора, БЕССРОЧНО, пока дело заморожено.
+// Это не гипотеза — это цена решения «funded освобождает от 90-дневного
+// потолка», принятого этой же задачей. Одна сторона такого не сделает по
+// ошибке (нужно 60 запросов в минуту непрерывно), но это уже не
+// «космети­ческий» долг у пункта 28.2 — это конкретное число, которое
+// квота обязана будет закрыть.
+// ⚠️ Сосед по теме: отсрочка «узел молчит» (К-1, cleanupBags() в
+// bagStore.js) ограничена ТЕМ ЖЕ BAG_MAX_AGE_MS от uploadedAt — то есть
+// узел, молчащий дольше 90 суток подряд, снесёт мешок живого спора, даже
+// если цепь (будь она доступна) сказала бы DISPUTED. Асимметрия честная:
+// «спор жив и цепь отвечает» — бессрочно; «спор жив, а узнать нечем» —
+// не дольше 90 суток. Не чинится этим кругом — названо числом, как
+// потребовало ревью.
+const DISPUTE_BOX_WRITE_RATE_MAX = readPositiveInt('DISPUTE_BOX_WRITE_RATE_MAX', 60);
+const DISPUTE_BOX_READ_RATE_MAX  = readPositiveInt('DISPUTE_BOX_READ_RATE_MAX', 120);
+
+function evictOldest(map, pick) {
+  if (map.size < DISPUTE_BOX_MAX_ENTRIES) return;
+  const oldest = [...map.entries()].sort((a, b) => pick(a[1]) - pick(b[1]))[0];
+  if (oldest) map.delete(oldest[0]);
+}
+
+/**
+ * Факты о ящике спора: { ok: true, facts } либо { ok: false, reason }.
+ *
+ * facts = { exists, client, executor, disputed, arbiter } — адреса в нижнем
+ * регистре, `arbiter` может быть null («спор никто не ведёт»).
+ * reason — 'chain_unavailable' | 'rate_limited'.
+ *
+ * ⚠️ Существование сделки — по `record.agreement === agreement`, НЕ по
+ * статусу (см. комментарий у getRecord в REGISTRY_MINI_ABI).
+ * ⚠️ Спор — по статусу САМОЙ СДЕЛКИ (== 4). У реестра DISPUTED = 3; два
+ * разных enum, путать нельзя.
+ * ⚠️ Арбитр — disputeArbiterOf(), НЕ Agreement.arbiter (туда claimDispute
+ * пишет сам диамонд; разбор — комментарий у disputeArbiterOf).
+ *
+ * ⚠️ `disputed` С ИТОГОВОГО РЕВЬЮ ВЕТКИ БОЛЬШЕ НЕ ЗАМОК НИ ОДНОГО МАРШРУТА, и
+ * это сказано вслух, а не оставлено на догадку. Право писать в ящик даёт
+ * ведущий арбитр (см. PUT ниже), право читать — он же; статус сделки не
+ * решает здесь ничего. Поле остаётся фактом о сделке и стоит одного
+ * staticcall на промах кэша. Записано в docs/OPEN-ITEMS.md (пункт 53.5) —
+ * чтобы следующий не счёл его проверяемым.
+ */
+async function disputeBoxFacts(agreement, asker) {
+  const now = Date.now();
+
+  const hit = _boxFacts.get(agreement);
+  if (hit && now - hit.at < DISPUTE_BOX_TTL_MS) return { ok: true, facts: hit.facts };
+
+  // Придержка по адресу, чтение которого только что сорвалось. Это НЕ кэш
+  // ответа: ответа мы не запоминаем и на следующем запросе снова пойдём в
+  // цепь — просто не чаще, чем раз в DISPUTE_BOX_RETRY_COOLDOWN_MS.
+  const failedAt = _boxReadFailedAt.get(agreement);
+  if (failedAt !== undefined && now - failedAt < DISPUTE_BOX_RETRY_COOLDOWN_MS) {
+    return { ok: false, reason: 'chain_unavailable' };
+  }
+
+  // Бюджет тратится ТОЛЬКО когда мы собираемся реально пойти в цепь.
+  if (!checkRateLimit(boxChainRateKey(asker), DISPUTE_BOX_CHAIN_MAX)) {
+    return { ok: false, reason: 'rate_limited' };
+  }
+
+  let facts;
+  try {
+    const registry = new ethers.Contract(DIAMOND_ADDR, REGISTRY_MINI_ABI, provider);
+    const rec = await registry.getRecord(agreement);
+    const named = String(rec?.agreement ?? rec?.[0] ?? '').toLowerCase();
+    if (named !== agreement) {
+      facts = { exists: false, client: null, executor: null, disputed: false, arbiter: null };
+    } else {
+      const client   = String(rec?.client   ?? rec?.[1] ?? '').toLowerCase();
+      const executor = String(rec?.executor ?? rec?.[2] ?? '').toLowerCase();
+      const agr = new ethers.Contract(agreement, AGREEMENT_MINI_ABI, provider);
+      const details = await agr.getDetails();
+      // AGREEMENT_STATUS_DISPUTED объявлена ниже по файлу (у пушей спора) и
+      // равна 4. Второй копии числа не заводим: хозяин у него один. К моменту
+      // ПЕРВОГО вызова этой функции тело модуля давно вычислено, TDZ пройдена.
+      const disputed = Number(details.status_) === AGREEMENT_STATUS_DISPUTED;
+      const arbiter = await disputeArbiterOf(agreement);
+      facts = { exists: true, client, executor, disputed, arbiter };
+    }
+  } catch (e) {
+    // Сюда попадает и «узел молчит», и «по адресу не то, что мы думали».
+    // Разделить их нечем, и обе — «вердикта нет»: ящик закрыт.
+    console.error('[disputes] box facts read failed for', agreement, '-', e.message);
+    evictOldest(_boxReadFailedAt, (v) => v);
+    _boxReadFailedAt.set(agreement, now);
+    return { ok: false, reason: 'chain_unavailable' };
+  }
+
+  _boxReadFailedAt.delete(agreement);
+  evictOldest(_boxFacts, (v) => v.at);
+  _boxFacts.set(agreement, { facts, at: now });
+  return { ok: true, facts };
+}
+
+/** Только для тестов: забыть факты и придержки между кейсами. */
+export function _resetDisputeBoxCache() { _boxFacts.clear(); _boxReadFailedAt.clear(); }
+
+// ─── Ящик спора: три маршрута ─────────────────────────────────────────────
+//
+// Ящик опознаётся адресом Agreement-контракта. Писать в него могут только
+// клиент и исполнитель ЭТОЙ сделки и только пока спор идёт; читать — тот,
+// кто ведёт спор сейчас, плюс отправитель про СВОЙ мешок.
+//
+// ⚠️ ОТСТУПЛЕНИЕ ОТ «ПРАВИЛА 2» СКЛАДА, сознательное. Все ветки старого
+// GET /bags/:key отвечают одним и тем же 404, чтобы по коду ответа нельзя
+// было узнать, какие ключи есть у чужого адреса. Здесь коды РАЗНЫЕ, потому
+// что участники спора и его арбитр ПУБЛИЧНЫ В ЦЕПИ — скрывать членство
+// незачем, а экран обязан объяснить человеку, что именно не так («вы не
+// сторона» и «спор ещё не начался» — разные советы). Отступление
+// ограничено этими тремя маршрутами; старые /bags/* своего единого 404 не
+// теряют. ВНУТРИ ящика правило 2 остаётся: «нет такого ключа», «мешок не
+// твой» и «файла нет» — один и тот же bag_not_found, потому что ключ несёт
+// uuid и его существование не публично нигде.
+//
+// ⚠️ 507 НА НЕХВАТКУ ДИСКА ЗДЕСЬ НЕТ, И ЭТО РЕШЕНИЕ. Запас
+// (DISK_RESERVE_BYTES, 2 ГиБ) держится ИМЕННО для мешков — так сказано у
+// самой константы. Мешок предъявления — 256 КиБ: в освобождённый отказом
+// чат-файлов запас их влезает 8192. Поставить 507 здесь значило бы
+// потратить резерв на то, ради чего он и держится. Настоящее кончившееся
+// место обработано двумя ветками общего кода: ws.on('error') в
+// streamWithSizeLimit → 500 write_failed с удалением обрезка, и бросок
+// recordBag → 500 internal_error с удалением файла.
+const DISPUTE_BOX_NOT_FOUND = { error: 'Bag not found', code: 'bag_not_found' };
+const SEALED_FOR_HEADER = 'x-sealed-for';
+const LOWER_ADDR_RE = /^0x[0-9a-f]{40}$/;
+
+/** Адрес сделки из пути, в нижнем регистре, или null (клиенту уже отвечено). */
+function boxAgreementParam(req, res) {
+  const agreement = String(req.params.agreement || '').toLowerCase();
+  if (!LOWER_ADDR_RE.test(agreement)) {
+    res.status(400).json({ error: 'Invalid agreement address', code: 'invalid_agreement' });
+    return null;
+  }
+  return agreement;
+}
+
+/** Факты о существующей сделке, или null (клиенту уже отвечено). */
+async function requireBoxFacts(agreement, asker, res) {
+  const verdict = await disputeBoxFacts(agreement, asker);
+  if (!verdict.ok) {
+    if (verdict.reason === 'rate_limited') {
+      bagRateLimited(res, 'rate_limited_box_chain');
+      return null;
+    }
+    // 503, не 404 и не 403. Переспрашивать нечего: и сделка, и права,
+    // возможно, безупречны — молчит узел. Ответить «нет такой сделки»
+    // значило бы соврать с уверенным лицом.
+    res.status(503).set('Retry-After', '5')
+      .json({ error: 'Deal state could not be read on-chain right now', code: 'chain_unavailable' });
+    return null;
+  }
+  if (!verdict.facts.exists) {
+    res.status(404).json({ error: 'No such deal', code: 'no_such_deal' });
+    return null;
+  }
+  return verdict.facts;
+}
+
+// PUT /disputes/:agreement/bags — положить мешок в ящик спора.
+//
+// Порядок — от дешёвого к дорогому, как у всей семьи мешков: бюджет выхода
+// → пропуск → бюджет адреса → форма запроса → цепь → права → диск.
+//
+// ⚠️ ЦЕПЬ СПРАШИВАЕТСЯ ДО ПЕРВОГО БАЙТА НА ДИСКЕ. Мешок постороннего не
+// занимает места вообще, ни на миг — это и есть ответ на «21 ГиБ в сутки»:
+// писать теперь НЕКУДА, а не «можно, но по чуть-чуть». Тело в это время
+// лежит в буфере ядра: поток не читается никем, пока ниже не встанет
+// streamWithSizeLimit.
+app.put('/disputes/:agreement/bags', async (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const sender = requireBagPass(req, res);
+  if (!sender) return;
+
+  if (!checkRateLimit(boxWriteRateKey(sender), DISPUTE_BOX_WRITE_RATE_MAX)) {
+    return bagRateLimited(res, 'rate_limited_write');
+  }
+
+  // Тот же капкан, что у PUT /bags/:recipient: глобальный express.json()
+  // выпил бы тело выше по цепочке, streamWithSizeLimit записал бы ноль
+  // байт, и вызывающий получил бы 200 за мешок, которого нет.
+  const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (contentType === 'application/json') {
+    return res.status(400).json({
+      error: 'Bag upload must not use Content-Type: application/json (body already consumed upstream)',
+      code: 'bag_content_type',
+    });
+  }
+
+  const agreement = boxAgreementParam(req, res);
+  if (!agreement) return;
+
+  // ⚠️ x-sealed-for — СЛОВО КЛАДУЩЕГО. Мешок нечитаем для сервера, проверить
+  // его содержимое нечем и никогда будет нечем. Проверяем ФОРМУ и только
+  // её: иначе в опись поедет что угодно и экран арбитра покажет мусор на
+  // месте адреса. Отсутствие заголовка — законно: это «не заявлено» (null),
+  // а не ошибка.
+  const claimedRaw = req.headers[SEALED_FOR_HEADER];
+  let sealedFor = null;
+  if (claimedRaw !== undefined) {
+    const claimed = String(claimedRaw).trim().toLowerCase();
+    if (!LOWER_ADDR_RE.test(claimed)) {
+      return res.status(400).json({ error: 'Invalid x-sealed-for', code: 'invalid_sealed_for' });
+    }
+    sealedFor = claimed;
+  }
+
+  const facts = await requireBoxFacts(agreement, sender, res);
+  if (!facts) return;
+
+  if (sender !== facts.client && sender !== facts.executor) {
+    return res.status(403).json({ error: 'Not a party to this deal', code: 'not_a_party' });
+  }
+  // ⚠️ ПРАВО ПИСАТЬ = ПРАВО ЧИТАТЬ, И ПРИЗНАК У НИХ ОДИН (решение владельца,
+  // итоговое ревью ветки 4в-2). Прежде здесь стоял `!facts.disputed`, то есть
+  // status_ == 4 у самой сделки, — а чтение ящика статуса не спрашивает вовсе
+  // (см. ⚠ у GET ниже: вердикт подан → сделка RESOLVED, а арбитру ещё
+  // разбирать апелляцию). Разъезд был не теоретический: экран арбитра
+  // ЧЕТЫРЕЖДЫ советует «попросите предъявить заново» — «мешок заявлен на
+  // другого», «не наш ключ», «не разобрался», «недочитано», — и все четыре
+  // совета попадали в окно, где сторона физически не может этого сделать:
+  // сделка уже не DISPUTED, кнопки нет, склад отвечает 409.
+  //
+  // Теперь замок один: пока у спора ЕСТЬ ведущий арбитр (disputeArbiterOf),
+  // сторона вправе положить мешок. Нет арбитра — 409 и на живом споре тоже:
+  // печатать не на кого, и мешок, запечатанный в пустоту, не откроет никто.
+  //
+  // ⚠️ ВТОРОЙ ЗАМОК ЗАПИСИ НЕ ТРОНУТ: выше стоит «только клиент и исполнитель
+  // ЭТОЙ сделки», и правка его не касается (замер — T38).
+  if (facts.arbiter === null) {
+    return res.status(409).json({
+      error: 'Nobody is handling this dispute right now — there is no arbiter to seal a presentation to',
+      code: 'not_disputed',
+    });
+  }
+
+  // Задача 2 (4в-2): СРОК СТАВИТСЯ ЗДЕСЬ, а не ночной уборкой в 03:00.
+  // Мешок, залитый в 03:05 и открытый арбитром в тот же день, получил бы
+  // семидневный срок (правило 2 склада) и мог не дожить до конца спора —
+  // ночная уборка добралась бы до него только следующей ночью, а спор с
+  // апелляцией идёт девять суток и верхней границы в цепи не имеет.
+  //
+  // ⚠️ Это ПЯТОЕ чтение цепи на маршрутах ящика — то самое, что названо
+  // в договоре шапки плана («Кто это проверяет», строка 5 таблицы).
+  // Список общий на весь план, не мой частный: поддельный узел в стендах
+  // Задачи 6 обязан отвечать и на этот селектор, иначе каждый PUT вернёт
+  // 503 ниже и стенд покраснеет по чужой причине.
+  //
+  // DISPUTE_WINDOW() — public constant КОНКРЕТНОГО клона, кэшируется по
+  // адресу агримента на весь процесс (makeCachedConstantMsReader), так
+  // что цена — один staticcall на ПЕРВЫЙ мешок каждой сделки, дальше 0.
+  let boxDeadline;
+  try {
+    const agr = new ethers.Contract(agreement, AGREEMENT_MINI_ABI, provider);
+    const disputeWindowMs = await getDisputeWindowMs(agr, agreement);
+    boxDeadline = disputeBoxBagDeadline(Date.now(), disputeWindowMs);
+  } catch (e) {
+    // Отказ узла именно здесь — не повод принять мешок с неизвестным
+    // сроком: «принято» с семидневной жизнью хуже, чем честное «попробуй
+    // ещё раз», потому что первое человек считает сделанным делом. Ответ
+    // — БАЙТ В БАЙТ тот же, которым requireBoxFacts() Задачи 1 отвечает
+    // на молчащую цепь: второго словаря отказов у одного маршрута быть
+    // не должно.
+    console.error('[disputes] DISPUTE_WINDOW read failed for', agreement, '-', e.message);
+    return res.status(503).set('Retry-After', '5')
+      .json({ error: 'Deal state could not be read on-chain right now', code: 'chain_unavailable' });
+  }
+
+  let key, filePath;
+  try {
+    key = bagKeyFor(agreement);
+    filePath = bagPathFor(key);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  } catch (e) {
+    console.error('[disputes] PUT setup failed:', e.message);
+    return res.status(500).json({ error: 'Failed to prepare bag storage', code: 'internal_error' });
+  }
+
+  streamWithSizeLimit(req, res, filePath, MAX_BAG_SIZE, () => {
+    let size;
+    try {
+      size = fs.statSync(filePath).size;
+    } catch (e) {
+      console.error('[disputes] PUT stat-after-write failed:', e.message);
+      unlinkQuietSync(filePath);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to read uploaded bag', code: 'internal_error' });
+      return;
+    }
+    if (size === 0) {
+      unlinkQuietSync(filePath);
+      if (!res.headersSent) res.status(400).json({ error: 'Empty bag', code: 'empty_bag' });
+      return;
+    }
+    try {
+      const uploadedAt = Date.now();
+      // ⚠️ Задача 2 (срок жизни мешков ящика) ДОПИСАЛА сюда `dealDeadline` —
+      // она дописывает поле, а не переписывает вызов. `deal` и `sealedFor`
+      // обязаны остаться: без первого мешок перестаёт быть мешком ящика
+      // (6 красных в test/disputeBox.test.js), без второго опись теряет
+      // «на кого заявлено», sealedForOthers становится вечным нулём, и новый
+      // арбитр видит пустой ящик там, где сторона предъявляла (2 красных).
+      const stored = recordBag({
+        sender, recipient: agreement, key, size, uploadedAt,
+        deal: agreement, sealedFor,
+        dealDeadline: boxDeadline,   // ← Задача 2, единственная новая строка
+      });
+      // uploadedAt отдаём наружу намеренно: человеку показывают «положено в
+      // ящик» + ВРЕМЯ, и это время обязано быть серверным. Возьми клиент
+      // своё — и «положено 14:02» разошлось бы с «забрал 13:58» у другого.
+      res.status(200).json({ key: stored.key, uploadedAt: stored.uploadedAt });
+    } catch (e) {
+      // recordBag бросает по контракту bagStore.js (в том числе когда на
+      // диске кончилось место): без этого catch отказ записи убивал бы
+      // процесс вместо одного запроса.
+      console.error('[disputes] recordBag failed:', e.message);
+      unlinkQuietSync(filePath);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to record bag', code: 'internal_error' });
+    }
+  });
+});
+
+// GET /disputes/:agreement/bags — опись ящика.
+//
+// ⚠️ ЧТЕНИЕ НЕ ТРЕБУЕТ status_ == 4. Вердикт подан — сделка уходит в
+// RESOLVED, а арбитру ещё нужно смотреть предъявленное (апелляция, разбор).
+// Право чтения даёт disputeArbiterOf, а не статус.
+//
+// ⚠️ СТОРОНА ВИДИТ ТОЛЬКО СВОИ МЕШКИ. «Противная сторона предъявила»
+// ей не показывается: это её дело перед арбитром, а не перед оппонентом.
+// Арбитр видит ящик целиком — иначе он не узнает, что предъявляли вообще.
+app.get('/disputes/:agreement/bags', async (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  if (!checkRateLimit(boxReadRateKey(address), DISPUTE_BOX_READ_RATE_MAX)) {
+    return bagRateLimited(res, 'rate_limited_read');
+  }
+
+  const agreement = boxAgreementParam(req, res);
+  if (!agreement) return;
+
+  const facts = await requireBoxFacts(agreement, address, res);
+  if (!facts) return;
+
+  const isArbiter = facts.arbiter !== null && facts.arbiter === address;
+  const isParty   = address === facts.client || address === facts.executor;
+  if (!isArbiter && !isParty) {
+    return res.status(403).json({ error: 'Not the arbiter of this dispute', code: 'not_the_arbiter' });
+  }
+
+  let all;
+  try {
+    all = listDisputeBags(agreement);
+  } catch (e) {
+    console.error('[disputes] GET box failed:', e.message);
+    return res.status(500).json({ error: 'Failed to list the dispute box', code: 'internal_error' });
+  }
+
+  const visible = isArbiter ? all : all.filter((b) => b.sender === address);
+
+  // ⚠️ sealedFor отдаётся с пометкой источника — не здесь, а в ТИПЕ и в
+  // тексте на экране (Задачи 6 и 7). Сервер обязан только не выдавать его
+  // за проверенное: он и не выдаёт — поле называется «на кого ЗАЯВЛЕНО»,
+  // отдельного «проверено» рядом нет и не будет.
+  // ⚠️ fetchedAt — МОМЕНТ (мс, часы сервера), а не галочка. Сторона печатает
+  // «положено 14:02 · забрал 14:07», и оба времени обязаны быть серверными:
+  // на устройстве с уехавшими часами булево заставило бы клиента подставить
+  // СВОЁ время, а спор — ровно то место, где порядок событий имеет цену.
+  // Значение уже лежит в описи (firstFetchedAt), выдумывать нечего;
+  // `?? null` только приводит отсутствующее к честному null, чтобы поле не
+  // исчезло из JSON целиком.
+  const bags = visible.map((b) => ({
+    key: b.key,
+    sender: b.sender,
+    sealedFor: b.sealedFor ?? null,
+    size: b.size,
+    uploadedAt: b.uploadedAt,
+    fetchedAt: b.firstFetchedAt ?? null,
+  }));
+
+  // ⚠️ Считается по ВИДИМЫМ мешкам, а не по всему ящику: иначе сторона
+  // узнавала бы про чужие предъявления числом. И ноль, когда арбитра нет
+  // вовсе: сравнивать не с кем, а выдумать «на других» значило бы соврать.
+  const sealedForOthers = facts.arbiter === null
+    ? 0
+    : visible.filter((b) => b.sealedFor != null && b.sealedFor !== facts.arbiter).length;
+
+  // ⚠️ `arbiter` уезжает из КЭША ФАКТОВ, а не из свежего чтения: ему до
+  // DISPUTE_BOX_TTL_MS (15 с), плюс придержка после неудачи. Значит это «кто
+  // ведёт спор по нашему последнему чтению», и ни один текст на экране не
+  // вправе выдавать его за состояние цепи прямо сейчас: арбитр, только что
+  // взявший спор, до конца окна увидит здесь предшественника. То же
+  // ограничение — у sealedForOthers: он сравнивается ровно с этим значением.
+  //
+  // ⚠️ Ревью, круг 2: `indexTrusted` — НЕ второй источник правды. Тот же
+  // признак, что уже отдаёт /health в поле storage.indexTrusted (app.js:1737),
+  // читается из ТОЙ ЖЕ isBagStoreHealthy(). Назначение здесь другое: круг 1
+  // измерил (test/disputeBox.test.js:T30), что после потери индекса
+  // _scanDiskBags() восстанавливает записи БЕЗ deal/sealedFor, они выпадают
+  // из listDisputeBags() насовсем, и bags здесь может быть пуст, даже когда
+  // мешки на диске лежат — арбитр не отличит это от «сторона ничего не
+  // предъявляла» (§2.3 замысла). Комментарий в релеере фронт ни к чему не
+  // обязывает — признак обязан ехать В ОТВЕТЕ, чтобы экран не мог его не
+  // увидеть. `false` здесь означает ровно «bags мог бы быть неполон или
+  // пуст не по факту, а по потере индекса» — Задача 7 обязана сказать это
+  // человеку, а не показать пустой ящик как утверждение.
+  res.json({ bags, arbiter: facts.arbiter, sealedForOthers, indexTrusted: isBagStoreHealthy() });
+});
+
+// GET /disputes/:agreement/bags/:name — забрать мешок.
+app.get('/disputes/:agreement/bags/:name', async (req, res) => {
+  const ip = clientIp(req);
+  if (!checkRateLimit(bagIpRateKey(ip), BAG_IP_RATE_MAX)) return bagRateLimited(res, 'rate_limited_ip');
+
+  const address = requireBagPass(req, res);
+  if (!address) return;
+
+  if (!checkRateLimit(boxReadRateKey(address), DISPUTE_BOX_READ_RATE_MAX)) {
+    return bagRateLimited(res, 'rate_limited_read');
+  }
+
+  const agreement = boxAgreementParam(req, res);
+  if (!agreement) return;
+
+  const facts = await requireBoxFacts(agreement, address, res);
+  if (!facts) return;
+
+  const isArbiter = facts.arbiter !== null && facts.arbiter === address;
+  const isParty   = address === facts.client || address === facts.executor;
+  if (!isArbiter && !isParty) {
+    return res.status(403).json({ error: 'Not the arbiter of this dispute', code: 'not_the_arbiter' });
+  }
+
+  // Ключ склада собирается ЗДЕСЬ из адреса сделки и имени, а не берётся у
+  // клиента целиком: bagPathFor() бросает на любой форме, кроме своей
+  // собственной, так что обход каталога отсекается формой ключа, а не
+  // отдельным санитайзером, который можно забыть позвать.
+  const key = `${agreement}/${req.params.name}`;
+
+  let meta;
+  try {
+    meta = bagMetaOf(key);
+  } catch {
+    return res.status(404).json(DISPUTE_BOX_NOT_FOUND);
+  }
+  // meta.deal !== agreement отсекает чат-мешок, случайно адресованный
+  // контракту сделки: он в ящике не лежит и через ящик не выдаётся.
+  if (!meta || meta.deal !== agreement) return res.status(404).json(DISPUTE_BOX_NOT_FOUND);
+
+  // Внутри ящика правило 2 действует: «не твой» и «нет такого» — один код.
+  if (!isArbiter && meta.sender !== address) return res.status(404).json(DISPUTE_BOX_NOT_FOUND);
+
+  let filePath;
+  try {
+    filePath = bagPathFor(key);
+  } catch {
+    return res.status(404).json(DISPUTE_BOX_NOT_FOUND);
+  }
+  if (!fs.existsSync(filePath)) return res.status(404).json(DISPUTE_BOX_NOT_FOUND);
+
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  res.setHeader('Content-Disposition', 'attachment');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  // Право читать живёт ЦЕЛИКОМ в заголовке x-bag-pass — тело доказательства
+  // авторизации не несёт. Посредник, кэширующий по URL, отдал бы этот ответ
+  // следующему спросившему без всякого пропуска.
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.append('Vary', 'x-bag-pass');   // append, а не setHeader: cors уже поставил Vary: Origin
+
+  // Express отвечает на HEAD тем же обработчиком, срезая тело на проводе.
+  // Без этой ветки разведочный HEAD зажигал бы «забрал» у мешка, которого
+  // арбитр не получил ни байта.
+  if (req.method === 'HEAD') return res.end();
+
+  const rs = fs.createReadStream(filePath);
+  rs.on('error', (e) => {
+    console.error('[disputes] read failed:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to read bag', code: 'internal_error' });
+  });
+  // ⚠️ ОТМЕТКА — ТОЛЬКО ЧТЕНИЮ ТЕКУЩЕГО АРБИТРА. Отправитель вправе забрать
+  // свой мешок (перезагрузил вкладку, сменил устройство), но его чтение не
+  // имеет права зажигать галочку: она начала бы врать в сторону, которую
+  // невозможно заметить — человек сам себе показал бы «арбитр забрал».
+  //
+  // ⚠️ И ЧЕСТНО О ГРАНИЦЕ САМОЙ ОТМЕТКИ: 'finish' срабатывает, когда ответ
+  // отдан ЯДРУ, а не получен человеком. Для 256 КиБ ядро принимает весь
+  // ответ одним write() раньше, чем оборвавший соединение клиент успеет
+  // это сделать (замер — комментарий у GET /bags/:recipient/:filename).
+  // Значит «забрал» — правда про байты и не обязательно правда про
+  // доставку. Слов «прочитал» и «понял» здесь нет и не будет.
+  //
+  // ⚠️ И ЧТО ОТМЕТКА НЕ ДЕЛАЕТ: она НЕ УКОРАЧИВАЕТ срок мешка ящика. Правило
+  // общего склада («прочитан» переводит с 30 дней на 7) для мешка ящика
+  // перекрыто: PUT выше кладёт в опись `dealDeadline` (срок спора вместе с
+  // окном апелляции, `disputeBoxBagDeadline`), а `bagExpiryAt` берёт
+  // `Math.max(base, dealDeadline)` (bagStore.js). Значит первый заход арбитра
+  // не может убить предъявление раньше спора — ни при каком порядке событий.
+  // ⚠️ Прежде здесь было написано обратное («может умереть РАНЬШЕ спора, это
+  // Задача 2, и она начинается отсюда»). Задача 2 приехала В ЭТОЙ ЖЕ ВЕТКЕ, и
+  // с ней факт отменился; комментарий пережил её на один круг ревью.
+  const marksRead = isArbiter;
+  res.on('finish', () => {
+    if (!marksRead) return;
+    try {
+      markFetched(key, Date.now());
+    } catch (e) {
+      console.error('[disputes] markFetched failed after successful delivery (read receipt lost, bytes already sent):', e.message);
+    }
+  });
+  rs.pipe(res);
+});
+
 // ─── Справочник открытых ключей чата (Задача 2, chat-client) ───────────────
 //
 // POST /keys — положить свой открытый ключ. Требует пропуск (правило 1
@@ -3703,6 +4683,10 @@ function bodyParserErrorHandler(err, req, res, next) {
 }
 app.use('/keys', bodyParserErrorHandler);
 app.use('/bags', bodyParserErrorHandler);
+// Тело в 64 КБ с content-type: application/json приезжает в маршруты ящика
+// тем же путём, что и в /bags: без этой строки переполнение отдало бы
+// HTML-страницу дефолтного обработчика express вместо {error, code}.
+app.use('/disputes', bodyParserErrorHandler);
 
 // ─── Push notification endpoints ──────────────────────────────────────────────
 
@@ -3963,7 +4947,14 @@ async function disputedSetSnapshot() {
 /** Только для тестов. */
 export function _resetDisputedSetCache() { _disputedSet = { addresses: null, at: 0 }; }
 
-const AGREEMENT_STATUS_DISPUTED = 4;   // src/Agreement.sol, enum Status
+// ⚠️ ЕДИНСТВЕННАЯ КОПИЯ ЭТОГО ЧИСЛА В РЕЛЕЕРЕ, и она заперта на исходник
+// контракта: `test/agreementStatusEnum.test.js` читает `src/Agreement.sol` и
+// берёт ПОЗИЦИЮ члена в `enum Status`. Экспортируется ради этого замка —
+// иначе сверять было бы нечего, а прежняя проверка на фронте сверяла
+// константу саму с собой (итоговое ревью ветки 4в-2, правка 2).
+// Близнец на фронте — `frontend/src/lib/agreementStatus.ts`, у него свой
+// такой же замок: общего кода у двух рантаймов быть не может.
+export const AGREEMENT_STATUS_DISPUTED = 4;   // src/Agreement.sol, enum Status
 
 /**
  * Правда ли, что по `deal` открыт спор.

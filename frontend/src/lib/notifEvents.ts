@@ -1,9 +1,15 @@
 /**
- * Девять родов событий, которые сторожат уведомления, — одним фильтром.
+ * Все рода событий, которые нужны приложению с диамонда, — ОДНИМ фильтром.
+ *
+ * ⚠️ РОДОВ ЗДЕСЬ БОЛЬШЕ, ЧЕМ УВЕДОМЛЕНИЙ, и это нарочно. Провод общий, а
+ * читателей у него два: разводка уведомлений (`NOTIF_EVENT_NAMES`) и слежение за
+ * сменой арбитра (`WIRE_ONLY_EVENT_NAMES`). Списки раздельны и названы
+ * по-разному — из имени видно, что человек увидит, а что просто приехало.
  *
  * ЗАЧЕМ ИМЕННО ТАК. viem умеет фильтр по НАБОРУ событий (`events`), и тогда
  * `topics[0]` уходит на узел массивом: один `eth_newFilter`, один
- * `eth_getFilterChanges` за такт на все девять родов. Прежние тринадцать
+ * `eth_getFilterChanges` за такт на ВСЕ рода набора (сегодня их одиннадцать:
+ * девять уведомлений плюс два «только на провод»). Прежние тринадцать
  * `useWatchContractEvent` давали тринадцать фильтров и тринадцать запросов за
  * такт — 140 в минуту на простое (`docs/OPEN-ITEMS.md`, пункт 38).
  *
@@ -24,7 +30,12 @@
 
 import type { AbiEvent } from 'viem';
 import { DIAMOND_ABI, SERVICE_BOARD_ABI, ARBITER_REGISTRY_ABI } from '@/config/contracts';
-import { NOTIF_EVENT_NAMES, type NotifEventName } from '@/lib/notifRouter';
+import {
+  NOTIF_EVENT_NAMES,
+  WIRE_ONLY_EVENT_NAMES,
+  type NotifEventName,
+  type WireOnlyEventName,
+} from '@/lib/notifRouter';
 
 /**
  * Такт опроса уведомлений. Было шесть секунд (общий из конфига wagmi) на каждый
@@ -53,15 +64,41 @@ function pickEvent(name: string): AbiEvent | null {
 }
 
 /**
+ * ЧТО ЕДЕТ ПО ПРОВОДУ — объединение двух РАЗНЫХ по смыслу списков:
+ *
+ *  • `NOTIF_EVENT_NAMES`     — рода, которые становятся уведомлениями (колокольчик);
+ *  • `WIRE_ONLY_EVENT_NAMES` — рода, которые уведомлениями НЕ становятся и нужны
+ *                              другому читателю (слежение за сменой арбитра,
+ *                              `lib/disputeArbiter.ts`).
+ *
+ * ⚠️ ПОЧЕМУ ОДИН ФИЛЬТР, А НЕ ВТОРОЙ РЯДОМ. Второй цикл опроса стоил бы ещё
+ * `60000 / такт` запросов в минуту на каждую открытую вкладку, а бюджет уже
+ * выбран (`hooks/chainPollBudget.test.ts`: не больше двух циклов и восьми
+ * запросов в минуту). Добавление рода в общий набор стоит **ноль** лишних
+ * обращений: viem кладёт `topics[0]` массивом, то есть растёт только фильтр на
+ * узле, а не число запросов.
+ *
+ * ⚠️ `DisputeClaimed` состоит в ОБОИХ списках — он и уведомление («ваш спор
+ * взят»), и повод перечитать цепь. Поэтому здесь объединение через `Set`, а не
+ * склейка: дубль в наборе дал бы два одинаковых `topics[0]` и лишнюю работу
+ * узлу.
+ */
+export const WIRE_EVENT_NAMES: readonly (NotifEventName | WireOnlyEventName)[] =
+  [...new Set<NotifEventName | WireOnlyEventName>([
+    ...NOTIF_EVENT_NAMES,
+    ...WIRE_ONLY_EVENT_NAMES,
+  ])];
+
+/**
  * Набор для фильтра. Собирается на загрузке модуля; пропущенный род — не
  * «меньше уведомлений», а тихая потеря целого рода, поэтому он попадает в
- * `MISSING_NOTIF_EVENTS`, и это проверяется замером.
+ * `MISSING_WIRE_EVENTS`, и это проверяется замером.
  */
-export const NOTIF_EVENTS: AbiEvent[] = [];
-export const MISSING_NOTIF_EVENTS: NotifEventName[] = [];
+export const WIRE_EVENTS: AbiEvent[] = [];
+export const MISSING_WIRE_EVENTS: (NotifEventName | WireOnlyEventName)[] = [];
 
-for (const name of NOTIF_EVENT_NAMES) {
+for (const name of WIRE_EVENT_NAMES) {
   const ev = pickEvent(name);
-  if (ev) NOTIF_EVENTS.push(ev);
-  else MISSING_NOTIF_EVENTS.push(name);
+  if (ev) WIRE_EVENTS.push(ev);
+  else MISSING_WIRE_EVENTS.push(name);
 }

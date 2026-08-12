@@ -116,7 +116,7 @@ async function makePresentation(heavy: boolean): Promise<PresentationContainer> 
       selected,
       session: alice.session,
       ownAttestation: await attestationOf(alice),
-      peerAttestation: await attestationOf(bob),
+      otherAttestations: [await attestationOf(bob)],
     };
     const fit = await fittingMessageCount(input);
     expect(fit.ok, `счёт влезающих отказал: ${fit.ok ? '' : fit.reason}`).toBe(true);

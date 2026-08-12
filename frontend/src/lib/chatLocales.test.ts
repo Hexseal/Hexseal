@@ -73,6 +73,62 @@ const REQUIRED_RECOVERY = [
   'chat.restore_err_other',
 ];
 
+/** Ключи предъявления арбитру (4в-2, Задача 6). Отдельным списком, а не
+ *  дописью в `REQUIRED`: у них свой владелец текста, и `present_warn_files` —
+ *  текст, утверждённый владельцем на ВЫКАТКУ 1 (правда про сегодня). */
+const REQUIRED_PRESENT = [
+  'chat.present_btn',
+  'chat.present_pick_title',
+  'chat.present_pick_hint',
+  'chat.present_pick_dropped',
+  'chat.present_pick_fits',
+  'chat.present_pick_fits_unknown',
+  'chat.present_pick_next',
+  'chat.present_warn_title',
+  'chat.present_warn_who',
+  'chat.present_warn_turn',
+  'chat.present_warn_turn_unknown',
+  'chat.present_warn_everything',
+  'chat.present_warn_files',
+  // Ревью, круг 2: у старых вложений ключ лежит в самом сообщении.
+  'chat.present_warn_legacy_files',
+  'chat.present_pick_legacy_mark',
+  'chat.present_warn_final',
+  'chat.present_consent',
+  'chat.present_send',
+  'chat.present_sent',
+  'chat.present_fetched',
+  'chat.present_fetch_unknown',
+  'chat.present_draft_found',
+  'chat.present_draft_sent',
+  'chat.present_draft_use',
+  // Ревью, круг 1 (I-4): запись на устройстве не легла, а мешок уехал.
+  'chat.present_draft_not_saved',
+  'chat.present_err_arbiter_has_no_key',
+  'chat.present_err_peer_has_no_key',
+  'chat.present_err_nothing_selected',
+  'chat.present_err_too_large',
+  'chat.present_err_no_session',
+  'chat.present_err_attestation_missing',
+  'chat.present_err_attestation_expired',
+  'chat.present_err_attestation_unproven',
+  'chat.present_err_not_disputed',
+  'chat.present_err_arbiter_changed',
+  'chat.present_err_key_changed',
+  'chat.present_err_arbiter_left',
+  'chat.present_err_no_consent',
+  'chat.present_err_busy',
+  'chat.present_err_chain_unavailable',
+  'chat.present_err_not_a_party',
+  'chat.present_err_no_such_deal',
+  'chat.present_err_rate_limited',
+  'chat.present_err_box_refused',
+  'chat.present_err_offline',
+  'chat.present_err_pass_refused',
+  // Ревью, круг 1 (I-5): наша поломка ДО склада — своё имя и свой текст.
+  'chat.present_err_internal_error',
+];
+
 /** Ключи, которые обязаны исчезнуть: они говорили про XMTP и про журнал
  *  бота, которого больше нет. Оставленный ключ — не мусор, а обещание,
  *  которое кто-нибудь снова выведет на экран. */
@@ -432,5 +488,121 @@ describe('адрес контракта не вписан в переводы р
       }
     }
     expect(guilty).toEqual([]);
+  });
+});
+
+/* ─── Предъявление арбитру (4в-2, Задача 6) ─────────────────────────────── */
+describe('тексты предъявления арбитру', () => {
+  it('L1: все 47 ключей есть в каждой из 14 локалей и ни один не пуст', () => {
+    // Число написано РУКАМИ: список выше может усохнуть незамеченным.
+    // 25 ключей показа + 22 ключа отказа (по числу членов `PresentRefusal`).
+    expect(REQUIRED_PRESENT.length).toBe(47);
+    const missing: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      for (const key of REQUIRED_PRESENT) {
+        const value = pick(dict, key);
+        if (typeof value !== 'string' || value.trim().length === 0) missing.push(`${locale}:${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('L2: у каждой из 22 причин отказа есть свой ключ, и он в локалях', async () => {
+    // ⚠️ Список причин пишется ЗДЕСЬ РУКАМИ и сверяется с картой модуля.
+    // ВОСЕМЬ имён сборщика — от Задачи 4, включая три беды заверения с
+    // РАЗНЫМ лечением. Добавит она девятое — карта не соберётся в
+    // type-check, а этот замер назовёт расхождение числом. Ожидаемое не
+    // берётся из проверяемого.
+    const REASONS = [
+      'arbiter_has_no_key', 'peer_has_no_key', 'nothing_selected', 'too_large', 'no_session',
+      'attestation_missing', 'attestation_expired', 'attestation_unproven',
+      'not_disputed', 'arbiter_changed', 'key_changed', 'arbiter_left',
+      'no_consent', 'already_sending',
+      'chain_unavailable', 'not_a_party', 'no_such_deal', 'rate_limited',
+      'box_refused', 'offline', 'pass_refused', 'internal_error',
+    ];
+    expect(REASONS.length).toBe(22);
+    const { PRESENT_REFUSAL_KEYS } = await import('./presentToArbiter');
+    expect(Object.keys(PRESENT_REFUSAL_KEYS).sort()).toEqual([...REASONS].sort());
+    const en = read('en');
+    for (const reason of REASONS) {
+      const key = (PRESENT_REFUSAL_KEYS as Record<string, string>)[reason];
+      expect(REQUIRED_PRESENT, `ключ ${key} не в списке обязательных`).toContain(key);
+      expect(typeof pick(en, key)).toBe('string');
+    }
+  });
+
+  it('L3: ⚠️ нигде не сказано «прочитал» — только «забрали»', () => {
+    // §4 замысла: «Слова „прочитал“ и „понял“ нет и не будет. „Забрал“ — про
+    // байты, а не про глаза». Написать «арбитр прочитал» значило бы дать
+    // стороне расслабиться там, где нельзя.
+    //
+    // ⚠️ ЧЕГО ЭТОТ ЗАПРЕТ НЕ КАСАЕТСЯ, и это надо сказать вслух, иначе
+    // следующий читатель сочтёт замок дырявым: запрещено ПРИПИСЫВАТЬ
+    // АРБИТРУ чтение и понимание. Согласие стороны («Я понимаю: это уйдёт
+    // арбитру») сюда не относится — там человек говорит про себя, а не мы
+    // про арбитра. Поэтому корень «поним…» в чёрный список не входит, хотя
+    // §4 называет и его.
+    //
+    // ⚠️ ЭТО ЗАМОК НА СЛОВО, и он честно ограничен: языки без однословного
+    // аналога, который ловится без ложных срабатываний, не проверяются вовсе —
+    // та же дисциплина, что у запрета «сохраните» выше (немецкий поймал
+    // `Gerätespeicher` и заставил гейтить ГЛАГОЛ, а не корень).
+    const BANNED: Record<string, RegExp> = {
+      ru: /прочит|прочёл|прочел|прочтёт/i,
+      uk: /прочит|прочов|прочитає/i,
+      en: /\bread\b|\bhas read\b/i,
+      de: /\bgelesen\b|\bliest\b/i,
+    };
+    const bad: string[] = [];
+    for (const locale of LOCALES) {
+      const banned = BANNED[locale];
+      if (!banned) continue;
+      const chat = pick(read(locale), 'chat') as Record<string, string>;
+      for (const [key, value] of Object.entries(chat)) {
+        if (key.startsWith('present_') && banned.test(value)) bad.push(`${locale}:${key}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('L4: обе строки про файлы — ПРАВДА ПРО СЕГОДНЯ, и они не спорят друг с другом', () => {
+    const ru = read('ru');
+    // ⚠️ РЕШЕНИЕ ВЛАДЕЛЬЦА ОТ 11 АВГУСТА. В Выкатке 1 арбитру уходит только
+    // имя, размер и тип файла — сам файл не уходит вовсе и показать его
+    // арбитру нельзя даже стороне. Формулировка §2.10 замысла («арбитр
+    // увидит файл, но копию штатно не получит») приезжает ВМЕСТЕ С
+    // ВЫКАТКОЙ 3, когда станет правдой; поставить её сейчас значило бы
+    // обещать передачу того, что не передаётся, и разойтись с экраном
+    // арбитра из этой же выкатки («только фактом, сам файл не показывается»).
+    expect(pick(ru, 'chat.present_warn_files')).toBe(
+      'Сам файл арбитру не уйдёт: уедут имя, размер и тип; '
+      + 'показать ему файл нельзя даже вам.',
+    );
+    expect(pick(ru, 'chat.present_warn_final')).toBe('Отменить нельзя: отправленное уже у арбитра.');
+
+    // ⚠️ И СОСЕДНЯЯ СТРОКА ТОГО ЖЕ ОКНА НЕ ОБЕЩАЕТ САМОГО ФАЙЛА. Решение
+    // владельца было внесено в `present_warn_files` и НЕ внесено сюда:
+    // «уйдёт… текст целиком и НАЗВАННЫЕ В НЁМ ФАЙЛЫ» — это обещание передать
+    // файл, прямо против строки выше. Человек читал бы два
+    // взаимоисключающих обещания подряд и решал бы сам, какому верить.
+    const everything = String(pick(ru, 'chat.present_warn_everything'));
+    expect(everything).toBe(
+      'Уйдёт всё, что внутри отмеченных сообщений: текст целиком и названия '
+      + 'упомянутых файлов — включая сведения о третьих лицах, к спору не причастных.',
+    );
+    // Третьи лица — несущее, и потерять их молча нельзя.
+    expect(everything).toContain('третьих лицах');
+    // ⚠️ И отдельно — запрет прежней формулировки: дословная сверка выше
+    // покраснеет на ЛЮБОЙ правке строки, а эта — только на возврате
+    // обещания самого файла, то есть скажет, ЧТО именно сломалось.
+    expect(everything, 'предупреждение снова обещает сам файл')
+      .not.toMatch(/названные в нём файлы|сами файлы|файлы целиком/i);
+
+    // «Забрали» — про байты и без имени: опись имени забравшего не хранит.
+    expect(String(pick(ru, 'chat.present_fetched'))).toContain('{time}');
+    // Два текста про черновик — разные: «не отправляли» и «уже предъявляли».
+    expect(pick(ru, 'chat.present_draft_sent')).not.toBe(pick(ru, 'chat.present_draft_found'));
   });
 });

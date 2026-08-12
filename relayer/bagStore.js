@@ -559,6 +559,14 @@ function isValidBagMetaEntry(key, meta) {
     assertSafeInt('_loadBagMeta', 'uploadedAt', meta.uploadedAt);
     if (meta.firstFetchedAt != null) assertSafeInt('_loadBagMeta', 'firstFetchedAt', meta.firstFetchedAt);
     if (meta.dealDeadline != null) assertSafeInt('_loadBagMeta', 'dealDeadline', meta.dealDeadline);
+    // 4в-2, Задача 1: поля ящика спора. Проверяются ровно так же, как
+    // остальные, и по той же причине: строка журнала — это то, что лежало на
+    // диске, а не то, что мы туда клали. Запись с `deal: {}` без этой проверки
+    // загрузилась бы, и замок ящика начал бы сравнивать адрес с объектом.
+    // Отсутствие полей — законно и нормально: так выглядит каждый чат-мешок и
+    // каждая запись, сделанная до этой задачи.
+    if (meta.deal != null) assertAddress('_loadBagMeta', meta.deal);
+    if (meta.sealedFor != null) assertAddress('_loadBagMeta', meta.sealedFor);
     // C1 (координатор, критическая находка): dealFunded как ПОЛЕ ЗАПИСИ
     // убран целиком — он и был источником дыры (свойство мешка, а не
     // свойство конкретного продления, см. докстринг adoptPairBags()).
@@ -1216,6 +1224,29 @@ export function recordBag(meta, nowMs = Date.now()) {
   assertFetchNotBeforeUpload('recordBag', uploadedAt, firstFetchedAt);
   const dealDeadline   = assertNullableSafeInt('recordBag', 'dealDeadline', meta.dealDeadline ?? null);
 
+  // 4в-2, Задача 1 — ящик спора. Два необязательных поля:
+  //
+  //   deal      — адрес Agreement: «эта запись лежит в ЯЩИКЕ СПОРА, а не в
+  //               переписке». Сегодня он всегда равен recipient (ключ мешка
+  //               ящика строится bagKeyFor(agreement)), и поле всё равно
+  //               отдельное: recipient — координата ХРАНЕНИЯ (префикс ключа,
+  //               каталог), deal — СМЫСЛ. Слив их, мы бы привязали замок
+  //               ящика к тому, что раскладка ключа никогда не изменится, и
+  //               открыли бы дорогу в ящик чат-мешку, случайно адресованному
+  //               контракту сделки.
+  //
+  //   sealedFor — адрес арбитра, на чей ключ мешок ЗАЯВЛЕН запечатанным.
+  //               Слово кладущего: мешок нечитаем для сервера, проверить
+  //               нечем. Хранится как есть и отдаётся с пометкой источника —
+  //               см. GET /disputes/:agreement/bags в app.js.
+  //
+  // ⚠️ Оба кладутся в запись ТОЛЬКО когда не null. Так запись чат-мешка
+  // остаётся байт в байт такой же, какой была до этой задачи: старые записи
+  // на диске не мигрируются, откат релеера назад ничего не ломает, а всё
+  // чтение обязано идти через `!= null` (undefined и null неразличимы).
+  const deal      = meta.deal      == null ? null : assertAddress('recordBag', meta.deal);
+  const sealedFor = meta.sealedFor == null ? null : assertAddress('recordBag', meta.sealedFor);
+
   const stored = {
     sender,
     recipient,
@@ -1224,6 +1255,8 @@ export function recordBag(meta, nowMs = Date.now()) {
     uploadedAt,
     firstFetchedAt,
     dealDeadline,
+    ...(deal      != null ? { deal }      : {}),
+    ...(sealedFor != null ? { sealedFor } : {}),
   };
   _bagMeta[key] = stored;
   try {
@@ -1342,6 +1375,13 @@ export function listBagsInvolving(address) {
   const received = [];
   const sent = [];
   for (const [key, meta] of Object.entries(_bagMeta)) {
+    // 4в-2, Задача 1: мешок ЯЩИКА СПОРА — не кадр переписки, и в чат-описи
+    // ему делать нечего. Оставь его здесь — и получатель у него адрес
+    // КОНТРАКТА сделки, то есть он приехал бы человеку в `sent`, а сам
+    // контракт — в `peers` как собеседник; фронт (receiveBags) попытался бы
+    // разобрать его как кадр и выдал бы человеку беду `malformed` о его же
+    // собственном предъявлении. Опись ящика отдаёт listDisputeBags() ниже.
+    if (meta.deal != null) continue;
     // Один и тот же объект-копия не переиспользуется между кучками: у
     // переписки с самим собой запись попадает в обе, и общий объект дал бы
     // вызывающему два имени одной и той же ссылки.
@@ -1351,6 +1391,89 @@ export function listBagsInvolving(address) {
   received.sort((a, b) => a.uploadedAt - b.uploadedAt);
   sent.sort((a, b) => a.uploadedAt - b.uploadedAt);
   return { received, sent };
+}
+
+/**
+ * 4в-2, Задача 1: опись ЯЩИКА СПОРА — записи, у которых `meta.deal` равен
+ * адресу этой сделки.
+ *
+ * Отбор идёт по `deal`, а НЕ по `recipient`, хотя сегодня они совпадают:
+ * совпадение — свойство нынешней раскладки ключа, а не правило. Отбирая по
+ * `recipient`, мы бы отдали в ящик любой чат-мешок, случайно адресованный
+ * контракту сделки.
+ *
+ * Полный обход описи, O(n) — ровно как у listBagsFor()/listBagsInvolving().
+ * Сегодня это приемлемо по той же причине, что и у них: опись живёт в
+ * памяти, обращение к диску не делается ни одного. Если ящиков станет много,
+ * дешёвое лекарство — индекс `deal → ключи`, но заводить его до нужды значит
+ * держать вторую копию правды.
+ *
+ * ⚠️ РЕЖИМ НЕДОВЕРИЯ ОПУСТОШАЕТ ЯЩИК, И ЭТО ЦЕНА ОБЩЕЙ ОПИСИ, а не сюрприз
+ * (ревью, круг 1, находка Important — измерено test/disputeBox.test.js:T30).
+ * План обосновывал общую опись с чат-мешками тем, что «метла сирот и режим
+ * недоверия достаются даром» (см. ⚠ у самого объявления ящика в
+ * task-1.md). Даром достаётся МЕТЛА, а не недоверие: запись, которую
+ * _scanDiskBags() восстанавливает из одного лишь имени файла (потеря
+ * индекса — снимок битый/отсутствует при непустом складе), несёт
+ * recipient/uploadedAt/size — и НИКОГДА `deal`/`sealedFor`, их неоткуда
+ * взять (bagKeyFor кодирует только получателя и время создания ключа).
+ * Фильтр `meta.deal === addr` не совпадёт после этого НИ РАЗУ — значит
+ * ПОСЛЕ реконструкции listDisputeBags() пуст для ЛЮБОЙ сделки, у которой
+ * лежали мешки, и остаётся пустым, пока человек не починит индекс руками.
+ * Арбитр видит пустой ящик, неотличимый от «сторона ничего не предъявляла»
+ * — ровно та беда §2.3 замысла, ради которой ящик заводился.
+ *
+ * Второй конец того же провала: PUT во время недоверия отвечает 200 и
+ * настоящим `uploadedAt`, как в штатном режиме (recordBag() не бросает —
+ * см. _persistUnlessDistrusted() выше, «не ошибка для вызывающего»), но
+ * запись живёт только в памяти этого процесса. У человека расписка есть, у
+ * арбитра предъявления нет, и оба конца молчат друг о друге.
+ *
+ * Не чинится здесь: чинить значило бы кодировать deal/sealedFor в САМОМ
+ * ИМЕНИ ФАЙЛА (новый формат ключа, третий санитайзер сверх bagPathFor) —
+ * вне объёма Задачи 1, стоимость уже разобрана в возражении 1 у task-1.md.
+ * Задача 7 ОБЯЗАНА уметь сказать «опись перестраивалась, предъявления могли
+ * потеряться» (сигнал — isBagStoreHealthy() === false, уже экспортирована)
+ * — а не подавать пустой ответ этого маршрута как факт «сторона молчала».
+ */
+export function listDisputeBags(deal) {
+  const addr = assertAddress('listDisputeBags', deal);
+  return Object.entries(_bagMeta)
+    .filter(([, meta]) => meta.deal === addr)
+    .map(([key, meta]) => ({ key, ...meta }))
+    .sort((a, b) => a.uploadedAt - b.uploadedAt);
+}
+
+// Задача 2 (4в-2), ревью круг 1, находка 1 (Important). У «идёт ли спор» —
+// ДВА хозяина, и они штатно расходятся: маршрут PUT спрашивает
+// Agreement.getDetails().status_ == 4 НАПРЯМУЮ (relayer/app.js:
+// disputeBoxFacts()), а ночная уборка до сих пор смотрела ТОЛЬКО в
+// Registry.getDisputed() (adoptDisputedPairBags()). Agreement._updateRegistry()
+// (Agreement.sol:1261-1266) обёрнут в try/catch и на отказе синхронизации
+// только эмитит RegistrySyncFailed — raiseDispute() (Agreement.sol:695) при
+// этом НЕ ревертит. Значит «Agreement говорит DISPUTED, реестр молчит» —
+// легальное состояние контракта, не баг: мешок ящика в этом состоянии
+// принимается PUT-ом (замок смотрит в Agreement), но никогда не находится
+// ночным отбором по getDisputed() — и умирает через хвост от последней
+// записи, хотя спор физически идёт. Ровно та беда, ради которой заведена
+// вся Задача 2, только с другой причиной расхождения.
+//
+// listLiveBoxDeals(nowMs) — дешёвая половина починки (app.js держит вторую,
+// точечную): чистый обход описи В ПАМЯТИ, ноль обращений в цепь. Отдаёт
+// множество адресов сделок, у которых есть хотя бы один ЖИВОЙ
+// (bagExpiryAt(meta, nowMs) > nowMs) мешок ящика — то есть «ещё не поздно
+// продлевать». Ночная уборка сверяет это множество с тем, что вернул
+// getDisputed() СЕГОДНЯ, и только для РАЗНИЦЫ идёт в цепь — по одному
+// прицельному Agreement.getDetails() на адрес, а не по одному на каждый
+// мешок в описи (см. adoptStrandedBoxBags() в app.js).
+export function listLiveBoxDeals(nowMs = Date.now()) {
+  assertSafeInt('listLiveBoxDeals', 'nowMs', nowMs);
+  const deals = new Set();
+  for (const meta of Object.values(_bagMeta)) {
+    if (meta.deal == null) continue;
+    if (bagExpiryAt(meta, nowMs) > nowMs) deals.add(meta.deal);
+  }
+  return [...deals];
 }
 
 // I3: раньше отдавала `_bagMeta[key]` напрямую — тот же объект, что живёт в
@@ -1619,21 +1742,57 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
   return disputedAtMs + disputeWindowMs + FINALIZE_DELAY_MS + APPEAL_REVIEW_WINDOW_DAYS * DAY_MS + BAG_DEAL_GRACE_MS;
 }
 
-// pairId — опаковая строка, та же форма, что производит _pairIdFromAddresses
-// (и app.js:pairIdFromAddresses — заперто тестом на совпадение обеих в
-// test/bagStore.test.js). dealDeadline — уже готовое число мс, посчитанное
-// вызывающим (обычно через dealDeadlineFromDispute() выше); эта функция сама
-// формулу не знает и не пересчитывает — только применяет её ко всем
-// подходящим записям.
+// Задача 2 (4в-2). Срок мешка ЯЩИКА СПОРА.
 //
-// ВАЖНО (Q5 отчёта Задачи 5): adoptPairBags() НЕ имеет способа проверить,
-// что вызывающий действительно вправе усыновлять именно эту пару — тот же
-// класс допущения, что уже есть у пометки пары disputedPairIds для вложений
-// (app.js: "peerA/peerB tagging on /files/presign has no proof-of-
-// participation check"). Единственная граница, реально ограничивающая
+// Отличие от dealDeadlineFromDispute ровно одно — ЯКОРЬ. Там он
+// disputedAt: мешок переписки старше спора, и его хвост считается от
+// начала дела. Мешок ящика РОЖДАЕТСЯ ВНУТРИ спора и обязан пережить его
+// конец, а конца у спора в цепи может не быть вовсе: freezeVerdict()
+// (onlyOwnerOrDAO, ArbiterRegistryFacet.sol:848) держит дело живым без
+// таймаута, а finalizeVerdict() может быть не вызвана никогда.
+//
+// Отсюда правило: пока цепь ГОВОРИТ DISPUTED, у мешка всегда впереди
+// полный хвост спора, считая от МОМЕНТА ВЫЗОВА. Как только сделка ушла
+// из getDisputed(), продлевать некому — мешок доживает последний хвост и
+// уходит. Прецедент приёма — dealDeadlineFromCreation() выше: пока
+// activatedAtMs ещё 0, её якорь тоже nowMs, и по той же причине («срок не
+// должен отставать от текущей ночи»).
+//
+// Своих чисел здесь НЕТ и не будет: это та же формула, вызванная с другим
+// якорем. Расширение script/check-appeal-window.sh зовёт именно эту
+// функцию и сверяет ВЫЧИСЛЕННОЕ число — подмена хвоста (например, на
+// BAG_TTL_MS) красит гейт, а не проходит текстовой проверкой.
+//
+// ⚠️ Ревью круг 1, находка 3: своих проверок входа здесь НЕТ, и это не
+// упущение. `dealDeadlineFromDispute` делает `assertSafeInt(fn, 'disputedAtMs',
+// disputedAtMs)` + `assertNonNegativeSafeInt(fn, 'disputeWindowMs',
+// disputeWindowMs)` — ТЕ ЖЕ два предиката на ТЕ ЖЕ значения (nowMs
+// пересылается позиционно как disputedAtMs, форму не меняя). Держать здесь
+// вторую пару тех же вызовов было бы мёртвым замком: он не расширяет
+// множество отвергаемых входов ни на один — что доказано мутацией «убрать
+// обе проверки из обёртки» (0 изменений в поведении, T3/T4 остаются
+// зелёными потому что бросает `dealDeadlineFromDispute`, а не потому что
+// обёртка перестала проверять). Вход сторожит ОДНО место — внутренняя
+// функция; называю это вслух, а не дублирую молча.
+export function disputeBoxBagDeadline(nowMs, disputeWindowMs) {
+  return dealDeadlineFromDispute(nowMs, disputeWindowMs);
+}
+
+// pairId/deal — опаковый селектор записей (либо pairId клиент↔исполнитель,
+// либо адрес сделки для ящика спора — см. matches() у вызывающих обёрток
+// ниже). dealDeadline — уже готовое число мс, посчитанное вызывающим
+// (обычно через dealDeadlineFromDispute()/disputeBoxBagDeadline() выше);
+// эта функция сама формулу не знает и не пересчитывает — только применяет
+// её ко всем подходящим записям.
+//
+// ВАЖНО (Q5 отчёта Задачи 5): _adoptBags() НЕ имеет способа проверить, что
+// вызывающий действительно вправе усыновлять именно эту пару/сделку — тот
+// же класс допущения, что уже есть у пометки пары disputedPairIds для
+// вложений (app.js: "peerA/peerB tagging on /files/presign has no proof-
+// of-participation check"). Единственная граница, реально ограничивающая
 // злоупотребление, — потолок BAG_MAX_AGE_MS в bagExpiryAt() (не здесь):
 // сколько бы ни было передано в dealDeadline, итоговый срок мешка никогда
-// не превышает uploadedAt + BAG_MAX_AGE_MS. adoptPairBags() сознательно не
+// не превышает uploadedAt + BAG_MAX_AGE_MS. _adoptBags() сознательно не
 // дублирует эту проверку — дублирование двух копий одного правила в двух
 // местах разошлось бы молча при следующей правке одного из них.
 //
@@ -1736,10 +1895,15 @@ export function dealDeadlineFromDispute(disputedAtMs, disputeWindowMs) {
 // — если мешок ещё НЕ был продлён за потолок, неоплаченная сделка может
 //   толкать его ВВЕРХ ДО потолка (кандидат растёт вместе с candidate, но
 //   упирается в ceiling) — и не дальше, сколько бы ночей подряд ни звали.
-export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded = false) {
-  assertPairId('adoptPairBags', pairId);
-  assertSafeInt('adoptPairBags', 'dealDeadline', dealDeadline);
-  assertSafeInt('adoptPairBags', 'nowMs', nowMs);
+//
+// Задача 2 (4в-2): ядро усыновления. Одно на два отбора — по паре
+// (переписка) и по сделке (ящик спора). Две копии этого тела разошлись бы
+// молча при первой же правке одной из них: здесь и потолок BAG_MAX_AGE_MS,
+// и правило «только продлевать» (Math.max), и откат при неудавшемся
+// персисте — три правила, каждое из которых уже стоило раунда ревью.
+function _adoptBags(fnName, matches, dealDeadline, nowMs, funded) {
+  assertSafeInt(fnName, 'dealDeadline', dealDeadline);
+  assertSafeInt(fnName, 'nowMs', nowMs);
 
   const rollback = []; // [meta, previousDealDeadline] — только записи, реально изменённые этим вызовом
   // К-3: ключи изменённых записей — для журнала дозаписи. Усыновление зовут
@@ -1751,7 +1915,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
   let cappedCount = 0;
 
   for (const [key, meta] of Object.entries(_bagMeta)) {
-    if (meta.pairId !== pairId) continue;
+    if (!matches(meta)) continue;
     // И-2: гейт первого усыновления — "жив ли мешок ПРЯМО СЕЙЧАС", не
     // "молодой ли он". Уже усыновлённая запись (dealDeadline != null)
     // пересчитывается независимо от этой проверки, см. докстринг выше (I-B).
@@ -1788,7 +1952,7 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
 
   if (adopted) {
     try {
-      _persistUnlessDistrusted('adoptPairBags', changedKeys.map((k) => ({ k, m: { ..._bagMeta[k] } })));
+      _persistUnlessDistrusted(fnName, changedKeys.map((k) => ({ k, m: { ..._bagMeta[k] } })));
     } catch (e) {
       // I2, тот же приём, что у recordBag()/markFetched(): не оставлять
       // память впереди диска. Откатываем РОВНО те записи, что изменил этот
@@ -1805,6 +1969,22 @@ export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded =
   // не агрегат по записям — funded описывает САМ ВЫЗОВ, не то, что
   // когда-либо было true на затронутых записях; см. докстринг выше).
   return { adopted, requested: dealDeadline, minEffectiveExpiry, cappedCount, funded: !!funded };
+}
+
+// Отбор по паре; правила — в _adoptBags().
+export function adoptPairBags(pairId, dealDeadline, nowMs = Date.now(), funded = false) {
+  assertPairId('adoptPairBags', pairId);
+  return _adoptBags('adoptPairBags', (meta) => meta.pairId === pairId, dealDeadline, nowMs, funded);
+}
+
+// Задача 2 (4в-2): отбор по СДЕЛКЕ. У мешка ящика pairId — это
+// (сторона ↔ сделка), а не (клиент ↔ исполнитель), поэтому усыновление по
+// паре не тронуло бы его никогда (разведка, GAP 8). Адрес приводится
+// assertAddress к тому же виду, в котором его хранит recordBag, — так
+// регистр перестаёт быть вопросом на этом шве, а не «проверяется».
+export function adoptDealBags(deal, dealDeadline, nowMs = Date.now(), funded = false) {
+  const addr = assertAddress('adoptDealBags', deal);
+  return _adoptBags('adoptDealBags', (meta) => meta.deal === addr, dealDeadline, nowMs, funded);
 }
 
 // ─── Чистка ─────────────────────────────────────────────────────────────────
