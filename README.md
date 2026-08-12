@@ -109,7 +109,7 @@ Windows are constants in `src/Agreement.sol:276-279`; the dispute fee (3 %, capp
 
 ## Getting started
 
-**Prerequisites:** [Foundry](https://book.getfoundry.sh/getting-started/installation), Node.js 18+, a Base Sepolia wallet with test ETH, and test USDC from [faucet.circle.com](https://faucet.circle.com).
+**Prerequisites:** [Foundry](https://book.getfoundry.sh/getting-started/installation), Node.js 22+ (what CI and both Dockerfiles use), a Base Sepolia wallet with test ETH, and test USDC from [faucet.circle.com](https://faucet.circle.com).
 
 ```bash
 git clone https://github.com/Hexseal/Hexseal.git
@@ -186,7 +186,7 @@ cd relayer   && npm ci && npm test           # relayer
 cd ../frontend && npm ci --legacy-peer-deps && npm test
 ```
 
-Five shell gates must be green; CI runs all of them (`.github/workflows/ci.yml:48-60`):
+Five shell gates must be green; CI runs all of them, in the `contracts` job of `.github/workflows/ci.yml`:
 
 | Gate | Catches |
 |---|---|
