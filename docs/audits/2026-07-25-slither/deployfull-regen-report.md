@@ -98,9 +98,9 @@ other selector in the file uses a `Facet.function.selector` expression.
   stale pre-ERC-7201 `keccak256("hexseal.X.storage")` description, and to
   point at the new drift test.
 - **`rewardPerDispute` left at 0** (unset) — per the brief, the flat-reward
-  model is being replaced per
-  `docs/superpowers/specs/2026-07-22-arbiter-economics-design.md` §3; `
-  setRewardPerDispute` / `fundVault` are deliberately not called.
+  model is being replaced per §3 of the arbiter-economics design note
+  (internal, not published); `setRewardPerDispute` / `fundVault` are
+  deliberately not called.
 - **No changes** to `foundry.toml`, pragmas, or dependencies. Script's overall
   shape (deploy → initCuts → Diamond → AgreementDeployer → initRegistry/
   initFactory → remaining cuts → link SVGRenderer) is unchanged; only the

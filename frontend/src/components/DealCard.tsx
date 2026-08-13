@@ -96,7 +96,7 @@ function DealCardImpl({ agreement, address, refetch }: {
   const [proposeDesc, setProposeDesc]     = useState('');
 
   // One multicall for this card's 6 reads instead of 6 separate RPC round
-  // trips (see docs/superpowers/specs/2026-07-20-dashboard-correctness-fixes-design.md).
+  // trips (see the internal dashboard-correctness design note, not published).
   // staleTime 30s: none of these tick client-side (timeLeft is a static
   // snapshot, not a live countdown), so 30s of staleness is invisible and
   // absorbs the cost of AgreementsTabs' tab-switch remount for free.

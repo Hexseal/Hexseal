@@ -245,7 +245,7 @@ contract SVGRenderer is ISVGRenderer {
         // а считается от суммы (max(amount * feeBps, feeFloor)) и в квитанцию не
         // передаётся. Печатать её здесь можно было бы только пересчётом по
         // текущему конфигу — то есть показывая не то, что человек заплатил.
-        // docs/superpowers/specs/2026-07-28-fee-economics-design.md
+        // Подробности — внутренний замысел экономики комиссий (не публикуется).
         return string(abi.encodePacked(
             '<line x1="20" y1="242" x2="360" y2="242" stroke="#2e2e2e" stroke-width="1"/>',
             '<text x="20" y="266" font-family="monospace,Courier New" font-size="9" fill="#555555" letter-spacing="1">ESCROW</text>',

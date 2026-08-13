@@ -17,8 +17,8 @@ pragma solidity ^0.8.20;
 //   спор — плоская выплата rewardPerDispute отвергнута дизайном 28 июля и
 //   снята 31 июля (setRewardPerDispute теперь ревертит RewardPathRetired,
 //   поле rewardPerDispute мёртвое). Оплата за вердикт сегодня из двух
-//   источников: creditDisputeFee (80% от 3% сбора со спорной суммы,
-//   docs/superpowers/specs/2026-07-22-arbiter-economics-design.md) и
+//   источников: creditDisputeFee (80% от 3% сбора со спорной суммы —
+//   внутренний замысел экономики арбитража, не публикуется) и
 //   disputeBounty — доплата стороны спора до arbiterFloor на мелком котле
 //   (fundDispute), которая при финализации уходит арбитру в finalizeVerdict.
 //   Арбитр забирает накопленное через withdrawArbiterReward().
