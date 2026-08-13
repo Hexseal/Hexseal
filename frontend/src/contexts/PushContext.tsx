@@ -62,8 +62,21 @@ export function PushProvider({ children }: { children: ReactNode }) {
   // attempt id and check it before applying their result.
   const attemptIdRef = useRef(0);
 
-  // Register the service worker at app start, regardless of push permission state,
-  // so useXmtpNotifications's navigator.serviceWorker.ready await always resolves.
+  // Register the service worker at app start, regardless of push permission
+  // state — and note there is deliberately no isPushSupported() guard here,
+  // unlike the effect below. `useNotifications` awaits
+  // `navigator.serviceWorker.ready` on every return to the foreground, to close
+  // OS notifications the user has already seen (`hooks/useNotifications.ts`,
+  // visibilitychange/focus effect), and that await never settles until someone
+  // registers a worker. `refreshSubscribed` below registers one too, but only
+  // when isPushSupported() holds — so wherever `serviceWorker` exists without
+  // PushManager or without a VAPID key, this line is the only registration
+  // there is, and the tray never gets cleaned without it.
+  //
+  // ⚠️ Здесь назывался `useXmtpNotifications` — тот ушёл вместе с XMTP 6 августа
+  // 2026, а строка осталась НЕСУЩЕЙ: потребитель просто другой. Имя мёртвого
+  // потребителя в объяснении хуже, чем отсутствие объяснения: по нему строку
+  // сносят как ненужную.
   useEffect(() => { void getSwRegistration(); }, []);
 
   const refreshSubscribed = useCallback(async (addr: string | undefined) => {

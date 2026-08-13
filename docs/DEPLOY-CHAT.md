@@ -152,6 +152,10 @@ curl -s https://api.hexseal.net/health
 ssh root@IP_VPS "docker run --rm -v relayer_storage:/s alpine rm -rf /s/xmtp-bot"
 ```
 
+`xmtp-bot` здесь — **имя каталога на диске**, оставшегося от бота, выключенного
+6 августа 2026 вместе со всей обвязкой XMTP. Никакой код в него не смотрит: чат
+работает на собственном транспорте, см. `docs/FRONTEND_GUIDE.md`.
+
 ---
 
 ## Если что-то пошло не так
