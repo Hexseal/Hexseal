@@ -24,10 +24,8 @@ const nextConfig: NextConfig = {
   // pino (WalletConnect dep) dynamically requires pino-pretty — don't bundle it
   serverExternalPackages: ['pino', 'pino-pretty'],
 
-  // @typescript-eslint version mismatch on Vercel's env — don't block prod builds
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // Ключ `eslint` убран при переезде на Next 16: там его больше нет в типе
+  // NextConfig (проверку кода из сборки вынесли наружу целиком).
 
   images: {
     domains: ['ipfs.io', 'w3s.link', 'cloudflare-ipfs.com'],
