@@ -48,14 +48,23 @@ const nextConfig: NextConfig = {
     ],
   },
 
+  // ⚠️ Сборщик закреплён вебпаком явно (`--webpack` в скриптах package.json).
+  // В Next 16 по умолчанию Turbopack, и настройка ниже — вебпаковская.
+  //
+  // ЧЕСТНО ПРО ПРИЧИНУ. Раньше здесь стоял блок `experiments.asyncWebAssembly`
+  // с пометкой «Required for @xmtp/browser-sdk». От XMTP проект отказался, чат
+  // переписан на собственный транспорт — пакета нет ни во фронте, ни в релеере.
+  // Комментарий пережил библиотеку и продолжал оправдывать настройку.
+  //
+  // Замерено 13 августа 2026, снятием: сборка БЕЗ этого блока проходит, и в
+  // выводе `.next` **ноль файлов .wasm** — обрабатывать сборщику было нечего.
+  // libsodium носит wasm внутри своего js и запускает его сам, мимо сборщика.
+  // Блок убран как мёртвый.
+  //
+  // Остаётся вебпаковским `resolve.fallback` ниже — вот он живой. Переезд на
+  // Turbopack потребует найти ему замену и проверяется отдельно, живым заходом
+  // с телефона, а не фактом успешной сборки.
   webpack: (config, { isServer }) => {
-    // Required for @xmtp/browser-sdk (WASM-based MLS group messaging)
-    config.experiments = {
-      ...config.experiments,
-      asyncWebAssembly: true,
-      layers: true,
-    };
-
     if (isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
