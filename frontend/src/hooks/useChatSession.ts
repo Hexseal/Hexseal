@@ -52,8 +52,7 @@
  * ⚠️ ТЕКСТ ПРЕДУПРЕЖДЕНИЯ ЖДЁТ СЛОВА ВЛАДЕЛЬЦА. Черновик разложен по всем
  * 14 локалям отдельными ключами — `chat.recovery_warning_title`,
  * `chat.recovery_warning_access`, `chat.recovery_warning_where`,
- * `chat.recovery_warning_loss` (`messages/*.json`; `zh.json` не трогается,
- * это сирота вне списка локалей). Четыре ключа, а не один абзац, ровно
+ * `chat.recovery_warning_loss` (`messages/*.json`). Четыре ключа, а не один абзац, ровно
  * затем, чтобы правка одной строки не требовала правки кода. Показывает их
  * отображение — Задача 7.
  *

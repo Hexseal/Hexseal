@@ -61,6 +61,8 @@ import {
 } from '@/lib/presentToArbiter';
 // ⚠️ ОДНО ЧТЕНИЕ ЦЕПИ НА ОБЕ СТОРОНЫ (Задача 7): арбитр сверяет отпечаток тем
 // же `readChainAnchors`, которым сторона узнаёт, отмечено ли её предъявление.
+// Разнятся они РОВНО ОДНИМ входом — `withLog` (см. вызов ниже): порядок нужен
+// арбитру, стороне нужно слово.
 import { readChainAnchors, restoreAnchorImpl } from '@/lib/presentationAnchor';
 
 export interface PresentToArbiterProps {
@@ -805,6 +807,19 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
    * они разошлись бы молча, и сторона видела бы «отмечено» там, где арбитр
    * видит «не сходится».
    *
+   * ⚠️ НО ВОПРОС РАЗНЫЙ, И ПОЭТОМУ `withLog: false`. Арбитру нужен ПОРЯДОК —
+   * «отпечаток на блоке N, запись о молчании на блоке M», — а номера блока не
+   * отдаёт ни один геттер, только лента. Стороне нужно одно слово: отмечено её
+   * предъявление или нет. Это сравнение со списком геттера, один `eth_call`;
+   * лента же — 43 200 блоков кусками по 3 600, ДВЕНАДЦАТЬ параллельных
+   * `eth_getLogs` на каждое открытие чата по спорной сделке. Купить на них
+   * сторона могла бы только `txHash`, а он не рисуется нигде
+   * (`PresentAnchorLine` знает ровно два слова).
+   *
+   * ⚠️ ЧЕСТНОЕ РАЗЛИЧЕНИЕ ЗАДАЧИ 7 ЦЕЛО: «не отмечено» и «не знаем» считаются
+   * ПО ГЕТТЕРУ (`anchorBy`: `unread` — это молчание геттера либо неполный
+   * список), лента в вердикт не входит ни одной веткой.
+   *
    * ⚠️ ЦЕПЬ НЕ ОТВЕТИЛА — МОЛЧИМ. `anchorFromChain` отдаёт `none`, строки нет
    * вовсе: «не отмечено», сказанное из-за молчания узла, погнало бы человека
    * платить за отметку, которая уже стоит в цепи.
@@ -817,7 +832,7 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
       agreement,
       alive: () => alive,
       applyAnchor: (fn) => setAnchor(fn),
-      readAnchors: () => readChainAnchors(publicClient, agreement),
+      readAnchors: () => readChainAnchors(publicClient, agreement, { withLog: false }),
     });
     return () => { alive = false; };
   }, [address, agreement, publicClient]);

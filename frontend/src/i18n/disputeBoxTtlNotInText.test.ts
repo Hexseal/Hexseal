@@ -27,7 +27,7 @@ import { describe, it, expect } from 'vitest';
 
 const MESSAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../messages');
 
-/** Те же четырнадцать, что и у остальных замков локалей. `zh.json` — сирота. */
+/** Те же четырнадцать, что и у остальных замков локалей. */
 const LOCALES = [
   'en', 'ru', 'es', 'de', 'fr', 'it', 'pt', 'uk', 'zh-CN', 'ja', 'ko', 'th', 'ar', 'hi',
 ];

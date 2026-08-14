@@ -18,7 +18,8 @@ import { canonicalPresentationBytes, type PresentationContainer } from '@/lib/pr
 import type { PresentationDraft } from '@/lib/presentationDraft';
 import type { AnchorState } from '@/lib/presentToArbiter';
 import {
-  ANCHOR_DIGEST_PAGE, ANCHOR_EVENTS, ANCHOR_LOG_CHUNK_BLOCKS, ANCHOR_LOG_WINDOW_BLOCKS,
+  ANCHOR_DIGEST_MAX_PAGES, ANCHOR_DIGEST_PAGE, ANCHOR_EVENTS,
+  ANCHOR_LOG_CHUNK_BLOCKS, ANCHOR_LOG_WINDOW_BLOCKS,
   anchorFromChain, anchorOrder, keepKnownAnchor, readChainAnchors, restoreAnchorImpl,
   sameDigest, verifyDigest,
 } from '@/lib/presentationAnchor';
@@ -255,6 +256,82 @@ describe('чтение цепи про отпечатки', () => {
     expect(a.windowCoversDispute).toBe(true);
     const { bagAnchor: bag } = await import('@/lib/presentationAnchor');
     expect(anchorOrder(bag(d, a), a)).toBe('no_record');
+  });
+
+  it('G11: ЗАМЕР — сторона открывает чат по СПОРНОЙ сделке: ленты НОЛЬ, геттер на месте', async () => {
+    // ⚠️ ВОЛНА ПРАВОК ОБЩЕГО РЕВЬЮ, ПРАВКА 2. Сцена ровно та, что стоила
+    // дороже всего: спор идёт, отпечаток по сделке ЕСТЬ (значит G1 «ленту не
+    // спрашиваем, когда отпечатков нет» здесь не спасает), человек открывает
+    // чат. Прежде это стоило двенадцать параллельных `eth_getLogs` — 43 200
+    // блоков кусками по 3 600, — и покупало стороне только `txHash`, который
+    // `PresentAnchorLine` не рисует нигде.
+    const c = containerOf(1);
+    const d = digestOf(c);
+    const head = BigInt(44_700_000);
+    const n = node({ digests: [d], logs: [digestLog(d, head - BigInt(5))], head });
+
+    const a = await readChainAnchors(n.client, DEAL, { withLog: false });
+
+    expect(n.calls.logs, 'лента спрошена там, где номера блока никто не рисует').toBe(0);
+    expect(n.calls.head, 'голову цепи спросили — значит ленту всё-таки готовили').toBe(0);
+    expect(n.calls.pages, 'геттер не спрошен — вердикт считать нечем').toBe(1);
+
+    // И ВЕРДИКТ ПРИ ЭТОМ ЦЕЛ: ради него всё и читается.
+    const { bagAnchor: bag } = await import('@/lib/presentationAnchor');
+    expect(bag(d, a).verdict, 'отметка есть в цепи, а сторона её не видит').toBe('match');
+    expect(anchorFromChain(d, a)).toEqual({ kind: 'anchored', txHash: null });
+  });
+
+  it('G12: без ленты «не отмечено» и «не знаем» ПО-ПРЕЖНЕМУ разные (Задача 7)', async () => {
+    // ⚠️ ГЛАВНОЕ СОМНЕНИЕ ПРАВКИ 2, И ОНО ЗАКРЫВАЕТСЯ ЗАМЕРОМ, А НЕ РАССУЖДЕНИЕМ.
+    // Честное различение считается по ГЕТТЕРУ (`anchorBy`), лента в вердикт не
+    // входит ни одной веткой — значит обязано пережить `withLog: false`.
+    const c = containerOf(1);
+    const d = digestOf(c);
+
+    // «не отмечено»: геттер ответил, и в ответе пусто → строка и кнопка есть.
+    const пусто = node({ digests: [] });
+    expect(anchorFromChain(d, await readChainAnchors(пусто.client, DEAL, { withLog: false })))
+      .toEqual({ kind: 'missing', digest: d });
+
+    // «не сходится»: отпечатки есть, но чужие — тоже знание, тоже кнопка.
+    const чужой = node({ digests: [keccak256(new Uint8Array([9, 9]))] });
+    expect(anchorFromChain(d, await readChainAnchors(чужой.client, DEAL, { withLog: false })).kind)
+      .toBe('missing');
+
+    // «не знаем»: список УПЁРСЯ В ПОТОЛОК страниц → молчим, кнопки нет.
+    const много = Array.from({ length: ANCHOR_DIGEST_PAGE * ANCHOR_DIGEST_MAX_PAGES },
+      (_, i) => keccak256(new Uint8Array([i & 0xff, (i >> 8) & 0xff, 7])));
+    const неполный = node({ digests: много });
+    const a = await readChainAnchors(неполный.client, DEAL, { withLog: false });
+    expect(a.digestsComplete, 'список полон — сцена «не знаем» не поставлена').toBe(false);
+    expect(anchorFromChain(d, a), '«не знаем» превратилось в «не отмечено» — это обвинение стороны')
+      .toEqual({ kind: 'none' });
+
+    // «цепь молчит»: геттер БРОСАЕТ и без ленты — решает вызывающий (G6).
+    const мёртвый = {
+      readContract: async () => { throw new Error('узел не ответил'); },
+      getBlockNumber: async () => BigInt(1),
+      getLogs: async () => [],
+    } as unknown as PublicClient;
+    await expect(readChainAnchors(мёртвый, DEAL, { withLog: false })).rejects.toThrow();
+  });
+
+  it('G13: у АРБИТРА лента по-прежнему спрашивается — умолчание не перевернули', async () => {
+    // Обратная сторона G11, и без неё правка «не спрашивать ленту» могла бы
+    // молча уехать в умолчание: вердикт арбитра остался бы зелёным (он из
+    // геттера), а порядок — то, ради чего всё затевалось, — пропал бы совсем.
+    const d = digestOf(containerOf(1));
+    const head = BigInt(44_700_000);
+    const n = node({ digests: [d], logs: [digestLog(d, head - BigInt(5))], head });
+
+    await readChainAnchors(n.client, DEAL);        // как зовёт арбитр — без опций
+    expect(n.calls.logs).toBe(Number(ANCHOR_LOG_WINDOW_BLOCKS / ANCHOR_LOG_CHUNK_BLOCKS));
+
+    // И `withLog: true` явным словом — то же самое, а не третье поведение.
+    const m = node({ digests: [d], logs: [digestLog(d, head - BigInt(5))], head });
+    await readChainAnchors(m.client, DEAL, { withLog: true });
+    expect(m.calls.logs).toBe(n.calls.logs);
   });
 
   it('G8: сверка отпечатков не смотрит на регистр, но смотрит на длину', () => {
