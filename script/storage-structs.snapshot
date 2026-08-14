@@ -100,6 +100,14 @@ mapping(address=>uint256) arbiterBond
 mapping(address=>uint256) openClaimCount
 mapping(address=>mapping(address=>bool)) hasVotedAppeal
 uint256 treasurySlice
+mapping(address=>uint256) disputeBounty
+mapping(address=>address) disputeBountyPayer
+uint256 arbiterFloor
+mapping(address=>uint256) refundableBounty
+mapping(address=>bytes32) arbiterBoxKey
+mapping(address=>bytes32) arbiterSignKey
+mapping(address=>mapping(address=>uint256)) disputeClaimedAtBy
+mapping(address=>mapping(address=>uint256)) disputeNoResponseAtBy
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.PendingVerdict ===
 address arbiter
@@ -151,6 +159,7 @@ mapping(address=>bool) hasEarnedXP
 uint256 uniqueActiveUsers
 mapping(address=>uint256) cleanStreak
 mapping(address=>bool) streakEvaluated
+mapping(address=>uint256) unresolvedDisputes
 
 === src/facets/ServiceBoardFacet.sol :: ServiceBoardStorage.HireRequest ===
 address client
