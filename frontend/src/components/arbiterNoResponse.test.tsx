@@ -152,6 +152,20 @@ describe('порядок состояний повторяет порядок п
     expect(noResponseState(facts({ claimedAt: NOW - 4241 })).kind).toBe('too_early');
   });
 
+  it('N26: сорвавшийся ПОРОГ не гасит того, что уже известно (ревью, круг 1)', () => {
+    // ⚠️ Порог нужен ровно двум веткам — «рано» и «можно». Требуй его наверху —
+    // и один неудавшийся `getNoResponseFloor` спрятал бы в «цепь не ответила»
+    // и «уже записано», и «спор ведёт другой»: факты, которые в этот момент
+    // ЗНАЕМ и которые от порога не зависят вовсе.
+    expect(noResponseState(facts({ floorSeconds: null, recordedAt: NOW - 5 })).kind).toBe('recorded');
+    expect(noResponseState(facts({ floorSeconds: null, claimer: OTHER })).kind).toBe('not_mine');
+    expect(noResponseState(facts({ floorSeconds: null, claimer: ZERO })).kind).toBe('not_claimed');
+    expect(noResponseState(facts({ floorSeconds: null, claimedAt: 0 })).kind).toBe('claim_unknown');
+    // А вот про «рано / можно» без порога сказать нечем — и это честное «не
+    // знаем», а не готовность.
+    expect(noResponseState(facts({ floorSeconds: null })).kind).toBe('chain_unread');
+  });
+
   it('N8: ПОЛ БЕРЁТСЯ ИЗ ВХОДА, а не из своего числа — та же сцена, два пола', () => {
     // ⚠️ Это поведенческий замок на хозяина числа, а не текстовый: если пол
     // где-то зашит, эта сцена перестанет двигаться вслед за цепью. Оба числа
@@ -317,7 +331,7 @@ describe('крючок спрашивает цепь, а не сам себя', 
   async function probeFacts(): Promise<Facts> {
     const { useNoResponseRecord } = await import('@/hooks/useNoResponseRecord');
     function Probe() {
-      const { facts: seen } = useNoResponseRecord(AGREEMENT, ME);
+      const { facts: seen } = useNoResponseRecord(AGREEMENT, ME, true);
       // ⚠️ Факты уезжают ЧЕРЕЗ РАЗМЕТКУ, а не присваиванием в переменную
       // снаружи: присваивание во время рендера — побочный эффект, и правило
       // React его запрещает (ESLint валит на этом же файле).
@@ -387,7 +401,77 @@ describe('крючок спрашивает цепь, а не сам себя', 
   });
 });
 
-/* ═════════════════════ 4. ХОЗЯИН ЧИСЛА — ТЕКСТОМ ══════════════════════ */
+/* ═══════ 4. ЖИВОЙ СПОР ПРОТИВ ВСЕЙ ИСТОРИИ АРБИТРА (ревью, круг 1) ══════ */
+
+describe('кнопка ставится на открытый спор, а не на всю историю', () => {
+  const OPEN = '0xaaaa000000000000000000000000000000000001' as `0x${string}`;
+  const CLOSED = '0xbbbb000000000000000000000000000000000002' as `0x${string}`;
+
+  async function tab(): Promise<string> {
+    const { ArbiterPresentationsTab } = await import('@/components/ArbiterPresentations');
+    return renderToStaticMarkup(React.createElement(ArbiterPresentationsTab, {
+      cases: [
+        { agreement: OPEN, client: OTHER, executor: ME, disputeOpen: true },
+        { agreement: CLOSED, client: OTHER, executor: ME, disputeOpen: false },
+      ],
+      me: ME,
+      chainKeys: null,
+      publicClient: undefined,
+      signChatKey: () => null,
+      getBoxPass: async () => '',
+      recordNoResponse: async () => {},
+    }));
+  }
+
+  it('N27: у разобранного дела кнопки НЕТ и чтений цепи на него НЕ ТРАТИТСЯ', async () => {
+    // ⚠️ Карточки ставятся на `getArbiterDeals()` — все дела, что арбитр когда-
+    // либо брал. Без гейта арбитр с сотней разобранных дел платил бы тремя
+    // чтениями цепи за каждое и читал бы на каждом «спор ведёт другой» про
+    // спор, кончившийся месяц назад.
+    chain = { getDisputeClaimer: ME, getDisputeClaimedAt: 1n, getNoResponseAt: 0n, getNoResponseFloor: 1n };
+    const markup = await tab();
+
+    const seen = markup.split(translate('arbiter.no_response_btn')).length - 1;
+    expect(seen, 'кнопка нарисована не только у живого спора').toBe(1);
+
+    const spent = calls.filter(c => Array.isArray(c.args) && (c.args as unknown[])[0] === CLOSED
+      && (c.query as { enabled?: boolean } | undefined)?.enabled !== false);
+    expect(spent.map(c => c.functionName),
+      'на разобранное дело потрачены чтения цепи').toEqual([]);
+
+    // И обратная сторона: у живого спора чтения ИДУТ, иначе «гейт» был бы
+    // просто выключенной кнопкой.
+    const live = calls.filter(c => Array.isArray(c.args) && (c.args as unknown[])[0] === OPEN
+      && (c.query as { enabled?: boolean } | undefined)?.enabled !== false);
+    expect(live.map(c => c.functionName)).toContain('getDisputeClaimer');
+  });
+});
+
+/* ═════════════════════ 5. ХОЗЯИН ЧИСЛА — ТЕКСТОМ ══════════════════════ */
+
+describe('на экране сказано, ЧЬЯ это запись (ревью, круг 1)', () => {
+  it('N28: «ваша» у кнопочной строки и «не обязательно ваша» у строки сводки', () => {
+    // ⚠️ Замок ТЕКСТОВЫЙ, и так и написано. Сцена, ради которой он стоит:
+    // прежний арбитр записал молчание и отпустил спор, спор взял я. Сводка
+    // ящика читает ЛЕНТУ (запись по сделке, любого арбитра) и говорит «в цепи
+    // есть запись, блок N»; кнопочный блок читает ГЕТТЕР (запись ТЕКУЩЕГО
+    // клеймера) и честно показывает активную кнопку. Оба верны, а человек
+    // читает противоречие — пока не сказано, чья запись.
+    const arb = (locale: string) => {
+      const bundle = JSON.parse(fs.readFileSync(path.join(MESSAGES_DIR, `${locale}.json`), 'utf8')) as
+        { arbiter: Record<string, string> };
+      return bundle.arbiter;
+    };
+    for (const locale of ['ru', 'en']) {
+      const a = arb(locale);
+      const mine = locale === 'ru' ? /ваша|ваш /i : /your/i;
+      const notMine = locale === 'ru' ? /не обязательно ваша/i : /not necessarily yours/i;
+      expect(a.no_response_recorded, `${locale}: не сказано, что запись ваша`).toMatch(mine);
+      expect(a.presentations_no_response_record,
+        `${locale}: запись из ленты выдана за вашу`).toMatch(notMine);
+    }
+  });
+});
 
 describe('своей копии пола во фронте нет', () => {
   it('N25: ни в компоненте, ни в крючке, ни в решении числа пола не написано', () => {

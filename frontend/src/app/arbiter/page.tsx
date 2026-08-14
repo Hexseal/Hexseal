@@ -283,11 +283,18 @@ export default function ArbiterPage() {
   // хранили и оплачивали местом на диске.
   //
   // Список приходит из цепи: `getArbiterDeals(me)` — это дела, где спор брал Я.
-  // Статус употребляется РОВНО НА ОДНО: порядок (живой спор выше) — тот же
-  // приём, что с `sealedFor` у мешков, где заявление годится для очерёдности и
-  // не годится для выбрасывания. Ответ «ящик не ваш» даёт СЕРВЕР, прочитав
-  // цепь, и печатается строками `presentations_not_mine` /
-  // `presentations_box_closed`.
+  // Статус употребляется НА ДВА, и оба раза не для выбрасывания ящика:
+  //   — порядок (живой спор выше) — тот же приём, что с `sealedFor` у мешков,
+  //     где заявление годится для очерёдности и не годится для выбрасывания;
+  //   — `disputeOpen` для кнопки «просил, ответа не было» (ревью Задачи 8):
+  //     карточек столько, сколько дел за всю жизнь арбитра, и три чтения цепи
+  //     на каждую разобранную — плата всех за случай одного. Ящик этим полем
+  //     НЕ гейтится: он живёт до конца апелляции.
+  // Ответ «ящик не ваш» по-прежнему даёт СЕРВЕР, прочитав цепь, и печатается
+  // строками `presentations_not_mine` / `presentations_box_closed`.
+  //
+  // ⚠️ Пока `histDetails` не приехали, `disputeOpen` честно `false`: блок
+  // появится секундой позже, а не покажет кнопку, за которой ничего нет.
   const myBoxCases: ArbiterCase[] = [...(myHistory ?? [])]
     .sort((x, y) =>
       Number(histDetails[y]?.status === AGREEMENT_STATUS_DISPUTED) -
@@ -296,6 +303,7 @@ export default function ArbiterPage() {
       agreement: a as `0x${string}`,
       client: (histDetails[a]?.client ?? ZERO_ADDR) as `0x${string}`,
       executor: (histDetails[a]?.executor ?? ZERO_ADDR) as `0x${string}`,
+      disputeOpen: histDetails[a]?.status === AGREEMENT_STATUS_DISPUTED,
     }));
 
   // Подписчик ключа чата — тот же раскрой, что у заявки и публикации ключа.

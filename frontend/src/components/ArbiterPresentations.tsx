@@ -69,6 +69,19 @@ export interface ArbiterCase {
   agreement: `0x${string}`;
   client: `0x${string}`;
   executor: `0x${string}`;
+  /**
+   * Идёт ли спор по этому делу ПРЯМО СЕЙЧАС (статус сделки DISPUTED).
+   *
+   * ⚠️ ЯЩИК ЭТИМ ПОЛЕМ НЕ ГЕЙТИТСЯ И НЕ БУДЕТ (договор шапки плана, §4):
+   * предъявленное живёт до конца апелляции, и фильтр по статусу сделал бы его
+   * недостижимым ровно тогда, ради чего его хранили. Поле нужно ОДНОМУ —
+   * кнопке «просил, ответа не было»: карточки ставятся на всю историю арбитра
+   * (`getArbiterDeals`), и без него сотня разобранных дел стоила бы трёх чтений
+   * цепи каждая, показав на каждой «спор ведёт другой» про спор, кончившийся
+   * месяц назад. Спрятать этим нечего: `Agreement` зовёт `clearDisputeClaim`,
+   * выходя из спора, значит вне DISPUTED клеймо нулевое и запись невозможна.
+   */
+  disputeOpen: boolean;
 }
 
 export interface ArbiterPresentationsTabProps {
@@ -620,8 +633,10 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
 
   // Факты цепи про запись о молчании — свои у каждой карточки, и читаются они
   // сами (см. шапку файла): у ответа «почему кнопки нет» не должно быть цены в
-  // одно нажатие.
-  const { facts, refetch: refetchNoResponse } = useNoResponseRecord(deal.agreement, me);
+  // одно нажатие. ⚠️ Но только у ЖИВОГО спора: карточек столько, сколько дел за
+  // всю жизнь арбитра, а не сколько открытых споров (ревью, круг 1).
+  const { facts, refetch: refetchNoResponse } =
+    useNoResponseRecord(deal.agreement, me, deal.disputeOpen);
   const [recording, setRecording] = useState(false);
 
   /**
@@ -678,8 +693,14 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
 
       {/* ⚠️ СТОИТ ВНЕ ИСХОДОВ ЧТЕНИЯ ЯЩИКА, И ЭТО НЕ ВЁРСТКА. Запись о молчании
           — про то, что предъявления НЕТ; спрятать её за успешным открытием
-          ящика значило бы показывать её только тем, кому есть что читать. */}
-      <ArbiterNoResponse facts={facts} busy={recording} onRecord={() => void record()} />
+          ящика значило бы показывать её только тем, кому есть что читать.
+          ⚠️ НО ТОЛЬКО У ЖИВОГО СПОРА (ревью, круг 1): у разобранного дела
+          клеймо снято самим `Agreement`, записать нельзя ни при каких
+          обстоятельствах, и блок печатал бы «спор ведёт другой» про спор,
+          кончившийся месяц назад — на каждой карточке истории. */}
+      {deal.disputeOpen && (
+        <ArbiterNoResponse facts={facts} busy={recording} onRecord={() => void record()} />
+      )}
 
       {state.kind === 'key_needed' && (
         <div className="space-y-2">

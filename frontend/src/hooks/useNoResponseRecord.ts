@@ -27,6 +27,19 @@ import { releaseAdvice, type NoResponseFacts } from '@/lib/arbiterNoResponse';
  * совет «отпустите спор и возьмите заново» не обещал выхода, которого нет.
  * Таких споров на 14 августа ровно один, и платить за них тремя `eth_call` на
  * каждую карточку было бы платой всех за случай одного.
+ *
+ * ⚠️ `enabled` — НЕ УДОБСТВО, А ЦЕНА (ревью Задачи 8, круг 1). Карточки ящика
+ * ставятся на ВСЮ историю арбитра (`getArbiterDeals` — все дела, что он когда-
+ * либо брал), а не на открытые споры. Без гейта арбитр с сотней разобранных дел
+ * платил бы тремя чтениями цепи за каждое — и на каждом читал бы «спор ведёт
+ * другой» про спор, кончившийся месяц назад. Гейт при этом ничего не прячет:
+ * `Agreement` зовёт `clearDisputeClaim` при выходе из спора, значит вне статуса
+ * DISPUTED клеймо нулевое и `recordNoResponse` ответил бы `NotClaimingArbiter`
+ * в любом случае.
+ *
+ * ⚠️ ПОЛ ГЕЙТОМ НЕ ЗАКРЫТ, и это осознанно: у `getNoResponseFloor` нет
+ * аргументов, ключ запроса у всех карточек ОДИН, и React Query сводит их к
+ * одному обращению на страницу независимо от числа дел.
  */
 
 /** Как часто пересчитываются часы. Обратный отсчёт до пола идёт минутами, и
@@ -42,19 +55,21 @@ export interface NoResponseRecord {
   refetch: () => void;
 }
 
-export function useNoResponseRecord(agreement: Address, me?: Address): NoResponseRecord {
+export function useNoResponseRecord(
+  agreement: Address, me: Address | undefined, enabled: boolean,
+): NoResponseRecord {
   const diamond = { address: CONTRACTS.diamond, abi: ARBITER_REGISTRY_ABI, args: [agreement] } as const;
 
   const { data: claimer, refetch: refetchClaimer } = useReadContract({
-    ...diamond, functionName: 'getDisputeClaimer',
+    ...diamond, functionName: 'getDisputeClaimer', query: { enabled },
   }) as { data: string | undefined; refetch: () => void };
 
   const { data: claimedAt, refetch: refetchClaimedAt } = useReadContract({
-    ...diamond, functionName: 'getDisputeClaimedAt',
+    ...diamond, functionName: 'getDisputeClaimedAt', query: { enabled },
   }) as { data: bigint | undefined; refetch: () => void };
 
   const { data: recordedAt, refetch: refetchRecordedAt } = useReadContract({
-    ...diamond, functionName: 'getNoResponseAt',
+    ...diamond, functionName: 'getNoResponseAt', query: { enabled },
   }) as { data: bigint | undefined; refetch: () => void };
 
   const { floorSeconds } = useNoResponseFloor();
@@ -62,7 +77,7 @@ export function useNoResponseRecord(agreement: Address, me?: Address): NoRespons
   const mine = typeof claimer === 'string' && !!me
     && claimer.toLowerCase() === me.toLowerCase();
   /** Спор взят до разреза: только здесь нужен совет про отпускание. */
-  const legacyClaim = mine && claimedAt === BigInt(0);
+  const legacyClaim = enabled && mine && claimedAt === BigInt(0);
 
   // ⚠️ Окно берётся у САМОЙ СДЕЛКИ, а не из `config/constants`: клоны EIP-1167
   // прибиты к своей реализации намертво, и у старого клона `DISPUTE_WINDOW`

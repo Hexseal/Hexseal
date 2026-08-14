@@ -110,7 +110,11 @@ export function noResponseState(f: NoResponseFacts): NoResponseState {
   // Часы браузера — такой же вход, как ответ цепи. Мусор в них (NaN даёт
   // `false` в любом сравнении) провалился бы прямиком в «готово».
   if (!known(f.nowSec)) return { kind: 'chain_unread' };
-  if (f.claimer === null || !known(f.claimedAt) || !known(f.recordedAt) || !known(f.floorSeconds)) {
+  // ⚠️ ПОРОГА ЗДЕСЬ НЕТ НАМЕРЕННО (ревью, круг 1). Он нужен ровно двум последним
+  // веткам — «рано» и «можно», — а требование его наверху гасило бы в «цепь не
+  // ответила» то, что в этот момент ИЗВЕСТНО: и «уже записано», и «спор ведёт
+  // другой». Один сорвавшийся `getNoResponseFloor` прятал бы факт цепи.
+  if (f.claimer === null || !known(f.claimedAt) || !known(f.recordedAt)) {
     return { kind: 'chain_unread' };
   }
 
@@ -127,7 +131,11 @@ export function noResponseState(f: NoResponseFacts): NoResponseState {
   // 3. Время взятия неизвестно: спор взят до разреза. Кода переноса нет вовсе.
   if (f.claimedAt === 0) return { kind: 'claim_unknown', release: f.release };
 
-  // 4. Пол. Сравнение то же, что в контракте: `block.timestamp < claimedAt +
+  // 4. Пол — и только здесь он и требуется. Не прочитан — сказать «рано» или
+  //    «можно» нечем, и это честное «не знаем», а не готовность.
+  if (!known(f.floorSeconds)) return { kind: 'chain_unread' };
+
+  //    Сравнение то же, что в контракте: `block.timestamp < claimedAt +
   //    NO_RESPONSE_FLOOR` — на ровной границе цепь уже принимает.
   const readyAt = f.claimedAt + f.floorSeconds;
   if (f.nowSec < readyAt) return { kind: 'too_early', leftSeconds: readyAt - f.nowSec };
