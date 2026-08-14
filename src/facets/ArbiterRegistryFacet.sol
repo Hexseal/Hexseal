@@ -178,6 +178,22 @@ library ArbiterRegistryStorage {
         // становится его выбором, а не фактом. У якоря такой свободы нет: его
         // сдвиг возможен только вперёд и только себе во вред.
         mapping(address => mapping(address => uint256)) disputeNoResponseAtBy;
+        // ── Отпечатки предъявлений (4в-2 Выкатка 2, 14 августа 2026) ──
+        // Сделка → список 32-байтовых хэшей канонического вида, которым сторона
+        // ПОДПИСЫВАЕТ предъявление (canonicalPresentationBytes,
+        // frontend/src/lib/presentation.ts:526).
+        //
+        // Список, а не одно значение: переписка не влезает в один мешок, и
+        // предъявлений по спору бывает сколько нужно (замысел 2.7). Ключ —
+        // сделка, а не пара (сделка, сторона): доказывается ПОРЯДОК, а порядок
+        // общий для спора, и лента должна читаться одним запросом. Кто именно
+        // положил, видно из события — в хранилище это не нужно никому.
+        //
+        // Бессмертен отпечаток, а не переписка (замысел 2.12): склад чистится,
+        // 32 байта остаются. Отсюда же то, чего здесь НЕТ и быть не должно —
+        // ни удаления, ни переписывания: запись, которую можно снять,
+        // доказывает ровно ничего.
+        mapping(address => bytes32[]) presentationDigests;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -237,6 +253,17 @@ contract ArbiterRegistryFacet {
     /// хранилище показывает только запись ТЕКУЩЕГО клеймера, а по апелляции
     /// смотрят весь ход спора, включая арбитров, которые спор уже отпустили.
     event DisputeNoResponseRecorded(address indexed agreement, address indexed arbiter, uint256 at);
+    /// Сторона спора положила в цепь отпечаток предъявления.
+    ///
+    /// ⚠️ СОБЫТИЕ ОБЯЗАТЕЛЬНО, и не как дубль хранилища: хранилище отвечает
+    /// «сколько и какие», а спор решается вопросом «что было раньше». Номер
+    /// блока и порядок относительно DisputeNoResponseRecorded есть только у
+    /// ленты. `index` дублирует место в списке нарочно — читающий ленту не
+    /// обязан ходить в хранилище, чтобы понять, первое это предъявление или
+    /// десятое.
+    event PresentationDigestRecorded(
+        address indexed agreement, address indexed submitter, bytes32 digest, uint256 index
+    );
     event DAOActivated(address indexed by);
     event ArbiterApplied(address indexed arbiter);
     /// Ключи чата арбитра опубликованы или заменены.
@@ -344,6 +371,16 @@ contract ArbiterRegistryFacet {
     /// что дело в вердикте. Одинаковый смысл, разные экраны.
     error NotClaimingArbiter();
     error ClaimTimeUnknown();
+
+    // ── Отпечаток предъявления (4в-2 Выкатка 2) ──
+    /// Отдельно от NotParty намеренно, по той же причине, что NotClaimingArbiter
+    /// отдельно от NotTheClaimer: NotParty живёт на пути ОПЛАТЫ арбитра
+    /// (fundDispute), и человек, получивший её в ответ на «предъявить
+    /// переписку», пошёл бы искать проблему в деньгах. Смысл один, экраны разные.
+    error NotDisputeParty();
+    /// Нулевой отпечаток — не предъявление, а пустая запись в ленте: хэша, чей
+    /// прообраз можно показать, у нуля нет.
+    error ZeroDigest();
 
     // -------- MODIFIERS --------
 
@@ -743,6 +780,53 @@ contract ArbiterRegistryFacet {
 
         d.disputeNoResponseAtBy[agreement][caller] = block.timestamp;
         emit DisputeNoResponseRecorded(agreement, caller, block.timestamp);
+    }
+
+    /// @notice Сторона спора кладёт в цепь отпечаток предъявления — 32 байта.
+    /// @dev Это хэш того же канонического вида, которым сторона ПОДПИСЫВАЕТ
+    /// предъявление (`canonicalPresentationBytes`, frontend/src/lib/presentation.ts:526:
+    /// длина перед каждым полем, склеек нет). Смысл — не доказать содержание,
+    /// а показать ПОРЯДОК: отпечаток лёг на блоке N, запись арбитра «просил,
+    /// ответа нет» — на блоке M. Доверия к нашему серверу для этого не нужно, и
+    /// если сервер потеряет ящик, факт предъявления останется.
+    ///
+    /// Записи о молчании отпечаток НЕ мешает (замысел 2.11) — ни здесь, ни в
+    /// recordNoResponse нет ни одной строки, которая связывала бы одно с другим.
+    /// Жёсткий запрет дал бы стороне щит: цепь не знает, что лежит под хэшем,
+    /// значит неуязвимость покупалась бы отпечатком пустого файла. Кто прав,
+    /// решает арбитр, глядя на порядок, а не контракт.
+    function recordPresentationDigest(address agreement, bytes32 digest) external {
+        if (digest == bytes32(0)) revert ZeroDigest();
+
+        address caller = _msgSender();
+
+        // Стороны берём из СВОЕГО реестра, а не внешним вызовом к сделке.
+        // RegistryStorage.AgreementRecord уже держит client и executor
+        // (src/RegistryFacet.sol), и остальные функции этого фасета ходят туда
+        // же (notifyArbiterTimeout, fundDispute). Так дешевле, не заводит
+        // внешнего вызова с разбором returndata — и заодно отвечает на «а
+        // сделка вообще наша?»: у адреса, которого в реестре нет, нет ни
+        // клиента, ни исполнителя, поэтому стороной по нему не окажется никто и
+        // ленту чужой сделки не наполнит никто.
+        RegistryStorage.AgreementRecord storage rec =
+            RegistryStorage.store().agreements[agreement];
+        // ⚠️ Первая строка сегодня СРАБОТАТЬ НЕ МОЖЕТ, и написано это здесь,
+        // чтобы следующий читатель не принял её за живой замок. Записи в
+        // реестре пишутся целиком (RegistryFacet.register) и не удаляются
+        // нигде, поэтому «записи нет» означает и client == 0, и executor == 0 —
+        // а тогда вторая строка отвергает любого ненулевого вызывающего сама.
+        // Замерено снятием: убрать первую строку — 0 красных из 632; убрать обе
+        // — 3 красных. Оставлена как объявление намерения («сделка обязана быть
+        // нашей») ценой одного холодного SLOAD; если этот SLOAD когда-нибудь
+        // станет жалко, снимать надо именно её, а не вторую.
+        if (rec.agreement != agreement) revert NotDisputeParty();
+        if (caller != rec.client && caller != rec.executor) revert NotDisputeParty();
+
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        d.presentationDigests[agreement].push(digest);
+        emit PresentationDigestRecorded(
+            agreement, caller, digest, d.presentationDigests[agreement].length - 1
+        );
     }
 
     // -------- VERDICT FLOW --------
@@ -1473,6 +1557,23 @@ contract ArbiterRegistryFacet {
     /// Фронт обязан спрашивать здесь, а не держать своё число (замысел 5.2).
     function getNoResponseFloor() external pure returns (uint256) {
         return NO_RESPONSE_FLOOR;
+    }
+
+    /// @notice Все отпечатки предъявлений по сделке, в порядке появления.
+    /// Порядок и есть содержание ответа: спор решается тем, что легло раньше.
+    ///
+    /// Отдаём списком целиком, без окна: это view, за газ никто не платит, а
+    /// предъявлений по одному спору столько, сколько человек успел сделать
+    /// руками. Кто именно положил каждый отпечаток, здесь не видно — это в
+    /// событии PresentationDigestRecorded, и туда же ходят за номером блока.
+    function getPresentationDigests(address agreement) external view returns (bytes32[] memory) {
+        return ArbiterRegistryStorage.data().presentationDigests[agreement];
+    }
+
+    /// @notice Сколько отпечатков лежит по сделке. Отдельно от списка — чтобы
+    /// экран, которому нужно только «есть или нет», не тащил весь массив.
+    function getPresentationDigestCount(address agreement) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().presentationDigests[agreement].length;
     }
 
     /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —

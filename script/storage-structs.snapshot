@@ -108,6 +108,7 @@ mapping(address=>bytes32) arbiterBoxKey
 mapping(address=>bytes32) arbiterSignKey
 mapping(address=>mapping(address=>uint256)) disputeClaimedAtBy
 mapping(address=>mapping(address=>uint256)) disputeNoResponseAtBy
+mapping(address=>bytes32[]) presentationDigests
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.PendingVerdict ===
 address arbiter
