@@ -1,16 +1,16 @@
 {
   "name": "hexseal-subgraph",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "graph": "node node_modules/@graphprotocol/graph-cli/bin/run",
     "codegen": "node node_modules/@graphprotocol/graph-cli/bin/run codegen",
     "build": "node node_modules/@graphprotocol/graph-cli/bin/run build",
-    "deploy:studio": "node node_modules/@graphprotocol/graph-cli/bin/run deploy hexseal --node https://api.studio.thegraph.com/deploy/ -l v2.3.0",
-    "_note_deploy": "Метку -l поднимать при каждом деплое. v2.1.0 добавила хендлер DisputeSplitNoVerdict и поля splitToClient/splitToExecutor. Деплоить ОБЯЗАТЕЛЬНО вместе с UpgradeAgreementDisputeFee.s.sol, а не после: до этого сделка, закрытая дележом, висит в статусе спора во всех интерфейсах, хотя на цепи финализирована и пуста. v2.2.0 добавила сущность FeeCollection (индексация FeeCollected) — часть перехода комиссии на max(amount*feeBps/10000, feeFloor). Деплоить ОБЯЗАТЕЛЬНО вместе с апгрейдом комиссии, а не после: до этого леджер дохода в сабграфе продолжает читаться из AgreementDeployed.fee — пересчёта на момент найма, который расходится с реально удержанным при новой ставке. v2.3.0 добавила поля явки в споре (clientResponded/executorResponded) и хендлер DisputeUnanswered — исход таймаута, когда одна сторона не откликнулась. Деплоить ОБЯЗАТЕЛЬНО вместе с новой реализацией Agreement (шаг 5 docs/DEPLOY-FEE-MODEL.md), а не после: до этого сделка, закрытая таймаутом без отклика, висит в статусе спора во всех интерфейсах, хотя на цепи финализирована и пуста."
+    "deploy:studio": "node node_modules/@graphprotocol/graph-cli/bin/run deploy hexseal --node https://api.studio.thegraph.com/deploy/ -l v2.4.0",
+    "_note_deploy": "Метку -l поднимать при каждом деплое. v2.1.0 добавила хендлер DisputeSplitNoVerdict и поля splitToClient/splitToExecutor. Деплоить ОБЯЗАТЕЛЬНО вместе с UpgradeAgreementDisputeFee.s.sol, а не после: до этого сделка, закрытая дележом, висит в статусе спора во всех интерфейсах, хотя на цепи финализирована и пуста. v2.2.0 добавила сущность FeeCollection (индексация FeeCollected) — часть перехода комиссии на max(amount*feeBps/10000, feeFloor). Деплоить ОБЯЗАТЕЛЬНО вместе с апгрейдом комиссии, а не после: до этого леджер дохода в сабграфе продолжает читаться из AgreementDeployed.fee — пересчёта на момент найма, который расходится с реально удержанным при новой ставке. v2.3.0 добавила поля явки в споре (clientResponded/executorResponded) и хендлер DisputeUnanswered — исход таймаута, когда одна сторона не откликнулась. Деплоить ОБЯЗАТЕЛЬНО вместе с новой реализацией Agreement (шаг 5 docs/DEPLOY-FEE-MODEL.md), а не после: до этого сделка, закрытая таймаутом без отклика, висит в статусе спора во всех интерфейсах, хотя на цепи финализирована и пуста. v2.4.0 — НЕ про данные: graph-cli поднят 0.91→0.98.1, graph-ts 0.35.1→0.38.2 (74 предупреждения о зависимостях). Новая версия ТРЕБУЕТ у каждой сущности пометку immutable. Проставлена по замеру, а не по умолчанию: Job, Service, ServiceRequest и Agreement код грузит через .load() и пересохраняет — они immutable: false; FeeCollection только создаётся, id = txHash-logIndex уникален по построению — immutable: true. Метка поднята до v2.4.0 именно потому, что сменилась изменяемость FeeCollection: выкатывать поверх v2.3.0 нельзя."
   },
   "dependencies": {
-    "@graphprotocol/graph-cli": "^0.91.0",
-    "@graphprotocol/graph-ts": "^0.35.1"
+    "@graphprotocol/graph-cli": "^0.98.1",
+    "@graphprotocol/graph-ts": "^0.38.2"
   }
 }

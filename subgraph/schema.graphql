@@ -1,4 +1,4 @@
-type Job @entity {
+type Job @entity(immutable: false) {
   id: ID!
   client: Bytes!
   title: String!
@@ -15,7 +15,7 @@ type Job @entity {
   updatedAt: BigInt!
 }
 
-type Service @entity {
+type Service @entity(immutable: false) {
   id: ID!
   executor: Bytes!
   title: String!
@@ -29,7 +29,7 @@ type Service @entity {
   updatedAt: BigInt!
 }
 
-type ServiceRequest @entity {
+type ServiceRequest @entity(immutable: false) {
   id: ID!
   serviceId: String!
   client: Bytes!
@@ -38,7 +38,7 @@ type ServiceRequest @entity {
   createdAt: BigInt!
 }
 
-type Agreement @entity {
+type Agreement @entity(immutable: false) {
   id: ID!
   client: Bytes!
   executor: Bytes!
@@ -87,7 +87,7 @@ type Agreement @entity {
 #   4 REQUEST_FORFEIT — sourceId = requestId, пол при отклонении/отзыве/вытеснении
 #   5 DIRECT_DEAL     — sourceId = 0, прямой найм через фабрику, минуя доски;
 #                       сделка опознаётся по AgreementDeployed той же транзакции
-type FeeCollection @entity {
+type FeeCollection @entity(immutable: true) {
   id: ID!            # txHash-logIndex
   kind: Int!
   sourceId: BigInt!
