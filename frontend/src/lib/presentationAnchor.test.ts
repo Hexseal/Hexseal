@@ -19,7 +19,7 @@ import type { PresentationDraft } from '@/lib/presentationDraft';
 import type { AnchorState } from '@/lib/presentToArbiter';
 import {
   ANCHOR_DIGEST_PAGE, ANCHOR_EVENTS, ANCHOR_LOG_CHUNK_BLOCKS, ANCHOR_LOG_WINDOW_BLOCKS,
-  anchorFromChain, keepKnownAnchor, readChainAnchors, restoreAnchorImpl,
+  anchorFromChain, anchorOrder, keepKnownAnchor, readChainAnchors, restoreAnchorImpl,
   sameDigest, verifyDigest,
 } from '@/lib/presentationAnchor';
 
@@ -209,6 +209,54 @@ describe('чтение цепи про отпечатки', () => {
     expect(n.ranges[0].toBlock).toBe(head);
   });
 
+  it('G9: ЖИВАЯ ПРОБА — свежий отпечаток, СТАРАЯ запись арбитра (ревью, круг 2)', async () => {
+    // ⚠️ ТА САМАЯ СЦЕНА, КОТОРОЙ РЕВЬЮЕР ПОЙМАЛ ЛОЖЬ, И ОНА НЕ УГОЛ: сторона
+    // предъявила недавно, арбитр просил давно — самая обычная форма спора к
+    // моменту разбора. Отпечаток внутри окна, запись арбитра трое суток назад,
+    // снаружи. ВСЕ отпечатки при этом накрыты, и прежний признак
+    // (`logsComplete`) объявлял «записи о молчании нет» — при правде
+    // `record_first`.
+    const c = containerOf(1);
+    const d = digestOf(c);
+    const head = BigInt(44_700_000);
+    const n = node({
+      digests: [d], head,
+      logs: [
+        digestLog(d, head - BigInt(20_000)),
+        // Трое суток назад: в окно 43 200 не попадает и в ленте не найдётся.
+        {
+          eventName: 'DisputeNoResponseRecorded', blockNumber: head - BigInt(130_000),
+          args: { agreement: DEAL, arbiter: REX, at: BigInt(1_759_000_000) },
+        },
+      ],
+    });
+    const a = await readChainAnchors(n.client, DEAL);
+
+    expect(a.logsComplete, 'все отпечатки накрыты — и это ни о чём не говорит').toBe(true);
+    expect(a.noResponse, 'запись арбитра в окно не попала').toEqual([]);
+    expect(a.windowCoversDispute, 'покрытие начала спора доказано неоткуда').toBe(false);
+
+    const { bagAnchor: bag } = await import('@/lib/presentationAnchor');
+    const anchor = bag(d, a);
+    expect(anchor.verdict).toBe('match');
+    expect(anchorOrder(anchor, a),
+      'экран сказал бы «записи нет», а правда — запись легла РАНЬШЕ').toBe('out_of_window');
+  });
+
+  it('G10: окно упёрлось в начало цепи — вот тогда «записи нет» это знание', async () => {
+    const c = containerOf(1);
+    const d = digestOf(c);
+    // Голова ближе к нулю, чем ширина окна: раньше ничего быть не может.
+    const head = BigInt(500);
+    const n = node({ digests: [d], head, logs: [digestLog(d, BigInt(400))] });
+    const a = await readChainAnchors(n.client, DEAL, {
+      windowBlocks: BigInt(1_000), chunkBlocks: BigInt(1_000),
+    });
+    expect(a.windowCoversDispute).toBe(true);
+    const { bagAnchor: bag } = await import('@/lib/presentationAnchor');
+    expect(anchorOrder(bag(d, a), a)).toBe('no_record');
+  });
+
   it('G8: сверка отпечатков не смотрит на регистр, но смотрит на длину', () => {
     const d = digestOf(containerOf(1));
     expect(sameDigest(d, d.toUpperCase().replace('0X', '0x'))).toBe(true);
@@ -246,7 +294,7 @@ describe('«отмечено ли» переживает перезагрузк�
 
   const anchors = (digests: Hex[], records: { digest: Hex; block: bigint; txHash?: Hex }[] = []) => ({
     digests, digestsComplete: true, logsComplete: true, window: null,
-    noResponse: [],
+    windowCoversDispute: false, noResponse: [],
     records: records.map(r => ({
       digest: r.digest, submitter: ALICE, index: BigInt(0), block: r.block,
       txHash: r.txHash ?? null,

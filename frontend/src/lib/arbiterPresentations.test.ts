@@ -741,9 +741,15 @@ describe('цена', () => {
 // пре-образ или другая функция хэша).
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * ⚠️ `windowCoversDispute` ПО УМОЛЧАНИЮ `false`, И ЭТО НЕ ПРИДИРКА (ревью,
+ * круг 2). Так живая сеть и отвечает: окно ленты — сутки, начала спора оно не
+ * достаёт, доказательства покрытия нет. Сцена, в которой «записи о молчании
+ * нет» — ЗНАНИЕ, обязана называть флаг вслух, а не получать его умолчанием.
+ */
 const anchorsOf = (over: Partial<ChainAnchors> = {}): ChainAnchors => ({
   digests: [], digestsComplete: true, records: [], noResponse: [],
-  logsComplete: true, window: null, ...over,
+  logsComplete: true, windowCoversDispute: false, window: null, ...over,
 });
 
 const recordOf = (digest: `0x${string}`, block: bigint, over: Partial<DigestRecord> = {}): DigestRecord => ({
@@ -867,8 +873,10 @@ describe('сверка отпечатка', () => {
     expect(at(BigInt(10), [BigInt(20)])).toBe('digest_first');
     expect(at(BigInt(20), [BigInt(10)])).toBe('record_first');
     expect(at(BigInt(10), [BigInt(10)])).toBe('same_block');
-    // Записи нет, а лента накрыла всё — это ЗНАНИЕ, и молчать про него законно.
-    expect(at(BigInt(10), []), 'записи о молчании нет и лента полна').toBe('no_record');
+    // Записи нет, а окно ДОКАЗАНО достаёт до начала спора — это ЗНАНИЕ, и
+    // молчать про него законно.
+    expect(at(BigInt(10), [], { windowCoversDispute: true }),
+      'записи о молчании нет и покрытие доказано').toBe('no_record');
   });
 
   it('F11b: «не знаю» и «не смотрел так далеко» — РАЗНЫЕ вещи (правка круга 1)', () => {
@@ -879,10 +887,15 @@ describe('сверка отпечатка', () => {
     // Отметка есть, номер блока за границей окна — ГРОМКО, а не молчанием.
     expect(anchorOrder(match(null), anchorsOf({ digests: [d], logsComplete: false })))
       .toBe('out_of_window');
-    // Свой блок нашёлся, но лента не накрыта: записи о молчании МОГЛО не быть
-    // видно, и выдавать её отсутствие за факт нельзя.
-    expect(anchorOrder(match(BigInt(10)), anchorsOf({ digests: [d], logsComplete: false })))
+    // ⚠️ СЦЕНА РЕВЬЮЕРА (круг 2). Свой блок нашёлся, ВСЕ отпечатки накрыты
+    // (`logsComplete: true`) — а запись арбитра могла лежать старше окна.
+    // Прежний признак объявлял это «записи нет»; правда — «не знаем».
+    expect(anchorOrder(match(BigInt(10)), anchorsOf({ digests: [d], logsComplete: true })))
       .toBe('out_of_window');
+    // Тот же случай при ДОКАЗАННОМ покрытии — уже знание.
+    expect(anchorOrder(match(BigInt(10)),
+      anchorsOf({ digests: [d], logsComplete: true, windowCoversDispute: true })))
+      .toBe('no_record');
     // А это НЕ потери, у каждой своя строка на экране.
     expect(anchorOrder(match(BigInt(10)), null)).toBe('chain_unread');
     expect(anchorOrder(

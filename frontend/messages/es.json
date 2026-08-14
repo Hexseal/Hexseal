@@ -822,7 +822,7 @@
     "presentation_anchor_dupes": "La misma huella está registrada {count} veces en la cadena — repetición de «registrar» tras una respuesta cortada. No es una falsificación.",
     "presentation_anchor_order_digest_first": "La presentación entró antes en la cadena: huella — bloque {digest}; el registro del árbitro «pedí, sin respuesta» — bloque {record}.",
     "presentation_anchor_order_record_first": "El registro del árbitro «pedí, sin respuesta» entró antes: bloque {record}; la huella de la presentación — bloque {digest}.",
-    "presentation_anchor_order_out_of_window": "No hay con qué ordenar: el registro es más antiguo que la ventana de búsqueda del flujo de eventos. Esto NO es «no hay huella», es «no miramos tan atrás». Pida una revisión si el orden decide.",
+    "presentation_anchor_order_out_of_window": "No hay con qué ordenar: la búsqueda en el flujo no alcanza el inicio de la disputa. Si existe un registro del árbitro anterior, no lo sabemos. Esto NO es «no hay registro»: pida una revisión si el orden decide.",
     "presentations_anchor_window": "La búsqueda en el flujo cubrió los bloques {from}–{to}. Lo anterior no entró en el orden: es el límite de la búsqueda, no una cadena vacía.",
     "presentations_anchor_truncated": "La cadena guarda más huellas de las que leímos: se tomaron {count}. Una no coincidencia puede deberse simplemente a que no terminamos de leer, por eso se llama «no sabemos».",
     "presentation_anchor_order_same": "La huella y el registro del árbitro «pedí, sin respuesta» cayeron en el mismo bloque — {block}.",

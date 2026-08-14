@@ -822,7 +822,7 @@
     "presentation_anchor_dupes": "同一指纹在链上记录了 {count} 次——回应中断后重复「记录」所致，并非伪造。",
     "presentation_anchor_order_digest_first": "提交先上链：指纹——区块 {digest}，仲裁人「已索要，无回应」的记录——区块 {record}。",
     "presentation_anchor_order_record_first": "仲裁人「已索要，无回应」的记录在先：区块 {record}，提交指纹——区块 {digest}。",
-    "presentation_anchor_order_out_of_window": "无从排定先后：这条记录早于事件流的检索窗口。这不是「没有指纹」，而是「我们没有回溯那么远」。若先后是关键，请申请复核。",
+    "presentation_anchor_order_out_of_window": "无从排定先后：事件流检索没有回溯到争议的起点。此前是否存在仲裁人的记录，我们并不知道。这不等于「没有记录」——若先后是关键，请申请复核。",
     "presentations_anchor_window": "事件流检索覆盖的是区块 {from}–{to}。更早的记录没有进入排序——这是检索的边界，而非空链。",
     "presentations_anchor_truncated": "链上的指纹多于我们读取的数量：已取 {count} 条。不相符也可能只是因为我们没有读完——所以它被称作「不确定」。",
     "presentation_anchor_order_same": "指纹与仲裁人「已索要，无回应」的记录落在同一区块——{block}。",

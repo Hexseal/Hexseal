@@ -822,7 +822,7 @@
     "presentation_anchor_dupes": "A mesma impressão está registada {count} vezes na cadeia — repetição de «registar» após resposta cortada. Não é falsificação.",
     "presentation_anchor_order_digest_first": "A apresentação entrou primeiro na cadeia: impressão — bloco {digest}, registo do árbitro «pedi, sem resposta» — bloco {record}.",
     "presentation_anchor_order_record_first": "O registo do árbitro «pedi, sem resposta» veio primeiro: bloco {record}, a impressão da apresentação — bloco {digest}.",
-    "presentation_anchor_order_out_of_window": "Não há por onde ordenar: o registo é mais antigo do que a janela de busca do fluxo de eventos. Isto NÃO é «não há impressão», é «não olhámos tão para trás». Peça uma análise se a ordem decidir.",
+    "presentation_anchor_order_out_of_window": "Não há por onde ordenar: a busca no fluxo não alcança o início do litígio. Se existe um registo do árbitro anterior, não sabemos. Isto NÃO é «não há registo»: peça uma análise se a ordem decidir.",
     "presentations_anchor_window": "A busca no fluxo cobriu os blocos {from}–{to}. O que ficou antes não entrou na ordem — é o limite da busca, não uma cadeia vazia.",
     "presentations_anchor_truncated": "A cadeia guarda mais impressões do que lemos: foram {count}. Uma não coincidência pode dever-se apenas a não termos acabado de ler — por isso se chama «não sabemos».",
     "presentation_anchor_order_same": "A impressão e o registo do árbitro «pedi, sem resposta» caíram no mesmo bloco — {block}.",

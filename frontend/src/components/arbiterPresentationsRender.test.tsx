@@ -54,9 +54,12 @@ const emptyReading = (over: Partial<DisputeBoxReading> = {}): DisputeBoxReading 
 
 const DIGEST = `0x${'ab'.repeat(32)}` as `0x${string}`;
 
+/** ⚠️ `windowCoversDispute: false` умолчанием — так отвечает живая сеть
+ *  (ревью, круг 2). Сцена «мы ЗНАЕМ, что записи нет» называет флаг вслух. */
 const anchorsOf = (over: Partial<NonNullable<DisputeBoxReading['anchors']>> = {}) => ({
   digests: [], digestsComplete: true, records: [], noResponse: [],
-  logsComplete: true, window: null, ...over,
+  logsComplete: true, windowCoversDispute: false,
+  window: { fromBlock: BigInt(44_656_800), toBlock: BigInt(44_700_000) }, ...over,
 });
 
 const bagOf = (over: Partial<PresentedBag> = {}): PresentedBag => ({
@@ -417,11 +420,11 @@ describe('три состояния отпечатка на экране арб�
     expect(after).toContain(translate('arbiter.presentation_anchor_order_record_first',
       { digest: '44700090', record: '44700050' }));
 
-    // Записи о молчании нет, лента накрыта — порядка на экране нет вовсе, и
-    // это НЕ потеря: мы знаем, что записи нет.
+    // Записи о молчании нет, и покрытие начала спора ДОКАЗАНО — порядка на
+    // экране нет вовсе, и это НЕ потеря: мы знаем, что записи нет.
     const alone = await bagHtml(bagOf({
       anchor: { verdict: 'match', block: BigInt(44_700_000), submitter: A, records: 1, total: 1 },
-    }), anchorsOf({ digests: [DIGEST] }));
+    }), anchorsOf({ digests: [DIGEST], windowCoversDispute: true }));
     expect(alone).not.toContain(translate('arbiter.presentation_anchor_order_digest_first',
       { digest: '44700000', record: '44700050' }));
     expect(alone).not.toContain(translate('arbiter.presentation_anchor_order_out_of_window'));
@@ -440,25 +443,35 @@ describe('три состояния отпечатка на экране арб�
     expect(html).not.toContain(translate('arbiter.presentation_anchor_mismatch', { count: 1 }));
   });
 
-  it('R21: пределы поиска названы ЧИСЛАМИ в сводке — окно и длина списка', async () => {
-    const window = await summary(emptyReading({
-      anchors: anchorsOf({
-        digests: [DIGEST], logsComplete: false,
-        window: { fromBlock: BigInt(44_656_800), toBlock: BigInt(44_700_000) },
-      }),
-    }), 0);
-    expect(window).toContain(translate('arbiter.presentations_anchor_window',
-      { from: '44656800', to: '44700000' }));
+  it('R21: предел поиска назван ЧИСЛАМИ в сводке — И ВСЕГДА (ревью, круг 2)', async () => {
+    const line = translate('arbiter.presentations_anchor_window',
+      { from: '44656800', to: '44700000' });
 
+    const partial = await summary(emptyReading({
+      anchors: anchorsOf({ digests: [DIGEST], logsComplete: false }),
+    }), 0);
+    expect(partial).toContain(line);
+
+    // ⚠️ ГЛАВНОЕ ЗДЕСЬ. Прежде строка стояла под `!logsComplete`, и в самой
+    // обычной сцене — отпечатки накрыты, запись арбитра старше окна — экран
+    // молчал ОБО ВСЁМ: ни порядка, ни предупреждения, только «сходится, блок N».
+    const covered = await summary(emptyReading({
+      anchors: anchorsOf({ digests: [DIGEST], logsComplete: true }),
+    }), 0);
+    expect(covered, 'предел поиска молчит там, где он и вреден').toContain(line);
+
+    // Ленту не спрашивали вовсе (отпечатков нет) — окна нет, и строки нет.
+    const noWindow = await summary(emptyReading({ anchors: anchorsOf({ window: null }) }), 0);
+    expect(noWindow).not.toContain(line);
+  });
+
+  it('R22: обрезанный список отпечатков назван числом — и только когда обрезан', async () => {
     const truncated = await summary(emptyReading({
       anchors: anchorsOf({ digests: [DIGEST], digestsComplete: false }),
     }), 0);
     expect(truncated).toContain(translate('arbiter.presentations_anchor_truncated', { count: 1 }));
 
-    // Лента накрыла всё и список дочитан — ни одной из двух строк нет вовсе.
     const clean = await summary(emptyReading({ anchors: anchorsOf({ digests: [DIGEST] }) }), 0);
-    expect(clean).not.toContain(translate('arbiter.presentations_anchor_window',
-      { from: '44656800', to: '44700000' }));
     expect(clean).not.toContain(translate('arbiter.presentations_anchor_truncated', { count: 1 }));
   });
 

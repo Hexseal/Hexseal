@@ -102,8 +102,29 @@ export interface ChainAnchors {
   /** Из ленты. Может быть короче `digests`: окно ленты ограничено. */
   records: DigestRecord[];
   noResponse: NoResponseRecord[];
-  /** Лента накрыла все отпечатки геттера — у каждого есть номер блока. */
+  /**
+   * Лента накрыла все ОТПЕЧАТКИ геттера — у каждого есть номер блока.
+   *
+   * ⚠️ ЭТО НЕ ГОВОРИТ НИЧЕГО ПРО ЗАПИСИ АРБИТРА, и на этом уже был промах
+   * (ревью, круг 2). Отпечаток лёг двадцать тысяч блоков назад, запись арбитра
+   * — сто тридцать тысяч; все отпечатки накрыты, `logsComplete === true`, а
+   * записи в ленте нет — и «записи нет» прозвучало бы как знание. Свежий
+   * отпечаток при старой записи — самая обычная форма спора к разбору:
+   * сторона предъявила недавно, арбитр просил давно.
+   */
   logsComplete: boolean;
+  /**
+   * Доказано ли, что окно ленты достаёт до НАЧАЛА спора. Только при `true`
+   * отсутствие записи о молчании — знание, а не пробел.
+   *
+   * ⚠️ СЕГОДНЯ ЭТО ДОКАЗЫВАЕТСЯ РОВНО ОДНИМ СПОСОБОМ: окно упёрлось в начало
+   * цепи (`head <= windowBlocks`), то есть раньше ничего быть не может. На
+   * живой сети этого не бывает, и флаг честно `false` — значит «записи нет»
+   * не утверждается никогда, пока не приедет сабграф. Дешёвого доказательства
+   * нет и придумывать его нельзя: `getDisputeClaimedAt` отвечает про ТЕКУЩЕЕ
+   * взятие спора, а запись мог оставить прежний арбитр — до него.
+   */
+  windowCoversDispute: boolean;
   /** Какое окно ленты спрашивали. `null` — лента не спрашивалась вовсе
    *  (отпечатков по сделке нет, упорядочивать нечего). */
   window: { fromBlock: bigint; toBlock: bigint } | null;
@@ -290,10 +311,16 @@ export function anchorOrder(anchor: BagAnchor, anchors: ChainAnchors | null): An
   // Отпечаток отмечен, а на каком блоке — не видно: лента до него не достала.
   if (typeof anchor.block !== 'bigint') return 'out_of_window';
   const rec = firstNoResponse(anchors);
-  // ⚠️ «Записи нет» — знание ТОЛЬКО при накрытой ленте. Не накрыта — запись
-  // могла лежать старше окна, и выдать её отсутствие за факт значило бы
-  // соврать ровно там, где решается спор.
-  if (!rec) return anchors.logsComplete ? 'no_record' : 'out_of_window';
+  // ⚠️ «ЗАПИСИ НЕТ» — ЗНАНИЕ ТОЛЬКО ПРИ ДОКАЗАННОМ ПОКРЫТИИ НАЧАЛА СПОРА, И
+  // ЭТО ПРАВКА КРУГА 2. Прежде здесь стоял `logsComplete` — покрытие
+  // ОТПЕЧАТКОВ, которое про записи арбитра не говорит ничего. Живая проба
+  // ревьюера: отпечаток 20 000 блоков назад (внутри окна), запись арбитра
+  // 130 000 (трое суток, снаружи) — `logsComplete === true`, записи в ленте
+  // нет, и выходило `no_record` при правде `record_first`. Это ровно та ложь,
+  // против которой правка круга 1 и вводилась, только зашедшая с другой
+  // стороны, и форма спора это самая обычная: предъявили недавно, просили
+  // давно.
+  if (!rec) return anchors.windowCoversDispute ? 'no_record' : 'out_of_window';
   if (anchor.block < rec.block) return 'digest_first';
   if (anchor.block > rec.block) return 'record_first';
   return 'same_block';
@@ -383,7 +410,9 @@ export async function readChainAnchors(
   const { digests, complete } = await readDigestPages(client, agreement);
   const base: ChainAnchors = {
     digests, digestsComplete: complete,
-    records: [], noResponse: [], logsComplete: false, window: null,
+    records: [], noResponse: [], logsComplete: false,
+    // Ленту ещё не спрашивали — доказывать покрытие нечем.
+    windowCoversDispute: false, window: null,
   };
   if (digests.length === 0) {
     // Упорядочивать нечего: ни одного отпечатка. `logsComplete` честно `true` —
@@ -401,10 +430,21 @@ export async function readChainAnchors(
   const records: DigestRecord[] = [];
   const noResponse: NoResponseRecord[] = [];
   let window: ChainAnchors['window'] = null;
+  /**
+   * ⚠️ ЕДИНСТВЕННОЕ ДОКАЗАТЕЛЬСТВО ПОКРЫТИЯ, КОТОРОЕ У НАС ЕСТЬ: окно упёрлось
+   * в начало цепи, значит раньше ничего быть не может — ни отпечатка, ни
+   * записи арбитра. На живой сети этого не бывает, и флаг честно `false`;
+   * тогда «записи о молчании нет» не утверждается вовсе. Дешёвого второго
+   * доказательства НЕТ и придумывать его нельзя: `getDisputeClaimedAt`
+   * отвечает про ТЕКУЩЕЕ взятие спора, а запись мог оставить прежний арбитр —
+   * до него. Настоящее лечение — сабграф, отдельной работой.
+   */
+  let coversAll = false;
 
   try {
     const head = await client.getBlockNumber();
     const from = head > windowBlocks ? head - windowBlocks : BigInt(0);
+    coversAll = head <= windowBlocks;
     // Резка на куски — у `planCatchUp`: у правила «сколько блоков берёт один
     // eth_getLogs» один хозяин, свой второй разошёлся бы с ним молча.
     const plan = planCatchUp(from, head, windowBlocks, chunkBlocks);
@@ -466,6 +506,7 @@ export async function readChainAnchors(
   return {
     ...base, records, noResponse, window,
     logsComplete: covered >= digests.length,
+    windowCoversDispute: coversAll,
   };
 }
 

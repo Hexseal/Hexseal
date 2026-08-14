@@ -822,7 +822,7 @@
     "presentation_anchor_dupes": "同じ指紋が連鎖に {count} 回記録されています — 応答が途切れた後の「記録する」の繰り返しです。偽造ではありません。",
     "presentation_anchor_order_digest_first": "提示のほうが先に連鎖に載りました：指紋 — ブロック {digest}、仲裁人の記録「求めたが返答なし」 — ブロック {record}。",
     "presentation_anchor_order_record_first": "仲裁人の記録「求めたが返答なし」が先でした：ブロック {record}、提示の指紋 — ブロック {digest}。",
-    "presentation_anchor_order_out_of_window": "前後関係を示すものがありません：この記録はイベントの流れの検索範囲より古いためです。これは「指紋がない」ではなく「そこまで遡って見ていない」です。順序が決め手になるなら精査を求めてください。",
+    "presentation_anchor_order_out_of_window": "前後関係を示すものがありません：流れの検索が紛争の始まりまで遡っていません。それ以前に仲裁人の記録があるかどうかは、わかりません。これは「記録がない」ではありません——順序が決め手になるなら精査を求めてください。",
     "presentations_anchor_window": "流れの検索が見たのはブロック {from}–{to} です。それより前のものは順序に入っていません——検索の限界であって、連鎖が空なのではありません。",
     "presentations_anchor_truncated": "連鎖には読み取った以上の指紋があります：取得は {count} 件。不一致は単に読み切っていないためかもしれません——だからこそ「わからない」と呼んでいます。",
     "presentation_anchor_order_same": "指紋と仲裁人の記録「求めたが返答なし」は同じブロックにあります — {block}。",

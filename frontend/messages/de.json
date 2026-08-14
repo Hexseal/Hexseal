@@ -822,7 +822,7 @@
     "presentation_anchor_dupes": "Derselbe Abdruck ist {count}-mal in der Kette vermerkt — eine Wiederholung des «Vermerkens» nach abgebrochener Antwort. Keine Fälschung.",
     "presentation_anchor_order_digest_first": "Die Vorlage kam zuerst in die Kette: Abdruck — Block {digest}, der Eintrag des Schiedsrichters «gefragt, keine Antwort» — Block {record}.",
     "presentation_anchor_order_record_first": "Der Eintrag des Schiedsrichters «gefragt, keine Antwort» kam zuerst: Block {record}, der Abdruck der Vorlage — Block {digest}.",
-    "presentation_anchor_order_out_of_window": "Es gibt nichts, wonach sich ordnen ließe: der Eintrag ist älter als das Suchfenster des Ereignisstroms. Das heißt NICHT «kein Abdruck», sondern «so weit haben wir nicht zurückgeschaut». Bitten Sie um eine Prüfung, wenn die Reihenfolge entscheidet.",
+    "presentation_anchor_order_out_of_window": "Es gibt nichts, wonach sich ordnen ließe: die Suche im Ereignisstrom reicht nicht bis zum Beginn des Streits zurück. Ob früher ein Eintrag des Schiedsrichters existiert, wissen wir nicht. Das heißt NICHT «es gibt keinen Eintrag» — bitten Sie um eine Prüfung, wenn die Reihenfolge entscheidet.",
     "presentations_anchor_window": "Die Suche im Ereignisstrom umfasste die Blöcke {from}–{to}. Was früher lag, kam nicht in die Reihenfolge — das ist die Grenze der Suche, keine leere Kette.",
     "presentations_anchor_truncated": "Die Kette hält mehr Abdrücke, als wir gelesen haben: {count} genommen. Ein Nichttreffer kann schlicht daran liegen, dass wir nicht zu Ende gelesen haben — deshalb heißt er «wissen wir nicht».",
     "presentation_anchor_order_same": "Abdruck und Eintrag des Schiedsrichters «gefragt, keine Antwort» liegen im selben Block — {block}.",

@@ -186,11 +186,14 @@ export function BoxSummaryView({ reading, before, deviceKey }: {
           count: reading.anchors ? reading.anchors.noResponse.length : 0,
         })}</p>
       )}
-      {/* ⚠️ ПРЕДЕЛ ПОИСКА НАЗЫВАЕТСЯ ЧИСЛАМИ (правка круга 1). Лента смотрит на
-          сутки назад, а спор с апелляцией живёт восемь; без этой строки арбитр
-          читал бы отсутствие порядка как отсутствие фактов. «Не знаю» и «не
-          смотрел так далеко» — разные вещи. */}
-      {reading.anchors && !reading.anchors.logsComplete && (
+      {/* ⚠️ ПРЕДЕЛ ПОИСКА НАЗЫВАЕТСЯ ЧИСЛАМИ (правка круга 1) — И ВСЕГДА, А НЕ
+          ПРИ НЕПОКРЫТЫХ ОТПЕЧАТКАХ (правка круга 2). Прежде строка стояла под
+          `!logsComplete`, то есть под покрытием ОТПЕЧАТКОВ; в самой обычной
+          сцене — отпечаток свежий, запись арбитра старая — отпечатки накрыты,
+          строка молчала, и арбитр не видел ни порядка, ни предупреждения:
+          экран говорил «сходится, блок N», и всё. Строка дешёвая и снимает
+          вопрос «а докуда вообще смотрели». */}
+      {reading.anchors && reading.anchors.window && (
         <p className="text-amber-300/85">
           {t('arbiter.presentations_anchor_window', {
             from: reading.anchors.window ? reading.anchors.window.fromBlock.toString() : '—',
