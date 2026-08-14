@@ -349,10 +349,52 @@ contract DisputeNoResponseTest is Test {
         facet.recordNoResponse(agreement);
     }
 
+    /// Арбитр, который спор вообще не брал. Замок слабый и назван таковым
+    /// намеренно: у чужого арбитра якорь нулевой, поэтому без проверки
+    /// NotClaimingArbiter вызов не прошёл бы насквозь, а упёрся бы дальше в
+    /// ClaimTimeUnknown — тест покраснел бы «не тем классом ошибки», а не тем,
+    /// что неавторизованный записал. Настоящую сцену сторожит следующий тест.
     function test_RecordNoResponse_RevertsForNonClaimingArbiter() public {
         _claimBy(arbiter, agreement);
         vm.warp(vm.getBlockTimestamp() + 24 hours);
         vm.prank(otherArbiter);
+        vm.expectRevert(ArbiterRegistryFacet.NotClaimingArbiter.selector);
+        facet.recordNoResponse(agreement);
+    }
+
+    /// ЕДИНСТВЕННАЯ сцена, ради которой проверка NotClaimingArbiter вообще
+    /// стоит: БЫВШИЙ клеймер с ЖИВЫМ якорем.
+    ///
+    /// Первый арбитр взял спор, подождал сутки, отпустил — спор взял второй. У
+    /// первого якорь остался ненулевым: ключ по паре (сделка, арбитр), и мы его
+    /// намеренно не чистим. Значит все остальные проверки он проходит: время
+    /// взятия известно, пол пройден, своей записи ещё нет. Не пускает его
+    /// ровно одна строка.
+    ///
+    /// ⚠️ И пропажа этой строки была бы НЕВИДИМА там, где её стали бы искать:
+    /// `getNoResponseAt` ходит через текущего клеймера и запись бывшего не
+    /// показал бы вовсе. А вот событие DisputeNoResponseRecorded ушло бы в
+    /// ленту — и лента, а не геттер, есть то, ради чего вся задача сделана.
+    /// Замерено: без проверки вызов не ревертит и событие испускается.
+    function test_FormerClaimer_WithLiveAnchor_CannotRecord() public {
+        _claimBy(arbiter, agreement);
+        vm.warp(vm.getBlockTimestamp() + 24 hours);
+
+        vm.prank(arbiter);
+        facet.releaseDisputeClaim(agreement);
+        _claimBy(otherArbiter, agreement);
+
+        // Якорь бывшего клеймера жив и стар — все прочие ворота для него открыты.
+        bytes32 anchorSlot = keccak256(abi.encode(
+            arbiter, keccak256(abi.encode(agreement, uint256(ARB_BASE) + SLOT_CLAIMED_AT_BY))
+        ));
+        assertEq(
+            uint256(vm.load(address(facet), anchorSlot)),
+            vm.getBlockTimestamp() - 24 hours,
+            unicode"сцена не собралась: у бывшего клеймера обязан остаться живой якорь"
+        );
+
+        vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.NotClaimingArbiter.selector);
         facet.recordNoResponse(agreement);
     }
