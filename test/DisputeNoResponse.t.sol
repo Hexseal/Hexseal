@@ -101,11 +101,15 @@ contract DisputeNoResponseTest is Test {
         );
     }
 
-    /// ГЛАВНЫЙ замок переделки. Арбитр отпускает спор и берёт его заново —
-    /// обе транзакции гейслесс и для него бесплатны. Якорь обязан остаться
-    /// на ПЕРВОМ взятии: иначе арбитр по своей воле двигает точку отсчёта,
-    /// от которой цепь показывает порядок событий.
-    function test_ReclaimBySameArbiter_AnchorDoesNotMove() public {
+    /// Перевзятие тем же арбитром двигает якорь ВПЕРЁД, на момент последнего
+    /// взятия. Решение владельца 14.08.2026, отменяет более раннее «один раз
+    /// навсегда»: пол должен мерить время, пока спор стоял ЗА ЭТИМ арбитром,
+    /// то есть пока стороне было кому предъявлять.
+    ///
+    /// Сдвиг вперёд арбитру не выгоден — он только откладывает его же запись,
+    /// см. следующий тест, который показывает, что именно этим сдвигом дыра и
+    /// закрывается.
+    function test_ReclaimBySameArbiter_AnchorMovesForward() public {
         _claimBy(arbiter, agreement);
         uint256 firstClaim = facet.getDisputeClaimedAt(agreement);
 
@@ -117,9 +121,32 @@ contract DisputeNoResponseTest is Test {
 
         assertEq(
             facet.getDisputeClaimedAt(agreement),
-            firstClaim,
-            unicode"перевзятие тем же арбитром не имеет права двигать якорь пола"
+            firstClaim + 25 hours,
+            unicode"перевзятие обязано переставить якорь на момент последнего взятия"
         );
+    }
+
+    /// Дыра, ради закрытия которой якорь пишется при каждом взятии.
+    ///
+    /// Подкупленный арбитр берёт спор, отпускает через минуту и возвращается
+    /// через двое суток. Формально «клеймером» он был двое суток назад — но
+    /// почти всё это время спор стоял ничей, ключ судьи был неизвестен, и
+    /// предъявлять стороне было НЕКОМУ. С якорем «первое взятие навсегда» он
+    /// записал бы молчание в ту же секунду, как вернулся. Теперь пол для него
+    /// начинается заново.
+    function test_ReclaimAfterLongGap_FloorStartsOver() public {
+        _claimBy(arbiter, agreement);
+
+        vm.warp(vm.getBlockTimestamp() + 1 minutes);
+        vm.prank(arbiter);
+        facet.releaseDisputeClaim(agreement);
+
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        _claimBy(arbiter, agreement);
+
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterRegistryFacet.NoResponseTooEarly.selector);
+        facet.recordNoResponse(agreement);
     }
 
     /// Пока клеймера нет, геттер обязан молчать: спор ничей, показывать
@@ -281,8 +308,9 @@ contract DisputeNoResponseTest is Test {
     }
 
     /// Однократность не смывается отпуском спора: арбитр не может стереть свою
-    /// запись и поставить её другим временем. Пара (сделка, арбитр) пишется
-    /// один раз навсегда — там же, где и якорь, и по той же причине.
+    /// запись и поставить её другим временем. Здесь якорь и запись расходятся
+    /// в правилах — якорь при перевзятии переставляется, запись нет, — и тест
+    /// сторожит именно это расхождение.
     function test_RecordNoResponse_ReclaimCannotRewriteRecord() public {
         _claimBy(arbiter, agreement);
         vm.warp(vm.getBlockTimestamp() + 24 hours);
@@ -300,12 +328,22 @@ contract DisputeNoResponseTest is Test {
             recordedAt,
             unicode"перевзятие не имеет права переставить время уже сделанной записи"
         );
-        assertLt(
+        // Осознанное следствие правила «якорь при каждом взятии»: в хранилище
+        // якорь теперь ПОЗЖЕ записи о молчании. Это не порча порядка событий —
+        // порядок читается из ленты (DisputeClaimed / DisputeReleased /
+        // DisputeNoResponseRecorded), а хранилище держит только последнее
+        // взятие. Утверждается здесь явно, чтобы следующий читатель не принял
+        // это за баг и не «починил» обратно в «один раз навсегда».
+        assertGt(
             facet.getDisputeClaimedAt(agreement),
             facet.getNoResponseAt(agreement),
-            unicode"порядок событий обязан остаться: спор взят РАНЬШЕ, чем записано молчание"
+            unicode"якорь обязан переставиться на последнее взятие, даже если оно позже записи"
         );
 
+        // Ответ обязан быть «уже записано», а не «рано»: якорь после перевзятия
+        // свежий, и пол формально не пройден — но обещать арбитру, что через
+        // сутки получится, значит соврать. Поэтому однократность проверяется
+        // раньше пола, см. recordNoResponse.
         vm.prank(arbiter);
         vm.expectRevert(ArbiterRegistryFacet.NoResponseAlreadyRecorded.selector);
         facet.recordNoResponse(agreement);
