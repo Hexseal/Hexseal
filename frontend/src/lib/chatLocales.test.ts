@@ -97,6 +97,11 @@ const REQUIRED_PRESENT = [
   'chat.present_consent',
   'chat.present_send',
   'chat.present_sent',
+  // Выкатка 2, Задача 6: третий исход — мешок у арбитра, отпечатка в цепи нет.
+  'chat.present_not_anchored',
+  'chat.present_anchor_retry',
+  'chat.present_anchored',
+  'chat.present_anchor_failed',
   'chat.present_fetched',
   'chat.present_fetch_unknown',
   'chat.present_draft_found',
@@ -500,10 +505,11 @@ describe('адрес контракта не вписан в переводы р
 
 /* ─── Предъявление арбитру (4в-2, Задача 6) ─────────────────────────────── */
 describe('тексты предъявления арбитру', () => {
-  it('L1: все 47 ключей есть в каждой из 14 локалей и ни один не пуст', () => {
+  it('L1: все 51 ключ есть в каждой из 14 локалей и ни один не пуст', () => {
     // Число написано РУКАМИ: список выше может усохнуть незамеченным.
-    // 25 ключей показа + 22 ключа отказа (по числу членов `PresentRefusal`).
-    expect(REQUIRED_PRESENT.length).toBe(47);
+    // 29 ключей показа + 22 ключа отказа (по числу членов `PresentRefusal`).
+    // 25 → 29: четыре про третий исход (Выкатка 2, Задача 6).
+    expect(REQUIRED_PRESENT.length).toBe(51);
     const missing: string[] = [];
     for (const locale of LOCALES) {
       const dict = read(locale);
@@ -611,5 +617,37 @@ describe('тексты предъявления арбитру', () => {
     expect(String(pick(ru, 'chat.present_fetched'))).toContain('{time}');
     // Два текста про черновик — разные: «не отправляли» и «уже предъявляли».
     expect(pick(ru, 'chat.present_draft_sent')).not.toBe(pick(ru, 'chat.present_draft_found'));
+  });
+
+  it('L5: третий исход — ТРЕТЬИ слова: ни «предъявлено», ни «ничего не отправлено»', () => {
+    // ⚠️ РАДИ ЭТОГО ЗАДАЧА И СУЩЕСТВУЕТ ОТДЕЛЬНО. Мешок у арбитра, отпечатка в
+    // цепи нет: сказать «отправлено» — не сказать про потерянную страховку,
+    // сказать «ничего не отправлено» — соврать и погнать предъявлять второй
+    // раз. Текст обязан отличаться от ОБОИХ крайних, и во всех 14 локалях.
+    const same: string[] = [];
+    for (const locale of LOCALES) {
+      const dict = read(locale);
+      const middle = String(pick(dict, 'chat.present_not_anchored'));
+      if (middle === String(pick(dict, 'chat.present_sent'))) same.push(`${locale}: = present_sent`);
+      if (middle === String(pick(dict, 'chat.present_anchored'))) same.push(`${locale}: = present_anchored`);
+      // Ни один из 22 отказов не годится в это место: там у всех «ничего не
+      // отправлено», а здесь отправлено.
+      for (const [key, value] of Object.entries(pick(dict, 'chat') as Record<string, string>)) {
+        if (key.startsWith('present_err_') && value === middle) same.push(`${locale}: = ${key}`);
+      }
+    }
+    expect(same).toEqual([]);
+
+    // ⚠️ И РУССКИЙ ТЕКСТ — ДОСЛОВНО: он говорит ОБА факта, а не один из них.
+    // «Переписка у арбитра» (иначе человек предъявит заново) и «в цепи не
+    // отмечено» (иначе он решит, что порядок событий доказан).
+    const ru = read('ru');
+    expect(pick(ru, 'chat.present_not_anchored')).toBe(
+      'Переписка у арбитра. В цепи это не отмечено: время предъявления нигде не зафиксировано.',
+    );
+    // Кнопка обязана существовать словом: без неё третье состояние — просто
+    // плохая новость без выхода.
+    expect(String(pick(ru, 'chat.present_anchor_retry')).length).toBeGreaterThan(0);
+    expect(pick(ru, 'chat.present_anchor_retry')).not.toBe(pick(ru, 'chat.present_anchored'));
   });
 });

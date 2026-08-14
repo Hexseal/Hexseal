@@ -28,6 +28,7 @@ import type { DisputeArbiterKey, PresentedTo } from '@/lib/disputeArbiter';
 import type { Hex } from 'viem';
 import {
   PRESENT_REFUSAL_KEYS,
+  anchorAfter,
   boxStateFromList,
   canSend,
   countLegacyExposed,
@@ -44,15 +45,18 @@ import {
   otherAttestationsOf,
   pickingPrep,
   presentButtonVisible,
+  presentSay,
   presentWarning,
   presentedFromKey,
   refusalOfBoxError,
   restoreSentBag,
+  retryAnchorImpl,
   selectableMessages,
   selectionFromContainer,
   sendPresentation,
   sentBagState,
   _resetSendingForTest,
+  type AnchorState,
   type PresentRefusal,
   type ReadyArbiterKey,
   type SendPresentationDeps,
@@ -79,6 +83,8 @@ const OTHER_ARB = '0x268dcfa7ab0dc134d01c5cbcaa7d2834d6dd0f0f' as `0x${string}`;
 /** Время склада. Отличается от `now()` НАРОЧНО: человеку показывается оно. */
 const STORED_AT = 1_754_401_010_000;
 const BAG_KEY   = `${AGREEMENT}/1754401010000-aaaa.bin`;
+/** Номер транзакции второго шага — то, чем цепь отвечает на отпечаток. */
+const ANCHOR_TX = `0x${'ab'.repeat(32)}`;
 
 /** 0x + 64 hex из байтов — свой, чтобы не тянуть чужой helper в замер. */
 function hex32(bytes: Uint8Array): Hex {
@@ -176,6 +182,10 @@ async function realDeps(over: Partial<SendPresentationDeps> = {}, trace?: Trace)
       trace?.steps.push('mark');
       return drafts.markPresentationSent(p, id, issuedAt, key, at);
     },
+    // ⚠️ ВТОРОЙ ШАГ — ТОЖЕ ЗАВИСИМОСТЬ СО СЛЕДОМ, и по той же причине, что
+    // черновик: без шага в `trace` мутация «отпечаток раньше склада»
+    // отличалась бы от честного порядка ничем, и число красных было бы враньём.
+    recordDigest: async () => { trace?.steps.push('digest'); return { txHash: ANCHOR_TX }; },
     now: () => 1_754_400_999_000,
     ...over,
   };
@@ -208,6 +218,7 @@ function cheapDeps(over: Partial<SendPresentationDeps> = {}, trace?: Trace): Sen
     },
     saveDraft: async () => { trace?.steps.push('save'); return 'saved'; },
     markSent: async () => { trace?.steps.push('mark'); return 'saved'; },
+    recordDigest: async () => { trace?.steps.push('digest'); return { txHash: ANCHOR_TX }; },
     ...over,
   };
 }
@@ -252,7 +263,7 @@ describe('согласие', () => {
   it('T4: без согласия отправки нет, и склада никто не трогал', async () => {
     const trace: Trace = { steps: [], puts: 0 };
     const v = await sendPresentation(cheapDeps({ consent: false }, trace));
-    expect(v).toEqual({ ok: false, reason: 'no_consent' });
+    expect(v).toEqual({ ok: false, status: 'error', reason: 'no_consent' });
     expect(trace.puts, 'без согласия сходили на склад').toBe(0);
     expect(trace.steps, 'без согласия вообще что-то делали').toEqual([]);
   });
@@ -292,7 +303,7 @@ describe('цепь сверяется со снимком, а не сама с �
     const v = await sendPresentation(await realDeps({
       readArbiterNow: async () => { trace.steps.push('arbiter'); return { state: 'no_arbiter' }; },
     }, trace));
-    expect(v).toEqual({ ok: false, reason: 'arbiter_left' });
+    expect(v).toEqual({ ok: false, status: 'error', reason: 'arbiter_left' });
     expect(trace.puts, 'мешок уехал по мёртвому спору').toBe(0);
     expect(trace.steps, 'до сборки дело дошло').toEqual(['arbiter']);
   }, 120_000);
@@ -305,7 +316,7 @@ describe('цепь сверяется со снимком, а не сама с �
         return readyKey(OTHER_ARB, judy.session.keypair.publicKey);
       },
     }, trace));
-    expect(v).toEqual({ ok: false, reason: 'arbiter_changed' });
+    expect(v).toEqual({ ok: false, status: 'error', reason: 'arbiter_changed' });
     expect(trace.puts, 'мешок на ключ прежнего арбитра всё-таки уехал').toBe(0);
     // ⚠️ ИМЕННО ЭТО ОТЛИЧАЕТ ПЕРВУЮ ДВЕРЬ ОТ ВТОРОЙ: сборки не было вовсе.
     // Уберите раннюю сверку — появится 'save', и замер это назовёт.
@@ -327,7 +338,7 @@ describe('цепь сверяется со снимком, а не сама с �
           : readyKey(OTHER_ARB, judy.session.keypair.publicKey);
       },
     }, trace));
-    expect(v).toEqual({ ok: false, reason: 'arbiter_changed' });
+    expect(v).toEqual({ ok: false, status: 'error', reason: 'arbiter_changed' });
     expect(trace.puts, 'мешок уехал ДРУГОМУ человеку, чем показали').toBe(0);
     // Сборка была, склад — нет: вторая дверь стоит именно там.
     expect(trace.steps).toEqual(['arbiter', 'save', 'arbiter']);
@@ -352,7 +363,7 @@ describe('цепь сверяется со снимком, а не сама с �
       const v = await sendPresentation(await realDeps({
         readArbiterNow: async () => { trace.steps.push('arbiter'); return now; },
       }, trace));
-      expect({ reason, got: v }).toEqual({ reason, got: { ok: false, reason } });
+      expect({ reason, got: v }).toEqual({ reason, got: { ok: false, status: 'error', reason } });
       expect(trace.puts, `${reason}: мешок всё-таки уехал`).toBe(0);
     }
   }, 240_000);
@@ -362,7 +373,7 @@ describe('цепь сверяется со снимком, а не сама с �
     const trace: Trace = { steps: [], puts: 0 };
     expect(await sendPresentation(await realDeps({
       readArbiterNow: async () => { throw new Error('RPC timeout'); },
-    }, trace))).toEqual({ ok: false, reason: 'chain_unavailable' });
+    }, trace))).toEqual({ ok: false, status: 'error', reason: 'chain_unavailable' });
     expect(trace.puts).toBe(0);
   }, 120_000);
 });
@@ -372,13 +383,18 @@ describe('цепь сверяется со снимком, а не сама с �
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('отправка', () => {
-  it('T8: порядок «арбитр → сборка → черновик → арбитр → пропуск → склад → пометка»', async () => {
+  it('T8: порядок «арбитр → сборка → черновик → арбитр → пропуск → склад → пометка → отпечаток»', async () => {
     const trace: Trace = { steps: [], puts: 0 };
     const deps = await realDeps({}, trace);
     const v = await sendPresentation(deps);
     expect(v.ok, `отправка отказала: ${v.ok ? '' : v.reason}`).toBe(true);
     if (!v.ok) return;
-    expect(trace.steps).toEqual(['arbiter', 'save', 'arbiter', 'pass', 'put', 'mark']);
+    // ⚠️ ОТПЕЧАТОК — ПОСЛЕДНИЙ, И ЭТО ЗАМЫСЕЛ 5.3, А НЕ ПРИВЫЧКА. Мешок
+    // существо дела, отпечаток страховка: уйди он вперёд — человек с молчащим
+    // узлом или отказавшим кошельком не предъявил бы переписку вовсе, при том
+    // что склад её принял бы.
+    expect(trace.steps).toEqual(['arbiter', 'save', 'arbiter', 'pass', 'put', 'mark', 'digest']);
+    expect(v.status, 'оба шага прошли, а слово не «предъявлено»').toBe('sent');
     expect(v.draftSaved, 'черновик не лёг ДО отправки').toBe('saved');
     expect(v.draftMarked, 'помечать было нечего — черновика не было').toBe('saved');
     expect(v.bagKey).toBe(BAG_KEY);
@@ -402,7 +418,7 @@ describe('отправка', () => {
       put: async () => { throw new BagTransportError('Storage failed', 'internal_error', 500); },
     });
     const v = await sendPresentation(deps);
-    expect(v).toEqual({ ok: false, reason: 'box_refused' });
+    expect(v).toEqual({ ok: false, status: 'error', reason: 'box_refused' });
     const left = await unsentPresentationDrafts(deps.presenter);
     expect(left.length, 'после отказа склада черновик потерян').toBe(1);
     expect(left[0].state).toBe('built');
@@ -433,13 +449,13 @@ describe('отправка', () => {
     for (const [err, reason] of cases) {
       _resetSendingForTest();
       const v = await sendPresentation({ ...base, put: async () => { throw err; } });
-      expect({ reason, got: v }).toEqual({ reason, got: { ok: false, reason } });
+      expect({ reason, got: v }).toEqual({ reason, got: { ok: false, status: 'error', reason } });
     }
     // Протухший пропуск — своя дверь: чинить человеку нечего, надо переподписать.
     _resetSendingForTest();
     expect(await sendPresentation({
       ...base, getPass: async () => { throw new BagPassError('pass expired', 'pass_expired', 401); },
-    })).toEqual({ ok: false, reason: 'pass_refused' });
+    })).toEqual({ ok: false, status: 'error', reason: 'pass_refused' });
     // И та же разводка отдельно, без пути отправки: её зовёт Задача 7.
     expect(refusalOfBoxError(new BagTransportError('Not a party', 'not_a_party', 403)))
       .toBe('not_a_party');
@@ -489,7 +505,7 @@ describe('отправка', () => {
     const deps = await realDeps({
       put: async () => { throw new TypeError('fetch failed'); },   // «вкладку закрыли»
     });
-    expect(await sendPresentation(deps)).toEqual({ ok: false, reason: 'offline' });
+    expect(await sendPresentation(deps)).toEqual({ ok: false, status: 'error', reason: 'offline' });
     // Новая «вкладка»: модули заново, диск тот же (Map переживает resetModules).
     vi.resetModules();
     const draftModule = await import('./presentationDraft');
@@ -1018,7 +1034,7 @@ describe('человек узнаёт, если запись на устройс
     expect(draftKeepNotice({ ...ok, draftMarked: 'not_found' }))
       .toBe('chat.present_draft_not_saved');
     // Отказ отправки — не про устройство, и второй строкой его не сопровождаем.
-    expect(draftKeepNotice({ ok: false, reason: 'offline' })).toBeNull();
+    expect(draftKeepNotice({ ok: false, status: 'error', reason: 'offline' })).toBeNull();
   });
 });
 
@@ -1034,7 +1050,7 @@ describe('«не бросает» — про весь путь, а не про �
       ...(await realDeps({}, trace)),
       peerBoxKey: new Uint8Array(7),   // не 32 байта — сборщик бросит
     });
-    expect(v).toEqual({ ok: false, reason: 'internal_error' });
+    expect(v).toEqual({ ok: false, status: 'error', reason: 'internal_error' });
     expect(trace.puts, 'мешок уехал после нашей же поломки').toBe(0);
 
     // Черновик бросил — тоже вердикт, и тоже ДО склада.
@@ -1042,7 +1058,7 @@ describe('«не бросает» — про весь путь, а не про �
     const t2: Trace = { steps: [], puts: 0 };
     expect(await sendPresentation(await realDeps({
       saveDraft: async () => { throw new Error('кладовая'); },
-    }, t2))).toEqual({ ok: false, reason: 'internal_error' });
+    }, t2))).toEqual({ ok: false, status: 'error', reason: 'internal_error' });
     expect(t2.puts).toBe(0);
 
     // ⚠️ А ПОМЕТКА, БРОСИВШАЯ ПОСЛЕ УСПЕШНОГО СКЛАДА, — НЕ ОТКАЗ: мешок уже в
@@ -1149,5 +1165,201 @@ describe('старая форма вложения — видна в списк�
       'chat.present_warn_legacy_files',
       'chat.present_warn_final',
     ]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ВТОРОЙ ШАГ: отпечаток в цепь (4в-2, Выкатка 2, Задача 6)
+//
+// ⚠️ ЦЕПИ ЗДЕСЬ НЕТ, И ЭТО ГРАНИЦА ЗАМЕРА. `recordDigest` — зависимость, то
+// есть проверяется РЕШЕНИЕ (что и в каком порядке зовётся, что отвечается
+// человеку), а не то, что транзакция долетела. Долетание — дело релеера и
+// контракта; их сторожат `test/PresentationDigest.t.sol` (Задача 3) и замок
+// ABI (`presentationDigestAbi.test.ts`, Задача 5).
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('мешок лёг, отпечаток не лёг — предъявление ДЕЙСТВИТЕЛЬНО', () => {
+  it('T43: слово ТРЕТЬЕ: ни «предъявлено», ни «не отправлено»', async () => {
+    const trace: Trace = { steps: [], puts: 0 };
+    const deps = await realDeps({
+      // Цепь не ответила: узел молчит, кошелёк отказал, релеер лежит — для
+      // этого исхода причина безразлична, важен факт.
+      recordDigest: async () => {
+        trace.steps.push('digest');
+        throw new Error('user rejected the request');
+      },
+    }, trace);
+    const v = await sendPresentation(deps);
+
+    // Мешок УЕХАЛ: отказом это не становится ни в каком виде.
+    expect(v.ok, 'отказ второго шага выдан за отказ отправки').toBe(true);
+    expect(v.status, 'у среднего исхода нет своего имени').toBe('stored-not-anchored');
+    if (!v.ok) return;
+    expect(v.bagKey).toBe(BAG_KEY);
+    expect(v.uploadedAt).toBe(STORED_AT);
+    // ⚠️ И ОТПЕЧАТОК ЕСТЬ, ХОТЯ В ЦЕПЬ ОН НЕ ЛЁГ: кнопке «отметить» нужен он
+    // самый, пересчёт по новой сборке дал бы другие 32 байта.
+    expect(v.digest).toMatch(/^0x[0-9a-f]{64}$/);
+    // Второй шаг — ПОСЛЕДНИЙ: до него всё случилось.
+    expect(trace.steps).toEqual(['arbiter', 'save', 'arbiter', 'pass', 'put', 'mark', 'digest']);
+    expect(trace.puts).toBe(1);
+
+    // И на диске предъявление помечено ОТПРАВЛЕННЫМ: неотмеченность в цепи не
+    // отменяет того, что переписка у арбитра.
+    const drafts = await readPresentationDrafts(deps.presenter);
+    expect(drafts[0].state, 'из-за отказа цепи черновик остался неотправленным').toBe('sent');
+    expect(drafts[0].bagKey).toBe(BAG_KEY);
+    expect(await unsentPresentationDrafts(deps.presenter)).toEqual([]);
+  }, 120_000);
+
+  it('T44: цепь ответила БЕЗ номера транзакции — это тоже «не отмечено»', async () => {
+    // Без номера сказать «отмечено» нечем: мы не знаем ни того, что запись
+    // прошла, ни на каком она блоке, — а весь смысл отпечатка в порядке блоков.
+    const v = await sendPresentation(await realDeps({
+      recordDigest: async () => ({ txHash: '' }),
+    }));
+    expect(v.status).toBe('stored-not-anchored');
+    expect(v.ok).toBe(true);
+  }, 120_000);
+
+  it('T45: отпечаток — keccak256 ТОГО ЖЕ канонического вида, что идёт в подпись', async () => {
+    // ⚠️ ЭТО ШОВ С ЗАДАЧЕЙ 7, И ЦЕПЬ ЕГО НЕ ПРОВЕРЯЕТ НИЧЕМ. В цепи лежат 32
+    // байта; посчитай эта сторона другой пре-образ (JSON склада) или другую
+    // функцию (sha256) — там лежали бы такие же законные 32 байта, у арбитра
+    // «сходится» не сошлось бы НИКОГДА, и узнали бы мы об этом от человека со
+    // сломанным экраном.
+    const { keccak256, sha256 } = await import('viem');
+    const { canonicalPresentationBytes } = await import('./presentation');
+    const { presentationJson } = await import('./presentationBag');
+
+    let anchored: string | null = null;
+    const deps = await realDeps({
+      recordDigest: async (digest) => { anchored = digest; return { txHash: ANCHOR_TX }; },
+    });
+    const v = await sendPresentation(deps);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+
+    // Контейнер берётся С ДИСКА — тем же путём, каким его получит арбитр:
+    // через JSON и обратно. Совпадение на живом объекте в памяти ничего не
+    // сказало бы про разбор.
+    const container = (await readPresentationDrafts(deps.presenter))[0].container;
+    const expected = keccak256(canonicalPresentationBytes(container));
+    expect(anchored, 'в цепь ушёл не тот отпечаток, что вернул вердикт').toBe(v.digest);
+    expect(v.digest, 'отпечаток посчитан НЕ каноническим видом подписи').toBe(expected);
+
+    // И два ближайших неверных выбора названы поимённо — оба дают законные
+    // 32 байта и оба молча ломают сверку у арбитра.
+    expect(v.digest, 'отпечаток посчитан по байтам склада (JSON), а не по подписываемым')
+      .not.toBe(keccak256(presentationJson(container)));
+    expect(v.digest, 'функция хэша не keccak256')
+      .not.toBe(sha256(canonicalPresentationBytes(container)));
+  }, 120_000);
+});
+
+describe('три слова, три состояния, повтор отметки', () => {
+  it('T46: у каждого из трёх исходов СВОЙ ключ локали и свой тон', () => {
+    const stored = {
+      ok: true as const, bagKey: BAG_KEY, uploadedAt: STORED_AT,
+      draftSaved: 'saved' as const, draftMarked: 'saved' as const,
+      digest: `0x${'11'.repeat(32)}` as `0x${string}`,
+    };
+    const sent = presentSay({ ...stored, status: 'sent', anchorTx: ANCHOR_TX });
+    const half = presentSay({ ...stored, status: 'stored-not-anchored' });
+    const none = presentSay({ ok: false, status: 'error', reason: 'offline' });
+
+    expect(sent).toEqual({ tone: 'success', key: 'chat.present_sent' });
+    expect(half).toEqual({ tone: 'warn', key: 'chat.present_not_anchored' });
+    expect(none).toEqual({ tone: 'error', key: PRESENT_REFUSAL_KEYS.offline });
+    // Три РАЗНЫХ слова, а не два и одно на двоих: отсутствующая страховка не
+    // равна тому, что ничего не произошло.
+    expect(new Set([sent.key, half.key, none.key]).size).toBe(3);
+    // И средний текст не совпадает НИ С ОДНИМ из 22 отказов: у них у всех
+    // «ничего не отправлено», а здесь отправлено.
+    expect(Object.values(PRESENT_REFUSAL_KEYS)).not.toContain(half.key);
+  });
+
+  it('T47: отказ следующей отправки НЕ стирает «в цепи не отмечено»', () => {
+    // Сцена: мешок лёг, отпечаток не лёг, человек жмёт «предъявить» ещё раз и
+    // получает отказ. Сбрось состояние — строка с кнопкой «отметить» исчезла
+    // бы с экрана, а неотмеченный мешок остался бы лежать у арбитра.
+    const digest = `0x${'22'.repeat(32)}` as `0x${string}`;
+    const missing: AnchorState = { kind: 'missing', digest };
+    expect(anchorAfter(missing, { ok: false, status: 'error', reason: 'arbiter_changed' }))
+      .toEqual(missing);
+    // Успех — заменяет, и номером транзакции.
+    const stored = {
+      ok: true as const, bagKey: BAG_KEY, uploadedAt: STORED_AT,
+      draftSaved: 'saved' as const, draftMarked: 'saved' as const, digest,
+    };
+    expect(anchorAfter(missing, { ...stored, status: 'sent', anchorTx: ANCHOR_TX }))
+      .toEqual({ kind: 'anchored', txHash: ANCHOR_TX });
+    // А «не отмечено» приходит с отпечатком того мешка, который лёг.
+    expect(anchorAfter({ kind: 'none' }, { ...stored, status: 'stored-not-anchored' }))
+      .toEqual({ kind: 'missing', digest });
+  });
+
+  it('T48: «отметить» шлёт ТОТ ЖЕ отпечаток, а неудача не гасит строку', async () => {
+    const digest = `0x${'33'.repeat(32)}` as `0x${string}`;
+    const seen: string[] = [];
+    const states: AnchorState[] = [];
+    const busy: boolean[] = [];
+
+    // Удача: состояние становится «отмечено», и в цепь ушёл ТОТ ЖЕ отпечаток
+    // (пересборка дала бы другое `issuedAt`, то есть другие 32 байта, и у
+    // арбитра не сошлось бы с тем, что он уже забрал).
+    const ok = await retryAnchorImpl({
+      digest,
+      record: async (d) => { seen.push(d); return { txHash: ANCHOR_TX }; },
+      alive: () => true,
+      applyAnchor: (s) => states.push(s),
+      applyBusy: (b) => busy.push(b),
+    });
+    expect(ok).toBe(true);
+    expect(seen).toEqual([digest]);
+    expect(states).toEqual([{ kind: 'anchored', txHash: ANCHOR_TX }]);
+    expect(busy, 'кнопка не запиралась на время похода в цепь').toEqual([true, false]);
+
+    // Неудача: состояние НЕ трогаем — остаётся «не отмечено» с кнопкой, а
+    // человек узнаёт словом. Погасить строку значило бы сказать «вышло».
+    const failed: unknown[] = [];
+    const states2: AnchorState[] = [];
+    const busy2: boolean[] = [];
+    const bad = await retryAnchorImpl({
+      digest,
+      record: async () => { throw new Error('RPC timeout'); },
+      alive: () => true,
+      applyAnchor: (s) => states2.push(s),
+      applyBusy: (b) => busy2.push(b),
+      onFailed: (e) => failed.push(e),
+    });
+    expect(bad).toBe(false);
+    expect(states2, 'неудача повтора погасила строку «не отмечено»').toEqual([]);
+    expect(failed.length, 'о неудаче повтора человеку не сказали').toBe(1);
+    expect(busy2, 'кнопка осталась запертой после неудачи').toEqual([true, false]);
+
+    // Пустой ответ цепи — то же самое, что бросок: «отмечено» без номера
+    // транзакции сказать нечем.
+    const states3: AnchorState[] = [];
+    expect(await retryAnchorImpl({
+      digest,
+      record: async () => ({ txHash: '' }),
+      alive: () => true,
+      applyAnchor: (s) => states3.push(s),
+      applyBusy: () => {},
+      onFailed: () => {},
+    })).toBe(false);
+    expect(states3).toEqual([]);
+
+    // Вкладку закрыли, пока ходили в цепь — в мёртвое состояние не пишем.
+    const states4: AnchorState[] = [];
+    expect(await retryAnchorImpl({
+      digest,
+      record: async () => ({ txHash: ANCHOR_TX }),
+      alive: () => false,
+      applyAnchor: (s) => states4.push(s),
+      applyBusy: () => {},
+    })).toBe(true);
+    expect(states4).toEqual([]);
   });
 });
