@@ -774,4 +774,219 @@ contract PresentationRecordUpgradeTest is Test {
         vm.expectRevert(bytes(unicode"post-flight: getVaultBalance() изменился поперёк разреза — раскладка могла сдвинуться"));
         upgrade.run();
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Круг правок 1: КАЖДЫЙ замок run() ломается через сам run()
+    //
+    // Ревью нашло общий изъян всех тестов ниже по файлу: они мерили УСЛОВИЕ
+    // помощника (позвать его отдельно на лживом состоянии и увидеть revert), но
+    // не мерили, что его ЗОВЁТ run(). Замер ревьюера: снять из run() вызов
+    // checkReplaceGroup / checkAddGroupUnmounted / assertRouted (оба) /
+    // assertFacetHoldsNoSelectors / счёт селекторов — по 0 красных из 662 на
+    // каждый. Причина была в сквозном тесте: он САМ заново звал пост-проверки
+    // после run(), то есть проверял мир после разреза, а не то, что скрипт
+    // сторожит.
+    //
+    // Форма ниже одна на все: сломать мир так, чтобы упасть был обязан САМ
+    // run(), и потребовать от него именно того сообщения. Образец — два теста
+    // выше (пол и целостность хранилища), они этим изъяном не болели.
+    // ════════════════════════════════════════════════════════════════════
+
+    /// Общая подготовка негативных тестов на run(): даймонд со «старой»
+    /// раскладкой, владение у адреса из PRIVATE_KEY, окружение выставлено.
+    function _armRun(DiamondProxy diamond) internal returns (uint256 pk) {
+        pk = 0xA11CE;
+        address ownerAddr = vm.addr(pk);
+        OwnershipFacet(address(diamond)).transferOwnership(ownerAddr);
+        vm.prank(ownerAddr);
+        OwnershipFacet(address(diamond)).acceptOwnership();
+        vm.setEnv("DIAMOND_ADDRESS", vm.toString(address(diamond)));
+        vm.setEnv("PRIVATE_KEY", vm.toString(pk));
+    }
+
+    /// Снять `checkReplaceGroup(...)` из run() — этот тест покраснеет.
+    ///
+    /// Мир сломан по-настоящему: один из 56 «остающихся» селекторов переведён
+    /// на посторонний фасет, как если бы чужой апгрейд проехал между запусками.
+    /// Replace на единый новый адрес в таком состоянии увёл бы часть маршрутов
+    /// не туда, и без пред-полёта скрипт узнал бы об этом уже после броадкаста.
+    function test_RunRevertsWhenReplaceGroupIsSplitAcrossFacets() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+
+        ArbiterRegistryFacet strayFacet = new ArbiterRegistryFacet();
+        bytes4[] memory stray = new bytes4[](1);
+        stray[0] = ArbiterRegistryFacet.getRefundableBounty.selector;
+        IDiamondCut.FacetCut[] memory strayCut = new IDiamondCut.FacetCut[](1);
+        strayCut[0] = IDiamondCut.FacetCut(address(strayFacet), IDiamondCut.FacetCutAction.Replace, stray);
+        IDiamondCut(address(diamond)).diamondCut(strayCut, address(0), "");
+
+        _armRun(diamond);
+
+        vm.expectRevert(bytes(unicode"UpgradePresentationRecord: селекторы Replace разъехались больше чем по одному живому адресу фасета"));
+        upgrade.run();
+    }
+
+    /// Снять `checkAddGroupUnmounted(...)` из run() — этот тест покраснеет.
+    ///
+    /// Мир сломан по-настоящему: один из восьми новых уже смонтирован
+    /// (повторный запуск скрипта, чужой параллельный cut). Без пред-полёта
+    /// диамонд ревертнул бы весь diamondCut на "Diamond: selector exists" уже
+    /// ПОСЛЕ броадкаста нового фасета — деплой состоялся, разрез нет, газ
+    /// потрачен.
+    function test_RunRevertsWhenAnAddSelectorIsAlreadyMounted() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+
+        ArbiterRegistryFacet stray = new ArbiterRegistryFacet();
+        bytes4[] memory strayAdd = new bytes4[](1);
+        strayAdd[0] = ArbiterRegistryFacet.recordNoResponse.selector;
+        IDiamondCut.FacetCut[] memory strayCut = new IDiamondCut.FacetCut[](1);
+        strayCut[0] = IDiamondCut.FacetCut(address(stray), IDiamondCut.FacetCutAction.Add, strayAdd);
+        IDiamondCut(address(diamond)).diamondCut(strayCut, address(0), "");
+
+        _armRun(diamond);
+
+        vm.expectRevert(bytes(unicode"UpgradePresentationRecord: селектор из Add уже где-то смонтирован — Add ревертнёт"));
+        upgrade.run();
+    }
+
+    /// Снять ПЕРВЫЙ `assertRouted(replaceSels, ...)` из run() — этот тест
+    /// покраснеет.
+    ///
+    /// Заставить настоящий diamondCut увести один Replace-селектор мимо нового
+    /// фасета нельзя: маршруты собирает сам buildCuts(). Поэтому лжёт
+    /// СПРАВОЧНИК — ответ loupe по одному селектору подменён на СТАРЫЙ адрес
+    /// фасета. Подмена выбрана именно такой, чтобы пред-полёт остался доволен
+    /// (до разреза там и должен быть старый адрес) и упало ровно то, что
+    /// проверяется. Это и есть натура бага, ради которого проверка написана:
+    /// «числится смонтированным» и «стоит там, где мы думаем» — разные вещи.
+    function test_RunRevertsWhenAReplaceSelectorDidNotLandOnTheNewFacet() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        address oldFacetAddr = _mountOldFacet(diamond);
+        _armRun(diamond);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                IDiamondLoupe.facetAddress.selector,
+                ArbiterRegistryFacet.setArbiterChatKey.selector
+            ),
+            abi.encode(oldFacetAddr)
+        );
+
+        vm.expectRevert(bytes(unicode"UpgradePresentationRecord: селектор не приземлился на новый фасет"));
+        upgrade.run();
+    }
+
+    /// Снять ВТОРОЙ `assertRouted(addSels, ...)` из run() — этот тест
+    /// покраснеет. Тот же приём, но подменённый ответ — ноль: пред-полёт
+    /// требует от Add-селекторов ровно нуля и остаётся доволен, а пост-полёт
+    /// обязан увидеть новый фасет и не видит. Отдельный тест, потому что это
+    /// отдельная строка в run(): снять можно любую из двух.
+    function test_RunRevertsWhenAnAddSelectorDidNotLandOnTheNewFacet() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+        _armRun(diamond);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                IDiamondLoupe.facetAddress.selector,
+                ArbiterRegistryFacet.getPresentationDigestsPage.selector
+            ),
+            abi.encode(address(0))
+        );
+
+        vm.expectRevert(bytes(unicode"UpgradePresentationRecord: селектор не приземлился на новый фасет"));
+        upgrade.run();
+    }
+
+    /// Снять `assertFacetHoldsNoSelectors(oldFacet, ...)` из run() — этот тест
+    /// покраснеет.
+    ///
+    /// Мир сломан по-настоящему и без единой подмены: на адресе старого фасета
+    /// висит ЛИШНИЙ селектор, которого нет ни в Replace, ни в Add — след
+    /// какого-то прежнего разреза. Replace вытеснит 56 знакомых, а этот
+    /// останется, и старый адрес продолжит обслуживать живой маршрут поверх
+    /// «уже заменённого» кода. Пред-полёт этого не видит и не должен: он
+    /// смотрит только на группы разреза.
+    function test_RunRevertsWhenOldFacetKeepsALeftoverSelector() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        address oldFacetAddr = _mountOldFacet(diamond);
+
+        // addFunctions требует от адреса только наличия кода, не реализации
+        // селектора, — поэтому «след прежнего разреза» вешается прямо сюда.
+        bytes4[] memory leftover = new bytes4[](1);
+        leftover[0] = bytes4(keccak256("leftoverFromAnOlderCut()"));
+        IDiamondCut.FacetCut[] memory leftoverCut = new IDiamondCut.FacetCut[](1);
+        leftoverCut[0] = IDiamondCut.FacetCut(oldFacetAddr, IDiamondCut.FacetCutAction.Add, leftover);
+        IDiamondCut(address(diamond)).diamondCut(leftoverCut, address(0), "");
+
+        _armRun(diamond);
+
+        vm.expectRevert(bytes(unicode"UpgradePresentationRecord: у старого адреса фасета после разреза остались селекторы"));
+        upgrade.run();
+    }
+
+    /// Снять итоговый `require(selectorsAfter == selectorsBefore + addSels.length)`
+    /// из run() — этот тест покраснеет.
+    ///
+    /// Ломается перепись: facets() отвечает одним и тем же обоим чтениям, до и
+    /// после разреза. Счёт обязан был сдвинуться ровно на +8, а не сдвинулся
+    /// вовсе — то есть разрез сделал не то, что заявлял. Ни одна другая
+    /// проверка run() этого не ловит: маршруты по отдельности честны, старый
+    /// адрес пуст, хранилище на месте, пол отвечает. Именно поэтому итоговый
+    /// счёт стоит отдельной строкой.
+    function test_RunRevertsWhenRoutedSelectorCountDoesNotMoveByAdd() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+        _armRun(diamond);
+
+        IDiamondLoupe.Facet[] memory frozen = new IDiamondLoupe.Facet[](0);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IDiamondLoupe.facets.selector),
+            abi.encode(frozen)
+        );
+
+        vm.expectRevert(bytes(unicode"post-flight: счёт смонтированных селекторов сдвинулся не ровно на +Add"));
+        upgrade.run();
+    }
+
+    /// Снять `warnArbitersWithPreCutClaims(diamond)` из run() — этот тест
+    /// покраснеет.
+    ///
+    /// Это предупреждение, а не замок: оно печатает и НЕ ревертит, поэтому
+    /// «сломать мир так, чтобы run() упал» к нему неприменимо в принципе.
+    /// Молчаливым исключением оставлять нельзя (это хуже отсутствующей
+    /// проверки), поэтому меряется иначе — по СЛЕДУ, который оно обязано
+    /// оставить: getOpenClaimCount() зовётся во всём run() ровно из этого
+    /// обхода и больше ниоткуда (снимок хранилища читает getArbiters,
+    /// getVaultBalance и getArbiterFloor). vm.expectCall требует этого вызова
+    /// по имени конкретного арбитра — уберут обход, вызова не будет, тест
+    /// красный.
+    ///
+    /// Ценность самого предупреждения: спор, взятый ДО разреза, останется без
+    /// якоря времени, и recordNoResponse откажет ему ClaimTimeUnknown. Без
+    /// печати арбитр решит, что кнопка сломана, вместо того чтобы перевзять
+    /// спор. На 14 августа таких споров на цепи нет (getOpenClaimCount = 0),
+    /// поэтому здесь арбитр с открытым спором сажается руками — иначе обход
+    /// прошёл бы по пустому списку и след был бы неотличим от его отсутствия.
+    function test_RunCallsThePreCutClaimsWarning() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountOldFacet(diamond);
+
+        address arb = address(0xAB7);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arb);
+        _setOpenClaimCount(diamond, arb, 1);
+
+        _armRun(diamond);
+
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(ArbiterRegistryFacet.getOpenClaimCount.selector, arb)
+        );
+        upgrade.run();
+    }
 }

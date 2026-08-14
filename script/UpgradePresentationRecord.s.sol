@@ -139,7 +139,7 @@ contract UpgradePresentationRecord is Script {
         uint256 selectorsAfter = totalRoutedSelectors(diamond);
         require(
             selectorsAfter == selectorsBefore + addSels.length,
-            "post: routed selector count did not move by exactly +Add"
+            unicode"post-flight: счёт смонтированных селекторов сдвинулся не ровно на +Add"
         );
         console.log("Total routed selectors AFTER cut:", selectorsAfter);
     }
