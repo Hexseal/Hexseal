@@ -19,7 +19,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import {
   commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless,
-  setArbiterChatKeyGasless,
+  setArbiterChatKeyGasless, recordNoResponseGasless,
 } from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
@@ -497,6 +497,37 @@ export default function ArbiterPage() {
     } finally { setBusy(null); }
   };
 
+  /**
+   * Арбитр записывает в цепь: просил переписку — ответа не было (4в-2,
+   * Выкатка 2, Задача 8).
+   *
+   * ⚠️ ПОДПИСЬ ЖИВЁТ ЗДЕСЬ, А НЕ В КАРТОЧКЕ СПОРА. `ArbiterPresentations.tsx`
+   * кошелька не трогает намеренно (см. его шапку и `lib/signaturePaths.test.ts`,
+   * который перечисляет места вызова подписи ПОИМЁННО): мьютекс кошелька стоит
+   * внутри `recordNoResponseGasless`, и заводить второе место подписи ради одной
+   * кнопки значило бы обойти этот учёт.
+   *
+   * ⚠️ БРОСАЕТ НАРУЖУ. Карточка перечитывает цепь и на удаче, и на отказе:
+   * `NoResponseAlreadyRecorded` означает, что её чтение устарело. Проглотить
+   * ошибку здесь — оставить арбитра с кнопкой, которая «не работает».
+   */
+  const handleRecordNoResponse = async (agreement: `0x${string}`) => {
+    if (!walletClient || !publicClient) { toast.error(t("common.error")); throw new Error("no client"); }
+    const id = toast.loading(t("arbiter.no_response_recording"));
+    try {
+      const { txHash } = await recordNoResponseGasless(walletClient, publicClient, agreement);
+      // ⚠️ assertMined обязателен: waitForTransactionReceipt разрешается и на
+      // отвергнутой транзакции — без этой строки экран сказал бы «записано» там,
+      // где цепь ответила отказом.
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}` }));
+      toast.success(t("arbiter.no_response_done"), { id });
+      bump();
+    } catch (err: any) {
+      toast.error(err?.shortMessage || err?.message || t("common.error"), { id });
+      throw err;
+    }
+  };
+
   // Для арбитра, взявшего спор ДО апгрейда 9 августа: тогда заявка ключей не
   // возила, и в цепи их нет. Одна транзакция публикует их отдельно от заявки —
   // сторона на предъявлении наконец получит, кому предъявлять.
@@ -775,6 +806,7 @@ export default function ArbiterPage() {
               publicClient={publicClient}
               signChatKey={signChatKeyForBox}
               getBoxPass={getBoxPass}
+              recordNoResponse={handleRecordNoResponse}
             />
           )}
 

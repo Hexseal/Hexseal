@@ -9,11 +9,18 @@
  * перечисляет файлы с вызовом подписи ПОИМЁННО, и новый файл в списке — повод
  * осознанно решать, по нажатию ли там подпись. Замер — мутации 13 и 15.
  *
- * ⚠️ НИЧЕГО НЕ ЧИТАЕТСЯ САМО. Ни описи, ни мешков, ни ключа — только по
- * нажатию: чтение стоит КЛИЕНТСКОГО адресного бюджета (100/мин на весь склад,
- * один на переписку и ящик — `BAG_READ_BUDGET_PER_MIN`; серверные потолки у
- * них при этом РАЗНЫЕ — у ящика свой `DISPUTE_BOX_READ_RATE_MAX`), а ключ
- * может стоить окна подписи.
+ * ⚠️ СО СКЛАДА НЕ ЧИТАЕТСЯ НИЧЕГО САМО. Ни описи, ни мешков, ни ключа — только
+ * по нажатию: чтение стоит КЛИЕНТСКОГО адресного бюджета (100/мин на весь
+ * склад, один на переписку и ящик — `BAG_READ_BUDGET_PER_MIN`; серверные
+ * потолки у них при этом РАЗНЫЕ — у ящика свой `DISPUTE_BOX_READ_RATE_MAX`), а
+ * ключ может стоить окна подписи.
+ *
+ * ⚠️ ЦЕПЬ — ДРУГОЕ ДЕЛО, И С ЗАДАЧИ 8 ОНА ЧИТАЕТСЯ САМА (`useNoResponseRecord`):
+ * три `eth_call` на карточку, ни бюджета склада, ни окна подписи они не стоят.
+ * Без них кнопку «просил, ответа не было» пришлось бы прятать за нажатием, то
+ * есть прятать вместе с ней и ответ «почему её нет», — а именно этот ответ и
+ * есть половина работы. Кошелька это по-прежнему не касается: сама запись
+ * уезжает через проп `recordNoResponse`, у которого хозяин — `app/arbiter/page.tsx`.
  *
  * ⚠️ ЧТО ЗДЕСЬ ПРОВЕРЯЕТСЯ, А ЧТО НЕТ — НАЗЫВАЮ В САМОМ ФАЙЛЕ, а не только в
  * отчёте. У фронта нет ни jsdom, ни `@testing-library` (`environment: 'node'`):
@@ -50,6 +57,10 @@ import {
   type PresentedBag, type PresentedMessageView,
 } from '@/lib/arbiterPresentations';
 import { anchorOrder, firstNoResponse, type ChainAnchors } from '@/lib/presentationAnchor';
+import {
+  noResponseState, noResponseWait, noResponseAtLabel, type NoResponseFacts,
+} from '@/lib/arbiterNoResponse';
+import { useNoResponseRecord } from '@/hooks/useNoResponseRecord';
 
 /** Пока `getDetails` дела не приехал, стороны неизвестны — ссылок в чат не рисуем. */
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -67,6 +78,15 @@ export interface ArbiterPresentationsTabProps {
   publicClient: PublicClient | undefined;
   signChatKey: () => GatedSignChatKey | null;
   getBoxPass: () => Promise<string>;
+  /**
+   * Записать в цепь «просил переписку, ответа не было». ⚠️ ОБЯЗАТЕЛЬНЫЙ проп, а
+   * не необязательный: кошелёк здесь не трогают (см. шапку файла), и хозяин
+   * подписи — страница. Сделай его необязательным — и кнопка молча
+   * превратилась бы в украшение ровно того рода, ради которого задача
+   * заводилась. Обещание бросить на отказе тоже часть договора: карточка
+   * перечитывает цепь ПОСЛЕ попытки, в том числе неудачной.
+   */
+  recordNoResponse: (agreement: `0x${string}`) => Promise<void>;
 }
 
 // ⚠️ ЧЕТЫРЕ ИСХОДА НАЖАТИЯ ОБЪЯВЛЕНЫ В МОДУЛЕ (`BoxOpenState`), а не здесь:
@@ -442,13 +462,103 @@ export function PresentationBagView({ bag, anchors = null }: {
   );
 }
 
+/**
+ * Кнопка «просил переписку, ответа не было» — и всё, что говорится вместо неё.
+ *
+ * ⚠️ ЧИСТАЯ: решает не она, а `noResponseState` (`lib/arbiterNoResponse.ts`),
+ * туда же уехал и порядок состояний — единственное, что в этой работе можно
+ * сделать неправильно молча. Сюда приезжают ГОТОВЫЕ факты, поэтому стенд может
+ * подать любую сцену без узла и без кошелька.
+ *
+ * ⚠️ НИ ОДНО СОСТОЯНИЕ НЕ МОЛЧИТ. Кнопки нет по четырём разным причинам, и
+ * каждая — своя новость: «уже записано», «спор взят до появления этой записи в
+ * цепи», «спор ведёт не тот, кто смотрит», «цепь не ответила». Молчащий экран
+ * тут читается как «такой кнопки не бывает», и арбитр не возвращается.
+ *
+ * ⚠️ ЗАПИСЬ НИЧЕГО НЕ ВЛЕЧЁТ, И ЭТО СКАЗАНО ВСЛУХ РЯДОМ С КНОПКОЙ (`_hint`).
+ * Ни XP, ни репутации, ни сдвига вердикта: цепь не видит нашего ящика и
+ * поверить может только слову арбитра. Не сказать этого — значит дать человеку
+ * нажать в расчёте на наказание, которого не будет.
+ */
+export function ArbiterNoResponse({ facts, busy = false, onRecord }: {
+  facts: NoResponseFacts; busy?: boolean; onRecord: () => void;
+}) {
+  const t = useTranslations();
+  const state = noResponseState(facts);
+  const wait = state.kind === 'too_early' ? noResponseWait(state.leftSeconds) : null;
+  // Метка времени считается ТОЛЬКО из состояния «записано» — в остальных её нет
+  // вовсе, и подставить туда «—» значило бы нарисовать факт, которого в цепи нет.
+  const at = state.kind === 'recorded' ? noResponseAtLabel(state.at) : null;
+
+  return (
+    <div className="space-y-1.5">
+      {state.kind === 'chain_unread' && (
+        <p className="text-[11px] text-white/45">{t('arbiter.no_response_chain_unread')}</p>
+      )}
+      {state.kind === 'not_claimed' && (
+        <p className="text-[11px] text-white/45">{t('arbiter.no_response_not_claimed')}</p>
+      )}
+      {state.kind === 'not_mine' && (
+        <p className="text-[11px] text-white/45">
+          {t('arbiter.no_response_not_mine', { arbiter: shortAddr(state.arbiter) })}
+        </p>
+      )}
+      {state.kind === 'recorded' && (
+        <p className="text-[11px] text-white/60">
+          {t('arbiter.no_response_recorded', { at: at ?? String(state.at) })}
+        </p>
+      )}
+      {state.kind === 'claim_unknown' && (
+        <>
+          <p className="text-[11px] text-amber-300/85">{t('arbiter.no_response_claim_unknown')}</p>
+          {/* ⚠️ СОВЕТ ГОВОРИТ ПРАВДУ ПРО СЕГОДНЯ. «Отпустите спор и возьмите
+              заново» неисполнимо после закрытия окна спора (releaseDisputeClaim
+              ревертит DisputeWindowPassed) и при уже поданном вердикте. Обещать
+              выход, которого нет, — та же ложь, что и «можно будет через сутки»
+              перед однократностью, только этажом ниже. */}
+          <p className="text-[11px] text-white/45">
+            {t(state.release === 'open' ? 'arbiter.no_response_release_open'
+              : state.release === 'window_passed' ? 'arbiter.no_response_release_closed'
+              : state.release === 'verdict_pending' ? 'arbiter.no_response_release_verdict'
+              : 'arbiter.no_response_release_unknown')}
+          </p>
+        </>
+      )}
+      {(state.kind === 'too_early' || state.kind === 'ready') && (
+        <div className="space-y-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            data-no-response={state.kind}
+            // Заперта в двух случаях: пол ещё не вышел (цепь откажет
+            // NoResponseTooEarly) и запись уже едет — второе нажатие подписало
+            // бы вторую транзакцию, которой цепь ответит «уже записано».
+            disabled={state.kind === 'too_early' || busy}
+            onClick={onRecord}
+          >
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+            {t('arbiter.no_response_btn')}
+          </Button>
+          {wait && (
+            <p className="text-[11px] text-white/45">{t(wait.key, wait.params)}</p>
+          )}
+          {state.kind === 'ready' && (
+            <p className="text-[11px] text-white/40">{t('arbiter.no_response_hint')}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ────────────────────────── ящик одного спора ─────────────────────────── */
 
-function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBoxPass }: {
+function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBoxPass, recordNoResponse }: {
   deal: ArbiterCase; me?: `0x${string}`; chainKeys: ChainChatKeys | null;
   publicClient: PublicClient | undefined;
   signChatKey: () => GatedSignChatKey | null;
   getBoxPass: () => Promise<string>;
+  recordNoResponse: (agreement: `0x${string}`) => Promise<void>;
 }) {
   const t = useTranslations();
   const [state, setState] = useState<BoxState>({ kind: 'idle' });
@@ -508,6 +618,34 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
     });
   }, [me, signChatKey, getBoxPass, deal.agreement, publicClient, chainKeys]);
 
+  // Факты цепи про запись о молчании — свои у каждой карточки, и читаются они
+  // сами (см. шапку файла): у ответа «почему кнопки нет» не должно быть цены в
+  // одно нажатие.
+  const { facts, refetch: refetchNoResponse } = useNoResponseRecord(deal.agreement, me);
+  const [recording, setRecording] = useState(false);
+
+  /**
+   * ⚠️ ПЕРЕЧИТЫВАЕМ ЦЕПЬ И ПОСЛЕ ОТКАЗА, А НЕ ТОЛЬКО ПОСЛЕ УДАЧИ. Отказ
+   * `NoResponseAlreadyRecorded` означает ровно одно: наше чтение устарело
+   * (записал прежний вызов, оборвавшийся на ответе). Оставить в этом случае
+   * прежнюю кнопку — значит звать человека нажимать её снова и снова.
+   *
+   * ⚠️ Слово о неудаче говорит ХОЗЯИН ПОДПИСИ — страница: у неё тосты и разбор
+   * причины отказа по таблице ошибок. Здесь ловится только собственный запор
+   * кнопки, чтобы одно нажатие не уехало дважды.
+   */
+  const record = useCallback(async () => {
+    setRecording(true);
+    try {
+      await recordNoResponse(deal.agreement);
+    } catch {
+      // Показывать нечего: страница уже сказала. Молчание здесь намеренное.
+    } finally {
+      if (mounted.current) setRecording(false);
+      refetchNoResponse();
+    }
+  }, [recordNoResponse, deal.agreement, refetchNoResponse]);
+
   return (
     <div className="rounded-[18px] border border-white/[0.08] bg-[#0f0f11] p-3 space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -515,8 +653,9 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
         <div className="flex items-center gap-2">
           {/* Просьба предъявить — обычным сообщением в чат, и обеим сторонам:
               предъявляет любая, а просить арбитру бывает нужно именно ту, что
-              молчит. Кнопки «записать, что просил и не ответили» в этой выкатке
-              НЕТ (это Выкатка 2), и рисовать её нельзя.
+              молчит. Просьба идёт ВНЕ ЦЕПИ, бесплатно и сколько нужно; в цепь
+              (кнопкой ниже) ложится только факт «просил, ответа не было», и
+              один раз.
               Стороны берутся из `getDetails`, который приезжает отдельным
               эффектом; пока не приехал — адрес нулевой, и ссылка не рисуется
               вовсе, вместо того чтобы вести в чат с `0x0000…`. */}
@@ -536,6 +675,11 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
           </Button>
         </div>
       </div>
+
+      {/* ⚠️ СТОИТ ВНЕ ИСХОДОВ ЧТЕНИЯ ЯЩИКА, И ЭТО НЕ ВЁРСТКА. Запись о молчании
+          — про то, что предъявления НЕТ; спрятать её за успешным открытием
+          ящика значило бы показывать её только тем, кому есть что читать. */}
+      <ArbiterNoResponse facts={facts} busy={recording} onRecord={() => void record()} />
 
       {state.kind === 'key_needed' && (
         <div className="space-y-2">
@@ -587,6 +731,7 @@ export function ArbiterPresentationsTab(props: ArbiterPresentationsTabProps) {
           publicClient={props.publicClient}
           signChatKey={props.signChatKey}
           getBoxPass={props.getBoxPass}
+          recordNoResponse={props.recordNoResponse}
         />
       ))}
     </div>
