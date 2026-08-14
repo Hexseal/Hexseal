@@ -184,6 +184,118 @@ contract PresentationDigestTest is Test {
     }
 
     // ============================================================
+    //  ОКНО: ЧТЕНИЕ, КОТОРОЕ НЕ ЛОМАЕТСЯ ОТ ЧУЖОГО УСЕРДИЯ
+    // ============================================================
+    //
+    // Полный getPresentationDigests при длинном списке упирается в потолок газа
+    // на eth_call — и ломается он у АРБИТРА и у второй стороны, а не у того, кто
+    // список раздул. Окно — выход для читателя без апгрейда контракта.
+    //
+    // Главное свойство здесь не «режет по limit», а «не ревертит на честном
+    // запросе». Читатель не знает длину заранее: узнать её он может только
+    // вторым вызовом, то есть в другом блоке, когда длина уже другая. Реверт на
+    // краю означал бы, что листающий обязан выиграть гонку с пишущим.
+
+    function test_Page_ReturnsWindow() public {
+        bytes32[] memory put = _fillDigests(5);
+
+        bytes32[] memory page = facet.getPresentationDigestsPage(agreement, 1, 2);
+        assertEq(page.length, 2, unicode"окно обязано отдать ровно limit, пока хватает списка");
+        assertEq(page[0], put[1], unicode"окно обязано начинаться с offset");
+        assertEq(page[1], put[2], unicode"порядок внутри окна — тот же, что в списке");
+    }
+
+    /// `offset` за концом — пустой массив, а не реверт. Это условие остановки
+    /// для листающего: «здесь больше ничего нет».
+    function test_Page_OffsetPastEnd_ReturnsEmptyNotRevert() public {
+        _fillDigests(3);
+        assertEq(
+            facet.getPresentationDigestsPage(agreement, 3, 10).length,
+            0,
+            unicode"offset ровно за концом — пусто, и это ответ, а не ошибка"
+        );
+        assertEq(
+            facet.getPresentationDigestsPage(agreement, 999, 10).length,
+            0,
+            unicode"offset далеко за концом — тоже пусто, читатель длины не знал"
+        );
+    }
+
+    /// Пустой список — тот же случай, и он частый: экран открыли до первого
+    /// предъявления.
+    function test_Page_EmptyList_ReturnsEmptyNotRevert() public view {
+        assertEq(
+            facet.getPresentationDigestsPage(agreement, 0, 10).length,
+            0,
+            unicode"по пустому списку окно обязано отдать пусто, а не упасть"
+        );
+    }
+
+    function test_Page_ZeroLimit_ReturnsEmptyNotRevert() public {
+        _fillDigests(3);
+        assertEq(
+            facet.getPresentationDigestsPage(agreement, 0, 0).length,
+            0,
+            unicode"limit == 0 — законный запрос «ничего не надо», не ошибка"
+        );
+    }
+
+    /// Хвост короче окна: отдаём сколько есть. Без этого листающий, попросивший
+    /// последнюю страницу, получал бы реверт вместо остатка.
+    function test_Page_LimitBeyondEnd_ReturnsTail() public {
+        bytes32[] memory put = _fillDigests(3);
+
+        bytes32[] memory page = facet.getPresentationDigestsPage(agreement, 2, 100);
+        assertEq(page.length, 1, unicode"хвост короче окна — отдаётся хвост, а не реверт");
+        assertEq(page[0], put[2], unicode"в хвосте обязан быть последний положенный");
+    }
+
+    /// `limit` в потолок uint256 — тот же «до конца», и запрос это честный:
+    /// «дай всё, что есть с этого места», когда длина заранее неизвестна.
+    ///
+    /// Проверяется отдельно, потому что наивное `offset + limit` здесь
+    /// ПАНИКУЕТ (0x11, checked-арифметика 0.8) — то есть ломает не точность
+    /// ответа, а само обещание «на честном запросе не ревертит». Замерено
+    /// мутацией: наивная сумма даёт красным ровно этот тест.
+    function test_Page_HugeLimit_IsUpToTheEnd_NotARevert() public {
+        _fillDigests(3);
+        assertEq(
+            facet.getPresentationDigestsPage(agreement, 1, type(uint256).max).length,
+            2,
+            unicode"limit в потолок — это «до конца», а не панику на честном запросе"
+        );
+    }
+
+    /// Окно и полный геттер обязаны говорить одно и то же — иначе «сходится /
+    /// не сходится» на экране зависело бы от того, каким геттером читали.
+    function test_Page_AgreesWithFullGetter() public {
+        _fillDigests(4);
+        bytes32[] memory full = facet.getPresentationDigests(agreement);
+        bytes32[] memory page = facet.getPresentationDigestsPage(agreement, 0, full.length);
+
+        assertEq(page.length, full.length, unicode"окно во всю длину обязано дать весь список");
+        for (uint256 i = 0; i < full.length; i++) {
+            assertEq(page[i], full[i], unicode"окно и полный список разошлись — читателю верить нечему");
+        }
+    }
+
+    /// Листание страницами обязано покрыть список целиком и без повторов —
+    /// ровно так им и пользуются.
+    function test_Page_WalkCoversEverythingOnce() public {
+        bytes32[] memory put = _fillDigests(5);
+
+        uint256 seen = 0;
+        for (uint256 off = 0; off < 6; off += 2) {
+            bytes32[] memory page = facet.getPresentationDigestsPage(agreement, off, 2);
+            for (uint256 i = 0; i < page.length; i++) {
+                assertEq(page[i], put[seen], unicode"листание сбилось: не тот отпечаток на своём месте");
+                seen++;
+            }
+        }
+        assertEq(seen, put.length, unicode"листание обязано покрыть список целиком");
+    }
+
+    // ============================================================
     //  ОТПЕЧАТОК НЕ ЩИТ
     // ============================================================
 
@@ -345,6 +457,18 @@ contract PresentationDigestTest is Test {
             bytes32(uint256(rec) + REC_OFFSET_EXECUTOR),
             bytes32(uint256(uint160(exe)))
         );
+    }
+
+    /// Кладёт n отпечатков от клиента и возвращает их в том же порядке —
+    /// чтобы тесты окна сверяли содержимое, а не только длину.
+    function _fillDigests(uint256 n) internal returns (bytes32[] memory put) {
+        put = new bytes32[](n);
+        vm.startPrank(client);
+        for (uint256 i = 0; i < n; i++) {
+            put[i] = keccak256(abi.encodePacked(unicode"предъявление", i));
+            facet.recordPresentationDigest(agreement, put[i]);
+        }
+        vm.stopPrank();
     }
 
     /// commit + roll + claim одной последовательностью в хелпере, а не
