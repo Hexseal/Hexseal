@@ -2035,6 +2035,39 @@ export const ARBITER_REGISTRY_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  // ── 4в-2 Выкатка 2: лента ────────────────────────────────────────────────
+  //
+  // ⚠️ ЭТО НЕ ДУБЛЬ ГЕТТЕРОВ ВЫШЕ. Геттеры отвечают «сколько и какие», а спор
+  // решается вопросом «что было раньше»: отпечаток лёг на блоке N, запись
+  // арбитра «просил, ответа нет» — на блоке M. Номера блока у геттеров нет ни
+  // у одного, порядок берётся только из ленты. Плюс хранилище показывает
+  // запись ТЕКУЩЕГО клеймера, а по апелляции смотрят весь ход спора, включая
+  // арбитров, которые спор уже отпустили, — их видно только здесь.
+  //
+  // ⚠️ Флаги `indexed` сверяются с исходником замком наравне с типами: они
+  // решают, что уедет в topics, а что в data. Ошибка в них не ревертит ничего —
+  // фильтр по сделке молча не находит НИЧЕГО.
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'agreement', type: 'address' },
+      { indexed: true,  internalType: 'address', name: 'arbiter',   type: 'address' },
+      { indexed: false, internalType: 'uint256', name: 'at',        type: 'uint256' },
+    ],
+    name: 'DisputeNoResponseRecorded',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'agreement', type: 'address' },
+      { indexed: true,  internalType: 'address', name: 'submitter', type: 'address' },
+      { indexed: false, internalType: 'bytes32', name: 'digest',    type: 'bytes32' },
+      { indexed: false, internalType: 'uint256', name: 'index',     type: 'uint256' },
+    ],
+    name: 'PresentationDigestRecorded',
+    type: 'event',
+  },
   // V3 — events
   {
     anonymous: false,

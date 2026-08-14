@@ -172,7 +172,105 @@ describe('ABI записи о молчании и отпечатка не рас
   }
 });
 
+/**
+ * ⚠️ СОБЫТИЯ — ЭТО НЕ ДУБЛЬ ГЕТТЕРОВ, И ЗАМОК ИМ НУЖЕН ОТДЕЛЬНЫЙ.
+ *
+ * Геттеры отдают `bytes32[]` и число — то есть «сколько и какие». А спор решается
+ * вопросом «что было раньше»: отпечаток лёг на блоке N, запись арбитра «просил,
+ * ответа нет» — на блоке M. Номера блока у геттера нет ни у одного, взять порядок
+ * можно только из ленты. Значит без этих двух записей экран арбитра (Задача 7) либо
+ * встанет, либо соврёт.
+ *
+ * ⚠️ И ГЛАВНОЕ, ЧЕМ СОБЫТИЕ ОПАСНЕЕ ФУНКЦИИ: `indexed`. Тип и имя могут совпадать
+ * полностью, а флаг — разойтись, и тогда viem ищет поле не там: `indexed` уезжает в
+ * topics, остальное в data. Ошибка не ревертит ничего — фильтр по сделке молча не
+ * находит НИЧЕГО, либо расшифровка выдаёт мусор в поле. Поэтому флаг сверяется
+ * наравне с типом и именем.
+ */
+type EventParam = { type: string; name: string; indexed: boolean };
+
+/** Параметры события из объявления в `.sol`. Объявление может быть многострочным. */
+function solEventParams(source: string, eventName: string): EventParam[] {
+  const re = new RegExp(`event\\s+${eventName}\\s*\\(([^)]*)\\)\\s*;`, 'g');
+  const matches = [...source.matchAll(re)];
+  if (matches.length === 0) throw new Error(`объявление события ${eventName} не найдено`);
+  if (matches.length > 1) {
+    throw new Error(`событие ${eventName} объявлено ${matches.length} раза — сверять не с чем`);
+  }
+  return matches[0][1]
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => {
+      const words = p.split(/\s+/);
+      const indexed = words.includes('indexed');
+      const rest = words.filter((w) => w !== 'indexed');
+      return { type: rest[0], name: rest.length > 1 ? rest[rest.length - 1] : '', indexed };
+    });
+}
+
+function abiEventEntry(abi: readonly unknown[], eventName: string) {
+  const found = (abi as AbiEntry[]).filter((e) => e && e.type === 'event' && e.name === eventName);
+  if (found.length === 0) throw new Error(`события ${eventName} нет в ABI фронта`);
+  if (found.length > 1) throw new Error(`событие ${eventName} в ABI фронта ${found.length} раза`);
+  return found[0] as AbiEntry & { inputs?: { type: string; name: string; indexed?: boolean }[] };
+}
+
+const eventShape = (params: EventParam[]) =>
+  params.map((p) => `${p.type}${p.indexed ? ' indexed' : ''} ${p.name}`).join(', ');
+
+/**
+ * Два события 4в-2 Выкатки 2. Список руками, по той же причине, что и список
+ * функций: собранный из самого ABI, он сверял бы забытую запись саму с собой.
+ */
+const NEW_EVENTS = ['DisputeNoResponseRecorded', 'PresentationDigestRecorded'] as const;
+
+describe('ABI событий ленты не расходится с контрактом', () => {
+  for (const eventName of NEW_EVENTS) {
+    it(`${eventName}: поля — типы, имена и indexed — совпадают с исходником`, () => {
+      const fromContract = solEventParams(FACET_SRC, eventName);
+      const fromConfig = (abiEventEntry(ARBITER_REGISTRY_ABI, eventName).inputs ?? []).map((p) => ({
+        type: p.type,
+        name: p.name ?? '',
+        indexed: p.indexed === true,
+      }));
+      expect(eventShape(fromConfig)).toBe(eventShape(fromContract));
+    });
+
+    it(`${eventName}: в исходнике ровно одно объявление`, () => {
+      const count = (FACET_SRC.match(new RegExp(`event\\s+${eventName}\\s*\\(`, 'g')) ?? []).length;
+      expect(count).toBe(1);
+    });
+  }
+
+  it('оба события в ABI помечены как event, а не как функция', () => {
+    // Мелочь, которая ломает молча: `type: 'function'` у записи события не мешает
+    // ничему до первой попытки разобрать лог — там она просто не найдётся.
+    for (const eventName of NEW_EVENTS) {
+      expect(abiEventEntry(ARBITER_REGISTRY_ABI, eventName).type).toBe('event');
+    }
+  });
+});
+
 describe('разбор объявлений сам по себе честен', () => {
+  it('indexed читается как флаг, а не как имя поля', () => {
+    const fake = 'event E(address indexed agreement, uint256 at);';
+    expect(solEventParams(fake, 'E')).toEqual([
+      { type: 'address', name: 'agreement', indexed: true },
+      { type: 'uint256', name: 'at', indexed: false },
+    ]);
+  });
+
+  it('многострочное объявление события разбирается целиком', () => {
+    const fake = 'event E(\n  address indexed a, bytes32 digest,\n  uint256 index\n);';
+    expect(solEventParams(fake, 'E').map((p) => p.name)).toEqual(['a', 'digest', 'index']);
+  });
+
+  it('разбор события падает на двойном объявлении', () => {
+    const fake = 'event E(address a);\nevent E(bytes32 a);';
+    expect(() => solEventParams(fake, 'E')).toThrow();
+  });
+
   it('расположение данных не принимается за имя возврата', () => {
     const fake = 'function f(address a) external view returns (bytes32[] memory) {';
     expect(solOutputs(fake, 'f')).toEqual([{ type: 'bytes32[]', name: '' }]);
