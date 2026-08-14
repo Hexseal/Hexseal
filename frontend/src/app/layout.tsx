@@ -85,6 +85,9 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Hexseal",
   description: "Reshape Digital Reality",
+  other: {
+    "talentapp:project_verification": "fde63ee1e6f42eb443f3515c2300bf334806b9ba56414b11b420468b878a9b2d5a5ab77afbd22d99b5268964d05a82ea2a8336fe946cacf494d10152c08b9513"
+  },
 };
 
 export const viewport = {
