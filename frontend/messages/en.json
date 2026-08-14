@@ -722,6 +722,7 @@
     "present_anchor_retry": "Mark on chain",
     "present_anchored": "Marked on chain",
     "present_anchor_failed": "Marking on chain did not work. The arbiter has the messages — try again later.",
+    "present_anchor_no_wallet": "Your wallet or the node is not answering — there is nothing to mark on chain with right now. The arbiter still has the messages.",
     "present_fetched": "picked up at {time}",
     "present_fetch_unknown": "Whether it was picked up could not be checked",
     "present_draft_found": "Earlier you put together {n} message(s) and did not send them. The ticks can be brought back — the presentation is then built again, for the arbiter who is on the dispute now.",

@@ -102,6 +102,8 @@ const REQUIRED_PRESENT = [
   'chat.present_anchor_retry',
   'chat.present_anchored',
   'chat.present_anchor_failed',
+  // Ревью, круг 1 (правка 2): нажатие «отметить» без кошелька/узла молчало.
+  'chat.present_anchor_no_wallet',
   'chat.present_fetched',
   'chat.present_fetch_unknown',
   'chat.present_draft_found',
@@ -505,11 +507,12 @@ describe('адрес контракта не вписан в переводы р
 
 /* ─── Предъявление арбитру (4в-2, Задача 6) ─────────────────────────────── */
 describe('тексты предъявления арбитру', () => {
-  it('L1: все 51 ключ есть в каждой из 14 локалей и ни один не пуст', () => {
+  it('L1: все 52 ключа есть в каждой из 14 локалей и ни один не пуст', () => {
     // Число написано РУКАМИ: список выше может усохнуть незамеченным.
-    // 29 ключей показа + 22 ключа отказа (по числу членов `PresentRefusal`).
-    // 25 → 29: четыре про третий исход (Выкатка 2, Задача 6).
-    expect(REQUIRED_PRESENT.length).toBe(51);
+    // 30 ключей показа + 22 ключа отказа (по числу членов `PresentRefusal`).
+    // 25 → 30: четыре про третий исход (Выкатка 2, Задача 6) плюс отказ
+    // повтора без кошелька (ревью, круг 1).
+    expect(REQUIRED_PRESENT.length).toBe(52);
     const missing: string[] = [];
     for (const locale of LOCALES) {
       const dict = read(locale);
@@ -628,8 +631,23 @@ describe('тексты предъявления арбитру', () => {
     for (const locale of LOCALES) {
       const dict = read(locale);
       const middle = String(pick(dict, 'chat.present_not_anchored'));
-      if (middle === String(pick(dict, 'chat.present_sent'))) same.push(`${locale}: = present_sent`);
-      if (middle === String(pick(dict, 'chat.present_anchored'))) same.push(`${locale}: = present_anchored`);
+      // ⚠️ СВЕРЯЕТСЯ СО ВСЕМИ СОСЕДЯМИ ПО ТРЕТЬЕМУ ИСХОДУ, а не только с
+      // успехом (ревью, круг 1, правка 3). У четырёх текстов четыре разные
+      // работы: состояние («не отмечено»), успех повтора («отмечено»),
+      // неудача повтора и отказ без кошелька — у последних двух разное
+      // лечение (ждать против «подключите кошелёк»). Совпадение любых двух в
+      // любой локали прошло бы незамеченным.
+      for (const neighbour of [
+        'chat.present_sent', 'chat.present_anchored',
+        'chat.present_anchor_failed', 'chat.present_anchor_no_wallet',
+      ]) {
+        if (middle === String(pick(dict, neighbour))) same.push(`${locale}: = ${neighbour}`);
+      }
+      // И два текста про неудачу — тоже не один на двоих: лечение разное.
+      if (String(pick(dict, 'chat.present_anchor_failed'))
+        === String(pick(dict, 'chat.present_anchor_no_wallet'))) {
+        same.push(`${locale}: anchor_failed = anchor_no_wallet`);
+      }
       // Ни один из 22 отказов не годится в это место: там у всех «ничего не
       // отправлено», а здесь отправлено.
       for (const [key, value] of Object.entries(pick(dict, 'chat') as Record<string, string>)) {

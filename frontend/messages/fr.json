@@ -722,6 +722,7 @@
     "present_anchor_retry": "Inscrire dans la chaîne",
     "present_anchored": "Inscrit dans la chaîne",
     "present_anchor_failed": "L'inscription dans la chaîne a échoué. L'arbitre a la conversation — réessayez plus tard.",
+    "present_anchor_no_wallet": "Le portefeuille ou le nœud ne répond pas : il n'y a rien pour l'inscrire dans la chaîne en ce moment. L'arbitre a bien la conversation.",
     "present_fetched": "récupéré à {time}",
     "present_fetch_unknown": "S'il a été récupéré n'a pas pu être vérifié",
     "present_draft_found": "Vous aviez déjà préparé {n} message(s) sans les envoyer. Les coches peuvent être rétablies — la présentation sera alors refaite, pour l'arbitre qui mène le litige maintenant.",

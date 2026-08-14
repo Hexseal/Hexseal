@@ -29,6 +29,7 @@ import type { Hex } from 'viem';
 import {
   PRESENT_REFUSAL_KEYS,
   anchorAfter,
+  anchorRetryGate,
   boxStateFromList,
   canSend,
   countLegacyExposed,
@@ -411,14 +412,21 @@ describe('отправка', () => {
     expect(await unsentPresentationDrafts(deps.presenter)).toEqual([]);
   }, 120_000);
 
-  it('T9: склад отказал — черновик остался НЕОТПРАВЛЕННЫМ', async () => {
+  it('T9: склад отказал — черновик остался НЕОТПРАВЛЕННЫМ, и отпечатка в цепи НЕТ', async () => {
     // 500 `internal_error` — то, чем живой сервер отвечает на кончившееся
     // место (507 он не отдаёт вовсе, см. перечень Задачи 1).
+    const trace: Trace = { steps: [], puts: 0 };
     const deps = await realDeps({
       put: async () => { throw new BagTransportError('Storage failed', 'internal_error', 500); },
-    });
+    }, trace);
     const v = await sendPresentation(deps);
     expect(v).toEqual({ ok: false, status: 'error', reason: 'box_refused' });
+    // ⚠️ ПЕРВЫЙ ШАГ УПАЛ — ВТОРОГО НЕТ, И ЭТО НЕ КОСМЕТИКА (ревью, круг 1).
+    // Отпечаток предъявления, которого у арбитра НЕТ, — это буквально
+    // «пустышка-щит» из замысла 2.11: сторона выглядит защищённой, а показать
+    // ей нечего. Прежде правило держалось одним лишь ранним выходом: вписать
+    // `recordDigest` в `catch` вокруг склада можно было при НУЛЕ красных.
+    expect(trace.steps, 'отпечаток лёг в цепь при упавшем складе').not.toContain('digest');
     const left = await unsentPresentationDrafts(deps.presenter);
     expect(left.length, 'после отказа склада черновик потерян').toBe(1);
     expect(left[0].state).toBe('built');
@@ -1297,6 +1305,37 @@ describe('три слова, три состояния, повтор отмет�
     // А «не отмечено» приходит с отпечатком того мешка, который лёг.
     expect(anchorAfter({ kind: 'none' }, { ...stored, status: 'stored-not-anchored' }))
       .toEqual({ kind: 'missing', digest });
+  });
+
+  it('T49: нажатие «отметить» без кошелька НЕ проваливается в тишину', async () => {
+    // ⚠️ РЕВЬЮ, КРУГ 1, ПРАВКА 2. Обработчик выходил молча: человек жал кнопку
+    // и не получал ничего — ни строки, ни тоста, ни следа, — и не мог понять,
+    // сломалось это или он промахнулся мимо кнопки.
+    const digest = `0x${'44'.repeat(32)}` as `0x${string}`;
+    const missing: AnchorState = { kind: 'missing', digest };
+
+    // Есть чем ходить — идём, и отпечаток берётся из состояния.
+    expect(anchorRetryGate({ state: missing, chainReady: true }))
+      .toEqual({ go: true, digest });
+
+    // Нечем — НЕ идём, и у отказа есть текст. Причина названа своя: лечение
+    // здесь «подключите кошелёк», а не «попробуйте позже».
+    const noChain = anchorRetryGate({ state: missing, chainReady: false });
+    expect(noChain.go).toBe(false);
+    expect(noChain.go === false && noChain.key, 'нажатие провалилось в тишину')
+      .toBe('chat.present_anchor_no_wallet');
+    // И это НЕ тот же текст, что у неудавшегося похода в цепь.
+    expect(noChain.go === false && noChain.key).not.toBe('chat.present_anchor_failed');
+
+    // Кнопки в этих состояниях нет вовсе (`PresentAnchorLine`) — молчание
+    // законно, и это ЕДИНСТВЕННОЕ законное молчание.
+    for (const state of [
+      { kind: 'none' } as const,
+      { kind: 'anchored', txHash: ANCHOR_TX } as const,
+    ]) {
+      expect(anchorRetryGate({ state, chainReady: true })).toEqual({ go: false, key: null });
+      expect(anchorRetryGate({ state, chainReady: false })).toEqual({ go: false, key: null });
+    }
   });
 
   it('T48: «отметить» шлёт ТОТ ЖЕ отпечаток, а неудача не гасит строку', async () => {

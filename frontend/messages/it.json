@@ -722,6 +722,7 @@
     "present_anchor_retry": "Registra sulla catena",
     "present_anchored": "Registrato sulla catena",
     "present_anchor_failed": "La registrazione sulla catena non è riuscita. L'arbitro ha la conversazione: riprova più tardi.",
+    "present_anchor_no_wallet": "Il portafoglio o il nodo non risponde: al momento non c'è con cosa registrarlo sulla catena. L'arbitro ha comunque la conversazione.",
     "present_fetched": "ritirato alle {time}",
     "present_fetch_unknown": "Se sia stato ritirato non è stato possibile verificarlo",
     "present_draft_found": "In precedenza avevate messo insieme {n} messaggio/i senza inviarli. I segni si possono recuperare: la presentazione verrà rifatta, per l'arbitro che segue la controversia adesso.",

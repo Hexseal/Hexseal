@@ -50,7 +50,8 @@ import { toPeerBoxKeyBytes, type ArbiterBoxKeyBytes } from '@/lib/presentation';
 // (арбитра сменили, просят предъявить заново) не существует вовсе.
 import { readPresentationDrafts, type PresentationDraft } from '@/lib/presentationDraft';
 import {
-  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, anchorAfter, canSend, countLegacyExposed, draftKeepNotice,
+  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, anchorAfter, anchorRetryGate, canSend,
+  countLegacyExposed, draftKeepNotice,
   fitNotice, lastDraftOfDeal, otherAttestationsOf, pickingPrep, presentButtonVisible,
   presentSay, presentWarning, presentedFromKey, restoreMountImpl, retryAnchorImpl,
   selectableMessages, selectionFromContainer, sendPresentation, shouldPollBox,
@@ -685,11 +686,24 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
    * `issuedAt`, то есть другие 32 байта, и у арбитра не сошлось бы с тем, что
    * он уже забрал. Кошелёк при этом будится: подпись мета-транзакции —
    * человеческое действие, и оно здесь ровно по нажатию.
+   *
+   * ⚠️ И НАЖАТИЕ НЕ ПРОВАЛИВАЕТСЯ В ТИШИНУ (ревью, круг 1, правка 2). Прежде
+   * при отсутствии кошелька или узла обработчик выходил молча: ни строки, ни
+   * тоста. Теперь решает `anchorRetryGate`, и у отказа есть текст.
    */
   const retryAnchor = useCallback(() => {
-    if (!publicClient || !walletClient || anchor.kind !== 'missing') return;
+    const gate = anchorRetryGate({
+      state: anchor, chainReady: Boolean(publicClient && walletClient),
+    });
+    if (!gate.go) {
+      if (gate.key) toast.error(t(gate.key as Parameters<typeof t>[0]));
+      return;
+    }
+    // ⚠️ ВЕТКА ДЛЯ ТИПОВ, А НЕ ВТОРОЕ ПРАВИЛО: `gate.go` уже означает, что оба
+    // клиента есть (`chainReady`). Тихого выхода здесь больше нет.
+    if (!publicClient || !walletClient) return;
     void retryAnchorImpl({
-      digest: anchor.digest,
+      digest: gate.digest,
       record: (digest) =>
         recordPresentationDigestGasless(walletClient, publicClient, agreement, digest),
       alive: () => mounted.current,

@@ -722,6 +722,7 @@
     "present_anchor_retry": "Registrar en la cadena",
     "present_anchored": "Registrado en la cadena",
     "present_anchor_failed": "No se pudo registrar en la cadena. El árbitro tiene la conversación: inténtelo de nuevo más tarde.",
+    "present_anchor_no_wallet": "La cartera o el nodo no responden: ahora mismo no hay con qué registrarlo en la cadena. El árbitro sí tiene la conversación.",
     "present_fetched": "recogido a las {time}",
     "present_fetch_unknown": "Si lo han recogido no se ha podido comprobar",
     "present_draft_found": "Antes preparó {n} mensaje(s) y no los envió. Las marcas se pueden recuperar: la presentación se volverá a preparar, para el árbitro que lleva la disputa ahora.",

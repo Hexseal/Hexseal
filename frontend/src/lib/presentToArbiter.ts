@@ -1233,6 +1233,33 @@ export function anchorAfter(prev: AnchorState, verdict: PresentVerdict): AnchorS
   return prev;
 }
 
+/**
+ * Пускать ли повтор отметки — и если нет, ЧТО СКАЗАТЬ ВСЛУХ.
+ *
+ * ⚠️ ПРИЕХАЛО РЕВЬЮ (круг 1, правка 2): нажатие проваливалось в тишину.
+ * Обработчик выходил на `!publicClient || !walletClient` молча — человек жал
+ * «отметить» и не получал ни строки, ни тоста, ни следа, и не мог понять,
+ * сломалось это или он промахнулся мимо кнопки. Теперь у отказа есть имя и
+ * текст, и он называет ПРИЧИНУ («кошелёк или узел не отвечают»), а не общее
+ * «не удалось»: лечение у неё своё — подключить кошелёк, а не ждать.
+ *
+ * ⚠️ `key: null` — ЗАКОННОЕ МОЛЧАНИЕ, и только одно: состояние не `missing`,
+ * то есть кнопки в разметке нет вовсе (`PresentAnchorLine`). Сюда попадают
+ * лишь повторный клик по уже отработавшей разметке и вызов из кода; говорить
+ * про это человеку нечего.
+ */
+export type AnchorRetryGate =
+  | { go: true; digest: Hex }
+  | { go: false; key: string | null };
+
+export function anchorRetryGate(
+  input: { state: AnchorState; chainReady: boolean },
+): AnchorRetryGate {
+  if (input.state.kind !== 'missing') return { go: false, key: null };
+  if (!input.chainReady) return { go: false, key: 'chat.present_anchor_no_wallet' };
+  return { go: true, digest: input.state.digest };
+}
+
 export interface AnchorRetryIO {
   /** ⚠️ Отпечаток ТОГО САМОГО мешка, а не пересчитанный: сборка повторно не
    *  делается, и второй контейнер (другое `issuedAt`) дал бы другие 32 байта. */

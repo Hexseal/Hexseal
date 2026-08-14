@@ -722,6 +722,7 @@
     "present_anchor_retry": "在链上标记",
     "present_anchored": "已在链上标记",
     "present_anchor_failed": "在链上标记失败。聊天记录已在仲裁人处 — 请稍后再试。",
+    "present_anchor_no_wallet": "钱包或节点没有响应 — 现在没有办法在链上标记。聊天记录仍然在仲裁人处。",
     "present_fetched": "{time} 被取走",
     "present_fetch_unknown": "是否已被取走，无法查明",
     "present_draft_found": "您之前整理了 {n} 条消息但没有发送。勾选可以恢复——出示内容会重新生成，面向当前负责该争议的仲裁者。",

@@ -722,6 +722,7 @@
     "present_anchor_retry": "Registar na cadeia",
     "present_anchored": "Registado na cadeia",
     "present_anchor_failed": "Não foi possível registar na cadeia. O árbitro tem a conversa — tente novamente mais tarde.",
+    "present_anchor_no_wallet": "A carteira ou o nó não responde — de momento não há com que registar na cadeia. O árbitro tem na mesma a conversa.",
     "present_fetched": "levantado às {time}",
     "present_fetch_unknown": "Se foi levantado não foi possível verificar",
     "present_draft_found": "Antes juntou {n} mensagem(ns) e não as enviou. As marcas podem ser repostas — a apresentação será preparada de novo, para o árbitro que conduz a disputa agora.",
